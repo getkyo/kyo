@@ -17,7 +17,7 @@ object futures {
     inline def fork[T, S](inline v: T > S)(using ExecutionContext): T > (S | Futures) =
       Future(v) >> Futures
 
-    inline def block[T, S](inline v: T > (S | Futures), timeout: Duration): T > S =
+    inline def block[T, S](v: T > (S | Futures), timeout: Duration): T > S =
       val blocker = Blocker(timeout)
       given blockingHandler: ShallowHandler[Future, Futures] =
         new ShallowHandler[Future, Futures] {

@@ -42,7 +42,7 @@ class Bench {
           loop(i + 1)
       }
     Futures.block(
-        Futures.fork((loop(0) < IOs)(_.run())),
+        Futures.fork((loop(0) < IOs).run()),
         Duration.Inf
     )
   }
@@ -90,7 +90,7 @@ class Bench {
           IOs(i + 11)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(loop)
       }
     Futures.block(
-        Futures.fork((loop(0) < IOs)(_.run())),
+        Futures.fork((loop(0) < IOs).run()),
         Duration.Inf
     )
   }
@@ -119,7 +119,7 @@ class Bench {
           IOs(i + 11)(a(_))(loop)
       }
     Futures.block(
-        Futures.fork((loop(0) < IOs)(_.run())),
+        Futures.fork((loop(0) < IOs).run()),
         Duration.Inf
     )
   }
