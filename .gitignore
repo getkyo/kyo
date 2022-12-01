@@ -1,0 +1,9 @@
+.bloop
+.bsp
+.metals
+project/target
+project/project
+.vscode
+target
+*.log
+graal_dumps
