@@ -14,7 +14,7 @@ object futures {
 
   final class Futures private[futures] () extends Effect[Future] {
 
-    inline def fork[T, S](inline v: T > S)(using ExecutionContext): T > (S | Futures) =
+    inline def fork[T, S](inline v: => T > S)(using ExecutionContext): T > (S | Futures) =
       Future(v) >> Futures
 
     inline def block[T, S](v: T > (S | Futures), timeout: Duration): T > S =

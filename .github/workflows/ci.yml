@@ -7,11 +7,17 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - uses: olafurpg/setup-scala@v11
-    - name: Test
+    - name: Test with inlines
       run: sbt test
       env: 
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    - name: Publish
-      run: sbt publish
+    - name: Remove inlines
+      run: find . -type f -name '*.scala' -exec sed -i '' s/inline//g {} +
+    - name: Test without inlines
+      run: sbt test
       env: 
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    # - name: Publish
+    #   run: sbt publish
+    #   env: 
+    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
