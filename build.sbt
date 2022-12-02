@@ -12,10 +12,6 @@ scalacOptions ++= Seq(
   "-language:implicitConversions",
 )
 
-ThisBuild / githubOwner := "fwbrasil"
-ThisBuild / githubRepository := "kyo"
-ThisBuild / githubTokenSource := TokenSource.Environment("GITHUB_TOKEN")
-
 scalafmtOnCompile := true
 version := "0.1.0-SNAPSHOT"
 
