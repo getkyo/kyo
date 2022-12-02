@@ -53,7 +53,7 @@ object aborts {
       (Fail(ex): Abort[E, T]) > Aborts[E]
   }
 
-  inline given [E]: ShallowHandler[[T] =>> Abort[E, T], Aborts[E]] =
+  inline given [E: Tag]: ShallowHandler[[T] =>> Abort[E, T], Aborts[E]] =
     new ShallowHandler[[T] =>> Abort[E, T], Aborts[E]] {
       def pure[U](v: U) = v
       def apply[U, V, S2](

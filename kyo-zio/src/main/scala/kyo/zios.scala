@@ -11,30 +11,35 @@ import scala.annotation.targetName
 import zios._
 
 object ziosTest extends ZIOAppDefault {
-  def test(i: Int): Either[IllegalStateException, String] > ZIOs =
-    val a = ZIO.succeed(i).flatMap {
+
+  val v0: ZIO[Service1, IllegalStateException, Int] =
+    Random.nextInt.flatMap {
       case 0 => ZIO.fail(new IllegalStateException)
-      case 1 => ZIO.service[Int].map(_ + 1)
+      case 1 => ZIO.service[Service1].map(_.get(1))
       case i => ZIO.succeed(10 / i)
     }
-    val b: Int > (Envs[Int] | Aborts[IllegalStateException] | ZIOs) =
-      ZIOs(a)
-    val c: Int > (Aborts[IllegalStateException] | ZIOs) =
-      Envs.let(1)(b)
-    val d: String > (Aborts[IllegalStateException] | ZIOs) =
-      c(_ + 1)(i => "i" + i)
-    val e: Abort[IllegalStateException, String] > ZIOs =
-      (d < Aborts[IllegalStateException])
-    e(_.toEither) 
 
+  val v1: Int > (Envs[Service1] | Aborts[IllegalStateException] | ZIOs) =
+    ZIOs(v0)
+
+  val v3: Int > (Aborts[IllegalStateException] | ZIOs) =
+    Envs.let(sertvice1)(v1(_ + 1))
+
+  val v4: Either[IllegalStateException, Int] > ZIOs =
+    (v3 < Aborts[IllegalStateException])(_.toEither)
+
+  val v5: Task[Either[IllegalStateException, Int]] > Nothing =
+    v4 << ZIOs
+
+  val v6: Task[Either[IllegalStateException, Int]] =
+    v5
   def run =
-    val a =
-      for {
-        v1 <- test(0)
-        v2 <- test(1)
-        v3 <- test(2)
-      } yield (v1, v2, v3)
-    (a << ZIOs).flatMap(Console.printLine(_))
+    v6.flatMap(Console.printLine(_))
+
+  trait Service1 {
+    def get(i: Int): Int
+  }
+  lazy val sertvice1: Service1 = _ + 1
 }
 
 object zios {

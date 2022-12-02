@@ -16,10 +16,8 @@ object options {
           f: T => U > (S | Options)
       ): U > (S | Options) =
         m match {
-          case None =>
-            Option.empty[U] > Options
-          case Some(v) =>
-            f(v)
+          case None    => Option.empty[U] > Options
+          case Some(v) => f(v)
         }
     }
 }
