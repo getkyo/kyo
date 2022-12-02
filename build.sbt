@@ -35,7 +35,6 @@ lazy val `kyo-core` = project
     
     libraryDependencies += "dev.zio" %% "izumi-reflect" % "2.2.2",
 
-    libraryDependencies += "org.typelevel" %% "cats-laws" % "2.7.0" % Test,
     libraryDependencies += "dev.zio" %% "zio-test" % "2.0.3" % Test,
     libraryDependencies += "dev.zio" %% "zio-test-magnolia" % "2.0.3" % Test,
     libraryDependencies += "dev.zio" %% "zio-test-sbt" % "2.0.3" % Test,

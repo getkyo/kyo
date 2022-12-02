@@ -14,7 +14,7 @@ import zio.test.laws._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 
-object ZIOsMonadLawsTest extends ZIOSpecDefault {
+object MonadLawsTest extends ZIOSpecDefault {
 
   type Myo[+T] = T > (IOs | Futures)
 
@@ -52,5 +52,4 @@ object ZIOsMonadLawsTest extends ZIOSpecDefault {
           checkAllLaws(IdentityFlattenLaws)(listGenF, Gen.int)
       )
   )
-//   @@ TestAspect.ignore // a bit of mystery for the monadic zealots ;)
 }
