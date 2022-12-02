@@ -12,8 +12,57 @@ scalacOptions ++= Seq(
     "-language:implicitConversions"
 )
 
+// # Set up some configuration for publishing to GitHub
+
+// GitHub repo info
+val githubOwner: String      = "fwbrasil"
+val githubRepository: String = "kyo"
+
+// Settings to set the version based on a tagged release in GitHub,
+// or use a default value if not present
+val defaultVersion: String = "0.1.0-SNAPSHOT"
+val tagWithQualifier: String => String => String =
+  qualifier =>
+    tagVersion => s"%s.%s.%s-${qualifier}%s".format(tagVersion.split("\\.")*)
+
+val tagAlpha: String => String     = tagWithQualifier("a")
+val tagBeta: String => String      = tagWithQualifier("b")
+val tagMilestone: String => String = tagWithQualifier("m")
+val tagRC: String => String        = tagWithQualifier("rc")
+val tagSnapshot: String => String = tagVersion =>
+  s"%s.%s.%s-SNAPSHOT".format(tagVersion.split("\\.")*)
+
+val versionFromTag: String = sys.env
+  .get("GITHUB_REF_TYPE")
+  .filter(_ == "tag")
+  .flatMap(_ => sys.env.get("GITHUB_REF_NAME"))
+  .flatMap { t =>
+    t.headOption.map {
+      case 'a' => tagAlpha(t.tail)     // Alpha build, a1.2.3.4 => 1.2.3-a4
+      case 'b' => tagBeta(t.tail)      // Beta build, b1.2.3.4 => 1.2.3-b4
+      case 'm' => tagMilestone(t.tail) // Milestone build, m1.2.3.4 => 1.2.3-m4
+      case 'r' => tagRC(t.tail)        // RC build, r1.2.3.4 => 1.2.3-rc4
+      case 's' => tagSnapshot(t.tail)  // SNAPSHOT build, s1.2.3 => 1.2.3-SNAPSHOT
+      case 'v' => t.tail               // Production build, should be v1.2.3 => 1.2.3
+      case _   => defaultVersion
+    }
+  }
+  .getOrElse(defaultVersion)
+ThisBuild / version := versionFromTag
+
+ThisBuild / publishMavenStyle := true // GitHub resolves maven style
+ThisBuild / versionScheme     := Some("early-semver")
+ThisBuild / publishTo := Some(
+    "GitHub Package Registry " at s"https://maven.pkg.github.com/$githubOwner/$githubRepository"
+)
+ThisBuild / credentials += Credentials(
+    "GitHub Package Registry",            // realm
+    "maven.pkg.github.com",               // host
+    githubOwner,                          // user
+    sys.env.getOrElse("GITHUB_TOKEN", "") // password
+)
+
 scalafmtOnCompile := true
-version           := "0.1.0-SNAPSHOT"
 
 lazy val kyo = (project in file("."))
   .aggregate(`kyo-core`, `kyo-bench`, `kyo-zio`)
