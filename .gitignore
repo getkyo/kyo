@@ -7,3 +7,5 @@ project/project
 target
 *.log
 graal_dumps
+.idea
+metals.sbt
