@@ -149,7 +149,7 @@ object core {
     )(using
         h: DeepHandler[M, E],
         h1: DeepHandler[M1, E1]
-    ): T > (E | E1) => M[M1[T]] > Nothing =
+    ): T > (E | E1) => M[M1[T]] =
       (v: T > (E | E1)) =>
         def deepHandleLoop(v: T > (E | E1)): M[M1[T]] =
           v match {
@@ -174,7 +174,7 @@ object core {
         h: DeepHandler[M, E],
         h1: DeepHandler[M1, E1],
         h2: DeepHandler[M2, E2]
-    ): T > (E | E1 | E2) => M[M1[M2[T]]] > Nothing =
+    ): T > (E | E1 | E2) => M[M1[M2[T]]] =
       (v: T > (E | E1 | E2)) =>
         def deepHandleLoop(v: T > (E | E1 | E2)): M[M1[M2[T]]] =
           v match {
