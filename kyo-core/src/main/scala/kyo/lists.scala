@@ -1,9 +1,5 @@
 package kyo
 
-import java.nio.channels.AsynchronousFileChannel
-import java.nio.file.Paths
-import scala.util._
-
 import core._
 
 object lists {
