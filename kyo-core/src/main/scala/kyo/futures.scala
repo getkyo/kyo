@@ -42,8 +42,6 @@ object futures {
     new DeepHandler[Future, Futures] {
       def pure[T](v: T): Future[T] =
         Future.successful(v)
-      override def handle[T, S](ex: Throwable): T > (S | Futures) =
-        Future.failed(ex) > Futures
       def flatMap[T, U](m: Future[T], f: T => Future[U]): Future[U] =
         m.flatMap(f)
     }

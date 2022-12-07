@@ -9,3 +9,4 @@ target
 graal_dumps
 .idea
 metals.sbt
+jmh-result.json

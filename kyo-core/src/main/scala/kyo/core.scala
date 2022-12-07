@@ -14,10 +14,16 @@ object core {
 
   sealed abstract class Handler[M[_], E <: Effect[M]] {
     def pure[T](v: T): M[T]
-    def handle[T, S](ex: Throwable): T > (S | E) = throw ex
   }
 
   abstract class ShallowHandler[M[_], E <: Effect[M]] extends Handler[M, E] {
+    def handle[T, S](ex: Throwable): T > (S | E) = throw ex
+    private[core] def run[T, U, S](m: M[T], f: T => U > (S | E)): U > (S | E) =
+      try apply(m, f)
+      catch {
+        case NonFatal(ex) =>
+          handle(ex)
+      }
     def apply[T, U, S](m: M[T], f: T => U > (S | E)): U > (S | E)
   }
 
@@ -104,7 +110,7 @@ object core {
               if (kyo.isRoot) {
                 kyo.value.asInstanceOf[M[T] > S2]
               } else {
-                shallowHandleLoop(h(kyo.value, kyo))
+                shallowHandleLoop(h.run(kyo.value, kyo))
               }
             } else {
               new Kyo[M, E, Any, M[T], S2](kyo.value, kyo.effect) {
