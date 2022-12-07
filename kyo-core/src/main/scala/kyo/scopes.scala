@@ -8,8 +8,8 @@ import scala.util.control.NonFatal
 object scopes {
 
   sealed trait Scope[T] {
-    def value(): T
-    def close(): Unit
+    private[scopes] def value(): T
+    private[scopes] def close(): Unit
     def run(): T =
       try value()
       finally close()
