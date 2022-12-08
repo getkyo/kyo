@@ -8,7 +8,13 @@ import java.util.ArrayDeque
 import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext.Implicits.global
 import core._
+import defers._
 import ios._
+import tries._
+
+object test extends App {
+  println((new Bench).deepBindKyo())
+}
 
 @State(Scope.Benchmark)
 @Fork(
@@ -31,7 +37,7 @@ class Bench {
 
   @Benchmark
   def deepBindKyo(): Unit = {
-    import kyo.ios._
+    import kyo.defers._
     import kyo.core._
     import kyo.futures._
     def loop(i: Int): Unit > IOs =
@@ -42,9 +48,9 @@ class Bench {
           loop(i + 1)
       }
     Futures.block(
-        Futures.fork((loop(0) < IOs).run()),
+        Futures.fork(IOs.run(loop(0)) < Tries),
         Duration.Inf
-    )
+    ).get
   }
 
   @Benchmark
@@ -80,26 +86,26 @@ class Bench {
   @Benchmark
   def deepMapBindKyo(): Int = {
     import kyo.core._
-    import kyo.ios._
+    import kyo.defers._
     import kyo.futures._
 
-    def loop(i: Int): Int > IOs =
-      IOs {
+    def loop(i: Int): Int > Defers =
+      Defers {
         if (i > depth) i
         else
-          IOs(i + 11)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(loop)
+          Defers(i + 11)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(loop)
       }
     Futures.block(
-        Futures.fork((loop(0) < IOs).run()),
+        Futures.fork((loop(0) < Defers).run()),
         Duration.Inf
     )
   }
 
-  val a: Int > Nothing => Int > IOs = {
+  val a: Int > Nothing => Int > Defers = {
     import kyo.core._
-    import kyo.ios._
+    import kyo.defers._
     import kyo.arrows._
-    Arrows[Int, Nothing, Int, IOs](
+    Arrows[Int, Nothing, Int, Defers](
         _(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(
             _ - 1
         )
@@ -109,17 +115,17 @@ class Bench {
   @Benchmark
   def deepMapBindKyoArrow(): Int = {
     import kyo.core._
-    import kyo.ios._
+    import kyo.defers._
     import kyo.futures._
 
-    def loop(i: Int): Int > IOs =
-      IOs {
+    def loop(i: Int): Int > Defers =
+      Defers {
         if (i > depth) i
         else
-          IOs(i + 11)(a(_))(loop)
+          Defers(i + 11)(a(_))(loop)
       }
     Futures.block(
-        Futures.fork((loop(0) < IOs).run()),
+        Futures.fork((loop(0) < Defers).run()),
         Duration.Inf
     )
   }

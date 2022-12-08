@@ -9,7 +9,8 @@ scalacOptions ++= Seq(
     "-unchecked",
     "-deprecation",
     "-explain",
-    "-language:implicitConversions"
+    "-language:implicitConversions",
+    "-Vprofile"
 )
 
 // # Set up some configuration for publishing to GitHub

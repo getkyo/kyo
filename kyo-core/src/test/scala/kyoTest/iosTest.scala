@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo.core._
-import kyo.ios._
+import kyo.defers._
 import kyo.options._
 
 import scala.concurrent.duration._
@@ -9,16 +9,16 @@ import scala.concurrent.duration._
 class iosTest extends KyoTest {
 
   "shallow handle" - {
-    "defers execution" in {
+    "ios execution" in {
       var called = false
       val v =
-        IOs {
+        Defers {
           called = true
           1
         }
       assert(!called)
       checkEquals[Int, Nothing](
-          (v < IOs)(_.run()),
+          (v < Defers)(_.run()),
           1
       )
       assert(called)
@@ -27,13 +27,13 @@ class iosTest extends KyoTest {
       var called = false
       val v =
         (Option(1) > Options) { i =>
-          IOs {
+          Defers {
             called = true
             i
           }
         }
       assert(!called)
-      val v2 = (v < IOs)(_.run())
+      val v2 = (v < Defers)(_.run())
       assert(!called)
       checkEquals[Option[Int], Nothing](
           v2 < Options,
@@ -43,19 +43,19 @@ class iosTest extends KyoTest {
     }
     "runFor" - {
       "done" in {
-        checkEquals[Either[IO[Int], Int], Nothing](
-            (IOs(1)(_ + 1) << IOs)(_.runFor(1.minute)),
+        checkEquals[Either[Defer[Int], Int], Nothing](
+            (Defers(1)(_ + 1) << Defers)(_.runFor(1.minute)),
             Right(2)
         )
       }
       "always done" in {
-        val io = IOs {
+        val io = Defers {
           Thread.sleep(100)
           1
         } { i =>
-          IOs(i + 1)
+          Defers(i + 1)
         }
-        (io < IOs).runFor(1.millis) match {
+        (io < Defers).runFor(1.millis) match {
           case Left(rest) =>
             fail(
                 "shallow handle's returned IO should represent only the last step of the computation"
@@ -67,49 +67,49 @@ class iosTest extends KyoTest {
     }
     "stack-safe" in {
       val frames = 100000
-      def loop(i: Int): Int > IOs =
-        IOs {
+      def loop(i: Int): Int > Defers =
+        Defers {
           if (i < frames)
             loop(i + 1)
           else
             i
         }
       checkEquals[Int, Nothing](
-          (loop(0) < IOs).run(),
+          (loop(0) < Defers).run(),
           frames
       )
     }
   }
   "deep handle" - {
-    "defers execution" in {
+    "ios execution" in {
       var called = false
       val v =
-        IOs {
+        Defers {
           called = true
           1
         }
       assert(!called)
       checkEquals[Int, Nothing](
-          (v << IOs)(_.run()),
+          (v << Defers)(_.run()),
           1
       )
       assert(called)
     }
     "runFor" - {
       "done" in {
-        checkEquals[Either[IO[Int], Int], Nothing](
-            (IOs(1)(_ + 1) << IOs)(_.runFor(1.minute)),
+        checkEquals[Either[Defer[Int], Int], Nothing](
+            (Defers(1)(_ + 1) << Defers)(_.runFor(1.minute)),
             Right(2)
         )
       }
       "not done" in {
-        val io = IOs {
+        val io = Defers {
           Thread.sleep(100)
           1
         } { i =>
-          IOs(i + 1)
+          Defers(i + 1)
         }
-        (io << IOs).runFor(1.millis) match {
+        (io << Defers).runFor(1.millis) match {
           case Left(rest) =>
             assert(rest.run() == 2)
           case Right(done) =>
@@ -119,15 +119,15 @@ class iosTest extends KyoTest {
     }
     "stack-safe" in {
       val frames = 100000
-      def loop(i: Int): Int > IOs =
-        IOs {
+      def loop(i: Int): Int > Defers =
+        Defers {
           if (i < frames)
             loop(i + 1)
           else
             i
         }
       checkEquals[Int, Nothing](
-          (loop(0) << IOs).run(),
+          (loop(0) << Defers).run(),
           frames
       )
     }
