@@ -37,7 +37,7 @@ object scopes {
           def value() = v
           def close() = {}
         }
-      override def handle[T, S](ex: Throwable): T > (S | Scopes) =
+      override def handle[T](ex: Throwable): T > Scopes =
         new Scope[T] {
           def value() = throw ex
           def close() = {}

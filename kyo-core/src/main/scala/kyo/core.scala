@@ -17,13 +17,7 @@ object core {
   }
 
   abstract class ShallowHandler[M[_], E <: Effect[M]] extends Handler[M, E] {
-    def handle[T, S](ex: Throwable): T > (S | E) = throw ex
-    private[core] def run[T, U, S](m: M[T], f: T => U > (S | E)): U > (S | E) =
-      try apply(m, f)
-      catch {
-        case ex if (NonFatal(ex)) =>
-          handle(ex)
-      }
+    def handle[T](ex: Throwable): T > E = throw ex
     def apply[T, U, S](m: M[T], f: T => U > (S | E)): U > (S | E)
   }
 

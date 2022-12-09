@@ -22,7 +22,7 @@ object futures {
       given blockingHandler: ShallowHandler[Future, Futures] =
         new ShallowHandler[Future, Futures] {
           def pure[T](v: T) = Future.successful(v)
-          override def handle[T, S](ex: Throwable): T > (S | Futures) =
+          override def handle[T](ex: Throwable): T > Futures =
             Future.failed(ex) > Futures
           def apply[T, U, S](m: Future[T], f: T => U > (S | Futures)) =
             f(blocker(m))
