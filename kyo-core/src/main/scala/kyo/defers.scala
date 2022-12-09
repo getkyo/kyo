@@ -16,7 +16,7 @@ object defers {
   opaque type Defer[T] = T | Thunk[T]
 
   object Defer {
-    /*inline*/ def apply[T](/*inline*/ v: => T): Defer[T] =
+    inline def apply[T](inline v: => T): Defer[T] =
       new Thunk[T] {
         def run(): Defer[T] = v
       }
@@ -24,7 +24,7 @@ object defers {
 
   extension [T](t: Defer[T]) {
 
-    /*inline*/ def run(): T =
+    inline def run(): T =
       @tailrec def deferRunLoop(t: Defer[T]): T =
         t match {
           case t: Thunk[T] @unchecked =>
@@ -34,7 +34,7 @@ object defers {
         }
       deferRunLoop(t)
 
-    /*inline*/ def runFor(duration: Duration): Either[Defer[T], T] =
+    inline def runFor(duration: Duration): Either[Defer[T], T] =
       val end = System.currentTimeMillis() + duration.toMillis
       @tailrec def deferRunForLoop(t: Defer[T]): Either[Defer[T], T] =
         t match {
@@ -51,8 +51,8 @@ object defers {
   }
 
   final class Defers private[defers] () extends Effect[Defer] {
-    /*inline*/ def apply[T, S](
-        /*inline*/ f: => T > (S | Defers)
+    inline def apply[T, S](
+        inline f: => T > (S | Defers)
     ): T > (S | Defers) =
       new Kyo[Defer, Defers, Unit, T, (S | Defers)]((), Defers) {
         def apply(v: Unit) = f
@@ -60,7 +60,7 @@ object defers {
   }
   val Defers: Defers = new Defers
 
-  /*inline*/ given ShallowHandler[Defer, Defers] =
+  inline given ShallowHandler[Defer, Defers] =
     new ShallowHandler[Defer, Defers] {
       def pure[T](v: T) =
         v
@@ -81,7 +81,7 @@ object defers {
         }
     }
 
-  /*inline*/ given DeepHandler[Defer, Defers] =
+  inline given DeepHandler[Defer, Defers] =
     new DeepHandler[Defer, Defers] {
       def pure[T](v: T) = v
       def flatMap[T, U](m: Defer[T], f: T => Defer[U]): Defer[U] =

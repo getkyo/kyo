@@ -7,7 +7,14 @@ import core._
 
 object tries {
 
-  final class Tries private[tries] extends Effect[Try]
+  final class Tries private[tries] extends Effect[Try] {
+    inline def apply[T, S](inline v: => T > S): T > (S | Tries) =
+      try v
+      catch {
+        case ex: Throwable if(NonFatal(ex)) =>
+          Failure(ex) > Tries
+      }
+  }
   val Tries = new Tries
 
   inline given ShallowHandler[Try, Tries] =

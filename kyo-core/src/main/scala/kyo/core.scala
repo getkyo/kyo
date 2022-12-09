@@ -44,7 +44,7 @@ object core {
 
   extension [M[_], T, S](v: M[T] > S) {
     @targetName("suspend")
-    /*inline*/ def >[E <: Effect[M]](e: E): T > (S | E) =
+    inline def >[E <: Effect[M]](e: E): T > (S | E) =
       def suspendLoop(v: M[T] > S): T > (S | E) =
         v match
           case kyo: Kyo[M, E, Any, M[T], S] @unchecked =>
@@ -67,7 +67,7 @@ object core {
 
   extension [M[_], T, S](v: M[T > S]) {
     @targetName("nestedEffect")
-    /*inline*/ def >>[E <: Effect[M]](e: E): T > (S | E) =
+    inline def >>[E <: Effect[M]](e: E): T > (S | E) =
       new Kyo[M, E, T > S, T, S | E](v, e) {
         def apply(v: T > S): T > (S | E) = v
       }
@@ -75,12 +75,12 @@ object core {
 
   extension [T, S](v: T > S) {
 
-    /*inline*/ def map[U, S2](/*inline*/ f: T => U): U > (S | S2) = apply(f)
+    inline def map[U, S2](inline f: T => U): U > (S | S2) = apply(f)
 
-    /*inline*/ def flatMap[U, S2](/*inline*/ f: T => (U > S2)): U > (S | S2) = apply(f)
+    inline def flatMap[U, S2](inline f: T => (U > S2)): U > (S | S2) = apply(f)
 
     @targetName("transform")
-    /*inline*/ def apply[U, S2](/*inline*/ f: T => (U > S2)): U > (S | S2) =
+    inline def apply[U, S2](inline f: T => (U > S2)): U > (S | S2) =
       def transformLoop(v: T > S): U > (S | S2) =
         type M[_]
         type E <: Effect[M]
@@ -96,7 +96,7 @@ object core {
       transformLoop(v)
 
     @targetName("shallowHandle")
-    /*inline*/ def <[M[_], E <: Effect[M], S2 <: S](
+    inline def <[M[_], E <: Effect[M], S2 <: S](
         e: E
     )(using ev: S => (S2 | E))(using
         h: ShallowHandler[M, E]
@@ -144,14 +144,14 @@ object core {
       shallowHandleLoop(v.asInstanceOf[T > (S2 | E)])
 
     @targetName("deepHandle")
-    /*inline*/ def <<[U](
+    inline def <<[U](
         f: T > S => U
     ): U = f(v)
   }
 
   extension [M[_], E <: Effect[M]](e: E) {
 
-    /*inline*/ def apply[T]()(using
+    inline def apply[T]()(using
         h: DeepHandler[M, E]
     ): T > E => M[T] > Nothing =
       (v: T > E) =>
@@ -164,7 +164,7 @@ object core {
           }
         deepHandleLoop(v)
 
-    /*inline*/ def apply[M1[_], E1 <: Effect[M1], T](
+    inline def apply[M1[_], E1 <: Effect[M1], T](
         tup1: (E1, [U] => M1[M[U]] => M[M1[U]])
     )(using
         h: DeepHandler[M, E],
@@ -183,7 +183,7 @@ object core {
           }
         deepHandleLoop(v)
 
-    /*inline*/ def apply[M1[_], E1 <: Effect[M1], M2[_], E2 <: Effect[M2], T](
+    inline def apply[M1[_], E1 <: Effect[M1], M2[_], E2 <: Effect[M2], T](
         tup1: (E1, [U] => M1[M[U]] => M[M1[U]]),
         tup2: (
             E2,
@@ -215,7 +215,7 @@ object core {
         deepHandleLoop(v)
   }
 
-  /*inline*/ given effectToHandle[M[_], E <: Effect[M], T](using
+  inline given effectToHandle[M[_], E <: Effect[M], T](using
       DeepHandler[M, E]
   ): Conversion[E, T > E => M[T] > Nothing] = _()
 
@@ -225,14 +225,14 @@ object core {
     _identity.asInstanceOf[T => T]
 
   private val identityConversion = new Conversion[Any, Any] {
-    /*inline*/ def apply(v: Any) = v
+    inline def apply(v: Any) = v
   }
 
   private[kyo] given fromKyo[T, S]: Conversion[Kyo[_, _, _, T, S], T > S] =
     identityConversion.asInstanceOf[Conversion[Kyo[_, _, _, T, S], T > S]]
 
-  /*inline*/ given toPure[T]: Conversion[T > Nothing, T] =
+  inline given toPure[T]: Conversion[T > Nothing, T] =
     identityConversion.asInstanceOf[Conversion[T > Nothing, T]]
-  /*inline*/ given fromPure[T]: Conversion[T, T > Nothing] =
+  inline given fromPure[T]: Conversion[T, T > Nothing] =
     identityConversion.asInstanceOf[Conversion[T > Nothing, T]]
 }
