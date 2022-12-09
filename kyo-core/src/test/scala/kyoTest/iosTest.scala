@@ -18,9 +18,9 @@ class iosTest extends KyoTest {
         1
       }
     assert(!called)
-    checkEquals[Try[Int], Nothing](
-        IOs.run(v) < Tries,
-        Try(1)
+    checkEquals[Int, Nothing](
+        IOs.run(v),
+        1
     )
     assert(called)
   }
@@ -36,9 +36,9 @@ class iosTest extends KyoTest {
     assert(!called)
     val v2 = IOs.run(v)
     assert(!called)
-    checkEquals[Try[Option[Int]], Nothing](
-        v2 < Options < Tries,
-        Try(Option(1))
+    checkEquals[Option[Int], Nothing](
+        v2 < Options,
+        Option(1)
     )
     assert(called)
   }
@@ -46,27 +46,27 @@ class iosTest extends KyoTest {
     val ex = new Exception
     def fail: Int = throw ex
     checkEquals[Try[Int], Nothing](
-        IOs.run(IOs(fail)) < Tries,
+        IOs.tryRun(IOs(fail)) < Tries,
         Try(throw ex)
     )
     checkEquals[Try[Int], Nothing](
-        IOs.run(IOs(fail)(_ + 1)) < Tries,
+        IOs.tryRun(IOs(fail)(_ + 1)) < Tries,
         Try(throw ex)
     )
     checkEquals[Try[Int], Nothing](
-        IOs.run(IOs(1)(_ => fail)) < Tries,
+        IOs.tryRun(IOs(1)(_ => fail)) < Tries,
         Try(throw ex)
     )
     checkEquals[Try[Int], Nothing](
-        IOs.run(IOs(IOs(1))(_ => fail)) < Tries,
+        IOs.tryRun(IOs(IOs(1))(_ => fail)) < Tries,
         Try(throw ex)
     )
     checkEquals[Try[Int], Nothing](
-        IOs.run(IOs(IOs(1)(_ => fail))) < Tries,
+        IOs.tryRun(IOs(IOs(1)(_ => fail))) < Tries,
         Try(throw ex)
     )
     checkEquals[Try[Int], Nothing](
-        IOs.run(IOs(1)(_ => IOs(fail))) < Tries,
+        IOs.tryRun(IOs(1)(_ => IOs(fail))) < Tries,
         Try(throw ex)
     )
   }

@@ -14,7 +14,10 @@ object ios {
   object IOs {
     inline def apply[T, S](inline v: => T > (S | IOs)): T > (S | IOs) =
       Defers(Tries(v))
-    inline def run[T, S](v: T > (S | IOs)): T > (S | Tries) =
+    inline def tryRun[T, S](v: T > (S | IOs)): T > (S | Tries) =
       Tries((v < Defers)(_.run()))
+    inline def run[T, S](v: T > (S | IOs)): T > S =
+      val a: T > (Tries | S) = Tries((v < Defers)(_.run()))
+      (a < Tries)(_.get)
   }
 }

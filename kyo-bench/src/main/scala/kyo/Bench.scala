@@ -44,9 +44,9 @@ class Bench {
           loop(i + 1)
       }
     Futures.block(
-        Futures.fork(IOs.run(loop(0)) < Tries),
+        Futures.fork(IOs.run(loop(0))),
         Duration.Inf
-    ).get
+    )
   }
 
   @Benchmark
@@ -91,9 +91,9 @@ class Bench {
           IOs(i + 11)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(loop)
       }
     Futures.block(
-        Futures.fork(IOs.run(loop(0)) < Tries),
+        Futures.fork(IOs.run(loop(0))),
         Duration.Inf
-    ).get
+    )
   }
 
   val a: Int > Nothing => Int > IOs = {
@@ -119,9 +119,9 @@ class Bench {
           IOs(i + 11)(a(_))(loop)
       }
     Futures.block(
-        Futures.fork(IOs.run(loop(0)) < Tries),
+        Futures.fork(IOs.run(loop(0))),
         Duration.Inf
-    ).get
+    )
   }
 
   @Benchmark

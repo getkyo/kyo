@@ -1,7 +1,7 @@
 package kyo
 
 import core._
-import defers._
+import ios._
 import java.io.Closeable
 import scala.util.control.NonFatal
 
@@ -10,8 +10,8 @@ object scopes {
   sealed trait Scope[T] {
     private[scopes] def value(): T
     private[scopes] def close(): Unit
-    def run(): T > Defers =
-      Defers {
+    def run(): T > IOs =
+      IOs {
         try value()
         finally close()
       }
@@ -25,7 +25,7 @@ object scopes {
         def close() = r.close()
       } > Scopes
 
-    inline def close[T, S](v: T > (S | Scopes)): T > (S | Defers) =
+    inline def close[T, S](v: T > (S | Scopes)): T > (S | IOs) =
       (v < Scopes)(_.run())
   }
   val Scopes = new Scopes
@@ -46,7 +46,7 @@ object scopes {
         val v =
           try f(m.value())
           catch {
-            case NonFatal(ex) =>
+            case ex if(NonFatal(ex)) =>
               m.close()
               throw ex
           }

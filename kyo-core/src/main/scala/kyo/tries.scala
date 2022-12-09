@@ -11,7 +11,7 @@ object tries {
     inline def apply[T, S](inline v: => T > S): T > (S | Tries) =
       try v
       catch {
-        case ex: Throwable if(NonFatal(ex)) =>
+        case ex if(NonFatal(ex)) =>
           Failure(ex) > Tries
       }
   }

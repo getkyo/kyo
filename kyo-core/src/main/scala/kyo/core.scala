@@ -21,7 +21,7 @@ object core {
     private[core] def run[T, U, S](m: M[T], f: T => U > (S | E)): U > (S | E) =
       try apply(m, f)
       catch {
-        case NonFatal(ex) =>
+        case ex if (NonFatal(ex)) =>
           handle(ex)
       }
     def apply[T, U, S](m: M[T], f: T => U > (S | E)): U > (S | E)
@@ -115,11 +115,8 @@ object core {
                     v =>
                       try kyo(v)
                       catch {
-                        case ex: Throwable =>
-                          if (NonFatal(ex))
-                            h.handle(ex)
-                          else
-                            throw ex
+                        case ex if (NonFatal(ex)) =>
+                          h.handle(ex)
                       }
                 ))
               }
@@ -129,11 +126,8 @@ object core {
                   shallowHandleLoop {
                     try kyo(v)
                     catch {
-                      case ex: Throwable =>
-                        if (NonFatal(ex))
-                          h.handle(ex)
-                        else
-                          throw ex
+                      case ex if (NonFatal(ex)) =>
+                        h.handle(ex)
                     }
                   }
               }

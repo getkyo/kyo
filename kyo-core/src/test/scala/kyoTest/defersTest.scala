@@ -41,6 +41,34 @@ class defersTest extends KyoTest {
       )
       assert(called)
     }
+    // "failure" in {
+    //   val ex        = new Exception
+    //   def fail: Int = throw ex
+    //   checkEquals[Try[Int], Nothing](
+    //       IOs.tryRun(IOs(fail)) < Tries,
+    //       Try(throw ex)
+    //   )
+    //   checkEquals[Try[Int], Nothing](
+    //       IOs.tryRun(IOs(fail)(_ + 1)) < Tries,
+    //       Try(throw ex)
+    //   )
+    //   checkEquals[Try[Int], Nothing](
+    //       IOs.tryRun(IOs(1)(_ => fail)) < Tries,
+    //       Try(throw ex)
+    //   )
+    //   checkEquals[Try[Int], Nothing](
+    //       IOs.tryRun(IOs(IOs(1))(_ => fail)) < Tries,
+    //       Try(throw ex)
+    //   )
+    //   checkEquals[Try[Int], Nothing](
+    //       IOs.tryRun(IOs(IOs(1)(_ => fail))) < Tries,
+    //       Try(throw ex)
+    //   )
+    //   checkEquals[Try[Int], Nothing](
+    //       IOs.tryRun(IOs(1)(_ => IOs(fail))) < Tries,
+    //       Try(throw ex)
+    //   )
+    // }
     "runFor" - {
       "done" in {
         checkEquals[Either[Defer[Int], Int], Nothing](

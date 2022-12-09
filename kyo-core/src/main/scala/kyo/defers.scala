@@ -64,6 +64,11 @@ object defers {
     new ShallowHandler[Defer, Defers] {
       def pure[T](v: T) =
         v
+      override def handle[T, S](ex: Throwable): T > (S | Defers) =
+        new Thunk[T] {
+          def run() =
+            throw ex
+        } > Defers
       def apply[T, U, S](
           m: Defer[T],
           f: T => U > (S | Defers)
