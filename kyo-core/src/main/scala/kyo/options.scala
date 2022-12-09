@@ -4,7 +4,13 @@ import core._
 
 object options {
 
-  final class Options private[options] () extends Effect[Option]
+  final class Options private[options] () extends Effect[Option] {
+    inline def apply[T](v: T): T > Options =
+      if (v == null)
+        Option.empty[T] > Options
+      else
+        v
+  }
   val Options = new Options
 
   inline given ShallowHandler[Option, Options] =
@@ -21,4 +27,3 @@ object options {
         }
     }
 }
-

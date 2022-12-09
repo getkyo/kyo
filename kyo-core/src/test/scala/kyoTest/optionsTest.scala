@@ -10,6 +10,21 @@ import scala.util.Success
 
 class optionsTest extends KyoTest {
 
+  "apply" - {
+    "null" in {
+      checkEquals[Option[String], Nothing](
+          Options(null: String) < Options,
+          None
+      )
+    }
+    "value" in {
+      checkEquals[Option[String], Nothing](
+          Options("hi") < Options,
+          Option("hi")
+      )
+    }
+  }
+
   "pure" - {
     "handle" in {
       checkEquals[Option[Int], Nothing](

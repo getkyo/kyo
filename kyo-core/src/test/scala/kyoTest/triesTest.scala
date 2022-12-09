@@ -14,6 +14,21 @@ class triesTest extends KyoTest {
 
   val e = new Exception
 
+  "apply" - {
+    "failure" in {
+      checkEquals[Try[Int], Nothing](
+          Tries((throw e): Int) < Tries,
+          Failure(e)
+      )
+    }
+    "success" in {
+      checkEquals[Try[Int], Nothing](
+          Tries(1) < Tries,
+          Success(1)
+      )
+    }
+  }
+
   "pure" - {
     "handle" in {
       checkEquals[Try[Int], Nothing](

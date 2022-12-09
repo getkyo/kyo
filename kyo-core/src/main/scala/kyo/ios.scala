@@ -17,7 +17,6 @@ object ios {
     inline def tryRun[T, S](v: T > (S | IOs)): T > (S | Tries) =
       Tries((v < Defers)(_.run()))
     inline def run[T, S](v: T > (S | IOs)): T > S =
-      val a: T > (Tries | S) = Tries((v < Defers)(_.run()))
-      (a < Tries)(_.get)
+      (tryRun(v) < Tries)(_.get)
   }
 }
