@@ -18,12 +18,8 @@ object tries {
         m match {
           case m: Failure[T] =>
             m.asInstanceOf[Failure[U]] > Tries
-          case m: Success[T] =>
-            try f(m.value)
-            catch {
-              case NonFatal(ex) =>
-                Failure(ex) > Tries
-            }
+          case _ =>
+            f(m.asInstanceOf[Success[T]].value)
         }
     }
 }

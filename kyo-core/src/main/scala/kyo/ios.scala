@@ -12,18 +12,13 @@ object ios {
   opaque type IOs <: Effect[IO] = Defers | Tries
 
   object IOs {
-    inline def apply[T, S](inline v: => T > (S | IOs)): T > (S | IOs) =
+    inline def apply[T, S <: Effect[_]](inline v: => T > (S | IOs)): T > (S | IOs) =
       Defers(Try(v) >> Tries)
-    def run[T, S](v: T > (S | IOs)): T > (S | Tries) =
-      val v1: T > (S | Tries | Defers) = v
-      val v2 = v1 < Tries
-      val v3 = v2 < Defers
-      // (v < Tries < Defers)(_.run()) > Tries
-      ???
-      // val a: Try[T] > (S | Defers) = v < Tries
-      // val b: Defer[Try[T]] > S     = a < Defers
-      // val c: Try[T] > S            = b(_.run())
-      // val d: T > (S | Tries)       = c > Tries
-      // d
+    inline def run[T, S <: Effect[_]](v: T > (S | IOs)): T > (S | Tries) =
+      val a: Try[T] > (S | Defers) = v < Tries
+      val b: Defer[Try[T]] > S     = a < Defers
+      val c: Try[T] > S            = b(_.run())
+      val d: T > (S | Tries)       = c > Tries
+      d
   }
 }

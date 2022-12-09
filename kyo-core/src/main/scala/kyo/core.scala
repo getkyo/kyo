@@ -110,18 +110,32 @@ object core {
               if (kyo.isRoot) {
                 kyo.value.asInstanceOf[M[T] > S2]
               } else {
-                shallowHandleLoop(h.run(kyo.value, kyo))
+                shallowHandleLoop(h(
+                    kyo.value,
+                    v =>
+                      try kyo(v)
+                      catch {
+                        case ex: Throwable =>
+                          if (NonFatal(ex))
+                            h.handle(ex)
+                          else
+                            throw ex
+                      }
+                ))
               }
             } else {
               new Kyo[M, E, Any, M[T], S2](kyo.value, kyo.effect) {
                 def apply(v: Any): M[T] > S2 =
-                  val r =
+                  shallowHandleLoop {
                     try kyo(v)
                     catch {
-                      case NonFatal(ex) =>
-                        h.handle(ex)
+                      case ex: Throwable =>
+                        if (NonFatal(ex))
+                          h.handle(ex)
+                        else
+                          throw ex
                     }
-                  shallowHandleLoop(r)
+                  }
               }
             }
           case _ =>
