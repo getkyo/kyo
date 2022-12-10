@@ -27,12 +27,26 @@ object core {
     def flatMap[T, U](m: M[T], f: T => M[U]): M[U]
   }
 
+  abstract class Safepoint[E <: Effect[_]] {
+    def apply(): Boolean
+    def apply[T, S](v: => T > (S | E)): T > (S | E)
+  }
+  object Safepoint {
+    given noop[E <: Effect[_]]: Safepoint[E] =
+      new Safepoint[E] {
+        def apply()                        = false
+        def apply[T, S](v: => T > (S | E)) = v
+      }
+  }
+
   private[kyo] sealed trait AKyo[+T, +S]
   private[kyo] abstract class Kyo[M[_], E <: Effect[M], T, U, S](
       val value: M[T],
       val effect: E
   ) extends AbstractFunction1[T, U > S]
       with AKyo[U, S] {
+    def apply(v: T): U > S = apply(v, Safepoint.noop[E])
+    def apply(v: T, s: Safepoint[E]): U > S
     def isRoot = false
   }
 
@@ -43,12 +57,12 @@ object core {
         v match
           case kyo: Kyo[M, E, Any, M[T], S] @unchecked =>
             new Kyo[M, E, Any, T, S | E](kyo.value, kyo.effect) {
-              def apply(v: Any) = suspendLoop(kyo(v))
+              def apply(v: Any, s: Safepoint[E]) = suspendLoop(kyo(v, s))
             }
           case _ =>
             new Kyo[M, E, T, T, S | E](v.asInstanceOf[M[T]], e) {
-              override def isRoot          = true
-              def apply(v: T): T > (S | E) = v
+              override def isRoot                           = true
+              def apply(v: T, s: Safepoint[E]): T > (S | E) = v
             }
       suspendLoop(v)
   }
@@ -63,7 +77,7 @@ object core {
     @targetName("nestedEffect")
     inline def >>[E <: Effect[M]](e: E): T > (S | E) =
       new Kyo[M, E, T > S, T, S | E](v, e) {
-        def apply(v: T > S): T > (S | E) = v
+        def apply(v: T > S, s: Safepoint[E]): T > (S | E) = v
       }
   }
 
@@ -81,8 +95,12 @@ object core {
         v match {
           case kyo: Kyo[M, E, Any, T, S] @unchecked =>
             new Kyo[M, E, Any, U, S | S2](kyo.value, kyo.effect) {
-              def apply(v: Any) =
-                transformLoop(kyo(v))
+              def apply(v: Any, s: Safepoint[E]) =
+                if (s()) {
+                  s(transformLoop(kyo(v, s))).asInstanceOf[U > (S | S2)]
+                } else {
+                  transformLoop(kyo(v, s))
+                }
             }
           case _ =>
             f(v.asInstanceOf[T])
@@ -93,7 +111,8 @@ object core {
     inline def <[M[_], E <: Effect[M], S2 <: S](
         e: E
     )(using ev: S => (S2 | E))(using
-        h: ShallowHandler[M, E]
+        h: ShallowHandler[M, E],
+        s: Safepoint[E]
     ): M[T] > S2 =
       def shallowHandleLoop(
           v: T > (S2 | E)
@@ -107,7 +126,7 @@ object core {
                 shallowHandleLoop(h(
                     kyo.value,
                     v =>
-                      try kyo(v)
+                      try kyo(v, s)
                       catch {
                         case ex if (NonFatal(ex)) =>
                           h.handle(ex)
@@ -116,9 +135,9 @@ object core {
               }
             } else {
               new Kyo[M, E, Any, M[T], S2](kyo.value, kyo.effect) {
-                def apply(v: Any): M[T] > S2 =
+                def apply(v: Any, s2: Safepoint[E]): M[T] > S2 =
                   shallowHandleLoop {
-                    try kyo(v)
+                    try kyo(v, s)
                     catch {
                       case ex if (NonFatal(ex)) =>
                         h.handle(ex)
@@ -140,13 +159,14 @@ object core {
   extension [M[_], E <: Effect[M]](e: E) {
 
     inline def apply[T]()(using
-        h: DeepHandler[M, E]
+        h: DeepHandler[M, E],
+        s: Safepoint[E]
     ): T > E => M[T] > Nothing =
       (v: T > E) =>
         def deepHandleLoop(v: T > E): M[T] =
           v match {
             case kyo: Kyo[M, E, Any, T, E] @unchecked =>
-              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v)))
+              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v, s)))
             case _ =>
               h.pure(v.asInstanceOf[T])
           }
@@ -156,15 +176,17 @@ object core {
         tup1: (E1, [U] => M1[M[U]] => M[M1[U]])
     )(using
         h: DeepHandler[M, E],
-        h1: DeepHandler[M1, E1]
+        h1: DeepHandler[M1, E1],
+        s: Safepoint[E],
+        s1: Safepoint[E1]
     ): T > (E | E1) => M[M1[T]] =
       (v: T > (E | E1)) =>
         def deepHandleLoop(v: T > (E | E1)): M[M1[T]] =
           v match {
             case kyo: Kyo[M, E, Any, T, E | E1] @unchecked if (kyo.effect eq e) =>
-              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v)))
+              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v, s)))
             case kyo: Kyo[M1, E1, Any, T, E | E1] @unchecked if (kyo.effect eq tup1._1) =>
-              val m1 = h1.map(kyo.value, v => deepHandleLoop(kyo(v)))
+              val m1 = h1.map(kyo.value, v => deepHandleLoop(kyo(v, s1)))
               h.map(tup1._2(m1), h1.flatten)
             case _ =>
               h.pure(h1.pure(v.asInstanceOf[T]))
@@ -181,19 +203,22 @@ object core {
     )(using
         h: DeepHandler[M, E],
         h1: DeepHandler[M1, E1],
-        h2: DeepHandler[M2, E2]
+        h2: DeepHandler[M2, E2],
+        s: Safepoint[E],
+        s1: Safepoint[E1],
+        s2: Safepoint[E2]
     ): T > (E | E1 | E2) => M[M1[M2[T]]] =
       (v: T > (E | E1 | E2)) =>
         def deepHandleLoop(v: T > (E | E1 | E2)): M[M1[M2[T]]] =
           v match {
             case kyo: Kyo[M, E, Any, T, E | E1 | E2] @unchecked if (kyo.effect eq e) =>
-              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v)))
+              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v, s)))
             case kyo: Kyo[M1, E1, Any, T, E | E1 | E2] @unchecked if (kyo.effect eq tup1._1) =>
-              val m1 = h1.map(kyo.value, v => deepHandleLoop(kyo(v)))
+              val m1 = h1.map(kyo.value, v => deepHandleLoop(kyo(v, s1)))
               h.map(tup1._2(m1), h1.flatten)
             case kyo: Kyo[M2, E2, Any, T, E | E1 | E2] @unchecked if (kyo.effect eq tup2._1) =>
               val m2: M2[M[M1[M2[T]]]] =
-                h2.map(kyo.value, v => deepHandleLoop(kyo(v)))
+                h2.map(kyo.value, v => deepHandleLoop(kyo(v, s2)))
               val b: M[M2[M1[M2[T]]]] = tup2._2(m2)
               val c: M[M1[M2[T]]]     = h.map(b, v => h1.map(tup2._3(v), h2.flatten))
               c

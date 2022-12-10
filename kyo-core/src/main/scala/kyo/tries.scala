@@ -11,7 +11,7 @@ object tries {
     inline def apply[T, S](inline v: => T > S): T > (S | Tries) =
       try v
       catch {
-        case ex if(NonFatal(ex)) =>
+        case ex if (NonFatal(ex)) =>
           Failure(ex) > Tries
       }
   }
@@ -19,7 +19,7 @@ object tries {
 
   inline given ShallowHandler[Try, Tries] =
     new ShallowHandler[Try, Tries] {
-      def pure[T](v: T) = Success(v)
+      def pure[T](v: T)                     = Success(v)
       override def handle[T](ex: Throwable) = Failure(ex) > Tries
       def apply[T, U, S](m: Try[T], f: T => U > (S | Tries)): U > (S | Tries) =
         m match {

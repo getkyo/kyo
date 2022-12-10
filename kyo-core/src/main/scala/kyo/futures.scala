@@ -32,8 +32,9 @@ object futures {
         r
       }
 
-    inline def sequence(using ExecutionContext) = [T] => (l: List[Future[T]]) => 
-      Future.sequence(l)
+    inline def sequence(using ExecutionContext) = [T] =>
+      (l: List[Future[T]]) =>
+        Future.sequence(l)
   }
 
   val Futures: Futures = new Futures

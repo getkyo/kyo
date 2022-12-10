@@ -104,6 +104,17 @@ class defersTest extends KyoTest {
           frames
       )
     }
+    "stack-safe pure transforms" in {
+      val frames = 10
+      var i      = Defers(0)
+      for (_ <- 0 until frames) {
+        i = i(_ + 1)
+      }
+      checkEquals[Int, Nothing](
+          (i < Defers).run(),
+          frames
+      )
+    }
   }
   "deep handle" - {
     "execution" in {
@@ -128,15 +139,20 @@ class defersTest extends KyoTest {
         )
       }
       "not done" in {
-        val io = Defers {
-          Thread.sleep(100)
-          1
-        } { i =>
-          Defers(i + 1)
-        }
-        (io << Defers).runFor(1.millis) match {
+        def loop(i: Int): Int > Defers =
+          if (i < 100)
+            Defers {
+              Thread.sleep(1)
+              loop(i + 1)
+            }
+          else
+            i
+        val start = System.currentTimeMillis()
+        (loop(0) << Defers).runFor(1.millis) match {
           case Left(rest) =>
-            assert(rest.run() == 2)
+            val delay = System.currentTimeMillis() - start
+            assert(delay < 20)
+            assert(rest.run() == 100)
           case Right(done) =>
             fail("should not be done")
         }

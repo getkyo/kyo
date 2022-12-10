@@ -125,7 +125,7 @@ class batchesTest extends KyoTest {
       }
       val v1: Int > Batches = Batches.foreach(List(1, 2, 3, 4))
       val v2: Int > Batches = v1 { i =>
-        if(i < 3) f1(i)
+        if (i < 3) f1(i)
         else f2(i)
       }
       assert((v2 << Batches).run == List(10, 20, 300, 400))

@@ -14,7 +14,7 @@ import scala.util.Try
 class abortsTest extends KyoTest {
 
   class Ex1 extends Exception
-  class Ex2 
+  class Ex2
 
   val ex1 = new Ex1
   val ex2 = new Ex2

@@ -13,7 +13,7 @@ class coreTest extends KyoTest {
 
   given ShallowHandler[Id, Ids] =
     new ShallowHandler[Id, Ids] {
-      def pure[T](v: T)                                                = v
+      def pure[T](v: T)                                   = v
       def apply[T, U, S](m: Id[T], f: T => U > (S | Ids)) = f(m)
     }
 

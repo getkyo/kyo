@@ -43,7 +43,7 @@ class iosTest extends KyoTest {
     assert(called)
   }
   "failure" in {
-    val ex = new Exception
+    val ex        = new Exception
     def fail: Int = throw ex
     checkEquals[Try[Int], Nothing](
         IOs.tryRun(IOs(fail)) < Tries,

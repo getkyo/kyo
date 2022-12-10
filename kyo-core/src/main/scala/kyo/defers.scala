@@ -55,10 +55,22 @@ object defers {
         inline f: => T > (S | Defers)
     ): T > (S | Defers) =
       new Kyo[Defer, Defers, Unit, T, (S | Defers)]((), Defers) {
-        def apply(v: Unit) = f
+        def apply(v: Unit, s: Safepoint[Defers]) =
+          if (s()) s(f)
+          else f
       }
   }
   val Defers: Defers = new Defers
+
+  inline given Safepoint[Defers] =
+    new Safepoint[Defers] {
+      private var step = 0
+      def apply() =
+        step += 1
+        (step & 63) == 0
+      def apply[T, S](v: => T > (S | Defers)): T > (S | Defers) =
+        Defers(v)
+    }
 
   inline given ShallowHandler[Defer, Defers] =
     new ShallowHandler[Defer, Defers] {

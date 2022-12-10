@@ -46,7 +46,7 @@ object scopes {
         val v =
           try f(m.value())
           catch {
-            case ex if(NonFatal(ex)) =>
+            case ex if (NonFatal(ex)) =>
               m.close()
               throw ex
           }
