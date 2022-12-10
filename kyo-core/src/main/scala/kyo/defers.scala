@@ -55,9 +55,7 @@ object defers {
         inline f: => T > (S | Defers)
     ): T > (S | Defers) =
       new Kyo[Defer, Defers, Unit, T, (S | Defers)]((), Defers) {
-        def apply(v: Unit, s: Safepoint[Defers]) =
-          if (s()) s(f)
-          else f
+        def apply(v: Unit, s: Safepoint[Defers]) = f
       }
   }
   val Defers: Defers = new Defers
