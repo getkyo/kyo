@@ -1,4 +1,4 @@
-![kyo](https://raw.githubusercontent.com/fwbrasil/kyo/master/quill.png)
+![kyo](https://raw.githubusercontent.com/fwbrasil/kyo/master/kyo.png)
 -------------------
 High-performance composable effects for Scala 3
 
