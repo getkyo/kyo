@@ -1,4 +1,5 @@
-# Kyō 
+![kyo](https://raw.githubusercontent.com/fwbrasil/kyo/master/quill.png)
+-------------------
 High-performance composable effects for Scala 3
 
 ![Build Status](https://github.com/fwbrasil/kyo/workflows/CI/badge.svg)
