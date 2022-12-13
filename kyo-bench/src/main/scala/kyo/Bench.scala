@@ -7,6 +7,22 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.ArrayDeque
 import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext.Implicits.global
+import java.util.concurrent.Executors
+import kyo.scheduler.Scheduler
+import org.openjdk.jmh.infra.Blackhole
+
+object aaa extends App {
+
+  Executors.newSingleThreadExecutor().execute { () =>
+    while (true) {
+      Thread.sleep(1000)
+      println(Scheduler)
+    }
+  }
+
+  while (true)
+    println((new Bench()).mix())
+}
 
 @State(Scope.Benchmark)
 @Fork(
@@ -22,7 +38,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 )
 class Bench {
 
-  var depth = 10000
+  var depth = 1
 
   val catsEffectRuntime = cats.effect.unsafe.implicits.global
   val zioRuntime        = zio.Runtime.default
@@ -43,6 +59,40 @@ class Bench {
         Futures.fork(IOs.run(loop(0))),
         Duration.Inf
     )
+  }
+
+  @Benchmark
+  def deepBindKyoFiber(): Unit = {
+    import kyo.ios._
+    import kyo.core._
+    import kyo.fibers._
+    def loop(i: Int): Unit > IOs =
+      IOs {
+        if (i > depth)
+          ()
+        else
+          loop(i + 1)
+      }
+    IOs.run(Fibers.forkAndBlock(loop(0)))
+  }
+
+  @Benchmark
+  def mix(): Unit = {
+    import kyo.ios._
+    import kyo.core._
+    import kyo.fibers._
+
+    def loop(i: Int): Unit > (Fibers | IOs) =
+      if (i > 10)
+        ()
+      else
+        Fibers.fork {
+          Blackhole.consumeCPU(100)
+          Thread.sleep(10)
+          Blackhole.consumeCPU(100)
+        }(_ => loop(i + 1))
+
+    IOs.run(Fibers.block(loop(0)))
   }
 
   @Benchmark
@@ -109,7 +159,7 @@ class Bench {
     import kyo.core._
     import kyo.futures._
     import kyo.ios._
-    
+
     def loop(i: Int): Int > IOs =
       IOs {
         if (i > depth) i
@@ -174,6 +224,43 @@ class Bench {
 
     runZIO(loop(0))
   }
+
+  @Benchmark
+  def chainedForkCats(): Int = {
+    import cats.effect.{Deferred, IO}
+    import cats.effect.unsafe.IORuntime
+
+    def iterate(deferred: Deferred[IO, Unit], n: Int): IO[Any] =
+      if (n <= 0) deferred.complete(())
+      else IO.unit.flatMap(_ => iterate(deferred, n - 1).start)
+
+    val io = for {
+      deferred <- IO.deferred[Unit]
+      _        <- iterate(deferred, 1000).start
+      _        <- deferred.get
+    } yield 0
+
+    runCatsEffect3(io)
+  }
+
+  // @Benchmark
+  // def chainedForkKyo(): Int = {
+  //   import kyo.core._
+  //   import kyo.fibers._
+  //   import kyo.ios._
+
+  //   def iterate(p: Promise[Unit], n: Int): Any > Fibers =
+  //     if (n <= 0) p.complete(())
+  //     else Fibers.fork(iterate(p, n - 1))(_.join)
+
+  //   val io = for {
+  //     p <- Fibers.promise[Unit]
+  //     _ <- Fibers.fork(iterate(p, 1000))
+  //     _ <- p.join
+  //   } yield 0
+
+  //   IOs.run(Fibers.block(io))
+  // }
 
   private[this] def runCatsEffect3[A](io: cats.effect.IO[A]): A =
     (cats.effect.IO.cede.flatMap(_ => io)).unsafeRunSync()(catsEffectRuntime)

@@ -35,11 +35,11 @@ object ios {
         }
       deferRunLoop(t)
 
-    inline def runWhile(cond: => Boolean): Either[IO[T], T] =
+    inline def run(preempt: () => Boolean): Either[IO[T], T] =
       @tailrec def deferRunWhileLoop(t: IO[T]): Either[IO[T], T] =
         t match {
           case t: Defer[T] @unchecked =>
-            if (cond) {
+            if (!preempt()) {
               deferRunWhileLoop(t.run())
             } else {
               Left(t)
@@ -51,7 +51,7 @@ object ios {
 
     inline def runFor(duration: Duration): Either[IO[T], T] =
       val end = System.currentTimeMillis() + duration.toMillis
-      runWhile(System.currentTimeMillis() <= end)
+      run(() => System.currentTimeMillis() > end)
   }
 
   final class IOs private[ios] () extends Effect[IO] {

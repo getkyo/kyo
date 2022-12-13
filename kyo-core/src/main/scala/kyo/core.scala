@@ -110,7 +110,7 @@ object core {
     @targetName("shallowHandle")
     inline def <[M[_], E <: Effect[M], S2 <: S](
         e: E
-    )(using ev: S => (S2 | E))(using
+    )(using S => S2 | E)(using
         h: ShallowHandler[M, E],
         s: Safepoint[E]
     ): M[T] > S2 =
@@ -148,7 +148,8 @@ object core {
           case _ =>
             h.pure(v.asInstanceOf[T])
         }
-      shallowHandleLoop(v.asInstanceOf[T > (S2 | E)])
+      val r: M[T] > S2 = shallowHandleLoop(v.asInstanceOf[T > (S2 | E)])
+      r
 
     @targetName("deepHandle")
     inline def <<[U](

@@ -10,7 +10,7 @@ object scopes {
   sealed trait Scope[T] {
     private[scopes] def value(): T
     private[scopes] def close(): Unit
-    def run(): T > IOs =
+    def apply(): T > IOs =
       IOs {
         try value()
         finally close()
@@ -26,7 +26,7 @@ object scopes {
       } > Scopes
 
     inline def close[T, S](v: T > (S | Scopes)): T > (S | IOs) =
-      (v < Scopes)(_.run())
+      (v < Scopes)(_())
   }
   val Scopes = new Scopes
 

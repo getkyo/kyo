@@ -1,4 +1,4 @@
-val scala3Version = "3.2.0"
+val scala3Version = "3.2.2-RC1"
 
 fork in run := true
 
@@ -79,23 +79,21 @@ lazy val `kyo-core` = project
       name                                   := "kyo-core",
       scalaVersion                           := scala3Version,
       libraryDependencies += "dev.zio"       %% "izumi-reflect"     % "2.2.2",
-      libraryDependencies += "dev.zio"       %% "zio-test"          % "2.0.3"      % Test,
-      libraryDependencies += "dev.zio"       %% "zio-test-magnolia" % "2.0.3"      % Test,
-      libraryDependencies += "dev.zio"       %% "zio-test-sbt"      % "2.0.3"      % Test,
+      libraryDependencies += "dev.zio"       %% "zio-test"          % "2.0.5"      % Test,
+      libraryDependencies += "dev.zio"       %% "zio-test-magnolia" % "2.0.5"      % Test,
+      libraryDependencies += "dev.zio"       %% "zio-test-sbt"      % "2.0.5"      % Test,
       libraryDependencies += "dev.zio"       %% "zio-prelude"       % "1.0.0-RC16" % Test,
       libraryDependencies += "dev.zio"       %% "zio-laws-laws"     % "1.0.0-RC16" % Test,
       libraryDependencies += "org.scalatest" %% "scalatest"         % "3.2.11"     % Test
   )
 
-lazy val `kyo-bench` = project
-  .in(file("kyo-bench"))
-  .enablePlugins(JmhPlugin)
+lazy val `kyo-fibers` = project
+  .in(file("kyo-fibers"))
   .dependsOn(`kyo-core`)
   .settings(
-      name                                   := "kyo-bench",
-      scalaVersion                           := scala3Version,
-      libraryDependencies += "org.typelevel" %% "cats-effect" % "3.3.12",
-      libraryDependencies += "dev.zio"       %% "zio"         % "2.0.3"
+      name                                := "kyo-fibers",
+      scalaVersion                        := scala3Version,
+      libraryDependencies += "net.openhft" % "affinity" % "3.23.2"
   )
 
 lazy val `kyo-zio` = project
@@ -105,6 +103,18 @@ lazy val `kyo-zio` = project
       name                             := "kyo-zio",
       scalaVersion                     := scala3Version,
       libraryDependencies += "dev.zio" %% "zio" % "2.0.3"
+  )
+
+lazy val `kyo-bench` = project
+  .in(file("kyo-bench"))
+  .enablePlugins(JmhPlugin)
+  .dependsOn(`kyo-core`)
+  .dependsOn(`kyo-fibers`)
+  .settings(
+      name                                   := "kyo-bench",
+      scalaVersion                           := scala3Version,
+      libraryDependencies += "org.typelevel" %% "cats-effect" % "3.3.12",
+      libraryDependencies += "dev.zio"       %% "zio"         % "2.0.5"
   )
 
 testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
