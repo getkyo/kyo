@@ -8,7 +8,7 @@ import kyo.tries._
 import scala.concurrent.duration._
 import scala.util.Try
 
-class defersTest extends KyoTest {
+class iosTest extends KyoTest {
 
   "shallow handle" - {
     "execution" in {
