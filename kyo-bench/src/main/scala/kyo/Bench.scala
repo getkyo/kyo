@@ -7,10 +7,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.ArrayDeque
 import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext.Implicits.global
-import core._
-import defers._
-import ios._
-import tries._
 
 @State(Scope.Benchmark)
 @Fork(
@@ -33,7 +29,7 @@ class Bench {
 
   @Benchmark
   def deepBindKyo(): Unit = {
-    import kyo.defers._
+    import kyo.ios._
     import kyo.core._
     import kyo.futures._
     def loop(i: Int): Unit > IOs =
@@ -83,6 +79,7 @@ class Bench {
   def deepMapBindKyo(): Int = {
     import kyo.core._
     import kyo.futures._
+    import kyo.ios._
 
     def loop(i: Int): Int > IOs =
       IOs {
@@ -96,7 +93,7 @@ class Bench {
     )
   }
 
-  val a: Int > Nothing => Int > IOs = {
+  val a = {
     import kyo.core._
     import kyo.ios._
     import kyo.arrows._
@@ -111,7 +108,8 @@ class Bench {
   def deepMapBindKyoArrow(): Int = {
     import kyo.core._
     import kyo.futures._
-
+    import kyo.ios._
+    
     def loop(i: Int): Int > IOs =
       IOs {
         if (i > depth) i
