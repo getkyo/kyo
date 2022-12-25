@@ -78,6 +78,7 @@ lazy val `kyo-core` = project
   .settings(
       name                                   := "kyo-core",
       scalaVersion                           := scala3Version,
+      libraryDependencies += "com.lihaoyi" %% "sourcecode" % "0.3.0",
       libraryDependencies += "dev.zio"       %% "izumi-reflect"     % "2.2.2",
       libraryDependencies += "dev.zio"       %% "zio-test"          % "2.0.5"      % Test,
       libraryDependencies += "dev.zio"       %% "zio-test-magnolia" % "2.0.5"      % Test,

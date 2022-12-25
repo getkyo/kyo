@@ -6,6 +6,7 @@ import java.lang.invoke.VarHandle
 import java.util.concurrent.locks.ReentrantLock
 
 class Queue[T <: Comparable[T]] {
+
   private var items = 0
   private val lock  = new ReentrantLock
   private val queue = new PriorityQueue[T]
@@ -49,9 +50,7 @@ class Queue[T <: Comparable[T]] {
   def addAndPoll(t: T): T =
     lock.lock()
     try {
-      if (t != null) {
-        queue.add(t)
-      }
+      queue.add(t)
       queue.poll()
     } finally {
       lock.unlock()

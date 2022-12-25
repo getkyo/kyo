@@ -87,8 +87,8 @@ class Bench {
         ()
       else
         Fibers.fork {
-          Blackhole.consumeCPU(100)
-          Thread.sleep(10)
+          Blackhole.consumeCPU(10000)
+          // Thread.sleep(1)
           Blackhole.consumeCPU(100)
         }(_ => loop(i + 1))
 

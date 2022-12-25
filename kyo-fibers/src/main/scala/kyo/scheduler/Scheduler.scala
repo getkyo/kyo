@@ -9,21 +9,29 @@ import java.util.concurrent.atomic.AtomicReference
 
 object Scheduler {
 
-  @volatile var concurrencyLimit = 0
-  val concurrency                = AtomicInteger(0)
+  private val coreWorkers = Runtime.getRuntime().availableProcessors()
+  private val stride      = 16
 
-  val workers = CopyOnWriteArrayList[Worker]
-  val idle    = AtomicReference[List[Worker]](Nil)
+  @volatile
+  private var concurrencyLimit = coreWorkers
+  private val concurrency      = AtomicInteger(coreWorkers)
 
-  val pool =
-    Executors.newCachedThreadPool(ThreadFactory("kyo-worker", new Worker(_)))
+  val workers      = CopyOnWriteArrayList[Worker]
+  private val idle = AtomicReference[List[Worker]](Nil)
+  private val pool = Executors.newCachedThreadPool(ThreadFactory("kyo-worker", new Worker(_)))
 
-  concurrency(Runtime.getRuntime().availableProcessors())
+  for (_ <- 0 until coreWorkers) {
+    pool.execute(() => Worker().runWorker(null))
+  }
 
-  def concurrency(limit: Int): Unit =
-    concurrencyLimit = limit
-    var c = concurrency.get()
-    while (c < limit && concurrency.compareAndSet(c, c + 1)) {
+  def removeWorker(): Unit =
+    concurrencyLimit = Math.max(1, concurrency.get() - 1)
+
+  def addWorker(): Unit =
+    concurrencyLimit = Math.max(concurrencyLimit, concurrency.get()) + 1
+    var c       = concurrency.get()
+    val toStart = Math.min(coreWorkers, concurrencyLimit)
+    while (c < toStart && concurrency.compareAndSet(c, c + 1)) {
       pool.execute(() => Worker().runWorker(null))
       c = concurrency.get()
     }
@@ -118,6 +126,6 @@ object Scheduler {
   override def toString =
     import scala.jdk.CollectionConverters._
     val w = workers.asScala.map(_.toString).mkString("\n")
-    s"=======================\nScheduler(loadAvg=${loadAvg()},concurrency=$concurrency,limit=$concurrencyLimit,workers=\n$w)"
+    s"=======================\n$w\nScheduler(loadAvg=${loadAvg()},concurrency=$concurrency,limit=$concurrencyLimit)"
 
 }

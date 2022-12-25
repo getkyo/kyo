@@ -5,14 +5,19 @@ import scala.util.control.NonFatal.apply
 import scala.util.control.NonFatal
 import scala.util.Random
 
-object Coordinator {
+private object Coordinator {
 
-  private val cycleTicks            = 128
-  private val cycleMask             = cycleTicks - 1
-  @volatile private var ticks: Long = 0L
-  @volatile private var cycles      = 0L
-  private val delay                 = MovingStdDev(7)
-  private var start                 = 0L
+  private val cycleExp   = 7
+  private val cycleTicks = Math.pow(2, cycleExp).intValue()
+  private val cycleMask  = cycleTicks - 1
+
+  @volatile
+  private var ticks: Long = 0L
+  @volatile
+  private var cycles = 0L
+
+  private val delay = MovingStdDev(cycleExp)
+  private var start = 0L
 
   val exec = Executors.newCachedThreadPool(ThreadFactory("kyo-coordinator"))
 
@@ -45,13 +50,16 @@ object Coordinator {
     }
 
   private def adapt() =
-    if((cycles & 15) == 0) println(Scheduler)
+    if ((cycles & 15) == 0) {
+      println(Scheduler)
+      println(this)
+    }
     val j = jitter()
     if (j >= 0.08)
-      Scheduler.concurrency(Math.max(1, Scheduler.concurrency.get() - 1))
+      Scheduler.removeWorker()
     else if (j <= 0.04 && Scheduler.loadAvg() > 0.8)
-      Scheduler.concurrency(Scheduler.concurrency.get() + 1)
+      Scheduler.addWorker()
 
   override def toString =
-    s"Clock(ticks=$ticks,cycles=$cycles,jitter=${jitter()},delay=${delay.avgg()})"
+    s"Clock(ticks=$ticks,cycles=$cycles,jitter=${jitter()})"
 }

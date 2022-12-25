@@ -1,21 +1,19 @@
 package kyo.scheduler
 
-class MovingStdDev(exp: Int) {
+private final class MovingStdDev(exp: Int) {
 
-  private[this] val window = 1 << exp
-  private[this] val mask   = window - 1
-  private[this] var values = new Array[Long](window)
-  private[this] var devs   = new Array[Long](window)
-  private[this] var idx    = 0
-  private[this] var sum    = 0L
-  private[this] var sumDev = 0L
+  private val window = 1 << exp
+  private val mask   = window - 1
+  private var values = new Array[Long](window)
+  private var devs   = new Array[Long](window)
+  private var idx    = 0
+  private var sum    = 0L
+  private var sumDev = 0L
 
-  private[this] var avg           = 0L
-  @volatile private[this] var dev = 0L
+  private var avg           = 0L
+  @volatile private var dev = 0L
 
   def apply(): Long = dev
-
-  def avgg() = avg
 
   def observe(v: Long): Unit =
     val prev = values(idx)
