@@ -30,8 +30,8 @@ object fibers {
     inline def promise[T]: Promise[T] > IOs =
       IOs(new Suspended[T])
 
-    inline def forkAndBlock[T](inline v: => T > IOs): T > (Fibers | IOs) =
-      fork(v)((f: Fiber[T]) => IOs(f.block()))
+    inline def forkAndBlock[T](inline v: => T > IOs): T > IOs =
+      block(fork(v))
 
     inline def fork[T](inline v: => T > IOs): T > (Fibers | IOs) =
       IOs {

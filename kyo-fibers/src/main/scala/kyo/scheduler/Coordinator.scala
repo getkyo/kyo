@@ -59,6 +59,8 @@ private object Coordinator {
       Scheduler.removeWorker()
     else if (j <= 0.04 && Scheduler.loadAvg() > 0.8)
       Scheduler.addWorker()
+    else if (Scheduler.loadAvg() < 0.8)
+      Scheduler.removeWorker()
 
   override def toString =
     s"Clock(ticks=$ticks,cycles=$cycles,jitter=${jitter()})"

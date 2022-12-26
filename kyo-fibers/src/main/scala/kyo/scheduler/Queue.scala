@@ -4,22 +4,23 @@ import java.util.concurrent.Semaphore
 import java.util.PriorityQueue
 import java.lang.invoke.VarHandle
 import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
 
 class Queue[T <: Comparable[T]] {
 
-  private var items = 0
+  private val items = new AtomicInteger
   private val lock  = new ReentrantLock
   private val queue = new PriorityQueue[T]
 
-  def size() =
-    VarHandle.loadLoadFence()
-    items
+  def size(): Int =
+    items.get()
 
   def add(t: T): Unit =
     lock.lock()
     try {
       queue.add(t)
-      items += 1
+      items.lazySet(queue.size())
     } finally {
       lock.unlock()
     }
@@ -28,7 +29,7 @@ class Queue[T <: Comparable[T]] {
     lock.tryLock() && {
       try {
         queue.add(t)
-        items += 1
+        items.lazySet(queue.size())
         true
       } finally {
         lock.unlock()
@@ -39,9 +40,7 @@ class Queue[T <: Comparable[T]] {
     lock.lock()
     try {
       val r = queue.poll()
-      if (r != null) {
-        items -= 1
-      }
+      items.lazySet(queue.size())
       r
     } finally {
       lock.unlock()
@@ -51,27 +50,29 @@ class Queue[T <: Comparable[T]] {
     lock.lock()
     try {
       queue.add(t)
-      queue.poll()
+      val r = queue.poll()
+      items.lazySet(queue.size())
+      r
     } finally {
       lock.unlock()
     }
 
   def steal(to: Queue[T]): T =
-    val i    = items
+    val i    = items.get()
     var t: T = null.asInstanceOf[T]
-    if (items > 0 && lock.tryLock()) {
+    if (items.get() > 0 && lock.tryLock()) {
       try {
         if (to.lock.tryLock()) {
           try {
             t = queue.poll()
-            val s = items - 1
+            val s = items.get() - 1
             var i = s - (s / 2)
-            items -= i + 1
-            to.items += i
             while (i > 0) {
               to.queue.add(queue.poll())
               i -= 1
             }
+            items.lazySet(queue.size())
+            to.items.lazySet(to.queue.size())
           } finally {
             to.lock.unlock()
           }
@@ -84,7 +85,7 @@ class Queue[T <: Comparable[T]] {
 
   def drain(f: T => Unit): Unit =
     lock.lock()
-    items = 0
+    items.set(0)
     queue.forEach(f(_))
     queue.clear()
     lock.unlock()

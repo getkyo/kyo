@@ -77,7 +77,7 @@ class Worker(r: Runnable)
     queue.drain(Scheduler.submit)
 
   override def toString =
-    s"Worker(thread=${getName},load=${load()},task=$currentTask"//,queue=$queue)"
+    s"Worker(thread=${getName},load=${load()},task=$currentTask,queue=${queue.size()}"
 }
 
 object Worker {
