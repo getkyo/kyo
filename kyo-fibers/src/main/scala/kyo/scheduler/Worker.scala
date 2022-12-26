@@ -2,7 +2,6 @@ package kyo.scheduler
 
 import java.util.concurrent.Semaphore
 import java.util.PriorityQueue
-import java.lang.invoke.VarHandle
 import java.util.concurrent.atomic.AtomicInteger
 
 class Worker(r: Runnable)
