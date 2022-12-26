@@ -11,6 +11,7 @@ object arrows {
         : T > S => U > S2 =
       val a =
         new Kyo[[T] =>> Unit, Arrows, T > S, T, S | Arrows]((), Arrows) {
+          def stack = Nil
           def apply(v: T > S, s: Safepoint[Arrows]) = v
         }
       f(a).asInstanceOf[T > S => U > S2]
@@ -22,6 +23,7 @@ object arrows {
       new AbstractFunction1[T > S, U > S2] {
         val a =
           new Kyo[[T] =>> Unit, Arrows, T > S, T, S | Arrows]((), Arrows) {
+            def stack = Nil
             def apply(v: T > S, s: Safepoint[Arrows]) = v
           }
         val g = f(a, this.asInstanceOf[T > (S | Arrows) => U > (S2 | Arrows)])

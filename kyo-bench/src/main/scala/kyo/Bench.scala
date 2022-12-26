@@ -11,17 +11,8 @@ import java.util.concurrent.Executors
 import kyo.scheduler.Scheduler
 import org.openjdk.jmh.infra.Blackhole
 
-object aaa extends App {
-
-  Executors.newSingleThreadExecutor().execute { () =>
-    while (true) {
-      Thread.sleep(1000)
-      println(Scheduler)
-    }
-  }
-
-  while (true)
-    println((new Bench()).mix())
+object test extends App {
+  println(Bench().deepBindKyoFiber())
 }
 
 @State(Scope.Benchmark)
@@ -38,7 +29,7 @@ object aaa extends App {
 )
 class Bench {
 
-  var depth = 1
+  var depth = 10000
 
   val catsEffectRuntime = cats.effect.unsafe.implicits.global
   val zioRuntime        = zio.Runtime.default
@@ -74,25 +65,6 @@ class Bench {
           loop(i + 1)
       }
     IOs.run(Fibers.forkAndBlock(loop(0)))
-  }
-
-  @Benchmark
-  def mix(): Unit = {
-    import kyo.ios._
-    import kyo.core._
-    import kyo.fibers._
-
-    def loop(i: Int): Unit > (Fibers | IOs) =
-      if (i > 10)
-        ()
-      else
-        Fibers.fork {
-          Blackhole.consumeCPU(10000)
-          // Thread.sleep(1)
-          Blackhole.consumeCPU(100)
-        }(_ => loop(i + 1))
-
-    IOs.run(Fibers.block(loop(0)))
   }
 
   @Benchmark

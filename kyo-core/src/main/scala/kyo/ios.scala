@@ -59,6 +59,7 @@ object ios {
         inline f: => T > (S | IOs)
     ): T > (S | IOs) =
       new Kyo[IO, IOs, Unit, T, (S | IOs)]((), IOs) {
+        def stack = Nil
         def apply(v: Unit, s: Safepoint[IOs]) = f
       }
     inline def run[T, S](f: T > (S | IOs)): T > S =

@@ -3,6 +3,8 @@ package kyo
 import scala.annotation.targetName
 import scala.runtime.AbstractFunction1
 import scala.util.control.NonFatal
+import scala.runtime.AbstractFunction0
+import frames._
 
 object core {
 
@@ -45,6 +47,7 @@ object core {
       val effect: E
   ) extends AbstractFunction1[T, U > S]
       with AKyo[U, S] {
+    def stack: List[Frame[String]]
     def apply(v: T): U > S = apply(v, Safepoint.noop[E])
     def apply(v: T, s: Safepoint[E]): U > S
     def isRoot = false
@@ -52,15 +55,20 @@ object core {
 
   extension [M[_], T, S](v: M[T] > S) {
     @targetName("suspend")
-    inline def >[E <: Effect[M]](e: E): T > (S | E) =
+    inline def >[E <: Effect[M]](e: E)(using frame: Frame[">"]): T > (S | E) =
       def suspendLoop(v: M[T] > S): T > (S | E) =
         v match
           case kyo: Kyo[M, E, Any, M[T], S] @unchecked =>
             new Kyo[M, E, Any, T, S | E](kyo.value, kyo.effect) {
-              def apply(v: Any, s: Safepoint[E]) = suspendLoop(kyo(v, s))
+              def stack =
+                frame :: kyo.stack
+              def apply(v: Any, s: Safepoint[E]) =
+                suspendLoop(kyo(v, s))
             }
           case _ =>
             new Kyo[M, E, T, T, S | E](v.asInstanceOf[M[T]], e) {
+              def stack =
+                frame :: Nil
               override def isRoot                           = true
               def apply(v: T, s: Safepoint[E]): T > (S | E) = v
             }
@@ -69,14 +77,15 @@ object core {
 
   extension [T, S, S2](v: T > S > S2) {
     @targetName("flatten")
-    def apply(): T > (S | S2) =
+    def apply()(using frame: Frame["apply"]): T > (S | S2) =
       v(identity[T > S])
   }
 
   extension [M[_], T, S](v: M[T > S]) {
     @targetName("nestedEffect")
-    inline def >>[E <: Effect[M]](e: E): T > (S | E) =
+    inline def >>[E <: Effect[M]](e: E)(using frame: Frame[">>"]): T > (S | E) =
       new Kyo[M, E, T > S, T, S | E](v, e) {
+        def stack                                         = frame :: Nil
         def apply(v: T > S, s: Safepoint[E]): T > (S | E) = v
       }
   }
@@ -88,13 +97,15 @@ object core {
     inline def flatMap[U, S2](inline f: T => (U > S2)): U > (S | S2) = apply(f)
 
     @targetName("transform")
-    inline def apply[U, S2](inline f: T => (U > S2)): U > (S | S2) =
+    inline def apply[U, S2](inline f: T => (U > S2))(using frame: Frame["apply"]): U > (S | S2) =
       def transformLoop(v: T > S): U > (S | S2) =
         type M[_]
         type E <: Effect[M]
         v match {
           case kyo: Kyo[M, E, Any, T, S] @unchecked =>
             new Kyo[M, E, Any, U, S | S2](kyo.value, kyo.effect) {
+              def stack =
+                frame :: kyo.stack
               def apply(v: Any, s: Safepoint[E]) =
                 if (s()) {
                   s(transformLoop(kyo(v, s))).asInstanceOf[U > (S | S2)]
@@ -112,7 +123,8 @@ object core {
         e: E
     )(using S => S2 | E)(using
         h: ShallowHandler[M, E],
-        s: Safepoint[E]
+        s: Safepoint[E],
+        frame: Frame["<"]
     ): M[T] > S2 =
       def shallowHandleLoop(
           v: T > (S2 | E)
@@ -135,6 +147,8 @@ object core {
               }
             } else {
               new Kyo[M, E, Any, M[T], S2](kyo.value, kyo.effect) {
+                def stack =
+                  frame :: kyo.stack
                 def apply(v: Any, s2: Safepoint[E]): M[T] > S2 =
                   shallowHandleLoop {
                     try kyo(v, s)
