@@ -75,7 +75,7 @@ object core {
 
   extension [T, S, S2](v: T > S > S2) {
     @targetName("flatten")
-    inline def apply()(using inline frame: Frame["apply"]): T > (S | S2) =
+    def apply()(using frame: Frame["apply"]): T > (S | S2) =
       v(identity[T > S])
   }
 

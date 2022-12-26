@@ -17,7 +17,6 @@ import java.util.concurrent.locks.LockSupport
 import scala.annotation.tailrec
 import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.atomic.AtomicLongFieldUpdater
-import java.lang.invoke.VarHandle
 import scala.util.Random
 import java.util.concurrent.atomic.AtomicLong
 

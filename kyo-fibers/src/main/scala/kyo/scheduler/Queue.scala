@@ -8,18 +8,21 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class Queue[T <: Comparable[T]] {
 
-  private val items = new AtomicInteger
+  private val _size = new AtomicInteger
   private val lock  = new ReentrantLock
   private val queue = new PriorityQueue[T]
 
   def size(): Int =
-    items.get()
+    _size.get()
+
+  private def updateSize() =
+    _size.lazySet(queue.size())
 
   def add(t: T): Unit =
     lock.lock()
     try {
       queue.add(t)
-      items.lazySet(queue.size())
+      updateSize()
     } finally {
       lock.unlock()
     }
@@ -28,7 +31,7 @@ class Queue[T <: Comparable[T]] {
     lock.tryLock() && {
       try {
         queue.add(t)
-        items.lazySet(queue.size())
+        updateSize()
         true
       } finally {
         lock.unlock()
@@ -39,7 +42,7 @@ class Queue[T <: Comparable[T]] {
     lock.lock()
     try {
       val r = queue.poll()
-      items.lazySet(queue.size())
+      updateSize()
       r
     } finally {
       lock.unlock()
@@ -50,28 +53,27 @@ class Queue[T <: Comparable[T]] {
     try {
       queue.add(t)
       val r = queue.poll()
-      items.lazySet(queue.size())
+      updateSize()
       r
     } finally {
       lock.unlock()
     }
 
   def steal(to: Queue[T]): T =
-    val i    = items.get()
     var t: T = null.asInstanceOf[T]
-    if (items.get() > 0 && lock.tryLock()) {
+    if (_size.get() > 0 && lock.tryLock()) {
       try {
         if (to.lock.tryLock()) {
           try {
             t = queue.poll()
-            val s = items.get() - 1
+            val s = _size.get() - 1
             var i = s - (s / 2)
             while (i > 0) {
               to.queue.add(queue.poll())
               i -= 1
             }
-            items.lazySet(queue.size())
-            to.items.lazySet(to.queue.size())
+            updateSize()
+            to.updateSize()
           } finally {
             to.lock.unlock()
           }
@@ -84,9 +86,9 @@ class Queue[T <: Comparable[T]] {
 
   def drain(f: T => Unit): Unit =
     lock.lock()
-    items.set(0)
     queue.forEach(f(_))
     queue.clear()
+    updateSize()
     lock.unlock()
 
   override def toString =
