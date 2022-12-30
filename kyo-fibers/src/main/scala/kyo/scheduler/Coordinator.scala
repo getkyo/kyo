@@ -11,10 +11,11 @@ private object Coordinator {
   private val cycleTicks = Math.pow(2, cycleExp).intValue()
   private val cycleMask  = cycleTicks - 1
 
-  @volatile
-  private var ticks: Long = 0L
-  @volatile
-  private var cycles = 0L
+  @volatile private[this] var ticks: Long = 0L
+
+  val p1, p2, p3, p4, p5, p6, p7 = 0L
+
+  @volatile private[this] var cycles = 0L
 
   private val delay = MovingStdDev(cycleExp)
   private var start = 0L
@@ -32,7 +33,7 @@ private object Coordinator {
   def cycle(): Long = cycles
 
   def jitter() =
-    delay().doubleValue() / 10000
+    delay.dev().doubleValue() / 10000
 
   private def update() =
     try {
@@ -50,18 +51,21 @@ private object Coordinator {
     }
 
   private def adapt() =
-    if ((cycles & 15) == 0) {
+    if ((cycles & 7) == 0) {
       println(Scheduler)
       println(this)
     }
+    Scheduler.workers.forEach(_.cycle())
     val j = jitter()
+    val l = Scheduler.loadAvg()
     if (j >= 0.08)
       Scheduler.removeWorker()
-    else if (j <= 0.04 && Scheduler.loadAvg() > 0.8)
+    else if (j <= 0.04 && l > 0.8)
       Scheduler.addWorker()
-    else if (Scheduler.loadAvg() < 0.8)
+    else if (l < 0.8)
       Scheduler.removeWorker()
+    ()
 
   override def toString =
-    s"Clock(ticks=$ticks,cycles=$cycles,jitter=${jitter()})"
+    s"Clock(ticks=$ticks,cycles=$cycles,delay.dev=${delay.dev()},delay.avg=${delay.avg()})"
 }

@@ -1,4 +1,4 @@
-val scala3Version = "3.2.2-RC1"
+val scala3Version = "3.2.0"
 
 fork in run := true
 
@@ -66,7 +66,7 @@ ThisBuild / credentials += Credentials(
 scalafmtOnCompile := true
 
 lazy val kyo = (project in file("."))
-  .aggregate(`kyo-core`, `kyo-bench`, `kyo-zio`)
+  .aggregate(`kyo-core`, `kyo-bench`, `kyo-zio`, `kyo-direct`)
   .settings(
       name            := "kyo",
       scalaVersion    := scala3Version,
@@ -93,8 +93,15 @@ lazy val `kyo-fibers` = project
   .dependsOn(`kyo-core`)
   .settings(
       name                                := "kyo-fibers",
-      scalaVersion                        := scala3Version,
-      libraryDependencies += "net.openhft" % "affinity" % "3.23.2"
+      scalaVersion                        := scala3Version
+  )
+
+lazy val `kyo-direct` = project
+  .in(file("kyo-direct"))
+  .dependsOn(`kyo-core`)
+  .settings(
+      name                                := "kyo-direct",
+      scalaVersion                        := scala3Version
   )
 
 lazy val `kyo-zio` = project

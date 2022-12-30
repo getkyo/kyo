@@ -5,9 +5,11 @@ import core._
 object options {
 
   final class Options private[options] () extends Effect[Option] {
+    private val none          = None > this
+    def empty[T]: T > Options = none
     inline def apply[T](v: T): T > Options =
       if (v == null)
-        Option.empty[T] > Options
+        none
       else
         v
   }
@@ -22,7 +24,7 @@ object options {
           f: T => U > (S | Options)
       ): U > (S | Options) =
         m match {
-          case None    => Option.empty[U] > Options
+          case None    => Options.empty
           case Some(v) => f(v)
         }
     }

@@ -1,28 +1,51 @@
 package kyo.scheduler
 
-import java.util.concurrent.Semaphore
+import kyo.ios.Preempt
+import kyo.scheduler.IOTask
+
+import java.util.Comparator
 import java.util.PriorityQueue
+import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.locks.LockSupport
 
 class Worker(r: Runnable)
     extends Thread(r) {
 
-  val queue        = new Queue[Task]
-  val maxParkNanos = 1_000_000_000
+  val queue = Queue[IOTask[_]]
 
-  @volatile var running           = false
-  @volatile var currentTask: Task = null
-  @volatile var cycle             = 0L
+  @volatile var running                = false
+  @volatile var currentTask: IOTask[_] = null
+  @volatile var parkedThread: Thread   = null
 
-  def steal(w: Worker): Task =
+  val delay = MovingStdDev(7)
+
+  def park() =
+    parkedThread = this
+    LockSupport.parkNanos(this, 100_000_000)
+    parkedThread = null
+
+  def steal(w: Worker): IOTask[_] =
     queue.steal(w.queue)
 
-  def enqueue(t: Task): Boolean =
-    val c = currentTask
-    val r = running && (c == null || cycle == Coordinator.cycle()) && queue.offer(t)
-    r
+  def enqueue(t: IOTask[_]): Boolean =
+    val curr = currentTask
+    val ok =
+      running &&
+        (curr == null || !curr()) &&
+        queue.offer(t)
+    if (ok) {
+      LockSupport.unpark(parkedThread)
+    }
+    ok
 
-  def enqueueLocal(t: Task): Unit =
+  def cycle() =
+    val t = currentTask
+    if (t != null && !queue.isEmpty()) {
+      t.preempt()
+    }
+
+  def enqueueLocal(t: IOTask[_]): Unit =
     queue.add(t)
 
   def load(): Int =
@@ -31,15 +54,16 @@ class Worker(r: Runnable)
       s += 1
     s
 
-  def runWorker(init: Task) =
-    var task      = init
-    var parkNanos = 1024L
-    var stopped   = false
-    val stop = () =>
-      stopped ||= Scheduler.stopWorker()
-      stopped
-    val preempt = () =>
-      stop() || (Coordinator.cycle() != cycle && queue.size() > 0)
+  def runWorker(init: IOTask[_]) =
+    var task = init
+    def stop() =
+      !running || {
+        val stop = Scheduler.stopWorker()
+        if (stop) {
+          running = false
+        }
+        stop
+      }
     running = true
     Scheduler.workers.add(this)
     while (!stop()) {
@@ -50,19 +74,17 @@ class Worker(r: Runnable)
         task = Scheduler.steal(this)
       }
       if (task == null) {
-        Scheduler.park(this, parkNanos)
-        if (parkNanos < maxParkNanos)
-          parkNanos *= 2;
+        Scheduler.idle(this)
       }
       if (task != null) {
-        parkNanos = 1024
-        cycle = Coordinator.cycle()
         currentTask = task
-        val done = task.run(preempt)
+        val done = task.run()
         currentTask = null
         if (!done) {
           task = queue.addAndPoll(task)
         } else {
+          val d = Coordinator.tick() - task.creationTs - task.runtime
+          delay.observe(d)
           task = null
         }
       }
@@ -76,7 +98,7 @@ class Worker(r: Runnable)
     queue.drain(Scheduler.submit)
 
   override def toString =
-    s"Worker(thread=${getName},load=${load()},task=$currentTask,queue=${queue.size()}"
+    s"Worker(thread=${getName},load=${load()},delay=${delay.avg()},task=$currentTask,queue.size=${queue.size()},frame=${this.getStackTrace()(0)})"
 }
 
 object Worker {

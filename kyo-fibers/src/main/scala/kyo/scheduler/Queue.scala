@@ -1,96 +1,95 @@
 package kyo.scheduler
 
 import java.util.concurrent.Semaphore
-import java.util.PriorityQueue
 import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
+import scala.annotation.tailrec
+import java.util.concurrent.atomic.AtomicReference
+import scala.collection.mutable.PriorityQueue
 
-class Queue[T <: Comparable[T]] {
+final class Queue[T <: Comparable[T]] extends AtomicBoolean {
 
-  private val _size = new AtomicInteger
-  private val lock  = new ReentrantLock
-  private val queue = new PriorityQueue[T]
+  private val queue  = PriorityQueue[T]()
+
+  @volatile private var items = 0
+
+  def isEmpty() =
+    items == 0
 
   def size(): Int =
-    _size.get()
-
-  private def updateSize() =
-    _size.lazySet(queue.size())
+    items
 
   def add(t: T): Unit =
-    lock.lock()
-    try {
-      queue.add(t)
-      updateSize()
-    } finally {
-      lock.unlock()
+    modify {
+      queue.addOne(t)
     }
 
   def offer(t: T): Boolean =
-    lock.tryLock() && {
-      try {
-        queue.add(t)
-        updateSize()
-        true
-      } finally {
-        lock.unlock()
-      }
+    tryModify {
+      queue.addOne(t)
+      true
     }
 
   def poll(): T =
-    lock.lock()
-    try {
-      val r = queue.poll()
-      updateSize()
-      r
-    } finally {
-      lock.unlock()
+    if (isEmpty()) {
+      null.asInstanceOf[T]
+    } else {
+      modify {
+        if (isEmpty()) null.asInstanceOf[T]
+        else queue.dequeue()
+      }
     }
 
   def addAndPoll(t: T): T =
-    lock.lock()
-    try {
-      queue.add(t)
-      val r = queue.poll()
-      updateSize()
-      r
-    } finally {
-      lock.unlock()
+    if (isEmpty()) {
+      t
+    } else {
+      modify {
+        queue.addOne(t)
+        queue.dequeue()
+      }
     }
 
   def steal(to: Queue[T]): T =
     var t: T = null.asInstanceOf[T]
-    if (_size.get() > 0 && lock.tryLock()) {
-      try {
-        if (to.lock.tryLock()) {
-          try {
-            t = queue.poll()
-            val s = _size.get() - 1
-            var i = s - (s / 2)
-            while (i > 0) {
-              to.queue.add(queue.poll())
-              i -= 1
-            }
-            updateSize()
-            to.updateSize()
-          } finally {
-            to.lock.unlock()
-          }
+    !isEmpty() && tryModify {
+      !isEmpty() && to.isEmpty() && to.tryModify {
+        t = queue.dequeue()
+        val s = size() - 1
+        var i = s - (s / 2)
+        while (i > 0) {
+          to.queue.addOne(queue.dequeue())
+          i -= 1
         }
-      } finally {
-        lock.unlock()
+        true
       }
     }
     t
 
   def drain(f: T => Unit): Unit =
-    lock.lock()
-    queue.forEach(f(_))
-    queue.clear()
-    updateSize()
-    lock.unlock()
+    modify {
+      queue.foreach(f)
+      queue.clear()
+    }
 
-  override def toString =
-    queue.toString()
+  private inline def modify[T](inline f: => T): T =
+    while (!compareAndSet(false, true)) {}
+    try f
+    finally {
+      items = queue.size
+      set(false)
+    }
+
+  private inline def tryModify[T](inline f: => Boolean): Boolean =
+    compareAndSet(false, true) && {
+      try f
+      finally {
+        items = queue.size
+        set(false)
+      }
+    }
+
+  override def toString = modify { s"Queue(${queue.mkString(",")})" }
 }

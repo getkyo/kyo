@@ -136,22 +136,3 @@ class coreTest extends KyoTest {
   // }
 
 }
-
-object A {
-  import kyo.options._
-  import kyo.tries._
-  import kyo.envs._
-  import kyo.aborts._
-  import kyo.ios._
-  val a: (String, Int, Int) > (Options | IOs | Tries) =
-    for {
-      i <- Options("1")
-      j <- Tries(Integer.parseInt(i))
-      k <- IOs(1)
-    } yield (i, j, 1)
-
-  val b = a < Options
-  val c = b < IOs
-  val d = c
-
-}

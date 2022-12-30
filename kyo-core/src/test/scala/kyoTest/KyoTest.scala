@@ -22,7 +22,7 @@ class KyoTest extends AnyFreeSpec with Assertions {
     def apply[T2, S2](value: T2 > S2, expected: Any)(using t2: Tag[T2], s2: Tag[S2]): Unit =
       assert(t.tag =:= t2.tag, "value tag doesn't match")
       assert(
-          (s2.tag =:= Tag[Any].tag && s.tag =:= Tag[Nothing].tag) || s.tag =:= s2.tag,
+          s2.tag =:= Tag[Any].tag || s.tag =:= Tag[Nothing].tag || s.tag =:= s2.tag,
           "effects tag doesn't match"
       )
       if (equals)

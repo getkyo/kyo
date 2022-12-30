@@ -9,7 +9,7 @@ object scopes {
 
   sealed trait Scope[T] {
     private[scopes] def value(): T
-    private[scopes] def close(): Unit
+    private[scopes] def close(): Unit > IOs
     def apply(): T > IOs =
       IOs {
         try value()
@@ -17,6 +17,12 @@ object scopes {
       }
   }
   final class Scopes extends Effect[Scope] {
+
+    inline def ensure[S](inline v: => Unit): Unit > Scopes =
+      new Scope[Unit] {
+        def value() = ()
+        def close() = v
+      } > Scopes
 
     inline def acquire[T <: Closeable, S](inline resource: => T): T > Scopes =
       new Scope[T] {

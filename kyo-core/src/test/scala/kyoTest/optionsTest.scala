@@ -12,6 +12,7 @@ class optionsTest extends KyoTest {
 
   "apply" - {
     "null" in {
+      assert(((Options(null: String) < Options): Option[String]) == None)
       checkEquals[Option[String], Nothing](
           Options(null: String) < Options,
           None

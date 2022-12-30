@@ -41,7 +41,7 @@ object MonadLawsTest extends ZIOSpecDefault {
       override def derive[A: Equal]: Equal[Myo[A]] =
         new Equal[Myo[A]] {
           protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean =
-            def run(m: Myo[A]): A = Futures.block((m < IOs)(_.run()), Duration.Inf)
+            def run(m: Myo[A]): A = IOs.run(Futures.block(m, Duration.Inf))
             run(l) == run(r)
         }
     }

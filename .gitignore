@@ -11,3 +11,4 @@ graal_dumps
 metals.sbt
 jmh-result.json
 *.jfr
+*.json
