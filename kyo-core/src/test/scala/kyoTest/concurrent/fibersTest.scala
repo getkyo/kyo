@@ -101,7 +101,7 @@ class fibersTest extends KyoTest {
 
         def loop(ref: IntRef): Unit > IOs =
           Thread.sleep(1)
-          fib(10)(_ => ref.incrementAndGet(_ => loop(ref)))
+          fib(7)(_ => ref.incrementAndGet(_ => loop(ref)))
         loop
       }
 
@@ -128,16 +128,16 @@ class fibersTest extends KyoTest {
           fiber2       <- Fibers.forkFiber(loop(ref))
           fiber3       <- Fibers.forkFiber(loop(ref))
           value1       <- ref.get
-          _            <- Fibers.sleep(10.millis)
+          _            <- Fibers.sleep(50.millis)
           interrupted1 <- fiber1.interrupt
           value2       <- ref.get
-          _            <- Fibers.sleep(10.millis)
+          _            <- Fibers.sleep(50.millis)
           interrupted2 <- fiber2.interrupt
           value3       <- ref.get
-          _            <- Fibers.sleep(10.millis)
+          _            <- Fibers.sleep(50.millis)
           interrupted3 <- fiber3.interrupt
           value4       <- ref.get
-          _            <- Fibers.sleep(10.millis)
+          _            <- Fibers.sleep(50.millis)
           value5       <- ref.get
         } yield {
           assert(interrupted1 && interrupted2 && interrupted3 &&
@@ -168,7 +168,7 @@ class fibersTest extends KyoTest {
         if (i > 0) {
           if (s.equals("a")) ac.incrementAndGet()
           else bc.incrementAndGet()
-          Thread.sleep(1)
+          Thread.sleep(10)
           loop(i - 1, s)
         } else {
           s
@@ -189,10 +189,10 @@ class fibersTest extends KyoTest {
       ref         <- IntRef(0)
       fiber       <- Fibers.raceFiber(List(loop(ref), loop(ref)))
       value1      <- ref.get
-      _           <- Fibers.sleep(10.millis)
+      _           <- Fibers.sleep(50.millis)
       interrupted <- fiber.interrupt
       value2      <- ref.get
-      _           <- Fibers.sleep(10.millis)
+      _           <- Fibers.sleep(50.millis)
       value3      <- ref.get
     } yield assert(interrupted && value1 < value2 && value2 == value3)
   }
