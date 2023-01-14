@@ -7,11 +7,22 @@ import kyo.core._
 import kyo.ios._
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import scheduler.ThreadFactory
 
 object timers {
 
   opaque type Timer     = ScheduledExecutorService
   opaque type TimerTask = ScheduledFuture[Unit]
+
+  object Timer {
+    def apply(cores: Int): Timer > IOs =
+      IOs(Executors.newSingleThreadScheduledExecutor(ThreadFactory("kyo-timer")))
+    given default: Timer = Executors.newScheduledThreadPool(
+        Runtime.getRuntime.availableProcessors / 2,
+        ThreadFactory("kyo-timer")
+    )
+  }
 
   extension (t: TimerTask) {
 

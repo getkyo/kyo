@@ -24,7 +24,7 @@ import java.util.concurrent.ScheduledFuture
 
 object fibers {
 
-  private val timer = Executors.newScheduledThreadPool(1, ThreadFactory("kyo-timer"))
+  private val timer = Executors.newScheduledThreadPool(1, ThreadFactory("kyo-fiber-sleep-timer"))
 
   opaque type Promise[T] <: Fiber[T] = IOPromise[T]
   opaque type Fiber[T]               = IOPromise[T]
