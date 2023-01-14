@@ -101,7 +101,7 @@ class fibersTest extends KyoTest {
 
         def loop(ref: IntRef): Unit > IOs =
           Thread.sleep(1)
-          fib(7)(_ => ref.incrementAndGet(_ => loop(ref)))
+          fib(5)(_ => ref.incrementAndGet(_ => loop(ref)))
         loop
       }
 
