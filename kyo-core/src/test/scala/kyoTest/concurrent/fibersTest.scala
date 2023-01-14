@@ -88,13 +88,6 @@ class fibersTest extends KyoTest {
     "ref inc loop" -
       interruptTest {
         def loop(ref: IntRef): Unit > IOs =
-          ref.incrementAndGet(_ => loop(ref))
-        loop
-      }
-
-    "sleep + ref inc loop" -
-      interruptTest {
-        def loop(ref: IntRef): Unit > IOs =
           Thread.sleep(1)
           ref.incrementAndGet(_ => loop(ref))
         loop
@@ -107,6 +100,7 @@ class fibersTest extends KyoTest {
           else fib(n - 1)(a => fib(n - 2)(b => a + b))
 
         def loop(ref: IntRef): Unit > IOs =
+          Thread.sleep(1)
           fib(10)(_ => ref.incrementAndGet(_ => loop(ref)))
         loop
       }
@@ -188,6 +182,7 @@ class fibersTest extends KyoTest {
 
   "raceFiber" in run {
     def loop(ref: IntRef): Unit > IOs =
+      Thread.sleep(1)
       ref.incrementAndGet(_ => loop(ref))
 
     for {
@@ -296,6 +291,7 @@ class fibersTest extends KyoTest {
     }
     "interrupt" in run {
       def loop(ref: IntRef): Unit > IOs =
+        Thread.sleep(1)
         ref.incrementAndGet(_ => loop(ref))
 
       def io(ref: IntRef) =
