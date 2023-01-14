@@ -1,4 +1,4 @@
-package kyo.scheduler
+package kyo.concurrent.scheduler
 
 import java.util.Random
 

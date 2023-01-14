@@ -23,16 +23,15 @@ object batches {
   }
   val Batches = new Batches
 
-  inline given DeepHandler[Batch, Batches] =
-    new DeepHandler[Batch, Batches] {
-      def pure[T](v: T) =
-        Batch.Foreach(List(v))
-      def flatMap[T, U](
-          m: Batch[T],
-          cont: T => Batch[U]
-      ): Batch[U] =
-        Batch.Continue(m, cont)
-    }
+  inline given DeepHandler[Batch, Batches] with {
+    def pure[T](v: T) =
+      Batch.Foreach(List(v))
+    def flatMap[T, U](
+        m: Batch[T],
+        cont: T => Batch[U]
+    ): Batch[U] =
+      Batch.Continue(m, cont)
+  }
 
   private object Batch {
     case class Foreach[T](l: List[T]) extends Batch[T] {

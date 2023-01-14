@@ -36,34 +36,33 @@ object scopes {
   }
   val Scopes = new Scopes
 
-  given handler: ShallowHandler[Scope, Scopes] =
-    new ShallowHandler[Scope, Scopes] {
-      def pure[T](v: T) =
-        new Scope[T] {
-          def value() = v
-          def close() = {}
+  given handler: ShallowHandler[Scope, Scopes] with {
+    def pure[T](v: T) =
+      new Scope[T] {
+        def value() = v
+        def close() = {}
+      }
+    override def handle[T](ex: Throwable): T > Scopes =
+      new Scope[T] {
+        def value() = throw ex
+        def close() = {}
+      } > Scopes
+    def apply[T, U, S](m: Scope[T], f: T => U > (S | Scopes)): U > (S | Scopes) =
+      val v =
+        try f(m.value())
+        catch {
+          case ex if (NonFatal(ex)) =>
+            m.close()
+            throw ex
         }
-      override def handle[T](ex: Throwable): T > Scopes =
-        new Scope[T] {
-          def value() = throw ex
-          def close() = {}
+      (v < Scopes) { s =>
+        new Scope[U] {
+          def value() =
+            s.value()
+          def close() =
+            s.close()
+            m.close()
         } > Scopes
-      def apply[T, U, S](m: Scope[T], f: T => U > (S | Scopes)): U > (S | Scopes) =
-        val v =
-          try f(m.value())
-          catch {
-            case ex if (NonFatal(ex)) =>
-              m.close()
-              throw ex
-          }
-        (v < Scopes) { s =>
-          new Scope[U] {
-            def value() =
-              s.value()
-            def close() =
-              s.close()
-              m.close()
-          } > Scopes
-        }
-    }
+      }
+  }
 }

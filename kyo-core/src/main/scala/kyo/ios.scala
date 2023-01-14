@@ -16,7 +16,8 @@ import scala.Conversion
 object ios {
 
   trait Preempt extends Safepoint[IOs] {
-    def apply[T, S](v: => T > (S | IOs)) = IOs(v)
+    def apply[T, S](v: => T > (S | IOs)) =
+      IOs(v)
   }
   object Preempt {
     val never: Preempt =
@@ -27,16 +28,15 @@ object ios {
 
   opaque type IO[+T] = T
 
-  abstract class KyoIO[T, S] extends Kyo[IO, IOs, Unit, T, (S | IOs)] {
+  private[kyo] abstract class KyoIO[T, S]
+      extends Kyo[IO, IOs, Unit, T, (S | IOs)] {
     def value  = ()
     def effect = ios.IOs
   }
 
   final class IOs private[ios] () extends Effect[IO] {
 
-    val False: false > IOs = apply(false)
-    val True: true > IOs   = apply(true)
-    val Unit: Unit > IOs   = apply(())
+    inline def value[T](v: T): T > IOs = v
 
     inline def apply[T, S](
         inline f: => T > (S | IOs)
@@ -62,28 +62,26 @@ object ios {
       runLoop(v)
 
     inline def lazyRun[T, S](v: T > (S | IOs)): T > S =
-      given ShallowHandler[IO, IOs] =
-        new ShallowHandler[IO, IOs] {
-          def pure[T](v: T) = v
-          def apply[T, U, S](m: IO[T], f: T => U > (S | IOs)): U > (S | IOs) =
-            f(m)
-        }
+      given ShallowHandler[IO, IOs] with {
+        def pure[T](v: T) = v
+        def apply[T, U, S](m: IO[T], f: T => U > (S | IOs)): U > (S | IOs) =
+          f(m)
+      }
       v < IOs
 
     inline def eval[T](p: Preempt)(v: T > IOs): T > IOs =
-      @tailrec def evalLoop(v: T > IOs, i: Int): T > IOs =
+      @tailrec def evalLoop(v: T > IOs): T > IOs =
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, IOs] @unchecked =>
-            val n = kyo((), p)
             if (p()) {
-              n
+              v
             } else {
-              evalLoop(n, i + 1)
+              evalLoop(kyo((), p))
             }
           case _ =>
             v.asInstanceOf[T > IOs]
         }
-      evalLoop(v, 0)
+      evalLoop(v)
   }
   val IOs: IOs = new IOs
 }

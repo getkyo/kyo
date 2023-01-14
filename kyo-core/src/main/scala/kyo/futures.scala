@@ -19,14 +19,13 @@ object futures {
 
     inline def block[T, S](v: T > (S | Futures), timeout: Duration): T > S =
       val blocker = Blocker(timeout)
-      given blockingHandler: ShallowHandler[Future, Futures] =
-        new ShallowHandler[Future, Futures] {
-          def pure[T](v: T) = Future.successful(v)
-          override def handle[T](ex: Throwable): T > Futures =
-            Future.failed(ex) > Futures
-          def apply[T, U, S](m: Future[T], f: T => U > (S | Futures)) =
-            f(blocker(m))
-        }
+      given blockingHandler: ShallowHandler[Future, Futures] with {
+        def pure[T](v: T) = Future.successful(v)
+        override def handle[T](ex: Throwable): T > Futures =
+          Future.failed(ex) > Futures
+        def apply[T, U, S](m: Future[T], f: T => U > (S | Futures)) =
+          f(blocker(m))
+      }
       (v < Futures) { fut =>
         val r = blocker(fut)
         r
@@ -39,13 +38,12 @@ object futures {
 
   val Futures: Futures = new Futures
 
-  inline given futuresHandler(using ExecutionContext): DeepHandler[Future, Futures] =
-    new DeepHandler[Future, Futures] {
-      def pure[T](v: T): Future[T] =
-        Future.successful(v)
-      def flatMap[T, U](m: Future[T], f: T => Future[U]): Future[U] =
-        m.flatMap(f)
-    }
+  inline given (using ExecutionContext): DeepHandler[Future, Futures] with {
+    def pure[T](v: T): Future[T] =
+      Future.successful(v)
+    def flatMap[T, U](m: Future[T], f: T => Future[U]): Future[U] =
+      m.flatMap(f)
+  }
 
   private sealed trait Blocker {
     def apply[T](fut: Future[T]): T

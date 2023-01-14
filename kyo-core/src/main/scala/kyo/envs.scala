@@ -28,20 +28,19 @@ object envs {
     final class Let[E, S] private[Envs] (es: E > S, tag: Tag[E]) {
       def apply[T, S2](v: T > (S2 | Envs[E])): T > (S | S2) =
         es { e =>
-          given ShallowHandler[[T] =>> Env[E, T], Envs[E]] =
-            new ShallowHandler[[T] =>> Env[E, T], Envs[E]] {
-              def pure[U](v: U) = v
-              def apply[U, V, S2](
-                  m: Env[E, U],
-                  f: U => V > (S2 | Envs[E])
-              ): V > (S2 | Envs[E]) =
-                m match {
-                  case Input =>
-                    f(e.asInstanceOf[U])
-                  case _ =>
-                    f(m.asInstanceOf[U])
-                }
-            }
+          given ShallowHandler[[T] =>> Env[E, T], Envs[E]] with {
+            def pure[U](v: U) = v
+            def apply[U, V, S2](
+                m: Env[E, U],
+                f: U => V > (S2 | Envs[E])
+            ): V > (S2 | Envs[E]) =
+              m match {
+                case Input =>
+                  f(e.asInstanceOf[U])
+                case _ =>
+                  f(m.asInstanceOf[U])
+              }
+          }
           (v < (new Envs[E](tag))).asInstanceOf[T > S]
         }
     }

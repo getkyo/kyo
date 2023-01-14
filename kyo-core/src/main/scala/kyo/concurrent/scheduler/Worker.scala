@@ -1,7 +1,7 @@
-package kyo.scheduler
+package kyo.concurrent.scheduler
 
 import kyo.ios.Preempt
-import kyo.scheduler.IOTask
+import kyo.concurrent.scheduler.IOTask
 
 import java.util.Comparator
 import java.util.PriorityQueue
@@ -29,15 +29,14 @@ class Worker(r: Runnable)
     queue.steal(w.queue)
 
   def enqueue(t: IOTask[_]): Boolean =
-    val curr = currentTask
-    val ok =
-      running &&
-        (curr == null || !curr()) &&
-        queue.offer(t)
-    if (ok) {
-      LockSupport.unpark(parkedThread)
+    running && {
+      val curr = currentTask
+      val ok   = (curr == null || !curr()) && queue.offer(t)
+      if (ok) {
+        LockSupport.unpark(parkedThread)
+      }
+      ok
     }
-    ok
 
   def cycle() =
     val t = currentTask
@@ -70,12 +69,6 @@ class Worker(r: Runnable)
       if (task == null) {
         task = queue.poll()
       }
-      if (task == null) {
-        task = Scheduler.steal(this)
-      }
-      if (task == null) {
-        Scheduler.idle(this)
-      }
       if (task != null) {
         currentTask = task
         val done = task.run()
@@ -83,9 +76,13 @@ class Worker(r: Runnable)
         if (!done) {
           task = queue.addAndPoll(task)
         } else {
-          val d = Coordinator.tick() - task.creationTs - task.runtime
-          delay.observe(d)
+          delay.observe(task.delay())
           task = null
+        }
+      } else {
+        task = Scheduler.steal(this)
+        if (task == null) {
+          Scheduler.idle(this)
         }
       }
     }

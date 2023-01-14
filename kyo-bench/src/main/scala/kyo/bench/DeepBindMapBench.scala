@@ -4,7 +4,7 @@ import cats.effect.IO
 import kyo.arrows._
 import kyo.core.>
 import kyo.ios.IOs
-import kyo.scheduler.Scheduler
+import kyo.concurrent.scheduler.Scheduler
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
 import zio.UIO
@@ -23,6 +23,7 @@ import kyo.bench.Bench
 import kyo.bench.CatsRuntime
 import kyo.bench.KyoRuntime
 
+import kyo.concurrent.scheduler.Scheduler
 class DeepBindMapBench extends Bench {
 
   val depth = 10000

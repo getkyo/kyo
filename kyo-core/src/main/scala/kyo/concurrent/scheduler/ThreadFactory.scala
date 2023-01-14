@@ -1,4 +1,4 @@
-package kyo.scheduler
+package kyo.concurrent.scheduler
 
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicInteger

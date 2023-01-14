@@ -32,9 +32,9 @@ class ForkManyBench extends Bench {
   @Benchmark
   def forkManyKyo(): Int = {
     import kyo.core._
-    import kyo.fibers._
     import kyo.ios._
-    import kyo.refs._
+    import kyo.concurrent.refs._
+    import kyo.concurrent.fibers._
 
     def kyoRepeat[A](n: Int)(io: A > IOs): A > IOs =
       if (n <= 1) io
@@ -50,7 +50,7 @@ class ForkManyBench extends Bench {
           else
             false
         }
-        _ <- kyoRepeat(10000)(Fibers.fork(effect))
+        _ <- kyoRepeat(10000)(Fibers.forkFiber(effect))
         _ <- promise.join
       } yield 0
 

@@ -313,7 +313,7 @@ class abortsTest extends KyoTest {
     }
   }
 
-  "opaque squashed aborts can be handled only when fully handled" - {
+  "opaque squashed aborts must be fully handled" - {
     def test(v: Int): Int > Aborts[Ex1 | Ex2] =
       v {
         case 0 => Aborts(ex1: (Ex1 | Ex2))

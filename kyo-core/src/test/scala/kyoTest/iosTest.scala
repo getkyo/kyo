@@ -57,30 +57,6 @@ class iosTest extends KyoTest {
         assert(Try(IOs.lazyRun(io)) == Try(fail))
       }
     }
-    //   "runFor" - {
-    //     "done" in {
-    //       checkEquals[Either[IO[Int], Int], Nothing](
-    //           (IOs(1)(_ + 1) << IOs)(_.runFor(1.minute)),
-    //           Right(2)
-    //       )
-    //     }
-    //     "always done" in {
-    //       val io = IOs {
-    //         Thread.sleep(100)
-    //         1
-    //       } { i =>
-    //         IOs(i + 1)
-    //       }
-    //       (io < IOs).runFor(1.millis) match {
-    //         case Left(rest) =>
-    //           fail(
-    //               "shallow handle's returned IO should represent only the last step of the computation"
-    //           )
-    //         case Right(done) =>
-    //           assert(done == 2)
-    //       }
-    //     }
-    //   }
     "stack-safe" in {
       val frames = 100000
       def loop(i: Int): Int > IOs =
@@ -101,8 +77,7 @@ class iosTest extends KyoTest {
       for (_ <- 0 until frames) {
         i = i(_ + 1)
       }
-      val r: Int = IOs.run(i)
-      print(r)
+      IOs.run(i)
     }
   }
   "run" - {
@@ -120,33 +95,6 @@ class iosTest extends KyoTest {
       )
       assert(called)
     }
-    // "runFor" - {
-    //   "done" in {
-    //     checkEquals[Either[IO[Int], Int], Nothing](
-    //         (IOs(1)(_ + 1) << IOs)(_.runFor(1.minute)),
-    //         Right(2)
-    //     )
-    //   }
-    //   "not done" in {
-    //     def loop(i: Int): Int > IOs =
-    //       if (i < 100)
-    //         IOs {
-    //           Thread.sleep(1)
-    //           loop(i + 1)
-    //         }
-    //       else
-    //         i
-    //     val start = System.currentTimeMillis()
-    //     (loop(0) << IOs).runFor(1.millis) match {
-    //       case Left(rest) =>
-    //         val delay = System.currentTimeMillis() - start
-    //         assert(delay < 20)
-    //         assert(rest.run() == 100)
-    //       case Right(done) =>
-    //         fail("should not be done")
-    //     }
-    //   }
-    // }
     "stack-safe" in {
       val frames = 100000
       def loop(i: Int): Int > IOs =
@@ -171,6 +119,31 @@ class iosTest extends KyoTest {
       ios.foreach { io =>
         assert(Try(IOs.run(io)) == Try(fail))
       }
+    }
+  }
+
+  "eval" - {
+    "done" in {
+      val io = IOs.eval(() => false)(IOs(1)(_ + 1))
+      assert(IOs.isDone(io))
+      assert(IOs.run(io) == 2)
+    }
+    "not done" in {
+      var steps = 0
+      def loop(i: Int): Int > IOs =
+        IOs {
+          steps += 1
+          if (i < 100)
+            loop(i + 1)
+          else
+            i
+        }
+
+      val io = IOs.eval(() => steps == 50)(loop(0))
+      assert(steps == 50)
+      assert(!IOs.isDone(io))
+      assert(IOs.run(io) == 100)
+      assert(steps == 101)
     }
   }
 }

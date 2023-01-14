@@ -15,17 +15,16 @@ object options {
   }
   val Options = new Options
 
-  inline given ShallowHandler[Option, Options] =
-    new ShallowHandler[Option, Options] {
-      def pure[T](v: T) =
-        Option(v)
-      def apply[T, U, S](
-          m: Option[T],
-          f: T => U > (S | Options)
-      ): U > (S | Options) =
-        m match {
-          case None    => Options.empty
-          case Some(v) => f(v)
-        }
-    }
+  inline given ShallowHandler[Option, Options] with {
+    def pure[T](v: T) =
+      Option(v)
+    def apply[T, U, S](
+        m: Option[T],
+        f: T => U > (S | Options)
+    ): U > (S | Options) =
+      m match {
+        case None    => Options.empty
+        case Some(v) => f(v)
+      }
+  }
 }

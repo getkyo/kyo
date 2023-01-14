@@ -1,4 +1,4 @@
-package kyo.scheduler
+package kyo.concurrent.scheduler
 
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.CopyOnWriteArrayList
@@ -11,7 +11,7 @@ import kyo.core._
 import kyo.ios._
 import java.util.concurrent.atomic.LongAdder
 
-import kyo.scheduler.IOTask
+import kyo.concurrent.scheduler.IOTask
 
 object Scheduler {
 
@@ -21,7 +21,8 @@ object Scheduler {
   private var concurrencyLimit = coreWorkers
   private val concurrency      = AtomicInteger(0)
 
-  val workers      = CopyOnWriteArrayList[Worker]
+  private[scheduler] val workers = CopyOnWriteArrayList[Worker]
+
   private val idle = AtomicReference[List[Worker]](Nil)
   private val pool = Executors.newCachedThreadPool(ThreadFactory("kyo-worker", new Worker(_)))
 
@@ -73,8 +74,8 @@ object Scheduler {
 
   def steal(w: Worker): IOTask[_] = {
     var r: IOTask[_] = null
-    var w0: Worker    = randomWorker()
-    var w1: Worker    = randomWorker()
+    var w0: Worker   = randomWorker()
+    var w1: Worker   = randomWorker()
     if (w0.load() < w1.load()) {
       val w = w0
       w0 = w1
@@ -96,6 +97,9 @@ object Scheduler {
       c += 1
     }
     sum.doubleValue() / c
+
+  def cycle(): Unit =
+    workers.forEach(_.cycle())
 
   def idle(w: Worker): Unit =
     var i = idle.get()

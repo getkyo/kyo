@@ -34,11 +34,10 @@ object core {
     def apply[T, S](v: => T > (S | E)): T > (S | E)
   }
   object Safepoint {
-    given noop[E <: Effect[_]]: Safepoint[E] =
-      new Safepoint[E] {
-        def apply()                        = false
-        def apply[T, S](v: => T > (S | E)) = v
-      }
+    given noop[E <: Effect[_]]: Safepoint[E] with {
+      def apply()                        = false
+      def apply[T, S](v: => T > (S | E)) = v
+    }
   }
 
   private[kyo] sealed trait AKyo[+T, +S]
@@ -111,6 +110,8 @@ object core {
 
     inline def flatMap[U, S2](inline f: T => (U > S2)): U > (S | S2) = apply(f)
 
+    def withFilter(p: T => Boolean): T > S = v
+
     @targetName("transform")
     inline def apply[U, S2](inline f: T => (U > S2))(using
         inline fr: Frame["apply"]
@@ -122,7 +123,7 @@ object core {
               def frame = fr
               def apply(v: Any, s: Safepoint[E2]) =
                 val n = kyo(v, s)
-                if (frame.preemptable && s()) {
+                if (s()) {
                   s(transformLoop(n)).asInstanceOf[U > (S | S2)]
                 } else {
                   transformLoop(n)
@@ -149,15 +150,7 @@ object core {
             if (kyo.isRoot) {
               kyo.value.asInstanceOf[M[T] > S2]
             } else {
-              shallowHandleLoop(h(
-                  kyo.value,
-                  v =>
-                    try kyo(v, s)
-                    catch {
-                      case ex if (NonFatal(ex)) =>
-                        h.handle(ex)
-                    }
-              ))
+              shallowHandleLoop(h(kyo.value, kyo(_, s)))
             }
           case kyo: Kyo[M2, E2, Any, T, S2 | E] @unchecked =>
             val e = kyo.effect

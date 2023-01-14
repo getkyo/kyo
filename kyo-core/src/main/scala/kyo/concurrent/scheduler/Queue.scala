@@ -1,4 +1,4 @@
-package kyo.scheduler
+package kyo.concurrent.scheduler
 
 import java.util.concurrent.Semaphore
 import java.util.concurrent.locks.ReentrantLock
@@ -9,9 +9,9 @@ import scala.annotation.tailrec
 import java.util.concurrent.atomic.AtomicReference
 import scala.collection.mutable.PriorityQueue
 
-final class Queue[T <: Comparable[T]] extends AtomicBoolean {
+private final class Queue[T <: Comparable[T]] extends AtomicBoolean {
 
-  private val queue  = PriorityQueue[T]()
+  private val queue = PriorityQueue[T]()
 
   @volatile private var items = 0
 

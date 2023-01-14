@@ -13,11 +13,10 @@ class coreTest extends KyoTest {
     }
     val Ids1 = new Ids1
 
-    given ShallowHandler[Id1, Ids1] =
-      new ShallowHandler[Id1, Ids1] {
-        def pure[T](v: T)                                     = v
-        def apply[T, U, S](m: Id1[T], f: T => U > (S | Ids1)) = f(m)
-      }
+    given ShallowHandler[Id1, Ids1] with {
+      def pure[T](v: T)                                     = v
+      def apply[T, U, S](m: Id1[T], f: T => U > (S | Ids1)) = f(m)
+    }
 
     opaque type Id2[T] = T
     class Ids2 extends Effect[Id2] {
@@ -25,11 +24,10 @@ class coreTest extends KyoTest {
     }
     val Ids2 = new Ids2
 
-    given ShallowHandler[Id2, Ids2] =
-      new ShallowHandler[Id2, Ids2] {
-        def pure[T](v: T)                                     = v
-        def apply[T, U, S](m: Id2[T], f: T => U > (S | Ids2)) = f(m)
-      }
+    given ShallowHandler[Id2, Ids2] with {
+      def pure[T](v: T)                                     = v
+      def apply[T, U, S](m: Id2[T], f: T => U > (S | Ids2)) = f(m)
+    }
 
     opaque type Id3[T] = T
     class Ids3 extends Effect[Id3] {
@@ -37,11 +35,10 @@ class coreTest extends KyoTest {
     }
     val Ids3 = new Ids3
 
-    given ShallowHandler[Id3, Ids3] =
-      new ShallowHandler[Id3, Ids3] {
-        def pure[T](v: T)                                     = v
-        def apply[T, U, S](m: Id3[T], f: T => U > (S | Ids3)) = f(m)
-      }
+    given ShallowHandler[Id3, Ids3] with {
+      def pure[T](v: T)                                     = v
+      def apply[T, U, S](m: Id3[T], f: T => U > (S | Ids3)) = f(m)
+    }
 
     opaque type Id4[T] = T
     class Ids4 extends Effect[Id4] {
@@ -49,11 +46,10 @@ class coreTest extends KyoTest {
     }
     val Ids4 = new Ids4
 
-    given ShallowHandler[Id4, Ids4] =
-      new ShallowHandler[Id4, Ids4] {
-        def pure[T](v: T)                                     = v
-        def apply[T, U, S](m: Id4[T], f: T => U > (S | Ids4)) = f(m)
-      }
+    given ShallowHandler[Id4, Ids4] with {
+      def pure[T](v: T)                                     = v
+      def apply[T, U, S](m: Id4[T], f: T => U > (S | Ids4)) = f(m)
+    }
 
     opaque type Id5[T] = T
     class Ids5 extends Effect[Id5] {
@@ -61,41 +57,35 @@ class coreTest extends KyoTest {
     }
     val Ids5 = new Ids5
 
-    given ShallowHandler[Id5, Ids5] =
-      new ShallowHandler[Id5, Ids5] {
-        def pure[T](v: T)                                     = v
-        def apply[T, U, S](m: Id5[T], f: T => U > (S | Ids5)) = f(m)
-      }
+    given ShallowHandler[Id5, Ids5] with {
+      def pure[T](v: T)                                     = v
+      def apply[T, U, S](m: Id5[T], f: T => U > (S | Ids5)) = f(m)
+    }
 
-    given DeepHandler[Id1, Ids1] =
-      new DeepHandler[Id1, Ids1] {
-        def pure[T](v: T) = v
-        def flatMap[T, U](m: Id1[T], f: T => Id1[U]) = f(m)
-      }
+    given DeepHandler[Id1, Ids1] with {
+      def pure[T](v: T)                            = v
+      def flatMap[T, U](m: Id1[T], f: T => Id1[U]) = f(m)
+    }
 
-    given DeepHandler[Id2, Ids2] =
-      new DeepHandler[Id2, Ids2] {
-        def pure[T](v: T) = v
-        def flatMap[T, U](m: Id2[T], f: T => Id2[U]) = f(m)
-      }
+    given DeepHandler[Id2, Ids2] with {
+      def pure[T](v: T)                            = v
+      def flatMap[T, U](m: Id2[T], f: T => Id2[U]) = f(m)
+    }
 
-    given DeepHandler[Id3, Ids3] =
-      new DeepHandler[Id3, Ids3] {
-        def pure[T](v: T) = v
-        def flatMap[T, U](m: Id3[T], f: T => Id3[U]) = f(m)
-      }
+    given DeepHandler[Id3, Ids3] with {
+      def pure[T](v: T)                            = v
+      def flatMap[T, U](m: Id3[T], f: T => Id3[U]) = f(m)
+    }
 
-    given DeepHandler[Id4, Ids4] =
-      new DeepHandler[Id4, Ids4] {
-        def pure[T](v: T) = v
-        def flatMap[T, U](m: Id4[T], f: T => Id4[U]) = f(m)
-      }
-    
-    given DeepHandler[Id5, Ids5] =
-      new DeepHandler[Id5, Ids5] {
-        def pure[T](v: T): Id5[T] = v
-        def flatMap[T, U](m: Id5[T], f: T => Id5[U]): Id5[U] = f(m)
-      }
+    given DeepHandler[Id4, Ids4] with {
+      def pure[T](v: T)                            = v
+      def flatMap[T, U](m: Id4[T], f: T => Id4[U]) = f(m)
+    }
+
+    given DeepHandler[Id5, Ids5] with {
+      def pure[T](v: T): Id5[T]                            = v
+      def flatMap[T, U](m: Id5[T], f: T => Id5[U]): Id5[U] = f(m)
+    }
   }
 
   import effects._

@@ -1,4 +1,4 @@
-package kyo.scheduler
+package kyo.concurrent.scheduler
 
 import kyo.core._
 import kyo.frames._
@@ -11,7 +11,7 @@ import scala.util.control.NoStackTrace
 
 import IOPromise._
 
-class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](Pending()) {
+private[kyo] class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](Pending()) {
 
   inline def isDone: Boolean = !get().isInstanceOf[Pending[_]]
 
@@ -72,7 +72,7 @@ class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](Pending()) {
     }
 }
 
-object IOPromise {
+private[kyo] object IOPromise {
   case class Interrupted(frame: Frame[String]) extends NoStackTrace
   sealed trait Pending[+T] {
     import Pending._

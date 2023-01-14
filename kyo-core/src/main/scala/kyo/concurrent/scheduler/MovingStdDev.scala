@@ -1,4 +1,4 @@
-package kyo.scheduler
+package kyo.concurrent.scheduler
 
 private final class MovingStdDev(exp: Int) {
 
@@ -30,6 +30,6 @@ private final class MovingStdDev(exp: Int) {
 
     idx = (idx + 1) & mask
 
-  override def toString = s"MovingStdDev(avg=$_avg,dev=$_dev)"
+  override def toString = s"MovingStdDev(avg=${_avg},dev=${_dev})"
 
 }

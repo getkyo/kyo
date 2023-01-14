@@ -22,13 +22,12 @@ object zios {
   }
   val ZIOs = new ZIOs
 
-  inline given [T]: DeepHandler[Task, ZIOs] =
-    new DeepHandler[Task, ZIOs] {
-      override def pure[T](v: T): Task[T] =
-        ZIO.succeed(v)
-      override def flatMap[T, U](m: Task[T], f: T => Task[U]): Task[U] =
-        m.flatMap(f)
-    }
+  inline given [T]: DeepHandler[Task, ZIOs] with {
+    override def pure[T](v: T): Task[T] =
+      ZIO.succeed(v)
+    override def flatMap[T, U](m: Task[T], f: T => Task[U]): Task[U] =
+      m.flatMap(f)
+  }
 
   private given zioTag[T](using t: ITag[T]): zio.Tag[T] =
     new zio.Tag[T] {

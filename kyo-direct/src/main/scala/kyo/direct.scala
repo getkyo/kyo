@@ -6,9 +6,9 @@
 
 // object direct {
 
-//   transparent inline def select[T](inline f: T) = ${ macroImpl[T]('f) }
+//   transparent /*inline*/ def select[T](/*inline*/ f: T) = ${ macroImpl[T]('f) }
 
-//   inline def from[T, S](v: T > S): T = compiletime.error("must be used within a `select` block")
+//   /*inline*/ def from[T, S](v: T > S): T = compiletime.error("must be used within a `select` block")
 
 //   def macroImpl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
 //     import quotes.reflect._

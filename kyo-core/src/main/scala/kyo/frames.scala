@@ -8,14 +8,12 @@ object frames {
 
   extension [T <: String](frame: Frame[T]) {
     def toStackTraceElement() =
-      val (preemptable :: location :: op :: file :: line :: column :: Nil) =
-        frame.split('|').toList
+      val (location :: op :: file :: line :: column :: Nil) =
+        (frame.split('|').toList: @unchecked)
       val parts  = location.split('.').toList
       val cls    = parts.take(parts.length - 1).mkString(".")
       val method = parts.lastOption.getOrElse("<unknown>")
-      new StackTraceElement(cls, s"$method@$op:$column", file, line.toInt)
-    inline def preemptable: Boolean =
-      frame.charAt(0) == '1'
+      StackTraceElement(cls, s"$method@$op:$column", file, line.toInt)
   }
 
   inline given [T <: String](using
@@ -42,11 +40,7 @@ object frames {
             " ",
             ""
         ).replaceAll("#", ".")
-        val frame = s"$location|$op|$file|$line|$column"
-        if ((frame.hashCode() & 7) == 0)
-          s"1|$frame"
-        else
-          s"0|$frame"
+        s"$location|$op|$file|$line|$column"
       } catch {
         case ex =>
           throw ex

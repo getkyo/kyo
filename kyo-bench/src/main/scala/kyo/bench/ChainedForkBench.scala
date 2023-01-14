@@ -8,7 +8,7 @@ import java.util.ArrayDeque
 import scala.concurrent.duration.Duration
 import scala.concurrent.ExecutionContext.Implicits.global
 import java.util.concurrent.Executors
-import kyo.scheduler.Scheduler
+import kyo.concurrent.scheduler.Scheduler
 import org.openjdk.jmh.infra.Blackhole
 import kyo.core._
 import kyo.ios.IOs
@@ -19,6 +19,9 @@ import cats.effect.IO
 import kyo.bench.Bench
 import kyo.bench.CatsRuntime
 
+import kyo.concurrent.fibers
+import kyo.concurrent.scheduler.Scheduler
+import kyo.concurrent.fibers
 class ChainedForkBench extends Bench {
 
   val depth = 10000
@@ -44,16 +47,16 @@ class ChainedForkBench extends Bench {
   @Benchmark
   def chainedForkKyo(): Int = {
     import kyo.core._
-    import kyo.fibers._
+    import kyo.concurrent.fibers._
     import kyo.ios._
 
     def iterate(p: Promise[Unit], n: Int): Boolean > (IOs | Fibers) =
       if (n <= 0) p.complete(())
-      else Fibers.fork(iterate(p, n - 1))(_ >> Fibers)
+      else Fibers.forkFiber(iterate(p, n - 1))(_ >> Fibers)
 
     val io: Int > (IOs | Fibers) = for {
       p <- Fibers.promise[Unit]
-      _ <- Fibers.fork(iterate(p, depth))
+      _ <- Fibers.forkFiber(iterate(p, depth))
       _ <- p.join
     } yield 0
 

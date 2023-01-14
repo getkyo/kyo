@@ -1,4 +1,4 @@
-package kyo.scheduler
+package kyo.concurrent.scheduler
 
 import java.util.concurrent.Executors
 import scala.util.control.NonFatal.apply
@@ -13,17 +13,19 @@ private object Coordinator {
 
   @volatile private[this] var ticks: Long = 0L
 
-  val p1, p2, p3, p4, p5, p6, p7 = 0L
+  private val a1, a2, a3, a4, a5, a6, a7 = 0L // paddding
 
   @volatile private[this] var cycles = 0L
 
-  private val delay = MovingStdDev(cycleExp)
-  private var start = 0L
+  private val b1, b2, b3, b4, b5, b6, b7 = 0L // paddding
 
-  val exec = Executors.newCachedThreadPool(ThreadFactory("kyo-coordinator"))
+  private var startNs = 0L
+  private val delayNs = MovingStdDev(cycleExp)
+
+  private val exec = Executors.newCachedThreadPool(ThreadFactory("kyo-coordinator"))
 
   exec.execute { () =>
-    start = System.nanoTime()
+    startNs = System.nanoTime()
     while (true) {
       update()
     }
@@ -32,16 +34,16 @@ private object Coordinator {
   def tick(): Long  = ticks
   def cycle(): Long = cycles
 
-  def jitter() =
-    delay.dev().doubleValue() / 10000
+  private def jitter() =
+    delayNs.dev().doubleValue() / 10000
 
   private def update() =
     try {
       Thread.sleep(1)
       ticks += 1
-      val end = System.nanoTime()
-      delay.observe(end - start - 1000000)
-      start = end
+      val endNs = System.nanoTime()
+      delayNs.observe(endNs - startNs - 1000000)
+      startNs = endNs
       if ((ticks & cycleMask) == 0)
         cycles += 1
         exec.execute(() => adapt())
@@ -51,11 +53,11 @@ private object Coordinator {
     }
 
   private def adapt() =
-    if ((cycles & 7) == 0) {
-      println(Scheduler)
-      println(this)
-    }
-    Scheduler.workers.forEach(_.cycle())
+    // if ((cycles & 7) == 0) {
+    //   println(Scheduler)
+    //   println(this)
+    // }
+    Scheduler.cycle()
     val j = jitter()
     val l = Scheduler.loadAvg()
     if (j >= 0.08)
@@ -67,5 +69,5 @@ private object Coordinator {
     ()
 
   override def toString =
-    s"Clock(ticks=$ticks,cycles=$cycles,delay.dev=${delay.dev()},delay.avg=${delay.avg()})"
+    s"Clock(ticks=$ticks,cycles=$cycles,delay.dev=${delayNs.dev()},delay.avg=${delayNs.avg()},jitter=${jitter()})"
 }
