@@ -11,6 +11,9 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.concurrent.refs.IntRef
 import scala.concurrent.duration._
+import kyo.scopes._
+import java.util.concurrent.atomic.AtomicBoolean
+import java.io.Closeable
 
 class fibersTest extends KyoTest {
 
@@ -314,4 +317,59 @@ class fibersTest extends KyoTest {
       } yield assert(interrupted && value1 < value2 && value2 == value3)
     }
   }
+
+  // "with scopes" - {
+  //   trait Context {
+  //     val resource1 = new AtomicInteger with Closeable {
+  //       def close(): Unit =
+  //         assert(get() > 0)
+  //         set(-1)
+  //     }
+  //     val resource2 = new AtomicInteger with Closeable {
+  //       def close(): Unit =
+  //         assert(get() > 0)
+  //         set(-1)
+  //     }
+  //   }
+  //   "outer" in new Context {
+  //     val io1: (AtomicInteger & Closeable, Int, Int, Int) > (Scopes | (IOs | (IOs | Fibers))) =
+  //       for {
+  //         r        <- Scopes.acquire(resource1)
+  //         v1       <- IOs(r.getAndIncrement())
+  //         (v2, v3) <- Fibers.fork(r.getAndIncrement(), r.getAndIncrement())
+  //       } yield (r, v1, v2, v3)
+  //     val io2: (AtomicInteger, Int, Int, Int) > (IOs | Fibers) =
+  //       Scopes.close(io1)
+  //     assert(run(io2) == (resource1, 0, 1, 2))
+  //     assert(resource1.get() == -1)
+  //   }
+  //   "inner" in new Context {
+  //     val io = Fibers.fork(Scopes.close(Scopes.acquire(resource1)(_.incrementAndGet())))
+  //     assert(run(io) == 1)
+  //     assert(resource1.get() == -1)
+  //   }
+  //   "multiple" in new Context {
+  //     val io = Fibers.fork(
+  //         Scopes.close(Scopes.acquire(resource1)(_.incrementAndGet())),
+  //         Scopes.close(Scopes.acquire(resource2)(_.incrementAndGet()))
+  //     )
+  //     assert(run(io) == (1, 1))
+  //     assert(resource1.get() == -1)
+  //     assert(resource2.get() == -1)
+  //   }
+  //   "mixed" in new Context {
+  //     val io1: (Int, Int, Int, Int) > (Scopes | (IOs | (IOs | Fibers))) =
+  //       for {
+  //         r        <- Scopes.acquire(resource1)
+  //         v1       <- IOs(r.incrementAndGet())
+  //         (v2, v3) <- Fibers.fork(r.incrementAndGet(), r.incrementAndGet())
+  //         v4       <- Scopes.close(Scopes.acquire(resource2)(_.incrementAndGet()))
+  //       } yield (v1, v2, v3, v4)
+  //     val io2: (Int, Int, Int, Int) > (IOs | Fibers) =
+  //       Scopes.close(io1)
+  //     assert(run(io2) == (1, 2, 3, 1))
+  //     assert(resource1.get() == -1)
+  //     assert(resource2.get() == -1)
+  //   }
+  // }
 }

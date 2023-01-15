@@ -69,6 +69,13 @@ object ios {
       }
       v < IOs
 
+    inline def evalSteps[T](i: Int)(v: T > IOs): T > IOs =
+      var steps = 0
+      eval(() => {
+        steps += 1
+        steps > i
+      })(v)
+
     inline def eval[T](p: Preempt)(v: T > IOs): T > IOs =
       @tailrec def evalLoop(v: T > IOs): T > IOs =
         v match {

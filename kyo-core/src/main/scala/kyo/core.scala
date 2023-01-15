@@ -106,6 +106,8 @@ object core {
 
   extension [T, S](v: T > S) {
 
+    inline def unit: Unit > S = map(_ => ())
+
     inline def map[U, S2](inline f: T => U): U > (S | S2) = apply(f)
 
     inline def flatMap[U, S2](inline f: T => (U > S2)): U > (S | S2) = apply(f)
