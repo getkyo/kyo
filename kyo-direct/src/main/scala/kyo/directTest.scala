@@ -1,9 +1,9 @@
-package kyo
+package kyoTest
 
-import core._
-import tries._
-import options._
-import direct._
+import kyo.core._
+import kyo.tries._
+import kyo.options._
+import kyo.direct._
 
 object directTest extends App {
 

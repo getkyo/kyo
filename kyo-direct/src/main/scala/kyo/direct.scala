@@ -12,7 +12,7 @@ import cps.CpsMonadNoAdoptContext
 
 object direct {
 
-  class CpsMonad[S] 
+  private[kyo] class CpsMonad[S] 
     extends CpsMonadInstanceContext[[T] =>> T > S] 
     with CpsAwaitable[[T] =>> T > S] 
     with CpsMonadNoAdoptContext[[T] =>> T > S] {
@@ -26,7 +26,7 @@ object direct {
     override def adoptAwait[A](fa: A > S): A > S = fa
   }
 
-  given [S]: CpsMonad[S] = CpsMonad[S]
+  private given [S]: CpsMonad[S] = CpsMonad[S]
 
   transparent inline def select[T](inline f: T) = ${ macroImpl[T]('f) }
 
