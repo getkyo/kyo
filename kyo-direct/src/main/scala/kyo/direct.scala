@@ -12,27 +12,13 @@ import cps.CpsMonadNoAdoptContext
 
 object direct {
 
-  private[kyo] class CpsMonad[S] 
-    extends CpsMonadInstanceContext[[T] =>> T > S] 
-    with CpsAwaitable[[T] =>> T > S] 
-    with CpsMonadNoAdoptContext[[T] =>> T > S] {
-
-    override inline def pure[T](t: T): T > S = t
-
-    override inline def map[A, B](fa: A > S)(f: A => B): B > S = fa(f(_))
-
-    override inline def flatMap[A, B](fa: A > S)(f: A => B > S): B > S = fa(f)
-
-    override def adoptAwait[A](fa: A > S): A > S = fa
-  }
-
-  private given [S]: CpsMonad[S] = CpsMonad[S]
-
-  transparent inline def select[T](inline f: T) = ${ macroImpl[T]('f) }
+  private inline given kyoCpsMonad[S]: KyoCpsMonad[S] = KyoCpsMonad[S]
 
   inline def from[T, S](v: T > S): T = compiletime.error("must be used within a `select` block")
 
-  def macroImpl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
+  transparent inline def select[T](inline f: T) = ${ selectImpl[T]('f) }
+
+  private def selectImpl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
     import quotes.reflect._
     import quotes.reflect.report._
 
@@ -43,12 +29,25 @@ object direct {
         effects ::= Type.of[s]
     }
 
-    effects.reduce { (a, b) =>
-      (a, b) match {
-        case ('[a], '[b]) =>
-          Type.of[a | b]
-      }
-    } match {
+    val s =
+      effects
+        .distinct
+        .flatMap {
+          case '[s] =>
+            TypeRepr.of[s] match {
+              case OrType(a, b) =>
+                List(a.asType, b.asType)
+              case _ =>
+                List(Type.of[s])
+            }
+        }.sortBy {
+          case '[t] => TypeTree.of[t].show
+        }.reduce {
+          case ('[t1], '[t2]) =>
+            Type.of[t1 | t2]
+        }
+
+    s match {
       case '[s] =>
         val body =
           Trees.transform(f.asTerm) {
@@ -57,12 +56,26 @@ object direct {
                 await[[T] =>> T > s, t, [T] =>> T > s](${ v.asExprOf[t > s] })
               }.asTerm
           }
-        
-        ' {
-          given CpsMonad[s] = CpsMonad[s]
-          async[[T] =>> T > s] {
+
+        '{
+          given KyoCpsMonad[s] = kyoCpsMonad[s]
+          async[[U] =>> U > s] {
             ${ body.asExprOf[T] }
           }: T > s
         }
     }
+
+  private[kyo] class KyoCpsMonad[S]
+      extends CpsMonadInstanceContext[[T] =>> T > S]
+      with CpsAwaitable[[T] =>> T > S]
+      with CpsMonadNoAdoptContext[[T] =>> T > S] {
+
+    override inline def pure[T](t: T): T > S = t
+
+    override inline def map[A, B](fa: A > S)(f: A => B): B > S = fa(f(_))
+
+    override inline def flatMap[A, B](fa: A > S)(f: A => B > S): B > S = fa(f)
+
+    override inline def adoptAwait[A](fa: A > S): A > S = fa
+  }
 }

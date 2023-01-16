@@ -18,7 +18,11 @@ object consoles {
   object Console {
     given default: Console with {
       def readln: String > IOs =
-        IOs(scala.Console.in.readLine())
+        IOs {
+          val l = scala.Console.in.readLine()
+          println("aaaa" + l)
+          l
+        }
       def print(s: => String): Unit > IOs =
         IOs(scala.Console.out.print(s))
       def printErr(s: => String): Unit > IOs =
@@ -30,7 +34,7 @@ object consoles {
     }
   }
 
-  opaque type Consoles = Envs[Console]
+  type Consoles = Envs[Console]
 
   object Consoles {
     def run[T, S](c: Console)(f: => T > (S | Consoles)): T > S =
