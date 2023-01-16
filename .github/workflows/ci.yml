@@ -12,7 +12,7 @@ jobs:
       env: 
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: Remove inlines
-      run: find ./ -type f -name '*.scala' ! -name 'frames.scala' -exec sed -i 's//*inline*///g' {} \;
+      run: find ./ -type f -name '*.scala' ! -name 'frames.scala' -exec sed -i 's/inline//g' {} \;
     - name: Test without inlines
       run: sbt test
       env: 

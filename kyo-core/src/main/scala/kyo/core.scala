@@ -112,7 +112,8 @@ object core {
 
     inline def flatMap[U, S2](inline f: T => (U > S2)): U > (S | S2) = apply(f)
 
-    def withFilter(p: T => Boolean): T > S = v
+    inline def withFilter(p: T => Boolean): T > S =
+      v(v => if (!p(v)) throw new MatchError(v) else v)
 
     @targetName("transform")
     inline def apply[U, S2](inline f: T => (U > S2))(using

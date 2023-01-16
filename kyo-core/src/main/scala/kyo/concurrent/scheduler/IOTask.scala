@@ -2,14 +2,15 @@ package kyo.concurrent.scheduler
 
 import kyo.core._
 import kyo.ios._
+import kyo.scopes._
 
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
-  inline def apply[T](inline v: => T > IOs): IOTask[T] =
-    val f = new IOTask[T](v)
+  inline def apply[T](inline v: T > (IOs | Scopes)): IOTask[T] =
+    val f = new IOTask[T](Scopes.close(v))
     Scheduler.schedule(f)
     f
 }

@@ -92,9 +92,10 @@ lazy val `kyo-direct` = project
   .in(file("kyo-direct"))
   .dependsOn(`kyo-core`)
   .settings(
-      name         := "kyo-direct",
-      scalaVersion := scala3Version,
-      fork         := true
+      name                                    := "kyo-direct",
+      scalaVersion                            := scala3Version,
+      fork                                    := true,
+      libraryDependencies += "com.github.rssh" %% "dotty-cps-async" % "0.9.14"
   )
 
 lazy val `kyo-zio` = project

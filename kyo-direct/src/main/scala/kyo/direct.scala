@@ -1,125 +1,68 @@
-// package kyo
+package kyo
 
-// import core._
-// import scala.quoted._
-// import java.awt.Taskbar.State
+import core._
+import scala.quoted._
+import java.awt.Taskbar.State
+import cps.await
+import cps.async
+import cps.CpsMonadContext
+import cps.CpsAwaitable
+import cps.CpsMonadInstanceContext
+import cps.CpsMonadNoAdoptContext
 
-// object direct {
+object direct {
 
-//   transparent /*inline*/ def select[T](/*inline*/ f: T) = ${ macroImpl[T]('f) }
+  class CpsMonad[S] 
+    extends CpsMonadInstanceContext[[T] =>> T > S] 
+    with CpsAwaitable[[T] =>> T > S] 
+    with CpsMonadNoAdoptContext[[T] =>> T > S] {
 
-//   /*inline*/ def from[T, S](v: T > S): T = compiletime.error("must be used within a `select` block")
+    override inline def pure[T](t: T): T > S = t
 
-//   def macroImpl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
-//     import quotes.reflect._
-//     import quotes.reflect.report._
+    override inline def map[A, B](fa: A > S)(f: A => B): B > S = fa(f(_))
 
-//     case class From[T, S](v: Expr[T > S], t: Type[T], s: Type[S])
-//     object From {
-//       def unapply(e: Expr[_]): Option[From[_, _]] =
-//         e match {
-//           case '{ from[t, s]($v) } => Some(From(v, Type.of[t], Type.of[s]))
-//           case _                   => None
-//         }
-//     }
+    override inline def flatMap[A, B](fa: A > S)(f: A => B > S): B > S = fa(f)
 
-//     case class Select(f: Term => Term)
+    override def adoptAwait[A](fa: A > S): A > S = fa
+  }
 
-//     object Select {
+  given [S]: CpsMonad[S] = CpsMonad[S]
 
-//       def apply(tree: Term): Term =
-//         unapply(tree).getOrElse(tree)
+  transparent inline def select[T](inline f: T) = ${ macroImpl[T]('f) }
 
-//       def unapply(tree: Term): Option[Term] =
-//         tree match {
-//           case PureTree(tree)            => None
-//           case Typed(tree, tpe)          => unapply(tree).map(Typed(_, tpe))
-//           case inlined(None, Nil, block) => unapply(block).map(inlined(None, Nil, _))
-//           case Block(stats, expr) =>
-//             ???
-//           case If(cond, ifTrue, ifFalse) => error("aaaa")
-//           case _                         => error("c")
-//         }
+  inline def from[T, S](v: T > S): T = compiletime.error("must be used within a `select` block")
 
-//         var unbinds = List.empty[(Tree, Type[_], Type[_])]
+  def macroImpl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
+    import quotes.reflect._
+    import quotes.reflect.report._
 
-//         Trees.traverse(tree) {
-//           case '{ from[t, s]($v) } =>
-//             unbinds ::= (v.asTerm, Type.of[t], Type.of[s])
-//         }
+    var effects = List.empty[Type[_]]
 
-//         unbinds.isEmpty {
-//           case true => None
-//           case false =>
-//             unbinds = unbinds.reverse
+    Trees.traverse(f.asTerm) {
+      case '{ from[t, s]($v) } =>
+        effects ::= Type.of[s]
+    }
 
-//             var values = List.empty[Expr[_]]
-
-//             val ss = Types.union(unbinds.map(_._3))
-
-//             def bind(
-//                 unbinds: List[(Tree, Type[_], Type[_])],
-//                 v: Option[Expr[_]]
-//             )(f: => Tree): Tree =
-//               v.foreach(values :+= _)
-//               unbinds match {
-//                 case Nil => f
-//                 case (v, t, s) :: tail =>
-//                   (t, s, ss) match {
-//                     case ('[t], '[s], '[ss]) =>
-//                       val x =
-//                         '{
-//                           import kyo.core._
-//                           ${ v.asExprOf[t > s] }((v: t) =>
-//                             ${ bind(tail, Some('v))(f).asExprOf[T > ss] }
-//                           )
-//                         }.asTerm
-//                       x
-//                   }
-//               }
-
-//             val r = bind(unbinds, None) {
-//               val r =
-//                 Trees.transform(tree) {
-//                   case '{ from[t, s]($v) } =>
-//                     val v = values.head
-//                     values = values.tail
-//                     v.asTerm
-//                 }
-//               val x: Expr[T > Nothing] =
-//                 '{
-//                   kyo.core.fromPure[T](${ r.asExprOf[T] })
-//                 }
-//               x.asTerm
-
-//             }
-//             Some(r.asExpr.asTerm)
-//         }
-//     }
-
-//     object PureTree {
-//       def unapply(t: Tree): Option[Tree] =
-//         Trees.exists(t) {
-//           case '{ from[t, s]($v) } => true
-//         } match {
-//           case true  => None
-//           case false => Some(t)
-//         }
-//     }
-
-//     // object TransformBlock {
-//     //   def unapply()
-//     // }
-
-//     object Types {
-//       def union(l: List[Type[_]]): Type[_] =
-//         l.reduce { (a, b) =>
-//           (a, b) match {
-//             case ('[a], '[b]) =>
-//               Type.of[a | b]
-//           }
-//         }
-//     }
-
-//     Select(f.asTerm).asExpr
-// }
+    effects.reduce { (a, b) =>
+      (a, b) match {
+        case ('[a], '[b]) =>
+          Type.of[a | b]
+      }
+    } match {
+      case '[s] =>
+        val body =
+          Trees.transform(f.asTerm) {
+            case '{ from[t, s2]($v) } =>
+              '{
+                await[[T] =>> T > s, t, [T] =>> T > s](${ v.asExprOf[t > s] })
+              }.asTerm
+          }
+        
+        ' {
+          given CpsMonad[s] = CpsMonad[s]
+          async[[T] =>> T > s] {
+            ${ body.asExprOf[T] }
+          }: T > s
+        }
+    }
+}

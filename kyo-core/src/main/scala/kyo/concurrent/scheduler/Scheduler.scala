@@ -72,7 +72,7 @@ object Scheduler {
       submit(t)
     }
 
-  def steal(w: Worker): IOTask[_] = {
+  def steal(w: Worker): IOTask[_] =
     var r: IOTask[_] = null
     var w0: Worker   = randomWorker()
     var w1: Worker   = randomWorker()
@@ -86,7 +86,6 @@ object Scheduler {
       r = w1.steal(w)
     }
     r
-  }
 
   def loadAvg(): Double =
     var sum = 0L

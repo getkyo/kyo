@@ -95,12 +95,14 @@ class scopesTest extends KyoTest {
     val r: Int > Options =
       IOs.lazyRun {
         Scopes.close {
-          for {
-            r1 <- Scopes.acquire(r1())
-            i1 <- Option(r1.id * 3) > Options
-            r2 <- Scopes.acquire(r2())
-            i2 <- Option(r2.id * 3) > Options
-          } yield i1 + i2
+          val io: Int > (Scopes | Options) =
+            for {
+              r1 <- Scopes.acquire(r1())
+              i1 <- Option(r1.id * 3) > Options
+              r2 <- Scopes.acquire(r2())
+              i2 <- Option(r2.id * 3) > Options
+            } yield i1 + i2
+          io
         }
       }
     assert(r1.closes == 0)
