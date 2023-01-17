@@ -2,7 +2,6 @@ package kyo
 
 import core._
 import scala.quoted._
-import java.awt.Taskbar.State
 import cps.await
 import cps.async
 import cps.CpsMonadContext
