@@ -14,11 +14,11 @@ object direct {
 
   private inline given kyoCpsMonad[S]: KyoCpsMonad[S] = KyoCpsMonad[S]
 
-  inline def Run[T, S](v: T > S): T = compiletime.error("must be used within a `select` block")
+  inline def Run[T, S](v: T > S): T = compiletime.error("must be used within a `Defer` block")
 
-  transparent inline def Defer[T](inline f: T) = ${ selectImpl[T]('f) }
+  transparent inline def Defer[T](inline f: T) = ${ deferImpl[T]('f) }
 
-  private def selectImpl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
+  private def deferImpl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
     import quotes.reflect._
     import quotes.reflect.report._
 
