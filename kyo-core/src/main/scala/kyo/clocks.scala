@@ -15,7 +15,7 @@ object clocks {
         IOs(Instant.now())
     }
   }
-  opaque type Clocks = Envs[Clock]
+  type Clocks = Envs[Clock]
   object Clocks {
     def run[T, S](c: Clock)(f: => T > (S | Clocks)): T > S =
       Envs.let(c)(f)

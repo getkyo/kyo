@@ -14,9 +14,9 @@ object direct {
 
   private inline given kyoCpsMonad[S]: KyoCpsMonad[S] = KyoCpsMonad[S]
 
-  inline def from[T, S](v: T > S): T = compiletime.error("must be used within a `select` block")
+  inline def Run[T, S](v: T > S): T = compiletime.error("must be used within a `select` block")
 
-  transparent inline def select[T](inline f: T) = ${ selectImpl[T]('f) }
+  transparent inline def Defer[T](inline f: T) = ${ selectImpl[T]('f) }
 
   private def selectImpl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
     import quotes.reflect._
@@ -25,7 +25,7 @@ object direct {
     var effects = List.empty[Type[_]]
 
     Trees.traverse(f.asTerm) {
-      case '{ from[t, s]($v) } =>
+      case '{ Run[t, s]($v) } =>
         effects ::= Type.of[s]
     }
 
@@ -42,16 +42,20 @@ object direct {
             }
         }.sortBy {
           case '[t] => TypeTree.of[t].show
-        }.reduce {
-          case ('[t1], '[t2]) =>
-            Type.of[t1 | t2]
+        } match {
+          case Nil => Type.of[Nothing]
+          case l =>
+            l.reduce {
+              case ('[t1], '[t2]) =>
+                Type.of[t1 | t2]
+            }
         }
 
     s match {
       case '[s] =>
         val body =
           Trees.transform(f.asTerm) {
-            case '{ from[t, s2]($v) } =>
+            case '{ Run[t, s2]($v) } =>
               '{
                 await[[T] =>> T > s, t, [T] =>> T > s](${ v.asExprOf[t > s] })
               }.asTerm

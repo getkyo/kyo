@@ -12,6 +12,8 @@ object options {
         none
       else
         v
+    inline def get[T](v: Option[T]): T > Options =
+      v > Options
   }
   val Options = new Options
 

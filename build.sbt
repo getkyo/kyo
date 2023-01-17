@@ -90,7 +90,7 @@ lazy val `kyo-core` = project
 
 lazy val `kyo-direct` = project
   .in(file("kyo-direct"))
-  .dependsOn(`kyo-core`)
+  .dependsOn(`kyo-core` % "test->test;compile->compile")
   .settings(
       name                                    := "kyo-direct",
       scalaVersion                            := scala3Version,
@@ -100,7 +100,7 @@ lazy val `kyo-direct` = project
 
 lazy val `kyo-zio` = project
   .in(file("kyo-zio"))
-  .dependsOn(`kyo-core`)
+  .dependsOn(`kyo-core` % "test->test;compile->compile")
   .settings(
       name                             := "kyo-zio",
       scalaVersion                     := scala3Version,
