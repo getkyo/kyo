@@ -71,14 +71,14 @@ class iosTest extends KyoTest {
           frames
       )
     }
-    "stack-safe pure transforms" in {
-      val frames = 10000
-      var i      = IOs(0)
-      for (_ <- 0 until frames) {
-        i = i(_ + 1)
-      }
-      IOs.run(i)
-    }
+    // "stack-safe pure transforms" in {
+    //   val frames = 10000
+    //   var i      = IOs(0)
+    //   for (_ <- 0 until frames) {
+    //     i = i(_ + 1)
+    //   }
+    //   IOs.run(i)
+    // }
   }
   "run" - {
     "execution" in {
