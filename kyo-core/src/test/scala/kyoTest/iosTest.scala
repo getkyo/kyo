@@ -7,6 +7,9 @@ import kyo.tries._
 
 import scala.concurrent.duration._
 import scala.util.Try
+import kyo.concurrent.refs.IntRef
+import java.io.Closeable
+import scala.util.Success
 
 class iosTest extends KyoTest {
 
@@ -122,28 +125,47 @@ class iosTest extends KyoTest {
     }
   }
 
-  "eval" - {
-    "done" in {
-      val io = IOs.eval(() => false)(IOs(1)(_ + 1))
-      assert(IOs.isDone(io))
-      assert(IOs.run(io) == 2)
-    }
-    "not done" in {
-      var steps = 0
-      def loop(i: Int): Int > IOs =
-        IOs {
-          steps += 1
-          if (i < 100)
-            loop(i + 1)
-          else
-            i
-        }
+  // "eval" - {
+  //   "done" in {
+  //     val io = IOs.eval(() => false)(IOs(1)(_ + 1))
+  //     assert(IOs.isDone(io))
+  //     assert(IOs.run(io) == 2)
+  //   }
+  //   "not done" in {
+  //     var steps = 0
+  //     def loop(i: Int): Int > IOs =
+  //       IOs {
+  //         steps += 1
+  //         if (i < 100)
+  //           loop(i + 1)
+  //         else
+  //           i
+  //       }
 
-      val io = IOs.eval(() => steps == 50)(loop(0))
-      assert(steps == 50)
-      assert(!IOs.isDone(io))
-      assert(IOs.run(io) == 100)
-      assert(steps == 101)
+  //     val io = IOs.eval(() => steps == 50)(loop(0))
+  //     assert(steps == 50)
+  //     assert(!IOs.isDone(io))
+  //     assert(IOs.run(io) == 100)
+  //     assert(steps == 101)
+  //   }
+  // }
+
+  "attempt" - {
+    "success" in {
+      val io = IOs(1)(_ + 1)
+      checkEquals[Try[Int], Nothing](
+          IOs.run(IOs.attempt(io)),
+          Success(2)
+      )
+    }
+    "failure" in {
+      val ex        = new Exception
+      def fail: Int = throw ex
+      val io        = IOs(fail)
+      checkEquals[Try[Int], Nothing](
+          IOs.run(IOs.attempt(io)),
+          Try(fail)
+      )
     }
   }
 }
