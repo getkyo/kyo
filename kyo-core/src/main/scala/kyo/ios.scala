@@ -18,13 +18,16 @@ import scala.util.Try
 object ios {
 
   trait Preempt extends Safepoint[IOs] {
+
+    def ensure(f: Unit > IOs): Unit
     def apply[T, S](v: => T > (S | IOs)) =
       IOs(v)
   }
   object Preempt {
     val never: Preempt =
       new Preempt {
-        def apply() = false
+        def ensure(f: Unit > IOs) = ()
+        def apply()               = false
       }
   }
 
@@ -36,11 +39,6 @@ object ios {
     def effect = ios.IOs
   }
 
-  private[kyo] abstract class Finalizer[T, S]
-      extends KyoIO[T, S] {
-    def run(): Unit
-  }
-
   final class IOs private[ios] () extends Effect[IO] {
 
     inline def value[T](v: T): T > IOs = v
@@ -48,25 +46,34 @@ object ios {
     inline def attempt[T, S](v: => T > S): Try[T] > S =
       v < Tries
 
-    inline def ensure[T, S](f: => Unit > IOs)(v: => T > S)(using
+    private[kyo] inline def ensure[T, S](f: => Unit > IOs)(v: => T > S)(using
         inline fr: Frame["IOs.ensure"]
     ): T > (S | IOs) =
-      new Finalizer[T, S] {
-        def frame = fr
-        def apply(u: Unit, s: Safepoint[IOs]) =
-          v
-        def run() =
-          try IOs.run(f)
-          catch {
-            case ex if NonFatal(ex) =>
-              ex.printStackTrace() // TODO log
-          }
-      }
+      type M2[_]
+      type E2 <: Effect[M2]
+      def ensureLoop(v: T > (S | IOs)): T > (S | IOs) =
+        v match {
+          case kyo: Kyo[M2, E2, Any, T, S | IOs] @unchecked =>
+            new KyoCont[M2, E2, Any, T, S | IOs](kyo) {
+              def frame = fr
+              def apply(v: Any, s: Safepoint[E2]) =
+                s match {
+                  case s: Preempt =>
+                    s.ensure(IOs(f))
+                    kyo(v, s)
+                  case _ =>
+                    ensureLoop(kyo(v, s))
+                }
+            }
+          case _ =>
+            IOs(f)(_ => v)
+        }
+      ensureLoop(v)
 
     inline def apply[T, S](
         inline f: => T > (S | IOs)
     )(using inline fr: Frame["IOs"]): T > (S | IOs) =
-      new KyoIO[T, (S | IOs)] {
+      new KyoIO[T, S] {
         def frame = fr
         def apply(v: Unit, s: Safepoint[IOs]) =
           f
@@ -84,43 +91,49 @@ object ios {
 
       runLoop(v)
 
-    inline def lazyRun[T, S](v: T > (S | IOs)): T > S =
-      given ShallowHandler[IO, IOs] with {
-        def pure[T](v: T) = v
-        def apply[T, U, S](m: IO[T], f: T => U > (S | IOs)): U > (S | IOs) =
-          f(m)
-      }
-      v < IOs
+    inline def lazyRun[T, S](v: T > (S | IOs))(using inline fr: Frame["IOs.lazyRun"]): T > S =
+      type M2[_]
+      type E2 <: Effect[M2]
+      @tailrec def lazyRunLoop(v: T > (S | IOs)): T > S =
+        val safepoint = Safepoint.noop[IOs]
+        v match {
+          case kyo: Kyo[IO, IOs, Unit, T, S | IOs] @unchecked if (kyo.effect eq IOs) =>
+            lazyRunLoop(kyo((), safepoint))
+          case kyo: Kyo[M2, E2, Any, T, S | IOs] @unchecked =>
+            new KyoCont[M2, E2, Any, T, S](kyo) {
+              def frame = fr
+              def apply(v: Any, s: Safepoint[E2]) =
+                val r =
+                  try kyo(v, s)
+                  catch {
+                    case ex if (NonFatal(ex)) =>
+                      throw ex
+                  }
+                lazyRunLoop(r)
+            }
+          case _ =>
+            v.asInstanceOf[T]
+        }
+
+      lazyRunLoop(v)
 
     inline def isDone[T](v: T > IOs): Boolean =
       !v.isInstanceOf[Kyo[_, _, _, _, _]]
 
     inline def eval[T](p: Preempt)(v: T > IOs): T > IOs =
-      @tailrec def finalize(l: List[Finalizer[T, IOs]]): Unit =
-        if (l ne Nil) {
-          l.head.run()
-          finalize(l.tail)
-        }
-      @tailrec def evalLoop(v: T > IOs, l: List[Finalizer[T, IOs]]): T > IOs =
+      @tailrec def evalLoop(v: T > IOs): T > IOs =
         if (p()) {
-          if (l ne Nil) {
-            IOs.ensure(finalize(l))(v)
-          } else {
-            v
-          }
+          v
         } else {
           v match {
-            case kyo: Finalizer[T, IOs] @unchecked =>
-              evalLoop(kyo((), p), kyo :: l)
             case kyo: Kyo[IO, IOs, Unit, T, IOs] @unchecked =>
-              evalLoop(kyo((), p), l)
+              evalLoop(kyo((), p))
             case _ =>
-              finalize(l)
               v.asInstanceOf[T > IOs]
           }
         }
 
-      evalLoop(v, Nil)
+      evalLoop(v)
   }
   val IOs: IOs = new IOs
 }

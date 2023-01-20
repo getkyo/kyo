@@ -8,8 +8,7 @@ import core._
 object tries {
 
   final class Tries private[tries] extends Effect[Try] {
-    inline
-    def apply[T, S]( inline v: => T > S): T > (S | Tries) =
+    inline def apply[T, S](inline v: => T > S): T > (S | Tries) =
       val a: Try[Try[T] > S]      = Try(v < Tries)
       val b: Try[T] > (S | Tries) = a >> Tries
       val c: T > (S | Tries)      = b > Tries
@@ -17,8 +16,7 @@ object tries {
   }
   val Tries = new Tries
 
-  inline
-  given ShallowHandler[Try, Tries] with {
+  inline given ShallowHandler[Try, Tries] with {
     def pure[T](v: T) =
       Success(v)
     override def handle[T](ex: Throwable) =

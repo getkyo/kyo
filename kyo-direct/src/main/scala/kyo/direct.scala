@@ -42,13 +42,13 @@ object direct {
         }.sortBy {
           case '[t] => TypeTree.of[t].show
         } match {
-          case Nil => Type.of[Nothing]
-          case l =>
-            l.reduce {
-              case ('[t1], '[t2]) =>
-                Type.of[t1 | t2]
-            }
-        }
+        case Nil => Type.of[Nothing]
+        case l =>
+          l.reduce {
+            case ('[t1], '[t2]) =>
+              Type.of[t1 | t2]
+          }
+      }
 
     s match {
       case '[s] =>

@@ -25,12 +25,15 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
   private var curr: T > IOs = init
   private var runtime       = 0L
   private var preempting    = false
+  private var ensures       = List.empty[Unit > IOs]
 
   def preempt() =
     preempting = true
 
   override protected def onComplete(): Unit =
     preempting = true
+
+  def ensure(f: Unit > IOs): Unit = ensures ::= f
 
   def apply(): Boolean =
     preempting
@@ -53,6 +56,7 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
       curr = nullIO
       true
     } else if (super.isDone) {
+      ensures.foreach(IOs.run(_))
       curr = nullIO
       true
     } else {

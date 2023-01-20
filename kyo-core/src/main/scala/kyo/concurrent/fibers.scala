@@ -214,12 +214,12 @@ object fibers {
 
     def sleep(d: Duration): Unit > (IOs | Fibers) =
       IOs {
-        val p = new IOPromise[Unit] with Runnable with (ScheduledFuture[_] => Unit) {
+        val p = new IOPromise[Unit] with Runnable with (ScheduledFuture[_] => Unit) { self =>
           @volatile var timerTask: ScheduledFuture[_] = null
           def apply(f: ScheduledFuture[_]) =
             timerTask = f
           def run() =
-            super.complete(())
+            IOTask(IOs(self.complete(())))
             val t = timerTask
             if (t != null) {
               t.cancel(false)

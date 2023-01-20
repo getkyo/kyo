@@ -8,16 +8,16 @@ import scala.annotation.tailrec
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.LongAdder
-import java.util.concurrent.atomic.DoubleAdder
+import java.util.concurrent.atomic.{LongAdder => JLongAdder}
+import java.util.concurrent.atomic.{DoubleAdder => JDoubleAdder}
 
-object sums {
+object adders {
 
-  opaque type LongSum = LongAdder
-  object LongSum {
-    inline def apply(): LongSum > IOs = IOs(LongAdder())
+  opaque type LongAdder = JLongAdder
+  object LongAdder {
+    inline def apply(): LongAdder > IOs = IOs(JLongAdder())
   }
-  extension (ref: LongSum) {
+  extension (ref: LongAdder) {
     inline def add(v: Long): Unit > IOs =
       IOs(ref.add(v))
     inline def decrement: Unit > IOs =
@@ -28,11 +28,11 @@ object sums {
       IOs(ref.reset())
   }
 
-  opaque type DoubleSum = DoubleAdder
-  object DoubleSum {
-    inline def apply(): DoubleSum > IOs = IOs(DoubleAdder())
+  opaque type DoubleAdder = JDoubleAdder
+  object DoubleAdder {
+    inline def apply(): DoubleAdder > IOs = IOs(JDoubleAdder())
   }
-  extension (ref: DoubleSum) {
+  extension (ref: DoubleAdder) {
     inline def add(v: Double): Unit > IOs =
       IOs(ref.add(v))
     inline def get: Double > IOs =
