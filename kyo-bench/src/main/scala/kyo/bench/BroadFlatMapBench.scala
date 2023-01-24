@@ -33,9 +33,6 @@ class BroadFlatMapBench extends Bench {
   def forkedKyoFiber = KyoRuntime.runFiber(kyoFib(depth))
 
   @Benchmark
-  def forkedKyoFuture = KyoRuntime.runFuture(kyoFib(depth))
-
-  @Benchmark
   def forkedCats = CatsRuntime.runForked(catsFib(depth))
 
   @Benchmark

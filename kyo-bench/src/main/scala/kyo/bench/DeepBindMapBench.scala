@@ -95,16 +95,10 @@ class DeepBindMapBench extends Bench {
   def forkedKyoFiber = KyoRuntime.runFiber(kyoLoop(0))
 
   @Benchmark
-  def forkedKyoFuture = KyoRuntime.runFuture(kyoLoop(0))
-
-  @Benchmark
   def kyoIOArrow = KyoRuntime.runIO(kyoLoopArrow(0))
 
   @Benchmark
   def forkedKyoFiberArrow = KyoRuntime.runFiber(kyoLoopArrow(0))
-
-  @Benchmark
-  def forkedKyoFutureArrow = KyoRuntime.runFuture(kyoLoopArrow(0))
 
   @Benchmark
   def forkedCats = CatsRuntime.runForked(catsLoop(0))

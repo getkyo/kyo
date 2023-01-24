@@ -1,8 +1,8 @@
 package kyo
 
 import kyo.core._
-import kyo.futures._
 import kyo.ios._
+import kyo.concurrent.fibers._
 import zio.Trace
 import zio.prelude._
 import zio.prelude.coherent.CovariantDeriveEqual
@@ -16,17 +16,17 @@ import scala.concurrent.duration.Duration
 
 object MonadLawsTest extends ZIOSpecDefault {
 
-  type Myo[+T] = T > (IOs | Futures)
+  type Myo[+T] = T > (IOs | Fibers)
 
   val listGenF: GenF[Any, Myo] =
     new GenF[Any, Myo] {
       def apply[R, A](gen: Gen[R, A])(implicit trace: Trace) =
         Gen.oneOf(
-            gen.map(v => (v: A > (IOs | Futures))),
+            gen.map(v => (v: A > (IOs | Fibers))),
             gen.map(v => IOs(v)),
-            gen.map(v => Futures.fork(v)),
-            gen.map(v => IOs(Futures.fork(v))),
-            gen.map(v => Futures.fork(IOs(v)))
+            gen.map(v => Fibers.fork(v)),
+            gen.map(v => IOs(Fibers.fork(v))),
+            gen.map(v => Fibers.fork(IOs(v)))
         )
     }
 
@@ -41,7 +41,7 @@ object MonadLawsTest extends ZIOSpecDefault {
       override def derive[A: Equal]: Equal[Myo[A]] =
         new Equal[Myo[A]] {
           protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean =
-            def run(m: Myo[A]): A = IOs.run(Futures.block(m, Duration.Inf))
+            def run(m: Myo[A]): A = IOs.run(Fibers.block(m))
             run(l) == run(r)
         }
     }
