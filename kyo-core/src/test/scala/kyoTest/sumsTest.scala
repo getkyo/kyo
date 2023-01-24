@@ -58,4 +58,17 @@ class sumsTest extends KyoTest {
       IOs.run(Sums.drop[String](Sums.get[String]))
     assert(s == "")
   }
+  "list" in {
+    val v =
+      for {
+        _  <- Sums.add(List(1))
+        v1 <- Sums.get[List[Int]]
+        _  <- Sums.add(List(2))
+        v2 <- Sums.get[List[Int]]
+        _  <- Sums.add(List(3))
+        v3 <- Sums.get[List[Int]]
+      } yield (v1, v2, v3)
+    val res = IOs.run(Sums.drop[List[Int]](v))
+    assert(res == (List(1), List(1, 2), List(1, 2, 3)))
+  }
 }

@@ -18,11 +18,7 @@ object consoles {
   object Console {
     given default: Console with {
       def readln: String > IOs =
-        IOs {
-          val l = scala.Console.in.readLine()
-          println("aaaa" + l)
-          l
-        }
+        IOs(scala.Console.in.readLine())
       def print(s: => String): Unit > IOs =
         IOs(scala.Console.out.print(s))
       def printErr(s: => String): Unit > IOs =
