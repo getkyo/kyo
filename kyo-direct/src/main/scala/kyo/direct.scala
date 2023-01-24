@@ -13,9 +13,9 @@ object direct {
 
   private inline given kyoCpsMonad[S]: KyoCpsMonad[S] = KyoCpsMonad[S]
 
-  inline def Run[T, S](v: T > S): T = compiletime.error("must be used within a `Defer` block")
+  inline def run[T, S](v: T > S): T = compiletime.error("must be used within a `defer` block")
 
-  transparent inline def Defer[T](inline f: T) = ${ deferImpl[T]('f) }
+  transparent inline def defer[T](inline f: T) = ${ deferImpl[T]('f) }
 
   private def deferImpl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
     import quotes.reflect._
@@ -24,7 +24,9 @@ object direct {
     var effects = List.empty[Type[_]]
 
     Trees.traverse(f.asTerm) {
-      case '{ Run[t, s]($v) } =>
+      case expr if (expr.isExprOf[>[Any, Any]]) =>
+        error("Kyo computations must be within a `run` block", expr)
+      case '{ run[t, s]($v) } =>
         effects ::= Type.of[s]
     }
 
@@ -54,7 +56,7 @@ object direct {
       case '[s] =>
         val body =
           Trees.transform(f.asTerm) {
-            case '{ Run[t, s2]($v) } =>
+            case '{ run[t, s2]($v) } =>
               '{
                 await[[T] =>> T > s, t, [T] =>> T > s](${ v.asExprOf[t > s] })
               }.asTerm

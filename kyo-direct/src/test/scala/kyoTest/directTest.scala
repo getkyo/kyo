@@ -4,6 +4,7 @@ import kyo.core._
 import kyo.tries._
 import kyo.options._
 import kyo.direct._
+import kyo.direct
 import kyo.ios._
 import kyo.envs._
 import kyo.concurrent.fibers._
@@ -15,8 +16,8 @@ import kyo.concurrent.refs._
 class directTest extends KyoTest {
 
   "one run" in {
-    val io = Defer {
-      val a = Run(IOs("hello"))
+    val io = defer {
+      val a = direct.run(IOs("hello"))
       a + " world"
     }
     assert(IOs.run(io) == "hello world")
@@ -24,9 +25,9 @@ class directTest extends KyoTest {
 
   "two runs" in {
     val io =
-      Defer {
-        val a = Run(IOs("hello"))
-        val b = Run(IOs("world"))
+      defer {
+        val a = direct.run(IOs("hello"))
+        val b = direct.run(IOs("world"))
         a + " " + b
       }
     assert(IOs.run(io) == "hello world")
@@ -34,9 +35,9 @@ class directTest extends KyoTest {
 
   "two effects" in {
     val io: String > (IOs | Options) =
-      Defer {
-        val a = Run(Options.get(Some("hello")))
-        val b = Run(IOs("world"))
+      defer {
+        val a = direct.run(Options.get(Some("hello")))
+        val b = direct.run(IOs("world"))
         a + " " + b
       }
     assert(IOs.run(io < Options) == Some("hello world"))
@@ -45,11 +46,11 @@ class directTest extends KyoTest {
   "if" in {
     var calls = List.empty[Int]
     val io: Boolean > IOs =
-      Defer {
-        if (Run(IOs { calls :+= 1; true }))
-          Run(IOs { calls :+= 2; true })
+      defer {
+        if (direct.run(IOs { calls :+= 1; true }))
+          direct.run(IOs { calls :+= 2; true })
         else
-          Run(IOs { calls :+= 3; true })
+          direct.run(IOs { calls :+= 3; true })
       }
     assert(IOs.run(io))
     assert(calls == List(1, 2))
@@ -65,8 +66,8 @@ class directTest extends KyoTest {
       "direct" in {
         var calls = List.empty[Int]
         val io: Boolean > IOs =
-          Defer {
-            (Run(IOs { calls :+= 1; true }) && Run(IOs { calls :+= 2; true }))
+          defer {
+            (direct.run(IOs { calls :+= 1; true }) && direct.run(IOs { calls :+= 2; true }))
           }
         assert(IOs.run(io))
         assert(calls == List(2, 1))
@@ -81,8 +82,8 @@ class directTest extends KyoTest {
       "direct" in {
         var calls = List.empty[Int]
         val io: Boolean > IOs =
-          Defer {
-            (Run(IOs { calls :+= 1; true }) || Run(IOs { calls :+= 2; true }))
+          defer {
+            (direct.run(IOs { calls :+= 1; true }) || direct.run(IOs { calls :+= 2; true }))
           }
         assert(IOs.run(io))
         assert(calls == List(2, 1))
@@ -92,14 +93,14 @@ class directTest extends KyoTest {
 
   "options" in {
     def test[T](opt: Option[T]) =
-      assert(opt == Defer(Run(opt > Options)) < Options)
+      assert(opt == defer(direct.run(opt > Options)) < Options)
     test(Some(1))
     test(None)
     test(Some("a"))
   }
   "tries" in {
     def test[T](t: Try[T]) =
-      assert(t == Defer(Run(t > Tries)) < Tries)
+      assert(t == defer(direct.run(t > Tries)) < Tries)
     test(Try(1))
     test(Try(throw new Exception("a")))
     test(Try("a"))
@@ -117,29 +118,26 @@ class directTest extends KyoTest {
 
       def printlnErr(s: => String): Unit > IOs = ???
     }
-    val io: String > IOs = Consoles.run(console)(Defer(Run(Consoles.readln)))
+    val io: String > IOs = Consoles.run(console)(defer(direct.run(Consoles.readln)))
     assert(IOs.run(io) == "hello")
   }
 
-  // case class Person(name: String, age: Int, minor: Boolean)
-
-  // def test(
-  //     nameOptions: Option[String],
-  //     ageString: String
-  // ): Person > (Options | Tries | Consoles | Fibers | IOs) =
-  //   Defer {
-  //     val name   = Run(nameOptions > Options)
-  //     val age    = Run(Tries(Integer.parseInt(ageString)))
-  //     val minAge = Run(Consoles.readln(i => Tries(Integer.parseInt(i))))
-  //     val minor  = Run(Fibers.fork(age < minAge))
-  //     Person(name, age, minor)
-  //   }
-
-  // val a: Person > (Fibers | Consoles | (IOs | Options | Tries)) = test(Some("John"), "10")
-  // val b: Option[Person] > (Fibers | Consoles | (IOs | Tries))   = a < Options
-  // val c: Try[Option[Person]] > (Fibers | Consoles | IOs)        = b < Tries
-  // val d: Try[Option[Person]] > (IOs | Fibers)                   = Consoles.run(c)
-  // val e                                                         = Fibers.block(d)
-  // val f: Try[Option[Person]]                                    = IOs.run(e)
-  // println(f)
+  "kyo computations must be within a run block" in {
+    assertDoesNotCompile("defer(IOs(1))")
+    assertDoesNotCompile("""
+      defer {
+        val a = IOs(1)
+        10
+      }
+    """)
+    assertDoesNotCompile("""
+      defer {
+        val a = {
+          val b = IOs(1)
+          10
+        }
+        10
+      }
+    """)
+  }
 }
