@@ -29,7 +29,7 @@ object fibers {
   private val timer = Executors.newScheduledThreadPool(1, ThreadFactory("kyo-fiber-sleep-timer"))
 
   opaque type Promise[T] <: Fiber[T] = IOPromise[T]
-  opaque type Fiber[T]               = IOPromise[T]
+  opaque type Fiber[T]               = T | IOPromise[T]
 
   extension [T](p: Promise[T]) {
 
@@ -40,26 +40,51 @@ object fibers {
   extension [T](f: Fiber[T]) {
 
     def isDone: Boolean > IOs =
-      IOs(f.isDone)
+      f match {
+        case f: IOPromise[T] @unchecked =>
+          IOs(f.isDone)
+        case _ =>
+          true
+      }
 
     def join: T > Fibers =
-      f > Fibers
+      f match {
+        case f: IOPromise[T] @unchecked =>
+          f > Fibers
+        case _ =>
+          f.asInstanceOf[T > Fibers]
+      }
 
     inline def joinTry: Try[T] > (Fibers | IOs) =
-      IOs {
-        val p = new IOPromise[Try[T]]
-        p.interrupts(f)
-        f.onComplete { t =>
-          p.complete(Try(IOs.run(t)))
-        }
-        p > Fibers
+      inline f match {
+        case f: IOPromise[T] @unchecked =>
+          IOs {
+            val p = new IOPromise[Try[T]]
+            p.interrupts(f)
+            f.onComplete { t =>
+              p.complete(Try(IOs.run(t)))
+            }
+            p > Fibers
+          }
+        case _ =>
+          Try(f.asInstanceOf[T])
       }
 
     inline def block: T > IOs =
-      IOs(f.block())
+      f match {
+        case f: IOPromise[T] @unchecked =>
+          IOs(f.block())
+        case _ =>
+          f.asInstanceOf[T > IOs]
+      }
 
     inline def interrupt: Boolean > IOs =
-      IOs(f.interrupt())
+      f match {
+        case f: IOPromise[T] @unchecked =>
+          IOs(f.interrupt())
+        case _ =>
+          false
+      }
   }
 
   final class Fibers private[fibers] extends Effect[Fiber] {
@@ -235,33 +260,44 @@ object fibers {
     inline def block[T, S](v: T > (S | Fibers)): T > (S | IOs) =
       given ShallowHandler[Fiber, Fibers] =
         new ShallowHandler[Fiber, Fibers] {
-          def pure[T](v: T) =
-            val p = IOPromise[T]
-            p.complete(v)
-            p
+          def pure[T](v: T) = v
           def apply[T, U, S](m: Fiber[T], f: T => U > (S | Fibers)) =
-            f(m.block())
+            m match {
+              case m: IOPromise[T] @unchecked =>
+                f(m.block())
+              case _ =>
+                f(m.asInstanceOf[T])
+            }
         }
-      IOs((v < Fibers)(_.block()))
+      (v < Fibers)(_.block)
   }
   val Fibers = new Fibers
 
   inline given DeepHandler[Fiber, Fibers] =
     new DeepHandler[Fiber, Fibers] {
-      def pure[T](v: T) =
-        val p = IOPromise[T]
-        p.complete(v)
-        p
-      def flatMap[T, U](fiber: Fiber[T], f: T => Fiber[U]): Fiber[U] =
-        val r = IOPromise[U]
-        r.interrupts(fiber)
-        fiber.onComplete { v =>
-          try f(IOs.run(v)).onComplete(r.complete(_))
-          catch {
-            case ex if (NonFatal(ex)) =>
-              r.complete(IOs(throw ex))
-          }
+      def pure[T](v: T) = v
+      def flatMap[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
+        m match {
+          case m: IOPromise[T] @unchecked =>
+            val r = IOPromise[U]
+            r.interrupts(m)
+            m.onComplete { v =>
+              try {
+                f(IOs.run(v)) match {
+                  case v: IOPromise[U] @unchecked =>
+                    v.onComplete(r.complete(_))
+                  case v =>
+                    r.complete(v.asInstanceOf[U])
+                }
+              } catch {
+                case ex if (NonFatal(ex)) =>
+                  r.complete(IOs(throw ex))
+              }
+            }
+            r
+          case _ =>
+            f(m.asInstanceOf[T])
         }
-        r
+
     }
 }
