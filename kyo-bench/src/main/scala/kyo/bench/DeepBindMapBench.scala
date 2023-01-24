@@ -24,88 +24,63 @@ import kyo.bench.CatsRuntime
 import kyo.bench.KyoRuntime
 
 import kyo.concurrent.scheduler.Scheduler
-class DeepBindMapBench extends Bench {
+
+class DeepBindMapBench extends Bench[Int] {
 
   val depth = 10000
 
-  final def kyoLoop(i: Int): Int > IOs =
-    IOs {
-      if (i > depth) i
-      else
-        IOs(i + 11)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(kyoLoop)
-    }
+  def kyoBench() = {
+    def loop(i: Int): Int > IOs =
+      IOs {
+        if (i > depth) i
+        else
+          IOs(i + 11)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(loop)
+      }
+    loop(0)
+  }
 
-  val mapArrow =
-    Arrows[Int, Nothing, Int, IOs](
-        _(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(
-            _ - 1
-        )
-    )
+  def catsBench() = {
+    def loop(i: Int): IO[Int] =
+      IO.unit.flatMap { _ =>
+        if (i > depth)
+          IO.pure(i)
+        else
+          IO(i + 11)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .flatMap(loop)
+      }
+    loop(0)
+  }
 
-  final def kyoLoopArrow(i: Int): Int > IOs =
-    IOs {
-      if (i > depth) i
-      else
-        IOs(i + 11)(mapArrow(_))(kyoLoopArrow)
-    }
-
-  final def catsLoop(i: Int): IO[Int] =
-    IO.unit.flatMap { _ =>
-      if (i > depth)
-        IO.pure(i)
-      else
-        IO(i + 11)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .flatMap(catsLoop)
-    }
-
-  final def zioLoop(i: Int): UIO[Int] =
-    ZIO.unit.flatMap { _ =>
-      if (i > depth)
-        ZIO.succeed(i)
-      else
-        ZIO.unit
-          .map(_ => (i + 11))
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .map(_ - 1)
-          .flatMap(zioLoop)
-    }
-
-  @Benchmark
-  def kyoIO = KyoRuntime.runIO(kyoLoop(0))
-
-  @Benchmark
-  def forkedKyoFiber = KyoRuntime.runFiber(kyoLoop(0))
-
-  @Benchmark
-  def kyoIOArrow = KyoRuntime.runIO(kyoLoopArrow(0))
-
-  @Benchmark
-  def forkedKyoFiberArrow = KyoRuntime.runFiber(kyoLoopArrow(0))
-
-  @Benchmark
-  def forkedCats = CatsRuntime.runForked(catsLoop(0))
-
-  @Benchmark
-  def zio = ZioRuntime.run(zioLoop(0))
-
-  @Benchmark
-  def forkedZio = ZioRuntime.runForked(zioLoop(0))
+  def zioBench() = {
+    def loop(i: Int): UIO[Int] =
+      ZIO.unit.flatMap { _ =>
+        if (i > depth)
+          ZIO.succeed(i)
+        else
+          ZIO.unit
+            .map(_ => (i + 11))
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .map(_ - 1)
+            .flatMap(loop)
+      }
+    loop(0)
+  }
 }

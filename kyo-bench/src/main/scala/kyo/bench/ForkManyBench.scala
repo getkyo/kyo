@@ -6,66 +6,63 @@ import cats.effect.kernel.Fiber
 import kyo.bench.Bench
 import kyo.bench.CatsRuntime
 import kyo.bench.ZioRuntime
-class ForkManyBench extends Bench {
+import kyo.core.>
+import kyo.concurrent.fibers.Fibers
+import kyo.ios.IOs
 
-  @Benchmark
-  def forkManyCats(): Int = {
+class ForkManyBench extends Bench[Int] {
+
+  def catsBench() = {
     import cats.effect.IO
 
-    def catsEffectRepeat[A](n: Int)(io: IO[A]): IO[A] =
+    def repeat[A](n: Int)(io: IO[A]): IO[A] =
       if (n <= 1) io
-      else io.flatMap(_ => catsEffectRepeat(n - 1)(io))
+      else io.flatMap(_ => repeat(n - 1)(io))
 
-    val io = for {
+    for {
       deferred <- IO.deferred[Unit]
       ref      <- IO.ref(10000)
       effect = ref
         .modify(n => (n - 1, if (n == 1) deferred.complete(()) else IO.unit))
         .flatten
-      _ <- catsEffectRepeat(10000)(effect.start)
+      _ <- repeat(10000)(effect.start)
       _ <- deferred.get
     } yield 0
-
-    CatsRuntime.run(io)
   }
 
-  @Benchmark
-  def forkManyKyo(): Int = {
+  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber())())
+  override def kyoBenchFiber() = {
     import kyo.core._
     import kyo.ios._
     import kyo.concurrent.refs._
     import kyo.concurrent.fibers._
 
-    def kyoRepeat[A](n: Int)(io: A > IOs): A > IOs =
+    def repeat[A](n: Int)(io: A > IOs): A > IOs =
       if (n <= 1) io
-      else io(_ => kyoRepeat(n - 1)(io))
+      else io(_ => repeat(n - 1)(io))
 
-    val io: Int > (IOs | Fibers) =
-      for {
-        promise <- Fibers.promise[Unit]
-        ref     <- IntRef(10000)
-        effect = ref.decrementAndGet { i =>
-          if (i == 1)
-            promise.complete(())
-          else
-            false
-        }
-        _ <- kyoRepeat(10000)(Fibers.forkFiber(effect))
-        _ <- promise.join
-      } yield 0
-
-    IOs.run(Fibers.block(io))
+    for {
+      promise <- Fibers.promise[Unit]
+      ref     <- IntRef(10000)
+      effect = ref.decrementAndGet { i =>
+        if (i == 1)
+          promise.complete(())
+        else
+          false
+      }
+      _ <- repeat(10000)(Fibers.forkFiber(effect))
+      _ <- promise.join
+    } yield 0
   }
 
-  @Benchmark
-  def forkManyZio(): Int = {
+  def zioBench() = {
     import zio.{Promise, Ref, ZIO}
 
     def repeat[R, E, A](n: Int)(zio: ZIO[R, E, A]): ZIO[R, E, A] =
       if (n <= 1) zio
       else zio *> repeat(n - 1)(zio)
 
-    val io = for {
+    for {
       promise <- Promise.make[Nothing, Unit]
       ref     <- Ref.make(10000)
       effect = ref
@@ -74,7 +71,5 @@ class ForkManyBench extends Bench {
       _ <- repeat(10000)(effect.forkDaemon)
       _ <- promise.await
     } yield 0
-
-    ZioRuntime.run(io)
   }
 }

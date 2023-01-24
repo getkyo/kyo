@@ -14,46 +14,40 @@ import kyo.bench.CatsRuntime
 import kyo.bench.KyoRuntime
 import kyo.bench.ZioRuntime
 
-class DeepBindBench extends Bench {
+class DeepBindBench extends Bench[Unit] {
 
   val depth = 10000
 
-  final def kyoLoop(i: Int): Unit > IOs =
-    IOs {
-      if (i > depth)
-        ()
-      else
-        kyoLoop(i + 1)
-    }
+  def kyoBench() = {
+    def loop(i: Int): Unit > IOs =
+      IOs {
+        if (i > depth)
+          ()
+        else
+          loop(i + 1)
+      }
+    loop(0)
+  }
 
-  final def catsLoop(i: Int): IO[Unit] =
-    IO.unit.flatMap { _ =>
-      if (i > depth)
-        IO.unit
-      else
-        catsLoop(i + 1)
-    }
+  def catsBench() = {
+    def loop(i: Int): IO[Unit] =
+      IO.unit.flatMap { _ =>
+        if (i > depth)
+          IO.unit
+        else
+          loop(i + 1)
+      }
+    loop(0)
+  }
 
-  final def zioLoop(i: Int): UIO[Unit] =
-    ZIO.unit.flatMap { _ =>
-      if (i > depth)
-        ZIO.unit
-      else
-        zioLoop(i + 1)
-    }
-
-  @Benchmark
-  def kyoIO = KyoRuntime.runIO(kyoLoop(0))
-
-  @Benchmark
-  def forkedKyoFiber = KyoRuntime.runFiber(kyoLoop(0))
-
-  @Benchmark
-  def forkedCats = CatsRuntime.runForked(catsLoop(0))
-
-  @Benchmark
-  def zio = ZioRuntime.run(zioLoop(0))
-
-  @Benchmark
-  def forkedZio = ZioRuntime.runForked(zioLoop(0))
+  def zioBench() = {
+    def loop(i: Int): UIO[Unit] =
+      ZIO.unit.flatMap { _ =>
+        if (i > depth)
+          ZIO.unit
+        else
+          loop(i + 1)
+      }
+    loop(0)
+  }
 }

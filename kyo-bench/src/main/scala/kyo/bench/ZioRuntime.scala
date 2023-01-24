@@ -9,6 +9,6 @@ object ZioRuntime {
       zioRuntime.unsafe.run(io).getOrThrow()
     )
 
-  def runForked[A](io: zio.ZIO[Any, Throwable, A]): A =
+  def runFork[A](io: zio.ZIO[Any, Throwable, A]): A =
     run(zio.ZIO.yieldNow.flatMap(_ => io))
 }

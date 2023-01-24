@@ -8,9 +8,9 @@ import scala.concurrent.ExecutionContext.Implicits.global
 
 object KyoRuntime {
 
-  def runIO[T](v: T > IOs): T =
+  def run[T](v: T > IOs): T =
     IOs.run(v)
 
-  def runFiber[T](v: T > IOs): T =
-    IOs.run(Fibers.forkFiber(v)(_.block))
+  def runFork[T](v: T > (IOs | Fibers)): T =
+    run(Fibers.block(Fibers.fork[T > (IOs | Fibers)](v)()))
 }

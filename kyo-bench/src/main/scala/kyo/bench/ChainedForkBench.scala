@@ -11,6 +11,7 @@ import java.util.concurrent.Executors
 import kyo.concurrent.scheduler.Scheduler
 import org.openjdk.jmh.infra.Blackhole
 import kyo.core._
+import kyo.concurrent.fibers._
 import kyo.ios.IOs
 import java.util.concurrent.locks.LockSupport
 import cats.effect.kernel.Deferred
@@ -22,12 +23,12 @@ import kyo.bench.CatsRuntime
 import kyo.concurrent.fibers
 import kyo.concurrent.scheduler.Scheduler
 import kyo.concurrent.fibers
-class ChainedForkBench extends Bench {
+
+class ChainedForkBench extends Bench[Int] {
 
   val depth = 10000
 
-  @Benchmark
-  def chainedForkCats(): Int = {
+  def catsBench() = {
     import cats.effect.{Deferred, IO}
     import cats.effect.unsafe.IORuntime
 
@@ -35,32 +36,42 @@ class ChainedForkBench extends Bench {
       if (n <= 0) deferred.complete(())
       else IO.unit.flatMap(_ => iterate(deferred, n - 1).start)
 
-    val io = for {
+    for {
       deferred <- IO.deferred[Unit]
       _        <- iterate(deferred, depth).start
       _        <- deferred.get
     } yield 0
-
-    CatsRuntime.run(io)
   }
 
-  @Benchmark
-  def chainedForkKyo(): Int = {
+  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber())())
+
+  override def kyoBenchFiber() = {
     import kyo.core._
     import kyo.concurrent.fibers._
     import kyo.ios._
 
-    def iterate(p: Promise[Unit], n: Int): Boolean > (IOs | Fibers) =
-      if (n <= 0) p.complete(())
-      else Fibers.forkFiber(iterate(p, n - 1))(_ >> Fibers)
+    def iterate(p: Promise[Unit], n: Int): Unit > (IOs | Fibers) =
+      if (n <= 0) p.complete(()).unit
+      else Fibers.forkFiber(iterate(p, n - 1)).unit
 
-    val io: Int > (IOs | Fibers) = for {
+    for {
       p <- Fibers.promise[Unit]
       _ <- Fibers.forkFiber(iterate(p, depth))
       _ <- p.join
     } yield 0
-
-    IOs.run(Fibers.block(IOs.lazyRun(io)))
   }
 
+  def zioBench() = {
+    import zio.{Promise, ZIO}
+
+    def iterate(promise: Promise[Nothing, Unit], n: Int): ZIO[Any, Nothing, Any] =
+      if (n <= 0) promise.succeed(())
+      else ZIO.unit.flatMap(_ => iterate(promise, n - 1).forkDaemon)
+
+    for {
+      promise <- Promise.make[Nothing, Unit]
+      _       <- iterate(promise, 1000).forkDaemon
+      _       <- promise.await
+    } yield 0
+  }
 }
