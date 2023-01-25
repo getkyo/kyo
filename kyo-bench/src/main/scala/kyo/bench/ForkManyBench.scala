@@ -44,10 +44,10 @@ class ForkManyBench extends Bench[Int] {
     for {
       promise <- Fibers.promise[Unit]
       ref     <- IntRef(10000)
-      effect = ref.decrementAndGet { i =>
-        if (i == 1)
+      effect = ref.decrementAndGet {
+        case 1 =>
           promise.complete(())
-        else
+        case _ =>
           false
       }
       _ <- repeat(10000)(Fibers.forkFiber(effect))

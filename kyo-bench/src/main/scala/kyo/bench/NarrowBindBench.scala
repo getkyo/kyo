@@ -10,10 +10,10 @@ class NarrowBindBench extends Bench[Int] {
     import kyo.lists._
 
     def loop(i: Int): Int > IOs =
-      if (i < depth) IOs(i + 1).flatMap(loop)
+      if (i < depth) IOs(i + 1)(loop)
       else IOs(i)
 
-    IOs(0).flatMap(loop)
+    IOs(0)(loop)
   }
 
   def catsBench() = {

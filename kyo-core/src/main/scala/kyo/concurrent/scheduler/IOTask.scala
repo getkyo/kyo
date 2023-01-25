@@ -22,10 +22,10 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
 
   val creationTs = Coordinator.tick()
 
-  private var curr: T > IOs = init
-  private var runtime       = 0L
-  @volatile private var preempting    = false
-  private var ensures       = List.empty[Unit > IOs]
+  private var curr: T > IOs        = init
+  private var runtime              = 0L
+  @volatile private var preempting = false
+  private var ensures              = List.empty[Unit > IOs]
 
   def preempt() =
     preempting = true

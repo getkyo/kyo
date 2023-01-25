@@ -33,20 +33,20 @@ abstract class Bench[T] {
   def catsBench(): IO[T]
 
   @Benchmark
-  def syncKyo: T = KyoRuntime.run(kyoBench())
+  def syncKyo(): T = KyoRuntime.run(kyoBench())
 
   @Benchmark
-  def forkKyo: T = KyoRuntime.runFork(kyoBenchFiber())
+  def forkKyo(): T = KyoRuntime.runFork(kyoBenchFiber())
 
   @Benchmark
-  def syncCats: T = CatsRuntime.run(catsBench())
+  def syncCats(): T = CatsRuntime.run(catsBench())
 
   @Benchmark
-  def forkCats: T = CatsRuntime.runFork(catsBench())
+  def forkCats(): T = CatsRuntime.runFork(catsBench())
 
   @Benchmark
-  def syncZio: T = ZioRuntime.run(zioBench())
+  def syncZio(): T = ZioRuntime.run(zioBench())
 
   @Benchmark
-  def forkZio: T = ZioRuntime.runFork(zioBench())
+  def forkZio(): T = ZioRuntime.runFork(zioBench())
 }

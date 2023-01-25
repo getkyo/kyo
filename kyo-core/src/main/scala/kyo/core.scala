@@ -35,10 +35,12 @@ object core {
     def apply[T, S](v: => T > (S | E)): T > (S | E)
   }
   object Safepoint {
-    given noop[E <: Effect[_]]: Safepoint[E] with {
-      def apply()                        = false
-      def apply[T, S](v: => T > (S | E)) = v
+    private val _noop = new Safepoint[Effect[_]] {
+      def apply()                                = false
+      def apply[T, S](v: => T > (S | Effect[_])) = v
     }
+    inline given noop[E <: Effect[_]]: Safepoint[E] =
+      _noop.asInstanceOf[Safepoint[E]]
   }
 
   private[kyo] sealed trait AKyo[+T, +S]
