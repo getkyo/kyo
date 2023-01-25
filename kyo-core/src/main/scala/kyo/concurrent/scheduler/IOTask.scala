@@ -46,7 +46,7 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
       preempting = false
     } catch {
       case ex if (NonFatal(ex)) =>
-        complete(IOs(throw ex))
+        complete(IOs[T, Nothing](throw ex))
         curr = nullIO
     } finally {
       runtime += Coordinator.tick() - start

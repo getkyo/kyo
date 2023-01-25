@@ -33,7 +33,7 @@ object frames {
         import sourcecode._
         import quotes.reflect._
         val pos    = quotes.reflect.Position.ofMacroExpansion
-        val file   = pos.sourceFile.jpath.getFileName.toString
+        val file   = pos.sourceFile.getJPath.get.getFileName.toString
         val line   = pos.startLine + 1
         val column = pos.startColumn + 1
         val location = Macros.enclosing(machine = false)(!Util.isSynthetic(_)).replaceAll(

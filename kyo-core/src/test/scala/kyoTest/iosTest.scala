@@ -93,7 +93,7 @@ class iosTest extends KyoTest {
         }
       assert(!called)
       checkEquals[Int, Nothing](
-          IOs.run(v),
+          IOs.run[Int](v),
           1
       )
       assert(called)
@@ -154,7 +154,7 @@ class iosTest extends KyoTest {
     "success" in {
       val io = IOs(1)(_ + 1)
       checkEquals[Try[Int], Nothing](
-          IOs.run(IOs.attempt(io)),
+          IOs.run[Try[Int]](IOs.attempt(io)),
           Success(2)
       )
     }
@@ -163,7 +163,7 @@ class iosTest extends KyoTest {
       def fail: Int = throw ex
       val io        = IOs(fail)
       checkEquals[Try[Int], Nothing](
-          IOs.run(IOs.attempt(io)),
+          IOs.run[Try[Int]](IOs.attempt(io)),
           Try(fail)
       )
     }

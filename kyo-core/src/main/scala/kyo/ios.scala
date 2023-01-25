@@ -46,6 +46,14 @@ object ios {
     inline def attempt[T, S](v: => T > S): Try[T] > S =
       v < Tries
 
+    inline def collect[T](l: List[T > IOs]): List[T] > IOs =
+      def collectLoop(l: List[T > IOs], acc: List[T]): List[T] > IOs =
+        l match {
+          case Nil          => acc.reverse
+          case head :: tail => head(v => collectLoop(tail, v :: acc))
+        }
+      collectLoop(l, Nil)
+
     private[kyo] inline def ensure[T, S](f: => Unit > IOs)(v: => T > S)(using
         inline fr: Frame["IOs.ensure"]
     ): T > (S | IOs) =

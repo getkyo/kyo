@@ -43,14 +43,14 @@ class ChainedForkBench extends Bench[Int] {
     } yield 0
   }
 
-  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber())())
+  def kyoBench() = Fibers.block(kyoBenchFiber())
 
   override def kyoBenchFiber() = {
     import kyo.core._
     import kyo.concurrent.fibers._
     import kyo.ios._
 
-    def iterate(p: Promise[Unit], n: Int): Unit > (IOs | Fibers) =
+    def iterate(p: Promise[Unit], n: Int): Unit > IOs =
       if (n <= 0) p.complete(()).unit
       else Fibers.forkFiber(iterate(p, n - 1)).unit
 

@@ -1,14 +1,15 @@
 val scala3Version = "3.2.0"
 
-scalacOptions ++= Seq(
+val compilerOptions = Seq(
     "-encoding",
     "utf8",
     "-feature",
     "-unchecked",
     "-deprecation",
-    "-explain",
     "-language:implicitConversions",
-    "-Vprofile"
+    // "-explain",
+    // "-Wvalue-discard",
+    //"-Vprofile",
 )
 
 // # Set up some configuration for publishing to GitHub
@@ -47,6 +48,7 @@ val versionFromTag: String = sys.env
     }
   }
   .getOrElse(defaultVersion)
+
 ThisBuild / version := versionFromTag
 
 ThisBuild / publishMavenStyle := true // GitHub resolves maven style
@@ -61,8 +63,6 @@ ThisBuild / credentials += Credentials(
     sys.env.getOrElse("GITHUB_TOKEN", "") // password
 )
 
-scalafmtOnCompile := true
-
 lazy val kyo = (project in file("."))
   .aggregate(`kyo-core`, `kyo-bench`, `kyo-zio`, `kyo-direct`)
   .settings(
@@ -75,9 +75,11 @@ lazy val kyo = (project in file("."))
 lazy val `kyo-core` = project
   .in(file("kyo-core"))
   .settings(
-      name                                   := "kyo-core",
-      scalaVersion                           := scala3Version,
-      fork                                   := true,
+      name         := "kyo-core",
+      scalaVersion := scala3Version,
+      fork         := true,
+      scalacOptions ++= compilerOptions,
+      scalafmtOnCompile                      := true,
       libraryDependencies += "com.lihaoyi"   %% "sourcecode"        % "0.3.0",
       libraryDependencies += "dev.zio"       %% "izumi-reflect"     % "2.2.2",
       libraryDependencies += "dev.zio"       %% "zio-test"          % "2.0.5"      % Test,
@@ -92,9 +94,11 @@ lazy val `kyo-direct` = project
   .in(file("kyo-direct"))
   .dependsOn(`kyo-core` % "test->test;compile->compile")
   .settings(
-      name                                    := "kyo-direct",
-      scalaVersion                            := scala3Version,
-      fork                                    := true,
+      name         := "kyo-direct",
+      scalaVersion := scala3Version,
+      fork         := true,
+      scalacOptions ++= compilerOptions,
+      scalafmtOnCompile                        := true,
       libraryDependencies += "com.github.rssh" %% "dotty-cps-async" % "0.9.14"
   )
 
@@ -102,9 +106,11 @@ lazy val `kyo-zio` = project
   .in(file("kyo-zio"))
   .dependsOn(`kyo-core` % "test->test;compile->compile")
   .settings(
-      name                             := "kyo-zio",
-      scalaVersion                     := scala3Version,
-      fork                             := true,
+      name         := "kyo-zio",
+      scalaVersion := scala3Version,
+      fork         := true,
+      scalacOptions ++= compilerOptions,
+      scalafmtOnCompile                := true,
       libraryDependencies += "dev.zio" %% "zio" % "2.0.3"
   )
 
@@ -113,9 +119,11 @@ lazy val `kyo-bench` = project
   .enablePlugins(JmhPlugin)
   .dependsOn(`kyo-core`)
   .settings(
-      name                                   := "kyo-bench",
-      scalaVersion                           := scala3Version,
-      fork                                   := true,
+      name         := "kyo-bench",
+      scalaVersion := scala3Version,
+      fork         := true,
+      scalacOptions ++= compilerOptions,
+      scalafmtOnCompile                      := true,
       libraryDependencies += "org.typelevel" %% "cats-effect" % "3.3.12",
       libraryDependencies += "dev.zio"       %% "zio"         % "2.0.5"
   )

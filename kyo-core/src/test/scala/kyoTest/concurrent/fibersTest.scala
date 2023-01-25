@@ -71,7 +71,7 @@ class fibersTest extends KyoTest {
     "nested" in run {
       val t1 = Thread.currentThread()
       for {
-        t2 <- Fibers.fork(Fibers.fork(Thread.currentThread()))
+        t2 <- Fibers.fork(IOs.value(Fibers.fork(Thread.currentThread())))
       } yield assert(t1 != t2)
     }
   }
@@ -328,15 +328,15 @@ class fibersTest extends KyoTest {
       }
     }
     "outer" in new Context {
-      val io1: (AtomicInteger & Closeable, Int, Int, Int) > (Scopes | (IOs | (IOs | Fibers))) =
+      val io1: (AtomicInteger & Closeable, Set[Int]) > (Scopes | IOs | Fibers) =
         for {
           r        <- Scopes.acquire(resource1)
           v1       <- IOs(r.getAndIncrement())
           (v2, v3) <- Fibers.fork(r.getAndIncrement(), r.getAndIncrement())
-        } yield (r, v1, v2, v3)
-      val io2: (AtomicInteger, Int, Int, Int) > (IOs | Fibers) =
+        } yield (r, Set(v1, v2, v3))
+      val io2: (AtomicInteger, Set[Int]) > (IOs | Fibers) =
         Scopes.close(io1)
-      assert(run(io2) == (resource1, 0, 1, 2))
+      assert(run(io2) == (resource1, Set(0, 1, 2)))
       assert(resource1.get() == -1)
     }
     "inner" in new Context {

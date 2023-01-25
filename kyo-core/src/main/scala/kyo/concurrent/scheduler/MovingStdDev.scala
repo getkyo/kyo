@@ -26,7 +26,7 @@ private final class MovingStdDev(exp: Int) {
     val prevDev = devs(idx)
     devs(idx) = currDev
     sumDev = sumDev - prevDev + currDev
-    _dev = Math.sqrt(sumDev >> exp).asInstanceOf[Int]
+    _dev = Math.sqrt((sumDev >> exp).toDouble).toInt
 
     idx = (idx + 1) & mask
 

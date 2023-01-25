@@ -12,5 +12,5 @@ object KyoRuntime {
     IOs.run(v)
 
   def runFork[T](v: T > (IOs | Fibers)): T =
-    run(Fibers.block(Fibers.fork[T > (IOs | Fibers)](v)()))
+    IOs.run(Fibers.forkFiber(IOs.lazyRun(v) << Fibers)(_.block)(_.block))
 }

@@ -5,6 +5,7 @@ import scala.runtime.AbstractFunction1
 import scala.util.control.NonFatal
 import scala.runtime.AbstractFunction0
 import frames._
+import scala.util.NotGiven
 
 object core {
 
@@ -108,7 +109,7 @@ object core {
 
     inline def unit: Unit > S = map(_ => ())
 
-    def map[U](f: T => U): U > S = apply(f)
+    inline def map[U](inline f: T => U): U > S = apply(f)
 
     inline def flatMap[U, S2](inline f: T => (U > S2)): U > (S | S2) = apply(f)
 
@@ -267,12 +268,12 @@ object core {
   ): InlineConversion[E, T > E => M[T] > Nothing] with
     inline def apply(v: E) = v()
 
-  given [T, S]: InlineConversion[Kyo[_, _, _, T, S], T > S] with
+  given [T, S](using NotGiven[T <:< (Any > Any)]): InlineConversion[Kyo[_, _, _, T, S], T > S] with
     inline def apply(v: Kyo[_, _, _, T, S]) = v
 
-  given [T]: InlineConversion[T > Nothing, T] with
+  given [T](using NotGiven[T <:< (Any > Any)]): InlineConversion[T > Nothing, T] with
     inline def apply(v: T > Nothing) = v.asInstanceOf[T]
 
-  given [T]: InlineConversion[T, T > Nothing] with
+  given [T](using NotGiven[T <:< (Any > Any)]): InlineConversion[T, T > Nothing] with
     inline def apply(v: T) = v.asInstanceOf[T > Nothing]
 }

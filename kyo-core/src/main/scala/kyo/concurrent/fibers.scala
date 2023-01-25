@@ -196,7 +196,7 @@ object fibers {
               }
             } catch {
               case ex if (NonFatal(ex)) =>
-                p.complete(IOs(throw ex))
+                p.complete(IOs[Unit, Nothing](throw ex))
             }
         l.foreach { io =>
           val fiber = IOTask(io)
@@ -229,12 +229,12 @@ object fibers {
               }
             } catch {
               case ex if (NonFatal(ex)) =>
-                p.complete(IOs(throw ex))
+                p.complete(IOs[Seq[T], Nothing](throw ex))
             }
           }
           i += 1
         }
-        p
+        (p: Fiber[Seq[T]])
       }
 
     def sleep(d: Duration): Unit > (IOs | Fibers) =
@@ -260,7 +260,8 @@ object fibers {
     inline def block[T, S](v: T > (S | Fibers)): T > (S | IOs) =
       given ShallowHandler[Fiber, Fibers] =
         new ShallowHandler[Fiber, Fibers] {
-          def pure[T](v: T) = v
+          def pure[T](v: T) =
+            v
           def apply[T, U, S](m: Fiber[T], f: T => U > (S | Fibers)) =
             m match {
               case m: IOPromise[T] @unchecked =>
