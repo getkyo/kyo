@@ -11,7 +11,7 @@ import cats.effect.IO
 @Fork(
     value = 1,
     jvmArgs = Array(
-        "-XX:+UnlockDiagnosticVMOptions",
+        // "-XX:+UnlockDiagnosticVMOptions",
         // "-Dgraal.PrintCompilation=true",
         // "-Dgraal.Log",
         // "-Dgraal.MethodFilter=kyo.scheduler.IOFiber.*",
@@ -22,7 +22,7 @@ import cats.effect.IO
         // "-XX:+TraceTypeProfile"
         "-Dcats.effect.tracing.mode=DISABLED"
     ),
-    jvm = "/Users/flavio.brasil/Downloads/graalvm-ce-java17-22.3.0/Contents/Home/bin/java"
+    // jvm = "/Users/flavio.brasil/Downloads/graalvm-ce-java17-22.3.0/Contents/Home/bin/java"
 )
 @BenchmarkMode(Array(Mode.Throughput))
 abstract class Bench[T] {

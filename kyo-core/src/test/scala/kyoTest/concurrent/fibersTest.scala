@@ -114,7 +114,7 @@ class fibersTest extends KyoTest {
           _            <- Fibers.sleep(10.millis)
           interrupted  <- fiber.interrupt
           interrupted2 <- fiber.interrupt
-          _            <- Fibers.sleep(200.millis)
+          _            <- Fibers.sleep(500.millis)
           value2       <- ref.get
           _            <- Fibers.sleep(10.millis)
           value3       <- ref.get
@@ -131,14 +131,14 @@ class fibersTest extends KyoTest {
           value1       <- ref.get
           _            <- Fibers.sleep(10.millis)
           interrupted1 <- fiber1.interrupt
-          _            <- Fibers.sleep(200.millis)
+          _            <- Fibers.sleep(500.millis)
           value2       <- ref.get
           interrupted2 <- fiber2.interrupt
-          _            <- Fibers.sleep(200.millis)
+          _            <- Fibers.sleep(500.millis)
           value3       <- ref.get
           _            <- Fibers.sleep(10.millis)
           interrupted3 <- fiber3.interrupt
-          _            <- Fibers.sleep(200.millis)
+          _            <- Fibers.sleep(500.millis)
           value4       <- ref.get
           _            <- Fibers.sleep(10.millis)
           value5       <- ref.get
@@ -194,7 +194,7 @@ class fibersTest extends KyoTest {
       value1      <- ref.get
       _           <- Fibers.sleep(10.millis)
       interrupted <- fiber.interrupt
-      _           <- Fibers.sleep(200.millis)
+      _           <- Fibers.sleep(500.millis)
       value2      <- ref.get
       _           <- Fibers.sleep(10.millis)
       value3      <- ref.get
@@ -311,7 +311,7 @@ class fibersTest extends KyoTest {
         fiber       <- IOs.lazyRun(io(ref)) << Fibers
         value1      <- ref.get
         interrupted <- fiber.interrupt
-        _           <- Fibers.sleep(200.millis)
+        _           <- Fibers.sleep(500.millis)
         value2      <- ref.get
         _           <- Fibers.sleep(10.millis)
         value3      <- ref.get
@@ -384,7 +384,7 @@ class fibersTest extends KyoTest {
           _           <- Fibers.sleep(10.millis)
           value2      <- ref.get
           interrupted <- fiber.interrupt
-          _           <- Fibers.sleep(200.millis)
+          _           <- Fibers.sleep(500.millis)
           value3      <- ref.get
           _           <- Fibers.sleep(10.millis)
           value4      <- ref.get
