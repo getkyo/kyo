@@ -24,7 +24,7 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
 
   private var curr: T > IOs = init
   private var runtime       = 0L
-  private var preempting    = false
+  @volatile private var preempting    = false
   private var ensures       = List.empty[Unit > IOs]
 
   def preempt() =
