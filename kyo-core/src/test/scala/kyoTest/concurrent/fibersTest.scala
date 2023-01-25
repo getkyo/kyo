@@ -114,6 +114,7 @@ class fibersTest extends KyoTest {
           _            <- Fibers.sleep(10.millis)
           interrupted  <- fiber.interrupt
           interrupted2 <- fiber.interrupt
+          _            <- Fibers.sleep(200.millis)
           value2       <- ref.get
           _            <- Fibers.sleep(10.millis)
           value3       <- ref.get
@@ -128,19 +129,18 @@ class fibersTest extends KyoTest {
           fiber2       <- Fibers.forkFiber(loop(ref))
           fiber3       <- Fibers.forkFiber(loop(ref))
           value1       <- ref.get
-          _            <- Fibers.sleep(50.millis)
+          _            <- Fibers.sleep(10.millis)
           interrupted1 <- fiber1.interrupt
-          _            <- Fibers.sleep(50.millis)
+          _            <- Fibers.sleep(200.millis)
           value2       <- ref.get
-          _            <- Fibers.sleep(50.millis)
           interrupted2 <- fiber2.interrupt
-          _            <- Fibers.sleep(50.millis)
+          _            <- Fibers.sleep(200.millis)
           value3       <- ref.get
-          _            <- Fibers.sleep(50.millis)
+          _            <- Fibers.sleep(10.millis)
           interrupted3 <- fiber3.interrupt
-          _            <- Fibers.sleep(50.millis)
+          _            <- Fibers.sleep(200.millis)
           value4       <- ref.get
-          _            <- Fibers.sleep(50.millis)
+          _            <- Fibers.sleep(10.millis)
           value5       <- ref.get
         } yield {
           assert(interrupted1 && interrupted2 && interrupted3 &&
@@ -192,11 +192,11 @@ class fibersTest extends KyoTest {
       ref         <- IntRef(0)
       fiber       <- Fibers.raceFiber(List(loop(ref), loop(ref)))
       value1      <- ref.get
-      _           <- Fibers.sleep(50.millis)
+      _           <- Fibers.sleep(10.millis)
       interrupted <- fiber.interrupt
       _           <- Fibers.sleep(200.millis)
       value2      <- ref.get
-      _           <- Fibers.sleep(50.millis)
+      _           <- Fibers.sleep(10.millis)
       value3      <- ref.get
     } yield assert(interrupted && value1 < value2 && value2 == value3)
   }
@@ -310,8 +310,8 @@ class fibersTest extends KyoTest {
         ref         <- IntRef(0)
         fiber       <- IOs.lazyRun(io(ref)) << Fibers
         value1      <- ref.get
-        _           <- Fibers.sleep(10.millis)
         interrupted <- fiber.interrupt
+        _           <- Fibers.sleep(200.millis)
         value2      <- ref.get
         _           <- Fibers.sleep(10.millis)
         value3      <- ref.get
@@ -381,12 +381,12 @@ class fibersTest extends KyoTest {
           ref         <- IntRef(0)
           fiber       <- Fibers.forkFiber(Scopes.close(Scopes.acquire(resource1)(_ => loop(ref))))
           value1      <- ref.get
-          _           <- Fibers.sleep(100.millis)
+          _           <- Fibers.sleep(10.millis)
           value2      <- ref.get
           interrupted <- fiber.interrupt
-          _           <- Fibers.sleep(100.millis)
+          _           <- Fibers.sleep(200.millis)
           value3      <- ref.get
-          _           <- Fibers.sleep(100.millis)
+          _           <- Fibers.sleep(10.millis)
           value4      <- ref.get
         } yield {
           assert(
