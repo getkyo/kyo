@@ -192,6 +192,7 @@ class fibersTest extends KyoTest {
       value1      <- ref.get
       _           <- Fibers.sleep(50.millis)
       interrupted <- fiber.interrupt
+      _           <- Fibers.sleep(100.millis)
       value2      <- ref.get
       _           <- Fibers.sleep(50.millis)
       value3      <- ref.get
