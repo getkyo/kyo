@@ -16,8 +16,8 @@ object scopes {
   opaque type Scopes = Sums[Finalizer]
 
   object Scopes {
-    def ensure(f: => Unit): Unit > Scopes =
-      Sums.add[Finalizer](() => f).unit
+    def ensure[T](f: => T > IOs): Unit > Scopes =
+      Sums.add[Finalizer](() => IOs.run(f)).unit
 
     def acquire[T <: Closeable](resource: => T): T > Scopes =
       lazy val v = resource

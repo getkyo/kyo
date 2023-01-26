@@ -39,7 +39,11 @@ object ios {
     def effect = ios.IOs
   }
 
+  private[kyo] trait Ensure
+
   final class IOs private[ios] () extends Effect[IO] {
+
+    val unit: Unit > IOs = ()
 
     inline def value[T](v: T): T > IOs = v
 
@@ -62,7 +66,7 @@ object ios {
       def ensureLoop(v: T > (S | IOs)): T > (S | IOs) =
         v match {
           case kyo: Kyo[M2, E2, Any, T, S | IOs] @unchecked =>
-            new KyoCont[M2, E2, Any, T, S | IOs](kyo) {
+            new KyoCont[M2, E2, Any, T, S | IOs](kyo) with Ensure {
               def frame = fr
               def apply(v: Any, s: Safepoint[E2]) =
                 s match {
@@ -130,7 +134,7 @@ object ios {
 
     inline def eval[T](p: Preempt)(v: T > IOs): T > IOs =
       @tailrec def evalLoop(v: T > IOs): T > IOs =
-        if (p()) {
+        if (p() && !v.isInstanceOf[Ensure]) {
           v
         } else {
           v match {

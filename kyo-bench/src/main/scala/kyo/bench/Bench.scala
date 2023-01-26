@@ -21,7 +21,7 @@ import cats.effect.IO
         // "-XX:+PrintCompilation", "-XX:+PrintInlining",
         // "-XX:+TraceTypeProfile"
         "-Dcats.effect.tracing.mode=DISABLED"
-    ),
+    )
     // jvm = "/Users/flavio.brasil/Downloads/graalvm-ce-java17-22.3.0/Contents/Home/bin/java"
 )
 @BenchmarkMode(Array(Mode.Throughput))

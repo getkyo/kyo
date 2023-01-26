@@ -237,6 +237,9 @@ object fibers {
         (p: Fiber[Seq[T]])
       }
 
+    def never: Fiber[Unit] > IOs =
+      IOs(IOPromise[Unit])
+
     def sleep(d: Duration): Unit > (IOs | Fibers) =
       IOs {
         val p = new IOPromise[Unit] with Runnable with (ScheduledFuture[_] => Unit) { self =>

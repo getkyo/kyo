@@ -41,7 +41,6 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
   def run(): Boolean =
     val start = Coordinator.tick()
     try {
-      preempting = false
       curr = IOs.eval[T](this)(curr)
       preempting = false
     } catch {
@@ -53,15 +52,13 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
     }
     if (curr != nullIO && IOs.isDone(curr)) {
       complete(curr)
-      curr = nullIO
-      true
-    } else if (super.isDone) {
+    }
+    val done = super.isDone
+    if (done) {
       ensures.foreach(IOs.run(_))
       curr = nullIO
-      true
-    } else {
-      false
     }
+    done
 
   def delay() = Coordinator.tick() - creationTs - runtime
 
@@ -69,5 +66,5 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
     (other.runtime - runtime).asInstanceOf[Int]
 
   override final def toString =
-    s"IOTask(id=${hashCode},runtime=$runtime,curr=$curr)"
+    s"IOTask(id=${hashCode},runtime=$runtime,IOs.isDone(curr)=${IOs.isDone(curr)},preempting=$preempting,ensures.size=${ensures.size})"
 }
