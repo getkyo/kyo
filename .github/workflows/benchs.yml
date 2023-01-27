@@ -1,8 +1,6 @@
 name: benchs
 on:
   push:
-    branches:
-      - master
 
 permissions:
   contents: write
