@@ -13,7 +13,6 @@ import org.scalatest.compatible.Assertion
 class timersTest extends KyoTest {
 
   private def run[T](io: T > (IOs | Timers | Fibers)): T =
-    // IOs.run(Fibers.block(io))
     val a: T > Fibers         = IOs.lazyRun(Timers.run(io))
     val b: Fiber[T] > Nothing = a << Fibers
     val c: Fiber[T]           = b
@@ -35,12 +34,12 @@ class timersTest extends KyoTest {
       p <- Fibers.promise[String]
       task <- Timers.schedule(
           p.complete("hello")(require),
-          100.millis
+          10.millis
       )
       _         <- task.cancel
       cancelled <- task.isCancelled
       done1     <- p.isDone
-      _         <- Fibers.sleep(200.millis)
+      _         <- Fibers.sleep(50.millis)
       done2     <- p.isDone
       taskDone  <- task.isDone
     } yield assert(cancelled && !done1 && !done2 && taskDone)
@@ -51,10 +50,10 @@ class timersTest extends KyoTest {
       ref <- IntRef(0)
       task <- Timers.scheduleAtFixedRate(
           ref.incrementAndGet.unit,
-          100.millis,
-          100.millis
+          10.millis,
+          10.millis
       )
-      _         <- Fibers.sleep(500.millis)
+      _         <- Fibers.sleep(50.millis)
       n         <- ref.get
       cancelled <- task.cancel
     } yield assert(n >= 4 && n <= 6 && cancelled)
@@ -65,10 +64,10 @@ class timersTest extends KyoTest {
       ref <- IntRef(0)
       task <- Timers.scheduleWithFixedDelay(
           ref.incrementAndGet.unit,
-          100.millis,
-          100.millis
+          10.millis,
+          10.millis
       )
-      _         <- Fibers.sleep(500.millis)
+      _         <- Fibers.sleep(50.millis)
       n         <- ref.get
       cancelled <- task.cancel
     } yield assert(n >= 4 && n <= 6 && cancelled)
