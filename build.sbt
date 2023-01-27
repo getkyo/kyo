@@ -52,33 +52,31 @@ lazy val `kyo-core` = project
   .in(file("kyo-core"))
   .settings(
       name := "kyo-core",
-      `kyo-core-settings`,
-      prepareOpt := {
-        import sys.process._
-        "./opt-gen.sh".!!
-      },
-      compile := ((Compile / compile) dependsOn (prepareOpt)).value
+      `kyo-core-settings`
   )
 
 lazy val `kyo-core-opt1` = project
   .in(file(s"kyo-core-opt1"))
   .settings(
       name := s"kyo-core-opt1",
-      `kyo-core-settings`
+      `kyo-core-settings`,
+      scalafmtOnCompile := false
   )
 
 lazy val `kyo-core-opt2` = project
   .in(file(s"kyo-core-opt2"))
   .settings(
       name := s"kyo-core-opt2",
-      `kyo-core-settings`
+      `kyo-core-settings`,
+      scalafmtOnCompile := false
   )
 
 lazy val `kyo-core-opt3` = project
   .in(file(s"kyo-core-opt3"))
   .settings(
       name := s"kyo-core-opt3",
-      `kyo-core-settings`
+      `kyo-core-settings`,
+      scalafmtOnCompile := false
   )
 
 lazy val `kyo-direct` = project
@@ -102,7 +100,7 @@ lazy val `kyo-zio` = project
 lazy val `kyo-bench` = project
   .in(file("kyo-bench"))
   .enablePlugins(JmhPlugin)
-  .dependsOn(`kyo-core-opt1`)
+  .dependsOn(`kyo-core`)
   .settings(
       name := "kyo-bench",
       `kyo-settings`,

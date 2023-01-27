@@ -7,13 +7,9 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - uses: olafurpg/setup-scala@v11
-    - name: Test with inlines
-      run: sbt test
-      env: 
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    - name: Remove inlines
-      run: find ./ -type f -name '*.scala' ! -name 'frames.scala' ! -name 'direct.scala' -exec sed -i 's/inline//g' {} \;
-    - name: Test without inlines
+    - name: gen kyo-core-optN
+      run: ./opt-gen.sh
+    - name: test
       run: sbt test
       env: 
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
