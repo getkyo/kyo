@@ -9,11 +9,6 @@ Algebraic effects for Scala 3
 Sorry, documentation coming soon.
 
 
-No Typelevel Policy
--------------------
-
-Given [Typelevel's](https://typelevel.org/) history of online attacks targeting its competitors and members of minority groups, this project adopts a "No Typelevel Policy". Integrations with Typelevel projects are strongly discouraged.
-
 License
 -------
 
