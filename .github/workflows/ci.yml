@@ -7,12 +7,10 @@ jobs:
     steps:
     - uses: actions/checkout@v1
     - uses: olafurpg/setup-scala@v11
-    - name: gen kyo-core-optN
-      run: ./opt-gen.sh
-    - name: test
-      run: sbt test
-      env: 
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: build
+      run: ./build/build.sh
+      env:
+       ENCRYPTION_PASSWORD: ${{ secrets.ENCRYPTION_PASSWORD }}
     # - name: Publish
     #   run: sbt publish
     #   env: 

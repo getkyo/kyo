@@ -1,6 +1,6 @@
 ![kyo](https://raw.githubusercontent.com/fwbrasil/kyo/master/kyo.png)
 -------------------
-High-performance composable effects for Scala 3
+Algebraic effects for Scala 3
 
 ![Build Status](https://github.com/fwbrasil/kyo/workflows/CI/badge.svg)
 ![Stage](https://img.shields.io/badge/Project%20Stage-Experimental-yellow.svg)

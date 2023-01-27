@@ -1,3 +1,6 @@
+import ReleaseTransformations._
+import sbtrelease.ReleasePlugin
+
 val scala3Version = "3.2.0"
 
 val compilerOptions = Seq(
@@ -32,7 +35,57 @@ lazy val kyo = (project in file("."))
   .settings(
       name := "kyo",
       `kyo-settings`,
-      publishArtifact := false
+      publishArtifact := false,
+      releasePublishArtifactsAction := PgpKeys.publishSigned.value,
+      releaseIgnoreUntrackedFiles := true,
+      publishMavenStyle := true,
+      publishTo := {
+        val nexus = "https://oss.sonatype.org/"
+        if (isSnapshot.value)
+          Some("snapshots" at nexus + "content/repositories/snapshots")
+        else
+          Some("releases"  at nexus + "service/local/staging/deploy/maven2")
+      },
+      pgpSecretRing := file("local.secring.gpg"),
+      pgpPublicRing := file("local.pubring.gpg"),
+      releasePublishArtifactsAction := PgpKeys.publishSigned.value,
+      releaseProcess := {
+        Seq[ReleaseStep](
+          checkSnapshotDependencies,
+          inquireVersions,
+          releaseStepCommandAndRemaining("+clean"),
+          releaseStepCommandAndRemaining("+test"),
+          setReleaseVersion,
+          commitReleaseVersion,
+          tagRelease,
+          releaseStepCommandAndRemaining("+publishSigned"),
+          setNextVersion,
+          commitNextVersion,
+          releaseStepCommand("sonatypeReleaseAll"),
+          pushChanges
+        )
+      },
+      pomExtra := (
+        <url>http://github.com/fwbrasil/kyo</url>
+        <licenses>
+          <license>
+            <name>Apache License 2.0</name>
+            <url>https://raw.githubusercontent.com/fwbrasil/kyo/master/LICENSE.txt</url>
+            <distribution>repo</distribution>
+          </license>
+        </licenses>
+        <scm>
+          <url>git@github.com:fwbrasil/kyo.git</url>
+          <connection>scm:git:git@github.com:fwbrasil/kyo.git</connection>
+        </scm>
+        <developers>
+          <developer>
+            <id>fwbrasil</id>
+            <name>Flavio W. Brasil</name>
+            <url>http://github.com/fwbrasil/</url>
+          </developer>
+        </developers>
+      )
   )
 
 lazy val prepareOpt = TaskKey[Unit]("prepareOpt", "prepareOpt")
@@ -108,6 +161,7 @@ lazy val `kyo-bench` = project
       libraryDependencies += "dev.zio"       %% "zio"         % "2.0.5"
   )
 
+  
 testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
 
 // # Set up some configuration for publishing to GitHub
@@ -149,14 +203,11 @@ val versionFromTag: String = sys.env
 
 ThisBuild / version := versionFromTag
 
-ThisBuild / publishMavenStyle := true // GitHub resolves maven style
-ThisBuild / versionScheme     := Some("early-semver")
-ThisBuild / publishTo := Some(
-    "GitHub Package Registry " at s"https://maven.pkg.github.com/$githubOwner/$githubRepository"
-)
-ThisBuild / credentials += Credentials(
-    "GitHub Package Registry",            // realm
-    "maven.pkg.github.com",               // host
-    githubOwner,                          // user
-    sys.env.getOrElse("GITHUB_TOKEN", "") // password
-)
+
+commands += Command.command("checkUnformattedFiles") { st =>
+  val vcs = Project.extract(st).get(releaseVcs).get
+  val modified = vcs.cmd("ls-files", "--modified", "--exclude-standard").!!.trim
+  if(modified.nonEmpty)
+    throw new IllegalStateException(s"Please run `sbt scalafmt` and resubmit your pull request. Found unformatted files: \n$modified")
+  st
+}
