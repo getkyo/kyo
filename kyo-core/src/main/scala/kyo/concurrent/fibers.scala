@@ -33,7 +33,8 @@ object fibers {
 
   extension [T](p: Promise[T]) {
 
-    inline def complete(v: => T > IOs): Boolean > IOs =
+    /*inline(2)*/
+    def complete(v: => T > IOs): Boolean > IOs =
       IOs(p.complete(IOs(v)))
   }
 
@@ -55,8 +56,9 @@ object fibers {
           f.asInstanceOf[T > Fibers]
       }
 
-    inline def joinTry: Try[T] > (Fibers | IOs) =
-      inline f match {
+    /*inline(2)*/
+    def joinTry: Try[T] > (Fibers | IOs) =
+      /*inline(2)*/ f match {
         case f: IOPromise[T] @unchecked =>
           IOs {
             val p = new IOPromise[Try[T]]
@@ -70,7 +72,8 @@ object fibers {
           Try(f.asInstanceOf[T])
       }
 
-    inline def block: T > IOs =
+    /*inline(2)*/
+    def block: T > IOs =
       f match {
         case f: IOPromise[T] @unchecked =>
           IOs(f.block())
@@ -78,7 +81,8 @@ object fibers {
           f.asInstanceOf[T > IOs]
       }
 
-    inline def interrupt: Boolean > IOs =
+    /*inline(2)*/
+    def interrupt: Boolean > IOs =
       f match {
         case f: IOPromise[T] @unchecked =>
           IOs(f.interrupt())
@@ -92,10 +96,12 @@ object fibers {
     def promise[T]: Promise[T] > IOs =
       IOs(IOPromise[T])
 
-    inline def forkFiber[T](v: => T > IOs): Fiber[T] > IOs =
+    /*inline(2)*/
+    def forkFiber[T](v: => T > IOs): Fiber[T] > IOs =
       IOs(IOTask(IOs(v)))
 
-    inline def fork[T](v: => T > IOs): T > (IOs | Fibers) =
+    /*inline(2)*/
+    def fork[T](v: => T > IOs): T > (IOs | Fibers) =
       forkFiber(v)(_.join)
 
     def fork[T1, T2](
@@ -260,7 +266,8 @@ object fibers {
         p > Fibers
       }
 
-    inline def block[T, S](v: T > (S | Fibers)): T > (S | IOs) =
+    /*inline(2)*/
+    def block[T, S](v: T > (S | Fibers)): T > (S | IOs) =
       given ShallowHandler[Fiber, Fibers] =
         new ShallowHandler[Fiber, Fibers] {
           def pure[T](v: T) =
@@ -277,7 +284,8 @@ object fibers {
   }
   val Fibers = new Fibers
 
-  inline given DeepHandler[Fiber, Fibers] =
+  /*inline(2)*/
+  given DeepHandler[Fiber, Fibers] =
     new DeepHandler[Fiber, Fibers] {
       def pure[T](v: T) = v
       def flatMap[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =

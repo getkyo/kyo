@@ -14,8 +14,10 @@ object aborts {
   opaque type Abort[+E, +T] = T | Fail[E]
 
   object Abort {
-    inline def success[E, T](v: T): Abort[E, T]  = v
-    inline def failure[E, T](ex: E): Abort[E, T] = Fail(ex)
+    /*inline(1)*/
+    def success[E, T](v: T): Abort[E, T] = v
+    /*inline(1)*/
+    def failure[E, T](ex: E): Abort[E, T] = Fail(ex)
   }
 
   extension [E, T](a: Abort[E, T]) {
@@ -49,11 +51,13 @@ object aborts {
   object Aborts {
     def apply[E](using tag: Tag[E]): Aborts[E] =
       new Aborts(tag)
-    inline def apply[T, E](inline ex: E)(using tag: Tag[E]): T > Aborts[E] =
+    /*inline(1)*/
+    def apply[T, E]( /*inline(1)*/ ex: E)(using tag: Tag[E]): T > Aborts[E] =
       (Fail(ex): Abort[E, T]) > Aborts[E]
   }
 
-  inline given [E: Tag]: ShallowHandler[[T] =>> Abort[E, T], Aborts[E]] =
+  /*inline(1)*/
+  given [E: Tag]: ShallowHandler[[T] =>> Abort[E, T], Aborts[E]] =
     new ShallowHandler[[T] =>> Abort[E, T], Aborts[E]] {
       def pure[U](v: U) = v
       def apply[U, V, S2](

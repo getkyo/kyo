@@ -39,7 +39,8 @@ object core {
       def apply()                                = false
       def apply[T, S](v: => T > (S | Effect[_])) = v
     }
-    inline given noop[E <: Effect[_]]: Safepoint[E] =
+    /*inline(3)*/
+    given noop[E <: Effect[_]]: Safepoint[E] =
       _noop.asInstanceOf[Safepoint[E]]
   }
 
@@ -75,7 +76,8 @@ object core {
 
   extension [M[_], T, S](v: M[T] > S) {
     @targetName("suspend")
-    inline def >[E <: Effect[M]](inline e: E)(using inline fr: Frame[">"]): T > (S | E) =
+    /*inline(3)*/
+    def >[E <: Effect[M]]( /*inline(3)*/ e: E)(using /*inline(3)*/ fr: Frame[">"]): T > (S | E) =
       def suspendLoop(v: M[T] > S): T > (S | E) =
         v match
           case kyo: Kyo[M2, E2, Any, M[T], S] @unchecked =>
@@ -109,18 +111,23 @@ object core {
 
   extension [T, S](v: T > S) {
 
-    inline def unit: Unit > S = map(_ => ())
+    /*inline(3)*/
+    def unit: Unit > S = map(_ => ())
 
-    inline def map[U](inline f: T => U): U > S = apply(f)
+    /*inline(3)*/
+    def map[U]( /*inline(3)*/ f: T => U): U > S = apply(f)
 
-    inline def flatMap[U, S2](inline f: T => (U > S2)): U > (S | S2) = apply(f)
+    /*inline(3)*/
+    def flatMap[U, S2]( /*inline(3)*/ f: T => (U > S2)): U > (S | S2) = apply(f)
 
-    inline def withFilter(p: T => Boolean): T > S =
+    /*inline(3)*/
+    def withFilter(p: T => Boolean): T > S =
       v(v => if (!p(v)) throw new MatchError(v) else v)
 
     @targetName("transform")
-    inline def apply[U, S2](inline f: T => (U > S2))(using
-        inline fr: Frame["apply"]
+    /*inline(3)*/
+    def apply[U, S2]( /*inline(3)*/ f: T => (U > S2))(using
+        /*inline(3)*/ fr: Frame["apply"]
     ): U > (S | S2) =
       def transformLoop(v: T > S): U > (S | S2) =
         v match {
@@ -141,12 +148,13 @@ object core {
       transformLoop(v)
 
     @targetName("shallowHandle")
-    inline def <[M[_], E <: Effect[M], S2 <: S](
+    /*inline(3)*/
+    def <[M[_], E <: Effect[M], S2 <: S](
         e: E
     )(using S => S2 | E)(using
         h: ShallowHandler[M, E],
         s: Safepoint[E],
-        inline fr: Frame["<"]
+        /*inline(3)*/ fr: Frame["<"]
     ): M[T] > S2 =
       def shallowHandleLoop(
           v: T > (S2 | E)
@@ -179,14 +187,16 @@ object core {
       shallowHandleLoop(v.asInstanceOf[T > (S2 | E)])
 
     @targetName("deepHandle")
-    inline def <<[U](
+    /*inline(3)*/
+    def <<[U](
         f: T > S => U
     ): U = f(v)
   }
 
   extension [M[_], E <: Effect[M]](e: E) {
 
-    inline def apply[T]()(using
+    /*inline(3)*/
+    def apply[T]()(using
         h: DeepHandler[M, E],
         s: Safepoint[E]
     ): T > E => M[T] > Nothing =
@@ -200,7 +210,8 @@ object core {
           }
         deepHandleLoop(v)
 
-    inline def apply[M1[_], E1 <: Effect[M1], T](
+    /*inline(3)*/
+    def apply[M1[_], E1 <: Effect[M1], T](
         tup1: (E1, [U] => M1[M[U]] => M[M1[U]])
     )(using
         h: DeepHandler[M, E],
@@ -221,7 +232,8 @@ object core {
           }
         deepHandleLoop(v)
 
-    inline def apply[M1[_], E1 <: Effect[M1], M2[_], E2 <: Effect[M2], T](
+    /*inline(3)*/
+    def apply[M1[_], E1 <: Effect[M1], M2[_], E2 <: Effect[M2], T](
         tup1: (E1, [U] => M1[M[U]] => M[M1[U]]),
         tup2: (
             E2,
@@ -262,20 +274,25 @@ object core {
     _identity.asInstanceOf[T => T]
 
   abstract class InlineConversion[T, U] extends Conversion[T, U] {
-    inline def apply(v: T): U
+    /*inline(3)*/
+    def apply(v: T): U
   }
 
   given [M[_], E <: Effect[M], T](using
       DeepHandler[M, E]
   ): InlineConversion[E, T > E => M[T] > Nothing] with
-    inline def apply(v: E) = v()
+    /*inline(3)*/
+    def apply(v: E) = v()
 
   given [T, S](using NotGiven[T <:< (Any > Any)]): InlineConversion[Kyo[_, _, _, T, S], T > S] with
-    inline def apply(v: Kyo[_, _, _, T, S]) = v
+    /*inline(3)*/
+    def apply(v: Kyo[_, _, _, T, S]) = v
 
   given [T](using NotGiven[T <:< (Any > Any)]): InlineConversion[T > Nothing, T] with
-    inline def apply(v: T > Nothing) = v.asInstanceOf[T]
+    /*inline(3)*/
+    def apply(v: T > Nothing) = v.asInstanceOf[T]
 
   given [T](using NotGiven[T <:< (Any > Any)]): InlineConversion[T, T > Nothing] with
-    inline def apply(v: T) = v.asInstanceOf[T > Nothing]
+    /*inline(3)*/
+    def apply(v: T) = v.asInstanceOf[T > Nothing]
 }

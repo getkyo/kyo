@@ -8,9 +8,10 @@ import frames._
 object arrows {
 
   final class Arrows private[arrows] () extends Effect[[T] =>> Unit] {
-    inline def apply[T, S <: Effect[_], U, S2](
+    /*inline(2)*/
+    def apply[T, S <: Effect[_], U, S2](
         f: T > (S | Arrows) => U > (S2 | Arrows)
-    )(using inline fr: Frame["Arrows"]): T > S => U > S2 =
+    )(using /*inline(2)*/ fr: Frame["Arrows"]): T > S => U > S2 =
       val a =
         new Kyo[[T] =>> Unit, Arrows, T > S, T, S | Arrows] {
           def frame  = fr
@@ -21,10 +22,11 @@ object arrows {
         }
       f(a).asInstanceOf[Kyo[[T] =>> Unit, Arrows, T > S, U, S2]](_, Safepoint.noop)
 
-    inline def recursive[T, S, U, S2](f: (
+    /*inline(2)*/
+    def recursive[T, S, U, S2](f: (
         T > (S | Arrows),
         T > (S | Arrows) => U > (S2 | Arrows)
-    ) => U > (S2 | Arrows))(using inline fr: Frame["Arrows.recursive"]): T > S => U > S2 =
+    ) => U > (S2 | Arrows))(using /*inline(2)*/ fr: Frame["Arrows.recursive"]): T > S => U > S2 =
       new AbstractFunction1[T > S, U > S2] {
         val a =
           new Kyo[[T] =>> Unit, Arrows, T > S, T, S | Arrows] {

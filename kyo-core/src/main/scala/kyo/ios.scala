@@ -45,12 +45,15 @@ object ios {
 
     val unit: Unit > IOs = ()
 
-    inline def value[T](v: T): T > IOs = v
+    /*inline(3)*/
+    def value[T](v: T): T > IOs = v
 
-    inline def attempt[T, S](v: => T > S): Try[T] > S =
+    /*inline(3)*/
+    def attempt[T, S](v: => T > S): Try[T] > S =
       v < Tries
 
-    inline def collect[T](l: List[T > IOs]): List[T] > IOs =
+    /*inline(3)*/
+    def collect[T](l: List[T > IOs]): List[T] > IOs =
       def collectLoop(l: List[T > IOs], acc: List[T]): List[T] > IOs =
         l match {
           case Nil          => acc.reverse
@@ -58,8 +61,8 @@ object ios {
         }
       collectLoop(l, Nil)
 
-    private[kyo] inline def ensure[T, S](f: => Unit > IOs)(v: => T > S)(using
-        inline fr: Frame["IOs.ensure"]
+    private[kyo] /*inline(3)*/ def ensure[T, S](f: => Unit > IOs)(v: => T > S)(using
+        /*inline(3)*/ fr: Frame["IOs.ensure"]
     ): T > (S | IOs) =
       type M2[_]
       type E2 <: Effect[M2]
@@ -82,16 +85,18 @@ object ios {
         }
       ensureLoop(v)
 
-    inline def apply[T, S](
-        inline f: => T > (S | IOs)
-    )(using inline fr: Frame["IOs"]): T > (S | IOs) =
+    /*inline(3)*/
+    def apply[T, S](
+        /*inline(3)*/ f: => T > (S | IOs)
+    )(using /*inline(3)*/ fr: Frame["IOs"]): T > (S | IOs) =
       new KyoIO[T, S] {
         def frame = fr
         def apply(v: Unit, s: Safepoint[IOs]) =
           f
       }
 
-    inline def run[T](v: T > IOs): T =
+    /*inline(3)*/
+    def run[T](v: T > IOs): T =
       val safepoint = Safepoint.noop[IOs]
       @tailrec def runLoop(v: T > IOs): T =
         v match {
@@ -103,7 +108,8 @@ object ios {
 
       runLoop(v)
 
-    inline def lazyRun[T, S](v: T > (S | IOs))(using inline fr: Frame["IOs.lazyRun"]): T > S =
+    /*inline(3)*/
+    def lazyRun[T, S](v: T > (S | IOs))(using /*inline(3)*/ fr: Frame["IOs.lazyRun"]): T > S =
       type M2[_]
       type E2 <: Effect[M2]
       @tailrec def lazyRunLoop(v: T > (S | IOs)): T > S =
@@ -129,10 +135,12 @@ object ios {
 
       lazyRunLoop(v)
 
-    inline def isDone[T](v: T > IOs): Boolean =
+    /*inline(3)*/
+    def isDone[T](v: T > IOs): Boolean =
       !v.isInstanceOf[Kyo[_, _, _, _, _]]
 
-    inline def eval[T](p: Preempt)(v: T > IOs): T > IOs =
+    /*inline(3)*/
+    def eval[T](p: Preempt)(v: T > IOs): T > IOs =
       @tailrec def evalLoop(v: T > IOs): T > IOs =
         if (p() && !v.isInstanceOf[Ensure]) {
           v

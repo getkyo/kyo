@@ -7,17 +7,20 @@ object options {
   final class Options private[options] () extends Effect[Option] {
     private val none          = None > this
     def empty[T]: T > Options = none
-    inline def apply[T](v: T): T > Options =
+    /*inline(2)*/
+    def apply[T](v: T): T > Options =
       if (v == null)
         none
       else
         v
-    inline def get[T](v: Option[T]): T > Options =
+    /*inline(2)*/
+    def get[T](v: Option[T]): T > Options =
       v > Options
   }
   val Options = new Options
 
-  inline given ShallowHandler[Option, Options] with {
+  /*inline(2)*/
+  given ShallowHandler[Option, Options] with {
     def pure[T](v: T) =
       Option(v)
     def apply[T, U, S](

@@ -9,7 +9,8 @@ import scala.util.control.NonFatal
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
-  inline def apply[T](inline v: T > IOs): IOTask[T] =
+  /*inline(2)*/
+  def apply[T]( /*inline(2)*/ v: T > IOs): IOTask[T] =
     val f = new IOTask[T](v)
     Scheduler.schedule(f)
     f

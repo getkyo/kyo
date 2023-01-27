@@ -13,17 +13,21 @@ import IOPromise._
 
 private[kyo] class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](Pending()) {
 
-  inline def isDone: Boolean = !get().isInstanceOf[Pending[_]]
+  /*inline(2)*/
+  def isDone: Boolean = !get().isInstanceOf[Pending[_]]
 
-  inline def interrupts(p: IOPromise[_]): Unit =
+  /*inline(2)*/
+  def interrupts(p: IOPromise[_]): Unit =
     onComplete { _ =>
       p.interrupt()
     }
 
-  inline def interrupt()(using frame: Frame["interrupt"]): Boolean =
+  /*inline(2)*/
+  def interrupt()(using frame: Frame["interrupt"]): Boolean =
     complete(IOs(throw Interrupted(frame)))
 
-  inline def onComplete(inline f: T > IOs => Unit): Unit =
+  /*inline(2)*/
+  def onComplete( /*inline(2)*/ f: T > IOs => Unit): Unit =
     @tailrec def loop(): Unit =
       get() match {
         case p: Pending[T] @unchecked =>
@@ -36,7 +40,8 @@ private[kyo] class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](
 
   protected def onComplete(): Unit = {}
 
-  inline def complete(v: T > IOs): Boolean =
+  /*inline(2)*/
+  def complete(v: T > IOs): Boolean =
     @tailrec def loop(): Boolean =
       get() match {
         case p: Pending[T] @unchecked =>
@@ -52,7 +57,8 @@ private[kyo] class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](
       }
     loop()
 
-  inline def block(): T =
+  /*inline(2)*/
+  def block(): T =
     IOs.run {
       get() match {
         case p: Pending[T] @unchecked =>
@@ -76,14 +82,16 @@ private[kyo] object IOPromise {
   case class Interrupted(frame: Frame[String]) extends NoStackTrace
   sealed trait Pending[+T] {
     import Pending._
-    inline def flush[B >: T](v: B > IOs): Unit =
+    /*inline(2)*/
+    def flush[B >: T](v: B > IOs): Unit =
       var c: Pending[B] = this
       while (c ne Empty) {
         val w = c.asInstanceOf[Waiter[B]]
         w(v)
         c = w.tail
       }
-    inline def add(inline f: T > IOs => Unit): Pending[T] =
+    /*inline(2)*/
+    def add( /*inline(2)*/ f: T > IOs => Unit): Pending[T] =
       new Waiter(this) {
         def apply(v: T > IOs) = f(v)
       }

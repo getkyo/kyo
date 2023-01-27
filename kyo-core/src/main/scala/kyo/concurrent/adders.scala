@@ -15,29 +15,38 @@ object adders {
 
   opaque type LongAdder = JLongAdder
   object LongAdder {
-    inline def apply(): LongAdder > IOs = IOs(JLongAdder())
+    /*inline(1)*/
+    def apply(): LongAdder > IOs = IOs(JLongAdder())
   }
   extension (ref: LongAdder) {
-    inline def add(v: Long): Unit > IOs =
+    /*inline(1)*/
+    def add(v: Long): Unit > IOs =
       IOs(ref.add(v))
-    inline def decrement: Unit > IOs =
+    /*inline(1)*/
+    def decrement: Unit > IOs =
       IOs(ref.decrement())
-    inline def get: Long > IOs =
+    /*inline(1)*/
+    def get: Long > IOs =
       IOs(ref.sum())
-    inline def reset: Unit > IOs =
+    /*inline(1)*/
+    def reset: Unit > IOs =
       IOs(ref.reset())
   }
 
   opaque type DoubleAdder = JDoubleAdder
   object DoubleAdder {
-    inline def apply(): DoubleAdder > IOs = IOs(JDoubleAdder())
+    /*inline(1)*/
+    def apply(): DoubleAdder > IOs = IOs(JDoubleAdder())
   }
   extension (ref: DoubleAdder) {
-    inline def add(v: Double): Unit > IOs =
+    /*inline(1)*/
+    def add(v: Double): Unit > IOs =
       IOs(ref.add(v))
-    inline def get: Double > IOs =
+    /*inline(1)*/
+    def get: Double > IOs =
       IOs(ref.sum())
-    inline def reset: Unit > IOs =
+    /*inline(1)*/
+    def reset: Unit > IOs =
       IOs(ref.reset())
   }
 }
