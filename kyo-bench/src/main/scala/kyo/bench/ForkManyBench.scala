@@ -10,6 +10,8 @@ import kyo.core.>
 import kyo.concurrent.fibers.Fibers
 import kyo.ios.IOs
 
+import kyo.concurrent.atomics
+
 class ForkManyBench extends Bench[Int] {
 
   def catsBench() = {
@@ -34,7 +36,7 @@ class ForkManyBench extends Bench[Int] {
   override def kyoBenchFiber() = {
     import kyo.core._
     import kyo.ios._
-    import kyo.concurrent.refs._
+    import kyo.concurrent.atomics._
     import kyo.concurrent.fibers._
 
     def repeat[A](n: Int)(io: A > IOs): A > IOs =
@@ -43,7 +45,7 @@ class ForkManyBench extends Bench[Int] {
 
     for {
       promise <- Fibers.promise[Unit]
-      ref     <- IntRef(10000)
+      ref     <- AtomicInteger(10000)
       effect = ref.decrementAndGet {
         case 1 =>
           promise.complete(())

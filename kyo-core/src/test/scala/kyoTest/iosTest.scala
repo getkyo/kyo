@@ -7,7 +7,7 @@ import kyo.tries._
 
 import scala.concurrent.duration._
 import scala.util.Try
-import kyo.concurrent.refs.IntRef
+import kyo.concurrent.atomics.AtomicInteger
 import java.io.Closeable
 import scala.util.Success
 

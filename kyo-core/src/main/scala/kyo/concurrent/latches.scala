@@ -3,7 +3,7 @@ package kyo.concurrent
 import kyo.core._
 import kyo.ios._
 import fibers._
-import refs._
+import atomics._
 
 object latches {
 
@@ -21,7 +21,7 @@ object latches {
         }
       } else {
         for {
-          count   <- IntRef(n)
+          count   <- AtomicInteger(n)
           promise <- Fibers.promise[Unit]
         } yield {
           new Latch {

@@ -11,7 +11,7 @@ import kyo.concurrent.fibers._
 import scala.util.Try
 import kyo.consoles._
 import kyo.lists._
-import kyo.concurrent.refs._
+import kyo.concurrent.atomics._
 
 class directTest extends KyoTest {
 

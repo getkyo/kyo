@@ -3,20 +3,20 @@ package kyo.concurrent
 import kyo.core._
 import kyo.ios._
 
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.{AtomicBoolean => JAtomicBoolean}
+import java.util.concurrent.atomic.{AtomicInteger => JAtomicInteger}
+import java.util.concurrent.atomic.{AtomicLong => JAtomicLong}
+import java.util.concurrent.atomic.{AtomicReference => JAtomicReference}
 import scala.annotation.tailrec
 
-object refs {
+object atomics {
 
-  opaque type IntRef = AtomicInteger
-  object IntRef {
+  opaque type AtomicInteger = JAtomicInteger
+  object AtomicInteger {
     /*inline(1)*/
-    def apply(v: Int): IntRef > IOs = IOs(AtomicInteger(v))
+    def apply(v: Int): AtomicInteger > IOs = IOs(JAtomicInteger(v))
   }
-  extension (ref: IntRef) {
+  extension (ref: AtomicInteger) {
     /*inline(1)*/
     def get: Int > IOs =
       IOs(ref.get())
@@ -52,12 +52,12 @@ object refs {
       IOs(ref.addAndGet(v))
   }
 
-  opaque type LongRef = AtomicLong
-  object LongRef {
+  opaque type AtomicLong = JAtomicLong
+  object AtomicLong {
     /*inline(1)*/
-    def apply(v: Long): LongRef > IOs = IOs(AtomicLong(v))
+    def apply(v: Long): AtomicLong > IOs = IOs(JAtomicLong(v))
   }
-  extension (ref: LongRef) {
+  extension (ref: AtomicLong) {
     /*inline(1)*/
     def get: Long > IOs =
       IOs(ref.get())
@@ -93,12 +93,12 @@ object refs {
       IOs(ref.addAndGet(v))
   }
 
-  opaque type BooleanRef = AtomicBoolean
-  object BooleanRef {
+  opaque type AtomicBoolean = JAtomicBoolean
+  object AtomicBoolean {
     /*inline(1)*/
-    def apply(v: Boolean): BooleanRef > IOs = IOs(AtomicBoolean(v))
+    def apply(v: Boolean): AtomicBoolean > IOs = IOs(JAtomicBoolean(v))
   }
-  extension (ref: BooleanRef) {
+  extension (ref: AtomicBoolean) {
     /*inline(1)*/
     def get: Boolean > IOs =
       IOs(ref.get())
@@ -116,12 +116,12 @@ object refs {
       IOs(ref.compareAndSet(curr, next))
   }
 
-  opaque type Ref[T] = AtomicReference[T]
-  object Ref {
+  opaque type AtomicReference[T] = JAtomicReference[T]
+  object AtomicReference {
     /*inline(1)*/
-    def apply[T](v: T): Ref[T] > IOs = IOs(AtomicReference(v))
+    def apply[T](v: T): AtomicReference[T] > IOs = IOs(JAtomicReference(v))
   }
-  extension [T](ref: Ref[T]) {
+  extension [T](ref: AtomicReference[T]) {
     /*inline(1)*/
     def get: T > IOs =
       IOs(ref.get())

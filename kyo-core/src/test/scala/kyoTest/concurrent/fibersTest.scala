@@ -4,13 +4,13 @@ import kyo.core._
 import kyo.ios._
 import kyo.tries._
 import scala.util.Failure
-import kyo.concurrent.refs._
+import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
 import kyo.concurrent.latches._
 import kyoTest.KyoTest
-import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.atomic.AtomicInteger
-import kyo.concurrent.refs.IntRef
+import java.util.concurrent.atomic.{AtomicReference => JAtomicReference}
+import java.util.concurrent.atomic.{AtomicInteger => JAtomicInteger}
+import kyo.concurrent.atomics.AtomicInteger
 import scala.concurrent.duration._
 import kyo.scopes._
 import java.util.concurrent.atomic.AtomicBoolean
@@ -82,14 +82,14 @@ class fibersTest extends KyoTest {
 
   "interrupt" - {
 
-    def loop(ref: IntRef): Unit > IOs =
+    def loop(ref: AtomicInteger): Unit > IOs =
       Thread.sleep(1)
       ref.incrementAndGet(_ => loop(ref))
 
     def runLoop[T](started: Latch, done: Latch) =
       Scopes.close {
         Scopes.ensure(done.release) { _ =>
-          started.release(_ => IntRef(0)(loop))
+          started.release(_ => AtomicInteger(0)(loop))
         }
       }
 
@@ -122,7 +122,7 @@ class fibersTest extends KyoTest {
   }
 
   "forkFiber" - {
-    val thread = AtomicReference[Thread]
+    val thread = JAtomicReference[Thread]
     "executes in a different thread" in {
       run(Fibers.forkFiber(thread.set(Thread.currentThread())))
       assert(thread.get() != Thread.currentThread())
@@ -134,8 +134,8 @@ class fibersTest extends KyoTest {
   }
 
   "race" in {
-    val ac = AtomicInteger(0)
-    val bc = AtomicInteger(0)
+    val ac = JAtomicInteger(0)
+    val bc = JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
       IOs {
         if (i > 0) {
@@ -154,8 +154,8 @@ class fibersTest extends KyoTest {
   }
 
   "await" in {
-    val ac = AtomicInteger(0)
-    val bc = AtomicInteger(0)
+    val ac = JAtomicInteger(0)
+    val bc = JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
       IOs {
         if (i > 0) {
@@ -174,8 +174,8 @@ class fibersTest extends KyoTest {
   }
 
   "awaitFiber" in {
-    val ac = AtomicInteger(0)
-    val bc = AtomicInteger(0)
+    val ac = JAtomicInteger(0)
+    val bc = JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
       IOs {
         if (i > 0) {
@@ -194,8 +194,8 @@ class fibersTest extends KyoTest {
   }
 
   "collect" in {
-    val ac = AtomicInteger(0)
-    val bc = AtomicInteger(0)
+    val ac = JAtomicInteger(0)
+    val bc = JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
       IOs {
         if (i > 0) {
@@ -214,8 +214,8 @@ class fibersTest extends KyoTest {
   }
 
   "collectFiber" in {
-    val ac = AtomicInteger(0)
-    val bc = AtomicInteger(0)
+    val ac = JAtomicInteger(0)
+    val bc = JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
       IOs {
         if (i > 0) {
@@ -246,14 +246,14 @@ class fibersTest extends KyoTest {
       assert(a == 15)
     }
     "interrupt" in run {
-      def loop(ref: IntRef): Unit > IOs =
+      def loop(ref: AtomicInteger): Unit > IOs =
         Thread.sleep(1)
         ref.incrementAndGet(_ => loop(ref))
 
       def task(l: Latch): Unit > IOs =
         Scopes.close {
           Scopes.ensure(l.release) { _ =>
-            IntRef(0)(loop)
+            AtomicInteger(0)(loop)
           }
         }
 
@@ -269,23 +269,23 @@ class fibersTest extends KyoTest {
 
   "with scopes" - {
     trait Context {
-      val resource1 = new AtomicInteger with Closeable {
+      val resource1 = new JAtomicInteger with Closeable {
         def close(): Unit =
           set(-1)
       }
-      val resource2 = new AtomicInteger with Closeable {
+      val resource2 = new JAtomicInteger with Closeable {
         def close(): Unit =
           set(-1)
       }
     }
     "outer" in new Context {
-      val io1: (AtomicInteger & Closeable, Set[Int]) > (Scopes | IOs | Fibers) =
+      val io1: (JAtomicInteger & Closeable, Set[Int]) > (Scopes | IOs | Fibers) =
         for {
           r        <- Scopes.acquire(resource1)
           v1       <- IOs(r.getAndIncrement())
           (v2, v3) <- Fibers.fork(r.getAndIncrement(), r.getAndIncrement())
         } yield (r, Set(v1, v2, v3))
-      val io2: (AtomicInteger, Set[Int]) > (IOs | Fibers) =
+      val io2: (JAtomicInteger, Set[Int]) > (IOs | Fibers) =
         Scopes.close(io1)
       assert(run(io2) == (resource1, Set(0, 1, 2)))
       assert(resource1.get() == -1)
