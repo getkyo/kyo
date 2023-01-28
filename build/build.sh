@@ -11,6 +11,9 @@ SBT_PUBLISH=" +publish"
 if [[ true ]]
 then
     SBT_CMD+=$SBT_PUBLISH
+
+    echo "test var $TEST_ENV_VAR"
+
     openssl aes-256-cbc -pass pass:$ENCRYPTION_PASSWORD -in ./build/secring.gpg.enc -out local.secring.gpg -d
     openssl aes-256-cbc -pass pass:$ENCRYPTION_PASSWORD -in ./build/pubring.gpg.enc -out local.pubring.gpg -d
     openssl aes-256-cbc -pass pass:$ENCRYPTION_PASSWORD -in ./build/credentials.sbt.enc -out local.credentials.sbt -d
