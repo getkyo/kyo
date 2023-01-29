@@ -1,5 +1,3 @@
-import ReleaseTransformations._
-import sbtrelease.ReleasePlugin
 
 val scala3Version = "3.2.0"
 
@@ -19,7 +17,21 @@ lazy val `kyo-settings` = Seq(
     scalaVersion := scala3Version,
     fork         := true,
     scalacOptions ++= compilerOptions,
-    scalafmtOnCompile := true
+    scalafmtOnCompile := true,
+    
+    organization := "io.getkyo",
+    homepage     := Some(url("https://getkyo.io")),
+    licenses     := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")),
+    developers := List(
+        Developer(
+            "fwbrasil",
+            "Flavio Brasil", 
+            "fwbrasil@gmail.com",
+            url("https://github.com/fwbrasil/")
+        )
+    ),
+    ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
+    sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
 )
 
 lazy val kyo = (project in file("."))
@@ -35,57 +47,7 @@ lazy val kyo = (project in file("."))
   .settings(
       name := "kyo",
       `kyo-settings`,
-      publishArtifact := false,
-      releasePublishArtifactsAction := PgpKeys.publishSigned.value,
-      releaseIgnoreUntrackedFiles := true,
-      publishMavenStyle := true,
-      publishTo := {
-        val nexus = "https://oss.sonatype.org/"
-        if (isSnapshot.value)
-          Some("snapshots" at nexus + "content/repositories/snapshots")
-        else
-          Some("releases"  at nexus + "service/local/staging/deploy/maven2")
-      },
-      pgpSecretRing := file("local.secring.gpg"),
-      pgpPublicRing := file("local.pubring.gpg"),
-      releasePublishArtifactsAction := PgpKeys.publishSigned.value,
-      releaseProcess := {
-        Seq[ReleaseStep](
-          checkSnapshotDependencies,
-          inquireVersions,
-          releaseStepCommandAndRemaining("+clean"),
-          releaseStepCommandAndRemaining("+test"),
-          setReleaseVersion,
-          commitReleaseVersion,
-          tagRelease,
-          releaseStepCommandAndRemaining("+publishSigned"),
-          setNextVersion,
-          commitNextVersion,
-          releaseStepCommand("sonatypeReleaseAll"),
-          pushChanges
-        )
-      },
-      pomExtra := (
-        <url>http://github.com/fwbrasil/kyo</url>
-        <licenses>
-          <license>
-            <name>Apache License 2.0</name>
-            <url>https://raw.githubusercontent.com/fwbrasil/kyo/master/LICENSE.txt</url>
-            <distribution>repo</distribution>
-          </license>
-        </licenses>
-        <scm>
-          <url>git@github.com:fwbrasil/kyo.git</url>
-          <connection>scm:git:git@github.com:fwbrasil/kyo.git</connection>
-        </scm>
-        <developers>
-          <developer>
-            <id>fwbrasil</id>
-            <name>Flavio W. Brasil</name>
-            <url>http://github.com/fwbrasil/</url>
-          </developer>
-        </developers>
-      )
+      publishArtifact := false
   )
 
 lazy val prepareOpt = TaskKey[Unit]("prepareOpt", "prepareOpt")
@@ -161,53 +123,5 @@ lazy val `kyo-bench` = project
       libraryDependencies += "dev.zio"       %% "zio"         % "2.0.5"
   )
 
-  
 testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
 
-// # Set up some configuration for publishing to GitHub
-
-// GitHub repo info
-val githubOwner: String      = "fwbrasil"
-val githubRepository: String = "kyo"
-
-// Settings to set the version based on a tagged release in GitHub,
-// or use a default value if not present
-val defaultVersion: String = "0.1.0-SNAPSHOT"
-val tagWithQualifier: String => String => String =
-  qualifier =>
-    tagVersion => s"%s.%s.%s-${qualifier}%s".format(tagVersion.split("\\.")*)
-
-val tagAlpha: String => String     = tagWithQualifier("a")
-val tagBeta: String => String      = tagWithQualifier("b")
-val tagMilestone: String => String = tagWithQualifier("m")
-val tagRC: String => String        = tagWithQualifier("rc")
-val tagSnapshot: String => String = tagVersion =>
-  s"%s.%s.%s-SNAPSHOT".format(tagVersion.split("\\.")*)
-
-val versionFromTag: String = sys.env
-  .get("GITHUB_REF_TYPE")
-  .filter(_ == "tag")
-  .flatMap(_ => sys.env.get("GITHUB_REF_NAME"))
-  .flatMap { t =>
-    t.headOption.map {
-      case 'a' => tagAlpha(t.tail)     // Alpha build, a1.2.3.4 => 1.2.3-a4
-      case 'b' => tagBeta(t.tail)      // Beta build, b1.2.3.4 => 1.2.3-b4
-      case 'm' => tagMilestone(t.tail) // Milestone build, m1.2.3.4 => 1.2.3-m4
-      case 'r' => tagRC(t.tail)        // RC build, r1.2.3.4 => 1.2.3-rc4
-      case 's' => tagSnapshot(t.tail)  // SNAPSHOT build, s1.2.3 => 1.2.3-SNAPSHOT
-      case 'v' => t.tail               // Production build, should be v1.2.3 => 1.2.3
-      case _   => defaultVersion
-    }
-  }
-  .getOrElse(defaultVersion)
-
-ThisBuild / version := versionFromTag
-
-
-commands += Command.command("checkUnformattedFiles") { st =>
-  val vcs = Project.extract(st).get(releaseVcs).get
-  val modified = vcs.cmd("ls-files", "--modified", "--exclude-standard").!!.trim
-  if(modified.nonEmpty)
-    throw new IllegalStateException(s"Please run `sbt scalafmt` and resubmit your pull request. Found unformatted files: \n$modified")
-  st
-}

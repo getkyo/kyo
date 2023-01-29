@@ -8,11 +8,4 @@ jobs:
     - uses: actions/checkout@v1
     - uses: olafurpg/setup-scala@v11
     - name: build
-      run: ./build/build.sh
-      env:
-       ENCRYPTION_PASSWORD: ${{ secrets.ENCRYPTION_PASSWORD }}
-       TEST_ENV_VAR: ${{ secrets.TEST_ENV_VAR }}
-    # - name: Publish
-    #   run: sbt publish
-    #   env: 
-    #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: sbt test

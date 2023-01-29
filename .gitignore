@@ -15,3 +15,4 @@ jmh-result.json
 kyo-core-opt1
 kyo-core-opt2
 kyo-core-opt3
+*.gpg
