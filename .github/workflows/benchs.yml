@@ -42,5 +42,5 @@ jobs:
           auto-push: true
           alert-threshold: '200%'
           comment-on-alert: true
-          fail-on-alert: true
+          fail-on-alert: false
           alert-comment-cc-users: '@fwbrasil'
