@@ -1,4 +1,3 @@
-
 val scala3Version = "3.2.0"
 
 val compilerOptions = Seq(
@@ -18,20 +17,19 @@ lazy val `kyo-settings` = Seq(
     fork         := true,
     scalacOptions ++= compilerOptions,
     scalafmtOnCompile := true,
-    
-    organization := "io.getkyo",
-    homepage     := Some(url("https://getkyo.io")),
-    licenses     := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")),
+    organization      := "io.getkyo",
+    homepage          := Some(url("https://getkyo.io")),
+    licenses          := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")),
     developers := List(
         Developer(
             "fwbrasil",
-            "Flavio Brasil", 
+            "Flavio Brasil",
             "fwbrasil@gmail.com",
             url("https://github.com/fwbrasil/")
         )
     ),
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
-    sonatypeRepository := "https://s01.oss.sonatype.org/service/local"
+    sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
 )
 
 lazy val kyo = (project in file("."))
@@ -50,15 +48,17 @@ lazy val kyo = (project in file("."))
       publishArtifact := false
   )
 
+val zioVersion = "2.0.6"
+
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "com.lihaoyi"   %% "sourcecode"        % "0.3.0",
     libraryDependencies += "dev.zio"       %% "izumi-reflect"     % "2.2.2",
-    libraryDependencies += "dev.zio"       %% "zio-test"          % "2.0.5"      % Test,
-    libraryDependencies += "dev.zio"       %% "zio-test-magnolia" % "2.0.5"      % Test,
-    libraryDependencies += "dev.zio"       %% "zio-test-sbt"      % "2.0.5"      % Test,
+    libraryDependencies += "dev.zio"       %% "zio-test"          % zioVersion   % Test,
+    libraryDependencies += "dev.zio"       %% "zio-test-magnolia" % zioVersion   % Test,
+    libraryDependencies += "dev.zio"       %% "zio-test-sbt"      % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %% "zio-prelude"       % "1.0.0-RC16" % Test,
     libraryDependencies += "dev.zio"       %% "zio-laws-laws"     % "1.0.0-RC16" % Test,
-    libraryDependencies += "org.scalatest" %% "scalatest"         % "3.2.11"     % Test
+    libraryDependencies += "org.scalatest" %% "scalatest"         % "3.2.15"     % Test
 )
 
 lazy val `kyo-core` = project
@@ -98,7 +98,7 @@ lazy val `kyo-direct` = project
   .settings(
       name := "kyo-direct",
       `kyo-settings`,
-      libraryDependencies += "com.github.rssh" %% "dotty-cps-async" % "0.9.14"
+      libraryDependencies += "com.github.rssh" %% "dotty-cps-async" % "0.9.15"
   )
 
 lazy val `kyo-zio` = project
@@ -107,12 +107,12 @@ lazy val `kyo-zio` = project
   .settings(
       name := "kyo-zio",
       `kyo-settings`,
-      libraryDependencies += "dev.zio" %% "zio" % "2.0.3"
+      libraryDependencies += "dev.zio" %% "zio" % zioVersion
   )
 
 val coreDep = {
   val ref = System.getenv("GITHUB_REF")
-  if(ref == null || ref.isEmpty()) {
+  if (ref == null || ref.isEmpty()) {
     `kyo-core`
   } else {
     `kyo-core-opt3`
@@ -127,8 +127,7 @@ lazy val `kyo-bench` = project
       name := "kyo-bench",
       `kyo-settings`,
       libraryDependencies += "org.typelevel" %% "cats-effect" % "3.3.12",
-      libraryDependencies += "dev.zio"       %% "zio"         % "2.0.5"
+      libraryDependencies += "dev.zio"       %% "zio"         % zioVersion
   )
 
 testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
-

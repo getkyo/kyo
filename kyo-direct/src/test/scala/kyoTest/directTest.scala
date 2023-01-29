@@ -70,7 +70,7 @@ class directTest extends KyoTest {
             (direct.run(IOs { calls :+= 1; true }) && direct.run(IOs { calls :+= 2; true }))
           }
         assert(IOs.run(io))
-        assert(calls == List(2, 1))
+        assert(calls == List(1, 2))
       }
     }
     "||" - {
@@ -86,7 +86,7 @@ class directTest extends KyoTest {
             (direct.run(IOs { calls :+= 1; true }) || direct.run(IOs { calls :+= 2; true }))
           }
         assert(IOs.run(io))
-        assert(calls == List(2, 1))
+        assert(calls == List(1))
       }
     }
   }
