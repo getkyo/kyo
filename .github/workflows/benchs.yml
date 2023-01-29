@@ -17,10 +17,18 @@ jobs:
         with:
           fetch-depth: 0
       - uses: olafurpg/setup-scala@v13
-      - name: compile benchmarks
-        run: sbt kyo-bench/jmh:compile
+        with:
+          java-version: openjdk@1.17.0
+
       - name: run benchmarks
-        run: sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true DeepBindMapBench"
+        run: sbt kyo-bench/"jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true" 
+
+      - name: Download previous benchmark data
+        uses: actions/cache@v1
+        with:
+          path: ./cache
+          key: ${{ runner.os }}-benchmark
+
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
