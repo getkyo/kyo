@@ -20,6 +20,9 @@ jobs:
         with:
           java-version: openjdk@1.17.0
 
+      - name: opt-gen
+        run: ./opt-gen.sh
+
       - name: run benchmarks
         run: sbt kyo-bench/"jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true" 
 

@@ -50,8 +50,6 @@ lazy val kyo = (project in file("."))
       publishArtifact := false
   )
 
-lazy val prepareOpt = TaskKey[Unit]("prepareOpt", "prepareOpt")
-
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "com.lihaoyi"   %% "sourcecode"        % "0.3.0",
     libraryDependencies += "dev.zio"       %% "izumi-reflect"     % "2.2.2",
@@ -115,7 +113,7 @@ lazy val `kyo-zio` = project
 lazy val `kyo-bench` = project
   .in(file("kyo-bench"))
   .enablePlugins(JmhPlugin)
-  .dependsOn(`kyo-core`)
+  .dependsOn(`kyo-core-opt1`)
   .settings(
       name := "kyo-bench",
       `kyo-settings`,
