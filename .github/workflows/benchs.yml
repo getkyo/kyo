@@ -2,7 +2,7 @@ name: benchs
 on:
   push:
     branches:
-      - master
+      - main
 
 permissions:
   contents: write
@@ -13,13 +13,14 @@ jobs:
     name: Run benchmark
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v1
-      - uses: olafurpg/setup-scala@v11
+      - uses: actions/checkout@v3.0.2
+        with:
+          fetch-depth: 0
+      - uses: olafurpg/setup-scala@v13
+      - name: compile benchmarks
+        run: sbt kyo-bench/jmh:compile
       - name: run benchmarks
-        run: sbt kyo-bench/jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true
-        env: 
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+        run: sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true DeepBindMapBench"
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
