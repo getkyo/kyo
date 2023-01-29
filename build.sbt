@@ -110,10 +110,19 @@ lazy val `kyo-zio` = project
       libraryDependencies += "dev.zio" %% "zio" % "2.0.3"
   )
 
+val coreDep = {
+  val ref = System.getenv("GITHUB_REF")
+  if(ref == null || ref.isEmpty()) {
+    `kyo-core`
+  } else {
+    `kyo-core-opt3`
+  }
+}
+
 lazy val `kyo-bench` = project
   .in(file("kyo-bench"))
   .enablePlugins(JmhPlugin)
-  .dependsOn(`kyo-core-opt3`)
+  .dependsOn(coreDep)
   .settings(
       name := "kyo-bench",
       `kyo-settings`,
