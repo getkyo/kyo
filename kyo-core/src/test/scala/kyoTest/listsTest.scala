@@ -31,6 +31,12 @@ class choicesTest extends KyoTest {
         List(20, 200, 30, 300)
     )
   }
+  "filter" in {
+    checkEquals[List[Int], Nothing](
+        Lists.run(Lists(1, 2, 3)(i => Lists.filter(i >= 2)(_ => Lists(i * 10, i * 100)))),
+        List(20, 200, 30, 300)
+    )
+  }
   "with fibers" in {
     val t = Thread.currentThread()
     val io: Int > (Lists | IOs | Fibers) =
