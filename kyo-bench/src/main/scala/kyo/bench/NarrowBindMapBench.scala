@@ -7,7 +7,6 @@ class NarrowBindMapBench extends Bench[Int] {
   def kyoBench() = {
     import kyo.core._
     import kyo.ios._
-    import kyo.lists._
 
     def loop(i: Int): Int > IOs =
       if (i < depth)

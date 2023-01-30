@@ -6,7 +6,6 @@ import kyo.core._
 import kyo.frames._
 import kyo.ios._
 import kyo.scopes._
-import kyo.lists.Lists
 
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
