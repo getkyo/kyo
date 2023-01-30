@@ -139,13 +139,13 @@ class directTest extends KyoTest {
     """)
   }
 
-  "choices" in {
-    import kyo.choices._
+  "lists" in {
+    import kyo.lists._
 
-    val x = Choices(1, -2, -3)
-    val y = Choices("ab", "cde")
+    val x = Lists(1, -2, -3)
+    val y = Lists("ab", "cde")
 
-    val v: Int > Choices =
+    val v: Int > Lists =
       Kyo.direct {
         val xx = Kyo(x)
         xx + (
@@ -154,17 +154,17 @@ class directTest extends KyoTest {
         )
       }
 
-    val a: List[Int] = Choices.run(v)
+    val a: List[Int] = Lists.run(v)
     assert(a == List(3, 4, -3, -5, -5, -8, 0, 1, -1, 0))
   }
 
-  "choices + ensure" in {
-    import kyo.choices._
+  "lists + filter" in {
+    import kyo.lists._
 
-    val x = Choices(1, -2, -3)
-    val y = Choices("ab", "cde")
+    val x = Lists(1, -2, -3)
+    val y = Lists("ab", "cde")
 
-    val v: Int > Choices =
+    val v: Int > Lists =
       Kyo.direct {
         val xx = Kyo(x)
         val r =
@@ -172,11 +172,11 @@ class directTest extends KyoTest {
               if (xx > 0) then Kyo(y).length * Kyo(x)
               else Kyo(y).length
           )
-        Kyo(Choices.ensure(r > 0))
+        Kyo(Lists.filter(r > 0))
         r
       }
 
-    val a: List[Int] = Choices.run(v)
+    val a: List[Int] = Lists.run(v)
     assert(a == List(3, 4, 1))
   }
 
