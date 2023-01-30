@@ -2,6 +2,8 @@ package kyoTest
 
 import kyo.core._
 import kyo.lists._
+import kyo.concurrent.fibers._
+import kyo.ios.IOs
 
 class choicesTest extends KyoTest {
 
@@ -28,5 +30,20 @@ class choicesTest extends KyoTest {
         Lists.run(Lists(1, 2, 3)(i => if (i < 2) Lists.drop else Lists(i * 10, i * 100))),
         List(20, 200, 30, 300)
     )
+  }
+  "with fibers" in {
+    val t = Thread.currentThread()
+    val io: Int > (Lists | IOs | Fibers) =
+      Lists(1, 2, 3) { i =>
+        Fibers.fork {
+          assert(Thread.currentThread() != t)
+          i + 1
+        }
+      }
+    val b: List[Int] > (IOs | Fibers) =
+      Lists.run(io)
+    val c: List[Int] =
+      IOs.lazyRun(Fibers.block(b))
+    assert(c == List(2, 3, 4))
   }
 }
