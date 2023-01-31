@@ -4,6 +4,7 @@ import kyo.core._
 import kyo.tries._
 import kyo.options._
 import kyo.direct._
+import kyo.direct
 import kyo.ios._
 import kyo.envs._
 import kyo.concurrent.fibers._
@@ -14,8 +15,8 @@ import kyo.concurrent.atomics._
 class directTest extends KyoTest {
 
   "one run" in {
-    val io = Kyo.direct {
-      val a = Kyo(IOs("hello"))
+    val io = defer {
+      val a = direct.run(IOs("hello"))
       a + " world"
     }
     assert(IOs.run(io) == "hello world")
@@ -23,9 +24,9 @@ class directTest extends KyoTest {
 
   "two runs" in {
     val io =
-      Kyo.direct {
-        val a = Kyo(IOs("hello"))
-        val b = Kyo(IOs("world"))
+      defer {
+        val a = direct.run(IOs("hello"))
+        val b = direct.run(IOs("world"))
         a + " " + b
       }
     assert(IOs.run(io) == "hello world")
@@ -33,9 +34,9 @@ class directTest extends KyoTest {
 
   "two effects" in {
     val io: String > (IOs | Options) =
-      Kyo.direct {
-        val a = Kyo(Options.get(Some("hello")))
-        val b = Kyo(IOs("world"))
+      defer {
+        val a = direct.run(Options.get(Some("hello")))
+        val b = direct.run(IOs("world"))
         a + " " + b
       }
     assert(IOs.run(io < Options) == Some("hello world"))
@@ -44,11 +45,11 @@ class directTest extends KyoTest {
   "if" in {
     var calls = List.empty[Int]
     val io: Boolean > IOs =
-      Kyo.direct {
-        if (Kyo(IOs { calls :+= 1; true }))
-          Kyo(IOs { calls :+= 2; true })
+      defer {
+        if (direct.run(IOs { calls :+= 1; true }))
+          direct.run(IOs { calls :+= 2; true })
         else
-          Kyo(IOs { calls :+= 3; true })
+          direct.run(IOs { calls :+= 3; true })
       }
     assert(IOs.run(io))
     assert(calls == List(1, 2))
@@ -64,8 +65,8 @@ class directTest extends KyoTest {
       "direct" in {
         var calls = List.empty[Int]
         val io: Boolean > IOs =
-          Kyo.direct {
-            (Kyo(IOs { calls :+= 1; true }) && Kyo(IOs { calls :+= 2; true }))
+          defer {
+            (direct.run(IOs { calls :+= 1; true }) && direct.run(IOs { calls :+= 2; true }))
           }
         assert(IOs.run(io))
         assert(calls == List(1, 2))
@@ -80,8 +81,8 @@ class directTest extends KyoTest {
       "direct" in {
         var calls = List.empty[Int]
         val io: Boolean > IOs =
-          Kyo.direct {
-            (Kyo(IOs { calls :+= 1; true }) || Kyo(IOs { calls :+= 2; true }))
+          defer {
+            (direct.run(IOs { calls :+= 1; true }) || direct.run(IOs { calls :+= 2; true }))
           }
         assert(IOs.run(io))
         assert(calls == List(1))
@@ -91,14 +92,14 @@ class directTest extends KyoTest {
 
   "options" in {
     def test[T](opt: Option[T]) =
-      assert(opt == Kyo.direct(Kyo(opt > Options)) < Options)
+      assert(opt == defer(direct.run(opt > Options)) < Options)
     test(Some(1))
     test(None)
     test(Some("a"))
   }
   "tries" in {
     def test[T](t: Try[T]) =
-      assert(t == Kyo.direct(Kyo(t > Tries)) < Tries)
+      assert(t == defer(direct.run(t > Tries)) < Tries)
     test(Try(1))
     test(Try(throw new Exception("a")))
     test(Try("a"))
@@ -116,20 +117,20 @@ class directTest extends KyoTest {
 
       def printlnErr(s: => String): Unit > IOs = ???
     }
-    val io: String > IOs = Consoles.run(console)(Kyo.direct(Kyo(Consoles.readln)))
+    val io: String > IOs = Consoles.run(console)(defer(direct.run(Consoles.readln)))
     assert(IOs.run(io) == "hello")
   }
 
   "kyo computations must be within a run block" in {
-    assertDoesNotCompile("Kyo.direct(IOs(1))")
+    assertDoesNotCompile("defer(IOs(1))")
     assertDoesNotCompile("""
-      Kyo.direct {
+      defer {
         val a = IOs(1)
         10
       }
     """)
     assertDoesNotCompile("""
-      Kyo.direct {
+      defer {
         val a = {
           val b = IOs(1)
           10
@@ -146,11 +147,11 @@ class directTest extends KyoTest {
     val y = Lists("ab", "cde")
 
     val v: Int > Lists =
-      Kyo.direct {
-        val xx = Kyo(x)
+      defer {
+        val xx = direct.run(x)
         xx + (
-            if (xx > 0) then Kyo(y).length * Kyo(x)
-            else Kyo(y).length
+            if (xx > 0) then direct.run(y).length * direct.run(x)
+            else direct.run(y).length
         )
       }
 
@@ -165,19 +166,18 @@ class directTest extends KyoTest {
     val y = Lists("ab", "cde")
 
     val v: Int > Lists =
-      Kyo.direct {
-        val xx = Kyo(x)
+      defer {
+        val xx = direct.run(x)
         val r =
           xx + (
-              if (xx > 0) then Kyo(y).length * Kyo(x)
-              else Kyo(y).length
+              if (xx > 0) then direct.run(y).length * direct.run(x)
+              else direct.run(y).length
           )
-        Kyo(Lists.filter(r > 0))
+        direct.run(Lists.filter(r > 0))
         r
       }
 
     val a: List[Int] = Lists.run(v)
     assert(a == List(3, 4, 1))
   }
-
 }
