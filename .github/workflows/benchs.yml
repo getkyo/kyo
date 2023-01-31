@@ -27,7 +27,7 @@ jobs:
         run: sbt kyo-bench/"jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true Kyo" 
 
       - name: Download previous benchmark data
-        uses: actions/cache@v1
+        uses: actions/cache@v3.2.4
         with:
           path: ./cache
           key: ${{ runner.os }}-benchmark
