@@ -30,7 +30,7 @@ object randoms {
     }
   }
 
-  opaque type Randoms = Envs[Random]
+  type Randoms = Envs[Random]
 
   object Randoms {
     def run[T, S](r: Random)(f: => T > (S | Randoms)): T > S =

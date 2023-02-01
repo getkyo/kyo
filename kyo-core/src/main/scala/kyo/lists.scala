@@ -5,7 +5,7 @@ import kyo.options._
 
 object lists {
 
-  final class Lists extends Effect[List] {
+  final class Lists private[lists] () extends Effect[List] {
 
     def run[T, S](v: T > (S | Lists)): List[T] > S =
       v < Lists
