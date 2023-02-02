@@ -22,6 +22,7 @@ import scala.util.control.NonFatal
 import scheduler._
 import java.util.concurrent.ScheduledFuture
 import java.io.Closeable
+import scala.concurrent.Future
 
 object fibers {
 
@@ -280,6 +281,21 @@ object fibers {
             }
         }
       (v < Fibers)(_.block)
+
+    def join[T](f: Future[T]): T > (IOs | Fibers) =
+      import scala.concurrent.ExecutionContext.Implicits.global
+      IOs {
+        val p = IOPromise[T]
+        f.onComplete { r =>
+          try {
+            p.complete(r.get)
+          } catch {
+            case ex if (NonFatal(ex)) =>
+              p.complete(IOs(throw ex))
+          }
+        }
+        p > Fibers
+      }
   }
   val Fibers = new Fibers
 
