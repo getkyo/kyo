@@ -10,11 +10,11 @@ import kyo.scopes._
 import kyo.concurrent.fibers._
 import scala.concurrent.duration._
 
-class AppTest extends KyoTest {
+class KyoAppTest extends KyoTest {
 
   "args" in {
     var args: List[String] = Nil
-    val app: kyo.App = (a: List[String]) => {
+    val app: kyo.KyoApp = (a: List[String]) => {
       args = a
       ()
     }
@@ -23,7 +23,7 @@ class AppTest extends KyoTest {
   }
 
   "effects" in {
-    val app: kyo.App = (a: List[String]) => {
+    val app: kyo.KyoApp = (a: List[String]) => {
       for {
         _ <- Timers.scheduleAtFixedRate((), 1.second, 1.second)
         _ <- Randoms.nextInt

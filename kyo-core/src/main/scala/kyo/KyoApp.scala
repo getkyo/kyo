@@ -11,7 +11,7 @@ import concurrent.fibers._
 import concurrent.timers._
 import kyo.randoms.Randoms
 
-trait App {
+trait KyoApp {
 
   final def main(args: Array[String]): Unit =
     val v0: Unit > (IOs | Fibers | Scopes | Clocks | Consoles | Randoms | Timers) = run(args.toList)
