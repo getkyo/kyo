@@ -69,5 +69,5 @@ private object Coordinator {
     ()
 
   override def toString =
-    s"Clock(ticks=$ticks,cycles=$cycles,delay.dev=${delayNs.dev()},delay.avg=${delayNs.avg()},jitter=${jitter()})"
+    s"Coordinator(ticks=$ticks,cycles=$cycles,delay.dev=${delayNs.dev()},delay.avg=${delayNs.avg()},jitter=${jitter()})"
 }

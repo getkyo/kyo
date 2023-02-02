@@ -3,7 +3,7 @@ package kyo.concurrent.scheduler
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicInteger
 
-object ThreadFactory {
+private object ThreadFactory {
 
   def apply(name: String): ThreadFactory =
     apply(name, new Thread(_))

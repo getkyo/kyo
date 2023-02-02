@@ -2,7 +2,7 @@ package kyo.concurrent.scheduler
 
 import java.util.Random
 
-object XSRandom extends Random {
+private object XSRandom extends Random {
   private[this] var seed: Long = System.nanoTime()
   override def next(nbits: Int): Int = {
     var x = seed + Thread.currentThread().getId

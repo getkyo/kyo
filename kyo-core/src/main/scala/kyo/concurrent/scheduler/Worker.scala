@@ -9,16 +9,16 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.LockSupport
 
-class Worker(r: Runnable)
+private final class Worker(r: Runnable)
     extends Thread(r) {
 
-  val queue = Queue[IOTask[_]]
+  private val queue = Queue[IOTask[_]]
 
-  @volatile var running                = false
-  @volatile var currentTask: IOTask[_] = null
-  @volatile var parkedThread: Thread   = null
+  @volatile private var running                = false
+  @volatile private var currentTask: IOTask[_] = null
+  @volatile private var parkedThread: Thread   = null
 
-  val delay = MovingStdDev(7)
+  private val delay = MovingStdDev(7)
 
   def park() =
     parkedThread = this
@@ -98,7 +98,7 @@ class Worker(r: Runnable)
     s"Worker(thread=${getName},load=${load()},delay=${delay.avg()},task=$currentTask,queue.size=${queue.size()},frame=${this.getStackTrace()(0)})"
 }
 
-object Worker {
+private object Worker {
   def apply(): Worker =
     Thread.currentThread() match {
       case w: Worker => w

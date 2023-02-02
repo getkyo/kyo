@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.LongAdder
 
 import kyo.concurrent.scheduler.IOTask
 
-object Scheduler {
+private[kyo] object Scheduler {
 
   private val coreWorkers = Runtime.getRuntime().availableProcessors()
 

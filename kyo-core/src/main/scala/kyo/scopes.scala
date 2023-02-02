@@ -43,7 +43,7 @@ object scopes {
           a.run()
         }
       override def drop(v: Finalizer): Unit > IOs =
-        v.run()
+        IOs(v.run())
     }
   }
 }
