@@ -121,13 +121,7 @@ object ios {
             new KyoCont[M2, E2, Any, T, S](kyo) {
               def frame = fr
               def apply(v: Any, s: Safepoint[E2]) =
-                val r =
-                  try kyo(v, s)
-                  catch {
-                    case ex if (NonFatal(ex)) =>
-                      throw ex
-                  }
-                lazyRunLoop(r)
+                lazyRunLoop(kyo(v, s))
             }
           case _ =>
             v.asInstanceOf[T]

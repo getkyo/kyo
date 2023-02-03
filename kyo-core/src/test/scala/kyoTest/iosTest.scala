@@ -74,14 +74,6 @@ class iosTest extends KyoTest {
           frames
       )
     }
-    // "stack-safe pure transforms" in {
-    //   val frames = 10000
-    //   var i      = IOs(0)
-    //   for (_ <- 0 until frames) {
-    //     i = i(_ + 1)
-    //   }
-    //   IOs.run(i)
-    // }
   }
   "run" - {
     "execution" in {
@@ -125,30 +117,33 @@ class iosTest extends KyoTest {
     }
   }
 
-  // "eval" - {
-  //   "done" in {
-  //     val io = IOs.eval(() => false)(IOs(1)(_ + 1))
-  //     assert(IOs.isDone(io))
-  //     assert(IOs.run(io) == 2)
-  //   }
-  //   "not done" in {
-  //     var steps = 0
-  //     def loop(i: Int): Int > IOs =
-  //       IOs {
-  //         steps += 1
-  //         if (i < 100)
-  //           loop(i + 1)
-  //         else
-  //           i
-  //       }
-
-  //     val io = IOs.eval(() => steps == 50)(loop(0))
-  //     assert(steps == 50)
-  //     assert(!IOs.isDone(io))
-  //     assert(IOs.run(io) == 100)
-  //     assert(steps == 101)
-  //   }
-  // }
+  "eval" - {
+    "done" in {
+      val io = IOs.eval(Preempt.never)(IOs(1)(_ + 1))
+      assert(IOs.isDone(io))
+      assert(IOs.run(io) == 2)
+    }
+    "not done" in {
+      var steps = 0
+      def loop(i: Int): Int > IOs =
+        IOs {
+          steps += 1
+          if (i < 100)
+            loop(i + 1)
+          else
+            i
+        }
+      val p = new Preempt {
+        def apply(): Boolean                     = steps == 50
+        override def ensure(f: Unit > IOs): Unit = ???
+      }
+      val io = IOs.eval(p)(loop(0))
+      assert(steps == 50)
+      assert(!IOs.isDone(io))
+      assert(IOs.run(io) == 100)
+      assert(steps == 101)
+    }
+  }
 
   "attempt" - {
     "success" in {
