@@ -1,4 +1,6 @@
-package object kyo {
+package kyo
+
+object all {
   export aborts._
   export arrows._
   export clocks._
@@ -12,4 +14,9 @@ package object kyo {
   export scopes._
   export sums._
   export tries._
+  export concurrent.adders._
+  export concurrent.atomics._
+  export concurrent.fibers._
+  export concurrent.latches._
+  export concurrent.timers._
 }

@@ -32,6 +32,12 @@ lazy val `kyo-settings` = Seq(
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
 )
 
+lazy val genOpt = TaskKey[Unit]("genOpt", "")
+
+lazy val genOptState: State => State = { s: State =>
+  "genOpt" :: s
+}
+
 lazy val kyo = (project in file("."))
   .aggregate(
       `kyo-core`,
@@ -40,12 +46,21 @@ lazy val kyo = (project in file("."))
       `kyo-core-opt3`,
       `kyo-bench`,
       `kyo-zio`,
-      `kyo-direct`
+      `kyo-direct`,
   )
   .settings(
       name := "kyo",
       `kyo-settings`,
-      publishArtifact := false
+      publishArtifact := false,
+      genOpt := {
+        genOpt(1)
+        genOpt(2)
+        genOpt(3)
+      },
+      Global / onLoad := {
+        val old = (Global / onLoad).value
+        genOptState compose old
+      },
   )
 
 val zioVersion = "2.0.6"
@@ -61,6 +76,24 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "org.scalatest" %% "scalatest"         % "3.2.15"     % Test
 )
 
+def genOpt(i: Int) = {
+  val origin = new File("kyo-core/src/")
+  val dest   = new File(s"kyo-core-opt$i/src/")
+  IO.copyDirectory(origin, dest)
+
+  def inlining(file: File): Unit = {
+    if (file.isDirectory) file.listFiles.foreach(inlining)
+    else {
+      var original = IO.read(file)
+      var content = original
+      for (i <- 1 to i)
+        content = content.replaceAllLiterally(s"/*inline(${4 - i})*/", "inline")
+      IO.write(file, content)
+    }
+  }
+  inlining(dest)
+}
+
 lazy val `kyo-core` = project
   .in(file("kyo-core"))
   .settings(
@@ -73,7 +106,7 @@ lazy val `kyo-core-opt1` = project
   .settings(
       name := s"kyo-core-opt1",
       `kyo-core-settings`,
-      scalafmtOnCompile := false
+      scalafmtOnCompile := false,
   )
 
 lazy val `kyo-core-opt2` = project
@@ -110,24 +143,24 @@ lazy val `kyo-zio` = project
       libraryDependencies += "dev.zio" %% "zio" % zioVersion
   )
 
-val coreDep = {
-  val ref = System.getenv("GITHUB_REF")
-  if (ref == null || ref.isEmpty()) {
-    `kyo-core`
-  } else {
-    `kyo-core-opt3`
-  }
-}
-
 lazy val `kyo-bench` = project
   .in(file("kyo-bench"))
   .enablePlugins(JmhPlugin)
-  .dependsOn(coreDep)
+  .dependsOn(`kyo-core-opt3`)
   .settings(
       name := "kyo-bench",
       `kyo-settings`,
       libraryDependencies += "org.typelevel" %% "cats-effect" % "3.3.12",
       libraryDependencies += "dev.zio"       %% "zio"         % zioVersion
+  )
+
+lazy val `kyo-sttp` = project
+  .in(file("kyo-sttp"))
+  .dependsOn(`kyo-core`)
+  .settings(
+      name := "kyo-sttp",
+      `kyo-settings`,
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.10"
   )
 
 testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")

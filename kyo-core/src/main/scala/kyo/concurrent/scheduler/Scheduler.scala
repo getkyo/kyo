@@ -101,9 +101,11 @@ private[kyo] object Scheduler {
     workers.forEach(_.cycle())
 
   def idle(w: Worker): Unit =
-    var i = idle.get()
-    if (w.load() == 0 && idle.compareAndSet(i, w :: i)) {
+    val i  = idle.get()
+    val ni = w :: i
+    if (w.load() == 0 && idle.compareAndSet(i, ni)) {
       w.park()
+      idle.compareAndSet(ni, i)
     }
 
   def stopWorker(): Boolean =

@@ -9,7 +9,5 @@ jobs:
       with:
         fetch-depth: 0
     - uses: olafurpg/setup-scala@v13
-    - name: opt-gen
-      run: ./opt-gen.sh
     - name: build
       run: sbt test

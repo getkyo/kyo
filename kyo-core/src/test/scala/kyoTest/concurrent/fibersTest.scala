@@ -1,8 +1,12 @@
 package kyoTest.concurrent
 
-import kyo._
+import kyo.core._
+import kyo.ios._
+import kyo.tries._
 import scala.util.Failure
-import kyo.concurrent._
+import kyo.concurrent.atomics._
+import kyo.concurrent.fibers._
+import kyo.concurrent.latches._
 import kyoTest.KyoTest
 import java.util.concurrent.atomic.{AtomicReference => JAtomicReference}
 import java.util.concurrent.atomic.{AtomicInteger => JAtomicInteger}
