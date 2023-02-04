@@ -42,7 +42,7 @@ object aborts {
     override def accepts(other: Effect[_]) =
       other match {
         case other: Aborts[_] =>
-          other.tag.tag <:< tag.tag
+          other.tag.tag == tag.tag || other.tag.tag <:< tag.tag
         case _ =>
           false
       }

@@ -20,7 +20,7 @@ object sums {
     override def accepts(other: Effect[_]) =
       other match {
         case other: Sums[_] =>
-          other.tag.tag <:< tag.tag
+          other.tag.tag == tag.tag || other.tag.tag <:< tag.tag
         case _ =>
           false
       }
