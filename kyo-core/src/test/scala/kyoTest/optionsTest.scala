@@ -79,4 +79,25 @@ class optionsTest extends KyoTest {
       )
     }
   }
+
+  "Options.run" - {
+    "pure" in {
+      checkEquals[Option[Int], Nothing](
+          Options.run(1: Int > Options),
+          Option(1)
+      )
+    }
+    "not empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.run(Option(1) > Options),
+          Option(1)
+      )
+    }
+    "empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.run(Option.empty[Int] > Options),
+          None
+      )
+    }
+  }
 }

@@ -16,6 +16,9 @@ object options {
     /*inline(2)*/
     def get[T](v: Option[T]): T > Options =
       v > Options
+
+    def run[T, S](v: T > (S | Options)): Option[T] > S =
+      v < Options
   }
   val Options = new Options
 

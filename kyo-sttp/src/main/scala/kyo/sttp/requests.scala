@@ -3,6 +3,7 @@ package kyo.sttp
 import kyo.concurrent.fibers._
 import kyo.core._
 import kyo.ios._
+import kyo.consoles._
 import sttp.client3
 import sttp.client3.Empty
 import sttp.client3.HttpClientFutureBackend

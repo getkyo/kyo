@@ -391,4 +391,95 @@ class abortsTest extends KyoTest {
       )
     }
   }
+
+  "Aborts" - {
+    def test(v: Int): Int > Aborts[Ex1] =
+      v {
+        case 0 => Aborts(ex1)
+        case i => 10 / i
+      }
+    "run" - {
+      "success" in {
+        checkEquals[Abort[Ex1, Int], Nothing](
+            Aborts[Ex1].run(test(2)),
+            Abort.success(5)
+        )
+      }
+      "failure" in {
+        checkEquals[Abort[Ex1, Int], Nothing](
+            Aborts[Ex1].run(test(0)),
+            Abort.failure(ex1)
+        )
+      }
+    }
+    "toOption" - {
+      "success" in {
+        checkEquals[Option[Int], Nothing](
+            Aborts[Ex1].toOption(test(2)),
+            Some(5)
+        )
+      }
+      "failure" in {
+        checkEquals[Option[Int], Nothing](
+            Aborts[Ex1].toOption(test(0)),
+            None
+        )
+      }
+    }
+    "toEither" - {
+      "success" in {
+        checkEquals[Either[Ex1, Int], Nothing](
+            Aborts[Ex1].toEither(test(2)),
+            Right(5)
+        )
+      }
+      "failure" in {
+        checkEquals[Either[Ex1, Int], Nothing](
+            Aborts[Ex1].toEither(test(0)),
+            Left(ex1)
+        )
+      }
+    }
+    "catching" - {
+      "only effect" - {
+        def test(v: Int): Int =
+          v {
+            case 0 => throw ex1
+            case i => 10 / i
+          }
+        "success" in {
+          checkEquals[Abort[Ex1, Int], Nothing](
+              Aborts[Ex1].run(Aborts[Ex1].catching(test(2))),
+              Abort.success(5)
+          )
+        }
+        "failure" in {
+          checkEquals[Abort[Ex1, Int], Nothing](
+              Aborts[Ex1].run(Aborts[Ex1].catching(test(0))),
+              Abort.failure(ex1)
+          )
+        }
+      }
+      "with other effect" - {
+        def test(v: Int > Options): Int > Options =
+          v {
+            case 0 => throw ex1
+            case i => 10 / i
+          }
+        "success" in {
+          checkEquals[Option[Abort[Ex1, Int]], Nothing](
+              Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Option(2) > Options)))),
+              Some(Abort.success(5))
+          )
+        }
+        "failure" in {
+          println(Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Option(2) > Options)))))
+          checkEquals[Option[Abort[Ex1, Int]], Nothing](
+              Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Option(0) > Options)))),
+              Some(Abort.failure(ex1))
+          )
+        }
+      }
+    }
+  }
 }

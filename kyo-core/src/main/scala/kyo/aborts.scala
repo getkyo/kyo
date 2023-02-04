@@ -7,6 +7,9 @@ import scala.reflect.ClassTag
 import scala.util.NotGiven
 
 import core._
+import tries._
+import scala.util.Success
+import scala.util.Failure
 
 object aborts {
 
@@ -37,8 +40,28 @@ object aborts {
       }
   }
 
-  final class Aborts[+E] private[aborts] (private val tag: Tag[_])
+  final class Aborts[+E] private[aborts] (private val _tag: Tag[_])
       extends Effect[[T] =>> Abort[E, T]] {
+
+    given tag[B >: E]: Tag[B] = _tag.asInstanceOf[Tag[B]]
+
+    def run[T, S, B >: E](v: T > (S | Aborts[B])): Abort[B, T] > S =
+      v < (this: Aborts[B])
+
+    def toOption[T, S, B >: E](v: T > (S | Aborts[B])): Option[T] > S =
+      run[T, S, B](v)((_: Abort[B, T]).toOption)
+
+    def toEither[T, S, B >: E](v: T > (S | Aborts[B])): Either[B, T] > S =
+      run[T, S, B](v)((_: Abort[B, T]).toEither)
+
+    def catching[T, S](f: => T > S)(using E => Throwable): T > (S | Aborts[E]) =
+      (Tries(f) < Tries) {
+        case Failure(ex) if _tag.closestClass == ex.getClass =>
+          (Fail(ex.asInstanceOf[E]): Abort[E, T]) > Aborts[E]
+        case v =>
+          v.get
+      }
+
     override def accepts(other: Effect[_]) =
       other match {
         case other: Aborts[_] =>
