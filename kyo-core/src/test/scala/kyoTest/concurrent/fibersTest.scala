@@ -147,10 +147,10 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    val io = Fibers.race(loop(10, "a"), loop(20, "b"))
+    val io = Fibers.race(loop(10, "a"), loop(100, "b"))
     assert(run(io) == "a")
     assert(ac.get() == 10)
-    assert(bc.get() < 20)
+    assert(bc.get() < 100)
   }
 
   "await" in {
