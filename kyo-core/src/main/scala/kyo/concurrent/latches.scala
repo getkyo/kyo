@@ -21,7 +21,7 @@ object latches {
         }
       } else {
         for {
-          count   <- AtomicInteger(n)
+          count   <- AtomicInt(n)
           promise <- Fibers.promise[Unit]
         } yield {
           new Latch {

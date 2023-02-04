@@ -10,7 +10,7 @@ import kyo.core.>
 import kyo.concurrent.fibers.Fibers
 import kyo.ios.IOs
 
-import kyo.concurrent.atomics
+import kyo.concurrent.atomics._
 
 class ForkManyBench extends Bench[Int] {
 
@@ -45,7 +45,7 @@ class ForkManyBench extends Bench[Int] {
 
     for {
       promise <- Fibers.promise[Unit]
-      ref     <- AtomicInteger(10000)
+      ref     <- AtomicInt(10000)
       effect = ref.decrementAndGet {
         case 1 =>
           promise.complete(())

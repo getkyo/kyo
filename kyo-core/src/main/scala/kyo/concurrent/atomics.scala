@@ -11,12 +11,12 @@ import scala.annotation.tailrec
 
 object atomics {
 
-  opaque type AtomicInteger = JAtomicInteger
-  object AtomicInteger {
+  opaque type AtomicInt = JAtomicInteger
+  object AtomicInt {
     /*inline(1)*/
-    def apply(v: Int): AtomicInteger > IOs = IOs(JAtomicInteger(v))
+    def apply(v: Int): AtomicInt > IOs = IOs(JAtomicInteger(v))
   }
-  extension (ref: AtomicInteger) {
+  extension (ref: AtomicInt) {
     /*inline(1)*/
     def get: Int > IOs =
       IOs(ref.get())

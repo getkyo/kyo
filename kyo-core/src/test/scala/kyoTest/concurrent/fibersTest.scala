@@ -10,7 +10,7 @@ import kyo.concurrent.latches._
 import kyoTest.KyoTest
 import java.util.concurrent.atomic.{AtomicReference => JAtomicReference}
 import java.util.concurrent.atomic.{AtomicInteger => JAtomicInteger}
-import kyo.concurrent.atomics.AtomicInteger
+import kyo.concurrent.atomics.AtomicInt
 import scala.concurrent.duration._
 import kyo.scopes._
 import java.util.concurrent.atomic.AtomicBoolean
@@ -82,14 +82,14 @@ class fibersTest extends KyoTest {
 
   "interrupt" - {
 
-    def loop(ref: AtomicInteger): Unit > IOs =
+    def loop(ref: AtomicInt): Unit > IOs =
       Thread.sleep(1)
       ref.incrementAndGet(_ => loop(ref))
 
     def runLoop[T](started: Latch, done: Latch) =
       Scopes.close {
         Scopes.ensure(done.release) { _ =>
-          started.release(_ => AtomicInteger(0)(loop))
+          started.release(_ => AtomicInt(0)(loop))
         }
       }
 
@@ -246,14 +246,14 @@ class fibersTest extends KyoTest {
       assert(a == 15)
     }
     "interrupt" in run {
-      def loop(ref: AtomicInteger): Unit > IOs =
+      def loop(ref: AtomicInt): Unit > IOs =
         Thread.sleep(1)
         ref.incrementAndGet(_ => loop(ref))
 
       def task(l: Latch): Unit > IOs =
         Scopes.close {
           Scopes.ensure(l.release) { _ =>
-            AtomicInteger(0)(loop)
+            AtomicInt(0)(loop)
           }
         }
 

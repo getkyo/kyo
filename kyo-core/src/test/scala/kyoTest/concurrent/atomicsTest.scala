@@ -10,20 +10,20 @@ class atomicsTest extends KyoTest {
   "IntRef" - {
     "should initialize to the provided value" in {
       for {
-        ref <- AtomicInteger(5)
+        ref <- AtomicInt(5)
         v   <- ref.get
       } yield assert(v == 5)
     }
     "should set the value" in {
       for {
-        ref <- AtomicInteger(5)
+        ref <- AtomicInt(5)
         _   <- ref.set(10)
         v   <- ref.get
       } yield assert(v == 10)
     }
     "should compare and set the value" in {
       for {
-        ref <- AtomicInteger(5)
+        ref <- AtomicInt(5)
         v   <- ref.cas(5, 10)
         r   <- ref.get
       } yield {
@@ -33,37 +33,37 @@ class atomicsTest extends KyoTest {
     }
     "should increment and get the value" in {
       for {
-        ref <- AtomicInteger(5)
+        ref <- AtomicInt(5)
         v   <- ref.incrementAndGet
       } yield assert(v == 6)
     }
     "should get and increment the value" in {
       for {
-        ref <- AtomicInteger(5)
+        ref <- AtomicInt(5)
         v   <- ref.getAndIncrement
       } yield assert(v == 5)
     }
     "should decrement and get the value" in {
       for {
-        ref <- AtomicInteger(5)
+        ref <- AtomicInt(5)
         v   <- ref.decrementAndGet
       } yield assert(v == 4)
     }
     "should get and decrement the value" in {
       for {
-        ref <- AtomicInteger(5)
+        ref <- AtomicInt(5)
         v   <- ref.getAndDecrement
       } yield assert(v == 5)
     }
     "should add and get the value" in {
       for {
-        ref <- AtomicInteger(5)
+        ref <- AtomicInt(5)
         v   <- ref.addAndGet(5)
       } yield assert(v == 10)
     }
     "should get and add the value" in {
       for {
-        ref <- AtomicInteger(5)
+        ref <- AtomicInt(5)
         v   <- ref.getAndAdd(5)
       } yield assert(v == 5)
     }
