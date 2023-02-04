@@ -1,9 +1,6 @@
 package kyoTest
 
-import kyo.arrows._
-import kyo.core._
-import kyo.options._
-import kyo.options._
+import kyo._
 
 class arrowsTest extends KyoTest {
 

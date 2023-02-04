@@ -29,14 +29,14 @@ private final class Worker(r: Runnable)
     queue.steal(w.queue)
 
   def enqueue(t: IOTask[_]): Boolean =
-    running && {
-      val curr = currentTask
-      val ok   = (curr == null || !curr()) && queue.offer(t)
-      if (ok) {
-        LockSupport.unpark(parkedThread)
-      }
-      ok
+    isAvailable && queue.offer(t) && {
+      LockSupport.unpark(parkedThread)
+      true
     }
+
+  def isAvailable: Boolean =
+    val t = currentTask
+    running && (t == null || !t())
 
   def cycle() =
     val t = currentTask
