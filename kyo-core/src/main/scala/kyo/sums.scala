@@ -17,10 +17,11 @@ object sums {
 
   final class Sums[V] private[sums] (using private val tag: Tag[_])
       extends Effect[[T] =>> Sum[V, T]] {
+
     override def accepts(other: Effect[_]) =
       other match {
         case other: Sums[_] =>
-          other.tag.tag == tag.tag || other.tag.tag <:< tag.tag
+          other.tag.tag == tag.tag
         case _ =>
           false
       }

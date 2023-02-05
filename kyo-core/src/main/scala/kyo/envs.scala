@@ -11,14 +11,14 @@ import core._
 object envs {
 
   private case object Input
-  opaque type Env[+E, +T] = T | Input.type
+  opaque type Env[E, +T] = T | Input.type
 
-  final class Envs[+E] private[envs] (private val tag: Tag[_])
+  final class Envs[E] private[envs] (private val tag: Tag[_])
       extends Effect[[T] =>> Env[E, T]] {
     override def accepts(other: Effect[_]) =
       other match {
         case other: Envs[_] =>
-          other.tag.tag == tag.tag || other.tag.tag <:< tag.tag
+          other.tag.tag == tag.tag
         case _ =>
           false
       }
