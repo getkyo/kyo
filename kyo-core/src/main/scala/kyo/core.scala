@@ -67,8 +67,8 @@ object core {
 
   private[kyo] abstract class KyoCont[M[_], E <: Effect[M], T, U, S](prev: Kyo[M, E, T, _, _])
       extends Kyo[M, E, T, U, S] {
-    def value: M[T] = prev.value
-    def effect: E   = prev.effect
+    val value: M[T] = prev.value
+    val effect: E   = prev.effect
   }
 
   private type M2[_]
@@ -108,6 +108,18 @@ object core {
           v
       }
   }
+
+  /*inline(3)*/
+  def zip[T1, T2, S](v1: T1 > S, v2: T2 > S): (T1, T2) > S =
+    v1(t1 => v2(t2 => (t1, t2)))
+
+  /*inline(3)*/
+  def zip[T1, T2, T3, S](v1: T1 > S, v2: T2 > S, v3: T3 > S): (T1, T2, T3) > S =
+    v1(t1 => v2(t2 => v3(t3 => (t1, t2, t3))))
+
+  /*inline(3)*/
+  def zip[T1, T2, T3, T4, S](v1: T1 > S, v2: T2 > S, v3: T3 > S, v4: T4 > S): (T1, T2, T3, T4) > S =
+    v1(t1 => v2(t2 => v3(t3 => v4(t4 => (t1, t2, t3, t4)))))
 
   extension [T, S](v: T > S) {
 
