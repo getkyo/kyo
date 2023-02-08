@@ -5,7 +5,7 @@ import kyo.concurrent.scheduler.IOTask
 import kyo.core._
 import kyo.frames._
 import kyo.ios._
-import kyo.scopes._
+import kyo.resources._
 
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit

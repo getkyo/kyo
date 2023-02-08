@@ -2,7 +2,7 @@ package kyo.concurrent.scheduler
 
 import kyo.core._
 import kyo.ios._
-import kyo.scopes._
+import kyo.resources._
 
 import scala.annotation.tailrec
 import scala.util.control.NonFatal

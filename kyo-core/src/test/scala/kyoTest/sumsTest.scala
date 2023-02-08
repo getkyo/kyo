@@ -1,4 +1,4 @@
-package kyoTest
+package kyo
 
 import kyo.core._
 import kyo.sums._
@@ -6,7 +6,7 @@ import kyo.ios._
 import scala.util.Success
 import scala.util.Try
 
-class sumsTest extends KyoTest {
+class sumsTest extends kyoTest.KyoTest {
   "int" in {
     val v: List[Int] > Sums[Int] =
       for {

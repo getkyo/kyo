@@ -86,8 +86,8 @@ object locals {
               def apply(st2: State, s: Safepoint[Locals]): T > (S | Locals) =
                 loop(kyo(st2 ++ st, s))
             }
-          case kyo: Kyo[Local, Locals, T, T, S] @unchecked if (st.contains(kyo.value)) =>
-            loop(kyo(st(kyo.value).asInstanceOf[T], Safepoint.noop))
+          case kyo: Kyo[Local, Locals, Any, T, S] @unchecked if (st.contains(kyo.value)) =>
+            loop(kyo(st(kyo.value), Safepoint.noop))
           case kyo: Kyo[M2, E2, Any, T, S] @unchecked =>
             new KyoCont[M2, E2, Any, T, S | Locals](kyo) {
               def frame = fr

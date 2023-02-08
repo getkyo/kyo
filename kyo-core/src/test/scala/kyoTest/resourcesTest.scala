@@ -3,11 +3,11 @@ package kyoTest
 import java.io.Closeable
 
 import kyo.core._
-import kyo.scopes._
+import kyo.resources._
 import kyo.options._
 import kyo.ios._
 
-class scopesTest extends KyoTest {
+class resourcesTest extends KyoTest {
 
   trait Context {
     case class Resource(id: Int, var closes: Int = 0) extends Closeable {
@@ -25,7 +25,7 @@ class scopesTest extends KyoTest {
 
   "acquire + close" in new Context {
     IOs.run {
-      Scopes.close(Scopes.acquire(r1()))
+      Resources.close(Resources.acquire(r1()))
     }
     assert(r1.closes == 1)
     assert(r2.closes == 0)
@@ -35,7 +35,7 @@ class scopesTest extends KyoTest {
 
   "acquire + tranform + close" in new Context {
     IOs.run {
-      Scopes.close(Scopes.acquire(r1())(_ => assert(r1.closes == 0)))
+      Resources.close(Resources.acquire(r1())(_ => assert(r1.closes == 0)))
     }
     assert(r1.closes == 1)
     assert(r2.closes == 0)
@@ -46,7 +46,7 @@ class scopesTest extends KyoTest {
   "acquire + effectful tranform + close" in new Context {
     val r =
       IOs.lazyRun {
-        Scopes.close(Scopes.acquire(r1()) { _ =>
+        Resources.close(Resources.acquire(r1()) { _ =>
           assert(r1.closes == 0)
           Option(1) > Options
         })
@@ -64,7 +64,7 @@ class scopesTest extends KyoTest {
 
   "two acquires + close" in new Context {
     IOs.run {
-      Scopes.close(Scopes.acquire(r1())(_ => Scopes.acquire(r2())))
+      Resources.close(Resources.acquire(r1())(_ => Resources.acquire(r2())))
     }
     assert(r1.closes == 1)
     assert(r2.closes == 1)
@@ -75,11 +75,11 @@ class scopesTest extends KyoTest {
   "two acquires + for-comp + close" in new Context {
     val r: Int =
       IOs.run {
-        Scopes.close {
+        Resources.close {
           for {
-            r1 <- Scopes.acquire(r1())
+            r1 <- Resources.acquire(r1())
             i1 <- r1.id * 3
-            r2 <- Scopes.acquire(r2())
+            r2 <- Resources.acquire(r2())
             i2 <- r2.id * 5
           } yield i1 + i2
         }
@@ -94,12 +94,12 @@ class scopesTest extends KyoTest {
   "two acquires + effectful for-comp + close" in new Context {
     val r: Int > Options =
       IOs.lazyRun {
-        Scopes.close {
-          val io: Int > (Scopes | Options) =
+        Resources.close {
+          val io: Int > (Resources | Options) =
             for {
-              r1 <- Scopes.acquire(r1())
+              r1 <- Resources.acquire(r1())
               i1 <- Option(r1.id * 3) > Options
-              r2 <- Scopes.acquire(r2())
+              r2 <- Resources.acquire(r2())
               i2 <- Option(r2.id * 3) > Options
             } yield i1 + i2
           io
@@ -117,7 +117,7 @@ class scopesTest extends KyoTest {
   }
 
   "nested" in new Context {
-    val r = IOs.run(Scopes.close(Scopes.close(Scopes.acquire(r1()))))
+    val r = IOs.run(Resources.close(Resources.close(Resources.acquire(r1()))))
     assert(r == r1)
     assert(r1.acquires == 1)
     assert(r1.closes == 1)

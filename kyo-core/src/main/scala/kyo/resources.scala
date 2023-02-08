@@ -9,21 +9,21 @@ import java.io.Closeable
 import scala.util.control.NonFatal
 import scala.util.Try
 
-object scopes {
+object resources {
 
-  opaque type Scope[T] = Sum[Finalizer, T]
+  opaque type Resource[T] = Sum[Finalizer, T]
 
-  opaque type Scopes = Sums[Finalizer]
+  opaque type Resources = Sums[Finalizer]
 
-  object Scopes {
-    def ensure[T](f: => T > IOs): Unit > Scopes =
+  object Resources {
+    def ensure[T](f: => T > IOs): Unit > Resources =
       Sums.add[Finalizer](() => IOs.run(f)).unit
 
-    def acquire[T <: Closeable](resource: => T): T > Scopes =
+    def acquire[T <: Closeable](resource: => T): T > Resources =
       lazy val v = resource
       Sums.add[Finalizer](() => v.close()).map(_ => v)
 
-    def close[T, S](v: T > (S | Scopes)): T > (S | IOs) =
+    def close[T, S](v: T > (S | Resources)): T > (S | IOs) =
       Sums.drop[Finalizer](v)
   }
 

@@ -11,8 +11,7 @@ object all {
   export lists._
   export options._
   export randoms._
-  export scopes._
-  export sums._
+  export resources._
   export tries._
   export concurrent.adders._
   export concurrent.atomics._
