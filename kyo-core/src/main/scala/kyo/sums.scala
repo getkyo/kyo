@@ -47,8 +47,8 @@ private[kyo] object sums {
               f: T => U > (S2 | Sums[V])
           ): U > (S2 | Sums[V]) =
             m match {
-              case Add[V](v) =>
-                curr = g.add(curr, v)
+              case Add(v) =>
+                curr = g.add(curr, v.asInstanceOf[V])
                 f(curr.asInstanceOf[T])
               case Get =>
                 f(curr.asInstanceOf[T])
@@ -58,8 +58,8 @@ private[kyo] object sums {
         }
         IOs.ensure(g.drop(curr)) {
           (v < Sums[V]) {
-            case Add[V](v) =>
-              curr = g.add(curr, v)
+            case Add(v) =>
+              curr = g.add(curr, v.asInstanceOf[V])
               curr.asInstanceOf[T]
             case Get =>
               curr.asInstanceOf[T]
