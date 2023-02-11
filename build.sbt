@@ -154,13 +154,4 @@ lazy val `kyo-bench` = project
       libraryDependencies += "dev.zio"       %% "zio"         % zioVersion
   )
 
-lazy val `kyo-sttp` = project
-  .in(file("kyo-sttp"))
-  .dependsOn(`kyo-core`)
-  .settings(
-      name := "kyo-sttp",
-      `kyo-settings`,
-      libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.10"
-  )
-
 testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
