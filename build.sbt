@@ -46,7 +46,7 @@ lazy val kyo = (project in file("."))
       `kyo-core-opt3`,
       `kyo-bench`,
       `kyo-zio`,
-      `kyo-direct`,
+      `kyo-direct`
   )
   .settings(
       name := "kyo",
@@ -60,7 +60,7 @@ lazy val kyo = (project in file("."))
       Global / onLoad := {
         val old = (Global / onLoad).value
         genOptState compose old
-      },
+      }
   )
 
 val zioVersion = "2.0.6"
@@ -68,6 +68,7 @@ val zioVersion = "2.0.6"
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "com.lihaoyi"   %% "sourcecode"        % "0.3.0",
     libraryDependencies += "dev.zio"       %% "izumi-reflect"     % "2.2.2",
+    libraryDependencies += "org.slf4j"      % "slf4j-api"         % "2.0.6",
     libraryDependencies += "dev.zio"       %% "zio-test"          % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %% "zio-test-magnolia" % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %% "zio-test-sbt"      % zioVersion   % Test,
@@ -85,7 +86,7 @@ def genOpt(i: Int) = {
     if (file.isDirectory) file.listFiles.foreach(inlining)
     else {
       var original = IO.read(file)
-      var content = original
+      var content  = original
       for (i <- 1 to i)
         content = content.replaceAllLiterally(s"/*inline(${4 - i})*/", "inline")
       IO.write(file, content)
@@ -106,7 +107,7 @@ lazy val `kyo-core-opt1` = project
   .settings(
       name := s"kyo-core-opt1",
       `kyo-core-settings`,
-      scalafmtOnCompile := false,
+      scalafmtOnCompile := false
   )
 
 lazy val `kyo-core-opt2` = project
