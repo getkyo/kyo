@@ -20,7 +20,7 @@ import kyo.resources
 class fibersTest extends KyoTest {
 
   private def run[T](io: T > (IOs | Fibers)): T =
-    IOs.run((IOs.lazyRun(io) << Fibers).block)
+    IOs.run((Fibers.run(IOs.lazyRun(io))).block)
 
   "promise" - {
     "complete" in run {
@@ -243,7 +243,7 @@ class fibersTest extends KyoTest {
           (v2, v3) <- Fibers.fork(2, 3)
           l        <- Fibers.collect(List(4, 5))
         } yield v1 + v2 + v3 + l.sum
-      val a = run((IOs.lazyRun(io) << Fibers)(_.join))
+      val a = run((Fibers.run(IOs.lazyRun(io)))(_.join))
       assert(a == 15)
     }
     "interrupt" in run {
@@ -260,7 +260,7 @@ class fibersTest extends KyoTest {
 
       for {
         l           <- Latch(1)
-        fiber       <- IOs.lazyRun(Fibers.fork(task(l))) << Fibers
+        fiber       <- Fibers.run(IOs.lazyRun(Fibers.fork(task(l))))
         _           <- Fibers.sleep(10.millis)
         interrupted <- fiber.interrupt
         _           <- l.await

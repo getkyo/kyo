@@ -33,7 +33,7 @@ object options {
   val Options = new Options
 
   /*inline(2)*/
-  given ShallowHandler[Option, Options] with {
+  given Handler[Option, Options] with {
     def pure[T](v: T) =
       Option(v)
     def apply[T, U, S](

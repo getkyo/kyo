@@ -15,26 +15,24 @@ object core {
 
   infix opaque type >[+T, +S] = T | AKyo[T, S]
 
-  sealed abstract class Handler[M[_], E <: Effect[M]] {
+  abstract class Handler[M[_], E <: Effect[M]] {
     def pure[T](v: T): M[T]
-  }
-
-  abstract class ShallowHandler[M[_], E <: Effect[M]] extends Handler[M, E] {
     def handle[T](ex: Throwable): T > E = throw ex
     def apply[T, U, S](m: M[T], f: T => U > (S | E)): U > (S | E)
   }
 
-  abstract class DeepHandler[M[_], E <: Effect[M]] extends Handler[M, E] {
+  private[kyo] abstract class DeepHandler[M[_], E <: Effect[M]] {
+    def pure[T](v: T): M[T]
     def map[T, U](m: M[T], f: T => U): M[U] = flatMap(m, v => pure(f(v)))
     def flatten[T](v: M[M[T]]): M[T]        = flatMap(v, identity[M[T]])
     def flatMap[T, U](m: M[T], f: T => M[U]): M[U]
   }
 
-  trait Safepoint[E <: Effect[_]] { self =>
+  private[kyo] trait Safepoint[E <: Effect[_]] { self =>
     def apply(): Boolean
     def apply[T, S](v: => T > (S | E)): T > (S | E)
   }
-  object Safepoint {
+  private[kyo] object Safepoint {
     private val _noop = new Safepoint[Effect[_]] {
       def apply()                                = false
       def apply[T, S](v: => T > (S | Effect[_])) = v
@@ -164,7 +162,7 @@ object core {
     def <[M[_], E <: Effect[M], S2 <: S](
         e: E
     )(using S => S2 | E)(using
-        h: ShallowHandler[M, E],
+        h: Handler[M, E],
         s: Safepoint[E],
         /*inline(3)*/ fr: Frame["<"]
     ): M[T] > S2 =
@@ -200,7 +198,7 @@ object core {
 
     @targetName("deepHandle")
     /*inline(3)*/
-    def <<[U](
+    private[kyo] def <<[U](
         f: T > S => U
     ): U = f(v)
   }
@@ -208,7 +206,7 @@ object core {
   extension [M[_], E <: Effect[M]](e: E) {
 
     /*inline(3)*/
-    def apply[T]()(using
+    private[kyo] def apply[T]()(using
         h: DeepHandler[M, E],
         s: Safepoint[E]
     ): T > E => M[T] > Nothing =
@@ -219,63 +217,6 @@ object core {
               h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v, s)))
             case _ =>
               h.pure(v.asInstanceOf[T])
-          }
-        deepHandleLoop(v)
-
-    /*inline(3)*/
-    def apply[M1[_], E1 <: Effect[M1], T](
-        tup1: (E1, [U] => M1[M[U]] => M[M1[U]])
-    )(using
-        h: DeepHandler[M, E],
-        h1: DeepHandler[M1, E1],
-        s: Safepoint[E],
-        s1: Safepoint[E1]
-    ): T > (E | E1) => M[M1[T]] =
-      (v: T > (E | E1)) =>
-        def deepHandleLoop(v: T > (E | E1)): M[M1[T]] =
-          v match {
-            case kyo: Kyo[M, E, Any, T, E | E1] @unchecked if (kyo.effect eq e) =>
-              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v, s)))
-            case kyo: Kyo[M1, E1, Any, T, E | E1] @unchecked if (kyo.effect eq tup1._1) =>
-              val m1 = h1.map(kyo.value, v => deepHandleLoop(kyo(v, s1)))
-              h.map(tup1._2(m1), h1.flatten)
-            case _ =>
-              h.pure(h1.pure(v.asInstanceOf[T]))
-          }
-        deepHandleLoop(v)
-
-    /*inline(3)*/
-    def apply[M1[_], E1 <: Effect[M1], M2[_], E2 <: Effect[M2], T](
-        tup1: (E1, [U] => M1[M[U]] => M[M1[U]]),
-        tup2: (
-            E2,
-            [U] => M2[M[U]] => M[M2[U]],
-            [U] => M2[M1[U]] => M1[M2[U]]
-        )
-    )(using
-        h: DeepHandler[M, E],
-        h1: DeepHandler[M1, E1],
-        h2: DeepHandler[M2, E2],
-        s: Safepoint[E],
-        s1: Safepoint[E1],
-        s2: Safepoint[E2]
-    ): T > (E | E1 | E2) => M[M1[M2[T]]] =
-      (v: T > (E | E1 | E2)) =>
-        def deepHandleLoop(v: T > (E | E1 | E2)): M[M1[M2[T]]] =
-          v match {
-            case kyo: Kyo[M, E, Any, T, E | E1 | E2] @unchecked if (kyo.effect eq e) =>
-              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v, s)))
-            case kyo: Kyo[M1, E1, Any, T, E | E1 | E2] @unchecked if (kyo.effect eq tup1._1) =>
-              val m1 = h1.map(kyo.value, v => deepHandleLoop(kyo(v, s1)))
-              h.map(tup1._2(m1), h1.flatten)
-            case kyo: Kyo[M2, E2, Any, T, E | E1 | E2] @unchecked if (kyo.effect eq tup2._1) =>
-              val m2: M2[M[M1[M2[T]]]] =
-                h2.map(kyo.value, v => deepHandleLoop(kyo(v, s2)))
-              val b: M[M2[M1[M2[T]]]] = tup2._2(m2)
-              val c: M[M1[M2[T]]]     = h.map(b, v => h1.map(tup2._3(v), h2.flatten))
-              c
-            case _ =>
-              h.pure(h1.pure(h2.pure(v.asInstanceOf[T])))
           }
         deepHandleLoop(v)
   }

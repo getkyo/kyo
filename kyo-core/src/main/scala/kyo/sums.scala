@@ -40,7 +40,7 @@ private[kyo] object sums {
           tag: Tag[V]
       ): T > (S | IOs) = {
         var curr = g.init
-        given ShallowHandler[[T] =>> Sum[V, T], Sums[V]] with {
+        given Handler[[T] =>> Sum[V, T], Sums[V]] with {
           def pure[U](v: U) = v
           def apply[T, U, S2](
               m: Sum[V, T],

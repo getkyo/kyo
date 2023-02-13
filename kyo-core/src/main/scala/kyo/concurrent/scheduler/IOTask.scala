@@ -32,7 +32,7 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
     preempting = true
 
   override protected def onComplete(): Unit =
-    preempting = true
+    preempt()
 
   def ensure(f: Unit > IOs): Unit = ensures ::= f
 

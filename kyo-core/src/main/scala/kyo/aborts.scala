@@ -80,8 +80,8 @@ object aborts {
   }
 
   /*inline(1)*/
-  given [E: Tag]: ShallowHandler[[T] =>> Abort[E, T], Aborts[E]] =
-    new ShallowHandler[[T] =>> Abort[E, T], Aborts[E]] {
+  given [E: Tag]: Handler[[T] =>> Abort[E, T], Aborts[E]] =
+    new Handler[[T] =>> Abort[E, T], Aborts[E]] {
       def pure[U](v: U) = v
       def apply[U, V, S2](
           m: Abort[E, U],

@@ -28,7 +28,7 @@ object envs {
     final class Let[E, S] private[Envs] (es: E > S, tag: Tag[E]) {
       def apply[T, S2](v: T > (S2 | Envs[E])): T > (S | S2) =
         es { e =>
-          given ShallowHandler[[T] =>> Env[E, T], Envs[E]] with {
+          given Handler[[T] =>> Env[E, T], Envs[E]] with {
             def pure[U](v: U) = v
             def apply[U, V, S2](
                 m: Env[E, U],

@@ -18,7 +18,7 @@ object tries {
   val Tries = new Tries
 
   /*inline(2)*/
-  given ShallowHandler[Try, Tries] with {
+  given Handler[Try, Tries] with {
     def pure[T](v: T) =
       Success(v)
     override def handle[T](ex: Throwable) =

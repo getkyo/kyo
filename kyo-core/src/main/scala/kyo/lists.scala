@@ -29,7 +29,7 @@ object lists {
   }
   val Lists = new Lists
 
-  given ShallowHandler[List, Lists] with
+  given Handler[List, Lists] with
     def pure[T](v: T) = List(v)
     def apply[T, U, S](v: List[T], f: T => U > (S | Lists)): U > (S | Lists) =
       def loop(l: List[T], acc: List[List[U]]): U > (S | Lists) =

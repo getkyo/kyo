@@ -93,6 +93,10 @@ object fibers {
 
   final class Fibers private[fibers] extends Effect[Fiber] {
 
+    def run[T](v: T > Fibers): Fiber[T] =
+      val a: Fiber[T] > Nothing = v << Fibers
+      a
+
     def promise[T]: Promise[T] > IOs =
       IOs(IOPromise[T])
 
@@ -268,8 +272,8 @@ object fibers {
 
     /*inline(2)*/
     def block[T, S](v: T > (S | Fibers)): T > (S | IOs) =
-      given ShallowHandler[Fiber, Fibers] =
-        new ShallowHandler[Fiber, Fibers] {
+      given Handler[Fiber, Fibers] =
+        new Handler[Fiber, Fibers] {
           def pure[T](v: T) =
             v
           def apply[T, U, S](m: Fiber[T], f: T => U > (S | Fibers)) =

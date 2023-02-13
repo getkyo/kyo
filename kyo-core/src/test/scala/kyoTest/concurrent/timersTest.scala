@@ -14,7 +14,7 @@ class timersTest extends KyoTest {
 
   private def run[T](io: T > (IOs | Timers | Fibers)): T =
     val a: T > Fibers         = IOs.lazyRun(Timers.run(io))
-    val b: Fiber[T] > Nothing = a << Fibers
+    val b: Fiber[T] > Nothing = Fibers.run(a)
     val c: Fiber[T]           = b
     IOs.run(c.block)
 
