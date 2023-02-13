@@ -19,6 +19,16 @@ object options {
 
     def run[T, S](v: T > (S | Options)): Option[T] > S =
       v < Options
+
+    def orElse[T, S](l: (T > (S | Options))*): T > (S | Options) =
+      l.toList match {
+        case Nil => Options.empty
+        case h :: t =>
+          run(h) {
+            case None => orElse(t: _*)
+            case v    => v > Options
+          }
+      }
   }
   val Options = new Options
 

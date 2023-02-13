@@ -100,4 +100,72 @@ class optionsTest extends KyoTest {
       )
     }
   }
+
+  "orElse" - {
+    "empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.orElse[Int, Nothing]() < Options,
+          None
+      )
+    }
+    "not empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.orElse(Option(1) > Options) < Options,
+          Option(1)
+      )
+    }
+    "not empty + empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.orElse(Option(1) > Options, Option.empty[Int] > Options) < Options,
+          Option(1)
+      )
+    }
+    "empty + not empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.orElse(Option.empty[Int] > Options, Option(1) > Options) < Options,
+          Option(1)
+      )
+    }
+    "empty + empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.orElse(Option.empty[Int] > Options, Option.empty[Int] > Options) < Options,
+          None
+      )
+    }
+    "not empty + not empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.orElse(Option(1) > Options, Option(2) > Options) < Options,
+          Option(1)
+      )
+    }
+    "not empty + not empty + not empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.orElse(Option(1) > Options, Option(2) > Options, Option(3) > Options) < Options,
+          Option(1)
+      )
+    }
+    "not empty + not empty + not empty + not empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.orElse(
+              Option(1) > Options,
+              Option(2) > Options,
+              Option(3) > Options,
+              Option(4) > Options
+          ) < Options,
+          Option(1)
+      )
+    }
+    "not empty + not empty + not empty + not empty + not empty" in {
+      checkEquals[Option[Int], Nothing](
+          Options.orElse(
+              Option(1) > Options,
+              Option(2) > Options,
+              Option(3) > Options,
+              Option(4) > Options,
+              Option(5) > Options
+          ) < Options,
+          Option(1)
+      )
+    }
+  }
 }
