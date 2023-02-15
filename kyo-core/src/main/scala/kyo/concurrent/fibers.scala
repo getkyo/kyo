@@ -7,29 +7,27 @@ import kyo.frames._
 import kyo.ios._
 import kyo.resources._
 
+import java.io.Closeable
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.locks.Lock
-import java.util.concurrent.locks.LockSupport
 import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
+import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 import scala.util._
 import scala.util.control.NonFatal
 
 import scheduler._
-import java.util.concurrent.ScheduledFuture
-import java.io.Closeable
-import scala.concurrent.Future
 
 object fibers {
 
   private val timer = Executors.newScheduledThreadPool(1, ThreadFactory("kyo-fiber-sleep-timer"))
 
-  opaque type Promise[T] <: Fiber[T] = IOPromise[T]
   opaque type Fiber[T]               = T | IOPromise[T]
+  opaque type Promise[T] <: Fiber[T] = IOPromise[T]
 
   extension [T](p: Promise[T]) {
 
@@ -38,10 +36,10 @@ object fibers {
       IOs(p.complete(IOs(v)))
   }
 
-  extension [T](f: Fiber[T]) {
+  extension [T](fiber: Fiber[T]) {
 
     def isDone: Boolean > IOs =
-      f match {
+      fiber match {
         case f: IOPromise[T] @unchecked =>
           IOs(f.isDone)
         case _ =>
@@ -49,16 +47,16 @@ object fibers {
       }
 
     def join: T > Fibers =
-      f match {
+      fiber match {
         case f: IOPromise[T] @unchecked =>
           f > Fibers
         case _ =>
-          f.asInstanceOf[T > Fibers]
+          fiber.asInstanceOf[T > Fibers]
       }
 
     /*inline(2)*/
     def joinTry: Try[T] > (Fibers | IOs) =
-      /*inline(2)*/ f match {
+      /*inline(2)*/ fiber match {
         case f: IOPromise[T] @unchecked =>
           IOs {
             val p = new IOPromise[Try[T]]
@@ -69,25 +67,48 @@ object fibers {
             p > Fibers
           }
         case _ =>
-          Try(f.asInstanceOf[T])
+          Try(fiber.asInstanceOf[T])
       }
 
     /*inline(2)*/
     def block: T > IOs =
-      f match {
+      fiber match {
         case f: IOPromise[T] @unchecked =>
           IOs(f.block())
         case _ =>
-          f.asInstanceOf[T > IOs]
+          fiber.asInstanceOf[T > IOs]
       }
 
     /*inline(2)*/
     def interrupt: Boolean > IOs =
-      f match {
+      fiber match {
         case f: IOPromise[T] @unchecked =>
           IOs(f.interrupt())
         case _ =>
           false
+      }
+
+    def transform[U](f: T => Fiber[U]): Fiber[U] =
+      fiber match {
+        case fiber: IOPromise[T] @unchecked =>
+          val r = IOPromise[U]
+          r.interrupts(fiber)
+          fiber.onComplete { v =>
+            try {
+              f(IOs.run(v)) match {
+                case v: IOPromise[U] @unchecked =>
+                  v.onComplete(r.complete(_))
+                case v =>
+                  r.complete(v.asInstanceOf[U])
+              }
+            } catch {
+              case ex if (NonFatal(ex)) =>
+                r.complete(IOs(throw ex))
+            }
+          }
+          r
+        case _ =>
+          f(fiber.asInstanceOf[T])
       }
   }
 
@@ -97,8 +118,14 @@ object fibers {
       val a: Fiber[T] > Nothing = v << Fibers
       a
 
+    def done[T](v: T): Fiber[T] =
+      v
+
     def promise[T]: Promise[T] > IOs =
       IOs(IOPromise[T])
+
+    private[kyo] def unsafePromise[T]: Promise[T] =
+      IOPromise[T]
 
     /*inline(2)*/
     def forkFiber[T](v: => T > IOs): Fiber[T] > IOs =
@@ -308,27 +335,6 @@ object fibers {
     new DeepHandler[Fiber, Fibers] {
       def pure[T](v: T) = v
       def flatMap[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
-        m match {
-          case m: IOPromise[T] @unchecked =>
-            val r = IOPromise[U]
-            r.interrupts(m)
-            m.onComplete { v =>
-              try {
-                f(IOs.run(v)) match {
-                  case v: IOPromise[U] @unchecked =>
-                    v.onComplete(r.complete(_))
-                  case v =>
-                    r.complete(v.asInstanceOf[U])
-                }
-              } catch {
-                case ex if (NonFatal(ex)) =>
-                  r.complete(IOs(throw ex))
-              }
-            }
-            r
-          case _ =>
-            f(m.asInstanceOf[T])
-        }
-
+        m.transform(f)
     }
 }

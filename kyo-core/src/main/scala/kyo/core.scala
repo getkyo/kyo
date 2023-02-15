@@ -209,7 +209,7 @@ object core {
     private[kyo] def apply[T]()(using
         h: DeepHandler[M, E],
         s: Safepoint[E]
-    ): T > E => M[T] > Nothing =
+    ): T > E => M[T] =
       (v: T > E) =>
         def deepHandleLoop(v: T > E): M[T] =
           v match {
