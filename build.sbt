@@ -133,7 +133,7 @@ lazy val `kyo-direct` = project
   .settings(
       name := "kyo-direct",
       `kyo-settings`,
-      libraryDependencies += "com.github.rssh" %% "dotty-cps-async" % "0.9.15"
+      libraryDependencies += "com.github.rssh" %% "dotty-cps-async" % "0.9.16"
   )
 
 lazy val `kyo-zio` = project

@@ -156,7 +156,7 @@ class directTest extends KyoTest {
       }
 
     val a: List[Int] = Lists.run(v)
-    assert(a == List(3, 4, -3, -5, -5, -8, 0, 1, -1, 0))
+    assert(a == List(3, -3, -5, 4, -5, -8, 0, 1, -1, 0))
   }
 
   "lists + filter" in {
