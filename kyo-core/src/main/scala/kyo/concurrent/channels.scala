@@ -38,8 +38,8 @@ object channels {
     def bounded[T](size: Int): Channel[T] > IOs =
       Queue.bounded[T](size)(bounded)
 
-    def bounded[T](q: Queue[T]): Channel[T] > IOs =
-      IOs {
+    def bounded[T](q: Queue[T] > IOs): Channel[T] > IOs =
+      q { q =>
         new Channel[T] {
           def offer(v: T) = q.offer(v)
           def poll        = q.poll
@@ -51,8 +51,8 @@ object channels {
     def dropping[T](capacity: Int): Unbounded[T] > IOs =
       Queue.bounded[T](capacity)(dropping)
 
-    def dropping[T](q: Queue[T]): Unbounded[T] > IOs =
-      IOs {
+    def dropping[T](q: Queue[T] > IOs): Unbounded[T] > IOs =
+      q { q =>
         new Unbounded[T] {
           def offer(v: T) = q.offer(v)
           def poll        = q.poll
@@ -65,8 +65,8 @@ object channels {
     def sliding[T](capacity: Int): Unbounded[T] > IOs =
       Queue.bounded[T](capacity)(sliding)
 
-    def sliding[T](q: Queue[T]): Unbounded[T] > IOs =
-      IOs {
+    def sliding[T](q: Queue[T] > IOs): Unbounded[T] > IOs =
+      q { q =>
         new Unbounded[T] {
           def offer(v: T) = q.offer(v)
           def poll        = q.poll
@@ -85,8 +85,8 @@ object channels {
     def unbounded[T](): Unbounded[T] > IOs =
       Queue.unbounded[T]()(unbounded)
 
-    def unbounded[T](q: UnboundedQueue[T]): Unbounded[T] > IOs =
-      IOs {
+    def unbounded[T](q: UnboundedQueue[T] > IOs): Unbounded[T] > IOs =
+      q { q =>
         new Unbounded[T] {
           def put(v: T)   = q.add(v)
           def offer(v: T) = q.offer(v)
@@ -99,8 +99,8 @@ object channels {
     def blocking[T](capacity: Int): Blocking[T] > IOs =
       Queue.bounded[T](capacity)(blocking)
 
-    def blocking[T](queue: Queue[T]): Blocking[T] > IOs =
-      IOs {
+    def blocking[T](queue: Queue[T] > IOs): Blocking[T] > IOs =
+      queue { queue =>
         new Blocking[T] {
           val q     = queue.unsafe
           val takes = MpmcUnboundedXaddArrayQueue[Promise[T]](8)
