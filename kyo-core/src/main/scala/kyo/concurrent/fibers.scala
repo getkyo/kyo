@@ -85,6 +85,7 @@ object fibers {
           false
       }
 
+    /*inline(2)*/
     def transform[U](f: T => Fiber[U]): Fiber[U] =
       fiber match {
         case fiber: IOPromise[T] @unchecked =>
