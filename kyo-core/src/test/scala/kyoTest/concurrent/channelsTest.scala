@@ -74,8 +74,7 @@ class channelsTest extends KyoTest {
 
   "dropping" in run {
     for {
-      bc <- Channel.bounded[Int](2)
-      c  <- bc.dropping
+      c  <- Channel.dropping[Int](2)
       _  <- c.put(1)
       b1 <- c.offer(2)
       b2 <- c.offer(3)
@@ -88,8 +87,7 @@ class channelsTest extends KyoTest {
 
   "sliding" in run {
     for {
-      bc <- Channel.bounded[Int](2)
-      c  <- bc.sliding
+      c  <- Channel.sliding[Int](2)
       _  <- c.put(1)
       b1 <- c.offer(2)
       b2 <- c.offer(3)
@@ -103,24 +101,21 @@ class channelsTest extends KyoTest {
   "blocking" - {
     "offer and poll" in run {
       for {
-        bc <- Channel.bounded[Int](2)
-        c  <- bc.blocking
-        b  <- c.offer(1)
-        v  <- c.poll
+        c <- Channel.blocking[Int](2)
+        b <- c.offer(1)
+        v <- c.poll
       } yield assert(b && v == Some(1))
     }
     "put and take" in run {
       for {
-        bc <- Channel.bounded[Int](2)
-        c  <- bc.blocking
-        _  <- c.put(1)
-        v  <- c.take
+        c <- Channel.blocking[Int](2)
+        _ <- c.put(1)
+        v <- c.take
       } yield assert(v == 1)
     }
     "offer, put, and take" in run {
       for {
-        bc <- Channel.bounded[Int](2)
-        c  <- bc.blocking
+        c  <- Channel.blocking[Int](2)
         b  <- c.offer(1)
         _  <- c.put(2)
         v1 <- c.take
@@ -129,8 +124,7 @@ class channelsTest extends KyoTest {
     }
     "offer, put, and poll" in run {
       for {
-        bc <- Channel.bounded[Int](2)
-        c  <- bc.blocking
+        c  <- Channel.blocking[Int](2)
         b  <- c.offer(1)
         _  <- c.put(2)
         v1 <- c.poll
@@ -139,8 +133,7 @@ class channelsTest extends KyoTest {
     }
     "offer, put, and take in parallel" in run {
       for {
-        bc    <- Channel.bounded[Int](2)
-        c     <- bc.blocking
+        c     <- Channel.blocking[Int](2)
         b     <- Fibers.fork(c.offer(1))
         put   <- Fibers.fork(c.putFiber(2))
         take1 <- Fibers.fork(c.takeFiber)
@@ -153,8 +146,7 @@ class channelsTest extends KyoTest {
     }
     "blocking put" in run {
       for {
-        bc <- Channel.bounded[Int](2)
-        c  <- bc.blocking
+        c  <- Channel.blocking[Int](2)
         _  <- c.put(1)
         _  <- c.put(2)
         f  <- c.putFiber(3)
@@ -168,8 +160,7 @@ class channelsTest extends KyoTest {
     }
     "blocking take" in run {
       for {
-        bc <- Channel.bounded[Int](2)
-        c  <- bc.blocking
+        c  <- Channel.blocking[Int](2)
         f  <- c.takeFiber
         _  <- Fibers.sleep(10.millis)
         d1 <- f.isDone
