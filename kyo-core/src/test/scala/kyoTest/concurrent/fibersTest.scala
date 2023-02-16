@@ -1,26 +1,28 @@
 package kyoTest.concurrent
 
-import kyo.core._
-import kyo.ios._
-import kyo.tries._
-import scala.util.Failure
+import kyo.concurrent.atomics.AtomicInt
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
 import kyo.concurrent.latches._
-import kyoTest.KyoTest
-import java.util.concurrent.atomic.{AtomicReference => JAtomicReference}
-import java.util.concurrent.atomic.{AtomicInteger => JAtomicInteger}
-import kyo.concurrent.atomics.AtomicInt
-import scala.concurrent.duration._
-import kyo.resources._
-import java.util.concurrent.atomic.AtomicBoolean
-import java.io.Closeable
-
+import kyo.concurrent.timers._
+import kyo.core._
+import kyo.ios._
 import kyo.resources
+import kyo.resources._
+import kyo.tries._
+import kyoTest.KyoTest
+
+import java.io.Closeable
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.{AtomicInteger => JAtomicInteger}
+import java.util.concurrent.atomic.{AtomicReference => JAtomicReference}
+import scala.concurrent.duration._
+import scala.util.Failure
+
 class fibersTest extends KyoTest {
 
-  private def run[T](io: T > (IOs | Fibers)): T =
-    IOs.run((Fibers.run(IOs.lazyRun(io))).block)
+  private def run[T](io: T > (IOs | Fibers | Timers)): T =
+    IOs.run((Fibers.run(IOs.lazyRun(Timers.run(io)))).block)
 
   "promise" - {
     "complete" in run {

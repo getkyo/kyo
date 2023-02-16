@@ -1,7 +1,5 @@
 package kyo.concurrent
 
-import kyo.concurrent.scheduler.IOPromise
-import kyo.concurrent.scheduler.IOTask
 import kyo.core._
 import kyo.frames._
 import kyo.ios._
@@ -21,10 +19,9 @@ import scala.util._
 import scala.util.control.NonFatal
 
 import scheduler._
+import timers._
 
 object fibers {
-
-  private val timer = Executors.newScheduledThreadPool(1, ThreadFactory("kyo-fiber-sleep-timer"))
 
   opaque type Fiber[T]               = T | IOPromise[T]
   opaque type Promise[T] <: Fiber[T] = IOPromise[T]
@@ -277,24 +274,20 @@ object fibers {
     def never: Fiber[Unit] > IOs =
       IOs(IOPromise[Unit])
 
-    def sleep(d: Duration): Unit > (IOs | Fibers) =
-      IOs {
-        val p = new IOPromise[Unit] with Runnable with (ScheduledFuture[_] => Unit) { self =>
-          @volatile var timerTask: ScheduledFuture[_] = null
-          def apply(f: ScheduledFuture[_]) =
-            timerTask = f
-          def run() =
-            IOTask(IOs(self.complete(())))
-            val t = timerTask
-            if (t != null) {
-              t.cancel(false)
-              timerTask = null
-            }
-        }
+    def sleep(d: Duration): Unit > (IOs | Fibers | Timers) =
+      promise[Unit] { p =>
         if (d.isFinite) {
-          p(timer.schedule(p, d.toMillis, TimeUnit.MILLISECONDS))
+          val run: Unit > IOs =
+            IOs {
+              IOTask(IOs(p.complete(())))
+              ()
+            }
+          Timers.schedule(run, d) { t =>
+            IOs(p.onComplete(_ => IOs.run(t.cancel)))(_ => p.join)
+          }
+        } else {
+          p.join
         }
-        p > Fibers
       }
 
     /*inline(2)*/

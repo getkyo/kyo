@@ -7,12 +7,13 @@ import kyo.ios._
 import kyo.concurrent.channels._
 import kyo.concurrent.fibers._
 import kyo.concurrent.queues._
+import kyo.concurrent.timers._
 import scala.concurrent.duration._
 
 class channelsTest extends KyoTest {
 
-  private def run[T](io: T > (IOs | Fibers)): T =
-    IOs.run((Fibers.run(IOs.lazyRun(io))).block)
+  private def run[T](io: T > (IOs | Fibers | Timers)): T =
+    IOs.run((Fibers.run(IOs.lazyRun(Timers.run(io)))).block)
 
   "bounded" - {
     "offer and poll" in run {
