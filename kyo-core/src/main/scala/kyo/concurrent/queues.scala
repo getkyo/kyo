@@ -33,37 +33,31 @@ object queues {
 
   object Queue {
 
-    def bounded[T](
-        capacity: Int,
-        multipleProducers: Boolean = true,
-        multipleConsumers: Boolean = true
-    ): Queue[T] > IOs =
+    def bounded[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
       IOs {
-        if (multipleConsumers && multipleProducers) {
-          Queue(MpmcArrayQueue(capacity), capacity)
-        } else if (multipleConsumers) {
-          Queue(SpmcArrayQueue(capacity), capacity)
-        } else if (multipleProducers) {
-          Queue(MpscArrayQueue(capacity), capacity)
-        } else {
-          Queue(SpscArrayQueue(capacity), capacity)
+        access match {
+          case Access.Mpmc =>
+            Queue(MpmcArrayQueue(capacity), capacity)
+          case Access.Mpsc =>
+            Queue(MpscArrayQueue(capacity), capacity)
+          case Access.Spmc =>
+            Queue(SpmcArrayQueue(capacity), capacity)
+          case Access.Spsc =>
+            Queue(SpscArrayQueue(capacity), capacity)
         }
       }
 
-    def unbounded[T](
-        multipleProducers: Boolean = true,
-        multipleConsumers: Boolean = true,
-        chunkSize: Int = 8
-    ): UnboundedQueue[T] > IOs =
+    def unbounded[T](access: Access = Access.Mpmc, chunkSize: Int = 8): UnboundedQueue[T] > IOs =
       IOs {
-        if (multipleConsumers && multipleProducers) {
-          UnboundedQueue(MpmcUnboundedXaddArrayQueue(chunkSize))
-        } else if (multipleConsumers) {
-          UnboundedQueue(MpmcUnboundedXaddArrayQueue(chunkSize))
-        } else if (multipleProducers) {
-          UnboundedQueue(MpscUnboundedArrayQueue(chunkSize))
-        } else {
-          UnboundedQueue(SpscUnboundedArrayQueue(chunkSize))
+        access match {
+          case Access.Mpmc =>
+            UnboundedQueue(MpmcUnboundedXaddArrayQueue(chunkSize))
+          case Access.Mpsc =>
+            UnboundedQueue(MpscUnboundedArrayQueue(chunkSize))
+          case Access.Spmc =>
+            UnboundedQueue(MpmcUnboundedXaddArrayQueue(chunkSize))
+          case Access.Spsc =>
+            UnboundedQueue(SpscUnboundedArrayQueue(chunkSize))
         }
       }
   }

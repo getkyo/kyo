@@ -8,6 +8,7 @@ import zio.{ZIO, UIO}
 import java.util.concurrent.Executors
 import kyo.concurrent.fibers._
 import kyo.concurrent.channels._
+import kyo.concurrent.Access
 
 import kyo.bench.Bench
 import java.util.concurrent.atomic.AtomicInteger
@@ -38,7 +39,7 @@ class EnqueueDequeueBench extends Bench[Unit] {
       else
         c.put(())(_ => c.take(_ => loop(c, i + 1)))
 
-    Channel.blocking[Unit](2)(loop(_, 0))
+    Channel.blocking[Unit](2, Access.Spsc)(loop(_, 0))
   }
 
   def zioBench(): UIO[Unit] = {

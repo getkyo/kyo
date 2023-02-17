@@ -36,10 +36,10 @@ object channels {
       def takeFiber: Fiber[T] > IOs
     }
 
-    def bounded[T](size: Int): Channel[T] > IOs =
-      Queue.bounded[T](size)(bounded)
+    def bounded[T](size: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
+      bounded(Queue.bounded[T](size, access))
 
-    def bounded[T](q: Queue[T] > IOs): Channel[T] > IOs =
+    private def bounded[T](q: Queue[T] > IOs): Channel[T] > IOs =
       q { q =>
         new Channel[T] {
           def offer(v: T) = q.offer(v)
@@ -49,10 +49,10 @@ object channels {
         }
       }
 
-    def dropping[T](capacity: Int): Unbounded[T] > IOs =
-      dropping(Queue.bounded[T](capacity))
+    def dropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      dropping(Queue.bounded[T](capacity, access))
 
-    def dropping[T](q: Queue[T] > IOs): Unbounded[T] > IOs =
+    private def dropping[T](q: Queue[T] > IOs): Unbounded[T] > IOs =
       q { q =>
         new Unbounded[T] {
           def offer(v: T) = q.offer(v)
@@ -63,10 +63,10 @@ object channels {
         }
       }
 
-    def sliding[T](capacity: Int): Unbounded[T] > IOs =
-      sliding(Queue.bounded[T](capacity))
+    def sliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      sliding(Queue.bounded[T](capacity, access))
 
-    def sliding[T](q: Queue[T] > IOs): Unbounded[T] > IOs =
+    private def sliding[T](q: Queue[T] > IOs): Unbounded[T] > IOs =
       q { q =>
         new Unbounded[T] {
           def offer(v: T) = q.offer(v)
@@ -83,10 +83,10 @@ object channels {
         }
       }
 
-    def unbounded[T](): Unbounded[T] > IOs =
-      unbounded(Queue.unbounded[T]())
+    def unbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      unbounded(Queue.unbounded[T](access))
 
-    def unbounded[T](q: UnboundedQueue[T] > IOs): Unbounded[T] > IOs =
+    private def unbounded[T](q: UnboundedQueue[T] > IOs): Unbounded[T] > IOs =
       q { q =>
         new Unbounded[T] {
           def put(v: T)   = q.add(v)
@@ -97,10 +97,10 @@ object channels {
         }
       }
 
-    def blocking[T](capacity: Int): Blocking[T] > IOs =
-      blocking(Queue.bounded[T](capacity))
+    def blocking[T](capacity: Int, access: Access = Access.Mpmc): Blocking[T] > IOs =
+      blocking(Queue.bounded[T](capacity, access))
 
-    def blocking[T](queue: Queue[T] > IOs): Blocking[T] > IOs =
+    private def blocking[T](queue: Queue[T] > IOs): Blocking[T] > IOs =
       queue { queue =>
         new Blocking[T] {
           val q     = queue.unsafe
