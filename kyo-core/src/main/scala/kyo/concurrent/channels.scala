@@ -86,7 +86,7 @@ object channels {
     def unbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
       unbounded(Queue.unbounded[T](access))
 
-    private def unbounded[T](q: UnboundedQueue[T] > IOs): Unbounded[T] > IOs =
+    private def unbounded[T](q: Queue.Unbounded[T] > IOs): Unbounded[T] > IOs =
       q { q =>
         new Unbounded[T] {
           def put(v: T)   = q.add(v)
@@ -156,9 +156,9 @@ object channels {
 
           private def unsafePoll(): T = {
             q.poll() match {
-              case null =>
+              case None =>
                 null.asInstanceOf[T]
-              case v =>
+              case Some(v) =>
                 def loop: T = {
                   val s = state.get()
                   if (s > 0) {
