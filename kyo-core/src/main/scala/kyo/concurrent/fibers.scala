@@ -31,6 +31,10 @@ object fibers {
     /*inline(2)*/
     def complete(v: => T > IOs): Boolean > IOs =
       IOs(p.complete(IOs(v)))
+
+    /*inline(2)*/
+    private[kyo] def unsafeComplete(v: => T > IOs): Boolean =
+      complete(v)
   }
 
   extension [T](fiber: Fiber[T]) {

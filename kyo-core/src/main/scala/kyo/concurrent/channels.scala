@@ -8,6 +8,7 @@ import fibers._
 import atomics._
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import java.util.concurrent.atomic.AtomicLong
+import scala.annotation.tailrec
 
 object channels {
 
@@ -104,95 +105,98 @@ object channels {
         new Blocking[T] {
           val q     = queue.unsafe
           val takes = MpmcUnboundedXaddArrayQueue[Promise[T]](8)
-          val puts  = MpmcUnboundedXaddArrayQueue[(T, Promise[Unit])](8)
+          val puts  = MpmcUnboundedXaddArrayQueue[Promise[Unit]](8)
           val state = AtomicLong() // > 0: puts, < 0: takes
-          def offer(v: T): Boolean > IOs =
-            IOs {
-              val s = state.get()
-              if (s == 0) {
-                q.offer(v)
-              } else if (s < 0) {
-                if (state.compareAndSet(s, s + 1)) {
-                  var p = takes.poll()
-                  while (p == null.asInstanceOf[Promise[T]]) {
-                    p = takes.poll()
-                  }
-                  p.complete(v) {
-                    case true  => true
-                    case false => offer(v)
-                  }
-                } else {
-                  offer(v)
-                }
-              } else {
-                false
-              }
-            }
-          def poll: Option[T] > IOs =
-            IOs {
-              q.poll() match {
-                case null => None
-                case v =>
-                  def loop(pending: (T, Promise[Unit])): Option[T] > IOs = {
-                    val s = state.get()
-                    if (s > 0) {
-                      if (state.compareAndSet(s, s - 1)) {
-                        var t = pending
-                        while (t == null) {
-                          t = puts.poll()
-                        }
-                        val (v2, p) = t
-                        if (q.offer(v2)) {
-                          p.complete(())(_ => Some(v))
-                        } else {
-                          puts.add(t)
-                          Some(v)
-                        }
-                      } else {
-                        loop(pending)
-                      }
-                    } else {
-                      Some(v)
-                    }
-                  }
-                  loop(null)
-              }
-            }
-          def putFiber(v: T): Fiber[Unit] > IOs =
-            offer(v) {
-              case true =>
-                Fibers.done(())
-              case false =>
-                IOs {
-                  val s = state.get()
-                  if (s >= 0 && state.compareAndSet(s, s + 1)) {
-                    val p = Fibers.unsafePromise[Unit]
-                    puts.add((v, p))
-                    p
-                  } else {
-                    putFiber(v)
-                  }
-                }
-            }
-          def takeFiber: Fiber[T] > IOs =
-            poll {
-              case Some(v) =>
-                Fibers.done(v)
-              case None =>
-                IOs {
-                  val s = state.get()
-                  if (s <= 0 && state.compareAndSet(s, s - 1)) {
-                    val p = Fibers.unsafePromise[T]
-                    takes.add(p)
-                    p
-                  } else {
-                    takeFiber
-                  }
-                }
-            }
 
+          def offer(v: T) =
+            IOs(unsafeOffer(v))
+          def poll =
+            IOs(Option(unsafePoll()))
+          def putFiber(v: T): Fiber[Unit] > IOs =
+            IOs(unsafePut(v))
+          def takeFiber: Fiber[T] > IOs =
+            IOs(unsafeTake())
           def isEmpty = queue.isEmpty
           def isFull  = queue.isFull
+
+          @tailrec private def unsafeOffer(v: T): Boolean =
+            val s = state.get()
+            if (s < 0) {
+              if (state.compareAndSet(s, s + 1)) {
+                var p = takes.poll()
+                while (p == null.asInstanceOf[Promise[T]]) {
+                  p = takes.poll()
+                }
+                if (p.unsafeComplete(v)) {
+                  true
+                } else {
+                  unsafeOffer(v)
+                }
+              } else {
+                unsafeOffer(v)
+              }
+            } else {
+              q.offer(v)
+            }
+
+          private def _unsafePut(v: T) = unsafePut(v)
+          @tailrec private def unsafePut(v: T): Fiber[Unit] =
+            if (unsafeOffer(v)) {
+              Fibers.done(())
+            } else {
+              val s = state.get()
+              if (s >= 0 && state.compareAndSet(s, s + 1)) {
+                val p = Fibers.unsafePromise[Unit]
+                puts.add(p)
+                p.transform(_ => _unsafePut(v))
+              } else {
+                unsafePut(v)
+              }
+            }
+
+          private def unsafePoll(): T = {
+            q.poll() match {
+              case null =>
+                null.asInstanceOf[T]
+              case v =>
+                def loop: T = {
+                  val s = state.get()
+                  if (s > 0) {
+                    if (state.compareAndSet(s, s - 1)) {
+                      var p = puts.poll()
+                      while (p == null.asInstanceOf[AnyRef]) {
+                        p = puts.poll()
+                      }
+                      if (p.unsafeComplete(())) {
+                        v
+                      } else {
+                        loop
+                      }
+                    } else {
+                      loop
+                    }
+                  } else {
+                    v
+                  }
+                }
+                loop
+            }
+          }
+
+          @tailrec private def unsafeTake(): Fiber[T] =
+            val v = unsafePoll()
+            if (v != null) {
+              Fibers.done(v)
+            } else {
+              val s = state.get()
+              if (s <= 0 && state.compareAndSet(s, s - 1)) {
+                val p = Fibers.unsafePromise[T]
+                takes.add(p)
+                p
+              } else {
+                unsafeTake()
+              }
+            }
         }
       }
   }
