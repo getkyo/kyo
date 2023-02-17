@@ -50,7 +50,7 @@ object channels {
       }
 
     def dropping[T](capacity: Int): Unbounded[T] > IOs =
-      Queue.bounded[T](capacity)(dropping)
+      dropping(Queue.bounded[T](capacity))
 
     def dropping[T](q: Queue[T] > IOs): Unbounded[T] > IOs =
       q { q =>
@@ -64,7 +64,7 @@ object channels {
       }
 
     def sliding[T](capacity: Int): Unbounded[T] > IOs =
-      Queue.bounded[T](capacity)(sliding)
+      sliding(Queue.bounded[T](capacity))
 
     def sliding[T](q: Queue[T] > IOs): Unbounded[T] > IOs =
       q { q =>
@@ -84,7 +84,7 @@ object channels {
       }
 
     def unbounded[T](): Unbounded[T] > IOs =
-      Queue.unbounded[T]()(unbounded)
+      unbounded(Queue.unbounded[T]())
 
     def unbounded[T](q: UnboundedQueue[T] > IOs): Unbounded[T] > IOs =
       q { q =>
@@ -98,7 +98,7 @@ object channels {
       }
 
     def blocking[T](capacity: Int): Blocking[T] > IOs =
-      Queue.bounded[T](capacity)(blocking)
+      blocking(Queue.bounded[T](capacity))
 
     def blocking[T](queue: Queue[T] > IOs): Blocking[T] > IOs =
       queue { queue =>
