@@ -28,19 +28,18 @@ object channels {
     }
 
     trait Blocking[T] extends Channel[T] {
+
+      def putFiber(v: T): Fiber[Unit] > IOs
+      def takeFiber: Fiber[T] > IOs
+
       def put(v: T): Unit > (IOs | Fibers) =
         putFiber(v)(_.join)
       def take: T > (IOs | Fibers) =
         takeFiber(_.join)
-      def putFiber(v: T): Fiber[Unit] > IOs
-      def takeFiber: Fiber[T] > IOs
     }
 
     def bounded[T](size: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
-      bounded(Queue.bounded[T](size, access))
-
-    private def bounded[T](q: Queue[T] > IOs): Channel[T] > IOs =
-      q { q =>
+      Queue.bounded[T](size, access) { q =>
         new Channel[T] {
           def offer(v: T) = q.offer(v)
           def poll        = q.poll
@@ -50,10 +49,7 @@ object channels {
       }
 
     def dropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      dropping(Queue.bounded[T](capacity, access))
-
-    private def dropping[T](q: Queue[T] > IOs): Unbounded[T] > IOs =
-      q { q =>
+      Queue.bounded[T](capacity, access) { q =>
         new Unbounded[T] {
           def offer(v: T) = q.offer(v)
           def poll        = q.poll
@@ -64,19 +60,21 @@ object channels {
       }
 
     def sliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      sliding(Queue.bounded[T](capacity, access))
-
-    private def sliding[T](q: Queue[T] > IOs): Unbounded[T] > IOs =
-      q { q =>
+      Queue.bounded[T](capacity, access) { q =>
         new Unbounded[T] {
           def offer(v: T) = q.offer(v)
           def poll        = q.poll
           def put(v: T) =
-            q.offer(v) {
-              case true =>
-                ()
-              case false =>
-                q.poll(_ => put(v))
+            IOs {
+              @tailrec def loop: Unit = {
+                val u = q.unsafe
+                if (u.offer(v)) ()
+                else {
+                  u.poll()
+                  loop
+                }
+              }
+              loop
             }
           def isEmpty = q.isEmpty
           def isFull  = q.isFull
@@ -84,10 +82,7 @@ object channels {
       }
 
     def unbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      unbounded(Queue.unbounded[T](access))
-
-    private def unbounded[T](q: Queue.Unbounded[T] > IOs): Unbounded[T] > IOs =
-      q { q =>
+      Queue.unbounded[T](access) { q =>
         new Unbounded[T] {
           def put(v: T)   = q.add(v)
           def offer(v: T) = q.offer(v)
@@ -98,10 +93,7 @@ object channels {
       }
 
     def blocking[T](capacity: Int, access: Access = Access.Mpmc): Blocking[T] > IOs =
-      blocking(Queue.bounded[T](capacity, access))
-
-    private def blocking[T](queue: Queue[T] > IOs): Blocking[T] > IOs =
-      queue { queue =>
+      Queue.bounded[T](capacity, access) { queue =>
         new Blocking[T] {
           val q     = queue.unsafe
           val takes = MpmcUnboundedXaddArrayQueue[Promise[T]](8)
@@ -127,11 +119,7 @@ object channels {
                 while (p == null.asInstanceOf[Promise[T]]) {
                   p = takes.poll()
                 }
-                if (p.unsafeComplete(v)) {
-                  true
-                } else {
-                  unsafeOffer(v)
-                }
+                p.unsafeComplete(v) || unsafeOffer(v)
               } else {
                 unsafeOffer(v)
               }
@@ -159,7 +147,7 @@ object channels {
               case None =>
                 null.asInstanceOf[T]
               case Some(v) =>
-                def loop: T = {
+                @tailrec def loop: T = {
                   val s = state.get()
                   if (s > 0) {
                     if (state.compareAndSet(s, s - 1)) {
