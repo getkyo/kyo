@@ -48,8 +48,6 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
       case ex if (NonFatal(ex)) =>
         complete(IOs[T, Nothing](throw ex))
         curr = nullIO
-    } finally {
-      runtime += Coordinator.tick() - start
     }
     if (curr != nullIO && IOs.isDone(curr)) {
       complete(curr)
@@ -59,6 +57,7 @@ private[kyo] final class IOTask[T](val init: T > IOs) extends IOPromise[T]
       ensures.foreach(IOs.run(_))
       curr = nullIO
     }
+    runtime += Coordinator.tick() - start
     done
 
   def delay() = Coordinator.tick() - creationTs - runtime
