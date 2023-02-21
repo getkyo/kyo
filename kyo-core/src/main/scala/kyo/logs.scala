@@ -20,7 +20,7 @@ object logs {
   extension (l: Logger) {
 
     /*inline(3)*/
-    def trace( /*inline(3)*/ msg: => String): Unit =
+    def trace( /*inline(3)*/ msg: => String): Unit > IOs =
       IOs(if (l.isTraceEnabled) l.trace(msg))
 
     /*inline(3)*/
