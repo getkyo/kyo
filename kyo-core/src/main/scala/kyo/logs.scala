@@ -21,7 +21,7 @@ object logs {
 
     /*inline(3)*/
     def trace( /*inline(3)*/ msg: => String): Unit =
-      if (l.isTraceEnabled) l.trace(msg)
+      IOs(if (l.isTraceEnabled) l.trace(msg))
 
     /*inline(3)*/
     def debug( /*inline(3)*/ msg: => String): Unit > IOs =
