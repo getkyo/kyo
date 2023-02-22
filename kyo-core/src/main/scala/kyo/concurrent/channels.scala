@@ -13,6 +13,7 @@ import scala.annotation.tailrec
 object channels {
 
   trait Channel[T] { self =>
+    def size: Int > IOs
     def offer(v: T): Boolean > IOs
     def poll: Option[T] > IOs
     def isEmpty: Boolean > IOs
@@ -41,6 +42,7 @@ object channels {
     def bounded[T](size: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
       Queue.bounded[T](size, access) { q =>
         new Channel[T] {
+          def size        = q.size
           def offer(v: T) = q.offer(v)
           def poll        = q.poll
           def isEmpty     = q.isEmpty
@@ -51,6 +53,7 @@ object channels {
     def dropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
       Queue.bounded[T](capacity, access) { q =>
         new Unbounded[T] {
+          def size        = q.size
           def offer(v: T) = q.offer(v)
           def poll        = q.poll
           def put(v: T)   = q.offer(v).unit
@@ -62,6 +65,7 @@ object channels {
     def sliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
       Queue.bounded[T](capacity, access) { q =>
         new Unbounded[T] {
+          def size        = q.size
           def offer(v: T) = q.offer(v)
           def poll        = q.poll
           def put(v: T) =
@@ -84,6 +88,7 @@ object channels {
     def unbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
       Queue.unbounded[T](access) { q =>
         new Unbounded[T] {
+          def size        = q.size
           def put(v: T)   = q.add(v)
           def offer(v: T) = q.offer(v)
           def poll        = q.poll
@@ -100,6 +105,7 @@ object channels {
           val puts  = MpmcUnboundedXaddArrayQueue[Promise[Unit]](8)
           val state = AtomicLong() // > 0: puts, < 0: takes
 
+          def size = queue.size
           def offer(v: T) =
             IOs(unsafeOffer(v))
           def poll =

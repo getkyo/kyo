@@ -128,26 +128,6 @@ object ios {
         }
 
       lazyRunLoop(v)
-
-    /*inline(3)*/
-    def isDone[T](v: T > IOs): Boolean =
-      !v.isInstanceOf[Kyo[_, _, _, _, _]]
-
-    /*inline(3)*/
-    def eval[T](p: Preempt)(v: T > IOs): T > IOs =
-      @tailrec def evalLoop(v: T > IOs): T > IOs =
-        if (p() && !v.isInstanceOf[Ensure]) {
-          v
-        } else {
-          v match {
-            case kyo: Kyo[IO, IOs, Unit, T, IOs] @unchecked =>
-              evalLoop(kyo((), p))
-            case _ =>
-              v.asInstanceOf[T > IOs]
-          }
-        }
-
-      evalLoop(v)
   }
   val IOs: IOs = new IOs
 }

@@ -14,7 +14,7 @@ import IOPromise._
 private[kyo] class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](Pending()) {
 
   /*inline(2)*/
-  def isDone: Boolean = !get().isInstanceOf[Pending[_]]
+  def isDone(): Boolean = !get().isInstanceOf[Pending[_]]
 
   /*inline(2)*/
   def interrupts(p: IOPromise[_]): Unit =

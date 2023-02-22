@@ -42,7 +42,7 @@ object fibers {
     def isDone: Boolean > IOs =
       fiber match {
         case f: IOPromise[T] @unchecked =>
-          IOs(f.isDone)
+          IOs(f.isDone())
         case _ =>
           true
       }
@@ -130,60 +130,60 @@ object fibers {
       IOPromise[T]
 
     /*inline(2)*/
-    def forkFiber[T](v: => T > IOs): Fiber[T] > IOs =
+    def forkFiber[T](v: => T > (IOs | Fibers)): Fiber[T] > IOs =
       IOs(IOTask(IOs(v)))
 
     /*inline(2)*/
-    def fork[T](v: => T > IOs): T > (IOs | Fibers) =
+    def fork[T](v: => T > (IOs | Fibers)): T > (IOs | Fibers) =
       forkFiber(v)(_.join)
 
     def fork[T1, T2](
-        v1: => T1 > IOs,
-        v2: => T2 > IOs
+        v1: => T1 > (IOs | Fibers),
+        v2: => T2 > (IOs | Fibers)
     ): (T1, T2) > (IOs | Fibers) =
       collect(List(IOs(v1), IOs(v2)))(s => (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2]))
 
     def fork[T1, T2, T3](
-        v1: => T1 > IOs,
-        v2: => T2 > IOs,
-        v3: => T3 > IOs
+        v1: => T1 > (IOs | Fibers),
+        v2: => T2 > (IOs | Fibers),
+        v3: => T3 > (IOs | Fibers)
     ): (T1, T2, T3) > (IOs | Fibers) =
       collect(List(IOs(v1), IOs(v2), IOs(v3)))(s =>
         (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3])
       )
 
     def fork[T1, T2, T3, T4](
-        v1: => T1 > IOs,
-        v2: => T2 > IOs,
-        v3: => T3 > IOs,
-        v4: => T4 > IOs
+        v1: => T1 > (IOs | Fibers),
+        v2: => T2 > (IOs | Fibers),
+        v3: => T3 > (IOs | Fibers),
+        v4: => T4 > (IOs | Fibers)
     ): (T1, T2, T3, T4) > (IOs | Fibers) =
       collect(List(IOs(v1), IOs(v2), IOs(v3), IOs(v4)))(s =>
         (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3], s(3).asInstanceOf[T4])
       )
 
     def race[T](
-        v1: => T > IOs,
-        v2: => T > IOs
+        v1: => T > (IOs | Fibers),
+        v2: => T > (IOs | Fibers)
     ): T > (IOs | Fibers) =
       raceFiber(List(IOs(v1), IOs(v2)))(_.join)
 
     def race[T](
-        v1: => T > IOs,
-        v2: => T > IOs,
-        v3: => T > IOs
+        v1: => T > (IOs | Fibers),
+        v2: => T > (IOs | Fibers),
+        v3: => T > (IOs | Fibers)
     ): T > (IOs | Fibers) =
       raceFiber(List(IOs(v1), IOs(v2), IOs(v2)))(_.join)
 
     def race[T](
-        v1: => T > IOs,
-        v2: => T > IOs,
-        v3: => T > IOs,
-        v4: => T > IOs
+        v1: => T > (IOs | Fibers),
+        v2: => T > (IOs | Fibers),
+        v3: => T > (IOs | Fibers),
+        v4: => T > (IOs | Fibers)
     ): T > (IOs | Fibers) =
       raceFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4)))(_.join)
 
-    def raceFiber[T](l: List[T > IOs]): Fiber[T] > IOs =
+    def raceFiber[T](l: List[T > (IOs | Fibers)]): Fiber[T] > IOs =
       require(!l.isEmpty)
       IOs {
         val p = IOPromise[T]
@@ -196,32 +196,32 @@ object fibers {
       }
 
     def await[T](
-        v1: => T > IOs
+        v1: => T > (IOs | Fibers)
     ): Unit > (IOs | Fibers) =
       fork(v1)(_ => ())
 
     def await[T](
-        v1: => T > IOs,
-        v2: => T > IOs
+        v1: => T > (IOs | Fibers),
+        v2: => T > (IOs | Fibers)
     ): Unit > (IOs | Fibers) =
       awaitFiber(List(IOs(v1), IOs(v2)))(_.join)
 
     def await[T](
-        v1: => T > IOs,
-        v2: => T > IOs,
-        v3: => T > IOs
+        v1: => T > (IOs | Fibers),
+        v2: => T > (IOs | Fibers),
+        v3: => T > (IOs | Fibers)
     ): Unit > (IOs | Fibers) =
       awaitFiber(List(IOs(v1), IOs(v2), IOs(v2)))(_.join)
 
     def await[T](
-        v1: => T > IOs,
-        v2: => T > IOs,
-        v3: => T > IOs,
-        v4: => T > IOs
+        v1: => T > (IOs | Fibers),
+        v2: => T > (IOs | Fibers),
+        v3: => T > (IOs | Fibers),
+        v4: => T > (IOs | Fibers)
     ): Unit > (IOs | Fibers) =
       awaitFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4)))(_.join)
 
-    def awaitFiber[T](l: List[T > IOs]): Fiber[Unit] > IOs =
+    def awaitFiber[T](l: List[T > (IOs | Fibers)]): Fiber[Unit] > IOs =
       IOs {
         val p       = IOPromise[Unit]
         val pending = AtomicInteger(l.size)
@@ -246,10 +246,10 @@ object fibers {
         p
       }
 
-    def collect[T](l: List[T > IOs]): Seq[T] > (IOs | Fibers) =
+    def collect[T](l: List[T > (IOs | Fibers)]): Seq[T] > (IOs | Fibers) =
       collectFiber[T](l)(_.join)
 
-    def collectFiber[T](l: List[T > IOs]): Fiber[Seq[T]] > IOs =
+    def collectFiber[T](l: List[T > (IOs | Fibers)]): Fiber[Seq[T]] > IOs =
       IOs {
         val p       = IOPromise[Seq[T]]
         val size    = l.size

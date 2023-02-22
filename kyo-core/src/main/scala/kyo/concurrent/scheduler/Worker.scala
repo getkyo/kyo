@@ -71,9 +71,9 @@ private final class Worker(r: Runnable)
       }
       if (task != null) {
         currentTask = task
-        val done = task.run()
+        task.run()
         currentTask = null
-        if (!done) {
+        if (task.reenqueue()) {
           task = queue.addAndPoll(task)
         } else {
           delay.observe(task.delay())
