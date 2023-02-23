@@ -4,6 +4,7 @@ import kyo.core._
 import kyo.ios._
 import fibers._
 import atomics._
+import java.util.concurrent.atomic.AtomicInteger
 
 object latches {
 
@@ -20,21 +21,21 @@ object latches {
           def release: Unit > IOs  = ()
         }
       } else {
-        for {
-          count   <- AtomicInt(n)
-          promise <- Fibers.promise[Unit]
-        } yield {
+        IOs {
           new Latch {
+            val promise = Fibers.unsafePromise[Unit]
+            val count   = AtomicInteger(n)
             def await: Unit > Fibers =
               promise.join
             def release: Unit > IOs =
-              count.decrementAndGet {
-                case 0 => promise.complete(()).unit
-                case _ => ()
+              IOs {
+                if (count.decrementAndGet() == 0) {
+                  promise.unsafeComplete(())
+                }
               }
           }
         }
       }
-  }
 
+  }
 }
