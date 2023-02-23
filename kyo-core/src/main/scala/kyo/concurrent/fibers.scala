@@ -183,11 +183,18 @@ object fibers {
     ): T > (IOs | Fibers) =
       raceFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4)))(_.join)
 
+    private inline def foreach[T, U](inline l: List[T])(inline f: T => Unit): Unit =
+      var curr = l
+      while (curr ne Nil) {
+        f(curr.head)
+        curr = curr.tail
+      }
+
     def raceFiber[T](l: List[T > (IOs | Fibers)]): Fiber[T] > IOs =
       require(!l.isEmpty)
       IOs {
         val p = IOPromise[T]
-        l.foreach { io =>
+        foreach(l) { io =>
           val f = IOTask(io)
           p.interrupts(f)
           f.onComplete(p.complete(_))
@@ -237,7 +244,7 @@ object fibers {
               case ex if (NonFatal(ex)) =>
                 p.complete(IOs[Unit, Nothing](throw ex))
             }
-        l.foreach { io =>
+        foreach(l) { io =>
           val fiber = IOTask(io)
           p.interrupts(fiber)
           fiber.onComplete(f)
@@ -256,7 +263,7 @@ object fibers {
         val results = (new Array[Any](size)).asInstanceOf[Array[T]]
         val pending = AtomicInteger(size)
         var i       = 0
-        l.foreach { io =>
+        foreach(l) { io =>
           val fiber = IOTask(io)
           p.interrupts(fiber)
           val j = i
