@@ -40,77 +40,77 @@ object fibers {
   extension [T](fiber: Fiber[T]) {
 
     def isDone: Boolean > IOs =
-      fiber match {
-        case f: IOPromise[T] @unchecked =>
-          IOs(f.isDone())
-        case _ =>
-          true
+      if (fiber.isInstanceOf[IOPromise[_]]) {
+        val f = fiber.asInstanceOf[IOPromise[T]]
+        IOs(f.isDone())
+      } else {
+        true
       }
 
     def join: T > Fibers =
-      fiber match {
-        case f: IOPromise[T] @unchecked =>
-          f > Fibers
-        case _ =>
-          fiber.asInstanceOf[T > Fibers]
+      if (fiber.isInstanceOf[IOPromise[_]]) {
+        val f = fiber.asInstanceOf[IOPromise[T]]
+        f > Fibers
+      } else {
+        fiber.asInstanceOf[T > Fibers]
       }
 
     /*inline(2)*/
     def joinTry: Try[T] > (Fibers | IOs) =
-      /*inline(2)*/ fiber match {
-        case f: IOPromise[T] @unchecked =>
-          IOs {
-            val p = new IOPromise[Try[T]]
-            p.interrupts(f)
-            f.onComplete { t =>
-              p.complete(Try(IOs.run(t)))
-            }
-            p > Fibers
+      if (fiber.isInstanceOf[IOPromise[_]]) {
+        val f = fiber.asInstanceOf[IOPromise[T]]
+        IOs {
+          val p = new IOPromise[Try[T]]
+          p.interrupts(f)
+          f.onComplete { t =>
+            p.complete(Try(IOs.run(t)))
           }
-        case _ =>
-          Try(fiber.asInstanceOf[T])
+          p > Fibers
+        }
+      } else {
+        Success(fiber.asInstanceOf[T])
       }
 
     /*inline(2)*/
     def block: T > IOs =
-      fiber match {
-        case f: IOPromise[T] @unchecked =>
-          IOs(f.block())
-        case _ =>
-          fiber.asInstanceOf[T > IOs]
+      if (fiber.isInstanceOf[IOPromise[_]]) {
+        val f = fiber.asInstanceOf[IOPromise[T]]
+        IOs(f.block())
+      } else {
+        fiber.asInstanceOf[T > IOs]
       }
 
     /*inline(2)*/
     def interrupt: Boolean > IOs =
-      fiber match {
-        case f: IOPromise[T] @unchecked =>
-          IOs(f.interrupt())
-        case _ =>
-          false
+      if (fiber.isInstanceOf[IOPromise[_]]) {
+        val f = fiber.asInstanceOf[IOPromise[T]]
+        IOs(f.interrupt())
+      } else {
+        false
       }
 
     /*inline(2)*/
-    def transform[U](f: T => Fiber[U]): Fiber[U] =
-      fiber match {
-        case fiber: IOPromise[T] @unchecked =>
-          val r = IOPromise[U]
-          r.interrupts(fiber)
-          fiber.onComplete { v =>
-            try {
-              f(IOs.run(v)) match {
-                case v: IOPromise[U] @unchecked =>
-                  v.onComplete(r.complete(_))
-                case v =>
-                  r.complete(v.asInstanceOf[U])
-              }
-            } catch {
-              case ex if (NonFatal(ex)) =>
-                r.complete(IOs(throw ex))
+    def transform[U](t: T => Fiber[U]): Fiber[U] =
+      if (fiber.isInstanceOf[IOPromise[_]]) {
+        val f = fiber.asInstanceOf[IOPromise[T]]
+        val r = IOPromise[U]
+        r.interrupts(f)
+        f.onComplete { v =>
+          try {
+            t(IOs.run(v)) match {
+              case v: IOPromise[U] @unchecked =>
+                v.onComplete(r.complete(_))
+              case v =>
+                r.complete(v.asInstanceOf[U])
             }
+          } catch {
+            case ex if (NonFatal(ex)) =>
+              r.complete(IOs(throw ex))
           }
-          r
-        case _ =>
-          f(fiber.asInstanceOf[T])
+        }
+        r
+      } else {
+        t(fiber.asInstanceOf[T])
       }
   }
 

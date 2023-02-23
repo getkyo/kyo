@@ -51,9 +51,10 @@ private[kyo] final class IOTask[T](val init: T > (IOs | Fibers)) extends IOPromi
       }
     } else {
       curr match {
-        case kyo: Kyo[IO, IOs, Unit, T, IOs | Fibers] if (kyo.effect eq IOs) =>
+        case kyo: Kyo[IO, IOs, Unit, T, IOs | Fibers] @unchecked if (kyo.effect eq IOs) =>
           eval(kyo((), this))
-        case kyo: Kyo[IOPromise, Fibers, Any, T, IOs | Fibers] if (kyo.effect eq Fibers) =>
+        case kyo: Kyo[IOPromise, Fibers, Any, T, IOs | Fibers] @unchecked
+            if (kyo.effect eq Fibers) =>
           kyo.value.onComplete { (v: Any > IOs) =>
             val t = IOTask(v(kyo(_, this.asInstanceOf[Safepoint[Fibers]])))
             this.interrupts(t)
