@@ -39,8 +39,8 @@ object channels {
         takeFiber(_.join)
     }
 
-    def bounded[T](size: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
-      Queue.bounded[T](size, access) { q =>
+    def bounded[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
+      Queue.bounded[T](capacity, access) { q =>
         new Channel[T] {
           def size        = q.size
           def offer(v: T) = q.offer(v)
