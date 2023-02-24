@@ -2,6 +2,7 @@ package kyo.concurrent.scheduler
 
 import kyo.core._
 import kyo.ios._
+import kyo.locals._
 import kyo.resources._
 import kyo.concurrent.fibers._
 
@@ -52,11 +53,11 @@ private[kyo] final class IOTask[T](val init: T > (IOs | Fibers)) extends IOPromi
     } else {
       curr match {
         case kyo: Kyo[IO, IOs, Unit, T, IOs | Fibers] @unchecked if (kyo.effect eq IOs) =>
-          eval(kyo((), this))
+          eval(kyo((), this, Locals.State.empty))
         case kyo: Kyo[IOPromise, Fibers, Any, T, IOs | Fibers] @unchecked
             if (kyo.effect eq Fibers) =>
           kyo.value.onComplete { (v: Any > IOs) =>
-            val t = IOTask(v(kyo(_, this.asInstanceOf[Safepoint[Fibers]])))
+            val t = IOTask(v(kyo(_, this.asInstanceOf[Safepoint[Fibers]], Locals.State.empty)))
             this.interrupts(t)
             t.onComplete { (v: T > IOs) =>
               complete(v)

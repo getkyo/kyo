@@ -9,6 +9,7 @@ import core._
 import tries._
 import options._
 import frames._
+import locals._
 import scala.runtime.AbstractFunction0
 import scala.util.control.NonFatal
 import scala.Conversion
@@ -71,13 +72,13 @@ object ios {
           case kyo: Kyo[M2, E2, Any, T, S | IOs] @unchecked =>
             new KyoCont[M2, E2, Any, T, S | IOs](kyo) with Ensure {
               def frame = fr
-              def apply(v: Any, s: Safepoint[E2]) =
+              def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
                 s match {
                   case s: Preempt =>
                     s.ensure(IOs(f))
-                    kyo(v, s)
+                    kyo(v, s, l)
                   case _ =>
-                    ensureLoop(kyo(v, s))
+                    ensureLoop(kyo(v, s, l))
                 }
             }
           case _ =>
@@ -91,7 +92,7 @@ object ios {
     )(using /*inline(3)*/ fr: Frame["IOs"]): T > (S | IOs) =
       new KyoIO[T, S] {
         def frame = fr
-        def apply(v: Unit, s: Safepoint[IOs]) =
+        def apply(v: Unit, s: Safepoint[IOs], l: Locals.State) =
           f
       }
 
@@ -101,11 +102,10 @@ object ios {
       @tailrec def runLoop(v: T > IOs): T =
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, IOs] @unchecked =>
-            runLoop(kyo((), safepoint))
+            runLoop(kyo((), safepoint, Locals.State.empty))
           case _ =>
             v.asInstanceOf[T]
         }
-
       runLoop(v)
 
     /*inline(3)*/
@@ -116,12 +116,12 @@ object ios {
         val safepoint = Safepoint.noop[IOs]
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, S | IOs] @unchecked if (kyo.effect eq IOs) =>
-            lazyRunLoop(kyo((), safepoint))
+            lazyRunLoop(kyo((), safepoint, Locals.State.empty))
           case kyo: Kyo[M2, E2, Any, T, S | IOs] @unchecked =>
             new KyoCont[M2, E2, Any, T, S](kyo) {
               def frame = fr
-              def apply(v: Any, s: Safepoint[E2]) =
-                lazyRunLoop(kyo(v, s))
+              def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
+                lazyRunLoop(kyo(v, s, l))
             }
           case _ =>
             v.asInstanceOf[T]

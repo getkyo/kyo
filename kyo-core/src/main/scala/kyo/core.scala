@@ -5,6 +5,7 @@ import scala.runtime.AbstractFunction1
 import scala.util.control.NonFatal
 import scala.runtime.AbstractFunction0
 import frames._
+import locals._
 import scala.util.NotGiven
 
 object core {
@@ -28,11 +29,11 @@ object core {
     def flatMap[T, U](m: M[T], f: T => M[U]): M[U]
   }
 
-  private[kyo] trait Safepoint[E <: Effect[_]] { self =>
+  trait Safepoint[E <: Effect[_]] { self =>
     def apply(): Boolean
     def apply[T, S](v: => T > (S | E)): T > (S | E)
   }
-  private[kyo] object Safepoint {
+  object Safepoint {
     private val _noop = new Safepoint[Effect[_]] {
       def apply()                                = false
       def apply[T, S](v: => T > (S | Effect[_])) = v
@@ -48,7 +49,7 @@ object core {
     def value: M[T]
     def effect: E
     def frame: Frame[String]
-    def apply(v: T, s: Safepoint[E]): U > S
+    def apply(v: T, s: Safepoint[E], l: Locals.State): U > S
     def isRoot = false
   }
 
@@ -60,7 +61,7 @@ object core {
 
     override def isRoot = true
 
-    def apply(v: T, s: Safepoint[E]): T > S = v
+    def apply(v: T, s: Safepoint[E], l: Locals.State): T > S = v
   }
 
   private[kyo] abstract class KyoCont[M[_], E <: Effect[M], T, U, S](prev: Kyo[M, E, T, _, _])
@@ -81,8 +82,8 @@ object core {
           case kyo: Kyo[M2, E2, Any, M[T], S] @unchecked =>
             new KyoCont[M2, E2, Any, T, S | E](kyo) {
               def frame = fr
-              def apply(v: Any, s: Safepoint[E2]) =
-                suspendLoop(kyo(v, s))
+              def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
+                suspendLoop(kyo(v, s, l))
             }
           case _ =>
             KyoRoot(fr, v.asInstanceOf[M[T]], e)
@@ -102,7 +103,7 @@ object core {
         def frame  = fr
         def value  = v
         def effect = e
-        def apply(v: T > S, s: Safepoint[E]): T > (S | E) =
+        def apply(v: T > S, s: Safepoint[E], l: Locals.State): T > (S | E) =
           v
       }
   }
@@ -144,8 +145,8 @@ object core {
           case kyo: Kyo[M2, E2, Any, T, S] @unchecked =>
             new KyoCont[M2, E2, Any, U, S | S2](kyo) {
               def frame = fr
-              def apply(v: Any, s: Safepoint[E2]) =
-                val n = kyo(v, s)
+              def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
+                val n = kyo(v, s, l)
                 if (s()) {
                   s(transformLoop(n)).asInstanceOf[U > (S | S2)]
                 } else {
@@ -174,7 +175,7 @@ object core {
             if (kyo.isRoot) {
               kyo.value.asInstanceOf[M[T] > S2]
             } else {
-              shallowHandleLoop(h(kyo.value, kyo(_, s)))
+              shallowHandleLoop(h(kyo.value, kyo(_, s, Locals.State.empty)))
             }
           case kyo: Kyo[M2, E2, Any, T, S2 | E] @unchecked =>
             val e = kyo.effect
@@ -182,9 +183,9 @@ object core {
               def frame  = fr
               def value  = kyo.value
               def effect = e
-              def apply(v: Any, s2: Safepoint[E2]): M[T] > S2 =
+              def apply(v: Any, s2: Safepoint[E2], l: Locals.State): M[T] > S2 =
                 shallowHandleLoop {
-                  try kyo(v, s2)
+                  try kyo(v, s2, l)
                   catch {
                     case ex if (NonFatal(ex)) =>
                       h.handle(ex)
@@ -214,7 +215,7 @@ object core {
         def deepHandleLoop(v: T > E): M[T] =
           v match {
             case kyo: Kyo[M, E, Any, T, E] @unchecked =>
-              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v, s)))
+              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v, s, Locals.State.empty)))
             case _ =>
               h.pure(v.asInstanceOf[T])
           }

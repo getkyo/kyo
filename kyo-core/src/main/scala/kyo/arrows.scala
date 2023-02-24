@@ -4,6 +4,7 @@ import scala.runtime.AbstractFunction1
 
 import core._
 import frames._
+import locals._
 
 object arrows {
 
@@ -17,10 +18,14 @@ object arrows {
           def frame  = fr
           def value  = ()
           def effect = arrows.Arrows
-          def apply(v: T > S, s: Safepoint[Arrows]) =
+          def apply(v: T > S, s: Safepoint[Arrows], l: Locals.State) =
             v
         }
-      f(a).asInstanceOf[Kyo[[T] =>> Unit, Arrows, T > S, U, S2]](_, Safepoint.noop)
+      f(a).asInstanceOf[Kyo[[T] =>> Unit, Arrows, T > S, U, S2]](
+          _,
+          Safepoint.noop,
+          Locals.State.empty
+      )
 
     /*inline(2)*/
     def recursive[T, S, U, S2](f: (
@@ -33,11 +38,15 @@ object arrows {
             def frame  = fr
             def value  = ()
             def effect = arrows.Arrows
-            def apply(v: T > S, s: Safepoint[Arrows]) =
+            def apply(v: T > S, s: Safepoint[Arrows], l: Locals.State) =
               v
           }
         val g = f(a, this.asInstanceOf[T > (S | Arrows) => U > (S2 | Arrows)])
-          .asInstanceOf[Kyo[[T] =>> Unit, Arrows, T > S, U, S2]](_, Safepoint.noop)
+          .asInstanceOf[Kyo[[T] =>> Unit, Arrows, T > S, U, S2]](
+              _,
+              Safepoint.noop,
+              Locals.State.empty
+          )
         def apply(v: T > S) = g(v)
       }
   }
