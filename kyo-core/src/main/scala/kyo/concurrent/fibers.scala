@@ -3,6 +3,7 @@ package kyo.concurrent
 import kyo.core._
 import kyo.frames._
 import kyo.ios._
+import kyo.locals._
 import kyo.resources._
 
 import java.io.Closeable
@@ -131,7 +132,7 @@ object fibers {
 
     /*inline(2)*/
     def forkFiber[T](v: => T > (IOs | Fibers)): Fiber[T] > IOs =
-      IOs(IOTask(IOs(v)))
+      Locals.save(st => IOTask(IOs(Locals.restore(st)(v))))
 
     /*inline(2)*/
     def fork[T](v: => T > (IOs | Fibers)): T > (IOs | Fibers) =
@@ -192,10 +193,10 @@ object fibers {
 
     def raceFiber[T](l: List[T > (IOs | Fibers)]): Fiber[T] > IOs =
       require(!l.isEmpty)
-      IOs {
+      Locals.save { st =>
         val p = IOPromise[T]
         foreach(l) { io =>
-          val f = IOTask(io)
+          val f = IOTask(IOs(Locals.restore(st)(io)))
           p.interrupts(f)
           f.onComplete(p.complete(_))
         }
@@ -229,7 +230,7 @@ object fibers {
       awaitFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4)))(_.join)
 
     def awaitFiber[T](l: List[T > (IOs | Fibers)]): Fiber[Unit] > IOs =
-      IOs {
+      Locals.save { st =>
         val p       = IOPromise[Unit]
         val pending = AtomicInteger(l.size)
         var i       = 0
@@ -245,7 +246,7 @@ object fibers {
                 p.complete(IOs[Unit, Nothing](throw ex))
             }
         foreach(l) { io =>
-          val fiber = IOTask(io)
+          val fiber = IOTask(IOs(Locals.restore(st)(io)))
           p.interrupts(fiber)
           fiber.onComplete(f)
           i += 1
@@ -257,14 +258,14 @@ object fibers {
       collectFiber[T](l)(_.join)
 
     def collectFiber[T](l: List[T > (IOs | Fibers)]): Fiber[Seq[T]] > IOs =
-      IOs {
+      Locals.save { st =>
         val p       = IOPromise[Seq[T]]
         val size    = l.size
         val results = (new Array[Any](size)).asInstanceOf[Array[T]]
         val pending = AtomicInteger(size)
         var i       = 0
         foreach(l) { io =>
-          val fiber = IOTask(io)
+          val fiber = IOTask(IOs(Locals.restore(st)(io)))
           p.interrupts(fiber)
           val j = i
           fiber.onComplete { r =>

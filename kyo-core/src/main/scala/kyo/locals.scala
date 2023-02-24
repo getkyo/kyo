@@ -57,17 +57,15 @@ object locals {
         override def toString = s"Local($fr)"
       }
 
-    /*inline(3)*/
-    def save(using /*inline(3)*/ fr: Frame["Locals.save"]): State > IOs =
+    def save(using fr: Frame["Locals.save"]): State > IOs =
       new KyoIO[State, Nothing] {
         def frame = fr
         def apply(v: Unit, s: Safepoint[IOs], l: Locals.State) =
           l
       }
 
-    /*inline(3)*/
-    def restore[T, S]( /*inline(3)*/ st: State)(f: T > S)(
-        using /*inline(3)*/ fr: Frame["Locals.restore"]
+    def restore[T, S](st: State)(f: T > S)(
+        using fr: Frame["Locals.restore"]
     ): T > (S | IOs) =
       type M2[_]
       type E2 <: Effect[M2]
