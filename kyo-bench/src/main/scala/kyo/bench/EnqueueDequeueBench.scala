@@ -29,7 +29,7 @@ class EnqueueDequeueBench extends Bench[Unit] {
     Queue.bounded[IO, Unit](1).flatMap(loop(_, 0))
   }
 
-  def kyoBench() = Fibers.block(kyoBenchFiber())
+  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
 
   override def kyoBenchFiber(): Unit > (IOs | Fibers) = {
 

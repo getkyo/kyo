@@ -32,7 +32,7 @@ class ForkManyBench extends Bench[Int] {
     } yield 0
   }
 
-  def kyoBench() = Fibers.block(kyoBenchFiber())
+  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
   override def kyoBenchFiber() = {
     import kyo.core._
     import kyo.ios._
