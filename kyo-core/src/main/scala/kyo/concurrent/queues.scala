@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 object queues {
 
-  opaque type Queue[T] = Queue.Unsafe[T]
+  opaque type Queue[T] = Queues.Unsafe[T]
 
   extension [T](u: Queue[T]) {
     def capacity: Int =
@@ -28,11 +28,11 @@ object queues {
     def isFull: Boolean > IOs =
       size(_ == capacity)
 
-    private[kyo] def unsafe: Queue.Unsafe[T] =
+    private[kyo] def unsafe: Queues.Unsafe[T] =
       u
   }
 
-  object Queue {
+  object Queues {
 
     private[kyo] trait Unsafe[T] {
       def capacity: Int
@@ -61,7 +61,7 @@ object queues {
         def peek(): Option[Any]    = None
       }
 
-    def bounded[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
+    def makeBounded[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
       IOs {
         capacity match {
           case 0 =>
@@ -91,7 +91,7 @@ object queues {
         }
       }
 
-    def unbounded[T](access: Access = Access.Mpmc, chunkSize: Int = 8): Unbounded[T] > IOs =
+    def makeUnbounded[T](access: Access = Access.Mpmc, chunkSize: Int = 8): Unbounded[T] > IOs =
       IOs {
         access match {
           case Access.Mpmc =>

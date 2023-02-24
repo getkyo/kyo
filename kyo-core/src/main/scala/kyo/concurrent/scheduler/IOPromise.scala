@@ -59,22 +59,20 @@ private[kyo] class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](
 
   /*inline(2)*/
   def block(): T =
-    IOs.run {
-      get() match {
-        case p: Pending[T] @unchecked =>
-          val b = new CountDownLatch(1) with (T > IOs => Unit) with (() => T > IOs) {
-            private[this] var result: T > IOs = null.asInstanceOf[T]
-            def apply(v: T > IOs) =
-              result = v
-              countDown()
-            def apply() = result
-          }
-          onComplete(b)
-          b.await()
-          b()
-        case v =>
-          v.asInstanceOf[T > IOs]
-      }
+    get() match {
+      case p: Pending[T] @unchecked =>
+        val b = new CountDownLatch(1) with (T > IOs => Unit) with (() => T > IOs) {
+          private[this] var result: T > IOs = null.asInstanceOf[T]
+          def apply(v: T > IOs) =
+            result = v
+            countDown()
+          def apply() = result
+        }
+        onComplete(b)
+        b.await()
+        IOs.run(b())
+      case v =>
+        v.asInstanceOf[T]
     }
 }
 

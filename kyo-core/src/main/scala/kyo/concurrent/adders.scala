@@ -13,11 +13,14 @@ import java.util.concurrent.atomic.{DoubleAdder => JDoubleAdder}
 
 object adders {
 
-  opaque type LongAdder = JLongAdder
-  object LongAdder {
-    /*inline(1)*/
-    def apply(): LongAdder > IOs = IOs(JLongAdder())
+  object Adders {
+    private val _makeLong             = IOs(JLongAdder())
+    private val _makeDouble           = IOs(JDoubleAdder())
+    def makeLong: LongAdder > IOs     = _makeLong
+    def makeDouble: DoubleAdder > IOs = _makeDouble
   }
+
+  opaque type LongAdder = JLongAdder
   extension (ref: LongAdder) {
     /*inline(1)*/
     def add(v: Long): Unit > IOs =
@@ -34,10 +37,6 @@ object adders {
   }
 
   opaque type DoubleAdder = JDoubleAdder
-  object DoubleAdder {
-    /*inline(1)*/
-    def apply(): DoubleAdder > IOs = IOs(JDoubleAdder())
-  }
   extension (ref: DoubleAdder) {
     /*inline(1)*/
     def add(v: Double): Unit > IOs =

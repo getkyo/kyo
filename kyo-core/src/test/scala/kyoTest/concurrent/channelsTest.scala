@@ -18,14 +18,14 @@ class channelsTest extends KyoTest {
   "bounded" - {
     "offer and poll" in run {
       for {
-        c <- Channel.bounded[Int](2)
+        c <- Channels.makeBounded[Int](2)
         b <- c.offer(1)
         v <- c.poll
       } yield assert(b && v == Some(1))
     }
     "offer and poll in parallel" in run {
       for {
-        c <- Channel.bounded[Int](2)
+        c <- Channels.makeBounded[Int](2)
         b <- Fibers.fork(c.offer(1))
         v <- Fibers.fork(c.poll)
       } yield assert(b && v == Some(1))
@@ -35,35 +35,35 @@ class channelsTest extends KyoTest {
   "unbounded" - {
     "offer and poll" in run {
       for {
-        c <- Channel.unbounded[Int]()
+        c <- Channels.makeUnbounded[Int]()
         b <- c.offer(1)
         v <- c.poll
       } yield assert(b && v == Some(1))
     }
     "offer and poll in parallel" in run {
       for {
-        c <- Channel.unbounded[Int]()
+        c <- Channels.makeUnbounded[Int]()
         b <- Fibers.fork(c.offer(1))
         v <- Fibers.fork(c.poll)
       } yield assert(b && v == Some(1))
     }
     "put and poll" in run {
       for {
-        c <- Channel.unbounded[Int]()
+        c <- Channels.makeUnbounded[Int]()
         _ <- c.put(1)
         v <- c.poll
       } yield assert(v == Some(1))
     }
     "put and poll in parallel" in run {
       for {
-        c <- Channel.unbounded[Int]()
+        c <- Channels.makeUnbounded[Int]()
         _ <- Fibers.fork(c.put(1))
         v <- Fibers.fork(c.poll)
       } yield assert(v == Some(1))
     }
     "offer, put, and poll" in run {
       for {
-        c  <- Channel.unbounded[Int]()
+        c  <- Channels.makeUnbounded[Int]()
         b  <- c.offer(1)
         _  <- c.put(2)
         v1 <- c.poll
@@ -74,7 +74,7 @@ class channelsTest extends KyoTest {
 
   "dropping" in run {
     for {
-      c  <- Channel.dropping[Int](2)
+      c  <- Channels.makeDropping[Int](2)
       _  <- c.put(1)
       b1 <- c.offer(2)
       b2 <- c.offer(3)
@@ -87,7 +87,7 @@ class channelsTest extends KyoTest {
 
   "sliding" in run {
     for {
-      c  <- Channel.sliding[Int](2)
+      c  <- Channels.makeSliding[Int](2)
       _  <- c.put(1)
       b1 <- c.offer(2)
       b2 <- c.offer(3)
@@ -101,21 +101,21 @@ class channelsTest extends KyoTest {
   "blocking" - {
     "offer and poll" in run {
       for {
-        c <- Channel.blocking[Int](2)
+        c <- Channels.makeBlocking[Int](2)
         b <- c.offer(1)
         v <- c.poll
       } yield assert(b && v == Some(1))
     }
     "put and take" in run {
       for {
-        c <- Channel.blocking[Int](2)
+        c <- Channels.makeBlocking[Int](2)
         _ <- c.put(1)
         v <- c.take
       } yield assert(v == 1)
     }
     "offer, put, and take" in run {
       for {
-        c  <- Channel.blocking[Int](2)
+        c  <- Channels.makeBlocking[Int](2)
         b  <- c.offer(1)
         _  <- c.put(2)
         v1 <- c.take
@@ -124,7 +124,7 @@ class channelsTest extends KyoTest {
     }
     "offer, put, and poll" in run {
       for {
-        c  <- Channel.blocking[Int](2)
+        c  <- Channels.makeBlocking[Int](2)
         b  <- c.offer(1)
         _  <- c.put(2)
         v1 <- c.poll
@@ -133,7 +133,7 @@ class channelsTest extends KyoTest {
     }
     "offer, put, and take in parallel" in run {
       for {
-        c     <- Channel.blocking[Int](2)
+        c     <- Channels.makeBlocking[Int](2)
         b     <- Fibers.fork(c.offer(1))
         put   <- Fibers.fork(c.putFiber(2))
         take1 <- Fibers.fork(c.takeFiber)
@@ -146,7 +146,7 @@ class channelsTest extends KyoTest {
     }
     "blocking put" in run {
       for {
-        c  <- Channel.blocking[Int](2)
+        c  <- Channels.makeBlocking[Int](2)
         _  <- c.put(1)
         _  <- c.put(2)
         f  <- c.putFiber(3)
@@ -160,7 +160,7 @@ class channelsTest extends KyoTest {
     }
     "blocking take" in run {
       for {
-        c  <- Channel.blocking[Int](2)
+        c  <- Channels.makeBlocking[Int](2)
         f  <- c.takeFiber
         _  <- Fibers.sleep(10.millis)
         d1 <- f.isDone

@@ -11,11 +11,14 @@ import scala.annotation.tailrec
 
 object atomics {
 
-  opaque type AtomicInt = JAtomicInteger
-  object AtomicInt {
-    /*inline(1)*/
-    def apply(v: Int): AtomicInt > IOs = IOs(JAtomicInteger(v))
+  object Atomics {
+    def makeInt(v: Int): AtomicInt > IOs             = IOs(JAtomicInteger(v))
+    def makeLong(v: Long): AtomicLong > IOs          = IOs(JAtomicLong(v))
+    def makeBoolean(v: Boolean): AtomicBoolean > IOs = IOs(JAtomicBoolean(v))
+    def makeRef[T](v: T): AtomicRef[T] > IOs         = IOs(JAtomicReference(v))
   }
+
+  opaque type AtomicInt = JAtomicInteger
   extension (ref: AtomicInt) {
     /*inline(1)*/
     def get: Int > IOs =
@@ -53,10 +56,6 @@ object atomics {
   }
 
   opaque type AtomicLong = JAtomicLong
-  object AtomicLong {
-    /*inline(1)*/
-    def apply(v: Long): AtomicLong > IOs = IOs(JAtomicLong(v))
-  }
   extension (ref: AtomicLong) {
     /*inline(1)*/
     def get: Long > IOs =
@@ -94,10 +93,6 @@ object atomics {
   }
 
   opaque type AtomicBoolean = JAtomicBoolean
-  object AtomicBoolean {
-    /*inline(1)*/
-    def apply(v: Boolean): AtomicBoolean > IOs = IOs(JAtomicBoolean(v))
-  }
   extension (ref: AtomicBoolean) {
     /*inline(1)*/
     def get: Boolean > IOs =
@@ -116,12 +111,8 @@ object atomics {
       IOs(ref.compareAndSet(curr, next))
   }
 
-  opaque type AtomicReference[T] = JAtomicReference[T]
-  object AtomicReference {
-    /*inline(1)*/
-    def apply[T](v: T): AtomicReference[T] > IOs = IOs(JAtomicReference(v))
-  }
-  extension [T](ref: AtomicReference[T]) {
+  opaque type AtomicRef[T] = JAtomicReference[T]
+  extension [T](ref: AtomicRef[T]) {
     /*inline(1)*/
     def get: T > IOs =
       IOs(ref.get())

@@ -20,7 +20,7 @@ object channels {
     def isFull: Boolean > IOs
   }
 
-  object Channel {
+  object Channels {
 
     trait Unbounded[T] extends Channel[T] {
       def offer(v: T): Boolean > IOs
@@ -39,8 +39,8 @@ object channels {
         takeFiber(_.join)
     }
 
-    def bounded[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
-      Queue.bounded[T](capacity, access) { q =>
+    def makeBounded[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
+      Queues.makeBounded[T](capacity, access) { q =>
         new Channel[T] {
           def size        = q.size
           def offer(v: T) = q.offer(v)
@@ -50,8 +50,8 @@ object channels {
         }
       }
 
-    def dropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      Queue.bounded[T](capacity, access) { q =>
+    def makeDropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      Queues.makeBounded[T](capacity, access) { q =>
         new Unbounded[T] {
           def size        = q.size
           def offer(v: T) = q.offer(v)
@@ -62,8 +62,8 @@ object channels {
         }
       }
 
-    def sliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      Queue.bounded[T](capacity, access) { q =>
+    def makeSliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      Queues.makeBounded[T](capacity, access) { q =>
         new Unbounded[T] {
           def size        = q.size
           def offer(v: T) = q.offer(v)
@@ -85,8 +85,8 @@ object channels {
         }
       }
 
-    def unbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      Queue.unbounded[T](access) { q =>
+    def makeUnbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      Queues.makeUnbounded[T](access) { q =>
         new Unbounded[T] {
           def size        = q.size
           def put(v: T)   = q.add(v)
@@ -97,25 +97,21 @@ object channels {
         }
       }
 
-    def blocking[T](capacity: Int, access: Access = Access.Mpmc): Blocking[T] > IOs =
-      Queue.bounded[T](capacity, access) { queue =>
+    def makeBlocking[T](capacity: Int, access: Access = Access.Mpmc): Blocking[T] > IOs =
+      Queues.makeBounded[T](capacity, access) { queue =>
         new Blocking[T] {
           val q     = queue.unsafe
           val takes = MpmcUnboundedXaddArrayQueue[Promise[T]](8)
           val puts  = MpmcUnboundedXaddArrayQueue[Promise[Unit]](8)
           val state = AtomicLong() // > 0: puts, < 0: takes
 
-          def size = queue.size
-          def offer(v: T) =
-            IOs(unsafeOffer(v))
-          def poll =
-            IOs(Option(unsafePoll()))
-          def putFiber(v: T): Fiber[Unit] > IOs =
-            IOs(unsafePut(v))
-          def takeFiber: Fiber[T] > IOs =
-            IOs(unsafeTake())
-          def isEmpty = queue.isEmpty
-          def isFull  = queue.isFull
+          def size                              = queue.size
+          def offer(v: T)                       = IOs(unsafeOffer(v))
+          def poll                              = IOs(Option(unsafePoll()))
+          def putFiber(v: T): Fiber[Unit] > IOs = IOs(unsafePut(v))
+          def takeFiber: Fiber[T] > IOs         = IOs(unsafeTake())
+          def isEmpty                           = queue.isEmpty
+          def isFull                            = queue.isFull
 
           @tailrec private def unsafeOffer(v: T): Boolean =
             val s = state.get()

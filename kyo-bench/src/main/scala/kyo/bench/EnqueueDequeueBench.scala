@@ -33,13 +33,13 @@ class EnqueueDequeueBench extends Bench[Unit] {
 
   override def kyoBenchFiber(): Unit > (IOs | Fibers) = {
 
-    def loop(c: Channel.Blocking[Unit], i: Int): Unit > (IOs | Fibers) =
+    def loop(c: Channels.Blocking[Unit], i: Int): Unit > (IOs | Fibers) =
       if (i >= depth)
         IOs.unit
       else
         c.put(())(_ => c.take(_ => loop(c, i + 1)))
 
-    Channel.blocking[Unit](1, Access.Spsc)(loop(_, 0))
+    Channels.makeBlocking[Unit](1, Access.Spsc)(loop(_, 0))
   }
 
   def zioBench(): UIO[Unit] = {

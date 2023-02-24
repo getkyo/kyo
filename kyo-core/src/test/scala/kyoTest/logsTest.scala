@@ -8,13 +8,12 @@ class logsTest extends KyoTest {
     import kyo.ios._
     import kyo.envs._
 
-    val logger = Logger("test")
-
     val io = for {
-      _ <- logger.debug("debug")
-      _ <- logger.info("info")
-      _ <- logger.warn("warn")
-      _ <- logger.error("error")
+      logger <- Logs.makeLogger("test")
+      _      <- logger.debug("debug")
+      _      <- logger.info("info")
+      _      <- logger.warn("warn")
+      _      <- logger.error("error")
     } yield ()
 
     IOs.run(io)

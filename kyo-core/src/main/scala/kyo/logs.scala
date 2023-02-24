@@ -10,11 +10,11 @@ object logs {
 
   opaque type Logger = org.slf4j.Logger
 
-  object Logger {
-    def apply(name: String): Logger =
-      LoggerFactory.getLogger(name)
-    def apply(cls: Class[_]): Logger =
-      LoggerFactory.getLogger(cls)
+  object Logs {
+    def makeLogger(name: String): Logger > IOs =
+      IOs(LoggerFactory.getLogger(name))
+    def makeLogger(cls: Class[_]): Logger > IOs =
+      IOs(LoggerFactory.getLogger(cls))
   }
 
   extension (l: Logger) {

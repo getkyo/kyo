@@ -15,14 +15,14 @@ class semaphoresTest extends KyoTest {
 
   "executes a task with a semaphore" in run {
     for {
-      sem <- Semaphore(1)
+      sem <- Semaphores.make(1)
       v   <- sem(2)
     } yield assert(v == 2)
   }
 
   "limits the number of concurrent tasks" in run {
     for {
-      sem <- Semaphore(1)
+      sem <- Semaphores.make(1)
       p   <- Fibers.promise[Int]
       b1  <- Fibers.promise[Unit]
       f1  <- Fibers.forkFiber(sem(b1.complete(())(_ => p.block)))

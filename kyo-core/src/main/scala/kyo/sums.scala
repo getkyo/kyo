@@ -8,7 +8,7 @@ import scala.util.Try
 import scala.util.Success
 import scala.util.Failure
 
-private[kyo] object sums {
+object sums {
 
   private case class Add[V](v: V)
   private case object Get

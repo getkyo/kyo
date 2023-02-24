@@ -13,9 +13,9 @@ object semaphores {
     def apply[T, S](v: => T > S): T > (S | IOs | Fibers)
   }
 
-  object Semaphore {
-    def apply(permits: Int): Semaphore > IOs =
-      Channel.blocking[Unit](permits) { chan =>
+  object Semaphores {
+    def make(permits: Int): Semaphore > IOs =
+      Channels.makeBlocking[Unit](permits) { chan =>
         def add(n: Int): Unit > IOs =
           if (n > 0) {
             chan.offer(())(_ => add(n - 1))

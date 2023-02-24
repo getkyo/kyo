@@ -13,8 +13,8 @@ object latches {
     def release: Unit > IOs
   }
 
-  object Latch {
-    def apply(n: Int): Latch > IOs =
+  object Latches {
+    def make(n: Int): Latch > IOs =
       if (n <= 0) {
         new Latch {
           def await: Unit > Fibers = ()

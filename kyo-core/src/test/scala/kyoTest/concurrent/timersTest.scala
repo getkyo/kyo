@@ -7,7 +7,7 @@ import kyo.concurrent.fibers._
 import scala.concurrent.duration._
 
 import kyoTest.KyoTest
-import kyo.concurrent.atomics.AtomicInt
+import kyo.concurrent.atomics._
 import org.scalatest.compatible.Assertion
 
 class timersTest extends KyoTest {
@@ -47,7 +47,7 @@ class timersTest extends KyoTest {
 
   "scheduleAtFixedRate" in run {
     for {
-      ref <- AtomicInt(0)
+      ref <- Atomics.makeInt(0)
       task <- Timers.scheduleAtFixedRate(
           ref.incrementAndGet.unit,
           10.millis,
@@ -61,7 +61,7 @@ class timersTest extends KyoTest {
 
   "scheduleWithFixedDelay" in run {
     for {
-      ref <- AtomicInt(0)
+      ref <- Atomics.makeInt(0)
       task <- Timers.scheduleWithFixedDelay(
           ref.incrementAndGet.unit,
           10.millis,
