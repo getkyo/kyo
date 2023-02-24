@@ -10,6 +10,7 @@ import kyo.ios._
 import kyo.resources
 import kyo.resources._
 import kyo.tries._
+import kyo.locals._
 import kyoTest.KyoTest
 
 import java.io.Closeable
@@ -321,6 +322,42 @@ class fibersTest extends KyoTest {
       assert(r == (1, 2, 3, 1) || r == (1, 3, 2, 1))
       assert(resource1.get() == -1)
       assert(resource2.get() == -1)
+    }
+  }
+
+  "locals" - {
+    val l = Locals.make(10)
+    "fork" - {
+      "default" in run {
+        Fibers.fork(l.get)(v => assert(v == 10))
+      }
+      "let" in run {
+        l.let(20)(Fibers.fork(l.get))(v => assert(v == 20))
+      }
+    }
+    "race" - {
+      "default" in run {
+        Fibers.race(l.get, l.get)(v => assert(v == 10))
+      }
+      "let" in run {
+        l.let(20)(Fibers.race(l.get, l.get))(v => assert(v == 20))
+      }
+    }
+    "collect" - {
+      "default" in run {
+        Fibers.collect(List(l.get, l.get))(v => assert(v == List(10, 10)))
+      }
+      "let" in run {
+        l.let(20)(Fibers.collect(List(l.get, l.get))(v => assert(v == List(20, 20))))
+      }
+    }
+    "await" - {
+      "default" in run {
+        Fibers.await(l.get(v => assert(v == 10)))
+      }
+      "let" in run {
+        l.let(20)(Fibers.await(l.get(v => assert(v == 20))))
+      }
     }
   }
 }
