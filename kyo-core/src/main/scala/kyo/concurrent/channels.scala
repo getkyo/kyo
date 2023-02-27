@@ -2,13 +2,16 @@ package kyo.concurrent
 
 import kyo.core._
 import kyo.ios._
+import org.jctools.queues.MpmcUnboundedXaddArrayQueue
+
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import scala.annotation.tailrec
 
 import queues._
 import fibers._
 import atomics._
-import org.jctools.queues.MpmcUnboundedXaddArrayQueue
-import java.util.concurrent.atomic.AtomicLong
-import scala.annotation.tailrec
 
 object channels {
 
@@ -100,93 +103,81 @@ object channels {
     def makeBlocking[T](capacity: Int, access: Access = Access.Mpmc): Blocking[T] > IOs =
       Queues.makeBounded[T](capacity, access) { queue =>
         new Blocking[T] {
+
           val q     = queue.unsafe
           val takes = MpmcUnboundedXaddArrayQueue[Promise[T]](8)
-          val puts  = MpmcUnboundedXaddArrayQueue[Promise[Unit]](8)
-          val state = AtomicLong() // > 0: puts, < 0: takes
+          val puts  = MpmcUnboundedXaddArrayQueue[(T, Promise[Unit])](8)
 
-          def size                              = queue.size
-          def offer(v: T)                       = IOs(unsafeOffer(v))
-          def poll                              = IOs(Option(unsafePoll()))
-          def putFiber(v: T): Fiber[Unit] > IOs = IOs(unsafePut(v))
-          def takeFiber: Fiber[T] > IOs         = IOs(unsafeTake())
-          def isEmpty                           = queue.isEmpty
-          def isFull                            = queue.isFull
-
-          @tailrec private def unsafeOffer(v: T): Boolean =
-            val s = state.get()
-            if (s < 0) {
-              if (state.compareAndSet(s, s + 1)) {
-                var p = takes.poll()
-                while (p == null.asInstanceOf[Promise[T]]) {
-                  p = takes.poll()
+          def size    = queue.size
+          def isEmpty = queue.isEmpty
+          def isFull  = queue.isFull
+          def offer(v: T) =
+            IOs {
+              try q.offer(v)
+              finally flush()
+            }
+          def poll =
+            IOs {
+              try q.poll()
+              finally flush()
+            }
+          def putFiber(v: T): Fiber[Unit] > IOs =
+            IOs {
+              try {
+                if (q.offer(v)) {
+                  Fibers.done(())
+                } else {
+                  val p = Fibers.unsafePromise[Unit]
+                  puts.add((v, p))
+                  p
                 }
-                p.unsafeComplete(v) || unsafeOffer(v)
-              } else {
-                unsafeOffer(v)
-              }
-            } else {
-              q.offer(v)
+              } finally flush()
+            }
+          def takeFiber: Fiber[T] > IOs =
+            IOs {
+              try {
+                q.poll() match {
+                  case Some(v) =>
+                    Fibers.done(v)
+                  case None =>
+                    val p = Fibers.unsafePromise[T]
+                    takes.add(p)
+                    p
+                }
+              } finally flush()
             }
 
-          private def _unsafePut(v: T) = unsafePut(v)
-          @tailrec private def unsafePut(v: T): Fiber[Unit] =
-            if (unsafeOffer(v)) {
-              Fibers.done(())
-            } else {
-              val s = state.get()
-              if (s >= 0 && state.compareAndSet(s, s + 1)) {
-                val p = Fibers.unsafePromise[Unit]
-                puts.add(p)
-                p.transform(_ => _unsafePut(v))
-              } else {
-                unsafePut(v)
-              }
-            }
-
-          private def unsafePoll(): T = {
-            q.poll() match {
-              case None =>
-                null.asInstanceOf[T]
-              case Some(v) =>
-                @tailrec def loop: T = {
-                  val s = state.get()
-                  if (s > 0) {
-                    if (state.compareAndSet(s, s - 1)) {
-                      var p = puts.poll()
-                      while (p == null.asInstanceOf[AnyRef]) {
-                        p = puts.poll()
-                      }
-                      if (p.unsafeComplete(())) {
-                        v
-                      } else {
-                        loop
-                      }
-                    } else {
-                      loop
+          private def flush(): Unit = {
+            if (q.size > 0 && !takes.isEmpty()) {
+              val p = takes.poll()
+              if (p != null.asInstanceOf[Promise[T]]) {
+                q.poll() match {
+                  case None => ()
+                  case Some(v) =>
+                    if (!p.unsafeComplete(v) && !q.offer(v)) {
+                      val p = Fibers.unsafePromise[Unit]
+                      puts.add((v, p))
                     }
-                  } else {
-                    v
-                  }
+                    flush()
                 }
-                loop
+              }
+            }
+            if (q.size < capacity && !puts.isEmpty()) {
+              val t = puts.poll()
+              if (t != null.asInstanceOf[Promise[Unit]]) {
+                val (v, p) = t
+                if (q.offer(v)) {
+                  p.unsafeComplete(())
+                } else {
+                  puts.add((v, p))
+                }
+                flush()
+              }
             }
           }
 
-          @tailrec private def unsafeTake(): Fiber[T] =
-            val v = unsafePoll()
-            if (v != null) {
-              Fibers.done(v)
-            } else {
-              val s = state.get()
-              if (s <= 0 && state.compareAndSet(s, s - 1)) {
-                val p = Fibers.unsafePromise[T]
-                takes.add(p)
-                p
-              } else {
-                unsafeTake()
-              }
-            }
+          override def toString(): String =
+            s"Channels.Blocking(capacity=$capacity, access=$access, queue=${queue.size}, takes=${takes.size}, puts=${puts.size})"
         }
       }
   }

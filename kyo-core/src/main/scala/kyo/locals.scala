@@ -17,7 +17,7 @@ object locals {
       new KyoIO[T, Nothing] {
         def frame = fr
         def apply(v: Unit, s: Safepoint[IOs], l: Locals.State) =
-          (l.get(Local.this): T)
+          l.getOrElse(Local.this, default).asInstanceOf[T]
       }
 
     /*inline(3)*/
@@ -30,7 +30,7 @@ object locals {
             new KyoCont[M2, E2, Any, U, S](kyo) {
               def frame = fr
               def apply(v2: Any, s: Safepoint[E2], l: Locals.State) =
-                loop(kyo(v2, s, l.set(Local.this, v)))
+                loop(kyo(v2, s, l.updated(Local.this, v)))
             }
           case _ =>
             f
@@ -41,12 +41,8 @@ object locals {
 
   object Locals {
 
-    opaque type State = Map[Local[_], Any]
+    type State = Map[Local[_], Any]
 
-    extension (s: State) {
-      def set[T](l: Local[T], v: T): State = s + (l -> v)
-      def get[T](l: Local[T]): T           = s.getOrElse(l, l.default).asInstanceOf[T]
-    }
     object State {
       def empty: State = Map.empty
     }
@@ -57,15 +53,17 @@ object locals {
         override def toString = s"Local($fr)"
       }
 
-    def save(using fr: Frame["Locals.save"]): State > IOs =
+    /*inline(3)*/
+    def save(using /*inline(3)*/ fr: Frame["Locals.save"]): State > IOs =
       new KyoIO[State, Nothing] {
         def frame = fr
         def apply(v: Unit, s: Safepoint[IOs], l: Locals.State) =
           l
       }
 
+    /*inline(3)*/
     def restore[T, S](st: State)(f: T > S)(
-        using fr: Frame["Locals.restore"]
+        using /*inline(3)*/ fr: Frame["Locals.restore"]
     ): T > (S | IOs) =
       type M2[_]
       type E2 <: Effect[M2]
@@ -75,7 +73,7 @@ object locals {
             new KyoCont[M2, E2, Any, T, S](kyo) {
               def frame = fr
               def apply(v2: Any, s: Safepoint[E2], l: Locals.State) =
-                loop(kyo(v2, s, (l: Map[Local[_], Any]) ++ (st: Map[Local[_], Any])))
+                loop(kyo(v2, s, l ++ st))
             }
           case _ =>
             f

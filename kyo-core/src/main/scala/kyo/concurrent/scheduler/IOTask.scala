@@ -41,7 +41,7 @@ private[kyo] final class IOTask[T](val init: T > (IOs | Fibers)) extends IOPromi
   def apply(): Boolean =
     preempting
 
-  private def eval(curr: T > (IOs | Fibers)): T > (IOs | Fibers) =
+  @tailrec private def eval(curr: T > (IOs | Fibers)): T > (IOs | Fibers) =
     def finalize() = ensures.foreach(IOs.run(_))
     if (preempting) {
       if (isDone()) {
