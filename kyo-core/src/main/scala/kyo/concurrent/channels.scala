@@ -147,22 +147,24 @@ object channels {
               } finally flush()
             }
 
-          private def flush(): Unit = {
-            if (q.size > 0 && !takes.isEmpty()) {
+          @tailrec private def flush(): Unit = {
+            var loop = false
+            if (!q.isEmpty && !takes.isEmpty()) {
+              loop = true
               val p = takes.poll()
               if (p != null.asInstanceOf[Promise[T]]) {
                 q.poll() match {
-                  case None => ()
+                  case None =>
                   case Some(v) =>
                     if (!p.unsafeComplete(v) && !q.offer(v)) {
                       val p = Fibers.unsafePromise[Unit]
                       puts.add((v, p))
                     }
-                    flush()
                 }
               }
             }
-            if (q.size < capacity && !puts.isEmpty()) {
+            if (!q.isFull && !puts.isEmpty()) {
+              loop = true
               val t = puts.poll()
               if (t != null.asInstanceOf[Promise[Unit]]) {
                 val (v, p) = t
@@ -171,13 +173,10 @@ object channels {
                 } else {
                   puts.add((v, p))
                 }
-                flush()
               }
             }
+            if (loop) flush()
           }
-
-          override def toString(): String =
-            s"Channels.Blocking(capacity=$capacity, access=$access, queue=${queue.size}, takes=${takes.size}, puts=${puts.size})"
         }
       }
   }

@@ -16,17 +16,16 @@ object queues {
       u.capacity
     def size: Int > IOs =
       IOs(u.size)
+    def isEmpty: Boolean > IOs =
+      IOs(u.isEmpty)
+    def isFull: Boolean > IOs =
+      IOs(u.isFull)
     def offer(v: T): Boolean > IOs =
       IOs(u.offer(v))
     def poll: Option[T] > IOs =
       IOs(u.poll())
     def peek: Option[T] > IOs =
       IOs(u.peek())
-
-    def isEmpty: Boolean > IOs =
-      size(_ == 0)
-    def isFull: Boolean > IOs =
-      size(_ == capacity)
 
     private[kyo] def unsafe: Queues.Unsafe[T] =
       u
@@ -37,6 +36,8 @@ object queues {
     private[kyo] trait Unsafe[T] {
       def capacity: Int
       def size: Int
+      def isEmpty: Boolean
+      def isFull: Boolean
       def offer(v: T): Boolean
       def poll(): Option[T]
       def peek(): Option[T]
@@ -56,6 +57,8 @@ object queues {
       new Unsafe[Any] {
         def capacity: Int          = 0
         def size: Int              = 0
+        def isEmpty: Boolean       = true
+        def isFull: Boolean        = true
         def offer(v: Any): Boolean = false
         def poll(): Option[Any]    = None
         def peek(): Option[Any]    = None
@@ -68,13 +71,15 @@ object queues {
             zeroCapacity.asInstanceOf[Queue[T]]
           case 1 =>
             new AtomicReference[T] with Unsafe[T] {
-              def capacity: Int = 1
-              def size: Int     = if (get == null) 0 else 1
-              def offer(v: T): Boolean =
+              def capacity = 1
+              def size     = if (get == null) 0 else 1
+              def isEmpty  = get == null
+              def isFull   = get != null
+              def offer(v: T) =
                 compareAndSet(null.asInstanceOf[T], v)
-              def poll(): Option[T] =
+              def poll() =
                 Option(getAndSet(null.asInstanceOf[T]))
-              def peek(): Option[T] =
+              def peek() =
                 Option(get)
             }
           case _ =>
@@ -109,6 +114,8 @@ object queues {
       new Unsafe[T] {
         def capacity: Int        = Int.MaxValue
         def size: Int            = q.size
+        def isEmpty              = q.isEmpty()
+        def isFull               = false
         def offer(v: T): Boolean = q.offer(v)
         def poll(): Option[T]    = Option(q.poll)
         def peek(): Option[T]    = Option(q.peek)
@@ -118,6 +125,8 @@ object queues {
       new Unsafe[T] {
         def capacity: Int        = _capacity
         def size: Int            = q.size
+        def isEmpty              = q.isEmpty()
+        def isFull               = q.size == _capacity
         def offer(v: T): Boolean = q.offer(v)
         def poll(): Option[T]    = Option(q.poll)
         def peek(): Option[T]    = Option(q.peek)
