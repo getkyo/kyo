@@ -10,7 +10,8 @@ object semaphores {
 
   trait Semaphore {
     def availablePermits: Int > IOs
-    def apply[T, S](v: => T > S): T > (S | IOs | Fibers)
+    def run[T, S](v: => T > S): T > (S | IOs | Fibers)
+    def tryRun[T, S](v: => T > S): Option[T] > (S | IOs | Fibers)
   }
 
   object Semaphores {
@@ -25,9 +26,22 @@ object semaphores {
         add(permits) { _ =>
           new Semaphore {
             def availablePermits = chan.size
-            def apply[T, S](v: => T > S): T > (S | IOs | Fibers) =
-              IOs.ensure(chan.offer(()).unit) {
+
+            val release = chan.offer(()).unit
+            def run[T, S](v: => T > S): T > (S | IOs | Fibers) =
+              IOs.ensure(release) {
                 chan.take(_ => v)
+              }
+            def tryRun[T, S](v: => T > S) =
+              IOs {
+                IOs.run(chan.poll) match {
+                  case None =>
+                    None
+                  case _ =>
+                    IOs.ensure(release) {
+                      v(Some(_))
+                    }
+                }
               }
           }
         }
