@@ -21,9 +21,15 @@ object timers {
 
   trait Timer {
     def shutdown: Unit > IOs
-    def schedule(f: => Unit > IOs, delay: Duration): TimerTask > IOs
-    def scheduleAtFixedRate(f: => Unit > IOs, delay: Duration, period: Duration): TimerTask > IOs
-    def scheduleWithFixedDelay(f: => Unit > IOs, delay: Duration, period: Duration): TimerTask > IOs
+    def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > IOs
+    def scheduleAtFixedRate(
+        initalDelay: Duration,
+        period: Duration
+    )(f: => Unit > IOs): TimerTask > IOs
+    def scheduleWithFixedDelay(
+        initalDelay: Duration,
+        period: Duration
+    )(f: => Unit > IOs): TimerTask > IOs
   }
 
   object Timer {
@@ -44,32 +50,30 @@ object timers {
         def shutdown: Unit > IOs =
           IOs.unit
 
-        def schedule(f: => Unit > IOs, delay: Duration): TimerTask > IOs =
-          IOs(Task(exec.schedule(() => IOs.run(f), delay.toNanos, TimeUnit.NANOSECONDS)))
+        def schedule(initalDelay: Duration)(f: => Unit > IOs): TimerTask > IOs =
+          IOs(Task(exec.schedule(() => IOs.run(f), initalDelay.toNanos, TimeUnit.NANOSECONDS)))
 
         def scheduleAtFixedRate(
-            f: => Unit > IOs,
-            delay: Duration,
+            initalDelay: Duration,
             period: Duration
-        ): TimerTask > IOs =
+        )(f: => Unit > IOs): TimerTask > IOs =
           IOs(Task {
             exec.scheduleAtFixedRate(
                 () => IOs.run(f),
-                delay.toNanos,
+                initalDelay.toNanos,
                 period.toNanos,
                 TimeUnit.NANOSECONDS
             )
           })
 
         def scheduleWithFixedDelay(
-            f: => Unit > IOs,
-            delay: Duration,
+            initalDelay: Duration,
             period: Duration
-        ): TimerTask > IOs =
+        )(f: => Unit > IOs): TimerTask > IOs =
           IOs(Task {
             exec.scheduleWithFixedDelay(
                 () => IOs.run(f),
-                delay.toNanos,
+                initalDelay.toNanos,
                 period.toNanos,
                 TimeUnit.NANOSECONDS
             )
@@ -87,19 +91,25 @@ object timers {
       Envs.let(t)(f)
     def shutdown: Unit > (Timers | IOs) =
       Envs[Timer](_.shutdown)
-    def schedule(f: => Unit > IOs, delay: Duration): TimerTask > (Timers | IOs) =
-      Envs[Timer](_.schedule(f, delay))
+    def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > (Timers | IOs) =
+      Envs[Timer](_.schedule(delay)(f))
     def scheduleAtFixedRate(
-        f: => Unit > IOs,
-        delay: Duration,
         period: Duration
-    ): TimerTask > (Timers | IOs) =
-      Envs[Timer](_.scheduleAtFixedRate(f, delay, period))
+    )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
+      scheduleAtFixedRate(Duration.Zero, period)(f)
+    def scheduleAtFixedRate(
+        initialDelay: Duration,
+        period: Duration
+    )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
+      Envs[Timer](_.scheduleAtFixedRate(initialDelay, period)(f))
     def scheduleWithFixedDelay(
-        f: => Unit > IOs,
-        delay: Duration,
         period: Duration
-    ): TimerTask > (Timers | IOs) =
-      Envs[Timer](_.scheduleWithFixedDelay(f, delay, period))
+    )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
+      scheduleWithFixedDelay(Duration.Zero, period)(f)
+    def scheduleWithFixedDelay(
+        initialDelay: Duration,
+        period: Duration
+    )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
+      Envs[Timer](_.scheduleWithFixedDelay(initialDelay, period)(f))
   }
 }

@@ -295,7 +295,7 @@ object fibers {
               IOTask(IOs(p.complete(())))
               ()
             }
-          Timers.schedule(run, d) { t =>
+          Timers.schedule(d)(run) { t =>
             IOs(p.onComplete(_ => IOs.run(t.cancel)))(_ => p.join)
           }
         } else {

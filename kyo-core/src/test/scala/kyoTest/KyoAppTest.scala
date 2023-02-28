@@ -25,7 +25,7 @@ class KyoAppTest extends KyoTest {
   "effects" in {
     val app: kyo.KyoApp = (a: List[String]) => {
       for {
-        _ <- Timers.scheduleAtFixedRate((), 1.second, 1.second)
+        _ <- Timers.scheduleAtFixedRate(1.second, 1.second)(())
         _ <- Randoms.nextInt
         _ <- Consoles.println("1")
         _ <- Clocks.now

@@ -108,6 +108,13 @@ object core {
       }
   }
 
+  def collect[T, S](v: List[T > S]): List[T] > S =
+    def loop(v: List[T > S], acc: List[T]): List[T] > S =
+      v match
+        case Nil    => acc.reverse
+        case h :: t => h(t1 => loop(t, t1 :: acc))
+    loop(v, Nil)
+
   /*inline(3)*/
   def zip[T1, T2, S](v1: T1 > S, v2: T2 > S): (T1, T2) > S =
     v1(t1 => v2(t2 => (t1, t2)))

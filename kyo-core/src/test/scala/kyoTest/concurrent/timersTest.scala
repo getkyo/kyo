@@ -20,22 +20,16 @@ class timersTest extends KyoTest {
 
   "schedule" in run {
     for {
-      p <- Fibers.promise[String]
-      _ <- Timers.schedule(
-          p.complete("hello")(require),
-          1.second
-      )
+      p     <- Fibers.promise[String]
+      _     <- Timers.schedule(1.second)(p.complete("hello")(require))
       hello <- p.join
     } yield assert(hello == "hello")
   }
 
   "cancel" in run {
     for {
-      p <- Fibers.promise[String]
-      task <- Timers.schedule(
-          p.complete("hello")(require),
-          10.millis
-      )
+      p         <- Fibers.promise[String]
+      task      <- Timers.schedule(10.millis)(p.complete("hello")(require))
       _         <- task.cancel
       cancelled <- task.isCancelled
       done1     <- p.isDone
@@ -49,10 +43,9 @@ class timersTest extends KyoTest {
     for {
       ref <- Atomics.makeInt(0)
       task <- Timers.scheduleAtFixedRate(
-          ref.incrementAndGet.unit,
           10.millis,
           10.millis
-      )
+      )(ref.incrementAndGet.unit)
       _         <- Fibers.sleep(50.millis)
       n         <- ref.get
       cancelled <- task.cancel
@@ -63,10 +56,9 @@ class timersTest extends KyoTest {
     for {
       ref <- Atomics.makeInt(0)
       task <- Timers.scheduleWithFixedDelay(
-          ref.incrementAndGet.unit,
           10.millis,
           10.millis
-      )
+      )(ref.incrementAndGet.unit)
       _         <- Fibers.sleep(50.millis)
       n         <- ref.get
       cancelled <- task.cancel
