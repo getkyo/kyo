@@ -1,15 +1,15 @@
 package kyoTest
 
-class logsTest extends KyoTest {
+class loggersTest extends KyoTest {
 
   "log" in {
     import kyo._
-    import kyo.logs._
+    import kyo.loggers._
     import kyo.ios._
     import kyo.envs._
 
     val io = for {
-      logger <- Logs.makeLogger("test")
+      logger <- Loggers.make("test")
       _      <- logger.debug("debug")
       _      <- logger.info("info")
       _      <- logger.warn("warn")

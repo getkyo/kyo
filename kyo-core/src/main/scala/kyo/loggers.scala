@@ -6,14 +6,14 @@ import core._
 import frames._
 import ios._
 
-object logs {
+object loggers {
 
   opaque type Logger = org.slf4j.Logger
 
-  object Logs {
-    def makeLogger(name: String): Logger > IOs =
+  object Loggers {
+    def make(name: String): Logger > IOs =
       IOs(LoggerFactory.getLogger(name))
-    def makeLogger(cls: Class[_]): Logger > IOs =
+    def make(cls: Class[_]): Logger > IOs =
       IOs(LoggerFactory.getLogger(cls))
   }
 

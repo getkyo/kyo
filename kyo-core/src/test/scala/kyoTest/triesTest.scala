@@ -29,6 +29,36 @@ class triesTest extends KyoTest {
     }
   }
 
+  "run" - {
+    "failure" in {
+      checkEquals[Try[Int], Nothing](
+          Tries.run(Tries((throw e): Int)),
+          Failure(e)
+      )
+    }
+    "success" in {
+      checkEquals[Try[Int], Nothing](
+          Tries.run(Tries(1)),
+          Success(1)
+      )
+    }
+  }
+
+  "get" - {
+    "failure" in {
+      checkEquals[Try[Int], Nothing](
+          Tries.get(Failure[Int](e)) < Tries,
+          Failure(e)
+      )
+    }
+    "success" in {
+      checkEquals[Try[Int], Nothing](
+          Tries.get(Success(1)) < Tries,
+          Success(1)
+      )
+    }
+  }
+
   "pure" - {
     "handle" in {
       checkEquals[Try[Int], Nothing](

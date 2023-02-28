@@ -8,12 +8,26 @@ import core._
 object tries {
 
   final class Tries private[tries] extends Effect[Try] {
+
+    /*inline(2)*/
+    def run[T, S](v: T > (S | Tries)): Try[T] > S =
+      v < Tries
+
     /*inline(2)*/
     def apply[T, S]( /*inline(2)*/ v: => T > S): T > (S | Tries) =
       val a: Try[Try[T] > S]      = Try(v < Tries)
       val b: Try[T] > (S | Tries) = a >> Tries
       val c: T > (S | Tries)      = b > Tries
       c
+
+    /*inline(2)*/
+    def get[T](v: Try[T]): T > Tries =
+      v match {
+        case Success(v) =>
+          v
+        case _ =>
+          v > Tries
+      }
   }
   val Tries = new Tries
 
