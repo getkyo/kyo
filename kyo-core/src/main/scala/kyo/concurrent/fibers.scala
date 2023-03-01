@@ -91,7 +91,7 @@ object fibers {
       }
 
     /*inline(2)*/
-    def transform[U](t: T => Fiber[U]): Fiber[U] =
+    private[kyo] def transform[U](t: T => Fiber[U]): Fiber[U] =
       if (fiber.isInstanceOf[IOPromise[_]]) {
         val f = fiber.asInstanceOf[IOPromise[T]]
         val r = IOPromise[U]
@@ -100,7 +100,7 @@ object fibers {
           try {
             t(IOs.run(v)) match {
               case v: IOPromise[U] @unchecked =>
-                v.onComplete(r.complete(_))
+                r.become(v)
               case v =>
                 r.complete(v.asInstanceOf[U])
             }

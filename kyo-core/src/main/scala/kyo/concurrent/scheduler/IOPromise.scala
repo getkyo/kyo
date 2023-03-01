@@ -11,12 +11,22 @@ import scala.util.control.NoStackTrace
 
 import IOPromise._
 
-private[kyo] class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](Pending()) {
+private[kyo] class IOPromise[T]
+    extends AtomicReference[State[T]](Pending()) {
 
   /*inline(2)*/
-  def isDone(): Boolean = !get().isInstanceOf[Pending[_]]
+  def isDone(): Boolean =
+    @tailrec def loop(promise: IOPromise[T]): Boolean =
+      promise.get() match {
+        case p: Pending[T] @unchecked =>
+          false
+        case l: Linked[T] @unchecked =>
+          loop(l.p)
+        case _ =>
+          true
+      }
+    loop(this)
 
-  /*inline(2)*/
   def interrupts(p: IOPromise[_]): Unit =
     onComplete { _ =>
       p.interrupt()
@@ -24,34 +34,84 @@ private[kyo] class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](
 
   /*inline(2)*/
   def interrupt()(using frame: Frame["interrupt"]): Boolean =
-    complete(IOs(throw Interrupted(frame)))
+    @tailrec def loop(promise: IOPromise[T]): Boolean =
+      promise.get() match {
+        case p: Pending[T] @unchecked =>
+          complete(p, IOs(throw Interrupted(frame))) || loop(promise)
+        case l: Linked[T] @unchecked =>
+          loop(l.p)
+        case _ =>
+          false
+      }
+    loop(this)
+
+  private def compress(): IOPromise[T] =
+    @tailrec def loop(p: IOPromise[T]): IOPromise[T] =
+      p.get() match {
+        case l: Linked[T] @unchecked =>
+          loop(l.p)
+        case _ =>
+          p
+      }
+    loop(this)
+
+  private def merge(p: Pending[T]): Unit =
+    @tailrec def loop(promise: IOPromise[T]): Unit =
+      promise.get() match {
+        case p2: Pending[T] @unchecked =>
+          if (!promise.compareAndSet(p2, p2.merge(p)))
+            loop(promise)
+        case l: Linked[T] @unchecked =>
+          loop(l.p)
+        case v =>
+          p.flush(v.asInstanceOf[T > IOs])
+      }
+    loop(this)
+
+  def become(other: IOPromise[T]): Boolean =
+    @tailrec def loop(other: IOPromise[T]): Boolean =
+      get() match {
+        case p: Pending[T] @unchecked =>
+          if (compareAndSet(p, Linked(other))) {
+            other.merge(p)
+            true
+          } else {
+            loop(other)
+          }
+        case _ =>
+          false
+      }
+    loop(other.compress())
 
   /*inline(2)*/
   def onComplete( /*inline(2)*/ f: T > IOs => Unit): Unit =
-    @tailrec def loop(): Unit =
-      get() match {
+    @tailrec def loop(promise: IOPromise[T]): Unit =
+      promise.get() match {
         case p: Pending[T] @unchecked =>
           if (!compareAndSet(p, p.add(f)))
-            loop()
+            loop(promise)
+        case l: Linked[T] @unchecked =>
+          loop(l.p)
         case v =>
           f(v.asInstanceOf[T > IOs])
       }
-    loop()
+    loop(this)
 
   protected def onComplete(): Unit = {}
+
+  private inline def complete(p: Pending[T], v: T > IOs): Boolean =
+    compareAndSet(p, v) && {
+      onComplete()
+      p.flush(v)
+      true
+    }
 
   /*inline(2)*/
   def complete(v: T > IOs): Boolean =
     @tailrec def loop(): Boolean =
       get() match {
         case p: Pending[T] @unchecked =>
-          if (!compareAndSet(p, v)) {
-            loop()
-          } else {
-            onComplete()
-            p.flush(v)
-            true
-          }
+          complete(p, v) || loop()
         case _ =>
           false
       }
@@ -59,46 +119,74 @@ private[kyo] class IOPromise[T] extends AtomicReference[(T > IOs) | Pending[T]](
 
   /*inline(2)*/
   def block(): T =
-    get() match {
-      case p: Pending[T] @unchecked =>
-        val b = new CountDownLatch(1) with (T > IOs => Unit) with (() => T > IOs) {
-          private[this] var result: T > IOs = null.asInstanceOf[T]
-          def apply(v: T > IOs) =
-            result = v
-            countDown()
-          def apply() = result
-        }
-        onComplete(b)
-        b.await()
-        IOs.run(b())
-      case v =>
-        v.asInstanceOf[T]
-    }
+    def loop(promise: IOPromise[T]): T =
+      promise.get() match {
+        case p: Pending[T] @unchecked =>
+          val b = new CountDownLatch(1) with (T > IOs => Unit) with (() => T > IOs) {
+            private[this] var result: T > IOs = null.asInstanceOf[T]
+            def apply(v: T > IOs) =
+              result = v
+              countDown()
+            def apply() = result
+          }
+          onComplete(b)
+          b.await()
+          IOs.run(b())
+        case l: Linked[T] @unchecked =>
+          loop(l.p)
+        case v =>
+          v.asInstanceOf[T]
+      }
+    loop(this)
 }
 
 private[kyo] object IOPromise {
+
+  type State[T] = (T > IOs) | Pending[T] | Linked[T]
+
   case class Interrupted(frame: Frame[String]) extends NoStackTrace
-  sealed trait Pending[+T] {
-    import Pending._
-    /*inline(2)*/
-    def flush[B >: T](v: B > IOs): Unit =
-      var c: Pending[B] = this
-      while (c ne Empty) {
-        val w = c.asInstanceOf[Waiter[B]]
-        w(v)
-        c = w.tail
+  case class Linked[T](p: IOPromise[T])
+
+  abstract class Pending[T] { self =>
+
+    def run(v: T > IOs): Pending[T]
+
+    inline def add(inline f: T > IOs => Unit): Pending[T] =
+      new Pending[T] {
+        def run(v: T > IOs) = {
+          f(v)
+          self
+        }
       }
-    /*inline(2)*/
-    def add( /*inline(2)*/ f: T > IOs => Unit): Pending[T] =
-      new Waiter(this) {
-        def apply(v: T > IOs) = f(v)
+
+    def merge(tail: Pending[T]): Pending[T] =
+      new Pending[T] {
+        def run(v: T > IOs) =
+          def loop(p: Pending[T]): Pending[T] =
+            p match {
+              case Pending.Empty =>
+                tail
+              case p: Pending[T] =>
+                loop(p.run(v))
+            }
+          loop(self)
       }
+
+    def flush(v: T > IOs): Unit =
+      @tailrec def loop(p: Pending[T]): Unit =
+        p match {
+          case Pending.Empty => ()
+          case p: Pending[T] =>
+            loop(p.run(v))
+        }
+      loop(this)
   }
+
   object Pending {
-    def apply[T](): Pending[T] = Empty
-    case object Empty extends Pending[Nothing]
-    abstract class Waiter[T](val tail: Pending[T]) extends Pending[T] {
-      def apply(v: T > IOs): Unit
+    def apply[T](): Pending[T] = Empty.asInstanceOf[Pending[T]]
+    case object Empty extends Pending[Nothing] {
+      def run(v: Nothing > IOs)                  = this
+      override def merge(tail: Pending[Nothing]) = tail
     }
   }
 }

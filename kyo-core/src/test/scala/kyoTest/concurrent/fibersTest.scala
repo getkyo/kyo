@@ -360,4 +360,14 @@ class fibersTest extends KyoTest {
       }
     }
   }
+
+  "stack safety" in run {
+    def loop(i: Int): Unit > (IOs | Fibers) =
+      if (i > 0) {
+        Fibers.fork(())(_ => loop(i - 1))
+      } else {
+        ()
+      }
+    loop(10000)
+  }
 }
