@@ -117,6 +117,7 @@ object fibers {
 
   final class Fibers private[fibers] extends Effect[Fiber] {
 
+    /*inline(2)*/
     def run[T](v: T > Fibers): Fiber[T] =
       val a: Fiber[T] > Nothing = v << Fibers
       a

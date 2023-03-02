@@ -22,7 +22,7 @@ object tries {
 
     /*inline(2)*/
     def get[T](v: Try[T]): T > Tries =
-      v match {
+      /*inline(2)*/ v match {
         case Success(v) =>
           v
         case _ =>

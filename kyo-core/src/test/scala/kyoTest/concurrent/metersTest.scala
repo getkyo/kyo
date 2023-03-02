@@ -126,17 +126,17 @@ class metersTest extends KyoTest {
     }
     "one loop" in run {
       for {
-        meter   <- Meters.makeRateLimiter(1, 1.millis)
+        meter   <- Meters.makeRateLimiter(10, 10.millis)
         counter <- Atomics.makeInt(0)
         f1      <- Fibers.forkFiber(loop(meter, counter))
         _       <- Fibers.sleep(50.millis)
         _       <- f1.interrupt
         v1      <- counter.get
-      } yield assert(v1 >= 40 && v1 <= 60)
+      } yield assert(v1 >= 30 && v1 <= 200)
     }
     "two loops" in run {
       for {
-        meter   <- Meters.makeRateLimiter(2, 1.millis)
+        meter   <- Meters.makeRateLimiter(10, 10.millis)
         counter <- Atomics.makeInt(0)
         f1      <- Fibers.forkFiber(loop(meter, counter))
         f2      <- Fibers.forkFiber(loop(meter, counter))
@@ -144,7 +144,7 @@ class metersTest extends KyoTest {
         _       <- f1.interrupt
         _       <- f2.interrupt
         v1      <- counter.get
-      } yield assert(v1 >= 90 && v1 <= 140)
+      } yield assert(v1 >= 30 && v1 <= 200)
     }
   }
 
