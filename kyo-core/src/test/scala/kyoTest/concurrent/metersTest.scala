@@ -148,16 +148,16 @@ class metersTest extends KyoTest {
     }
   }
 
-  // "pipepline" in run {
-  //   for {
-  //     meter   <- Meters.makePipeline(Meters.makeRateLimiter(2, 1.millis), Meters.makeMutex)
-  //     counter <- Atomics.makeInt(0)
-  //     f1      <- Fibers.forkFiber(loop(meter, counter))
-  //     f2      <- Fibers.forkFiber(loop(meter, counter))
-  //     _       <- Fibers.sleep(50.millis)
-  //     _       <- f1.interrupt
-  //     _       <- f2.interrupt
-  //     v1      <- counter.get
-  //   } yield assert(v1 == 60)
-  // }
+  "pipepline" in run {
+    for {
+      meter   <- Meters.makePipeline(Meters.makeRateLimiter(2, 1.millis), Meters.makeMutex)
+      counter <- Atomics.makeInt(0)
+      f1      <- Fibers.forkFiber(loop(meter, counter))
+      f2      <- Fibers.forkFiber(loop(meter, counter))
+      _       <- Fibers.sleep(50.millis)
+      _       <- f1.interrupt
+      _       <- f2.interrupt
+      v1      <- counter.get
+    } yield assert(v1 > 50 && v1 < 200)
+  }
 }

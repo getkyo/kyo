@@ -15,6 +15,7 @@ import scala.util.control.NonFatal
 import scala.Conversion
 import java.io.Closeable
 import scala.util.Try
+import kyo.loggers.Loggers
 
 object ios {
 
@@ -44,6 +45,8 @@ object ios {
 
   final class IOs private[ios] () extends Effect[IO] {
 
+    private[this] val log = Loggers.make(getClass())
+
     val unit: Unit > IOs = ()
 
     /*inline(3)*/
@@ -62,11 +65,17 @@ object ios {
         }
       collectLoop(l, Nil)
 
-    private[kyo] /*inline(3)*/ def ensure[T, S](f: => Unit > IOs)(v: => T > S)(using
+    private[kyo] /*inline(3)*/ def ensure[T, S]( /*inline(3)*/ f: => Unit > IOs)(v: => T > S)(using
         /*inline(3)*/ fr: Frame["IOs.ensure"]
     ): T > (S | IOs) =
       type M2[_]
       type E2 <: Effect[M2]
+      lazy val run: Unit =
+        try IOs.run(f)
+        catch {
+          case ex if NonFatal(ex) =>
+            log.error(s"IOs.ensure function failed at frame $fr", ex)
+        }
       def ensureLoop(v: T > (S | IOs)): T > (S | IOs) =
         v match {
           case kyo: Kyo[M2, E2, Any, T, S | IOs] @unchecked =>
@@ -75,14 +84,13 @@ object ios {
               def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
                 s match {
                   case s: Preempt =>
-                    s.ensure(IOs(f))
-                    kyo(v, s, l)
+                    s.ensure(IOs(run))
                   case _ =>
-                    ensureLoop(kyo(v, s, l))
                 }
+                ensureLoop(kyo(v, s, l))
             }
           case _ =>
-            IOs(f)(_ => v)
+            IOs(run)(_ => v)
         }
       ensureLoop(v)
 
