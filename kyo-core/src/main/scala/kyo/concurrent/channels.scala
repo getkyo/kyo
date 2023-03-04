@@ -125,7 +125,7 @@ object channels {
             IOs {
               try {
                 if (q.offer(v)) {
-                  Fibers.done(())
+                  Fibers.value(())
                 } else {
                   val p = Fibers.unsafePromise[Unit]
                   puts.add((v, p))
@@ -138,7 +138,7 @@ object channels {
               try {
                 q.poll() match {
                   case Some(v) =>
-                    Fibers.done(v)
+                    Fibers.value(v)
                   case None =>
                     val p = Fibers.unsafePromise[T]
                     takes.add(p)

@@ -12,9 +12,6 @@ import scala.concurrent.duration._
 
 class channelsTest extends KyoTest {
 
-  private def run[T](io: T > (IOs | Fibers | Timers)): T =
-    IOs.run((Fibers.run(IOs.lazyRun(Timers.run(io)))).block)
-
   "bounded" - {
     "offer and poll" in run {
       for {

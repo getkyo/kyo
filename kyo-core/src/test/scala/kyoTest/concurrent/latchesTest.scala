@@ -8,10 +8,6 @@ import kyo.ios._
 
 class latchesTest extends KyoTest {
 
-  def run(v: Unit > (IOs | Fibers)) =
-    IOs.run(Fibers.block(v))
-    Fibers.block(IOs.lazyRun(v))
-
   "countDown + await" in run {
     for {
       latch <- Latches.make(1)

@@ -28,7 +28,7 @@ private[kyo] final class IOTask[T](val init: T > (IOs | Fibers)) extends IOPromi
   private var curr: T > (IOs | Fibers) = init
   private var runtime                  = 0L
   @volatile private var preempting     = false
-  private var ensures                  = List.empty[Unit > IOs]
+  private var ensures                  = Set.empty[() => Unit]
 
   def preempt() =
     preempting = true
@@ -36,13 +36,13 @@ private[kyo] final class IOTask[T](val init: T > (IOs | Fibers)) extends IOPromi
   override protected def onComplete(): Unit =
     preempt()
 
-  def ensure(f: Unit > IOs): Unit = ensures ::= f
+  def ensure(f: () => Unit): Unit = ensures += f
 
   def apply(): Boolean =
     preempting
 
   @tailrec private def eval(curr: T > (IOs | Fibers)): T > (IOs | Fibers) =
-    def finalize() = ensures.foreach(IOs.run(_))
+    def finalize() = ensures.foreach(_())
     if (preempting) {
       if (isDone()) {
         finalize()

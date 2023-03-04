@@ -21,14 +21,14 @@ object ios {
 
   trait Preempt extends Safepoint[IOs] {
 
-    def ensure(f: Unit > IOs): Unit
+    def ensure(f: () => Unit): Unit
     def apply[T, S](v: => T > (S | IOs)) =
       IOs(v)
   }
   object Preempt {
     val never: Preempt =
       new Preempt {
-        def ensure(f: Unit > IOs) = ()
+        def ensure(f: () => Unit) = ()
         def apply()               = false
       }
   }
@@ -40,8 +40,6 @@ object ios {
     def value  = ()
     def effect = ios.IOs
   }
-
-  private[kyo] trait Ensure
 
   final class IOs private[ios] () extends Effect[IO] {
 
@@ -76,15 +74,17 @@ object ios {
           case ex if NonFatal(ex) =>
             log.error(s"IOs.ensure function failed at frame $fr", ex)
         }
+      val ensure = () => run
       def ensureLoop(v: T > (S | IOs)): T > (S | IOs) =
         v match {
           case kyo: Kyo[M2, E2, Any, T, S | IOs] @unchecked =>
-            new KyoCont[M2, E2, Any, T, S | IOs](kyo) with Ensure {
-              def frame = fr
+            new KyoCont[M2, E2, Any, T, S | IOs](kyo) {
+              def apply() = run
+              def frame   = fr
               def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
                 s match {
                   case s: Preempt =>
-                    s.ensure(IOs(run))
+                    s.ensure(ensure)
                   case _ =>
                 }
                 ensureLoop(kyo(v, s, l))

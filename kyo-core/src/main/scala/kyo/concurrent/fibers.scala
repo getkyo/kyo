@@ -21,6 +21,7 @@ import scala.util.control.NonFatal
 
 import scheduler._
 import timers._
+import java.util.concurrent.TimeoutException
 
 object fibers {
 
@@ -82,13 +83,16 @@ object fibers {
       }
 
     /*inline(2)*/
-    def interrupt: Boolean > IOs =
+    def interrupt(reason: String): Boolean > IOs =
       if (fiber.isInstanceOf[IOPromise[_]]) {
         val f = fiber.asInstanceOf[IOPromise[T]]
-        IOs(f.interrupt())
+        IOs(f.interrupt(reason))
       } else {
         false
       }
+
+    def interrupt: Boolean > IOs =
+      interrupt("")
 
     /*inline(2)*/
     private[kyo] def transform[U](t: T => Fiber[U]): Fiber[U] =
@@ -122,7 +126,7 @@ object fibers {
       val a: Fiber[T] > Nothing = v << Fibers
       a
 
-    def done[T](v: T): Fiber[T] =
+    def value[T](v: T): Fiber[T] =
       v
 
     def promise[T]: Promise[T] > IOs =
@@ -297,10 +301,24 @@ object fibers {
               ()
             }
           Timers.schedule(d)(run) { t =>
-            IOs(p.onComplete(_ => IOs.run(t.cancel)))(_ => p.join)
+            IOs.ensure(t.cancel.unit)(p.join)
           }
         } else {
           p.join
+        }
+      }
+
+    def timeout[T](d: Duration)(v: => T > (IOs | Fibers))(using
+        fr: Frame["Fibers.timeout"]
+    ): T > (IOs | Fibers | Timers) =
+      forkFiber(v) { f =>
+        val timeout: Unit > IOs =
+          IOs {
+            IOTask(IOs(f.interrupt))
+            ()
+          }
+        Timers.schedule(d)(timeout) { t =>
+          IOs.ensure(t.cancel.unit)(f.join)
         }
       }
 

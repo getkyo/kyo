@@ -13,12 +13,6 @@ import scheduler.ThreadFactory
 
 object timers {
 
-  trait TimerTask {
-    def cancel: Boolean > IOs
-    def isCancelled: Boolean > IOs
-    def isDone: Boolean > IOs
-  }
-
   trait Timer {
     def shutdown: Unit > IOs
     def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > IOs
@@ -50,35 +44,61 @@ object timers {
         def shutdown: Unit > IOs =
           IOs.unit
 
-        def schedule(initalDelay: Duration)(f: => Unit > IOs): TimerTask > IOs =
-          IOs(Task(exec.schedule(() => IOs.run(f), initalDelay.toNanos, TimeUnit.NANOSECONDS)))
+        def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > IOs =
+          if (delay.isFinite) {
+            IOs(Task(exec.schedule(() => IOs.run(f), delay.toNanos, TimeUnit.NANOSECONDS)))
+          } else {
+            TimerTask.noop
+          }
 
         def scheduleAtFixedRate(
             initalDelay: Duration,
             period: Duration
         )(f: => Unit > IOs): TimerTask > IOs =
-          IOs(Task {
-            exec.scheduleAtFixedRate(
-                () => IOs.run(f),
-                initalDelay.toNanos,
-                period.toNanos,
-                TimeUnit.NANOSECONDS
-            )
-          })
+          if (period.isFinite && initalDelay.isFinite) {
+            IOs(Task {
+              exec.scheduleAtFixedRate(
+                  () => IOs.run(f),
+                  initalDelay.toNanos,
+                  period.toNanos,
+                  TimeUnit.NANOSECONDS
+              )
+            })
+          } else {
+            TimerTask.noop
+          }
 
         def scheduleWithFixedDelay(
             initalDelay: Duration,
             period: Duration
         )(f: => Unit > IOs): TimerTask > IOs =
-          IOs(Task {
-            exec.scheduleWithFixedDelay(
-                () => IOs.run(f),
-                initalDelay.toNanos,
-                period.toNanos,
-                TimeUnit.NANOSECONDS
-            )
-          })
+          if (period.isFinite && initalDelay.isFinite) {
+            IOs(Task {
+              exec.scheduleWithFixedDelay(
+                  () => IOs.run(f),
+                  initalDelay.toNanos,
+                  period.toNanos,
+                  TimeUnit.NANOSECONDS
+              )
+            })
+          } else {
+            TimerTask.noop
+          }
       }
+    }
+  }
+
+  trait TimerTask {
+    def cancel: Boolean > IOs
+    def isCancelled: Boolean > IOs
+    def isDone: Boolean > IOs
+  }
+
+  object TimerTask {
+    private[kyo] val noop = new TimerTask {
+      def cancel      = false
+      def isCancelled = false
+      def isDone      = true
     }
   }
 

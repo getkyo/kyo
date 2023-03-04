@@ -10,22 +10,29 @@ import aborts._
 import concurrent.fibers._
 import concurrent.timers._
 import kyo.randoms.Randoms
+import scala.concurrent.duration.Duration
 
 trait KyoApp {
 
   final def main(args: Array[String]): Unit =
-    val v0: Unit > (IOs | Fibers | Resources | Clocks | Consoles | Randoms | Timers) =
-      run(args.toList)
-    val v1: Unit > (IOs | Fibers | Resources | Clocks | Consoles | Randoms) = Timers.run(v0)
-    val v2: Unit > (IOs | Fibers | Resources | Clocks | Consoles)           = Randoms.run(v1)
-    val v3: Unit > (IOs | Fibers | Resources | Clocks)                      = Consoles.run(v2)
-    val v4: Unit > (IOs | Fibers | Resources)                               = Clocks.run(v3)
-    val v5: Unit > (IOs | Fibers)                                           = Resources.close(v4)
-    val v6: Unit > Fibers                                                   = IOs.lazyRun(v5)
-
-    IOs.run((v6 << Fibers)(_.block))
+    KyoApp.run(Duration.Inf)(run(args.toList))
 
   def run(args: List[String])
       : Unit > (IOs | Fibers | Resources | Clocks | Consoles | Randoms | Timers)
 
+}
+
+object KyoApp {
+  def run[T](timeout: Duration)(v: T > (IOs | Fibers | Resources | Clocks | Consoles | Randoms |
+    Timers)): T = {
+    val v1: T > (IOs | Fibers | Resources | Clocks | Consoles | Timers) = Randoms.run(v)
+    val v2: T > (IOs | Fibers | Resources | Clocks | Timers)            = Consoles.run(v1)
+    val v3: T > (IOs | Fibers | Resources | Timers)                     = Clocks.run(v2)
+    val v4: T > (IOs | Fibers | Timers)                                 = Resources.close(v3)
+    val v5: T > (IOs | Fibers)                                          = Timers.run(v4)
+    val v6: T > (IOs | Fibers | Timers) = Fibers.timeout(timeout)(v5)
+    val v7: T > (IOs | Fibers)          = Timers.run(v6)
+    val v8: T > Fibers                  = IOs.lazyRun(v7)
+    IOs.run((v8 << Fibers)(_.block))
+  }
 }

@@ -27,17 +27,18 @@ private[kyo] class IOPromise[T]
       }
     loop(this)
 
-  def interrupts(p: IOPromise[_]): Unit =
+  /*inline(2)*/
+  def interrupts(p: IOPromise[_])(using frame: Frame["interrupt"]): Unit =
     onComplete { _ =>
-      p.interrupt()
+      p.interrupt("")
     }
 
   /*inline(2)*/
-  def interrupt()(using frame: Frame["interrupt"]): Boolean =
+  def interrupt(reason: String)(using frame: Frame["interrupt"]): Boolean =
     @tailrec def loop(promise: IOPromise[T]): Boolean =
       promise.get() match {
         case p: Pending[T] @unchecked =>
-          complete(p, IOs(throw Interrupted(frame))) || loop(promise)
+          complete(p, IOs(throw Interrupted(reason, frame))) || loop(promise)
         case l: Linked[T] @unchecked =>
           loop(l.p)
         case _ =>
@@ -144,7 +145,7 @@ private[kyo] object IOPromise {
 
   type State[T] = (T > IOs) | Pending[T] | Linked[T]
 
-  case class Interrupted(frame: Frame[String]) extends NoStackTrace
+  case class Interrupted(reason: String, frame: Frame[String]) extends NoStackTrace
   case class Linked[T](p: IOPromise[T])
 
   abstract class Pending[T] { self =>

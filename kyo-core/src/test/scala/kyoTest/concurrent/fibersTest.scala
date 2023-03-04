@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.{AtomicInteger => JAtomicInteger}
 import java.util.concurrent.atomic.{AtomicReference => JAtomicReference}
 import scala.concurrent.duration._
 import scala.util.Failure
+import scala.util.Try
 
 class fibersTest extends KyoTest {
 
@@ -80,6 +81,14 @@ class fibersTest extends KyoTest {
   "sleep" in {
     val start = System.currentTimeMillis()
     run(Fibers.sleep(10.millis))
+    val end = System.currentTimeMillis()
+    assert(end - start >= 10)
+  }
+
+  "timeout" in {
+    val start = System.currentTimeMillis()
+    val io    = Fibers.timeout(10.millis)(Timers.run(Fibers.sleep(1.day)))
+    assert(Try(run(io)).isFailure)
     val end = System.currentTimeMillis()
     assert(end - start >= 10)
   }
@@ -246,8 +255,7 @@ class fibersTest extends KyoTest {
           (v2, v3) <- Fibers.fork(2, 3)
           l        <- Fibers.collect(List(4, 5))
         } yield v1 + v2 + v3 + l.sum
-      val a = run((Fibers.run(IOs.lazyRun(io)))(_.join))
-      assert(a == 15)
+      assert(run(io) == 15)
     }
     "interrupt" in run {
       def loop(ref: AtomicInt): Unit > IOs =
