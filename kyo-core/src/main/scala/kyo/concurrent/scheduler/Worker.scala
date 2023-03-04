@@ -22,7 +22,7 @@ private final class Worker(r: Runnable)
 
   def park() =
     parkedThread = this
-    LockSupport.parkNanos(this, 10_000_000L)
+    LockSupport.parkNanos(this, 1_000_000L)
     parkedThread = null
 
   def steal(w: Worker): IOTask[_] =

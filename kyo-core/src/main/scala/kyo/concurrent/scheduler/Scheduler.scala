@@ -44,6 +44,12 @@ private[kyo] object Scheduler {
 
   @tailrec def schedule(t: IOTask[_]): Unit =
 
+    // try current worker
+    val w = Worker()
+    if (w != null && w.enqueue(t)) {
+      return
+    }
+
     // try an idle worker
     val iw = idle.get()
     if ((iw ne Nil) && idle.compareAndSet(iw, iw.tail)) {
@@ -52,12 +58,6 @@ private[kyo] object Scheduler {
       if (ok) {
         return
       }
-    }
-
-    // try current worker
-    val w = Worker()
-    if (w != null && w.enqueue(t)) {
-      return
     }
 
     // p2c load balancing
