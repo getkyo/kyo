@@ -135,11 +135,12 @@ object fibers {
     private[kyo] def unsafePromise[T]: Promise[T] =
       IOPromise[T]
 
-    /*inline(2)*/
+    // compiler bug workaround
+    private val IOTask = kyo.concurrent.scheduler.IOTask
+
     def forkFiber[T](v: => T > (IOs | Fibers)): Fiber[T] > IOs =
       Locals.save(st => IOTask(IOs(Locals.restore(st)(v))))
 
-    /*inline(2)*/
     def fork[T](v: => T > (IOs | Fibers)): T > (IOs | Fibers) =
       forkFiber(v)(_.join)
 

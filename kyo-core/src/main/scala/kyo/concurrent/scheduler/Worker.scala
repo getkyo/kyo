@@ -22,11 +22,14 @@ private final class Worker(r: Runnable)
 
   def park() =
     parkedThread = this
-    LockSupport.parkNanos(this, 1_000_000L)
+    LockSupport.parkNanos(this, 100_000_000L)
     parkedThread = null
 
   def steal(w: Worker): IOTask[_] =
     queue.steal(w.queue)
+
+  def enqueueLocal(t: IOTask[_]): Boolean =
+    queue.offer(t)
 
   def enqueue(t: IOTask[_]): Boolean =
     isAvailable() && queue.offer(t) && {
@@ -38,11 +41,14 @@ private final class Worker(r: Runnable)
     val t = currentTask
     running && (t == null || !t())
 
-  def cycle() =
+  def cycle(): Unit =
     val t = currentTask
     if (t != null && !queue.isEmpty()) {
       t.preempt()
     }
+
+  def flush(): Unit =
+    queue.drain(Scheduler.submit)
 
   def load(): Int =
     var s = queue.size()
@@ -86,10 +92,9 @@ private final class Worker(r: Runnable)
     Scheduler.workers.remove(this)
     running = false
     if (task != null) {
-      Scheduler.schedule(task)
-      task = null
+      queue.add(task)
     }
-    queue.drain(Scheduler.schedule)
+    flush()
 
   override def toString =
     s"Worker(thread=${getName},load=${load()},delay=${delay.avg()},task=$currentTask,queue.size=${queue.size()},frame=${this.getStackTrace()(0)})"

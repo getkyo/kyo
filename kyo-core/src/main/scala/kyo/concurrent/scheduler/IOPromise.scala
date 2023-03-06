@@ -38,7 +38,7 @@ private[kyo] class IOPromise[T]
     @tailrec def loop(promise: IOPromise[T]): Boolean =
       promise.get() match {
         case p: Pending[T] @unchecked =>
-          complete(p, IOs(throw Interrupted(reason, frame))) || loop(promise)
+          promise.complete(p, IOs(throw Interrupted(reason, frame))) || loop(promise)
         case l: Linked[T] @unchecked =>
           loop(l.p)
         case _ =>
@@ -89,7 +89,7 @@ private[kyo] class IOPromise[T]
     @tailrec def loop(promise: IOPromise[T]): Unit =
       promise.get() match {
         case p: Pending[T] @unchecked =>
-          if (!compareAndSet(p, p.add(f)))
+          if (!promise.compareAndSet(p, p.add(f)))
             loop(promise)
         case l: Linked[T] @unchecked =>
           loop(l.p)
@@ -122,7 +122,7 @@ private[kyo] class IOPromise[T]
   def block(): T =
     def loop(promise: IOPromise[T]): T =
       promise.get() match {
-        case p: Pending[T] @unchecked =>
+        case _: Pending[T] @unchecked =>
           val b = new CountDownLatch(1) with (T > IOs => Unit) with (() => T > IOs) {
             private[this] var result: T > IOs = null.asInstanceOf[T]
             def apply(v: T > IOs) =
@@ -138,6 +138,7 @@ private[kyo] class IOPromise[T]
         case v =>
           v.asInstanceOf[T]
       }
+    Scheduler.flush()
     loop(this)
 }
 

@@ -15,11 +15,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import cats.effect.kernel.Deferred
 import kyo.concurrent.atomics._
 
-object jkhkj extends App {
-  while (true)
-    PingPongBench().syncKyo()
-}
-
 class PingPongBench extends Bench[Unit] {
 
   val depth = 1000

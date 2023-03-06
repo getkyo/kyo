@@ -42,15 +42,22 @@ private[kyo] object Scheduler {
       c = concurrency.get()
     }
 
-  @tailrec def schedule(t: IOTask[_]): Unit =
-
-    // try current worker
+  def flush(): Unit = {
     val w = Worker()
-    if (w != null && w.enqueue(t)) {
-      return
+    if (w != null) {
+      w.flush()
     }
+  }
 
-    // try an idle worker
+  def schedule(t: IOTask[_]): Unit = {
+    val w = Worker()
+    if (w == null || !w.enqueueLocal(t)) {
+      submit(t)
+    }
+  }
+
+  @tailrec def submit(t: IOTask[_]): Unit =
+
     val iw = idle.get()
     if ((iw ne Nil) && idle.compareAndSet(iw, iw.tail)) {
       val w  = iw.head
@@ -60,7 +67,6 @@ private[kyo] object Scheduler {
       }
     }
 
-    // p2c load balancing
     var w0: Worker = randomWorker()
     var w1: Worker = randomWorker()
     if (w0.load() > w1.load()) {
@@ -69,7 +75,7 @@ private[kyo] object Scheduler {
       w1 = w
     }
     if (!w0.enqueue(t) && !w1.enqueue(t)) {
-      schedule(t)
+      submit(t)
     }
 
   def steal(w: Worker): IOTask[_] =
