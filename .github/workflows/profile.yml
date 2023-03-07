@@ -37,6 +37,7 @@ jobs:
 
       - name: Store flamegraphs
         run: |
+          git config pull.rebase true 
           export REV=$(git rev-parse --short HEAD)
           mv kyo-bench/kyo.bench.* /tmp
           git clean -fdx
