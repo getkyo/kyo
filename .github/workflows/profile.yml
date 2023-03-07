@@ -47,8 +47,8 @@ jobs:
           cd dev/profile
           tree -H . -o index.html
           cd ../../
-          git config --global user.name "CI"
-          git config --global user.email "ci@users.noreply.github.com"
+          git config --global user.name "Kyo CI"
+          git config --global user.email "kyoci@users.noreply.github.com"
           git add .
           git commit -m "flamegraphs for $REV"
           git push
