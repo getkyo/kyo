@@ -6,7 +6,7 @@ Algebraic effects for Scala 3
 ![Stage](https://img.shields.io/badge/Project%20Stage-Experimental-yellow.svg)
 
 
-Sorry, documentation coming soon.
+Sorry, documentation coming soon
 
 
 License
