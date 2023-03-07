@@ -118,7 +118,6 @@ private[kyo] class IOPromise[T]
       }
     loop()
 
-  /*inline(2)*/
   def block(): T =
     def loop(promise: IOPromise[T]): T =
       promise.get() match {

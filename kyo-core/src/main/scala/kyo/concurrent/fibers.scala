@@ -73,7 +73,6 @@ object fibers {
         Success(fiber.asInstanceOf[T])
       }
 
-    /*inline(2)*/
     def block: T > IOs =
       if (fiber.isInstanceOf[IOPromise[_]]) {
         val f = fiber.asInstanceOf[IOPromise[T]]
@@ -138,9 +137,11 @@ object fibers {
     // compiler bug workaround
     private val IOTask = kyo.concurrent.scheduler.IOTask
 
+    /*inline(2)*/
     def forkFiber[T](v: => T > (IOs | Fibers)): Fiber[T] > IOs =
       Locals.save(st => IOTask(IOs(Locals.restore(st)(v))))
 
+    /*inline(2)*/
     def fork[T](v: => T > (IOs | Fibers)): T > (IOs | Fibers) =
       forkFiber(v)(_.join)
 
