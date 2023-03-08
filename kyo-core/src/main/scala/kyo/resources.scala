@@ -23,7 +23,7 @@ object resources {
       lazy val v = resource
       Sums.add[Finalizer](() => v.close()).map(_ => v)
 
-    def close[T, S](v: T > (S | Resources)): T > (S | IOs) =
+    def run[T, S](v: T > (S | Resources)): T > (S | IOs) =
       Sums.drop[Finalizer](v)
   }
 

@@ -20,7 +20,6 @@ import kyo.loggers.Loggers
 object ios {
 
   trait Preempt extends Safepoint[IOs] {
-
     def ensure(f: () => Unit): Unit
     def apply[T, S](v: => T > (S | IOs)) =
       IOs(v)

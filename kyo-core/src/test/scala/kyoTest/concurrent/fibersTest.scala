@@ -100,7 +100,7 @@ class fibersTest extends KyoTest {
       ref.incrementAndGet(_ => loop(ref))
 
     def runLoop[T](started: Latch, done: Latch) =
-      Resources.close {
+      Resources.run {
         Resources.ensure(done.release) { _ =>
           started.release(_ => Atomics.makeInt(0)(loop))
         }
@@ -263,7 +263,7 @@ class fibersTest extends KyoTest {
         ref.incrementAndGet(_ => loop(ref))
 
       def task(l: Latch): Unit > IOs =
-        Resources.close {
+        Resources.run {
           Resources.ensure(l.release) { _ =>
             Atomics.makeInt(0)(loop)
           }
@@ -298,19 +298,19 @@ class fibersTest extends KyoTest {
           (v2, v3) <- Fibers.fork(r.getAndIncrement(), r.getAndIncrement())
         } yield (r, Set(v1, v2, v3))
       val io2: (JAtomicInteger, Set[Int]) > (IOs | Fibers) =
-        Resources.close(io1)
+        Resources.run(io1)
       assert(run(io2) == (resource1, Set(0, 1, 2)))
       assert(resource1.get() == -1)
     }
     "inner" in new Context {
-      val io = Fibers.fork(Resources.close(Resources.acquire(resource1)(_.incrementAndGet())))
+      val io = Fibers.fork(Resources.run(Resources.acquire(resource1)(_.incrementAndGet())))
       assert(run(io) == 1)
       assert(resource1.get() == -1)
     }
     "multiple" in new Context {
       val io = Fibers.fork(
-          Resources.close(Resources.acquire(resource1)(_.incrementAndGet())),
-          Resources.close(Resources.acquire(resource2)(_.incrementAndGet()))
+          Resources.run(Resources.acquire(resource1)(_.incrementAndGet())),
+          Resources.run(Resources.acquire(resource2)(_.incrementAndGet()))
       )
       assert(run(io) == (1, 1))
       assert(resource1.get() == -1)
@@ -322,10 +322,10 @@ class fibersTest extends KyoTest {
           r        <- Resources.acquire(resource1)
           v1       <- IOs(r.incrementAndGet())
           (v2, v3) <- Fibers.fork(r.incrementAndGet(), r.incrementAndGet())
-          v4       <- Resources.close(Resources.acquire(resource2)(_.incrementAndGet()))
+          v4       <- Resources.run(Resources.acquire(resource2)(_.incrementAndGet()))
         } yield (v1, v2, v3, v4)
       val io2: (Int, Int, Int, Int) > (IOs | Fibers) =
-        Resources.close(io1)
+        Resources.run(io1)
       val r = run(io2)
       assert(r == (1, 2, 3, 1) || r == (1, 3, 2, 1))
       assert(resource1.get() == -1)

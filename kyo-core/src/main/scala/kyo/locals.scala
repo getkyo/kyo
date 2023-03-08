@@ -78,6 +78,6 @@ object locals {
           case _ =>
             f
         }
-      IOs(loop(f))
+      loop(f)
   }
 }

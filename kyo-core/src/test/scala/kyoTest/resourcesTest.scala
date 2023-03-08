@@ -25,7 +25,7 @@ class resourcesTest extends KyoTest {
 
   "acquire + close" in new Context {
     IOs.run {
-      Resources.close(Resources.acquire(r1()))
+      Resources.run(Resources.acquire(r1()))
     }
     assert(r1.closes == 1)
     assert(r2.closes == 0)
@@ -35,7 +35,7 @@ class resourcesTest extends KyoTest {
 
   "acquire + tranform + close" in new Context {
     IOs.run {
-      Resources.close(Resources.acquire(r1())(_ => assert(r1.closes == 0)))
+      Resources.run(Resources.acquire(r1())(_ => assert(r1.closes == 0)))
     }
     assert(r1.closes == 1)
     assert(r2.closes == 0)
@@ -46,7 +46,7 @@ class resourcesTest extends KyoTest {
   "acquire + effectful tranform + close" in new Context {
     val r =
       IOs.lazyRun {
-        Resources.close(Resources.acquire(r1()) { _ =>
+        Resources.run(Resources.acquire(r1()) { _ =>
           assert(r1.closes == 0)
           Option(1) > Options
         })
@@ -64,7 +64,7 @@ class resourcesTest extends KyoTest {
 
   "two acquires + close" in new Context {
     IOs.run {
-      Resources.close(Resources.acquire(r1())(_ => Resources.acquire(r2())))
+      Resources.run(Resources.acquire(r1())(_ => Resources.acquire(r2())))
     }
     assert(r1.closes == 1)
     assert(r2.closes == 1)
@@ -75,7 +75,7 @@ class resourcesTest extends KyoTest {
   "two acquires + for-comp + close" in new Context {
     val r: Int =
       IOs.run {
-        Resources.close {
+        Resources.run {
           for {
             r1 <- Resources.acquire(r1())
             i1 <- r1.id * 3
@@ -94,7 +94,7 @@ class resourcesTest extends KyoTest {
   "two acquires + effectful for-comp + close" in new Context {
     val r: Int > Options =
       IOs.lazyRun {
-        Resources.close {
+        Resources.run {
           val io: Int > (Resources | Options) =
             for {
               r1 <- Resources.acquire(r1())
@@ -117,7 +117,7 @@ class resourcesTest extends KyoTest {
   }
 
   "nested" in new Context {
-    val r = IOs.run(Resources.close(Resources.close(Resources.acquire(r1()))))
+    val r = IOs.run(Resources.run(Resources.run(Resources.acquire(r1()))))
     assert(r == r1)
     assert(r1.acquires == 1)
     assert(r1.closes == 1)

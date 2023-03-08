@@ -33,7 +33,7 @@ object MonadLawsTest extends ZIOSpecDefault {
   given CovariantDeriveEqualIdentityFlatten[Myo] =
     new CovariantDeriveEqualIdentityFlatten[Myo] {
       override def flatten[A](ffa: Myo[Myo[A]]): Myo[A] =
-        ffa()
+        ffa.flatten
       override def any: Myo[Any] =
         ()
       override def map[A, B](f: A => B): Myo[A] => Myo[B] =

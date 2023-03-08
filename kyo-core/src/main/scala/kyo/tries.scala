@@ -16,7 +16,7 @@ object tries {
     /*inline(2)*/
     def apply[T, S]( /*inline(2)*/ v: => T > S): T > (S | Tries) =
       val a: Try[Try[T] > S]      = Try(v < Tries)
-      val b: Try[T] > (S | Tries) = a >> Tries
+      val b: Try[T] > (S | Tries) = (a > Tries).flatten
       val c: T > (S | Tries)      = b > Tries
       c
 

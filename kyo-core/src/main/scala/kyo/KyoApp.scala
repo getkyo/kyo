@@ -28,7 +28,7 @@ object KyoApp {
     val v1: T > (IOs | Fibers | Resources | Clocks | Consoles | Timers) = Randoms.run(v)
     val v2: T > (IOs | Fibers | Resources | Clocks | Timers)            = Consoles.run(v1)
     val v3: T > (IOs | Fibers | Resources | Timers)                     = Clocks.run(v2)
-    val v4: T > (IOs | Fibers | Timers)                                 = Resources.close(v3)
+    val v4: T > (IOs | Fibers | Timers)                                 = Resources.run(v3)
     val v5: T > (IOs | Fibers)                                          = Timers.run(v4)
     val v6: T > (IOs | Fibers | Timers) = Fibers.timeout(timeout)(v5)
     val v7: T > (IOs | Fibers)          = Timers.run(v6)
