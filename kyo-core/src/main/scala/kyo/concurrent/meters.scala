@@ -66,9 +66,9 @@ object meters {
       }
 
     def pipeline[S](l: (Meter > (S | IOs))*): Meter > (S | IOs) =
-      makePipeline(l.toList)
+      pipeline(l.toList)
 
-    def makePipeline[S](l: List[Meter > (S | IOs)]): Meter > (S | IOs) =
+    def pipeline[S](l: List[Meter > (S | IOs)]): Meter > (S | IOs) =
       collect(l) { meters =>
         new Meter {
           val isAvailable =

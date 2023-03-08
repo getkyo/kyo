@@ -29,14 +29,16 @@ trait KyoZioApp {
 
 object KyoZioApp {
 
-  def run[T](timeout: Duration)(v: T > (IOs | Fibers | Resources | Clocks | Consoles | Randoms |
-    Timers | ZIOs)): T = {
+  def block[T](timeout: Duration)(t: Task[T]): T =
     zio.Unsafe.unsafe(implicit u =>
       zio.Runtime.default.unsafe.run(
-          runTask(v).timeoutFail(new TimeoutException)(zio.Duration.fromScala(timeout))
+          t.timeoutFail(new TimeoutException)(zio.Duration.fromScala(timeout))
       ).getOrThrow()
     )
-  }
+
+  def run[T](timeout: Duration)(v: T > (IOs | Fibers | Resources | Clocks | Consoles | Randoms |
+    Timers | ZIOs)): T =
+    block(timeout)(runTask(v))
 
   def runTask[T](v: T > (IOs | Fibers | Resources | Clocks | Consoles | Randoms |
     Timers | ZIOs)): Task[T] = {

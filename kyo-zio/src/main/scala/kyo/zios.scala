@@ -17,20 +17,22 @@ object zios {
 
   final class ZIOs private[zios] () extends Effect[Task] {
 
+    @targetName("fromZIO")
     def apply[R: ITag, E: ITag, A](v: ZIO[R, E, A]): A > (Envs[R] | Aborts[E] | ZIOs) =
       val a: URIO[R, A > Aborts[E]]           = v.fold[A > Aborts[E]](Aborts(_), v => v)
       val b: Task[A > Aborts[E]] > Envs[R]    = Envs[R](r => a.provideEnvironment(ZEnvironment(r)))
       val c: A > (Aborts[E] | Envs[R] | ZIOs) = (b > this).flatten
       c
 
+    @targetName("fromIO")
     def apply[E: ITag, A](v: IO[E, A]): A > (Aborts[E] | ZIOs) =
       val a: Task[A > Aborts[E]]    = v.fold[A > Aborts[E]](Aborts(_), v => v)
       val b: A > (Aborts[E] | ZIOs) = (a > this).flatten
       b
 
+    @targetName("fromTask")
     def apply[T](v: Task[T]): T > ZIOs =
       v > this
-
   }
   val ZIOs = new ZIOs
 
