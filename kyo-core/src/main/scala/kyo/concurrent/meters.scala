@@ -19,11 +19,11 @@ object meters {
 
   object Meters {
 
-    def makeMutex: Meter > IOs =
-      makeSemaphore(1)
+    def mutex: Meter > IOs =
+      semaphore(1)
 
-    def makeSemaphore(permits: Int): Meter > IOs =
-      Channels.makeBlocking[Unit](permits) { chan =>
+    def semaphore(permits: Int): Meter > IOs =
+      Channels.blocking[Unit](permits) { chan =>
         offer(permits, chan, ()) { _ =>
           new Meter {
             val isAvailable = chan.size(_ > 0)
@@ -47,8 +47,8 @@ object meters {
         }
       }
 
-    def makeRateLimiter(rate: Int, period: Duration): Meter > (IOs | Timers) =
-      Channels.makeBlocking[Unit](rate) { chan =>
+    def rateLimiter(rate: Int, period: Duration): Meter > (IOs | Timers) =
+      Channels.blocking[Unit](rate) { chan =>
         Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())) { _ =>
           new Meter {
             val isAvailable = chan.size(_ > 0)
@@ -65,7 +65,7 @@ object meters {
         }
       }
 
-    def makePipeline[S](l: (Meter > (S | IOs))*): Meter > (S | IOs) =
+    def pipeline[S](l: (Meter > (S | IOs))*): Meter > (S | IOs) =
       makePipeline(l.toList)
 
     def makePipeline[S](l: List[Meter > (S | IOs)]): Meter > (S | IOs) =

@@ -10,20 +10,20 @@ class addersTest extends KyoTest {
   "LongAdder" - {
     "should initialize to 0" in {
       for {
-        ref <- Adders.makeLong
+        ref <- Adders.forLong
         v   <- ref.get
       } yield assert(v == 0)
     }
     "should add value" in {
       for {
-        ref <- Adders.makeLong
+        ref <- Adders.forLong
         _   <- ref.add(5)
         v   <- ref.get
       } yield assert(v == 5)
     }
     "should decrement the value" in {
       for {
-        ref <- Adders.makeLong
+        ref <- Adders.forLong
         _   <- ref.add(5)
         _   <- ref.decrement
         v   <- ref.get
@@ -31,7 +31,7 @@ class addersTest extends KyoTest {
     }
     "should reset the value" in {
       for {
-        ref <- Adders.makeLong
+        ref <- Adders.forLong
         _   <- ref.add(5)
         _   <- ref.reset
         v   <- ref.get
@@ -42,20 +42,20 @@ class addersTest extends KyoTest {
   "DoubleAdder" - {
     "should initialize to 0" in {
       for {
-        ref <- Adders.makeDouble
+        ref <- Adders.forDouble
         v   <- ref.get
       } yield assert(v == 0.0)
     }
     "should add value" in {
       for {
-        ref <- Adders.makeDouble
+        ref <- Adders.forDouble
         _   <- ref.add(5.0)
         v   <- ref.get
       } yield assert(v == 5.0)
     }
     "should reset the value" in {
       for {
-        ref <- Adders.makeDouble
+        ref <- Adders.forDouble
         _   <- ref.add(5.0)
         _   <- ref.reset
         v   <- ref.get

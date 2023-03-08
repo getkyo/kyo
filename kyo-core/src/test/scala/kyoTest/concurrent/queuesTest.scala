@@ -11,14 +11,14 @@ class queuesTest extends KyoTest {
     "isEmpty" in
       IOs.run {
         for {
-          q <- Queues.makeBounded[Int](2)
+          q <- Queues.bounded[Int](2)
           b <- q.isEmpty
         } yield assert(b)
       }
     "offer and poll" in
       IOs.run {
         for {
-          q <- Queues.makeBounded[Int](2)
+          q <- Queues.bounded[Int](2)
           b <- q.offer(1)
           v <- q.poll
         } yield assert(b && v == Some(1))
@@ -26,7 +26,7 @@ class queuesTest extends KyoTest {
     "peek" in
       IOs.run {
         for {
-          q <- Queues.makeBounded[Int](2)
+          q <- Queues.bounded[Int](2)
           _ <- q.offer(1)
           v <- q.peek
         } yield assert(v == Some(1))
@@ -34,7 +34,7 @@ class queuesTest extends KyoTest {
     "full" in
       IOs.run {
         for {
-          q <- Queues.makeBounded[Int](2)
+          q <- Queues.bounded[Int](2)
           _ <- q.offer(1)
           _ <- q.offer(2)
           b <- q.offer(3)
@@ -46,14 +46,14 @@ class queuesTest extends KyoTest {
     "isEmpty" in
       IOs.run {
         for {
-          q <- Queues.makeUnbounded[Int]()
+          q <- Queues.unbounded[Int]()
           b <- q.isEmpty
         } yield assert(b)
       }
     "offer and poll" in
       IOs.run {
         for {
-          q <- Queues.makeUnbounded[Int]()
+          q <- Queues.unbounded[Int]()
           b <- q.offer(1)
           v <- q.poll
         } yield assert(b && v == Some(1))
@@ -61,7 +61,7 @@ class queuesTest extends KyoTest {
     "peek" in
       IOs.run {
         for {
-          q <- Queues.makeUnbounded[Int]()
+          q <- Queues.unbounded[Int]()
           _ <- q.offer(1)
           v <- q.peek
         } yield assert(v == Some(1))
@@ -69,7 +69,7 @@ class queuesTest extends KyoTest {
     "add and poll" in
       IOs.run {
         for {
-          q <- Queues.makeUnbounded[Int]()
+          q <- Queues.unbounded[Int]()
           _ <- q.add(1)
           v <- q.poll
         } yield assert(v == Some(1))

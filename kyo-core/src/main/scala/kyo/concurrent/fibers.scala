@@ -10,6 +10,7 @@ import java.io.Closeable
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
@@ -21,7 +22,6 @@ import scala.util.control.NonFatal
 
 import scheduler._
 import timers._
-import java.util.concurrent.TimeoutException
 
 object fibers {
 
@@ -365,7 +365,7 @@ object fibers {
   val Fibers = new Fibers
 
   /*inline(2)*/
-  given DeepHandler[Fiber, Fibers] =
+  private[kyo] given DeepHandler[Fiber, Fibers] =
     new DeepHandler[Fiber, Fibers] {
       def pure[T](v: T) = v
       def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =

@@ -42,8 +42,8 @@ object channels {
         takeFiber(_.join)
     }
 
-    def makeBounded[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
-      Queues.makeBounded[T](capacity, access) { q =>
+    def bounded[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
+      Queues.bounded[T](capacity, access) { q =>
         new Channel[T] {
           def size        = q.size
           def offer(v: T) = q.offer(v)
@@ -53,8 +53,8 @@ object channels {
         }
       }
 
-    def makeDropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      Queues.makeBounded[T](capacity, access) { q =>
+    def dropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      Queues.bounded[T](capacity, access) { q =>
         new Unbounded[T] {
           def size        = q.size
           def offer(v: T) = q.offer(v)
@@ -65,8 +65,8 @@ object channels {
         }
       }
 
-    def makeSliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      Queues.makeBounded[T](capacity, access) { q =>
+    def sliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      Queues.bounded[T](capacity, access) { q =>
         new Unbounded[T] {
           def size        = q.size
           def offer(v: T) = q.offer(v)
@@ -88,8 +88,8 @@ object channels {
         }
       }
 
-    def makeUnbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      Queues.makeUnbounded[T](access) { q =>
+    def unbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      Queues.unbounded[T](access) { q =>
         new Unbounded[T] {
           def size        = q.size
           def put(v: T)   = q.add(v)
@@ -100,8 +100,8 @@ object channels {
         }
       }
 
-    def makeBlocking[T](capacity: Int, access: Access = Access.Mpmc): Blocking[T] > IOs =
-      Queues.makeBounded[T](capacity, access) { queue =>
+    def blocking[T](capacity: Int, access: Access = Access.Mpmc): Blocking[T] > IOs =
+      Queues.bounded[T](capacity, access) { queue =>
         new Blocking[T] {
 
           val q     = queue.unsafe

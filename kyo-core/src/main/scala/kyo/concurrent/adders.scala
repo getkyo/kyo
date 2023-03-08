@@ -14,10 +14,8 @@ import java.util.concurrent.atomic.{DoubleAdder => JDoubleAdder}
 object adders {
 
   object Adders {
-    private val _makeLong             = IOs(JLongAdder())
-    private val _makeDouble           = IOs(JDoubleAdder())
-    def makeLong: LongAdder > IOs     = _makeLong
-    def makeDouble: DoubleAdder > IOs = _makeDouble
+    def forLong: LongAdder > IOs     = IOs(JLongAdder())
+    def forDouble: DoubleAdder > IOs = IOs(JDoubleAdder())
   }
 
   opaque type LongAdder = JLongAdder

@@ -14,14 +14,14 @@ class metersTest extends KyoTest {
   "mutex" - {
     "ok" in run {
       for {
-        t <- Meters.makeMutex
+        t <- Meters.mutex
         v <- t.run(2)
       } yield assert(v == 2)
     }
 
     "run" in run {
       for {
-        t  <- Meters.makeMutex
+        t  <- Meters.mutex
         p  <- Fibers.promise[Int]
         b1 <- Fibers.promise[Unit]
         f1 <- Fibers.forkFiber(t.run(b1.complete(())(_ => p.block)))
@@ -42,7 +42,7 @@ class metersTest extends KyoTest {
 
     "tryRun" in run {
       for {
-        sem <- Meters.makeSemaphore(1)
+        sem <- Meters.semaphore(1)
         p   <- Fibers.promise[Int]
         b1  <- Fibers.promise[Unit]
         f1  <- Fibers.forkFiber(sem.tryRun(b1.complete(())(_ => p.block)))
@@ -59,7 +59,7 @@ class metersTest extends KyoTest {
   "semaphore" - {
     "ok" in run {
       for {
-        t  <- Meters.makeSemaphore(2)
+        t  <- Meters.semaphore(2)
         v1 <- t.run(2)
         v2 <- t.run(3)
       } yield assert(v1 == 2 && v2 == 3)
@@ -67,7 +67,7 @@ class metersTest extends KyoTest {
 
     "run" in run {
       for {
-        t  <- Meters.makeSemaphore(2)
+        t  <- Meters.semaphore(2)
         p  <- Fibers.promise[Int]
         b1 <- Fibers.promise[Unit]
         f1 <- Fibers.forkFiber(t.run(b1.complete(())(_ => p.block)))
@@ -91,7 +91,7 @@ class metersTest extends KyoTest {
 
     "tryRun" in run {
       for {
-        sem <- Meters.makeSemaphore(2)
+        sem <- Meters.semaphore(2)
         p   <- Fibers.promise[Int]
         b1  <- Fibers.promise[Unit]
         f1  <- Fibers.forkFiber(sem.tryRun(b1.complete(())(_ => p.block)))
@@ -116,15 +116,15 @@ class metersTest extends KyoTest {
   "rate limiter" - {
     "ok" in run {
       for {
-        t  <- Meters.makeRateLimiter(2, 10.millis)
+        t  <- Meters.rateLimiter(2, 10.millis)
         v1 <- t.run(2)
         v2 <- t.run(3)
       } yield assert(v1 == 2 && v2 == 3)
     }
     "one loop" in run {
       for {
-        meter   <- Meters.makeRateLimiter(10, 10.millis)
-        counter <- Atomics.makeInt(0)
+        meter   <- Meters.rateLimiter(10, 10.millis)
+        counter <- Atomics.forInt(0)
         f1      <- Fibers.forkFiber(loop(meter, counter))
         _       <- Fibers.sleep(50.millis)
         _       <- f1.interrupt
@@ -133,8 +133,8 @@ class metersTest extends KyoTest {
     }
     "two loops" in run {
       for {
-        meter   <- Meters.makeRateLimiter(10, 10.millis)
-        counter <- Atomics.makeInt(0)
+        meter   <- Meters.rateLimiter(10, 10.millis)
+        counter <- Atomics.forInt(0)
         f1      <- Fibers.forkFiber(loop(meter, counter))
         f2      <- Fibers.forkFiber(loop(meter, counter))
         _       <- Fibers.sleep(50.millis)
@@ -147,8 +147,8 @@ class metersTest extends KyoTest {
 
   "pipepline" in run {
     for {
-      meter   <- Meters.makePipeline(Meters.makeRateLimiter(2, 1.millis), Meters.makeMutex)
-      counter <- Atomics.makeInt(0)
+      meter   <- Meters.pipeline(Meters.rateLimiter(2, 1.millis), Meters.mutex)
+      counter <- Atomics.forInt(0)
       f1      <- Fibers.forkFiber(loop(meter, counter))
       f2      <- Fibers.forkFiber(loop(meter, counter))
       _       <- Fibers.sleep(50.millis)

@@ -10,7 +10,7 @@ class latchesTest extends KyoTest {
 
   "countDown + await" in run {
     for {
-      latch <- Latches.make(1)
+      latch <- Latches(1)
       _     <- latch.release
       _     <- latch.await
     } yield ()
@@ -18,7 +18,7 @@ class latchesTest extends KyoTest {
 
   "countDown(2) + await" in run {
     for {
-      latch <- Latches.make(2)
+      latch <- Latches(2)
       _     <- latch.release
       _     <- latch.release
       _     <- latch.await
@@ -27,7 +27,7 @@ class latchesTest extends KyoTest {
 
   "countDown + fibers + await" in run {
     for {
-      latch <- Latches.make(1)
+      latch <- Latches(1)
       _     <- Fibers.fork(latch.release)
       _     <- latch.await
     } yield ()
@@ -35,7 +35,7 @@ class latchesTest extends KyoTest {
 
   "countDown(2) + fibers + await" in run {
     for {
-      latch <- Latches.make(2)
+      latch <- Latches(2)
       _     <- Fibers.fork(latch.release, latch.release)
       _     <- latch.await
     } yield ()

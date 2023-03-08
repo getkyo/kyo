@@ -102,14 +102,14 @@ class fibersTest extends KyoTest {
     def runLoop[T](started: Latch, done: Latch) =
       Resources.run {
         Resources.ensure(done.release) { _ =>
-          started.release(_ => Atomics.makeInt(0)(loop))
+          started.release(_ => Atomics.forInt(0)(loop))
         }
       }
 
     "one fiber" in run {
       for {
-        started     <- Latches.make(1)
-        done        <- Latches.make(1)
+        started     <- Latches(1)
+        done        <- Latches(1)
         fiber       <- Fibers.forkFiber(runLoop(started, done))
         _           <- started.await
         interrupted <- fiber.interrupt
@@ -119,8 +119,8 @@ class fibersTest extends KyoTest {
     }
     "multiple fibers" in run {
       for {
-        started      <- Latches.make(1)
-        done         <- Latches.make(1)
+        started      <- Latches(1)
+        done         <- Latches(1)
         fiber1       <- Fibers.forkFiber(runLoop(started, done))
         fiber2       <- Fibers.forkFiber(runLoop(started, done))
         fiber3       <- Fibers.forkFiber(runLoop(started, done))
@@ -265,12 +265,12 @@ class fibersTest extends KyoTest {
       def task(l: Latch): Unit > IOs =
         Resources.run {
           Resources.ensure(l.release) { _ =>
-            Atomics.makeInt(0)(loop)
+            Atomics.forInt(0)(loop)
           }
         }
 
       for {
-        l           <- Latches.make(1)
+        l           <- Latches(1)
         fiber       <- Fibers.run(IOs.lazyRun(Fibers.fork(task(l))))
         _           <- Fibers.sleep(10.millis)
         interrupted <- fiber.interrupt
@@ -334,7 +334,7 @@ class fibersTest extends KyoTest {
   }
 
   "locals" - {
-    val l = Locals.make(10)
+    val l = Locals(10)
     "fork" - {
       "default" in run {
         Fibers.fork(l.get)(v => assert(v == 10))

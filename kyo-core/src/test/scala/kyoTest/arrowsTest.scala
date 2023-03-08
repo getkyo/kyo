@@ -30,7 +30,7 @@ class arrowsTest extends KyoTest {
         )
       }
       "locals" in {
-        val l     = Locals.make(10)
+        val l     = Locals(10)
         val arrow = Arrows[Int, Nothing, Int, IOs](_(v1 => l.get(v2 => v1 + v2)))
         checkEquals[Int, Nothing](
             IOs.run[Int](arrow(20)),
@@ -58,7 +58,7 @@ class arrowsTest extends KyoTest {
         )
       }
       "locals" in {
-        val l     = Locals.make(10)
+        val l     = Locals(10)
         val arrow = Arrows[Int, Options, Int, (Options | IOs)](_(v1 => l.get(v2 => v1 + v2)))
         checkEquals[Option[Int], Nothing](
             IOs.run[Option[Int]](arrow(Option(20) > Options) < Options),
@@ -121,7 +121,7 @@ class arrowsTest extends KyoTest {
       )
     }
     "locals" in {
-      val l = Locals.make(10)
+      val l = Locals(10)
       val a =
         Arrows.recursive[Int, Nothing, Int, IOs] { (i, self) =>
           i {

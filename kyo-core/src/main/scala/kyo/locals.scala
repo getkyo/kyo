@@ -47,7 +47,7 @@ object locals {
       def empty: State = Map.empty
     }
     /*inline(3)*/
-    def make[T](defaultValue: T)(using /*inline(3)*/ fr: Frame["Locals.make"]): Local[T] =
+    def apply[T](defaultValue: T)(using /*inline(3)*/ fr: Frame["Locals.apply"]): Local[T] =
       new Local[T] {
         def default           = defaultValue
         override def toString = s"Local($fr)"

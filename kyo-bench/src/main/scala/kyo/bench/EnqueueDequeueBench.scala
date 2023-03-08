@@ -39,7 +39,7 @@ class EnqueueDequeueBench extends Bench[Unit] {
       else
         c.put(())(_ => c.take(_ => loop(c, i + 1)))
 
-    Channels.makeBlocking[Unit](1, Access.Spsc)(loop(_, 0))
+    Channels.blocking[Unit](1, Access.Spsc)(loop(_, 0))
   }
 
   def zioBench(): UIO[Unit] = {

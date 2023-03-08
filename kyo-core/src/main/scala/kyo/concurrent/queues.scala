@@ -64,7 +64,7 @@ object queues {
         def peek(): Option[Any]    = None
       }
 
-    def makeBounded[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
+    def bounded[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
       IOs {
         capacity match {
           case 0 =>
@@ -96,7 +96,7 @@ object queues {
         }
       }
 
-    def makeUnbounded[T](access: Access = Access.Mpmc, chunkSize: Int = 8): Unbounded[T] > IOs =
+    def unbounded[T](access: Access = Access.Mpmc, chunkSize: Int = 8): Unbounded[T] > IOs =
       IOs {
         access match {
           case Access.Mpmc =>

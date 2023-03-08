@@ -14,7 +14,7 @@ object latches {
   }
 
   object Latches {
-    def make(n: Int): Latch > IOs =
+    def apply(n: Int): Latch > IOs =
       if (n <= 0) {
         new Latch {
           def await: Unit > Fibers = ()
