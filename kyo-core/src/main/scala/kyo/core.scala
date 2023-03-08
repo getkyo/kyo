@@ -7,6 +7,7 @@ import scala.runtime.AbstractFunction0
 import frames._
 import locals._
 import scala.util.NotGiven
+import kyo.locals.Locals.State
 
 object core {
 
@@ -22,14 +23,16 @@ object core {
     def apply[T, U, S](m: M[T], f: T => U > (S | E)): U > (S | E)
   }
 
-  private[kyo] abstract class DeepHandler[M[_], E <: Effect[M]] {
-    def pure[T](v: T): M[T]
-    def map[T, U](m: M[T], f: T => U): M[U] = flatMap(m, v => pure(f(v)))
-    def flatten[T](v: M[M[T]]): M[T]        = flatMap(v, identity[M[T]])
-    def flatMap[T, U](m: M[T], f: T => M[U]): M[U]
+  private[kyo] abstract class Injection[M1[_], E1 <: Effect[M1], M2[_], E2 <: Effect[M2], S] {
+    def apply[T](m: M1[T]): M2[T] > S
   }
 
-  trait Safepoint[E <: Effect[_]] { self =>
+  private[kyo] abstract class DeepHandler[M[_], E <: Effect[M]] {
+    def pure[T](v: T): M[T]
+    def apply[T, U](m: M[T], f: T => M[U]): M[U]
+  }
+
+  trait Safepoint[E <: Effect[_]] {
     def apply(): Boolean
     def apply[T, S](v: => T > (S | E)): T > (S | E)
   }
@@ -50,18 +53,15 @@ object core {
     def effect: E
     def frame: Frame[String]
     def apply(v: T, s: Safepoint[E], l: Locals.State): U > S
-    def isRoot = false
   }
 
   private[kyo] class KyoRoot[M[_], E <: Effect[M], T, S](fr: Frame[String], v: M[T], e: E)
       extends Kyo[M, E, T, T, S] {
     def frame  = fr
-    def value  = v.asInstanceOf[M[T]]
+    def value  = v
     def effect = e
-
-    override def isRoot = true
-
-    def apply(v: T, s: Safepoint[E], l: Locals.State): T > S = v
+    def apply(v: T, s: Safepoint[E], l: Locals.State) =
+      v
   }
 
   private[kyo] abstract class KyoCont[M[_], E <: Effect[M], T, U, S](prev: Kyo[M, E, T, _, _])
@@ -70,8 +70,8 @@ object core {
     val effect: E   = prev.effect
   }
 
-  private type M2[_]
-  private type E2 <: Effect[M2]
+  private type MX[_]
+  private type EX <: Effect[MX]
 
   extension [M[_], T, S](v: M[T] > S) {
     @targetName("suspend")
@@ -79,10 +79,10 @@ object core {
     def >[E <: Effect[M]]( /*inline(3)*/ e: E)(using /*inline(3)*/ fr: Frame[">"]): T > (S | E) =
       def suspendLoop(v: M[T] > S): T > (S | E) =
         v match
-          case kyo: Kyo[M2, E2, Any, M[T], S] @unchecked =>
-            new KyoCont[M2, E2, Any, T, S | E](kyo) {
+          case kyo: Kyo[MX, EX, Any, M[T], S] @unchecked =>
+            new KyoCont[MX, EX, Any, T, S | E](kyo) {
               def frame = fr
-              def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
+              def apply(v: Any, s: Safepoint[EX], l: Locals.State) =
                 suspendLoop(kyo(v, s, l))
             }
           case _ =>
@@ -91,23 +91,11 @@ object core {
   }
 
   extension [T, S, S2](v: T > S > S2) {
-    @targetName("flatten")
-    def apply()(using Frame["apply"]): T > (S | S2) =
+    def flatten(using Frame["apply"]): T > (S | S2) =
       v(identity[T > S])
   }
 
-  extension [M[_], T, S](v: M[T > S]) {
-    @targetName("nestedEffect")
-    def >>[E <: Effect[M]](e: E)(using fr: Frame[">>"]): T > (S | E) =
-      new Kyo[M, E, T > S, T, S | E] {
-        def frame  = fr
-        def value  = v
-        def effect = e
-        def apply(v: T > S, s: Safepoint[E], l: Locals.State): T > (S | E) =
-          v
-      }
-  }
-
+  /*inline(3)*/
   def collect[T, S](v: List[T > S]): List[T] > S =
     def loop(v: List[T > S], acc: List[T]): List[T] > S =
       v match
@@ -149,10 +137,10 @@ object core {
     ): U > (S | S2) =
       def transformLoop(v: T > S): U > (S | S2) =
         v match {
-          case kyo: Kyo[M2, E2, Any, T, S] @unchecked =>
-            new KyoCont[M2, E2, Any, U, S | S2](kyo) {
+          case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>
+            new KyoCont[MX, EX, Any, U, S | S2](kyo) {
               def frame = fr
-              def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
+              def apply(v: Any, s: Safepoint[EX], l: Locals.State) =
                 val n = kyo(v, s, l)
                 if (s()) {
                   s(transformLoop(n)).asInstanceOf[U > (S | S2)]
@@ -164,6 +152,38 @@ object core {
             f(v.asInstanceOf[T])
         }
       transformLoop(v)
+
+    @targetName("inject")
+    /*inline(3)*/
+    private[kyo] def >>[M1[_], M2[_], E1 <: Effect[M1], E2 <: Effect[M2], S2, S3](tup: (E1, E2))(
+        using
+        /*inline(3)*/ i: Injection[M1, E1, M2, E2, S3],
+        /*inline(3)*/ fr: Frame["<<"]
+    )(using
+        S => (S2 | E1 | E2)
+    ): T > (S2 | S3 | E2) =
+      def injectLoop(v: T > (S | E1 | E2)): T > (S2 | S3 | E2) =
+        v match {
+          case kyo: Kyo[M1, E1, Any, T, S | E1 | E2] @unchecked if tup._1.accepts(kyo.effect) =>
+            i(kyo.value) { v =>
+              new Kyo[M2, E2, Any, T, S2 | S3 | E2] {
+                def value: M2[Any]       = v
+                def effect: E2           = tup._2
+                def frame: Frame[String] = fr
+                def apply(v: Any, s: Safepoint[E2], l: State) =
+                  injectLoop(kyo(v, Safepoint.noop, l))
+              }
+            }
+          case kyo: Kyo[MX, EX, Any, T, S | E1 | E2] @unchecked =>
+            new KyoCont[MX, EX, Any, T, S2 | S3 | E2](kyo) {
+              def frame = fr
+              def apply(v: Any, s: Safepoint[EX], l: Locals.State) =
+                injectLoop(kyo(v, s, l))
+            }
+          case _ =>
+            v.asInstanceOf[T > (S2 | S3 | E2)]
+        }
+      injectLoop(v)
 
     @targetName("shallowHandle")
     /*inline(3)*/
@@ -179,18 +199,18 @@ object core {
       ): M[T] > S2 =
         v match {
           case kyo: Kyo[M, E, Any, T, S2 | E] @unchecked if (e.accepts(kyo.effect)) =>
-            if (kyo.isRoot) {
+            if (kyo.isInstanceOf[KyoRoot[_, _, _, _]]) {
               kyo.value.asInstanceOf[M[T] > S2]
             } else {
               shallowHandleLoop(h(kyo.value, kyo(_, s, Locals.State.empty)))
             }
-          case kyo: Kyo[M2, E2, Any, T, S2 | E] @unchecked =>
+          case kyo: Kyo[MX, EX, Any, T, S2 | E] @unchecked =>
             val e = kyo.effect
-            new Kyo[M2, E2, Any, M[T], S2] {
+            new Kyo[MX, EX, Any, M[T], S2] {
               def frame  = fr
               def value  = kyo.value
               def effect = e
-              def apply(v: Any, s2: Safepoint[E2], l: Locals.State): M[T] > S2 =
+              def apply(v: Any, s2: Safepoint[EX], l: Locals.State): M[T] > S2 =
                 shallowHandleLoop {
                   try kyo(v, s2, l)
                   catch {
@@ -222,16 +242,16 @@ object core {
         def deepHandleLoop(v: T > E): M[T] =
           v match {
             case kyo: Kyo[M, E, Any, T, E] @unchecked =>
-              h.flatMap(kyo.value, (v) => deepHandleLoop(kyo(v, s, Locals.State.empty)))
+              h.apply(kyo.value, (v) => deepHandleLoop(kyo(v, s, Locals.State.empty)))
             case _ =>
               h.pure(v.asInstanceOf[T])
           }
         deepHandleLoop(v)
   }
 
-  private final val _identity: Any => Any = v => v
+  private val _identity: Any => Any = v => v
 
-  private final def identity[T] =
+  private def identity[T] =
     _identity.asInstanceOf[T => T]
 
   abstract class InlineConversion[T, U] extends Conversion[T, U] {

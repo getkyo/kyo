@@ -57,6 +57,13 @@ object fibers {
         fiber.asInstanceOf[T > Fibers]
       }
 
+    def onComplete(f: T > IOs => Unit): Unit > IOs =
+      if (fiber.isInstanceOf[IOPromise[_]]) {
+        IOs(fiber.asInstanceOf[IOPromise[T]].onComplete(f))
+      } else {
+        f(fiber.asInstanceOf[T])
+      }
+
     /*inline(2)*/
     def joinTry: Try[T] > (Fibers | IOs) =
       if (fiber.isInstanceOf[IOPromise[_]]) {
@@ -139,7 +146,7 @@ object fibers {
 
     /*inline(2)*/
     def forkFiber[T](v: => T > (IOs | Fibers)): Fiber[T] > IOs =
-      Locals.save(st => IOTask(IOs(Locals.restore(st)(v))))
+      Locals.save(st => IOTask(IOs(v), st))
 
     /*inline(2)*/
     def fork[T](v: => T > (IOs | Fibers)): T > (IOs | Fibers) =
@@ -203,7 +210,7 @@ object fibers {
       Locals.save { st =>
         val p = IOPromise[T]
         foreach(l) { io =>
-          val f = IOTask(IOs(Locals.restore(st)(io)))
+          val f = IOTask(IOs(io), st)
           p.interrupts(f)
           f.onComplete(p.complete(_))
         }
@@ -253,7 +260,7 @@ object fibers {
                 p.complete(IOs[Unit, Nothing](throw ex))
             }
         foreach(l) { io =>
-          val fiber = IOTask(IOs(Locals.restore(st)(io)))
+          val fiber = IOTask(IOs(io), st)
           p.interrupts(fiber)
           fiber.onComplete(f)
           i += 1
@@ -272,7 +279,7 @@ object fibers {
         val pending = AtomicInteger(size)
         var i       = 0
         foreach(l) { io =>
-          val fiber = IOTask(IOs(Locals.restore(st)(io)))
+          val fiber = IOTask(IOs(io), st)
           p.interrupts(fiber)
           val j = i
           fiber.onComplete { r =>
@@ -299,7 +306,7 @@ object fibers {
         if (d.isFinite) {
           val run: Unit > IOs =
             IOs {
-              IOTask(IOs(p.complete(())))
+              IOTask(IOs(p.complete(())), Locals.State.empty)
               ()
             }
           Timers.schedule(d)(run) { t =>
@@ -316,7 +323,7 @@ object fibers {
       forkFiber(v) { f =>
         val timeout: Unit > IOs =
           IOs {
-            IOTask(IOs(f.interrupt))
+            IOTask(IOs(f.interrupt), Locals.State.empty)
             ()
           }
         Timers.schedule(d)(timeout) { t =>
@@ -361,7 +368,7 @@ object fibers {
   given DeepHandler[Fiber, Fibers] =
     new DeepHandler[Fiber, Fibers] {
       def pure[T](v: T) = v
-      def flatMap[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
+      def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
         m.transform(f)
     }
 }

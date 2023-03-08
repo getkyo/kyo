@@ -14,15 +14,17 @@ private[kyo] object IOTask {
   /*inline(2)*/
   def apply[T](
       /*inline(2)*/ v: T > (IOs | Fibers),
+      st: Locals.State,
       ensures: Set[() => Unit] = Set.empty
   ): IOTask[T] =
-    val f = new IOTask[T](v, ensures)
+    val f = new IOTask[T](v, st, ensures)
     Scheduler.schedule(f)
     f
 }
 
 private[kyo] final class IOTask[T](
     val init: T > (IOs | Fibers),
+    st: Locals.State,
     private var ensures: Set[() => Unit] = Set.empty
 ) extends IOPromise[T]
     with Comparable[IOTask[_]]
@@ -58,13 +60,13 @@ private[kyo] final class IOTask[T](
     } else {
       curr match {
         case kyo: Kyo[IO, IOs, Unit, T, IOs | Fibers] @unchecked if (kyo.effect eq IOs) =>
-          eval(kyo((), this, Locals.State.empty))
+          eval(kyo((), this, st))
         case kyo: Kyo[IOPromise, Fibers, Any, T, IOs | Fibers] @unchecked
             if (kyo.effect eq Fibers) =>
           this.interrupts(kyo.value)
           kyo.value.onComplete { (v: Any > IOs) =>
-            val io = v(kyo(_, this.asInstanceOf[Safepoint[Fibers]], Locals.State.empty))
-            this.become(IOTask(io, ensures))
+            val io = v(kyo(_, this.asInstanceOf[Safepoint[Fibers]], st))
+            this.become(IOTask(io, st, ensures))
           }
           nullIO
         case _ =>
