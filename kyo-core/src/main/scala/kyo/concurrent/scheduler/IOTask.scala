@@ -15,9 +15,10 @@ private[kyo] object IOTask {
   def apply[T](
       /*inline(2)*/ v: T > (IOs | Fibers),
       st: Locals.State,
-      ensures: Set[() => Unit] = Set.empty
+      ensures: Set[() => Unit] = Set.empty,
+      runtime: Long = 0L
   ): IOTask[T] =
-    val f = new IOTask[T](v, st, ensures)
+    val f = new IOTask[T](v, st, ensures, runtime)
     Scheduler.schedule(f)
     f
 }
@@ -25,7 +26,8 @@ private[kyo] object IOTask {
 private[kyo] final class IOTask[T](
     val init: T > (IOs | Fibers),
     st: Locals.State,
-    private var ensures: Set[() => Unit] = Set.empty
+    private var ensures: Set[() => Unit],
+    private var runtime: Long
 ) extends IOPromise[T]
     with Comparable[IOTask[_]]
     with Preempt {
@@ -34,7 +36,6 @@ private[kyo] final class IOTask[T](
   val creationTs = Coordinator.tick()
 
   private var curr: T > (IOs | Fibers) = init
-  private var runtime                  = 0L
   @volatile private var preempting     = false
 
   def preempt() =
@@ -48,7 +49,7 @@ private[kyo] final class IOTask[T](
   def apply(): Boolean =
     preempting
 
-  @tailrec private def eval(curr: T > (IOs | Fibers)): T > (IOs | Fibers) =
+  @tailrec private def eval(start: Long, curr: T > (IOs | Fibers)): T > (IOs | Fibers) =
     def finalize() = ensures.foreach(_())
     if (preempting) {
       if (isDone()) {
@@ -60,13 +61,14 @@ private[kyo] final class IOTask[T](
     } else {
       curr match {
         case kyo: Kyo[IO, IOs, Unit, T, IOs | Fibers] @unchecked if (kyo.effect eq IOs) =>
-          eval(kyo((), this, st))
+          eval(start, kyo((), this, st))
         case kyo: Kyo[IOPromise, Fibers, Any, T, IOs | Fibers] @unchecked
             if (kyo.effect eq Fibers) =>
           this.interrupts(kyo.value)
+          runtime += Coordinator.tick() - start
           kyo.value.onComplete { (v: Any > IOs) =>
             val io = v(kyo(_, this.asInstanceOf[Safepoint[Fibers]], st))
-            this.become(IOTask(io, st, ensures))
+            this.become(IOTask(io, st, ensures, runtime))
           }
           nullIO
         case _ =>
@@ -79,14 +81,16 @@ private[kyo] final class IOTask[T](
   def run(): Unit = {
     val start = Coordinator.tick()
     try {
-      curr = eval(curr)
+      curr = eval(start, curr)
       preempting = false
+      if (curr != nullIO) {
+        runtime += Coordinator.tick() - start
+      }
     } catch {
       case ex if (NonFatal(ex)) =>
         complete(IOs[T, Nothing](throw ex))
         curr = nullIO
     }
-    runtime += Coordinator.tick() - start
   }
 
   def reenqueue(): Boolean =
