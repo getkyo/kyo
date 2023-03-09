@@ -161,7 +161,7 @@ lazy val `kyo-sttp` = project
 lazy val `kyo-bench` = project
   .in(file("kyo-bench"))
   .enablePlugins(JmhPlugin)
-  .dependsOn(`kyo-core-opt3`)
+  .dependsOn(`kyo-core-opt3` % "test->test;compile->compile")
   .settings(
       name := "kyo-bench",
       `kyo-settings`,
