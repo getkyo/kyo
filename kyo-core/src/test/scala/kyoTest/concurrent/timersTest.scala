@@ -21,7 +21,7 @@ class timersTest extends KyoTest {
   "schedule" in run {
     for {
       p     <- Fibers.promise[String]
-      _     <- Timers.schedule(1.second)(p.complete("hello")(require))
+      _     <- Timers.schedule(1.milli)(p.complete("hello")(require))
       hello <- p.join
     } yield assert(hello == "hello")
   }
