@@ -46,7 +46,8 @@ lazy val kyo = (project in file("."))
       `kyo-core-opt3`,
       `kyo-bench`,
       `kyo-zio`,
-      `kyo-direct`
+      `kyo-direct`,
+      `kyo-sttp`
   )
   .settings(
       name := "kyo",
@@ -146,6 +147,15 @@ lazy val `kyo-zio` = project
       name := "kyo-zio",
       `kyo-settings`,
       libraryDependencies += "dev.zio" %% "zio" % zioVersion
+  )
+
+lazy val `kyo-sttp` = project
+  .in(file("kyo-sttp"))
+  .dependsOn(`kyo-core` % "test->test;compile->compile")
+  .settings(
+      name := "kyo-sttp",
+      `kyo-settings`,
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.10"
   )
 
 lazy val `kyo-bench` = project

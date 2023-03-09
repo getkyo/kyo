@@ -36,7 +36,7 @@ object consoles {
     def run[T, S](c: Console)(f: => T > (S | Consoles)): T > S =
       Envs.let(c)(f)
     def run[T, S](f: => T > (S | Consoles))(using c: Console): T > S =
-      Envs.let(c)(f)
+      run(c)(f)
     def readln: String > (Consoles | IOs) =
       Envs[Console](_.readln)
     def print(s: => String): Unit > (Consoles | IOs) =

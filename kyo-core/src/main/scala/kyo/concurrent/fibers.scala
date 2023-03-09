@@ -104,7 +104,7 @@ object fibers {
     private[kyo] def transform[U](t: T => Fiber[U]): Fiber[U] =
       if (fiber.isInstanceOf[IOPromise[_]]) {
         val f = fiber.asInstanceOf[IOPromise[T]]
-        val r = IOPromise[U]
+        val r = IOPromise[U]()
         r.interrupts(f)
         f.onComplete { v =>
           try {
@@ -136,10 +136,10 @@ object fibers {
       v
 
     def promise[T]: Promise[T] > IOs =
-      IOs(IOPromise[T])
+      IOs(IOPromise[T]())
 
     private[kyo] def unsafePromise[T]: Promise[T] =
-      IOPromise[T]
+      IOPromise[T]()
 
     // compiler bug workaround
     private val IOTask = kyo.concurrent.scheduler.IOTask
@@ -335,8 +335,9 @@ object fibers {
     def block[T, S](v: T > (S | Fibers)): T > (S | IOs) =
       given Handler[Fiber, Fibers] =
         new Handler[Fiber, Fibers] {
-          def pure[T](v: T) =
-            v
+          def pure[T](v: T) = v
+          override def handle[T](ex: Throwable): T > Fibers =
+            IOPromise(IOs(throw ex)) > Fibers
           def apply[T, U, S](m: Fiber[T], f: T => U > (S | Fibers)) =
             m match {
               case m: IOPromise[T] @unchecked =>
@@ -349,15 +350,19 @@ object fibers {
 
     def join[T](f: Future[T]): T > (IOs | Fibers) =
       import scala.concurrent.ExecutionContext.Implicits.global
-      IOs {
-        val p = IOPromise[T]
+      Locals.save { st =>
+        val p = IOPromise[T]()
         f.onComplete { r =>
-          try {
-            p.complete(r.get)
-          } catch {
-            case ex if (NonFatal(ex)) =>
-              p.complete(IOs(throw ex))
-          }
+          val io =
+            IOs {
+              r match {
+                case Success(v) =>
+                  p.complete(v)
+                case Failure(ex) =>
+                  p.complete(IOs(throw ex))
+              }
+            }
+          IOTask(io, st)
         }
         p > Fibers
       }

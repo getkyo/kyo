@@ -10,9 +10,13 @@ import scala.annotation.tailrec
 import scala.util.control.NoStackTrace
 
 import IOPromise._
+import scala.util.control.NonFatal
+import kyo.loggers.Loggers
 
-private[kyo] class IOPromise[T]
-    extends AtomicReference[State[T]](Pending()) {
+private[kyo] class IOPromise[T](s: State[T])
+    extends AtomicReference(s) {
+
+  def this() = this(Pending())
 
   /*inline(2)*/
   def isDone(): Boolean =
@@ -94,7 +98,11 @@ private[kyo] class IOPromise[T]
         case l: Linked[T] @unchecked =>
           loop(l.p)
         case v =>
-          f(v.asInstanceOf[T > IOs])
+          try f(v.asInstanceOf[T > IOs])
+          catch {
+            case ex if NonFatal(ex) =>
+              log.error("uncaught exception", ex)
+          }
       }
     loop(this)
 
@@ -143,9 +151,14 @@ private[kyo] class IOPromise[T]
 
 private[kyo] object IOPromise {
 
+  private val log = Loggers(getClass())
+
   type State[T] = (T > IOs) | Pending[T] | Linked[T]
 
-  case class Interrupted(reason: String, frame: Frame[String]) extends NoStackTrace
+  case class Interrupted(reason: String, frame: Frame[String])
+      extends RuntimeException(s"reason=$reason, frame=$frame")
+      with NoStackTrace
+
   case class Linked[T](p: IOPromise[T])
 
   abstract class Pending[T] { self =>
@@ -155,7 +168,11 @@ private[kyo] object IOPromise {
     inline def add(inline f: T > IOs => Unit): Pending[T] =
       new Pending[T] {
         def run(v: T > IOs) = {
-          f(v)
+          try f(v)
+          catch {
+            case ex if NonFatal(ex) =>
+              IOs.run(log.error("uncaught exception", ex))
+          }
           self
         }
       }
