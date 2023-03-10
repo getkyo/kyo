@@ -1,15 +1,10 @@
 package kyo.concurrent
 
-import java.util.concurrent.atomic.AtomicReference
-
 import kyo.core._
 import kyo.ios._
-import scala.annotation.tailrec
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.{LongAdder => JLongAdder}
+
 import java.util.concurrent.atomic.{DoubleAdder => JDoubleAdder}
+import java.util.concurrent.atomic.{LongAdder => JLongAdder}
 
 object adders {
 

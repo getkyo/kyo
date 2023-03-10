@@ -1,8 +1,8 @@
 package kyoTest
 
 import kyo.core._
-import kyo.locals._
 import kyo.ios._
+import kyo.locals._
 import kyo.options._
 
 class localsTest extends KyoTest {

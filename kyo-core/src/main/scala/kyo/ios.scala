@@ -1,21 +1,22 @@
 package kyo
 
+import kyo.loggers.Loggers
+
+import java.io.Closeable
 import java.util.concurrent.ThreadLocalRandom
+import scala.Conversion
 import scala.annotation.tailrec
 import scala.concurrent.duration.Duration
+import scala.runtime.AbstractFunction0
 import scala.util.NotGiven
+import scala.util.Try
+import scala.util.control.NonFatal
 
 import core._
 import tries._
 import options._
 import frames._
 import locals._
-import scala.runtime.AbstractFunction0
-import scala.util.control.NonFatal
-import scala.Conversion
-import java.io.Closeable
-import scala.util.Try
-import kyo.loggers.Loggers
 
 object ios {
 

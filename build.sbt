@@ -32,10 +32,10 @@ lazy val `kyo-settings` = Seq(
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
 )
 
-lazy val genOpt = TaskKey[Unit]("genOpt", "")
+lazy val gen = TaskKey[Unit]("gen", "")
 
-lazy val genOptState: State => State = { s: State =>
-  "genOpt" :: s
+lazy val genState: State => State = { s: State =>
+  "gen" :: s
 }
 
 lazy val kyo = (project in file("."))
@@ -53,14 +53,14 @@ lazy val kyo = (project in file("."))
       name := "kyo",
       `kyo-settings`,
       publishArtifact := false,
-      genOpt := {
-        genOpt(1)
-        genOpt(2)
-        genOpt(3)
+      gen := {
+        gen(1)
+        gen(2)
+        gen(3)
       },
       Global / onLoad := {
         val old = (Global / onLoad).value
-        genOptState compose old
+        genState compose old
       }
   )
 
@@ -82,7 +82,7 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     )
 )
 
-def genOpt(i: Int) = {
+def gen(i: Int) = {
   val origin = new File("kyo-core/src/")
   val dest   = new File(s"kyo-core-opt$i/src/")
   IO.copyDirectory(origin, dest)

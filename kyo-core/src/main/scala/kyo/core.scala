@@ -1,13 +1,15 @@
 package kyo
 
+import kyo.locals.Locals.State
+
 import scala.annotation.targetName
-import scala.runtime.AbstractFunction1
-import scala.util.control.NonFatal
 import scala.runtime.AbstractFunction0
+import scala.runtime.AbstractFunction1
+import scala.util.NotGiven
+import scala.util.control.NonFatal
+
 import frames._
 import locals._
-import scala.util.NotGiven
-import kyo.locals.Locals.State
 
 object core {
 

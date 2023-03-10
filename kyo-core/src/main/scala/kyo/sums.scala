@@ -1,12 +1,14 @@
 package kyo
 
 import izumi.reflect._
+
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
+
 import core._
 import tries._
 import ios._
-import scala.util.Try
-import scala.util.Success
-import scala.util.Failure
 
 object sums {
 

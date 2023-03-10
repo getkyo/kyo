@@ -1,13 +1,14 @@
 package kyo
 
+import java.io.Closeable
+import scala.util.Try
+import scala.util.control.NonFatal
+
 import core._
 import ios._
 import frames._
 import envs._
 import sums._
-import java.io.Closeable
-import scala.util.control.NonFatal
-import scala.util.Try
 
 object resources {
 

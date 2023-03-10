@@ -1,5 +1,9 @@
 package kyo
 
+import kyo.randoms.Randoms
+
+import scala.concurrent.duration.Duration
+
 import core._
 import ios._
 import clocks._
@@ -9,8 +13,6 @@ import tries._
 import aborts._
 import concurrent.fibers._
 import concurrent.timers._
-import kyo.randoms.Randoms
-import scala.concurrent.duration.Duration
 
 trait KyoApp {
 

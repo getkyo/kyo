@@ -4,12 +4,12 @@ import izumi.reflect._
 
 import scala.annotation.targetName
 import scala.reflect.ClassTag
+import scala.util.Failure
 import scala.util.NotGiven
+import scala.util.Success
 
 import core._
 import tries._
-import scala.util.Success
-import scala.util.Failure
 
 object aborts {
 

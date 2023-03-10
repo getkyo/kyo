@@ -1,10 +1,10 @@
 package kyoTest
 
+import kyo.concurrent.fibers._
 import kyo.core._
 import kyo.ios._
-import kyo.concurrent.fibers._
-import kyoTest.KyoTest
 import kyo.requests._
+import kyoTest.KyoTest
 import sttp.client3._
 import sttp.model.StatusCode
 

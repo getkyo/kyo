@@ -1,17 +1,16 @@
 package kyo.concurrent.scheduler
 
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Executors
-import scala.annotation.tailrec
-import java.util.concurrent.locks.LockSupport
-import java.util.concurrent.atomic.AtomicReference
-
+import kyo.concurrent.scheduler.IOTask
 import kyo.core._
 import kyo.ios._
-import java.util.concurrent.atomic.LongAdder
 
-import kyo.concurrent.scheduler.IOTask
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.LongAdder
+import java.util.concurrent.locks.LockSupport
+import scala.annotation.tailrec
 
 private[kyo] object Scheduler {
 

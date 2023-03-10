@@ -1,10 +1,10 @@
 package kyo.concurrent.scheduler
 
+import kyo.concurrent.fibers._
 import kyo.core._
 import kyo.ios._
 import kyo.locals._
 import kyo.resources._
-import kyo.concurrent.fibers._
 
 import scala.annotation.tailrec
 import scala.util.control.NonFatal

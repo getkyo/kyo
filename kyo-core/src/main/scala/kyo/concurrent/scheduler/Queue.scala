@@ -1,12 +1,12 @@
 package kyo.concurrent.scheduler
 
 import java.util.concurrent.Semaphore
-import java.util.concurrent.locks.ReentrantLock
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicBoolean
-import scala.annotation.tailrec
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.ReentrantLock
+import scala.annotation.tailrec
 import scala.collection.mutable.PriorityQueue
 
 private final class Queue[T <: Comparable[T]] extends AtomicBoolean {

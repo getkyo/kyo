@@ -7,10 +7,10 @@ import kyo.concurrent.latches._
 import kyo.concurrent.timers._
 import kyo.core._
 import kyo.ios._
+import kyo.locals._
 import kyo.resources
 import kyo.resources._
 import kyo.tries._
-import kyo.locals._
 import kyoTest.KyoTest
 
 import java.io.Closeable

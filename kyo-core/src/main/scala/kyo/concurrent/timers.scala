@@ -1,14 +1,16 @@
 package kyo.concurrent
 
-import java.util.concurrent.ScheduledExecutorService
-import scala.concurrent.duration.Duration
-import java.util.concurrent.TimeUnit
 import kyo.core._
-import kyo.ios._
 import kyo.envs._
-import java.util.concurrent.ScheduledFuture
+import kyo.ios._
+
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import scala.concurrent.duration.Duration
+
 import scheduler.ThreadFactory
 
 object timers {

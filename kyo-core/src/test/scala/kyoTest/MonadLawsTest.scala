@@ -1,8 +1,8 @@
 package kyo
 
+import kyo.concurrent.fibers._
 import kyo.core._
 import kyo.ios._
-import kyo.concurrent.fibers._
 import zio.Trace
 import zio.prelude._
 import zio.prelude.coherent.CovariantDeriveEqual

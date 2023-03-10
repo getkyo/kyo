@@ -1,9 +1,12 @@
 package kyo
 
 import kyo.core._
-import kyo.ios._
 import kyo.envs._
-import java.time.{Clock => JClock, Instant, ZoneId}
+import kyo.ios._
+
+import java.time.Instant
+import java.time.ZoneId
+import java.time.{Clock => JClock}
 
 object clocks {
   trait Clock {

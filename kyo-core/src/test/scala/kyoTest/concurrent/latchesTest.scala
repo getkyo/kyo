@@ -1,10 +1,10 @@
 package kyoTest.concurrent
 
-import kyoTest.KyoTest
-import kyo.concurrent.latches._
 import kyo.concurrent.fibers._
+import kyo.concurrent.latches._
 import kyo.core._
 import kyo.ios._
+import kyoTest.KyoTest
 
 class latchesTest extends KyoTest {
 

@@ -1,13 +1,13 @@
 package kyoTest
 
+import kyo._
+import kyo.envs._
+import kyo.ios._
+import kyo.loggers._
+
 class loggersTest extends KyoTest {
 
   "log" in {
-    import kyo._
-    import kyo.loggers._
-    import kyo.ios._
-    import kyo.envs._
-
     val logger = Loggers("test")
     val io = for {
       _ <- logger.debug("debug")

@@ -1,14 +1,14 @@
 package kyoTest.concurrent
 
+import kyo.concurrent.atomics._
+import kyo.concurrent.fibers._
+import kyo.concurrent.timers._
 import kyo.core._
 import kyo.ios._
-import kyo.concurrent.timers._
-import kyo.concurrent.fibers._
-import scala.concurrent.duration._
-
 import kyoTest.KyoTest
-import kyo.concurrent.atomics._
 import org.scalatest.compatible.Assertion
+
+import scala.concurrent.duration._
 
 class timersTest extends KyoTest {
 

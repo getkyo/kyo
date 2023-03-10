@@ -1,5 +1,14 @@
 package kyo
 
+import kyo.randoms.Randoms
+import kyo.zios.ZIOs
+import zio.Task
+import zio.ZIO
+
+import java.util.concurrent.TimeoutException
+import scala.concurrent.duration.Duration
+import scala.util.control.NonFatal
+
 import core._
 import ios._
 import clocks._
@@ -9,13 +18,6 @@ import tries._
 import aborts._
 import concurrent.fibers._
 import concurrent.timers._
-import kyo.randoms.Randoms
-import scala.concurrent.duration.Duration
-import kyo.zios.ZIOs
-import zio.Task
-import zio.ZIO
-import scala.util.control.NonFatal
-import java.util.concurrent.TimeoutException
 
 trait KyoZioApp {
 

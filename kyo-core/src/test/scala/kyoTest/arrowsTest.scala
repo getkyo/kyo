@@ -2,10 +2,10 @@ package kyoTest
 
 import kyo.arrows._
 import kyo.core._
-import kyo.options._
-import kyo.options._
-import kyo.locals.Locals
 import kyo.ios.IOs
+import kyo.locals.Locals
+import kyo.options._
+import kyo.options._
 
 class arrowsTest extends KyoTest {
 

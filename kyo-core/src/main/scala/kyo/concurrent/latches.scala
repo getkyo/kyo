@@ -2,9 +2,11 @@ package kyo.concurrent
 
 import kyo.core._
 import kyo.ios._
+
+import java.util.concurrent.atomic.AtomicInteger
+
 import fibers._
 import atomics._
-import java.util.concurrent.atomic.AtomicInteger
 
 object latches {
 

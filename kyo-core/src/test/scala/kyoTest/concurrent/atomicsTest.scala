@@ -1,8 +1,7 @@
 package kyoTest.concurrent
 
-import kyo.core._
 import kyo.concurrent.atomics._
-
+import kyo.core._
 import kyoTest.KyoTest
 
 class atomicsTest extends KyoTest {

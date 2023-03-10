@@ -1,8 +1,8 @@
 package kyoTest
 
-import kyo.randoms._
 import kyo.core._
 import kyo.ios._
+import kyo.randoms._
 
 class randomsTest extends KyoTest {
 

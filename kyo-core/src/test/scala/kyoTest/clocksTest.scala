@@ -1,9 +1,10 @@
 package kyoTest
 
+import kyo.clocks._
 import kyo.core._
 import kyo.envs._
 import kyo.ios._
-import kyo.clocks._
+
 import java.time.Instant
 import java.time.ZoneId
 

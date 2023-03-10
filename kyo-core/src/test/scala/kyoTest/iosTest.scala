@@ -1,15 +1,15 @@
 package kyoTest
 
+import kyo.concurrent.atomics.AtomicInt
 import kyo.core._
 import kyo.ios._
 import kyo.options._
 import kyo.tries._
 
-import scala.concurrent.duration._
-import scala.util.Try
-import kyo.concurrent.atomics.AtomicInt
 import java.io.Closeable
+import scala.concurrent.duration._
 import scala.util.Success
+import scala.util.Try
 
 class iosTest extends KyoTest {
 

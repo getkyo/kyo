@@ -4,6 +4,7 @@ import kyo.core._
 import kyo.ios._
 import kyo.options._
 import org.jctools.queues._
+
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicReference
 

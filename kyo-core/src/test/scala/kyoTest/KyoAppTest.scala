@@ -1,13 +1,14 @@
 package kyoTest
 
+import kyo.clocks._
+import kyo.concurrent.fibers._
+import kyo.concurrent.timers._
+import kyo.consoles._
 import kyo.core._
 import kyo.ios._
-import kyo.concurrent.timers._
 import kyo.randoms._
-import kyo.consoles._
-import kyo.clocks._
 import kyo.resources._
-import kyo.concurrent.fibers._
+
 import scala.concurrent.duration._
 
 class KyoAppTest extends KyoTest {

@@ -3,15 +3,15 @@ package kyo.concurrent.scheduler
 import kyo.core._
 import kyo.frames._
 import kyo.ios._
+import kyo.loggers.Loggers
 
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import scala.util.control.NoStackTrace
+import scala.util.control.NonFatal
 
 import IOPromise._
-import scala.util.control.NonFatal
-import kyo.loggers.Loggers
 
 private[kyo] class IOPromise[T](s: State[T])
     extends AtomicReference(s) {

@@ -1,7 +1,7 @@
 package kyo.concurrent.scheduler
 
-import kyo.ios.Preempt
 import kyo.concurrent.scheduler.IOTask
+import kyo.ios.Preempt
 
 import java.util.Comparator
 import java.util.PriorityQueue

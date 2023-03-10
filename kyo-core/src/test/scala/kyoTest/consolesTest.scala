@@ -1,9 +1,9 @@
 package kyoTest
 
+import kyo.consoles._
 import kyo.core._
 import kyo.envs._
 import kyo.ios._
-import kyo.consoles._
 
 class consolesTest extends KyoTest {
 

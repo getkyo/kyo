@@ -1,8 +1,9 @@
 package kyo
 
 import kyo.core._
-import kyo.sums._
 import kyo.ios._
+import kyo.sums._
+
 import scala.util.Success
 import scala.util.Try
 

@@ -1,9 +1,9 @@
 package kyo.concurrent.scheduler
 
 import java.util.concurrent.Executors
-import scala.util.control.NonFatal.apply
-import scala.util.control.NonFatal
 import scala.util.Random
+import scala.util.control.NonFatal
+import scala.util.control.NonFatal.apply
 
 private object Coordinator {
 

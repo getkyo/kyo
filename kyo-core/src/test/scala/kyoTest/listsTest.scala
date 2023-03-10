@@ -1,9 +1,9 @@
 package kyoTest
 
-import kyo.core._
-import kyo.lists._
 import kyo.concurrent.fibers._
+import kyo.core._
 import kyo.ios.IOs
+import kyo.lists._
 
 class choicesTest extends KyoTest {
 
