@@ -13,7 +13,7 @@ import scala.util.Try
 
 class abortsTest extends KyoTest {
 
-  class Ex1 extends Exception
+  class Ex1 extends RuntimeException
   class Ex2
 
   val ex1 = new Ex1
@@ -456,6 +456,12 @@ class abortsTest extends KyoTest {
         "failure" in {
           checkEquals[Abort[Ex1, Int], Nothing](
               Aborts[Ex1].run(Aborts[Ex1].catching(test(0))),
+              Abort.failure(ex1)
+          )
+        }
+        "subclass" in {
+          checkEquals[Abort[Ex1, Int], Nothing](
+              Aborts[RuntimeException].run(Aborts[RuntimeException].catching(test(0))),
               Abort.failure(ex1)
           )
         }

@@ -56,7 +56,7 @@ object aborts {
 
     def catching[T, S](f: => T > S)(using E => Throwable): T > (S | Aborts[E]) =
       (Tries(f) < Tries) {
-        case Failure(ex) if _tag.closestClass == ex.getClass =>
+        case Failure(ex) if _tag.closestClass.isAssignableFrom(ex.getClass) =>
           (Fail(ex.asInstanceOf[E]): Abort[E, T]) > Aborts[E]
         case v =>
           v.get
