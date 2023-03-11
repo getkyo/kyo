@@ -79,7 +79,7 @@ class abortsTest extends KyoTest {
       val e = new Exception
       checkEquals[Abort[Ex1, Int], Nothing](
           (1: Int > Aborts[Ex1])(_ + 1)(_ => Abort.failure(ex1) > Aborts[Ex1]) < Aborts[Ex1],
-          Abort.failure(ex1)
+          Abort.failure[Ex1, Int](ex1)
       )
     }
   }
@@ -473,7 +473,6 @@ class abortsTest extends KyoTest {
           )
         }
         "failure" in {
-          println(Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Option(2) > Options)))))
           checkEquals[Option[Abort[Ex1, Int]], Nothing](
               Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Option(0) > Options)))),
               Some(Abort.failure(ex1))
