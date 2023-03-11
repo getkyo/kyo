@@ -161,7 +161,6 @@ lazy val `kyo-sttp` = project
       `kyo-settings`,
       libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.13"
   )
-  )
 
 lazy val `kyo-bench` = project
   .in(file("kyo-bench"))
