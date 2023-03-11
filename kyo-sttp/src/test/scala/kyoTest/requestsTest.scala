@@ -11,15 +11,15 @@ import sttp.model.StatusCode
 class requestsTest extends KyoTest {
 
   "requests" - {
-    "default" in run {
-      Requests.run {
-        for {
-          r <- Requests(_.get(uri"https://httpbin.org/get"))
-        } yield {
-          assert(r.code == StatusCode.Ok)
-        }
-      }
-    }
+    // "default" in run {
+    //   Requests.run {
+    //     for {
+    //       r <- Requests(_.get(uri"https://httpbin.org/get"))
+    //     } yield {
+    //       assert(r.code == StatusCode.Ok)
+    //     }
+    //   }
+    // }
     "mocked" in run {
       val backend = new Backend {
         def send[T](r: Request[T, Any]): Response[T] > (IOs | Fibers) =

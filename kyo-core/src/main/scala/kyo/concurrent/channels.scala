@@ -5,13 +5,10 @@ import kyo.ios._
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 import scala.annotation.tailrec
 
 import queues._
 import fibers._
-import atomics._
 
 object channels {
 

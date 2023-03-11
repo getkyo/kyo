@@ -6,7 +6,6 @@ import kyo.ios.Preempt
 import java.util.Comparator
 import java.util.PriorityQueue
 import java.util.concurrent.Semaphore
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.locks.LockSupport
 
 private final class Worker(r: Runnable)
