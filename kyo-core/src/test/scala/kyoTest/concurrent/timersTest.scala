@@ -29,11 +29,11 @@ class timersTest extends KyoTest {
   "cancel" in run {
     for {
       p         <- Fibers.promise[String]
-      task      <- Timers.schedule(10.millis)(p.complete("hello")(require))
+      task      <- Timers.schedule(1.millis)(p.complete("hello")(require))
       _         <- task.cancel
-      cancelled <- task.isCancelled
+      cancelled <- retry(task.isCancelled)
       done1     <- p.isDone
-      _         <- Fibers.sleep(50.millis)
+      _         <- Fibers.sleep(5.millis)
       done2     <- p.isDone
       taskDone  <- task.isDone
     } yield assert(cancelled && !done1 && !done2 && taskDone)

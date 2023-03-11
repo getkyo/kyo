@@ -46,7 +46,7 @@ jobs:
           mkdir -p dev/profile/$REV
           mv /tmp/kyo.bench.* dev/profile/$REV
           cd dev/profile
-          tree -H . -o index.html
+          find . -maxdepth 1 -type d \( ! -name . \) -exec bash -c "cd '{}' && tree -H . -o index.html" \;
           cd ../../
           git config --global user.name "Kyo CI"
           git config --global user.email "kyoci@users.noreply.github.com"

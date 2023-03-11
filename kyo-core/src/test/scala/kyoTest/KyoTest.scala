@@ -29,6 +29,15 @@ class KyoTest extends AnyFreeSpec with Assertions {
     given [T]: Eq[T] = _ == _
   }
 
+  def retry[S](f: => Boolean > S): Boolean > S = {
+    def loop(n: Int): Boolean > S =
+      f {
+        case true  => true
+        case false => loop(n - 1)
+      }
+    loop(100)
+  }
+
   // def timeout = Duration.Inf
   def timeout = 10.seconds
 

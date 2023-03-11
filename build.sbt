@@ -1,4 +1,5 @@
 val scala3Version = "3.2.2"
+val scala2Version = "2.13.10"
 
 val compilerOptions = Seq(
     "-encoding",
@@ -29,7 +30,9 @@ lazy val `kyo-settings` = Seq(
         )
     ),
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
-    sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
+    sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
+    gen                                := {},
+    Test / testOptions += Tests.Argument("-oDG")
 )
 
 lazy val gen = TaskKey[Unit]("gen", "")
@@ -38,29 +41,48 @@ lazy val genState: State => State = { s: State =>
   "gen" :: s
 }
 
+Global / onLoad := {
+  val old = (Global / onLoad).value
+  genState compose old
+}
+
+def transformFiles(path: File)(f: String => String): Unit =
+  if (path.isDirectory) path.listFiles.foreach(transformFiles(_)(f))
+  else {
+    var original = IO.read(path)
+    IO.write(path, f(original))
+  }
+
 lazy val kyo = (project in file("."))
   .aggregate(
       `kyo-core`,
       `kyo-core-opt1`,
       `kyo-core-opt2`,
       `kyo-core-opt3`,
-      `kyo-bench`,
       `kyo-zio`,
       `kyo-direct`,
-      `kyo-sttp`
+      `kyo-sttp`,
+      `kyo-bench`
   )
   .settings(
       name := "kyo",
       `kyo-settings`,
       publishArtifact := false,
       gen := {
-        gen(1)
-        gen(2)
-        gen(3)
-      },
-      Global / onLoad := {
-        val old = (Global / onLoad).value
-        genState compose old
+        def genOpt(i: Int) = {
+          val origin = new File("kyo-core/src/")
+          val dest   = new File(s"kyo-core-opt$i/src/")
+          IO.copyDirectory(origin, dest)
+          transformFiles(dest) { s =>
+            var content = s
+            for (i <- 1 to i)
+              content = content.replaceAllLiterally(s"/*inline(${4 - i})*/", "inline")
+            content
+          }
+        }
+        genOpt(1)
+        genOpt(2)
+        genOpt(3)
       }
   )
 
@@ -81,24 +103,6 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
         Tags.limit(Tags.CPU, 1)
     )
 )
-
-def gen(i: Int) = {
-  val origin = new File("kyo-core/src/")
-  val dest   = new File(s"kyo-core-opt$i/src/")
-  IO.copyDirectory(origin, dest)
-
-  def inlining(file: File): Unit = {
-    if (file.isDirectory) file.listFiles.foreach(inlining)
-    else {
-      var original = IO.read(file)
-      var content  = original
-      for (i <- 1 to i)
-        content = content.replaceAllLiterally(s"/*inline(${4 - i})*/", "inline")
-      IO.write(file, content)
-    }
-  }
-  inlining(dest)
-}
 
 lazy val `kyo-core` = project
   .in(file("kyo-core"))
@@ -155,7 +159,8 @@ lazy val `kyo-sttp` = project
   .settings(
       name := "kyo-sttp",
       `kyo-settings`,
-      libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.10"
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.13"
+  )
   )
 
 lazy val `kyo-bench` = project

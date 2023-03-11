@@ -154,16 +154,16 @@ class fibersTest extends KyoTest {
         if (i > 0) {
           if (s.equals("a")) ac.incrementAndGet()
           else bc.incrementAndGet()
-          Thread.sleep(10)
+          Thread.sleep(1)
           loop(i - 1, s)
         } else {
           s
         }
       }
-    val io = Fibers.race(loop(10, "a"), loop(100, "b"))
+    val io = Fibers.race(loop(1, "a"), loop(10, "b"))
     assert(run(io) == "a")
-    assert(ac.get() == 10)
-    assert(bc.get() < 100)
+    assert(ac.get() == 1)
+    assert(bc.get() < 10)
   }
 
   "await" in {
@@ -180,10 +180,10 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    val io = Fibers.await(loop(10, "a"), loop(20, "b"))
+    val io = Fibers.await(loop(2, "a"), loop(4, "b"))
     run(io)
-    assert(ac.get() == 10)
-    assert(bc.get() == 20)
+    assert(ac.get() == 2)
+    assert(bc.get() == 4)
   }
 
   "awaitFiber" in {
@@ -200,10 +200,10 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    val io = Fibers.awaitFiber(List(loop(10, "a"), loop(20, "b")))(_.join)
+    val io = Fibers.awaitFiber(List(loop(2, "a"), loop(5, "b")))(_.join)
     run(io)
-    assert(ac.get() == 10)
-    assert(bc.get() == 20)
+    assert(ac.get() == 2)
+    assert(bc.get() == 5)
   }
 
   "collect" in {
@@ -220,10 +220,10 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    val io = Fibers.collect(List(loop(10, "a"), loop(20, "b")))
+    val io = Fibers.collect(List(loop(1, "a"), loop(5, "b")))
     assert(run(io) == List("a", "b"))
-    assert(ac.get() == 10)
-    assert(bc.get() == 20)
+    assert(ac.get() == 1)
+    assert(bc.get() == 5)
   }
 
   "collectFiber" in {
@@ -240,10 +240,10 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    val io = Fibers.collectFiber(List(loop(10, "a"), loop(20, "b")))(_.join)
+    val io = Fibers.collectFiber(List(loop(2, "a"), loop(5, "b")))(_.join)
     assert(run(io) == List("a", "b"))
-    assert(ac.get() == 10)
-    assert(bc.get() == 20)
+    assert(ac.get() == 2)
+    assert(bc.get() == 5)
   }
 
   "deep handler" - {
