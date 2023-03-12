@@ -18,14 +18,6 @@ class CollectAllBench extends Bench[Long] {
     collect(tasks)(_.sum.toLong)
   }
 
-  override def kyoBenchFiber() = {
-    import kyo.core._
-    import kyo.ios._
-
-    val tasks = (0 until count).map(_ => IOs(1)).toList
-    Fibers.collect(tasks)(_.sum.toLong)
-  }
-
   def catsBench() = {
     import cats.implicits._
 
