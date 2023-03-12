@@ -6,6 +6,7 @@ import kyo.ios.IOs
 import zio.UIO
 import org.openjdk.jmh.annotations._
 import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 
 @State(Scope.Benchmark)
 @Fork(
@@ -33,20 +34,24 @@ abstract class Bench[T] {
   def catsBench(): IO[T]
 
   @Benchmark
-  def syncKyo(): T = KyoRuntime.run(kyoBench())
+  def syncKyo(): T = IOs.run(kyoBench())
 
   @Benchmark
-  def forkKyo(): T = KyoRuntime.runFork(kyoBenchFiber())
+  def forkKyo(): T = IOs.run(Fibers.forkFiber(kyoBenchFiber())(_.block))
 
   @Benchmark
-  def syncCats(): T = CatsRuntime.run(catsBench())
+  def syncCats(): T = catsBench().unsafeRunSync()
 
   @Benchmark
-  def forkCats(): T = CatsRuntime.runFork(catsBench())
+  def forkCats(): T = IO.cede.flatMap(_ => catsBench()).unsafeRunSync()
 
   @Benchmark
-  def syncZio(): T = ZioRuntime.run(zioBench())
+  def syncZio(): T = zio.Unsafe.unsafe(implicit u =>
+    zio.Runtime.default.unsafe.run(zioBench()).getOrThrow()
+  )
 
   @Benchmark
-  def forkZio(): T = ZioRuntime.runFork(zioBench())
+  def forkZio(): T = zio.Unsafe.unsafe(implicit u =>
+    zio.Runtime.default.unsafe.run(zio.ZIO.yieldNow.flatMap(_ => zioBench())).getOrThrow()
+  )
 }

@@ -26,6 +26,7 @@ private[kyo] object Scheduler {
   private val pool = Executors.newCachedThreadPool(ThreadFactory("kyo-worker", new Worker(_)))
 
   startWorkers()
+  Coordinator.load()
 
   def removeWorker(): Unit =
     concurrencyLimit = Math.max(1, concurrency.get() - 1)
