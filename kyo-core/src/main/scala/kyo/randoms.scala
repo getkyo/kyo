@@ -31,20 +31,20 @@ object randoms {
     }
   }
 
-  type Randoms = Envs[Random]
+  type Randoms = Envs[Random] | IOs
 
   object Randoms {
-    def run[T, S](r: Random)(f: => T > (S | Randoms)): T > S =
+    def run[T, S](r: Random)(f: => T > (S | Randoms)): T > (S | IOs) =
       Envs.let(r)(f)
-    def run[T, S](f: => T > (S | Randoms))(using c: Random): T > S =
+    def run[T, S](f: => T > (S | Randoms))(using c: Random): T > (S | IOs) =
       Envs.let(c)(f)
 
-    def nextInt: Int > (Randoms | IOs)         = Envs[Random](_.nextInt)
-    def nextInt(n: Int): Int > (Randoms | IOs) = Envs[Random](_.nextInt(n))
-    def nextLong: Long > (Randoms | IOs)       = Envs[Random](_.nextLong)
-    def nextDouble: Double > (Randoms | IOs)   = Envs[Random](_.nextDouble)
-    def nextBoolean: Boolean > (Randoms | IOs) = Envs[Random](_.nextBoolean)
-    def nextFloat: Float > (Randoms | IOs)     = Envs[Random](_.nextFloat)
-    def nextGaussian: Double > (Randoms | IOs) = Envs[Random](_.nextGaussian)
+    def nextInt: Int > Randoms         = Envs[Random](_.nextInt)
+    def nextInt(n: Int): Int > Randoms = Envs[Random](_.nextInt(n))
+    def nextLong: Long > Randoms       = Envs[Random](_.nextLong)
+    def nextDouble: Double > Randoms   = Envs[Random](_.nextDouble)
+    def nextBoolean: Boolean > Randoms = Envs[Random](_.nextBoolean)
+    def nextFloat: Float > Randoms     = Envs[Random](_.nextFloat)
+    def nextGaussian: Double > Randoms = Envs[Random](_.nextGaussian)
   }
 }
