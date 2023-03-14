@@ -18,7 +18,6 @@ import cats.effect.kernel.Deferred
 import cats.effect.IO
 
 import kyo.bench.Bench
-import kyo.bench.CatsRuntime
 
 import kyo.concurrent.fibers
 import kyo.concurrent.scheduler.Scheduler

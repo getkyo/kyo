@@ -4,8 +4,6 @@ import org.openjdk.jmh.annotations._
 import cats.effect.kernel.Fiber
 
 import kyo.bench.Bench
-import kyo.bench.CatsRuntime
-import kyo.bench.ZioRuntime
 import kyo.core.>
 import kyo.concurrent.fibers.Fibers
 import kyo.ios.IOs

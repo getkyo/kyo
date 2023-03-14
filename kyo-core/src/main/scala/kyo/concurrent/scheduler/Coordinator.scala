@@ -7,7 +7,11 @@ import scala.util.control.NonFatal.apply
 
 private object Coordinator {
 
-  private val cycleExp   = 7
+  private val cycleExp      = Flag("coordinator.cycleExp", 7)
+  private val loadAvgTarget = Flag("coordinator.loadAvgTarget", 0.8)
+  private val jitterMax     = Flag("coordinator.jitterMax", 0.08)
+  private val jitterSoftMax = Flag("coordinator.jitterSoftMax", 0.04)
+
   private val cycleTicks = Math.pow(2, cycleExp).intValue()
   private val cycleMask  = cycleTicks - 1
 
@@ -31,6 +35,7 @@ private object Coordinator {
     }
   }
 
+  def load(): Unit  = {}
   def tick(): Long  = ticks
   def cycle(): Long = cycles
 
@@ -46,27 +51,24 @@ private object Coordinator {
       startNs = endNs
       if ((ticks & cycleMask) == 0)
         cycles += 1
-        exec.execute(() => adapt())
+        exec.execute(adapt)
     } catch {
       case ex if NonFatal(ex) =>
         ex.printStackTrace()
     }
 
-  private def adapt() =
-    // if ((cycles & 7) == 0) {
-    //   println(Scheduler)
-    //   println(this)
-    // }
-    Scheduler.cycle()
-    val j = jitter()
-    val l = Scheduler.loadAvg()
-    if (j >= 0.08)
-      Scheduler.removeWorker()
-    else if (j <= 0.04 && l > 0.8)
-      Scheduler.addWorker()
-    else if (l < 0.8)
-      Scheduler.removeWorker()
-    ()
+  private val adapt: Runnable =
+    () => {
+      Scheduler.cycle()
+      val j = jitter()
+      val l = Scheduler.loadAvg()
+      if (j >= jitterMax)
+        Scheduler.removeWorker()
+      else if (j <= jitterSoftMax && l > loadAvgTarget)
+        Scheduler.addWorker()
+      else if (l < loadAvgTarget)
+        Scheduler.removeWorker()
+    }
 
   override def toString =
     s"Coordinator(ticks=$ticks,cycles=$cycles,delay.dev=${delayNs.dev()},delay.avg=${delayNs.avg()},jitter=${jitter()})"
