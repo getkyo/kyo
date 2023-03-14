@@ -20,6 +20,8 @@ import scala.concurrent.duration.Duration
 import scala.util._
 
 import kyo.bench.Bench
+import kyo.bench.CatsRuntime
+import kyo.bench.KyoRuntime
 
 import kyo.concurrent.scheduler.Scheduler
 

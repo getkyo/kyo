@@ -10,6 +10,9 @@ import zio.ZIO
 import java.util.concurrent.atomic.AtomicInteger
 
 import kyo.bench.Bench
+import kyo.bench.CatsRuntime
+import kyo.bench.KyoRuntime
+import kyo.bench.ZioRuntime
 
 class DeepBindBench extends Bench[Unit] {
 
