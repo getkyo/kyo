@@ -256,26 +256,23 @@ object core {
   private def identity[T] =
     _identity.asInstanceOf[T => T]
 
-  abstract class InlineConversion[T, U] extends Conversion[T, U] {
-    /*inline(3)*/
-    def apply(v: T): U
-  }
+  private val identityConversion = new Conversion[Any, Any] {
+      def apply(v: Any) = v
+    }
 
   given [M[_], E <: Effect[M], T](using
       DeepHandler[M, E]
-  ): InlineConversion[E, T > E => M[T] > Nothing] with
+  ): Conversion[E, T > E => M[T] > Nothing] with
     /*inline(3)*/
     def apply(v: E) = v()
 
-  given [T, S](using NotGiven[T <:< (Any > Any)]): InlineConversion[Kyo[_, _, _, T, S], T > S] with
-    /*inline(3)*/
-    def apply(v: Kyo[_, _, _, T, S]) = v
 
-  given [T](using NotGiven[T <:< (Any > Any)]): InlineConversion[T > Nothing, T] with
-    /*inline(3)*/
-    def apply(v: T > Nothing) = v.asInstanceOf[T]
+  given [T, S](using NotGiven[T <:< (Any > Any)]): Conversion[Kyo[_, _, _, T, S], T > S] =
+    identityConversion.asInstanceOf[Conversion[Kyo[_, _, _, T, S], T > S]]
 
-  given [T](using NotGiven[T <:< (Any > Any)]): InlineConversion[T, T > Nothing] with
-    /*inline(3)*/
-    def apply(v: T) = v.asInstanceOf[T > Nothing]
+  given [T](using NotGiven[T <:< (Any > Any)]): Conversion[T > Nothing, T] =
+    identityConversion.asInstanceOf[Conversion[T > Nothing, T]]
+
+  given [T](using NotGiven[T <:< (Any > Any)]): Conversion[T, T > Nothing] =
+    identityConversion.asInstanceOf[Conversion[T, T > Nothing]]
 }
