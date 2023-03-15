@@ -30,10 +30,15 @@ jobs:
           sudo sysctl kernel.perf_event_paranoid=1
           sudo sysctl kernel.kptr_restrict=0
 
-      - name: run benchmarks
+      - name: cpu profiling
         run: |
           cd /home/runner/work/kyo/kyo/
           sbt kyo-bench/"jmh:run -wi 10 -i 10 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph Kyo" 
+
+      - name: alloc profiling
+        run: |
+          cd /home/runner/work/kyo/kyo/
+          sbt kyo-bench/"jmh:run -wi 10 -i 10 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\" Kyo"
 
       - name: Store flamegraphs
         run: |
