@@ -16,7 +16,7 @@ private[kyo] object IOTask {
       /*inline(2)*/ v: T > (IOs | Fibers),
       st: Locals.State,
       ensures: Set[() => Unit] = Set.empty,
-      runtime: Long = 0L
+      runtime: Int = 0
   ): IOTask[T] =
     val f = new IOTask[T](v, st, ensures, runtime)
     Scheduler.schedule(f)
@@ -24,19 +24,18 @@ private[kyo] object IOTask {
 }
 
 private[kyo] final class IOTask[T](
-    val init: T > (IOs | Fibers),
-    st: Locals.State,
+    private var curr: T > (IOs | Fibers),
+    private val st: Locals.State,
     private var ensures: Set[() => Unit],
-    private var runtime: Long
+    private var runtime: Int
 ) extends IOPromise[T]
     with Comparable[IOTask[_]]
     with Preempt {
   import IOTask._
 
-  val creationTs = Coordinator.tick()
+  private val creationTs = Coordinator.tick()
 
-  private var curr: T > (IOs | Fibers) = init
-  @volatile private var preempting     = false
+  @volatile private var preempting = false
 
   def preempt() =
     preempting = true
@@ -65,7 +64,7 @@ private[kyo] final class IOTask[T](
         case kyo: Kyo[IOPromise, Fibers, Any, T, IOs | Fibers] @unchecked
             if (kyo.effect eq Fibers) =>
           this.interrupts(kyo.value)
-          runtime += Coordinator.tick() - start
+          runtime += (Coordinator.tick() - start).asInstanceOf[Int]
           kyo.value.onComplete { (v: Any > IOs) =>
             val io = v(kyo(_, this.asInstanceOf[Safepoint[Fibers]], st))
             this.become(IOTask(io, st, ensures, runtime))
@@ -84,7 +83,7 @@ private[kyo] final class IOTask[T](
       curr = eval(start, curr)
       preempting = false
       if (curr != nullIO) {
-        runtime += Coordinator.tick() - start
+        runtime += (Coordinator.tick() - start).asInstanceOf[Int]
       }
     } catch {
       case ex if (NonFatal(ex)) =>
