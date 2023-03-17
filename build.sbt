@@ -85,7 +85,7 @@ lazy val kyo = (project in file("."))
       }
   )
 
-val zioVersion = "2.0.6"
+val zioVersion = "2.0.10"
 
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "com.lihaoyi"   %% "sourcecode"        % "0.3.0",
