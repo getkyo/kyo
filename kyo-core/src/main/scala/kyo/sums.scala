@@ -34,7 +34,8 @@ object sums {
       Add(v) > Sums[V]
 
     def get[V: Tag]: V > Sums[V] =
-      (Get: Sum[V, V]) > Sums[V]
+      val v: Sum[V, V] = Get
+      v > Sums[V]
 
     class DropDsl[V] {
       def apply[T, S](v: T > (S | Sums[V]))(using

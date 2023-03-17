@@ -257,15 +257,14 @@ object core {
     _identity.asInstanceOf[T => T]
 
   private val identityConversion = new Conversion[Any, Any] {
-      def apply(v: Any) = v
-    }
+    def apply(v: Any) = v
+  }
 
   given [M[_], E <: Effect[M], T](using
       DeepHandler[M, E]
   ): Conversion[E, T > E => M[T] > Nothing] with
     /*inline(3)*/
     def apply(v: E) = v()
-
 
   given [T, S](using NotGiven[T <:< (Any > Any)]): Conversion[Kyo[_, _, _, T, S], T > S] =
     identityConversion.asInstanceOf[Conversion[Kyo[_, _, _, T, S], T > S]]

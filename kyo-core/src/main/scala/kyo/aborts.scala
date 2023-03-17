@@ -57,7 +57,8 @@ object aborts {
     def catching[T, S](f: => T > S)(using E => Throwable): T > (S | Aborts[E]) =
       (Tries(f) < Tries) {
         case Failure(ex) if _tag.closestClass.isAssignableFrom(ex.getClass) =>
-          (Fail(ex.asInstanceOf[E]): Abort[E, T]) > Aborts[E]
+          val v: Abort[E, T] = Fail(ex.asInstanceOf[E])
+          v > Aborts[E]
         case v =>
           v.get
       }
@@ -76,7 +77,8 @@ object aborts {
       new Aborts(tag)
     /*inline(1)*/
     def apply[T, E]( /*inline(1)*/ ex: E)(using tag: Tag[E]): T > Aborts[E] =
-      (Fail(ex): Abort[E, T]) > Aborts[E]
+      val v: Abort[E, T] = Fail(ex)
+      v > Aborts[E]
   }
 
   /*inline(1)*/
@@ -89,7 +91,8 @@ object aborts {
       ): V > (S2 | Aborts[E]) =
         m match {
           case f: Fail[E] @unchecked =>
-            (f: Abort[E, V]) > Aborts[E]
+            val v: Abort[E, V] = f
+            v > Aborts[E]
           case _ =>
             f(m.asInstanceOf[U])
         }

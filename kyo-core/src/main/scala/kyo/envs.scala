@@ -46,7 +46,8 @@ object envs {
     }
 
     def apply[E](using tag: Tag[E]): E > Envs[E] =
-      (Input: Env[E, E]) > (new Envs(tag))
+      val v: Env[E, E] = Input
+      v > (new Envs(tag))
     def let[E, S](es: E > S)(using tag: Tag[E]): Let[E, S] =
       new Let(es, tag)
   }
