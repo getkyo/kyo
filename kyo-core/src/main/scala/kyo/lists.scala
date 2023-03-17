@@ -2,20 +2,23 @@ package kyo
 
 import kyo.core._
 import kyo.options._
+import scala.collection.mutable.ListBuffer
 
 object lists {
 
   final class Lists private[lists] () extends Effect[List] {
 
+    /*inline(1)*/
     def run[T, S](v: T > (S | Lists)): List[T] > S =
       v < Lists
 
-    def apply[T](v: List[T]): T > Lists =
+    def foreach[T](v: List[T]): T > Lists =
       v > Lists
 
-    def apply[T](v: T*): T > Lists =
-      apply(v.toList)
+    def foreach[T](v: T*): T > Lists =
+      foreach(v.toList)
 
+    /*inline(1)*/
     def filter[S](v: Boolean > S): Unit > (S | Lists) =
       v {
         case true =>
@@ -26,6 +29,20 @@ object lists {
 
     def drop[T]: T > Lists =
       List.empty[T] > Lists
+
+    /*inline(1)*/
+    def collect[T, S](v: List[T > S]): List[T] > S =
+      val buff = ListBuffer[T]()
+      def loop(v: List[T > S]): List[T] > S =
+        v match {
+          case Nil => buff.toList
+          case h :: t =>
+            h(t1 => {
+              buff.addOne(t1)
+              loop(t)
+            })
+        }
+      loop(v)
   }
   val Lists = new Lists
 
@@ -35,7 +52,7 @@ object lists {
       def loop(l: List[T], acc: List[List[U]]): U > (S | Lists) =
         l match
           case Nil =>
-            Lists(acc.reverse.flatten)
+            Lists.foreach(acc.reverse.flatten)
           case t :: ts =>
             (f(t) < Lists)(l => loop(ts, l :: acc))
       loop(v, Nil)

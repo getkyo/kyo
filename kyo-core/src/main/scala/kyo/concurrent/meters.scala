@@ -10,6 +10,7 @@ import scala.concurrent.duration.Duration
 import channels._
 import fibers._
 import timers._
+import kyo.lists.Lists
 
 object meters {
 
@@ -71,7 +72,7 @@ object meters {
       pipeline(l.toList)
 
     def pipeline[S](l: List[Meter > (S | IOs)]): Meter > (S | IOs) =
-      collect(l) { meters =>
+      Lists.collect(l) { meters =>
         new Meter {
           val isAvailable =
             def loop(l: List[Meter]): Boolean > IOs =

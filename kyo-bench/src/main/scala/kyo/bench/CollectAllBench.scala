@@ -2,8 +2,9 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations._
 import cats.effect.IO
-import kyo.core.>
-import kyo.ios.IOs
+import kyo.core._
+import kyo.ios._
+import kyo.lists._
 import kyo.concurrent.fibers._
 
 class CollectAllBench extends Bench[Long] {
@@ -15,7 +16,7 @@ class CollectAllBench extends Bench[Long] {
     import kyo.ios._
 
     val tasks = (0 until count).map(_ => IOs(1)).toList
-    collect(tasks)(_.sum.toLong)
+    Lists.collect(tasks)(_.sum.toLong)
   }
 
   def catsBench() = {
