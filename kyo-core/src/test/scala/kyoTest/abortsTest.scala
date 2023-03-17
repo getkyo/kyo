@@ -76,10 +76,10 @@ class abortsTest extends KyoTest {
       )
     }
     "handle + transform + failed effectful transform" in {
-      val e = new Exception
+      val fail = Abort.failure[Ex1, Int](ex1)
       checkEquals[Abort[Ex1, Int], Nothing](
-          (1: Int > Aborts[Ex1])(_ + 1)(_ => Abort.failure(ex1) > Aborts[Ex1]) < Aborts[Ex1],
-          Abort.failure[Ex1, Int](ex1)
+          (1: Int > Aborts[Ex1])(_ + 1)(_ => fail > Aborts[Ex1]) < Aborts[Ex1],
+          fail
       )
     }
   }
@@ -112,10 +112,10 @@ class abortsTest extends KyoTest {
         )
       }
       "handle + transform + failed effectful transform" in {
-        val e = new Exception
+        val fail = Abort.failure[Ex1, Int](ex1)
         checkEquals[Abort[Ex1, Int], Nothing](
-            v(_ + 1)(_ => Abort.failure(ex1) > Aborts[Ex1]) < Aborts[Ex1],
-            Abort.failure(ex1)
+            v(_ + 1)(_ => fail > Aborts[Ex1]) < Aborts[Ex1],
+            fail
         )
       }
     }
@@ -146,10 +146,10 @@ class abortsTest extends KyoTest {
         )
       }
       "handle + transform + failed effectful transform" in {
-        val e = new Exception
+        val fail = Abort.failure[Ex1, Int](ex1)
         checkEquals[Abort[Ex1, Int], Nothing](
-            v(_ + 1)(_ => Abort.failure(ex1) > Aborts[Ex1]) < Aborts[Ex1],
-            Abort.failure(ex1)
+            v(_ + 1)(_ => fail > Aborts[Ex1]) < Aborts[Ex1],
+            fail
         )
       }
     }
@@ -163,15 +163,15 @@ class abortsTest extends KyoTest {
         case i => 10 / i
       }
     "handle all" in {
-      checkEquals[Abort[Ex1, Int], Nothing](
+      checkEquals[Abort[Ex1 | Ex2, Int], Nothing](
           test(0) < Aborts[Ex1 | Ex2],
           Abort.failure(ex1)
       )
-      checkEquals[Abort[Ex1, Int], Nothing](
+      checkEquals[Abort[Ex1 | Ex2, Int], Nothing](
           test(1) < Aborts[Ex1 | Ex2],
           Abort.failure(ex2)
       )
-      checkEquals[Abort[Ex1, Int], Nothing](
+      checkEquals[Abort[Ex1 | Ex2, Int], Nothing](
           test(2) < Aborts[Ex1 | Ex2],
           Abort.success(5)
       )
@@ -242,15 +242,15 @@ class abortsTest extends KyoTest {
         case i => 10 / i
       }
     "handle all" in {
-      checkEquals[Abort[Ex1, Int], Nothing](
+      checkEquals[Abort[Ex1 | Ex2, Int], Nothing](
           test(0) < Aborts[Ex1 | Ex2],
           Abort.failure(ex1)
       )
-      checkEquals[Abort[Ex1, Int], Nothing](
+      checkEquals[Abort[Ex1 | Ex2, Int], Nothing](
           test(1) < Aborts[Ex1 | Ex2],
           Abort.failure(ex2)
       )
-      checkEquals[Abort[Ex1, Int], Nothing](
+      checkEquals[Abort[Ex1 | Ex2, Int], Nothing](
           test(2) < Aborts[Ex1 | Ex2],
           Abort.success(5)
       )
@@ -321,15 +321,15 @@ class abortsTest extends KyoTest {
         case i => 10 / i
       }
     "handle all" in {
-      checkEquals[Abort[Ex1, Int], Nothing](
+      checkEquals[Abort[Ex1 | Ex2, Int], Nothing](
           test(0) < Aborts[Ex1 | Ex2],
           Abort.failure(ex1)
       )
-      checkEquals[Abort[Ex1, Int], Nothing](
+      checkEquals[Abort[Ex1 | Ex2, Int], Nothing](
           test(1) < Aborts[Ex1 | Ex2],
           Abort.failure(ex2)
       )
-      checkEquals[Abort[Ex1, Int], Nothing](
+      checkEquals[Abort[Ex1 | Ex2, Int], Nothing](
           test(2) < Aborts[Ex1 | Ex2],
           Abort.success(5)
       )
@@ -460,7 +460,7 @@ class abortsTest extends KyoTest {
           )
         }
         "subclass" in {
-          checkEquals[Abort[Ex1, Int], Nothing](
+          checkEquals[Abort[RuntimeException, Int], Nothing](
               Aborts[RuntimeException].run(Aborts[RuntimeException].catching(test(0))),
               Abort.failure(ex1)
           )
