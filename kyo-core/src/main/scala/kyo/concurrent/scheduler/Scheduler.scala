@@ -14,7 +14,7 @@ import scala.annotation.tailrec
 
 private[kyo] object Scheduler {
 
-  private val coreWorkers = Runtime.getRuntime().availableProcessors()
+  private val coreWorkers = Flag("coreWorkers", Runtime.getRuntime().availableProcessors())
 
   @volatile
   private var concurrencyLimit = coreWorkers
@@ -29,7 +29,8 @@ private[kyo] object Scheduler {
   Coordinator.load()
 
   def removeWorker(): Unit =
-    concurrencyLimit = Math.max(1, concurrency.get() - 1)
+    if (concurrencyLimit > coreWorkers)
+      concurrencyLimit = Math.max(1, concurrency.get() - 1)
 
   def addWorker(): Unit =
     concurrencyLimit = Math.max(concurrencyLimit, concurrency.get()) + 1

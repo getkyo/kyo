@@ -23,10 +23,6 @@ import kyo.concurrent.fibers
 import kyo.concurrent.scheduler.Scheduler
 import kyo.concurrent.fibers
 
-object jkhlj extends App {
-  println(CountdownLatchBench().forkCats())
-}
-
 class CountdownLatchBench extends Bench[Int] {
 
   val depth = 10000

@@ -89,6 +89,26 @@ object fibers {
       }
 
     /*inline(2)*/
+    def interruptAndJoin: Unit > (Fibers | IOs) =
+      interruptAndJoin("")
+    
+    /*inline(2)*/
+    def interruptAndJoin(reason: String): Unit > (Fibers | IOs) =
+      if (fiber.isInstanceOf[IOPromise[_]]) {
+        Fibers.promise[Unit] { p =>
+          val complete = IOs {
+            p.unsafeComplete(())
+            ()
+          }
+          IOs.ensure(complete) {
+            interrupt(reason)
+          }(_ => p.join)
+        }
+      } else {
+        ()
+      }
+
+    /*inline(2)*/
     def interrupt(reason: String): Boolean > IOs =
       if (fiber.isInstanceOf[IOPromise[_]]) {
         val f = fiber.asInstanceOf[IOPromise[T]]

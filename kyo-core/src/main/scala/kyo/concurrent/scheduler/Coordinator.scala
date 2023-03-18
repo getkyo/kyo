@@ -59,6 +59,9 @@ private object Coordinator {
 
   private val adapt: Runnable =
     () => {
+      // if (cycles % 7 == 0)
+      //   println(this)
+      //   println(Scheduler)
       Scheduler.cycle()
       val j = jitter()
       val l = Scheduler.loadAvg()
