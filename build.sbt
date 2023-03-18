@@ -168,8 +168,9 @@ lazy val `kyo-bench` = project
   .settings(
       name := "kyo-bench",
       `kyo-settings`,
-      libraryDependencies += "org.typelevel" %% "cats-effect" % "3.4.8",
-      libraryDependencies += "dev.zio"       %% "zio"         % zioVersion
+      libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.4.8",
+      libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
+      libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
   )
 
 testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
