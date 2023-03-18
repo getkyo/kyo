@@ -15,7 +15,7 @@ private[kyo] object IOTask {
   def apply[T](
       /*inline(2)*/ v: T > (IOs | Fibers),
       st: Locals.State,
-      ensures: Set[() => Unit] = Set.empty,
+      ensures: List[() => Unit] = List.empty,
       runtime: Int = 0
   ): IOTask[T] =
     val f = new IOTask[T](v, st, ensures, runtime)
@@ -26,7 +26,7 @@ private[kyo] object IOTask {
 private[kyo] final class IOTask[T](
     private var curr: T > (IOs | Fibers),
     private val st: Locals.State,
-    private var ensures: Set[() => Unit],
+    private var ensures: List[() => Unit],
     private var runtime: Int
 ) extends IOPromise[T]
     with Comparable[IOTask[_]]
@@ -43,7 +43,7 @@ private[kyo] final class IOTask[T](
   override protected def onComplete(): Unit =
     preempt()
 
-  def ensure(f: () => Unit): Unit = ensures += f
+  def ensure(f: () => Unit): Unit = ensures ::= f
 
   def apply(): Boolean =
     preempting

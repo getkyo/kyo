@@ -15,7 +15,8 @@ import kyo.lists.Lists
 object meters {
 
   trait Meter { self =>
-    def isAvailable: Boolean > IOs
+    def available: Int > IOs
+    def isAvailable: Boolean > IOs = available(_ > 0)
     def run[T, S](v: => T > S): T > (S | IOs | Fibers)
     def tryRun[T, S](v: => T > S): Option[T] > (S | IOs)
   }
@@ -29,8 +30,8 @@ object meters {
       Channels.blocking[Unit](permits) { chan =>
         offer(permits, chan, ()) { _ =>
           new Meter {
-            val isAvailable = chan.size(_ > 0)
-            val release     = chan.offer(()).unit
+            val available = chan.size
+            val release   = chan.offer(()).unit
             def run[T, S](v: => T > S): T > (S | IOs | Fibers) =
               IOs.ensure(release) {
                 chan.take(_ => v)
@@ -54,7 +55,7 @@ object meters {
       Channels.blocking[Unit](rate) { chan =>
         Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())) { _ =>
           new Meter {
-            val isAvailable = chan.size(_ > 0)
+            def available = chan.size
             def run[T, S](v: => T > S): T > (S | IOs | Fibers) =
               chan.take(_ => v)
             def tryRun[T, S](v: => T > S) =
@@ -74,17 +75,15 @@ object meters {
     def pipeline[S](l: List[Meter > (S | IOs)]): Meter > (S | IOs) =
       Lists.collect(l) { meters =>
         new Meter {
-          val isAvailable =
-            def loop(l: List[Meter]): Boolean > IOs =
+          val available =
+            def loop(l: List[Meter], acc: Int): Int > IOs =
               l match {
-                case Nil => true
+                case Nil => acc
                 case h :: t =>
-                  h.isAvailable {
-                    case true => loop(t)
-                    case _    => false
-                  }
+                  h.available(v => loop(t, acc + v))
               }
-            loop(meters)
+            loop(meters, 0)
+
           def run[T, S](v: => T > S) =
             def loop(l: List[Meter]): T > (S | IOs | Fibers) =
               l match {
