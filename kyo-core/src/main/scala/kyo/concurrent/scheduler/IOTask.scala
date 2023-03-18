@@ -21,6 +21,13 @@ private[kyo] object IOTask {
     val f = new IOTask[T](v, st, ensures, runtime)
     Scheduler.schedule(f)
     f
+
+  private var token = 0
+  private def avoidUnstableIf(): Boolean =
+    token < 20000 && {
+      token += 1
+      token % 2 == 0
+    }
 }
 
 private[kyo] final class IOTask[T](
@@ -50,7 +57,7 @@ private[kyo] final class IOTask[T](
 
   @tailrec private def eval(start: Long, curr: T > (IOs | Fibers)): T > (IOs | Fibers) =
     def finalize() = ensures.foreach(_())
-    if (preempting) {
+    if (preempting || avoidUnstableIf()) {
       if (isDone()) {
         finalize()
         nullIO
