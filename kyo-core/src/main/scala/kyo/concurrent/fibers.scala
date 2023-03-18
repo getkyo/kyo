@@ -89,15 +89,15 @@ object fibers {
       }
 
     /*inline(2)*/
-    def interruptAndJoin: Unit > (Fibers | IOs) =
-      interruptAndJoin("")
-    
+    def interruptAwait: Boolean > (Fibers | IOs) =
+      interruptAwait("")
+
     /*inline(2)*/
-    def interruptAndJoin(reason: String): Unit > (Fibers | IOs) =
+    def interruptAwait(reason: String): Boolean > (Fibers | IOs) =
       if (fiber.isInstanceOf[IOPromise[_]]) {
-        Fibers.promise[Unit] { p =>
+        Fibers.promise[Boolean] { p =>
           val complete = IOs {
-            p.unsafeComplete(())
+            p.unsafeComplete(true)
             ()
           }
           IOs.ensure(complete) {
@@ -105,7 +105,7 @@ object fibers {
           }(_ => p.join)
         }
       } else {
-        ()
+        false
       }
 
     /*inline(2)*/

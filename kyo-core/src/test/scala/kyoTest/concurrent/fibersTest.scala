@@ -134,6 +134,41 @@ class fibersTest extends KyoTest {
     }
   }
 
+  "interruptAwait" - {
+
+    def loop(ref: AtomicInt): Unit > IOs =
+      Thread.sleep(1)
+      ref.incrementAndGet(_ => loop(ref))
+
+    def runLoop[T](started: Latch) =
+      Resources.run {
+        started.release(_ => Atomics.forInt(0)(loop))
+      }
+
+    "one fiber" in run {
+      for {
+        started     <- Latches(1)
+        fiber       <- Fibers.forkFiber(runLoop(started))
+        _           <- started.await
+        interrupted <- fiber.interruptAwait
+        _           <- assert(interrupted)
+      } yield ()
+    }
+    "multiple fibers" in run {
+      for {
+        started      <- Latches(1)
+        fiber1       <- Fibers.forkFiber(runLoop(started))
+        fiber2       <- Fibers.forkFiber(runLoop(started))
+        fiber3       <- Fibers.forkFiber(runLoop(started))
+        _            <- started.await
+        interrupted1 <- fiber1.interruptAwait
+        interrupted2 <- fiber2.interruptAwait
+        interrupted3 <- fiber3.interruptAwait
+        _            <- assert(interrupted1 && interrupted2 && interrupted3)
+      } yield ()
+    }
+  }
+
   "forkFiber" - {
     val thread = JAtomicReference[Thread]
     "executes in a different thread" in {
