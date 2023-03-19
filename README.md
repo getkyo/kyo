@@ -1,13 +1,12 @@
 ![kyo](https://raw.githubusercontent.com/fwbrasil/kyo/master/kyo.png)
 -------------------
-Algebraic effects for Scala 3
+Functional Programming made fast and easy!
 
 ![Build Status](https://github.com/fwbrasil/kyo/workflows/build/badge.svg)
-![Stage](https://img.shields.io/badge/Project%20Stage-Experimental-yellow.svg)
-
+![Chat](https://img.shields.io/discord/1087005439859904574)
+![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3)
 
 Sorry, documentation coming soon
-
 
 License
 -------
