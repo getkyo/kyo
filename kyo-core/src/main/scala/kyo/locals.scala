@@ -44,7 +44,7 @@ object locals {
     type State = Map[Local[_], Any]
 
     object State {
-      def empty: State = Map.empty
+      val empty: State = Map.empty
     }
     /*inline(3)*/
     def apply[T](defaultValue: T)(using /*inline(3)*/ fr: Frame["Locals.apply"]): Local[T] =

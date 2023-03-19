@@ -9,7 +9,7 @@ import kyo.resources._
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import org.jctools.queues.MpmcArrayQueue
-import scala.collection.mutable.ArrayDeque
+import java.util.ArrayDeque
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
@@ -17,18 +17,12 @@ private[kyo] object IOTask {
   def apply[T](
       /*inline(2)*/ v: T > (IOs | Fibers),
       st: Locals.State,
-      ensures: ArrayDeque[() => Unit] = buffer(),
+      ensures: ArrayDeque[() => Unit] = ArrayDeque(4),
       runtime: Int = 0
   ): IOTask[T] =
     val f = new IOTask[T](v, st, ensures, runtime)
     Scheduler.schedule(f)
     f
-
-  private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1000)
-  private def buffer(): ArrayDeque[() => Unit] =
-    val b = bufferCache.poll()
-    if (b == null) ArrayDeque()
-    else b
 
   private var token = 0
   private def avoidUnstableIf(): Boolean =
@@ -36,6 +30,13 @@ private[kyo] object IOTask {
       token += 1
       token % 2 == 0
     }
+
+  object TaskOrdering extends Ordering[IOTask[_]] {
+    def compare(x: IOTask[_], y: IOTask[_]): Int =
+      y.runtime - x.runtime
+  }
+
+  given Ordering[IOTask[_]] = TaskOrdering
 }
 
 private[kyo] final class IOTask[T](
@@ -44,7 +45,6 @@ private[kyo] final class IOTask[T](
     private var ensures: ArrayDeque[() => Unit],
     private var runtime: Int
 ) extends IOPromise[T]
-    with Comparable[IOTask[_]]
     with Preempt {
   import IOTask._
 
@@ -58,17 +58,13 @@ private[kyo] final class IOTask[T](
   override protected def onComplete(): Unit =
     preempt()
 
-  def ensure(f: () => Unit): Unit = ensures.addOne(f)
+  def ensure(f: () => Unit): Unit = ensures.add(f)
 
   def apply(): Boolean =
     preempting
 
   @tailrec private def eval(start: Long, curr: T > (IOs | Fibers)): T > (IOs | Fibers) =
-    def finalize() = {
-      ensures.foreach(_())
-      ensures.clear()
-      bufferCache.offer(ensures)
-    }
+    def finalize() = ensures.forEach(_())
     if (preempting || avoidUnstableIf()) {
       if (isDone()) {
         finalize()
@@ -115,9 +111,6 @@ private[kyo] final class IOTask[T](
     curr != nullIO
 
   def delay() = Coordinator.tick() - creationTs - runtime
-
-  final def compareTo(other: IOTask[_]): Int =
-    (other.runtime - runtime).asInstanceOf[Int]
 
   override final def toString =
     s"IOTask(id=${hashCode},runtime=$runtime,preempting=$preempting,ensures.size=${ensures.size})"

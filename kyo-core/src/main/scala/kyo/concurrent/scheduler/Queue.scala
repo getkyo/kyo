@@ -9,7 +9,7 @@ import java.util.concurrent.locks.ReentrantLock
 import scala.annotation.tailrec
 import scala.collection.mutable.PriorityQueue
 
-private final class Queue[T <: Comparable[T]] extends AtomicBoolean {
+private final class Queue[T](using Ordering[T]) extends AtomicBoolean {
 
   private val queue = PriorityQueue[T]()
 

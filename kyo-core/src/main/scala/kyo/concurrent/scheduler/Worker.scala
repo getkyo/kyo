@@ -11,7 +11,7 @@ import java.util.concurrent.locks.LockSupport
 private final class Worker(r: Runnable)
     extends Thread(r) {
 
-  private val queue = Queue[IOTask[_]]
+  private val queue = Queue[IOTask[_]]()
 
   @volatile private var running                = false
   @volatile private var currentTask: IOTask[_] = null
