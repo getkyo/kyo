@@ -17,12 +17,18 @@ private[kyo] object IOTask {
   def apply[T](
       /*inline(2)*/ v: T > (IOs | Fibers),
       st: Locals.State,
-      ensures: ArrayDeque[() => Unit] = ArrayDeque(4),
+      ensures: (() => Unit) | ArrayDeque[() => Unit] = null,
       runtime: Int = 0
   ): IOTask[T] =
     val f = new IOTask[T](v, st, ensures, runtime)
     Scheduler.schedule(f)
     f
+
+  private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1000)
+  private def buffer(): ArrayDeque[() => Unit] =
+    val b = bufferCache.poll()
+    if (b == null) ArrayDeque()
+    else b
 
   private var token = 0
   private def avoidUnstableIf(): Boolean =
@@ -42,7 +48,7 @@ private[kyo] object IOTask {
 private[kyo] final class IOTask[T](
     private var curr: T > (IOs | Fibers),
     private val st: Locals.State,
-    private var ensures: ArrayDeque[() => Unit],
+    private var ensures: (() => Unit) | ArrayDeque[() => Unit] = null,
     private var runtime: Int
 ) extends IOPromise[T]
     with Preempt {
@@ -58,13 +64,34 @@ private[kyo] final class IOTask[T](
   override protected def onComplete(): Unit =
     preempt()
 
-  def ensure(f: () => Unit): Unit = ensures.add(f)
+  def ensure(f: () => Unit): Unit =
+    ensures match {
+      case null =>
+        ensures = f
+      case f0: (() => Unit) @unchecked =>
+        val b = buffer()
+        b.add(f0)
+        b.add(f)
+        ensures = b
+      case arr: ArrayDeque[() => Unit] @unchecked =>
+        arr.add(f)
+    }
 
   def apply(): Boolean =
     preempting
 
   @tailrec private def eval(start: Long, curr: T > (IOs | Fibers)): T > (IOs | Fibers) =
-    def finalize() = ensures.forEach(_())
+    def finalize() = {
+      ensures match {
+        case null =>
+        case f: (() => Unit) @unchecked =>
+          f()
+        case arr: ArrayDeque[() => Unit] @unchecked =>
+          arr.forEach(_())
+          arr.clear()
+          bufferCache.offer(arr)
+      }
+    }
     if (preempting || avoidUnstableIf()) {
       if (isDone()) {
         finalize()
@@ -113,5 +140,5 @@ private[kyo] final class IOTask[T](
   def delay() = Coordinator.tick() - creationTs - runtime
 
   override final def toString =
-    s"IOTask(id=${hashCode},runtime=$runtime,preempting=$preempting,ensures.size=${ensures.size})"
+    s"IOTask(id=${hashCode},runtime=$runtime,preempting=$preempting,ensures=${ensures})"
 }
