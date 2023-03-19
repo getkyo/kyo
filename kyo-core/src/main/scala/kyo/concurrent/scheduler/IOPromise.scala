@@ -5,8 +5,8 @@ import kyo.frames._
 import kyo.ios._
 import kyo.loggers.Loggers
 
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.AbstractQueuedSynchronizer
 import scala.annotation.tailrec
 import scala.util.control.NoStackTrace
 import scala.util.control.NonFatal
@@ -130,15 +130,21 @@ private[kyo] class IOPromise[T](s: State[T])
     def loop(promise: IOPromise[T]): T =
       promise.get() match {
         case _: Pending[T] @unchecked =>
-          val b = new CountDownLatch(1) with (T > IOs => Unit) with (() => T > IOs) {
+          val b = new AbstractQueuedSynchronizer with (T > IOs => Unit) with (() => T > IOs) {
             private[this] var result: T > IOs = null.asInstanceOf[T]
+            override def tryAcquireShared(ignored: Int): Int =
+              if (getState != 0) 1 else -1
+            override def tryReleaseShared(ignore: Int): Boolean = {
+              setState(1)
+              true
+            }
             def apply(v: T > IOs) =
               result = v
-              countDown()
+              releaseShared(1)
             def apply() = result
           }
           onComplete(b)
-          b.await()
+          b.acquireSharedInterruptibly(1)
           IOs.run(b())
         case l: Linked[T] @unchecked =>
           loop(l.p)
