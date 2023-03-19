@@ -40,6 +40,11 @@ jobs:
           cd /home/runner/work/kyo/kyo/
           sbt kyo-bench/"jmh:run -wi 10 -i 10 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\" Kyo"
 
+      - name: cache misses profiling
+        run: |
+          cd /home/runner/work/kyo/kyo/
+          sbt kyo-bench/"jmh:run -wi 10 -i 10 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:cache-misses;output=flamegraph\" Kyo"
+
       - name: Store flamegraphs
         run: |
           git config pull.rebase true 
@@ -50,6 +55,7 @@ jobs:
           git pull
           mkdir -p dev/profile/$REV
           mv /tmp/kyo.bench.* dev/profile/$REV
+          rm dev/profile/**/*reverse*
           cd dev/profile
           find . -maxdepth 1 -type d \( ! -name . \) -exec bash -c "cd '{}' && tree -H . -o index.html" \;
           cd ../../
