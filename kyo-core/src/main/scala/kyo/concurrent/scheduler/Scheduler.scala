@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.LongAdder
 import java.util.concurrent.locks.LockSupport
 import scala.annotation.tailrec
+import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 
 private[kyo] object Scheduler {
 
@@ -22,7 +23,7 @@ private[kyo] object Scheduler {
 
   private[scheduler] val workers = CopyOnWriteArrayList[Worker]
 
-  private val idle = AtomicReference[List[Worker]](Nil)
+  private val idle = MpmcUnboundedXaddArrayQueue[Worker](8)
   private val pool = Executors.newCachedThreadPool(ThreadFactory("kyo-worker", new Worker(_)))
 
   startWorkers()
@@ -59,9 +60,8 @@ private[kyo] object Scheduler {
 
   @tailrec def submit(t: IOTask[_]): Unit =
 
-    val iw = idle.get()
-    if ((iw ne Nil) && idle.compareAndSet(iw, iw.tail)) {
-      val w  = iw.head
+    val w = idle.poll()
+    if (w != null) {
       val ok = w.enqueue(t)
       if (ok) {
         return
@@ -109,11 +109,9 @@ private[kyo] object Scheduler {
     workers.forEach(_.cycle())
 
   def idle(w: Worker): Unit =
-    val i  = idle.get()
-    val ni = w :: i
-    if (w.load() == 0 && idle.compareAndSet(i, ni)) {
+    if (w.load() == 0) {
+      idle.add(w)
       w.park()
-      idle.compareAndSet(ni, i)
     }
 
   def stopWorker(): Boolean =
