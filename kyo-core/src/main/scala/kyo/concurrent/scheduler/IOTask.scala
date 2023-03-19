@@ -91,6 +91,7 @@ private[kyo] final class IOTask[T](
           arr.clear()
           bufferCache.offer(arr)
       }
+      ensures = null
     }
     if (preempting || avoidUnstableIf()) {
       if (isDone()) {
