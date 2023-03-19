@@ -134,39 +134,27 @@ class fibersTest extends KyoTest {
     }
   }
 
-  "interruptAwait" - {
+  "interruptAwait" in run {
 
     def loop(ref: AtomicInt): Unit > IOs =
       Thread.sleep(1)
       ref.incrementAndGet(_ => loop(ref))
 
-    def runLoop[T](started: Latch) =
+    def runLoop[T](started: Latch, done: Latch): Unit > IOs =
       Resources.run {
-        started.release(_ => Atomics.forInt(0)(loop))
+        Resources.ensure(done.release) { _ =>
+          started.release(_ => Atomics.forInt(0)(loop))
+        }
       }
 
-    "one fiber" in run {
-      for {
-        started     <- Latches(1)
-        fiber       <- Fibers.forkFiber(runLoop(started))
-        _           <- started.await
-        interrupted <- fiber.interruptAwait
-        _           <- assert(interrupted)
-      } yield ()
-    }
-    "multiple fibers" in run {
-      for {
-        started      <- Latches(1)
-        fiber1       <- Fibers.forkFiber(runLoop(started))
-        fiber2       <- Fibers.forkFiber(runLoop(started))
-        fiber3       <- Fibers.forkFiber(runLoop(started))
-        _            <- started.await
-        interrupted1 <- fiber1.interruptAwait
-        interrupted2 <- fiber2.interruptAwait
-        interrupted3 <- fiber3.interruptAwait
-        _            <- assert(interrupted1 && interrupted2 && interrupted3)
-      } yield ()
-    }
+    for {
+      started     <- Latches(1)
+      done        <- Latches(1)
+      fiber       <- Fibers.forkFiber(runLoop(started, done))
+      _           <- started.await
+      interrupted <- fiber.interruptAwait
+      pending     <- done.pending
+    } yield assert(interrupted && pending == 0)
   }
 
   "forkFiber" - {

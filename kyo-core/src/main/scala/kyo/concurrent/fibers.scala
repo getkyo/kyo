@@ -94,16 +94,16 @@ object fibers {
 
     /*inline(2)*/
     def interruptAwait(reason: String): Boolean > (Fibers | IOs) =
-      if (fiber.isInstanceOf[IOPromise[_]]) {
-        Fibers.promise[Boolean] { p =>
-          val complete = IOs {
-            p.unsafeComplete(true)
-            ()
-          }
-          IOs.ensure(complete) {
-            interrupt(reason)
-          }(_ => p.join)
+      if (fiber.isInstanceOf[IOTask[_]]) {
+        val f = fiber.asInstanceOf[IOTask[T]]
+        val p = IOPromise[Boolean]()
+        f.ensure(() => p.unsafeComplete(true))
+        interrupt(reason) {
+          case true  => p.join
+          case false => false
         }
+      } else if (fiber.isInstanceOf[IOPromise[_]]) {
+        interrupt(reason)
       } else {
         false
       }

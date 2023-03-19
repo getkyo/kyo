@@ -8,6 +8,8 @@ import kyo.resources._
 
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
+import org.jctools.queues.MpmcArrayQueue
+import scala.collection.mutable.ArrayDeque
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
@@ -15,12 +17,18 @@ private[kyo] object IOTask {
   def apply[T](
       /*inline(2)*/ v: T > (IOs | Fibers),
       st: Locals.State,
-      ensures: List[() => Unit] = List.empty,
+      ensures: ArrayDeque[() => Unit] = buffer(),
       runtime: Int = 0
   ): IOTask[T] =
     val f = new IOTask[T](v, st, ensures, runtime)
     Scheduler.schedule(f)
     f
+
+  private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1000)
+  private def buffer(): ArrayDeque[() => Unit] =
+    val b = bufferCache.poll()
+    if (b == null) ArrayDeque()
+    else b
 
   private var token = 0
   private def avoidUnstableIf(): Boolean =
@@ -33,7 +41,7 @@ private[kyo] object IOTask {
 private[kyo] final class IOTask[T](
     private var curr: T > (IOs | Fibers),
     private val st: Locals.State,
-    private var ensures: List[() => Unit],
+    private var ensures: ArrayDeque[() => Unit],
     private var runtime: Int
 ) extends IOPromise[T]
     with Comparable[IOTask[_]]
@@ -50,13 +58,17 @@ private[kyo] final class IOTask[T](
   override protected def onComplete(): Unit =
     preempt()
 
-  def ensure(f: () => Unit): Unit = ensures ::= f
+  def ensure(f: () => Unit): Unit = ensures.addOne(f)
 
   def apply(): Boolean =
     preempting
 
   @tailrec private def eval(start: Long, curr: T > (IOs | Fibers)): T > (IOs | Fibers) =
-    def finalize() = ensures.foreach(_())
+    def finalize() = {
+      ensures.foreach(_())
+      ensures.clear()
+      bufferCache.offer(ensures)
+    }
     if (preempting || avoidUnstableIf()) {
       if (isDone()) {
         finalize()
