@@ -19,7 +19,7 @@ jobs:
       - uses: olafurpg/setup-scala@v13
         with:
           java-version: openjdk@1.17.0
-
+ 
       - name: run benchmarks
         run: |
           cd /home/runner/work/kyo/kyo/
