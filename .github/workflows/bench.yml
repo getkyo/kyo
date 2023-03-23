@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   benchmark:
-    name: Run benchmarks
+    name: Profile benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3.0.2
@@ -20,24 +20,50 @@ jobs:
         with:
           java-version: openjdk@1.17.0
 
-      - name: run benchmarks
-        run: sbt kyo-bench/"jmh:run -wi 10 -i 10 -r 1 -w 1 -t 1 -rf json -foe true Kyo" 
+      - name: install async-profiler
+        run: |
+          cd /home/runner
+          wget https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.9/async-profiler-2.9-linux-x64.tar.gz
+          tar -xvzf async-profiler-2.9-linux-x64.tar.gz
+          sudo mkdir -p /usr/java/packages/lib/
+          sudo cp async-profiler-2.9-linux-x64/build/libasyncProfiler.so /usr/java/packages/lib/
+          sudo sysctl kernel.perf_event_paranoid=1
+          sudo sysctl kernel.kptr_restrict=0
 
-      - name: Download previous benchmark data
-        uses: actions/cache@v3.2.4
-        with:
-          path: ./cache
-          key: ${{ runner.os }}-benchmark
+      - name: cpu profiling
+        run: |
+          cd /home/runner/work/kyo/kyo/
+          sbt kyo-bench/"jmh:clean"
+          sbt kyo-bench/"jmh:run -wi 1 -i 1 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph" 
 
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
+      - name: alloc profiling
+        run: |
+          cd /home/runner/work/kyo/kyo/
+          sbt kyo-bench/"jmh:clean"
+          sbt kyo-bench/"jmh:run -wi 1 -i 1 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\""
+
+      - name: run
+        run: |
+          cd /home/runner/work/kyo/kyo/
+          sbt kyo-bench/"jmh:clean"
+          sbt kyo-bench/"jmh:run -wi 1 -i 1 -r 1 -w 1 -t 1 -rf json -foe true -prof gc" 
+
+      - name: prepare results
+        run: |
+          export REV=$(git rev-parse --short HEAD)
+          mkdir -p output/dev/bench/$REV/
+          mkdir -p output/dev/bench/$REV/profile/
+          cp -r kyo-bench/*.json output/dev/bench/$REV/
+          cp -r kyo-bench/kyo.bench.* output/dev/bench/$REV/profile/
+
+      - name: publish results
+        uses: cpina/github-action-push-to-another-repository@main
+        env:
+          SSH_DEPLOY_KEY: ${{ secrets.SSH_DEPLOY_KEY }}
+          API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
         with:
-          name: JMH Benchmark
-          tool: 'jmh'
-          output-file-path: kyo-bench/jmh-result.json
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-          alert-threshold: '200%'
-          comment-on-alert: true
-          fail-on-alert: false
-          alert-comment-cc-users: '@fwbrasil'
+          source-directory: 'output'
+          destination-github-username: 'getkyo'
+          destination-repository-name: 'website'
+          user-email: getkyo.io@gmail.com
+          target-branch: main
