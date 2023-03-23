@@ -1,4 +1,4 @@
-name: bench
+name: profile-alloc
 on:
   push:
     branches:
@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   benchmark:
-    name: Run benchmarks
+    name: Profile benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3.0.2
@@ -20,16 +20,26 @@ jobs:
         with:
           java-version: openjdk@1.17.0
 
-      - name: run benchmarks
+      - name: install async-profiler
+        run: |
+          cd /home/runner
+          wget https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.9/async-profiler-2.9-linux-x64.tar.gz
+          tar -xvzf async-profiler-2.9-linux-x64.tar.gz
+          sudo mkdir -p /usr/java/packages/lib/
+          sudo cp async-profiler-2.9-linux-x64/build/libasyncProfiler.so /usr/java/packages/lib/
+          sudo sysctl kernel.perf_event_paranoid=1
+          sudo sysctl kernel.kptr_restrict=0
+
+      - name: alloc profiling
         run: |
           cd /home/runner/work/kyo/kyo/
           sbt kyo-bench/"jmh:clean"
-          sbt kyo-bench/"jmh:run -wi 1 -i 1 -r 1 -w 1 -t 1 -rf json -foe true -prof gc" 
+          sbt kyo-bench/"jmh:run -wi 1 -i 1 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\""
 
       - name: prepare results
         run: |
           mkdir -p output/
-          cp -r kyo-bench/*.json output/
+          cp -r kyo-bench/kyo.bench.* output/
 
       - name: publish results
         uses: cpina/github-action-push-to-another-repository@main
@@ -38,7 +48,7 @@ jobs:
           API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
         with:
           source-directory: 'output'
-          target-directory: 'dev/bench/${{ github.sha }}/'
+          target-directory: 'dev/profile/${{ github.sha }}/alloc/'
           destination-github-username: 'getkyo'
           destination-repository-name: 'website'
           user-email: getkyo.io@gmail.com
