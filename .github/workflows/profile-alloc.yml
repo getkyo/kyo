@@ -34,12 +34,13 @@ jobs:
         run: |
           cd /home/runner/work/kyo/kyo/
           sbt kyo-bench/"jmh:clean"
-          sbt kyo-bench/"jmh:run -wi 1 -i 1 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\""
+          sbt kyo-bench/"jmh:run -wi 5 -i 5 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\""
 
       - name: prepare results
         run: |
           mkdir -p output/
           cp -r kyo-bench/kyo.bench.* output/
+          rm -rf output/**/*reverse.html
 
       - name: publish results
         uses: cpina/github-action-push-to-another-repository@main
