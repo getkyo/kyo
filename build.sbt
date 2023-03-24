@@ -9,7 +9,7 @@ val compilerOptions = Seq(
     "-language:implicitConversions"
     // "-explain",
     // "-Wvalue-discard",
-    //"-Vprofile",
+    // "-Vprofile",
 )
 
 lazy val `kyo-settings` = Seq(
