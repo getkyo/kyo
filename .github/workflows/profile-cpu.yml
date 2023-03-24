@@ -41,6 +41,9 @@ jobs:
           mkdir -p output/
           cp -r kyo-bench/kyo.bench.* output/
           rm -rf output/**/*reverse.html
+          cd output
+          find . -maxdepth 1 -type d \( ! -name . \) -exec bash -c "cd '{}' && tree -H . -o index.html" \;
+          cd ..
 
       - name: publish results
         uses: cpina/github-action-push-to-another-repository@main
