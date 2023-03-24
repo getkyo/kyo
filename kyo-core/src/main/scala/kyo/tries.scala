@@ -13,6 +13,12 @@ object tries {
     def run[T, S](v: T > (S | Tries)): Try[T] > S =
       v < Tries
 
+    def fail[T](ex: Throwable): T > Tries =
+      Failure(ex) > Tries
+
+    def fail[T](msg: String): T > Tries =
+      Failure(new Exception(msg)) > Tries
+
     /*inline(2)*/
     def apply[T, S]( /*inline(2)*/ v: => T > S): T > (S | Tries) =
       val a: Try[Try[T] > S]      = Try(v < Tries)
