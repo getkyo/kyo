@@ -157,6 +157,7 @@ object fibers {
     def value[T](v: T): Fiber[T] =
       v
 
+    /*inline(2)*/
     def promise[T]: Promise[T] > IOs =
       IOs(IOPromise[T]())
 

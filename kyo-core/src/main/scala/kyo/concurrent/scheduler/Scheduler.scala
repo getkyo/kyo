@@ -15,7 +15,10 @@ import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 
 private[kyo] object Scheduler {
 
-  private val coreWorkers = Flag("coreWorkers", Runtime.getRuntime().availableProcessors())
+  private val coreWorkers = Flag(
+      "coreWorkers",
+      Math.ceil(Runtime.getRuntime().availableProcessors().toDouble / 2).intValue()
+  )
 
   @volatile
   private var concurrencyLimit = coreWorkers

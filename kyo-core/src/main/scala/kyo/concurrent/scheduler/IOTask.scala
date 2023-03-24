@@ -38,11 +38,14 @@ private[kyo] object IOTask {
     }
 
   object TaskOrdering extends Ordering[IOTask[_]] {
+    override def lt(x: IOTask[_], y: IOTask[_]): Boolean =
+      val r = x.runtime
+      r == 0 || r < y.runtime
     def compare(x: IOTask[_], y: IOTask[_]): Int =
       y.runtime - x.runtime
   }
 
-  given Ordering[IOTask[_]] = TaskOrdering
+  inline given Ordering[IOTask[_]] = TaskOrdering
 }
 
 private[kyo] final class IOTask[T](

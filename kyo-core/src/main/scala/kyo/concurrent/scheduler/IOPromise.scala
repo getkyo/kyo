@@ -19,7 +19,7 @@ private[kyo] class IOPromise[T](s: State[T])
   def this() = this(Pending())
 
   /*inline(2)*/
-  def isDone(): Boolean =
+  final def isDone(): Boolean =
     @tailrec def loop(promise: IOPromise[T]): Boolean =
       promise.get() match {
         case p: Pending[T] @unchecked =>
@@ -32,13 +32,13 @@ private[kyo] class IOPromise[T](s: State[T])
     loop(this)
 
   /*inline(2)*/
-  def interrupts(p: IOPromise[_])(using frame: Frame["interrupt"]): Unit =
+  final def interrupts(p: IOPromise[_])(using frame: Frame["interrupt"]): Unit =
     onComplete { _ =>
       p.interrupt("")
     }
 
   /*inline(2)*/
-  def interrupt(reason: String)(using frame: Frame["interrupt"]): Boolean =
+  final def interrupt(reason: String)(using frame: Frame["interrupt"]): Boolean =
     @tailrec def loop(promise: IOPromise[T]): Boolean =
       promise.get() match {
         case p: Pending[T] @unchecked =>
@@ -73,7 +73,7 @@ private[kyo] class IOPromise[T](s: State[T])
       }
     loop(this)
 
-  def become(other: IOPromise[T]): Boolean =
+  final def become(other: IOPromise[T]): Boolean =
     @tailrec def loop(other: IOPromise[T]): Boolean =
       get() match {
         case p: Pending[T] @unchecked =>
@@ -89,7 +89,7 @@ private[kyo] class IOPromise[T](s: State[T])
     loop(other.compress())
 
   /*inline(2)*/
-  def onComplete( /*inline(2)*/ f: T > IOs => Unit): Unit =
+  final def onComplete( /*inline(2)*/ f: T > IOs => Unit): Unit =
     @tailrec def loop(promise: IOPromise[T]): Unit =
       promise.get() match {
         case p: Pending[T] @unchecked =>
@@ -116,7 +116,7 @@ private[kyo] class IOPromise[T](s: State[T])
     }
 
   /*inline(2)*/
-  def complete(v: T > IOs): Boolean =
+  final def complete(v: T > IOs): Boolean =
     @tailrec def loop(): Boolean =
       get() match {
         case p: Pending[T] @unchecked =>
@@ -126,7 +126,7 @@ private[kyo] class IOPromise[T](s: State[T])
       }
     loop()
 
-  def block(): T =
+  final def block(): T =
     def loop(promise: IOPromise[T]): T =
       promise.get() match {
         case _: Pending[T] @unchecked =>
@@ -183,7 +183,7 @@ private[kyo] object IOPromise {
         }
       }
 
-    def merge(tail: Pending[T]): Pending[T] =
+    final def merge(tail: Pending[T]): Pending[T] =
       @tailrec def loop(p: Pending[T], v: T > IOs): Pending[T] =
         p match {
           case Pending.Empty =>
@@ -196,7 +196,7 @@ private[kyo] object IOPromise {
           loop(self, v)
       }
 
-    def flush(v: T > IOs): Unit =
+    final def flush(v: T > IOs): Unit =
       @tailrec def loop(p: Pending[T]): Unit =
         p match {
           case Pending.Empty => ()
@@ -209,8 +209,7 @@ private[kyo] object IOPromise {
   object Pending {
     def apply[T](): Pending[T] = Empty.asInstanceOf[Pending[T]]
     case object Empty extends Pending[Nothing] {
-      def run(v: Nothing > IOs)                  = this
-      override def merge(tail: Pending[Nothing]) = tail
+      def run(v: Nothing > IOs) = this
     }
   }
 }

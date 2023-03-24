@@ -57,7 +57,7 @@ object core {
     def apply(v: T, s: Safepoint[E], l: Locals.State): U > S
   }
 
-  private[kyo] class KyoRoot[M[_], E <: Effect[M], T, S](fr: Frame[String], v: M[T], e: E)
+  private[kyo] abstract class KyoRoot[M[_], E <: Effect[M], T, S](fr: Frame[String], v: M[T], e: E)
       extends Kyo[M, E, T, T, S] {
     def frame  = fr
     def value  = v
@@ -68,8 +68,8 @@ object core {
 
   private[kyo] abstract class KyoCont[M[_], E <: Effect[M], T, U, S](prev: Kyo[M, E, T, _, _])
       extends Kyo[M, E, T, U, S] {
-    val value: M[T] = prev.value
-    val effect: E   = prev.effect
+    final val value: M[T] = prev.value
+    final val effect: E   = prev.effect
   }
 
   private type MX[_]
@@ -88,7 +88,7 @@ object core {
                 suspendLoop(kyo(v, s, l))
             }
           case _ =>
-            KyoRoot(fr, v.asInstanceOf[M[T]], e)
+            new KyoRoot(fr, v.asInstanceOf[M[T]], e) {}
       suspendLoop(v)
   }
 

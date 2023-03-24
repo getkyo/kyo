@@ -34,7 +34,7 @@ jobs:
         run: |
           cd /home/runner/work/kyo/kyo/
           sbt kyo-bench/"jmh:clean"
-          sbt kyo-bench/"jmh:run -wi 5 -i 5 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph" 
+          sbt kyo-bench/"jmh:run -wi 10 -i 5 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph Kyo" 
 
       - name: prepare results
         run: |

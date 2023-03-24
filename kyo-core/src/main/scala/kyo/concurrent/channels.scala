@@ -128,7 +128,9 @@ object channels {
                   puts.add((v, p))
                   p
                 }
-              } finally flush()
+              } finally {
+                flush()
+              }
             }
           def takeFiber: Fiber[T] > IOs =
             IOs {
@@ -141,7 +143,9 @@ object channels {
                     takes.add(p)
                     p
                 }
-              } finally flush()
+              } finally {
+                flush()
+              }
             }
 
           @tailrec private def flush(): Unit = {
@@ -152,6 +156,7 @@ object channels {
               if (p != null.asInstanceOf[Promise[T]]) {
                 q.poll() match {
                   case None =>
+                    takes.add(p)
                   case Some(v) =>
                     if (!p.unsafeComplete(v) && !q.offer(v)) {
                       val p = Fibers.unsafePromise[Unit]
@@ -163,12 +168,12 @@ object channels {
             if (!q.isFull && !puts.isEmpty()) {
               loop = true
               val t = puts.poll()
-              if (t != null.asInstanceOf[Promise[Unit]]) {
+              if (t != null) {
                 val (v, p) = t
                 if (q.offer(v)) {
                   p.unsafeComplete(())
                 } else {
-                  puts.add((v, p))
+                  puts.add(t)
                 }
               }
             }

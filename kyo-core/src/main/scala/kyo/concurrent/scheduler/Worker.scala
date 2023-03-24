@@ -37,8 +37,10 @@ private final class Worker(r: Runnable)
     }
 
   def isAvailable(): Boolean =
-    val t = currentTask
-    running && (t == null || !t())
+    running && {
+      val t = currentTask
+      (t == null || !t())
+    }
 
   def cycle(): Unit =
     val t = currentTask

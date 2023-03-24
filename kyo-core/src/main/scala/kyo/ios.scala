@@ -37,8 +37,8 @@ object ios {
 
   private[kyo] abstract class KyoIO[T, S]
       extends Kyo[IO, IOs, Unit, T, (S | IOs)] {
-    def value  = ()
-    def effect = ios.IOs
+    final def value  = ()
+    final def effect = ios.IOs
   }
 
   final class IOs private[ios] () extends Effect[IO] {

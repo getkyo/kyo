@@ -37,7 +37,7 @@ object timers {
               ThreadFactory("kyo-timer-default")
           )
 
-        private class Task[T](task: ScheduledFuture[T]) extends TimerTask {
+        private final class Task[T](task: ScheduledFuture[T]) extends TimerTask {
           def cancel: Boolean > IOs      = IOs(task.cancel(false))
           def isCancelled: Boolean > IOs = IOs(task.isCancelled())
           def isDone: Boolean > IOs      = IOs(task.isDone())
