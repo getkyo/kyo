@@ -7,6 +7,8 @@ import org.scalatest.Status
 
 import scala.util.Failure
 import scala.util.Success
+import kyo.tries.Tries
+import scala.util.Try
 
 class optionsTest extends KyoTest {
 
@@ -165,6 +167,33 @@ class optionsTest extends KyoTest {
               Option(5) > Options
           ) < Options,
           Option(1)
+      )
+    }
+  }
+
+  "getOrElse" - {
+    "empty" in {
+      checkEquals[Int, Nothing](
+          Options.getOrElse[Int, Nothing](Option.empty[Int], 1),
+          1
+      )
+    }
+    "not empty" in {
+      checkEquals[Int, Nothing](
+          Options.getOrElse[Int, Nothing](Some(2), 1),
+          2
+      )
+    }
+    "or fail" in {
+      val e              = Exception()
+      val a: Int > Tries = Options.getOrElse(Option.empty[Int], Tries.fail("fail"))
+      checkEquals[Try[Int], Nothing](
+          Tries.run(Options.getOrElse(Option.empty[Int], Tries.fail(e))),
+          Failure(e)
+      )
+      checkEquals[Try[Int], Nothing](
+          Tries.run(Options.getOrElse(Some(1), Tries.fail(e))),
+          Success(1)
       )
     }
   }

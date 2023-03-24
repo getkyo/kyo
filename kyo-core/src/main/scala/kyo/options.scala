@@ -19,6 +19,13 @@ object options {
     def get[T](v: Option[T]): T > Options =
       v > Options
 
+    /*inline(2)*/
+    def getOrElse[T, S](v: Option[T], default: => T > S): T > S =
+      v match {
+        case None    => default
+        case Some(v) => v
+      }
+
     def run[T, S](v: T > (S | Options)): Option[T] > S =
       v < Options
 
