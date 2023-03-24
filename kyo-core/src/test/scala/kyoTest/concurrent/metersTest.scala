@@ -166,6 +166,7 @@ class metersTest extends KyoTest {
         meter   <- Meters.pipeline(Meters.rateLimiter(2, 1.millis), Meters.mutex)
         counter <- Atomics.forInt(0)
         f1      <- Fibers.forkFiber(loop(meter, counter))
+        _       <- retry(meter.isAvailable(!_))
         _       <- Fibers.sleep(50.millis)
         r       <- meter.tryRun(())
         _       <- f1.interrupt
