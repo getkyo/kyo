@@ -18,6 +18,7 @@ object channels {
     def poll: Option[T] > IOs
     def isEmpty: Boolean > IOs
     def isFull: Boolean > IOs
+
   }
 
   object Channels {
@@ -42,32 +43,32 @@ object channels {
     def bounded[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
       Queues.bounded[T](capacity, access) { q =>
         new Channel[T] {
-          def size        = q.size
+          val size        = q.size
           def offer(v: T) = q.offer(v)
-          def poll        = q.poll
-          def isEmpty     = q.isEmpty
-          def isFull      = q.isFull
+          val poll        = q.poll
+          val isEmpty     = q.isEmpty
+          val isFull      = q.isFull
         }
       }
 
     def dropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
       Queues.bounded[T](capacity, access) { q =>
         new Unbounded[T] {
-          def size        = q.size
+          val size        = q.size
           def offer(v: T) = q.offer(v)
-          def poll        = q.poll
+          val poll        = q.poll
           def put(v: T)   = q.offer(v).unit
-          def isEmpty     = q.isEmpty
-          def isFull      = q.isFull
+          val isEmpty     = q.isEmpty
+          val isFull      = q.isFull
         }
       }
 
     def sliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
       Queues.bounded[T](capacity, access) { q =>
         new Unbounded[T] {
-          def size        = q.size
+          val size        = q.size
           def offer(v: T) = q.offer(v)
-          def poll        = q.poll
+          val poll        = q.poll
           def put(v: T) =
             IOs {
               @tailrec def loop: Unit = {
@@ -80,20 +81,20 @@ object channels {
               }
               loop
             }
-          def isEmpty = q.isEmpty
-          def isFull  = q.isFull
+          val isEmpty = q.isEmpty
+          val isFull  = q.isFull
         }
       }
 
     def unbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
       Queues.unbounded[T](access) { q =>
         new Unbounded[T] {
-          def size        = q.size
+          val size        = q.size
           def put(v: T)   = q.add(v)
           def offer(v: T) = q.offer(v)
-          def poll        = q.poll
-          def isEmpty     = q.isEmpty
-          def isFull      = false
+          val poll        = q.poll
+          val isEmpty     = q.isEmpty
+          val isFull      = false
         }
       }
 
@@ -105,15 +106,15 @@ object channels {
           val takes = MpmcUnboundedXaddArrayQueue[Promise[T]](8)
           val puts  = MpmcUnboundedXaddArrayQueue[(T, Promise[Unit])](8)
 
-          def size    = queue.size
-          def isEmpty = queue.isEmpty
-          def isFull  = queue.isFull
+          val size    = queue.size
+          val isEmpty = queue.isEmpty
+          val isFull  = queue.isFull
           def offer(v: T) =
             IOs {
               try q.offer(v)
               finally flush()
             }
-          def poll =
+          val poll =
             IOs {
               try q.poll()
               finally flush()
@@ -132,7 +133,7 @@ object channels {
                 flush()
               }
             }
-          def takeFiber: Fiber[T] > IOs =
+          val takeFiber: Fiber[T] > IOs =
             IOs {
               try {
                 q.poll() match {

@@ -55,7 +55,7 @@ object meters {
       Channels.blocking[Unit](rate) { chan =>
         Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())) { _ =>
           new Meter {
-            def available = chan.size
+            val available = chan.size
             def run[T, S](v: => T > S): T > (S | IOs | Fibers) =
               chan.take(_ => v)
             def tryRun[T, S](v: => T > S) =
@@ -99,7 +99,7 @@ object meters {
                 case h :: t =>
                   h.tryRun(loop(t)) {
                     case None => None
-                    case _    => loop(t)
+                    case r    => r.flatten
                   }
               }
             loop(meters)
