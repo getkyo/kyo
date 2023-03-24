@@ -12,11 +12,14 @@ object lists {
     def run[T, S](v: T > (S | Lists)): List[T] > S =
       v < Lists
 
-    def foreach[T](v: List[T]): T > Lists =
-      v > Lists
+    def foreach[T, S](v: List[T] > S): T > (S | Lists) =
+      v {
+        case head :: Nil => head
+        case _           => v > Lists
+      }
 
-    def foreach[T](v: T*): T > Lists =
-      foreach(v.toList)
+    def foreach[T, S](v: (T > S)*): T > (S | Lists) =
+      foreach(collect(v.toList))
 
     /*inline(1)*/
     def filter[S](v: Boolean > S): Unit > (S | Lists) =
