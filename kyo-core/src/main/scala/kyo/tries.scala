@@ -27,8 +27,8 @@ object tries {
       c
 
     /*inline(2)*/
-    def get[T](v: Try[T]): T > Tries =
-      /*inline(2)*/ v match {
+    def get[T, S](v: Try[T] > S): T > (S | Tries) =
+      v {
         case Success(v) =>
           v
         case _ =>

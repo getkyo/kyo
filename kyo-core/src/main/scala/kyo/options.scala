@@ -16,12 +16,12 @@ object options {
         v
 
     /*inline(2)*/
-    def get[T](v: Option[T]): T > Options =
+    def get[T, S](v: Option[T] > S): T > (S | Options) =
       v > Options
 
     /*inline(2)*/
-    def getOrElse[T, S](v: Option[T], default: => T > S): T > S =
-      v match {
+    def getOrElse[T, S](v: Option[T] > S, default: => T > S): T > S =
+      v {
         case None    => default
         case Some(v) => v
       }
