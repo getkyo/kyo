@@ -95,8 +95,8 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %% "zio-test"          % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %% "zio-test-magnolia" % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %% "zio-test-sbt"      % zioVersion   % Test,
-    libraryDependencies += "dev.zio"       %% "zio-prelude"       % "1.0.0-RC16" % Test,
-    libraryDependencies += "dev.zio"       %% "zio-laws-laws"     % "1.0.0-RC16" % Test,
+    libraryDependencies += "dev.zio"       %% "zio-prelude"       % "1.0.0-RC18" % Test,
+    libraryDependencies += "dev.zio"       %% "zio-laws-laws"     % "1.0.0-RC18" % Test,
     libraryDependencies += "org.scalatest" %% "scalatest"         % "3.2.15"     % Test,
     Global / concurrentRestrictions := Seq(
         Tags.limit(Tags.CPU, 1)
