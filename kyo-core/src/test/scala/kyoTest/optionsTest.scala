@@ -174,13 +174,13 @@ class optionsTest extends KyoTest {
   "getOrElse" - {
     "empty" in {
       checkEquals[Int, Nothing](
-          Options.getOrElse[Int, Nothing](Option.empty[Int], 1),
+          Options.getOrElse(Option.empty[Int], 1),
           1
       )
     }
     "not empty" in {
       checkEquals[Int, Nothing](
-          Options.getOrElse[Int, Nothing](Some(2), 1),
+          Options.getOrElse(Some(2), 1),
           2
       )
     }

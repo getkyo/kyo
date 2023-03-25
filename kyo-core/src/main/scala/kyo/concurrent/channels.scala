@@ -18,7 +18,6 @@ object channels {
     def poll: Option[T] > IOs
     def isEmpty: Boolean > IOs
     def isFull: Boolean > IOs
-
   }
 
   object Channels {

@@ -258,12 +258,16 @@ object core {
     /*inline(3)*/
     def apply(v: E) = v()
 
-  given [T, S](using NotGiven[T <:< (Any > Any)]): Conversion[Kyo[_, _, _, T, S], T > S] =
+  /*inline(3)*/
+  given [T, S](using /*inline(3)*/ ng: NotGiven[T <:< (Any > Any)])
+      : Conversion[Kyo[_, _, _, T, S], T > S] =
     identityConversion.asInstanceOf[Conversion[Kyo[_, _, _, T, S], T > S]]
 
-  given [T](using NotGiven[T <:< (Any > Any)]): Conversion[T > Nothing, T] =
+  /*inline(3)*/
+  given [T](using /*inline(3)*/ ng: NotGiven[T <:< (Any > Any)]): Conversion[T > Nothing, T] =
     identityConversion.asInstanceOf[Conversion[T > Nothing, T]]
 
-  given [T](using NotGiven[T <:< (Any > Any)]): Conversion[T, T > Nothing] =
+  /*inline(3)*/
+  given [T](using /*inline(3)*/ ng: NotGiven[T <:< (Any > Any)]): Conversion[T, T > Nothing] =
     identityConversion.asInstanceOf[Conversion[T, T > Nothing]]
 }
