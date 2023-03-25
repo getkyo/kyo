@@ -20,7 +20,7 @@ object options {
       v > Options
 
     /*inline(2)*/
-    def getOrElse[T, S](v: Option[T] > S, default: => T > S): T > S =
+    def getOrElse[T, S1, S2](v: Option[T] > S1, default: => T > S2): T > (S1 | S2) =
       v {
         case None    => default
         case Some(v) => v

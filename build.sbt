@@ -9,7 +9,7 @@ val compilerOptions = Seq(
     "-language:implicitConversions"
     // "-explain",
     // "-Wvalue-discard",
-    //"-Vprofile",
+    // "-Vprofile",
 )
 
 lazy val `kyo-settings` = Seq(
@@ -90,7 +90,7 @@ val zioVersion = "2.0.10"
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "com.lihaoyi"   %% "sourcecode"        % "0.3.0",
     libraryDependencies += "dev.zio"       %% "izumi-reflect"     % "2.2.2",
-    libraryDependencies += "org.slf4j"      % "slf4j-api"         % "2.0.6",
+    libraryDependencies += "org.slf4j"      % "slf4j-api"         % "2.0.7",
     libraryDependencies += "org.jctools"    % "jctools-core"      % "4.0.1",
     libraryDependencies += "dev.zio"       %% "zio-test"          % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %% "zio-test-magnolia" % zioVersion   % Test,

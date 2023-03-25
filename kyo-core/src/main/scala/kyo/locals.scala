@@ -21,21 +21,22 @@ object locals {
       }
 
     /*inline(3)*/
-    def let[U, S](v: T)(f: U > S)(using /*inline(3)*/ fr: Frame["let"]): U > (S | IOs) = {
+    def let[U, S1, S2](v: T > S1)(f: U > S2)(using /*inline(3)*/ fr: Frame["let"])
+        : U > (S1 | S2 | IOs) = {
       type M2[_]
       type E2 <: Effect[M2]
-      def loop(f: U > S): U > S =
+      def loop(v: T, f: U > S2): U > S2 =
         f match {
-          case kyo: Kyo[M2, E2, Any, U, S] @unchecked =>
-            new KyoCont[M2, E2, Any, U, S](kyo) {
+          case kyo: Kyo[M2, E2, Any, U, S2] @unchecked =>
+            new KyoCont[M2, E2, Any, U, S2](kyo) {
               def frame = fr
               def apply(v2: Any, s: Safepoint[E2], l: Locals.State) =
-                loop(kyo(v2, s, l.updated(Local.this, v)))
+                loop(v, kyo(v2, s, l.updated(Local.this, v)))
             }
           case _ =>
             f
         }
-      IOs(loop(f))
+      v(loop(_, f))
     }
   }
 
