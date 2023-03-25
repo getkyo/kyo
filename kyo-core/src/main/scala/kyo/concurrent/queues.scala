@@ -127,7 +127,7 @@ object queues {
         def capacity: Int        = _capacity
         def size: Int            = q.size
         def isEmpty              = q.isEmpty()
-        def isFull               = q.size == _capacity
+        def isFull               = q.size >= _capacity
         def offer(v: T): Boolean = q.offer(v)
         def poll(): Option[T]    = Option(q.poll)
         def peek(): Option[T]    = Option(q.peek)
