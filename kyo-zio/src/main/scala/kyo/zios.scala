@@ -25,28 +25,30 @@ object zios {
   final class ZIOs private[zios] () extends Effect[Task] {
 
     @targetName("fromZIO")
-    def apply[R: ITag, E: ITag, A](v: ZIO[R, E, A]): A > (Envs[R] | Aborts[E] | ZIOs) =
-      val a: URIO[R, A > Aborts[E]]           = v.fold[A > Aborts[E]](Aborts(_), v => v)
-      val b: Task[A > Aborts[E]] > Envs[R]    = Envs[R](r => a.provideEnvironment(ZEnvironment(r)))
-      val c: A > (Aborts[E] | Envs[R] | ZIOs) = (b > this).flatten
-      c
+    def apply[R: ITag, E: ITag, A, S](v: ZIO[R, E, A] > S): A > (S | Envs[R] | Aborts[E] | ZIOs) =
+      for {
+        urio <- v(_.fold[A > Aborts[E]](Aborts(_), v => v))
+        task <- Envs[R](r => urio.provideEnvironment(ZEnvironment(r)))
+        r    <- (task > this).flatten
+      } yield r
 
     @targetName("fromIO")
-    def apply[E: ITag, A](v: IO[E, A]): A > (Aborts[E] | ZIOs) =
-      val a: Task[A > Aborts[E]]    = v.fold[A > Aborts[E]](Aborts(_), v => v)
-      val b: A > (Aborts[E] | ZIOs) = (a > this).flatten
-      b
+    def apply[E: ITag, A, S](v: IO[E, A] > S): A > (S | Aborts[E] | ZIOs) =
+      for {
+        task <- v(_.fold[A > Aborts[E]](Aborts(_), v => v))
+        r    <- (task > this).flatten
+      } yield r
 
     @targetName("fromTask")
-    def apply[T](v: Task[T]): T > ZIOs =
+    def apply[T, S](v: Task[T] > S): T > (S | ZIOs) =
       v > this
   }
   val ZIOs = new ZIOs
 
   private[kyo] given [T]: DeepHandler[Task, ZIOs] with {
-    override def pure[T](v: T): Task[T] =
+    def pure[T](v: T): Task[T] =
       ZIO.succeed(v)
-    override def apply[T, U](m: Task[T], f: T => Task[U]): Task[U] =
+    def apply[T, U](m: Task[T], f: T => Task[U]): Task[U] =
       m.flatMap(f)
   }
 
@@ -75,7 +77,7 @@ object zios {
 
   private given zioTag[T](using t: ITag[T]): zio.Tag[T] =
     new zio.Tag[T] {
-      override def tag: zio.LightTypeTag  = t.tag
-      override def closestClass: Class[?] = t.closestClass
+      def tag: zio.LightTypeTag  = t.tag
+      def closestClass: Class[?] = t.closestClass
     }
 }

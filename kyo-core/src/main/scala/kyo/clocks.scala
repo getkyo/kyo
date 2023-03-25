@@ -14,7 +14,7 @@ object clocks {
   }
   object Clock {
     given default: Clock with {
-      def now: Instant > IOs =
+      val now: Instant > IOs =
         IOs(Instant.now())
     }
   }

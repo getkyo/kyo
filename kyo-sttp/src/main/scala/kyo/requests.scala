@@ -43,10 +43,10 @@ object requests {
     def run[T, S](v: T > (S | Requests))(using b: Backend): T > (S | IOs | Fibers) =
       run(b)(v)
 
-    def apply[T](req: Request[T, Any]): Response[T] > Requests =
-      Envs[Backend](_.send(req))
+    def apply[T, S](req: Request[T, Any] > S): Response[T] > (S | Requests) =
+      Envs[Backend](b => req(b.send))
 
-    def apply[T](f: BasicRequest => Request[T, Any]): Response[T] > Requests =
+    def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (S | Requests) =
       apply(f(basicRequest))
   }
 }

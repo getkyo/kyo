@@ -18,7 +18,7 @@ object consoles {
 
   object Console {
     given default: Console with {
-      def readln: String > IOs =
+      val readln: String > IOs =
         IOs(scala.Console.in.readLine())
       def print(s: => String): Unit > IOs =
         IOs(scala.Console.out.print(s))
