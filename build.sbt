@@ -158,7 +158,7 @@ lazy val `kyo-sttp` = project
   .settings(
       name := "kyo-sttp",
       `kyo-settings`,
-      libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.13"
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.14"
   )
 
 lazy val `kyo-chatgpt` = project
@@ -169,7 +169,7 @@ lazy val `kyo-chatgpt` = project
       name := "kyo-chatgpt",
       `kyo-settings`,
       libraryDependencies += "com.softwaremill.sttp.client3" %% "jsoniter" % "3.8.14",
-      libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json" % "3.8.14",
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json" % "3.8.14"
   )
 
 lazy val `kyo-bench` = project
