@@ -161,10 +161,21 @@ lazy val `kyo-sttp` = project
       libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.13"
   )
 
+lazy val `kyo-chatgpt` = project
+  .in(file("kyo-chatgpt"))
+  .dependsOn(`kyo-sttp`)
+  .dependsOn(`kyo-core` % "test->test;compile->compile")
+  .settings(
+      name := "kyo-chatgpt",
+      `kyo-settings`,
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "jsoniter" % "3.8.14",
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json" % "3.8.14",
+  )
+
 lazy val `kyo-bench` = project
   .in(file("kyo-bench"))
   .enablePlugins(JmhPlugin)
-  .dependsOn(`kyo-core-opt3` % "test->test;compile->compile")
+  .dependsOn(`kyo-core` % "test->test;compile->compile")
   .settings(
       name := "kyo-bench",
       `kyo-settings`,
