@@ -36,8 +36,9 @@ lazy val `kyo-settings` = Seq(
 
 lazy val gen = TaskKey[Unit]("gen", "")
 
-lazy val genState: State => State = { s: State =>
-  "gen" :: s
+lazy val genState: State => State = {
+  s: State =>
+    "gen" :: s
 }
 
 Global / onLoad := {
@@ -169,7 +170,7 @@ lazy val `kyo-chatgpt` = project
       name := "kyo-chatgpt",
       `kyo-settings`,
       libraryDependencies += "com.softwaremill.sttp.client3" %% "jsoniter" % "3.8.14",
-      libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json" % "3.8.14",
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json" % "3.8.14"
   )
 
 lazy val `kyo-bench` = project
