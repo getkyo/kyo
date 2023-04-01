@@ -60,6 +60,14 @@ object ais {
         (f < Tries)(r => Sums[State].set(st)(_ => r.get))
       }
 
+    def clone[S](ai: AI > (S | AIs)): AI > (S | AIs) =
+      for {
+        orig <- ai
+        res  <- init
+        st   <- Sums[State].get
+        _    <- Sums[State].set(st + (res -> st.getOrElse(orig, Context())))
+      } yield res
+
     def run[T, S](v: T > (S | AIs)): T > (S | Requests) =
       Sums.drop[State](Tries.run(v))(_.get)
   }
@@ -92,14 +100,6 @@ object ais {
         }
         _ <- assistant(content)
       } yield content
-
-    def clone[S](v: AI > (S | AIs)): AI > (S | AIs) =
-      v { ai =>
-        Sums[State].get { st =>
-          Sums[State]
-            .set(st + (ai -> st.getOrElse(this, Context())))(_ => IOs(ai))
-        }
-      }
   }
 
   private given Summer[State] with
