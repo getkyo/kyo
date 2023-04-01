@@ -18,6 +18,11 @@ object lists {
         case _           => v > Lists
       }
 
+    def traverse[T, U, S, S2](v: List[T] > S)(f: T => U > S2): List[U] > (S | S2) =
+      v { v =>
+        collect(v(_.map(f)))
+      }
+
     def foreach[T, S](v: (T > S)*): T > (S | Lists) =
       foreach(collect(v.toList))
 

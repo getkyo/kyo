@@ -13,9 +13,10 @@ import ios._
 object sums {
 
   private case class Add[V](v: V)
+  private case class Set[V](v: V)
   private case object Get
 
-  opaque type Sum[V, +T] = T | Add[V] | Get.type
+  opaque type Sum[V, +T] = T | Add[V] | Set[V] | Get.type
 
   final class Sums[V] private[sums] (using private val tag: Tag[_])
       extends Effect[[T] =>> Sum[V, T]] {
@@ -32,6 +33,9 @@ object sums {
   object Sums {
     def add[V: Tag](v: V): V > Sums[V] =
       Add(v) > Sums[V]
+
+    def set[V: Tag](v: V): V > Sums[V] =
+      Set(v) > Sums[V]
 
     def get[V: Tag]: V > Sums[V] =
       val v: Sum[V, V] = Get
@@ -52,6 +56,9 @@ object sums {
             m match {
               case Add(v) =>
                 curr = g.add(curr, v.asInstanceOf[V])
+                f(curr.asInstanceOf[T])
+              case Set(v) =>
+                curr = v.asInstanceOf[V]
                 f(curr.asInstanceOf[T])
               case Get =>
                 f(curr.asInstanceOf[T])
