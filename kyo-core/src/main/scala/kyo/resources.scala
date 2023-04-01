@@ -18,11 +18,11 @@ object resources {
 
   object Resources {
     def ensure[T](f: => T > IOs): Unit > Resources =
-      Sums.add[Finalizer](() => IOs.run(f)).unit
+      Sums[Finalizer].add(() => IOs.run(f)).unit
 
     def acquire[T <: Closeable](resource: => T): T > Resources =
       lazy val v = resource
-      Sums.add[Finalizer](() => v.close()).map(_ => v)
+      Sums[Finalizer].add(() => v.close()).map(_ => v)
 
     def run[T, S](v: T > (S | Resources)): T > (S | IOs) =
       Sums.drop[Finalizer](v)

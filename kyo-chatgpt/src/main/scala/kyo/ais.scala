@@ -44,10 +44,10 @@ object ais {
       Tries.fail(AIException(cause))
 
     def transactional[T, S](f: => T > (S | AIs)): T > (S | AIs) =
-      Sums.get[State].flatMap { st =>
-        (f < Tries) {
+      Sums[State].get { st =>
+        IOs.attempt(f) {
           case Failure(ex) =>
-            Sums.set[State](st).flatMap { _ =>
+            Sums[State].set(st) { _ =>
               Tries.fail(ex)
             }
           case Success(value) =>
@@ -56,8 +56,8 @@ object ais {
       }
 
     def ephemeral[T, S](f: => T > (S | AIs)): T > (S | AIs) =
-      Sums.get[State].flatMap { st =>
-        (f < Tries)(r => Sums.set[State](st).flatMap(_ => r.get))
+      Sums[State].get { st =>
+        (f < Tries)(r => Sums[State].set(st)(_ => r.get))
       }
 
     def run[T, S](v: T > (S | AIs)): T > (S | Requests) =
@@ -67,7 +67,7 @@ object ais {
   class AI private[ais] () {
 
     private def add(role: String, msg: String): State > AIs =
-      Sums.add(Map(this -> Context(messages = List(Message(role, msg)))))
+      Sums[State].add(Map(this -> Context(messages = List(Message(role, msg)))))
 
     def user(msg: String): Unit > AIs      = add("user", msg).unit
     def system(msg: String): Unit > AIs    = add("system", msg).unit
@@ -94,10 +94,10 @@ object ais {
       } yield content
 
     def clone[S](v: AI > (S | AIs)): AI > (S | AIs) =
-      v.flatMap { ai =>
-        Sums.get[State].flatMap { st =>
-          Sums.set[State](st + (ai -> st.getOrElse(this, Context())))
-            .flatMap(_ => IOs(ai))
+      v { ai =>
+        Sums[State].get { st =>
+          Sums[State]
+            .set(st + (ai -> st.getOrElse(this, Context())))(_ => IOs(ai))
         }
       }
   }

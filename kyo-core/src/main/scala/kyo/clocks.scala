@@ -21,10 +21,10 @@ object clocks {
   type Clocks = Envs[Clock] | IOs
   object Clocks {
     def run[T, S](c: Clock)(f: => T > (S | Clocks)): T > (S | IOs) =
-      Envs.let(c)(f)
+      Envs[Clock].let(c)(f)
     def run[T, S](f: => T > (S | Clocks))(using c: Clock): T > (S | IOs) =
-      Envs.let(c)(f)
+      Envs[Clock].let(c)(f)
     def now: Instant > Clocks =
-      Envs[Clock](_.now)
+      Envs[Clock].get(_.now)
   }
 }

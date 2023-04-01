@@ -38,13 +38,13 @@ object requests {
   object Requests {
 
     def run[T, S](b: Backend)(v: T > (S | Requests)): T > (S | IOs | Fibers) =
-      Envs.let(b)(v)
+      Envs[Backend].let(b)(v)
 
     def run[T, S](v: T > (S | Requests))(using b: Backend): T > (S | IOs | Fibers) =
       run(b)(v)
 
     def apply[T, S](req: Request[T, Any] > S): Response[T] > (S | Requests) =
-      Envs[Backend](b => req(b.send))
+      Envs[Backend].get(b => req(b.send))
 
     def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (S | Requests) =
       apply(f(basicRequest))

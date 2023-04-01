@@ -52,7 +52,7 @@ object ios {
 
     /*inline(3)*/
     def attempt[T, S](v: => T > S): Try[T] > S =
-      v < Tries
+      Tries(v) < Tries
 
     private[kyo] /*inline(3)*/ def ensure[T, S]( /*inline(3)*/ f: => Unit > IOs)(v: => T > S)(using
         /*inline(3)*/ fr: Frame["IOs.ensure"]

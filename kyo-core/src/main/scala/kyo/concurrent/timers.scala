@@ -108,13 +108,13 @@ object timers {
 
   object Timers {
     def run[T, S](t: Timer)(f: => T > (S | Timers)): T > S =
-      Envs.let(t)(f)
+      Envs[Timer].let(t)(f)
     def run[T, S](f: => T > (S | Timers))(using t: Timer): T > S =
-      Envs.let(t)(f)
+      Envs[Timer].let(t)(f)
     def shutdown: Unit > (Timers | IOs) =
-      Envs[Timer](_.shutdown)
+      Envs[Timer].get(_.shutdown)
     def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > (Timers | IOs) =
-      Envs[Timer](_.schedule(delay)(f))
+      Envs[Timer].get(_.schedule(delay)(f))
     def scheduleAtFixedRate(
         period: Duration
     )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
@@ -123,7 +123,7 @@ object timers {
         initialDelay: Duration,
         period: Duration
     )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
-      Envs[Timer](_.scheduleAtFixedRate(initialDelay, period)(f))
+      Envs[Timer].get(_.scheduleAtFixedRate(initialDelay, period)(f))
     def scheduleWithFixedDelay(
         period: Duration
     )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
@@ -132,6 +132,6 @@ object timers {
         initialDelay: Duration,
         period: Duration
     )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
-      Envs[Timer](_.scheduleWithFixedDelay(initialDelay, period)(f))
+      Envs[Timer].get(_.scheduleWithFixedDelay(initialDelay, period)(f))
   }
 }

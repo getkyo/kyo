@@ -21,6 +21,16 @@ object sums {
   final class Sums[V] private[sums] (using private val tag: Tag[_])
       extends Effect[[T] =>> Sum[V, T]] {
 
+    val get: V > Sums[V] =
+      val v: Sum[V, V] = Get
+      v > this
+
+    def add(v: V): V > Sums[V] =
+      (Add(v): Sum[V, V]) > this
+
+    def set(v: V): V > Sums[V] =
+      (Set(v): Sum[V, V]) > this
+
     override def accepts(other: Effect[_]) =
       other match {
         case other: Sums[_] =>
@@ -31,15 +41,9 @@ object sums {
   }
 
   object Sums {
-    def add[V: Tag](v: V): V > Sums[V] =
-      Add(v) > Sums[V]
 
-    def set[V: Tag](v: V): V > Sums[V] =
-      Set(v) > Sums[V]
-
-    def get[V: Tag]: V > Sums[V] =
-      val v: Sum[V, V] = Get
-      v > Sums[V]
+    def apply[V: Tag]: Sums[V] =
+      new Sums[V]
 
     class DropDsl[V] {
       def apply[T, S](v: T > (S | Sums[V]))(using
