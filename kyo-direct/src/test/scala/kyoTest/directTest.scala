@@ -15,8 +15,8 @@ import kyo.concurrent.atomics._
 class directTest extends KyoTest {
 
   "one run" in {
-    val io = Defer {
-      val a = Run(IOs("hello"))
+    val io = defer {
+      val a = await(IOs("hello"))
       a + " world"
     }
     assert(IOs.run(io) == "hello world")
@@ -24,9 +24,9 @@ class directTest extends KyoTest {
 
   "two runs" in {
     val io =
-      Defer {
-        val a = Run(IOs("hello"))
-        val b = Run(IOs("world"))
+      defer {
+        val a = await(IOs("hello"))
+        val b = await(IOs("world"))
         a + " " + b
       }
     assert(IOs.run(io) == "hello world")
@@ -34,9 +34,9 @@ class directTest extends KyoTest {
 
   "two effects" in {
     val io: String > (IOs | Options) =
-      Defer {
-        val a = Run(Options.get(Some("hello")))
-        val b = Run(IOs("world"))
+      defer {
+        val a = await(Options.get(Some("hello")))
+        val b = await(IOs("world"))
         a + " " + b
       }
     assert(IOs.run(io < Options) == Some("hello world"))
@@ -45,11 +45,11 @@ class directTest extends KyoTest {
   "if" in {
     var calls = List.empty[Int]
     val io: Boolean > IOs =
-      Defer {
-        if (Run(IOs { calls :+= 1; true }))
-          Run(IOs { calls :+= 2; true })
+      defer {
+        if (await(IOs { calls :+= 1; true }))
+          await(IOs { calls :+= 2; true })
         else
-          Run(IOs { calls :+= 3; true })
+          await(IOs { calls :+= 3; true })
       }
     assert(IOs.run(io))
     assert(calls == List(1, 2))
@@ -65,8 +65,8 @@ class directTest extends KyoTest {
       "direct" in {
         var calls = List.empty[Int]
         val io: Boolean > IOs =
-          Defer {
-            (Run(IOs { calls :+= 1; true }) && Run(IOs { calls :+= 2; true }))
+          defer {
+            (await(IOs { calls :+= 1; true }) && await(IOs { calls :+= 2; true }))
           }
         assert(IOs.run(io))
         assert(calls == List(1, 2))
@@ -81,8 +81,8 @@ class directTest extends KyoTest {
       "direct" in {
         var calls = List.empty[Int]
         val io: Boolean > IOs =
-          Defer {
-            (Run(IOs { calls :+= 1; true }) || Run(IOs { calls :+= 2; true }))
+          defer {
+            (await(IOs { calls :+= 1; true }) || await(IOs { calls :+= 2; true }))
           }
         assert(IOs.run(io))
         assert(calls == List(1))
@@ -92,14 +92,14 @@ class directTest extends KyoTest {
 
   "options" in {
     def test[T](opt: Option[T]) =
-      assert(opt == Defer(Run(opt > Options)) < Options)
+      assert(opt == defer(await(opt > Options)) < Options)
     test(Some(1))
     test(None)
     test(Some("a"))
   }
   "tries" in {
     def test[T](t: Try[T]) =
-      assert(t == Defer(Run(t > Tries)) < Tries)
+      assert(t == defer(await(t > Tries)) < Tries)
     test(Try(1))
     test(Try(throw new Exception("a")))
     test(Try("a"))
@@ -117,7 +117,7 @@ class directTest extends KyoTest {
 
       def printlnErr(s: => String): Unit > IOs = ???
     }
-    val io: String > IOs = Consoles.run(console)(Defer(Run(Consoles.readln)))
+    val io: String > IOs = Consoles.run(console)(defer(await(Consoles.readln)))
     assert(IOs.run(io) == "hello")
   }
 
@@ -147,11 +147,11 @@ class directTest extends KyoTest {
     val y = Lists.foreach("ab", "cde")
 
     val v: Int > Lists =
-      Defer {
-        val xx = Run(x)
+      defer {
+        val xx = await(x)
         xx + (
-            if (xx > 0) then Run(y).length * Run(x)
-            else Run(y).length
+            if (xx > 0) then await(y).length * await(x)
+            else await(y).length
         )
       }
 
@@ -166,14 +166,14 @@ class directTest extends KyoTest {
     val y = Lists.foreach("ab", "cde")
 
     val v: Int > Lists =
-      Defer {
-        val xx = Run(x)
+      defer {
+        val xx = await(x)
         val r =
           xx + (
-              if (xx > 0) then Run(y).length * Run(x)
-              else Run(y).length
+              if (xx > 0) then await(y).length * await(x)
+              else await(y).length
           )
-        Run(Lists.filter(r > 0))
+        await(Lists.filter(r > 0))
         r
       }
 

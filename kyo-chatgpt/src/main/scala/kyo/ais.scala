@@ -25,10 +25,10 @@ import scala.util.control.NoStackTrace
 
 object ais {
   val apiKeyProp = "OPENAI_API_KEY"
-  val apiKey     = "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"
-  // Option(System.getenv(apiKeyProp))
-  //   .orElse(Option(System.getProperty(apiKeyProp)))
-  //   .getOrElse(throw new Exception(s"Missing $apiKeyProp"))
+  val apiKey =
+    Option(System.getenv(apiKeyProp))
+      .orElse(Option(System.getProperty(apiKeyProp)))
+      .getOrElse(throw new Exception(s"Missing $apiKeyProp"))
 
   opaque type State = Map[AI, Context]
 
