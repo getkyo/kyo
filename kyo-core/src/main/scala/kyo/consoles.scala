@@ -40,13 +40,13 @@ object consoles {
       run(c)(f)
     def readln: String > Consoles =
       Envs[Console].get(_.readln)
-    def print(s: => String): Unit > Consoles =
-      Envs[Console].get(_.print(s))
-    def printErr(s: => String): Unit > Consoles =
-      Envs[Console].get(_.printErr(s))
-    def println(s: => String): Unit > Consoles =
-      Envs[Console].get(_.println(s))
-    def printlnErr(s: => String): Unit > Consoles =
-      Envs[Console].get(_.printlnErr(s))
+    def print[S](s: => String > S): Unit > (S | Consoles) =
+      s(s => Envs[Console].get(_.print(s)))
+    def printErr[S](s: => String > S): Unit > (S | Consoles) =
+      s(s => Envs[Console].get(_.printErr(s)))
+    def println[S](s: => String > S): Unit > (S | Consoles) =
+      s(s => Envs[Console].get(_.println(s)))
+    def printlnErr[S](s: => String > S): Unit > (S | Consoles) =
+      s(s => Envs[Console].get(_.printlnErr(s)))
   }
 }

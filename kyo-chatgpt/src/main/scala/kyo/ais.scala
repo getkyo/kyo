@@ -69,21 +69,21 @@ object ais {
       } yield res
 
     def run[T, S](v: T > (S | AIs)): T > (S | Requests) =
-      Sums.drop[State](Tries.run(v))(_.get)
+      Sums[State].drop(Tries.run(v))(_.get)
   }
 
   class AI private[ais] () {
 
-    private def add(role: String, msg: String): State > AIs =
-      Sums[State].add(Map(this -> Context(messages = List(Message(role, msg)))))
+    private def add(role: String, msg: Any*): State > AIs =
+      Sums[State].add(Map(this -> Context(messages = List(Message(role, msg.mkString(" "))))))
 
-    def user(msg: String): Unit > AIs      = add("user", msg).unit
-    def system(msg: String): Unit > AIs    = add("system", msg).unit
-    def assistant(msg: String): Unit > AIs = add("assistant", msg).unit
+    def user(msg: Any*): AI > AIs      = add("user", msg)(_ => this)
+    def system(msg: Any*): AI > AIs    = add("system", msg)(_ => this)
+    def assistant(msg: Any*): AI > AIs = add("assistant", msg)(_ => this)
 
-    def ask(inputs: Any*): String > AIs =
+    def ask(msg: Any*): String > AIs =
       for {
-        st <- add("user", inputs.mkString(" "))(_.getOrElse(this, Context()))
+        st <- add("user", msg.mkString(" "))(_.getOrElse(this, Context()))
         response <- Requests(
             _.contentType("application/json")
               .header("Authorization", s"Bearer $apiKey")

@@ -12,11 +12,11 @@ import ios._
 
 object sums {
 
-  private case class Add[V](v: V)
-  private case class Set[V](v: V)
+  private case class AddValue[V](v: V)
+  private case class SetValue[V](v: V)
   private case object Get
 
-  opaque type Sum[V, +T] = T | Add[V] | Set[V] | Get.type
+  opaque type Sum[V, +T] = T | AddValue[V] | SetValue[V] | Get.type
 
   final class Sums[V] private[sums] (using private val tag: Tag[_])
       extends Effect[[T] =>> Sum[V, T]] {
@@ -26,10 +26,47 @@ object sums {
       v > this
 
     def add(v: V): V > Sums[V] =
-      (Add(v): Sum[V, V]) > this
+      (AddValue(v): Sum[V, V]) > this
 
     def set(v: V): V > Sums[V] =
-      (Set(v): Sum[V, V]) > this
+      (SetValue(v): Sum[V, V]) > this
+
+    def drop[T, S](v: T > (S | Sums[V]))(using
+        g: Summer[V],
+        tag: Tag[V]
+    ): T > (S | IOs) = {
+      var curr = g.init
+      given Handler[[T] =>> Sum[V, T], Sums[V]] with {
+        def pure[U](v: U) = v
+        def apply[T, U, S2](
+            m: Sum[V, T],
+            f: T => U > (S2 | Sums[V])
+        ): U > (S2 | Sums[V]) =
+          m match {
+            case AddValue(v) =>
+              curr = g.add(curr, v.asInstanceOf[V])
+              f(curr.asInstanceOf[T])
+            case SetValue(v) =>
+              curr = v.asInstanceOf[V]
+              f(curr.asInstanceOf[T])
+            case Get =>
+              f(curr.asInstanceOf[T])
+            case _ =>
+              f(m.asInstanceOf[T])
+          }
+      }
+      IOs.ensure(g.drop(curr)) {
+        (v < Sums[V]) {
+          case AddValue(v) =>
+            curr = g.add(curr, v.asInstanceOf[V])
+            curr.asInstanceOf[T]
+          case Get =>
+            curr.asInstanceOf[T]
+          case m =>
+            m.asInstanceOf[T]
+        }
+      }
+    }
 
     override def accepts(other: Effect[_]) =
       other match {
@@ -41,50 +78,8 @@ object sums {
   }
 
   object Sums {
-
     def apply[V: Tag]: Sums[V] =
       new Sums[V]
-
-    class DropDsl[V] {
-      def apply[T, S](v: T > (S | Sums[V]))(using
-          g: Summer[V],
-          tag: Tag[V]
-      ): T > (S | IOs) = {
-        var curr = g.init
-        given Handler[[T] =>> Sum[V, T], Sums[V]] with {
-          def pure[U](v: U) = v
-          def apply[T, U, S2](
-              m: Sum[V, T],
-              f: T => U > (S2 | Sums[V])
-          ): U > (S2 | Sums[V]) =
-            m match {
-              case Add(v) =>
-                curr = g.add(curr, v.asInstanceOf[V])
-                f(curr.asInstanceOf[T])
-              case Set(v) =>
-                curr = v.asInstanceOf[V]
-                f(curr.asInstanceOf[T])
-              case Get =>
-                f(curr.asInstanceOf[T])
-              case _ =>
-                f(m.asInstanceOf[T])
-            }
-        }
-        IOs.ensure(g.drop(curr)) {
-          (v < Sums[V]) {
-            case Add(v) =>
-              curr = g.add(curr, v.asInstanceOf[V])
-              curr.asInstanceOf[T]
-            case Get =>
-              curr.asInstanceOf[T]
-            case m =>
-              m.asInstanceOf[T]
-          }
-        }
-      }
-    }
-
-    def drop[V] = DropDsl[V]
   }
 
   trait Summer[V] {
@@ -104,5 +99,6 @@ object sums {
     given Summer[Float]        = Summer(0f, _ + _)
     given Summer[String]       = Summer("", _ + _)
     given [T]: Summer[List[T]] = Summer(Nil, _ ++ _)
+    given [T]: Summer[Set[T]]  = Summer(Set.empty, _ ++ _)
   }
 }

@@ -25,7 +25,7 @@ object resources {
       Sums[Finalizer].add(() => v.close()).map(_ => v)
 
     def run[T, S](v: T > (S | Resources)): T > (S | IOs) =
-      Sums.drop[Finalizer](v)
+      Sums[Finalizer].drop(v)
   }
 
   private abstract class Finalizer {
