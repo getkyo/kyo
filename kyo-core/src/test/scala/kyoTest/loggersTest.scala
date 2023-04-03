@@ -8,7 +8,7 @@ import kyo.loggers._
 class loggersTest extends KyoTest {
 
   "log" in {
-    val logger = Loggers("test")
+    val logger = Loggers.init("test")
     val io = for {
       _ <- logger.debug("debug")
       _ <- logger.info("info")
