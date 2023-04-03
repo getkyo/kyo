@@ -32,18 +32,18 @@ object ais {
 
   opaque type State = Map[AI, Context]
 
-  case class AIException(cause: String) extends Exception(cause) with NoStackTrace
+  case class AIException(cause: Any*) extends Exception(cause.mkString(" ")) with NoStackTrace
 
-  type AIs = Sums[State] | Requests | Tries
+  opaque type AIs = Sums[State] | Requests | Tries | IOs
 
   object AIs {
 
     def init: AI > IOs = IOs(AI())
 
-    def fail[T](cause: String): T > AIs =
+    def fail[T](cause: Any*): T > AIs =
       Tries.fail(AIException(cause))
 
-    def transactional[T, S](f: => T > (S | AIs)): T > (S | AIs) =
+    def transactional[T, S](f: => T > (S | Requests | Tries | IOs | AIs)): T > (S | AIs) =
       Sums[State].get { st =>
         IOs.attempt(f) {
           case Failure(ex) =>
@@ -55,12 +55,12 @@ object ais {
         }
       }
 
-    def ephemeral[T, S](f: => T > (S | AIs)): T > (S | AIs) =
+    def ephemeral[T, S](f: => T > (S | Requests | Tries | IOs | AIs)): T > (S | AIs) =
       Sums[State].get { st =>
         (f < Tries)(r => Sums[State].set(st)(_ => r.get))
       }
 
-    def clone[S](ai: AI > (S | AIs)): AI > (S | AIs) =
+    def clone[S](ai: AI > (S | Requests | Tries | IOs | AIs)): AI > (S | AIs) =
       for {
         orig <- ai
         res  <- init
@@ -68,8 +68,8 @@ object ais {
         _    <- Sums[State].set(st + (res -> st.getOrElse(orig, Context())))
       } yield res
 
-    def run[T, S](v: T > (S | AIs)): T > (S | Requests) =
-      Sums[State].drop(Tries.run(v))(_.get)
+    def run[T, S](v: T > (S | Requests | Tries | IOs | AIs)): T > (S | Requests) =
+      Requests.iso(Sums[State].drop(Tries.run(v))(_.get))
   }
 
   class AI private[ais] () {

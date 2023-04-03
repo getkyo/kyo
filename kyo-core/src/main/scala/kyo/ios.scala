@@ -43,7 +43,7 @@ object ios {
 
   final class IOs private[ios] () extends Effect[IO] {
 
-    private[this] val log = Loggers(getClass())
+    private[this] val log = Loggers.init(getClass())
 
     val unit: Unit > IOs = ()
 

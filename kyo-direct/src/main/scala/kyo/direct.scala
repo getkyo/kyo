@@ -17,7 +17,7 @@ object direct {
   inline def await[T, S](v: T > S): T =
     compiletime.error("`run` must be used within a `defer` block")
 
-  private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
+  private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] = {
     import quotes.reflect._
     import quotes.reflect.report._
 
@@ -25,7 +25,7 @@ object direct {
 
     Trees.traverse(f.asTerm) {
       case expr if (expr.isExprOf[>[Any, Any]]) =>
-        error("Kyo computations must used within a `run` block", expr)
+        error("Kyo computations must used within a `await` block: " + expr.show, expr)
       case '{ await[t, s]($v) } =>
         effects ::= Type.of[s]
     }
@@ -69,6 +69,7 @@ object direct {
           }: T > s
         }
     }
+  }
 
   private[kyo] class KyoCpsMonad[S]
       extends CpsMonadInstanceContext[[T] =>> T > S]

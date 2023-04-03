@@ -31,16 +31,17 @@ object randoms {
     }
   }
 
-  type Randoms = Envs[Random] | IOs
+  opaque type Randoms = Envs[Random] | IOs
 
   object Randoms {
-    def run[T, S](r: Random)(f: => T > (S | Randoms)): T > (S | IOs) =
+    def run[T, S](r: Random)(f: => T > (S | IOs | Randoms)): T > (S | IOs) =
       Envs[Random].let(r)(f)
-    def run[T, S](f: => T > (S | Randoms))(using c: Random): T > (S | IOs) =
+    def run[T, S](f: => T > (S | IOs | Randoms))(using c: Random): T > (S | IOs) =
       Envs[Random].let(c)(f)
 
-    def nextInt: Int > Randoms         = Envs[Random].get(_.nextInt)
-    def nextInt(n: Int): Int > Randoms = Envs[Random].get(_.nextInt(n))
+    def nextInt: Int > Randoms = Envs[Random].get(_.nextInt)
+    def nextInt[S](n: Int > (S | IOs | Randoms)): Int > (S | Randoms) =
+      n(n => Envs[Random].get(_.nextInt(n)))
     def nextLong: Long > Randoms       = Envs[Random].get(_.nextLong)
     def nextDouble: Double > Randoms   = Envs[Random].get(_.nextDouble)
     def nextBoolean: Boolean > Randoms = Envs[Random].get(_.nextBoolean)

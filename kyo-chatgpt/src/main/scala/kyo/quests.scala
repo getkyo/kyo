@@ -7,7 +7,7 @@ import kyo.frames._
 import kyo.lists._
 import kyo.sums._
 import kyo.tries._
-import kyo.direct._
+import kyo.ios._
 import zio.schema.DeriveSchema
 import zio.schema.codec.JsonCodec.JsonDecoder
 
@@ -15,6 +15,11 @@ import scala.compiletime.summonInline
 import scala.io.Source
 import scala.util.Failure
 import scala.util.Success
+import scala.util.matching.Regex
+import java.io.StringWriter
+import java.io.PrintWriter
+import kyo.options.Options
+import zio.schema.Schema
 
 object quests {
 
@@ -24,77 +29,65 @@ object quests {
 
   object Quests {
 
+    private val firstJsonBlock: Regex = """(?s)```json\s*([\s\S]+?)\s*```""".r
+
+    def log[T, U](msg: Any*)(using frame: Frame[T]): Unit > (Envs[AI] | AIs) =
+      Envs[AI].get(_.system(frame, msg)).unit
+
     inline def select[T](desc: Any*)(using
         caller: sourcecode.File,
         frame: Frame["Quests.select"]
-    ): T > Quests = {
-      def loop(): T > Quests = {
-        val schema = DeriveSchema.gen[T]
-        for {
-          _  <- observe(caller)
-          ai <- Envs[AI].get
-          _  <- ai.system(frame, "select", desc, schema)
-          text <-
-            ai.ask(
-                "produce a json in a code block (```json) for " + desc.mkString(
-                    " "
-                ) + " with the zio schema " + schema + ". Avoid empty fields. DO NOT USE PLACEHOLDER DATA."
-            )
-          r <- text.replaceAll("json", "").split("```").toList
-            .map(_.trim).filter(!_.isEmpty).drop(1).headOption match {
-            case None =>
-              Envs[AI].get(_.system(
-                  frame,
-                  "no code block found, this is the code used to extract the json from your response: " +
-                    "text.replaceAll('json', '').split('```'').toList.map(_.trim).filter(!_.isEmpty).drop(1).headOption"
-              )) { _ =>
-                loop()
-              }
-            case Some(json) =>
-              JsonDecoder.decode(schema, json) match {
-                case Left(err) =>
-                  Envs[AI].get(_.system(
-                      frame,
-                      "JsonDecoder.decode failed, review zio-schema's documentation to provide a valid json",
-                      err
-                  )(
-                      _.ask(
-                          "please reflect on why you failed, re-analyze the code and your answer"
-                      )
-                  )) {
-                    _ =>
-                      loop()
-                  }
-                case Right(v) => Lists.foreach(v)
-              }
-          }
-        } yield r
-      }
-      loop()
-    }
-
-    def drop[T](using
-        caller: sourcecode.File,
-        frame: Frame["Quests.drop"]
     ): T > Quests =
-      Envs[AI].get(_.system(frame, "drop")) { _ =>
-        Lists.drop
-      }
+      select(DeriveSchema.gen[T], desc: _*)
 
-    def foreach[T, S](v: List[T] > S): T > (S | Quests) =
-      Lists.foreach(v)
-
-    def filter[S](p: Boolean > S)(using frame: Frame["Quests.filter"]): Unit > (S | Quests) =
-      p { p =>
-        Envs[AI].get(_.system(frame, "filter", p)) { _ =>
-          Lists.filter(p)
+    def select[T](schema: Schema[T], desc: Any*)(using
+        caller: sourcecode.File,
+        frame: Frame["Quests.select"]
+    ): T > Quests =
+      for {
+        ai <- Envs[AI].get
+        _  <- log(caller, schema, desc)
+        text <- ai.ask(
+            "Please provide a JSON value in a code block (```json) for the 'select' call. Remember not to use placeholder data. " +
+              "Ensure the JSON format is compatible with the system requirements."
+        )
+        result <- firstJsonBlock.findFirstMatchIn(text).map(_.group(1)) match {
+          case None =>
+            AIs.fail[T](
+                frame,
+                "no code block found, this is the regex used to extract the json from your response: " + firstJsonBlock
+            )
+          case Some(json) =>
+            JsonDecoder.decode(schema, json) match {
+              case Left(err) =>
+                AIs.fail[T](
+                    frame,
+                    "JsonDecoder.decode failed, review zio-schema's documentation to provide a valid json",
+                    err
+                )
+              case Right(v) =>
+                Lists.foreach(v)
+            }
         }
-      }
+      } yield result
 
-    def fail[T](reason: String)(using frame: Frame["Quests.fail"]): T > Quests =
-      Envs[AI].get(_.system(frame, "fail", reason)) { _ =>
-        AIs.fail[T](reason)
-      }
+    def foreach[T, S](list: List[T] > S)(using
+        frame: Frame["Quests.foreach"]
+    ): T > (S | AIs | Envs[AI] | Lists) =
+      for {
+        v <- list
+        _ <- log(v)
+        v <- Lists.foreach(v)
+      } yield v
+
+    def filter[S](predicate: Boolean > S)(using
+        frame: Frame["Quests.filter"]
+    ): Unit > (S | Quests) =
+      for {
+        p <- predicate
+        _ <- log(p)
+        v <- Lists.filter(p)
+      } yield v
 
     private val self = summon[sourcecode.File]
 
@@ -102,55 +95,78 @@ object quests {
         caller: sourcecode.File,
         frame: Frame["Quests.run"]
     ): T > AIs =
-      println(1)
-      def loop(q: T > Quests): T > (AIs | Sums[Set[Source]]) =
-        Tries.run(Lists.run(Envs[AI].let(ai)(q))) {
-          case Success(v :: _) => v
-          case res =>
-            ai.system(
-                "pay special attention to this infinite loop in the source code. On each execution, analyze previous " +
-                  "interactions to provide data that will use creativity to eventually be able to fullful the complete query"
-            ) { _ =>
-              ai.system(frame, "failure", res) { _ =>
-                loop(q)
-              }
-            }
+      def trySolve(
+          q: T > Quests,
+          failures: List[String] = Nil
+      ): Either[String, T] > (AIs | Sums[Set[Source]]) =
+        Tries.run(Options.getOrElse(
+            Lists.run(Envs[AI].let(ai)(log(q, failures)(_ => q)))(_.headOption),
+            Tries.fail("empty quest result")
+        )) {
+          case Success(v) =>
+            Right(v)
+          case Failure(ex) =>
+            for {
+              _ <- ai.system(frame, "failure", ex)
+              why <- ai.ask(
+                  "The quest failed in the previous attempt. As we restart the execution, please summarize the reasons for the failure " +
+                    "and provide pointers for generating the necessary data again. Keep in mind that you may need to generate the same data " +
+                    "as in the previous attempt if it helps in solving the quest so provide samples or descriptions of it as well."
+              )
+            } yield Left(s"failure $ex why: $why")
         }
-      for {
-        _ <- ai.system(
-            "You're interfacing with an automated script. It'll share the relevant " +
-              "code and assume you're going to behave as expected from the AI being used " +
-              "in the Quests effect. On each interaction, it'll only consider the first " +
-              "json value in your response. Make your best effort to fulfill the queries. " +
-              "You'll use data as of you cutoff date of September 2021. The script will " +
-              "run in a loop until it's sucessful so pay attention to the previous " +
-              "interactions. Your goal is to fulfill the final query without any access " +
-              "to other systems and generate the data as you'd in a regular chat session. For" +
-              "example, if the select is 'the best movies in the 90s', you'll think of a " +
-              "user asking 'what were the best movies in the 90s' and answer accordingly " +
-              "with the json."
-        )
-        _ <- ai.system(frame, "run")
-        r <- Sums[Set[Source]].drop(loop {
-          for {
-            _ <- observe(self)
-            _ <- observe(caller)
-            s <- ai.ask(
-                "What data is the code at " + frame + " trying to obtain? What is the final query? What values " +
-                  "could be used to satisfy the final query results?"
-            )
-            q <- q
-          } yield q
-        })
-      } yield r
+      def loop(
+          q: T > Quests,
+          failures: List[String] = Nil
+      ): T > (AIs | Envs[AI] | Sums[Set[Source]]) =
+        AIs.ephemeral(log(
+            s"Please provide a new answer that addresses the issue and avoids the same mistake. Make sure the JSON " +
+              s"object is accurate and formatted correctly. Your previous attempts failed due to: $failures."
+        )(_ => trySolve(q))) {
+          case Left(failure) =>
+            loop(q, failure :: failures)
+          case Right(result) =>
+            result
+        }
+
+      val preamble =
+        for {
+          ai <- Envs[AI].get
+          _  <- log(caller, q)
+          _ <- ai.system(
+              "You are now interacting an automated script that shares relevant code snippets and expects you to " +
+                "respond accurately as an AI within the Quests effect. Kyo is a library for algebraic effects in Scala, " +
+                "using an innovative technique for composable effects. During each interaction, the script will consider " +
+                "the first JSON value in your response. Make sure your responses are accurate and avoid using placeholder " +
+                "data. The script will loop until a successful response is obtained, so pay attention to previous " +
+                "interactions and use your knowledge up to September 2021. Your goal is to fulfill the final query without " +
+                "accessing other systems, generating data as you would in a regular chat session. For example, if the " +
+                "select is 'the best movies in the 90s', think of a user asking 'what were the best movies in the 90s' and " +
+                "answer accordingly with the JSON."
+          )
+          _ <- observe(self)
+          _ <- observe(caller)
+          _ <- ai.ask(
+              "Analyze the code at " + frame + " to understand the data it's trying to obtain. What is the final query? " +
+                "What values can be used to satisfy the final query results?"
+          )
+        } yield ()
+
+      AIs.ephemeral(
+          Sums[Set[Source]].drop(
+              Envs[AI].let(ai)(
+                  preamble(_ => loop(q))
+              )
+          )
+      )
 
     def run[T](q: T > Quests)(using
         caller: sourcecode.File,
         frame: Frame["Quests.run"]
-    ): T > AIs =
+    ): T > (IOs | AIs) =
       AIs.init(run(_)(q))
 
-    private def observe(file: sourcecode.File): Unit > Quests =
+    private def observe(file: sourcecode.File): Unit > (Envs[AI] | Sums[Set[Source]] | AIs) =
       val code   = scala.io.Source.fromFile(file.value).getLines().mkString("\n")
       val source = Source(file.value.split('/').last, code)
       Sums[Set[Source]].get { sources =>
