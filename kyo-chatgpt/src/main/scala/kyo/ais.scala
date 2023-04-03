@@ -21,7 +21,7 @@ import zio.json._
 
 object ais {
   val apiKeyProp = "OPENAI_API_KEY"
-  val apiKey =
+  val apiKey = 
     Option(System.getenv(apiKeyProp))
       .orElse(Option(System.getProperty(apiKeyProp)))
       .getOrElse(throw new Exception(s"Missing $apiKeyProp"))
