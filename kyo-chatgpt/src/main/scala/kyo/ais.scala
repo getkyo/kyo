@@ -77,6 +77,13 @@ object ais {
     private def add(role: String, msg: Any*): State > AIs =
       Sums[State].add(Map(this -> Context(messages = List(Message(role, msg.mkString(" "))))))
 
+    def dump: String > AIs =
+      Sums[State].get(
+          _.getOrElse(this, Context()).messages.map(msg => s"${msg.role}: ${msg.content}").mkString(
+              "\n"
+          )
+      )
+
     def user(msg: Any*): AI > AIs      = add("user", msg)(_ => this)
     def system(msg: Any*): AI > AIs    = add("system", msg)(_ => this)
     def assistant(msg: Any*): AI > AIs = add("assistant", msg)(_ => this)
