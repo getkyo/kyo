@@ -48,8 +48,8 @@ object quests {
         ai <- Envs[AI].get
         _  <- log(caller, schema, desc)
         text <- ai.ask(
-            "Please provide a JSON value in a code block (```json) for the 'select' call. Remember not to use placeholder data. " +
-              "Ensure the JSON format is compatible with the system requirements."
+            s"Please provide a JSON value in a code block (```json) for the schema $schema and description $desc. " +
+              "Remember not to use placeholder data. Re-analyze the previous failures reported by the system to fullfil the quest."
         )
         result <- firstJsonBlock.findFirstMatchIn(text).map(_.group(1)) match {
           case None =>
@@ -97,10 +97,10 @@ object quests {
     ): T > AIs =
       def trySolve(
           q: T > Quests,
-          failures: List[String] = Nil
+          lastFailure: Option[String]
       ): Either[String, T] > (AIs | Sums[Set[Source]]) =
         Tries.run(Options.getOrElse(
-            Lists.run(Envs[AI].let(ai)(log(q, failures)(_ => q)))(_.headOption),
+            Lists.run(Envs[AI].let(ai)(q))(_.headOption),
             Tries.fail("empty quest result")
         )) {
           case Success(v) =>
@@ -109,9 +109,9 @@ object quests {
             for {
               _ <- ai.system(frame, "failure", ex)
               why <- ai.ask(
-                  "The quest failed in the previous attempt. As we restart the execution, please summarize the reasons for the failure " +
+                  "The quest failed. As we restart the execution, please summarize the reasons for the failure " +
                     "and provide pointers for generating the necessary data again. Keep in mind that you may need to generate the same data " +
-                    "as in the previous attempt if it helps in solving the quest so provide samples or descriptions of it as well."
+                    "as in the previous attempt if it helps in solving the quest so provide samples or descriptions of it as well. "
               )
             } yield Left(s"failure $ex why: $why")
         }
@@ -120,9 +120,8 @@ object quests {
           failures: List[String] = Nil
       ): T > (AIs | Envs[AI] | Sums[Set[Source]]) =
         AIs.ephemeral(log(
-            s"Please provide a new answer that addresses the issue and avoids the same mistake. Make sure the JSON " +
-              s"object is accurate and formatted correctly. Your previous attempts failed due to: $failures."
-        )(_ => trySolve(q))) {
+            s"Your previous attempts failed due to: ${failures.reverse}."
+        )(_ => trySolve(q, failures.headOption))) {
           case Left(failure) =>
             loop(q, failure :: failures)
           case Right(result) =>
