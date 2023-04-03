@@ -25,7 +25,7 @@ class ziosTest extends KyoTest {
   }
 
   "env" in run {
-    Aborts[Nothing].run(Envs.let(10)(ZIOs(ZIO.environment[Int]))(v => assert(v.get == 10)))
+    Aborts[Nothing].run(Envs[Int].let(10)(ZIOs(ZIO.environment[Int]))(v => assert(v.get == 10)))
   }
 
   "fibers" - {

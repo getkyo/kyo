@@ -28,7 +28,7 @@ object zios {
     def apply[R: ITag, E: ITag, A, S](v: ZIO[R, E, A] > S): A > (S | Envs[R] | Aborts[E] | ZIOs) =
       for {
         urio <- v(_.fold[A > Aborts[E]](Aborts(_), v => v))
-        task <- Envs[R](r => urio.provideEnvironment(ZEnvironment(r)))
+        task <- Envs[R].get(r => urio.provideEnvironment(ZEnvironment(r)))
         r    <- (task > this).flatten
       } yield r
 

@@ -157,7 +157,7 @@ private[kyo] class IOPromise[T](s: State[T])
 
 private[kyo] object IOPromise {
 
-  private val log = Loggers(getClass())
+  private val log = Loggers.init(getClass())
 
   type State[T] = (T > IOs) | Pending[T] | Linked[T]
 

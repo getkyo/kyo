@@ -357,7 +357,7 @@ class fibersTest extends KyoTest {
   }
 
   "locals" - {
-    val l = Locals(10)
+    val l = Locals.init(10)
     "fork" - {
       "default" in run {
         Fibers.fork(l.get)(v => assert(v == 10))

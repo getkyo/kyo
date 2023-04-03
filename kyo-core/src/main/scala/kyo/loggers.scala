@@ -11,9 +11,9 @@ object loggers {
   opaque type Logger = org.slf4j.Logger
 
   object Loggers {
-    def apply(name: String): Logger =
+    def init(name: String): Logger =
       LoggerFactory.getLogger(name)
-    def apply(cls: Class[_]): Logger =
+    def init(cls: Class[_]): Logger =
       LoggerFactory.getLogger(cls)
   }
 
