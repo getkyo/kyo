@@ -17,7 +17,7 @@ lazy val `kyo-settings` = Seq(
     fork         := true,
     scalacOptions ++= compilerOptions,
     scalafmtOnCompile := true,
-    organization      := "io.getkyo",
+    // organization      := "io.getkyo",
     homepage          := Some(url("https://getkyo.io")),
     licenses          := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")),
     developers := List(
@@ -28,6 +28,7 @@ lazy val `kyo-settings` = Seq(
             url("https://github.com/fwbrasil/")
         )
     ),
+    ThisBuild / organization := "giuliohome.com",
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     gen                                := {},
