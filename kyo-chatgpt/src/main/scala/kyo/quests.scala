@@ -21,6 +21,8 @@ import java.io.PrintWriter
 import kyo.options.Options
 import zio.schema.Schema
 
+import sbt.io.IO
+
 object quests {
 
   case class Source(file: String, code: String)
@@ -165,8 +167,20 @@ object quests {
     ): T > (IOs | AIs) =
       AIs.init(run(_)(q))
 
+    private def observeResource(path: String): String =
+      if (path.startsWith("/home/giulio/scala/kyo/kyo-chatgpt/")) {
+        val relPath = path.replace("/home/giulio/scala/kyo/kyo-chatgpt/src/main", "")
+        println(s"relative path: ${relPath}")
+        val stream = getClass.getResourceAsStream(relPath)
+        return scala.io.Source.fromInputStream(stream).getLines().mkString("\n")
+      } else {
+        return scala.io.Source.fromFile(path).getLines().mkString("\n")
+      }
+
     private def observe(file: sourcecode.File): Unit > (Envs[AI] | Sums[Set[Source]] | AIs) =
-      val code   = scala.io.Source.fromFile(file.value).getLines().mkString("\n")
+      // val code   = scala.io.Source.fromFile(file.value).getLines().mkString("\n")
+      println(s"observing file ${file}")
+      val code   = observeResource(file.value)
       val source = Source(file.value.split('/').last, code)
       Sums[Set[Source]].get { sources =>
         if (sources.contains(source)) ()

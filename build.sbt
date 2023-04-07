@@ -175,7 +175,23 @@ lazy val `kyo-chatgpt` = project
       libraryDependencies += "dev.zio" %% "zio-schema"          % "0.4.10",
       libraryDependencies += "dev.zio" %% "zio-schema-json"     % "0.4.10",
       libraryDependencies += "dev.zio" %% "zio-schema-protobuf" % "0.4.9",
-      libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10"
+      libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10",
+      // https://mvnrepository.com/artifact/org.scala-sbt/io
+      libraryDependencies += "org.scala-sbt" %% "io" % "1.8.0",
+      resourceGenerators in Compile += Def.task {
+         val file = (sourceDirectory in Compile).value / "scala" / "kyo" / "quests.scala"
+         val content = IO.read(file)
+         val target = (resourceManaged in Compile).value / "scala" / "kyo" / "quests.scala"
+         IO.write(target, content)
+         Seq(target)
+       }.taskValue,
+       mappings in (Compile, packageBin) ++= {
+         val resourceDir = (resourceManaged in Compile).value / "kyo-chatgpt"
+         val files = (resourceDir ** "*").get.map { file =>
+           file -> ("kyo-chatgpt/" + file.getName)
+         }
+         files
+       }
   )
 
 lazy val `kyo-bench` = project
