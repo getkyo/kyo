@@ -168,11 +168,11 @@ object quests {
       AIs.init(run(_)(q))
 
     private def observeResource(path: String): String =
-      if (path.startsWith("/home/giulio/scala/kyo/kyo-chatgpt/")) {
-        val relPath = path.replace("/home/giulio/scala/kyo/kyo-chatgpt/src/main", "")
+      if (path.endsWith("kyo-chatgpt/src/main/scala/kyo/quests.scala")) {
+        val relPath = "/scala/kyo/quests.scala"
         println(s"relative path: ${relPath}")
         val stream = getClass.getResourceAsStream(relPath)
-        return scala.io.Source.fromInputStream(stream).getLines().mkString("\n")
+        return scala.io.Source.fromInputStream(stream).mkString
       } else {
         return scala.io.Source.fromFile(path).getLines().mkString("\n")
       }
@@ -182,6 +182,7 @@ object quests {
       println(s"observing file ${file}")
       val code   = observeResource(file.value)
       val source = Source(file.value.split('/').last, code)
+      println(s"source: ${source}")
       Sums[Set[Source]].get { sources =>
         if (sources.contains(source)) ()
         else
