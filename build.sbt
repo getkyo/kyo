@@ -179,7 +179,7 @@ lazy val `kyo-chatgpt` = project
       // https://mvnrepository.com/artifact/org.scala-sbt/io
       libraryDependencies += "org.scala-sbt" %% "io" % "1.8.0",
       resourceGenerators in Compile += Def.task {
-         val file = (sourceDirectory in Compile).value / "scala" / "kyo" / "quests.scala"
+         val file = (sourceDirectory in Compile).value / "scala" / "kyo" / "quests-original.txt"
          val content = IO.read(file)
          val target = (resourceManaged in Compile).value / "scala" / "kyo" / "quests.scala"
          IO.write(target, content)
