@@ -86,7 +86,7 @@ lazy val kyo = (project in file("."))
       }
   )
 
-val zioVersion = "2.0.10"
+val zioVersion = "2.0.11"
 
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "com.lihaoyi"   %% "sourcecode"        % "0.3.0",
@@ -169,12 +169,12 @@ lazy val `kyo-chatgpt` = project
   .settings(
       name := "kyo-chatgpt",
       `kyo-settings`,
-      libraryDependencies += "com.softwaremill.sttp.client3" %% "jsoniter" % "3.8.14",
-      libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json" % "3.8.14",
-      libraryDependencies += "dev.zio" %% "zio-schema"          % "0.4.10",
-      libraryDependencies += "dev.zio" %% "zio-schema-json"     % "0.4.10",
-      libraryDependencies += "dev.zio" %% "zio-schema-protobuf" % "0.4.9",
-      libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10"
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "jsoniter"              % "3.8.14",
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"              % "3.8.14",
+      libraryDependencies += "dev.zio"                       %% "zio-schema"            % "0.4.10",
+      libraryDependencies += "dev.zio"                       %% "zio-schema-json"       % "0.4.10",
+      libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf"   % "0.4.9",
+      libraryDependencies += "dev.zio"                       %% "zio-schema-derivation" % "0.4.10"
   )
 
 lazy val `kyo-bench` = project
