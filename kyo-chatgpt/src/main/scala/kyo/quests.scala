@@ -8,6 +8,7 @@ import kyo.lists._
 import kyo.sums._
 import kyo.tries._
 import kyo.ios._
+import kyo.aspects._
 import zio.schema.DeriveSchema
 import zio.schema.codec.JsonCodec.JsonDecoder
 
@@ -48,32 +49,27 @@ object quests {
         ai <- Envs[AI].get
         _  <- log(caller, schema, desc)
         text <- ai.ask(
-            s"Please provide a JSON value in a code block (```json) for the schema $schema and description $desc. " +
-              "Remember not to use placeholder data. Re-analyze the previous failures reported by the system to fullfil the quest."
+            s"Please analyze the provided source code, the systems message, and produce a JSON block (```json)" +
+              s"that will ensure the entire quest execution to succeed. Think about all " +
+              s"quest interactions to produce responses that will satisfy them globally, " +
+              s"including the interactions between the different replies you provide. " +
+              s"When analyzing the systems message, reason about the timeline, the frame " +
+              s"information, and the execution state based on the source code. "
         )
         result <- firstJsonBlock.findFirstMatchIn(text).map(_.group(1)) match {
           case None =>
-            AIs.fail[T](
-                frame,
-                "no code block found, this is the regex used to extract the json from your response: " + firstJsonBlock
-            )
+            AIs.fail[T]("No JSON block found")
           case Some(json) =>
             JsonDecoder.decode(schema, json) match {
-              case Left(err) =>
-                AIs.fail[T](
-                    frame,
-                    "JsonDecoder.decode failed, review zio-schema's documentation to provide a valid json",
-                    err
-                )
-              case Right(v) =>
-                Lists.foreach(v)
+              case Left(err) => AIs.fail[T]("Invalid JSON block", err)
+              case Right(v)  => Lists.foreach(v)
             }
         }
       } yield result
 
     def foreach[T, S](list: List[T] > S)(using
         frame: Frame["Quests.foreach"]
-    ): T > (S | AIs | Envs[AI] | Lists) =
+    ): T > (S | Quests) =
       for {
         v <- list
         _ <- log(v)
@@ -96,24 +92,24 @@ object quests {
         frame: Frame["Quests.run"]
     ): T > AIs =
       def trySolve(
-          q: T > Quests,
-          lastFailure: Option[String]
+          q: T > Quests
       ): Either[String, T] > (AIs | Sums[Set[Source]]) =
         Tries.run(Options.getOrElse(
             Lists.run(Envs[AI].let(ai)(q))(_.headOption),
-            Tries.fail("empty quest result")
+            Tries.fail("Quest has failed becuase no results were produced.")
         )) {
           case Success(v) =>
             Right(v)
           case Failure(ex) =>
-            for {
-              _ <- ai.system(frame, "failure", ex)
-              why <- ai.ask(
-                  "The quest failed. As we restart the execution, please summarize the reasons for the failure " +
-                    "and provide pointers for generating the necessary data again. Keep in mind that you may need to generate the same data " +
-                    "as in the previous attempt if it helps in solving the quest so provide samples or descriptions of it as well. "
-              )
-            } yield Left(s"failure $ex why: $why")
+            Aspects.run {
+              for {
+                _ <- ai.system(frame, "failure", ex)
+                why <- ai.ask("why has the quest failed? Provide a reply that will help you " +
+                  "generate responses that will succeed the quest on the next try. Also provide " +
+                  "pointers of the data you used so you can reuse them in the next attempt. " +
+                  "One paragraph.")
+              } yield Left(s"failure $ex why: $why")
+            }
         }
       def loop(
           q: T > Quests,
@@ -121,7 +117,7 @@ object quests {
       ): T > (AIs | Envs[AI] | Sums[Set[Source]]) =
         AIs.ephemeral(log(
             s"Your previous attempts failed due to: ${failures.reverse}."
-        )(_ => trySolve(q, failures.headOption))) {
+        )(_ => trySolve(q))) {
           case Left(failure) =>
             loop(q, failure :: failures)
           case Right(result) =>
@@ -133,22 +129,13 @@ object quests {
           ai <- Envs[AI].get
           _  <- log(caller, q)
           _ <- ai.system(
-              "You are now interacting an automated script that shares relevant code snippets and expects you to " +
-                "respond accurately as an AI within the Quests effect. Kyo is a library for algebraic effects in Scala, " +
-                "using an innovative technique for composable effects. During each interaction, the script will consider " +
-                "the first JSON value in your response. Make sure your responses are accurate and avoid using placeholder " +
-                "data. The script will loop until a successful response is obtained, so pay attention to previous " +
-                "interactions and use your knowledge up to September 2021. Your goal is to fulfill the final query without " +
-                "accessing other systems, generating data as you would in a regular chat session. For example, if the " +
-                "select is 'the best movies in the 90s', think of a user asking 'what were the best movies in the 90s' and " +
-                "answer accordingly with the JSON."
+              s"Please analyze the provided source code, the systems message, and produce an output " +
+                s"that will ensure the entire quest execution to succeed. Think about all" +
+                s"quest interactions to produce responses that will satisfy them globally," +
+                s"including the interactions between the different replies you provide."
           )
           _ <- observe(self)
           _ <- observe(caller)
-          _ <- ai.ask(
-              "Analyze the code at " + frame + " to understand the data it's trying to obtain. What is the final query? " +
-                "What values can be used to satisfy the final query results?"
-          )
         } yield ()
 
       AIs.ephemeral(

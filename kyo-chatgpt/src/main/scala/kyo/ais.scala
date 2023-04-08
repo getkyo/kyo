@@ -9,6 +9,8 @@ import kyo.ios._
 import kyo.requests._
 import kyo.sums._
 import kyo.tries._
+import kyo.locals._
+import kyo.aspects._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
@@ -34,11 +36,16 @@ object ais {
 
   case class AIException(cause: Any*) extends Exception(cause.mkString(" ")) with NoStackTrace
 
-  opaque type AIs = Sums[State] | Requests | Tries | IOs
+  opaque type AIs = Sums[State] | Requests | Tries | IOs | Aspects
 
   object AIs {
 
+    val askAspect = Aspects.init[(AI, String), String, AIs]
+
     def init: AI > IOs = IOs(AI())
+
+    def iso[T, S](v: T > (S | Requests | Tries | IOs | Aspects)): T > (S | AIs) =
+      v
 
     def fail[T](cause: Any*): T > AIs =
       Tries.fail(AIException(cause))
@@ -69,12 +76,13 @@ object ais {
       } yield res
 
     def run[T, S](v: T > (S | Requests | Tries | IOs | AIs)): T > (S | Requests) =
-      Requests.iso(Sums[State].drop(Tries.run(v))(_.get))
+      Requests.iso(Aspects.run(Sums[State].drop(Tries.run(v))(_.get)))
   }
 
   class AI private[ais] () {
 
     private def add(role: String, msg: Any*): State > AIs =
+      println(s"$role: ${msg.mkString(" ")}")
       Sums[State].add(Map(this -> Context(messages = List(Message(role, msg.mkString(" "))))))
 
     def dump: String > AIs =
@@ -89,24 +97,33 @@ object ais {
     def assistant(msg: Any*): AI > AIs = add("assistant", msg)(_ => this)
 
     def ask(msg: Any*): String > AIs =
-      for {
-        st <- add("user", msg.mkString(" "))(_.getOrElse(this, Context()))
-        response <- Requests(
-            _.contentType("application/json")
-              .header("Authorization", s"Bearer $apiKey")
-              .post(uri"https://api.openai.com/v1/chat/completions")
-              .body(st)
-              .response(asJson[Response])
-        )(_.body {
-          case Left(error)  => throw new Exception(error)
-          case Right(value) => value
-        })
-        content <- response.choices match {
-          case Nil => throw new Exception("No choices")
-          case xs  => xs.head.message.content
-        }
-        _ <- assistant(content)
-      } yield content
+      def doIt(msg: String): String > AIs =
+        for {
+          st <- add("user", msg)(_.getOrElse(this, Context()))
+          d  <- dump
+          // _  <- println("*********************")
+          // _  <- println(d)
+          response <- Requests(
+              _.contentType("application/json")
+                .header("Authorization", s"Bearer $apiKey")
+                .post(uri"https://api.openai.com/v1/chat/completions")
+                .body(st)
+                .response(asJson[Response])
+          )(_.body {
+            case Left(error)  => throw new Exception(error)
+            case Right(value) => value
+          })
+          content <- response.choices match {
+            case Nil => throw new Exception("No choices")
+            case xs  => xs.head.message.content
+          }
+          _ <- println(content)
+          _ <- assistant(content)
+        } yield content
+
+      AIs.askAspect((this, msg.mkString(" "))) { (ai, msg) =>
+        doIt(msg)
+      }
   }
 
   private given Summer[State] with

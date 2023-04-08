@@ -15,7 +15,7 @@ object direct {
 
   transparent inline def defer[T](inline f: T) = ${ impl[T]('f) }
   inline def await[T, S](v: T > S): T =
-    compiletime.error("`run` must be used within a `defer` block")
+    compiletime.error("`await` must be used within a `defer` block")
 
   private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] = {
     import quotes.reflect._
