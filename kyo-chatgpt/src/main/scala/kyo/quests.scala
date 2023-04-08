@@ -21,8 +21,6 @@ import java.io.PrintWriter
 import kyo.options.Options
 import zio.schema.Schema
 
-import sbt.io.IO
-
 object quests {
 
   case class Source(file: String, code: String)
@@ -145,7 +143,6 @@ object quests {
                 "select is 'the best movies in the 90s', think of a user asking 'what were the best movies in the 90s' and " +
                 "answer accordingly with the JSON."
           )
-          _ <- observe(self)
           _ <- observe(caller)
           _ <- ai.ask(
               "Analyze the code at " + frame + " to understand the data it's trying to obtain. What is the final query? " +
@@ -167,22 +164,9 @@ object quests {
     ): T > (IOs | AIs) =
       AIs.init(run(_)(q))
 
-    private def observeResource(path: String): String =
-      if (path.endsWith("kyo-chatgpt/src/main/scala/kyo/quests.scala")) {
-        val relPath = "/scala/kyo/quests.scala"
-        println(s"relative path: ${relPath}")
-        val stream = getClass.getResourceAsStream(relPath)
-        return scala.io.Source.fromInputStream(stream).mkString
-      } else {
-        return scala.io.Source.fromFile(path).getLines().mkString("\n")
-      }
-
     private def observe(file: sourcecode.File): Unit > (Envs[AI] | Sums[Set[Source]] | AIs) =
-      // val code   = scala.io.Source.fromFile(file.value).getLines().mkString("\n")
-      println(s"observing file ${file}")
-      val code   = observeResource(file.value)
+      val code   = scala.io.Source.fromFile(file.value).getLines().mkString("\n")
       val source = Source(file.value.split('/').last, code)
-      println(s"source: ${source}")
       Sums[Set[Source]].get { sources =>
         if (sources.contains(source)) ()
         else
