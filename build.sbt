@@ -170,12 +170,13 @@ lazy val `kyo-chatgpt` = project
   .settings(
       name := "kyo-chatgpt",
       `kyo-settings`,
-      libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json" % "3.8.14",
-      libraryDependencies += "dev.zio" %% "zio-schema"          % "0.4.10",
-      libraryDependencies += "dev.zio" %% "zio-schema-json"     % "0.4.10",
-      libraryDependencies += "dev.zio" %% "zio-schema-protobuf" % "0.4.9",
-      libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10",
-      libraryDependencies += "org.apache.lucene" % "lucene-core" % "9.5.0"
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"              % "3.8.14",
+      libraryDependencies += "dev.zio"                       %% "zio-schema"            % "0.4.10",
+      libraryDependencies += "dev.zio"                       %% "zio-schema-json"       % "0.4.10",
+      libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf"   % "0.4.9",
+      libraryDependencies += "dev.zio"                       %% "zio-schema-derivation" % "0.4.10",
+      libraryDependencies += "org.apache.lucene"              % "lucene-core"           % "9.5.0",
+      libraryDependencies += "org.apache.lucene"              % "lucene-queryparser"    % "9.5.0"
   )
 
 lazy val `kyo-bench` = project

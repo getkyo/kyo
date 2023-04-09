@@ -25,6 +25,7 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NoStackTrace
 
+import kyo.aspects
 object ais {
   val apiKeyProp = "OPENAI_API_KEY"
   val apiKey =
@@ -40,7 +41,8 @@ object ais {
 
   object AIs {
 
-    val askAspect = Aspects.init[(AI, String), String, AIs]
+    val askAspect: Aspect[(AI, String), String, AIs] =
+      Aspects.init[(AI, String), String, AIs]
 
     def init: AI > IOs = IOs(AI())
 
@@ -82,7 +84,7 @@ object ais {
   class AI private[ais] () {
 
     private def add(role: String, msg: Any*): State > AIs =
-      println(s"$role: ${msg.mkString(" ")}")
+      // println(s"$role: ${msg.mkString(" ")}")
       Sums[State].add(Map(this -> Context(messages = List(Message(role, msg.mkString(" "))))))
 
     def dump: String > AIs =
@@ -92,17 +94,17 @@ object ais {
           )
       )
 
-    def user(msg: Any*): AI > AIs      = add("user", msg)(_ => this)
-    def system(msg: Any*): AI > AIs    = add("system", msg)(_ => this)
-    def assistant(msg: Any*): AI > AIs = add("assistant", msg)(_ => this)
+    def user(msg: Any*): AI > AIs      = add("user", msg: _*)(_ => this)
+    def system(msg: Any*): AI > AIs    = add("system", msg: _*)(_ => this)
+    def assistant(msg: Any*): AI > AIs = add("assistant", msg: _*)(_ => this)
 
     def ask(msg: Any*): String > AIs =
-      def doIt(msg: String): String > AIs =
+      def doIt(ai: AI, msg: String): String > AIs =
         for {
-          st <- add("user", msg)(_.getOrElse(this, Context()))
+          st <- ai.add("user", msg)(_.getOrElse(this, Context()))
           d  <- dump
-          // _  <- println("*********************")
-          // _  <- println(d)
+          _  <- println("*********************")
+          _  <- println(d)
           response <- Requests(
               _.contentType("application/json")
                 .header("Authorization", s"Bearer $apiKey")
@@ -117,13 +119,10 @@ object ais {
             case Nil => throw new Exception("No choices")
             case xs  => xs.head.message.content
           }
-          _ <- println(content)
+          // _ <- println(content)
           _ <- assistant(content)
         } yield content
-
-      AIs.askAspect((this, msg.mkString(" "))) { (ai, msg) =>
-        doIt(msg)
-      }
+      AIs.askAspect((this, msg.mkString(" ")))(doIt)
   }
 
   private given Summer[State] with
