@@ -61,6 +61,7 @@ lazy val kyo = (project in file("."))
       `kyo-zio`,
       `kyo-direct`,
       `kyo-sttp`,
+      `kyo-podman`,
       `kyo-chatgpt`,
       `kyo-bench`
   )
@@ -162,6 +163,15 @@ lazy val `kyo-sttp` = project
       libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.13"
   )
 
+lazy val `kyo-podman` = project
+  .in(file("kyo-podman"))
+  .dependsOn(`kyo-sttp`)
+  .dependsOn(`kyo-core` % "test->test;compile->compile")
+  .settings(
+      name := "kyo-podman",
+      `kyo-settings`
+  )
+
 lazy val `kyo-chatgpt` = project
   .in(file("kyo-chatgpt"))
   .dependsOn(`kyo-sttp`)
@@ -175,8 +185,7 @@ lazy val `kyo-chatgpt` = project
       libraryDependencies += "dev.zio"                       %% "zio-schema-json"       % "0.4.10",
       libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf"   % "0.4.9",
       libraryDependencies += "dev.zio"                       %% "zio-schema-derivation" % "0.4.10",
-      libraryDependencies += "org.apache.lucene"              % "lucene-core"           % "9.5.0",
-      libraryDependencies += "org.apache.lucene"              % "lucene-queryparser"    % "9.5.0"
+      libraryDependencies += "io.pinecone"                    % "pinecone-client"       % "0.2.1"
   )
 
 lazy val `kyo-bench` = project
