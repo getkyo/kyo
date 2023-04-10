@@ -12,3 +12,4 @@ License
 -------
 
 See the [LICENSE](https://github.com/fwbrasil/kyo/blob/master/LICENSE.txt) file for details.
+ 
