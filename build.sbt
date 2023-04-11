@@ -160,7 +160,7 @@ lazy val `kyo-sttp` = project
   .settings(
       name := "kyo-sttp",
       `kyo-settings`,
-      libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.13"
+      libraryDependencies += "com.softwaremill.sttp.client3" %% "core" % "3.8.15"
   )
 
 lazy val `kyo-podman` = project
