@@ -1,4 +1,4 @@
-package kyo
+package kyo.chatgpt
 
 import kyo.aborts._
 import kyo.consoles._
@@ -119,7 +119,7 @@ object ais {
             case Nil => throw new Exception("No choices")
             case xs  => xs.head.message.content
           }
-          // _ <- println(content)
+          _ <- println(s"assistant: $content")
           _ <- assistant(content)
         } yield content
       AIs.askAspect((this, msg.mkString(" ")))(doIt)

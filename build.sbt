@@ -185,7 +185,9 @@ lazy val `kyo-chatgpt` = project
       libraryDependencies += "dev.zio"                       %% "zio-schema-json"       % "0.4.10",
       libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf"   % "0.4.9",
       libraryDependencies += "dev.zio"                       %% "zio-schema-derivation" % "0.4.10",
-      libraryDependencies += "io.pinecone"                    % "pinecone-client"       % "0.2.1"
+      libraryDependencies += "org.apache.lucene"              % "lucene-core"           % "9.5.0",
+      libraryDependencies += "org.apache.lucene"              % "lucene-queryparser"    % "9.5.0",
+      libraryDependencies += "com.formdev"                    % "flatlaf"               % "3.1"
   )
 
 lazy val `kyo-bench` = project

@@ -1,6 +1,6 @@
-package kyo
+package kyo.chatgpt.mode
 
-import kyo.ais._
+import kyo.chatgpt.ais._
 import kyo.aspects._
 import kyo.consoles._
 import kyo.core._
@@ -11,8 +11,17 @@ import java.nio.file.Paths
 import scala.util.Try
 import scala.util.matching.Regex
 
-abstract class Trait(val ais: Set[AI])
+import kyo.chatgpt.ais
+
+private[kyo] abstract class Mode(val ais: Set[AI])
     extends Cut[(AI, String), String, AIs] {
+
+  def onlyIf(cond: Boolean): Mode =
+    if (cond) this
+    else new Mode(Set.empty) {
+      def apply[S](ai: AI, msg: String)(next: String => String > (S | Aspects)) = ???
+    }
+
   def apply[S2, S3](v: (AI, String) > S2)(next: ((AI, String)) => String > (S3 | Aspects))
       : String > (AIs | S2 | S3 | Aspects) =
     v {

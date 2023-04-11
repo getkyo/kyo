@@ -1,12 +1,13 @@
-package kyo
+package kyo.chatgpt
 
-import kyo.ais._
+import kyo.chatgpt.ais._
 import kyo.core._
 import kyo.requests._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
 
+import kyo.chatgpt.ais
 object vectors {
 
   private case class Request(input: String, model: String)

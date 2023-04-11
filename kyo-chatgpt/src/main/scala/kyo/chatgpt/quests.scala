@@ -1,6 +1,6 @@
-package kyo
+package kyo.chatgpt
 
-import kyo.ais._
+import kyo.chatgpt.ais._
 import kyo.core._
 import kyo.envs._
 import kyo.frames._
@@ -22,6 +22,7 @@ import java.io.PrintWriter
 import kyo.options.Options
 import zio.schema.Schema
 
+import kyo.chatgpt.ais
 object quests {
 
   case class Source(file: String, code: String)
