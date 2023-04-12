@@ -26,6 +26,7 @@ import scala.util.Success
 import scala.util.control.NoStackTrace
 
 import kyo.aspects
+
 object ais {
   val apiKeyProp = "OPENAI_API_KEY"
   val apiKey =
@@ -37,22 +38,23 @@ object ais {
 
   case class AIException(cause: Any*) extends Exception(cause.mkString(" ")) with NoStackTrace
 
-  opaque type AIs = Sums[State] | Requests | Tries | IOs | Aspects
+  opaque type AIs = Sums[State] | Requests | Tries | IOs | Aspects | Consoles
 
   object AIs {
+
+    type Iso = Sums[State] | Requests | Tries | IOs | Aspects | Consoles | AIs
+    def iso[T, S](v: T > (S | Iso)): T > (S | AIs) =
+      v
 
     val askAspect: Aspect[(AI, String), String, AIs] =
       Aspects.init[(AI, String), String, AIs]
 
     def init: AI > IOs = IOs(AI())
 
-    def iso[T, S](v: T > (S | Requests | Tries | IOs | Aspects)): T > (S | AIs) =
-      v
-
     def fail[T](cause: Any*): T > AIs =
       Tries.fail(AIException(cause))
 
-    def transactional[T, S](f: => T > (S | Requests | Tries | IOs | AIs)): T > (S | AIs) =
+    def transactional[T, S](f: => T > (S | Iso)): T > (S | AIs) =
       Sums[State].get { st =>
         IOs.attempt(f) {
           case Failure(ex) =>
@@ -64,12 +66,12 @@ object ais {
         }
       }
 
-    def ephemeral[T, S](f: => T > (S | Requests | Tries | IOs | AIs)): T > (S | AIs) =
+    def ephemeral[T, S](f: => T > (S | Iso)): T > (S | AIs) =
       Sums[State].get { st =>
         (f < Tries)(r => Sums[State].set(st)(_ => r.get))
       }
 
-    def clone[S](ai: AI > (S | Requests | Tries | IOs | AIs)): AI > (S | AIs) =
+    def clone[S](ai: AI > (S | Iso)): AI > (S | AIs) =
       for {
         orig <- ai
         res  <- init
@@ -77,7 +79,7 @@ object ais {
         _    <- Sums[State].set(st + (res -> st.getOrElse(orig, Context())))
       } yield res
 
-    def run[T, S](v: T > (S | Requests | Tries | IOs | AIs)): T > (S | Requests) =
+    def run[T, S](v: T > (S | Iso)): T > (S | Requests | Consoles) =
       Requests.iso(Aspects.run(Sums[State].drop(Tries.run(v))(_.get)))
   }
 
@@ -103,15 +105,15 @@ object ais {
         for {
           st <- ai.add("user", msg)(_.getOrElse(this, Context()))
           d  <- dump
-          _  <- println("*********************")
-          _  <- println(d)
-          response <- Requests(
+          _  <- Consoles.println("*********************")
+          _  <- Consoles.println(d)
+          response <- Tries(Requests(
               _.contentType("application/json")
                 .header("Authorization", s"Bearer $apiKey")
                 .post(uri"https://api.openai.com/v1/chat/completions")
                 .body(st)
                 .response(asJson[Response])
-          )(_.body {
+          ))(_.body {
             case Left(error)  => throw new Exception(error)
             case Right(value) => value
           })
@@ -119,7 +121,7 @@ object ais {
             case Nil => throw new Exception("No choices")
             case xs  => xs.head.message.content
           }
-          _ <- println(s"assistant: $content")
+          _ <- Consoles.println(s"assistant: $content")
           _ <- assistant(content)
         } yield content
       AIs.askAspect((this, msg.mkString(" ")))(doIt)

@@ -187,7 +187,9 @@ lazy val `kyo-chatgpt` = project
       libraryDependencies += "dev.zio"                       %% "zio-schema-derivation" % "0.4.10",
       libraryDependencies += "org.apache.lucene"              % "lucene-core"           % "9.5.0",
       libraryDependencies += "org.apache.lucene"              % "lucene-queryparser"    % "9.5.0",
-      libraryDependencies += "com.formdev"                    % "flatlaf"               % "3.1"
+      libraryDependencies += "com.formdev"                    % "flatlaf"               % "3.1",
+      libraryDependencies += "com.vladsch.flexmark"           % "flexmark-all"          % "0.64.0",
+      libraryDependencies += "com.vladsch.flexmark"           % "flexmark-java"         % "0.64.0"
   )
 
 lazy val `kyo-bench` = project

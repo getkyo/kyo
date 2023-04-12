@@ -28,53 +28,51 @@ import java.time.format.FormatStyle
 import java.util.Date
 import scala.jdk.CollectionConverters._
 
-class Recall(ai: AI) extends Mode(Set(ai)) {
+class Recall(prompt: String, ai: AI) extends Mode(Set(ai)) {
+  def this(ai: AI) = this("", ai)
+
   private val analyzer = new StandardAnalyzer()
   private val indexPath =
     Paths.get(System.getProperty("user.home", ".") + "/.kyo/kyo-chatgpt/index")
   private val index = new MMapDirectory(indexPath)
 
-  index("system", "")
+  indexMessage("system", "init")
 
-  private def index(role: String, content: String): Unit > AIs =
-    AIs.iso {
-      Vectors.embed(s"$role: $content") { v =>
-        IOs {
-          val now       = LocalDateTime.now();
-          val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM);
-          val timestamp = now.format(formatter);
-          val doc       = new Document()
-          doc.add(new StringField("timestamp", timestamp, Field.Store.YES))
-          doc.add(new StringField("role", role, Field.Store.YES))
-          doc.add(new TextField("content", content, Field.Store.YES))
-          doc.add(new KnnFloatVectorField("embedding", v.values.take(1024).toArray));
+  private def indexMessage(role: String, content: String) =
+    Vectors.embed(s"$role: $content") { v =>
+      IOs {
+        val now       = LocalDateTime.now();
+        val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT);
+        val timestamp = now.format(formatter);
+        val doc       = new Document()
+        doc.add(new StringField("timestamp", timestamp, Field.Store.YES))
+        doc.add(new StringField("role", role, Field.Store.YES))
+        doc.add(new TextField("content", content, Field.Store.YES))
+        doc.add(new KnnFloatVectorField("embedding", v.values.take(1024).toArray));
 
-          val writerConfig = new IndexWriterConfig(analyzer)
-          val writer       = new IndexWriter(index, writerConfig)
-          writer.addDocument(doc)
-          writer.close()
-        }
+        val writerConfig = new IndexWriterConfig(analyzer)
+        val writer       = new IndexWriter(index, writerConfig)
+        writer.addDocument(doc)
+        writer.close()
       }
     }
 
-  private def search(query: String): String > AIs =
-    AIs.iso {
-      Vectors.embed(query) { v =>
-        IOs {
-          val reader   = DirectoryReader.open(index)
-          val searcher = new IndexSearcher(reader)
-          val query    = new KnnFloatVectorQuery("embedding", v.values.take(1024).toArray, 10)
+  private def search(query: String) =
+    Vectors.embed(query) { v =>
+      IOs {
+        val reader   = DirectoryReader.open(index)
+        val searcher = new IndexSearcher(reader)
+        val query    = new KnnFloatVectorQuery("embedding", v.values.take(1024).toArray, 15)
 
-          val hits    = searcher.search(query, 10).scoreDocs
-          val results = hits.toList.map(hit => searcher.doc(hit.doc))
+        val hits    = searcher.search(query, 15).scoreDocs
+        val results = hits.toList.map(hit => searcher.storedFields().document(hit.doc))
 
-          reader.close()
-          format(results)
-        }
+        reader.close()
+        format(results)
       }
     }
 
-  private def format(docs: List[Document]): String = {
+  private def format(docs: List[Document]) =
     docs.reverse.zipWithIndex.map {
       case (doc, index) =>
         val timestampField = doc.getField("timestamp")
@@ -86,26 +84,22 @@ class Recall(ai: AI) extends Mode(Set(ai)) {
 
         s"$timestamp $role: $content"
     }.mkString("\n")
-  }
 
   def apply[S](
       ai: AI,
       msg: String
-  )(next: String => String > (S | Aspects)): String > (S | Aspects | AIs) = {
-    AIs.iso {
-      AIs.ephemeral {
-        for {
-          recall <- search(msg)
-          _ <-
-            if (recall.isEmpty()) ()
-            else ai.user(
-                "Consider these previous messages I exchanged with you:\n```\n" + recall + "\n```\n"
-            )
-          r <- next(msg)
-          _ <- index("user", msg)
-          _ <- index("assistant", r)
-        } yield r
-      }
-    }
+  )(next: String => String > (S | Aspects)) = {
+    for {
+      recall <- search(msg)
+      _ <-
+        if (recall.isEmpty()) ()
+        else ai.user(
+            "Consider these previous messages I exchanged with you:\n```\n" + recall + "\n```\n\n" + prompt
+        )
+      r <- next(msg + " (feel free to use the info in the previous messages I " +
+        "shared with you but don't mention that I shared them with you)")
+      _ <- indexMessage("user", msg)
+      _ <- indexMessage("assistant", r)
+    } yield r
   }
 }
