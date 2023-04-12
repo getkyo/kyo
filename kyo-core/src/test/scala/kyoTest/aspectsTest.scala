@@ -67,4 +67,25 @@ class aspectsTest extends KyoTest {
       }
     }
   }
+
+  "use aspect as a cut" in run {
+    val aspect1 = Aspects.init[Int, Int, IOs]
+    val aspect2 = Aspects.init[Int, Int, IOs]
+
+    def test(v: Int) =
+      for {
+        v1 <- aspect1(v)(_ + 1)
+        v2 <- aspect2(v)(_ + 1)
+      } yield (v1, v2)
+
+    val cut = new Cut[Int, Int, IOs] {
+      def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 | Aspects)) =
+        v(v => f(v * 3))
+    }
+    aspect1.let(cut) {
+      aspect2.let(aspect1) {
+        test(2)(v => assert(v == (2 * 3 + 1, 2 * 3 + 1)))
+      }
+    }
+  }
 }
