@@ -10,6 +10,7 @@ import kyo.aspects._
 import kyo.requests._
 import kyo.consoles._
 import kyo.ios._
+import kyo.tries._
 import kyo.chatgpt.ais._
 import kyo.concurrent.fibers._
 import kyo.concurrent.channels._
@@ -24,6 +25,7 @@ import com.vladsch.flexmark.util.data.MutableDataSet;
 import javax.swing.text.html.HTMLDocument
 
 import kyo.chatgpt.mode.Reflect
+import scala.util.Failure
 case class ModeInfo(name: String, prompt: String = "") {
   override def toString: String = name + (if (prompt.nonEmpty) ": " + prompt else "")
 }
@@ -49,7 +51,7 @@ object UI extends App {
 
   def appendChat(text: String): Unit = {
     val document = parser.parse(text)
-    val html     = renderer.render(document) + "<br /><br />"
+    val html     = renderer.render(document) + " <br /><br />"
     val doc      = chatHistory.getDocument.asInstanceOf[HTMLDocument]
     doc.insertAfterEnd(doc.getCharacterElement(doc.getLength), html)
   }
@@ -153,17 +155,23 @@ object UI extends App {
         AIs.iso {
           for {
             (msg, modes, p) <- chan.take
-            resp            <- withModes(ai, modes, ai.ask(msg))
+            resp            <- withModes(ai, modes.reverse, ai.ask(msg))
             _               <- p.complete(resp)
           } yield ()
         }
       def loop(): Unit > (Fibers | AIs) =
         run(_ => loop())
       Consoles.run {
-        Requests.run {
-          AIs.run {
-            loop()
+        Tries.run {
+          Requests.run {
+            AIs.run {
+              loop()
+            }
           }
+        } {
+          case Failure(exception) =>
+            Consoles.println(exception.toString())
+          case _ =>
         }
       }
     }

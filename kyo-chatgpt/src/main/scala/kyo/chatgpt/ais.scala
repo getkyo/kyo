@@ -71,30 +71,35 @@ object ais {
         (f < Tries)(r => Sums[State].set(st)(_ => r.get))
       }
 
-    def clone[S](ai: AI > (S | Iso)): AI > (S | AIs) =
-      for {
-        orig <- ai
-        res  <- init
-        st   <- Sums[State].get
-        _    <- Sums[State].set(st + (res -> st.getOrElse(orig, Context())))
-      } yield res
-
-    def run[T, S](v: T > (S | Iso)): T > (S | Requests | Consoles) =
-      Requests.iso(Aspects.run(Sums[State].drop(Tries.run(v))(_.get)))
+    def run[T, S](v: T > (S | Iso)): T > (S | Requests | Consoles | Tries) =
+      Requests.iso(Aspects.run(Sums[State].drop(v)))
   }
 
   class AI private[ais] () {
 
     private def add(role: String, msg: Any*): State > AIs =
-      // println(s"$role: ${msg.mkString(" ")}")
       Sums[State].add(Map(this -> Context(messages = List(Message(role, msg.mkString(" "))))))
 
-    def dump: String > AIs =
-      Sums[State].get(
-          _.getOrElse(this, Context()).messages.map(msg => s"${msg.role}: ${msg.content}").mkString(
-              "\n"
-          )
-      )
+    val save: Context > AIs = Sums[State].get(_.getOrElse(this, Context.empty))
+
+    def restore[T, S](ctx: Context)(v: T > (S | AIs.Iso)): T > (S | AIs) =
+      Sums[State].get { st =>
+        Sums[State].set(st + (this -> ctx))(_ => v)
+      }
+
+    @targetName("cloneAI")
+    val clone: AI > AIs =
+      for {
+        res <- AIs.init
+        st  <- Sums[State].get
+        _   <- Sums[State].set(st + (res -> st.getOrElse(this, Context.empty)))
+      } yield res
+
+    val dump: String > AIs =
+      save { ctx =>
+        ctx.messages.map(msg => s"${msg.role}: ${msg.content}")
+          .mkString("\n")
+      }
 
     def user(msg: Any*): AI > AIs      = add("user", msg: _*)(_ => this)
     def system(msg: Any*): AI > AIs    = add("system", msg: _*)(_ => this)
@@ -103,10 +108,9 @@ object ais {
     def ask(msg: Any*): String > AIs =
       def doIt(ai: AI, msg: String): String > AIs =
         for {
-          st <- ai.add("user", msg)(_.getOrElse(this, Context()))
-          d  <- dump
-          _  <- Consoles.println("*********************")
-          _  <- Consoles.println(d)
+          st <- ai.add("user", msg)(_.getOrElse(this, Context.empty))
+          _  <- Consoles.println("******************")
+          _  <- Consoles.println(dump)
           response <- Tries(Requests(
               _.contentType("application/json")
                 .header("Authorization", s"Bearer $apiKey")
@@ -114,23 +118,26 @@ object ais {
                 .body(st)
                 .response(asJson[Response])
           ))(_.body {
-            case Left(error)  => throw new Exception(error)
+            case Left(error)  => Tries.fail(error)
             case Right(value) => value
           })
-          content <- response.choices match {
-            case Nil => throw new Exception("No choices")
-            case xs  => xs.head.message.content
-          }
-          _ <- Consoles.println(s"assistant: $content")
+          content <-
+            response.choices.headOption match {
+              case None =>
+                AIs.fail[String]("no choices")
+              case Some(v) =>
+                v.message.content: String > Nothing
+            }
+          _ <- Consoles.println(dump)
           _ <- assistant(content)
         } yield content
       AIs.askAspect((this, msg.mkString(" ")))(doIt)
   }
 
   private given Summer[State] with
-    def init: State = Map.empty
+    val init: State = Map.empty
     def add(x: State, y: State): State =
-      x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Context()) ++ v) }
+      x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Context.empty) ++ v) }
 
   case class Message(role: String, content: String)
   case class Choice(message: Message)
@@ -144,6 +151,10 @@ object ais {
     def user(msg: String)      = Context(model, messages :+ Message("user", msg))
     def assistant(msg: String) = Context(model, messages :+ Message("assistant", msg))
     def ++(that: Context)      = Context(model, messages ++ that.messages)
+  }
+
+  object Context {
+    val empty = Context()
   }
 
   given JsonEncoder[Message]  = DeriveJsonEncoder.gen[Message]

@@ -14,7 +14,7 @@ class Reflect(val prompt: String, ais: Set[AI]) extends Mode(ais) {
     for {
       r1 <- AIs.ephemeral(next(msg))
       _ <- ai.user(
-          "This could be your response:\n\n" + r1 + "\n\n\n" + prompt + " Edit it with improvements ensure it's " +
+          "This could be your response:\n\n" + r1 + "\n\n\n" + prompt + ". Edit it with improvements ensure it's " +
             "compatible with the user request. Consider all messages in this session. The user shouldn't know this " +
             "specific exchange happened."
       )
