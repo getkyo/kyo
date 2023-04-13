@@ -24,7 +24,7 @@ object arrows {
               v
           }
         def apply(v: T > S) =
-          Locals.save { st =>
+          Locals.save.map { st =>
             f(a).asInstanceOf[Kyo[[T] =>> Unit, Arrows, T > S, U, S2]](
                 v,
                 Safepoint.noop,
@@ -51,7 +51,7 @@ object arrows {
         val g = f(a, this.asInstanceOf[T > (S | Arrows) => U > (S2 | Arrows)])
           .asInstanceOf[Kyo[[T] =>> Unit, Arrows, T > S, U, S2]]
         def apply(v: T > S) =
-          Locals.save { st =>
+          Locals.save.map { st =>
             g(v, Safepoint.noop, st)
           }
       }

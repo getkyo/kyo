@@ -34,13 +34,13 @@ object channels {
       def takeFiber: Fiber[T] > IOs
 
       def put(v: T): Unit > (IOs | Fibers) =
-        putFiber(v)(_.join)
+        putFiber(v).map(_.join)
       def take: T > (IOs | Fibers) =
-        takeFiber(_.join)
+        takeFiber.map(_.join)
     }
 
     def bounded[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
-      Queues.bounded[T](capacity, access) { q =>
+      Queues.bounded[T](capacity, access).map { q =>
         new Channel[T] {
           val size        = q.size
           def offer(v: T) = q.offer(v)
@@ -51,7 +51,7 @@ object channels {
       }
 
     def dropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      Queues.bounded[T](capacity, access) { q =>
+      Queues.bounded[T](capacity, access).map { q =>
         new Unbounded[T] {
           val size        = q.size
           def offer(v: T) = q.offer(v)
@@ -63,7 +63,7 @@ object channels {
       }
 
     def sliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      Queues.bounded[T](capacity, access) { q =>
+      Queues.bounded[T](capacity, access).map { q =>
         new Unbounded[T] {
           val size        = q.size
           def offer(v: T) = q.offer(v)
@@ -86,7 +86,7 @@ object channels {
       }
 
     def unbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      Queues.unbounded[T](access) { q =>
+      Queues.unbounded[T](access).map { q =>
         new Unbounded[T] {
           val size        = q.size
           def put(v: T)   = q.add(v)
@@ -98,7 +98,7 @@ object channels {
       }
 
     def blocking[T](capacity: Int, access: Access = Access.Mpmc): Blocking[T] > IOs =
-      Queues.bounded[T](capacity, access) { queue =>
+      Queues.bounded[T](capacity, access).map { queue =>
         new Blocking[T] {
 
           val q     = queue.unsafe

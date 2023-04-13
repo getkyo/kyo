@@ -99,7 +99,7 @@ object fibers {
         IOs {
           val p = IOPromise[Boolean]()
           f.ensure(() => p.unsafeComplete(true))
-          interrupt(reason) {
+          interrupt(reason).map {
             case true  => p.join
             case false => false
           }
@@ -169,24 +169,24 @@ object fibers {
 
     /*inline(2)*/
     def forkFiber[T](v: => T > (IOs | Fibers)): Fiber[T] > IOs =
-      Locals.save(st => IOTask(IOs(v), st))
+      Locals.save.map(st => IOTask(IOs(v), st))
 
     /*inline(2)*/
     def fork[T](v: => T > (IOs | Fibers)): T > (IOs | Fibers) =
-      forkFiber(v)(_.join)
+      forkFiber(v).map(_.join)
 
     def fork[T1, T2](
         v1: => T1 > (IOs | Fibers),
         v2: => T2 > (IOs | Fibers)
     ): (T1, T2) > (IOs | Fibers) =
-      collect(List(IOs(v1), IOs(v2)))(s => (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2]))
+      collect(List(IOs(v1), IOs(v2))).map(s => (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2]))
 
     def fork[T1, T2, T3](
         v1: => T1 > (IOs | Fibers),
         v2: => T2 > (IOs | Fibers),
         v3: => T3 > (IOs | Fibers)
     ): (T1, T2, T3) > (IOs | Fibers) =
-      collect(List(IOs(v1), IOs(v2), IOs(v3)))(s =>
+      collect(List(IOs(v1), IOs(v2), IOs(v3))).map(s =>
         (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3])
       )
 
@@ -196,7 +196,7 @@ object fibers {
         v3: => T3 > (IOs | Fibers),
         v4: => T4 > (IOs | Fibers)
     ): (T1, T2, T3, T4) > (IOs | Fibers) =
-      collect(List(IOs(v1), IOs(v2), IOs(v3), IOs(v4)))(s =>
+      collect(List(IOs(v1), IOs(v2), IOs(v3), IOs(v4))).map(s =>
         (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3], s(3).asInstanceOf[T4])
       )
 
@@ -204,14 +204,14 @@ object fibers {
         v1: => T > (IOs | Fibers),
         v2: => T > (IOs | Fibers)
     ): T > (IOs | Fibers) =
-      raceFiber(List(IOs(v1), IOs(v2)))(_.join)
+      raceFiber(List(IOs(v1), IOs(v2))).map(_.join)
 
     def race[T](
         v1: => T > (IOs | Fibers),
         v2: => T > (IOs | Fibers),
         v3: => T > (IOs | Fibers)
     ): T > (IOs | Fibers) =
-      raceFiber(List(IOs(v1), IOs(v2), IOs(v2)))(_.join)
+      raceFiber(List(IOs(v1), IOs(v2), IOs(v2))).map(_.join)
 
     def race[T](
         v1: => T > (IOs | Fibers),
@@ -219,7 +219,7 @@ object fibers {
         v3: => T > (IOs | Fibers),
         v4: => T > (IOs | Fibers)
     ): T > (IOs | Fibers) =
-      raceFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4)))(_.join)
+      raceFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))).map(_.join)
 
     private inline def foreach[T, U](inline l: List[T])(inline f: T => Unit): Unit =
       var curr = l
@@ -230,7 +230,7 @@ object fibers {
 
     def raceFiber[T](l: List[T > (IOs | Fibers)]): Fiber[T] > IOs =
       require(!l.isEmpty)
-      Locals.save { st =>
+      Locals.save.map { st =>
         val p = IOPromise[T]
         foreach(l) { io =>
           val f = IOTask(IOs(io), st)
@@ -243,20 +243,20 @@ object fibers {
     def await[T](
         v1: => T > (IOs | Fibers)
     ): Unit > (IOs | Fibers) =
-      fork(v1)(_ => ())
+      fork(v1).map(_ => ())
 
     def await[T](
         v1: => T > (IOs | Fibers),
         v2: => T > (IOs | Fibers)
     ): Unit > (IOs | Fibers) =
-      awaitFiber(List(IOs(v1), IOs(v2)))(_.join)
+      awaitFiber(List(IOs(v1), IOs(v2))).map(_.join)
 
     def await[T](
         v1: => T > (IOs | Fibers),
         v2: => T > (IOs | Fibers),
         v3: => T > (IOs | Fibers)
     ): Unit > (IOs | Fibers) =
-      awaitFiber(List(IOs(v1), IOs(v2), IOs(v2)))(_.join)
+      awaitFiber(List(IOs(v1), IOs(v2), IOs(v2))).map(_.join)
 
     def await[T](
         v1: => T > (IOs | Fibers),
@@ -264,10 +264,10 @@ object fibers {
         v3: => T > (IOs | Fibers),
         v4: => T > (IOs | Fibers)
     ): Unit > (IOs | Fibers) =
-      awaitFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4)))(_.join)
+      awaitFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))).map(_.join)
 
     def awaitFiber[T](l: List[T > (IOs | Fibers)]): Fiber[Unit] > IOs =
-      Locals.save { st =>
+      Locals.save.map { st =>
         val p       = IOPromise[Unit]
         val pending = AtomicInteger(l.size)
         var i       = 0
@@ -292,10 +292,10 @@ object fibers {
       }
 
     def collect[T](l: List[T > (IOs | Fibers)]): Seq[T] > (IOs | Fibers) =
-      collectFiber[T](l)(_.join)
+      collectFiber[T](l).map(_.join)
 
     def collectFiber[T](l: List[T > (IOs | Fibers)]): Fiber[Seq[T]] > IOs =
-      Locals.save { st =>
+      Locals.save.map { st =>
         val p       = IOPromise[Seq[T]]
         val size    = l.size
         val results = (new Array[Any](size)).asInstanceOf[Array[T]]
@@ -325,14 +325,14 @@ object fibers {
       IOs(IOPromise[Unit])
 
     def sleep(d: Duration): Unit > (IOs | Fibers | Timers) =
-      promise[Unit] { p =>
+      promise[Unit].map { p =>
         if (d.isFinite) {
           val run: Unit > IOs =
             IOs {
               IOTask(IOs(p.complete(())), Locals.State.empty)
               ()
             }
-          Timers.schedule(d)(run) { t =>
+          Timers.schedule(d)(run).map { t =>
             IOs.ensure(t.cancel.unit)(p.join)
           }
         } else {
@@ -343,13 +343,13 @@ object fibers {
     def timeout[T](d: Duration)(v: => T > (IOs | Fibers))(using
         fr: Frame["Fibers.timeout"]
     ): T > (IOs | Fibers | Timers) =
-      forkFiber(v) { f =>
+      forkFiber(v).map { f =>
         val timeout: Unit > IOs =
           IOs {
             IOTask(IOs(f.interrupt), Locals.State.empty)
             ()
           }
-        Timers.schedule(d)(timeout) { t =>
+        Timers.schedule(d)(timeout).map { t =>
           IOs.ensure(t.cancel.unit)(f.join)
         }
       }
@@ -369,11 +369,11 @@ object fibers {
                 f(m.asInstanceOf[T])
             }
         }
-      (v < Fibers)(_.block)
+      (v < Fibers).map(_.block)
 
     def join[T](f: Future[T]): T > (IOs | Fibers) =
       import scala.concurrent.ExecutionContext.Implicits.global
-      Locals.save { st =>
+      Locals.save.map { st =>
         val p = IOPromise[T]()
         f.onComplete { r =>
           val io =

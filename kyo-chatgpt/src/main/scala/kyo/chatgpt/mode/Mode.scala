@@ -21,12 +21,12 @@ private[kyo] abstract class Mode(val ais: Set[AI])
   def apply[S2, S3](v: (AI, String) > S2)(next: ((AI, String)) => String > (S3 | Aspects))
       : String > (AIs | S2 | S3 | Aspects) =
     AIs.iso {
-      v {
+      v.map {
         case tup @ (ai, msg) =>
           if (ais.contains(ai))
             AIs.ephemeral {
               this(ai, msg)(next(ai, _))
-            } { r =>
+            }.map { r =>
               for {
                 _ <- ai.user(msg)
                 _ <- ai.assistant(r)

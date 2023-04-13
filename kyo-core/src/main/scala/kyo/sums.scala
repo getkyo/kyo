@@ -56,7 +56,7 @@ object sums {
           }
       }
       IOs.ensure(g.drop(curr)) {
-        (v < Sums[V]) {
+        (v < Sums[V]).map {
           case AddValue(v) =>
             curr = g.add(curr, v.asInstanceOf[V])
             curr.asInstanceOf[T]

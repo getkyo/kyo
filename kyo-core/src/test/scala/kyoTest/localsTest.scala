@@ -22,14 +22,14 @@ class localsTest extends KyoTest {
     "effect + get" in {
       val l = Locals.init(10)
       checkEquals[Option[Int], Nothing](
-          IOs.run[Option[Int]](Options.run(Options(1)(_ => l.get))),
+          IOs.run[Option[Int]](Options.run(Options(1).map(_ => l.get))),
           Some(10)
       )
     }
     "effect + get + effect" in {
       val l = Locals.init(10)
       checkEquals[Option[Int], Nothing](
-          IOs.run[Option[Int]](Options.run(Options(1)(_ => l.get)(Options(_)))),
+          IOs.run[Option[Int]](Options.run(Options(1).map(_ => l.get).map(Options(_)))),
           Some(10)
       )
     }
@@ -54,14 +54,14 @@ class localsTest extends KyoTest {
     "effect + get" in {
       val l = Locals.init(10)
       checkEquals[Option[Int], Nothing](
-          IOs.run[Option[Int]](Options.run(Options(1)(_ => l.let(20)(l.get)))),
+          IOs.run[Option[Int]](Options.run(Options(1).map(_ => l.let(20)(l.get)))),
           Some(20)
       )
     }
     "effect + get + effect" in {
       val l = Locals.init(10)
       checkEquals[Option[Int], Nothing](
-          IOs.run[Option[Int]](Options.run(Options(1)(_ => l.let(20)(l.get)(Options(_))))),
+          IOs.run[Option[Int]](Options.run(Options(1).map(_ => l.let(20)(l.get).map(Options(_))))),
           Some(20)
       )
     }
@@ -86,22 +86,22 @@ class localsTest extends KyoTest {
     "let + effect + save" in {
       val l = Locals.init(10)
       checkEquals[Option[Locals.State], Nothing](
-          IOs.run[Option[Locals.State]](Options.run(l.let(20)(Options(1)(_ => Locals.save)))),
+          IOs.run[Option[Locals.State]](Options.run(l.let(20)(Options(1).map(_ => Locals.save)))),
           Some(Map(l -> 20))
       )
     }
     "effect + let + save" in {
       val l = Locals.init(10)
       checkEquals[Option[Locals.State], Nothing](
-          IOs.run[Option[Locals.State]](Options.run(Options(1)(_ => l.let(20)(Locals.save)))),
+          IOs.run[Option[Locals.State]](Options.run(Options(1).map(_ => l.let(20)(Locals.save)))),
           Some(Map(l -> 20))
       )
     }
     "effect + let + save + effect" in {
       val l = Locals.init(10)
       checkEquals[Option[Locals.State], Nothing](
-          IOs.run[Option[Locals.State]](Options.run(Options(1)(_ =>
-            l.let(20)(Locals.save)(Options(_))
+          IOs.run[Option[Locals.State]](Options.run(Options(1).map(_ =>
+            l.let(20)(Locals.save).map(Options(_))
           ))),
           Some(Map(l -> 20))
       )
@@ -128,7 +128,7 @@ class localsTest extends KyoTest {
               Options.run(
                   l1.let(30)(
                       l2.let(40)(
-                          Options(1)(_ => Locals.save)
+                          Options(1).map(_ => Locals.save)
                       )
                   )
               )
@@ -144,9 +144,9 @@ class localsTest extends KyoTest {
               Options.run(
                   l1.let(30)(
                       l2.let(40)(
-                          Options(1)(_ => Locals.save)(Options(_))
-                      )(Options(_))
-                  )(Options(_))
+                          Options(1).map(_ => Locals.save).map(Options(_))
+                      ).map(Options(_))
+                  ).map(Options(_))
               )
           ),
           Some(Map(l1 -> 30, l2 -> 40))
@@ -176,9 +176,9 @@ class localsTest extends KyoTest {
           IOs.run[Option[(Locals.State, Locals.State)]](
               Options.run(
                   l3.let(20) {
-                    Options(1)(_ =>
+                    Options(1).map(_ =>
                       zip(
-                          l1.let(30)(Locals.save)(Options(_)),
+                          l1.let(30)(Locals.save).map(Options(_)),
                           l2.let(40)(Locals.save)
                       )
                     )
@@ -212,14 +212,14 @@ class localsTest extends KyoTest {
     }
     "effect + get" in {
       checkEquals[Option[Int], Nothing](
-          IOs.run[Option[Int]](Options.run(Locals.restore(state)(Options(1)(_ => l1.get)))),
+          IOs.run[Option[Int]](Options.run(Locals.restore(state)(Options(1).map(_ => l1.get)))),
           Some(10)
       )
     }
     "effect + get + effect" in {
       checkEquals[Option[Int], Nothing](
           IOs.run[Option[Int]](
-              Options.run(Locals.restore(state)(Options(1)(_ => l1.get)(Options(_))))
+              Options.run(Locals.restore(state)(Options(1).map(_ => l1.get).map(Options(_))))
           ),
           Some(10)
       )
@@ -232,7 +232,7 @@ class localsTest extends KyoTest {
     }
     "multiple + effect" in {
       checkEquals[Option[(Int, Int)], Nothing](
-          IOs.run[Option[(Int, Int)]](Options.run(Locals.restore(state)(Options(1)(_ =>
+          IOs.run[Option[(Int, Int)]](Options.run(Locals.restore(state)(Options(1).map(_ =>
             zip(l1.get, l2.get)
           )))),
           Some((10, 20))

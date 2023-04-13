@@ -16,7 +16,7 @@ object meters {
 
   trait Meter { self =>
     def available: Int > IOs
-    def isAvailable: Boolean > IOs = available(_ > 0)
+    def isAvailable: Boolean > IOs = available.map(_ > 0)
     def run[T, S](v: => T > S): T > (S | IOs | Fibers)
     def tryRun[T, S](v: => T > S): Option[T] > (S | IOs)
   }
@@ -27,14 +27,14 @@ object meters {
       semaphore(1)
 
     def semaphore(permits: Int): Meter > IOs =
-      Channels.blocking[Unit](permits) { chan =>
-        offer(permits, chan, ()) { _ =>
+      Channels.blocking[Unit](permits).map { chan =>
+        offer(permits, chan, ()).map { _ =>
           new Meter {
             val available = chan.size
             val release   = chan.offer(()).unit
             def run[T, S](v: => T > S): T > (S | IOs | Fibers) =
               IOs.ensure(release) {
-                chan.take(_ => v)
+                chan.take.map(_ => v)
               }
             def tryRun[T, S](v: => T > S) =
               IOs {
@@ -43,7 +43,7 @@ object meters {
                     None
                   case _ =>
                     IOs.ensure(release) {
-                      v(Some(_))
+                      v.map(Some(_))
                     }
                 }
               }
@@ -52,18 +52,18 @@ object meters {
       }
 
     def rateLimiter(rate: Int, period: Duration): Meter > (IOs | Timers) =
-      Channels.blocking[Unit](rate) { chan =>
-        Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())) { _ =>
+      Channels.blocking[Unit](rate).map { chan =>
+        Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())).map { _ =>
           new Meter {
             val available = chan.size
             def run[T, S](v: => T > S): T > (S | IOs | Fibers) =
-              chan.take(_ => v)
+              chan.take.map(_ => v)
             def tryRun[T, S](v: => T > S) =
-              chan.poll {
+              chan.poll.map {
                 case None =>
                   None
                 case _ =>
-                  v(Some(_))
+                  v.map(Some(_))
               }
           }
         }
@@ -73,14 +73,14 @@ object meters {
       pipeline(l.toList)
 
     def pipeline[S](l: List[Meter > (S | IOs)]): Meter > (S | IOs) =
-      Lists.collect(l) { meters =>
+      Lists.collect(l).map { meters =>
         new Meter {
           val available =
             def loop(l: List[Meter], acc: Int): Int > IOs =
               l match {
                 case Nil => acc
                 case h :: t =>
-                  h.available(v => loop(t, acc + v))
+                  h.available.map(v => loop(t, acc + v))
               }
             loop(meters, 0)
 
@@ -95,9 +95,9 @@ object meters {
           def tryRun[T, S](v: => T > S) =
             def loop(l: List[Meter]): Option[T] > (S | IOs) =
               l match {
-                case Nil => v(Some(_))
+                case Nil => v.map(Some(_))
                 case h :: t =>
-                  h.tryRun(loop(t)) {
+                  h.tryRun(loop(t)).map {
                     case None => None
                     case r    => r.flatten
                   }
@@ -108,7 +108,7 @@ object meters {
 
     private def offer[T](n: Int, chan: Channel[T], v: T): Unit > IOs =
       if (n > 0) {
-        chan.offer(v) {
+        chan.offer(v).map {
           case true => offer(n - 1, chan, v)
           case _    => ()
         }

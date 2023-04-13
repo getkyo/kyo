@@ -37,7 +37,7 @@ object MonadLawsTest extends ZIOSpecDefault {
       override def any: Myo[Any] =
         ()
       override def map[A, B](f: A => B): Myo[A] => Myo[B] =
-        _(f(_))
+        _.map(f(_))
       override def derive[A: Equal]: Equal[Myo[A]] =
         new Equal[Myo[A]] {
           protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean =

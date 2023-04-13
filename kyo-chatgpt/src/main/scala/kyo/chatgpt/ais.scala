@@ -55,10 +55,10 @@ object ais {
       Tries.fail(AIException(cause))
 
     def transactional[T, S](f: => T > (S | Iso)): T > (S | AIs) =
-      Sums[State].get { st =>
-        IOs.attempt(f) {
+      Sums[State].get.map { st =>
+        IOs.attempt(f).map {
           case Failure(ex) =>
-            Sums[State].set(st) { _ =>
+            Sums[State].set(st).map { _ =>
               Tries.fail(ex)
             }
           case Success(value) =>
@@ -67,8 +67,8 @@ object ais {
       }
 
     def ephemeral[T, S](f: => T > (S | Iso)): T > (S | AIs) =
-      Sums[State].get { st =>
-        (f < Tries)(r => Sums[State].set(st)(_ => r.get))
+      Sums[State].get.map { st =>
+        (f < Tries).map(r => Sums[State].set(st).map(_ => r.get))
       }
 
     def run[T, S](v: T > (S | Iso)): T > (S | Requests | Consoles | Tries) =
@@ -80,11 +80,11 @@ object ais {
     private def add(role: String, msg: Any*): State > AIs =
       Sums[State].add(Map(this -> Context(messages = List(Message(role, msg.mkString(" "))))))
 
-    val save: Context > AIs = Sums[State].get(_.getOrElse(this, Context.empty))
+    val save: Context > AIs = Sums[State].get.map(_.getOrElse(this, Context.empty))
 
     def restore[T, S](ctx: Context)(v: T > (S | AIs.Iso)): T > (S | AIs) =
-      Sums[State].get { st =>
-        Sums[State].set(st + (this -> ctx))(_ => v)
+      Sums[State].get.map { st =>
+        Sums[State].set(st + (this -> ctx)).map(_ => v)
       }
 
     @targetName("cloneAI")
@@ -96,19 +96,19 @@ object ais {
       } yield res
 
     val dump: String > AIs =
-      save { ctx =>
+      save.map { ctx =>
         ctx.messages.map(msg => s"${msg.role}: ${msg.content}")
           .mkString("\n")
       }
 
-    def user(msg: Any*): AI > AIs      = add("user", msg: _*)(_ => this)
-    def system(msg: Any*): AI > AIs    = add("system", msg: _*)(_ => this)
-    def assistant(msg: Any*): AI > AIs = add("assistant", msg: _*)(_ => this)
+    def user(msg: Any*): AI > AIs      = add("user", msg: _*).map(_ => this)
+    def system(msg: Any*): AI > AIs    = add("system", msg: _*).map(_ => this)
+    def assistant(msg: Any*): AI > AIs = add("assistant", msg: _*).map(_ => this)
 
     def ask(msg: Any*): String > AIs =
       def doIt(ai: AI, msg: String): String > AIs =
         for {
-          st <- ai.add("user", msg)(_.getOrElse(this, Context.empty))
+          st <- ai.add("user", msg).map(_.getOrElse(this, Context.empty))
           _  <- Consoles.println("******************")
           _  <- Consoles.println(dump)
           response <- Tries(Requests(
@@ -117,7 +117,7 @@ object ais {
                 .post(uri"https://api.openai.com/v1/chat/completions")
                 .body(st)
                 .response(asJson[Response])
-          ))(_.body {
+          )).map(_.body match {
             case Left(error)  => Tries.fail(error)
             case Right(value) => value
           })

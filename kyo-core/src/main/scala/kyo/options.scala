@@ -21,7 +21,7 @@ object options {
 
     /*inline(2)*/
     def getOrElse[T, S1, S2](v: Option[T] > S1, default: => T > S2): T > (S1 | S2) =
-      v {
+      v.map {
         case None    => default
         case Some(v) => v
       }
@@ -33,7 +33,7 @@ object options {
       l.toList match {
         case Nil => Options.empty
         case h :: t =>
-          run(h) {
+          run(h).map {
             case None => orElse(t: _*)
             case v    => v > Options
           }

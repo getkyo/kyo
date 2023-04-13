@@ -30,21 +30,21 @@ class abortsTest extends KyoTest {
     }
     "transform toOption" in {
       checkEquals[Option[Int], Nothing](
-          (Abort.success(1) > Aborts[Ex1] < Aborts[Ex1])(_.toOption),
+          (Abort.success(1) > Aborts[Ex1] < Aborts[Ex1]).map(_.toOption),
           Option(1)
       )
       checkEquals[Option[Int], Nothing](
-          (Abort.failure[Ex1, Int](ex1) > Aborts[Ex1] < Aborts[Ex1])(_.toOption),
+          (Abort.failure[Ex1, Int](ex1) > Aborts[Ex1] < Aborts[Ex1]).map(_.toOption),
           None
       )
     }
     "transform toEither" in {
       checkEquals[Either[Ex1, Int], Nothing](
-          (Abort.success(1) > Aborts[Ex1] < Aborts[Ex1])(_.toEither),
+          (Abort.success(1) > Aborts[Ex1] < Aborts[Ex1]).map(_.toEither),
           Right(1)
       )
       checkEquals[Either[Ex1, Int], Nothing](
-          (Abort.failure[Ex1, Int](ex1) > Aborts[Ex1] < Aborts[Ex1])(_.toEither),
+          (Abort.failure[Ex1, Int](ex1) > Aborts[Ex1] < Aborts[Ex1]).map(_.toEither),
           Left(ex1)
       )
     }
@@ -59,26 +59,28 @@ class abortsTest extends KyoTest {
     }
     "handle + transform" in {
       checkEquals[Abort[Ex1, Int], Nothing](
-          (1: Int > Aborts[Ex1])(_ + 1) < Aborts[Ex1],
+          (1: Int > Aborts[Ex1]).map(_ + 1) < Aborts[Ex1],
           Abort.success(2)
       )
     }
     "handle + effectful transform" in {
       checkEquals[Abort[Ex1, Int], Nothing](
-          (1: Int > Aborts[Ex1])(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
+          (1: Int > Aborts[Ex1]).map(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
           Abort.success(2)
       )
     }
     "handle + transform + effectful transform" in {
       checkEquals[Abort[Ex1, Int], Nothing](
-          (1: Int > Aborts[Ex1])(_ + 1)(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
+          (1: Int > Aborts[Ex1]).map(_ + 1).map(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[
+              Ex1
+          ],
           Abort.success(3)
       )
     }
     "handle + transform + failed effectful transform" in {
       val fail = Abort.failure[Ex1, Int](ex1)
       checkEquals[Abort[Ex1, Int], Nothing](
-          (1: Int > Aborts[Ex1])(_ + 1)(_ => fail > Aborts[Ex1]) < Aborts[Ex1],
+          (1: Int > Aborts[Ex1]).map(_ + 1).map(_ => fail > Aborts[Ex1]) < Aborts[Ex1],
           fail
       )
     }
@@ -95,26 +97,26 @@ class abortsTest extends KyoTest {
       }
       "handle + transform" in {
         checkEquals[Abort[Ex1, Int], Nothing](
-            v(_ + 1) < Aborts[Ex1],
+            v.map(_ + 1) < Aborts[Ex1],
             Abort.success(2)
         )
       }
       "handle + effectful transform" in {
         checkEquals[Abort[Ex1, Int], Nothing](
-            v(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
+            v.map(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
             Abort.success(2)
         )
       }
       "handle + transform + effectful transform" in {
         checkEquals[Abort[Ex1, Int], Nothing](
-            v(_ + 1)(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
+            v.map(_ + 1).map(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
             Abort.success(3)
         )
       }
       "handle + transform + failed effectful transform" in {
         val fail = Abort.failure[Ex1, Int](ex1)
         checkEquals[Abort[Ex1, Int], Nothing](
-            v(_ + 1)(_ => fail > Aborts[Ex1]) < Aborts[Ex1],
+            v.map(_ + 1).map(_ => fail > Aborts[Ex1]) < Aborts[Ex1],
             fail
         )
       }
@@ -129,26 +131,26 @@ class abortsTest extends KyoTest {
       }
       "handle + transform" in {
         checkEquals[Abort[Ex1, Int], Nothing](
-            v(_ + 1) < Aborts[Ex1],
+            v.map(_ + 1) < Aborts[Ex1],
             Abort.failure(ex1)
         )
       }
       "handle + effectful transform" in {
         checkEquals[Abort[Ex1, Int], Nothing](
-            v(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
+            v.map(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
             Abort.failure(ex1)
         )
       }
       "handle + transform + effectful transform" in {
         checkEquals[Abort[Ex1, Int], Nothing](
-            v(_ + 1)(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
+            v.map(_ + 1).map(i => Abort.success(i + 1) > Aborts[Ex1]) < Aborts[Ex1],
             Abort.failure(ex1)
         )
       }
       "handle + transform + failed effectful transform" in {
         val fail = Abort.failure[Ex1, Int](ex1)
         checkEquals[Abort[Ex1, Int], Nothing](
-            v(_ + 1)(_ => fail > Aborts[Ex1]) < Aborts[Ex1],
+            v.map(_ + 1).map(_ => fail > Aborts[Ex1]) < Aborts[Ex1],
             fail
         )
       }
@@ -157,7 +159,7 @@ class abortsTest extends KyoTest {
 
   "multiple aborts" - {
     def test(v: Int): Int > (Aborts[Ex1] | Aborts[Ex2]) =
-      v {
+      v.map {
         case 0 => Aborts(ex1)
         case 1 => Aborts(ex2)
         case i => 10 / i
@@ -236,7 +238,7 @@ class abortsTest extends KyoTest {
 
   "squashed aborts effect remain present if not fully handled" - {
     def test(v: Int): Int > Aborts[Ex1 | Ex2] =
-      v {
+      v.map {
         case 0 => Aborts(ex1)
         case 1 => Aborts(ex2)
         case i => 10 / i
@@ -315,7 +317,7 @@ class abortsTest extends KyoTest {
 
   "opaque squashed aborts must be fully handled" - {
     def test(v: Int): Int > Aborts[Ex1 | Ex2] =
-      v {
+      v.map {
         case 0 => Aborts(ex1: (Ex1 | Ex2))
         case 1 => Aborts(ex2: (Ex1 | Ex2))
         case i => 10 / i
@@ -394,7 +396,7 @@ class abortsTest extends KyoTest {
 
   "Aborts" - {
     def test(v: Int): Int > Aborts[Ex1] =
-      v {
+      v.map {
         case 0 => Aborts(ex1)
         case i => 10 / i
       }
@@ -443,7 +445,7 @@ class abortsTest extends KyoTest {
     "catching" - {
       "only effect" - {
         def test(v: Int): Int =
-          v {
+          v.map {
             case 0 => throw ex1
             case i => 10 / i
           }
@@ -468,7 +470,7 @@ class abortsTest extends KyoTest {
       }
       "with other effect" - {
         def test(v: Int > Options): Int > Options =
-          v {
+          v.map {
             case 0 => throw ex1
             case i => 10 / i
           }

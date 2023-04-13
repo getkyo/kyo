@@ -26,6 +26,6 @@ object clocks {
     def run[T, S](f: => T > (S | IOs | Clocks))(using c: Clock): T > (S | IOs) =
       Envs[Clock].let(c)(f)
     def now: Instant > Clocks =
-      Envs[Clock].get(_.now)
+      Envs[Clock].get.map(_.now)
   }
 }

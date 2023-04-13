@@ -28,7 +28,7 @@ object tries {
 
     /*inline(2)*/
     def get[T, S](v: Try[T] > S): T > (S | Tries) =
-      v {
+      v.map {
         case Success(v) =>
           v
         case _ =>

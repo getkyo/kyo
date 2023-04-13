@@ -39,14 +39,14 @@ object consoles {
     def run[T, S](f: => T > (S | IOs | Consoles))(using c: Console): T > (S | IOs) =
       run(c)(f)
     def readln: String > Consoles =
-      Envs[Console].get(_.readln)
+      Envs[Console].get.map(_.readln)
     def print[S](s: => String > (S | IOs | Consoles)): Unit > (S | Consoles) =
-      s(s => Envs[Console].get(_.print(s)))
+      s.map(s => Envs[Console].get.map(_.print(s)))
     def printErr[S](s: => String > (S | IOs | Consoles)): Unit > (S | Consoles) =
-      s(s => Envs[Console].get(_.printErr(s)))
+      s.map(s => Envs[Console].get.map(_.printErr(s)))
     def println[S](s: => String > (S | IOs | Consoles)): Unit > (S | Consoles) =
-      s(s => Envs[Console].get(_.println(s)))
+      s.map(s => Envs[Console].get.map(_.println(s)))
     def printlnErr[S](s: => String > (S | IOs | Consoles)): Unit > (S | Consoles) =
-      s(s => Envs[Console].get(_.printlnErr(s)))
+      s.map(s => Envs[Console].get.map(_.printlnErr(s)))
   }
 }

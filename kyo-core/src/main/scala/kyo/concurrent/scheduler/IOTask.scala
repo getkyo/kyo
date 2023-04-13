@@ -112,7 +112,7 @@ private[kyo] final class IOTask[T](
           this.interrupts(kyo.value)
           runtime += (Coordinator.tick() - start).asInstanceOf[Int]
           kyo.value.onComplete { (v: Any > IOs) =>
-            val io = v(kyo(_, this.asInstanceOf[Safepoint[Fibers]], st))
+            val io = v.map(kyo(_, this.asInstanceOf[Safepoint[Fibers]], st))
             this.become(IOTask(io, st, ensures, runtime))
           }
           nullIO

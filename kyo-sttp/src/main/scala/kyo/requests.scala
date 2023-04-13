@@ -47,7 +47,7 @@ object requests {
       v
 
     def apply[T, S](req: Request[T, Any] > S): Response[T] > (S | Requests) =
-      Envs[Backend].get(b => req(b.send))
+      Envs[Backend].get.map(b => req.map(b.send))
 
     def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (S | Requests) =
       apply(f(basicRequest))

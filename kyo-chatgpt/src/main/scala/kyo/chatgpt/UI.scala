@@ -160,7 +160,7 @@ object UI extends App {
           } yield ()
         }
       def loop(): Unit > (Fibers | AIs) =
-        run(_ => loop())
+        run.map(_ => loop())
       Consoles.run {
         Tries.run {
           Requests.run {
@@ -168,7 +168,7 @@ object UI extends App {
               loop()
             }
           }
-        } {
+        }.map {
           case Failure(exception) =>
             Consoles.println(exception.toString())
           case _ =>

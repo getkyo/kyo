@@ -13,14 +13,14 @@ object lists {
       v < Lists
 
     def foreach[T, S](v: List[T] > S): T > (S | Lists) =
-      v {
+      v.map {
         case head :: Nil => head
         case _           => v > Lists
       }
 
     def traverse[T, U, S, S2](v: List[T] > S)(f: T => U > S2): List[U] > (S | S2) =
-      v { v =>
-        collect(v(_.map(f)))
+      v.map { v =>
+        collect(v.map(_.map(f)))
       }
 
     def foreach[T, S](v: (T > S)*): T > (S | Lists) =
@@ -28,7 +28,7 @@ object lists {
 
     /*inline(1)*/
     def filter[S](v: Boolean > S): Unit > (S | Lists) =
-      v {
+      v.map {
         case true =>
           ()
         case false =>
@@ -45,7 +45,7 @@ object lists {
         v match {
           case Nil => buff.toList
           case h :: t =>
-            h(t1 => {
+            h.map(t1 => {
               buff.addOne(t1)
               loop(t)
             })
@@ -62,7 +62,7 @@ object lists {
           case Nil =>
             Lists.foreach(acc.reverse.flatten)
           case t :: ts =>
-            (f(t) < Lists)(l => loop(ts, l :: acc))
+            (f(t) < Lists).map(l => loop(ts, l :: acc))
       loop(v, Nil)
 
 }

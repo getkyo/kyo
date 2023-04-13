@@ -21,7 +21,7 @@ object envs {
       v > this
 
     def let[T, S, S2](es: E > S)(v: T > (S2 | Envs[E])): T > (S | S2) =
-      es { e =>
+      es.map { e =>
         given Handler[[T] =>> Env[E, T], Envs[E]] with {
           def pure[U](v: U) = v
           def apply[U, V, S2](

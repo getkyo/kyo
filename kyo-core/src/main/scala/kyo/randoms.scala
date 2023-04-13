@@ -39,13 +39,13 @@ object randoms {
     def run[T, S](f: => T > (S | IOs | Randoms))(using c: Random): T > (S | IOs) =
       Envs[Random].let(c)(f)
 
-    def nextInt: Int > Randoms = Envs[Random].get(_.nextInt)
+    def nextInt: Int > Randoms = Envs[Random].get.map(_.nextInt)
     def nextInt[S](n: Int > (S | IOs | Randoms)): Int > (S | Randoms) =
-      n(n => Envs[Random].get(_.nextInt(n)))
-    def nextLong: Long > Randoms       = Envs[Random].get(_.nextLong)
-    def nextDouble: Double > Randoms   = Envs[Random].get(_.nextDouble)
-    def nextBoolean: Boolean > Randoms = Envs[Random].get(_.nextBoolean)
-    def nextFloat: Float > Randoms     = Envs[Random].get(_.nextFloat)
-    def nextGaussian: Double > Randoms = Envs[Random].get(_.nextGaussian)
+      n.map(n => Envs[Random].get.map(_.nextInt(n)))
+    def nextLong: Long > Randoms       = Envs[Random].get.map(_.nextLong)
+    def nextDouble: Double > Randoms   = Envs[Random].get.map(_.nextDouble)
+    def nextBoolean: Boolean > Randoms = Envs[Random].get.map(_.nextBoolean)
+    def nextFloat: Float > Randoms     = Envs[Random].get.map(_.nextFloat)
+    def nextGaussian: Double > Randoms = Envs[Random].get.map(_.nextGaussian)
   }
 }

@@ -8,7 +8,7 @@ class envsTest extends KyoTest {
 
   "value" in {
     val v1 =
-      Envs[Int].get(_ + 1)
+      Envs[Int].get.map(_ + 1)
     val v2: Int > Envs[Int] = v1
     checkEquals[Int, Nothing](
         Envs[Int].let(1)(v2),
@@ -34,7 +34,7 @@ class envsTest extends KyoTest {
 
     "one service" in {
       val a =
-        Envs[Service1].get(_(1))
+        Envs[Service1].get.map(_(1))
       val b: Int > Envs[Service1] = a
       checkEquals[Int, Nothing](
           Envs[Service1].let(service1)(a),
@@ -43,8 +43,8 @@ class envsTest extends KyoTest {
     }
     "two services" - {
       val a =
-        Envs[Service1].get(_(1)) { i =>
-          Envs[Service2].get(_(i))
+        Envs[Service1].get.map(_(1)).map { i =>
+          Envs[Service2].get.map(_(i))
         }
       val v: Int > (Envs[Service1] | Envs[Service2]) = a
       "same handling order" in {
@@ -60,7 +60,7 @@ class envsTest extends KyoTest {
         )
       }
       "dependent services" in {
-        val s1 = Envs[Service2].get(service2 =>
+        val s1 = Envs[Service2].get.map(service2 =>
           new Service1 {
             def apply(i: Int) = service2(i * 10)
           }
@@ -102,7 +102,7 @@ class envsTest extends KyoTest {
     "one service" - {
       "continue" in {
         val a =
-          Envs[Service1].get(_(1))
+          Envs[Service1].get.map(_(1))
         val b: Int > (Envs[Service1] | Options) = a
         checkEquals[Option[Int], Nothing](
             Envs[Service1].let(service1)(a) < Options,
@@ -111,7 +111,7 @@ class envsTest extends KyoTest {
       }
       "short circuit" in {
         val a =
-          Envs[Service1].get(_(0))
+          Envs[Service1].get.map(_(0))
         val b: Int > (Envs[Service1] | Options) = a
         checkEquals[Option[Int], Nothing](
             Envs[Service1].let(service1)(a) < Options,
@@ -122,8 +122,8 @@ class envsTest extends KyoTest {
     "two services" - {
       "continue" - {
         val a =
-          Envs[Service1].get(_(1)) { i =>
-            Envs[Service2].get(_(i))
+          Envs[Service1].get.map(_(1)).map { i =>
+            Envs[Service2].get.map(_(i))
           }
         val v: Int > (Envs[Service1] | Envs[Service2] | Options) = a
         "same handling order" in {
@@ -143,7 +143,7 @@ class envsTest extends KyoTest {
           )
         }
         "dependent services" in {
-          val s1 = Envs[Service2].get(service2 =>
+          val s1 = Envs[Service2].get.map(service2 =>
             new Service1 {
               def apply(i: Int) = service2(i * 10)
             }

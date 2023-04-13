@@ -31,7 +31,7 @@ class KyoTest extends AnyFreeSpec with Assertions {
 
   def retry[S](f: => Boolean > S): Boolean > S = {
     def loop(): Boolean > S =
-      f {
+      f.map {
         case true  => true
         case false => loop()
       }

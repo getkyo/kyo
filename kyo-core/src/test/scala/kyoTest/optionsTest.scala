@@ -37,19 +37,19 @@ class optionsTest extends KyoTest {
     }
     "handle + transform" in {
       checkEquals[Option[Int], Nothing](
-          (1: Int > Options)(_ + 1) < Options,
+          (1: Int > Options).map(_ + 1) < Options,
           Option(2)
       )
     }
     "handle + effectful transform" in {
       checkEquals[Option[Int], Nothing](
-          (1: Int > Options)(i => Option(i + 1) > Options) < Options,
+          (1: Int > Options).map(i => Option(i + 1) > Options) < Options,
           Option(2)
       )
     }
     "handle + transform + effectful transform" in {
       checkEquals[Option[Int], Nothing](
-          (1: Int > Options)(_ + 1)(i => Option(i + 1) > Options) < Options,
+          (1: Int > Options).map(_ + 1).map(i => Option(i + 1) > Options) < Options,
           Option(3)
       )
     }
@@ -64,19 +64,19 @@ class optionsTest extends KyoTest {
     }
     "handle + transform" in {
       checkEquals[Option[Int], Nothing](
-          (Option(1) > Options)(_ + 1) < Options,
+          (Option(1) > Options).map(_ + 1) < Options,
           Option(2)
       )
     }
     "handle + effectful transform" in {
       checkEquals[Option[Int], Nothing](
-          (Option(1) > Options)(i => Option(i + 1) > Options) < Options,
+          (Option(1) > Options).map(i => Option(i + 1) > Options) < Options,
           Option(2)
       )
     }
     "handle + transform + effectful transform" in {
       checkEquals[Option[Int], Nothing](
-          (Option(1) > Options)(_ + 1)(i => Option(i + 1) > Options) < Options,
+          (Option(1) > Options).map(_ + 1).map(i => Option(i + 1) > Options) < Options,
           Option(3)
       )
     }

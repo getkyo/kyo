@@ -25,11 +25,11 @@ class metersTest extends KyoTest {
         t  <- Meters.mutex
         p  <- Fibers.promise[Int]
         b1 <- Fibers.promise[Unit]
-        f1 <- Fibers.forkFiber(t.run(b1.complete(())(_ => p.block)))
+        f1 <- Fibers.forkFiber(t.run(b1.complete(()).map(_ => p.block)))
         _  <- b1.join
         a1 <- t.isAvailable
         b2 <- Fibers.promise[Unit]
-        f2 <- Fibers.forkFiber(b2.complete(())(_ => t.run(2)))
+        f2 <- Fibers.forkFiber(b2.complete(()).map(_ => t.run(2)))
         _  <- b2.join
         a2 <- t.isAvailable
         d1 <- f1.isDone
@@ -46,7 +46,7 @@ class metersTest extends KyoTest {
         sem <- Meters.semaphore(1)
         p   <- Fibers.promise[Int]
         b1  <- Fibers.promise[Unit]
-        f1  <- Fibers.forkFiber(sem.tryRun(b1.complete(())(_ => p.block)))
+        f1  <- Fibers.forkFiber(sem.tryRun(b1.complete(()).map(_ => p.block)))
         _   <- b1.join
         a1  <- sem.isAvailable
         b1  <- sem.tryRun(2)
@@ -71,14 +71,14 @@ class metersTest extends KyoTest {
         t  <- Meters.semaphore(2)
         p  <- Fibers.promise[Int]
         b1 <- Fibers.promise[Unit]
-        f1 <- Fibers.forkFiber(t.run(b1.complete(())(_ => p.block)))
+        f1 <- Fibers.forkFiber(t.run(b1.complete(()).map(_ => p.block)))
         _  <- b1.join
         b2 <- Fibers.promise[Unit]
-        f2 <- Fibers.forkFiber(t.run(b2.complete(())(_ => p.block)))
+        f2 <- Fibers.forkFiber(t.run(b2.complete(()).map(_ => p.block)))
         _  <- b2.join
         a1 <- t.isAvailable
         b3 <- Fibers.promise[Unit]
-        f2 <- Fibers.forkFiber(b3.complete(())(_ => t.run(2)))
+        f2 <- Fibers.forkFiber(b3.complete(()).map(_ => t.run(2)))
         _  <- b3.join
         a2 <- t.isAvailable
         d1 <- f1.isDone
@@ -95,10 +95,10 @@ class metersTest extends KyoTest {
         sem <- Meters.semaphore(2)
         p   <- Fibers.promise[Int]
         b1  <- Fibers.promise[Unit]
-        f1  <- Fibers.forkFiber(sem.tryRun(b1.complete(())(_ => p.block)))
+        f1  <- Fibers.forkFiber(sem.tryRun(b1.complete(()).map(_ => p.block)))
         _   <- b1.join
         b2  <- Fibers.promise[Unit]
-        f2  <- Fibers.forkFiber(sem.tryRun(b2.complete(())(_ => p.block)))
+        f2  <- Fibers.forkFiber(sem.tryRun(b2.complete(()).map(_ => p.block)))
         _   <- b2.join
         a1  <- sem.isAvailable
         b3  <- sem.tryRun(2)
@@ -112,7 +112,7 @@ class metersTest extends KyoTest {
   }
 
   def loop(meter: Meter, counter: AtomicInt): Unit > (IOs | Fibers) =
-    meter.run(counter.incrementAndGet)(_ => loop(meter, counter))
+    meter.run(counter.incrementAndGet).map(_ => loop(meter, counter))
 
   "rate limiter" - {
     "ok" in run {

@@ -36,7 +36,7 @@ object locals {
           case _ =>
             f
         }
-      v(loop(_, f))
+      v.map(loop(_, f))
     }
   }
 

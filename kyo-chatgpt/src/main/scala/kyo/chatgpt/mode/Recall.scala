@@ -39,7 +39,7 @@ class Recall(prompt: String, ai: AI) extends Mode(Set(ai)) {
   indexMessage("system", "init")
 
   private def indexMessage(role: String, content: String) =
-    Vectors.embed(s"$role: $content") { v =>
+    Vectors.embed(s"$role: $content").map { v =>
       IOs {
         val now       = LocalDateTime.now();
         val formatter = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.SHORT);
@@ -58,7 +58,7 @@ class Recall(prompt: String, ai: AI) extends Mode(Set(ai)) {
     }
 
   private def search(query: String) =
-    Vectors.embed(query) { v =>
+    Vectors.embed(query).map { v =>
       IOs {
         val reader   = DirectoryReader.open(index)
         val searcher = new IndexSearcher(reader)

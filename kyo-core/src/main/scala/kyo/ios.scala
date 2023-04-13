@@ -81,7 +81,7 @@ object ios {
                 ensureLoop(kyo(v, s, l))
             }
           case _ =>
-            IOs(run)(_ => v)
+            IOs(run).map(_ => v)
         }
       ensureLoop(v)
 

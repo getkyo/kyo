@@ -21,11 +21,11 @@ class ziosTest extends KyoTest {
 
   "aborts" in run {
     val a: Int > (Aborts[String] | ZIOs) = ZIOs(ZIO.fail("error"))
-    Aborts[String].toOption(a)(opt => assert(opt.isEmpty))
+    Aborts[String].toOption(a).map(opt => assert(opt.isEmpty))
   }
 
   "env" in run {
-    Aborts[Nothing].run(Envs[Int].let(10)(ZIOs(ZIO.environment[Int]))(v => assert(v.get == 10)))
+    Aborts[Nothing].run(Envs[Int].let(10)(ZIOs(ZIO.environment[Int])).map(v => assert(v.get == 10)))
   }
 
   "fibers" - {
@@ -55,7 +55,7 @@ class ziosTest extends KyoTest {
   "interrupts" - {
 
     def kyoLoop(a: AtomicInt): Unit > IOs =
-      a.incrementAndGet(_ => kyoLoop(a))
+      a.incrementAndGet.map(_ => kyoLoop(a))
 
     def zioLoop(a: Ref[Int]): Task[Unit] =
       a.update(_ + 1).flatMap(_ => zioLoop(a))

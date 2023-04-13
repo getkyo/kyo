@@ -49,13 +49,13 @@ object aborts {
       v < (this: Aborts[B])
 
     def toOption[T, S, B >: E](v: T > (S | Aborts[B])): Option[T] > S =
-      run[T, S, B](v)((_: Abort[B, T]).toOption)
+      run[T, S, B](v).map((_: Abort[B, T]).toOption)
 
     def toEither[T, S, B >: E](v: T > (S | Aborts[B])): Either[B, T] > S =
-      run[T, S, B](v)((_: Abort[B, T]).toEither)
+      run[T, S, B](v).map((_: Abort[B, T]).toEither)
 
     def catching[T, S](f: => T > S)(using E => Throwable): T > (S | Aborts[E]) =
-      (Tries(f) < Tries) {
+      (Tries(f) < Tries).map {
         case Failure(ex) if _tag.closestClass.isAssignableFrom(ex.getClass) =>
           val v: Abort[E, T] = Fail(ex.asInstanceOf[E])
           v > Aborts[E]

@@ -115,7 +115,7 @@ object core {
     def unit: Unit > S = map(_ => ())
 
     /*inline(3)*/
-    def map[U]( /*inline(3)*/ f: T => U): U > S = apply(f)
+    def map[U, S2]( /*inline(3)*/ f: T => (U > S2)): U > (S | S2) = apply(f)
 
     /*inline(3)*/
     def flatMap[U, S2]( /*inline(3)*/ f: T => (U > S2)): U > (S | S2) = apply(f)
@@ -124,9 +124,8 @@ object core {
     def withFilter(p: T => Boolean): T > S =
       v(v => if (!p(v)) throw new MatchError(v) else v)
 
-    @targetName("transform")
     /*inline(3)*/
-    def apply[U, S2]( /*inline(3)*/ f: T => (U > S2))(using
+    private def apply[U, S2]( /*inline(3)*/ f: T => (U > S2))(using
         /*inline(3)*/ fr: Frame["apply"]
     ): U > (S | S2) =
       def transformLoop(v: T > S): U > (S | S2) =

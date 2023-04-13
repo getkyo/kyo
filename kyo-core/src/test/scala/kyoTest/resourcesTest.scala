@@ -35,7 +35,7 @@ class resourcesTest extends KyoTest {
 
   "acquire + tranform + close" in new Context {
     IOs.run {
-      Resources.run(Resources.acquire(r1())(_ => assert(r1.closes == 0)))
+      Resources.run(Resources.acquire(r1()).map(_ => assert(r1.closes == 0)))
     }
     assert(r1.closes == 1)
     assert(r2.closes == 0)
@@ -46,7 +46,7 @@ class resourcesTest extends KyoTest {
   "acquire + effectful tranform + close" in new Context {
     val r =
       IOs.lazyRun {
-        Resources.run(Resources.acquire(r1()) { _ =>
+        Resources.run(Resources.acquire(r1()).map { _ =>
           assert(r1.closes == 0)
           Option(1) > Options
         })
@@ -64,7 +64,7 @@ class resourcesTest extends KyoTest {
 
   "two acquires + close" in new Context {
     IOs.run {
-      Resources.run(Resources.acquire(r1())(_ => Resources.acquire(r2())))
+      Resources.run(Resources.acquire(r1()).map(_ => Resources.acquire(r2())))
     }
     assert(r1.closes == 1)
     assert(r2.closes == 1)

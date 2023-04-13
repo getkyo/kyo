@@ -31,7 +31,7 @@ class iosTest extends KyoTest {
     "next handled effects can execute" in {
       var called = false
       val v =
-        (Option(1) > Options) { i =>
+        (Option(1) > Options).map { i =>
           IOs {
             called = true
             i
@@ -52,9 +52,9 @@ class iosTest extends KyoTest {
 
       val ios = List(
           IOs(fail),
-          IOs(fail)(_ + 1),
-          IOs(1)(_ => fail),
-          IOs(IOs(1))(_ => fail)
+          IOs(fail).map(_ + 1),
+          IOs(1).map(_ => fail),
+          IOs(IOs(1)).map(_ => fail)
       )
       ios.foreach { io =>
         assert(Try(IOs.lazyRun(io)) == Try(fail))
@@ -107,9 +107,9 @@ class iosTest extends KyoTest {
 
       val ios = List(
           IOs(fail),
-          IOs(fail)(_ + 1),
-          IOs(1)(_ => fail),
-          IOs(IOs(1))(_ => fail)
+          IOs(fail).map(_ + 1),
+          IOs(1).map(_ => fail),
+          IOs(IOs(1)).map(_ => fail)
       )
       ios.foreach { io =>
         assert(Try(IOs.run(io)) == Try(fail))
@@ -119,7 +119,7 @@ class iosTest extends KyoTest {
 
   "attempt" - {
     "success" in {
-      val io = IOs(1)(_ + 1)
+      val io = IOs(1).map(_ + 1)
       checkEquals[Try[Int], Nothing](
           IOs.run[Try[Int]](IOs.attempt(io)),
           Success(2)

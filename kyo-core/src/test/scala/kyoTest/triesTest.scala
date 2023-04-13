@@ -75,26 +75,26 @@ class triesTest extends KyoTest {
     }
     "handle + transform" in {
       checkEquals[Try[Int], Nothing](
-          (1: Int > Tries)(_ + 1) < Tries,
+          (1: Int > Tries).map(_ + 1) < Tries,
           Try(2)
       )
     }
     "handle + effectful transform" in {
       checkEquals[Try[Int], Nothing](
-          (1: Int > Tries)(i => Try(i + 1) > Tries) < Tries,
+          (1: Int > Tries).map(i => Try(i + 1) > Tries) < Tries,
           Try(2)
       )
     }
     "handle + transform + effectful transform" in {
       checkEquals[Try[Int], Nothing](
-          (1: Int > Tries)(_ + 1)(i => Try(i + 1) > Tries) < Tries,
+          (1: Int > Tries).map(_ + 1).map(i => Try(i + 1) > Tries) < Tries,
           Try(3)
       )
     }
     "handle + transform + failed effectful transform" in {
       val e = new Exception
       checkEquals[Try[Int], Nothing](
-          (1: Int > Tries)(_ + 1)(i => Try[Int](throw e) > Tries) < Tries,
+          (1: Int > Tries).map(_ + 1).map(i => Try[Int](throw e) > Tries) < Tries,
           Failure(e)
       )
     }
@@ -109,44 +109,44 @@ class triesTest extends KyoTest {
     }
     "handle + transform" in {
       checkEquals[Try[Int], Nothing](
-          (Try(1) > Tries)(_ + 1) < Tries,
+          (Try(1) > Tries).map(_ + 1) < Tries,
           Try(2)
       )
     }
     "handle + effectful transform" in {
       checkEquals[Try[Int], Nothing](
-          (Try(1) > Tries)(i => Try(i + 1) > Tries) < Tries,
+          (Try(1) > Tries).map(i => Try(i + 1) > Tries) < Tries,
           Try(2)
       )
     }
     "handle + transform + effectful transform" in {
       checkEquals[Try[Int], Nothing](
-          (Try(1) > Tries)(_ + 1)(i => Try(i + 1) > Tries) < Tries,
+          (Try(1) > Tries).map(_ + 1).map(i => Try(i + 1) > Tries) < Tries,
           Try(3)
       )
     }
     "handle + failed transform" in {
       checkEquals[Try[Int], Nothing](
-          (Try(1) > Tries)(_ => (throw e): Int) < Tries,
+          (Try(1) > Tries).map(_ => (throw e): Int) < Tries,
           Failure(e)
       )
     }
     "handle + transform + effectful transform + failed transform" in {
       checkEquals[Try[Int], Nothing](
-          (Try(1) > Tries)(_ + 1)(i => Try(i + 1) > Tries)(_ => (throw e): Int) < Tries,
+          (Try(1) > Tries).map(_ + 1).map(i => Try(i + 1) > Tries).map(_ => (throw e): Int) < Tries,
           Failure(e)
       )
     }
     "handle + transform + failed effectful transform" in {
       checkEquals[Try[Int], Nothing](
-          (Try(1) > Tries)(_ + 1)(i => Try((throw e): Int) > Tries) < Tries,
+          (Try(1) > Tries).map(_ + 1).map(i => Try((throw e): Int) > Tries) < Tries,
           Failure(e)
       )
     }
     "nested effect + failure" in {
       checkEquals[Option[Try[Int]], Nothing](
-          (Try(Option(1)) > Tries)(opt =>
-            ((opt: Option[Int] > Tries) > Options)(_ => (throw e): Int)
+          (Try(Option(1)) > Tries).map(opt =>
+            ((opt: Option[Int] > Tries) > Options).map(_ => (throw e): Int)
           ) < Tries < Options,
           Some(Failure(e))
       )
