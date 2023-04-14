@@ -43,6 +43,10 @@ class BenchTest extends KyoTest {
     test(CollectAllBench(), 1000L)
   }
 
+  "CountdownLatchBench" - {
+    test(CountdownLatchBench(), 0)
+  }
+
   "DeepBindBench" - {
     test(DeepBindBench(), ())
   }
@@ -55,6 +59,10 @@ class BenchTest extends KyoTest {
     test(ForkManyBench(), 0)
   }
 
+  "InterruptBench" - {
+    test(InterruptBench(), ())
+  }
+
   "NarrowBindBench" - {
     test(NarrowBindBench(), 10000)
   }
@@ -65,5 +73,17 @@ class BenchTest extends KyoTest {
 
   "PingPongBench" - {
     test(PingPongBench(), ())
+  }
+
+  "ProducerConsumerBench" - {
+    test(ProducerConsumerBench(), ())
+  }
+
+  "SemaphoreBench" - {
+    test(SemaphoreBench(), ())
+  }
+
+  "SuspensionBench" - {
+    test(SuspensionBench(), ())
   }
 }
