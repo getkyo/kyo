@@ -1,38 +1,31 @@
 package kyo.chatgpt
 
-import kyo.aborts._
+import kyo.aspects._
+import kyo.chatgpt.contexts._
 import kyo.consoles._
 import kyo.core._
-import kyo.envs._
-import kyo.frames._
 import kyo.ios._
 import kyo.requests._
 import kyo.sums._
 import kyo.tries._
-import kyo.locals._
-import kyo.aspects._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
+import zio.json.internal.Write
 
-import java.util.ArrayList
-import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.atomic.AtomicInteger
 import scala.annotation.targetName
-import scala.collection.mutable.ListBuffer
-import scala.io.Source
 import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NoStackTrace
 
-import kyo.aspects
-
 object ais {
-  val apiKeyProp = "OPENAI_API_KEY"
-  val apiKey =
+
+  val apiKey = {
+    val apiKeyProp = "OPENAI_API_KEY"
     Option(System.getenv(apiKeyProp))
       .orElse(Option(System.getProperty(apiKeyProp)))
       .getOrElse(throw new Exception(s"Missing $apiKeyProp"))
+  }
 
   opaque type State = Map[AI, Context]
 
@@ -49,7 +42,11 @@ object ais {
     val askAspect: Aspect[(AI, String), String, AIs] =
       Aspects.init[(AI, String), String, AIs]
 
-    def init: AI > IOs = IOs(AI())
+    def init: AI = AI()
+
+    def init(ctx: Context): AI > AIs =
+      val ai = init
+      ai.restore(ctx).map(_ => ai)
 
     def fail[T](cause: Any*): T > AIs =
       Tries.fail(AIException(cause))
@@ -77,14 +74,16 @@ object ais {
 
   class AI private[ais] () {
 
-    private def add(role: String, msg: Any*): State > AIs =
-      Sums[State].add(Map(this -> Context(messages = List(Message(role, msg.mkString(" "))))))
+    private def add(role: Role, msg: Any*): Unit > AIs =
+      save.map { ctx =>
+        ctx.add(role, msg.mkString(" ")).map(restore)
+      }
 
-    val save: Context > AIs = Sums[State].get.map(_.getOrElse(this, Context.empty))
+    val save: Context > AIs = Sums[State].get.map(_.getOrElse(this, Context.init))
 
-    def restore[T, S](ctx: Context)(v: T > (S | AIs.Iso)): T > (S | AIs) =
+    def restore[T, S](ctx: Context): Unit > (S | AIs) =
       Sums[State].get.map { st =>
-        Sums[State].set(st + (this -> ctx)).map(_ => v)
+        Sums[State].set(st + (this -> ctx)).unit
       }
 
     @targetName("cloneAI")
@@ -92,7 +91,7 @@ object ais {
       for {
         res <- AIs.init
         st  <- Sums[State].get
-        _   <- Sums[State].set(st + (res -> st.getOrElse(this, Context.empty)))
+        _   <- Sums[State].set(st + (res -> st.getOrElse(this, Context.init)))
       } yield res
 
     val dump: String > AIs =
@@ -101,21 +100,22 @@ object ais {
           .mkString("\n")
       }
 
-    def user(msg: Any*): AI > AIs      = add("user", msg: _*).map(_ => this)
-    def system(msg: Any*): AI > AIs    = add("system", msg: _*).map(_ => this)
-    def assistant(msg: Any*): AI > AIs = add("assistant", msg: _*).map(_ => this)
+    def user(msg: Any*): AI > AIs      = add(Role.user, msg: _*).map(_ => this)
+    def system(msg: Any*): AI > AIs    = add(Role.system, msg: _*).map(_ => this)
+    def assistant(msg: Any*): AI > AIs = add(Role.assistant, msg: _*).map(_ => this)
 
     def ask(msg: Any*): String > AIs =
       def doIt(ai: AI, msg: String): String > AIs =
         for {
-          st <- ai.add("user", msg).map(_.getOrElse(this, Context.empty))
-          _  <- Consoles.println("******************")
-          _  <- Consoles.println(dump)
+          _   <- add(Role.user, msg)
+          ctx <- save
+          _   <- Consoles.println(s"**************")
+          _   <- Consoles.println(dump)
           response <- Tries(Requests(
               _.contentType("application/json")
                 .header("Authorization", s"Bearer $apiKey")
                 .post(uri"https://api.openai.com/v1/chat/completions")
-                .body(st)
+                .body(ctx)
                 .response(asJson[Response])
           )).map(_.body match {
             case Left(error)  => Tries.fail(error)
@@ -128,7 +128,7 @@ object ais {
               case Some(v) =>
                 v.message.content: String > Nothing
             }
-          _ <- Consoles.println(dump)
+          _ <- Consoles.println("assistant: " + content)
           _ <- assistant(content)
         } yield content
       AIs.askAspect((this, msg.mkString(" ")))(doIt)
@@ -137,29 +137,16 @@ object ais {
   private given Summer[State] with
     val init: State = Map.empty
     def add(x: State, y: State): State =
-      x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Context.empty) ++ v) }
+      x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Context.init) ++ v) }
 
-  case class Message(role: String, content: String)
   case class Choice(message: Message)
   case class Response(choices: List[Choice])
 
-  case class Context(
-      model: String = "gpt-3.5-turbo",
-      messages: List[Message] = Nil
-  ) {
-    def system(msg: String)    = Context(model, messages :+ Message("system", msg))
-    def user(msg: String)      = Context(model, messages :+ Message("user", msg))
-    def assistant(msg: String) = Context(model, messages :+ Message("assistant", msg))
-    def ++(that: Context)      = Context(model, messages ++ that.messages)
+  given JsonEncoder[Role] = new JsonEncoder[Role] {
+    def unsafeEncode(a: Role, indent: Option[Int], out: Write): Unit =
+      out.write(a.toString())
   }
 
-  object Context {
-    val empty = Context()
-  }
-
-  given JsonEncoder[Message]  = DeriveJsonEncoder.gen[Message]
-  given JsonEncoder[Context]  = DeriveJsonEncoder.gen[Context]
-  given JsonDecoder[Message]  = DeriveJsonDecoder.gen[Message]
   given JsonDecoder[Choice]   = DeriveJsonDecoder.gen[Choice]
   given JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
 }

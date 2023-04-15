@@ -1,31 +1,31 @@
 package kyo.chatgpt
 
 import com.formdev.flatlaf.FlatDarkLaf
-import javax.swing._
+import com.vladsch.flexmark.html.HtmlRenderer
+import com.vladsch.flexmark.parser.Parser
+import com.vladsch.flexmark.util.ast.Node
+import com.vladsch.flexmark.util.data.MutableDataSet
+import kyo.KyoApp
+import kyo.aspects._
+import kyo.chatgpt.ais._
+import kyo.chatgpt.mode.Reflect
+import kyo.chatgpt.mode._
+import kyo.concurrent.channels._
+import kyo.concurrent.fibers._
+import kyo.consoles._
+import kyo.core._
+import kyo.ios._
+import kyo.requests._
+import kyo.tries._
+
 import java.awt._
 import java.awt.event._
-import scala.jdk.CollectionConverters._
-import kyo.core._
-import kyo.aspects._
-import kyo.requests._
-import kyo.consoles._
-import kyo.ios._
-import kyo.tries._
-import kyo.chatgpt.ais._
-import kyo.concurrent.fibers._
-import kyo.concurrent.channels._
-import kyo.chatgpt.mode._
-import kyo.KyoApp
-import scala.concurrent.duration.Duration
-
-import com.vladsch.flexmark.util.ast.Node;
-import com.vladsch.flexmark.html.HtmlRenderer;
-import com.vladsch.flexmark.parser.Parser;
-import com.vladsch.flexmark.util.data.MutableDataSet;
+import javax.swing._
 import javax.swing.text.html.HTMLDocument
-
-import kyo.chatgpt.mode.Reflect
+import scala.concurrent.duration.Duration
+import scala.jdk.CollectionConverters._
 import scala.util.Failure
+
 case class ModeInfo(name: String, prompt: String = "") {
   override def toString: String = name + (if (prompt.nonEmpty) ": " + prompt else "")
 }
