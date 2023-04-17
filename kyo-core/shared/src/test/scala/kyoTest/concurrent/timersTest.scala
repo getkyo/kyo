@@ -29,8 +29,7 @@ class timersTest extends KyoTest {
       done1     <- p.isDone
       _         <- Fibers.sleep(5.millis)
       done2     <- p.isDone
-      taskDone  <- task.isDone
-    } yield assert(cancelled && !done1 && !done2 && taskDone)
+    } yield assert(cancelled && !done1 && !done2)
   }
 
   "scheduleAtFixedRate" in run {

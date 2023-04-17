@@ -10,8 +10,8 @@ object tries {
   final class Tries private[tries] extends Effect[Try] {
 
     /*inline(2)*/
-    def run[T, S](v: T > (S | Tries)): Try[T] > S =
-      v < Tries
+    def run[T, S](v: => T > (S | Tries)): Try[T] > S =
+      Tries(v) < Tries
 
     def fail[T](ex: Throwable): T > Tries =
       Failure(ex) > Tries

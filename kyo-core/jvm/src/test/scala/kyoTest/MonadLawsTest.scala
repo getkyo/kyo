@@ -1,4 +1,4 @@
-package kyo
+package kyoTest
 
 import kyo.concurrent.fibers._
 import kyo.core._

@@ -22,6 +22,7 @@ import scala.util.control.NonFatal
 
 import scheduler._
 import timers._
+import scala.util.control.NoStackTrace
 
 object fibers {
 
@@ -122,6 +123,19 @@ object fibers {
     def interrupt: Boolean > IOs =
       interrupt("")
 
+    def toFuture: Future[T] > IOs =
+      if (fiber.isInstanceOf[IOPromise[_]]) {
+        val f = fiber.asInstanceOf[IOPromise[T]]
+        IOs {
+          val p = scala.concurrent.Promise[T]()
+          f.onComplete { v =>
+            p.complete(Try(IOs.run(v)))
+          }.map(_ => p.future)
+        }
+      } else {
+        Future.successful(fiber.asInstanceOf[T])
+      }
+
     /*inline(2)*/
     private[kyo] def transform[U](t: T => Fiber[U]): Fiber[U] =
       if (fiber.isInstanceOf[IOPromise[_]]) {
@@ -143,11 +157,21 @@ object fibers {
         }
         r
       } else {
-        t(fiber.asInstanceOf[T])
+        try t(fiber.asInstanceOf[T])
+        catch {
+          case ex if (NonFatal(ex)) =>
+            val p = IOPromise[U]()
+            p.complete(IOs(throw ex))
+            p
+        }
       }
   }
 
   final class Fibers private[fibers] extends Effect[Fiber] {
+
+    case class Interrupted(reason: String, frame: Frame[String])
+        extends RuntimeException(s"reason=$reason, frame=$frame")
+        with NoStackTrace
 
     /*inline(2)*/
     def run[T](v: T > Fibers): Fiber[T] =

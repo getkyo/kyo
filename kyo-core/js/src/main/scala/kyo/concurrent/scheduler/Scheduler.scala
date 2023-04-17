@@ -1,10 +1,10 @@
 package kyo.concurrent.scheduler
 
-import scala.collection.mutable.Queue
+import scala.collection.mutable.PriorityQueue
 
 object Scheduler {
 
-  private val queue   = Queue[IOTask[_]]()
+  private val queue   = PriorityQueue[IOTask[_]]()
   private var running = false
 
   def schedule(t: IOTask[_]): Unit =
@@ -19,5 +19,8 @@ object Scheduler {
     while (queue.nonEmpty) {
       val task = queue.dequeue()
       task.run()
+      if (task.reenqueue()) {
+        queue.enqueue(task)
+      }
     }
 }

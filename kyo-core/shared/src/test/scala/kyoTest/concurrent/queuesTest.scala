@@ -1,3 +1,5 @@
+package kyoTest.concurrent
+
 import kyo.concurrent.queues._
 import kyo.core._
 import kyo.ios._

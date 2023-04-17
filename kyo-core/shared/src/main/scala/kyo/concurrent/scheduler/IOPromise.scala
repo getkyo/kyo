@@ -12,6 +12,7 @@ import scala.util.control.NoStackTrace
 import scala.util.control.NonFatal
 
 import IOPromise._
+import kyo.concurrent.fibers.Fibers
 
 private[kyo] class IOPromise[T](s: State[T])
     extends AtomicReference(s) {
@@ -42,7 +43,7 @@ private[kyo] class IOPromise[T](s: State[T])
     @tailrec def loop(promise: IOPromise[T]): Boolean =
       promise.get() match {
         case p: Pending[T] @unchecked =>
-          promise.complete(p, IOs(throw Interrupted(reason, frame))) || loop(promise)
+          promise.complete(p, IOs(throw Fibers.Interrupted(reason, frame))) || loop(promise)
         case l: Linked[T] @unchecked =>
           loop(l.p)
         case _ =>
@@ -160,10 +161,6 @@ private[kyo] object IOPromise {
   private val log = Loggers.init(getClass())
 
   type State[T] = (T > IOs) | Pending[T] | Linked[T]
-
-  case class Interrupted(reason: String, frame: Frame[String])
-      extends RuntimeException(s"reason=$reason, frame=$frame")
-      with NoStackTrace
 
   case class Linked[T](p: IOPromise[T])
 

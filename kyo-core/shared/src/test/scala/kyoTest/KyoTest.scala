@@ -24,8 +24,19 @@ import scala.concurrent.Future
 import scala.concurrent.Promise
 import scala.util.Try
 import org.scalatest.compatible.Assertion
+import scala.concurrent.ExecutionContext
 
 class KyoTest extends AsyncFreeSpec with Assertions {
+
+  implicit override def executionContext =
+    if (Platform.isJVM) {
+      scala.concurrent.ExecutionContext.global
+    } else {
+      new ExecutionContext {
+        def execute(runnable: Runnable): Unit     = runnable.run()
+        def reportFailure(cause: Throwable): Unit = cause.printStackTrace()
+      }
+    }
 
   trait Eq[T] {
     def apply(a: T, b: T): Boolean
@@ -48,18 +59,31 @@ class KyoTest extends AsyncFreeSpec with Assertions {
 
   given Conversion[Assertion, Future[Assertion]] = (a: Assertion) => Future.successful(a)
 
+  def runJVM(v: => Assertion > (IOs | Fibers | Resources | Clocks | Consoles | Randoms | Timers))
+      : Future[Assertion] =
+    if (Platform.isJVM) {
+      run(v)
+    } else {
+      Future.successful(succeed)
+    }
+
+  def runJS(v: => Assertion > (IOs | Fibers | Resources | Clocks | Consoles | Randoms | Timers))
+      : Future[Assertion] =
+    if (Platform.isJS) {
+      run(v)
+    } else {
+      Future.successful(succeed)
+    }
+
   def run(v: => Assertion > (IOs | Fibers | Resources | Clocks | Consoles | Randoms | Timers))
       : Future[Assertion] =
-    val p = Promise[Assertion]()
-    Future {
-      IOs.run {
-        val fiber = KyoApp.runFiber(timeout)(v)
-        KyoApp.runFiber(timeout)(v).onComplete { r =>
-          p.complete(Try(IOs.run(r)))
-        }
-      }
+    if (Platform.isJS) {
+      val v1: Future[Assertion] > (IOs | Fibers) =
+        Fibers.fork(KyoApp.runFiber(timeout)(v).map(_.toFuture))
+      IOs.run(Fibers.run(IOs.lazyRun(v1)).toFuture).flatten
+    } else {
+      IOs.run(KyoApp.runFiber(timeout)(v).toFuture)
     }
-    p.future
 
   class Check[T, S](equals: Boolean)(using t: Tag[T], s: Tag[S], eq: Eq[T]) {
     def apply[T2, S2](value: T2 > S2, expected: Any)(using t2: Tag[T2], s2: Tag[S2]): Assertion =

@@ -107,7 +107,7 @@ object timers {
   opaque type Timers = Envs[Timer]
 
   object Timers {
-    def run[T, S](t: Timer)(f: => T > (S | Timers)): T > S =
+    def run[T, S1, S2](t: Timer > S1)(f: => T > (S2 | Timers)): T > (S1 | S2) =
       Envs[Timer].let(t)(f)
     def run[T, S](f: => T > (S | Timers))(using t: Timer): T > S =
       Envs[Timer].let(t)(f)

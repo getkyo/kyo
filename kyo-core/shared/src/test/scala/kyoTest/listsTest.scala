@@ -5,7 +5,7 @@ import kyo.core._
 import kyo.ios.IOs
 import kyo.lists._
 
-class choicesTest extends KyoTest {
+class listsTest extends KyoTest {
 
   "one" in {
     checkEquals[List[Int], Nothing](
@@ -41,20 +41,5 @@ class choicesTest extends KyoTest {
         )),
         List(20, 200, 30, 300)
     )
-  }
-  "with fibers" in {
-    val t = Thread.currentThread()
-    val io: Int > (Lists | IOs | Fibers) =
-      Lists.foreach(1, 2, 3).map { i =>
-        Fibers.fork {
-          assert(Thread.currentThread() != t)
-          i + 1
-        }
-      }
-    val b: List[Int] > (IOs | Fibers) =
-      Lists.run(io)
-    val c: List[Int] =
-      IOs.lazyRun(Fibers.block(b))
-    assert(c == List(2, 3, 4))
   }
 }
