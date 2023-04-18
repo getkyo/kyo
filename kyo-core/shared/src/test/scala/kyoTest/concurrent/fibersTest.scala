@@ -110,32 +110,34 @@ class fibersTest extends KyoTest {
         }
       }
 
-    // "one fiber" in run {
-    //   for {
-    //     started     <- Latches(1)
-    //     done        <- Latches(1)
-    //     fiber       <- Fibers.forkFiber(runLoop(started, done))
-    //     _           <- started.await
-    //     interrupted <- fiber.interrupt
-    //     _           <- assert(interrupted)
-    //     _           <- done.await
-    //   } yield succeed
-    // }
-    // "multiple fibers" in run {
-    //   for {
-    //     started      <- Latches(1)
-    //     done         <- Latches(1)
-    //     fiber1       <- Fibers.forkFiber(runLoop(started, done))
-    //     fiber2       <- Fibers.forkFiber(runLoop(started, done))
-    //     fiber3       <- Fibers.forkFiber(runLoop(started, done))
-    //     _            <- started.await
-    //     interrupted1 <- fiber1.interrupt
-    //     interrupted2 <- fiber2.interrupt
-    //     interrupted3 <- fiber3.interrupt
-    //     _            <- assert(interrupted1 && interrupted2 && interrupted3)
-    //     _            <- done.await
-    //   } yield succeed
-    // }
+    "one fiber" in run {
+      for {
+        started     <- Latches(1)
+        done        <- Latches(1)
+        fiber       <- Fibers.forkFiber(runLoop(started, done))
+        _           <- started.await
+        interrupted <- fiber.interrupt
+        _           <- assert(interrupted)
+        _           <- done.await
+      } yield succeed
+    }
+    "multiple fibers" in run {
+      for {
+        started      <- Latches(3)
+        done         <- Latches(3)
+        fiber1       <- Fibers.forkFiber(runLoop(started, done))
+        fiber2       <- Fibers.forkFiber(runLoop(started, done))
+        fiber3       <- Fibers.forkFiber(runLoop(started, done))
+        _            <- started.await
+        _            <- println("started")
+        interrupted1 <- fiber1.interrupt
+        interrupted2 <- fiber2.interrupt
+        interrupted3 <- fiber3.interrupt
+        _            <- println("interrupted " + done)
+        _            <- assert(interrupted1 && interrupted2 && interrupted3)
+        _            <- done.await
+      } yield succeed
+    }
   }
 
   // "interruptAwait" in runJVM {
@@ -289,25 +291,25 @@ class fibersTest extends KyoTest {
         l        <- Fibers.collect(List(4, 5))
       } yield assert(v1 + v2 + v3 + l.sum == 15)
     }
-    // "interrupt" in runJVM {
-    //   def loop(ref: AtomicInt): Unit > IOs =
-    //     ref.incrementAndGet.map(_ => loop(ref))
+    "interrupt" in runJVM {
+      def loop(ref: AtomicInt): Unit > IOs =
+        ref.incrementAndGet.map(_ => loop(ref))
 
-    //   def task(l: Latch): Unit > IOs =
-    //     Resources.run {
-    //       Resources.ensure(l.release).map { _ =>
-    //         Atomics.forInt(0).map(loop)
-    //       }
-    //     }
+      def task(l: Latch): Unit > IOs =
+        Resources.run {
+          Resources.ensure(l.release).map { _ =>
+            Atomics.forInt(0).map(loop)
+          }
+        }
 
-    //   for {
-    //     l           <- Latches(1)
-    //     fiber       <- Fibers.run(IOs.lazyRun(Fibers.fork(task(l))))
-    //     _           <- Fibers.sleep(10.millis)
-    //     interrupted <- fiber.interrupt
-    //     _           <- l.await
-    //   } yield assert(interrupted)
-    // }
+      for {
+        l           <- Latches(1)
+        fiber       <- Fibers.run(IOs.lazyRun(Fibers.fork(task(l))))
+        _           <- Fibers.sleep(10.millis)
+        interrupted <- fiber.interrupt
+        _           <- l.await
+      } yield assert(interrupted)
+    }
   }
 
   "with resources" - {

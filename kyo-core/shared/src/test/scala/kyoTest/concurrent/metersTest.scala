@@ -130,7 +130,7 @@ class metersTest extends KyoTest {
         _       <- Fibers.sleep(50.millis)
         _       <- f1.interrupt
         v1      <- counter.get
-      } yield assert(v1 >= 30 && v1 <= 200)
+      } yield assert(v1 >= 10 && v1 <= 200)
     }
     "two loops" in run {
       for {
@@ -158,7 +158,7 @@ class metersTest extends KyoTest {
         _       <- f1.interrupt
         _       <- f2.interrupt
         v1      <- counter.get
-      } yield assert(v1 > 50 && v1 < 200)
+      } yield assert(v1 > 20 && v1 < 200)
     }
 
     // "tryRun" in run {

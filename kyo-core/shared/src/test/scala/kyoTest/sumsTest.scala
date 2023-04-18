@@ -1,4 +1,4 @@
-package kyo
+package kyoTest
 
 import kyo.core._
 import kyo.ios._

@@ -1,6 +1,7 @@
 package kyo.concurrent.scheduler
 
 import scala.collection.mutable.PriorityQueue
+import scala.scalajs.js
 
 object Scheduler {
 
@@ -11,11 +12,16 @@ object Scheduler {
     queue.enqueue(t)
     if (!running) {
       running = true
-      flush()
-      running = false
+      js.Dynamic.global.setTimeout(
+          () => {
+            flush()
+            running = false
+          },
+          0
+      )
     }
 
-  def flush() =
+  def flush(): Unit = {
     while (queue.nonEmpty) {
       val task = queue.dequeue()
       task.run()
@@ -23,4 +29,6 @@ object Scheduler {
         queue.enqueue(task)
       }
     }
+  }
+
 }

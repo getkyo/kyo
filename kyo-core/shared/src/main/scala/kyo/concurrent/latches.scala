@@ -23,6 +23,8 @@ object latches {
           val await: Unit > Fibers = ()
           val release: Unit > IOs  = ()
           val pending: Int > IOs   = 0
+
+          override def toString = "Latches(0)"
         }
       } else {
         IOs {
@@ -33,11 +35,13 @@ object latches {
               promise.join
             val release: Unit > IOs =
               IOs {
-                if (count.decrementAndGet() == 0) {
+                if (count.get() > 0 && count.decrementAndGet() == 0) {
                   promise.unsafeComplete(())
                 }
               }
             val pending = IOs(count.get())
+
+            override def toString = s"Latches($count)"
           }
         }
       }

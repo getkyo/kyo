@@ -1,3 +1,5 @@
+package kyoTest.concurrent
+
 import kyo.concurrent.channels._
 import kyo.concurrent.fibers._
 import kyo.concurrent.queues._

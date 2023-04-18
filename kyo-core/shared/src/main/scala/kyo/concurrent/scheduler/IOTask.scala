@@ -72,12 +72,15 @@ private[kyo] final class IOTask[T](
       case null =>
         ensures = f
       case f0: (() => Unit) @unchecked =>
-        val b = buffer()
-        b.add(f0)
-        b.add(f)
-        ensures = b
+        if (f0 ne f) {
+          val b = buffer()
+          b.add(f0)
+          b.add(f)
+          ensures = b
+        }
       case arr: ArrayDeque[() => Unit] @unchecked =>
-        arr.add(f)
+        if (!arr.contains(f))
+          arr.add(f)
     }
 
   def apply(): Boolean =

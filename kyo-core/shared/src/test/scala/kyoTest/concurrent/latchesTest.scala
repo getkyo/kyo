@@ -1,3 +1,5 @@
+package kyoTest.concurrent
+
 import kyo.concurrent.fibers._
 import kyo.concurrent.latches._
 import kyo.core._

@@ -1,3 +1,5 @@
+package kyoTest.concurrent
+
 import kyo.concurrent.atomics._
 import kyo.core._
 import kyoTest.KyoTest
