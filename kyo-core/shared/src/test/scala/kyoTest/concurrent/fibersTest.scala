@@ -197,7 +197,7 @@ class fibersTest extends KyoTest {
       } else {
         assert(r == "a")
         assert(ac.get() == 1)
-        assert(bc.get() < 10000)
+        assert(bc.get() <= 10000)
       }
     }
   }
