@@ -54,7 +54,6 @@ def transformFiles(path: File)(f: String => String): Unit =
 
 lazy val kyo =
   crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
     .aggregate(
         `kyo-core`,
         `kyo-core-opt1`,
@@ -70,7 +69,7 @@ lazy val kyo =
     .settings(
         name := "kyo",
         `kyo-settings`,
-        publishArtifact := false,
+        publish / skip := true,
         gen := {
           def genOpt(i: Int) = {
             val origin = new File("kyo-core/")
@@ -89,11 +88,11 @@ lazy val kyo =
         }
     )
 
-val zioVersion = "2.0.10"
+val zioVersion = "2.0.13"
 
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "com.lihaoyi"   %%% "sourcecode"        % "0.3.0",
-    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.2.5",
+    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.2",
     libraryDependencies += "org.slf4j"       % "slf4j-api"         % "2.0.7",
     libraryDependencies += "org.jctools"     % "jctools-core"      % "4.0.1",
     libraryDependencies += "dev.zio"       %%% "zio-test"          % zioVersion   % Test,
@@ -176,7 +175,7 @@ lazy val `kyo-sttp` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.8.13"
+        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.8.15"
     )
 
 lazy val `kyo-chatgpt` =
@@ -189,17 +188,17 @@ lazy val `kyo-chatgpt` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.14",
+        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.15",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.10",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.10",
         libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.9",
         libraryDependencies += "dev.zio"             %% "zio-schema-derivation" % "0.4.10",
         libraryDependencies += "org.apache.lucene"    % "lucene-core"           % "9.5.0",
         libraryDependencies += "org.apache.lucene"    % "lucene-queryparser"    % "9.5.0",
-        libraryDependencies += "com.formdev"          % "flatlaf"               % "3.1",
+        libraryDependencies += "com.formdev"          % "flatlaf"               % "3.1.1",
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-all"          % "0.64.0",
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-java"         % "0.64.0",
-        libraryDependencies += "com.knuddels"         % "jtokkit"               % "0.2.0"
+        libraryDependencies += "com.knuddels"         % "jtokkit"               % "0.4.0"
     )
 
 lazy val `kyo-bench` =
@@ -211,7 +210,7 @@ lazy val `kyo-bench` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.4.8",
+        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.4.9",
         libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
     )
