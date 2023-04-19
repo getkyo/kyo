@@ -16,7 +16,7 @@ class CollectAllBench extends Bench[Long] {
     import kyo.ios._
 
     val tasks = (0 until count).map(_ => IOs(1)).toList
-    Lists.collect(tasks)(_.sum.toLong)
+    Lists.collect(tasks).map(_.sum.toLong)
   }
 
   def catsBench() = {

@@ -32,7 +32,8 @@ class DeepBindMapBench extends Bench[Int] {
       IOs {
         if (i > depth) i
         else
-          IOs(i + 11)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(loop)
+          IOs(i + 11).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+            .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(loop)
       }
     loop(0)
   }

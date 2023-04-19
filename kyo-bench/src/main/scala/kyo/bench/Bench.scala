@@ -37,7 +37,7 @@ abstract class Bench[T] {
   def syncKyo(): T = IOs.run(kyoBench())
 
   @Benchmark
-  def forkKyo(): T = IOs.run(Fibers.forkFiber(kyoBenchFiber())(_.block))
+  def forkKyo(): T = IOs.run(Fibers.forkFiber(kyoBenchFiber()).flatMap(_.block))
 
   @Benchmark
   def syncCats(): T = catsBench().unsafeRunSync()
