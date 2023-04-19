@@ -1,4 +1,4 @@
-name: build
+name: build-js
 on:
   push:
 jobs:
@@ -9,7 +9,7 @@ jobs:
       JVM_OPTS: -Xms5G -Xmx5G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
     strategy:
       matrix:
-        module: ["kyo-core", "kyo-core-opt1", "kyo-core-opt2", "kyo-core-opt3", "kyo-direct", "kyo-bench", "kyo-zio"]
+        module: ["kyo-coreJS", "kyo-directJS", "kyo-sttpJS", "kyo-zioJS"]
     steps:
     - uses: actions/checkout@v3.0.2
       with:

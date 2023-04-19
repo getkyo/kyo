@@ -1,0 +1,21 @@
+name: build-jvm
+on:
+  push:
+jobs:
+  build-matrix:
+    runs-on: ubuntu-latest
+    env:
+      JAVA_OPTS: -Xms5G -Xmx5G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      JVM_OPTS: -Xms5G -Xmx5G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+    strategy:
+      matrix:
+        module: ["kyo-core", "kyo-core-opt1", "kyo-core-opt2", "kyo-core-opt3", "kyo-direct", "kyo-bench", "kyo-sttp", "kyo-zio", "kyo-chatgpt"]
+    steps:
+    - uses: actions/checkout@v3.0.2
+      with:
+        fetch-depth: 0
+    - uses: olafurpg/setup-scala@v13
+      with:
+          java-version: openjdk@1.17.0
+    - name: build
+      run: sbt ${{ matrix.module }}/test
