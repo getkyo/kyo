@@ -53,7 +53,9 @@ def transformFiles(path: File)(f: String => String): Unit =
   }
 
 lazy val kyo =
-  crossProject().aggregate(
+  crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .aggregate(
         `kyo-core`,
         `kyo-core-opt1`,
         `kyo-core-opt2`,
@@ -71,8 +73,8 @@ lazy val kyo =
         publishArtifact := false,
         gen := {
           def genOpt(i: Int) = {
-            val origin = new File("kyo-core/src/")
-            val dest   = new File(s"kyo-core-opt$i/src/")
+            val origin = new File("kyo-core/")
+            val dest   = new File(s"kyo-core-opt$i/")
             IO.copyDirectory(origin, dest)
             transformFiles(dest) { s =>
               var content = s
@@ -111,7 +113,6 @@ lazy val `kyo-core` =
     .crossType(CrossType.Full)
     .in(file("kyo-core"))
     .settings(
-        name := "kyo-core",
         `kyo-core-settings`
     )
 
