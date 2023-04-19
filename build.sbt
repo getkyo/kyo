@@ -88,7 +88,7 @@ lazy val kyo =
         }
     )
 
-val zioVersion = "2.0.10"
+val zioVersion = "2.0.13"
 
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "com.lihaoyi"   %%% "sourcecode"        % "0.3.0",
