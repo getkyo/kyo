@@ -54,7 +54,6 @@ def transformFiles(path: File)(f: String => String): Unit =
 
 lazy val kyo =
   crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
     .aggregate(
         `kyo-core`,
         `kyo-core-opt1`,

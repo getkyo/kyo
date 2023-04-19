@@ -29,6 +29,7 @@ jobs:
       - name: prepare results
         run: |
           mkdir -p output/
+          find .
           cp -r kyo-bench/*.json output/
 
       - name: publish results
