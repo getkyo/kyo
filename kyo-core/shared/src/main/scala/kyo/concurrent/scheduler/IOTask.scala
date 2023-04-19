@@ -10,6 +10,7 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import org.jctools.queues.MpmcArrayQueue
 import java.util.ArrayDeque
+import scala.jdk.CollectionConverters._
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
@@ -68,19 +69,23 @@ private[kyo] final class IOTask[T](
     preempt()
 
   def ensure(f: () => Unit): Unit =
-    ensures match {
-      case null =>
-        ensures = f
-      case f0: (() => Unit) @unchecked =>
-        if (f0 ne f) {
-          val b = buffer()
-          b.add(f0)
-          b.add(f)
-          ensures = b
-        }
-      case arr: ArrayDeque[() => Unit] @unchecked =>
-        if (!arr.contains(f))
-          arr.add(f)
+    if (curr == nullIO) {
+      f()
+    } else {
+      ensures match {
+        case null =>
+          ensures = f
+        case f0: (() => Unit) @unchecked =>
+          if (f0 ne f) {
+            val b = buffer()
+            b.add(f0)
+            b.add(f)
+            ensures = b
+          }
+        case arr: ArrayDeque[() => Unit] @unchecked =>
+          if (!arr.contains(f))
+            arr.add(f)
+      }
     }
 
   def apply(): Boolean =
@@ -94,7 +99,8 @@ private[kyo] final class IOTask[T](
           f()
         case arr: ArrayDeque[() => Unit] @unchecked =>
           while (!arr.isEmpty()) {
-            arr.poll()()
+            val f = arr.poll()
+            f()
           }
           bufferCache.offer(arr)
       }
@@ -148,5 +154,13 @@ private[kyo] final class IOTask[T](
   def delay() = Coordinator.tick() - creationTs - runtime
 
   override final def toString =
-    s"IOTask(id=${hashCode},runtime=$runtime,preempting=$preempting,ensures=${ensures})"
+    val e = ensures match {
+      case null =>
+        "[]"
+      case f: (() => Unit) @unchecked =>
+        s"[$f]"
+      case arr: ArrayDeque[() => Unit] @unchecked =>
+        arr.asScala.mkString("[", ",", "]")
+    }
+    s"IOTask(id=${hashCode},preempting=$preempting,curr=$curr,ensures=$ensures,runtime=$runtime)"
 }

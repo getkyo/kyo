@@ -8,7 +8,6 @@ import kyo.envs._
 import kyo.ios._
 import sttp.client3
 import sttp.client3.Empty
-import sttp.client3.HttpClientFutureBackend
 import sttp.client3.Request
 import sttp.client3.RequestT
 import sttp.client3.Response
@@ -27,7 +26,7 @@ object requests {
 
   object Backend {
     given default: Backend = new Backend {
-      val backend = HttpClientFutureBackend()
+      val backend = PlatformBackend.instance
       def send[T](r: Request[T, Any]): Response[T] > (IOs | Fibers) =
         Fibers.join(r.send(backend))
     }

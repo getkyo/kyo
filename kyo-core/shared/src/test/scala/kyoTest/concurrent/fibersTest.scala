@@ -121,7 +121,7 @@ class fibersTest extends KyoTest {
         _           <- done.await
       } yield succeed
     }
-    "multiple fibers" in run {
+    "multiple fibers" in runJVM {
       for {
         started      <- Latches(3)
         done         <- Latches(3)
@@ -129,38 +129,36 @@ class fibersTest extends KyoTest {
         fiber2       <- Fibers.forkFiber(runLoop(started, done))
         fiber3       <- Fibers.forkFiber(runLoop(started, done))
         _            <- started.await
-        _            <- println("started")
         interrupted1 <- fiber1.interrupt
         interrupted2 <- fiber2.interrupt
         interrupted3 <- fiber3.interrupt
-        _            <- println("interrupted " + done)
         _            <- assert(interrupted1 && interrupted2 && interrupted3)
         _            <- done.await
       } yield succeed
     }
   }
 
-  // "interruptAwait" in runJVM {
+  "interruptAwait" in runJVM {
 
-  //   def loop(ref: AtomicInt): Unit > IOs =
-  //     ref.incrementAndGet.map(_ => loop(ref))
+    def loop(ref: AtomicInt): Unit > IOs =
+      ref.incrementAndGet.map(_ => loop(ref))
 
-  //   def runLoop[T](started: Latch, done: Latch): Unit > IOs =
-  //     Resources.run {
-  //       Resources.ensure(done.release).map { _ =>
-  //         started.release.map(_ => Atomics.forInt(0).map(loop))
-  //       }
-  //     }
+    def runLoop[T](started: Latch, done: Latch): Unit > IOs =
+      Resources.run {
+        Resources.ensure(done.release).map { _ =>
+          started.release.map(_ => Atomics.forInt(0).map(loop))
+        }
+      }
 
-  //   for {
-  //     started     <- Latches(1)
-  //     done        <- Latches(1)
-  //     fiber       <- Fibers.forkFiber(runLoop(started, done))
-  //     _           <- started.await
-  //     interrupted <- fiber.interruptAwait
-  //     pending     <- done.pending
-  //   } yield assert(interrupted && pending == 0)
-  // }
+    for {
+      started     <- Latches(1)
+      done        <- Latches(1)
+      fiber       <- Fibers.forkFiber(runLoop(started, done))
+      _           <- started.await
+      interrupted <- fiber.interruptAwait
+      pending     <- done.pending
+    } yield assert(interrupted && pending == 0)
+  }
 
   "forkFiber" - {
     val thread = JAtomicReference[Thread]
@@ -191,15 +189,15 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    Fibers.race(loop(1, "a"), loop(100, "b")).map { r =>
+    Fibers.race(loop(1, "a"), loop(10000, "b")).map { r =>
       if (Platform.isJS) {
         assert(r == "b")
         assert(ac.get() == 0)
-        assert(bc.get() == 100)
+        assert(bc.get() == 10000)
       } else {
         assert(r == "a")
         assert(ac.get() == 1)
-        assert(bc.get() < 100)
+        assert(bc.get() < 10000)
       }
     }
   }

@@ -177,15 +177,16 @@ object UI extends App {
     }
   }
 
-  def processMessage(message: String, enabledModes: scala.List[ModeInfo]): String = {
-    KyoApp.run(Duration.Inf) {
-      for {
-        p <- Fibers.promise[String]
-        _ <- chan.put((message, enabledModes.toList, p))
-        r <- p.join
-      } yield r
+  def processMessage(message: String, enabledModes: scala.List[ModeInfo]): String =
+    IOs.run {
+      KyoApp.runFiber(Duration.Inf) {
+        for {
+          p <- Fibers.promise[String]
+          _ <- chan.put((message, enabledModes.toList, p))
+          r <- p.join
+        } yield r
+      }.block
     }
-  }
 }
 
 class ModeForm(parent: JFrame, predefinedModes: scala.List[ModeInfo]) {

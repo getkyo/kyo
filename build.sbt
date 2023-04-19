@@ -52,23 +52,19 @@ def transformFiles(path: File)(f: String => String): Unit =
     IO.write(path, f(original))
   }
 
-lazy val modules =
-  List(
-      `kyo-core`,
-      `kyo-core-opt1`,
-      `kyo-core-opt2`,
-      `kyo-core-opt3`,
-      `kyo-zio`,
-      `kyo-direct`,
-      `kyo-sttp`,
-      `kyo-chatgpt`,
-      `kyo-bench`
-  )
-
 lazy val kyo =
-  project
+  crossProject().aggregate(
+        `kyo-core`,
+        `kyo-core-opt1`,
+        `kyo-core-opt2`,
+        `kyo-core-opt3`,
+        `kyo-zio`,
+        `kyo-direct`,
+        `kyo-sttp`,
+        `kyo-chatgpt`,
+        `kyo-bench`
+    )
     .in(file("."))
-    .aggregate(modules.flatMap(p => p.projects.get(JVMPlatform).map(_.project)): _*)
     .settings(
         name := "kyo",
         `kyo-settings`,
@@ -152,9 +148,9 @@ lazy val `kyo-core-opt3` =
 lazy val `kyo-direct` =
   crossProject(JSPlatform, JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
+    .crossType(CrossType.Pure)
     .in(file("kyo-direct"))
-    .dependsOn(`kyo-core`)
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
         libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.16"
@@ -163,9 +159,9 @@ lazy val `kyo-direct` =
 lazy val `kyo-zio` =
   crossProject(JSPlatform, JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
+    .crossType(CrossType.Pure)
     .in(file("kyo-zio"))
-    .dependsOn(`kyo-core`)
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
         libraryDependencies += "dev.zio" %%% "zio" % zioVersion
@@ -176,7 +172,7 @@ lazy val `kyo-sttp` =
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Full)
     .in(file("kyo-sttp"))
-    .dependsOn(`kyo-core`)
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
         libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.8.13"
@@ -185,11 +181,11 @@ lazy val `kyo-sttp` =
 lazy val `kyo-chatgpt` =
   crossProject(JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
+    .crossType(CrossType.Pure)
     .in(file("kyo-chatgpt"))
     .dependsOn(`kyo-sttp`)
     .dependsOn(`kyo-direct`)
-    .dependsOn(`kyo-core`)
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.14",
@@ -208,10 +204,10 @@ lazy val `kyo-chatgpt` =
 lazy val `kyo-bench` =
   crossProject(JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
+    .crossType(CrossType.Pure)
     .in(file("kyo-bench"))
     .enablePlugins(JmhPlugin)
-    .dependsOn(`kyo-core`)
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
         libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.4.8",
