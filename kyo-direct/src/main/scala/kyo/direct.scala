@@ -78,9 +78,9 @@ object direct {
 
     override inline def pure[T](t: T): T > S = t
 
-    override inline def map[A, B](fa: A > S)(f: A => B): B > S = fa(f(_))
+    override inline def map[A, B](fa: A > S)(f: A => B): B > S = fa.map(f(_))
 
-    override inline def flatMap[A, B](fa: A > S)(f: A => B > S): B > S = fa(f)
+    override inline def flatMap[A, B](fa: A > S)(f: A => B > S): B > S = fa.flatMap(f)
 
     override inline def adoptAwait[A](fa: A > S): A > S = fa
   }

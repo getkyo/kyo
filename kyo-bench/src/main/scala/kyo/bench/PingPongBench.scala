@@ -54,7 +54,7 @@ class PingPongBench extends Bench[Unit] {
 
     def repeat[A](n: Int)(io: A > (IOs | Fibers)): A > (IOs | Fibers) =
       if (n <= 1) io
-      else io(_ => repeat(n - 1)(io))
+      else io.flatMap(_ => repeat(n - 1)(io))
 
     def iterate(promise: Promise[Unit], n: Int): Unit > (IOs | Fibers) =
       for {

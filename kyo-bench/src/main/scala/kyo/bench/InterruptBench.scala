@@ -51,7 +51,7 @@ class InterruptBench extends Bench[Unit] {
 
     def iterate(n: Int): Unit > (IOs | Fibers) =
       if (n <= 0) IOs.unit
-      else Fibers.forkFiber(loop())(_.interruptAwait)(_ => iterate(n - 1))
+      else Fibers.forkFiber(loop()).flatMap(_.interruptAwait).flatMap(_ => iterate(n - 1))
 
     iterate(depth)
   }

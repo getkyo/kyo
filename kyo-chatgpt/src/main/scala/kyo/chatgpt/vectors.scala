@@ -30,7 +30,7 @@ object vectors {
               .post(uri"https://api.openai.com/v1/embeddings")
               .body(Request(text, model))
               .response(asJson[Response])
-        )(_.body match {
+        ).map(_.body match {
           case Left(error) =>
             AIs.fail(error)
           case Right(value) =>

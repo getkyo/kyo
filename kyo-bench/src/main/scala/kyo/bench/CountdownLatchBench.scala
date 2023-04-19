@@ -51,7 +51,7 @@ class CountdownLatchBench extends Bench[Int] {
 
     def iterate(l: Latch, n: Int): Unit > IOs =
       if (n <= 0) IOs.unit
-      else l.release(_ => iterate(l, n - 1))
+      else l.release.flatMap(_ => iterate(l, n - 1))
 
     for {
       l <- Latches(depth)

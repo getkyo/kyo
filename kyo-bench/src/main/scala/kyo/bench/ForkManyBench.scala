@@ -39,12 +39,12 @@ class ForkManyBench extends Bench[Int] {
 
     def repeat[A](n: Int)(io: A > IOs): A > IOs =
       if (n <= 1) io
-      else io(_ => repeat(n - 1)(io))
+      else io.flatMap(_ => repeat(n - 1)(io))
 
     for {
       promise <- Fibers.promise[Unit]
       ref     <- Atomics.forInt(10000)
-      effect = ref.decrementAndGet {
+      effect = ref.decrementAndGet.flatMap {
         case 1 =>
           promise.complete(())
         case _ =>
