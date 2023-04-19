@@ -27,15 +27,15 @@ object zios {
     @targetName("fromZIO")
     def apply[R: ITag, E: ITag, A, S](v: ZIO[R, E, A] > S): A > (S | Envs[R] | Aborts[E] | ZIOs) =
       for {
-        urio <- v(_.fold[A > Aborts[E]](Aborts(_), v => v))
-        task <- Envs[R].get(r => urio.provideEnvironment(ZEnvironment(r)))
+        urio <- v.map(_.fold[A > Aborts[E]](Aborts(_), v => v))
+        task <- Envs[R].get.map(r => urio.provideEnvironment(ZEnvironment(r)))
         r    <- (task > this).flatten
       } yield r
 
     @targetName("fromIO")
     def apply[E: ITag, A, S](v: IO[E, A] > S): A > (S | Aborts[E] | ZIOs) =
       for {
-        task <- v(_.fold[A > Aborts[E]](Aborts(_), v => v))
+        task <- v.map(_.fold[A > Aborts[E]](Aborts(_), v => v))
         r    <- (task > this).flatten
       } yield r
 

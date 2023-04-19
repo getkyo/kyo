@@ -10,10 +10,11 @@ class NarrowBindMapBench extends Bench[Int] {
 
     def loop(i: Int): Int > IOs =
       if (i < depth)
-        IOs(i + 11)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(_ - 1)(loop)
+        IOs(i + 11).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+          .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(loop)
       else IOs(i)
 
-    IOs(0)(loop)
+    IOs(0).flatMap(loop)
   }
 
   def catsBench() = {

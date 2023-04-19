@@ -34,7 +34,7 @@ object quests {
     private val firstJsonBlock: Regex = """(?s)```json\s*([\s\S]+?)\s*```""".r
 
     def log[T, U](msg: Any*)(using frame: Frame[T]): Unit > (Envs[AI] | AIs) =
-      Envs[AI].get(_.system(frame, msg)).unit
+      Envs[AI].get.map(_.system(frame, msg)).unit
 
     inline def select[T](desc: Any*)(using
         caller: sourcecode.File,
@@ -96,9 +96,9 @@ object quests {
           q: T > Quests
       ): Either[String, T] > (AIs | Sums[Set[Source]]) =
         Tries.run(Options.getOrElse(
-            Lists.run(Envs[AI].let(ai)(q))(_.headOption),
+            Lists.run(Envs[AI].let(ai)(q)).map(_.headOption),
             Tries.fail("Quest has failed becuase no results were produced.")
-        )) {
+        )).map {
           case Success(v) =>
             Right(v)
           case Failure(ex) =>
@@ -118,7 +118,7 @@ object quests {
       ): T > (AIs | Envs[AI] | Sums[Set[Source]]) =
         AIs.ephemeral(log(
             s"Your previous attempts failed due to: ${failures.reverse}."
-        )(_ => trySolve(q))) {
+        ).map(_ => trySolve(q))).map {
           case Left(failure) =>
             loop(q, failure :: failures)
           case Right(result) =>
@@ -142,7 +142,7 @@ object quests {
       AIs.ephemeral(
           Sums[Set[Source]].drop(
               Envs[AI].let(ai)(
-                  preamble(_ => loop(q))
+                  preamble.map(_ => loop(q))
               )
           )
       )
@@ -151,15 +151,15 @@ object quests {
         caller: sourcecode.File,
         frame: Frame["Quests.run"]
     ): T > (IOs | AIs) =
-      AIs.init(run(_)(q))
+      AIs.init.map(run(_)(q))
 
     private def observe(file: sourcecode.File): Unit > (Envs[AI] | Sums[Set[Source]] | AIs) =
       val code   = scala.io.Source.fromFile(file.value).getLines().mkString("\n")
       val source = Source(file.value.split('/').last, code)
-      Sums[Set[Source]].get { sources =>
+      Sums[Set[Source]].get.map { sources =>
         if (sources.contains(source)) ()
         else
-          Envs[AI].get(_.system("new source code found", source)) { _ =>
+          Envs[AI].get.map(_.system("new source code found", source)).map { _ =>
             Sums[Set[Source]].add(Set(source)).unit
           }
       }

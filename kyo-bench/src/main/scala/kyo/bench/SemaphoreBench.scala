@@ -38,9 +38,9 @@ class SemaphoreBench extends Bench[Unit] {
       if (i >= depth)
         IOs.unit
       else
-        s.run(())(_ => loop(s, i + 1))
+        s.run(()).flatMap(_ => loop(s, i + 1))
 
-    Meters.semaphore(1)(loop(_, 0))
+    Meters.semaphore(1).flatMap(loop(_, 0))
   }
 
   def zioBench(): UIO[Unit] = {

@@ -37,9 +37,9 @@ class EnqueueDequeueBench extends Bench[Unit] {
       if (i >= depth)
         IOs.unit
       else
-        c.put(())(_ => c.take(_ => loop(c, i + 1)))
+        c.put(()).flatMap(_ => c.take.flatMap(_ => loop(c, i + 1)))
 
-    Channels.blocking[Unit](1, Access.Spsc)(loop(_, 0))
+    Channels.blocking[Unit](1, Access.Spsc).flatMap(loop(_, 0))
   }
 
   def zioBench(): UIO[Unit] = {
