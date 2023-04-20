@@ -54,22 +54,11 @@ def transformFiles(path: File)(f: String => String): Unit =
 
 lazy val kyo =
   crossProject(JVMPlatform)
-    .aggregate(
-        `kyo-core`,
-        `kyo-core-opt1`,
-        `kyo-core-opt2`,
-        `kyo-core-opt3`,
-        `kyo-zio`,
-        `kyo-direct`,
-        `kyo-sttp`,
-        `kyo-chatgpt`,
-        `kyo-bench`
-    )
     .in(file("."))
     .settings(
-        name := "kyo",
+        name            := "kyo",
         publishArtifact := false,
-        publish / skip := true,
+        publish / skip  := true,
         `kyo-settings`,
         gen := {
           def genOpt(i: Int) = {
@@ -87,6 +76,16 @@ lazy val kyo =
           genOpt(2)
           genOpt(3)
         }
+    ).aggregate(
+        `kyo-core`,
+        `kyo-core-opt1`,
+        `kyo-core-opt2`,
+        `kyo-core-opt3`,
+        `kyo-zio`,
+        `kyo-direct`,
+        `kyo-sttp`,
+        `kyo-chatgpt`,
+        `kyo-bench`
     )
 
 val zioVersion = "2.0.13"

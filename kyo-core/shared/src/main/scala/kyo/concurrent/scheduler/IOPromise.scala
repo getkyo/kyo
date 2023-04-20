@@ -1,5 +1,6 @@
 package kyo.concurrent.scheduler
 
+import kyo.concurrent.fibers.Fibers
 import kyo.core._
 import kyo.frames._
 import kyo.ios._
@@ -8,11 +9,9 @@ import kyo.loggers.Loggers
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.AbstractQueuedSynchronizer
 import scala.annotation.tailrec
-import scala.util.control.NoStackTrace
 import scala.util.control.NonFatal
 
 import IOPromise._
-import kyo.concurrent.fibers.Fibers
 
 private[kyo] class IOPromise[T](s: State[T])
     extends AtomicReference(s) {
