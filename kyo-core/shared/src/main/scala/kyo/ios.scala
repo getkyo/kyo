@@ -22,6 +22,7 @@ object ios {
 
   trait Preempt extends Safepoint[IOs] {
     def ensure(f: () => Unit): Unit
+    def remove(f: () => Unit): Unit
     def apply[T, S](v: => T > (S | IOs)) =
       IOs(v)
   }
@@ -29,6 +30,7 @@ object ios {
     val never: Preempt =
       new Preempt {
         def ensure(f: () => Unit) = ()
+        def remove(f: () => Unit) = ()
         def apply()               = false
       }
   }
@@ -65,25 +67,31 @@ object ios {
           case ex if NonFatal(ex) =>
             log.error(s"IOs.ensure function failed at frame $fr", ex)
         }
-      val ensure = () => run
-      def ensureLoop(v: T > (S | IOs)): T > (S | IOs) =
+      val ensure = new AbstractFunction0[Unit] {
+        def apply() = run
+      }
+      def ensureLoop(v: T > (S | IOs), p: Preempt): T > (S | IOs) =
         v match {
           case kyo: Kyo[M2, E2, Any, T, S | IOs] @unchecked =>
             new KyoCont[M2, E2, Any, T, S | IOs](kyo) {
               def apply() = run
               def frame   = fr
               def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
-                s match {
-                  case s: Preempt =>
-                    s.ensure(ensure)
-                  case _ =>
-                }
-                ensureLoop(kyo(v, s, l))
+                val np =
+                  s match {
+                    case s: Preempt =>
+                      s.ensure(ensure)
+                      s
+                    case _ =>
+                      p
+                  }
+                ensureLoop(kyo(v, s, l), np)
             }
           case _ =>
+            p.remove(ensure)
             IOs(run).map(_ => v)
         }
-      ensureLoop(v)
+      ensureLoop(v, Preempt.never)
 
     /*inline(3)*/
     def apply[T, S](

@@ -68,8 +68,9 @@ lazy val kyo =
     .in(file("."))
     .settings(
         name := "kyo",
-        `kyo-settings`,
+        publishArtifact := false,
         publish / skip := true,
+        `kyo-settings`,
         gen := {
           def genOpt(i: Int) = {
             val origin = new File("kyo-core/")

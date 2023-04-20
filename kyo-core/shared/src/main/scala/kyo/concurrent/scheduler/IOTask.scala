@@ -11,6 +11,7 @@ import scala.util.control.NonFatal
 import org.jctools.queues.MpmcArrayQueue
 import java.util.ArrayDeque
 import scala.jdk.CollectionConverters._
+import java.util.IdentityHashMap
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
@@ -67,26 +68,6 @@ private[kyo] final class IOTask[T](
 
   override protected def onComplete(): Unit =
     preempt()
-
-  def ensure(f: () => Unit): Unit =
-    if (curr == nullIO) {
-      f()
-    } else {
-      ensures match {
-        case null =>
-          ensures = f
-        case f0: (() => Unit) @unchecked =>
-          if (f0 ne f) {
-            val b = buffer()
-            b.add(f0)
-            b.add(f)
-            ensures = b
-          }
-        case arr: ArrayDeque[() => Unit] @unchecked =>
-          if (!arr.contains(f))
-            arr.add(f)
-      }
-    }
 
   def apply(): Boolean =
     preempting
@@ -152,6 +133,34 @@ private[kyo] final class IOTask[T](
     curr != nullIO
 
   def delay() = Coordinator.tick() - creationTs - runtime
+
+  def ensure(f: () => Unit): Unit =
+    if (curr == nullIO) {
+      f()
+    } else {
+      ensures match {
+        case null =>
+          ensures = f
+        case f0: (() => Unit) @unchecked =>
+          val b = buffer()
+          b.add(f0)
+          b.add(f)
+          ensures = b
+        case arr: ArrayDeque[() => Unit] @unchecked =>
+          arr.add(f)
+      }
+    }
+
+  def remove(f: () => Unit): Unit =
+    ensures match {
+      case null =>
+      case f0: (() => Unit) @unchecked =>
+        if (f0 eq f) ensures = null
+      case arr: ArrayDeque[() => Unit] @unchecked =>
+        def loop(): Unit =
+          if (arr.remove(f)) loop()
+        loop()
+    }
 
   override final def toString =
     val e = ensures match {
