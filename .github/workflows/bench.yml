@@ -31,6 +31,13 @@ jobs:
           mkdir -p output/
           cp -r kyo-bench/.jvm/*.json output/
 
+      - name: Turnstyle
+        uses: softprops/turnstyle@v1
+        with:
+          continue-after-seconds: 180
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: publish results
         uses: cpina/github-action-push-to-another-repository@main
         env:
