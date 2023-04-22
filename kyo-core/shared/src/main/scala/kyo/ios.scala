@@ -53,6 +53,9 @@ object ios {
     def value[T](v: T): T > IOs = v
 
     /*inline(3)*/
+    def fail[T](ex: Throwable): T > IOs = IOs(throw ex)
+
+    /*inline(3)*/
     def attempt[T, S](v: => T > S): Try[T] > S =
       Tries(v) < Tries
 

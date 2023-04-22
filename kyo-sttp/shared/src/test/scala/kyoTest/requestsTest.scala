@@ -22,8 +22,8 @@ class requestsTest extends KyoTest {
     // }
     "mocked" in run {
       val backend = new Backend {
-        def send[T](r: Request[T, Any]): Response[T] > (IOs | Fibers) =
-          Response.ok(Left("mocked")).asInstanceOf[Response[T]]
+        def send[T](r: Request[T, Any]): Fiber[Response[T]] > IOs =
+          Fibers.value(Response.ok(Left("mocked")).asInstanceOf[Response[T]])
       }
       Requests.run(backend) {
         for {

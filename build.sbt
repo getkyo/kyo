@@ -31,7 +31,7 @@ lazy val `kyo-settings` = Seq(
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     gen                                := {},
-    Test / testOptions += Tests.Argument("-oDG")
+    Test / testOptions += Tests.Argument("-oDG"),
 )
 
 lazy val gen = TaskKey[Unit]("gen", "")
@@ -88,7 +88,7 @@ lazy val kyo =
         `kyo-bench`
     )
 
-val zioVersion = "2.0.13"
+val zioVersion = "2.0.10"
 
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "com.lihaoyi"   %%% "sourcecode"        % "0.3.0",
@@ -101,6 +101,7 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC18" % Test,
     libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC18" % Test,
     libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.15"     % Test,
+    testFrameworks := Seq(new TestFramework("zio.test.sbt.ZTestFramework")),
     Global / concurrentRestrictions := Seq(
         Tags.limit(Tags.CPU, 1)
     )
@@ -179,26 +180,28 @@ lazy val `kyo-sttp` =
     )
 
 lazy val `kyo-chatgpt` =
-  crossProject(JVMPlatform)
+  crossProject(JSPlatform, JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure)
+    .crossType(CrossType.Full)
     .in(file("kyo-chatgpt"))
     .dependsOn(`kyo-sttp`)
     .dependsOn(`kyo-direct`)
     .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .jvmSettings(
+        libraryDependencies += "org.apache.lucene"    % "lucene-core"        % "9.5.0",
+        libraryDependencies += "org.apache.lucene"    % "lucene-queryparser" % "9.5.0",
+        libraryDependencies += "com.formdev"          % "flatlaf"            % "3.1.1",
+        libraryDependencies += "com.vladsch.flexmark" % "flexmark-all"       % "0.64.0",
+        libraryDependencies += "com.vladsch.flexmark" % "flexmark-java"      % "0.64.0",
+        libraryDependencies += "com.knuddels"         % "jtokkit"            % "0.4.0"
+    )
     .settings(
         `kyo-settings`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.15",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.10",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.10",
         libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.9",
-        libraryDependencies += "dev.zio"             %% "zio-schema-derivation" % "0.4.10",
-        libraryDependencies += "org.apache.lucene"    % "lucene-core"           % "9.5.0",
-        libraryDependencies += "org.apache.lucene"    % "lucene-queryparser"    % "9.5.0",
-        libraryDependencies += "com.formdev"          % "flatlaf"               % "3.1.1",
-        libraryDependencies += "com.vladsch.flexmark" % "flexmark-all"          % "0.64.0",
-        libraryDependencies += "com.vladsch.flexmark" % "flexmark-java"         % "0.64.0",
-        libraryDependencies += "com.knuddels"         % "jtokkit"               % "0.4.0"
+        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10"
     )
 
 lazy val `kyo-bench` =
@@ -214,5 +217,3 @@ lazy val `kyo-bench` =
         libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
     )
-
-testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")

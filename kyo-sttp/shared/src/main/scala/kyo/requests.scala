@@ -21,14 +21,14 @@ object requests {
   type BasicRequest = RequestT[Empty, Either[String, String], Any]
 
   trait Backend {
-    def send[T](r: Request[T, Any]): Response[T] > (IOs | Fibers)
+    def send[T](r: Request[T, Any]): Fiber[Response[T]] > IOs
   }
 
   object Backend {
     given default: Backend = new Backend {
       val backend = PlatformBackend.instance
-      def send[T](r: Request[T, Any]): Response[T] > (IOs | Fibers) =
-        Fibers.join(r.send(backend))
+      def send[T](r: Request[T, Any]): Fiber[Response[T]] > IOs =
+        Fibers.joinFiber(r.send(backend))
     }
   }
 
@@ -46,9 +46,15 @@ object requests {
       v
 
     def apply[T, S](req: Request[T, Any] > S): Response[T] > (S | Requests) =
+      fiber(req).map(_.join)
+
+    def fiber[T, S](req: Request[T, Any] > S): Fiber[Response[T]] > (S | Requests) =
       Envs[Backend].get.map(b => req.map(b.send))
 
     def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (S | Requests) =
-      apply(f(basicRequest))
+      fiber(f).map(_.join)
+
+    def fiber[T, S](f: BasicRequest => Request[T, Any] > S): Fiber[Response[T]] > (S | Requests) =
+      fiber(f(basicRequest))
   }
 }
