@@ -20,15 +20,27 @@ object aspects {
     def run[T, S](v: T > (S | Aspects)): T > S =
       envs.let(Map.empty)(v)
 
-    def init[T, U, S1]: Aspect[T, U, S1] =
-      new Aspect[T, U, S1]
+    def init[T, U, S]: Aspect[T, U, S] =
+      init(new Cut[T, U, S] {
+        def apply[S2, S3](v: T > S2)(f: T => U > (S3 | Aspects)): U > (S | S2 | S3 | Aspects) =
+          v.map(f)
+      })
+
+    def init[T, U, S](default: Cut[T, U, S]): Aspect[T, U, S] =
+      new Aspect[T, U, S](default)
   }
 
   trait Cut[T, U, S1] {
     def apply[S2, S3](v: T > S2)(f: T => U > (S3 | Aspects)): U > (S1 | S2 | S3 | Aspects)
+
+    def andThen(other: Cut[T, U, S1]): Cut[T, U, S1] =
+      new Cut[T, U, S1] {
+        def apply[S2, S3](v: T > S2)(f: T => U > (S3 | Aspects)): U > (S1 | S2 | S3 | Aspects) =
+          Cut.this(v)(other(_)(f))
+      }
   }
 
-  final class Aspect[T, U, S1] private[aspects] () extends Cut[T, U, S1] {
+  final class Aspect[T, U, S1] private[aspects] (default: Cut[T, U, S1]) extends Cut[T, U, S1] {
 
     def apply[S2, S3](v: T > S2)(f: T => U > (S3 | Aspects)): U > (S1 | S2 | S3 | Aspects) =
       envs.get.map { map =>
@@ -38,7 +50,19 @@ object aspects {
               a(v)(f)
             }
           case _ =>
-            v.map(f)
+            default(v)(f)
+        }
+      }
+
+    def sandbox[S](v: T > (S | Aspects)): T > (S | Aspects) =
+      envs.get.map { map =>
+        map.get(this) match {
+          case Some(a: Cut[T, U, S1] @unchecked) =>
+            envs.let(map - this) {
+              v
+            }
+          case _ =>
+            v
         }
       }
 

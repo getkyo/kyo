@@ -17,8 +17,12 @@ import scala.annotation.targetName
 import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NoStackTrace
+import kyo.chatgpt.embeddings.Embeddings
+import java.lang.ref.WeakReference
 
 object ais {
+
+  import Model._
 
   val apiKey = {
     val apiKeyProp = "OPENAI_API_KEY"
@@ -27,9 +31,7 @@ object ais {
       .getOrElse(throw new Exception(s"Missing $apiKeyProp"))
   }
 
-  opaque type State = Map[AI, Context]
-
-  case class AIException(cause: Any*) extends Exception(cause.mkString(" ")) with NoStackTrace
+  opaque type State = Map[AIRef, Context]
 
   opaque type AIs = Sums[State] | Requests | Tries | IOs | Aspects | Consoles
 
@@ -42,13 +44,14 @@ object ais {
     val askAspect: Aspect[(AI, String), String, AIs] =
       Aspects.init[(AI, String), String, AIs]
 
-    def init: AI = AI()
+    def init: AI > IOs = IOs(new AI())
 
     def init(ctx: Context): AI > AIs =
-      val ai = init
-      ai.restore(ctx).map(_ => ai)
+      init.map { ai =>
+        ai.restore(ctx).map(_ => ai)
+      }
 
-    def fail[T](cause: Any*): T > AIs =
+    def fail[T](cause: String): T > AIs =
       Tries.fail(AIException(cause))
 
     def transactional[T, S](f: => T > (S | Iso)): T > (S | AIs) =
@@ -74,16 +77,18 @@ object ais {
 
   class AI private[ais] () {
 
-    private def add(role: Role, msg: Any*): Unit > AIs =
+    private val ref = AIRef(this)
+
+    private def add(role: Role, content: String): Unit > AIs =
       save.map { ctx =>
-        ctx.add(role, msg.mkString(" ")).map(restore)
+        ctx.add(role, content).map(restore)
       }
 
-    val save: Context > AIs = Sums[State].get.map(_.getOrElse(this, Context.init))
+    val save: Context > AIs = Sums[State].get.map(_.getOrElse(ref, Contexts.init))
 
     def restore[T, S](ctx: Context): Unit > (S | AIs) =
       Sums[State].get.map { st =>
-        Sums[State].set(st + (this -> ctx)).unit
+        Sums[State].set(st + (ref -> ctx)).unit
       }
 
     @targetName("cloneAI")
@@ -91,31 +96,32 @@ object ais {
       for {
         res <- AIs.init
         st  <- Sums[State].get
-        _   <- Sums[State].set(st + (res -> st.getOrElse(this, Context.init)))
+        _   <- Sums[State].set(st + (res.ref -> st.getOrElse(ref, Contexts.init)))
       } yield res
 
     val dump: String > AIs =
       save.map { ctx =>
-        ctx.messages.map(msg => s"${msg.role}: ${msg.content}")
+        ctx.messages.reverse.map(msg => s"${msg.role}: ${msg.content}")
           .mkString("\n")
       }
 
-    def user(msg: Any*): AI > AIs      = add(Role.user, msg: _*).map(_ => this)
-    def system(msg: Any*): AI > AIs    = add(Role.system, msg: _*).map(_ => this)
-    def assistant(msg: Any*): AI > AIs = add(Role.assistant, msg: _*).map(_ => this)
+    def user(msg: String): Unit > AIs      = add(Role.user, msg)
+    def system(msg: String): Unit > AIs    = add(Role.system, msg)
+    def assistant(msg: String): Unit > AIs = add(Role.assistant, msg)
 
-    def ask(msg: Any*): String > AIs =
+    def ask(msg: String, maxTokens: Int = -1): String > AIs =
       def doIt(ai: AI, msg: String): String > AIs =
         for {
           _   <- add(Role.user, msg)
-          ctx <- save
           _   <- Consoles.println(s"**************")
           _   <- Consoles.println(dump)
+          ctx <- save.map(_.compact)
+          _   <- restore(ctx)
           response <- Tries(Requests(
               _.contentType("application/json")
                 .header("Authorization", s"Bearer $apiKey")
                 .post(uri"https://api.openai.com/v1/chat/completions")
-                .body(ctx)
+                .body(Request(ctx, maxTokens))
                 .response(asJson[Response])
           )).map(_.body match {
             case Left(error)  => Tries.fail(error)
@@ -131,22 +137,47 @@ object ais {
           _ <- Consoles.println("assistant: " + content)
           _ <- assistant(content)
         } yield content
-      AIs.askAspect((this, msg.mkString(" ")))(doIt)
+      AIs.askAspect((this, msg))(doIt)
   }
+
+  private class AIRef(ai: AI) extends WeakReference[AI](ai) {
+    def isValid(): Boolean = get() != null
+    override def equals(obj: Any): Boolean = obj match {
+      case other: AIRef => get() == other.get()
+      case _            => false
+    }
+    override def hashCode(): Int = get().hashCode()
+  }
+
+  case class AIException(cause: String) extends Exception(cause) with NoStackTrace
 
   private given Summer[State] with
     val init: State = Map.empty
     def add(x: State, y: State): State =
-      x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Context.init) ++ v) }
+      val merged = x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Contexts.init) ++ v) }
+      merged.filter { case (k, v) => k.isValid() && v.messages.nonEmpty }
 
-  case class Choice(message: Message)
-  case class Response(choices: List[Choice])
+  private object Model {
+    case class Entry(role: String, content: String)
+    case class Request(model: String, messages: List[Entry], max_tokens: Int)
 
-  given JsonEncoder[Role] = new JsonEncoder[Role] {
-    def unsafeEncode(a: Role, indent: Option[Int], out: Write): Unit =
-      out.write(a.toString())
+    object Request {
+      def apply(ctx: Context, maxTokens: Int): Request =
+        val entries =
+          ctx.messages.reverse.map(msg => Entry(msg.role.name, msg.content))
+        val mt =
+          if (maxTokens <= 0) ctx.model.maxTokens
+          else maxTokens
+        Request(ctx.model.name, entries, mt)
+    }
+
+    case class Choice(message: Entry)
+    case class Response(choices: List[Choice])
+
+    given JsonEncoder[Entry]    = DeriveJsonEncoder.gen[Entry]
+    given JsonEncoder[Request]  = DeriveJsonEncoder.gen[Request]
+    given JsonDecoder[Entry]    = DeriveJsonDecoder.gen[Entry]
+    given JsonDecoder[Choice]   = DeriveJsonDecoder.gen[Choice]
+    given JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
   }
-
-  given JsonDecoder[Choice]   = DeriveJsonDecoder.gen[Choice]
-  given JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
 }
