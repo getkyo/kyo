@@ -31,7 +31,7 @@ lazy val `kyo-settings` = Seq(
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     gen                                := {},
-    Test / testOptions += Tests.Argument("-oDG"),
+    Test / testOptions += Tests.Argument("-oDG")
 )
 
 lazy val gen = TaskKey[Unit]("gen", "")
@@ -98,8 +98,8 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "zio-test"          % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-test-magnolia" % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-test-sbt"      % zioVersion   % Test,
-    libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC18" % Test,
-    libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC18" % Test,
+    libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC19" % Test,
+    libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC19" % Test,
     libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.15"     % Test,
     testFrameworks := Seq(new TestFramework("zio.test.sbt.ZTestFramework")),
     Global / concurrentRestrictions := Seq(
