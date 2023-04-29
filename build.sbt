@@ -31,7 +31,7 @@ lazy val `kyo-settings` = Seq(
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     gen                                := {},
-    Test / testOptions += Tests.Argument("-oDG"),
+    Test / testOptions += Tests.Argument("-oDG")
 )
 
 lazy val gen = TaskKey[Unit]("gen", "")
@@ -213,7 +213,7 @@ lazy val `kyo-bench` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.4.9",
+        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.4.10",
         libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
     )
