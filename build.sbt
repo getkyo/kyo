@@ -12,6 +12,11 @@ val compilerOptions = Seq(
     // "-Vprofile",
 )
 
+ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
+sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
+sonatypeProfileName                := "io.getkyo",
+publish / skip := true
+
 lazy val `kyo-settings` = Seq(
     scalaVersion := scala3Version,
     fork         := false,
@@ -28,9 +33,6 @@ lazy val `kyo-settings` = Seq(
             url("https://github.com/fwbrasil/")
         )
     ),
-    ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
-    sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
-    sonatypeProfileName                := "io.getkyo",
     gen                                := {},
     Test / testOptions += Tests.Argument("-oDG"),
     Compile / packageDoc / publishArtifact := false,
@@ -54,8 +56,6 @@ def transformFiles(path: File)(f: String => String): Unit =
     var original = IO.read(path)
     IO.write(path, f(original))
   }
-
-publish / skip := true
 
 lazy val kyo =
   crossProject(JVMPlatform)
