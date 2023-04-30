@@ -12,10 +12,10 @@ val compilerOptions = Seq(
     // "-Vprofile",
 )
 
-ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
-sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
-sonatypeProfileName                := "io.getkyo",
-publish / skip := true
+ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
+sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
+sonatypeProfileName                := "io.getkyo"
+publish / skip                     := true
 
 lazy val `kyo-settings` = Seq(
     scalaVersion := scala3Version,
@@ -33,7 +33,7 @@ lazy val `kyo-settings` = Seq(
             url("https://github.com/fwbrasil/")
         )
     ),
-    gen                                := {},
+    gen := {},
     Test / testOptions += Tests.Argument("-oDG"),
     Compile / packageDoc / publishArtifact := false,
     ThisBuild / versionScheme              := Some("early-semver")
