@@ -250,7 +250,7 @@ lazy val `empty-scaladoc` = Seq(
     },
     Compile / packageDoc := {
       val outputFile = (Compile / packageDoc / artifactPath).value
-      IO.touch(outputFile)
+      IO.write(outputFile, "empty!")
       outputFile
     }
 )
