@@ -74,6 +74,16 @@ object contexts {
   object Contexts {
     val init = Context(Model("gpt-3.5-turbo", 4097, 4097), Nil, 0)
 
+    def init(entries: (Role, String)*): Context > AIs =
+      def loop(ctx: Context, entries: List[(Role, String)]): Context > AIs =
+        entries match {
+          case Nil =>
+            ctx
+          case (role, msg) :: t =>
+            ctx.add(role, msg.stripMargin).map(loop(_, t))
+        }
+      loop(init, entries.toList)
+
     def rolling[T, S](v: T > (S | AIs)): T > (S | AIs) =
       AIs.iso(Strategy.aspect.let(Strategy.rolling)(v))
 
