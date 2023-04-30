@@ -31,7 +31,7 @@ lazy val `kyo-settings` = Seq(
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     gen                                := {},
-    Test / testOptions += Tests.Argument("-oDG"),
+    Test / testOptions += Tests.Argument("-oDG")
 )
 
 lazy val gen = TaskKey[Unit]("gen", "")
@@ -54,12 +54,13 @@ def transformFiles(path: File)(f: String => String): Unit =
 
 lazy val kyo =
   crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
     .in(file("."))
     .settings(
         name            := "kyo",
         publishArtifact := false,
-        publish / skip  := true,
         `kyo-settings`,
+        publish / skip  := true,
         gen := {
           def genOpt(i: Int) = {
             val origin = new File("kyo-core/")
