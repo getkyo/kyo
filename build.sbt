@@ -38,8 +38,7 @@ lazy val `kyo-settings` = Seq(
     sonatypeProfileName                := "io.getkyo",
     gen                                := {},
     Test / testOptions += Tests.Argument("-oDG"),
-    Compile / packageDoc / publishArtifact := false,
-    ThisBuild / versionScheme              := Some("early-semver")
+    ThisBuild / versionScheme := Some("early-semver")
 )
 
 lazy val gen = TaskKey[Unit]("gen", "")
@@ -124,6 +123,7 @@ lazy val `kyo-core` =
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Full)
     .in(file("kyo-core"))
+    .jsSettings(`empty-scaladoc`)
     .settings(
         `kyo-core-settings`
     )
@@ -164,6 +164,7 @@ lazy val `kyo-direct` =
     .crossType(CrossType.Pure)
     .in(file("kyo-direct"))
     .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .jsSettings(`empty-scaladoc`)
     .settings(
         `kyo-settings`,
         libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.16"
@@ -175,6 +176,7 @@ lazy val `kyo-zio` =
     .crossType(CrossType.Pure)
     .in(file("kyo-zio"))
     .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .jsSettings(`empty-scaladoc`)
     .settings(
         `kyo-settings`,
         libraryDependencies += "dev.zio" %%% "zio" % zioVersion
@@ -186,6 +188,7 @@ lazy val `kyo-sttp` =
     .crossType(CrossType.Full)
     .in(file("kyo-sttp"))
     .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .jsSettings(`empty-scaladoc`)
     .settings(
         `kyo-settings`,
         libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.8.15"
@@ -207,6 +210,7 @@ lazy val `kyo-chatgpt` =
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-java"      % "0.64.0",
         libraryDependencies += "com.knuddels"         % "jtokkit"            % "0.4.0"
     )
+    .jsSettings(`empty-scaladoc`)
     .settings(
         `kyo-settings`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.15",
@@ -229,3 +233,24 @@ lazy val `kyo-bench` =
         libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
     )
+
+lazy val `empty-scaladoc` = Seq(
+    Compile / packageDoc / artifact := {
+      val art = (Compile / packageDoc / artifact).value
+      art.withClassifier(Some("javadoc")).withExtension("jar")
+    },
+    Compile / packageDoc / artifactPath := {
+      val basePath      = (Compile / packageDoc / artifactPath).value.getParentFile
+      val artifactValue = (Compile / packageDoc / artifact).value
+      val module        = (Compile / moduleName).value
+      val ver           = (Compile / version).value
+      val classifier    = artifactValue.classifier.getOrElse("")
+      val extension     = artifactValue.extension
+      new File(basePath, s"$module-$ver-$classifier.$extension")
+    },
+    Compile / packageDoc := {
+      val outputFile = (Compile / packageDoc / artifactPath).value
+      IO.touch(outputFile)
+      outputFile
+    }
+)
