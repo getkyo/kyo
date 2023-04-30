@@ -26,7 +26,7 @@ private object Coordinator {
   private var startNs = 0L
   private val delayNs = MovingStdDev(cycleExp)
 
-  private val exec = Executors.newCachedThreadPool(ThreadFactory("kyo-coordinator"))
+  private val exec = Executors.newCachedThreadPool(Threads("kyo-coordinator"))
 
   exec.execute { () =>
     startNs = System.nanoTime()
