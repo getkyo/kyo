@@ -235,22 +235,5 @@ lazy val `kyo-bench` =
     )
 
 lazy val `empty-scaladoc` = Seq(
-    Compile / packageDoc / artifact := {
-      val art = (Compile / packageDoc / artifact).value
-      art.withClassifier(Some("javadoc")).withExtension("jar")
-    },
-    Compile / packageDoc / artifactPath := {
-      val basePath      = (Compile / packageDoc / artifactPath).value.getParentFile
-      val artifactValue = (Compile / packageDoc / artifact).value
-      val module        = (Compile / moduleName).value
-      val ver           = (Compile / version).value
-      val classifier    = artifactValue.classifier.getOrElse("")
-      val extension     = artifactValue.extension
-      new File(basePath, s"$module-$ver-$classifier.$extension")
-    },
-    Compile / packageDoc := {
-      val outputFile = (Compile / packageDoc / artifactPath).value
-      IO.write(outputFile, "empty!")
-      outputFile
-    }
+    Compile / doc / sources := Seq.empty,
 )
