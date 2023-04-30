@@ -33,7 +33,10 @@ lazy val `kyo-settings` = Seq(
             url("https://github.com/fwbrasil/")
         )
     ),
-    gen := {},
+    ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
+    sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
+    sonatypeProfileName                := "io.getkyo",
+    gen                                := {},
     Test / testOptions += Tests.Argument("-oDG"),
     Compile / packageDoc / publishArtifact := false,
     ThisBuild / versionScheme              := Some("early-semver")
