@@ -10,8 +10,7 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.Duration
-
-import kyo.concurrent.scheduler.ThreadFactory
+import kyo.concurrent.scheduler.Threads
 
 object timers {
 
@@ -34,10 +33,10 @@ object timers {
         private val exec =
           Executors.newScheduledThreadPool(
               Runtime.getRuntime.availableProcessors / 2,
-              ThreadFactory("kyo-timer-default")
+              Threads("kyo-timer-default")
           )
 
-        private final class Task[T](task: ScheduledFuture[T]) extends TimerTask {
+        private final class Task(task: ScheduledFuture[_]) extends TimerTask {
           def cancel: Boolean > IOs      = IOs(task.cancel(false))
           def isCancelled: Boolean > IOs = IOs(task.isCancelled())
           def isDone: Boolean > IOs      = IOs(task.isDone())
@@ -48,7 +47,10 @@ object timers {
 
         def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > IOs =
           if (delay.isFinite) {
-            IOs(Task(exec.schedule(() => IOs.run(f), delay.toNanos, TimeUnit.NANOSECONDS)))
+            val call = new Callable[Unit] {
+              def call: Unit = IOs.run(f)
+            }
+            IOs(Task(exec.schedule(call, delay.toNanos, TimeUnit.NANOSECONDS)))
           } else {
             TimerTask.noop
           }

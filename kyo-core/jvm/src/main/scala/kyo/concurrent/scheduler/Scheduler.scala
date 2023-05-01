@@ -27,7 +27,7 @@ private[kyo] object Scheduler {
   private[scheduler] val workers = CopyOnWriteArrayList[Worker]
 
   private val idle = MpmcUnboundedXaddArrayQueue[Worker](8)
-  private val pool = Executors.newCachedThreadPool(ThreadFactory("kyo-worker", new Worker(_)))
+  private val pool = Executors.newCachedThreadPool(Threads("kyo-worker", new Worker(_)))
 
   startWorkers()
   Coordinator.load()

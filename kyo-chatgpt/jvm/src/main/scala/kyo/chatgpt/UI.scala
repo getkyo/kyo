@@ -30,7 +30,7 @@ case class ModeInfo(name: String, prompt: String = "") {
   override def toString: String = name + (if (prompt.nonEmpty) ": " + prompt else "")
 }
 
-object UI extends App { 
+object UI extends App {
   FlatDarkLaf.setup()
 
   val predefinedModes = scala.List(
