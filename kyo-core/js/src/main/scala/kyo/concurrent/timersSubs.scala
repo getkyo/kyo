@@ -7,7 +7,7 @@ import scala.scalajs.js.timers.SetIntervalHandle
 import java.util.Timer
 import java.util.TimerTask
 
-class ScheduledFuture[T](r: => Unit) extends TimerTask {
+class ScheduledFuture[T](r: => T) extends TimerTask {
   private var cancelled = false
   private var done      = false
   def cancel(b: Boolean) = {
@@ -15,7 +15,7 @@ class ScheduledFuture[T](r: => Unit) extends TimerTask {
     super.cancel()
   }
   def isCancelled(): Boolean = cancelled
-  def run =
+  def run(): Unit =
     done = true
     try r
     catch {
@@ -29,7 +29,7 @@ class ScheduledExecutorService() {
 
   val timer = Timer()
 
-  def schedule(r: Callable[_], delay: Long, unit: TimeUnit) = {
+  def schedule[T](r: Callable[T], delay: Long, unit: TimeUnit): ScheduledFuture[T] = {
     val task = ScheduledFuture(r.call())
     timer.schedule(task, unit.toMillis(delay))
     task

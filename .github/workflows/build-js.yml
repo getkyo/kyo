@@ -1,6 +1,5 @@
 name: build-js
-on:
-  push:
+on: [push, pull_request]
 jobs:
   build-matrix:
     runs-on: ubuntu-latest
