@@ -109,8 +109,8 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "zio-test"          % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-test-magnolia" % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-test-sbt"      % zioVersion   % Test,
-    libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC18" % Test,
-    libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC18" % Test,
+    libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC19" % Test,
+    libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC19" % Test,
     libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.15"     % Test,
     testFrameworks := Seq(new TestFramework("zio.test.sbt.ZTestFramework")),
     Global / concurrentRestrictions := Seq(
@@ -235,5 +235,5 @@ lazy val `kyo-bench` =
     )
 
 lazy val `empty-scaladoc` = Seq(
-    Compile / doc / sources := Seq.empty,
+    Compile / doc / sources := Seq.empty
 )
