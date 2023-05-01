@@ -31,7 +31,7 @@ lazy val `kyo-settings` = Seq(
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     gen                                := {},
-    Test / testOptions += Tests.Argument("-oDG")
+    Test / testOptions += Tests.Argument("-oDG"),
 )
 
 lazy val gen = TaskKey[Unit]("gen", "")
@@ -92,7 +92,7 @@ val zioVersion = "2.0.10"
 
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "com.lihaoyi"   %%% "sourcecode"        % "0.3.0",
-    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.4",
+    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.2",
     libraryDependencies += "org.slf4j"       % "slf4j-api"         % "2.0.7",
     libraryDependencies += "org.jctools"     % "jctools-core"      % "4.0.1",
     libraryDependencies += "dev.zio"       %%% "zio-test"          % zioVersion   % Test,
