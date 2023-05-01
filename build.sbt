@@ -214,10 +214,10 @@ lazy val `kyo-chatgpt` =
     .settings(
         `kyo-settings`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.15",
-        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.10",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.10",
+        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.11",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.11",
         libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.9",
-        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10"
+        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.11"
     )
 
 lazy val `kyo-bench` =
@@ -235,5 +235,5 @@ lazy val `kyo-bench` =
     )
 
 lazy val `empty-scaladoc` = Seq(
-    Compile / doc / sources := Seq.empty,
+    Compile / doc / sources := Seq.empty
 )
