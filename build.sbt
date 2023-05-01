@@ -31,7 +31,7 @@ lazy val `kyo-settings` = Seq(
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     gen                                := {},
-    Test / testOptions += Tests.Argument("-oDG")
+    Test / testOptions += Tests.Argument("-oDG"),
 )
 
 lazy val gen = TaskKey[Unit]("gen", "")
@@ -198,10 +198,10 @@ lazy val `kyo-chatgpt` =
     .settings(
         `kyo-settings`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.15",
-        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.11",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.11",
+        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.10",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.10",
         libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.9",
-        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.11"
+        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10"
     )
 
 lazy val `kyo-bench` =
