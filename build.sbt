@@ -7,7 +7,15 @@ val compilerOptions = Seq(
     "-unchecked",
     "-deprecation",
     "-language:implicitConversions"
+    // "-explain",
+    // "-Wvalue-discard",
+    // "-Vprofile",
 )
+
+ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
+sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
+sonatypeProfileName                := "io.getkyo"
+publish / skip                     := true
 
 lazy val `kyo-settings` = Seq(
     scalaVersion := scala3Version,
@@ -51,12 +59,17 @@ def transformFiles(path: File)(f: String => String): Unit =
     IO.write(path, f(original))
   }
 
-lazy val root =
+lazy val kyo =
   crossProject(JVMPlatform)
     .in(file("."))
     .settings(
         name                                   := "kyo",
+        organization                           := "io.getkyo",
+        publishArtifact                        := false,
         publish / skip                         := true,
+        Compile / packageBin / publishArtifact := false,
+        Compile / packageDoc / publishArtifact := false,
+        Compile / packageSrc / publishArtifact := false,
         `kyo-settings`,
         gen := {
           def genOpt(i: Int) = {
