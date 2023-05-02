@@ -43,8 +43,8 @@ object resources {
           b.run()
           a.run()
         }
-      override def drop(v: Finalizer): Unit > IOs =
-        IOs(v.run())
+      override def drop[T, S](v: Finalizer)(cont: T > S): T > (S | IOs) =
+        IOs.ensure(v.run())(cont)
     }
   }
 }
