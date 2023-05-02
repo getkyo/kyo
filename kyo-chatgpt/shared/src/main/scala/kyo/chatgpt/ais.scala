@@ -46,13 +46,13 @@ object ais {
 
     def init: AI > IOs = IOs(new AI())
 
-    def init(ctx: Context): AI > AIs =
+    def init[S](ctx: Context > (S | Iso)): AI > (S | AIs) =
       init.map { ai =>
         ai.restore(ctx).map(_ => ai)
       }
 
-    def fail[T](cause: String): T > AIs =
-      Tries.fail(AIException(cause))
+    def fail[T, S](cause: String > (S | Iso)): T > (S | AIs) =
+      cause.map(cause => Tries.fail(AIException(cause)))
 
     def transactional[T, S](f: => T > (S | Iso)): T > (S | AIs) =
       Sums[State].get.map { st =>
@@ -79,16 +79,20 @@ object ais {
 
     private val ref = AIRef(this)
 
-    private def add(role: Role, content: String): Unit > AIs =
-      save.map { ctx =>
-        ctx.add(role, content).map(restore)
+    private def add[S](role: Role, content: String > (S | AIs.Iso)): Unit > (S | AIs) =
+      content.map { content =>
+        save.map { ctx =>
+          ctx.add(role, content).map(restore)
+        }
       }
 
     val save: Context > AIs = Sums[State].get.map(_.getOrElse(ref, Contexts.init))
 
-    def restore[T, S](ctx: Context): Unit > (S | AIs) =
-      Sums[State].get.map { st =>
-        Sums[State].set(st + (ref -> ctx)).unit
+    def restore[T, S](ctx: Context > (S | AIs.Iso)): Unit > (S | AIs) =
+      ctx.map { ctx =>
+        Sums[State].get.map { st =>
+          Sums[State].set(st + (ref -> ctx)).unit
+        }
       }
 
     @targetName("cloneAI")
@@ -105,11 +109,14 @@ object ais {
           .mkString("\n")
       }
 
-    def user(msg: String): Unit > AIs      = add(Role.user, msg)
-    def system(msg: String): Unit > AIs    = add(Role.system, msg)
-    def assistant(msg: String): Unit > AIs = add(Role.assistant, msg)
+    def user[S](msg: String > (S | AIs.Iso)): Unit > (S | AIs) =
+      add(Role.user, msg)
+    def system[S](msg: String > (S | AIs.Iso)): Unit > (S | AIs) =
+      add(Role.system, msg)
+    def assistant[S](msg: String > (S | AIs.Iso)): Unit > (S | AIs) =
+      add(Role.assistant, msg)
 
-    def ask(msg: String, maxTokens: Int = -1): String > AIs =
+    def ask[S](msg: String > (S | AIs.Iso), maxTokens: Int = -1): String > (S | AIs) =
       def doIt(ai: AI, msg: String): String > AIs =
         for {
           _   <- add(Role.user, msg)
@@ -130,14 +137,14 @@ object ais {
           content <-
             response.choices.headOption match {
               case None =>
-                AIs.fail[String]("no choices")
+                AIs.fail("no choices")
               case Some(v) =>
                 v.message.content: String > Nothing
             }
           _ <- Consoles.println("assistant: " + content)
           _ <- assistant(content)
         } yield content
-      AIs.askAspect((this, msg))(doIt)
+      msg.map(msg => AIs.askAspect((this, msg))(doIt))
   }
 
   private class AIRef(ai: AI) extends WeakReference[AI](ai) {
