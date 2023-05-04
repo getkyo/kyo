@@ -26,10 +26,12 @@ object sums {
       v > this
 
     def add(v: V): V > Sums[V] =
-      (AddValue(v): Sum[V, V]) > this
+      val s: Sum[V, V] = AddValue(v)
+      s > this
 
     def set(v: V): V > Sums[V] =
-      (SetValue(v): Sum[V, V]) > this
+      val s: Sum[V, V] = SetValue(v)
+      s > this
 
     def drop[T, S](v: T > (S | Sums[V]))(using
         g: Summer[V],

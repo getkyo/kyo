@@ -59,7 +59,8 @@ object fibers {
         case promise: IOPromise[_] =>
           promise > Fibers
         case failed: Failed =>
-          (failed: Fiber[T]) > Fibers
+          val f: Fiber[T] = failed
+          f > Fibers
         case _ =>
           fiber.asInstanceOf[T > Fibers]
       }
