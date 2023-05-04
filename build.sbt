@@ -229,7 +229,7 @@ lazy val `kyo-bench` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.4.9",
+        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.4.10",
         libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
     )
