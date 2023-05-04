@@ -7,10 +7,10 @@ import scala.util.control.NonFatal.apply
 
 private object Coordinator {
 
-  private val cycleExp      = Flag("coordinator.cycleExp", 7)
+  private val cycleExp      = Flag("coordinator.cycleExp", 8)
   private val loadAvgTarget = Flag("coordinator.loadAvgTarget", 0.8)
-  private val jitterMax     = Flag("coordinator.jitterMax", 0.08)
-  private val jitterSoftMax = Flag("coordinator.jitterSoftMax", 0.04)
+  private val jitterMax     = Flag("coordinator.jitterMax", 0.1)
+  private val jitterSoftMax = Flag("coordinator.jitterSoftMax", 0.8)
 
   private val cycleTicks = Math.pow(2, cycleExp).intValue()
   private val cycleMask  = cycleTicks - 1
@@ -40,7 +40,7 @@ private object Coordinator {
   def cycle(): Long = cycles
 
   private def jitter() =
-    delayNs.dev().doubleValue() / 10000
+    delayNs.dev().doubleValue() / 1000000
 
   private def update() =
     try {

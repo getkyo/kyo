@@ -16,19 +16,20 @@ private final class MovingStdDev(exp: Int) {
   def dev(): Long = _dev
   def avg(): Long = _avg
 
-  def observe(v: Long): Unit =
+  def observe(v: Long): Unit = {
     val prev = values(idx)
     values(idx) = v
     sum = sum - prev + v
     _avg = sum >> exp
 
-    val currDev = Math.abs((v - _avg) << 1)
+    val currDev = (v - _avg) * (v - _avg)
     val prevDev = devs(idx)
     devs(idx) = currDev
     sumDev = sumDev - prevDev + currDev
     _dev = Math.sqrt((sumDev >> exp).toDouble).toInt
 
     idx = (idx + 1) & mask
+  }
 
   override def toString = s"MovingStdDev(avg=${_avg},dev=${_dev})"
 
