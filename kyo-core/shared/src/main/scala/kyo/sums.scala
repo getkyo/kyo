@@ -57,7 +57,7 @@ object sums {
               f(m.asInstanceOf[T])
           }
       }
-      g.drop(curr) {
+      IOs.ensure(g.drop(curr)) {
         (v < Sums[V]).map {
           case AddValue(v) =>
             curr = g.add(curr, v.asInstanceOf[V])
@@ -87,7 +87,7 @@ object sums {
   trait Summer[V] {
     def init: V
     def add(v1: V, v2: V): V
-    def drop[T, S](v: V)(cont: T > S): T > (S | IOs) = cont
+    def drop(v: V): Unit > IOs = IOs.unit
   }
   object Summer {
     def apply[V](_init: V, _add: (V, V) => V): Summer[V] =
