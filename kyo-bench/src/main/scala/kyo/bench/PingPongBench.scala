@@ -58,7 +58,7 @@ class PingPongBench extends Bench[Unit] {
 
     def iterate(promise: Promise[Unit], n: Int): Unit > (IOs | Fibers) =
       for {
-        ref  <- Atomics.forInt(n)
+        ref  <- Atomics.initInt(n)
         chan <- Channels.blocking[Unit](1)
         effect =
           for {

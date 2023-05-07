@@ -34,7 +34,7 @@ class timersTest extends KyoTest {
 
   "scheduleAtFixedRate" in run {
     for {
-      ref <- Atomics.forInt(0)
+      ref <- Atomics.initInt(0)
       task <- Timers.scheduleAtFixedRate(
           10.millis,
           10.millis
@@ -47,7 +47,7 @@ class timersTest extends KyoTest {
 
   "scheduleWithFixedDelay" in run {
     for {
-      ref <- Atomics.forInt(0)
+      ref <- Atomics.initInt(0)
       task <- Timers.scheduleWithFixedDelay(
           10.millis,
           10.millis

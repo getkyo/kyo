@@ -8,6 +8,7 @@ import kyo.ios._
 import kyo.requests._
 import kyo.sums._
 import kyo.tries._
+import kyo.locals._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
@@ -24,13 +25,6 @@ object ais {
 
   import Model._
 
-  val apiKey = {
-    val apiKeyProp = "OPENAI_API_KEY"
-    Option(System.getenv(apiKeyProp))
-      .orElse(Option(System.getProperty(apiKeyProp)))
-      .getOrElse(throw new Exception(s"Missing $apiKeyProp"))
-  }
-
   opaque type State = Map[AIRef, Context]
 
   opaque type AIs = Sums[State] | Requests | Tries | IOs | Aspects | Consoles
@@ -40,6 +34,18 @@ object ais {
     type Iso = Sums[State] | Requests | Tries | IOs | Aspects | Consoles | AIs
     def iso[T, S](v: T > (S | Iso)): T > (S | AIs) =
       v
+
+    private val keyLocal = Locals.init[String] {
+      val apiKeyProp = "OPENAI_API_KEY"
+      Option(System.getenv(apiKeyProp))
+        .orElse(Option(System.getProperty(apiKeyProp)))
+        .getOrElse(throw new Exception(s"Missing $apiKeyProp"))
+    }
+
+    def getApiKey: String > AIs = keyLocal.get
+
+    def letApiKey[T, S1, S2](key: String > S1)(f: => T > (S2 | AIs)): T > (S1 | S2 | AIs) =
+      keyLocal.let(key)(f)
 
     val askAspect: Aspect[(AI, String), String, AIs] =
       Aspects.init[(AI, String), String, AIs]
@@ -109,6 +115,9 @@ object ais {
           .mkString("\n")
       }
 
+    /** user: S: Type? msg: String > (S | AIs.Iso)? * add(Role.user, msg)
+      */
+
     def user[S](msg: String > (S | AIs.Iso)): Unit > (S | AIs) =
       add(Role.user, msg)
     def system[S](msg: String > (S | AIs.Iso)): Unit > (S | AIs) =
@@ -124,9 +133,10 @@ object ais {
           _   <- Consoles.println(dump)
           ctx <- save.map(_.compact)
           _   <- restore(ctx)
+          key <- AIs.getApiKey
           response <- Tries(Requests(
               _.contentType("application/json")
-                .header("Authorization", s"Bearer $apiKey")
+                .header("Authorization", s"Bearer $key")
                 .post(uri"https://api.openai.com/v1/chat/completions")
                 .body(Request(ctx, maxTokens))
                 .response(asJson[Response])

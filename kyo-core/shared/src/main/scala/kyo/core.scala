@@ -109,6 +109,11 @@ object core {
   def zip[T1, T2, T3, T4, S](v1: T1 > S, v2: T2 > S, v3: T3 > S, v4: T4 > S): (T1, T2, T3, T4) > S =
     v1(t1 => v2(t2 => v3(t3 => v4(t4 => (t1, t2, t3, t4)))))
 
+  extension [S](v: Unit > S) {
+    def andThen[T, S2](f: T > S2): T > (S | S2) =
+      v.map(_ => f)
+  }
+
   extension [T, S](v: T > S) {
 
     /*inline(3)*/

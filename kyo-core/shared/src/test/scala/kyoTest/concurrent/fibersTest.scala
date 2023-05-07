@@ -106,7 +106,7 @@ class fibersTest extends KyoTest {
     def runLoop[T](started: Latch, done: Latch) =
       Resources.run {
         Resources.ensure(done.release).map { _ =>
-          started.release.map(_ => Atomics.forInt(0).map(loop))
+          started.release.map(_ => Atomics.initInt(0).map(loop))
         }
       }
 
@@ -146,7 +146,7 @@ class fibersTest extends KyoTest {
     def runLoop[T](started: Latch, done: Latch): Unit > IOs =
       Resources.run {
         Resources.ensure(done.release).map { _ =>
-          started.release.map(_ => Atomics.forInt(0).map(loop))
+          started.release.map(_ => Atomics.initInt(0).map(loop))
         }
       }
 
@@ -296,7 +296,7 @@ class fibersTest extends KyoTest {
       def task(l: Latch): Unit > IOs =
         Resources.run {
           Resources.ensure(l.release).map { _ =>
-            Atomics.forInt(0).map(loop)
+            Atomics.initInt(0).map(loop)
           }
         }
 

@@ -12,10 +12,10 @@ import scala.annotation.tailrec
 object atomics {
 
   object Atomics {
-    def forInt(v: Int): AtomicInt > IOs             = IOs(JAtomicInteger(v))
-    def forLong(v: Long): AtomicLong > IOs          = IOs(JAtomicLong(v))
-    def forBoolean(v: Boolean): AtomicBoolean > IOs = IOs(JAtomicBoolean(v))
-    def forRef[T](v: T): AtomicRef[T] > IOs         = IOs(JAtomicReference(v))
+    def initInt(v: Int): AtomicInt             = JAtomicInteger(v)
+    def initLong(v: Long): AtomicLong          = JAtomicLong(v)
+    def initBoolean(v: Boolean): AtomicBoolean = JAtomicBoolean(v)
+    def initRef[T](v: T): AtomicRef[T]         = JAtomicReference(v)
   }
 
   opaque type AtomicInt = JAtomicInteger

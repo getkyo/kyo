@@ -43,7 +43,7 @@ class ForkManyBench extends Bench[Int] {
 
     for {
       promise <- Fibers.promise[Unit]
-      ref     <- Atomics.forInt(10000)
+      ref     <- Atomics.initInt(10000)
       effect = ref.decrementAndGet.flatMap {
         case 1 =>
           promise.complete(())

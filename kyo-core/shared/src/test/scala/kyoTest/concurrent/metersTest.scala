@@ -125,7 +125,7 @@ class metersTest extends KyoTest {
     "one loop" in run {
       for {
         meter   <- Meters.rateLimiter(10, 10.millis)
-        counter <- Atomics.forInt(0)
+        counter <- Atomics.initInt(0)
         f1      <- Fibers.forkFiber(loop(meter, counter))
         _       <- Fibers.sleep(50.millis)
         _       <- f1.interrupt
@@ -135,7 +135,7 @@ class metersTest extends KyoTest {
     "two loops" in run {
       for {
         meter   <- Meters.rateLimiter(10, 10.millis)
-        counter <- Atomics.forInt(0)
+        counter <- Atomics.initInt(0)
         f1      <- Fibers.forkFiber(loop(meter, counter))
         f2      <- Fibers.forkFiber(loop(meter, counter))
         _       <- Fibers.sleep(50.millis)
@@ -151,7 +151,7 @@ class metersTest extends KyoTest {
     "run" in run {
       for {
         meter   <- Meters.pipeline(Meters.rateLimiter(2, 1.millis), Meters.mutex)
-        counter <- Atomics.forInt(0)
+        counter <- Atomics.initInt(0)
         f1      <- Fibers.forkFiber(loop(meter, counter))
         f2      <- Fibers.forkFiber(loop(meter, counter))
         _       <- Fibers.sleep(50.millis)
@@ -164,7 +164,7 @@ class metersTest extends KyoTest {
     // "tryRun" in run {
     //   for {
     //     meter   <- Meters.pipeline(Meters.rateLimiter(2, 1.millis), Meters.mutex)
-    //     counter <- Atomics.forInt(0)
+    //     counter <- Atomics.initInt(0)
     //     f1      <- Fibers.forkFiber(loop(meter, counter))
     //     _       <- Fibers.sleep(50.millis)
     //     _       <- retry(meter.isAvailable(!_))

@@ -32,22 +32,24 @@ object embeddings {
     def fiber(text: String, model: String = "text-embedding-ada-002"): Fiber[Embedding] > AIs =
       AIs.iso {
         Requests.iso {
-          Requests.fiber(
-              _.contentType("application/json")
-                .header("Authorization", s"Bearer ${ais.apiKey}")
-                .post(uri"https://api.openai.com/v1/embeddings")
-                .body(Request(text, model))
-                .response(asJson[Response])
-          ).map(f =>
-            f.transform { r =>
-              r.body match {
-                case Left(error) =>
-                  Fibers.fail(error)
-                case Right(value) =>
-                  Fibers.value(Embedding(value.usage.prompt_tokens, value.data.head.embedding))
+          AIs.getApiKey.map { key =>
+            Requests.fiber(
+                _.contentType("application/json")
+                  .header("Authorization", s"Bearer $key")
+                  .post(uri"https://api.openai.com/v1/embeddings")
+                  .body(Request(text, model))
+                  .response(asJson[Response])
+            ).map(f =>
+              f.transform { r =>
+                r.body match {
+                  case Left(error) =>
+                    Fibers.fail(error)
+                  case Right(value) =>
+                    Fibers.value(Embedding(value.usage.prompt_tokens, value.data.head.embedding))
+                }
               }
-            }
-          )
+            )
+          }
         }
       }
   }
