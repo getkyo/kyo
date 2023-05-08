@@ -20,6 +20,7 @@ import scala.util.Success
 import scala.util.control.NoStackTrace
 import kyo.chatgpt.embeddings.Embeddings
 import java.lang.ref.WeakReference
+import kyo.options.Options
 
 object ais {
 
@@ -35,22 +36,10 @@ object ais {
     def iso[T, S](v: T > (S | Iso)): T > (S | AIs) =
       v
 
-    private val keyLocal = Locals.init[String] {
-      val apiKeyProp = "OPENAI_API_KEY"
-      Option(System.getenv(apiKeyProp))
-        .orElse(Option(System.getProperty(apiKeyProp)))
-        .getOrElse(throw new Exception(s"Missing $apiKeyProp"))
-    }
-
-    def getApiKey: String > AIs = keyLocal.get
-
-    def letApiKey[T, S1, S2](key: String > S1)(f: => T > (S2 | AIs)): T > (S1 | S2 | AIs) =
-      keyLocal.let(key)(f)
-
     val askAspect: Aspect[(AI, String), String, AIs] =
       Aspects.init[(AI, String), String, AIs]
 
-    def init: AI > IOs = IOs(new AI())
+    val init: AI > IOs = IOs(new AI())
 
     def init[S](ctx: Context > (S | Iso)): AI > (S | AIs) =
       init.map { ai =>
@@ -79,6 +68,32 @@ object ais {
 
     def run[T, S](v: T > (S | Iso)): T > (S | Requests | Consoles | Tries) =
       Requests.iso(Aspects.run(Sums[State].drop(v)))
+
+    object ApiKey {
+      private val local = Locals.init[Option[String]] {
+        val apiKeyProp = "OPENAI_API_KEY"
+        Option(System.getenv(apiKeyProp))
+          .orElse(Option(System.getProperty(apiKeyProp)))
+      }
+      private val example = "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"
+
+      val get: String > AIs =
+        Options.getOrElse(local.get, AIs.fail("No API key found"))
+
+      def let[T, S1, S2](key: String > S1)(f: => T > (S2 | AIs)): T > (S1 | S2 | AIs) =
+        key.map { k =>
+          if (k.size != example.size) {
+            AIs.fail(s"Invalid API key: $k")
+          } else {
+            Tries.run(AIs.init.map(_.ask("0", 1))).map {
+              case Failure(_) =>
+                AIs.fail(s"Invalid API key: $k")
+              case Success(_) =>
+                local.let(Some(k))(f)
+            }
+          }
+        }
+    }
   }
 
   class AI private[ais] () {
@@ -115,9 +130,6 @@ object ais {
           .mkString("\n")
       }
 
-    /** user: S: Type? msg: String > (S | AIs.Iso)? * add(Role.user, msg)
-      */
-
     def user[S](msg: String > (S | AIs.Iso)): Unit > (S | AIs) =
       add(Role.user, msg)
     def system[S](msg: String > (S | AIs.Iso)): Unit > (S | AIs) =
@@ -133,7 +145,7 @@ object ais {
           _   <- Consoles.println(dump)
           ctx <- save.map(_.compact)
           _   <- restore(ctx)
-          key <- AIs.getApiKey
+          key <- AIs.ApiKey.get
           response <- Tries(Requests(
               _.contentType("application/json")
                 .header("Authorization", s"Bearer $key")
@@ -182,8 +194,9 @@ object ais {
       def apply(ctx: Context, maxTokens: Int): Request =
         val entries =
           ctx.messages.reverse.map(msg => Entry(msg.role.name, msg.content))
+        println("TOKENS: " + ctx.tokens)
         val mt =
-          if (maxTokens <= 0) ctx.model.maxTokens
+          if (maxTokens <= 0) ctx.model.maxTokens - ctx.tokens - 10
           else maxTokens
         Request(ctx.model.name, entries, mt)
     }

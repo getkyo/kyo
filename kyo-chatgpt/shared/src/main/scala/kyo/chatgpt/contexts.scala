@@ -36,12 +36,12 @@ object contexts {
     def add(role: Role, msg: String): Context > AIs =
       Embeddings(msg).map { embedding =>
         if (embedding.tokens >= model.maxTokens / 2) {
-          AIs.fail(s"Message too long: ${embedding.tokens} > ${model.maxTokens / 2}")
+          AIs.fail(s"Message too long: ${embedding.tokens} >= ${model.maxTokens / 2} tokens")
         } else {
           Context(
               model,
               Message(role, msg, embedding) :: messages,
-              tokens + embedding.tokens
+              tokens + embedding.tokens + 8
           )
         }
       }

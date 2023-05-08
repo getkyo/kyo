@@ -32,7 +32,7 @@ object embeddings {
     def fiber(text: String, model: String = "text-embedding-ada-002"): Fiber[Embedding] > AIs =
       AIs.iso {
         Requests.iso {
-          AIs.getApiKey.map { key =>
+          AIs.ApiKey.get.map { key =>
             Requests.fiber(
                 _.contentType("application/json")
                   .header("Authorization", s"Bearer $key")

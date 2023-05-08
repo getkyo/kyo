@@ -77,7 +77,7 @@ class ziosTest extends KyoTest {
       "kyo" in {
         val v =
           for {
-            a <- Atomics.forInt(0)
+            a <- Atomics.initInt(0)
             _ <- Fibers.fork(kyoLoop(a))
           } yield ()
         KyoZioApp.block(1.day) {
@@ -107,7 +107,7 @@ class ziosTest extends KyoTest {
           for {
             a  <- ZIOs(Ref.make(0))
             _  <- ZIOs(zioLoop(a))
-            a2 <- Atomics.forInt(0)
+            a2 <- Atomics.initInt(0)
             _  <- Fibers.fork(kyoLoop(a2))
           } yield ()
         KyoZioApp.block(1.second) {
