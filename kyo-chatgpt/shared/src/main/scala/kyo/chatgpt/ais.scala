@@ -41,7 +41,7 @@ object ais {
 
     val init: AI > IOs = IOs(new AI())
 
-    def init[S](ctx: Context > (S | Iso)): AI > (S | AIs) =
+    def restore[S](ctx: Context > (S | Iso)): AI > (S | AIs) =
       init.map { ai =>
         ai.restore(ctx).map(_ => ai)
       }
@@ -194,7 +194,6 @@ object ais {
       def apply(ctx: Context, maxTokens: Int): Request =
         val entries =
           ctx.messages.reverse.map(msg => Entry(msg.role.name, msg.content))
-        println("TOKENS: " + ctx.tokens)
         val mt =
           if (maxTokens <= 0) ctx.model.maxTokens - ctx.tokens - 10
           else maxTokens

@@ -104,7 +104,7 @@ object contexts {
               val (keep, compact) = ctx.partition(ht - lt)
               aspect.sandbox {
                 for {
-                  ai <- AIs.init(compact)
+                  ai <- AIs.restore(compact)
                   summary <-
                     ai.ask(
                         "Please summarize this conversation from your perspective so we I can copy and paste your response in our next " +

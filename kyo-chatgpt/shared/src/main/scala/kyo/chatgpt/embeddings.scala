@@ -12,19 +12,10 @@ import kyo.chatgpt.ais
 
 object embeddings {
 
-  private case class Request(input: String, model: String)
-  private case class Data(embedding: List[Float])
-  private case class Usage(prompt_tokens: Int)
-  private case class Response(data: List[Data], usage: Usage)
-
-  private given JsonEncoder[Request]  = DeriveJsonEncoder.gen[Request]
-  private given JsonDecoder[Data]     = DeriveJsonDecoder.gen[Data]
-  private given JsonDecoder[Usage]    = DeriveJsonDecoder.gen[Usage]
-  private given JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
-
   case class Embedding(tokens: Int, vector: List[Float])
 
   object Embeddings {
+    import Model._
 
     def apply(text: String, model: String = "text-embedding-ada-002"): Embedding > AIs =
       AIs.iso(Requests.iso(fiber(text, model).flatMap(_.join)))
@@ -52,5 +43,17 @@ object embeddings {
           }
         }
       }
+
+    private object Model {
+      case class Request(input: String, model: String)
+      case class Data(embedding: List[Float])
+      case class Usage(prompt_tokens: Int)
+      case class Response(data: List[Data], usage: Usage)
+
+      given JsonEncoder[Request]  = DeriveJsonEncoder.gen[Request]
+      given JsonDecoder[Data]     = DeriveJsonDecoder.gen[Data]
+      given JsonDecoder[Usage]    = DeriveJsonDecoder.gen[Usage]
+      given JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
+    }
   }
 }
