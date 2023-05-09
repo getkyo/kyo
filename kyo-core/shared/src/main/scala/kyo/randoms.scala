@@ -47,5 +47,7 @@ object randoms {
     def nextBoolean: Boolean > Randoms = Envs[Random].get.map(_.nextBoolean)
     def nextFloat: Float > Randoms     = Envs[Random].get.map(_.nextFloat)
     def nextGaussian: Double > Randoms = Envs[Random].get.map(_.nextGaussian)
+    def nextValue[T, S](seq: Seq[T] > S): T > (S | Randoms) =
+      seq.map(s => nextInt(s.size).map(idx => s(idx)))
   }
 }

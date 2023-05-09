@@ -54,7 +54,7 @@ class CountdownLatchBench extends Bench[Int] {
       else l.release.flatMap(_ => iterate(l, n - 1))
 
     for {
-      l <- Latches(depth)
+      l <- Latches.init(depth)
       _ <- Fibers.forkFiber(iterate(l, depth))
       _ <- l.await
     } yield 0
