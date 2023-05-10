@@ -39,7 +39,7 @@ class directTest extends KyoTest {
         val b = await(IOs("world"))
         a + " " + b
       }
-    assert(IOs.run(io < Options) == Some("hello world"))
+    assert(IOs.run(Options.run(io)) == Some("hello world"))
   }
 
   "if" in {
@@ -56,50 +56,36 @@ class directTest extends KyoTest {
   }
 
   "booleans" - {
-    "&&" - {
-      "plain" in {
-        var calls = List.empty[Int]
-        { calls :+= 1; true } && { calls :+= 2; true }
-        assert(calls == List(1, 2))
-      }
-      "direct" in {
-        var calls = List.empty[Int]
-        val io: Boolean > IOs =
-          defer {
-            (await(IOs { calls :+= 1; true }) && await(IOs { calls :+= 2; true }))
-          }
-        assert(IOs.run(io))
-        assert(calls == List(1, 2))
-      }
+    "&&" in {
+      var calls = List.empty[Int]
+      val io: Boolean > IOs =
+        defer {
+          (await(IOs { calls :+= 1; true }) && await(IOs { calls :+= 2; true }))
+        }
+      assert(IOs.run(io))
+      assert(calls == List(1, 2))
     }
-    "||" - {
-      "plain" in {
-        var calls = List.empty[Int]
-        { calls :+= 1; true } || { calls :+= 2; true }
-        assert(calls == List(1))
-      }
-      "direct" in {
-        var calls = List.empty[Int]
-        val io: Boolean > IOs =
-          defer {
-            (await(IOs { calls :+= 1; true }) || await(IOs { calls :+= 2; true }))
-          }
-        assert(IOs.run(io))
-        assert(calls == List(1))
-      }
+    "||" in {
+      var calls = List.empty[Int]
+      val io: Boolean > IOs =
+        defer {
+          (await(IOs { calls :+= 1; true }) || await(IOs { calls :+= 2; true }))
+        }
+      assert(IOs.run(io))
+      assert(calls == List(1))
     }
   }
 
   "options" in {
     def test[T](opt: Option[T]) =
-      assert(opt == defer(await(opt > Options)) < Options)
+      assert(opt == Options.run(defer(await(Options.get(opt)))))
     test(Some(1))
     test(None)
     test(Some("a"))
   }
   "tries" in {
     def test[T](t: Try[T]) =
-      assert(t == defer(await(t > Tries)) < Tries)
+      assert(t == Tries.run(defer(await(Tries.get(t)))))
     test(Try(1))
     test(Try(throw new Exception("a")))
     test(Try("a"))

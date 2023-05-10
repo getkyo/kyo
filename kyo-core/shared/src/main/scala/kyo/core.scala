@@ -110,8 +110,12 @@ object core {
     v1(t1 => v2(t2 => v3(t3 => v4(t4 => (t1, t2, t3, t4)))))
 
   extension [S](v: Unit > S) {
-    def andThen[T, S2](f: T > S2): T > (S | S2) =
+    def andThen[T, S2](f: => T > S2): T > (S | S2) =
       v.map(_ => f)
+    def repeat(i: Int): Unit > S =
+      if i <= 0 then () else v.andThen(repeat(i - 1))
+    def forever: Unit > S =
+      v.andThen(forever)
   }
 
   extension [T, S](v: T > S) {
