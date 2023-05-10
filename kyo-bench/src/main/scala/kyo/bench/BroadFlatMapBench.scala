@@ -8,6 +8,7 @@ import zio.{ZIO, UIO}
 import java.util.concurrent.Executors
 
 import kyo.bench.Bench
+import java.util.concurrent.CompletableFuture
 
 class BroadFlatMapBench extends Bench[BigInt] {
 
@@ -37,5 +38,22 @@ class BroadFlatMapBench extends Bench[BigInt] {
       else
         zioFib(n - 1).flatMap(a => zioFib(n - 2).flatMap(b => ZIO.succeed(a + b)))
     zioFib(depth)
+  }
+
+  def oxFib(n: Int): BigInt =
+    if (n <= 1) n
+    else oxFib(n - 1) + oxFib(n - 2)
+
+  @Benchmark
+  def syncOx(): BigInt = {
+    oxFib(depth)
+  }
+
+  @Benchmark
+  def forkOx(): BigInt = {
+    import ox._
+    scoped {
+      fork(oxFib(depth)).join()
+    }
   }
 }
