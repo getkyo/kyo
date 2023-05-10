@@ -9,8 +9,12 @@ import kyo.concurrent.fibers.Fibers
 import kyo.ios.IOs
 
 import kyo.concurrent.atomics._
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.atomic.AtomicInteger
 
 class ForkManyBench extends Bench[Int] {
+
+  val depth = 10000
 
   def catsBench() = {
     import cats.effect.IO
@@ -21,11 +25,11 @@ class ForkManyBench extends Bench[Int] {
 
     for {
       deferred <- IO.deferred[Unit]
-      ref      <- IO.ref(10000)
+      ref      <- IO.ref(depth)
       effect = ref
         .modify(n => (n - 1, if (n == 1) deferred.complete(()) else IO.unit))
         .flatten
-      _ <- repeat(10000)(effect.start)
+      _ <- repeat(depth)(effect.start)
       _ <- deferred.get
     } yield 0
   }
@@ -43,14 +47,14 @@ class ForkManyBench extends Bench[Int] {
 
     for {
       promise <- Fibers.promise[Unit]
-      ref     <- Atomics.initInt(10000)
+      ref     <- Atomics.initInt(depth)
       effect = ref.decrementAndGet.flatMap {
         case 1 =>
           promise.complete(())
         case _ =>
           false
       }
-      _ <- repeat(10000)(Fibers.forkFiber(effect))
+      _ <- repeat(depth)(Fibers.forkFiber(effect))
       _ <- promise.join
     } yield 0
   }
@@ -64,12 +68,32 @@ class ForkManyBench extends Bench[Int] {
 
     for {
       promise <- Promise.make[Nothing, Unit]
-      ref     <- Ref.make(10000)
+      ref     <- Ref.make(depth)
       effect = ref
         .modify(n => (if (n == 1) promise.succeed(()) else ZIO.unit, n - 1))
         .flatten
-      _ <- repeat(10000)(effect.forkDaemon)
+      _ <- repeat(depth)(effect.forkDaemon)
       _ <- promise.await
     } yield 0
+  }
+
+  @Benchmark
+  def forkOx() = {
+    import ox._
+    import ox.channels._
+
+    scoped {
+      val promise = new CompletableFuture[Unit]
+      val ref     = new AtomicInteger(depth)
+      for (_ <- 0 until depth) {
+        fork {
+          ref.decrementAndGet() match {
+            case 1 => promise.complete(())
+            case _ => ()
+          }
+        }
+      }
+      promise.get()
+    }
   }
 }

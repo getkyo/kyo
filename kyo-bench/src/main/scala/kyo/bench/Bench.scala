@@ -20,9 +20,13 @@ import cats.effect.unsafe.implicits.global
         // "-XX:+LogCompilation",
         // "-Dgraal.Dump=", //, "-Dgraal.MethodFilter=kyo2.*",
         // "-XX:+PrintCompilation", "-XX:+PrintInlining",
-        // "-XX:+TraceTypeProfile"
+        // "-XX:+TraceTypeProfile",
         "-Dcats.effect.tracing.mode=DISABLED"
-    )
+    ),
+    // jvmArgsPrepend = Array(
+    //     "--enable-preview",
+    //     "--add-modules=jdk.incubator.concurrent"
+    // )
     // jvm = "/Users/flavio.brasil/Downloads/graalvm-ce-java17-22.3.0/Contents/Home/bin/java"
 )
 @BenchmarkMode(Array(Mode.Throughput))

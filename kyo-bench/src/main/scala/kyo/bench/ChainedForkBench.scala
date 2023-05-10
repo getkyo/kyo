@@ -22,6 +22,7 @@ import kyo.bench.Bench
 import kyo.concurrent.fibers
 import kyo.concurrent.scheduler.Scheduler
 import kyo.concurrent.fibers
+import java.util.concurrent.CompletableFuture
 
 class ChainedForkBench extends Bench[Int] {
 
@@ -72,5 +73,22 @@ class ChainedForkBench extends Bench[Int] {
       _       <- iterate(promise, depth).forkDaemon
       _       <- promise.await
     } yield 0
+  }
+
+  @Benchmark
+  def forkOx() = {
+    import ox._
+    def iterate(p: CompletableFuture[Unit], n: Int): Unit =
+      if (n <= 0) p.complete(())
+      else
+        scoped {
+          fork(iterate(p, n - 1))
+        }
+
+    scoped {
+      val p = new CompletableFuture[Unit]()
+      fork(iterate(p, depth))
+      p.get()
+    }
   }
 }

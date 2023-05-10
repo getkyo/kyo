@@ -70,4 +70,24 @@ class ProducerConsumerBench extends Bench[Unit] {
       } yield {}
     }
   }
+
+  @Benchmark
+  def forkOx() = {
+    import ox._
+    import ox.channels._
+
+    val q = Channel[Unit](depth / 2)
+    scoped {
+      val f1 =
+        fork {
+          for (_ <- 0 until depth) q.send(()).orThrow
+        }
+      val f2 =
+        fork {
+          for (_ <- 0 until depth) q.take(1).drain()
+        }
+      f1.join()
+      f2.join()
+    }
+  }
 }
