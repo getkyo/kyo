@@ -3,7 +3,7 @@ package kyo.chatgpt.mode
 import kyo.chatgpt.ais._
 import kyo.aspects._
 import kyo.consoles._
-import kyo.core._
+import kyo._
 import kyo.envs._
 import kyo.ios._
 import kyo.requests._

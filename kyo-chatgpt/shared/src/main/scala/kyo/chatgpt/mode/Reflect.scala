@@ -1,6 +1,6 @@
 package kyo.chatgpt.mode
 
-import kyo.core._
+import kyo._
 import kyo.aspects._
 import kyo.chatgpt.ais._
 import kyo.direct._

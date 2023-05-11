@@ -1,7 +1,6 @@
 package kyo
 
 import locals._
-import core._
 import envs._
 import kyo.clocks.Clocks
 import kyo.consoles.Consoles

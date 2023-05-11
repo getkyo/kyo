@@ -1,6 +1,6 @@
 package kyo.chatgpt
 
-import kyo.core._
+import kyo._
 import kyo.chatgpt.embeddings._
 import kyo.chatgpt.ais._
 import kyo.aspects._

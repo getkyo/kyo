@@ -1,7 +1,7 @@
 package kyo.concurrent.scheduler
 
 import kyo.concurrent.scheduler.IOTask
-import kyo.core._
+import kyo._
 import kyo.ios._
 
 import java.util.concurrent.CopyOnWriteArrayList

@@ -55,7 +55,7 @@ object aborts {
       run[T, S, B](v).map((_: Abort[B, T]).toEither)
 
     def catching[T, S](f: => T > S)(using E => Throwable): T > (S | Aborts[E]) =
-      (Tries(f) < Tries).map {
+      Tries.run(f).map {
         case Failure(ex) if _tag.closestClass.isAssignableFrom(ex.getClass) =>
           val v: Abort[E, T] = Fail(ex.asInstanceOf[E])
           v > Aborts[E]

@@ -10,7 +10,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import java.util.concurrent.Executors
 import kyo.concurrent.scheduler.Scheduler
 import org.openjdk.jmh.infra.Blackhole
-import kyo.core._
+import kyo._
 import kyo.concurrent.fibers._
 import kyo.ios.IOs
 import java.util.concurrent.locks.LockSupport
@@ -46,7 +46,7 @@ class ChainedForkBench extends Bench[Int] {
   def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
 
   override def kyoBenchFiber() = {
-    import kyo.core._
+    import kyo._
     import kyo.concurrent.fibers._
     import kyo.ios._
 

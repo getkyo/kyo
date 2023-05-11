@@ -1,5 +1,6 @@
 package kyo
 
+import kyo._
 import kyo.core._
 import kyo.options._
 import scala.collection.mutable.ListBuffer
@@ -20,7 +21,7 @@ object lists {
 
     def traverse[T, U, S, S2](v: List[T] > S)(f: T => U > S2): List[U] > (S | S2) =
       v.map { v =>
-        collect(v.map(_.map(f)))
+        collect(v.map(f))
       }
 
     def foreach[T, S](v: (T > S)*): T > (S | Lists) =

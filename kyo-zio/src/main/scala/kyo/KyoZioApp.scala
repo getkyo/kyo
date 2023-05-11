@@ -9,7 +9,6 @@ import java.util.concurrent.TimeoutException
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
-import core._
 import ios._
 import clocks._
 import consoles._

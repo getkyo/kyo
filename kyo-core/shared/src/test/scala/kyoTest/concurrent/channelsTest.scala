@@ -4,7 +4,7 @@ import kyo.concurrent.channels._
 import kyo.concurrent.fibers._
 import kyo.concurrent.queues._
 import kyo.concurrent.timers._
-import kyo.core._
+import kyo._
 import kyo.ios._
 import kyoTest.KyoTest
 

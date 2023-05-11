@@ -2,7 +2,7 @@ package kyo.bench
 
 import cats.effect.IO
 import kyo.arrows._
-import kyo.core.>
+import kyo._
 import kyo.ios.IOs
 import kyo.concurrent.scheduler.Scheduler
 import org.openjdk.jmh.annotations._

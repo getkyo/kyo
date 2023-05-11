@@ -1,6 +1,6 @@
 package kyo.bench
 
-import kyo.core._
+import kyo._
 import kyo.concurrent.fibers._
 import kyo.ios.IOs
 import zio.UIO
@@ -22,7 +22,7 @@ import cats.effect.unsafe.implicits.global
         // "-XX:+PrintCompilation", "-XX:+PrintInlining",
         // "-XX:+TraceTypeProfile",
         "-Dcats.effect.tracing.mode=DISABLED"
-    ),
+    )
     // jvmArgsPrepend = Array(
     //     "--enable-preview",
     //     "--add-modules=jdk.incubator.concurrent"

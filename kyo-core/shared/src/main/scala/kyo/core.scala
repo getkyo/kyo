@@ -93,48 +93,55 @@ object core {
   }
 
   extension [T, S, S2](v: T > S > S2) {
-    def flatten(using Frame["apply"]): T > (S | S2) =
-      v(identity[T > S])
+    private[kyo] def flatten: T > (S | S2) =
+      v.map(v => v)
   }
 
   /*inline(3)*/
-  def zip[T1, T2, S](v1: T1 > S, v2: T2 > S): (T1, T2) > S =
-    v1(t1 => v2(t2 => (t1, t2)))
+  private[kyo] def zip[T1, T2, S](v1: T1 > S, v2: T2 > S): (T1, T2) > S =
+    v1.map(t1 => v2.map(t2 => (t1, t2)))
 
   /*inline(3)*/
-  def zip[T1, T2, T3, S](v1: T1 > S, v2: T2 > S, v3: T3 > S): (T1, T2, T3) > S =
-    v1(t1 => v2(t2 => v3(t3 => (t1, t2, t3))))
+  private[kyo] def zip[T1, T2, T3, S](v1: T1 > S, v2: T2 > S, v3: T3 > S): (T1, T2, T3) > S =
+    v1.map(t1 => v2.map(t2 => v3.map(t3 => (t1, t2, t3))))
 
   /*inline(3)*/
-  def zip[T1, T2, T3, T4, S](v1: T1 > S, v2: T2 > S, v3: T3 > S, v4: T4 > S): (T1, T2, T3, T4) > S =
-    v1(t1 => v2(t2 => v3(t3 => v4(t4 => (t1, t2, t3, t4)))))
+  private[kyo] def zip[T1, T2, T3, T4, S](
+      v1: T1 > S,
+      v2: T2 > S,
+      v3: T3 > S,
+      v4: T4 > S
+  ): (T1, T2, T3, T4) > S =
+    v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
 
   extension [S](v: Unit > S) {
-    def andThen[T, S2](f: => T > S2): T > (S | S2) =
+    private[kyo] def andThen[T, S2](f: => T > S2): T > (S | S2) =
       v.map(_ => f)
-    def repeat(i: Int): Unit > S =
+    private[kyo] def repeat(i: Int): Unit > S =
       if i <= 0 then () else v.andThen(repeat(i - 1))
-    def forever: Unit > S =
+    private[kyo] def forever: Unit > S =
       v.andThen(forever)
   }
 
   extension [T, S](v: T > S) {
 
     /*inline(3)*/
-    def unit: Unit > S = map(_ => ())
+    private[kyo] def unit: Unit > S = map(_ => ())
 
     /*inline(3)*/
-    def map[U, S2]( /*inline(3)*/ f: T => (U > S2)): U > (S | S2) = apply(f)
+    private[kyo] def map[U, S2]( /*inline(3)*/ f: T => (U > S2)): U > (S | S2) =
+      v.flatMap(f)
 
     /*inline(3)*/
-    def flatMap[U, S2]( /*inline(3)*/ f: T => (U > S2)): U > (S | S2) = apply(f)
+    private[kyo] def flatMap[U, S2]( /*inline(3)*/ f: T => (U > S2)): U > (S | S2) =
+      v[U, S2](f)
 
     /*inline(3)*/
-    def withFilter(p: T => Boolean): T > S =
-      v(v => if (!p(v)) throw new MatchError(v) else v)
+    private[kyo] def withFilter(p: T => Boolean): T > S =
+      v.map(v => if (!p(v)) throw new MatchError(v) else v)
 
     /*inline(3)*/
-    private def apply[U, S2]( /*inline(3)*/ f: T => (U > S2))(using
+    private[kyo] def apply[U, S2]( /*inline(3)*/ f: T => (U > S2))(using
         /*inline(3)*/ fr: Frame["apply"]
     ): U > (S | S2) =
       def transformLoop(v: T > S): U > (S | S2) =
@@ -251,20 +258,15 @@ object core {
         deepHandleLoop(v)
   }
 
-  private val _identity: Any => Any = v => v
-
-  private def identity[T] =
-    _identity.asInstanceOf[T => T]
-
-  private val identityConversion = new Conversion[Any, Any] {
-    def apply(v: Any) = v
-  }
-
   given [M[_], E <: Effect[M], T](using
       DeepHandler[M, E]
   ): Conversion[E, T > E => M[T] > Nothing] with
     /*inline(3)*/
     def apply(v: E) = v()
+
+  private val identityConversion = new Conversion[Any, Any] {
+    def apply(v: Any) = v
+  }
 
   /*inline(3)*/
   given [T, S](using /*inline(3)*/ ng: NotGiven[T <:< (Any > Any)])

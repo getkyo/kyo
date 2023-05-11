@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo.concurrent.fibers._
-import kyo.core._
+import kyo._
 import kyo.ios._
 import kyo.requests._
 import kyoTest.KyoTest

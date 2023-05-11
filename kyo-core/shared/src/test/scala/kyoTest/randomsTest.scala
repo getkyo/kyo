@@ -1,6 +1,6 @@
 package kyoTest
 
-import kyo.core._
+import kyo._
 import kyo.ios._
 import kyo.randoms._
 

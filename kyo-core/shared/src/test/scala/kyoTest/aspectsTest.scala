@@ -1,6 +1,6 @@
 package kyoTest
 
-import kyo.core._
+import kyo._
 import kyo.aspects._
 import kyo.ios._
 import org.scalatest.compatible.Assertion

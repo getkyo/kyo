@@ -3,7 +3,7 @@ package kyo.chatgpt
 import kyo.aspects._
 import kyo.chatgpt.contexts._
 import kyo.consoles._
-import kyo.core._
+import kyo._
 import kyo.ios._
 import kyo.requests._
 import kyo.sums._

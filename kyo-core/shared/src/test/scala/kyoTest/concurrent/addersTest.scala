@@ -1,7 +1,7 @@
 package kyoTest.concurrent
 
 import kyo.concurrent.adders._
-import kyo.core._
+import kyo._
 import kyoTest.KyoTest
 
 class addersTest extends KyoTest {

@@ -1,6 +1,5 @@
 package kyo
 
-import core._
 import ios._
 import clocks._
 import consoles._

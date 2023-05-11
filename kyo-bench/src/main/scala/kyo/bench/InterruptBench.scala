@@ -6,7 +6,7 @@ import kyo.bench.Bench
 import kyo.concurrent.fibers
 import kyo.concurrent.fibers._
 import kyo.concurrent.scheduler.Scheduler
-import kyo.core._
+import kyo._
 import kyo.ios.IOs
 import org.openjdk.jmh.annotations._
 import org.openjdk.jmh.infra.Blackhole
@@ -42,7 +42,7 @@ class InterruptBench extends Bench[Unit] {
   def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
 
   override def kyoBenchFiber() = {
-    import kyo.core._
+    import kyo._
     import kyo.concurrent.fibers._
     import kyo.ios._
 

@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo.aborts._
-import kyo.core
+import kyo._
 import kyo.core._
 import kyo.options._
 import org.scalatest.Args

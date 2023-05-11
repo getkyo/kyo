@@ -7,7 +7,7 @@ import kyo.clocks.Clocks
 import kyo.concurrent.fibers.Fibers
 import kyo.concurrent.timers.Timers
 import kyo.consoles.Consoles
-import kyo.core._
+import kyo._
 import kyo.ios.IOs
 import kyo.loggers.Loggers
 import kyo.randoms.Randoms

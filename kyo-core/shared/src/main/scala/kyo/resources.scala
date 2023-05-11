@@ -4,7 +4,6 @@ import java.io.Closeable
 import scala.util.Try
 import scala.util.control.NonFatal
 
-import core._
 import ios._
 import frames._
 import envs._

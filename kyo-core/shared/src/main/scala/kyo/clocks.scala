@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.core._
+import kyo._
 import kyo.envs._
 import kyo.ios._
 

@@ -4,7 +4,7 @@ import kyo.KyoZioApp
 import kyo.aborts.Aborts
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
-import kyo.core._
+import kyo._
 import kyo.aborts._
 import kyo.envs._
 import kyo.ios._

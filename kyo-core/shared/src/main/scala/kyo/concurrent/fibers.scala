@@ -1,5 +1,6 @@
 package kyo.concurrent
 
+import kyo._
 import kyo.core._
 import kyo.frames._
 import kyo.ios._
@@ -144,7 +145,8 @@ object fibers {
             val p = scala.concurrent.Promise[T]()
             promise.onComplete { v =>
               p.complete(Try(IOs.run(v)))
-            }.map(_ => p.future)
+            }
+            p.future
           }
         case Failed(ex) =>
           Future.failed(ex)

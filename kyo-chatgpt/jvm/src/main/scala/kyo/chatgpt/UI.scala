@@ -13,7 +13,7 @@ import kyo.chatgpt.mode._
 import kyo.concurrent.channels._
 import kyo.concurrent.fibers._
 import kyo.consoles._
-import kyo.core._
+import kyo._
 import kyo.ios._
 import kyo.requests._
 import kyo.tries._

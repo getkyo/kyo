@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo.concurrent.atomics.AtomicInt
-import kyo.core._
+import kyo._
 import kyo.ios._
 import kyo.options._
 import kyo.tries._
@@ -32,7 +32,7 @@ class iosTest extends KyoTest {
     "next handled effects can execute" in run {
       var called = false
       val v =
-        (Option(1) > Options).map { i =>
+        Options.get(Option(1)).map { i =>
           IOs {
             called = true
             i

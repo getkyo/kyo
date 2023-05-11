@@ -1,7 +1,7 @@
 package kyo.chatgpt
 
 import kyo.chatgpt.ais._
-import kyo.core._
+import kyo._
 import kyo.concurrent.fibers._
 import kyo.requests._
 import sttp.client3._

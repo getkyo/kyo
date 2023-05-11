@@ -4,7 +4,7 @@ import kyo.clocks._
 import kyo.concurrent.fibers._
 import kyo.concurrent.timers._
 import kyo.consoles._
-import kyo.core._
+import kyo._
 import kyo.ios._
 import kyo.randoms._
 import kyo.resources._

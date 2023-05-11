@@ -1,6 +1,6 @@
 package kyo.concurrent
 
-import kyo.core._
+import kyo._
 import kyo.ios._
 
 import java.util.concurrent.atomic.{AtomicBoolean => JAtomicBoolean}

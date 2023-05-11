@@ -1,6 +1,6 @@
 package kyoTest
 
-import kyo.core._
+import kyo._
 import kyo.envs._
 import kyo.options._
 
@@ -88,13 +88,13 @@ class envsTest extends KyoTest {
 
     val service1 = new Service1 {
       def apply(i: Int) = i match {
-        case 0 => Option.empty[Int] > Options
+        case 0 => Options.get(Option.empty[Int])
         case i => i + 1
       }
     }
     val service2 = new Service2 {
       def apply(i: Int) = i match {
-        case 0 => Some(1) > Options
+        case 0 => Options.get(Some(1))
         case i => i + 1
       }
     }

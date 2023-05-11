@@ -1,6 +1,6 @@
 package kyoTest
 
-import kyo.core._
+import kyo._
 import kyo.ios._
 import kyo.options._
 import kyo.resources._
@@ -55,7 +55,7 @@ class resourcesTest extends KyoTest {
       IOs.lazyRun {
         Resources.run(Resources.acquire(r1()).map { _ =>
           assert(r1.closes == 0)
-          Option(1) > Options
+          Options.get(Option(1))
         })
       }
     assert(r1.closes == 0)
@@ -108,9 +108,9 @@ class resourcesTest extends KyoTest {
           val io: Int > (Resources | Options) =
             for {
               r1 <- Resources.acquire(r1())
-              i1 <- Option(r1.id * 3) > Options
+              i1 <- Options.get(Option(r1.id * 3))
               r2 <- Resources.acquire(r2())
-              i2 <- Option(r2.id * 3) > Options
+              i2 <- Options.get(Option(r2.id * 3))
             } yield i1 + i2
           io
         }

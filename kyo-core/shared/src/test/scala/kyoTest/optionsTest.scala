@@ -1,6 +1,6 @@
 package kyoTest
 
-import kyo.core._
+import kyo._
 import kyo.options._
 import org.scalatest.Args
 import org.scalatest.Status
@@ -14,7 +14,7 @@ class optionsTest extends KyoTest {
 
   "apply" - {
     "null" in {
-      assert(((Options(null: String) < Options): Option[String]) == None)
+      assert(((Options.run(Options(null: String))): Option[String]) == None)
       checkEquals[Option[String], Nothing](
           Options(null: String) < Options,
           None
@@ -43,13 +43,13 @@ class optionsTest extends KyoTest {
     }
     "handle + effectful transform" in {
       checkEquals[Option[Int], Nothing](
-          (1: Int > Options).map(i => Option(i + 1) > Options) < Options,
+          (1: Int > Options).map(i => Options.get(Option(i + 1))) < Options,
           Option(2)
       )
     }
     "handle + transform + effectful transform" in {
       checkEquals[Option[Int], Nothing](
-          (1: Int > Options).map(_ + 1).map(i => Option(i + 1) > Options) < Options,
+          (1: Int > Options).map(_ + 1).map(i => Options.get(Option(i + 1))) < Options,
           Option(3)
       )
     }
@@ -58,25 +58,25 @@ class optionsTest extends KyoTest {
   "effectful" - {
     "handle" in {
       checkEquals[Option[Int], Nothing](
-          Option(1) > Options < Options,
+          Options.run(Options.get(Option(1))),
           Option(1)
       )
     }
     "handle + transform" in {
       checkEquals[Option[Int], Nothing](
-          (Option(1) > Options).map(_ + 1) < Options,
+          Options.run(Options.get(Option(1)).map(_ + 1)),
           Option(2)
       )
     }
     "handle + effectful transform" in {
       checkEquals[Option[Int], Nothing](
-          (Option(1) > Options).map(i => Option(i + 1) > Options) < Options,
+          Options.run(Options.get(Option(1)).map(i => Options.get(Option(i + 1)))),
           Option(2)
       )
     }
     "handle + transform + effectful transform" in {
       checkEquals[Option[Int], Nothing](
-          (Option(1) > Options).map(_ + 1).map(i => Option(i + 1) > Options) < Options,
+          Options.run(Options.get(Option(1)).map(_ + 1).map(i => Options.get(Option(i + 1)))),
           Option(3)
       )
     }
@@ -91,13 +91,13 @@ class optionsTest extends KyoTest {
     }
     "not empty" in {
       checkEquals[Option[Int], Nothing](
-          Options.run(Option(1) > Options),
+          Options.run(Options.get(Option(1))),
           Option(1)
       )
     }
     "empty" in {
       checkEquals[Option[Int], Nothing](
-          Options.run(Option.empty[Int] > Options),
+          Options.run(Options.get(Option.empty[Int])),
           None
       )
     }
@@ -112,47 +112,51 @@ class optionsTest extends KyoTest {
     }
     "not empty" in {
       checkEquals[Option[Int], Nothing](
-          Options.orElse(Option(1) > Options) < Options,
+          Options.run(Options.orElse(Options.get(Option(1)))),
           Option(1)
       )
     }
     "not empty + empty" in {
       checkEquals[Option[Int], Nothing](
-          Options.orElse(Option(1) > Options, Option.empty[Int] > Options) < Options,
+          Options.run(Options.orElse(Options.get(Option(1)), Options.get(Option.empty[Int]))),
           Option(1)
       )
     }
     "empty + not empty" in {
       checkEquals[Option[Int], Nothing](
-          Options.orElse(Option.empty[Int] > Options, Option(1) > Options) < Options,
+          Options.run(Options.orElse(Options.get(Option.empty[Int]), Options.get(Option(1)))),
           Option(1)
       )
     }
     "empty + empty" in {
       checkEquals[Option[Int], Nothing](
-          Options.orElse(Option.empty[Int] > Options, Option.empty[Int] > Options) < Options,
+          Options.orElse(Options.get(Option.empty[Int]), Options.get(Option.empty[Int])) < Options,
           None
       )
     }
     "not empty + not empty" in {
       checkEquals[Option[Int], Nothing](
-          Options.orElse(Option(1) > Options, Option(2) > Options) < Options,
+          Options.orElse(Options.get(Option(1)), Options.get(Option(2))) < Options,
           Option(1)
       )
     }
     "not empty + not empty + not empty" in {
       checkEquals[Option[Int], Nothing](
-          Options.orElse(Option(1) > Options, Option(2) > Options, Option(3) > Options) < Options,
+          Options.run(Options.orElse(
+              Options.get(Option(1)),
+              Options.get(Option(2)),
+              Options.get(Option(3))
+          )),
           Option(1)
       )
     }
     "not empty + not empty + not empty + not empty" in {
       checkEquals[Option[Int], Nothing](
           Options.orElse(
-              Option(1) > Options,
-              Option(2) > Options,
-              Option(3) > Options,
-              Option(4) > Options
+              Options.get(Option(1)),
+              Options.get(Option(2)),
+              Options.get(Option(3)),
+              Options.get(Option(4))
           ) < Options,
           Option(1)
       )
@@ -160,11 +164,11 @@ class optionsTest extends KyoTest {
     "not empty + not empty + not empty + not empty + not empty" in {
       checkEquals[Option[Int], Nothing](
           Options.orElse(
-              Option(1) > Options,
-              Option(2) > Options,
-              Option(3) > Options,
-              Option(4) > Options,
-              Option(5) > Options
+              Options.get(Option(1)),
+              Options.get(Option(2)),
+              Options.get(Option(3)),
+              Options.get(Option(4)),
+              Options.get(Option(5))
           ) < Options,
           Option(1)
       )

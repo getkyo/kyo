@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations._
 import cats.effect.kernel.Fiber
 
 import kyo.bench.Bench
-import kyo.core.>
+import kyo._
 import kyo.concurrent.fibers.Fibers
 import kyo.ios.IOs
 
@@ -36,7 +36,7 @@ class ForkManyBench extends Bench[Int] {
 
   def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
   override def kyoBenchFiber() = {
-    import kyo.core._
+    import kyo._
     import kyo.ios._
     import kyo.concurrent.atomics._
     import kyo.concurrent.fibers._

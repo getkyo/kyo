@@ -2,7 +2,7 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations._
 import cats.effect.IO
-import kyo.core._
+import kyo._
 import kyo.ios._
 import zio.{ZIO, UIO}
 import java.util.concurrent.Executors

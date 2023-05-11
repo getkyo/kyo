@@ -5,7 +5,7 @@ class NarrowBindBench extends Bench[Int] {
   val depth = 10000
 
   def kyoBench() = {
-    import kyo.core._
+    import kyo._
     import kyo.ios._
 
     def loop(i: Int): Int > IOs =

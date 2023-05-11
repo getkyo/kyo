@@ -5,7 +5,7 @@ import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
 import kyo.concurrent.latches._
 import kyo.concurrent.timers._
-import kyo.core._
+import kyo._
 import kyo.ios._
 import kyo.locals._
 import kyo.resources
@@ -77,7 +77,7 @@ class fibersTest extends KyoTest {
     "nested" in runJVM {
       val t1 = Thread.currentThread()
       for {
-        t2 <- Fibers.fork(IOs.value(Fibers.fork(Thread.currentThread())))
+        t2 <- Fibers.fork(IOs(Fibers.fork(Thread.currentThread())))
       } yield assert(t1 != t2)
     }
   }

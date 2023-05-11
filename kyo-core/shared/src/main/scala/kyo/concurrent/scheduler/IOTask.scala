@@ -1,6 +1,7 @@
 package kyo.concurrent.scheduler
 
 import kyo.concurrent.fibers._
+import kyo._
 import kyo.core._
 import kyo.ios._
 import kyo.locals._

@@ -1,6 +1,5 @@
 package kyo
 
-import core._
 import scala.quoted._
 import cps.await
 import cps.async
