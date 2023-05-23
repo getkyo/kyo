@@ -102,8 +102,7 @@ lazy val kyo =
 val zioVersion = "2.0.10"
 
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
-    libraryDependencies += "com.lihaoyi"   %%% "sourcecode"        % "0.3.0",
-    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.5",
+    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.7",
     libraryDependencies += "org.slf4j"       % "slf4j-api"         % "2.0.7",
     libraryDependencies += "org.jctools"     % "jctools-core"      % "4.0.1",
     libraryDependencies += "dev.zio"       %%% "zio-test"          % zioVersion   % Test,
@@ -133,8 +132,9 @@ lazy val `kyo-scala2` =
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Pure)
     .settings(
-        scalaVersion := "2.13.10",
-        scalacOptions += "-Ytasty-reader"
+      scalaVersion := "2.13.10",
+      scalacOptions += "-Ytasty-reader",
+      `kyo-core-settings`
     )
     .in(file("kyo-scala2"))
     .dependsOn(`kyo-core`)
