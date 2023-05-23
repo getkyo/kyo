@@ -33,13 +33,14 @@ object randoms {
   opaque type Randoms = Envs[Random] & IOs
 
   object Randoms {
-    def run[T, S](r: Random)(f: => T > (S & IOs & Randoms)): T > (S & IOs) =
+    type Iso = Randoms & IOs
+    def run[T, S](r: Random)(f: => T > (Iso & S)): T > (IOs & S) =
       Envs[Random].let(r)(f)
-    def run[T, S](f: => T > (S & IOs & Randoms))(using c: Random): T > (S & IOs) =
+    def run[T, S](f: => T > (Iso & S))(using c: Random): T > (IOs & S) =
       Envs[Random].let(c)(f)
 
     def nextInt: Int > Randoms = Envs[Random].get.map(_.nextInt)
-    def nextInt[S](n: Int > (S & IOs & Randoms)): Int > (S & Randoms) =
+    def nextInt[S](n: Int > (Iso & S)): Int > (S & Randoms) =
       n.map(n => Envs[Random].get.map(_.nextInt(n)))
     def nextLong: Long > Randoms       = Envs[Random].get.map(_.nextLong)
     def nextDouble: Double > Randoms   = Envs[Random].get.map(_.nextDouble)

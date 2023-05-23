@@ -288,7 +288,7 @@ object fibers {
 
     def await[T](
         v1: => T > (IOs & Fibers)
-    ): Unit > (IOs & Fibers) =
+    )(using NotGiven[T <:< (Any > Nothing)]): Unit > (IOs & Fibers) =
       fork(v1).map(_ => ())
 
     def await[T](
@@ -399,7 +399,7 @@ object fibers {
       }
 
     /*inline(2)*/
-    def block[T, S](v: T > (S & Fibers)): T > (S & IOs) =
+    def block[T, S](v: T > (Fibers & S)): T > (S & IOs) =
       given Handler[Fiber, Fibers] =
         new Handler[Fiber, Fibers] {
           def pure[T](v: T) = v

@@ -33,7 +33,7 @@ object sums {
       val s: Sum[V, V] = SetValue(v)
       s > this
 
-    def run[T, S](v: T > (S & Sums[V]))(using
+    def run[T, S](v: T > (Sums[V] & S))(using
         g: Summer[V],
         tag: Tag[V]
     ): T > (S & IOs) = {

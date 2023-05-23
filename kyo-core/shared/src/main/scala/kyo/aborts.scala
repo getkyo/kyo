@@ -45,19 +45,19 @@ object aborts {
 
     private given _tag: Tag[E] = tag
 
-    def run[T, S](v: T > (S & Aborts[E])): Abort[E, T] > S =
+    def run[T, S](v: T > (Aborts[E] & S)): Abort[E, T] > S =
       v < (this: Aborts[E])
 
-    def get[T, S](v: Abort[E, T] > S): T > (S & Aborts[E]) =
+    def get[T, S](v: Abort[E, T] > S): T > (Aborts[E] & S) =
       v > this
 
-    def toOption[T, S](v: T > (S & Aborts[E])): Option[T] > S =
+    def toOption[T, S](v: T > (Aborts[E] & S)): Option[T] > S =
       run[T, S](v).map((_: Abort[E, T]).toOption)
 
-    def toEither[T, S](v: T > (S & Aborts[E])): Either[E, T] > S =
+    def toEither[T, S](v: T > (Aborts[E] & S)): Either[E, T] > S =
       run[T, S](v).map((_: Abort[E, T]).toEither)
 
-    def catching[T, S](f: => T > S)(using E => Throwable): T > (S & Aborts[E]) =
+    def catching[T, S](f: => T > S)(using E => Throwable): T > (Aborts[E] & S) =
       Tries.run(f).map {
         case Failure(ex) if tag.closestClass.isAssignableFrom(ex.getClass) =>
           val v: Abort[E, T] = Fail(ex.asInstanceOf[E])

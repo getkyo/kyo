@@ -260,15 +260,15 @@ object core {
   }
 
   /*inline(3)*/
-  given [T, S](using /*inline(3)*/ ng: NotGiven[T <:< (Any > Any)])
+  given [T, S](using /*inline(3)*/ ng: NotGiven[T <:< (Any > Nothing)])
       : Conversion[Kyo[_, _, _, T, S], T > S] =
     identityConversion.asInstanceOf[Conversion[Kyo[_, _, _, T, S], T > S]]
 
   /*inline(3)*/
-  given [T](using /*inline(3)*/ ng: NotGiven[T <:< (Any > Any)]): Conversion[T > Any, T] =
+  given [T](using /*inline(3)*/ ng: NotGiven[T <:< (Any > Nothing)]): Conversion[T > Any, T] =
     identityConversion.asInstanceOf[Conversion[T > Any, T]]
 
   /*inline(3)*/
-  given [T, S](using /*inline(3)*/ ng: NotGiven[T <:< (Any > Any)]): Conversion[T, T > S] =
+  given [T, S](using /*inline(3)*/ ng: NotGiven[T <:< (Any > Nothing)]): Conversion[T, T > S] =
     identityConversion.asInstanceOf[Conversion[T, T > S]]
 }

@@ -16,7 +16,7 @@ object aspects {
 
   object Aspects {
 
-    def run[T, S](v: T > (S & Aspects)): T > S =
+    def run[T, S](v: T > (Aspects & S)): T > S =
       envs.let(Map.empty)(v)
 
     def init[T, U, S]: Aspect[T, U, S] =
@@ -53,7 +53,7 @@ object aspects {
         }
       }
 
-    def sandbox[S](v: T > (S & Aspects)): T > (S & Aspects) =
+    def sandbox[S](v: T > (Aspects & S)): T > (Aspects & S) =
       envs.get.map { map =>
         map.get(this) match {
           case Some(a: Cut[T, U, S1] @unchecked) =>

@@ -32,8 +32,8 @@ object ais {
 
   object AIs {
 
-    type Iso = Sums[State] & Requests & Tries & IOs & Aspects & Consoles & AIs
-    def iso[T, S](v: T > (S & Iso)): T > (S & AIs) =
+    type Iso = AIs & Sums[State] & Requests & Tries & IOs & Aspects & Consoles
+    def iso[T, S](v: T > (Iso & S)): T > (S & AIs) =
       v
 
     val askAspect: Aspect[(AI, String), String, AIs] =
@@ -41,15 +41,15 @@ object ais {
 
     val init: AI > IOs = IOs(new AI())
 
-    def restore[S](ctx: Context > (S & Iso)): AI > (S & AIs) =
+    def restore[S](ctx: Context > (Iso & S)): AI > (S & AIs) =
       init.map { ai =>
         ai.restore(ctx).map(_ => ai)
       }
 
-    def fail[T, S](cause: String > (S & Iso)): T > (S & AIs) =
+    def fail[T, S](cause: String > (Iso & S)): T > (S & AIs) =
       cause.map(cause => Tries.fail(AIException(cause)))
 
-    def transactional[T, S](f: => T > (S & Iso)): T > (S & AIs) =
+    def transactional[T, S](f: => T > (Iso & S)): T > (S & AIs) =
       Sums[State].get.map { st =>
         IOs.attempt(f).map {
           case Failure(ex) =>
@@ -61,12 +61,12 @@ object ais {
         }
       }
 
-    def ephemeral[T, S](f: => T > (S & Iso)): T > (S & AIs) =
+    def ephemeral[T, S](f: => T > (Iso & S)): T > (S & AIs) =
       Sums[State].get.map { st =>
         (f < Tries).map(r => Sums[State].set(st).map(_ => r.get))
       }
 
-    def run[T, S](v: T > (S & Iso)): T > (S & Requests & Consoles & Tries) =
+    def run[T, S](v: T > (Iso & S)): T > (S & Requests & Consoles & Tries) =
       Requests.iso(Aspects.run(Sums[State].run(v)))
 
     object ApiKey {
