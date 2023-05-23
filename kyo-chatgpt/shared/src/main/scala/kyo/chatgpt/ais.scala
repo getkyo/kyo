@@ -28,12 +28,12 @@ object ais {
 
   opaque type State = Map[AIRef, Context]
 
-  opaque type AIs = Sums[State] | Requests | Tries | IOs | Aspects | Consoles
+  opaque type AIs = Sums[State] & Requests & Tries & IOs & Aspects & Consoles
 
   object AIs {
 
-    type Iso = Sums[State] | Requests | Tries | IOs | Aspects | Consoles | AIs
-    def iso[T, S](v: T > (S | Iso)): T > (S | AIs) =
+    type Iso = Sums[State] & Requests & Tries & IOs & Aspects & Consoles & AIs
+    def iso[T, S](v: T > (S & Iso)): T > (S & AIs) =
       v
 
     val askAspect: Aspect[(AI, String), String, AIs] =
@@ -41,15 +41,15 @@ object ais {
 
     val init: AI > IOs = IOs(new AI())
 
-    def restore[S](ctx: Context > (S | Iso)): AI > (S | AIs) =
+    def restore[S](ctx: Context > (S & Iso)): AI > (S & AIs) =
       init.map { ai =>
         ai.restore(ctx).map(_ => ai)
       }
 
-    def fail[T, S](cause: String > (S | Iso)): T > (S | AIs) =
+    def fail[T, S](cause: String > (S & Iso)): T > (S & AIs) =
       cause.map(cause => Tries.fail(AIException(cause)))
 
-    def transactional[T, S](f: => T > (S | Iso)): T > (S | AIs) =
+    def transactional[T, S](f: => T > (S & Iso)): T > (S & AIs) =
       Sums[State].get.map { st =>
         IOs.attempt(f).map {
           case Failure(ex) =>
@@ -61,13 +61,13 @@ object ais {
         }
       }
 
-    def ephemeral[T, S](f: => T > (S | Iso)): T > (S | AIs) =
+    def ephemeral[T, S](f: => T > (S & Iso)): T > (S & AIs) =
       Sums[State].get.map { st =>
         (f < Tries).map(r => Sums[State].set(st).map(_ => r.get))
       }
 
-    def run[T, S](v: T > (S | Iso)): T > (S | Requests | Consoles | Tries) =
-      Requests.iso(Aspects.run(Sums[State].drop(v)))
+    def run[T, S](v: T > (S & Iso)): T > (S & Requests & Consoles & Tries) =
+      Requests.iso(Aspects.run(Sums[State].run(v)))
 
     object ApiKey {
       private val local = Locals.init[Option[String]] {
@@ -80,7 +80,7 @@ object ais {
       val get: String > AIs =
         Options.getOrElse(local.get, AIs.fail("No API key found"))
 
-      def let[T, S1, S2](key: String > S1)(f: => T > (S2 | AIs)): T > (S1 | S2 | AIs) =
+      def let[T, S1, S2](key: String > S1)(f: => T > (S2 & AIs)): T > (S1 & S2 & AIs) =
         key.map { k =>
           if (k.size != example.size) {
             AIs.fail(s"Invalid API key: $k")
@@ -100,7 +100,7 @@ object ais {
 
     private val ref = AIRef(this)
 
-    private def add[S](role: Role, content: String > (S | AIs.Iso)): Unit > (S | AIs) =
+    private def add[S](role: Role, content: String > (S & AIs.Iso)): Unit > (S & AIs) =
       content.map { content =>
         save.map { ctx =>
           ctx.add(role, content).map(restore)
@@ -109,7 +109,7 @@ object ais {
 
     val save: Context > AIs = Sums[State].get.map(_.getOrElse(ref, Contexts.init))
 
-    def restore[T, S](ctx: Context > (S | AIs.Iso)): Unit > (S | AIs) =
+    def restore[T, S](ctx: Context > (S & AIs.Iso)): Unit > (S & AIs) =
       ctx.map { ctx =>
         Sums[State].get.map { st =>
           Sums[State].set(st + (ref -> ctx)).unit
@@ -130,14 +130,14 @@ object ais {
           .mkString("\n")
       }
 
-    def user[S](msg: String > (S | AIs.Iso)): Unit > (S | AIs) =
+    def user[S](msg: String > (S & AIs.Iso)): Unit > (S & AIs) =
       add(Role.user, msg)
-    def system[S](msg: String > (S | AIs.Iso)): Unit > (S | AIs) =
+    def system[S](msg: String > (S & AIs.Iso)): Unit > (S & AIs) =
       add(Role.system, msg)
-    def assistant[S](msg: String > (S | AIs.Iso)): Unit > (S | AIs) =
+    def assistant[S](msg: String > (S & AIs.Iso)): Unit > (S & AIs) =
       add(Role.assistant, msg)
 
-    def ask[S](msg: String > (S | AIs.Iso), maxTokens: Int = -1): String > (S | AIs) =
+    def ask[S](msg: String > (S & AIs.Iso), maxTokens: Int = -1): String > (S & AIs) =
       def doIt(ai: AI, msg: String): String > AIs =
         for {
           _   <- add(Role.user, msg)
@@ -161,7 +161,7 @@ object ais {
               case None =>
                 AIs.fail("no choices")
               case Some(v) =>
-                v.message.content: String > Nothing
+                v.message.content: String > Any
             }
           _ <- Consoles.println("assistant: " + content)
           _ <- assistant(content)

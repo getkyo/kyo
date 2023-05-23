@@ -21,7 +21,7 @@ object queues {
       IOs(u.isEmpty)
     def isFull: Boolean > IOs =
       IOs(u.isFull)
-    def offer[S](v: T > S): Boolean > (S | IOs) =
+    def offer[S](v: T > S): Boolean > (S & IOs) =
       v.map(v => IOs(u.offer(v)))
     def poll: Option[T] > IOs =
       IOs(u.poll())
@@ -47,7 +47,7 @@ object queues {
     opaque type Unbounded[T] <: Queue[T] = Unsafe[T]
 
     extension [T](u: Unbounded[T]) {
-      def add[S](v: T > S): Unit > (S | IOs) =
+      def add[S](v: T > S): Unit > (S & IOs) =
         v.map(u.offer).unit
     }
 

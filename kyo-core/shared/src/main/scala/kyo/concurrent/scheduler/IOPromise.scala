@@ -2,7 +2,6 @@ package kyo.concurrent.scheduler
 
 import kyo.concurrent.fibers.Fibers
 import kyo._
-import kyo.frames._
 import kyo.ios._
 import kyo.loggers.Loggers
 
@@ -32,17 +31,17 @@ private[kyo] class IOPromise[T](s: State[T])
     loop(this)
 
   /*inline(2)*/
-  final def interrupts(p: IOPromise[_])(using frame: Frame["interrupt"]): Unit =
+  final def interrupts(p: IOPromise[_]): Unit =
     onComplete { _ =>
       p.interrupt("")
     }
 
   /*inline(2)*/
-  final def interrupt(reason: String)(using frame: Frame["interrupt"]): Boolean =
+  final def interrupt(reason: String): Boolean =
     @tailrec def loop(promise: IOPromise[T]): Boolean =
       promise.get() match {
         case p: Pending[T] @unchecked =>
-          promise.complete(p, IOs(throw Fibers.Interrupted(reason, frame))) || loop(promise)
+          promise.complete(p, IOs(throw Fibers.Interrupted(reason))) || loop(promise)
         case l: Linked[T] @unchecked =>
           loop(l.p)
         case _ =>

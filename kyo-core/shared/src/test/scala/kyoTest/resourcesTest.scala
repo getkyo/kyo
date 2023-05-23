@@ -105,7 +105,7 @@ class resourcesTest extends KyoTest {
     val r: Int > Options =
       IOs.lazyRun {
         Resources.run {
-          val io: Int > (Resources | Options) =
+          val io: Int > (Resources & Options) =
             for {
               r1 <- Resources.acquire(r1())
               i1 <- Options.get(Option(r1.id * 3))

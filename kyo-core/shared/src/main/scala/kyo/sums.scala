@@ -33,17 +33,17 @@ object sums {
       val s: Sum[V, V] = SetValue(v)
       s > this
 
-    def drop[T, S](v: T > (S | Sums[V]))(using
+    def run[T, S](v: T > (S & Sums[V]))(using
         g: Summer[V],
         tag: Tag[V]
-    ): T > (S | IOs) = {
+    ): T > (S & IOs) = {
       var curr = g.init
       given Handler[[T] =>> Sum[V, T], Sums[V]] with {
         def pure[U](v: U) = v
         def apply[T, U, S2](
             m: Sum[V, T],
-            f: T => U > (S2 | Sums[V])
-        ): U > (S2 | Sums[V]) =
+            f: T => U > (S2 & Sums[V])
+        ): U > (S2 & Sums[V]) =
           m match {
             case AddValue(v) =>
               curr = g.add(curr, v.asInstanceOf[V])

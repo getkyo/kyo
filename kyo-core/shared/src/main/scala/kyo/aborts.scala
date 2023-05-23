@@ -13,8 +13,8 @@ import tries._
 
 object aborts {
 
-  private case class Fail[+E](e: E)
-  opaque type Abort[+E, +T] = T | Fail[E]
+  private case class Fail[E](e: E)
+  opaque type Abort[E, +T] = T | Fail[E]
 
   object Abort {
     /*inline(1)*/
@@ -40,23 +40,26 @@ object aborts {
       }
   }
 
-  final class Aborts[+E] private[aborts] (private val _tag: Tag[_])
+  final class Aborts[E] private[aborts] (private val tag: Tag[E])
       extends Effect[[T] =>> Abort[E, T]] {
 
-    given tag[B >: E]: Tag[B] = _tag.asInstanceOf[Tag[B]]
+    private given _tag: Tag[E] = tag
 
-    def run[T, S, B >: E](v: T > (S | Aborts[B])): Abort[B, T] > S =
-      v < (this: Aborts[B])
+    def run[T, S](v: T > (S & Aborts[E])): Abort[E, T] > S =
+      v < (this: Aborts[E])
 
-    def toOption[T, S, B >: E](v: T > (S | Aborts[B])): Option[T] > S =
-      run[T, S, B](v).map((_: Abort[B, T]).toOption)
+    def get[T, S](v: Abort[E, T] > S): T > (S & Aborts[E]) =
+      v > this
 
-    def toEither[T, S, B >: E](v: T > (S | Aborts[B])): Either[B, T] > S =
-      run[T, S, B](v).map((_: Abort[B, T]).toEither)
+    def toOption[T, S](v: T > (S & Aborts[E])): Option[T] > S =
+      run[T, S](v).map((_: Abort[E, T]).toOption)
 
-    def catching[T, S](f: => T > S)(using E => Throwable): T > (S | Aborts[E]) =
+    def toEither[T, S](v: T > (S & Aborts[E])): Either[E, T] > S =
+      run[T, S](v).map((_: Abort[E, T]).toEither)
+
+    def catching[T, S](f: => T > S)(using E => Throwable): T > (S & Aborts[E]) =
       Tries.run(f).map {
-        case Failure(ex) if _tag.closestClass.isAssignableFrom(ex.getClass) =>
+        case Failure(ex) if tag.closestClass.isAssignableFrom(ex.getClass) =>
           val v: Abort[E, T] = Fail(ex.asInstanceOf[E])
           v > Aborts[E]
         case v =>
@@ -66,7 +69,7 @@ object aborts {
     override def accepts(other: Effect[_]) =
       other match {
         case other: Aborts[_] =>
-          other.tag.tag == tag.tag || other.tag.tag <:< tag.tag
+          other.tag.tag == tag.tag
         case _ =>
           false
       }
@@ -82,13 +85,13 @@ object aborts {
   }
 
   /*inline(1)*/
-  given [E: Tag]: Handler[[T] =>> Abort[E, T], Aborts[E]] =
+  private given [E: Tag]: Handler[[T] =>> Abort[E, T], Aborts[E]] =
     new Handler[[T] =>> Abort[E, T], Aborts[E]] {
       def pure[U](v: U) = v
       def apply[U, V, S2](
           m: Abort[E, U],
-          f: U => V > (S2 | Aborts[E])
-      ): V > (S2 | Aborts[E]) =
+          f: U => V > (S2 & Aborts[E])
+      ): V > (S2 & Aborts[E]) =
         m match {
           case f: Fail[E] @unchecked =>
             val v: Abort[E, V] = f

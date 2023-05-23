@@ -51,7 +51,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
 
   given Conversion[Assertion, Future[Assertion]] = (a: Assertion) => Future.successful(a)
 
-  def runJVM(v: => Assertion > (IOs | Fibers | Resources | Clocks | Consoles | Randoms | Timers))
+  def runJVM(v: => Assertion > (IOs & Fibers & Resources & Clocks & Consoles & Randoms & Timers))
       : Future[Assertion] =
     if (Platform.isJVM) {
       run(v)
@@ -59,7 +59,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
       Future.successful(succeed)
     }
 
-  def runJS(v: => Assertion > (IOs | Fibers | Resources | Clocks | Consoles | Randoms | Timers))
+  def runJS(v: => Assertion > (IOs & Fibers & Resources & Clocks & Consoles & Randoms & Timers))
       : Future[Assertion] =
     if (Platform.isJS) {
       run(v)
@@ -67,15 +67,20 @@ class KyoTest extends AsyncFreeSpec with Assertions {
       Future.successful(succeed)
     }
 
-  def run(v: => Assertion > (IOs | Fibers | Resources | Clocks | Consoles | Randoms | Timers))
+  def run(v: => Assertion > (IOs & Fibers & Resources & Clocks & Consoles & Randoms & Timers))
       : Future[Assertion] =
+    val v1 = KyoApp.runFiber(timeout)(v)
+    val v2 = v1.toFuture
     IOs.run(KyoApp.runFiber(timeout)(v).toFuture)
 
   class Check[T, S](equals: Boolean)(using t: Tag[T], s: Tag[S], eq: Eq[T]) {
-    def apply[T2, S2](value: T2 > S2, expected: Any)(using t2: Tag[T2], s2: Tag[S2]): Assertion =
+    def apply[T2, S2](value: T2 > S2, expected: Any)(using
+        t2: Tag[T2],
+        s2: Tag[S2]
+    ): Assertion =
       assert(t.tag =:= t2.tag, "value tag doesn't match")
       assert(
-          s2.tag =:= Tag[Any].tag || s.tag =:= Tag[Nothing].tag || s.tag =:= s2.tag,
+          s2.tag =:= Tag[Any].tag || s.tag =:= Tag[Any].tag || s.tag =:= s2.tag,
           "effects tag doesn't match"
       )
       if (equals)

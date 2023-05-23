@@ -18,7 +18,7 @@ object all {
   export concurrent.adders._
   export concurrent.atomics._
   export concurrent.channels._
-  export concurrent.fibers._
+  export concurrent.fibers.{transform => _, _}
   export concurrent.latches._
   export concurrent.meters._
   export concurrent.queues._

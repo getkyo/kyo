@@ -19,7 +19,7 @@ class sumsTest extends kyoTest.KyoTest {
         v3 <- Sums[Int].get
       } yield List(v1, v2, v3)
 
-    assert(IOs.run(Sums[Int].drop(v)) == List(1, 2, 3))
+    assert(IOs.run(Sums[Int].run(v)) == List(1, 2, 3))
   }
   "string" in {
     val v: List[String] > Sums[String] =
@@ -31,11 +31,11 @@ class sumsTest extends kyoTest.KyoTest {
         _  <- Sums[String].add("3")
         v3 <- Sums[String].get
       } yield List(v1, v2, v3)
-    val res = IOs.run(Sums[String].drop(v))
+    val res = IOs.run(Sums[String].run(v))
     assert(res == List("1", "12", "123"))
   }
   "int and string" in {
-    val v: (Int, String) > (Sums[Int] | Sums[String]) =
+    val v: (Int, String) > (Sums[Int] & Sums[String]) =
       for {
         _  <- Sums[Int].add(1)
         _  <- Sums[String].add("1")
@@ -47,16 +47,16 @@ class sumsTest extends kyoTest.KyoTest {
         v2 <- Sums[String].get
       } yield (v1, v2)
     val res: (Int, String) =
-      IOs.run(Sums[String].drop(Sums[Int].drop(v)))
+      IOs.run(Sums[String].run(Sums[Int].run(v)))
     assert(res == (3, "123"))
   }
   "initial value" in {
     val r: Int =
-      IOs.run(Sums[Int].drop(Sums[Int].get))
+      IOs.run(Sums[Int].run(Sums[Int].get))
     assert(r == 0)
 
     val s: String =
-      IOs.run(Sums[String].drop(Sums[String].get))
+      IOs.run(Sums[String].run(Sums[String].get))
     assert(s == "")
   }
   "list" in {
@@ -69,7 +69,7 @@ class sumsTest extends kyoTest.KyoTest {
         _  <- Sums[List[Int]].add(List(3))
         v3 <- Sums[List[Int]].get
       } yield (v1, v2, v3)
-    val res = IOs.run(Sums[List[Int]].drop(v))
+    val res = IOs.run(Sums[List[Int]].run(v))
     assert(res == (List(1), List(1, 2), List(1, 2, 3)))
   }
 }

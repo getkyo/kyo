@@ -311,39 +311,35 @@ class fibersTest extends KyoTest {
   }
 
   "with resources" - {
-    val resource1 = new JAtomicInteger with Closeable {
-      def close(): Unit =
-        set(-1)
-    }
-    val resource2 = new JAtomicInteger with Closeable {
+    class Resource extends JAtomicInteger with Closeable {
       def close(): Unit =
         set(-1)
     }
     "outer" in run {
-      resource1.set(0)
-      resource2.set(0)
-      val io1: (JAtomicInteger & Closeable, Set[Int]) > (Resources | IOs | Fibers) =
+      val resource1 = new Resource
+      val resource2 = new Resource
+      val io1: (JAtomicInteger & Closeable, Set[Int]) > (Resources & IOs & Fibers) =
         for {
-          r        <- Resources.acquire(resource1)
-          v1       <- IOs(r.getAndIncrement())
-          (v2, v3) <- Fibers.fork(r.getAndIncrement(), r.getAndIncrement())
-        } yield (r, Set(v1, v2, v3))
+          r  <- Resources.acquire(resource1)
+          v1 <- IOs(r.incrementAndGet())
+          v2 <- Fibers.fork(r.incrementAndGet())
+        } yield (r, Set(v1, v2))
       Resources.run(io1).map { case (r, v) =>
-        assert(v == Set(0, 1, 2))
+        assert(v == Set(1, 2))
         assert(r.get() == -1)
       }
     }
     "inner" in run {
-      resource1.set(0)
-      resource2.set(0)
+      val resource1 = new Resource
+      val resource2 = new Resource
       Fibers.fork(Resources.run(Resources.acquire(resource1).map(_.incrementAndGet()))).map { r =>
         assert(r == 1)
         assert(resource1.get() == -1)
       }
     }
     "multiple" in run {
-      resource1.set(0)
-      resource2.set(0)
+      val resource1 = new Resource
+      val resource2 = new Resource
       Fibers.fork(
           Resources.run(Resources.acquire(resource1).map(_.incrementAndGet())),
           Resources.run(Resources.acquire(resource2).map(_.incrementAndGet()))
@@ -354,17 +350,17 @@ class fibersTest extends KyoTest {
       }
     }
     "mixed" in run {
-      resource1.set(0)
-      resource2.set(0)
-      val io1: (Int, Int, Int, Int) > (Resources | (IOs | (IOs | Fibers))) =
+      val resource1 = new Resource
+      val resource2 = new Resource
+      val io1: Set[Int] > (Resources & (IOs & (IOs & Fibers))) =
         for {
-          r        <- Resources.acquire(resource1)
-          v1       <- IOs(r.incrementAndGet())
-          (v2, v3) <- Fibers.fork(r.incrementAndGet(), r.incrementAndGet())
-          v4       <- Resources.run(Resources.acquire(resource2).map(_.incrementAndGet()))
-        } yield (v1, v2, v3, v4)
+          r  <- Resources.acquire(resource1)
+          v1 <- IOs(r.incrementAndGet())
+          v2 <- Fibers.fork(r.incrementAndGet())
+          v3 <- Resources.run(Resources.acquire(resource2).map(_.incrementAndGet()))
+        } yield Set(v1, v2, v3)
       Resources.run(io1).map { r =>
-        assert(r == (1, 2, 3, 1) || r == (1, 3, 2, 1))
+        assert(r == Set(1, 2))
         assert(resource1.get() == -1)
         assert(resource2.get() == -1)
       }
@@ -408,7 +404,7 @@ class fibersTest extends KyoTest {
   }
 
   "stack safety" in run {
-    def loop(i: Int): Assertion > (IOs | Fibers) =
+    def loop(i: Int): Assertion > (IOs & Fibers) =
       if (i > 0) {
         Fibers.fork(List.fill(1000)(())).map(_ => loop(i - 1))
       } else {

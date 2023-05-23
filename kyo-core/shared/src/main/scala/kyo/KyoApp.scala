@@ -18,23 +18,22 @@ trait KyoApp {
     IOs.run(KyoApp.runFiber(Duration.Inf)(run(args.toList)).block)
 
   def run(args: List[String])
-      : Unit > (IOs | Fibers | Resources | Clocks | Consoles | Randoms | Timers | Aspects)
+      : Unit > (IOs & Fibers & Resources & Clocks & Consoles & Randoms & Timers & Aspects)
 
 }
 
 object KyoApp {
-  def runFiber[T](timeout: Duration)(v: T > (IOs | Fibers | Resources | Clocks | Consoles |
-    Randoms |
-    Timers | Aspects)): Fiber[T] = {
-    val v1: T > (IOs | Fibers | Resources | Clocks | Consoles | Timers | Aspects) = Randoms.run(v)
-    val v2: T > (IOs | Fibers | Resources | Clocks | Timers | Aspects)            = Consoles.run(v1)
-    val v3: T > (IOs | Fibers | Resources | Timers | Aspects)                     = Clocks.run(v2)
-    val v4: T > (IOs | Fibers | Timers | Aspects) = Resources.run(v3)
-    val v5: T > (IOs | Fibers | Timers)           = Aspects.run(v4)
-    val v6: T > (IOs | Fibers)                    = Timers.run(v5)
-    val v7: T > (IOs | Fibers | Timers)           = Fibers.timeout(timeout)(v6)
-    val v8: T > (IOs | Fibers)                    = Timers.run(v6)
-    val v9: Fiber[T] > Nothing                    = IOs.lazyRun(v8) << Fibers
+  def runFiber[T](timeout: Duration)(v: T > (IOs & Fibers & Resources & Clocks & Consoles &
+    Randoms & Timers & Aspects)): Fiber[T] = {
+    val v1: T > (IOs & Fibers & Resources & Clocks & Consoles & Timers & Aspects) = Randoms.run(v)
+    val v2: T > (IOs & Fibers & Resources & Clocks & Timers & Aspects)            = Consoles.run(v1)
+    val v3: T > (IOs & Fibers & Resources & Timers & Aspects)                     = Clocks.run(v2)
+    val v4: T > (IOs & Fibers & Timers & Aspects) = Resources.run(v3)
+    val v5: T > (IOs & Fibers & Timers)           = Aspects.run(v4)
+    val v6: T > (IOs & Fibers)                    = Timers.run(v5)
+    val v7: T > (IOs & Fibers & Timers)           = Fibers.timeout(timeout)(v6)
+    val v8: T > (IOs & Fibers)                    = Timers.run(v6)
+    val v9                                        = IOs.lazyRun(v8) << Fibers
     v9
   }
 }

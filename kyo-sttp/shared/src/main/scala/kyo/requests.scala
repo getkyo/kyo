@@ -32,29 +32,29 @@ object requests {
     }
   }
 
-  opaque type Requests = Envs[Backend] | Fibers | IOs
+  opaque type Requests = Envs[Backend] & Fibers & IOs
 
   object Requests {
 
-    def run[T, S](b: Backend)(v: T > (S | Requests)): T > (S | IOs | Fibers) =
+    def run[T, S](b: Backend)(v: T > (S & Requests)): T > (S & IOs & Fibers) =
       Envs[Backend].let(b)(v)
 
-    def run[T, S](v: T > (S | Requests))(using b: Backend): T > (S | IOs | Fibers) =
+    def run[T, S](v: T > (S & Requests))(using b: Backend): T > (S & IOs & Fibers) =
       run(b)(v)
 
-    def iso[T, S](v: T > (S | Fibers | IOs | Requests)): T > (S | Requests) =
+    def iso[T, S](v: T > (S & Fibers & IOs & Requests)): T > (S & Requests) =
       v
 
-    def apply[T, S](req: Request[T, Any] > S): Response[T] > (S | Requests) =
+    def apply[T, S](req: Request[T, Any] > S): Response[T] > (S & Requests) =
       fiber(req).map(_.join)
 
-    def fiber[T, S](req: Request[T, Any] > S): Fiber[Response[T]] > (S | Requests) =
+    def fiber[T, S](req: Request[T, Any] > S): Fiber[Response[T]] > (S & Requests) =
       Envs[Backend].get.map(b => req.map(b.send))
 
-    def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (S | Requests) =
+    def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (S & Requests) =
       fiber(f).map(_.join)
 
-    def fiber[T, S](f: BasicRequest => Request[T, Any] > S): Fiber[Response[T]] > (S | Requests) =
+    def fiber[T, S](f: BasicRequest => Request[T, Any] > S): Fiber[Response[T]] > (S & Requests) =
       fiber(f(basicRequest))
   }
 }

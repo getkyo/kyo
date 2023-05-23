@@ -31,9 +31,9 @@ class EnqueueDequeueBench extends Bench[Unit] {
 
   def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
 
-  override def kyoBenchFiber(): Unit > (IOs | Fibers) = {
+  override def kyoBenchFiber(): Unit > (IOs & Fibers) = {
 
-    def loop(c: Channels.Blocking[Unit], i: Int): Unit > (IOs | Fibers) =
+    def loop(c: Channels.Blocking[Unit], i: Int): Unit > (IOs & Fibers) =
       if (i >= depth)
         IOs.unit
       else

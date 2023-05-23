@@ -10,7 +10,7 @@ class envsTest extends KyoTest {
     val v1 =
       Envs[Int].get.map(_ + 1)
     val v2: Int > Envs[Int] = v1
-    checkEquals[Int, Nothing](
+    checkEquals[Int, Any](
         Envs[Int].let(1)(v2),
         2
     )
@@ -36,7 +36,7 @@ class envsTest extends KyoTest {
       val a =
         Envs[Service1].get.map(_(1))
       val b: Int > Envs[Service1] = a
-      checkEquals[Int, Nothing](
+      checkEquals[Int, Any](
           Envs[Service1].let(service1)(a),
           2
       )
@@ -46,16 +46,16 @@ class envsTest extends KyoTest {
         Envs[Service1].get.map(_(1)).map { i =>
           Envs[Service2].get.map(_(i))
         }
-      val v: Int > (Envs[Service1] | Envs[Service2]) = a
+      val v: Int > (Envs[Service1] & Envs[Service2]) = a
       "same handling order" in {
-        checkEquals[Int, Nothing](
-            Envs[Service1].let(service1)(Envs[Service2].let(service2)(v)),
+        checkEquals[Int, Any](
+            Envs[Service1].let[Int, Envs[Service2]](service1)(Envs[Service2].let(service2)(v)),
             4
         )
       }
       "reverse handling order" in {
-        checkEquals[Int, Nothing](
-            Envs[Service2].let(service2)(Envs[Service1].let(service1)(v)),
+        checkEquals[Int, Any](
+            Envs[Service2].let[Int, Envs[Service1]](service2)(Envs[Service1].let(service1)(v)),
             4
         )
       }
@@ -67,9 +67,9 @@ class envsTest extends KyoTest {
         )
         val v1: Service1 > Envs[Service2] = s1
         val v2 =
-          Envs[Service1].let(service1)(v)
+          Envs[Service1].let[Int, Envs[Service2]](service1)(v)
         val v3: Int > Envs[Service2] = v2
-        checkEquals[Int, Nothing](
+        checkEquals[Int, Any](
             Envs[Service2].let(service2)(v3),
             4
         )
@@ -103,8 +103,8 @@ class envsTest extends KyoTest {
       "continue" in {
         val a =
           Envs[Service1].get.map(_(1))
-        val b: Int > (Envs[Service1] | Options) = a
-        checkEquals[Option[Int], Nothing](
+        val b: Int > (Envs[Service1] & Options) = a
+        checkEquals[Option[Int], Any](
             Envs[Service1].let(service1)(a) < Options,
             Some(2)
         )
@@ -112,8 +112,8 @@ class envsTest extends KyoTest {
       "short circuit" in {
         val a =
           Envs[Service1].get.map(_(0))
-        val b: Int > (Envs[Service1] | Options) = a
-        checkEquals[Option[Int], Nothing](
+        val b: Int > (Envs[Service1] & Options) = a
+        checkEquals[Option[Int], Any](
             Envs[Service1].let(service1)(a) < Options,
             None
         )
@@ -125,9 +125,9 @@ class envsTest extends KyoTest {
           Envs[Service1].get.map(_(1)).map { i =>
             Envs[Service2].get.map(_(i))
           }
-        val v: Int > (Envs[Service1] | Envs[Service2] | Options) = a
+        val v: Int > (Envs[Service1] & Envs[Service2] & Options) = a
         "same handling order" in {
-          checkEquals[Option[Int], Nothing](
+          checkEquals[Option[Int], Any](
               (Envs[Service1].let(service1)(
                   Envs[Service2].let(service2)(v)
               ): Int > Options) < Options,
@@ -135,7 +135,7 @@ class envsTest extends KyoTest {
           )
         }
         "reverse handling order" in {
-          checkEquals[Option[Int], Nothing](
+          checkEquals[Option[Int], Any](
               (Envs[Service2].let(service2)(
                   Envs[Service1].let(service1)(v)
               ): Int > Options) < Options,
@@ -149,8 +149,8 @@ class envsTest extends KyoTest {
             }
           )
           val v1: Service1 > Envs[Service2]        = s1
-          val v2: Int > (Envs[Service2] | Options) = Envs[Service1].let(service1)(v)
-          checkEquals[Option[Int], Nothing](
+          val v2: Int > (Envs[Service2] & Options) = Envs[Service1].let(service1)(v)
+          checkEquals[Option[Int], Any](
               Envs[Service2].let(service2)(v2) < Options,
               Some(3)
           )

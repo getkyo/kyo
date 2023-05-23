@@ -49,14 +49,14 @@ class PingPongBench extends Bench[Unit] {
 
   def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
 
-  override def kyoBenchFiber(): Unit > (IOs | Fibers) = {
+  override def kyoBenchFiber(): Unit > (IOs & Fibers) = {
     import kyo.concurrent.queues._
 
-    def repeat[A](n: Int)(io: A > (IOs | Fibers)): A > (IOs | Fibers) =
+    def repeat[A](n: Int)(io: A > (IOs & Fibers)): A > (IOs & Fibers) =
       if (n <= 1) io
       else io.flatMap(_ => repeat(n - 1)(io))
 
-    def iterate(promise: Promise[Unit], n: Int): Unit > (IOs | Fibers) =
+    def iterate(promise: Promise[Unit], n: Int): Unit > (IOs & Fibers) =
       for {
         ref  <- Atomics.initInt(n)
         chan <- Channels.blocking[Unit](1)

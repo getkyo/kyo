@@ -18,8 +18,8 @@ import kyo.chatgpt.ais
 private[kyo] abstract class Mode(val ais: Set[AI])
     extends Cut[(AI, String), String, AIs] {
 
-  def apply[S2, S3](v: (AI, String) > S2)(next: ((AI, String)) => String > (S3 | Aspects))
-      : String > (AIs | S2 | S3 | Aspects) =
+  def apply[S2, S3](v: (AI, String) > S2)(next: ((AI, String)) => String > (S3 & Aspects))
+      : String > (AIs & S2 & S3 & Aspects) =
     AIs.iso {
       v.map {
         case tup @ (ai, msg) =>
@@ -40,5 +40,5 @@ private[kyo] abstract class Mode(val ais: Set[AI])
   def apply[S](
       ai: AI,
       msg: String
-  )(next: String => String > (S | Aspects)): String > (S | Requests | Tries | IOs | Aspects | AIs)
+  )(next: String => String > (S & Aspects)): String > (S & Requests & Tries & IOs & Aspects & AIs)
 }

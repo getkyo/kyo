@@ -20,23 +20,22 @@ object envs {
       val v: Env[E, E] = Input
       v > this
 
-    def let[T, S, S2](es: E > S)(v: T > (S2 | Envs[E])): T > (S | S2) =
-      es.map { e =>
-        given Handler[[T] =>> Env[E, T], Envs[E]] with {
-          def pure[U](v: U) = v
-          def apply[U, V, S2](
-              m: Env[E, U],
-              f: U => V > (S2 | Envs[E])
-          ): V > (S2 | Envs[E]) =
-            m match {
-              case Input =>
-                f(e.asInstanceOf[U])
-              case _ =>
-                f(m.asInstanceOf[U])
-            }
-        }
-        (v < this).asInstanceOf[T > S]
+    def let[T, S](e: E)(v: T > (Envs[E] & S)): T > S = {
+      given Handler[[T] =>> Env[E, T], Envs[E]] with {
+        def pure[U](v: U) = v
+        def apply[U, V, S2](
+            m: Env[E, U],
+            f: U => V > (S2 & Envs[E])
+        ): V > (S2 & Envs[E]) =
+          m match {
+            case Input =>
+              f(e.asInstanceOf[U])
+            case _ =>
+              f(m.asInstanceOf[U])
+          }
       }
+      (v < this).asInstanceOf[T > S]
+    }
 
     override def accepts(other: Effect[_]) =
       other match {

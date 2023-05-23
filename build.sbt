@@ -128,6 +128,17 @@ lazy val `kyo-core` =
         `kyo-core-settings`
     )
 
+lazy val `kyo-scala2` =
+  crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Pure)
+    .settings(
+        scalaVersion := "2.13.10",
+        scalacOptions += "-Ytasty-reader"
+    )
+    .in(file("kyo-scala2"))
+    .dependsOn(`kyo-core`)
+
 lazy val `kyo-core-opt1` =
   crossProject(JVMPlatform)
     .withoutSuffixFor(JVMPlatform)

@@ -135,7 +135,7 @@ object UI extends App {
   val ai   = IOs.run(AIs.init)
   val chan = IOs.run(Channels.blocking[(String, scala.List[ModeInfo], Promise[String])](1024))
 
-  def withModes[T, S](ai: AI, modes: scala.List[ModeInfo], v: T > S): T > (S | AIs | Aspects) =
+  def withModes[T, S](ai: AI, modes: scala.List[ModeInfo], v: T > S): T > (S & AIs & Aspects) =
     modes match {
       case Nil => v
       case h :: t =>
@@ -159,7 +159,7 @@ object UI extends App {
             _               <- p.complete(resp)
           } yield ()
         }
-      def loop(): Unit > (Fibers | AIs) =
+      def loop(): Unit > (Fibers & AIs) =
         run.map(_ => loop())
       Consoles.run {
         Tries.run {

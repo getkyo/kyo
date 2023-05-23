@@ -5,7 +5,6 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 import ios._
-import frames._
 import envs._
 import sums._
 
@@ -23,8 +22,8 @@ object resources {
       lazy val v = resource
       Sums[Finalizer].add(() => v.close()).map(_ => v)
 
-    def run[T, S](v: T > (S | Resources)): T > (S | IOs) =
-      Sums[Finalizer].drop(v)
+    def run[T, S](v: T > (S & Resources)): T > (S & IOs) =
+      Sums[Finalizer].run(v)
   }
 
   private abstract class Finalizer {

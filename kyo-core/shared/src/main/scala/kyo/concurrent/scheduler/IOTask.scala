@@ -18,7 +18,7 @@ private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
   /*inline(2)*/
   def apply[T](
-      /*inline(2)*/ v: T > (IOs | Fibers),
+      /*inline(2)*/ v: T > (IOs & Fibers),
       st: Locals.State,
       ensures: (() => Unit) | ArrayDeque[() => Unit] = null,
       runtime: Int = 0
@@ -52,7 +52,7 @@ private[kyo] object IOTask {
 }
 
 private[kyo] final class IOTask[T](
-    private var curr: T > (IOs | Fibers),
+    private var curr: T > (IOs & Fibers),
     private val st: Locals.State,
     private var ensures: (() => Unit) | ArrayDeque[() => Unit] = null,
     private var runtime: Int
@@ -73,7 +73,7 @@ private[kyo] final class IOTask[T](
   def apply(): Boolean =
     preempting
 
-  @tailrec private def eval(start: Long, curr: T > (IOs | Fibers)): T > (IOs | Fibers) =
+  @tailrec private def eval(start: Long, curr: T > (IOs & Fibers)): T > (IOs & Fibers) =
     def finalize() = {
       ensures match {
         case null =>
@@ -97,9 +97,9 @@ private[kyo] final class IOTask[T](
       }
     } else {
       curr match {
-        case kyo: Kyo[IO, IOs, Unit, T, IOs | Fibers] @unchecked if (kyo.effect eq IOs) =>
+        case kyo: Kyo[IO, IOs, Unit, T, IOs & Fibers] @unchecked if (kyo.effect eq IOs) =>
           eval(start, kyo((), this, st))
-        case kyo: Kyo[IOPromise, Fibers, Any, T, IOs | Fibers] @unchecked
+        case kyo: Kyo[IOPromise, Fibers, Any, T, IOs & Fibers] @unchecked
             if (kyo.effect eq Fibers) =>
           this.interrupts(kyo.value)
           runtime += (Coordinator.tick() - start).asInstanceOf[Int]
@@ -125,7 +125,7 @@ private[kyo] final class IOTask[T](
       }
     } catch {
       case ex if (NonFatal(ex)) =>
-        complete(IOs[T, Nothing](throw ex))
+        complete(IOs[T, Any](throw ex))
         curr = nullIO
     }
   }

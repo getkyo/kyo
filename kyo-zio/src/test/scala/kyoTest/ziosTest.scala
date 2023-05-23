@@ -22,7 +22,7 @@ import scala.annotation.targetName
 class ziosTest extends KyoTest {
 
   @targetName("runZIO")
-  def run(v: => Assertion > (IOs | Fibers | ZIOs)): Future[Assertion] =
+  def run(v: => Assertion > (IOs & Fibers & ZIOs)): Future[Assertion] =
     zio.Unsafe.unsafe(implicit u =>
       zio.Runtime.default.unsafe.runToFuture(
           KyoZioApp.runTask(v)
@@ -30,7 +30,7 @@ class ziosTest extends KyoTest {
     )
 
   "aborts" in run {
-    val a: Int > (Aborts[String] | ZIOs) = ZIOs(ZIO.fail("error"))
+    val a: Int > (Aborts[String] & ZIOs) = ZIOs(ZIO.fail("error"))
     Aborts[String].toOption(a).map(opt => assert(opt.isEmpty))
   }
 

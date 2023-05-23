@@ -2,7 +2,6 @@ package kyo
 
 import org.slf4j.LoggerFactory
 
-import frames._
 import ios._
 
 object loggers {

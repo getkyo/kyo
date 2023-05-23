@@ -8,7 +8,7 @@ import scala.concurrent.Future
 
 class aspectsTest extends KyoTest {
 
-  private def run(v: Assertion > (Aspects | IOs)) = Future.successful(IOs.run(Aspects.run(v)))
+  private def run(v: Assertion > (Aspects & IOs)) = Future.successful(IOs.run(Aspects.run(v)))
 
   "one aspect" - {
     val aspect       = Aspects.init[Int, Int, IOs]
@@ -20,7 +20,7 @@ class aspectsTest extends KyoTest {
 
     "with cut" in run {
       val cut = new Cut[Int, Int, IOs] {
-        def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 | Aspects)) =
+        def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 & Aspects)) =
           v.map(v => f(v + 1))
       }
       aspect.let(cut) {
@@ -30,11 +30,11 @@ class aspectsTest extends KyoTest {
 
     "nested cuts" in run {
       val cut1 = new Cut[Int, Int, IOs] {
-        def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 | Aspects)) =
+        def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 & Aspects)) =
           v.map(v => f(v * 3))
       }
       val cut2 = new Cut[Int, Int, IOs] {
-        def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 | Aspects)) =
+        def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 & Aspects)) =
           v.map(v => f(v + 5))
       }
       aspect.let(cut1) {
@@ -56,11 +56,11 @@ class aspectsTest extends KyoTest {
       } yield (v1, v2)
 
     val cut1 = new Cut[Int, Int, IOs] {
-      def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 | Aspects)) =
+      def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 & Aspects)) =
         v.map(v => f(v * 3))
     }
     val cut2 = new Cut[Int, Int, IOs] {
-      def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 | Aspects)) =
+      def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 & Aspects)) =
         v.map(v => f(v + 5))
     }
     aspect1.let(cut1) {
@@ -81,7 +81,7 @@ class aspectsTest extends KyoTest {
       } yield (v1, v2)
 
     val cut = new Cut[Int, Int, IOs] {
-      def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 | Aspects)) =
+      def apply[S1, S2](v: Int > S1)(f: Int => Int > (S2 & Aspects)) =
         v.map(v => f(v * 3))
     }
     aspect1.let(cut) {

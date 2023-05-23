@@ -1,5 +1,6 @@
 package kyo
 
+import scala.annotation.targetName
 import scala.quoted._
 import cps.await
 import cps.async
@@ -13,6 +14,7 @@ object direct {
   private inline given kyoCpsMonad[S]: KyoCpsMonad[S] = KyoCpsMonad[S]
 
   transparent inline def defer[T](inline f: T) = ${ impl[T]('f) }
+
   inline def await[T, S](v: T > S): T =
     compiletime.error("`await` must be used within a `defer` block")
 
@@ -23,10 +25,21 @@ object direct {
     var effects = List.empty[Type[_]]
 
     Trees.traverse(f.asTerm) {
-      case expr if (expr.isExprOf[>[Any, Any]]) =>
-        error("Kyo computations must used within a `await` block: " + expr.show, expr)
-      case '{ await[t, s]($v) } =>
+      case x =>
+        if (x.show.startsWith("kyo.direct.await"))
+          x match {
+            case '{ kyo.direct.await[t, s]($v) } =>
+              info("match " + x.show)
+            case _ =>
+              info("no match " + Printer.TreeCode.show(x.asTerm))
+          }
+    }
+
+    Trees.traverse(f.asTerm) {
+      case '{ kyo.direct.await[t, s]($v) } =>
         effects ::= Type.of[s]
+      case expr if (expr.isExprOf[>[Any, Any]]) =>
+        error("Kyo computations must used within an `await` block: " + expr.show, expr)
     }
 
     val s =
@@ -35,7 +48,7 @@ object direct {
         .flatMap {
           case '[s] =>
             TypeRepr.of[s] match {
-              case OrType(a, b) =>
+              case AndType(a, b) =>
                 List(a.asType, b.asType)
               case _ =>
                 List(Type.of[s])
@@ -43,11 +56,11 @@ object direct {
         }.sortBy {
           case '[t] => TypeTree.of[t].show
         } match {
-        case Nil => Type.of[Nothing]
+        case Nil => Type.of[Any]
         case l =>
           l.reduce {
             case ('[t1], '[t2]) =>
-              Type.of[t1 | t2]
+              Type.of[t1 & t2]
           }
       }
 
@@ -55,14 +68,14 @@ object direct {
       case '[s] =>
         val body =
           Trees.transform(f.asTerm) {
-            case '{ await[t, s2]($v) } =>
+            case '{ kyo.direct.await[t, s2]($v) } =>
               '{
                 cps.await[[T] =>> T > s, t, [T] =>> T > s](${ v.asExprOf[t > s] })
               }.asTerm
           }
 
         '{
-          given KyoCpsMonad[s] = kyoCpsMonad[s]
+          given KyoCpsMonad[s] = KyoCpsMonad[s]
           async[[U] =>> U > s] {
             ${ body.asExprOf[T] }
           }: T > s

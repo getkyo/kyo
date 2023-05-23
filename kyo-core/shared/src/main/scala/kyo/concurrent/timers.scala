@@ -109,31 +109,31 @@ object timers {
   opaque type Timers = Envs[Timer]
 
   object Timers {
-    def run[T, S1, S2](t: Timer > S1)(f: => T > (S2 | Timers)): T > (S1 | S2) =
+    def run[T, S1, S2](t: Timer > S1)(f: => T > (S2 & Timers)): T > (S1 & S2) =
+      t.map(t => Envs[Timer].let(t)(f))
+    def run[T, S](f: => T > (S & Timers))(using t: Timer): T > S =
       Envs[Timer].let(t)(f)
-    def run[T, S](f: => T > (S | Timers))(using t: Timer): T > S =
-      Envs[Timer].let(t)(f)
-    def shutdown: Unit > (Timers | IOs) =
+    def shutdown: Unit > (Timers & IOs) =
       Envs[Timer].get.map(_.shutdown)
-    def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > (Timers | IOs) =
+    def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > (Timers & IOs) =
       Envs[Timer].get.map(_.schedule(delay)(f))
     def scheduleAtFixedRate(
         period: Duration
-    )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
+    )(f: => Unit > IOs): TimerTask > (Timers & IOs) =
       scheduleAtFixedRate(Duration.Zero, period)(f)
     def scheduleAtFixedRate(
         initialDelay: Duration,
         period: Duration
-    )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
+    )(f: => Unit > IOs): TimerTask > (Timers & IOs) =
       Envs[Timer].get.map(_.scheduleAtFixedRate(initialDelay, period)(f))
     def scheduleWithFixedDelay(
         period: Duration
-    )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
+    )(f: => Unit > IOs): TimerTask > (Timers & IOs) =
       scheduleWithFixedDelay(Duration.Zero, period)(f)
     def scheduleWithFixedDelay(
         initialDelay: Duration,
         period: Duration
-    )(f: => Unit > IOs): TimerTask > (Timers | IOs) =
+    )(f: => Unit > IOs): TimerTask > (Timers & IOs) =
       Envs[Timer].get.map(_.scheduleWithFixedDelay(initialDelay, period)(f))
   }
 }
