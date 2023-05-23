@@ -16,7 +16,7 @@ object core {
     def accepts(other: Effect[_]): Boolean = this eq other
   }
 
-  infix opaque type >[+T, -S] = Any
+  infix opaque type >[+T, -S] = Any // T | AKyo[T, S]
 
   abstract class Handler[M[_], E <: Effect[M]] {
     def pure[T](v: T): M[T]

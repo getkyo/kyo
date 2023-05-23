@@ -11,7 +11,7 @@ import core._
 object envs {
 
   private case object Input
-  opaque type Env[E, +T] = T | Input.type
+  opaque type Env[E, +T] = Any // T | Input.type
 
   final class Envs[E] private[envs] (using private val tag: Tag[_])
       extends Effect[[T] =>> Env[E, T]] {

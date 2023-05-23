@@ -14,7 +14,7 @@ import tries._
 object aborts {
 
   private case class Fail[E](e: E)
-  opaque type Abort[E, +T] = T | Fail[E]
+  opaque type Abort[E, +T] = Any // T | Fail[E]
 
   object Abort {
     /*inline(1)*/

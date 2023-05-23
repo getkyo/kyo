@@ -20,7 +20,7 @@ private[kyo] object IOTask {
   def apply[T](
       /*inline(2)*/ v: T > (IOs & Fibers),
       st: Locals.State,
-      ensures: (() => Unit) | ArrayDeque[() => Unit] = null,
+      ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
       runtime: Int = 0
   ): IOTask[T] =
     val f = new IOTask[T](v, st, ensures, runtime)
@@ -54,7 +54,7 @@ private[kyo] object IOTask {
 private[kyo] final class IOTask[T](
     private var curr: T > (IOs & Fibers),
     private val st: Locals.State,
-    private var ensures: (() => Unit) | ArrayDeque[() => Unit] = null,
+    private var ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
     private var runtime: Int
 ) extends IOPromise[T]
     with Preempt {

@@ -16,7 +16,7 @@ object sums {
   private case class SetValue[V](v: V)
   private case object Get
 
-  opaque type Sum[V, +T] = T | AddValue[V] | SetValue[V] | Get.type
+  opaque type Sum[V, +T] = Any // T | AddValue[V] | SetValue[V] | Get.type
 
   final class Sums[V] private[sums] (using private val tag: Tag[_])
       extends Effect[[T] =>> Sum[V, T]] {

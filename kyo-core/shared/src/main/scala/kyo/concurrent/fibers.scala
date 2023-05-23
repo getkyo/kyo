@@ -28,7 +28,7 @@ object fibers {
 
   private case class Failed(reason: Throwable)
 
-  opaque type Fiber[T]               = T | IOPromise[T] | Failed
+  opaque type Fiber[T]               = Any // T | IOPromise[T] | Failed
   opaque type Promise[T] <: Fiber[T] = IOPromise[T]
 
   extension [T](p: Promise[T]) {
@@ -57,7 +57,7 @@ object fibers {
     def join: T > Fibers =
       fiber match {
         case promise: IOPromise[_] =>
-          promise > Fibers
+          (promise: Fiber[T] > Any) > Fibers
         case failed: Failed =>
           val f: Fiber[T] = failed
           f > Fibers
