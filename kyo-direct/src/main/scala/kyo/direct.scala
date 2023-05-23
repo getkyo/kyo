@@ -1,13 +1,14 @@
 package kyo
 
-import scala.annotation.targetName
-import scala.quoted._
-import cps.await
-import cps.async
-import cps.CpsMonadContext
 import cps.CpsAwaitable
+import cps.CpsMonadContext
 import cps.CpsMonadInstanceContext
 import cps.CpsMonadNoAdoptContext
+import cps.async
+import cps.await
+
+import scala.annotation.targetName
+import scala.quoted._
 
 object direct {
 
@@ -15,7 +16,13 @@ object direct {
 
   transparent inline def defer[T](inline f: T) = ${ impl[T]('f) }
 
-  inline def await[T, S](v: T > S): T =
+  case class Awaitable[T, S](v: T > S)
+
+  given [T, S]: Conversion[T > S, Awaitable[T, S]] with
+    /*inline(3)*/
+    def apply(v: T > S) = Awaitable(v)
+
+  inline def await[T, S](v: Awaitable[T, S]): T =
     compiletime.error("`await` must be used within a `defer` block")
 
   private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] = {
@@ -25,18 +32,7 @@ object direct {
     var effects = List.empty[Type[_]]
 
     Trees.traverse(f.asTerm) {
-      case x =>
-        if (x.show.startsWith("kyo.direct.await"))
-          x match {
-            case '{ kyo.direct.await[t, s]($v) } =>
-              info("match " + x.show)
-            case _ =>
-              info("no match " + Printer.TreeCode.show(x.asTerm))
-          }
-    }
-
-    Trees.traverse(f.asTerm) {
-      case '{ kyo.direct.await[t, s]($v) } =>
+      case '{ await[t, s]($v) } =>
         effects ::= Type.of[s]
       case expr if (expr.isExprOf[>[Any, Any]]) =>
         error("Kyo computations must used within an `await` block: " + expr.show, expr)
@@ -68,9 +64,9 @@ object direct {
       case '[s] =>
         val body =
           Trees.transform(f.asTerm) {
-            case '{ kyo.direct.await[t, s2]($v) } =>
+            case '{ await[t, s2]($v) } =>
               '{
-                cps.await[[T] =>> T > s, t, [T] =>> T > s](${ v.asExprOf[t > s] })
+                cps.await[[T] =>> T > s, t, [T] =>> T > s]($v.asInstanceOf[Awaitable[t, s]].v)
               }.asTerm
           }
 
