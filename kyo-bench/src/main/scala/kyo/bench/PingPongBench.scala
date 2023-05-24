@@ -56,7 +56,7 @@ class PingPongBench extends Bench[Unit] {
       if (n <= 1) io
       else io.flatMap(_ => repeat(n - 1)(io))
 
-    def iterate(promise: Promise[Unit], n: Int): Unit > (IOs & Fibers) =
+    def iterate(promise: Fiber.Promise[Unit], n: Int): Unit > (IOs & Fibers) =
       for {
         ref  <- Atomics.initInt(n)
         chan <- Channels.blocking[Unit](1)

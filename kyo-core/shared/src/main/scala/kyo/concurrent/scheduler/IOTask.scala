@@ -99,13 +99,19 @@ private[kyo] final class IOTask[T](
       curr match {
         case kyo: Kyo[IO, IOs, Unit, T, IOs & Fibers] @unchecked if (kyo.effect eq IOs) =>
           eval(start, kyo((), this, st))
-        case kyo: Kyo[IOPromise, Fibers, Any, T, IOs & Fibers] @unchecked
-            if (kyo.effect eq Fibers) =>
-          this.interrupts(kyo.value)
-          runtime += (Coordinator.tick() - start).asInstanceOf[Int]
-          kyo.value.onComplete { (v: Any > IOs) =>
-            val io = v.map(kyo(_, this.asInstanceOf[Safepoint[Fibers]], st))
-            this.become(IOTask(io, st, ensures, runtime))
+        case kyo: Kyo[Fiber, Fibers, Any, T, IOs & Fibers] @unchecked if (kyo.effect eq Fibers) =>
+          kyo.value.state match {
+            case promise: IOPromise[T] @unchecked =>
+              this.interrupts(promise)
+              runtime += (Coordinator.tick() - start).asInstanceOf[Int]
+              promise.onComplete { (v: Any > IOs) =>
+                val io = v.map(kyo(_, this.asInstanceOf[Safepoint[Fibers]], st))
+                this.become(IOTask(io, st, ensures, runtime))
+              }
+            case Failed(ex) =>
+              complete(IOs.fail(ex))
+            case v =>
+              complete(v.asInstanceOf[T > IOs])
           }
           nullIO
         case _ =>

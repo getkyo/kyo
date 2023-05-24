@@ -7,16 +7,12 @@ import kyo.aspects._
 
 object contexts {
 
-  opaque type Role = String
-
-  extension (r: Role) {
-    def name: String = r
-  }
+  case class Role(name: String) extends AnyVal
 
   object Role {
-    val system: Role    = "system"
-    val user: Role      = "user"
-    val assistant: Role = "assistant"
+    val system: Role    = Role("system")
+    val user: Role      = Role("user")
+    val assistant: Role = Role("assistant")
   }
 
   case class Message(

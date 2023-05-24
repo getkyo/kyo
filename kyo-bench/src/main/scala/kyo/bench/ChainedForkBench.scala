@@ -50,7 +50,7 @@ class ChainedForkBench extends Bench[Int] {
     import kyo.concurrent.fibers._
     import kyo.ios._
 
-    def iterate(p: Promise[Unit], n: Int): Unit > IOs =
+    def iterate(p: Fiber.Promise[Unit], n: Int): Unit > IOs =
       if (n <= 0) p.complete(()).unit
       else Fibers.forkFiber(iterate(p, n - 1)).unit
 

@@ -19,70 +19,39 @@ class abortsTest extends KyoTest {
   val ex1 = new Ex1
   val ex2 = new Ex2
 
-  "abort" - {
-    "toOption" in {
-      assert(Abort.success(1).toOption == Option(1))
-      assert(Abort.failure(ex1).toOption == None)
-    }
-    "toEither" in {
-      assert(Abort.success(1).toEither == Right(1))
-      assert(Abort.failure(ex1).toEither == Left(ex1))
-    }
-    "transform toOption" in {
-      checkEquals[Option[Int], Any](
-          Aborts[Ex1].run(Aborts[Ex1].get(Abort.success(1))).map(_.toOption),
-          Option(1)
-      )
-      checkEquals[Option[Int], Any](
-          Aborts[Ex1].run(Aborts[Ex1].get(Abort.failure[Ex1, Int](ex1))).map(_.toOption),
-          None
-      )
-    }
-    "transform toEither" in {
-      checkEquals[Either[Ex1, Int], Any](
-          Aborts[Ex1].run(Aborts[Ex1].get(Abort.success(1))).map(_.toEither),
-          Right(1)
-      )
-      checkEquals[Either[Ex1, Int], Any](
-          Aborts[Ex1].run(Aborts[Ex1].get(Abort.failure[Ex1, Int](ex1))).map(_.toEither),
-          Left(ex1)
-      )
-    }
-  }
-
   "pure" - {
     "handle" in {
-      checkEquals[Abort[Ex1, Int], Any](
-          Aborts[Ex1].run(Aborts[Ex1].get(Abort.success(1))),
-          Abort.success(1)
+      checkEquals[Either[Ex1, Int], Any](
+          Aborts[Ex1].run(Aborts[Ex1].get(Right(1))),
+          Right(1)
       )
     }
     "handle + transform" in {
-      checkEquals[Abort[Ex1, Int], Any](
-          Aborts[Ex1].run(Aborts[Ex1].get(Abort.success(1)).map(_ + 1)),
-          Abort.success(2)
+      checkEquals[Either[Ex1, Int], Any](
+          Aborts[Ex1].run(Aborts[Ex1].get(Right(1)).map(_ + 1)),
+          Right(2)
       )
     }
     "handle + effectful transform" in {
-      checkEquals[Abort[Ex1, Int], Any](
-          Aborts[Ex1].run(Aborts[Ex1].get(Abort.success(1)).map(i =>
-            Aborts[Ex1].get(Abort.success(i + 1))
+      checkEquals[Either[Ex1, Int], Any](
+          Aborts[Ex1].run(Aborts[Ex1].get(Right(1)).map(i =>
+            Aborts[Ex1].get(Right(i + 1))
           )),
-          Abort.success(2)
+          Right(2)
       )
     }
     "handle + transform + effectful transform" in {
-      checkEquals[Abort[Ex1, Int], Any](
-          Aborts[Ex1].run(Aborts[Ex1].get(Abort.success(1)).map(_ + 1).map(i =>
-            Aborts[Ex1].get(Abort.success(i + 1))
+      checkEquals[Either[Ex1, Int], Any](
+          Aborts[Ex1].run(Aborts[Ex1].get(Right(1)).map(_ + 1).map(i =>
+            Aborts[Ex1].get(Right(i + 1))
           )),
-          Abort.success(3)
+          Right(3)
       )
     }
     "handle + transform + failed effectful transform" in {
-      val fail = Abort.failure[Ex1, Int](ex1)
-      checkEquals[Abort[Ex1, Int], Any](
-          Aborts[Ex1].run(Aborts[Ex1].get(Abort.success(1)).map(_ + 1).map(_ =>
+      val fail = Left[Ex1, Int](ex1)
+      checkEquals[Either[Ex1, Int], Any](
+          Aborts[Ex1].run(Aborts[Ex1].get(Right(1)).map(_ + 1).map(_ =>
             Aborts[Ex1].get(fail)
           )),
           fail
@@ -92,68 +61,68 @@ class abortsTest extends KyoTest {
 
   "effectful" - {
     "success" - {
-      val v = (Abort.success(1) > Aborts[Ex1])
+      val v = (Right(1) > Aborts[Ex1])
       "handle" in {
-        checkEquals[Abort[Ex1, Int], Any](
+        checkEquals[Either[Ex1, Int], Any](
             Aborts[Ex1].run(v),
-            Abort.success(1)
+            Right(1)
         )
       }
       "handle + transform" in {
-        checkEquals[Abort[Ex1, Int], Any](
+        checkEquals[Either[Ex1, Int], Any](
             Aborts[Ex1].run(v.map(_ + 1)),
-            Abort.success(2)
+            Right(2)
         )
       }
       "handle + effectful transform" in {
-        checkEquals[Abort[Ex1, Int], Any](
-            Aborts[Ex1].run(v.map(i => Aborts[Ex1].get(Abort.success(i + 1)))),
-            Abort.success(2)
+        checkEquals[Either[Ex1, Int], Any](
+            Aborts[Ex1].run(v.map(i => Aborts[Ex1].get(Right(i + 1)))),
+            Right(2)
         )
       }
       "handle + transform + effectful transform" in {
-        checkEquals[Abort[Ex1, Int], Any](
-            Aborts[Ex1].run(v.map(_ + 1).map(i => Aborts[Ex1].get(Abort.success(i + 1)))),
-            Abort.success(3)
+        checkEquals[Either[Ex1, Int], Any](
+            Aborts[Ex1].run(v.map(_ + 1).map(i => Aborts[Ex1].get(Right(i + 1)))),
+            Right(3)
         )
       }
       "handle + transform + failed effectful transform" in {
-        val fail = Abort.failure[Ex1, Int](ex1)
-        checkEquals[Abort[Ex1, Int], Any](
+        val fail = Left[Ex1, Int](ex1)
+        checkEquals[Either[Ex1, Int], Any](
             Aborts[Ex1].run(v.map(_ + 1).map(_ => Aborts[Ex1].get(fail))),
             fail
         )
       }
     }
     "failure" - {
-      val v: Int > Aborts[Ex1] = (Abort.failure(ex1) > Aborts[Ex1])
+      val v: Int > Aborts[Ex1] = (Left(ex1) > Aborts[Ex1])
       "handle" in {
-        checkEquals[Abort[Ex1, Int], Any](
+        checkEquals[Either[Ex1, Int], Any](
             Aborts[Ex1].run(v),
-            Abort.failure(ex1)
+            Left(ex1)
         )
       }
       "handle + transform" in {
-        checkEquals[Abort[Ex1, Int], Any](
+        checkEquals[Either[Ex1, Int], Any](
             Aborts[Ex1].run(v.map(_ + 1)),
-            Abort.failure(ex1)
+            Left(ex1)
         )
       }
       "handle + effectful transform" in {
-        checkEquals[Abort[Ex1, Int], Any](
-            Aborts[Ex1].run(v.map(i => Aborts[Ex1].get(Abort.success(i + 1)))),
-            Abort.failure(ex1)
+        checkEquals[Either[Ex1, Int], Any](
+            Aborts[Ex1].run(v.map(i => Aborts[Ex1].get(Right(i + 1)))),
+            Left(ex1)
         )
       }
       "handle + transform + effectful transform" in {
-        checkEquals[Abort[Ex1, Int], Any](
-            Aborts[Ex1].run(v.map(_ + 1).map(i => Aborts[Ex1].get(Abort.success(i + 1)))),
-            Abort.failure(ex1)
+        checkEquals[Either[Ex1, Int], Any](
+            Aborts[Ex1].run(v.map(_ + 1).map(i => Aborts[Ex1].get(Right(i + 1)))),
+            Left(ex1)
         )
       }
       "handle + transform + failed effectful transform" in {
-        val fail = Abort.failure[Ex1, Int](ex1)
-        checkEquals[Abort[Ex1, Int], Any](
+        val fail = Left[Ex1, Int](ex1)
+        checkEquals[Either[Ex1, Int], Any](
             Aborts[Ex1].run(v.map(_ + 1).map(_ => Aborts[Ex1].get(fail))),
             fail
         )
@@ -169,42 +138,14 @@ class abortsTest extends KyoTest {
       }
     "run" - {
       "success" in {
-        checkEquals[Abort[Ex1, Int], Any](
-            Aborts[Ex1].run(test(2)),
-            Abort.success(5)
-        )
-      }
-      "failure" in {
-        checkEquals[Abort[Ex1, Int], Any](
-            Aborts[Ex1].run(test(0)),
-            Abort.failure(ex1)
-        )
-      }
-    }
-    "toOption" - {
-      "success" in {
-        checkEquals[Option[Int], Any](
-            Aborts[Ex1].toOption(test(2)),
-            Some(5)
-        )
-      }
-      "failure" in {
-        checkEquals[Option[Int], Any](
-            Aborts[Ex1].toOption(test(0)),
-            None
-        )
-      }
-    }
-    "toEither" - {
-      "success" in {
         checkEquals[Either[Ex1, Int], Any](
-            Aborts[Ex1].toEither(test(2)),
+            Aborts[Ex1].run(test(2)),
             Right(5)
         )
       }
       "failure" in {
         checkEquals[Either[Ex1, Int], Any](
-            Aborts[Ex1].toEither(test(0)),
+            Aborts[Ex1].run(test(0)),
             Left(ex1)
         )
       }
@@ -217,21 +158,21 @@ class abortsTest extends KyoTest {
             case i => 10 / i
           }
         "success" in {
-          checkEquals[Abort[Ex1, Int], Any](
+          checkEquals[Either[Ex1, Int], Any](
               Aborts[Ex1].run(Aborts[Ex1].catching(test(2))),
-              Abort.success(5)
+              Right(5)
           )
         }
         "failure" in {
-          checkEquals[Abort[Ex1, Int], Any](
+          checkEquals[Either[Ex1, Int], Any](
               Aborts[Ex1].run(Aborts[Ex1].catching(test(0))),
-              Abort.failure(ex1)
+              Left(ex1)
           )
         }
         "subclass" in {
-          checkEquals[Abort[RuntimeException, Int], Any](
+          checkEquals[Either[RuntimeException, Int], Any](
               Aborts[RuntimeException].run(Aborts[RuntimeException].catching(test(0))),
-              Abort.failure(ex1)
+              Left(ex1)
           )
         }
       }
@@ -242,15 +183,15 @@ class abortsTest extends KyoTest {
             case i => 10 / i
           }
         "success" in {
-          checkEquals[Option[Abort[Ex1, Int]], Any](
+          checkEquals[Option[Either[Ex1, Int]], Any](
               Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Option(2) > Options)))),
-              Some(Abort.success(5))
+              Some(Right(5))
           )
         }
         "failure" in {
-          checkEquals[Option[Abort[Ex1, Int]], Any](
+          checkEquals[Option[Either[Ex1, Int]], Any](
               Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Option(0) > Options)))),
-              Some(Abort.failure(ex1))
+              Some(Left(ex1))
           )
         }
       }

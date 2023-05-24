@@ -1,4 +1,5 @@
 val scala3Version = "3.2.2"
+val scala2Version = "2.13.10"
 
 val compilerOptions = Seq(
     "-encoding",
@@ -134,7 +135,7 @@ lazy val `kyo-scala2` =
     .dependsOn(`kyo-core`)
     .settings(
         `kyo-settings`,
-        scalaVersion := "2.13.10",
+        scalaVersion := scala2Version,
         scalacOptions += "-Ytasty-reader",
         libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.15" % Test
     )
@@ -238,7 +239,7 @@ lazy val `kyo-bench` =
     .crossType(CrossType.Pure)
     .in(file("kyo-bench"))
     .enablePlugins(JmhPlugin)
-    .dependsOn(`kyo-core-opt3` % "test->test;compile->compile")
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
         libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.4.10",

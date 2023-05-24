@@ -102,8 +102,8 @@ object channels {
         new Blocking[T] {
 
           val q     = queue.unsafe
-          val takes = MpmcUnboundedXaddArrayQueue[Promise[T]](8)
-          val puts  = MpmcUnboundedXaddArrayQueue[(T, Promise[Unit])](8)
+          val takes = MpmcUnboundedXaddArrayQueue[Fiber.Promise[T]](8)
+          val puts  = MpmcUnboundedXaddArrayQueue[(T, Fiber.Promise[Unit])](8)
 
           val size    = queue.size
           val isEmpty = queue.isEmpty
@@ -157,7 +157,7 @@ object channels {
             if (!q.isEmpty && !takes.isEmpty()) {
               loop = true
               val p = takes.poll()
-              if (p != null.asInstanceOf[Promise[T]]) {
+              if (p != null.asInstanceOf[Fiber.Promise[T]]) {
                 q.poll() match {
                   case None =>
                     takes.add(p)

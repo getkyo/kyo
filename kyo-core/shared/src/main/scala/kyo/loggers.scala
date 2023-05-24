@@ -6,16 +6,14 @@ import ios._
 
 object loggers {
 
-  opaque type Logger = org.slf4j.Logger
-
   object Loggers {
     def init(name: String): Logger =
-      LoggerFactory.getLogger(name)
+      Logger(LoggerFactory.getLogger(name))
     def init(cls: Class[_]): Logger =
-      LoggerFactory.getLogger(cls)
+      Logger(LoggerFactory.getLogger(cls))
   }
 
-  extension (l: Logger) {
+  class Logger private[loggers] (l: org.slf4j.Logger) extends AnyVal {
 
     /*inline(3)*/
     def trace( /*inline(3)*/ msg: => String): Unit > IOs =

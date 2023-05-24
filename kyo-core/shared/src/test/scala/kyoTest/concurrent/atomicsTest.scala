@@ -6,7 +6,7 @@ import kyoTest.KyoTest
 
 class atomicsTest extends KyoTest {
 
-  "IntRef" - {
+  "AtomicInt" - {
     "should initialize to the provided value" in run {
       for {
         ref <- Atomics.initInt(5)
@@ -68,7 +68,7 @@ class atomicsTest extends KyoTest {
     }
   }
 
-  "LongRef" - {
+  "AtomicLong" - {
     "should initialize to the provided value" in run {
       for {
         ref <- Atomics.initLong(5L)
@@ -130,7 +130,33 @@ class atomicsTest extends KyoTest {
     }
   }
 
-  "Ref" - {
+  "AtomicBoolean" - {
+    "should initialize to the provided value" in run {
+      for {
+        ref <- Atomics.initBoolean(true)
+        v   <- ref.get
+      } yield assert(v == true)
+    }
+    "should set the value" in run {
+      for {
+        ref <- Atomics.initBoolean(true)
+        _   <- ref.set(false)
+        v   <- ref.get
+      } yield assert(v == false)
+    }
+    "should compare and set the value" in run {
+      for {
+        ref <- Atomics.initBoolean(true)
+        v   <- ref.cas(true, false)
+        r   <- ref.get
+      } yield {
+        assert(v == true)
+        assert(r == false)
+      }
+    }
+  }
+
+  "AtomicRef" - {
     "should initialize to the provided value" in run {
       for {
         ref <- Atomics.initRef("initial")

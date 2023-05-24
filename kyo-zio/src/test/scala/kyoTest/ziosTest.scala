@@ -31,12 +31,12 @@ class ziosTest extends KyoTest {
 
   "aborts" in run {
     val a: Int > (Aborts[String] & ZIOs) = ZIOs(ZIO.fail("error"))
-    Aborts[String].toOption(a).map(opt => assert(opt.isEmpty))
+    Aborts[String].run(a).map(e => assert(e.isLeft))
   }
 
   "env" in run {
     Aborts[Nothing].run(Envs[Int].let(10)(ZIOs(ZIO.environment[Int])).map(_.get)).map(v =>
-      assert(v == Abort.success(10))
+      assert(v == Right(10))
     )
   }
 

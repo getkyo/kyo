@@ -133,7 +133,7 @@ object UI extends App {
   frame.setVisible(true)
 
   val ai   = IOs.run(AIs.init)
-  val chan = IOs.run(Channels.blocking[(String, scala.List[ModeInfo], Promise[String])](1024))
+  val chan = IOs.run(Channels.blocking[(String, scala.List[ModeInfo], Fiber.Promise[String])](1024))
 
   def withModes[T, S](ai: AI, modes: scala.List[ModeInfo], v: T > S): T > (S & AIs & Aspects) =
     modes match {
