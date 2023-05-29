@@ -110,9 +110,9 @@ object timers {
 
   object Timers {
     def run[T, S1, S2](t: Timer > S1)(f: => T > (Timers & S2)): T > (IOs & S1 & S2) =
-      t.map(t => Envs[Timer].let(t)(f))
+      t.map(t => Envs[Timer].run(t)(f))
     def run[T, S](f: => T > (Timers & S))(using t: Timer): T > (IOs & S) =
-      Envs[Timer].let(t)(f)
+      Envs[Timer].run(t)(f)
     def shutdown: Unit > Timers =
       Envs[Timer].get.map(_.shutdown)
     def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > Timers =

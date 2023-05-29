@@ -35,7 +35,7 @@ class ziosTest extends KyoTest {
   }
 
   "env" in run {
-    Aborts[Nothing].run(Envs[Int].let(10)(ZIOs(ZIO.environment[Int])).map(_.get)).map(v =>
+    Aborts[Nothing].run(Envs[Int].run(10)(ZIOs(ZIO.environment[Int])).map(_.get)).map(v =>
       assert(v == Right(10))
     )
   }

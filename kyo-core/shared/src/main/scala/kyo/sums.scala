@@ -19,19 +19,16 @@ object sums {
   opaque type Sum[V, +T] = Any // T | AddValue[V] | SetValue[V] | Get.type
 
   final class Sums[V] private[sums] (using private val tag: Tag[_])
-      extends Effect[[T] =>> Sum[V, T]] {
+      extends Effect[[T] =>> Sum[V, T], Sums[V]] {
 
     val get: V > Sums[V] =
-      val v: Sum[V, V] = Get
-      v > this
+      suspend(Get)
 
     def add(v: V): V > Sums[V] =
-      val s: Sum[V, V] = AddValue(v)
-      s > this
+      suspend(AddValue(v))
 
     def set(v: V): V > Sums[V] =
-      val s: Sum[V, V] = SetValue(v)
-      s > this
+      suspend(SetValue(v))
 
     def run[T, S](v: T > (Sums[V] & S))(using
         g: Summer[V],
@@ -58,7 +55,7 @@ object sums {
           }
       }
       IOs.ensure(g.drop(curr)) {
-        (v < Sums[V]).map {
+        handle(v).map {
           case AddValue(v) =>
             curr = g.add(curr, v.asInstanceOf[V])
             curr.asInstanceOf[T]
@@ -70,7 +67,7 @@ object sums {
       }
     }
 
-    override def accepts(other: Effect[_]) =
+    override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
       other match {
         case other: Sums[_] =>
           other.tag.tag == tag.tag

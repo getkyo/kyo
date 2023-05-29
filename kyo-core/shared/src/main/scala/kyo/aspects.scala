@@ -17,7 +17,7 @@ object aspects {
   object Aspects {
 
     def run[T, S](v: => T > (Aspects & S)): T > S =
-      envs.let(Map.empty)(v)
+      envs.run(Map.empty)(v)
 
     def init[T, U, S]: Aspect[T, U, S] =
       init(new Cut[T, U, S] {
@@ -45,7 +45,7 @@ object aspects {
       envs.get.map { map =>
         map.get(this) match {
           case Some(a: Cut[T, U, S1] @unchecked) =>
-            envs.let(map - this) {
+            envs.run(map - this) {
               a(v)(f)
             }
           case _ =>
@@ -57,7 +57,7 @@ object aspects {
       envs.get.map { map =>
         map.get(this) match {
           case Some(a: Cut[T, U, S1] @unchecked) =>
-            envs.let(map - this) {
+            envs.run(map - this) {
               v
             }
           case _ =>
@@ -73,7 +73,7 @@ object aspects {
               new Cut[T, U, S1] {
                 def apply[S3, S4](v: T > S3)(f: T => U > (S4 & Aspects)) =
                   b(v) { v =>
-                    envs.let(map) {
+                    envs.run(map) {
                       a(v)(f)
                     }
                   }
@@ -81,7 +81,7 @@ object aspects {
             case _ =>
               a
           }
-        envs.let(map + (this -> cut))(v)
+        envs.run(map + (this -> cut))(v)
       }
   }
   private val envs = Envs[Map[Aspect[_, _, _], Cut[_, _, _]]]

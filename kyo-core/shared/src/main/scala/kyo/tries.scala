@@ -7,23 +7,23 @@ import core._
 
 object tries {
 
-  final class Tries private[tries] extends Effect[Try] {
+  final class Tries private[tries] extends Effect[Try, Tries] {
 
     /*inline(2)*/
     def run[T, S](v: => T > (Tries & S)): Try[T] > S =
-      Tries(v) < Tries
+      handle(Tries(v))
 
     def fail[T](ex: Throwable): T > Tries =
-      Failure(ex) > Tries
+      suspend(Failure(ex))
 
     def fail[T](msg: String): T > Tries =
-      Failure(new Exception(msg)) > Tries
+      suspend(Failure(new Exception(msg)))
 
     /*inline(2)*/
     def apply[T, S]( /*inline(2)*/ v: => T > S): T > (Tries & S) =
-      val a: Try[Try[T] > S]      = Try(v < Tries)
-      val b: Try[T] > (Tries & S) = (a > Tries).flatten
-      val c: T > (Tries & S)      = b > Tries
+      val a: Try[Try[T] > S]      = Try(handle(v))
+      val b: Try[T] > (Tries & S) = suspend(a).flatten
+      val c: T > (Tries & S)      = suspend(b)
       c
 
     /*inline(2)*/
@@ -32,7 +32,7 @@ object tries {
         case Success(v) =>
           v
         case _ =>
-          v > Tries
+          suspend(v)
       }
   }
   val Tries = new Tries
@@ -42,16 +42,16 @@ object tries {
     def pure[T](v: T) =
       Success(v)
     override def handle[T](ex: Throwable) =
-      Failure(ex) > Tries
+      Tries.get(Failure(ex))
     def apply[T, U, S](m: Try[T], f: T => U > (Tries & S)): U > (Tries & S) =
       m match {
         case m: Failure[T] =>
-          m.asInstanceOf[Failure[U]] > Tries
+          Tries.get(m.asInstanceOf[Failure[U]])
         case _ =>
           try f(m.asInstanceOf[Success[T]].value)
           catch {
             case ex if (NonFatal(ex)) =>
-              Failure(ex) > Tries
+              Tries.get(Failure(ex))
           }
       }
   }

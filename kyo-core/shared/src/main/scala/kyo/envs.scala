@@ -14,13 +14,12 @@ object envs {
   opaque type Env[E, +T] = Any // T | Input.type
 
   final class Envs[E] private[envs] (using private val tag: Tag[_])
-      extends Effect[[T] =>> Env[E, T]] {
+      extends Effect[[T] =>> Env[E, T], Envs[E]] {
 
     def get: E > Envs[E] =
-      val v: Env[E, E] = Input
-      v > this
+      suspend(Input)
 
-    def let[T, S](e: E)(v: T > (Envs[E] & S)): T > S = {
+    def run[T, S](e: E)(v: T > (Envs[E] & S)): T > S = {
       given Handler[[T] =>> Env[E, T], Envs[E]] with {
         def pure[U](v: U) = v
         def apply[U, V, S2](
@@ -34,10 +33,10 @@ object envs {
               f(m.asInstanceOf[U])
           }
       }
-      (v < this).asInstanceOf[T > S]
+      handle(v).asInstanceOf[T > S]
     }
 
-    override def accepts(other: Effect[_]) =
+    override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
       other match {
         case other: Envs[_] =>
           other.tag.tag == tag.tag

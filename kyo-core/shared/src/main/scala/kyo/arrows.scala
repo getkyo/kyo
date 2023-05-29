@@ -3,12 +3,13 @@ package kyo
 import scala.runtime.AbstractFunction1
 
 import core._
+import core.internal._
 import locals._
 import ios._
 
 object arrows {
 
-  final class Arrows private[arrows] () extends Effect[[T] =>> Unit] {
+  final class Arrows private[arrows] () extends Effect[[T] =>> Unit, Arrows] {
     /*inline(2)*/
     def apply[T, S, U, S2](
         f: T > (S & Arrows) => U > (S2 & Arrows)
@@ -18,7 +19,7 @@ object arrows {
           new Kyo[[T] =>> Unit, Arrows, T > S, T, S & Arrows] {
             def value  = ()
             def effect = arrows.Arrows
-            def apply(v: T > S, s: Safepoint[Arrows], l: Locals.State) =
+            def apply(v: T > S, s: Safepoint[[T] =>> Unit, Arrows], l: Locals.State) =
               v
           }
         def apply(v: T > S) =
@@ -41,7 +42,7 @@ object arrows {
           new Kyo[[T] =>> Unit, Arrows, T > S, T, S & Arrows] {
             def value  = ()
             def effect = arrows.Arrows
-            def apply(v: T > S, s: Safepoint[Arrows], l: Locals.State) =
+            def apply(v: T > S, s: Safepoint[[T] =>> Unit, Arrows], l: Locals.State) =
               v
           }
         val g = f(a, this.asInstanceOf[T > (S & Arrows) => U > (S2 & Arrows)])

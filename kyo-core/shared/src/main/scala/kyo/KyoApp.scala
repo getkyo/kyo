@@ -33,7 +33,7 @@ object KyoApp {
     val v6: T > (IOs & Fibers)                    = Timers.run(v5)
     val v7: T > (IOs & Fibers & Timers)           = Fibers.timeout(timeout)(v6)
     val v8: T > (IOs & Fibers)                    = Timers.run(v6)
-    val v9                                        = IOs.lazyRun(v8) << Fibers
+    val v9: Fiber[T]                              = Fibers.run(IOs.lazyRun(v8))
     v9
   }
 }

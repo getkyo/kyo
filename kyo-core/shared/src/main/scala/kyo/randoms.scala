@@ -35,9 +35,9 @@ object randoms {
   object Randoms {
     type Iso = Randoms & IOs
     def run[T, S](r: Random)(f: => T > (Iso & S)): T > (IOs & S) =
-      Envs[Random].let(r)(f)
+      Envs[Random].run(r)(f)
     def run[T, S](f: => T > (Iso & S))(using c: Random): T > (IOs & S) =
-      Envs[Random].let(c)(f)
+      Envs[Random].run(c)(f)
 
     def nextInt: Int > Randoms = Envs[Random].get.map(_.nextInt)
     def nextInt[S](n: Int > (Iso & S)): Int > (S & Randoms) =

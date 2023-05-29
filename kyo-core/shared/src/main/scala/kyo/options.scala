@@ -4,8 +4,8 @@ import core._
 
 object options {
 
-  final class Options private[options] () extends Effect[Option] {
-    private val none          = None > this
+  final class Options private[options] () extends Effect[Option, Options] {
+    private val none          = suspend(None)
     def empty[T]: T > Options = none
 
     /*inline(2)*/
@@ -17,7 +17,7 @@ object options {
 
     /*inline(2)*/
     def get[T, S](v: Option[T] > S): T > (Options & S) =
-      v > Options
+      suspend(v)
 
     /*inline(2)*/
     def getOrElse[T, S1, S2](v: Option[T] > S1, default: => T > S2): T > (S1 & S2) =
@@ -27,7 +27,7 @@ object options {
       }
 
     def run[T, S](v: T > (Options & S)): Option[T] > S =
-      v < Options
+      handle(v)
 
     def orElse[T, S](l: (T > (Options & S))*): T > (Options & S) =
       l.toList match {
@@ -35,7 +35,7 @@ object options {
         case h :: t =>
           run(h).map {
             case None => orElse(t: _*)
-            case v    => v > Options
+            case v    => suspend(v)
           }
       }
   }

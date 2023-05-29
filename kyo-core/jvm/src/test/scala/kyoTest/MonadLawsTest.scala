@@ -4,7 +4,7 @@ import kyo.concurrent.fibers._
 import kyo._
 import kyo.ios._
 import zio.Trace
-import zio.prelude._
+import zio.prelude.{Equal}
 import zio.prelude.coherent.CovariantDeriveEqual
 import zio.prelude.coherent.CovariantDeriveEqualIdentityFlatten
 import zio.prelude.laws._

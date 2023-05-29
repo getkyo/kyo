@@ -2,6 +2,7 @@ package kyo.concurrent
 
 import kyo._
 import kyo.core._
+import kyo.core.internal._
 import kyo.ios._
 import kyo.locals._
 import kyo.resources._
@@ -49,10 +50,6 @@ object fibers {
       private[concurrent] val state: Any /* T | IOPromise[T] | Failed */
   ) {
 
-    if (state.isInstanceOf[Fiber[_]]) {
-      (new Exception).printStackTrace()
-    }
-
     def isDone: Boolean > IOs =
       state match {
         case promise: IOPromise[_] =>
@@ -66,9 +63,9 @@ object fibers {
     def join: T > Fibers =
       state match {
         case promise: IOPromise[_] =>
-          this > Fibers
+          Fibers.join(this)
         case failed: Failed =>
-          this > Fibers
+          Fibers.join(this)
         case _ =>
           state.asInstanceOf[T > Fibers]
       }
@@ -92,7 +89,7 @@ object fibers {
             promise.onComplete { t =>
               p.complete(Try(IOs.run(t)))
             }
-            Fiber.promise(p) > Fibers
+            Fibers.join(Fiber.promise(p))
           }
         case Failed(ex) =>
           Failure(ex)
@@ -192,18 +189,20 @@ object fibers {
       }
   }
 
-  final class Fibers private[fibers] extends Effect[Fiber] {
+  final class Fibers private[fibers] extends Effect[Fiber, Fibers] {
 
     case class Interrupted(reason: String)
         extends RuntimeException(reason)
         with NoStackTrace
 
     def run[T](v: T > Fibers): Fiber[T] =
-      val a: Fiber[T] > Any = v << Fibers
-      a
+      deepHandle(this)(v)
 
     def value[T](v: T): Fiber[T] =
       Fiber.done(v)
+
+    def join[T, S](v: Fiber[T] > S): T > (Fibers & S) =
+      suspend(v)
 
     def fail[T](ex: Throwable): Fiber[T] =
       Fiber.failed(ex)
@@ -290,7 +289,7 @@ object fibers {
 
     def await[T](
         v1: => T > (IOs & Fibers)
-    )(using NotGiven[T <:< (Any > Nothing)]): Unit > (IOs & Fibers) =
+    ): Unit > (IOs & Fibers) =
       fork(v1).map(_ => ())
 
     def await[T](
@@ -405,7 +404,7 @@ object fibers {
         new Handler[Fiber, Fibers] {
           def pure[T](v: T) = Fiber.done(v)
           override def handle[T](ex: Throwable): T > Fibers =
-            IOPromise(IOs(throw ex)) > Fibers
+            Fibers.join(Fiber.failed(ex))
           def apply[T, U, S](m: Fiber[T], f: T => U > (S & Fibers)) =
             m.state match {
               case m: IOPromise[T] @unchecked =>
@@ -416,7 +415,7 @@ object fibers {
                 f(m.asInstanceOf[T])
             }
         }
-      (v < Fibers).map(_.block)
+      handle(v).map(_.block)
 
     def join[T](f: Future[T]): T > (IOs & Fibers) =
       joinFiber(f).map(_.join)

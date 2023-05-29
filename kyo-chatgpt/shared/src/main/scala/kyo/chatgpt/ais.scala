@@ -63,7 +63,7 @@ object ais {
 
     def ephemeral[T, S](f: => T > (Iso & S)): T > (S & AIs) =
       Sums[State].get.map { st =>
-        (f < Tries).map(r => Sums[State].set(st).map(_ => r.get))
+        Tries.run(f).map(r => Sums[State].set(st).map(_ => r.get))
       }
 
     def run[T, S](v: T > (Iso & S)): T > (S & Requests & Consoles & Tries) =

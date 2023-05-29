@@ -128,19 +128,6 @@ lazy val `kyo-core` =
     )
     .jsSettings(`js-settings`)
 
-lazy val `kyo-scala2` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure)
-    .dependsOn(`kyo-core`)
-    .settings(
-        `kyo-settings`,
-        scalaVersion := scala2Version,
-        scalacOptions += "-Ytasty-reader",
-        libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.15" % Test
-    )
-    .in(file("kyo-scala2"))
-
 lazy val `kyo-core-opt1` =
   crossProject(JVMPlatform)
     .withoutSuffixFor(JVMPlatform)

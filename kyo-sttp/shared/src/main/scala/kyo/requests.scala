@@ -37,7 +37,7 @@ object requests {
   object Requests {
 
     def run[T, S](b: Backend)(v: T > (S & Requests)): T > (S & IOs & Fibers) =
-      Envs[Backend].let(b)(v)
+      Envs[Backend].run(b)(v)
 
     def run[T, S](v: T > (S & Requests))(using b: Backend): T > (S & IOs & Fibers) =
       run(b)(v)

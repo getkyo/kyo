@@ -3,6 +3,7 @@ package kyo.concurrent.scheduler
 import kyo.concurrent.fibers._
 import kyo._
 import kyo.core._
+import kyo.core.internal._
 import kyo.ios._
 import kyo.locals._
 import kyo.resources._
@@ -105,7 +106,7 @@ private[kyo] final class IOTask[T](
               this.interrupts(promise)
               runtime += (Coordinator.tick() - start).asInstanceOf[Int]
               promise.onComplete { (v: Any > IOs) =>
-                val io = v.map(kyo(_, this.asInstanceOf[Safepoint[Fibers]], st))
+                val io = v.map(kyo(_, this.asInstanceOf[Safepoint[Fiber, Fibers]], st))
                 this.become(IOTask(io, st, ensures, runtime))
               }
             case Failed(ex) =>

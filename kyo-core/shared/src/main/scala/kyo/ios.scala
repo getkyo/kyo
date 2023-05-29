@@ -12,14 +12,16 @@ import scala.util.NotGiven
 import scala.util.Try
 import scala.util.control.NonFatal
 
+import kyo._
 import core._
+import core.internal._
 import tries._
 import options._
 import locals._
 
 object ios {
 
-  trait Preempt extends Safepoint[IOs] {
+  trait Preempt extends Safepoint[IO, IOs] {
     def ensure(f: () => Unit): Unit
     def remove(f: () => Unit): Unit
     def apply[T, S](v: => T > (IOs & S)) =
@@ -42,7 +44,7 @@ object ios {
     final def effect = ios.IOs
   }
 
-  final class IOs private[ios] () extends Effect[IO] {
+  final class IOs private[ios] () extends Effect[IO, IOs] {
 
     private[this] val log = Loggers.init(getClass())
 
@@ -56,12 +58,12 @@ object ios {
 
     /*inline(3)*/
     def attempt[T, S](v: => T > S): Try[T] > S =
-      Tries(v) < Tries
+      Tries.run(Tries(v))
 
     private[kyo] /*inline(3)*/ def ensure[T, S]( /*inline(3)*/ f: => Unit > IOs)(v: => T > S)
         : T > (IOs & S) =
       type M2[_]
-      type E2 <: Effect[M2]
+      type E2 <: Effect[M2, E2]
       lazy val run: Unit =
         try IOs.run(f)
         catch {
@@ -76,7 +78,7 @@ object ios {
           case kyo: Kyo[M2, E2, Any, T, S & IOs] @unchecked =>
             new KyoCont[M2, E2, Any, T, S & IOs](kyo) {
               def apply() = run
-              def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
+              def apply(v: Any, s: Safepoint[M2, E2], l: Locals.State) =
                 val np =
                   s match {
                     case s: Preempt =>
@@ -98,13 +100,13 @@ object ios {
         /*inline(3)*/ f: => T > (IOs & S)
     ): T > (IOs & S) =
       new KyoIO[T, S] {
-        def apply(v: Unit, s: Safepoint[IOs], l: Locals.State) =
+        def apply(v: Unit, s: Safepoint[IO, IOs], l: Locals.State) =
           f
       }
 
     /*inline(3)*/
     def run[T](v: T > IOs): T =
-      val safepoint = Safepoint.noop[IOs]
+      val safepoint = Safepoint.noop[IO, IOs]
       @tailrec def runLoop(v: T > IOs): T =
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, IOs] @unchecked =>
@@ -117,15 +119,15 @@ object ios {
     /*inline(3)*/
     def lazyRun[T, S](v: T > (IOs & S)): T > S =
       type M2[_]
-      type E2 <: Effect[M2]
+      type E2 <: Effect[M2, E2]
       @tailrec def lazyRunLoop(v: T > (IOs & S)): T > S =
-        val safepoint = Safepoint.noop[IOs]
+        val safepoint = Safepoint.noop[IO, IOs]
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, S & IOs] @unchecked if (kyo.effect eq IOs) =>
             lazyRunLoop(kyo((), safepoint, Locals.State.empty))
           case kyo: Kyo[M2, E2, Any, T, S & IOs] @unchecked =>
             new KyoCont[M2, E2, Any, T, S](kyo) {
-              def apply(v: Any, s: Safepoint[E2], l: Locals.State) =
+              def apply(v: Any, s: Safepoint[M2, E2], l: Locals.State) =
                 lazyRunLoop(kyo(v, s, l))
             }
           case _ =>

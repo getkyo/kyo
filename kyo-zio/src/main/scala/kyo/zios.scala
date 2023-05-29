@@ -14,6 +14,7 @@ import scala.annotation.targetName
 import scala.util.control.NonFatal
 
 import core._
+import core.internal._
 import envs._
 import aborts._
 import zios._
@@ -22,37 +23,40 @@ import concurrent.fibers._
 
 object zios {
 
-  final class ZIOs private[zios] () extends Effect[Task] {
+  final class ZIOs private[zios] () extends Effect[Task, ZIOs] {
+
+    def run[T](v: T > ZIOs): Task[T] =
+      deepHandle(this)(v)
 
     @targetName("fromZIO")
     def apply[R: ITag, E: ITag, A, S](v: ZIO[R, E, A] > S): A > (S & Envs[R] & Aborts[E] & ZIOs) =
       for {
         urio <- v.map(_.fold[A > Aborts[E]](Aborts(_), v => v))
         task <- Envs[R].get.map(r => urio.provideEnvironment(ZEnvironment(r)))
-        r    <- (task > this).flatten
+        r    <- suspend(task)
       } yield r
 
     @targetName("fromIO")
     def apply[E: ITag, A, S](v: IO[E, A] > S): A > (S & Aborts[E] & ZIOs) =
       for {
         task <- v.map(_.fold[A > Aborts[E]](Aborts(_), v => v))
-        r    <- (task > this).flatten
+        r    <- suspend(task)
       } yield r
 
     @targetName("fromTask")
     def apply[T, S](v: Task[T] > S): T > (S & ZIOs) =
-      v > this
+      suspend(v)
   }
   val ZIOs = new ZIOs
 
-  private[kyo] given [T]: DeepHandler[Task, ZIOs] with {
+  private[kyo] given DeepHandler[Task, ZIOs] with {
     def pure[T](v: T): Task[T] =
       ZIO.succeed(v)
     def apply[T, U](m: Task[T], f: T => Task[U]): Task[U] =
       m.flatMap(f)
   }
 
-  private[kyo] given Injection[Fiber, Fibers, Task, ZIOs, Any] with {
+  private[kyo] given Injection[Fiber, Fibers, Task, ZIOs] with {
     def apply[T](m: Fiber[T]) =
       ZIO.asyncInterrupt[Any, Throwable, T] { callback =>
         IOs.run {

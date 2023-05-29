@@ -7,16 +7,16 @@ import scala.collection.mutable.ListBuffer
 
 object lists {
 
-  final class Lists private[lists] () extends Effect[List] {
+  final class Lists private[lists] () extends Effect[List, Lists] {
 
     /*inline(1)*/
     def run[T, S](v: T > (Lists & S)): List[T] > S =
-      v < Lists
+      handle(v)
 
     def foreach[T, S](v: List[T] > S): T > (Lists & S) =
       v.map {
         case head :: Nil => head
-        case _           => v > Lists
+        case _           => suspend(v)
       }
 
     def traverse[T, U, S, S2](v: List[T] > S)(f: T => U > S2): List[U] > (S & S2) =
@@ -37,7 +37,7 @@ object lists {
       }
 
     def drop[T]: T > Lists =
-      List.empty[T] > Lists
+      suspend(List.empty[T])
 
     /*inline(1)*/
     def collect[T, S](v: List[T > S]): List[T] > S =
@@ -63,7 +63,7 @@ object lists {
           case Nil =>
             Lists.foreach(acc.reverse.flatten)
           case t :: ts =>
-            (f(t) < Lists).map(l => loop(ts, l :: acc))
+            Lists.run(f(t)).map(l => loop(ts, l :: acc))
       loop(v, Nil)
 
 }

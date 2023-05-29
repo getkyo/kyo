@@ -9,6 +9,7 @@ import java.util.concurrent.TimeoutException
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
+import kyo.core.internal._
 import ios._
 import clocks._
 import consoles._
@@ -48,9 +49,8 @@ object KyoZioApp {
     val v3: T > (IOs & Fibers & Resources & Timers & ZIOs)                     = Clocks.run(v2)
     val v4: T > (IOs & Fibers & Timers & ZIOs)                                 = Resources.run(v3)
     val v5: T > (IOs & Fibers & ZIOs)                                          = Timers.run(v4)
-    val v6: T > (IOs & ZIOs)             = v5 >> (Fibers -> ZIOs)
-    val v7: T > ZIOs                     = IOs.lazyRun(v6)
-    val v8: ZIO[Any, Throwable, T] > Any = v7 << ZIOs
-    v8
+    val v6: T > (IOs & ZIOs) = inject(Fibers, ZIOs)(v5)
+    val v7: T > ZIOs         = IOs.lazyRun(v6)
+    ZIOs.run(v7)
   }
 }

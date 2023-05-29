@@ -35,7 +35,7 @@ object consoles {
   object Consoles {
     type Iso = Consoles & IOs
     def run[T, S](c: Console)(f: => T > (Iso & S)): T > (IOs & S) =
-      Envs[Console].let(c)(f)
+      Envs[Console].run(c)(f)
     def run[T, S](f: => T > (Iso & S))(using c: Console): T > (IOs & S) =
       run(c)(f)
     def readln: String > Consoles =

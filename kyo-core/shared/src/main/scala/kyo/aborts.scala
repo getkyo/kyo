@@ -8,32 +8,33 @@ import scala.util.Failure
 import scala.util.NotGiven
 import scala.util.Success
 
+import kyo._
 import core._
 import tries._
+import scala.util.Try
 
 object aborts {
 
   final class Aborts[E] private[aborts] (private val tag: Tag[E])
-      extends Effect[[T] =>> Either[E, T]] {
+      extends Effect[[T] =>> Either[E, T], Aborts[E]] {
 
     private given _tag: Tag[E] = tag
 
     def run[T, S](v: T > (Aborts[E] & S)): Either[E, T] > S =
-      v < (this: Aborts[E])
+      handle(v)
 
     def get[T, S](v: Either[E, T] > S): T > (Aborts[E] & S) =
-      v > this
+      suspend(v)
 
     def catching[T, S](f: => T > S)(using E => Throwable): T > (Aborts[E] & S) =
       Tries.run(f).map {
         case Failure(ex) if tag.closestClass.isAssignableFrom(ex.getClass) =>
-          val v: Either[E, T] = Left(ex.asInstanceOf[E])
-          v > Aborts[E]
-        case v =>
+          get(Left(ex.asInstanceOf[E]))
+        case v: Try[T] =>
           v.get
       }
 
-    override def accepts(other: Effect[_]) =
+    override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
       other match {
         case other: Aborts[_] =>
           other.tag.tag == tag.tag
@@ -47,7 +48,7 @@ object aborts {
       new Aborts(tag)
     /*inline(1)*/
     def apply[T, E]( /*inline(1)*/ ex: E)(using tag: Tag[E]): T > Aborts[E] =
-      Left(ex) > Aborts[E]
+      Aborts[E].get(Left(ex))
   }
 
   /*inline(1)*/
@@ -60,7 +61,7 @@ object aborts {
       ): V > (S2 & Aborts[E]) =
         m match {
           case left: Left[_, _] =>
-            left.asInstanceOf[Left[E, V]] > Aborts[E]
+            Aborts[E].get(left.asInstanceOf[Left[E, V]])
           case Right(v) =>
             f(v.asInstanceOf[U])
         }
