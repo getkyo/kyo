@@ -18,13 +18,13 @@ object clocks {
         IOs(Instant.now())
     }
   }
-  opaque type Clocks = Envs[Clock] & IOs
+  type Clocks = Envs[Clock] with IOs
 
   object Clocks {
-    type Iso = Clocks & IOs
-    def run[T, S](c: Clock)(f: => T > (Iso & S)): T > (IOs & S) =
+    type Iso = Clocks with IOs
+    def run[T, S](c: Clock)(f: => T > (Iso with S)): T > (IOs with S) =
       Envs[Clock].run(c)(f)
-    def run[T, S](f: => T > (Iso & S))(using c: Clock): T > (IOs & S) =
+    def run[T, S](f: => T > (Iso with S))(using c: Clock): T > (IOs with S) =
       Envs[Clock].run(c)(f)
     def now: Instant > Clocks =
       Envs[Clock].get.map(_.now)

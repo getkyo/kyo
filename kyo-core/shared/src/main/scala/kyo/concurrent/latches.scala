@@ -17,7 +17,7 @@ object latches {
   }
 
   object Latches {
-    def init[S](n: Int > S): Latch > (IOs & S) =
+    def init[S](n: Int > S): Latch > (IOs with S) =
       n.map { n =>
         if (n <= 0) {
           new Latch {

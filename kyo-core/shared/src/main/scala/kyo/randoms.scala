@@ -30,24 +30,24 @@ object randoms {
     }
   }
 
-  opaque type Randoms = Envs[Random] & IOs
+  type Randoms = Envs[Random] with IOs
 
   object Randoms {
-    type Iso = Randoms & IOs
-    def run[T, S](r: Random)(f: => T > (Iso & S)): T > (IOs & S) =
+    type Iso = Randoms with IOs
+    def run[T, S](r: Random)(f: => T > (Iso with S)): T > (IOs with S) =
       Envs[Random].run(r)(f)
-    def run[T, S](f: => T > (Iso & S))(using c: Random): T > (IOs & S) =
+    def run[T, S](f: => T > (Iso with S))(using c: Random): T > (IOs with S) =
       Envs[Random].run(c)(f)
 
     def nextInt: Int > Randoms = Envs[Random].get.map(_.nextInt)
-    def nextInt[S](n: Int > (Iso & S)): Int > (S & Randoms) =
+    def nextInt[S](n: Int > (Iso with S)): Int > (S with Randoms) =
       n.map(n => Envs[Random].get.map(_.nextInt(n)))
     def nextLong: Long > Randoms       = Envs[Random].get.map(_.nextLong)
     def nextDouble: Double > Randoms   = Envs[Random].get.map(_.nextDouble)
     def nextBoolean: Boolean > Randoms = Envs[Random].get.map(_.nextBoolean)
     def nextFloat: Float > Randoms     = Envs[Random].get.map(_.nextFloat)
     def nextGaussian: Double > Randoms = Envs[Random].get.map(_.nextGaussian)
-    def nextValue[T, S](seq: Seq[T] > S): T > (S & Randoms) =
+    def nextValue[T, S](seq: Seq[T] > S): T > (S with Randoms) =
       seq.map(s => nextInt(s.size).map(idx => s(idx)))
   }
 }

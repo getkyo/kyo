@@ -50,7 +50,7 @@ object direct {
         case l =>
           l.reduce {
             case ('[t1], '[t2]) =>
-              Type.of[t1 & t2]
+              Type.of[t1 with t2]
           }
       }
 

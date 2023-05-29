@@ -19,7 +19,7 @@ object locals {
           l.getOrElse(Local.this, default).asInstanceOf[T]
       }
 
-    def let[U, S1, S2](v: T > S1)(f: U > S2): U > (S1 & S2 & IOs) = {
+    def let[U, S1, S2](v: T > S1)(f: U > S2): U > (S1 with S2 with IOs) = {
       type M2[_]
       type E2 <: Effect[M2, E2]
       def loop(v: T, f: U > S2): U > S2 =
@@ -57,7 +57,7 @@ object locals {
       }
 
     /*inline(3)*/
-    def restore[T, S](st: State)(f: T > S): T > (IOs & S) =
+    def restore[T, S](st: State)(f: T > S): T > (IOs with S) =
       type M2[_]
       type E2 <: Effect[M2, E2]
       def loop(f: T > S): T > S =

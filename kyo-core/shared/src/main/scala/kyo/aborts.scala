@@ -20,13 +20,13 @@ object aborts {
 
     private given _tag: Tag[E] = tag
 
-    def run[T, S](v: T > (Aborts[E] & S)): Either[E, T] > S =
+    def run[T, S](v: T > (Aborts[E] with S)): Either[E, T] > S =
       handle(v)
 
-    def get[T, S](v: Either[E, T] > S): T > (Aborts[E] & S) =
+    def get[T, S](v: Either[E, T] > S): T > (Aborts[E] with S) =
       suspend(v)
 
-    def catching[T, S](f: => T > S)(using E => Throwable): T > (Aborts[E] & S) =
+    def catching[T, S](f: => T > S)(using E => Throwable): T > (Aborts[E] with S) =
       Tries.run(f).map {
         case Failure(ex) if tag.closestClass.isAssignableFrom(ex.getClass) =>
           get(Left(ex.asInstanceOf[E]))
@@ -57,8 +57,8 @@ object aborts {
       def pure[U](v: U) = Right(v)
       def apply[U, V, S2](
           m: Either[E, U],
-          f: U => V > (S2 & Aborts[E])
-      ): V > (S2 & Aborts[E]) =
+          f: U => V > (S2 with Aborts[E])
+      ): V > (S2 with Aborts[E]) =
         m match {
           case left: Left[_, _] =>
             Aborts[E].get(left.asInstanceOf[Left[E, V]])

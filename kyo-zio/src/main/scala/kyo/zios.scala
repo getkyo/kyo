@@ -29,7 +29,8 @@ object zios {
       deepHandle(this)(v)
 
     @targetName("fromZIO")
-    def apply[R: ITag, E: ITag, A, S](v: ZIO[R, E, A] > S): A > (S & Envs[R] & Aborts[E] & ZIOs) =
+    def apply[R: ITag, E: ITag, A, S](v: ZIO[R, E, A] > S)
+        : A > (S with Envs[R] with Aborts[E] with ZIOs) =
       for {
         urio <- v.map(_.fold[A > Aborts[E]](Aborts(_), v => v))
         task <- Envs[R].get.map(r => urio.provideEnvironment(ZEnvironment(r)))
@@ -37,14 +38,14 @@ object zios {
       } yield r
 
     @targetName("fromIO")
-    def apply[E: ITag, A, S](v: IO[E, A] > S): A > (S & Aborts[E] & ZIOs) =
+    def apply[E: ITag, A, S](v: IO[E, A] > S): A > (S with Aborts[E] with ZIOs) =
       for {
         task <- v.map(_.fold[A > Aborts[E]](Aborts(_), v => v))
         r    <- suspend(task)
       } yield r
 
     @targetName("fromTask")
-    def apply[T, S](v: Task[T] > S): T > (S & ZIOs) =
+    def apply[T, S](v: Task[T] > S): T > (S with ZIOs) =
       suspend(v)
   }
   val ZIOs = new ZIOs

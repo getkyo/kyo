@@ -10,25 +10,25 @@ object lists {
   final class Lists private[lists] () extends Effect[List, Lists] {
 
     /*inline(1)*/
-    def run[T, S](v: T > (Lists & S)): List[T] > S =
+    def run[T, S](v: T > (Lists with S)): List[T] > S =
       handle(v)
 
-    def foreach[T, S](v: List[T] > S): T > (Lists & S) =
+    def foreach[T, S](v: List[T] > S): T > (Lists with S) =
       v.map {
         case head :: Nil => head
         case _           => suspend(v)
       }
 
-    def traverse[T, U, S, S2](v: List[T] > S)(f: T => U > S2): List[U] > (S & S2) =
+    def traverse[T, U, S, S2](v: List[T] > S)(f: T => U > S2): List[U] > (S with S2) =
       v.map { v =>
         collect(v.map(f))
       }
 
-    def foreach[T, S](v: (T > S)*): T > (Lists & S) =
+    def foreach[T, S](v: (T > S)*): T > (Lists with S) =
       foreach(collect(v.toList))
 
     /*inline(1)*/
-    def filter[S](v: Boolean > S): Unit > (Lists & S) =
+    def filter[S](v: Boolean > S): Unit > (Lists with S) =
       v.map {
         case true =>
           ()
@@ -57,8 +57,8 @@ object lists {
 
   given Handler[List, Lists] with
     def pure[T](v: T) = List(v)
-    def apply[T, U, S](v: List[T], f: T => U > (Lists & S)): U > (Lists & S) =
-      def loop(l: List[T], acc: List[List[U]]): U > (Lists & S) =
+    def apply[T, U, S](v: List[T], f: T => U > (Lists with S)): U > (Lists with S) =
+      def loop(l: List[T], acc: List[List[U]]): U > (Lists with S) =
         l match
           case Nil =>
             Lists.foreach(acc.reverse.flatten)

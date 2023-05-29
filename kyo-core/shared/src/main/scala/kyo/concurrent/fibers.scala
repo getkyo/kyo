@@ -80,7 +80,7 @@ object fibers {
           f(state.asInstanceOf[T > IOs])
       }
 
-    def joinTry: Try[T] > (Fibers & IOs) =
+    def joinTry: Try[T] > (Fibers with IOs) =
       state match {
         case promise: IOPromise[T] @unchecked =>
           IOs {
@@ -107,10 +107,10 @@ object fibers {
           state.asInstanceOf[T > IOs]
       }
 
-    def interruptAwait: Boolean > (Fibers & IOs) =
+    def interruptAwait: Boolean > (Fibers with IOs) =
       interruptAwait("")
 
-    def interruptAwait(reason: String): Boolean > (Fibers & IOs) =
+    def interruptAwait(reason: String): Boolean > (Fibers with IOs) =
       state match {
         case ioTask: IOTask[T] @unchecked =>
           IOs {
@@ -201,7 +201,7 @@ object fibers {
     def value[T](v: T): Fiber[T] =
       Fiber.done(v)
 
-    def join[T, S](v: Fiber[T] > S): T > (Fibers & S) =
+    def join[T, S](v: Fiber[T] > S): T > (Fibers with S) =
       suspend(v)
 
     def fail[T](ex: Throwable): Fiber[T] =
@@ -216,56 +216,56 @@ object fibers {
     // compiler bug workaround
     private val IOTask = kyo.concurrent.scheduler.IOTask
 
-    def forkFiber[T](v: => T > (IOs & Fibers)): Fiber[T] > IOs =
+    def forkFiber[T](v: => T > (IOs with Fibers)): Fiber[T] > IOs =
       Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
-    def fork[T](v: => T > (IOs & Fibers)): T > (IOs & Fibers) =
+    def fork[T](v: => T > (IOs with Fibers)): T > (IOs with Fibers) =
       forkFiber(v).map(_.join)
 
     def fork[T1, T2](
-        v1: => T1 > (IOs & Fibers),
-        v2: => T2 > (IOs & Fibers)
-    ): (T1, T2) > (IOs & Fibers) =
+        v1: => T1 > (IOs with Fibers),
+        v2: => T2 > (IOs with Fibers)
+    ): (T1, T2) > (IOs with Fibers) =
       collect(List(IOs(v1), IOs(v2))).map(s => (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2]))
 
     def fork[T1, T2, T3](
-        v1: => T1 > (IOs & Fibers),
-        v2: => T2 > (IOs & Fibers),
-        v3: => T3 > (IOs & Fibers)
-    ): (T1, T2, T3) > (IOs & Fibers) =
+        v1: => T1 > (IOs with Fibers),
+        v2: => T2 > (IOs with Fibers),
+        v3: => T3 > (IOs with Fibers)
+    ): (T1, T2, T3) > (IOs with Fibers) =
       collect(List(IOs(v1), IOs(v2), IOs(v3))).map(s =>
         (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3])
       )
 
     def fork[T1, T2, T3, T4](
-        v1: => T1 > (IOs & Fibers),
-        v2: => T2 > (IOs & Fibers),
-        v3: => T3 > (IOs & Fibers),
-        v4: => T4 > (IOs & Fibers)
-    ): (T1, T2, T3, T4) > (IOs & Fibers) =
+        v1: => T1 > (IOs with Fibers),
+        v2: => T2 > (IOs with Fibers),
+        v3: => T3 > (IOs with Fibers),
+        v4: => T4 > (IOs with Fibers)
+    ): (T1, T2, T3, T4) > (IOs with Fibers) =
       collect(List(IOs(v1), IOs(v2), IOs(v3), IOs(v4))).map(s =>
         (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3], s(3).asInstanceOf[T4])
       )
 
     def race[T](
-        v1: => T > (IOs & Fibers),
-        v2: => T > (IOs & Fibers)
-    ): T > (IOs & Fibers) =
+        v1: => T > (IOs with Fibers),
+        v2: => T > (IOs with Fibers)
+    ): T > (IOs with Fibers) =
       raceFiber(List(IOs(v1), IOs(v2))).map(_.join)
 
     def race[T](
-        v1: => T > (IOs & Fibers),
-        v2: => T > (IOs & Fibers),
-        v3: => T > (IOs & Fibers)
-    ): T > (IOs & Fibers) =
+        v1: => T > (IOs with Fibers),
+        v2: => T > (IOs with Fibers),
+        v3: => T > (IOs with Fibers)
+    ): T > (IOs with Fibers) =
       raceFiber(List(IOs(v1), IOs(v2), IOs(v2))).map(_.join)
 
     def race[T](
-        v1: => T > (IOs & Fibers),
-        v2: => T > (IOs & Fibers),
-        v3: => T > (IOs & Fibers),
-        v4: => T > (IOs & Fibers)
-    ): T > (IOs & Fibers) =
+        v1: => T > (IOs with Fibers),
+        v2: => T > (IOs with Fibers),
+        v3: => T > (IOs with Fibers),
+        v4: => T > (IOs with Fibers)
+    ): T > (IOs with Fibers) =
       raceFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))).map(_.join)
 
     private inline def foreach[T, U](inline l: List[T])(inline f: T => Unit): Unit =
@@ -275,7 +275,7 @@ object fibers {
         curr = curr.tail
       }
 
-    def raceFiber[T](l: List[T > (IOs & Fibers)]): Fiber[T] > IOs =
+    def raceFiber[T](l: List[T > (IOs with Fibers)]): Fiber[T] > IOs =
       require(!l.isEmpty)
       Locals.save.map { st =>
         val p = IOPromise[T]
@@ -288,32 +288,32 @@ object fibers {
       }
 
     def await[T](
-        v1: => T > (IOs & Fibers)
-    ): Unit > (IOs & Fibers) =
+        v1: => T > (IOs with Fibers)
+    ): Unit > (IOs with Fibers) =
       fork(v1).map(_ => ())
 
     def await[T](
-        v1: => T > (IOs & Fibers),
-        v2: => T > (IOs & Fibers)
-    ): Unit > (IOs & Fibers) =
+        v1: => T > (IOs with Fibers),
+        v2: => T > (IOs with Fibers)
+    ): Unit > (IOs with Fibers) =
       awaitFiber(List(IOs(v1), IOs(v2))).map(_.join)
 
     def await[T](
-        v1: => T > (IOs & Fibers),
-        v2: => T > (IOs & Fibers),
-        v3: => T > (IOs & Fibers)
-    ): Unit > (IOs & Fibers) =
+        v1: => T > (IOs with Fibers),
+        v2: => T > (IOs with Fibers),
+        v3: => T > (IOs with Fibers)
+    ): Unit > (IOs with Fibers) =
       awaitFiber(List(IOs(v1), IOs(v2), IOs(v2))).map(_.join)
 
     def await[T](
-        v1: => T > (IOs & Fibers),
-        v2: => T > (IOs & Fibers),
-        v3: => T > (IOs & Fibers),
-        v4: => T > (IOs & Fibers)
-    ): Unit > (IOs & Fibers) =
+        v1: => T > (IOs with Fibers),
+        v2: => T > (IOs with Fibers),
+        v3: => T > (IOs with Fibers),
+        v4: => T > (IOs with Fibers)
+    ): Unit > (IOs with Fibers) =
       awaitFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))).map(_.join)
 
-    def awaitFiber[T](l: List[T > (IOs & Fibers)]): Fiber[Unit] > IOs =
+    def awaitFiber[T](l: List[T > (IOs with Fibers)]): Fiber[Unit] > IOs =
       Locals.save.map { st =>
         val p       = IOPromise[Unit]
         val pending = AtomicInteger(l.size)
@@ -338,10 +338,10 @@ object fibers {
         Fiber.promise(p)
       }
 
-    def collect[T](l: List[T > (IOs & Fibers)]): Seq[T] > (IOs & Fibers) =
+    def collect[T](l: List[T > (IOs with Fibers)]): Seq[T] > (IOs with Fibers) =
       collectFiber[T](l).map(_.join)
 
-    def collectFiber[T](l: List[T > (IOs & Fibers)]): Fiber[Seq[T]] > IOs =
+    def collectFiber[T](l: List[T > (IOs with Fibers)]): Fiber[Seq[T]] > IOs =
       Locals.save.map { st =>
         val p       = IOPromise[Seq[T]]
         val size    = l.size
@@ -371,7 +371,7 @@ object fibers {
     def never: Fiber[Unit] > IOs =
       IOs(Fiber.promise(IOPromise[Unit]))
 
-    def sleep(d: Duration): Unit > (IOs & Fibers & Timers) =
+    def sleep(d: Duration): Unit > (IOs with Fibers with Timers) =
       promise[Unit].map { p =>
         if (d.isFinite) {
           val run: Unit > IOs =
@@ -387,7 +387,7 @@ object fibers {
         }
       }
 
-    def timeout[T](d: Duration)(v: => T > (IOs & Fibers)): T > (IOs & Fibers & Timers) =
+    def timeout[T](d: Duration)(v: => T > (IOs with Fibers)): T > (IOs with Fibers with Timers) =
       forkFiber(v).map { f =>
         val timeout: Unit > IOs =
           IOs {
@@ -399,13 +399,13 @@ object fibers {
         }
       }
 
-    def block[T, S](v: T > (Fibers & S)): T > (IOs & S) =
+    def block[T, S](v: T > (Fibers with S)): T > (IOs with S) =
       given Handler[Fiber, Fibers] =
         new Handler[Fiber, Fibers] {
           def pure[T](v: T) = Fiber.done(v)
           override def handle[T](ex: Throwable): T > Fibers =
             Fibers.join(Fiber.failed(ex))
-          def apply[T, U, S](m: Fiber[T], f: T => U > (S & Fibers)) =
+          def apply[T, U, S](m: Fiber[T], f: T => U > (S with Fibers)) =
             m.state match {
               case m: IOPromise[T] @unchecked =>
                 f(m.block())
@@ -417,7 +417,7 @@ object fibers {
         }
       handle(v).map(_.block)
 
-    def join[T](f: Future[T]): T > (IOs & Fibers) =
+    def join[T](f: Future[T]): T > (IOs with Fibers) =
       joinFiber(f).map(_.join)
 
     def joinFiber[T](f: Future[T]): Fiber[T] > IOs =

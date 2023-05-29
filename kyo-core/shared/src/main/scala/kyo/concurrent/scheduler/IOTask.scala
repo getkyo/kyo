@@ -19,7 +19,7 @@ private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
   /*inline(2)*/
   def apply[T](
-      /*inline(2)*/ v: T > (IOs & Fibers),
+      /*inline(2)*/ v: T > (IOs with Fibers),
       st: Locals.State,
       ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
       runtime: Int = 0
@@ -53,7 +53,7 @@ private[kyo] object IOTask {
 }
 
 private[kyo] final class IOTask[T](
-    private var curr: T > (IOs & Fibers),
+    private var curr: T > (IOs with Fibers),
     private val st: Locals.State,
     private var ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
     private var runtime: Int
@@ -74,7 +74,7 @@ private[kyo] final class IOTask[T](
   def apply(): Boolean =
     preempting
 
-  @tailrec private def eval(start: Long, curr: T > (IOs & Fibers)): T > (IOs & Fibers) =
+  @tailrec private def eval(start: Long, curr: T > (IOs with Fibers)): T > (IOs with Fibers) =
     def finalize() = {
       ensures match {
         case null =>
@@ -98,9 +98,10 @@ private[kyo] final class IOTask[T](
       }
     } else {
       curr match {
-        case kyo: Kyo[IO, IOs, Unit, T, IOs & Fibers] @unchecked if (kyo.effect eq IOs) =>
+        case kyo: Kyo[IO, IOs, Unit, T, IOs with Fibers] @unchecked if (kyo.effect eq IOs) =>
           eval(start, kyo((), this, st))
-        case kyo: Kyo[Fiber, Fibers, Any, T, IOs & Fibers] @unchecked if (kyo.effect eq Fibers) =>
+        case kyo: Kyo[Fiber, Fibers, Any, T, IOs with Fibers] @unchecked
+            if (kyo.effect eq Fibers) =>
           kyo.value.state match {
             case promise: IOPromise[T] @unchecked =>
               this.interrupts(promise)

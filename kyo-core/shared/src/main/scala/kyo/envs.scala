@@ -11,7 +11,7 @@ import core._
 object envs {
 
   private case object Input
-  opaque type Env[E, +T] = Any // T | Input.type
+  type Env[E, +T] = Any // T | Input.type
 
   final class Envs[E] private[envs] (using private val tag: Tag[_])
       extends Effect[[T] =>> Env[E, T], Envs[E]] {
@@ -19,13 +19,13 @@ object envs {
     def get: E > Envs[E] =
       suspend(Input)
 
-    def run[T, S](e: E)(v: T > (Envs[E] & S)): T > S = {
+    def run[T, S](e: E)(v: T > (Envs[E] with S)): T > S = {
       given Handler[[T] =>> Env[E, T], Envs[E]] with {
         def pure[U](v: U) = v
         def apply[U, V, S2](
             m: Env[E, U],
-            f: U => V > (S2 & Envs[E])
-        ): V > (S2 & Envs[E]) =
+            f: U => V > (S2 with Envs[E])
+        ): V > (S2 with Envs[E]) =
           m match {
             case Input =>
               f(e.asInstanceOf[U])

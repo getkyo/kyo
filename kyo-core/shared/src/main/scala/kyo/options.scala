@@ -16,20 +16,20 @@ object options {
         v
 
     /*inline(2)*/
-    def get[T, S](v: Option[T] > S): T > (Options & S) =
+    def get[T, S](v: Option[T] > S): T > (Options with S) =
       suspend(v)
 
     /*inline(2)*/
-    def getOrElse[T, S1, S2](v: Option[T] > S1, default: => T > S2): T > (S1 & S2) =
+    def getOrElse[T, S1, S2](v: Option[T] > S1, default: => T > S2): T > (S1 with S2) =
       v.map {
         case None    => default
         case Some(v) => v
       }
 
-    def run[T, S](v: T > (Options & S)): Option[T] > S =
+    def run[T, S](v: T > (Options with S)): Option[T] > S =
       handle(v)
 
-    def orElse[T, S](l: (T > (Options & S))*): T > (Options & S) =
+    def orElse[T, S](l: (T > (Options with S))*): T > (Options with S) =
       l.toList match {
         case Nil => Options.empty
         case h :: t =>
@@ -47,8 +47,8 @@ object options {
       Option(v)
     def apply[T, U, S](
         m: Option[T],
-        f: T => U > (Options & S)
-    ): U > (Options & S) =
+        f: T => U > (Options with S)
+    ): U > (Options with S) =
       m match {
         case None    => Options.empty
         case Some(v) => f(v)

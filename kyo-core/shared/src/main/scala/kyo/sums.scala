@@ -16,7 +16,7 @@ object sums {
   private case class SetValue[V](v: V)
   private case object Get
 
-  opaque type Sum[V, +T] = Any // T | AddValue[V] | SetValue[V] | Get.type
+  type Sum[V, +T] = Any // T | AddValue[V] | SetValue[V] | Get.type
 
   final class Sums[V] private[sums] (using private val tag: Tag[_])
       extends Effect[[T] =>> Sum[V, T], Sums[V]] {
@@ -30,17 +30,17 @@ object sums {
     def set(v: V): V > Sums[V] =
       suspend(SetValue(v))
 
-    def run[T, S](v: T > (Sums[V] & S))(using
+    def run[T, S](v: T > (Sums[V] with S))(using
         g: Summer[V],
         tag: Tag[V]
-    ): T > (IOs & S) = {
+    ): T > (IOs with S) = {
       var curr = g.init
       given Handler[[T] =>> Sum[V, T], Sums[V]] with {
         def pure[U](v: U) = v
         def apply[T, U, S2](
             m: Sum[V, T],
-            f: T => U > (S2 & Sums[V])
-        ): U > (S2 & Sums[V]) =
+            f: T => U > (S2 with Sums[V])
+        ): U > (S2 with Sums[V]) =
           m match {
             case AddValue(v) =>
               curr = g.add(curr, v.asInstanceOf[V])

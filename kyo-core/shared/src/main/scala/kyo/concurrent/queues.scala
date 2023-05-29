@@ -19,7 +19,7 @@ object queues {
       IOs(unsafe.isEmpty)
     def isFull: Boolean > IOs =
       IOs(unsafe.isFull)
-    def offer[S](v: T > S): Boolean > (IOs & S) =
+    def offer[S](v: T > S): Boolean > (IOs with S) =
       v.map(v => IOs(unsafe.offer(v)))
     def poll: Option[T] > IOs =
       IOs(unsafe.poll())
@@ -40,7 +40,7 @@ object queues {
     }
 
     class Unbounded[T] private[queues] (unsafe: Queues.Unsafe[T]) extends Queue[T](unsafe) {
-      def add[S](v: T > S): Unit > (IOs & S) =
+      def add[S](v: T > S): Unit > (IOs with S) =
         v.map(offer).unit
     }
 

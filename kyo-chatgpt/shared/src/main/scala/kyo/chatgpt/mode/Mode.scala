@@ -18,27 +18,26 @@ import kyo.chatgpt.ais
 private[kyo] abstract class Mode(val ais: Set[AI])
     extends Cut[(AI, String), String, AIs] {
 
-  def apply[S2, S3](v: (AI, String) > S2)(next: ((AI, String)) => String > (S3 & Aspects))
-      : String > (AIs & S2 & S3 & Aspects) =
-    AIs.iso {
-      v.map {
-        case tup @ (ai, msg) =>
-          if (ais.contains(ai))
-            AIs.ephemeral {
-              this(ai, msg)(next(ai, _))
-            }.map { r =>
-              for {
-                _ <- ai.user(msg)
-                _ <- ai.assistant(r)
-              } yield r
-            }
-          else
-            next(tup)
-      }
+  def apply[S2, S3](v: (AI, String) > S2)(next: ((AI, String)) => String > (S3 with Aspects))
+      : String > (AIs with S2 with S3 with Aspects) =
+    v.map {
+      case tup @ (ai, msg) =>
+        if (ais.contains(ai))
+          AIs.ephemeral {
+            this(ai, msg)(next(ai, _))
+          }.map { r =>
+            for {
+              _ <- ai.user(msg)
+              _ <- ai.assistant(r)
+            } yield r
+          }
+        else
+          next(tup)
     }
 
   def apply[S](
       ai: AI,
       msg: String
-  )(next: String => String > (S & Aspects)): String > (S & Requests & Tries & IOs & Aspects & AIs)
+  )(next: String => String > (S with Aspects))
+      : String > (S with Requests with Tries with IOs with Aspects with AIs)
 }

@@ -26,30 +26,26 @@ object ais {
 
   import Model._
 
-  opaque type State = Map[AIRef, Context]
+  type State = Map[AIRef, Context]
 
-  opaque type AIs = Sums[State] & Requests & Tries & IOs & Aspects & Consoles
+  type AIs = Sums[State] with Requests with Tries with IOs with Aspects with Consoles
 
   object AIs {
-
-    type Iso = AIs & Sums[State] & Requests & Tries & IOs & Aspects & Consoles
-    def iso[T, S](v: T > (Iso & S)): T > (S & AIs) =
-      v
 
     val askAspect: Aspect[(AI, String), String, AIs] =
       Aspects.init[(AI, String), String, AIs]
 
     val init: AI > IOs = IOs(new AI())
 
-    def restore[S](ctx: Context > (Iso & S)): AI > (S & AIs) =
+    def restore[S](ctx: Context > S): AI > (AIs with S) =
       init.map { ai =>
         ai.restore(ctx).map(_ => ai)
       }
 
-    def fail[T, S](cause: String > (Iso & S)): T > (S & AIs) =
+    def fail[T, S](cause: String > S): T > (AIs with S) =
       cause.map(cause => Tries.fail(AIException(cause)))
 
-    def transactional[T, S](f: => T > (Iso & S)): T > (S & AIs) =
+    def transactional[T, S](f: => T > S): T > (AIs with S) =
       Sums[State].get.map { st =>
         IOs.attempt(f).map {
           case Failure(ex) =>
@@ -61,13 +57,15 @@ object ais {
         }
       }
 
-    def ephemeral[T, S](f: => T > (Iso & S)): T > (S & AIs) =
+    def ephemeral[T, S](f: => T > S): T > (AIs with S) =
       Sums[State].get.map { st =>
         Tries.run(f).map(r => Sums[State].set(st).map(_ => r.get))
       }
 
-    def run[T, S](v: T > (Iso & S)): T > (S & Requests & Consoles & Tries) =
-      Requests.iso(Aspects.run(Sums[State].run(v)))
+    def run[T, S](v: T > (AIs with S)): T > (Requests with Consoles with Tries with S) =
+      val a: T > (Requests with Consoles with Tries with Aspects with S) = Sums[State].run(v)
+      val b: T > (Requests with Consoles with Tries with S)              = Aspects.run(a)
+      b
 
     object ApiKey {
       private val local = Locals.init[Option[String]] {
@@ -80,7 +78,7 @@ object ais {
       val get: String > AIs =
         Options.getOrElse(local.get, AIs.fail("No API key found"))
 
-      def let[T, S1, S2](key: String > S1)(f: => T > (S2 & AIs)): T > (S1 & S2 & AIs) =
+      def let[T, S1, S2](key: String > S1)(f: => T > S2): T > (S1 with S2 with AIs) =
         key.map { k =>
           if (k.size != example.size) {
             AIs.fail(s"Invalid API key: $k")
@@ -100,7 +98,7 @@ object ais {
 
     private val ref = AIRef(this)
 
-    private def add[S](role: Role, content: String > (S & AIs.Iso)): Unit > (S & AIs) =
+    private def add[S](role: Role, content: String > S): Unit > (AIs with S) =
       content.map { content =>
         save.map { ctx =>
           ctx.add(role, content).map(restore)
@@ -109,7 +107,7 @@ object ais {
 
     val save: Context > AIs = Sums[State].get.map(_.getOrElse(ref, Contexts.init))
 
-    def restore[T, S](ctx: Context > (S & AIs.Iso)): Unit > (S & AIs) =
+    def restore[T, S](ctx: Context > S): Unit > (AIs with S) =
       ctx.map { ctx =>
         Sums[State].get.map { st =>
           Sums[State].set(st + (ref -> ctx)).unit
@@ -130,14 +128,14 @@ object ais {
           .mkString("\n")
       }
 
-    def user[S](msg: String > (S & AIs.Iso)): Unit > (S & AIs) =
+    def user[S](msg: String > S): Unit > (AIs with S) =
       add(Role.user, msg)
-    def system[S](msg: String > (S & AIs.Iso)): Unit > (S & AIs) =
+    def system[S](msg: String > S): Unit > (AIs with S) =
       add(Role.system, msg)
-    def assistant[S](msg: String > (S & AIs.Iso)): Unit > (S & AIs) =
+    def assistant[S](msg: String > S): Unit > (AIs with S) =
       add(Role.assistant, msg)
 
-    def ask[S](msg: String > (S & AIs.Iso), maxTokens: Int = -1): String > (S & AIs) =
+    def ask[S](msg: String > S, maxTokens: Int = -1): String > (AIs with S) =
       def doIt(ai: AI, msg: String): String > AIs =
         for {
           _   <- add(Role.user, msg)
@@ -169,7 +167,7 @@ object ais {
       msg.map(msg => AIs.askAspect((this, msg))(doIt))
   }
 
-  private class AIRef(ai: AI) extends WeakReference[AI](ai) {
+  class AIRef(ai: AI) extends WeakReference[AI](ai) {
     def isValid(): Boolean = get() != null
     override def equals(obj: Any): Boolean = obj match {
       case other: AIRef => get() == other.get()

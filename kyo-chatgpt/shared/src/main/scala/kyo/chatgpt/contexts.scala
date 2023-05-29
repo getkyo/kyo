@@ -61,7 +61,7 @@ object contexts {
 
     def compact: Context > AIs =
       if (tokens >= model.maxTokens) {
-        AIs.iso(Contexts.Strategy.aspect(this)(identity))
+        Contexts.Strategy.aspect(this)(identity)
       } else {
         this
       }
@@ -80,20 +80,20 @@ object contexts {
         }
       loop(init, entries.toList)
 
-    def rolling[T, S](v: T > (S & AIs)): T > (S & AIs) =
-      AIs.iso(Strategy.aspect.let(Strategy.rolling)(v))
+    def rolling[T, S](v: T > (S with AIs)): T > (S with AIs) =
+      Strategy.aspect.let(Strategy.rolling)(v)
 
-    def summarizing[T, S](low: Double, high: Double)(v: T > (S & AIs)): T > (S & AIs) =
-      AIs.iso(Strategy.aspect.let(Strategy.summarizing(low, high))(v))
+    def summarizing[T, S](low: Double, high: Double)(v: T > (S with AIs)): T > (S with AIs) =
+      Strategy.aspect.let(Strategy.summarizing(low, high))(v)
 
-    def summarizing[T, S](v: T > (S & AIs)): T > (S & AIs) =
-      AIs.iso(Strategy.aspect.let(Strategy.summarizing())(v))
+    def summarizing[T, S](v: T > (S with AIs)): T > (S with AIs) =
+      Strategy.aspect.let(Strategy.summarizing())(v)
 
     private[contexts] object Strategy {
 
       def summarizing(low: Double = 0.25, high: Double = 0.75) =
         new Cut[Context, Context, AIs] {
-          def apply[S2, S3](v: Context > S2)(f: Context => Context > (S3 & Aspects)) =
+          def apply[S2, S3](v: Context > S2)(f: Context => Context > (S3 with Aspects)) =
             v.map { ctx =>
               val lt              = (ctx.model.maxTokens * low).toInt
               val ht              = (ctx.model.maxTokens * high).toInt
@@ -117,7 +117,7 @@ object contexts {
         }
 
       val rolling = new Cut[Context, Context, AIs] {
-        def apply[S2, S3](v: Context > S2)(f: Context => Context > (S3 & Aspects)) =
+        def apply[S2, S3](v: Context > S2)(f: Context => Context > (S3 with Aspects)) =
           v.map { ctx =>
             def loop(messages: List[Message], tokens: Int, acc: List[Message]): Context =
               messages match {

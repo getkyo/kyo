@@ -10,9 +10,9 @@ import sums._
 
 object resources {
 
-  opaque type Resource[T] = Sum[Finalizer, T]
+  type Resource[T] = Sum[Finalizer, T]
 
-  opaque type Resources = Sums[Finalizer]
+  type Resources = Sums[Finalizer]
 
   object Resources {
     def ensure[T](f: => T > IOs): Unit > Resources =
@@ -22,11 +22,11 @@ object resources {
       lazy val v = resource
       Sums[Finalizer].add(() => v.close()).map(_ => v)
 
-    def run[T, S](v: T > (Resources & S)): T > (IOs & S) =
+    def run[T, S](v: T > (Resources with S)): T > (IOs with S) =
       Sums[Finalizer].run(v)
   }
 
-  private abstract class Finalizer {
+  abstract class Finalizer {
     def run(): Unit
   }
 

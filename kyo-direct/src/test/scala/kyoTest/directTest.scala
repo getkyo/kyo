@@ -33,7 +33,7 @@
 //   }
 
 //   "two effects" in {
-//     val io: String > (IOs & Options) =
+//     val io: String > (IOs with Options) =
 //       defer {
 //         val a = await(Options.get(Some("hello")))
 //         val b = await(IOs("world"))

@@ -12,16 +12,17 @@ import kyo.concurrent.timers.Timers
 
 object aspects {
 
-  opaque type Aspects = Envs[Map[Aspect[_, _, _], Cut[_, _, _]]]
+  type Aspects = Envs[Map[Aspect[_, _, _], Cut[_, _, _]]]
 
   object Aspects {
 
-    def run[T, S](v: => T > (Aspects & S)): T > S =
+    def run[T, S](v: => T > (Aspects with S)): T > S =
       envs.run(Map.empty)(v)
 
     def init[T, U, S]: Aspect[T, U, S] =
       init(new Cut[T, U, S] {
-        def apply[S2, S3](v: T > S2)(f: T => U > (Aspects & S3)): U > (S & S2 & S3 & Aspects) =
+        def apply[S2, S3](v: T > S2)(f: T => U > (Aspects with S3))
+            : U > (S with S2 with S3 with Aspects) =
           v.map(f)
       })
 
@@ -30,18 +31,21 @@ object aspects {
   }
 
   trait Cut[T, U, S1] {
-    def apply[S2, S3](v: T > S2)(f: T => U > (Aspects & S3)): U > (S1 & S2 & S3 & Aspects)
+    def apply[S2, S3](v: T > S2)(f: T => U > (Aspects with S3))
+        : U > (S1 with S2 with S3 with Aspects)
 
     def andThen(other: Cut[T, U, S1]): Cut[T, U, S1] =
       new Cut[T, U, S1] {
-        def apply[S2, S3](v: T > S2)(f: T => U > (Aspects & S3)): U > (S1 & S2 & S3 & Aspects) =
+        def apply[S2, S3](v: T > S2)(f: T => U > (Aspects with S3))
+            : U > (S1 with S2 with S3 with Aspects) =
           Cut.this(v)(other(_)(f))
       }
   }
 
   final class Aspect[T, U, S1] private[aspects] (default: Cut[T, U, S1]) extends Cut[T, U, S1] {
 
-    def apply[S2, S3](v: T > S2)(f: T => U > (Aspects & S3)): U > (S1 & S2 & S3 & Aspects) =
+    def apply[S2, S3](v: T > S2)(f: T => U > (Aspects with S3))
+        : U > (S1 with S2 with S3 with Aspects) =
       envs.get.map { map =>
         map.get(this) match {
           case Some(a: Cut[T, U, S1] @unchecked) =>
@@ -53,7 +57,7 @@ object aspects {
         }
       }
 
-    def sandbox[S](v: T > (Aspects & S)): T > (Aspects & S) =
+    def sandbox[S](v: T > S): T > (Aspects with S) =
       envs.get.map { map =>
         map.get(this) match {
           case Some(a: Cut[T, U, S1] @unchecked) =>
@@ -65,13 +69,13 @@ object aspects {
         }
       }
 
-    def let[V, S2](a: Cut[T, U, S1])(v: V > (Aspects & S2)): V > (S1 & S2 & Aspects) =
+    def let[V, S2](a: Cut[T, U, S1])(v: V > (Aspects with S2)): V > (S1 with S2 with Aspects) =
       envs.get.map { map =>
         val cut =
           map.get(this) match {
             case Some(b: Cut[T, U, S1] @unchecked) =>
               new Cut[T, U, S1] {
-                def apply[S3, S4](v: T > S3)(f: T => U > (S4 & Aspects)) =
+                def apply[S3, S4](v: T > S3)(f: T => U > (S4 with Aspects)) =
                   b(v) { v =>
                     envs.run(map) {
                       a(v)(f)

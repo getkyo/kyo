@@ -10,7 +10,7 @@ object tries {
   final class Tries private[tries] extends Effect[Try, Tries] {
 
     /*inline(2)*/
-    def run[T, S](v: => T > (Tries & S)): Try[T] > S =
+    def run[T, S](v: => T > (Tries with S)): Try[T] > S =
       handle(Tries(v))
 
     def fail[T](ex: Throwable): T > Tries =
@@ -20,14 +20,14 @@ object tries {
       suspend(Failure(new Exception(msg)))
 
     /*inline(2)*/
-    def apply[T, S]( /*inline(2)*/ v: => T > S): T > (Tries & S) =
-      val a: Try[Try[T] > S]      = Try(handle(v))
-      val b: Try[T] > (Tries & S) = suspend(a).flatten
-      val c: T > (Tries & S)      = suspend(b)
+    def apply[T, S]( /*inline(2)*/ v: => T > S): T > (Tries with S) =
+      val a: Try[Try[T] > S]         = Try(handle(v))
+      val b: Try[T] > (Tries with S) = suspend(a).flatten
+      val c: T > (Tries with S)      = suspend(b)
       c
 
     /*inline(2)*/
-    def get[T, S](v: Try[T] > S): T > (Tries & S) =
+    def get[T, S](v: Try[T] > S): T > (Tries with S) =
       v.map {
         case Success(v) =>
           v
@@ -43,7 +43,7 @@ object tries {
       Success(v)
     override def handle[T](ex: Throwable) =
       Tries.get(Failure(ex))
-    def apply[T, U, S](m: Try[T], f: T => U > (Tries & S)): U > (Tries & S) =
+    def apply[T, U, S](m: Try[T], f: T => U > (Tries with S)): U > (Tries with S) =
       m match {
         case m: Failure[T] =>
           Tries.get(m.asInstanceOf[Failure[U]])
