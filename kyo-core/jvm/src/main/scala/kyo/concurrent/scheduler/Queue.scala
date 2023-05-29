@@ -3,7 +3,7 @@ package kyo.concurrent.scheduler
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.collection.mutable.PriorityQueue
 
-private final class Queue[T](using Ordering[T]) extends AtomicBoolean {
+private final class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
 
   private val queue = PriorityQueue[T]()
 

@@ -24,7 +24,7 @@ object clocks {
     type Iso = Clocks with IOs
     def run[T, S](c: Clock)(f: => T > (Iso with S)): T > (IOs with S) =
       Envs[Clock].run(c)(f)
-    def run[T, S](f: => T > (Iso with S))(using c: Clock): T > (IOs with S) =
+    def run[T, S](f: => T > (Iso with S))(implicit c: Clock): T > (IOs with S) =
       Envs[Clock].run(c)(f)
     def now: Instant > Clocks =
       Envs[Clock].get.map(_.now)

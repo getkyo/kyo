@@ -111,7 +111,7 @@ object timers {
   object Timers {
     def run[T, S1, S2](t: Timer > S1)(f: => T > (Timers with S2)): T > (IOs with S1 with S2) =
       t.map(t => Envs[Timer].run(t)(f))
-    def run[T, S](f: => T > (Timers with S))(using t: Timer): T > (IOs with S) =
+    def run[T, S](f: => T > (Timers with S))(implicit t: Timer): T > (IOs with S) =
       Envs[Timer].run(t)(f)
     def shutdown: Unit > Timers =
       Envs[Timer].get.map(_.shutdown)

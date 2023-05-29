@@ -39,7 +39,7 @@ object requests {
     def run[T, S](b: Backend)(v: T > (Requests with S)): T > (S with IOs with Fibers) =
       Envs[Backend].run(b)(v)
 
-    def run[T, S](v: T > (Requests with S))(using b: Backend): T > (S with IOs with Fibers) =
+    def run[T, S](v: T > (Requests with S))(implicit b: Backend): T > (S with IOs with Fibers) =
       run(b)(v)
 
     def apply[T, S](req: Request[T, Any] > S): Response[T] > (Requests with S) =

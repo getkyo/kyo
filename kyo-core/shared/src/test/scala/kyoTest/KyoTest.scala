@@ -76,8 +76,11 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     val v2 = v1.toFuture
     IOs.run(KyoApp.runFiber(timeout)(v).toFuture)
 
-  class Check[T, S](equals: Boolean)(using t: Tag[T], s: Tag[S], eq: Eq[T]) {
-    def apply[T2, S2](value: T2 > S2, expected: Any)(using
+  class Check[T, S](equals: Boolean) {
+    def apply[T2, S2](value: T2 > S2, expected: Any)(implicit
+        t: Tag[T],
+        s: Tag[S],
+        eq: Eq[T],
         t2: Tag[T2],
         s2: Tag[S2]
     ): Assertion =
@@ -92,6 +95,6 @@ class KyoTest extends AsyncFreeSpec with Assertions {
         assert(!eq(value.asInstanceOf[T], expected.asInstanceOf[T]))
   }
 
-  def checkEquals[T, S](using t: Tag[T], s: Tag[S], eq: Eq[T])    = new Check[T, S](true)
-  def checkNotEquals[T, S](using t: Tag[T], s: Tag[S], eq: Eq[T]) = new Check[T, S](false)
+  def checkEquals[T, S]    = new Check[T, S](true)
+  def checkNotEquals[T, S] = new Check[T, S](false)
 }

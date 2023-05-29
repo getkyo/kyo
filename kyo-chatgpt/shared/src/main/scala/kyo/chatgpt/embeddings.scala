@@ -46,10 +46,10 @@ object embeddings {
       case class Usage(prompt_tokens: Int)
       case class Response(data: List[Data], usage: Usage)
 
-      given JsonEncoder[Request]  = DeriveJsonEncoder.gen[Request]
-      given JsonDecoder[Data]     = DeriveJsonDecoder.gen[Data]
-      given JsonDecoder[Usage]    = DeriveJsonDecoder.gen[Usage]
-      given JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
+      implicit val requestEncoder: JsonEncoder[Request]   = DeriveJsonEncoder.gen[Request]
+      implicit val dataDecoder: JsonDecoder[Data]         = DeriveJsonDecoder.gen[Data]
+      implicit val usageDecoder: JsonDecoder[Usage]       = DeriveJsonDecoder.gen[Usage]
+      implicit val responseDecoder: JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
     }
   }
 }

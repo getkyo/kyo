@@ -178,11 +178,13 @@ object ais {
 
   case class AIException(cause: String) extends Exception(cause) with NoStackTrace
 
-  private given Summer[State] with
-    val init: State = Map.empty
-    def add(x: State, y: State): State =
-      val merged = x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Contexts.init) ++ v) }
-      merged.filter { case (k, v) => k.isValid() && v.messages.nonEmpty }
+  private implicit val summer: Summer[State] =
+    new Summer[State] {
+      val init: State = Map.empty
+      def add(x: State, y: State): State =
+        val merged = x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Contexts.init) ++ v) }
+        merged.filter { case (k, v) => k.isValid() && v.messages.nonEmpty }
+    }
 
   private object Model {
     case class Entry(role: String, content: String)
@@ -201,10 +203,10 @@ object ais {
     case class Choice(message: Entry)
     case class Response(choices: List[Choice])
 
-    given JsonEncoder[Entry]    = DeriveJsonEncoder.gen[Entry]
-    given JsonEncoder[Request]  = DeriveJsonEncoder.gen[Request]
-    given JsonDecoder[Entry]    = DeriveJsonDecoder.gen[Entry]
-    given JsonDecoder[Choice]   = DeriveJsonDecoder.gen[Choice]
-    given JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
+    implicit val entryEncoder: JsonEncoder[Entry]       = DeriveJsonEncoder.gen[Entry]
+    implicit val requestEncoder: JsonEncoder[Request]   = DeriveJsonEncoder.gen[Request]
+    implicit val entryDecoder: JsonDecoder[Entry]       = DeriveJsonDecoder.gen[Entry]
+    implicit val choiceDecoder: JsonDecoder[Choice]     = DeriveJsonDecoder.gen[Choice]
+    implicit val responseDecoder: JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
   }
 }

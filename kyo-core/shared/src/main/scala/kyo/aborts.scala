@@ -26,7 +26,7 @@ object aborts {
     def get[T, S](v: Either[E, T] > S): T > (Aborts[E] with S) =
       suspend(v)
 
-    def catching[T, S](f: => T > S)(using E => Throwable): T > (Aborts[E] with S) =
+    def catching[T, S](f: => T > S)(implicit ev: E => Throwable): T > (Aborts[E] with S) =
       Tries.run(f).map {
         case Failure(ex) if tag.closestClass.isAssignableFrom(ex.getClass) =>
           get(Left(ex.asInstanceOf[E]))
@@ -44,10 +44,10 @@ object aborts {
   }
 
   object Aborts {
-    def apply[E](using tag: Tag[E]): Aborts[E] =
+    def apply[E](implicit tag: Tag[E]): Aborts[E] =
       new Aborts(tag)
     /*inline(1)*/
-    def apply[T, E]( /*inline(1)*/ ex: E)(using tag: Tag[E]): T > Aborts[E] =
+    def apply[T, E]( /*inline(1)*/ ex: E)(implicit tag: Tag[E]): T > Aborts[E] =
       Aborts[E].get(Left(ex))
   }
 

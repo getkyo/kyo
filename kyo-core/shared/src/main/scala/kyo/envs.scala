@@ -13,7 +13,7 @@ object envs {
   private case object Input
   type Env[E, +T] = Any // T | Input.type
 
-  final class Envs[E] private[envs] (using private val tag: Tag[_])
+  final class Envs[E] private[envs] (implicit private val tag: Tag[_])
       extends Effect[[T] =>> Env[E, T], Envs[E]] {
 
     def get: E > Envs[E] =
@@ -46,7 +46,7 @@ object envs {
   }
 
   object Envs {
-    def apply[E](using tag: Tag[E]): Envs[E] =
+    def apply[E](implicit tag: Tag[E]): Envs[E] =
       new Envs[E]
   }
 }

@@ -80,7 +80,7 @@ object zios {
       }
   }
 
-  private given zioTag[T](using t: ITag[T]): zio.Tag[T] =
+  private implicit def zioTag[T](implicit t: ITag[T]): zio.Tag[T] =
     new zio.Tag[T] {
       def tag: zio.LightTypeTag  = t.tag
       def closestClass: Class[?] = t.closestClass

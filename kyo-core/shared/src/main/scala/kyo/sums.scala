@@ -18,7 +18,7 @@ object sums {
 
   type Sum[V, +T] = Any // T | AddValue[V] | SetValue[V] | Get.type
 
-  final class Sums[V] private[sums] (using private val tag: Tag[_])
+  final class Sums[V] private[sums] (implicit private val tag: Tag[_])
       extends Effect[[T] =>> Sum[V, T], Sums[V]] {
 
     val get: V > Sums[V] =
@@ -30,7 +30,7 @@ object sums {
     def set(v: V): V > Sums[V] =
       suspend(SetValue(v))
 
-    def run[T, S](v: T > (Sums[V] with S))(using
+    def run[T, S](v: T > (Sums[V] with S))(implicit
         g: Summer[V],
         tag: Tag[V]
     ): T > (IOs with S) = {
