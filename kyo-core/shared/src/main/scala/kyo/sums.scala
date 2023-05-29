@@ -36,7 +36,7 @@ object sums {
     def run[T, S](v: T > (Sums[V] & S))(using
         g: Summer[V],
         tag: Tag[V]
-    ): T > (S & IOs) = {
+    ): T > (IOs & S) = {
       var curr = g.init
       given Handler[[T] =>> Sum[V, T], Sums[V]] with {
         def pure[U](v: U) = v

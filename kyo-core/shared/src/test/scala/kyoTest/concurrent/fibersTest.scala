@@ -91,7 +91,12 @@ class fibersTest extends KyoTest {
   }
 
   "timeout" in runJVM {
-    Tries.run(Fibers.block(Fibers.timeout(10.millis)(Timers.run(Fibers.sleep(1.day)))))
+    Tries.run[Unit, Timers with IOs with Fibers](
+        Fibers.block[Unit, IOs with Fibers with Timers](Fibers.timeout(10.millis)(Timers.run[
+            Unit,
+            IOs with Fibers
+        ](Fibers.sleep(1.day))))
+    )
       .map {
         case Failure(_: Fibers.Interrupted) => succeed
         case _                              => fail()
@@ -103,8 +108,8 @@ class fibersTest extends KyoTest {
     def loop(ref: AtomicInt): Unit > IOs =
       ref.incrementAndGet.map(_ => loop(ref))
 
-    def runLoop[T](started: Latch, done: Latch) =
-      Resources.run {
+    def runLoop(started: Latch, done: Latch) =
+      Resources.run[Unit, IOs] {
         Resources.ensure(done.release).map { _ =>
           started.release.map(_ => Atomics.initInt(0).map(loop))
         }
@@ -117,9 +122,8 @@ class fibersTest extends KyoTest {
         fiber       <- Fibers.forkFiber(runLoop(started, done))
         _           <- started.await
         interrupted <- fiber.interrupt
-        _           <- assert(interrupted)
         _           <- done.await
-      } yield succeed
+      } yield assert(interrupted)
     }
     "multiple fibers" in runJVM {
       for {
@@ -132,9 +136,8 @@ class fibersTest extends KyoTest {
         interrupted1 <- fiber1.interrupt
         interrupted2 <- fiber2.interrupt
         interrupted3 <- fiber3.interrupt
-        _            <- assert(interrupted1 && interrupted2 && interrupted3)
         _            <- done.await
-      } yield succeed
+      } yield assert(interrupted1 && interrupted2 && interrupted3)
     }
   }
 
@@ -143,8 +146,8 @@ class fibersTest extends KyoTest {
     def loop(ref: AtomicInt): Unit > IOs =
       ref.incrementAndGet.map(_ => loop(ref))
 
-    def runLoop[T](started: Latch, done: Latch): Unit > IOs =
-      Resources.run {
+    def runLoop(started: Latch, done: Latch): Unit > IOs =
+      Resources.run[Unit, IOs] {
         Resources.ensure(done.release).map { _ =>
           started.release.map(_ => Atomics.initInt(0).map(loop))
         }
@@ -161,24 +164,23 @@ class fibersTest extends KyoTest {
   }
 
   "forkFiber" - {
-    val thread = JAtomicReference[Thread]
-    "executes in a different thread" in run {
+    "executes in a different thread" in runJVM {
       for {
         t1 <- IOs.value(Thread.currentThread())
-        t2 <- Fibers.forkFiber(thread.set(Thread.currentThread()))
+        t2 <- Fibers.fork(Thread.currentThread())
       } yield assert(t1 != t2)
     }
-    "nested" in run {
+    "nested" in runJVM {
       for {
         t1 <- IOs.value(Thread.currentThread())
-        t2 <- Fibers.forkFiber(Fibers.forkFiber(thread.set(Thread.currentThread())))
+        t2 <- Fibers.fork(Fibers.fork(Thread.currentThread()))
       } yield assert(t1 != t2)
     }
   }
 
   "race" in run {
-    val ac = JAtomicInteger(0)
-    val bc = JAtomicInteger(0)
+    val ac = new JAtomicInteger(0)
+    val bc = new JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
       IOs {
         if (i > 0) {
@@ -203,8 +205,8 @@ class fibersTest extends KyoTest {
   }
 
   "await" in run {
-    val ac = JAtomicInteger(0)
-    val bc = JAtomicInteger(0)
+    val ac = new JAtomicInteger(0)
+    val bc = new JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
       IOs {
         if (i > 0) {
@@ -222,8 +224,8 @@ class fibersTest extends KyoTest {
   }
 
   "awaitFiber" in run {
-    val ac = JAtomicInteger(0)
-    val bc = JAtomicInteger(0)
+    val ac = new JAtomicInteger(0)
+    val bc = new JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
       IOs {
         if (i > 0) {
@@ -241,8 +243,8 @@ class fibersTest extends KyoTest {
   }
 
   "collect" in run {
-    val ac = JAtomicInteger(0)
-    val bc = JAtomicInteger(0)
+    val ac = new JAtomicInteger(0)
+    val bc = new JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
       IOs {
         if (i > 0) {
@@ -261,8 +263,8 @@ class fibersTest extends KyoTest {
   }
 
   "collectFiber" in run {
-    val ac = JAtomicInteger(0)
-    val bc = JAtomicInteger(0)
+    val ac = new JAtomicInteger(0)
+    val bc = new JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
       IOs {
         if (i > 0) {
@@ -286,7 +288,7 @@ class fibersTest extends KyoTest {
         v1       <- Fibers.fork(1)
         _        <- Fibers.await(())
         (v2, v3) <- Fibers.fork(2, 3)
-        l        <- Fibers.collect(List(4, 5))
+        l        <- Fibers.collect(List[Int > Any](4, 5))
       } yield assert(v1 + v2 + v3 + l.sum == 15)
     }
     "interrupt" in runJVM {
@@ -294,7 +296,7 @@ class fibersTest extends KyoTest {
         ref.incrementAndGet.map(_ => loop(ref))
 
       def task(l: Latch): Unit > IOs =
-        Resources.run {
+        Resources.run[Unit, IOs] {
           Resources.ensure(l.release).map { _ =>
             Atomics.initInt(0).map(loop)
           }
@@ -318,15 +320,16 @@ class fibersTest extends KyoTest {
     "outer" in run {
       val resource1 = new Resource
       val resource2 = new Resource
-      val io1: (JAtomicInteger & Closeable, Set[Int]) > (Resources & IOs & Fibers) =
+      val io1: (JAtomicInteger with Closeable, Set[Int]) > (Resources with IOs with Fibers) =
         for {
           r  <- Resources.acquire(resource1)
           v1 <- IOs(r.incrementAndGet())
           v2 <- Fibers.fork(r.incrementAndGet())
         } yield (r, Set(v1, v2))
-      Resources.run(io1).map { case (r, v) =>
-        assert(v == Set(1, 2))
-        assert(r.get() == -1)
+      Resources.run[(JAtomicInteger with Closeable, Set[Int]), IOs with Fibers](io1).map {
+        case (r, v) =>
+          assert(v == Set(1, 2))
+          assert(r.get() == -1)
       }
     }
     "inner" in run {
@@ -352,14 +355,14 @@ class fibersTest extends KyoTest {
     "mixed" in run {
       val resource1 = new Resource
       val resource2 = new Resource
-      val io1: Set[Int] > (Resources & (IOs & (IOs & Fibers))) =
+      val io1: Set[Int] > (Resources with (IOs with (IOs with Fibers))) =
         for {
           r  <- Resources.acquire(resource1)
           v1 <- IOs(r.incrementAndGet())
           v2 <- Fibers.fork(r.incrementAndGet())
           v3 <- Resources.run(Resources.acquire(resource2).map(_.incrementAndGet()))
         } yield Set(v1, v2, v3)
-      Resources.run(io1).map { r =>
+      Resources.run[Set[Int], IOs with Fibers](io1).map { r =>
         assert(r == Set(1, 2))
         assert(resource1.get() == -1)
         assert(resource2.get() == -1)
@@ -404,7 +407,7 @@ class fibersTest extends KyoTest {
   }
 
   "stack safety" in run {
-    def loop(i: Int): Assertion > (IOs & Fibers) =
+    def loop(i: Int): Assertion > (IOs with Fibers) =
       if (i > 0) {
         Fibers.fork(List.fill(1000)(())).map(_ => loop(i - 1))
       } else {

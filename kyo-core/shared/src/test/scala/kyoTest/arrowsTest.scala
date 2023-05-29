@@ -23,9 +23,9 @@ class arrowsTest extends KyoTest {
       "impure transform" in {
         val a =
           Arrows[Int, Any, String, Options](_.map(v => Options.get(Option("" + v))))
-        val arrow: Int > Any => String > (Options & IOs) = a
+        val arrow: Int > Any => String > (Options with IOs) = a
         checkEquals[Option[String], Any](
-            IOs.run[Option[String]](arrow(1) < Options),
+            IOs.run[Option[String]](Options.run(arrow(1))),
             Option("1")
         )
       }
@@ -42,7 +42,7 @@ class arrowsTest extends KyoTest {
       "pure transform" in {
         val a =
           Arrows[Int, Options, String, Options](_.map(v => "" + v))
-        val arrow: Int > Options => String > (Options & IOs) = a
+        val arrow: Int > Options => String > (Options with IOs) = a
         checkEquals[Option[String], Any](
             IOs.run[Option[String]](Options.run(arrow(Options.get(Option(1))))),
             Option("1")
@@ -51,7 +51,7 @@ class arrowsTest extends KyoTest {
       "impure transform" in {
         val a =
           Arrows[Int, Options, String, Options](_.map(v => Options.get(Option("" + v))))
-        val arrow: Int > Options => String > (Options & IOs) = a
+        val arrow: Int > Options => String > (Options with IOs) = a
         checkEquals[Option[String], Any](
             IOs.run[Option[String]](Options.run(arrow(Options.get(Option(1))))),
             Option("1")
@@ -60,7 +60,7 @@ class arrowsTest extends KyoTest {
       "locals" in {
         val l = Locals.init(10)
         val arrow =
-          Arrows[Int, Options, Int, (Options & IOs)](_.map(v1 => l.get.map(v2 => v1 + v2)))
+          Arrows[Int, Options, Int, (Options with IOs)](_.map(v1 => l.get.map(v2 => v1 + v2)))
         checkEquals[Option[Int], Any](
             IOs.run[Option[Int]](Options.run(arrow(Options.get(Option(20))))),
             Option(30)
@@ -70,7 +70,7 @@ class arrowsTest extends KyoTest {
     "handle input effect" - {
       "transform + handle" in {
         val a =
-          Arrows[Int, Options, Option[String], Any](_.map(v => "" + v) < Options)
+          Arrows[Int, Options, Option[String], Any](v => Options.run(v.map(v => "" + v)))
         val arrow: Int > Options => Option[String] > IOs = a
         checkEquals[Option[String], Any](
             IOs.run[Option[String]](arrow(Options.get(Option(1)))),
@@ -80,7 +80,7 @@ class arrowsTest extends KyoTest {
       "transform + handle + transform" in {
         val a =
           Arrows[Int, Options, Option[String], Any](i =>
-            (i.map(_ + 1) < Options).map(_.map("" + _))
+            Options.run(i.map(_ + 1)).map(_.map("" + _))
           )
         val arrow: Int > Options => Option[String] > IOs = a
         checkEquals[Option[String], Any](
@@ -117,9 +117,9 @@ class arrowsTest extends KyoTest {
               self(i - 1)
           }
         }
-      val arrow: Int > Options => String > (Options & IOs) = a
+      val arrow: Int > Options => String > (Options with IOs) = a
       checkEquals[Option[String], Any](
-          IOs.run[Option[String]](arrow(10) < Options),
+          IOs.run[Option[String]](Options.run(arrow(10))),
           Option("0")
       )
     }

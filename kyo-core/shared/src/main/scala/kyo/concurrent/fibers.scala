@@ -400,7 +400,7 @@ object fibers {
         }
       }
 
-    def block[T, S](v: T > (Fibers & S)): T > (S & IOs) =
+    def block[T, S](v: T > (Fibers & S)): T > (IOs & S) =
       given Handler[Fiber, Fibers] =
         new Handler[Fiber, Fibers] {
           def pure[T](v: T) = Fiber.done(v)

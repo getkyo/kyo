@@ -6,7 +6,7 @@ import kyo.randoms._
 
 class randomsTest extends KyoTest {
 
-  given testRandom: Random with {
+  implicit def testRandom: Random = new Random {
     def nextInt         = 10
     def nextInt(n: Int) = 11 + n
     def nextLong        = 20L

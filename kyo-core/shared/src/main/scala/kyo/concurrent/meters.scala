@@ -18,7 +18,7 @@ object meters {
     def available: Int > IOs
     def isAvailable: Boolean > IOs = available.map(_ > 0)
     def run[T, S](v: => T > S): T > (S & IOs & Fibers)
-    def tryRun[T, S](v: => T > S): Option[T] > (S & IOs)
+    def tryRun[T, S](v: => T > S): Option[T] > (IOs & S)
   }
 
   object Meters {
@@ -69,10 +69,25 @@ object meters {
         }
       }
 
-    def pipeline[S](l: (Meter > (S & IOs))*): Meter > (S & IOs) =
-      pipeline(l.toList)
+    def pipeline[S1, S2](m1: Meter > S1, m2: Meter > S2): Meter > (IOs & S1 & S2) =
+      pipeline(List(m1, m2))
 
-    def pipeline[S](l: List[Meter > (S & IOs)]): Meter > (S & IOs) =
+    def pipeline[S1, S2, S3](
+        m1: Meter > S1,
+        m2: Meter > S2,
+        m3: Meter > S3
+    ): Meter > (IOs & S1 & S2 & S3) =
+      pipeline(List(m1, m2, m3))
+
+    def pipeline[S1, S2, S3, S4](
+        m1: Meter > S1,
+        m2: Meter > S2,
+        m3: Meter > S3,
+        m4: Meter > S4
+    ): Meter > (IOs & S1 & S2 & S3 & S4) =
+      pipeline(List(m1, m2, m3, m4))
+
+    def pipeline[S](l: List[Meter > (IOs & S)]): Meter > (IOs & S) =
       Lists.collect(l).map { meters =>
         new Meter {
           val available =
@@ -93,7 +108,7 @@ object meters {
               }
             loop(meters)
           def tryRun[T, S](v: => T > S) =
-            def loop(l: List[Meter]): Option[T] > (S & IOs) =
+            def loop(l: List[Meter]): Option[T] > (IOs & S) =
               l match {
                 case Nil => v.map(Some(_))
                 case h :: t =>

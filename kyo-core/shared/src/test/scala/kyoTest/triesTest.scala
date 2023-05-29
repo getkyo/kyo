@@ -23,7 +23,7 @@ class triesTest extends KyoTest {
     }
     "success" in {
       checkEquals[Try[Int], Nothing](
-          Tries(1) < Tries,
+          Tries.run(Tries(1)),
           Success(1)
       )
     }
@@ -147,9 +147,13 @@ class triesTest extends KyoTest {
     }
     "nested effect + failure" in {
       checkEquals[Option[Try[Int]], Nothing](
-          Tries.get(Try(Option(1))).map(opt =>
-            ((opt: Option[Int] > Tries) > Options).map(_ => (throw e): Int)
-          ) < Tries < Options,
+          Options.run(
+              Tries.run(
+                  Tries.get(Try(Option(1))).map(opt =>
+                    Options.get(opt: Option[Int] > Tries).map(_ => (throw e): Int)
+                  )
+              )
+          ),
           Some(Failure(e))
       )
     }

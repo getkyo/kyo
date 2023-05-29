@@ -56,7 +56,7 @@ object locals {
       }
 
     /*inline(3)*/
-    def restore[T, S](st: State)(f: T > S): T > (S & IOs) =
+    def restore[T, S](st: State)(f: T > S): T > (IOs & S) =
       type M2[_]
       type E2 <: Effect[M2]
       def loop(f: T > S): T > S =

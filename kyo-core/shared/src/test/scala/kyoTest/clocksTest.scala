@@ -30,8 +30,8 @@ class clocksTest extends KyoTest {
   }
 
   "now implicit clock" in run {
-    given Clock = testClock
-    val instant = Instant.now()
+    implicit def clock: Clock = testClock
+    val instant               = Instant.now()
     testClock.nows = List(instant)
     val io = Clocks.run(Clocks.now)
     assert(IOs.run(io) == instant)

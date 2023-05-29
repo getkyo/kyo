@@ -42,7 +42,7 @@ class iosTest extends KyoTest {
       val v2 = IOs.lazyRun(v)
       assert(!called)
       checkEquals[Option[Int], Nothing](
-          v2 < Options,
+          Options.run(v2),
           Option(1)
       )
       assert(called)

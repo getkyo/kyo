@@ -18,17 +18,9 @@ class resourcesTest extends KyoTest {
     def close() = closes += 1
   }
 
-  val r1 = Resource(1)
-  val r2 = Resource(2)
-
-  def clear() =
-    r1.closes = 0
-    r2.closes = 0
-    r1.acquires = 0
-    r2.acquires = 0
-
   "acquire + close" in run {
-    clear()
+    val r1 = Resource(1)
+    val r2 = Resource(2)
     IOs.run {
       Resources.run(Resources.acquire(r1()))
     }
@@ -39,7 +31,8 @@ class resourcesTest extends KyoTest {
   }
 
   "acquire + tranform + close" in run {
-    clear()
+    val r1 = Resource(1)
+    val r2 = Resource(2)
     IOs.run {
       Resources.run(Resources.acquire(r1()).map(_ => assert(r1.closes == 0)))
     }
@@ -50,10 +43,11 @@ class resourcesTest extends KyoTest {
   }
 
   "acquire + effectful tranform + close" in run {
-    clear()
+    val r1 = Resource(1)
+    val r2 = Resource(2)
     val r =
       IOs.lazyRun {
-        Resources.run(Resources.acquire(r1()).map { _ =>
+        Resources.run[Int, Options](Resources.acquire(r1()).map { _ =>
           assert(r1.closes == 0)
           Options.get(Option(1))
         })
@@ -62,7 +56,7 @@ class resourcesTest extends KyoTest {
     assert(r2.closes == 0)
     assert(r1.acquires == 1)
     assert(r2.acquires == 0)
-    r < Options
+    Options.run(r)
     assert(r1.closes == 1)
     assert(r2.closes == 0)
     assert(r1.acquires == 1)
@@ -70,7 +64,8 @@ class resourcesTest extends KyoTest {
   }
 
   "two acquires + close" in run {
-    clear()
+    val r1 = Resource(1)
+    val r2 = Resource(2)
     IOs.run {
       Resources.run(Resources.acquire(r1()).map(_ => Resources.acquire(r2())))
     }
@@ -81,7 +76,8 @@ class resourcesTest extends KyoTest {
   }
 
   "two acquires + for-comp + close" in run {
-    clear()
+    val r1 = Resource(1)
+    val r2 = Resource(2)
     val r: Int =
       IOs.run {
         Resources.run {
@@ -101,11 +97,12 @@ class resourcesTest extends KyoTest {
   }
 
   "two acquires + effectful for-comp + close" in run {
-    clear()
+    val r1 = Resource(1)
+    val r2 = Resource(2)
     val r: Int > Options =
       IOs.lazyRun {
-        Resources.run {
-          val io: Int > (Resources & Options) =
+        Resources.run[Int, Options] {
+          val io: Int > (Resources with Options) =
             for {
               r1 <- Resources.acquire(r1())
               i1 <- Options.get(Option(r1.id * 3))
@@ -119,7 +116,7 @@ class resourcesTest extends KyoTest {
     assert(r2.closes == 0)
     assert(r1.acquires == 1)
     assert(r2.acquires == 0)
-    r < Options
+    Options.run(r)
     assert(r1.closes == 1)
     assert(r2.closes == 1)
     assert(r1.acquires == 1)
@@ -127,8 +124,9 @@ class resourcesTest extends KyoTest {
   }
 
   "nested" in run {
-    clear()
-    val r = IOs.run(Resources.run(Resources.run(Resources.acquire(r1()))))
+    val r1 = Resource(1)
+    val r2 = Resource(2)
+    val r  = IOs.run(Resources.run(Resources.run(Resources.acquire(r1()))))
     assert(r == r1)
     assert(r1.acquires == 1)
     assert(r1.closes == 1)

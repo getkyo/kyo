@@ -2,7 +2,6 @@ package kyoTest
 
 import kyo.aborts._
 import kyo._
-import kyo.core._
 import kyo.options._
 import org.scalatest.Args
 import org.scalatest.Status
@@ -61,7 +60,7 @@ class abortsTest extends KyoTest {
 
   "effectful" - {
     "success" - {
-      val v = (Right(1) > Aborts[Ex1])
+      val v = Aborts[Ex1].get(Right(1))
       "handle" in {
         checkEquals[Either[Ex1, Int], Any](
             Aborts[Ex1].run(v),
@@ -95,7 +94,7 @@ class abortsTest extends KyoTest {
       }
     }
     "failure" - {
-      val v: Int > Aborts[Ex1] = (Left(ex1) > Aborts[Ex1])
+      val v: Int > Aborts[Ex1] = Aborts[Ex1].get(Left(ex1))
       "handle" in {
         checkEquals[Either[Ex1, Int], Any](
             Aborts[Ex1].run(v),
@@ -184,13 +183,13 @@ class abortsTest extends KyoTest {
           }
         "success" in {
           checkEquals[Option[Either[Ex1, Int]], Any](
-              Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Option(2) > Options)))),
+              Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Options.get(Option(2)))))),
               Some(Right(5))
           )
         }
         "failure" in {
           checkEquals[Option[Either[Ex1, Int]], Any](
-              Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Option(0) > Options)))),
+              Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Options.get(Option(0)))))),
               Some(Left(ex1))
           )
         }

@@ -22,7 +22,7 @@ object ios {
   trait Preempt extends Safepoint[IOs] {
     def ensure(f: () => Unit): Unit
     def remove(f: () => Unit): Unit
-    def apply[T, S](v: => T > (S & IOs)) =
+    def apply[T, S](v: => T > (IOs & S)) =
       IOs(v)
   }
   object Preempt {
@@ -37,7 +37,7 @@ object ios {
   opaque type IO[+T] = T
 
   private[kyo] abstract class KyoIO[T, S]
-      extends Kyo[IO, IOs, Unit, T, (S & IOs)] {
+      extends Kyo[IO, IOs, Unit, T, (IOs & S)] {
     final def value  = ()
     final def effect = ios.IOs
   }
@@ -59,7 +59,7 @@ object ios {
       Tries(v) < Tries
 
     private[kyo] /*inline(3)*/ def ensure[T, S]( /*inline(3)*/ f: => Unit > IOs)(v: => T > S)
-        : T > (S & IOs) =
+        : T > (IOs & S) =
       type M2[_]
       type E2 <: Effect[M2]
       lazy val run: Unit =
@@ -71,7 +71,7 @@ object ios {
       val ensure = new AbstractFunction0[Unit] {
         def apply() = run
       }
-      def ensureLoop(v: T > (S & IOs), p: Preempt): T > (S & IOs) =
+      def ensureLoop(v: T > (IOs & S), p: Preempt): T > (IOs & S) =
         v match {
           case kyo: Kyo[M2, E2, Any, T, S & IOs] @unchecked =>
             new KyoCont[M2, E2, Any, T, S & IOs](kyo) {
@@ -95,8 +95,8 @@ object ios {
 
     /*inline(3)*/
     def apply[T, S](
-        /*inline(3)*/ f: => T > (S & IOs)
-    ): T > (S & IOs) =
+        /*inline(3)*/ f: => T > (IOs & S)
+    ): T > (IOs & S) =
       new KyoIO[T, S] {
         def apply(v: Unit, s: Safepoint[IOs], l: Locals.State) =
           f
@@ -115,10 +115,10 @@ object ios {
       runLoop(v)
 
     /*inline(3)*/
-    def lazyRun[T, S](v: T > (S & IOs)): T > S =
+    def lazyRun[T, S](v: T > (IOs & S)): T > S =
       type M2[_]
       type E2 <: Effect[M2]
-      @tailrec def lazyRunLoop(v: T > (S & IOs)): T > S =
+      @tailrec def lazyRunLoop(v: T > (IOs & S)): T > S =
         val safepoint = Safepoint.noop[IOs]
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, S & IOs] @unchecked if (kyo.effect eq IOs) =>

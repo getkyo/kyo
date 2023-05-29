@@ -8,58 +8,51 @@ import kyo.ios._
 class consolesTest extends KyoTest {
 
   "run" in run {
-    testConsole.clear()
+    val testConsole = new TestConsole
     testConsole.readlns = List("readln")
     val io: String > IOs = Consoles.run(testConsole)(Consoles.readln)
     assert(IOs.run(io) == "readln")
   }
   "run implicit console" in run {
-    testConsole.clear()
-    given Console = testConsole
+    val testConsole               = new TestConsole
+    implicit def console: Console = testConsole
     testConsole.readlns = List("readln")
     val io: String > IOs = Consoles.run(Consoles.readln)
     assert(IOs.run(io) == "readln")
   }
   "readln" in run {
-    testConsole.clear()
+    val testConsole = new TestConsole
     testConsole.readlns = List("readln")
     val io: String > IOs = Consoles.run(testConsole)(Consoles.readln)
     assert(IOs.run(io) == "readln")
   }
   "print" in run {
-    testConsole.clear()
+    val testConsole = new TestConsole
     IOs.run(Consoles.run(testConsole)(Consoles.print("print")))
     assert(testConsole.prints == List("print"))
   }
   "printErr" in run {
-    testConsole.clear()
+    val testConsole = new TestConsole
     IOs.run(Consoles.run(testConsole)(Consoles.printErr("printErr")))
     assert(testConsole.printErrs == List("printErr"))
   }
   "println" in run {
-    testConsole.clear()
+    val testConsole = new TestConsole
     IOs.run(Consoles.run(testConsole)(Consoles.println("println")))
     assert(testConsole.printlns == List("println"))
   }
   "printlnErr" in run {
-    testConsole.clear()
+    val testConsole = new TestConsole
     IOs.run(Consoles.run(testConsole)(Consoles.printlnErr("printlnErr")))
     assert(testConsole.printlnErrs == List("printlnErr"))
   }
 
-  object testConsole extends Console {
+  class TestConsole extends Console {
     var readlns     = List.empty[String]
     var prints      = List.empty[String]
     var printErrs   = List.empty[String]
     var printlns    = List.empty[String]
     var printlnErrs = List.empty[String]
-
-    def clear() =
-      readlns = List.empty[String]
-      prints = List.empty[String]
-      printErrs = List.empty[String]
-      printlns = List.empty[String]
-      printlnErrs = List.empty[String]
 
     def readln: String > IOs =
       IOs {

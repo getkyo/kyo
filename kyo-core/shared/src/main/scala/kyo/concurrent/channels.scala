@@ -14,7 +14,7 @@ object channels {
 
   trait Channel[T] { self =>
     def size: Int > IOs
-    def offer[S](v: T > S): Boolean > (S & IOs)
+    def offer[S](v: T > S): Boolean > (IOs & S)
     def poll: Option[T] > IOs
     def isEmpty: Boolean > IOs
     def isFull: Boolean > IOs
@@ -23,14 +23,14 @@ object channels {
   object Channels {
 
     trait Unbounded[T] extends Channel[T] {
-      def offer[S](v: T > S): Boolean > (S & IOs)
+      def offer[S](v: T > S): Boolean > (IOs & S)
       def poll: Option[T] > IOs
-      def put[S](v: T > S): Unit > (S & IOs)
+      def put[S](v: T > S): Unit > (IOs & S)
     }
 
     trait Blocking[T] extends Channel[T] {
 
-      def putFiber[S](v: T > S): Fiber[Unit] > (S & IOs)
+      def putFiber[S](v: T > S): Fiber[Unit] > (IOs & S)
       def takeFiber: Fiber[T] > IOs
 
       def put[S](v: T > S): Unit > (S & IOs & Fibers) =
@@ -120,7 +120,7 @@ object channels {
               try q.poll()
               finally flush()
             }
-          def putFiber[S](v: T > S): Fiber[Unit] > (S & IOs) =
+          def putFiber[S](v: T > S): Fiber[Unit] > (IOs & S) =
             v.map { v =>
               IOs {
                 try {
