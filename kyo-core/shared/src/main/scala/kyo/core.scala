@@ -2,7 +2,6 @@ package kyo
 
 import kyo.locals.Locals.State
 
-import scala.annotation.targetName
 import scala.runtime.AbstractFunction0
 import scala.runtime.AbstractFunction1
 import scala.util.control.NonFatal
@@ -79,13 +78,13 @@ object core {
 
   trait Safepoint[M[_], E <: Effect[M, E]] {
     def apply(): Boolean
-    def apply[T, S](v: => T > (S with E)): T > (S with E)
+    def apply[T, S](v: => T > S): T > (S with E)
   }
 
   object Safepoint {
     private val _noop = new Safepoint[MX, EX] {
-      def apply()                            = false
-      def apply[T, S](v: => T > (S with EX)) = v
+      def apply()                  = false
+      def apply[T, S](v: => T > S) = v
     }
     implicit def noop[M[_], E <: Effect[M, E]]: Safepoint[M, E] =
       _noop.asInstanceOf[Safepoint[M, E]]
@@ -99,7 +98,7 @@ object core {
             def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) = {
               val n = kyo(v, s, l)
               if (s()) {
-                s(transformLoop(n))
+                s[U, S with S2](transformLoop(n))
                   .asInstanceOf[U > (S with S2)]
               } else {
                 transformLoop(n)

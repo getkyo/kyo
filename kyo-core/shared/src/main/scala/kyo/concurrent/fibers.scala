@@ -24,7 +24,6 @@ import scala.util.control.NonFatal
 
 import scheduler._
 import timers._
-import scala.annotation.targetName
 
 object fibers {
 
@@ -41,9 +40,9 @@ object fibers {
         p.complete(v)
     }
 
-    def done[T](value: T): Fiber[T]                        = Fiber(value)
-    def failed[T](reason: Throwable): Fiber[T]             = Fiber(Failed(reason))
-    private[kyo] def promise[T](p: IOPromise[T]): Fiber[T] = Fiber(p)
+    def done[T](value: T): Fiber[T]                        = new Fiber(value)
+    def failed[T](reason: Throwable): Fiber[T]             = new Fiber(Failed(reason))
+    private[kyo] def promise[T](p: IOPromise[T]): Fiber[T] = new Fiber(p)
   }
 
   class Fiber[T] private[Fiber] (
@@ -114,10 +113,10 @@ object fibers {
       state match {
         case ioTask: IOTask[T] @unchecked =>
           IOs {
-            val p = IOPromise[Boolean]()
+            val p = new IOPromise[Boolean]()
             ioTask.ensure(() => p.complete(true))
             interrupt(reason).map {
-              case true  => Fiber(p).join
+              case true  => new Fiber(p).join
               case false => false
             }
           }
@@ -160,7 +159,7 @@ object fibers {
     private[kyo] def unsafeTransform[U](t: T => Fiber[U]): Fiber[U] =
       state match {
         case promise: IOPromise[T] @unchecked =>
-          val r = IOPromise[U]()
+          val r = new IOPromise[U]()
           r.interrupts(promise)
           promise.onComplete { v =>
             try {
@@ -177,7 +176,7 @@ object fibers {
                 r.complete(IOs.fail(ex))
             }
           }
-          Fiber(r)
+          new Fiber(r)
         case failed: Failed =>
           this.asInstanceOf[Fiber[U]]
         case _ =>
@@ -202,7 +201,7 @@ object fibers {
           def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
             m.unsafeTransform(f)
         }
-      deepHandle(this)(v)
+      deepHandle[Fiber, Fibers, T, Any](this)(v)
     }
 
     def value[T](v: T): Fiber[T] =
@@ -215,10 +214,10 @@ object fibers {
       Fiber.failed(ex)
 
     def promise[T]: Fiber.Promise[T] > IOs =
-      IOs(Fiber.Promise(IOPromise[T]()))
+      IOs(new Fiber.Promise(new IOPromise[T]()))
 
     private[kyo] def unsafePromise[T]: Fiber.Promise[T] =
-      Fiber.Promise(IOPromise[T]())
+      new Fiber.Promise(new IOPromise[T]())
 
     // compiler bug workaround
     private val IOTask = kyo.concurrent.scheduler.IOTask
@@ -275,17 +274,18 @@ object fibers {
     ): T > (IOs with Fibers) =
       raceFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))).map(_.join)
 
-    private inline def foreach[T, U](inline l: List[T])(inline f: T => Unit): Unit =
+    private def foreach[T, U](l: List[T])(f: T => Unit): Unit = {
       var curr = l
       while (curr ne Nil) {
         f(curr.head)
         curr = curr.tail
       }
+    }
 
-    def raceFiber[T](l: List[T > (IOs with Fibers)]): Fiber[T] > IOs =
+    def raceFiber[T](l: List[T > (IOs with Fibers)]): Fiber[T] > IOs = {
       require(!l.isEmpty)
       Locals.save.map { st =>
-        val p = IOPromise[T]
+        val p = new IOPromise[T]
         foreach(l) { io =>
           val f = IOTask(IOs(io), st)
           p.interrupts(f)
@@ -293,6 +293,7 @@ object fibers {
         }
         Fiber.promise(p)
       }
+    }
 
     def await[T](
         v1: => T > (IOs with Fibers)
@@ -322,8 +323,8 @@ object fibers {
 
     def awaitFiber[T](l: List[T > (IOs with Fibers)]): Fiber[Unit] > IOs =
       Locals.save.map { st =>
-        val p       = IOPromise[Unit]
-        val pending = AtomicInteger(l.size)
+        val p       = new IOPromise[Unit]
+        val pending = new AtomicInteger(l.size)
         var i       = 0
         val f: T > IOs => Unit =
           r =>
@@ -350,10 +351,10 @@ object fibers {
 
     def collectFiber[T](l: List[T > (IOs with Fibers)]): Fiber[Seq[T]] > IOs =
       Locals.save.map { st =>
-        val p       = IOPromise[Seq[T]]
+        val p       = new IOPromise[Seq[T]]
         val size    = l.size
         val results = (new Array[Any](size)).asInstanceOf[Array[T]]
-        val pending = AtomicInteger(size)
+        val pending = new AtomicInteger(size)
         var i       = 0
         foreach(l) { io =>
           val fiber = IOTask(IOs(io), st)
@@ -376,7 +377,7 @@ object fibers {
       }
 
     def never: Fiber[Unit] > IOs =
-      IOs(Fiber.promise(IOPromise[Unit]))
+      IOs(Fiber.promise(new IOPromise[Unit]))
 
     def sleep(d: Duration): Unit > (IOs with Fibers with Timers) =
       promise[Unit].map { p =>
@@ -406,7 +407,7 @@ object fibers {
         }
       }
 
-    def block[T, S](v: T > (Fibers with S)): T > (IOs with S) =
+    def block[T, S](v: T > (Fibers with S)): T > (IOs with S) = {
       implicit def handler: Handler[Fiber, Fibers] =
         new Handler[Fiber, Fibers] {
           def pure[T](v: T) = Fiber.done(v)
@@ -423,14 +424,15 @@ object fibers {
             }
         }
       handle(v).map(_.block)
+    }
 
     def join[T](f: Future[T]): T > (IOs with Fibers) =
       joinFiber(f).map(_.join)
 
-    def joinFiber[T](f: Future[T]): Fiber[T] > IOs =
+    def joinFiber[T](f: Future[T]): Fiber[T] > IOs = {
       import scala.concurrent.ExecutionContext.Implicits.global
       Locals.save.map { st =>
-        val p = IOPromise[T]()
+        val p = new IOPromise[T]()
         f.onComplete { r =>
           val io =
             IOs {
@@ -445,6 +447,7 @@ object fibers {
         }
         Fiber.promise(p)
       }
+    }
   }
   val Fibers = new Fibers
 

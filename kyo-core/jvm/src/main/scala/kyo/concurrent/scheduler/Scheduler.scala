@@ -22,11 +22,11 @@ private[kyo] object Scheduler {
 
   @volatile
   private var concurrencyLimit = coreWorkers
-  private val concurrency      = AtomicInteger(0)
+  private val concurrency      = new AtomicInteger(0)
 
-  private[scheduler] val workers = CopyOnWriteArrayList[Worker]
+  private[scheduler] val workers = new CopyOnWriteArrayList[Worker]
 
-  private val idle = MpmcUnboundedXaddArrayQueue[Worker](8)
+  private val idle = new MpmcUnboundedXaddArrayQueue[Worker](8)
   private val pool = Executors.newCachedThreadPool(Threads("kyo-worker", new Worker(_)))
 
   startWorkers()
@@ -40,12 +40,13 @@ private[kyo] object Scheduler {
     concurrencyLimit = Math.max(concurrencyLimit, concurrency.get()) + 1
     startWorkers()
 
-  private def startWorkers(): Unit =
+  private def startWorkers(): Unit = {
     var c = concurrency.get()
     while (c < concurrencyLimit && concurrency.compareAndSet(c, c + 1)) {
       pool.execute(() => Worker().runWorker(null))
       c = concurrency.get()
     }
+  }
 
   def flush(): Unit = {
     val w = Worker()
@@ -61,7 +62,7 @@ private[kyo] object Scheduler {
     }
   }
 
-  @tailrec def submit(t: IOTask[_]): Unit =
+  @tailrec def submit(t: IOTask[_]): Unit = {
 
     val w = idle.poll()
     if (w != null) {
@@ -81,8 +82,9 @@ private[kyo] object Scheduler {
     if (!w0.enqueue(t) && !w1.enqueue(t)) {
       submit(t)
     }
+  }
 
-  def steal(w: Worker): IOTask[_] =
+  def steal(w: Worker): IOTask[_] = {
     // p2c load stealing
     var r: IOTask[_] = null
     var w0: Worker   = randomWorker()
@@ -97,8 +99,9 @@ private[kyo] object Scheduler {
       r = w1.steal(w)
     }
     r
+  }
 
-  def loadAvg(): Double =
+  def loadAvg(): Double = {
     var sum = 0L
     val it  = workers.iterator()
     var c   = 0
@@ -107,6 +110,7 @@ private[kyo] object Scheduler {
       c += 1
     }
     sum.doubleValue() / c
+  }
 
   def cycle(): Unit =
     workers.forEach(_.cycle())
@@ -117,9 +121,10 @@ private[kyo] object Scheduler {
       w.park()
     }
 
-  def stopWorker(): Boolean =
+  def stopWorker(): Boolean = {
     val c = concurrency.get()
     c > concurrencyLimit && concurrency.compareAndSet(c, c - 1)
+  }
 
   @tailrec private def randomWorker(): Worker =
     try {
@@ -129,9 +134,10 @@ private[kyo] object Scheduler {
         randomWorker()
     }
 
-  override def toString =
+  override def toString = {
     import scala.jdk.CollectionConverters._
     val w = workers.asScala.map(_.toString).mkString("\n")
     s"$w\nScheduler(loadAvg=${loadAvg()},concurrency=$concurrency,limit=$concurrencyLimit)"
+  }
 
 }

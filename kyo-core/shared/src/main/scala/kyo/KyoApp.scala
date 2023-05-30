@@ -25,8 +25,7 @@ trait KyoApp {
 
 object KyoApp {
   def runFiber[T](timeout: Duration)(
-      v: T > (IOs with Fibers with Resources with Clocks with Consoles &
-        Randoms with Timers with Aspects)
+      v: T > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers with Aspects)
   ): Fiber[T] = {
     val v1
         : T > (IOs with Fibers with Resources with Clocks with Consoles with Timers with Aspects) =

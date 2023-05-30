@@ -49,13 +49,13 @@ class envsTest extends KyoTest {
       val v: Int > (Envs[Service1] with Envs[Service2]) = a
       "same handling order" in {
         checkEquals[Int, Any](
-            Envs[Service1].run[Int, Envs[Service2]](service1)(Envs[Service2].run(service2)(v)),
+            Envs[Service1].run[Int, Any](service1)(Envs[Service2].run(service2)(v)),
             4
         )
       }
       "reverse handling order" in {
         checkEquals[Int, Any](
-            Envs[Service2].run[Int, Envs[Service1]](service2)(Envs[Service1].run(service1)(v)),
+            Envs[Service2].run[Int, Any](service2)(Envs[Service1].run(service1)(v)),
             4
         )
       }

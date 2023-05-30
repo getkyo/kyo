@@ -102,8 +102,8 @@ object channels {
         new Blocking[T] {
 
           val q     = queue.unsafe
-          val takes = MpmcUnboundedXaddArrayQueue[Fiber.Promise[T]](8)
-          val puts  = MpmcUnboundedXaddArrayQueue[(T, Fiber.Promise[Unit])](8)
+          val takes = new MpmcUnboundedXaddArrayQueue[Fiber.Promise[T]](8)
+          val puts  = new MpmcUnboundedXaddArrayQueue[(T, Fiber.Promise[Unit])](8)
 
           val size    = queue.size
           val isEmpty = queue.isEmpty

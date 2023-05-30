@@ -27,10 +27,10 @@ class ScheduledFuture[T](r: => T) extends TimerTask {
 
 class ScheduledExecutorService() {
 
-  val timer = Timer()
+  val timer = new Timer()
 
   def schedule[T](r: Callable[T], delay: Long, unit: TimeUnit): ScheduledFuture[T] = {
-    val task = ScheduledFuture(r.call())
+    val task = new ScheduledFuture(r.call())
     timer.schedule(task, unit.toMillis(delay))
     task
   }
@@ -41,7 +41,7 @@ class ScheduledExecutorService() {
       period: Long,
       unit: TimeUnit
   ): ScheduledFuture[_] = {
-    val task = ScheduledFuture(r.run())
+    val task = new ScheduledFuture(r.run())
     timer.scheduleAtFixedRate(task, unit.toMillis(delay), unit.toMillis(period))
     task
   }
@@ -52,7 +52,7 @@ class ScheduledExecutorService() {
       period: Long,
       unit: TimeUnit
   ): ScheduledFuture[_] = {
-    val task = ScheduledFuture(r.run())
+    val task = new ScheduledFuture(r.run())
     timer.scheduleAtFixedRate(task, unit.toMillis(delay), unit.toMillis(period))
     task
   }
@@ -60,5 +60,5 @@ class ScheduledExecutorService() {
 
 object Executors {
   def newScheduledThreadPool(ign: Int, ign2: ThreadFactory): ScheduledExecutorService =
-    ScheduledExecutorService()
+    new ScheduledExecutorService()
 }

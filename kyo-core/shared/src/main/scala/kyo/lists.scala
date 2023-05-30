@@ -9,20 +9,22 @@ object lists {
 
   final class Lists private[lists] () extends Effect[List, Lists] {
 
-    /*inline(1)*/
-    def run[T, S](v: T > (Lists with S)): List[T] > S =
-      implicit val handler: Handler[List, Lists] =
-        new Handler[List, Lists] {
-          def pure[T](v: T) = List(v)
-          def apply[T, U, S](v: List[T], f: T => U > (Lists with S)): U > (Lists with S) =
-            def loop(l: List[T], acc: List[List[U]]): U > (Lists with S) =
-              l match
-                case Nil =>
-                  Lists.foreach(acc.reverse.flatten)
-                case t :: ts =>
-                  Lists.run(f(t)).map(l => loop(ts, l :: acc))
-            loop(v, Nil)
+    private implicit val handler: Handler[List, Lists] =
+      new Handler[List, Lists] {
+        def pure[T](v: T) = List(v)
+        def apply[T, U, S](v: List[T], f: T => U > (Lists with S)): U > (Lists with S) = {
+          def loop(l: List[T], acc: List[List[U]]): U > (Lists with S) =
+            l match {
+              case Nil =>
+                Lists.foreach(acc.reverse.flatten)
+              case t :: ts =>
+                Lists.run(f(t)).map(l => loop(ts, l :: acc))
+            }
+          loop(v, Nil)
         }
+      }
+
+    def run[T, S](v: T > (Lists with S)): List[T] > S =
       handle(v)
 
     def foreach[T, S](v: List[T] > S): T > (Lists with S) =
@@ -39,7 +41,6 @@ object lists {
     def foreach[T, S](v: (T > S)*): T > (Lists with S) =
       foreach(collect(v.toList))
 
-    /*inline(1)*/
     def filter[S](v: Boolean > S): Unit > (Lists with S) =
       v.map {
         case true =>
@@ -51,8 +52,7 @@ object lists {
     def drop[T]: T > Lists =
       suspend(List.empty[T])
 
-    /*inline(1)*/
-    def collect[T, S](v: List[T > S]): List[T] > S =
+    def collect[T, S](v: List[T > S]): List[T] > S = {
       val buff = ListBuffer[T]()
       def loop(v: List[T > S]): List[T] > S =
         v match {
@@ -64,6 +64,7 @@ object lists {
             })
         }
       loop(v)
+    }
   }
   val Lists = new Lists
 }

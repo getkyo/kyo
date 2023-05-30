@@ -23,16 +23,18 @@ private[kyo] object IOTask {
       st: Locals.State,
       ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
       runtime: Int = 0
-  ): IOTask[T] =
+  ): IOTask[T] = {
     val f = new IOTask[T](v, st, ensures, runtime)
     Scheduler.schedule(f)
     f
+  }
 
   private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1000)
-  private def buffer(): ArrayDeque[() => Unit] =
+  private def buffer(): ArrayDeque[() => Unit] = {
     val b = bufferCache.poll()
-    if (b == null) ArrayDeque()
+    if (b == null) new ArrayDeque()
     else b
+  }
 
   private var token = 0
   private def avoidUnstableIf(): Boolean =
@@ -42,14 +44,15 @@ private[kyo] object IOTask {
     }
 
   object TaskOrdering extends Ordering[IOTask[_]] {
-    override def lt(x: IOTask[_], y: IOTask[_]): Boolean =
+    override def lt(x: IOTask[_], y: IOTask[_]): Boolean = {
       val r = x.runtime
       r == 0 || r < y.runtime
+    }
     def compare(x: IOTask[_], y: IOTask[_]): Int =
       y.runtime - x.runtime
   }
 
-  inline implicit def ord: Ordering[IOTask[_]] = TaskOrdering
+  implicit def ord: Ordering[IOTask[_]] = TaskOrdering
 }
 
 private[kyo] final class IOTask[T](
@@ -74,7 +77,7 @@ private[kyo] final class IOTask[T](
   def apply(): Boolean =
     preempting
 
-  @tailrec private def eval(start: Long, curr: T > (IOs with Fibers)): T > (IOs with Fibers) =
+  @tailrec private def eval(start: Long, curr: T > (IOs with Fibers)): T > (IOs with Fibers) = {
     def finalize() = {
       ensures match {
         case null =>
@@ -122,6 +125,7 @@ private[kyo] final class IOTask[T](
           nullIO
       }
     }
+  }
 
   def run(): Unit = {
     val start = Coordinator.tick()
@@ -171,7 +175,7 @@ private[kyo] final class IOTask[T](
         loop()
     }
 
-  override final def toString =
+  override final def toString = {
     val e = ensures match {
       case null =>
         "[]"
@@ -181,4 +185,5 @@ private[kyo] final class IOTask[T](
         arr.asScala.mkString("[", ",", "]")
     }
     s"IOTask(id=${hashCode},preempting=$preempting,curr=$curr,ensures=$ensures,runtime=$runtime)"
+  }
 }

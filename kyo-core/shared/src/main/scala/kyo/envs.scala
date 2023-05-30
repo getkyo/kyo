@@ -2,7 +2,6 @@ package kyo
 
 import izumi.reflect._
 
-import scala.annotation.targetName
 import scala.reflect.ClassTag
 
 import core._
@@ -10,20 +9,22 @@ import core._
 object envs {
 
   private case object Input
-  type Env[E, +T] = Any // T | Input.type
+  type Env[E] = {
+    type Value[T] >: T // = T | Input.type
+  }
 
   final class Envs[E] private[envs] (implicit private val tag: Tag[_])
-      extends Effect[[T] =>> Env[E, T], Envs[E]] {
+      extends Effect[Env[E]#Value, Envs[E]] {
 
-    def get: E > Envs[E] =
-      suspend(Input)
+    val get: E > Envs[E] =
+      suspend(Input.asInstanceOf[Env[E]#Value[E]])
 
     def run[T, S](e: E)(v: T > (Envs[E] with S)): T > S = {
-      implicit val handler: Handler[[T] =>> Env[E, T], Envs[E]] =
-        new Handler[[T] =>> Env[E, T], Envs[E]] {
+      implicit val handler: Handler[Env[E]#Value, Envs[E]] =
+        new Handler[Env[E]#Value, Envs[E]] {
           def pure[U](v: U) = v
           def apply[U, V, S2](
-              m: Env[E, U],
+              m: Env[E]#Value[U],
               f: U => V > (S2 with Envs[E])
           ): V > (S2 with Envs[E]) =
             m match {
@@ -33,7 +34,7 @@ object envs {
                 f(m.asInstanceOf[U])
             }
         }
-      handle(v).asInstanceOf[T > S]
+      handle[T, Envs[E] with S](v).asInstanceOf[T > S]
     }
 
     override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =

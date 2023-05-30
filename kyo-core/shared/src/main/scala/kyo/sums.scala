@@ -16,30 +16,32 @@ object sums {
   private case class SetValue[V](v: V)
   private case object Get
 
-  type Sum[V, +T] = Any // T | AddValue[V] | SetValue[V] | Get.type
+  type Sum[V] = {
+    type Value[T] >: T // = T | AddValue[V] | SetValue[V] | Get.type
+  }
 
   final class Sums[V] private[sums] (implicit private val tag: Tag[_])
-      extends Effect[[T] =>> Sum[V, T], Sums[V]] {
+      extends Effect[Sum[V]#Value, Sums[V]] {
 
     val get: V > Sums[V] =
-      suspend(Get)
+      suspend(Get.asInstanceOf[Sum[V]#Value[V]])
 
     def add(v: V): V > Sums[V] =
-      suspend(AddValue(v))
+      suspend(AddValue(v).asInstanceOf[Sum[V]#Value[V]])
 
     def set(v: V): V > Sums[V] =
-      suspend(SetValue(v))
+      suspend(SetValue(v).asInstanceOf[Sum[V]#Value[V]])
 
     def run[T, S](v: T > (Sums[V] with S))(implicit
         g: Summer[V],
         tag: Tag[V]
     ): T > (IOs with S) = {
       var curr = g.init
-      implicit def handler: Handler[[T] =>> Sum[V, T], Sums[V]] =
-        new Handler[[T] =>> Sum[V, T], Sums[V]] {
+      implicit def handler: Handler[Sum[V]#Value, Sums[V]] =
+        new Handler[Sum[V]#Value, Sums[V]] {
           def pure[U](v: U) = v
           def apply[T, U, S2](
-              m: Sum[V, T],
+              m: Sum[V]#Value[T],
               f: T => U > (S2 with Sums[V])
           ): U > (S2 with Sums[V]) =
             m match {

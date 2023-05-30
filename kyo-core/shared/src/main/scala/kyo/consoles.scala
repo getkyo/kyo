@@ -34,10 +34,10 @@ object consoles {
   type Consoles = Envs[Console] with IOs
 
   object Consoles {
-    def run[T, S](c: Console)(f: => T > (Consoles & S)): T > (IOs with S) =
-      Envs[Console].run(c)(f)
-    def run[T, S](f: => T > (Consoles & S))(implicit c: Console): T > (IOs with S) =
-      run(c)(f)
+    def run[T, S](c: Console)(f: => T > (Consoles with S)): T > (IOs with S) =
+      Envs[Console].run[T, IOs with S](c)(f)
+    def run[T, S](f: => T > (Consoles with S))(implicit c: Console): T > (IOs with S) =
+      run[T, IOs with S](c)(f)
     def readln: String > Consoles =
       Envs[Console].get.map(_.readln)
     def print[S](s: => String > S): Unit > (S with Consoles) =

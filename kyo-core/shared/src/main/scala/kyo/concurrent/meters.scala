@@ -90,7 +90,7 @@ object meters {
     def pipeline[S](l: List[Meter > (IOs with S)]): Meter > (IOs with S) =
       Lists.collect(l).map { meters =>
         new Meter {
-          val available =
+          val available = {
             def loop(l: List[Meter], acc: Int): Int > IOs =
               l match {
                 case Nil => acc
@@ -98,8 +98,9 @@ object meters {
                   h.available.map(v => loop(t, acc + v))
               }
             loop(meters, 0)
+          }
 
-          def run[T, S](v: => T > S) =
+          def run[T, S](v: => T > S) = {
             def loop(l: List[Meter]): T > (S with IOs with Fibers) =
               l match {
                 case Nil => v
@@ -107,7 +108,8 @@ object meters {
                   h.run(loop(t))
               }
             loop(meters)
-          def tryRun[T, S](v: => T > S) =
+          }
+          def tryRun[T, S](v: => T > S) = {
             def loop(l: List[Meter]): Option[T] > (IOs with S) =
               l match {
                 case Nil => v.map(Some(_))
@@ -118,6 +120,7 @@ object meters {
                   }
               }
             loop(meters)
+          }
         }
       }
 

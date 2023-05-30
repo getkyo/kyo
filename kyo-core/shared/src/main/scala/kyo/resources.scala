@@ -10,7 +10,7 @@ import sums._
 
 object resources {
 
-  type Resource[T] = Sum[Finalizer, T]
+  type Resource[T] = Sum[Finalizer]#Value[T]
 
   type Resources = Sums[Finalizer]
 
@@ -18,9 +18,10 @@ object resources {
     def ensure[T](f: => T > IOs): Unit > Resources =
       Sums[Finalizer].add(() => IOs.run(f)).unit
 
-    def acquire[T <: Closeable](resource: => T): T > Resources =
+    def acquire[T <: Closeable](resource: => T): T > Resources = {
       lazy val v = resource
       Sums[Finalizer].add(() => v.close()).map(_ => v)
+    }
 
     def run[T, S](v: T > (Resources with S)): T > (IOs with S) =
       Sums[Finalizer].run(v)

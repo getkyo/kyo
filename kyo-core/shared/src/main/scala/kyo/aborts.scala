@@ -2,7 +2,6 @@ package kyo
 
 import izumi.reflect._
 
-import scala.annotation.targetName
 import scala.reflect.ClassTag
 import scala.util.Failure
 import scala.util.Success
@@ -14,19 +13,23 @@ import scala.util.Try
 
 object aborts {
 
+  type Abort[E] = {
+    type Value[T] = Either[E, T]
+  }
+
   final class Aborts[E] private[aborts] (private val tag: Tag[E])
-      extends Effect[[T] =>> Either[E, T], Aborts[E]] {
+      extends Effect[Abort[E]#Value, Aborts[E]] {
 
     private implicit def _tag: Tag[E] = tag
 
     def run[T, S](v: T > (Aborts[E] with S)): Either[E, T] > S =
-      handle(v)
+      handle[T, S](v)
 
     def get[T, S](v: Either[E, T] > S): T > (Aborts[E] with S) =
       suspend(v)
 
     def catching[T, S](f: => T > S)(implicit ev: E => Throwable): T > (Aborts[E] with S) =
-      Tries.run(f).map {
+      Tries.run[T, S](f).map {
         case Failure(ex) if tag.closestClass.isAssignableFrom(ex.getClass) =>
           get(Left(ex.asInstanceOf[E]))
         case v: Try[T] =>
@@ -51,8 +54,8 @@ object aborts {
   }
 
   /*inline(1)*/
-  private implicit def handler[E: Tag]: Handler[[T] =>> Either[E, T], Aborts[E]] =
-    new Handler[[T] =>> Either[E, T], Aborts[E]] {
+  private implicit def handler[E: Tag]: Handler[Abort[E]#Value, Aborts[E]] =
+    new Handler[Abort[E]#Value, Aborts[E]] {
       def pure[U](v: U) = Right(v)
       def apply[U, V, S2](
           m: Either[E, U],

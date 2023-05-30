@@ -61,7 +61,7 @@ object queues {
           case 0 =>
             zeroCapacity.asInstanceOf[Queue[T]]
           case 1 =>
-            Queue(
+            new Queue(
                 new AtomicReference[T] with Unsafe[T] {
                   def capacity = 1
                   def size     = if (get == null) 0 else 1
@@ -78,13 +78,13 @@ object queues {
           case _ =>
             access match {
               case Access.Mpmc =>
-                bounded(MpmcArrayQueue(capacity), capacity)
+                bounded(new MpmcArrayQueue[T](capacity), capacity)
               case Access.Mpsc =>
-                bounded(MpscArrayQueue(capacity), capacity)
+                bounded(new MpscArrayQueue[T](capacity), capacity)
               case Access.Spmc =>
-                bounded(SpmcArrayQueue(capacity), capacity)
+                bounded(new SpmcArrayQueue[T](capacity), capacity)
               case Access.Spsc =>
-                bounded(SpscArrayQueue(capacity), capacity)
+                bounded(new SpscArrayQueue[T](capacity), capacity)
             }
         }
       }
@@ -93,18 +93,18 @@ object queues {
       IOs {
         access match {
           case Access.Mpmc =>
-            unbounded(MpmcUnboundedXaddArrayQueue(chunkSize))
+            unbounded(new MpmcUnboundedXaddArrayQueue[T](chunkSize))
           case Access.Mpsc =>
-            unbounded(MpscUnboundedArrayQueue(chunkSize))
+            unbounded(new MpscUnboundedArrayQueue[T](chunkSize))
           case Access.Spmc =>
-            unbounded(MpmcUnboundedXaddArrayQueue(chunkSize))
+            unbounded(new MpmcUnboundedXaddArrayQueue[T](chunkSize))
           case Access.Spsc =>
-            unbounded(SpscUnboundedArrayQueue(chunkSize))
+            unbounded(new SpscUnboundedArrayQueue[T](chunkSize))
         }
       }
 
     private def unbounded[T](q: java.util.Queue[T]): Unbounded[T] =
-      Unbounded(
+      new Unbounded(
           new Unsafe[T] {
             def capacity: Int        = Int.MaxValue
             def size: Int            = q.size
@@ -117,7 +117,7 @@ object queues {
       )
 
     private def bounded[T](q: java.util.Queue[T], _capacity: Int): Queue[T] =
-      Queue(
+      new Queue(
           new Unsafe[T] {
             def capacity: Int        = _capacity
             def size: Int            = q.size

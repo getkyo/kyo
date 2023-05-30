@@ -71,10 +71,11 @@ class KyoTest extends AsyncFreeSpec with Assertions {
 
   def run(
       v: => Assertion > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers)
-  ): Future[Assertion] =
+  ): Future[Assertion] = {
     val v1 = KyoApp.runFiber(timeout)(v)
     val v2 = v1.toFuture
     IOs.run(KyoApp.runFiber(timeout)(v).toFuture)
+  }
 
   class Check[T, S](equals: Boolean) {
     def apply[T2, S2](value: T2 > S2, expected: Any)(implicit

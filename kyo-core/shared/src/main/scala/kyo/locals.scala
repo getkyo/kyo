@@ -20,13 +20,11 @@ object locals {
       }
 
     def let[U, S1, S2](v: T > S1)(f: U > S2): U > (S1 with S2 with IOs) = {
-      type M2[_]
-      type E2 <: Effect[M2, E2]
       def loop(v: T, f: U > S2): U > S2 =
         f match {
-          case kyo: Kyo[M2, E2, Any, U, S2] @unchecked =>
-            new KyoCont[M2, E2, Any, U, S2](kyo) {
-              def apply(v2: Any, s: Safepoint[M2, E2], l: Locals.State) =
+          case kyo: Kyo[MX, EX, Any, U, S2] @unchecked =>
+            new KyoCont[MX, EX, Any, U, S2](kyo) {
+              def apply(v2: Any, s: Safepoint[MX, EX], l: Locals.State) =
                 loop(v, kyo(v2, s, l.updated(Local.this, v)))
             }
           case _ =>
@@ -57,19 +55,18 @@ object locals {
       }
 
     /*inline(3)*/
-    def restore[T, S](st: State)(f: T > S): T > (IOs with S) =
-      type M2[_]
-      type E2 <: Effect[M2, E2]
+    def restore[T, S](st: State)(f: T > S): T > (IOs with S) = {
       def loop(f: T > S): T > S =
         f match {
-          case kyo: Kyo[M2, E2, Any, T, S] @unchecked =>
-            new KyoCont[M2, E2, Any, T, S](kyo) {
-              def apply(v2: Any, s: Safepoint[M2, E2], l: Locals.State) =
+          case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>
+            new KyoCont[MX, EX, Any, T, S](kyo) {
+              def apply(v2: Any, s: Safepoint[MX, EX], l: Locals.State) =
                 loop(kyo(v2, s, l ++ st))
             }
           case _ =>
             f
         }
       loop(f)
+    }
   }
 }

@@ -34,14 +34,13 @@ object randoms {
   type Randoms = Envs[Random] with IOs
 
   object Randoms {
-    type Iso = Randoms with IOs
-    def run[T, S](r: Random)(f: => T > (Iso with S)): T > (IOs with S) =
-      Envs[Random].run(r)(f)
-    def run[T, S](f: => T > (Iso with S))(implicit c: Random): T > (IOs with S) =
-      Envs[Random].run(c)(f)
+    def run[T, S](r: Random)(f: => T > (Randoms with S)): T > (IOs with S) =
+      Envs[Random].run[T, IOs with S](r)(f)
+    def run[T, S](f: => T > (Randoms with S))(implicit r: Random): T > (IOs with S) =
+      run(r)(f)
 
     def nextInt: Int > Randoms = Envs[Random].get.map(_.nextInt)
-    def nextInt[S](n: Int > (Iso with S)): Int > (S with Randoms) =
+    def nextInt[S](n: Int > S): Int > (S with Randoms) =
       n.map(n => Envs[Random].get.map(_.nextInt(n)))
     def nextLong: Long > Randoms       = Envs[Random].get.map(_.nextLong)
     def nextDouble: Double > Randoms   = Envs[Random].get.map(_.nextDouble)
