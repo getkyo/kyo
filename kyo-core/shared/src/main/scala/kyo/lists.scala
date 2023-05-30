@@ -11,6 +11,18 @@ object lists {
 
     /*inline(1)*/
     def run[T, S](v: T > (Lists with S)): List[T] > S =
+      implicit val handler: Handler[List, Lists] =
+        new Handler[List, Lists] {
+          def pure[T](v: T) = List(v)
+          def apply[T, U, S](v: List[T], f: T => U > (Lists with S)): U > (Lists with S) =
+            def loop(l: List[T], acc: List[List[U]]): U > (Lists with S) =
+              l match
+                case Nil =>
+                  Lists.foreach(acc.reverse.flatten)
+                case t :: ts =>
+                  Lists.run(f(t)).map(l => loop(ts, l :: acc))
+            loop(v, Nil)
+        }
       handle(v)
 
     def foreach[T, S](v: List[T] > S): T > (Lists with S) =
@@ -54,16 +66,4 @@ object lists {
       loop(v)
   }
   val Lists = new Lists
-
-  given Handler[List, Lists] with
-    def pure[T](v: T) = List(v)
-    def apply[T, U, S](v: List[T], f: T => U > (Lists with S)): U > (Lists with S) =
-      def loop(l: List[T], acc: List[List[U]]): U > (Lists with S) =
-        l match
-          case Nil =>
-            Lists.foreach(acc.reverse.flatten)
-          case t :: ts =>
-            Lists.run(f(t)).map(l => loop(ts, l :: acc))
-      loop(v, Nil)
-
 }

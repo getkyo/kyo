@@ -4,7 +4,6 @@ import izumi.reflect._
 
 import scala.annotation.targetName
 import scala.reflect.ClassTag
-import scala.util.NotGiven
 
 import core._
 
@@ -20,19 +19,20 @@ object envs {
       suspend(Input)
 
     def run[T, S](e: E)(v: T > (Envs[E] with S)): T > S = {
-      given Handler[[T] =>> Env[E, T], Envs[E]] with {
-        def pure[U](v: U) = v
-        def apply[U, V, S2](
-            m: Env[E, U],
-            f: U => V > (S2 with Envs[E])
-        ): V > (S2 with Envs[E]) =
-          m match {
-            case Input =>
-              f(e.asInstanceOf[U])
-            case _ =>
-              f(m.asInstanceOf[U])
-          }
-      }
+      implicit val handler: Handler[[T] =>> Env[E, T], Envs[E]] =
+        new Handler[[T] =>> Env[E, T], Envs[E]] {
+          def pure[U](v: U) = v
+          def apply[U, V, S2](
+              m: Env[E, U],
+              f: U => V > (S2 with Envs[E])
+          ): V > (S2 with Envs[E]) =
+            m match {
+              case Input =>
+                f(e.asInstanceOf[U])
+              case _ =>
+                f(m.asInstanceOf[U])
+            }
+        }
       handle(v).asInstanceOf[T > S]
     }
 

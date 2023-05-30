@@ -13,10 +13,11 @@ object clocks {
     def now: Instant > IOs
   }
   object Clock {
-    given default: Clock with {
-      val now: Instant > IOs =
-        IOs(Instant.now())
-    }
+    implicit val default: Clock =
+      new Clock {
+        val now: Instant > IOs =
+          IOs(Instant.now())
+      }
   }
   type Clocks = Envs[Clock] with IOs
 

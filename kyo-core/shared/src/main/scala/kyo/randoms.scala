@@ -18,16 +18,17 @@ object randoms {
   }
 
   object Random {
-    given default: Random with {
-      val random          = new java.util.Random
-      def nextInt         = IOs(random.nextInt())
-      def nextInt(n: Int) = IOs(random.nextInt(n))
-      def nextLong        = IOs(random.nextLong())
-      def nextDouble      = IOs(random.nextDouble())
-      def nextBoolean     = IOs(random.nextBoolean())
-      def nextFloat       = IOs(random.nextFloat())
-      def nextGaussian    = IOs(random.nextGaussian())
-    }
+    implicit val default: Random =
+      new Random {
+        val random          = new java.util.Random
+        def nextInt         = IOs(random.nextInt())
+        def nextInt(n: Int) = IOs(random.nextInt(n))
+        def nextLong        = IOs(random.nextLong())
+        def nextDouble      = IOs(random.nextDouble())
+        def nextBoolean     = IOs(random.nextBoolean())
+        def nextFloat       = IOs(random.nextFloat())
+        def nextGaussian    = IOs(random.nextGaussian())
+      }
   }
 
   type Randoms = Envs[Random] with IOs

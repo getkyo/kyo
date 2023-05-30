@@ -26,8 +26,22 @@ object options {
         case Some(v) => v
       }
 
-    def run[T, S](v: T > (Options with S)): Option[T] > S =
+    def run[T, S](v: T > (Options with S)): Option[T] > S = {
+      implicit val handler: Handler[Option, Options] =
+        new Handler[Option, Options] {
+          def pure[T](v: T) =
+            Option(v)
+          def apply[T, U, S](
+              m: Option[T],
+              f: T => U > (Options with S)
+          ): U > (Options with S) =
+            m match {
+              case None    => Options.empty
+              case Some(v) => f(v)
+            }
+        }
       handle(v)
+    }
 
     def orElse[T, S](l: (T > (Options with S))*): T > (Options with S) =
       l.toList match {
@@ -41,17 +55,4 @@ object options {
   }
   val Options = new Options
 
-  /*inline(2)*/
-  given Handler[Option, Options] with {
-    def pure[T](v: T) =
-      Option(v)
-    def apply[T, U, S](
-        m: Option[T],
-        f: T => U > (Options with S)
-    ): U > (Options with S) =
-      m match {
-        case None    => Options.empty
-        case Some(v) => f(v)
-      }
-  }
 }

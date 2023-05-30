@@ -25,8 +25,16 @@ object zios {
 
   final class ZIOs private[zios] () extends Effect[Task, ZIOs] {
 
-    def run[T](v: T > ZIOs): Task[T] =
+    def run[T](v: T > ZIOs): Task[T] = {
+      implicit val handler: DeepHandler[Task, ZIOs] =
+        new DeepHandler[Task, ZIOs] {
+          def pure[T](v: T): Task[T] =
+            ZIO.succeed(v)
+          def apply[T, U](m: Task[T], f: T => Task[U]): Task[U] =
+            m.flatMap(f)
+        }
       deepHandle(this)(v)
+    }
 
     @targetName("fromZIO")
     def apply[R: ITag, E: ITag, A, S](v: ZIO[R, E, A] > S)
@@ -50,35 +58,29 @@ object zios {
   }
   val ZIOs = new ZIOs
 
-  private[kyo] given DeepHandler[Task, ZIOs] with {
-    def pure[T](v: T): Task[T] =
-      ZIO.succeed(v)
-    def apply[T, U](m: Task[T], f: T => Task[U]): Task[U] =
-      m.flatMap(f)
-  }
-
-  private[kyo] given Injection[Fiber, Fibers, Task, ZIOs] with {
-    def apply[T](m: Fiber[T]) =
-      ZIO.asyncInterrupt[Any, Throwable, T] { callback =>
-        IOs.run {
-          m.onComplete { io =>
-            callback {
-              try {
-                ZIO.succeed(IOs.run(io))
-              } catch {
-                case ex if NonFatal(ex) =>
-                  ZIO.fail(ex)
+  private[kyo] implicit val injection: Injection[Fiber, Fibers, Task, ZIOs] =
+    new Injection[Fiber, Fibers, Task, ZIOs] {
+      def apply[T](m: Fiber[T]) =
+        ZIO.asyncInterrupt[Any, Throwable, T] { callback =>
+          IOs.run {
+            m.onComplete { io =>
+              callback {
+                try {
+                  ZIO.succeed(IOs.run(io))
+                } catch {
+                  case ex if NonFatal(ex) =>
+                    ZIO.fail(ex)
+                }
               }
             }
           }
-        }
-        Left {
-          ZIO.succeedUnsafe { u =>
-            IOs.run(m.interrupt)
+          Left {
+            ZIO.succeedUnsafe { u =>
+              IOs.run(m.interrupt)
+            }
           }
         }
-      }
-  }
+    }
 
   private implicit def zioTag[T](implicit t: ITag[T]): zio.Tag[T] =
     new zio.Tag[T] {

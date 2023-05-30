@@ -49,7 +49,7 @@ private[kyo] object IOTask {
       y.runtime - x.runtime
   }
 
-  inline given Ordering[IOTask[_]] = TaskOrdering
+  inline implicit def ord: Ordering[IOTask[_]] = TaskOrdering
 }
 
 private[kyo] final class IOTask[T](

@@ -34,7 +34,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     def apply(a: T, b: T): Boolean
   }
   object Eq {
-    given [T]: Eq[T] = _ == _
+    implicit def eq[T]: Eq[T] = _ == _
   }
 
   def retry[S](f: => Boolean > S): Boolean > S = {
@@ -49,7 +49,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
   // def timeout = Duration.Inf
   def timeout = 10.seconds
 
-  given Conversion[Assertion, Future[Assertion]] = (a: Assertion) => Future.successful(a)
+  implicit def toFuture(a: Assertion): Future[Assertion] = Future.successful(a)
 
   def runJVM(
       v: => Assertion > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers)

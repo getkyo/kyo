@@ -16,18 +16,19 @@ object consoles {
   }
 
   object Console {
-    given default: Console with {
-      val readln: String > IOs =
-        IOs(scala.Console.in.readLine())
-      def print(s: => String): Unit > IOs =
-        IOs(scala.Console.out.print(s))
-      def printErr(s: => String): Unit > IOs =
-        IOs(scala.Console.err.print(s))
-      def println(s: => String): Unit > IOs =
-        IOs(scala.Console.out.println(s))
-      def printlnErr(s: => String): Unit > IOs =
-        IOs(scala.Console.err.println(s))
-    }
+    implicit val default: Console =
+      new Console {
+        val readln: String > IOs =
+          IOs(scala.Console.in.readLine())
+        def print(s: => String): Unit > IOs =
+          IOs(scala.Console.out.print(s))
+        def printErr(s: => String): Unit > IOs =
+          IOs(scala.Console.err.print(s))
+        def println(s: => String): Unit > IOs =
+          IOs(scala.Console.out.println(s))
+        def printlnErr(s: => String): Unit > IOs =
+          IOs(scala.Console.err.println(s))
+      }
   }
 
   type Consoles = Envs[Console] with IOs

@@ -5,7 +5,6 @@ import izumi.reflect._
 import scala.annotation.targetName
 import scala.reflect.ClassTag
 import scala.util.Failure
-import scala.util.NotGiven
 import scala.util.Success
 
 import kyo._
@@ -18,7 +17,7 @@ object aborts {
   final class Aborts[E] private[aborts] (private val tag: Tag[E])
       extends Effect[[T] =>> Either[E, T], Aborts[E]] {
 
-    private given _tag: Tag[E] = tag
+    private implicit def _tag: Tag[E] = tag
 
     def run[T, S](v: T > (Aborts[E] with S)): Either[E, T] > S =
       handle(v)
@@ -52,7 +51,7 @@ object aborts {
   }
 
   /*inline(1)*/
-  private given [E: Tag]: Handler[[T] =>> Either[E, T], Aborts[E]] =
+  private implicit def handler[E: Tag]: Handler[[T] =>> Either[E, T], Aborts[E]] =
     new Handler[[T] =>> Either[E, T], Aborts[E]] {
       def pure[U](v: U) = Right(v)
       def apply[U, V, S2](

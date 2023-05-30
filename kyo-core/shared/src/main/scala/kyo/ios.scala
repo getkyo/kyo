@@ -8,7 +8,6 @@ import scala.Conversion
 import scala.annotation.tailrec
 import scala.concurrent.duration.Duration
 import scala.runtime.AbstractFunction0
-import scala.util.NotGiven
 import scala.util.Try
 import scala.util.control.NonFatal
 

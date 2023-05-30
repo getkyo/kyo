@@ -34,15 +34,16 @@ object resources {
     val noop = new Finalizer {
       def run(): Unit = ()
     }
-    given Summer[Finalizer] with {
-      def init = noop
-      def add(a: Finalizer, b: Finalizer) =
-        () => {
-          b.run()
-          a.run()
-        }
-      override def drop(v: Finalizer): Unit > IOs =
-        IOs(v.run())
-    }
+    implicit val summer: Summer[Finalizer] =
+      new Summer[Finalizer] {
+        def init = noop
+        def add(a: Finalizer, b: Finalizer) =
+          () => {
+            b.run()
+            a.run()
+          }
+        override def drop(v: Finalizer): Unit > IOs =
+          IOs(v.run())
+      }
   }
 }

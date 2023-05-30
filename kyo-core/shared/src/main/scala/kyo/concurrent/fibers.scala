@@ -195,8 +195,15 @@ object fibers {
         extends RuntimeException(reason)
         with NoStackTrace
 
-    def run[T](v: T > Fibers): Fiber[T] =
+    def run[T](v: T > Fibers): Fiber[T] = {
+      implicit val handler: DeepHandler[Fiber, Fibers] =
+        new DeepHandler[Fiber, Fibers] {
+          def pure[T](v: T) = Fiber.done(v)
+          def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
+            m.unsafeTransform(f)
+        }
       deepHandle(this)(v)
+    }
 
     def value[T](v: T): Fiber[T] =
       Fiber.done(v)
@@ -400,7 +407,7 @@ object fibers {
       }
 
     def block[T, S](v: T > (Fibers with S)): T > (IOs with S) =
-      given Handler[Fiber, Fibers] =
+      implicit def handler: Handler[Fiber, Fibers] =
         new Handler[Fiber, Fibers] {
           def pure[T](v: T) = Fiber.done(v)
           override def handle[T](ex: Throwable): T > Fibers =
@@ -441,10 +448,4 @@ object fibers {
   }
   val Fibers = new Fibers
 
-  private[kyo] given DeepHandler[Fiber, Fibers] =
-    new DeepHandler[Fiber, Fibers] {
-      def pure[T](v: T) = Fiber.done(v)
-      def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
-        m.unsafeTransform(f)
-    }
 }

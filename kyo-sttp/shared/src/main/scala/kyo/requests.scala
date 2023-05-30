@@ -25,11 +25,12 @@ object requests {
   }
 
   object Backend {
-    given default: Backend = new Backend {
-      val backend = PlatformBackend.instance
-      def send[T](r: Request[T, Any]): Fiber[Response[T]] > IOs =
-        Fibers.joinFiber(r.send(backend))
-    }
+    implicit val default: Backend =
+      new Backend {
+        val backend = PlatformBackend.instance
+        def send[T](r: Request[T, Any]): Fiber[Response[T]] > IOs =
+          Fibers.joinFiber(r.send(backend))
+      }
   }
 
   type Requests = Envs[Backend] with Fibers with IOs

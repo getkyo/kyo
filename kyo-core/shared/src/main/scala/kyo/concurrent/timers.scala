@@ -28,7 +28,7 @@ object timers {
   }
 
   object Timer {
-    given default: Timer = {
+    implicit val default: Timer =
       new Timer {
         private val exec =
           Executors.newScheduledThreadPool(
@@ -89,7 +89,6 @@ object timers {
             TimerTask.noop
           }
       }
-    }
   }
 
   trait TimerTask {
