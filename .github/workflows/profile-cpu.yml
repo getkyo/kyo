@@ -46,14 +46,7 @@ jobs:
           cd ..
 
       - name: publish results
-        uses: getkyo/github-action-push-to-another-repository@main
-        env:
-          SSH_DEPLOY_KEY: ${{ secrets.SSH_DEPLOY_KEY }}
-          API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
+        uses: actions/upload-artifact@v3
         with:
-          source-directory: 'output'
-          target-directory: 'dev/profile/${{ github.sha }}/cpu/'
-          destination-github-username: 'getkyo'
-          destination-repository-name: 'website'
-          user-email: getkyo.io@gmail.com
-          target-branch: main
+          name: profile-cpu
+          path: output/**

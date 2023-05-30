@@ -232,7 +232,7 @@ lazy val `kyo-bench` =
     .crossType(CrossType.Pure)
     .in(file("kyo-bench"))
     .enablePlugins(JmhPlugin)
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .dependsOn(`kyo-core-opt3` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
         libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.4.10",

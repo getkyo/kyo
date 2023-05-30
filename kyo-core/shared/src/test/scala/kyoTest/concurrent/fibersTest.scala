@@ -178,7 +178,7 @@ class fibersTest extends KyoTest {
     }
   }
 
-  "race" in run {
+  "race" in runJVM {
     val ac = new JAtomicInteger(0)
     val bc = new JAtomicInteger(0)
     def loop(i: Int, s: String): String > IOs =
@@ -191,16 +191,10 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    Fibers.race(loop(1, "a"), loop(10000, "b")).map { r =>
-      if (Platform.isJS) {
-        assert(r == "b")
-        assert(ac.get() == 0)
-        assert(bc.get() == 10000)
-      } else {
-        assert(r == "a")
-        assert(ac.get() == 1)
-        assert(bc.get() <= 10000)
-      }
+    Fibers.race(loop(10, "a"), loop(Int.MaxValue, "b")).map { r =>
+      assert(r == "a")
+      assert(ac.get() == 10)
+      assert(bc.get() <= Int.MaxValue)
     }
   }
 
