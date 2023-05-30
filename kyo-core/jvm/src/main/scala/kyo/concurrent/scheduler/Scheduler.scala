@@ -1,6 +1,5 @@
 package kyo.concurrent.scheduler
 
-import kyo.concurrent.scheduler.IOTask
 import kyo._
 import kyo.ios._
 
@@ -134,10 +133,7 @@ private[kyo] object Scheduler {
         randomWorker()
     }
 
-  override def toString = {
-    import scala.jdk.CollectionConverters._
-    val w = workers.asScala.map(_.toString).mkString("\n")
-    s"$w\nScheduler(loadAvg=${loadAvg()},concurrency=$concurrency,limit=$concurrencyLimit)"
-  }
+  override def toString =
+    s"Scheduler(loadAvg=${loadAvg()},concurrency=$concurrency,limit=$concurrencyLimit)"
 
 }

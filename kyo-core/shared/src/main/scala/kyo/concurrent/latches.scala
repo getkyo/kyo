@@ -31,13 +31,14 @@ object latches {
           IOs {
             new Latch {
               val promise = Fibers.unsafePromise[Unit]
-              val count   = AtomicInteger(n)
+              val count   = new AtomicInteger(n)
               val await: Unit > Fibers =
                 promise.join
               val release: Unit > IOs =
                 IOs {
                   if (count.get() > 0 && count.decrementAndGet() == 0) {
                     promise.unsafeComplete(())
+                    ()
                   }
                 }
               val pending = IOs(count.get())

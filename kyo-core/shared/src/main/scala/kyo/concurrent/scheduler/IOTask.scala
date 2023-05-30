@@ -12,8 +12,8 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import org.jctools.queues.MpmcArrayQueue
 import java.util.ArrayDeque
-import scala.jdk.CollectionConverters._
 import java.util.IdentityHashMap
+import java.util.Arrays
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
@@ -182,7 +182,7 @@ private[kyo] final class IOTask[T](
       case f: (() => Unit) @unchecked =>
         s"[$f]"
       case arr: ArrayDeque[() => Unit] @unchecked =>
-        arr.asScala.mkString("[", ",", "]")
+        Arrays.toString(arr.toArray)
     }
     s"IOTask(id=${hashCode},preempting=$preempting,curr=$curr,ensures=$ensures,runtime=$runtime)"
   }

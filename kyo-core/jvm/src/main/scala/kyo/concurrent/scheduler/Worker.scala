@@ -1,6 +1,5 @@
 package kyo.concurrent.scheduler
 
-import kyo.concurrent.scheduler.IOTask
 import kyo.ios.Preempt
 
 import java.util.Comparator
@@ -21,7 +20,7 @@ private final class Worker(r: Runnable)
 
   def park() =
     parkedThread = this
-    LockSupport.parkNanos(this, 100_000_000L)
+    LockSupport.parkNanos(this, 100000000L)
     parkedThread = null
 
   def steal(w: Worker): IOTask[_] =

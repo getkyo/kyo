@@ -1,3 +1,5 @@
+import scala.language.higherKinds
+
 package object kyo {
 
   type >[+T, -S] >: T // = T | Kyo[_, _, _, T, S]

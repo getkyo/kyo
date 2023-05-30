@@ -5,6 +5,7 @@ import kyo.locals.Locals.State
 import scala.runtime.AbstractFunction0
 import scala.runtime.AbstractFunction1
 import scala.util.control.NonFatal
+import scala.language.higherKinds
 
 import locals._
 

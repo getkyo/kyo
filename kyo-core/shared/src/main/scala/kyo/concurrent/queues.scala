@@ -41,7 +41,7 @@ object queues {
 
     class Unbounded[T] private[queues] (unsafe: Queues.Unsafe[T]) extends Queue[T](unsafe) {
       def add[S](v: T > S): Unit > (IOs with S) =
-        v.map(offer).unit
+        v.map(offer(_)).unit
     }
 
     private val zeroCapacity =

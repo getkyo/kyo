@@ -1,5 +1,6 @@
 val scala3Version = "3.2.2"
 val scala2Version = "2.13.10"
+val scalaVersions = List(scala3Version /*, scala2Version*/ )
 
 val compilerOptions = Seq(
     "-encoding",
@@ -19,8 +20,9 @@ sonatypeProfileName                := "io.getkyo"
 publish / skip                     := true
 
 lazy val `kyo-settings` = Seq(
-    scalaVersion := scala3Version,
-    fork         := true,
+    scalaVersion       := scala3Version,
+    crossScalaVersions := scalaVersions,
+    fork               := true,
     scalacOptions ++= compilerOptions,
     scalafmtOnCompile := true,
     organization      := "io.getkyo",
@@ -135,7 +137,8 @@ lazy val `kyo-core-opt1` =
     .in(file(s"kyo-core-opt1"))
     .settings(
         `kyo-core-settings`,
-        scalafmtOnCompile := false
+        crossScalaVersions := List(scala3Version),
+        scalafmtOnCompile  := false
     )
 
 lazy val `kyo-core-opt2` =
@@ -145,7 +148,8 @@ lazy val `kyo-core-opt2` =
     .in(file(s"kyo-core-opt2"))
     .settings(
         `kyo-core-settings`,
-        scalafmtOnCompile := false
+        crossScalaVersions := List(scala3Version),
+        scalafmtOnCompile  := false
     )
 
 lazy val `kyo-core-opt3` =
@@ -155,7 +159,8 @@ lazy val `kyo-core-opt3` =
     .in(file(s"kyo-core-opt3"))
     .settings(
         `kyo-core-settings`,
-        scalafmtOnCompile := false
+        crossScalaVersions := List(scala3Version),
+        scalafmtOnCompile  := false
     )
 
 lazy val `kyo-direct` =
@@ -166,6 +171,7 @@ lazy val `kyo-direct` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
+        crossScalaVersions                        := List(scala3Version),
         libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.16"
     )
     .jsSettings(`js-settings`)

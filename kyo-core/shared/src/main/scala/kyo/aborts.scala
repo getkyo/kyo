@@ -2,6 +2,7 @@ package kyo
 
 import izumi.reflect._
 
+import scala.language.higherKinds
 import scala.reflect.ClassTag
 import scala.util.Failure
 import scala.util.Success

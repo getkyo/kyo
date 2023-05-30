@@ -50,7 +50,7 @@ object timers {
             val call = new Callable[Unit] {
               def call: Unit = IOs.run(f)
             }
-            IOs(Task(exec.schedule(call, delay.toNanos, TimeUnit.NANOSECONDS)))
+            IOs(new Task(exec.schedule(call, delay.toNanos, TimeUnit.NANOSECONDS)))
           } else {
             TimerTask.noop
           }
@@ -60,14 +60,14 @@ object timers {
             period: Duration
         )(f: => Unit > IOs): TimerTask > IOs =
           if (period.isFinite && initalDelay.isFinite) {
-            IOs(Task {
-              exec.scheduleAtFixedRate(
-                  () => IOs.run(f),
-                  initalDelay.toNanos,
-                  period.toNanos,
-                  TimeUnit.NANOSECONDS
-              )
-            })
+            IOs(new Task(
+                exec.scheduleAtFixedRate(
+                    () => IOs.run(f),
+                    initalDelay.toNanos,
+                    period.toNanos,
+                    TimeUnit.NANOSECONDS
+                )
+            ))
           } else {
             TimerTask.noop
           }
@@ -77,14 +77,14 @@ object timers {
             period: Duration
         )(f: => Unit > IOs): TimerTask > IOs =
           if (period.isFinite && initalDelay.isFinite) {
-            IOs(Task {
-              exec.scheduleWithFixedDelay(
-                  () => IOs.run(f),
-                  initalDelay.toNanos,
-                  period.toNanos,
-                  TimeUnit.NANOSECONDS
-              )
-            })
+            IOs(new Task(
+                exec.scheduleWithFixedDelay(
+                    () => IOs.run(f),
+                    initalDelay.toNanos,
+                    period.toNanos,
+                    TimeUnit.NANOSECONDS
+                )
+            ))
           } else {
             TimerTask.noop
           }

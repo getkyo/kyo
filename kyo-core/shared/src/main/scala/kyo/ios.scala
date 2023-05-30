@@ -76,7 +76,7 @@ object ios {
               def apply() = run
               def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) = {
                 val np =
-                  s match {
+                  (s: Any) match {
                     case s: Preempt =>
                       s.ensure(ensure)
                       s
