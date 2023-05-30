@@ -62,9 +62,9 @@ object fibers {
     def join: T > Fibers =
       state match {
         case promise: IOPromise[_] =>
-          Fibers.join(this)
+          Fibers.get(this)
         case failed: Failed =>
-          Fibers.join(this)
+          Fibers.get(this)
         case _ =>
           state.asInstanceOf[T > Fibers]
       }
@@ -88,7 +88,7 @@ object fibers {
             promise.onComplete { t =>
               p.complete(Try(IOs.run(t)))
             }
-            Fibers.join(Fiber.promise(p))
+            Fibers.get(Fiber.promise(p))
           }
         case Failed(ex) =>
           Failure(ex)
@@ -207,7 +207,7 @@ object fibers {
     def value[T](v: T): Fiber[T] =
       Fiber.done(v)
 
-    def join[T, S](v: Fiber[T] > S): T > (Fibers with S) =
+    def get[T, S](v: Fiber[T] > S): T > (Fibers with S) =
       suspend(v)
 
     def fail[T](ex: Throwable): Fiber[T] =
@@ -412,8 +412,8 @@ object fibers {
         new Handler[Fiber, Fibers] {
           def pure[T](v: T) = Fiber.done(v)
           override def handle[T](ex: Throwable): T > Fibers =
-            Fibers.join(Fiber.failed(ex))
-          def apply[T, U, S](m: Fiber[T], f: T => U > (S with Fibers)) =
+            Fibers.get(Fiber.failed[T](ex))
+          def apply[T, U, S](m: Fiber[T], f: T => U > (Fibers with S)) =
             m.state match {
               case m: IOPromise[T] @unchecked =>
                 f(m.block())
@@ -423,7 +423,7 @@ object fibers {
                 f(m.asInstanceOf[T])
             }
         }
-      handle(v).map(_.block)
+      handle[T, IOs with S](v).map(_.block)
     }
 
     def join[T](f: Future[T]): T > (IOs with Fibers) =
@@ -435,7 +435,7 @@ object fibers {
         val p = new IOPromise[T]()
         f.onComplete { r =>
           val io =
-            IOs {
+            IOs[Boolean, IOs] {
               r match {
                 case Success(v) =>
                   p.complete(v)

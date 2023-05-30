@@ -32,12 +32,14 @@ object meters {
           new Meter {
             val available = chan.size
             val release   = chan.offer(()).unit
-            def run[T, S](v: => T > S): T > (S with IOs with Fibers) =
+
+            def run[T, S](v: => T > S) =
               IOs.ensure(release) {
                 chan.take.map(_ => v)
               }
+
             def tryRun[T, S](v: => T > S) =
-              IOs {
+              IOs[Option[T], S] {
                 IOs.run(chan.poll) match {
                   case None =>
                     None
@@ -70,14 +72,14 @@ object meters {
       }
 
     def pipeline[S1, S2](m1: Meter > S1, m2: Meter > S2): Meter > (IOs with S1 with S2) =
-      pipeline(List(m1, m2))
+      pipeline[S1 with S2](List(m1, m2))
 
     def pipeline[S1, S2, S3](
         m1: Meter > S1,
         m2: Meter > S2,
         m3: Meter > S3
     ): Meter > (IOs with S1 with S2 with S3) =
-      pipeline(List(m1, m2, m3))
+      pipeline[S1 with S2 with S3](List(m1, m2, m3))
 
     def pipeline[S1, S2, S3, S4](
         m1: Meter > S1,
@@ -85,7 +87,7 @@ object meters {
         m3: Meter > S3,
         m4: Meter > S4
     ): Meter > (IOs with S1 with S2 with S3 with S4) =
-      pipeline(List(m1, m2, m3, m4))
+      pipeline[S1 with S2 with S3 with S4](List(m1, m2, m3, m4))
 
     def pipeline[S](l: List[Meter > (IOs with S)]): Meter > (IOs with S) =
       Lists.collect(l).map { meters =>
@@ -116,7 +118,7 @@ object meters {
                 case h :: t =>
                   h.tryRun(loop(t)).map {
                     case None => None
-                    case r    => r.flatten
+                    case r    => r.flatten: Option[T]
                   }
               }
             loop(meters)

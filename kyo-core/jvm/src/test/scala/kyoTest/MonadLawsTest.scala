@@ -40,9 +40,10 @@ object MonadLawsTest extends ZIOSpecDefault {
         _.map(f(_))
       override def derive[A: Equal]: Equal[Myo[A]] =
         new Equal[Myo[A]] {
-          protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean =
+          protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean = {
             def run(m: Myo[A]): A = IOs.run(Fibers.block(m))
             run(l) == run(r)
+          }
         }
     }
 

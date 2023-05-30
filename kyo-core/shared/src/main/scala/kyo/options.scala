@@ -40,15 +40,15 @@ object options {
               case Some(v) => f(v)
             }
         }
-      handle(v)
+      handle[T, S](v)
     }
 
     def orElse[T, S](l: (T > (Options with S))*): T > (Options with S) =
       l.toList match {
         case Nil => Options.empty
         case h :: t =>
-          run(h).map {
-            case None => orElse(t: _*)
+          run[T, S](h).map {
+            case None => orElse[T, S](t: _*)
             case v    => suspend(v)
           }
       }

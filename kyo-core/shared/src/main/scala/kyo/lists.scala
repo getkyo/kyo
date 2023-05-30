@@ -16,16 +16,16 @@ object lists {
           def loop(l: List[T], acc: List[List[U]]): U > (Lists with S) =
             l match {
               case Nil =>
-                Lists.foreach(acc.reverse.flatten)
+                Lists.foreach(acc.reverse.flatten: List[U])
               case t :: ts =>
-                Lists.run(f(t)).map(l => loop(ts, l :: acc))
+                Lists.run[U, S](f(t)).map(l => loop(ts, l :: acc))
             }
           loop(v, Nil)
         }
       }
 
     def run[T, S](v: T > (Lists with S)): List[T] > S =
-      handle(v)
+      handle[T, S](v)
 
     def foreach[T, S](v: List[T] > S): T > (Lists with S) =
       v.map {
@@ -37,9 +37,6 @@ object lists {
       v.map { v =>
         collect(v.map(f))
       }
-
-    def foreach[T, S](v: (T > S)*): T > (Lists with S) =
-      foreach(collect(v.toList))
 
     def filter[S](v: Boolean > S): Unit > (Lists with S) =
       v.map {

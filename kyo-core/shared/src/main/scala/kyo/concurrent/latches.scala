@@ -28,7 +28,7 @@ object latches {
             override def toString = "Latches(0)"
           }
         } else {
-          IOs {
+          IOs[Latch, Any] {
             new Latch {
               val promise = Fibers.unsafePromise[Unit]
               val count   = new AtomicInteger(n)

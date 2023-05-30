@@ -88,7 +88,7 @@ object ios {
             }
           case _ =>
             p.remove(ensure)
-            IOs(run).map(_ => v)
+            IOs[Unit, Any](run).map(_ => v)
         }
       ensureLoop(v, Preempt.never)
     }
@@ -117,7 +117,7 @@ object ios {
 
     /*inline(3)*/
     def lazyRun[T, S](v: T > (IOs with S)): T > S = {
-      @tailrec def lazyRunLoop(v: T > (IOs with S)): T > S = {
+      def lazyRunLoop(v: T > (IOs with S)): T > S = {
         val safepoint = Safepoint.noop[IO, IOs]
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, S with IOs] @unchecked if (kyo.effect eq IOs) =>

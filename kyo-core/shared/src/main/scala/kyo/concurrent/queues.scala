@@ -20,7 +20,7 @@ object queues {
     def isFull: Boolean > IOs =
       IOs(unsafe.isFull)
     def offer[S](v: T > S): Boolean > (IOs with S) =
-      v.map(v => IOs(unsafe.offer(v)))
+      v.map(v => IOs[Boolean, S](unsafe.offer(v)))
     def poll: Option[T] > IOs =
       IOs(unsafe.poll())
     def peek: Option[T] > IOs =
@@ -78,13 +78,13 @@ object queues {
           case _ =>
             access match {
               case Access.Mpmc =>
-                bounded(new MpmcArrayQueue[T](capacity), capacity)
+                fromJava(new MpmcArrayQueue[T](capacity), capacity)
               case Access.Mpsc =>
-                bounded(new MpscArrayQueue[T](capacity), capacity)
+                fromJava(new MpscArrayQueue[T](capacity), capacity)
               case Access.Spmc =>
-                bounded(new SpmcArrayQueue[T](capacity), capacity)
+                fromJava(new SpmcArrayQueue[T](capacity), capacity)
               case Access.Spsc =>
-                bounded(new SpscArrayQueue[T](capacity), capacity)
+                fromJava(new SpscArrayQueue[T](capacity), capacity)
             }
         }
       }
@@ -93,17 +93,17 @@ object queues {
       IOs {
         access match {
           case Access.Mpmc =>
-            unbounded(new MpmcUnboundedXaddArrayQueue[T](chunkSize))
+            fromJava(new MpmcUnboundedXaddArrayQueue[T](chunkSize))
           case Access.Mpsc =>
-            unbounded(new MpscUnboundedArrayQueue[T](chunkSize))
+            fromJava(new MpscUnboundedArrayQueue[T](chunkSize))
           case Access.Spmc =>
-            unbounded(new MpmcUnboundedXaddArrayQueue[T](chunkSize))
+            fromJava(new MpmcUnboundedXaddArrayQueue[T](chunkSize))
           case Access.Spsc =>
-            unbounded(new SpscUnboundedArrayQueue[T](chunkSize))
+            fromJava(new SpscUnboundedArrayQueue[T](chunkSize))
         }
       }
 
-    private def unbounded[T](q: java.util.Queue[T]): Unbounded[T] =
+    private def fromJava[T](q: java.util.Queue[T]): Unbounded[T] =
       new Unbounded(
           new Unsafe[T] {
             def capacity: Int        = Int.MaxValue
@@ -116,7 +116,7 @@ object queues {
           }
       )
 
-    private def bounded[T](q: java.util.Queue[T], _capacity: Int): Queue[T] =
+    private def fromJava[T](q: java.util.Queue[T], _capacity: Int): Queue[T] =
       new Queue(
           new Unsafe[T] {
             def capacity: Int        = _capacity

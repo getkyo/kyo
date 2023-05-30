@@ -189,7 +189,7 @@ private[kyo] object IOPromise {
     final def merge(tail: Pending[T]): Pending[T] = {
       @tailrec def loop(p: Pending[T], v: T > IOs): Pending[T] =
         p match {
-          case Pending.Empty =>
+          case _ if (p eq Pending.Empty) =>
             tail
           case p: Pending[T] =>
             loop(p.run(v), v)
@@ -203,7 +203,7 @@ private[kyo] object IOPromise {
     final def flush(v: T > IOs): Unit = {
       @tailrec def loop(p: Pending[T]): Unit =
         p match {
-          case Pending.Empty => ()
+          case _ if (p eq Pending.Empty) => ()
           case p: Pending[T] =>
             loop(p.run(v))
         }

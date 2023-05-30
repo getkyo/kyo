@@ -48,7 +48,7 @@ object locals {
         def default = defaultValue
       }
 
-    val save: State > IOs =
+    def save: State > IOs =
       new KyoIO[State, Any] {
         def apply(v: Unit, s: Safepoint[IO, IOs], l: Locals.State) =
           l

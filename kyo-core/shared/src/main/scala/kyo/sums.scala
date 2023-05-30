@@ -42,7 +42,7 @@ object sums {
           def pure[U](v: U) = v
           def apply[T, U, S2](
               m: Sum[V]#Value[T],
-              f: T => U > (S2 with Sums[V])
+              f: T => U > (Sums[V] with S2)
           ): U > (S2 with Sums[V]) =
             m match {
               case AddValue(v) =>
@@ -58,7 +58,7 @@ object sums {
             }
         }
       IOs.ensure(g.drop(curr)) {
-        handle(v).map {
+        handle[T, S](v).map {
           case AddValue(v) =>
             curr = g.add(curr, v.asInstanceOf[V])
             curr.asInstanceOf[T]

@@ -29,7 +29,7 @@ object tries {
                 }
             }
         }
-      handle(Tries(v))
+      handle[T, S](Tries(v))
     }
 
     def fail[T](ex: Throwable): T > Tries =

@@ -125,13 +125,17 @@ private[kyo] object Scheduler {
     c > concurrencyLimit && concurrency.compareAndSet(c, c - 1)
   }
 
-  @tailrec private def randomWorker(): Worker =
-    try {
-      workers.get(XSRandom.nextInt(workers.size()))
-    } catch {
-      case _: ArrayIndexOutOfBoundsException | _: IllegalArgumentException =>
-        randomWorker()
+  private def randomWorker(): Worker = {
+    var w: Worker = null
+    while (w == null) {
+      try {
+        w = workers.get(XSRandom.nextInt(workers.size()))
+      } catch {
+        case _: ArrayIndexOutOfBoundsException | _: IllegalArgumentException =>
+      }
     }
+    w
+  }
 
   override def toString =
     s"Scheduler(loadAvg=${loadAvg()},concurrency=$concurrency,limit=$concurrencyLimit)"

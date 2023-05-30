@@ -24,7 +24,7 @@ object resources {
     }
 
     def run[T, S](v: T > (Resources with S)): T > (IOs with S) =
-      Sums[Finalizer].run(v)
+      Sums[Finalizer].run[T, S](v)
   }
 
   abstract class Finalizer {

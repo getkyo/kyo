@@ -93,7 +93,7 @@ object contexts {
 
       def summarizing(low: Double = 0.25, high: Double = 0.75) =
         new Cut[Context, Context, AIs] {
-          def apply[S2, S3](v: Context > S2)(f: Context => Context > (S3 with Aspects)) =
+          def apply[S](v: Context > S)(f: Context => Context > AIs) =
             v.map { ctx =>
               val lt              = (ctx.model.maxTokens * low).toInt
               val ht              = (ctx.model.maxTokens * high).toInt
@@ -117,7 +117,7 @@ object contexts {
         }
 
       val rolling = new Cut[Context, Context, AIs] {
-        def apply[S2, S3](v: Context > S2)(f: Context => Context > (S3 with Aspects)) =
+        def apply[S](v: Context > S)(f: Context => Context > AIs) =
           v.map { ctx =>
             def loop(messages: List[Message], tokens: Int, acc: List[Message]): Context =
               messages match {

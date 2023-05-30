@@ -74,7 +74,7 @@ object core {
   abstract class Handler[M[_], E <: Effect[M, E]] {
     def pure[T](v: T): M[T]
     def handle[T](ex: Throwable): T > E = throw ex
-    def apply[T, U, S](m: M[T], f: T => U > (S with E)): U > (S with E)
+    def apply[T, U, S](m: M[T], f: T => U > (E with S)): U > (E with S)
   }
 
   trait Safepoint[M[_], E <: Effect[M, E]] {

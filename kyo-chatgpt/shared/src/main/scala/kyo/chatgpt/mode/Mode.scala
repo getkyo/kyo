@@ -18,8 +18,8 @@ import kyo.chatgpt.ais
 private[kyo] abstract class Mode(val ais: Set[AI])
     extends Cut[(AI, String), String, AIs] {
 
-  def apply[S2, S3](v: (AI, String) > S2)(next: ((AI, String)) => String > (S3 with Aspects))
-      : String > (AIs with S2 with S3 with Aspects) =
+  override def apply[S](v: (AI, String) > S)(next: ((AI, String)) => String > AIs)
+      : String > (AIs with S) =
     v.map {
       case tup @ (ai, msg) =>
         if (ais.contains(ai))

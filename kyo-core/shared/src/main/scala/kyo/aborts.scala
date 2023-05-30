@@ -60,7 +60,7 @@ object aborts {
       def pure[U](v: U) = Right(v)
       def apply[U, V, S2](
           m: Either[E, U],
-          f: U => V > (S2 with Aborts[E])
+          f: U => V > (Aborts[E] with S2)
       ): V > (S2 with Aborts[E]) =
         m match {
           case left: Left[_, _] =>

@@ -69,7 +69,7 @@ object channels {
           def offer[S](v: T > S) = q.offer(v)
           val poll               = q.poll
           def put[S](v: T > S) =
-            IOs {
+            IOs[Unit, S] {
               @tailrec def loop(v: T): Unit = {
                 val u = q.unsafe
                 if (u.offer(v)) ()
@@ -110,7 +110,7 @@ object channels {
           val isFull  = queue.isFull
           def offer[S](v: T > S) =
             v.map { v =>
-              IOs {
+              IOs[Boolean, S] {
                 try q.offer(v)
                 finally flush()
               }
@@ -122,7 +122,7 @@ object channels {
             }
           def putFiber[S](v: T > S): Fiber[Unit] > (IOs with S) =
             v.map { v =>
-              IOs {
+              IOs[Fiber[Unit], S] {
                 try {
                   if (q.offer(v)) {
                     Fibers.value(())
