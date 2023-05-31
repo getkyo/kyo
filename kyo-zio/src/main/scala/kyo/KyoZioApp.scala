@@ -9,6 +9,7 @@ import java.util.concurrent.TimeoutException
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
+import kyo.core.internal._
 import ios._
 import clocks._
 import consoles._
@@ -23,8 +24,9 @@ trait KyoZioApp {
   final def main(args: Array[String]): Unit =
     KyoZioApp.run(Duration.Inf)(run(args.toList))
 
-  def run(args: List[String])
-      : Unit > (IOs & Fibers & Resources & Clocks & Consoles & Randoms & Timers & ZIOs)
+  def run(
+      args: List[String]
+  ): Unit > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers with ZIOs)
 
 }
 
@@ -37,20 +39,24 @@ object KyoZioApp {
       ).getOrThrow()
     )
 
-  def run[T](timeout: Duration)(v: T > (IOs & Fibers & Resources & Clocks & Consoles & Randoms &
-    Timers & ZIOs)): T =
+  def run[T](timeout: Duration)(
+      v: T > (IOs with Fibers with Resources with Clocks with Consoles with Randoms &
+        Timers with ZIOs)
+  ): T =
     block(timeout)(runTask(v))
 
-  def runTask[T](v: T > (IOs & Fibers & Resources & Clocks & Consoles & Randoms & Timers & ZIOs))
-      : Task[T] = {
-    val v1: T > (IOs & Fibers & Resources & Clocks & Consoles & Timers & ZIOs) = Randoms.run(v)
-    val v2: T > (IOs & Fibers & Resources & Clocks & Timers & ZIOs)            = Consoles.run(v1)
-    val v3: T > (IOs & Fibers & Resources & Timers & ZIOs)                     = Clocks.run(v2)
-    val v4: T > (IOs & Fibers & Timers & ZIOs)                                 = Resources.run(v3)
-    val v5: T > (IOs & Fibers & ZIOs)                                          = Timers.run(v4)
-    val v6: T > (IOs & ZIOs)             = v5 >> (Fibers -> ZIOs)
-    val v7: T > ZIOs                     = IOs.lazyRun(v6)
-    val v8: ZIO[Any, Throwable, T] > Any = v7 << ZIOs
-    v8
+  def runTask[T](
+      v: T > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers with ZIOs)
+  ): Task[T] = {
+    val v1: T > (IOs with Fibers with Resources with Clocks with Consoles with Timers with ZIOs) =
+      Randoms.run(v)
+    val v2: T > (IOs with Fibers with Resources with Clocks with Timers with ZIOs) =
+      Consoles.run(v1)
+    val v3: T > (IOs with Fibers with Resources with Timers with ZIOs) = Clocks.run(v2)
+    val v4: T > (IOs with Fibers with Timers with ZIOs)                = Resources.run(v3)
+    val v5: T > (IOs with Fibers with ZIOs)                            = Timers.run(v4)
+    val v6: T > (IOs with ZIOs)                                        = inject(Fibers, ZIOs)(v5)
+    val v7: T > ZIOs                                                   = IOs.lazyRun(v6)
+    ZIOs.run(v7)
   }
 }

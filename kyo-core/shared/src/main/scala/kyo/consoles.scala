@@ -16,37 +16,37 @@ object consoles {
   }
 
   object Console {
-    given default: Console with {
-      val readln: String > IOs =
-        IOs(scala.Console.in.readLine())
-      def print(s: => String): Unit > IOs =
-        IOs(scala.Console.out.print(s))
-      def printErr(s: => String): Unit > IOs =
-        IOs(scala.Console.err.print(s))
-      def println(s: => String): Unit > IOs =
-        IOs(scala.Console.out.println(s))
-      def printlnErr(s: => String): Unit > IOs =
-        IOs(scala.Console.err.println(s))
-    }
+    implicit val default: Console =
+      new Console {
+        val readln: String > IOs =
+          IOs(scala.Console.in.readLine())
+        def print(s: => String): Unit > IOs =
+          IOs(scala.Console.out.print(s))
+        def printErr(s: => String): Unit > IOs =
+          IOs(scala.Console.err.print(s))
+        def println(s: => String): Unit > IOs =
+          IOs(scala.Console.out.println(s))
+        def printlnErr(s: => String): Unit > IOs =
+          IOs(scala.Console.err.println(s))
+      }
   }
 
-  opaque type Consoles = Envs[Console] & IOs
+  type Consoles = Envs[Console] with IOs
 
   object Consoles {
-    type Iso = Consoles & IOs
-    def run[T, S](c: Console)(f: => T > (Iso & S)): T > (IOs & S) =
-      Envs[Console].let(c)(f)
-    def run[T, S](f: => T > (Iso & S))(using c: Console): T > (IOs & S) =
-      run(c)(f)
+    def run[T, S](c: Console)(f: => T > (Consoles with S)): T > (IOs with S) =
+      Envs[Console].run[T, IOs with S](c)(f)
+    def run[T, S](f: => T > (Consoles with S))(implicit c: Console): T > (IOs with S) =
+      run[T, IOs with S](c)(f)
     def readln: String > Consoles =
       Envs[Console].get.map(_.readln)
-    def print[S](s: => String > (Iso & S)): Unit > (S & Consoles) =
+    def print[S](s: => String > S): Unit > (S with Consoles) =
       s.map(s => Envs[Console].get.map(_.print(s)))
-    def printErr[S](s: => String > (Iso & S)): Unit > (S & Consoles) =
+    def printErr[S](s: => String > S): Unit > (S with Consoles) =
       s.map(s => Envs[Console].get.map(_.printErr(s)))
-    def println[S](s: => String > (Iso & S)): Unit > (S & Consoles) =
+    def println[S](s: => String > S): Unit > (S with Consoles) =
       s.map(s => Envs[Console].get.map(_.println(s)))
-    def printlnErr[S](s: => String > (Iso & S)): Unit > (S & Consoles) =
+    def printlnErr[S](s: => String > S): Unit > (S with Consoles) =
       s.map(s => Envs[Console].get.map(_.printlnErr(s)))
   }
 }

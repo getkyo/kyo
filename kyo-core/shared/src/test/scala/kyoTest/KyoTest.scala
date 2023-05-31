@@ -34,7 +34,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     def apply(a: T, b: T): Boolean
   }
   object Eq {
-    given [T]: Eq[T] = _ == _
+    implicit def eq[T]: Eq[T] = _ == _
   }
 
   def retry[S](f: => Boolean > S): Boolean > S = {
@@ -49,7 +49,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
   // def timeout = Duration.Inf
   def timeout = 10.seconds
 
-  given Conversion[Assertion, Future[Assertion]] = (a: Assertion) => Future.successful(a)
+  implicit def toFuture(a: Assertion): Future[Assertion] = Future.successful(a)
 
   def runJVM(
       v: => Assertion > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers)
@@ -71,13 +71,17 @@ class KyoTest extends AsyncFreeSpec with Assertions {
 
   def run(
       v: => Assertion > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers)
-  ): Future[Assertion] =
+  ): Future[Assertion] = {
     val v1 = KyoApp.runFiber(timeout)(v)
     val v2 = v1.toFuture
     IOs.run(KyoApp.runFiber(timeout)(v).toFuture)
+  }
 
-  class Check[T, S](equals: Boolean)(using t: Tag[T], s: Tag[S], eq: Eq[T]) {
-    def apply[T2, S2](value: T2 > S2, expected: Any)(using
+  class Check[T, S](equals: Boolean) {
+    def apply[T2, S2](value: T2 > S2, expected: Any)(implicit
+        t: Tag[T],
+        s: Tag[S],
+        eq: Eq[T],
         t2: Tag[T2],
         s2: Tag[S2]
     ): Assertion =
@@ -92,6 +96,6 @@ class KyoTest extends AsyncFreeSpec with Assertions {
         assert(!eq(value.asInstanceOf[T], expected.asInstanceOf[T]))
   }
 
-  def checkEquals[T, S](using t: Tag[T], s: Tag[S], eq: Eq[T])    = new Check[T, S](true)
-  def checkNotEquals[T, S](using t: Tag[T], s: Tag[S], eq: Eq[T]) = new Check[T, S](false)
+  def checkEquals[T, S]    = new Check[T, S](true)
+  def checkNotEquals[T, S] = new Check[T, S](false)
 }

@@ -37,10 +37,10 @@ class ProducerConsumerBench extends Bench[Unit] {
 
   def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
 
-  override def kyoBenchFiber(): Unit > (IOs & Fibers) = {
+  override def kyoBenchFiber(): Unit > (IOs with Fibers) = {
     import kyo.concurrent.atomics._
 
-    def repeat[A](n: Int)(io: A > (IOs & Fibers)): A > (IOs & Fibers) =
+    def repeat[A](n: Int)(io: A > (IOs with Fibers)): A > (IOs with Fibers) =
       if (n <= 1) io
       else io.flatMap(_ => repeat(n - 1)(io))
 

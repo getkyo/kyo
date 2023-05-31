@@ -131,7 +131,7 @@ class abortsTest extends KyoTest {
 
   "Aborts" - {
     def test(v: Int): Int > Aborts[Ex1] =
-      v.map {
+      v match {
         case 0 => Aborts(ex1)
         case i => 10 / i
       }
@@ -152,7 +152,7 @@ class abortsTest extends KyoTest {
     "catching" - {
       "only effect" - {
         def test(v: Int): Int =
-          v.map {
+          v match {
             case 0 => throw ex1
             case i => 10 / i
           }

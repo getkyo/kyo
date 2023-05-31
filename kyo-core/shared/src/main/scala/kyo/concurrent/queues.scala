@@ -19,8 +19,8 @@ object queues {
       IOs(unsafe.isEmpty)
     def isFull: Boolean > IOs =
       IOs(unsafe.isFull)
-    def offer[S](v: T > S): Boolean > (IOs & S) =
-      v.map(v => IOs(unsafe.offer(v)))
+    def offer[S](v: T > S): Boolean > (IOs with S) =
+      v.map(v => IOs[Boolean, S](unsafe.offer(v)))
     def poll: Option[T] > IOs =
       IOs(unsafe.poll())
     def peek: Option[T] > IOs =
@@ -40,8 +40,8 @@ object queues {
     }
 
     class Unbounded[T] private[queues] (unsafe: Queues.Unsafe[T]) extends Queue[T](unsafe) {
-      def add[S](v: T > S): Unit > (IOs & S) =
-        v.map(offer).unit
+      def add[S](v: T > S): Unit > (IOs with S) =
+        v.map(offer(_)).unit
     }
 
     private val zeroCapacity =
@@ -61,7 +61,7 @@ object queues {
           case 0 =>
             zeroCapacity.asInstanceOf[Queue[T]]
           case 1 =>
-            Queue(
+            new Queue(
                 new AtomicReference[T] with Unsafe[T] {
                   def capacity = 1
                   def size     = if (get == null) 0 else 1
@@ -78,13 +78,13 @@ object queues {
           case _ =>
             access match {
               case Access.Mpmc =>
-                bounded(MpmcArrayQueue(capacity), capacity)
+                fromJava(new MpmcArrayQueue[T](capacity), capacity)
               case Access.Mpsc =>
-                bounded(MpscArrayQueue(capacity), capacity)
+                fromJava(new MpscArrayQueue[T](capacity), capacity)
               case Access.Spmc =>
-                bounded(SpmcArrayQueue(capacity), capacity)
+                fromJava(new SpmcArrayQueue[T](capacity), capacity)
               case Access.Spsc =>
-                bounded(SpscArrayQueue(capacity), capacity)
+                fromJava(new SpscArrayQueue[T](capacity), capacity)
             }
         }
       }
@@ -93,18 +93,18 @@ object queues {
       IOs {
         access match {
           case Access.Mpmc =>
-            unbounded(MpmcUnboundedXaddArrayQueue(chunkSize))
+            fromJava(new MpmcUnboundedXaddArrayQueue[T](chunkSize))
           case Access.Mpsc =>
-            unbounded(MpscUnboundedArrayQueue(chunkSize))
+            fromJava(new MpscUnboundedArrayQueue[T](chunkSize))
           case Access.Spmc =>
-            unbounded(MpmcUnboundedXaddArrayQueue(chunkSize))
+            fromJava(new MpmcUnboundedXaddArrayQueue[T](chunkSize))
           case Access.Spsc =>
-            unbounded(SpscUnboundedArrayQueue(chunkSize))
+            fromJava(new SpscUnboundedArrayQueue[T](chunkSize))
         }
       }
 
-    private def unbounded[T](q: java.util.Queue[T]): Unbounded[T] =
-      Unbounded(
+    private def fromJava[T](q: java.util.Queue[T]): Unbounded[T] =
+      new Unbounded(
           new Unsafe[T] {
             def capacity: Int        = Int.MaxValue
             def size: Int            = q.size
@@ -116,8 +116,8 @@ object queues {
           }
       )
 
-    private def bounded[T](q: java.util.Queue[T], _capacity: Int): Queue[T] =
-      Queue(
+    private def fromJava[T](q: java.util.Queue[T], _capacity: Int): Queue[T] =
+      new Queue(
           new Unsafe[T] {
             def capacity: Int        = _capacity
             def size: Int            = q.size

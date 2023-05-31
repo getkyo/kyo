@@ -17,7 +17,7 @@ object latches {
   }
 
   object Latches {
-    def init[S](n: Int > S): Latch > (IOs & S) =
+    def init[S](n: Int > S): Latch > (IOs with S) =
       n.map { n =>
         if (n <= 0) {
           new Latch {
@@ -28,16 +28,17 @@ object latches {
             override def toString = "Latches(0)"
           }
         } else {
-          IOs {
+          IOs[Latch, Any] {
             new Latch {
               val promise = Fibers.unsafePromise[Unit]
-              val count   = AtomicInteger(n)
+              val count   = new AtomicInteger(n)
               val await: Unit > Fibers =
                 promise.join
               val release: Unit > IOs =
                 IOs {
                   if (count.get() > 0 && count.decrementAndGet() == 0) {
                     promise.unsafeComplete(())
+                    ()
                   }
                 }
               val pending = IOs(count.get())

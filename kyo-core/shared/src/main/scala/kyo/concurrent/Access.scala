@@ -1,5 +1,10 @@
 package kyo.concurrent
 
-enum Access {
-  case Mpmc, Mpsc, Spmc, Spsc
+sealed trait Access
+
+object Access {
+  case object Mpmc extends Access
+  case object Mpsc extends Access
+  case object Spmc extends Access
+  case object Spsc extends Access
 }

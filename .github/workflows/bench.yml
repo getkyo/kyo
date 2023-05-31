@@ -12,6 +12,7 @@ jobs:
   benchmark:
     name: Run benchmarks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v3.0.2
         with:
@@ -32,14 +33,7 @@ jobs:
           cp -r kyo-bench/.jvm/*.json output/
 
       - name: publish results
-        uses: getkyo/github-action-push-to-another-repository@main
-        env:
-          SSH_DEPLOY_KEY: ${{ secrets.SSH_DEPLOY_KEY }}
-          API_TOKEN_GITHUB: ${{ secrets.API_TOKEN_GITHUB }}
+        uses: actions/upload-artifact@v3
         with:
-          source-directory: 'output'
-          target-directory: 'dev/bench/${{ github.sha }}/'
-          destination-github-username: 'getkyo'
-          destination-repository-name: 'website'
-          user-email: getkyo.io@gmail.com
-          target-branch: main
+          name: bench
+          path: output/**

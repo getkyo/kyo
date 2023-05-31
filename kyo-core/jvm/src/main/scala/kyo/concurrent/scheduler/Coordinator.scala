@@ -24,7 +24,7 @@ private object Coordinator {
   private val b1, b2, b3, b4, b5, b6, b7 = 0L // paddding
 
   private var startNs = 0L
-  private val delayNs = MovingStdDev(cycleExp)
+  private val delayNs = new MovingStdDev(cycleExp)
 
   private val exec = Executors.newCachedThreadPool(Threads("kyo-coordinator"))
 
