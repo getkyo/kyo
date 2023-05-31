@@ -1,6 +1,6 @@
 val scala3Version = "3.2.2"
 val scala2Version = "2.13.10"
-val scalaVersions = List(scala3Version/*, scala2Version*/)
+val scalaVersions = List(scala3Version /*, scala2Version*/ )
 
 val compilerOptions = Seq(
     "-encoding",
@@ -105,7 +105,7 @@ lazy val kyo =
 val zioVersion = "2.0.10"
 
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
-    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.7",
+    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.8",
     libraryDependencies += "org.slf4j"       % "slf4j-api"         % "2.0.7",
     libraryDependencies += "org.jctools"     % "jctools-core"      % "4.0.1",
     libraryDependencies += "dev.zio"       %%% "zio-test"          % zioVersion   % Test,
