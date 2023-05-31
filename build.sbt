@@ -111,7 +111,7 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "zio-test-sbt"      % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC19" % Test,
     libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC19" % Test,
-    libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.16"     % Test,
+    libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.15"     % Test,
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     Global / concurrentRestrictions := Seq(
         Tags.limit(Tags.CPU, 1)
@@ -137,7 +137,7 @@ lazy val `kyo-scala2` =
         `kyo-settings`,
         scalaVersion := scala2Version,
         scalacOptions += "-Ytasty-reader",
-        libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.16" % Test
+        libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.15" % Test
     )
     .in(file("kyo-scala2"))
 
