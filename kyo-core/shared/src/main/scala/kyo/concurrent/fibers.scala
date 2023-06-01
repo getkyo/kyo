@@ -45,7 +45,7 @@ object fibers {
     private[kyo] def promise[T](p: IOPromise[T]): Fiber[T] = new Fiber(p)
   }
 
-  class Fiber[T] private[Fiber] (
+  case class Fiber[T] private[Fiber] (
       private[concurrent] val state: Any /* T | IOPromise[T] | Failed */
   ) {
 
@@ -201,7 +201,7 @@ object fibers {
           def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
             m.unsafeTransform(f)
         }
-      deepHandle[Fiber, Fibers, T, Any](this)(v)
+      deepHandle(v)
     }
 
     def value[T](v: T): Fiber[T] =

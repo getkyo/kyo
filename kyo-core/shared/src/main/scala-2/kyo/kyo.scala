@@ -2,9 +2,9 @@ import scala.language.higherKinds
 
 package object kyo {
 
-  type >[+T, -S] // = T | Kyo[_, _, _, T, S]
+  type >[+T, -S] >: T // = T | Kyo[_, _, _, T, S]
 
-  implicit class KyoOps[+T, -S](private[kyo] val v: T > S) extends AnyVal {
+  class KyoOps[+T, -S](private[kyo] val v: T > S) extends AnyVal {
 
     def flatMap[U, S2](f: T => U > S2): U > (S with S2) =
       kyo.core.transform(v)(f)
@@ -34,7 +34,8 @@ package object kyo {
       v.asInstanceOf[T]
   }
 
-  implicit def fromPure[T, S](v: T): T > S = v.asInstanceOf[T > S]
+  implicit def kyoOps[T, U, S](v: T)(implicit ev: T => U > S): KyoOps[U, S] =
+    new KyoOps[U, S](v)
 
   def zip[T1, T2, S](v1: T1 > S, v2: T2 > S): (T1, T2) > S =
     v1.map(t1 => v2.map(t2 => (t1, t2)))

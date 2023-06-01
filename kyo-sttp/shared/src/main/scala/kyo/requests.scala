@@ -37,11 +37,11 @@ object requests {
 
   object Requests {
 
-    def run[T, S](b: Backend)(v: T > (Requests with S)): T > (S with IOs with Fibers) =
-      Envs[Backend].run(b)(v)
+    def run[T, S](b: Backend)(v: T > (Requests with S)): T > (Fibers with IOs with S) =
+      Envs[Backend].run[T, Fibers with IOs with S](b)(v)
 
-    def run[T, S](v: T > (Requests with S))(implicit b: Backend): T > (S with IOs with Fibers) =
-      run(b)(v)
+    def run[T, S](v: T > (Requests with S))(implicit b: Backend): T > (Fibers with IOs with S) =
+      run[T, S](b)(v)
 
     def apply[T, S](req: Request[T, Any] > S): Response[T] > (Requests with S) =
       fiber(req).map(_.join)
