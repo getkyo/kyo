@@ -10,7 +10,6 @@ import zio.ZEnvironment
 import zio.ZIO
 
 import java.io.IOException
-import scala.annotation.targetName
 import scala.util.control.NonFatal
 
 import core._
@@ -33,27 +32,24 @@ object zios {
           def apply[T, U](m: Task[T], f: T => Task[U]): Task[U] =
             m.flatMap(f)
         }
-      deepHandle(this)(v)
+      deepHandle(v)
     }
 
-    @targetName("fromZIO")
-    def apply[R: ITag, E: ITag, A, S](v: ZIO[R, E, A] > S)
+    def fromZIO[R: ITag, E: ITag, A, S](v: ZIO[R, E, A] > S)
         : A > (S with Envs[R] with Aborts[E] with ZIOs) =
       for {
         urio <- v.map(_.fold[A > Aborts[E]](Aborts(_), v => v))
-        task <- Envs[R].get.map(r => urio.provideEnvironment(ZEnvironment(r)))
+        task <- Envs[R].get.map(r => urio.provideEnvironment(ZEnvironment(r)(zioTag[R])))
         r    <- suspend(task)
       } yield r
 
-    @targetName("fromIO")
-    def apply[E: ITag, A, S](v: IO[E, A] > S): A > (S with Aborts[E] with ZIOs) =
+    def fromIO[E: ITag, A, S](v: IO[E, A] > S): A > (S with Aborts[E] with ZIOs) =
       for {
         task <- v.map(_.fold[A > Aborts[E]](Aborts(_), v => v))
         r    <- suspend(task)
       } yield r
 
-    @targetName("fromTask")
-    def apply[T, S](v: Task[T] > S): T > (S with ZIOs) =
+    def fromTask[T, S](v: Task[T] > S): T > (S with ZIOs) =
       suspend(v)
   }
   val ZIOs = new ZIOs
@@ -82,7 +78,7 @@ object zios {
         }
     }
 
-  private implicit def zioTag[T](implicit t: ITag[T]): zio.Tag[T] =
+  private def zioTag[T](implicit t: ITag[T]): zio.Tag[T] =
     new zio.Tag[T] {
       def tag: zio.LightTypeTag  = t.tag
       def closestClass: Class[?] = t.closestClass

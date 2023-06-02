@@ -1,6 +1,6 @@
 val scala3Version = "3.2.2"
 val scala2Version = "2.13.10"
-val scalaVersions = List(scala3Version/*, scala2Version*/)
+val scalaVersions = List(scala3Version, scala2Version)
 
 val compilerOptions = Seq(
     "-encoding",
@@ -20,9 +20,7 @@ sonatypeProfileName                := "io.getkyo"
 publish / skip                     := true
 
 lazy val `kyo-settings` = Seq(
-    scalaVersion       := scala3Version,
-    crossScalaVersions := scalaVersions,
-    fork               := true,
+    fork := true,
     scalacOptions ++= compilerOptions,
     scalafmtOnCompile := true,
     organization      := "io.getkyo",
@@ -73,6 +71,7 @@ lazy val kyo =
         Compile / packageBin / publishArtifact := false,
         Compile / packageDoc / publishArtifact := false,
         Compile / packageSrc / publishArtifact := false,
+        scalaVersion                           := scala3Version,
         `kyo-settings`,
         gen := {
           def genOpt(i: Int) = {
@@ -120,13 +119,24 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     )
 )
 
+lazy val `without-cross-scala` = Seq(
+    scalaVersion       := scala3Version,
+    crossScalaVersions := List(scala3Version)
+)
+
+lazy val `with-cross-scala` = Seq(
+    scalaVersion       := scala3Version,
+    crossScalaVersions := List(scala2Version, scala3Version)
+)
+
 lazy val `kyo-core` =
   crossProject(JSPlatform, JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Full)
     .in(file("kyo-core"))
     .settings(
-        `kyo-core-settings`
+        `kyo-core-settings`,
+        `with-cross-scala`
     )
     .jsSettings(`js-settings`)
 
@@ -137,8 +147,8 @@ lazy val `kyo-core-opt1` =
     .in(file(s"kyo-core-opt1"))
     .settings(
         `kyo-core-settings`,
-        crossScalaVersions := List(scala3Version),
-        scalafmtOnCompile  := false
+        `without-cross-scala`,
+        scalafmtOnCompile := false
     )
 
 lazy val `kyo-core-opt2` =
@@ -148,8 +158,8 @@ lazy val `kyo-core-opt2` =
     .in(file(s"kyo-core-opt2"))
     .settings(
         `kyo-core-settings`,
-        crossScalaVersions := List(scala3Version),
-        scalafmtOnCompile  := false
+        `without-cross-scala`,
+        scalafmtOnCompile := false
     )
 
 lazy val `kyo-core-opt3` =
@@ -159,8 +169,8 @@ lazy val `kyo-core-opt3` =
     .in(file(s"kyo-core-opt3"))
     .settings(
         `kyo-core-settings`,
-        crossScalaVersions := List(scala3Version),
-        scalafmtOnCompile  := false
+        `without-cross-scala`,
+        scalafmtOnCompile := false
     )
 
 lazy val `kyo-direct` =
@@ -171,7 +181,7 @@ lazy val `kyo-direct` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        crossScalaVersions                        := List(scala3Version),
+        `without-cross-scala`,
         libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.16"
     )
     .jsSettings(`js-settings`)
@@ -184,6 +194,7 @@ lazy val `kyo-zio` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
+        `with-cross-scala`,
         libraryDependencies += "dev.zio" %%% "zio" % zioVersion
     )
     .jsSettings(`js-settings`)
@@ -196,6 +207,7 @@ lazy val `kyo-sttp` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
+        `with-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.8.15"
     )
     .jsSettings(`js-settings`)
@@ -218,6 +230,7 @@ lazy val `kyo-chatgpt` =
     )
     .settings(
         `kyo-settings`,
+        `without-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.15",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.10",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.10",
@@ -235,6 +248,7 @@ lazy val `kyo-bench` =
     .dependsOn(`kyo-core-opt3` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
+        `without-cross-scala`,
         libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.4.10",
         libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion,

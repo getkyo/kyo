@@ -16,7 +16,7 @@ import scala.concurrent.duration.Duration
 
 object MonadLawsTest extends ZIOSpecDefault {
 
-  type Myo[+T] = T > (IOs with Fibers)
+  case class Myo[+T](v: T > (IOs with Fibers))
 
   val listGenF: GenF[Any, Myo] =
     new GenF[Any, Myo] {
@@ -27,21 +27,21 @@ object MonadLawsTest extends ZIOSpecDefault {
             gen.map(v => Fibers.fork(v)),
             gen.map(v => IOs(Fibers.fork(v))),
             gen.map(v => Fibers.fork(IOs(v)))
-        )
+        ).map(Myo(_))
     }
 
   implicit val cdeif: CovariantDeriveEqualIdentityFlatten[Myo] =
     new CovariantDeriveEqualIdentityFlatten[Myo] {
       override def flatten[A](ffa: Myo[Myo[A]]): Myo[A] =
-        ffa.flatten
+        Myo(ffa.v.flatMap(_.v))
       override def any: Myo[Any] =
-        ()
+        Myo(())
       override def map[A, B](f: A => B): Myo[A] => Myo[B] =
-        _.map(f(_))
+        m => Myo[B](m.v.map(f))
       override def derive[A: Equal]: Equal[Myo[A]] =
         new Equal[Myo[A]] {
           protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean = {
-            def run(m: Myo[A]): A = IOs.run(Fibers.block(m))
+            def run(m: Myo[A]): A = IOs.run(Fibers.block(m.v))
             run(l) == run(r)
           }
         }
