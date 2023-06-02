@@ -12,13 +12,13 @@ import scala.annotation.tailrec
 object atomics {
 
   object Atomics {
-    def initInt(v: Int): AtomicInt > IOs             = IOs(AtomicInt(JAtomicInteger(v)))
-    def initLong(v: Long): AtomicLong > IOs          = IOs(AtomicLong(JAtomicLong(v)))
-    def initBoolean(v: Boolean): AtomicBoolean > IOs = IOs(AtomicBoolean(JAtomicBoolean(v)))
-    def initRef[T](v: T): AtomicRef[T] > IOs         = IOs(AtomicRef(JAtomicReference[T](v)))
+    def initInt(v: Int): AtomicInt > IOs             = IOs(new AtomicInt(new JAtomicInteger(v)))
+    def initLong(v: Long): AtomicLong > IOs          = IOs(new AtomicLong(new JAtomicLong(v)))
+    def initBoolean(v: Boolean): AtomicBoolean > IOs = IOs(new AtomicBoolean(new JAtomicBoolean(v)))
+    def initRef[T](v: T): AtomicRef[T] > IOs = IOs(new AtomicRef(new JAtomicReference[T](v)))
   }
 
-  class AtomicInt private[atomics] (ref: JAtomicInteger) extends AnyVal {
+  class AtomicInt private[atomics] (private val ref: JAtomicInteger) extends AnyVal {
     /*inline(1)*/
     def get: Int > IOs =
       IOs(ref.get())
@@ -54,7 +54,7 @@ object atomics {
       IOs(ref.addAndGet(v))
   }
 
-  class AtomicLong private[atomics] (ref: JAtomicLong) extends AnyVal {
+  class AtomicLong private[atomics] (private val ref: JAtomicLong) extends AnyVal {
     /*inline(1)*/
     def get: Long > IOs =
       IOs(ref.get())
@@ -90,7 +90,7 @@ object atomics {
       IOs(ref.addAndGet(v))
   }
 
-  class AtomicBoolean private[atomics] (ref: JAtomicBoolean) extends AnyVal {
+  class AtomicBoolean private[atomics] (private val ref: JAtomicBoolean) extends AnyVal {
     /*inline(1)*/
     def get: Boolean > IOs =
       IOs(ref.get())
@@ -108,7 +108,7 @@ object atomics {
       IOs(ref.compareAndSet(curr, next))
   }
 
-  class AtomicRef[T] private[atomics] (ref: JAtomicReference[T]) extends AnyVal {
+  class AtomicRef[T] private[atomics] (private val ref: JAtomicReference[T]) extends AnyVal {
     /*inline(1)*/
     def get: T > IOs =
       IOs(ref.get())

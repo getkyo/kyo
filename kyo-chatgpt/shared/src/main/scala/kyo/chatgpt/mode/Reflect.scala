@@ -10,7 +10,7 @@ import kyo.chatgpt.mode.Mode
 
 class Reflect(val prompt: String, ais: Set[AI]) extends Mode(ais) {
   def this(ais: Set[AI]) = this("", ais)
-  def apply[S](ai: AI, msg: String)(next: String => String > (S & Aspects)) =
+  def apply[S](ai: AI, msg: String)(next: String => String > (S with Aspects)) =
     for {
       r1 <- AIs.ephemeral(next(msg))
       _ <- ai.user(

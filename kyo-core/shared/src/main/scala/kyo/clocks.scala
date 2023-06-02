@@ -13,19 +13,19 @@ object clocks {
     def now: Instant > IOs
   }
   object Clock {
-    given default: Clock with {
-      val now: Instant > IOs =
-        IOs(Instant.now())
-    }
+    implicit val default: Clock =
+      new Clock {
+        val now: Instant > IOs =
+          IOs(Instant.now())
+      }
   }
-  opaque type Clocks = Envs[Clock] & IOs
+  type Clocks = Envs[Clock] with IOs
 
   object Clocks {
-    type Iso = Clocks & IOs
-    def run[T, S](c: Clock)(f: => T > (Iso & S)): T > (IOs & S) =
-      Envs[Clock].let(c)(f)
-    def run[T, S](f: => T > (Iso & S))(using c: Clock): T > (IOs & S) =
-      Envs[Clock].let(c)(f)
+    def run[T, S](c: Clock)(f: => T > (Clocks with S)): T > (IOs with S) =
+      Envs[Clock].run[T, IOs with S](c)(f)
+    def run[T, S](f: => T > (Clocks with S))(implicit c: Clock): T > (IOs with S) =
+      Envs[Clock].run[T, IOs with S](c)(f)
     def now: Instant > Clocks =
       Envs[Clock].get.map(_.now)
   }

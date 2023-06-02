@@ -16,13 +16,7 @@ object direct {
 
   transparent inline def defer[T](inline f: T) = ${ impl[T]('f) }
 
-  case class Awaitable[T, S](v: T > S)
-
-  given [T, S]: Conversion[T > S, Awaitable[T, S]] with
-    /*inline(3)*/
-    def apply(v: T > S) = Awaitable(v)
-
-  inline def await[T, S](v: Awaitable[T, S]): T =
+  inline def await[T, S](v: KyoOps[T, S]): T =
     compiletime.error("`await` must be used within a `defer` block")
 
   private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] = {
@@ -56,7 +50,7 @@ object direct {
         case l =>
           l.reduce {
             case ('[t1], '[t2]) =>
-              Type.of[t1 & t2]
+              Type.of[t1 with t2]
           }
       }
 
@@ -66,7 +60,7 @@ object direct {
           Trees.transform(f.asTerm) {
             case '{ await[t, s2]($v) } =>
               '{
-                cps.await[[T] =>> T > s, t, [T] =>> T > s]($v.asInstanceOf[Awaitable[t, s]].v)
+                cps.await[[T] =>> T > s, t, [T] =>> T > s]($v.v.asInstanceOf[t > s])
               }.asTerm
           }
 

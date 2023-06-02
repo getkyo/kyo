@@ -3,7 +3,7 @@ package kyo.concurrent.scheduler
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.collection.mutable.PriorityQueue
 
-private final class Queue[T](using Ordering[T]) extends AtomicBoolean {
+private final class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
 
   private val queue = PriorityQueue[T]()
 
@@ -56,7 +56,7 @@ private final class Queue[T](using Ordering[T]) extends AtomicBoolean {
       }
     }
 
-  def steal(to: Queue[T]): T =
+  def steal(to: Queue[T]): T = {
     var t: T = null.asInstanceOf[T]
     !isEmpty() && tryModify {
       !isEmpty() && to.isEmpty() && to.tryModify {
@@ -73,6 +73,7 @@ private final class Queue[T](using Ordering[T]) extends AtomicBoolean {
       }
     }
     t
+  }
 
   def drain(f: T => Unit): Unit =
     modify {
@@ -81,12 +82,13 @@ private final class Queue[T](using Ordering[T]) extends AtomicBoolean {
       queue.clear()
     }
 
-  private inline def modify[T](inline f: => T): T =
+  private def modify[T](f: => T): T = {
     while (!compareAndSet(false, true)) {}
     try f
     finally set(false)
+  }
 
-  private inline def tryModify[T](inline f: => Boolean): Boolean =
+  private def tryModify[T](f: => Boolean): Boolean =
     compareAndSet(false, true) && {
       try f
       finally set(false)

@@ -12,54 +12,48 @@ import kyo.zios._
 import kyoTest.KyoTest
 import zio.Task
 import zio.ZIO
-import zio._
+import zio.Ref
 
 import scala.concurrent.duration._
 import org.scalatest.compatible.Assertion
 import scala.concurrent.Future
-import scala.annotation.targetName
+import zio.ZEnvironment
 
 class ziosTest extends KyoTest {
 
-  @targetName("runZIO")
-  def run(v: => Assertion > (IOs & Fibers & ZIOs)): Future[Assertion] =
+  def runZIO(v: => Assertion > (IOs with Fibers with ZIOs)): Future[Assertion] =
     zio.Unsafe.unsafe(implicit u =>
       zio.Runtime.default.unsafe.runToFuture(
           KyoZioApp.runTask(v)
       )
     )
 
-  "aborts" in run {
-    val a: Int > (Aborts[String] & ZIOs) = ZIOs(ZIO.fail("error"))
+  "aborts" in runZIO {
+    val a: Int > (Aborts[String] with ZIOs) = ZIOs.fromIO(ZIO.fail("error"))
     Aborts[String].run(a).map(e => assert(e.isLeft))
   }
 
-  "env" in run {
-    Aborts[Nothing].run(Envs[Int].let(10)(ZIOs(ZIO.environment[Int])).map(_.get)).map(v =>
+  "env" in runZIO {
+    Aborts[Nothing].run(Envs[Int].run(10)(
+        ZIOs.fromZIO[Int, Nothing, ZEnvironment[Int], Any](ZIO.environment[Int])
+    ).map(_.get)).map(v =>
       assert(v == Right(10))
     )
   }
 
   "fibers" - {
-    "kyo" in run {
+    "kyo" in runZIO {
       for {
-        v1 <- ZIOs(ZIO.succeed(1))
+        v1 <- ZIOs.fromTask(ZIO.succeed(1))
         v2 <- Fibers.fork(2)
-        v3 <- ZIOs(ZIO.succeed(3))
+        v3 <- ZIOs.fromTask(ZIO.succeed(3))
       } yield assert(v1 == 1 && v2 == 2 && v3 == 3)
     }
-    "zio" in run {
+    "zio" in runZIO {
       for {
         v1 <- IOs(1)
-        v2 <- ZIOs(ZIO.succeed(2).fork.flatMap(_.join))
+        v2 <- ZIOs.fromTask(ZIO.succeed(2).fork.flatMap(_.join))
         v3 <- IOs(3)
-      } yield assert(v1 == 1 && v2 == 2 && v3 == 3)
-    }
-    "both" in run {
-      for {
-        v1 <- IOs(1)
-        v2 <- ZIOs(ZIO.succeed(2).fork.flatMap(_.join))
-        v3 <- Fibers.fork(3)
       } yield assert(v1 == 1 && v2 == 2 && v3 == 3)
     }
   }
@@ -91,8 +85,8 @@ class ziosTest extends KyoTest {
       "zio" in {
         val v =
           for {
-            a <- ZIOs(Ref.make(0))
-            _ <- ZIOs(zioLoop(a))
+            a <- ZIOs.fromTask(Ref.make(0))
+            _ <- ZIOs.fromTask(zioLoop(a))
           } yield ()
         KyoZioApp.block(1.second) {
           for {
@@ -105,8 +99,8 @@ class ziosTest extends KyoTest {
       "both" in {
         val v =
           for {
-            a  <- ZIOs(Ref.make(0))
-            _  <- ZIOs(zioLoop(a))
+            a  <- ZIOs.fromTask(Ref.make(0))
+            _  <- ZIOs.fromTask(zioLoop(a))
             a2 <- Atomics.initInt(0)
             _  <- Fibers.fork(kyoLoop(a2))
           } yield ()

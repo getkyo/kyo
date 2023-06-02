@@ -41,7 +41,7 @@ class metersTest extends KyoTest {
       } yield assert(!a1 && !d1 && !d2 && !a2 && v1 == 1 && v2 == 2 && a3)
     }
 
-    "tryRun" in run {
+    "tryRun" in runJVM {
       for {
         sem <- Meters.semaphore(1)
         p   <- Fibers.promise[Int]
@@ -66,7 +66,7 @@ class metersTest extends KyoTest {
       } yield assert(v1 == 2 && v2 == 3)
     }
 
-    "run" in run {
+    "run" in runJVM {
       for {
         t  <- Meters.semaphore(2)
         p  <- Fibers.promise[Int]
@@ -90,7 +90,7 @@ class metersTest extends KyoTest {
       } yield assert(!a1 && !d1 && !d2 && !a2 && v1 == 1 && v2 == 2 && a3)
     }
 
-    "tryRun" in run {
+    "tryRun" in runJVM {
       for {
         sem <- Meters.semaphore(2)
         p   <- Fibers.promise[Int]
@@ -122,7 +122,7 @@ class metersTest extends KyoTest {
         v2 <- t.run(3)
       } yield assert(v1 == 2 && v2 == 3)
     }
-    "one loop" in run {
+    "one loop" in runJVM {
       for {
         meter   <- Meters.rateLimiter(10, 10.millis)
         counter <- Atomics.initInt(0)
@@ -132,7 +132,7 @@ class metersTest extends KyoTest {
         v1      <- counter.get
       } yield assert(v1 >= 10 && v1 <= 200)
     }
-    "two loops" in run {
+    "two loops" in runJVM {
       for {
         meter   <- Meters.rateLimiter(10, 10.millis)
         counter <- Atomics.initInt(0)
@@ -148,7 +148,7 @@ class metersTest extends KyoTest {
 
   "pipepline" - {
 
-    "run" in run {
+    "run" in runJVM {
       for {
         meter   <- Meters.pipeline(Meters.rateLimiter(2, 1.millis), Meters.mutex)
         counter <- Atomics.initInt(0)

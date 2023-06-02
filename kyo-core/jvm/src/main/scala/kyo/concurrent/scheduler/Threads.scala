@@ -11,10 +11,11 @@ object Threads {
   def apply(name: String, create: Runnable => Thread): ThreadFactory =
     new ThreadFactory {
       val nextId = new AtomicInteger
-      def newThread(r: Runnable): Thread =
+      def newThread(r: Runnable): Thread = {
         val t = create(r)
         t.setName(name + "-" + nextId.incrementAndGet)
         t.setDaemon(true)
         t
+      }
     }
 }

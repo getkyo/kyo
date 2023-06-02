@@ -28,7 +28,7 @@ object timers {
   }
 
   object Timer {
-    given default: Timer = {
+    implicit val default: Timer =
       new Timer {
         private val exec =
           Executors.newScheduledThreadPool(
@@ -50,7 +50,7 @@ object timers {
             val call = new Callable[Unit] {
               def call: Unit = IOs.run(f)
             }
-            IOs(Task(exec.schedule(call, delay.toNanos, TimeUnit.NANOSECONDS)))
+            IOs(new Task(exec.schedule(call, delay.toNanos, TimeUnit.NANOSECONDS)))
           } else {
             TimerTask.noop
           }
@@ -60,14 +60,14 @@ object timers {
             period: Duration
         )(f: => Unit > IOs): TimerTask > IOs =
           if (period.isFinite && initalDelay.isFinite) {
-            IOs(Task {
-              exec.scheduleAtFixedRate(
-                  () => IOs.run(f),
-                  initalDelay.toNanos,
-                  period.toNanos,
-                  TimeUnit.NANOSECONDS
-              )
-            })
+            IOs(new Task(
+                exec.scheduleAtFixedRate(
+                    () => IOs.run(f),
+                    initalDelay.toNanos,
+                    period.toNanos,
+                    TimeUnit.NANOSECONDS
+                )
+            ))
           } else {
             TimerTask.noop
           }
@@ -77,19 +77,18 @@ object timers {
             period: Duration
         )(f: => Unit > IOs): TimerTask > IOs =
           if (period.isFinite && initalDelay.isFinite) {
-            IOs(Task {
-              exec.scheduleWithFixedDelay(
-                  () => IOs.run(f),
-                  initalDelay.toNanos,
-                  period.toNanos,
-                  TimeUnit.NANOSECONDS
-              )
-            })
+            IOs(new Task(
+                exec.scheduleWithFixedDelay(
+                    () => IOs.run(f),
+                    initalDelay.toNanos,
+                    period.toNanos,
+                    TimeUnit.NANOSECONDS
+                )
+            ))
           } else {
             TimerTask.noop
           }
       }
-    }
   }
 
   trait TimerTask {
@@ -106,13 +105,13 @@ object timers {
     }
   }
 
-  opaque type Timers = Envs[Timer] & IOs
+  type Timers = Envs[Timer] with IOs
 
   object Timers {
-    def run[T, S1, S2](t: Timer > S1)(f: => T > (Timers & S2)): T > (IOs & S1 & S2) =
-      t.map(t => Envs[Timer].let(t)(f))
-    def run[T, S](f: => T > (Timers & S))(using t: Timer): T > (IOs & S) =
-      Envs[Timer].let(t)(f)
+    def run[T, S](t: Timer > S)(f: => T > (Timers with S)): T > (IOs with S) =
+      t.map(t => Envs[Timer].run[T, IOs with S](t)(f))
+    def run[T, S](f: => T > (Timers with S))(implicit t: Timer): T > (IOs with S) =
+      run[T, IOs with S](t)(f)
     def shutdown: Unit > Timers =
       Envs[Timer].get.map(_.shutdown)
     def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > Timers =

@@ -3,6 +3,7 @@ on: [push, pull_request]
 jobs:
   build-matrix:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       JAVA_OPTS: -Xms5G -Xmx5G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
       JVM_OPTS: -Xms5G -Xmx5G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
@@ -17,4 +18,4 @@ jobs:
       with:
           java-version: openjdk@1.17.0
     - name: build
-      run: sbt ${{ matrix.module }}/test
+      run: sbt "+${{ matrix.module }}/test"

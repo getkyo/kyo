@@ -25,36 +25,35 @@ object requests {
   }
 
   object Backend {
-    given default: Backend = new Backend {
-      val backend = PlatformBackend.instance
-      def send[T](r: Request[T, Any]): Fiber[Response[T]] > IOs =
-        Fibers.joinFiber(r.send(backend))
-    }
+    implicit val default: Backend =
+      new Backend {
+        val backend = PlatformBackend.instance
+        def send[T](r: Request[T, Any]): Fiber[Response[T]] > IOs =
+          Fibers.joinFiber(r.send(backend))
+      }
   }
 
-  opaque type Requests = Envs[Backend] & Fibers & IOs
+  type Requests = Envs[Backend] with Fibers with IOs
 
   object Requests {
 
-    def run[T, S](b: Backend)(v: T > (S & Requests)): T > (S & IOs & Fibers) =
-      Envs[Backend].let(b)(v)
+    def run[T, S](b: Backend)(v: T > (Requests with S)): T > (Fibers with IOs with S) =
+      Envs[Backend].run[T, Fibers with IOs with S](b)(v)
 
-    def run[T, S](v: T > (S & Requests))(using b: Backend): T > (S & IOs & Fibers) =
-      run(b)(v)
+    def run[T, S](v: T > (Requests with S))(implicit b: Backend): T > (Fibers with IOs with S) =
+      run[T, S](b)(v)
 
-    def iso[T, S](v: T > (S & Fibers & IOs & Requests)): T > (S & Requests) =
-      v
-
-    def apply[T, S](req: Request[T, Any] > S): Response[T] > (S & Requests) =
+    def apply[T, S](req: Request[T, Any] > S): Response[T] > (Requests with S) =
       fiber(req).map(_.join)
 
-    def fiber[T, S](req: Request[T, Any] > S): Fiber[Response[T]] > (S & Requests) =
+    def fiber[T, S](req: Request[T, Any] > S): Fiber[Response[T]] > (Requests with S) =
       Envs[Backend].get.map(b => req.map(b.send))
 
-    def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (S & Requests) =
+    def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (Requests with S) =
       fiber(f).map(_.join)
 
-    def fiber[T, S](f: BasicRequest => Request[T, Any] > S): Fiber[Response[T]] > (S & Requests) =
+    def fiber[T, S](f: BasicRequest => Request[T, Any] > S)
+        : Fiber[Response[T]] > (Requests with S) =
       fiber(f(basicRequest))
   }
 }
