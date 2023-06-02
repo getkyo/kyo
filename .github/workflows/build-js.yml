@@ -18,4 +18,4 @@ jobs:
       with:
           java-version: openjdk@1.17.0
     - name: build
-      run: sbt ${{ matrix.module }}/test
+      run: sbt "+${{ matrix.module }}/test"
