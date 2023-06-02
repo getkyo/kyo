@@ -16,7 +16,7 @@ object tries {
           def pure[T](v: T) =
             Success(v)
           override def handle[T](ex: Throwable) =
-            Tries.get(Failure(ex))
+            Tries.fail(ex)
           def apply[T, U, S](m: Try[T], f: T => U > (Tries with S)): U > (Tries with S) =
             m match {
               case m: Failure[T] =>
@@ -25,7 +25,7 @@ object tries {
                 try f(m.asInstanceOf[Success[T]].value)
                 catch {
                   case ex if (NonFatal(ex)) =>
-                    Tries.get(Failure(ex))
+                    Tries.fail(ex)
                 }
             }
         }

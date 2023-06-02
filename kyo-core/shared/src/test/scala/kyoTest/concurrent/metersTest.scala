@@ -41,7 +41,7 @@ class metersTest extends KyoTest {
       } yield assert(!a1 && !d1 && !d2 && !a2 && v1 == 1 && v2 == 2 && a3)
     }
 
-    "tryRun" in run {
+    "tryRun" in runJVM {
       for {
         sem <- Meters.semaphore(1)
         p   <- Fibers.promise[Int]
@@ -66,7 +66,7 @@ class metersTest extends KyoTest {
       } yield assert(v1 == 2 && v2 == 3)
     }
 
-    "run" in run {
+    "run" in runJVM {
       for {
         t  <- Meters.semaphore(2)
         p  <- Fibers.promise[Int]
@@ -90,7 +90,7 @@ class metersTest extends KyoTest {
       } yield assert(!a1 && !d1 && !d2 && !a2 && v1 == 1 && v2 == 2 && a3)
     }
 
-    "tryRun" in run {
+    "tryRun" in runJVM {
       for {
         sem <- Meters.semaphore(2)
         p   <- Fibers.promise[Int]

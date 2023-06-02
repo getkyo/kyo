@@ -20,7 +20,7 @@ class timersTest extends KyoTest {
     } yield assert(hello == "hello")
   }
 
-  "cancel" in run {
+  "cancel" in runJVM {
     for {
       p         <- Fibers.promise[String]
       task      <- Timers.schedule(5.second)(p.complete("hello").map(require(_)))
@@ -45,7 +45,7 @@ class timersTest extends KyoTest {
     } yield assert(n > 0 && cancelled)
   }
 
-  "scheduleWithFixedDelay" in run {
+  "scheduleWithFixedDelay" in runJVM {
     for {
       ref <- Atomics.initInt(0)
       task <- Timers.scheduleWithFixedDelay(
