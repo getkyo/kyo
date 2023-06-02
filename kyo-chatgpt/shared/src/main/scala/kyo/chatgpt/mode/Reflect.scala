@@ -3,7 +3,6 @@ package kyo.chatgpt.mode
 import kyo._
 import kyo.aspects._
 import kyo.chatgpt.ais._
-import kyo.direct._
 
 import kyo.chatgpt.ais
 import kyo.chatgpt.mode.Mode
