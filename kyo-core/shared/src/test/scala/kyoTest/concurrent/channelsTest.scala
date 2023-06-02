@@ -20,7 +20,7 @@ class channelsTest extends KyoTest {
         v <- c.poll
       } yield assert(b && v == Some(1))
     }
-    "offer and poll in parallel" in run {
+    "offer and poll in parallel" in runJVM {
       for {
         c <- Channels.bounded[Int](2)
         b <- Fibers.fork(c.offer(1))
@@ -37,7 +37,7 @@ class channelsTest extends KyoTest {
         v <- c.poll
       } yield assert(b && v == Some(1))
     }
-    "offer and poll in parallel" in run {
+    "offer and poll in parallel" in runJVM {
       for {
         c <- Channels.unbounded[Int]()
         b <- Fibers.fork(c.offer(1))
@@ -51,7 +51,7 @@ class channelsTest extends KyoTest {
         v <- c.poll
       } yield assert(v == Some(1))
     }
-    "put and poll in parallel" in run {
+    "put and poll in parallel" in runJVM {
       for {
         c <- Channels.unbounded[Int]()
         _ <- Fibers.fork(c.put(1))
@@ -128,7 +128,7 @@ class channelsTest extends KyoTest {
         v2 <- c.poll
       } yield assert(b && v1 == Some(1) && v2 == Some(2))
     }
-    "offer, put, and take in parallel" in run {
+    "offer, put, and take in parallel" in runJVM {
       for {
         c     <- Channels.blocking[Int](2)
         b     <- Fibers.fork(c.offer(1))
@@ -155,7 +155,7 @@ class channelsTest extends KyoTest {
         v3 <- c.poll
       } yield assert(!d1 && d2 && v1 == Some(1) && v2 == Some(2) && v3 == Some(3))
     }
-    "blocking take" in run {
+    "blocking take" in runJVM {
       for {
         c  <- Channels.blocking[Int](2)
         f  <- c.takeFiber

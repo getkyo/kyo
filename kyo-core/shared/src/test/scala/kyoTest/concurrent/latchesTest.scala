@@ -25,7 +25,7 @@ class latchesTest extends KyoTest {
     } yield succeed
   }
 
-  "countDown + fibers + await" in run {
+  "countDown + fibers + await" in runJVM {
     for {
       latch <- Latches.init(1)
       _     <- Fibers.fork(latch.release)
@@ -33,7 +33,7 @@ class latchesTest extends KyoTest {
     } yield succeed
   }
 
-  "countDown(2) + fibers + await" in run {
+  "countDown(2) + fibers + await" in runJVM {
     for {
       latch <- Latches.init(2)
       _     <- Fibers.fork(latch.release, latch.release)

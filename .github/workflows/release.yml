@@ -13,7 +13,7 @@ jobs:
       - uses: olafurpg/setup-scala@v13
         with:
           java-version: openjdk@1.17.0
-      - run: sbt ci-release
+      - run: sbt "ci-release"
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}

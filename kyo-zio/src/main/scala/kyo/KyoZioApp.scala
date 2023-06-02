@@ -40,8 +40,7 @@ object KyoZioApp {
     )
 
   def run[T](timeout: Duration)(
-      v: T > (IOs with Fibers with Resources with Clocks with Consoles with Randoms &
-        Timers with ZIOs)
+      v: T > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers with ZIOs)
   ): T =
     block(timeout)(runTask(v))
 
@@ -55,8 +54,9 @@ object KyoZioApp {
     val v3: T > (IOs with Fibers with Resources with Timers with ZIOs) = Clocks.run(v2)
     val v4: T > (IOs with Fibers with Timers with ZIOs)                = Resources.run(v3)
     val v5: T > (IOs with Fibers with ZIOs)                            = Timers.run(v4)
-    val v6: T > (IOs with ZIOs)                                        = inject(Fibers, ZIOs)(v5)
-    val v7: T > ZIOs                                                   = IOs.lazyRun(v6)
+
+    val v6: T > (IOs with ZIOs) = inject[T, Fiber, Task, Fibers, ZIOs, IOs](Fibers, ZIOs)(v5)
+    val v7: T > ZIOs            = IOs.lazyRun(v6)
     ZIOs.run(v7)
   }
 }
