@@ -15,10 +15,7 @@ import kyo.tries._
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 
-import scala.compiletime.erasedValue
-import scala.compiletime.testing.typeChecks
 import scala.concurrent.duration._
-import scala.quoted.*
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.concurrent.Future
 import scala.concurrent.Promise
@@ -84,7 +81,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
         eq: Eq[T],
         t2: Tag[T2],
         s2: Tag[S2]
-    ): Assertion =
+    ): Assertion = {
       assert(t.tag =:= t2.tag, "value tag doesn't match")
       assert(
           s2.tag =:= Tag[Any].tag || s.tag =:= Tag[Any].tag || s.tag =:= s2.tag,
@@ -94,6 +91,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
         assert(eq(value.asInstanceOf[T], expected.asInstanceOf[T]))
       else
         assert(!eq(value.asInstanceOf[T], expected.asInstanceOf[T]))
+    }
   }
 
   def checkEquals[T, S]    = new Check[T, S](true)

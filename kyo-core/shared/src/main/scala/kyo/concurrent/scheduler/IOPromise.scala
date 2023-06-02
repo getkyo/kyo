@@ -12,7 +12,7 @@ import scala.util.control.NonFatal
 
 import IOPromise._
 
-private[kyo] class IOPromise[T](s: State[T])
+private[kyo] class IOPromise[T](protected val s: State[T])
     extends AtomicReference(s) {
 
   def this() = this(Pending())
@@ -144,9 +144,10 @@ private[kyo] class IOPromise[T](s: State[T])
               setState(1)
               true
             }
-            def apply(v: T > IOs) =
+            def apply(v: T > IOs) = {
               result = v
               releaseShared(1)
+            }
             def apply() = result
           }
           onComplete(b)

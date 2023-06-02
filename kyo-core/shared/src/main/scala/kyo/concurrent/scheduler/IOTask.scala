@@ -184,6 +184,6 @@ private[kyo] final class IOTask[T](
       case arr: ArrayDeque[() => Unit] @unchecked =>
         Arrays.toString(arr.toArray)
     }
-    s"IOTask(id=${hashCode},preempting=$preempting,curr=$curr,ensures=$ensures,runtime=$runtime)"
+    s"IOTask(id=${hashCode},preempting=$preempting,curr=$curr,ensures=$ensures,runtime=$runtime,state=$s)"
   }
 }
