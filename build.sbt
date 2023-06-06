@@ -234,7 +234,7 @@ lazy val `kyo-chatgpt` =
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.15",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.10",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.10",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.11",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.12",
         libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10"
     )
     .jsSettings(`js-settings`)
