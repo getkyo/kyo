@@ -11,13 +11,24 @@ object direct {
 
   object internal {
 
-    def whileLoop[T, S](cond: => Boolean > S, v: => Unit > S): Unit > S =
+    def branch[T, S1, S2, S3](
+        cond: Boolean > S1,
+        ifTrue: => T > S2,
+        ifFalse: => T > S3
+    ): T > (S1 with S2 with S3) =
       cond.map {
-        case true  => v.andThen(whileLoop(cond, v))
-        case false => ()
+        case true  => ifTrue
+        case false => ifFalse
       }
 
-    def lift[T, S](t: T > S): T > S = t
+    def cont[T, U, S1, S2](v: T > S1)(f: T => U > S2): U > (S1 with S2) =
+      v.map(f)
+
+    def loop[T, S1, S2](cond: => Boolean > S1, v: => Any > S1): Unit > (S1 with S2) =
+      cond.map {
+        case true  => v.map(_ => loop(cond, v.unit))
+        case false => ()
+      }
   }
 
 }

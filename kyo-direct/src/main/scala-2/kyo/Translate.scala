@@ -17,28 +17,24 @@ private[kyo] object Translate {
         case q"$pack.await[$t, $s]($v)" => true
       }
 
-    def nest(binds: List[(TermName, Tree)], value: Tree): Tree =
+    def nest(binds: List[(TermName, Tree)], body: Tree): Tree =
       binds match {
-        case Nil => value
-        case (name, body) :: t =>
-          value match {
-            case Ident(TermName(name)) =>
-              body
-            case _ =>
-              q"$body.map(${toVal(name)} => ${nest(t, value)})"
-          }
+        case Nil => body
+        case (name, value) :: t =>
+          q"${c.prefix}.internal.cont($value)(${toVal(name)} => ${nest(t, body)})"
       }
+
+    var nextId = 0
+    var binds  = List.empty[(TermName, Tree)]
 
     val transformer =
       new Transformer {
-        var nextId = 0
-        var binds  = List.empty[(TermName, Tree)]
 
         private def boundary(tree: Tree): Tree = {
           val prev = binds
           binds = List.empty
           val value = transform(tree)
-          try q"${c.prefix}.internal.lift(${nest(binds.reverse, value)})"
+          try nest(binds.reverse, value)
           finally binds = prev
         }
 
@@ -49,43 +45,39 @@ private[kyo] object Translate {
           q"$name"
         }
 
+        private def cont(value: Tree, name: TermName, body: Tree): Tree =
+          await(nest(List((name, boundary(value))), boundary(body)))
+
+        private def branch(cond: Tree, ifTrue: Tree, ifFalse: Tree): Tree =
+          await(
+              q"${c.prefix}.internal.branch(${boundary(cond)}, ${boundary(ifTrue)}, ${boundary(ifFalse)})"
+          )
+
+        private def loop(cond: Tree, body: Tree): Tree =
+          await(q"${c.prefix}.internal.loop(${boundary(cond)}, ${boundary(body)})")
+
         override def transform(tree: Tree) =
           tree match {
 
             case tree if (pure(tree)) => tree
 
             case q"{ $mods val $name: $t = $v; ..$tail }" if (tail.nonEmpty) =>
-              await(q"${boundary(v)}.map(${toVal(name)} => ${boundary(q"{ ..$tail }")})")
+              cont(v, name, q"{ ..$tail }")
 
             case q"{ ..${head :: tail} }" if (tail.nonEmpty) =>
-              await(q"${boundary(head)}.map(_ => ${boundary(q"{ ..$tail }")})")
+              cont(head, TermName("_"), q"{ ..$tail }")
 
             case q"if($cond) $ifTrue else $ifFalse" =>
-              await(q""" 
-                ${boundary(cond)}.map {
-                  case true => ${boundary(ifTrue)}
-                  case false => ${boundary(ifFalse)}
-                }
-              """)
+              branch(cond, ifTrue, ifFalse)
 
             case q"$a && $b" =>
-              await(q""" 
-                ${boundary(a)}.map {
-                  case true => ${boundary(b)}
-                  case false => false
-                }
-              """)
+              branch(a, b, q"false")
 
             case q"$a || $b" =>
-              await(q""" 
-                ${boundary(a)}.map {
-                  case true => true
-                  case false => ${boundary(b)}
-                }
-              """)
+              branch(a, q"true", b)
 
             case q"while($cond) $body" =>
-              await(q"${c.prefix}.internal.whileLoop(${boundary(cond)}, ${boundary(body)}.unit)")
+              loop(cond, body)
 
             case q"$value match { case ..$cases }" =>
               val matchValue = TermName(c.freshName("matchValue"))
@@ -108,11 +100,7 @@ private[kyo] object Translate {
                     """ :: Nil
                 }
 
-              await(q"""
-                ${boundary(value)}.map { ${toVal(matchValue)} => 
-                  $matchValue match { case ..${loop(cases)} }
-                }
-              """)
+              cont(value, matchValue, q"$matchValue match { case ..${loop(cases)} }")
 
             case q"$pack.await[$t, $s]($v)" =>
               await(v)
@@ -123,6 +111,6 @@ private[kyo] object Translate {
       }
 
     val result = transformer.transform(tree)
-    c.resetAllAttrs(nest(transformer.binds, result))
+    c.resetAllAttrs(nest(binds, result))
   }
 }
