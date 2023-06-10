@@ -18,7 +18,7 @@ jobs:
   bench:
     name: bench
     runs-on: bench
-    timeout-minutes: 40
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v3.0.2
         with:
@@ -45,9 +45,9 @@ jobs:
           else
             SELECTOR="${{ github.event.inputs.selector }}"
           fi
-          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\" $SELECTOR"
-          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph $SELECTOR"
-          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true $SELECTOR"
+          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 10 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\" $SELECTOR"
+          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 10 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph $SELECTOR"
+          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 10 -i 3 -r 1 -w 1 -t 1 -rf json -foe true $SELECTOR"
 
       - name: prepare results
         run: |
