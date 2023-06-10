@@ -52,7 +52,7 @@ private[kyo] class TestSupportMacro(val c: Context) {
   def typecheckToTry(tree: Tree, name: String): Tree = {
     try {
       val typeCheckedTree = c.typecheck(c.resetAllAttrs(tree))
-      c.info(c.enclosingPosition, s"$name: $typeCheckedTree", force = false)
+      // c.info(c.enclosingPosition, s"$name: $typeCheckedTree", force = false)
       q"scala.util.Try($typeCheckedTree)"
     } catch {
       case e: TypecheckException =>
