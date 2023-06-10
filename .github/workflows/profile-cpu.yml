@@ -11,7 +11,7 @@ permissions:
 jobs:
   benchmark:
     name: Profile benchmarks
-    runs-on: ubuntu-latest
+    runs-on: bench
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v3.0.2
