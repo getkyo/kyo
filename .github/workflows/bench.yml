@@ -46,9 +46,9 @@ jobs:
           else
             SELECTOR="${{ github.event.inputs.selector }}"
           fi
-          sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\" $SELECTOR"
-          sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph $SELECTOR"
-          sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof gc $SELECTOR"
+          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\" $SELECTOR"
+          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph $SELECTOR"
+          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true $SELECTOR"
 
       - name: prepare results
         run: |
