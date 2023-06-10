@@ -1,6 +1,5 @@
-val scala3Version = "3.2.2"
-val scala2Version = "2.13.10"
-val scalaVersions = List(scala3Version, scala2Version)
+val scala3Version = "3.3.0"
+val scala2Version = "2.13.11"
 
 val compilerOptions = Seq(
     "-encoding",
@@ -14,6 +13,7 @@ val compilerOptions = Seq(
     // "-Vprofile",
 )
 
+scalaVersion                       := scala3Version
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
 sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
 sonatypeProfileName                := "io.getkyo"
@@ -126,7 +126,7 @@ lazy val `without-cross-scala` = Seq(
 
 lazy val `with-cross-scala` = Seq(
     scalaVersion       := scala3Version,
-    crossScalaVersions := List(scala2Version, scala3Version)
+    crossScalaVersions := List(scala3Version, scala2Version)
 )
 
 lazy val `kyo-core` =
@@ -181,8 +181,13 @@ lazy val `kyo-direct` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        `without-cross-scala`,
-        libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.16"
+        `with-cross-scala`,
+        libraryDependencies ++= Seq(
+            "org.scala-lang"   % "scala-library"  % scalaVersion.value,
+            "org.scala-lang"   % "scala-compiler" % scalaVersion.value,
+            "org.scala-lang"   % "scala-reflect"  % scalaVersion.value,
+            "org.scalamacros" %% "resetallattrs"  % "1.0.0"
+        ).filter(_ => scalaVersion.value.startsWith("2"))
     )
     .jsSettings(`js-settings`)
 
@@ -234,8 +239,8 @@ lazy val `kyo-chatgpt` =
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.15",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.12",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.12",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.11",
-        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.12"
+        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.12",
+        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10"
     )
     .jsSettings(`js-settings`)
 

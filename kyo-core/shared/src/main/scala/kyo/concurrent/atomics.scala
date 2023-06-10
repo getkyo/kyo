@@ -52,6 +52,8 @@ object atomics {
     /*inline(1)*/
     def addAndGet(v: Int): Int > IOs =
       IOs(ref.addAndGet(v))
+
+    override def toString = ref.toString()
   }
 
   class AtomicLong private[atomics] (private val ref: JAtomicLong) extends AnyVal {
@@ -88,6 +90,8 @@ object atomics {
     /*inline(1)*/
     def addAndGet(v: Long): Long > IOs =
       IOs(ref.addAndGet(v))
+
+    override def toString = ref.toString()
   }
 
   class AtomicBoolean private[atomics] (private val ref: JAtomicBoolean) extends AnyVal {
@@ -106,6 +110,8 @@ object atomics {
     /*inline(1)*/
     def cas(curr: Boolean, next: Boolean): Boolean > IOs =
       IOs(ref.compareAndSet(curr, next))
+
+    override def toString = ref.toString()
   }
 
   class AtomicRef[T] private[atomics] (private val ref: JAtomicReference[T]) extends AnyVal {
@@ -124,5 +130,7 @@ object atomics {
     /*inline(1)*/
     def cas(curr: T, next: T): Boolean > IOs =
       IOs(ref.compareAndSet(curr, next))
+
+    override def toString = ref.toString()
   }
 }
