@@ -77,7 +77,7 @@ class ForkManyBench extends Bench[Int] {
     } yield 0
   }
 
-  @Benchmark
+  // @Benchmark
   def forkOx() = {
     import ox._
     import ox.channels._

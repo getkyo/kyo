@@ -75,7 +75,7 @@ class ChainedForkBench extends Bench[Int] {
     } yield 0
   }
 
-  @Benchmark
+  // @Benchmark
   def forkOx() = {
     import ox._
     def iterate(p: CompletableFuture[Unit], n: Int): Unit =

@@ -71,7 +71,7 @@ class ProducerConsumerBench extends Bench[Unit] {
     }
   }
 
-  @Benchmark
+  // @Benchmark
   def forkOx() = {
     import ox._
     import ox.channels._

@@ -44,12 +44,12 @@ class BroadFlatMapBench extends Bench[BigInt] {
     if (n <= 1) n
     else oxFib(n - 1) + oxFib(n - 2)
 
-  @Benchmark
+  // @Benchmark
   def syncOx(): BigInt = {
     oxFib(depth)
   }
 
-  @Benchmark
+  // @Benchmark
   def forkOx(): BigInt = {
     import ox._
     scoped {
