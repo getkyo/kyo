@@ -1,7 +1,7 @@
 name: build
 on: [push, pull_request]
 jobs:
-  build-matrix:
+  build:
     runs-on: build
     timeout-minutes: 10
     env:
