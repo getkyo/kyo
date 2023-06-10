@@ -56,7 +56,7 @@ object ios {
 
     /*inline(3)*/
     def attempt[T, S](v: => T > S): Try[T] > S =
-      Tries.run[T, S](Tries(v))
+      Tries.run[T, S](v)
 
     private[kyo] /*inline(3)*/ def ensure[T, S]( /*inline(3)*/ f: => Unit > IOs)(v: => T > S)
         : T > (IOs with S) = {

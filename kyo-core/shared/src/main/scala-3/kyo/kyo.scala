@@ -4,32 +4,41 @@ package object kyo {
 
   type >[+T, -S] >: T // = T | Kyo[_, _, _, T, S]
 
-  implicit class KyoOps[+T, -S](private[kyo] val v: T > S) extends AnyVal {
+  extension [T, S](v: T > S) {
 
+    /*inline(3)*/
     def flatMap[U, S2](f: T => U > S2): U > (S with S2) =
       kyo.core.transform(v)(f)
 
+    /*inline(3)*/
     def map[U, S2](f: T => U > S2): U > (S with S2) =
       flatMap(f)
 
+    /*inline(3)*/
     def unit: Unit > S =
       map(_ => ())
 
+    /*inline(3)*/
     def withFilter(p: T => Boolean): T > S =
       map(v => if (!p(v)) throw new MatchError(v) else v)
 
+    /*inline(3)*/
     def flatten[U, S2](implicit ev: T => U > S2): U > (S with S2) =
       flatMap(ev)
 
+    /*inline(3)*/
     def andThen[U, S2](f: => U > S2)(implicit ev: T => Unit): U > (S with S2) =
       flatMap(_ => f)
 
+    /*inline(3)*/
     def repeat(i: Int)(implicit ev: T => Unit): Unit > S =
       if (i <= 0) () else andThen(repeat(i - 1))
 
+    /*inline(3)*/
     def forever(implicit ev: T => Unit): Unit > S =
       andThen(forever)
 
+    /*inline(3)*/
     def pure(implicit ev: Any => S): T =
       v.asInstanceOf[T]
   }

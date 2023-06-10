@@ -18,6 +18,7 @@ object core {
 
     def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]): Boolean = this eq other
 
+    /*inline(3)*/
     protected def suspend[T, S](v: M[T] > S): T > (S with E) = {
       def suspendLoop(v: M[T] > S): T > (S with E) = {
         v match {
@@ -33,6 +34,7 @@ object core {
       suspendLoop(v)
     }
 
+    /*inline(3)*/
     protected def handle[T, S](v: T > (E with S))(implicit
         h: Handler[M, E],
         s: Safepoint[M, E]
@@ -70,6 +72,7 @@ object core {
       shallowHandleLoop(v)
     }
 
+    /*inline(3)*/
     protected[kyo] def deepHandle[T, S](v: T > E)(implicit
         h: DeepHandler[M, E],
         s: Safepoint[M, E]
@@ -105,6 +108,7 @@ object core {
       _noop.asInstanceOf[Safepoint[M, E]]
   }
 
+  /*inline(3)*/
   def transform[T, S, U, S2](v: T > S)(f: T => (U > S2)): U > (S with S2) = {
     def transformLoop(v: T > S): U > (S with S2) =
       v match {
