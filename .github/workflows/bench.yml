@@ -13,6 +13,7 @@ on:
 permissions:
   contents: write
   deployments: write
+  gist: write
 
 jobs:
   bench:
@@ -45,9 +46,9 @@ jobs:
           else
             SELECTOR="${{ github.event.inputs.selector }}"
           fi
-          sbt kyo-bench/"jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\" $SELECTOR"
-          sbt kyo-bench/"jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph $SELECTOR"
-          sbt kyo-bench/"jmh:run -wi 5 -i 3 -r 1 -w 1 -t 1 -rf json -foe true $SELECTOR"
+          sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\" $SELECTOR"
+          sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph $SELECTOR"
+          sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof gc $SELECTOR"
 
       - name: prepare results
         run: |
@@ -57,7 +58,20 @@ jobs:
           rm -rf output/**/*reverse.html
 
       - name: publish results
-        uses: actions/upload-artifact@v3
+        uses: actions/github-script@v5
         with:
-          name: profile
-          path: output/**
+          script: |
+            const fs = require('fs').promises;
+            const path = require('path');
+            const files = await fs.readdir('output/');
+            let gistFiles = {};
+
+            for (const file of files) {
+              const content = await fs.readFile(path.join('output/', file), 'utf-8');
+              gistFiles[file] = { content: content };
+            }
+
+            github.rest.gists.create({
+              files: gistFiles,
+              public: true
+            });
