@@ -16,8 +16,6 @@ private final class Worker(r: Runnable)
   @volatile private var currentTask: IOTask[_] = null
   @volatile private var parkedThread: Thread   = null
 
-  private val delay = new MovingStdDev(7)
-
   def park() =
     parkedThread = this
     LockSupport.parkNanos(this, 100000000L)
@@ -81,7 +79,6 @@ private final class Worker(r: Runnable)
         if (task.reenqueue()) {
           task = queue.addAndPoll(task)
         } else {
-          delay.observe(task.delay())
           task = null
         }
       } else {
@@ -100,7 +97,7 @@ private final class Worker(r: Runnable)
   }
 
   override def toString =
-    s"Worker(thread=${getName},load=${load()},delay=${delay.avg()},task=$currentTask,queue.size=${queue.size()},frame=${this.getStackTrace()(0)})"
+    s"Worker(thread=${getName},load=${load()},task=$currentTask,queue.size=${queue.size()},frame=${this.getStackTrace()(0)})"
 }
 
 private object Worker {

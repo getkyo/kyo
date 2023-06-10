@@ -13,7 +13,6 @@ on:
 permissions:
   contents: write
   deployments: write
-  gist: write
 
 jobs:
   bench:
@@ -56,22 +55,49 @@ jobs:
           cp -r kyo-bench/.jvm/*.json output/
           cp -r kyo-bench/.jvm/kyo.bench.* output/
           rm -rf output/**/*reverse.html
+          ls output/
 
       - name: publish results
         uses: actions/github-script@v5
         with:
+          github-token: ${{ secrets.GIST_PAT }}
           script: |
             const fs = require('fs').promises;
             const path = require('path');
-            const files = await fs.readdir('output/');
-            let gistFiles = {};
 
-            for (const file of files) {
-              const content = await fs.readFile(path.join('output/', file), 'utf-8');
-              gistFiles[file] = { content: content };
+            async function getFiles(dir) {
+              const dirents = await fs.readdir(dir, { withFileTypes: true });
+              const files = await Promise.all(dirents.map((dirent) => {
+                const res = path.resolve(dir, dirent.name);
+                return dirent.isDirectory() ? getFiles(res) : res;
+              }));
+              return Array.prototype.concat(...files);
             }
 
-            github.rest.gists.create({
+            let gistFiles = {};
+
+            const files = await getFiles('output/');
+            for (const file of files) {
+              const content = await fs.readFile(file, 'utf-8');
+              const relativePath = path.relative('output/', file);
+              let gistFileName = relativePath.split(path.sep).join('-');
+              // Simplify the filename
+              if (gistFileName === 'jmh-result.json') {
+                const fullSha = context.sha;
+                const shortSha = fullSha.slice(0, 7);
+                gistFileName = `${shortSha}-jmh-result.json`;
+              } else {
+                gistFileName = gistFileName.replace(/kyo.bench.(\w+).(\w+)-\w+-flame-(\w+)-forward.html/, '$1-$2-$3.html');
+              }
+              gistFiles[gistFileName] = { content: content };
+            }
+
+            await github.rest.gists.create({
               files: gistFiles,
               public: true
             });
+
+
+
+
+
