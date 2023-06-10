@@ -3,7 +3,7 @@ on: [push, pull_request]
 jobs:
   build:
     runs-on: build
-    timeout-minutes: 10
+    timeout-minutes: 7
     env:
       JAVA_OPTS: -Xms20G -Xmx20G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
       JVM_OPTS: -Xms20G -Xmx20G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8

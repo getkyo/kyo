@@ -9,8 +9,8 @@ permissions:
   deployments: write
 
 jobs:
-  benchmark:
-    name: Run benchmarks
+  bench:
+    name: bench
     runs-on: bench
     timeout-minutes: 20
     steps:
@@ -20,20 +20,33 @@ jobs:
       - uses: olafurpg/setup-scala@v13
         with:
           java-version: openjdk@1.17.0
- 
-      - name: run benchmarks
+
+      - name: install async-profiler
+        run: |
+          cd /home/runner
+          wget https://github.com/jvm-profiling-tools/async-profiler/releases/download/v2.9/async-profiler-2.9-linux-x64.tar.gz
+          tar -xvzf async-profiler-2.9-linux-x64.tar.gz
+          sudo mkdir -p /usr/java/packages/lib/
+          sudo cp async-profiler-2.9-linux-x64/build/libasyncProfiler.so /usr/java/packages/lib/
+          sudo sysctl kernel.perf_event_paranoid=1
+          sudo sysctl kernel.kptr_restrict=0
+
+      - name: run
         run: |
           cd /home/runner/work/kyo/kyo/
-          sbt kyo-bench/"jmh:clean"
-          sbt kyo-bench/"jmh:run -wi 10 -i 5 -r 1 -w 1 -t 1 -rf json -foe true -prof gc Kyo" 
+          sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\" Kyo"
+          sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph Kyo" 
+          sbt kyo-bench/"jmh:run -wi 7 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof gc Kyo" 
 
       - name: prepare results
         run: |
           mkdir -p output/
           cp -r kyo-bench/.jvm/*.json output/
+          cp -r kyo-bench/.jvm/kyo.bench.* output/
+          rm -rf output/**/*reverse.html
 
       - name: publish results
         uses: actions/upload-artifact@v3
         with:
-          name: bench
+          name: profile-alloc
           path: output/**
