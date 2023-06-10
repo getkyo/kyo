@@ -135,7 +135,11 @@ object UI extends App {
   val ai   = IOs.run(AIs.init)
   val chan = IOs.run(Channels.blocking[(String, scala.List[ModeInfo], Fiber.Promise[String])](1024))
 
-  def withModes[T, S](ai: AI, modes: scala.List[ModeInfo], v: T > S): T > (S & AIs & Aspects) =
+  def withModes[T, S](
+      ai: AI,
+      modes: scala.List[ModeInfo],
+      v: T > S
+  ): T > (S with AIs with Aspects) =
     modes match {
       case Nil => v
       case h :: t =>
@@ -152,14 +156,12 @@ object UI extends App {
   IOs.run {
     Fibers.forkFiber {
       val run =
-        AIs.iso {
-          for {
-            (msg, modes, p) <- chan.take
-            resp            <- withModes(ai, modes.reverse, ai.ask(msg))
-            _               <- p.complete(resp)
-          } yield ()
-        }
-      def loop(): Unit > (Fibers & AIs) =
+        for {
+          (msg, modes, p) <- chan.take
+          resp            <- withModes(ai, modes.reverse, ai.ask(msg))
+          _               <- p.complete(resp)
+        } yield ()
+      def loop(): Unit > (Fibers with AIs) =
         run.map(_ => loop())
       Consoles.run {
         Tries.run {

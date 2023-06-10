@@ -5,14 +5,14 @@ private object Flag {
     def apply(s: String): T
   }
   object Reader {
-    given Reader[Int]    = Integer.parseInt(_)
-    given Reader[String] = identity(_)
-    given Reader[Long]   = java.lang.Long.parseLong(_)
-    given Reader[Double] = java.lang.Double.parseDouble(_)
-    given [T](using r: Reader[T]): Reader[List[T]] =
+    implicit val intReader: Reader[Int]       = Integer.parseInt(_)
+    implicit val stringReader: Reader[String] = identity(_)
+    implicit val longReader: Reader[Long]     = java.lang.Long.parseLong(_)
+    implicit val doubleReader: Reader[Double] = java.lang.Double.parseDouble(_)
+    implicit def listReader[T](implicit r: Reader[T]): Reader[List[T]] =
       (s: String) => s.split(",").toList.map(r(_))
   }
-  def apply[T](name: String, default: T)(using r: Reader[T]) =
+  def apply[T](name: String, default: T)(implicit r: Reader[T]) =
     Option(System.getProperty(s"kyo.scheduler.$name"))
       .map(r(_)).getOrElse(default)
 }

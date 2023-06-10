@@ -14,7 +14,7 @@ class optionsTest extends KyoTest {
 
   "apply" - {
     "null" in {
-      assert(((Options.run(Options(null: String))): Option[String]) == None)
+      assert((Options.run(Options(null: String))).pure == None)
       checkEquals[Option[String], Any](
           Options.run(Options(null: String)),
           None

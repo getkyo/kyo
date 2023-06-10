@@ -11,8 +11,22 @@ import kyo.concurrent.fibers._
 import scala.util.Try
 import kyo.consoles._
 import kyo.concurrent.atomics._
+import kyo.direct._
 
 class directTest extends KyoTest {
+
+  "match" in {
+    val a = IOs(1)
+    val b = IOs(2)
+    val c =
+      defer {
+        await(a) match {
+          case i if (await(b) > 0) => i
+          case 2                   => 99
+        }
+      }
+    assert(IOs.run(c) == 1)
+  }
 
   "one run" in {
     val io = defer {
@@ -33,7 +47,7 @@ class directTest extends KyoTest {
   }
 
   "two effects" in {
-    val io: String > (IOs & Options) =
+    val io: String > (IOs with Options) =
       defer {
         val a = await(Options.get(Some("hello")))
         val b = await(IOs("world"))
@@ -76,6 +90,18 @@ class directTest extends KyoTest {
     }
   }
 
+  "while" in {
+    val io =
+      defer {
+        val c = await(Atomics.initInt(1))
+        while (await(c.get) < 100) {
+          await(c.incrementAndGet)
+        }
+        await(c.get)
+      }
+    assert(IOs.run(io) == 100)
+  }
+
   "options" in {
     def test[T](opt: Option[T]) =
       assert(opt == Options.run(defer(await(Options.get(opt)))))
@@ -110,60 +136,59 @@ class directTest extends KyoTest {
   "kyo computations must be within a run block" in {
     assertDoesNotCompile("defer(IOs(1))")
     assertDoesNotCompile("""
-      defer {
-        val a = IOs(1)
-        10
-      }
-    """)
+       defer {
+         val a = IOs(1)
+         10
+       }
+     """)
     assertDoesNotCompile("""
-      defer {
-        val a = {
-          val b = IOs(1)
-          10
-        }
-        10
-      }
-    """)
+       defer {
+         val a = {
+           val b = IOs(1)
+           10
+         }
+         10
+       }
+     """)
   }
 
   "lists" in {
     import kyo.lists._
 
-    val x = Lists.foreach(1, -2, -3)
-    val y = Lists.foreach("ab", "cde")
+    val x = Lists.foreach(List(1, -2, -3))
+    val y = Lists.foreach(List("ab", "cde"))
 
     val v: Int > Lists =
       defer {
         val xx = await(x)
         xx + (
-            if (xx > 0) then await(y).length * await(x)
+            if (xx > 0) await(y).length * await(x)
             else await(y).length
         )
       }
 
-    val a: List[Int] = Lists.run(v)
+    val a: List[Int] = Lists.run(v).pure
     assert(a == List(3, -3, -5, 4, -5, -8, 0, 1, -1, 0))
   }
 
   "lists + filter" in {
     import kyo.lists._
 
-    val x = Lists.foreach(1, -2, -3)
-    val y = Lists.foreach("ab", "cde")
+    val x = Lists.foreach(List(1, -2, -3))
+    val y = Lists.foreach(List("ab", "cde"))
 
     val v: Int > Lists =
       defer {
         val xx = await(x)
         val r =
           xx + (
-              if (xx > 0) then await(y).length * await(x)
+              if (xx > 0) await(y).length * await(x)
               else await(y).length
           )
         await(Lists.filter(r > 0))
         r
       }
 
-    val a: List[Int] = Lists.run(v)
-    assert(a == List(3, 4, 1))
+    assert(Lists.run(v).pure == List(3, 4, 1))
   }
 }

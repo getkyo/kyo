@@ -7,52 +7,53 @@ import core._
 
 object tries {
 
-  final class Tries private[tries] extends Effect[Try] {
+  final class Tries private[tries] extends Effect[Try, Tries] {
 
     /*inline(2)*/
-    def run[T, S](v: => T > (Tries & S)): Try[T] > S =
-      Tries(v) < Tries
+    def run[T, S](v: => T > (Tries with S)): Try[T] > S = {
+      implicit def handler: Handler[Try, Tries] =
+        new Handler[Try, Tries] {
+          def pure[T](v: T) =
+            Success(v)
+          override def handle[T](ex: Throwable) =
+            Tries.fail(ex)
+          def apply[T, U, S](m: Try[T], f: T => U > (Tries with S)): U > (Tries with S) =
+            m match {
+              case m: Failure[T] =>
+                Tries.get(m.asInstanceOf[Failure[U]])
+              case _ =>
+                try f(m.asInstanceOf[Success[T]].value)
+                catch {
+                  case ex if (NonFatal(ex)) =>
+                    Tries.fail(ex)
+                }
+            }
+        }
+      handle[T, S](Tries(v))
+    }
 
     def fail[T](ex: Throwable): T > Tries =
-      Failure(ex) > Tries
+      suspend(Failure(ex))
 
     def fail[T](msg: String): T > Tries =
-      Failure(new Exception(msg)) > Tries
+      suspend(Failure(new Exception(msg)))
 
     /*inline(2)*/
-    def apply[T, S]( /*inline(2)*/ v: => T > S): T > (Tries & S) =
-      val a: Try[Try[T] > S]      = Try(v < Tries)
-      val b: Try[T] > (Tries & S) = (a > Tries).flatten
-      val c: T > (Tries & S)      = b > Tries
+    def apply[T, S]( /*inline(2)*/ v: => T > S): T > (Tries with S) = {
+      val a: Try[T > S]         = Try(v)
+      val b: T > S > Tries      = Tries.get(a)
+      val c: T > (Tries with S) = b.flatten
       c
+    }
 
     /*inline(2)*/
-    def get[T, S](v: Try[T] > S): T > (Tries & S) =
+    def get[T, S](v: Try[T] > S): T > (Tries with S) =
       v.map {
         case Success(v) =>
           v
         case _ =>
-          v > Tries
+          suspend(v)
       }
   }
   val Tries = new Tries
-
-  /*inline(2)*/
-  given Handler[Try, Tries] with {
-    def pure[T](v: T) =
-      Success(v)
-    override def handle[T](ex: Throwable) =
-      Failure(ex) > Tries
-    def apply[T, U, S](m: Try[T], f: T => U > (Tries & S)): U > (Tries & S) =
-      m match {
-        case m: Failure[T] =>
-          m.asInstanceOf[Failure[U]] > Tries
-        case _ =>
-          try f(m.asInstanceOf[Success[T]].value)
-          catch {
-            case ex if (NonFatal(ex)) =>
-              Failure(ex) > Tries
-          }
-      }
-  }
 }

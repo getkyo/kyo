@@ -10,23 +10,24 @@ import sums._
 
 object resources {
 
-  opaque type Resource[T] = Sum[Finalizer, T]
+  type Resource[T] = Sum[Finalizer]#Value[T]
 
-  opaque type Resources = Sums[Finalizer]
+  type Resources = Sums[Finalizer]
 
   object Resources {
     def ensure[T](f: => T > IOs): Unit > Resources =
       Sums[Finalizer].add(() => IOs.run(f)).unit
 
-    def acquire[T <: Closeable](resource: => T): T > Resources =
+    def acquire[T <: Closeable](resource: => T): T > Resources = {
       lazy val v = resource
       Sums[Finalizer].add(() => v.close()).map(_ => v)
+    }
 
-    def run[T, S](v: T > (Resources & S)): T > (IOs & S) =
-      Sums[Finalizer].run(v)
+    def run[T, S](v: T > (Resources with S)): T > (IOs with S) =
+      Sums[Finalizer].run[T, S](v)
   }
 
-  private abstract class Finalizer {
+  abstract class Finalizer {
     def run(): Unit
   }
 
@@ -34,15 +35,16 @@ object resources {
     val noop = new Finalizer {
       def run(): Unit = ()
     }
-    given Summer[Finalizer] with {
-      def init = noop
-      def add(a: Finalizer, b: Finalizer) =
-        () => {
-          b.run()
-          a.run()
-        }
-      override def drop(v: Finalizer): Unit > IOs =
-        IOs(v.run())
-    }
+    implicit val summer: Summer[Finalizer] =
+      new Summer[Finalizer] {
+        def init = noop
+        def add(a: Finalizer, b: Finalizer) =
+          () => {
+            b.run()
+            a.run()
+          }
+        override def drop(v: Finalizer): Unit > IOs =
+          IOs(v.run())
+      }
   }
 }

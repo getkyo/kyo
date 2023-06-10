@@ -1,5 +1,5 @@
-val scala3Version = "3.2.2"
-val scala2Version = "2.13.10"
+val scala3Version = "3.3.0"
+val scala2Version = "2.13.11"
 
 val compilerOptions = Seq(
     "-encoding",
@@ -13,14 +13,14 @@ val compilerOptions = Seq(
     // "-Vprofile",
 )
 
+scalaVersion                       := scala3Version
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
 sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
 sonatypeProfileName                := "io.getkyo"
 publish / skip                     := true
 
 lazy val `kyo-settings` = Seq(
-    scalaVersion := scala3Version,
-    fork         := true,
+    fork := true,
     scalacOptions ++= compilerOptions,
     scalafmtOnCompile := true,
     organization      := "io.getkyo",
@@ -44,8 +44,9 @@ lazy val `kyo-settings` = Seq(
 
 lazy val gen = TaskKey[Unit]("gen", "")
 
-lazy val genState: State => State = { s: State =>
-  "gen" :: s
+lazy val genState: State => State = {
+  s: State =>
+    "gen" :: s
 }
 
 Global / onLoad := {
@@ -71,6 +72,7 @@ lazy val kyo =
         Compile / packageBin / publishArtifact := false,
         Compile / packageDoc / publishArtifact := false,
         Compile / packageSrc / publishArtifact := false,
+        scalaVersion                           := scala3Version,
         `kyo-settings`,
         gen := {
           def genOpt(i: Int) = {
@@ -100,10 +102,10 @@ lazy val kyo =
         `kyo-bench`
     )
 
-val zioVersion = "2.0.10"
+val zioVersion = "2.0.15"
 
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
-    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.7",
+    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.8",
     libraryDependencies += "org.slf4j"       % "slf4j-api"         % "2.0.7",
     libraryDependencies += "org.jctools"     % "jctools-core"      % "4.0.1",
     libraryDependencies += "dev.zio"       %%% "zio-test"          % zioVersion   % Test,
@@ -111,11 +113,21 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "zio-test-sbt"      % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC19" % Test,
     libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC19" % Test,
-    libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.15"     % Test,
+    libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.16"     % Test,
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     Global / concurrentRestrictions := Seq(
         Tags.limit(Tags.CPU, 1)
     )
+)
+
+lazy val `without-cross-scala` = Seq(
+    scalaVersion       := scala3Version,
+    crossScalaVersions := List(scala3Version)
+)
+
+lazy val `with-cross-scala` = Seq(
+    scalaVersion       := scala3Version,
+    crossScalaVersions := List(scala3Version, scala2Version)
 )
 
 lazy val `kyo-core` =
@@ -124,22 +136,10 @@ lazy val `kyo-core` =
     .crossType(CrossType.Full)
     .in(file("kyo-core"))
     .settings(
-        `kyo-core-settings`
+        `kyo-core-settings`,
+        `with-cross-scala`
     )
     .jsSettings(`js-settings`)
-
-lazy val `kyo-scala2` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure)
-    .dependsOn(`kyo-core`)
-    .settings(
-        `kyo-settings`,
-        scalaVersion := scala2Version,
-        scalacOptions += "-Ytasty-reader",
-        libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.15" % Test
-    )
-    .in(file("kyo-scala2"))
 
 lazy val `kyo-core-opt1` =
   crossProject(JVMPlatform)
@@ -148,6 +148,7 @@ lazy val `kyo-core-opt1` =
     .in(file(s"kyo-core-opt1"))
     .settings(
         `kyo-core-settings`,
+        `without-cross-scala`,
         scalafmtOnCompile := false
     )
 
@@ -158,6 +159,7 @@ lazy val `kyo-core-opt2` =
     .in(file(s"kyo-core-opt2"))
     .settings(
         `kyo-core-settings`,
+        `without-cross-scala`,
         scalafmtOnCompile := false
     )
 
@@ -168,6 +170,7 @@ lazy val `kyo-core-opt3` =
     .in(file(s"kyo-core-opt3"))
     .settings(
         `kyo-core-settings`,
+        `without-cross-scala`,
         scalafmtOnCompile := false
     )
 
@@ -179,7 +182,13 @@ lazy val `kyo-direct` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.16"
+        `with-cross-scala`,
+        libraryDependencies ++= Seq(
+            "org.scala-lang"   % "scala-library"  % scalaVersion.value,
+            "org.scala-lang"   % "scala-compiler" % scalaVersion.value,
+            "org.scala-lang"   % "scala-reflect"  % scalaVersion.value,
+            "org.scalamacros" %% "resetallattrs"  % "1.0.0"
+        ).filter(_ => scalaVersion.value.startsWith("2"))
     )
     .jsSettings(`js-settings`)
 
@@ -191,6 +200,7 @@ lazy val `kyo-zio` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
+        `with-cross-scala`,
         libraryDependencies += "dev.zio" %%% "zio" % zioVersion
     )
     .jsSettings(`js-settings`)
@@ -203,6 +213,7 @@ lazy val `kyo-sttp` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
+        `with-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.8.15"
     )
     .jsSettings(`js-settings`)
@@ -216,19 +227,20 @@ lazy val `kyo-chatgpt` =
     .dependsOn(`kyo-direct`)
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .jvmSettings(
-        libraryDependencies += "org.apache.lucene"    % "lucene-core"        % "9.5.0",
-        libraryDependencies += "org.apache.lucene"    % "lucene-queryparser" % "9.5.0",
+        libraryDependencies += "org.apache.lucene"    % "lucene-core"        % "9.6.0",
+        libraryDependencies += "org.apache.lucene"    % "lucene-queryparser" % "9.6.0",
         libraryDependencies += "com.formdev"          % "flatlaf"            % "3.1.1",
-        libraryDependencies += "com.vladsch.flexmark" % "flexmark-all"       % "0.64.4",
-        libraryDependencies += "com.vladsch.flexmark" % "flexmark-java"      % "0.64.4",
+        libraryDependencies += "com.vladsch.flexmark" % "flexmark-all"       % "0.64.8",
+        libraryDependencies += "com.vladsch.flexmark" % "flexmark-java"      % "0.64.8",
         libraryDependencies += "com.knuddels"         % "jtokkit"            % "0.5.0"
     )
     .settings(
         `kyo-settings`,
+        `without-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.8.15",
-        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.10",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.10",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.11",
+        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.12",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.12",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.12",
         libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10"
     )
     .jsSettings(`js-settings`)
@@ -239,10 +251,11 @@ lazy val `kyo-bench` =
     .crossType(CrossType.Pure)
     .in(file("kyo-bench"))
     .enablePlugins(JmhPlugin)
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .dependsOn(`kyo-core-opt3` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.4.10",
+        `without-cross-scala`,
+        libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.4.11",
         libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion,
         libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.6"

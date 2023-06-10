@@ -8,12 +8,12 @@ object loggers {
 
   object Loggers {
     def init(name: String): Logger =
-      Logger(LoggerFactory.getLogger(name))
+      new Logger(LoggerFactory.getLogger(name))
     def init(cls: Class[_]): Logger =
-      Logger(LoggerFactory.getLogger(cls))
+      new Logger(LoggerFactory.getLogger(cls))
   }
 
-  class Logger private[loggers] (l: org.slf4j.Logger) extends AnyVal {
+  class Logger private[loggers] (private val l: org.slf4j.Logger) extends AnyVal {
 
     /*inline(3)*/
     def trace( /*inline(3)*/ msg: => String): Unit > IOs =

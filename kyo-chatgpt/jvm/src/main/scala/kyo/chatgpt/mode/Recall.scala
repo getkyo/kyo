@@ -88,7 +88,7 @@ class Recall(prompt: String, ai: AI) extends Mode(Set(ai)) {
   def apply[S](
       ai: AI,
       msg: String
-  )(next: String => String > (S & Aspects)) = {
+  )(next: String => String > (Aspects with S)) = {
     for {
       recall <- search(msg)
       _ <-

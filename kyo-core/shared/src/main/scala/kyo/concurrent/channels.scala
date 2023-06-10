@@ -14,7 +14,7 @@ object channels {
 
   trait Channel[T] { self =>
     def size: Int > IOs
-    def offer[S](v: T > S): Boolean > (IOs & S)
+    def offer[S](v: T > S): Boolean > (IOs with S)
     def poll: Option[T] > IOs
     def isEmpty: Boolean > IOs
     def isFull: Boolean > IOs
@@ -23,19 +23,19 @@ object channels {
   object Channels {
 
     trait Unbounded[T] extends Channel[T] {
-      def offer[S](v: T > S): Boolean > (IOs & S)
+      def offer[S](v: T > S): Boolean > (IOs with S)
       def poll: Option[T] > IOs
-      def put[S](v: T > S): Unit > (IOs & S)
+      def put[S](v: T > S): Unit > (IOs with S)
     }
 
     trait Blocking[T] extends Channel[T] {
 
-      def putFiber[S](v: T > S): Fiber[Unit] > (IOs & S)
+      def putFiber[S](v: T > S): Fiber[Unit] > (IOs with S)
       def takeFiber: Fiber[T] > IOs
 
-      def put[S](v: T > S): Unit > (S & IOs & Fibers) =
+      def put[S](v: T > S): Unit > (S with IOs with Fibers) =
         putFiber(v).map(_.join)
-      def take: T > (IOs & Fibers) =
+      def take: T > (IOs with Fibers) =
         takeFiber.map(_.join)
     }
 
@@ -69,7 +69,7 @@ object channels {
           def offer[S](v: T > S) = q.offer(v)
           val poll               = q.poll
           def put[S](v: T > S) =
-            IOs {
+            IOs[Unit, S] {
               @tailrec def loop(v: T): Unit = {
                 val u = q.unsafe
                 if (u.offer(v)) ()
@@ -102,15 +102,15 @@ object channels {
         new Blocking[T] {
 
           val q     = queue.unsafe
-          val takes = MpmcUnboundedXaddArrayQueue[Fiber.Promise[T]](8)
-          val puts  = MpmcUnboundedXaddArrayQueue[(T, Fiber.Promise[Unit])](8)
+          val takes = new MpmcUnboundedXaddArrayQueue[Fiber.Promise[T]](8)
+          val puts  = new MpmcUnboundedXaddArrayQueue[(T, Fiber.Promise[Unit])](8)
 
           val size    = queue.size
           val isEmpty = queue.isEmpty
           val isFull  = queue.isFull
           def offer[S](v: T > S) =
             v.map { v =>
-              IOs {
+              IOs[Boolean, S] {
                 try q.offer(v)
                 finally flush()
               }
@@ -120,9 +120,9 @@ object channels {
               try q.poll()
               finally flush()
             }
-          def putFiber[S](v: T > S): Fiber[Unit] > (IOs & S) =
+          def putFiber[S](v: T > S): Fiber[Unit] > (IOs with S) =
             v.map { v =>
-              IOs {
+              IOs[Fiber[Unit], S] {
                 try {
                   if (q.offer(v)) {
                     Fibers.value(())
