@@ -1,0 +1,18 @@
+name: build
+on: [push, pull_request]
+jobs:
+  build-matrix:
+    runs-on: build
+    timeout-minutes: 10
+    env:
+      JAVA_OPTS: -Xms20G -Xmx20G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      JVM_OPTS: -Xms20G -Xmx20G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+    steps:
+    - uses: actions/checkout@v3.0.2
+      with:
+        fetch-depth: 0
+    - uses: olafurpg/setup-scala@v13
+      with:
+          java-version: openjdk@1.17.0
+    - name: build
+      run: sbt "+test"
