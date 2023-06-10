@@ -44,8 +44,9 @@ lazy val `kyo-settings` = Seq(
 
 lazy val gen = TaskKey[Unit]("gen", "")
 
-lazy val genState: State => State = { s: State =>
-  "gen" :: s
+lazy val genState: State => State = {
+  s: State =>
+    "gen" :: s
 }
 
 Global / onLoad := {
