@@ -10,6 +10,8 @@ private[kyo] object Translate {
   def apply(c: Context)(tree: c.Tree): c.Tree = {
     import c.universe._
 
+    val wildcard = TermName("_")
+
     def toVal(name: TermName) = q"val $name = $EmptyTree"
 
     def pure(tree: Tree) =
@@ -21,7 +23,12 @@ private[kyo] object Translate {
       binds match {
         case Nil => body
         case (name, value) :: t =>
-          q"${c.prefix}.internal.cont($value)(${toVal(name)} => ${nest(t, body)})"
+          body match {
+            case Ident(`name`) if (t.isEmpty) =>
+              value
+            case _ =>
+              q"${c.prefix}.internal.cont($value)(${toVal(name)} => ${nest(t, body)})"
+          }
       }
 
     var nextId = 0
@@ -31,11 +38,15 @@ private[kyo] object Translate {
       new Transformer {
 
         private def boundary(tree: Tree): Tree = {
-          val prev = binds
-          binds = List.empty
-          val value = transform(tree)
-          try nest(binds.reverse, value)
-          finally binds = prev
+          if (pure(tree)) {
+            tree
+          } else {
+            val prev = binds
+            binds = List.empty
+            val value = transform(tree)
+            try nest(binds.reverse, value)
+            finally binds = prev
+          }
         }
 
         private def await(tree: Tree): Tree = {
@@ -49,9 +60,13 @@ private[kyo] object Translate {
           await(nest(List((name, boundary(value))), boundary(body)))
 
         private def branch(cond: Tree, ifTrue: Tree, ifFalse: Tree): Tree =
-          await(
+          await {
+            if (pure(cond)) {
+              q"if($cond) ${boundary(ifTrue)} else ${boundary(ifFalse)}"
+            } else {
               q"${c.prefix}.internal.branch(${boundary(cond)}, ${boundary(ifTrue)}, ${boundary(ifFalse)})"
-          )
+            }
+          }
 
         private def loop(cond: Tree, body: Tree): Tree =
           await(q"${c.prefix}.internal.loop(${boundary(cond)}, ${boundary(body)})")
@@ -65,7 +80,10 @@ private[kyo] object Translate {
               cont(v, name, q"{ ..$tail }")
 
             case q"{ ..${head :: tail} }" if (tail.nonEmpty) =>
-              cont(head, TermName("_"), q"{ ..$tail }")
+              if (pure(head))
+                q"{ ..${head :: transform(q"{ ..$tail }") :: Nil} }"
+              else
+                cont(head, wildcard, q"{ ..$tail }")
 
             case q"if($cond) $ifTrue else $ifFalse" =>
               branch(cond, ifTrue, ifFalse)
