@@ -6,9 +6,25 @@ on:
   workflow_dispatch:
     inputs:
       selector:
-        description: 'Benchmarks selector'     
+        description: 'Benchmark selector'     
         required: false
         default: '' 
+      warmupIterations:
+        description: 'Warmup iterations'     
+        required: false
+        default: ''
+      measurementIterations:
+        description: 'Measurement iterations'     
+        required: false
+        default: ''
+      profileAlloc:
+        description: 'Profile allocations'     
+        required: false
+        default: ''
+      profileCpu:
+        description: 'Profile CPU'     
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -38,16 +54,24 @@ jobs:
           sudo sysctl kernel.kptr_restrict=0
 
       - name: run
+        env: 
+          SE: ${{ github.event.inputs.selector || 'Kyo' }}
+          WI: ${{ github.event.inputs.warmupIterations || '10' }}
+          MI: ${{ github.event.inputs.measurementIterations || '5' }}
+          PA: ${{ github.event.inputs.profileAlloc || 'true' }}
+          PC: ${{ github.event.inputs.profileCPU || 'true' }}
         run: |
           cd /home/runner/work/kyo/kyo/
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            SELECTOR="Kyo"
-          else
-            SELECTOR="${{ github.event.inputs.selector }}"
+
+          if [[ "$PA" == "true" ]]; then
+            sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r 1 -w 1 -t 1 -foe true -prof \"async:alloc;output=flamegraph\" $SE"
           fi
-          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 10 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof \"async:alloc;output=flamegraph\" $SELECTOR"
-          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 10 -i 3 -r 1 -w 1 -t 1 -rf json -foe true -prof async:output=flamegraph $SELECTOR"
-          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi 10 -i 3 -r 1 -w 1 -t 1 -rf json -foe true $SELECTOR"
+
+          if [[ "$PC" == "true" ]]; then
+            sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r 1 -w 1 -t 1 -foe true -prof async:output=flamegraph $SE"
+          fi
+          
+          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r 1 -w 1 -t 1 -rf json -foe true $SE"
 
       - name: prepare results
         run: |
