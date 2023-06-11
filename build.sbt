@@ -255,7 +255,7 @@ lazy val `kyo-bench` =
     .settings(
         `kyo-settings`,
         `without-cross-scala`,
-        libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.5.0",
+        libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.4.11",
         libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion,
         libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.6"
