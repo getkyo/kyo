@@ -55,9 +55,9 @@ jobs:
 
       - name: run
         env: 
-          SE: ${{ github.event.inputs.selector || 'DeepBindBench.forkKyo' }}
-          WI: ${{ github.event.inputs.warmupIterations || '1' }}
-          MI: ${{ github.event.inputs.measurementIterations || '1' }}
+          SE: ${{ github.event.inputs.selector || 'Kyo' }}
+          WI: ${{ github.event.inputs.warmupIterations || '7' }}
+          MI: ${{ github.event.inputs.measurementIterations || '3' }}
           PA: ${{ github.event.inputs.profileAlloc || 'true' }}
           PC: ${{ github.event.inputs.profileCPU || 'true' }}
         run: |
@@ -80,21 +80,11 @@ jobs:
           cp -r kyo-bench/.jvm/kyo.bench.* output/
           rm -rf output/**/*reverse.html
           for file in $(find output -name "*.html"); do
-            newfile=$(echo $file | sed 's/kyo.bench.\([^.]*\).*flame-\([^-]*\)-forward.html/\1-\2.html/')
+            newfile=$(echo $file | sed 's/\([^.]*\)-.*flame-\([^-]*\)-forward.html/\1-\2.html/')
             if [ "$file" != "$newfile" ]; then
               mv "$file" "$newfile"
             fi
           done
-          echo "<html><body>" > output/index.html
-          for file in $(find output -name "*.json"); do
-            echo "<a href='https://jmh.morethan.io/?source=$file'><h2>Results</h2></a><br>" >> output/index.html
-            break
-          done
-          echo "<h2>Flamegraphs:</h2>" >> output/index.html
-          for file in $(find output -name "*.html"); do
-            echo "<a href='$file'>$(basename "$file")</a><br>" >> output/index.html
-          done
-          echo "</body></html>" >> output/index.html
           ls output/
     
       - name: publish results
@@ -174,10 +164,34 @@ jobs:
               return indexGist;
             }
 
+            const https = require('https');
+
             async function updateIndexGist() {
               if (indexGist) {
                 const indexFile = indexGist.files[indexFileName];
-                const newIndexContent = (indexFile.content ? indexFile.content + "\n" : "") + `${shortSHA},${timestamp},${runUrl},${gistUrl}`;
+
+                let fileContent = '';
+                if (indexFile && indexFile.raw_url) {
+                  fileContent = await new Promise((resolve, reject) => {
+                    https.get(indexFile.raw_url, (res) => {
+                      let data = '';
+
+                      res.on('data', (chunk) => {
+                        data += chunk;
+                      });
+
+                      res.on('end', () => {
+                        resolve(data);
+                      });
+
+                    }).on('error', (err) => {
+                      console.log("Error: " + err.message);
+                      reject(err);
+                    });
+                  });
+                }
+
+                const newIndexContent = (fileContent ? fileContent + "\n" : "") + `${shortSHA},${timestamp},${runUrl},${gistUrl}`;
 
                 await github.rest.gists.update({
                   gist_id: indexGist.id,
@@ -188,7 +202,8 @@ jobs:
                   }
                 });
               } else {
-                const newIndexContent = `${shortSHA},${timestamp},${runUrl},${gistUrl}`;
+                const header = "sha,timestamp,run,gist";
+                const newIndexContent = `${header}\n${shortSHA},${timestamp},${runUrl},${gistUrl}`;
 
                 const newGist = await github.rest.gists.create({
                   files: {
