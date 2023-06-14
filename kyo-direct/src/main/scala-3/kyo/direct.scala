@@ -35,7 +35,7 @@ object direct {
 
     transparent inline def loop[T, S1, S2](
         inline cond: => Boolean > S1,
-        inline v: => Any > S1
+        inline v: => T > S1
     ): Unit > (S1 with S2) =
       cond.map {
         case true  => v.map(_ => loop(cond, v.unit))

@@ -24,7 +24,7 @@ object direct {
     def cont[T, U, S1, S2](v: T > S1)(f: T => U > S2): U > (S1 with S2) =
       v.map(f)
 
-    def loop[T, S1, S2](cond: => Boolean > S1, v: => Any > S1): Unit > (S1 with S2) =
+    def loop[T, S](cond: => Boolean > S, v: => Any > S): Unit > S =
       cond.map {
         case true  => v.map(_ => loop(cond, v.unit))
         case false => ()

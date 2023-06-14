@@ -50,7 +50,7 @@ private[kyo] object Translate {
         }
 
         private def await(tree: Tree): Tree = {
-          val name = TermName("await" + nextId)
+          val name = TermName("await$" + nextId)
           nextId += 1
           binds ::= (name, tree)
           q"$name"
@@ -107,15 +107,18 @@ private[kyo] object Translate {
                   case t @ cq"$pattern => $body" :: tail =>
                     cq"$pattern => ${boundary(body)}" :: loop(tail)
                   case t @ cq"$pattern if $cond => $body" :: tail =>
-                    cq"""
-                      $pattern => 
-                        ${boundary(cond)}.map {
-                          case true => 
-                            ${boundary(body)}
-                          case false => 
-                            $matchValue match { case ..${loop(tail)} }
-                        }
-                    """ :: Nil
+                    if (pure(cond))
+                      cq"$pattern if $cond => ${boundary(body)}" :: loop(tail)
+                    else
+                      cq"""
+                        $pattern => 
+                          ${boundary(cond)}.map {
+                            case true => 
+                              ${boundary(body)}
+                            case false => 
+                              $matchValue match { case ..${loop(tail)} }
+                          }
+                      """ :: Nil
                 }
 
               cont(value, matchValue, q"$matchValue match { case ..${loop(cases)} }")

@@ -28,7 +28,7 @@ private[kyo] object Validate {
       case tree @ q"return $v" =>
         fail(tree, "`return` are not allowed in a defer block")
       case q"$mods val $name = $body" if mods.hasFlag(Flag.LAZY) =>
-        fail(tree, "`lazy val` are not allowed in a defer block")
+        fail(tree, "`lazy val` is not allowed in a defer block")
       case tree @ q"(..$params) => $body" if (!pure(body)) =>
         fail(tree, "functions can't use await blocks")
       case tree @ q"$method[..$t](...$values)" if values.size > 0 && method.symbol.isMethod =>
@@ -44,13 +44,8 @@ private[kyo] object Validate {
           }
         }
         values.flatten.foreach(Validate(c)(_))
-      case tree @ q"$mods def $method[..$tpe](...$params) = $body" if (!pure(body)) =>
-        if (tree.symbol.overrides.nonEmpty)
-          fail(tree, "can't use await blocks in overriden method bodies")
-        else
-          Validate(c)(body)
       case tree @ q"$mods def $method[..$t](...$params): $r = $body" if (!pure(body)) =>
-        fail(tree, "can't use await blocks in a nested method body")
+        fail(tree, "can't use await in a `def`")
     }
   }
 }
