@@ -59,7 +59,8 @@ jobs:
           IFS=', ' read -r -a array <<< "$PE"
           for EVENT in "${array[@]}"
           do
-            sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r 1 -w 1 -t 1 -foe true -prof \"async:$EVENT;output=flamegraph\" $SE"
+            ESCAPED_EVENT=$(printf '%q' "$EVENT")
+            sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r 1 -w 1 -t 1 -foe true -prof \"async:$ESCAPED_EVENT;output=flamegraph\" $SE"
           done
           
           sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r 1 -w 1 -t 1 -rf json -foe true $SE"
