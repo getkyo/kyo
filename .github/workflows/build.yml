@@ -5,14 +5,42 @@ jobs:
     runs-on: build
     timeout-minutes: 15
     env:
-      JAVA_OPTS: -Xms20G -Xmx20G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
-      JVM_OPTS: -Xms20G -Xmx20G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      COMMAND: sbt +test
     steps:
     - uses: actions/checkout@v3.0.2
       with:
         fetch-depth: 0
-    - uses: olafurpg/setup-scala@v13
+
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v1
+
+    - name: Restore Docker image cache
+      id: cache
+      uses: actions/cache@v2
       with:
-          java-version: openjdk@1.17.0
-    - name: build
-      run: sbt "+test"
+        path: image.tar.gz
+        key: ${{ runner.os }}-docker-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-docker-
+
+    - name: Load Docker image
+      run: |
+        if [[ -f image.tar.gz && "${{ steps.cache.outputs.cache-hit }}" == "true" ]]; then
+          gunzip -c image.tar.gz | docker load
+        fi
+
+    - name: Build Docker image
+      run: |
+        if [[ "${{ steps.cache.outputs.cache-hit }}" != "true" ]]; then
+          docker build --build-arg COMMAND="$COMMAND" -f .github/workflows/Dockerfile -t kyo-build .
+          docker save kyo-build:latest | gzip > image.tar.gz
+        fi
+
+    - name: Cache Docker image
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache@v2
+      with:
+        path: image.tar.gz
+        key: ${{ runner.os }}-docker-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-docker-
