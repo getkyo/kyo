@@ -17,12 +17,8 @@ on:
         description: 'Measurement iterations'     
         required: false
         default: ''
-      profileAlloc:
-        description: 'Profile allocations'     
-        required: false
-        default: ''
-      profileCpu:
-        description: 'Profile CPU'     
+      profileEvents:
+        description: 'Profile events'     
         required: false
         default: ''
 
@@ -58,18 +54,13 @@ jobs:
           SE: ${{ github.event.inputs.selector || 'Kyo' }}
           WI: ${{ github.event.inputs.warmupIterations || '7' }}
           MI: ${{ github.event.inputs.measurementIterations || '3' }}
-          PA: ${{ github.event.inputs.profileAlloc || 'true' }}
-          PC: ${{ github.event.inputs.profileCPU || 'true' }}
+          PE: ${{ github.event.inputs.profileEvents || 'alloc,cpu' }}
         run: |
-          cd /home/runner/work/kyo/kyo/
-
-          if [[ "$PA" == "true" ]]; then
-            sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r 1 -w 1 -t 1 -foe true -prof \"async:alloc;output=flamegraph\" $SE"
-          fi
-
-          if [[ "$PC" == "true" ]]; then
-            sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r 1 -w 1 -t 1 -foe true -prof async:output=flamegraph $SE"
-          fi
+          IFS=', ' read -r -a array <<< "$PE"
+          for EVENT in "${array[@]}"
+          do
+            sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r 1 -w 1 -t 1 -foe true -prof \"async:$EVENT;output=flamegraph\" $SE"
+          done
           
           sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r 1 -w 1 -t 1 -rf json -foe true $SE"
 
