@@ -12,8 +12,8 @@ import scala.util.control.NonFatal
 
 import IOPromise._
 
-private[kyo] class IOPromise[T](protected val s: State[T])
-    extends AtomicReference(s) {
+private[kyo] class IOPromise[T](state: State[T])
+    extends AtomicReference(state) {
 
   def this() = this(Pending())
 

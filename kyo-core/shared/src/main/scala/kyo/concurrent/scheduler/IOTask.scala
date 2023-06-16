@@ -14,6 +14,7 @@ import org.jctools.queues.MpmcArrayQueue
 import java.util.ArrayDeque
 import java.util.IdentityHashMap
 import java.util.Arrays
+import kyo.locals.Locals.State
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
@@ -22,9 +23,16 @@ private[kyo] object IOTask {
       /*inline(2)*/ v: T > (IOs with Fibers),
       st: Locals.State,
       ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
-      runtime: Int = 0
+      runtime: Int = 1
   ): IOTask[T] = {
-    val f = new IOTask[T](v, st, ensures, runtime)
+    val f =
+      if (st eq Locals.State.empty) {
+        new IOTask[T](v, ensures, runtime)
+      } else {
+        new IOTask[T](v, ensures, runtime) {
+          override def locals: State = st
+        }
+      }
     Scheduler.schedule(f)
     f
   }
@@ -55,27 +63,26 @@ private[kyo] object IOTask {
   implicit def ord: Ordering[IOTask[_]] = TaskOrdering
 }
 
-private[kyo] final class IOTask[T](
+private[kyo] class IOTask[T](
     private var curr: T > (IOs with Fibers),
-    private val st: Locals.State,
     private var ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
-    private var runtime: Int
+    @volatile private var runtime: Int
 ) extends IOPromise[T]
     with Preempt {
   import IOTask._
 
-  private val creationTs = Coordinator.tick()
+  def locals: Locals.State = Locals.State.empty
 
-  @volatile private var preempting = false
+  def apply(): Boolean =
+    runtime < 0
 
   def preempt() =
-    preempting = true
+    if (runtime > 0) {
+      runtime = -runtime;
+    }
 
   override protected def onComplete(): Unit =
     preempt()
-
-  def apply(): Boolean =
-    preempting
 
   @tailrec private def eval(start: Long, curr: T > (IOs with Fibers)): T > (IOs with Fibers) = {
     def finalize() = {
@@ -92,7 +99,7 @@ private[kyo] final class IOTask[T](
       }
       ensures = null
     }
-    if (preempting || avoidUnstableIf()) {
+    if (apply() || avoidUnstableIf()) {
       if (isDone()) {
         finalize()
         nullIO
@@ -102,7 +109,7 @@ private[kyo] final class IOTask[T](
     } else {
       curr match {
         case kyo: Kyo[IO, IOs, Unit, T, IOs with Fibers] @unchecked if (kyo.effect eq IOs) =>
-          eval(start, kyo((), this, st))
+          eval(start, kyo((), this, locals))
         case kyo: Kyo[Fiber, Fibers, Any, T, IOs with Fibers] @unchecked
             if (kyo.effect eq Fibers) =>
           kyo.value match {
@@ -110,8 +117,8 @@ private[kyo] final class IOTask[T](
               this.interrupts(promise)
               runtime += (Coordinator.tick() - start).asInstanceOf[Int]
               promise.onComplete { (v: Any > IOs) =>
-                val io = v.map(kyo(_, this.asInstanceOf[Safepoint[Fiber, Fibers]], st))
-                this.become(IOTask(io, st, ensures, runtime))
+                val io = v.map(kyo(_, this.asInstanceOf[Safepoint[Fiber, Fibers]], locals))
+                this.become(IOTask(io, locals, ensures, runtime))
               }
             case Failed(ex) =>
               complete(IOs.fail(ex))
@@ -131,7 +138,7 @@ private[kyo] final class IOTask[T](
     val start = Coordinator.tick()
     try {
       curr = eval(start, curr)
-      preempting = false
+      runtime = Math.abs(runtime);
       if (curr != nullIO) {
         runtime += (Coordinator.tick() - start).asInstanceOf[Int]
       }
@@ -144,8 +151,6 @@ private[kyo] final class IOTask[T](
 
   def reenqueue(): Boolean =
     curr != nullIO
-
-  def delay() = Coordinator.tick() - creationTs - runtime
 
   def ensure(f: () => Unit): Unit =
     if (curr == nullIO) {
@@ -184,6 +189,6 @@ private[kyo] final class IOTask[T](
       case arr: ArrayDeque[() => Unit] @unchecked =>
         Arrays.toString(arr.toArray)
     }
-    s"IOTask(id=${hashCode},preempting=$preempting,curr=$curr,ensures=$ensures,runtime=$runtime,state=$s)"
+    s"IOTask(id=${hashCode},preempting=${apply()},curr=$curr,ensures=$ensures,runtime=$runtime,state=${get()})"
   }
 }
