@@ -105,7 +105,7 @@ private[kyo] final class IOTask[T](
           eval(start, kyo((), this, st))
         case kyo: Kyo[Fiber, Fibers, Any, T, IOs with Fibers] @unchecked
             if (kyo.effect eq Fibers) =>
-          kyo.value.state match {
+          kyo.value match {
             case promise: IOPromise[T] @unchecked =>
               this.interrupts(promise)
               runtime += (Coordinator.tick() - start).asInstanceOf[Int]

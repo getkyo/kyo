@@ -29,25 +29,26 @@ object fibers {
 
   private[concurrent] case class Failed(reason: Throwable)
 
-  object Fiber {
+  type Fiber[+T] // = T | Failed[T] | IOPromise[T]
 
-    class Promise[T] private[kyo] (p: IOPromise[T]) extends Fiber[T](p) {
+  type Promise[+T] <: Fiber[T] // = IOPromise[T]
 
-      def complete(v: => T > IOs): Boolean > IOs =
-        IOs(p.complete(IOs(v)))
+  implicit class PromiseOps[T](private val p: Promise[T]) extends AnyVal {
 
-      private[kyo] def unsafeComplete(v: T > IOs): Boolean =
-        p.complete(v)
-    }
+    def complete(v: => T > IOs): Boolean > IOs =
+      IOs(p.asInstanceOf[IOPromise[T]].complete(IOs(v)))
 
-    def done[T](value: T): Fiber[T]                        = new Fiber(value)
-    def failed[T](reason: Throwable): Fiber[T]             = new Fiber(Failed(reason))
-    private[kyo] def promise[T](p: IOPromise[T]): Fiber[T] = new Fiber(p)
+    private[kyo] def unsafeComplete(v: T > IOs): Boolean =
+      p.asInstanceOf[IOPromise[T]].complete(v)
   }
 
-  case class Fiber[T] private[Fiber] (
-      private[concurrent] val state: Any /* T | IOPromise[T] | Failed */
-  ) {
+  object Fiber {
+    def done[T](value: T): Fiber[T]                          = value.asInstanceOf[Fiber[T]]
+    def failed[T](reason: Throwable): Fiber[T]               = Failed(reason).asInstanceOf[Fiber[T]]
+    private[kyo] def promise[T](p: IOPromise[T]): Promise[T] = p.asInstanceOf[Promise[T]]
+  }
+
+  implicit class FiberOps[T](private val state: Fiber[T]) extends AnyVal {
 
     def isDone: Boolean > IOs =
       state match {
@@ -62,9 +63,9 @@ object fibers {
     def join: T > Fibers =
       state match {
         case promise: IOPromise[_] =>
-          Fibers.get(this)
+          Fibers.get(state)
         case failed: Failed =>
-          Fibers.get(this)
+          Fibers.get(state)
         case _ =>
           state.asInstanceOf[T > Fibers]
       }
@@ -116,7 +117,7 @@ object fibers {
             val p = new IOPromise[Boolean]()
             ioTask.ensure(() => p.complete(true))
             interrupt(reason).map {
-              case true  => new Fiber(p).join
+              case true  => Fiber.promise(p).join
               case false => false
             }
           }
@@ -163,7 +164,7 @@ object fibers {
           r.interrupts(promise)
           promise.onComplete { v =>
             try {
-              t(IOs.run(v)).state match {
+              t(IOs.run(v)) match {
                 case v: IOPromise[U] @unchecked =>
                   r.become(v)
                 case Failed(ex) =>
@@ -176,7 +177,7 @@ object fibers {
                 r.complete(IOs.fail(ex))
             }
           }
-          new Fiber(r)
+          Fiber.promise(r)
         case failed: Failed =>
           this.asInstanceOf[Fiber[U]]
         case _ =>
@@ -213,11 +214,11 @@ object fibers {
     def fail[T](ex: Throwable): Fiber[T] =
       Fiber.failed(ex)
 
-    def promise[T]: Fiber.Promise[T] > IOs =
-      IOs(new Fiber.Promise(new IOPromise[T]()))
+    def promise[T]: Promise[T] > IOs =
+      IOs(unsafePromise[T])
 
-    private[kyo] def unsafePromise[T]: Fiber.Promise[T] =
-      new Fiber.Promise(new IOPromise[T]())
+    private[kyo] def unsafePromise[T]: Promise[T] =
+      Fiber.promise(new IOPromise[T]())
 
     // compiler bug workaround
     private val IOTask = kyo.concurrent.scheduler.IOTask
@@ -414,7 +415,7 @@ object fibers {
           override def handle[T](ex: Throwable): T > Fibers =
             Fibers.get(Fiber.failed[T](ex))
           def apply[T, U, S](m: Fiber[T], f: T => U > (Fibers with S)) =
-            m.state match {
+            m match {
               case m: IOPromise[T] @unchecked =>
                 f(m.block())
               case Failed(ex) =>
