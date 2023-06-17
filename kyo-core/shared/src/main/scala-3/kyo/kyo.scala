@@ -6,39 +6,39 @@ package object kyo {
 
   extension [T, S](v: T > S) {
 
-    /*inline(3)*/
+    /*inline*/
     def flatMap[U, S2](f: T => U > S2): U > (S with S2) =
       kyo.core.transform(v)(f)
 
-    /*inline(3)*/
+    /*inline*/
     def map[U, S2](f: T => U > S2): U > (S with S2) =
       flatMap(f)
 
-    /*inline(3)*/
+    /*inline*/
     def unit: Unit > S =
       map(_ => ())
 
-    /*inline(3)*/
+    /*inline*/
     def withFilter(p: T => Boolean): T > S =
       map(v => if (!p(v)) throw new MatchError(v) else v)
 
-    /*inline(3)*/
+    /*inline*/
     def flatten[U, S2](implicit ev: T => U > S2): U > (S with S2) =
       flatMap(ev)
 
-    /*inline(3)*/
+    /*inline*/
     def andThen[U, S2](f: => U > S2)(implicit ev: T => Unit): U > (S with S2) =
       flatMap(_ => f)
 
-    /*inline(3)*/
+    /*inline*/
     def repeat(i: Int)(implicit ev: T => Unit): Unit > S =
       if (i <= 0) () else andThen(repeat(i - 1))
 
-    /*inline(3)*/
+    /*inline*/
     def forever(implicit ev: T => Unit): Unit > S =
       andThen(forever)
 
-    /*inline(3)*/
+    /*inline*/
     def pure(implicit ev: Any => S): T =
       v.asInstanceOf[T]
   }

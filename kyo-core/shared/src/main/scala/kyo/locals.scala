@@ -12,7 +12,7 @@ object locals {
 
     def default: T
 
-    /*inline(3)*/
+    /*inline*/
     def get: T > IOs =
       new KyoIO[T, Any] {
         def apply(v: Unit, s: Safepoint[IO, IOs], l: Locals.State) =
@@ -42,19 +42,20 @@ object locals {
       val empty: State = Map.empty
     }
 
-    /*inline(3)*/
+    /*inline*/
     def init[T](defaultValue: T): Local[T] =
       new Local[T] {
         def default = defaultValue
       }
 
+    /*inline*/
     def save: State > IOs =
       new KyoIO[State, Any] {
         def apply(v: Unit, s: Safepoint[IO, IOs], l: Locals.State) =
           l
       }
 
-    /*inline(3)*/
+    /*inline*/
     def restore[T, S](st: State)(f: T > S): T > (IOs with S) = {
       def loop(f: T > S): T > S =
         f match {

@@ -49,12 +49,11 @@ object aborts {
   object Aborts {
     def apply[E](implicit tag: Tag[E]): Aborts[E] =
       new Aborts(tag)
-    /*inline(1)*/
-    def apply[T, E]( /*inline(1)*/ ex: E)(implicit tag: Tag[E]): T > Aborts[E] =
+
+    def apply[T, E](ex: E)(implicit tag: Tag[E]): T > Aborts[E] =
       Aborts[E].get(Left(ex))
   }
 
-  /*inline(1)*/
   private implicit def handler[E: Tag]: Handler[Abort[E]#Value, Aborts[E]] =
     new Handler[Abort[E]#Value, Aborts[E]] {
       def pure[U](v: U) = Right(v)

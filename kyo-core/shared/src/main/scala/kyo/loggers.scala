@@ -15,44 +15,44 @@ object loggers {
 
   class Logger private[loggers] (private val l: org.slf4j.Logger) extends AnyVal {
 
-    /*inline(3)*/
-    def trace( /*inline(3)*/ msg: => String): Unit > IOs =
+    /*inline*/
+    def trace( /*inline*/ msg: => String): Unit > IOs =
       IOs(if (l.isTraceEnabled) l.trace(msg))
 
-    /*inline(3)*/
-    def debug( /*inline(3)*/ msg: => String): Unit > IOs =
+    /*inline*/
+    def debug( /*inline*/ msg: => String): Unit > IOs =
       IOs(if (l.isDebugEnabled) l.debug(msg))
 
-    /*inline(3)*/
-    def info( /*inline(3)*/ msg: => String): Unit > IOs =
+    /*inline*/
+    def info( /*inline*/ msg: => String): Unit > IOs =
       IOs(if (l.isInfoEnabled) l.info(msg))
 
-    /*inline(3)*/
-    def warn( /*inline(3)*/ msg: => String): Unit > IOs =
+    /*inline*/
+    def warn( /*inline*/ msg: => String): Unit > IOs =
       IOs(if (l.isWarnEnabled) l.warn(msg))
 
-    /*inline(3)*/
-    def error( /*inline(3)*/ msg: => String): Unit > IOs =
+    /*inline*/
+    def error( /*inline*/ msg: => String): Unit > IOs =
       IOs(if (l.isErrorEnabled) l.error(msg))
 
-    /*inline(3)*/
-    def trace( /*inline(3)*/ msg: => String, t: Throwable): Unit > IOs =
+    /*inline*/
+    def trace( /*inline*/ msg: => String, t: Throwable): Unit > IOs =
       IOs(if (l.isTraceEnabled) l.trace(msg, t))
 
-    /*inline(3)*/
-    def debug( /*inline(3)*/ msg: => String, t: Throwable): Unit > IOs =
+    /*inline*/
+    def debug( /*inline*/ msg: => String, t: Throwable): Unit > IOs =
       IOs(if (l.isDebugEnabled) l.debug(msg, t))
 
-    /*inline(3)*/
-    def info( /*inline(3)*/ msg: => String, t: Throwable): Unit > IOs =
+    /*inline*/
+    def info( /*inline*/ msg: => String, t: Throwable): Unit > IOs =
       IOs(if (l.isInfoEnabled) l.info(msg, t))
 
-    /*inline(3)*/
-    def warn( /*inline(3)*/ msg: => String, t: Throwable): Unit > IOs =
+    /*inline*/
+    def warn( /*inline*/ msg: => String, t: Throwable): Unit > IOs =
       IOs(if (l.isWarnEnabled) l.warn(msg, t))
 
-    /*inline(3)*/
-    def error( /*inline(3)*/ msg: => String, t: Throwable): Unit > IOs =
+    /*inline*/
+    def error( /*inline*/ msg: => String, t: Throwable): Unit > IOs =
       IOs(if (l.isErrorEnabled) l.error(msg, t))
   }
 }

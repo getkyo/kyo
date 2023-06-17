@@ -75,26 +75,16 @@ lazy val kyo =
         scalaVersion                           := scala3Version,
         `kyo-settings`,
         gen := {
-          def genOpt(i: Int) = {
-            val origin = new File("kyo-core/")
-            val dest   = new File(s"kyo-core-opt$i/")
-            IO.copyDirectory(origin, dest)
-            transformFiles(dest) { s =>
-              var content = s
-              for (i <- 1 to i)
-                content = content.replaceAllLiterally(s"/*inline(${4 - i})*/", "inline")
-              content
-            }
+          val origin = new File("kyo-core/")
+          val dest   = new File(s"kyo-core-opt/")
+          IO.copyDirectory(origin, dest)
+          transformFiles(dest) {
+            _.replaceAllLiterally(s"/*inline*/", "inline")
           }
-          genOpt(1)
-          genOpt(2)
-          genOpt(3)
         }
     ).aggregate(
         `kyo-core`,
-        `kyo-core-opt1`,
-        `kyo-core-opt2`,
-        `kyo-core-opt3`,
+        `kyo-core-opt`,
         `kyo-zio`,
         `kyo-direct`,
         `kyo-sttp`,
@@ -141,33 +131,11 @@ lazy val `kyo-core` =
     )
     .jsSettings(`js-settings`)
 
-lazy val `kyo-core-opt1` =
+lazy val `kyo-core-opt` =
   crossProject(JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Full)
-    .in(file(s"kyo-core-opt1"))
-    .settings(
-        `kyo-core-settings`,
-        `without-cross-scala`,
-        scalafmtOnCompile := false
-    )
-
-lazy val `kyo-core-opt2` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file(s"kyo-core-opt2"))
-    .settings(
-        `kyo-core-settings`,
-        `without-cross-scala`,
-        scalafmtOnCompile := false
-    )
-
-lazy val `kyo-core-opt3` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file(s"kyo-core-opt3"))
+    .in(file(s"kyo-core-opt"))
     .settings(
         `kyo-core-settings`,
         `without-cross-scala`,
@@ -251,7 +219,7 @@ lazy val `kyo-bench` =
     .crossType(CrossType.Pure)
     .in(file("kyo-bench"))
     .enablePlugins(JmhPlugin)
-    .dependsOn(`kyo-core-opt3` % "test->test;compile->compile")
+    .dependsOn(`kyo-core-opt` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
         `without-cross-scala`,

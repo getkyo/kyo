@@ -48,18 +48,14 @@ object ios {
 
     val unit: Unit > IOs = ()
 
-    /*inline(3)*/
     def value[T](v: T): T > IOs = v
 
-    /*inline(3)*/
     def fail[T](ex: Throwable): T > IOs = IOs(throw ex)
 
-    /*inline(3)*/
     def attempt[T, S](v: => T > S): Try[T] > S =
       Tries.run[T, S](v)
 
-    private[kyo] /*inline(3)*/ def ensure[T, S]( /*inline(3)*/ f: => Unit > IOs)(v: => T > S)
-        : T > (IOs with S) = {
+    private[kyo] def ensure[T, S](f: => Unit > IOs)(v: => T > S): T > (IOs with S) = {
       lazy val run: Unit =
         try IOs.run(f)
         catch {
@@ -93,16 +89,16 @@ object ios {
       ensureLoop(v, Preempt.never)
     }
 
-    /*inline(3)*/
+    /*inline*/
     def apply[T, S](
-        /*inline(3)*/ f: => T > (IOs with S)
+        /*inline*/ f: => T > (IOs with S)
     ): T > (IOs with S) =
       new KyoIO[T, S] {
         def apply(v: Unit, s: Safepoint[IO, IOs], l: Locals.State) =
           f
       }
 
-    /*inline(3)*/
+    /*inline*/
     def run[T](v: T > IOs): T = {
       val safepoint = Safepoint.noop[IO, IOs]
       @tailrec def runLoop(v: T > IOs): T =
@@ -115,7 +111,7 @@ object ios {
       runLoop(v)
     }
 
-    /*inline(3)*/
+    /*inline*/
     def lazyRun[T, S](v: T > (IOs with S)): T > S = {
       def lazyRunLoop(v: T > (IOs with S)): T > S = {
         val safepoint = Safepoint.noop[IO, IOs]

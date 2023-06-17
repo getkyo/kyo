@@ -13,7 +13,7 @@ object arrows {
   type Fix[T] = Unit
 
   final class Arrows private[arrows] () extends Effect[Fix, Arrows] {
-    /*inline(2)*/
+
     def apply[T, S, U, S2](
         f: T > (S with Arrows) => U > (S2 with Arrows)
     ): T > S => U > (S2 with IOs) =
@@ -35,7 +35,6 @@ object arrows {
           }
       }
 
-    /*inline(2)*/
     def recursive[T, S, U, S2](f: (
         T > (S with Arrows),
         T > (S with Arrows) => U > (S2 with Arrows)

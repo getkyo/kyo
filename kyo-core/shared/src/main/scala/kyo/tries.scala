@@ -9,7 +9,6 @@ object tries {
 
   final class Tries private[tries] extends Effect[Try, Tries] {
 
-    /*inline(2)*/
     def run[T, S](v: => T > (Tries with S)): Try[T] > S = {
       implicit def handler: Handler[Try, Tries] =
         new Handler[Try, Tries] {
@@ -38,15 +37,13 @@ object tries {
     def fail[T](msg: String): T > Tries =
       suspend(Failure(new Exception(msg)))
 
-    /*inline(2)*/
-    def apply[T, S]( /*inline(2)*/ v: => T > S): T > (Tries with S) = {
+    def apply[T, S](v: => T > S): T > (Tries with S) = {
       val a: Try[T > S]         = Try(v)
       val b: T > S > Tries      = Tries.get(a)
       val c: T > (Tries with S) = b.flatten
       c
     }
 
-    /*inline(2)*/
     def get[T, S](v: Try[T] > S): T > (Tries with S) =
       v.map {
         case Success(v) =>

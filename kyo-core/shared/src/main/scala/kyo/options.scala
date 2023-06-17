@@ -8,18 +8,15 @@ object options {
     private val none          = suspend(None)
     def empty[T]: T > Options = none
 
-    /*inline(2)*/
     def apply[T](v: T): T > Options =
       if (v == null)
         none
       else
         v
 
-    /*inline(2)*/
     def get[T, S](v: Option[T] > S): T > (Options with S) =
       suspend(v)
 
-    /*inline(2)*/
     def getOrElse[T, S1, S2](v: Option[T] > S1, default: => T > S2): T > (S1 with S2) =
       v.map {
         case None    => default

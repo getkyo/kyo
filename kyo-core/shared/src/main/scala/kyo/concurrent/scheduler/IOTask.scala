@@ -18,9 +18,9 @@ import kyo.locals.Locals.State
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
-  /*inline(2)*/
+  /*inline*/
   def apply[T](
-      /*inline(2)*/ v: T > (IOs with Fibers),
+      /*inline*/ v: T > (IOs with Fibers),
       st: Locals.State,
       ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
       runtime: Int = 1
