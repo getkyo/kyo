@@ -23,7 +23,7 @@ import kyo.concurrent.fibers
 import kyo.concurrent.scheduler.Scheduler
 import kyo.concurrent.fibers
 
-class CountdownLatchBench extends Bench[Int] {
+class CountdownLatchBench extends Bench.ForkOnly[Int] {
 
   val depth = 10000
 

@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import cats.effect.kernel.Deferred
 import kyo.concurrent.atomics._
 
-class PingPongBench extends Bench[Unit] {
+class PingPongBench extends Bench.ForkOnly[Unit] {
 
   val depth = 1000
 

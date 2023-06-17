@@ -13,7 +13,7 @@ import kyo.concurrent.Access
 import kyo.bench.Bench
 import java.util.concurrent.atomic.AtomicInteger
 
-class ProducerConsumerBench extends Bench[Unit] {
+class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
 
   val depth = 10000
 

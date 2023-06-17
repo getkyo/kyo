@@ -10,7 +10,7 @@ import java.util.concurrent.Executors
 import kyo.bench.Bench
 import java.util.concurrent.CompletableFuture
 
-class BroadFlatMapBench extends Bench[BigInt] {
+class BroadFlatMapBench extends Bench.SyncAndFork[BigInt] {
 
   val depth = 15
 

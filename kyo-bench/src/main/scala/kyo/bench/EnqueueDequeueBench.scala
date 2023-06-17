@@ -13,7 +13,7 @@ import kyo.concurrent.Access
 import kyo.bench.Bench
 import java.util.concurrent.atomic.AtomicInteger
 
-class EnqueueDequeueBench extends Bench[Unit] {
+class EnqueueDequeueBench extends Bench.ForkOnly[Unit] {
 
   val depth = 10000
 

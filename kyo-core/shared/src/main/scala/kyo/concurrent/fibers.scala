@@ -195,6 +195,7 @@ object fibers {
         extends RuntimeException(reason)
         with NoStackTrace
 
+    /*inline(3)*/
     def run[T](v: T > Fibers): Fiber[T] = {
       implicit val handler: DeepHandler[Fiber, Fibers] =
         new DeepHandler[Fiber, Fibers] {
@@ -223,10 +224,12 @@ object fibers {
     // compiler bug workaround
     private val IOTask = kyo.concurrent.scheduler.IOTask
 
-    def forkFiber[T](v: => T > (IOs with Fibers)): Fiber[T] > IOs =
+    /*inline(3)*/
+    def forkFiber[T]( /*inline(3)*/ v: => T > (IOs with Fibers)): Fiber[T] > IOs =
       Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
-    def fork[T](v: => T > (IOs with Fibers)): T > (IOs with Fibers) =
+    /*inline(3)*/
+    def fork[T](/*inline(3)*/ v: => T > (IOs with Fibers)): T > (IOs with Fibers) =
       forkFiber(v).map(_.join)
 
     def fork[T1, T2](
@@ -408,6 +411,7 @@ object fibers {
         }
       }
 
+    /*inline(3)*/
     def block[T, S](v: T > (Fibers with S)): T > (IOs with S) = {
       implicit def handler: Handler[Fiber, Fibers] =
         new Handler[Fiber, Fibers] {

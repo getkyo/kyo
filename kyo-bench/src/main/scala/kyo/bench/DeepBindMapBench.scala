@@ -23,7 +23,7 @@ import kyo.bench.Bench
 
 import kyo.concurrent.scheduler.Scheduler
 
-class DeepBindMapBench extends Bench[Int] {
+class DeepBindMapBench extends Bench.SyncAndFork[Int] {
 
   val depth = 10000
 

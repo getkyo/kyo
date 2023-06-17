@@ -12,7 +12,7 @@ import kyo.concurrent.atomics._
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicInteger
 
-class ForkManyBench extends Bench[Int] {
+class ForkManyBench extends Bench.ForkOnly[Int] {
 
   val depth = 10000
 

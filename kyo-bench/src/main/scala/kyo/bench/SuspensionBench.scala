@@ -13,7 +13,7 @@ import kyo.concurrent.Access
 import kyo.bench.Bench
 import java.util.concurrent.atomic.AtomicInteger
 
-class SuspensionBench extends Bench[Unit] {
+class SuspensionBench extends Bench.SyncAndFork[Unit] {
 
   def catsBench(): IO[Unit] = {
     IO(())

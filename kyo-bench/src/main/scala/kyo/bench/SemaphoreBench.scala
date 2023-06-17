@@ -13,7 +13,7 @@ import kyo.concurrent.Access
 import kyo.bench.Bench
 import java.util.concurrent.atomic.AtomicInteger
 
-class SemaphoreBench extends Bench[Unit] {
+class SemaphoreBench extends Bench.ForkOnly[Unit] {
 
   val depth = 10000
 

@@ -7,7 +7,7 @@ import kyo.ios._
 import kyo.lists._
 import kyo.concurrent.fibers._
 
-class CollectAllBench extends Bench[Long] {
+class CollectAllBench extends Bench.SyncAndFork[Long] {
 
   val count = 1000
 

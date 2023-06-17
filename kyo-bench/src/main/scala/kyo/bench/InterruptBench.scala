@@ -21,7 +21,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
 import scala.util._
 
-class InterruptBench extends Bench[Unit] {
+class InterruptBench extends Bench.ForkOnly[Unit] {
 
   val depth = 1000
 

@@ -24,7 +24,7 @@ import kyo.concurrent.scheduler.Scheduler
 import kyo.concurrent.fibers
 import java.util.concurrent.CompletableFuture
 
-class ChainedForkBench extends Bench[Int] {
+class ChainedForkBench extends Bench.ForkOnly[Int] {
 
   val depth = 10000
 

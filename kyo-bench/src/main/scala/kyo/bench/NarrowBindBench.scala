@@ -1,6 +1,6 @@
 package kyo.bench
 
-class NarrowBindBench extends Bench[Int] {
+class NarrowBindBench extends Bench.SyncAndFork[Int] {
 
   val depth = 10000
 

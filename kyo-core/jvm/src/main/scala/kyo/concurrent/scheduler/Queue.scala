@@ -83,14 +83,14 @@ private final class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
     }
 
   /*inline(3)*/
-  private def modify[T](f: => T): T = {
+  private def modify[T](/*inline(3)*/ f: => T): T = {
     while (!compareAndSet(false, true)) {}
     try f
     finally set(false)
   }
 
   /*inline(3)*/
-  private def tryModify[T](f: => Boolean): Boolean =
+  private def tryModify[T](/*inline(3)*/ f: => Boolean): Boolean =
     compareAndSet(false, true) && {
       try f
       finally set(false)

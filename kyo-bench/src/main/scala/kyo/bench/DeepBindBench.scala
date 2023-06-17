@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import kyo.bench.Bench
 
-class DeepBindBench extends Bench[Unit] {
+class DeepBindBench extends Bench.SyncAndFork[Unit] {
 
   val depth = 10000
 
