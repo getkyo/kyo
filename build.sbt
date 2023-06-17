@@ -209,7 +209,7 @@ lazy val `kyo-chatgpt` =
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.12",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.12",
         libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.12",
-        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.10"
+        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.12"
     )
     .jsSettings(`js-settings`)
 
