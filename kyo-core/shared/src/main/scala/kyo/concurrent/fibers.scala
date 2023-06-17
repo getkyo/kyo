@@ -426,7 +426,7 @@ object fibers {
                 f(m.asInstanceOf[T])
             }
         }
-      IOs(handle[T, IOs with S](v).map(_.block))
+      IOs[T, S](handle[T, IOs with S](v).map(_.block))
     }
 
     def join[T](f: Future[T]): T > (IOs with Fibers) =

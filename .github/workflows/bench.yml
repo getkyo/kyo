@@ -52,7 +52,7 @@ jobs:
       - name: run
         env: 
           SE: ${{ github.event.inputs.selector || 'Kyo' }}
-          WI: ${{ github.event.inputs.warmupIterations || '7' }}
+          WI: ${{ github.event.inputs.warmupIterations || '10' }}
           MI: ${{ github.event.inputs.measurementIterations || '3' }}
           PE: ${{ github.event.inputs.profileEvents || 'alloc,cpu' }}
         run: |
