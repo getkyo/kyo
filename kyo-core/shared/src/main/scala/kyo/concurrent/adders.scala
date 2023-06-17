@@ -15,30 +15,17 @@ object adders {
 
   class LongAdder private[adders] (private val ref: JLongAdder) extends AnyVal {
 
-    def add(v: Long): Unit > IOs =
-      IOs(ref.add(v))
-
-    def decrement: Unit > IOs =
-      IOs(ref.decrement())
-    def increment: Unit > IOs =
-      IOs(ref.increment())
-
-    def get: Long > IOs =
-      IOs(ref.sum())
-
-    def reset: Unit > IOs =
-      IOs(ref.reset())
+    def add(v: Long): Unit > IOs = IOs(ref.add(v))
+    def decrement: Unit > IOs    = IOs(ref.decrement())
+    def increment: Unit > IOs    = IOs(ref.increment())
+    def get: Long > IOs          = IOs(ref.sum())
+    def reset: Unit > IOs        = IOs(ref.reset())
   }
 
   class DoubleAdder private[adders] (private val ref: JDoubleAdder) extends AnyVal {
 
-    def add(v: Double): Unit > IOs =
-      IOs(ref.add(v))
-
-    def get: Double > IOs =
-      IOs(ref.sum())
-
-    def reset: Unit > IOs =
-      IOs(ref.reset())
+    def add(v: Double): Unit > IOs = IOs(ref.add(v))
+    def get: Double > IOs          = IOs(ref.sum())
+    def reset: Unit > IOs          = IOs(ref.reset())
   }
 }

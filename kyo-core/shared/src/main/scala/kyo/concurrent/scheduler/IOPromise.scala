@@ -34,15 +34,15 @@ private[kyo] class IOPromise[T](state: State[T])
   /*inline*/
   final def interrupts(p: IOPromise[_]): Unit =
     onComplete { _ =>
-      p.interrupt("")
+      p.interrupt()
     }
 
   /*inline*/
-  final def interrupt(reason: String): Boolean = {
+  final def interrupt(): Boolean = {
     @tailrec def loop(promise: IOPromise[T]): Boolean =
       promise.get() match {
         case p: Pending[T] @unchecked =>
-          promise.complete(p, IOs(throw Fibers.Interrupted(reason))) || loop(promise)
+          promise.complete(p, IOs(throw Fibers.Interrupted())) || loop(promise)
         case l: Linked[T] @unchecked =>
           loop(l.p)
         case _ =>

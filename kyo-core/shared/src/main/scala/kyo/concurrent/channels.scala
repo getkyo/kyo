@@ -41,35 +41,39 @@ object channels {
 
     def bounded[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
       Queues.bounded[T](capacity, access).map { q =>
-        new Channel[T] {
-          val size               = q.size
-          def offer[S](v: T > S) = q.offer(v)
-          val poll               = q.poll
-          val isEmpty            = q.isEmpty
-          val isFull             = q.isFull
+        IOs {
+          new Channel[T] {
+            val size               = q.size
+            def offer[S](v: T > S) = q.offer(v)
+            val poll               = q.poll
+            val isEmpty            = q.isEmpty
+            val isFull             = q.isFull
+          }
         }
       }
 
     def dropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
       Queues.bounded[T](capacity, access).map { q =>
-        new Unbounded[T] {
-          val size               = q.size
-          def offer[S](v: T > S) = q.offer(v)
-          val poll               = q.poll
-          def put[S](v: T > S)   = q.offer(v).unit
-          val isEmpty            = q.isEmpty
-          val isFull             = q.isFull
+        IOs {
+          new Unbounded[T] {
+            val size               = q.size
+            def offer[S](v: T > S) = q.offer(v)
+            val poll               = q.poll
+            def put[S](v: T > S)   = q.offer(v).unit
+            val isEmpty            = q.isEmpty
+            val isFull             = q.isFull
+          }
         }
       }
 
     def sliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
       Queues.bounded[T](capacity, access).map { q =>
-        new Unbounded[T] {
-          val size               = q.size
-          def offer[S](v: T > S) = q.offer(v)
-          val poll               = q.poll
-          def put[S](v: T > S) =
-            IOs[Unit, S] {
+        IOs {
+          new Unbounded[T] {
+            val size               = q.size
+            def offer[S](v: T > S) = q.offer(v)
+            val poll               = q.poll
+            def put[S](v: T > S) = {
               @tailrec def loop(v: T): Unit = {
                 val u = q.unsafe
                 if (u.offer(v)) ()
@@ -78,110 +82,115 @@ object channels {
                   loop(v)
                 }
               }
-              v.map(loop(_))
+              v.map(v => IOs(loop(v)))
             }
-          val isEmpty = q.isEmpty
-          val isFull  = q.isFull
+            val isEmpty = q.isEmpty
+            val isFull  = q.isFull
+          }
         }
       }
 
     def unbounded[T](access: Access = Access.Mpmc): Unbounded[T] > IOs =
       Queues.unbounded[T](access).map { q =>
-        new Unbounded[T] {
-          val size               = q.size
-          def put[S](v: T > S)   = q.add(v)
-          def offer[S](v: T > S) = q.offer(v)
-          val poll               = q.poll
-          val isEmpty            = q.isEmpty
-          val isFull             = false
+        IOs {
+          new Unbounded[T] {
+            val size               = q.size
+            def put[S](v: T > S)   = q.add(v)
+            def offer[S](v: T > S) = q.offer(v)
+            val poll               = q.poll
+            val isEmpty            = q.isEmpty
+            val isFull             = false
+          }
         }
       }
 
     def blocking[T](capacity: Int, access: Access = Access.Mpmc): Blocking[T] > IOs =
       Queues.bounded[T](capacity, access).map { queue =>
-        new Blocking[T] {
+        IOs {
+          new Blocking[T] {
 
-          val q     = queue.unsafe
-          val takes = new MpmcUnboundedXaddArrayQueue[Promise[T]](8)
-          val puts  = new MpmcUnboundedXaddArrayQueue[(T, Promise[Unit])](8)
+            val u     = queue.unsafe
+            val takes = new MpmcUnboundedXaddArrayQueue[Promise[T]](8)
+            val puts  = new MpmcUnboundedXaddArrayQueue[(T, Promise[Unit])](8)
 
-          val size    = queue.size
-          val isEmpty = queue.isEmpty
-          val isFull  = queue.isFull
-          def offer[S](v: T > S) =
-            v.map { v =>
-              IOs[Boolean, S] {
-                try q.offer(v)
+            val size    = queue.size
+            val isEmpty = queue.isEmpty
+            val isFull  = queue.isFull
+            def offer[S](v: T > S) =
+              v.map { v =>
+                IOs[Boolean, S] {
+                  try u.offer(v)
+                  finally flush()
+                }
+              }
+            val poll =
+              IOs {
+                try u.poll()
                 finally flush()
               }
-            }
-          val poll =
-            IOs {
-              try q.poll()
-              finally flush()
-            }
-          def putFiber[S](v: T > S): Fiber[Unit] > (IOs with S) =
-            v.map { v =>
-              IOs[Fiber[Unit], S] {
+            def putFiber[S](v: T > S): Fiber[Unit] > (IOs with S) =
+              v.map { v =>
+                IOs[Fiber[Unit], S] {
+                  try {
+                    if (u.offer(v)) {
+                      Fibers.value(())
+                    } else {
+                      val p = Fibers.unsafePromise[Unit]
+                      puts.add((v, p))
+                      p
+                    }
+                  } finally {
+                    flush()
+                  }
+                }
+              }
+            val takeFiber: Fiber[T] > IOs =
+              IOs {
                 try {
-                  if (q.offer(v)) {
-                    Fibers.value(())
-                  } else {
-                    val p = Fibers.unsafePromise[Unit]
-                    puts.add((v, p))
-                    p
+                  u.poll() match {
+                    case Some(v) =>
+                      Fibers.value(v)
+                    case None =>
+                      val p = Fibers.unsafePromise[T]
+                      takes.add(p)
+                      p
                   }
                 } finally {
                   flush()
                 }
               }
-            }
-          val takeFiber: Fiber[T] > IOs =
-            IOs {
-              try {
-                q.poll() match {
-                  case Some(v) =>
-                    Fibers.value(v)
-                  case None =>
-                    val p = Fibers.unsafePromise[T]
-                    takes.add(p)
-                    p
-                }
-              } finally {
-                flush()
-              }
-            }
 
-          @tailrec private def flush(): Unit = {
-            var loop = false
-            if (!q.isEmpty && !takes.isEmpty()) {
-              loop = true
-              val p = takes.poll()
-              if (p != null.asInstanceOf[Promise[T]]) {
-                q.poll() match {
-                  case None =>
-                    takes.add(p)
-                  case Some(v) =>
-                    if (!p.unsafeComplete(v) && !q.offer(v)) {
-                      val p = Fibers.unsafePromise[Unit]
-                      puts.add((v, p))
-                    }
+            @tailrec private def flush(): Unit = {
+              var loop = false
+              if (!u.isEmpty && !takes.isEmpty()) {
+                loop = true
+                val p = takes.poll()
+                if (p != null.asInstanceOf[Promise[T]]) {
+                  u.poll() match {
+                    case None =>
+                      takes.add(p)
+                    case Some(v) =>
+                      if (!p.unsafeComplete(v) && !u.offer(v)) {
+                        val p = Fibers.unsafePromise[Unit]
+                        puts.add((v, p))
+                      }
+                  }
                 }
               }
-            }
-            if (!q.isFull && !puts.isEmpty()) {
-              loop = true
-              val t = puts.poll()
-              if (t != null) {
-                val (v, p) = t
-                if (q.offer(v)) {
-                  p.unsafeComplete(())
-                } else {
-                  puts.add(t)
+              if (!u.isFull && !puts.isEmpty()) {
+                loop = true
+                val t = puts.poll()
+                if (t != null) {
+                  val (v, p) = t
+                  if (u.offer(v)) {
+                    p.unsafeComplete(())
+                  } else {
+                    puts.add(t)
+                  }
                 }
               }
+              if (loop) flush()
             }
-            if (loop) flush()
           }
         }
       }

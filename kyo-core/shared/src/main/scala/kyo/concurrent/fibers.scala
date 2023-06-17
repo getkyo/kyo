@@ -54,10 +54,8 @@ object fibers {
       state match {
         case promise: IOPromise[_] =>
           IOs(promise.isDone())
-        case _: Failed =>
-          true
         case _ =>
-          false
+          true
       }
 
     def join: T > Fibers =
@@ -102,41 +100,35 @@ object fibers {
         case promise: IOPromise[T] @unchecked =>
           IOs(promise.block())
         case Failed(ex) =>
-          throw ex
+          IOs.fail(ex)
         case _ =>
           state.asInstanceOf[T > IOs]
       }
 
     def interruptAwait: Boolean > (Fibers with IOs) =
-      interruptAwait("")
-
-    def interruptAwait(reason: String): Boolean > (Fibers with IOs) =
       state match {
         case ioTask: IOTask[T] @unchecked =>
           IOs {
             val p = new IOPromise[Boolean]()
             ioTask.ensure(() => p.complete(true))
-            interrupt(reason).map {
+            interrupt.map {
               case true  => Fiber.promise(p).join
               case false => false
             }
           }
         case promise: IOPromise[T] @unchecked =>
-          interrupt(reason)
-        case _ =>
-          false
-      }
-
-    def interrupt(reason: String): Boolean > IOs =
-      state match {
-        case promise: IOPromise[T] @unchecked =>
-          IOs(promise.interrupt(reason))
+          interrupt
         case _ =>
           false
       }
 
     def interrupt: Boolean > IOs =
-      interrupt("")
+      state match {
+        case promise: IOPromise[T] @unchecked =>
+          IOs(promise.interrupt())
+        case _ =>
+          false
+      }
 
     def toFuture: Future[T] > IOs =
       state match {
@@ -191,19 +183,19 @@ object fibers {
 
   final class Fibers private[fibers] extends Effect[Fiber, Fibers] {
 
-    case class Interrupted(reason: String)
-        extends RuntimeException(reason)
+    case class Interrupted()
+        extends RuntimeException
         with NoStackTrace
 
     /*inline*/
-    def run[T](v: T > Fibers): Fiber[T] = {
+    def run[T](v: T > Fibers): Fiber[T] > IOs = {
       implicit val handler: DeepHandler[Fiber, Fibers] =
         new DeepHandler[Fiber, Fibers] {
           def pure[T](v: T) = Fiber.done(v)
           def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
             m.unsafeTransform(f)
         }
-      deepHandle(v)
+      IOs(deepHandle(v))
     }
 
     def value[T](v: T): Fiber[T] =
@@ -289,13 +281,15 @@ object fibers {
     def raceFiber[T](l: List[T > (IOs with Fibers)]): Fiber[T] > IOs = {
       require(!l.isEmpty)
       Locals.save.map { st =>
-        val p = new IOPromise[T]
-        foreach(l) { io =>
-          val f = IOTask(IOs(io), st)
-          p.interrupts(f)
-          f.onComplete(p.complete(_))
+        IOs {
+          val p = new IOPromise[T]
+          foreach(l) { io =>
+            val f = IOTask(IOs(io), st)
+            p.interrupts(f)
+            f.onComplete(p.complete(_))
+          }
+          Fiber.promise(p)
         }
-        Fiber.promise(p)
       }
     }
 
@@ -327,27 +321,29 @@ object fibers {
 
     def awaitFiber[T](l: List[T > (IOs with Fibers)]): Fiber[Unit] > IOs =
       Locals.save.map { st =>
-        val p       = new IOPromise[Unit]
-        val pending = new AtomicInteger(l.size)
-        var i       = 0
-        val f: T > IOs => Unit =
-          r =>
-            try {
-              IOs.run(r)
-              if (pending.decrementAndGet() == 0) {
-                p.complete(())
+        IOs {
+          val p       = new IOPromise[Unit]
+          val pending = new AtomicInteger(l.size)
+          var i       = 0
+          val f: T > IOs => Unit =
+            r =>
+              try {
+                IOs.run(r)
+                if (pending.decrementAndGet() == 0) {
+                  p.complete(())
+                }
+              } catch {
+                case ex if (NonFatal(ex)) =>
+                  p.complete(IOs[Unit, Any](throw ex))
               }
-            } catch {
-              case ex if (NonFatal(ex)) =>
-                p.complete(IOs[Unit, Any](throw ex))
-            }
-        foreach(l) { io =>
-          val fiber = IOTask(IOs(io), st)
-          p.interrupts(fiber)
-          fiber.onComplete(f)
-          i += 1
+          foreach(l) { io =>
+            val fiber = IOTask(IOs(io), st)
+            p.interrupts(fiber)
+            fiber.onComplete(f)
+            i += 1
+          }
+          Fiber.promise(p)
         }
-        Fiber.promise(p)
       }
 
     def collect[T](l: List[T > (IOs with Fibers)]): Seq[T] > (IOs with Fibers) =
@@ -355,29 +351,31 @@ object fibers {
 
     def collectFiber[T](l: List[T > (IOs with Fibers)]): Fiber[Seq[T]] > IOs =
       Locals.save.map { st =>
-        val p       = new IOPromise[Seq[T]]
-        val size    = l.size
-        val results = (new Array[Any](size)).asInstanceOf[Array[T]]
-        val pending = new AtomicInteger(size)
-        var i       = 0
-        foreach(l) { io =>
-          val fiber = IOTask(IOs(io), st)
-          p.interrupts(fiber)
-          val j = i
-          fiber.onComplete { r =>
-            try {
-              results(j) = IOs.run(r)
-              if (pending.decrementAndGet() == 0) {
-                p.complete(ArraySeq.unsafeWrapArray(results))
+        IOs {
+          val p       = new IOPromise[Seq[T]]
+          val size    = l.size
+          val results = (new Array[Any](size)).asInstanceOf[Array[T]]
+          val pending = new AtomicInteger(size)
+          var i       = 0
+          foreach(l) { io =>
+            val fiber = IOTask(IOs(io), st)
+            p.interrupts(fiber)
+            val j = i
+            fiber.onComplete { r =>
+              try {
+                results(j) = IOs.run(r)
+                if (pending.decrementAndGet() == 0) {
+                  p.complete(ArraySeq.unsafeWrapArray(results))
+                }
+              } catch {
+                case ex if (NonFatal(ex)) =>
+                  p.complete(IOs[Seq[T], Any](throw ex))
               }
-            } catch {
-              case ex if (NonFatal(ex)) =>
-                p.complete(IOs[Seq[T], Any](throw ex))
             }
+            i += 1
           }
-          i += 1
+          Fiber.promise(p)
         }
-        Fiber.promise(p)
       }
 
     def never: Fiber[Unit] > IOs =
@@ -428,7 +426,7 @@ object fibers {
                 f(m.asInstanceOf[T])
             }
         }
-      handle[T, IOs with S](v).map(_.block)
+      IOs(handle[T, IOs with S](v).map(_.block))
     }
 
     def join[T](f: Future[T]): T > (IOs with Fibers) =
@@ -437,20 +435,22 @@ object fibers {
     def joinFiber[T](f: Future[T]): Fiber[T] > IOs = {
       import scala.concurrent.ExecutionContext.Implicits.global
       Locals.save.map { st =>
-        val p = new IOPromise[T]()
-        f.onComplete { r =>
-          val io =
-            IOs[Boolean, IOs] {
-              r match {
-                case Success(v) =>
-                  p.complete(v)
-                case Failure(ex) =>
-                  p.complete(IOs(throw ex))
+        IOs {
+          val p = new IOPromise[T]()
+          f.onComplete { r =>
+            val io =
+              IOs[Boolean, IOs] {
+                r match {
+                  case Success(v) =>
+                    p.complete(v)
+                  case Failure(ex) =>
+                    p.complete(IOs(throw ex))
+                }
               }
-            }
-          IOTask(io, st)
+            IOTask(io, st)
+          }
+          Fiber.promise(p)
         }
-        Fiber.promise(p)
       }
     }
   }
