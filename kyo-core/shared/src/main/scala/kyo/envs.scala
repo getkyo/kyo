@@ -9,6 +9,7 @@ import core._
 object envs {
 
   private case object Input
+
   type Env[E] = {
     type Value[T] >: T // = T | Input.type
   }

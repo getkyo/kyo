@@ -7,11 +7,11 @@ package object kyo {
   extension [T, S](v: T > S) {
 
     /*inline*/
-    def flatMap[U, S2](f: T => U > S2): U > (S with S2) =
+    def flatMap[U, S2]( /*inline*/ f: T => U > S2): U > (S with S2) =
       kyo.core.transform(v)(f)
 
     /*inline*/
-    def map[U, S2](f: T => U > S2): U > (S with S2) =
+    def map[U, S2]( /*inline*/ f: T => U > S2): U > (S with S2) =
       flatMap(f)
 
     /*inline*/
@@ -19,7 +19,7 @@ package object kyo {
       map(_ => ())
 
     /*inline*/
-    def withFilter(p: T => Boolean): T > S =
+    def withFilter( /*inline*/ p: T => Boolean): T > S =
       map(v => if (!p(v)) throw new MatchError(v) else v)
 
     /*inline*/
