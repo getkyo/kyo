@@ -68,7 +68,6 @@ private final class Worker(r: Runnable)
       }
     running = true
     Scheduler.workers.add(this)
-    var spins = 0
     while (!stop()) {
       if (task == null) {
         task = queue.poll()
@@ -85,13 +84,7 @@ private final class Worker(r: Runnable)
       } else {
         task = Scheduler.steal(this)
         if (task == null) {
-          def s = Scheduler.workers.size()
-          if (spins < 15 || spins < ((s | 0xffff) << 1)) {
-            spins += 1
-          } else {
-            Scheduler.idle(this)
-            spins = 0
-          }
+          Scheduler.idle(this)
         }
       }
     }
