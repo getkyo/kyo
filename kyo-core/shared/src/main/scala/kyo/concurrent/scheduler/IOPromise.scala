@@ -138,7 +138,7 @@ private[kyo] class IOPromise[T](state: State[T])
       promise.get() match {
         case _: Pending[T] @unchecked =>
           val b = new (T > IOs => Unit) with (() => T > IOs) {
-            private[this] var result: T > IOs = null.asInstanceOf[T > IOs]
+            @volatile private[this] var result: T > IOs = null.asInstanceOf[T > IOs]
             private[this] val waiterThread    = Thread.currentThread()
             def apply(v: T > IOs) = {
               result = v

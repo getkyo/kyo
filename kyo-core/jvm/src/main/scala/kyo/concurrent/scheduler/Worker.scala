@@ -72,6 +72,9 @@ private final class Worker(r: Runnable)
       if (task == null) {
         task = queue.poll()
       }
+      if (task == null) {
+        task = Scheduler.steal(this)
+      }
       if (task != null) {
         currentTask = task
         task.run()
@@ -82,7 +85,13 @@ private final class Worker(r: Runnable)
           task = null
         }
       } else {
-        task = Scheduler.steal(this)
+        def s     = Scheduler.workers.size()
+        var spins = (((s & 0xffff) << 1) | 0xf)
+        while (spins > 0 && task == null) {
+          Thread.onSpinWait()
+          task = queue.poll()
+          spins -= 1
+        }
         if (task == null) {
           Scheduler.idle(this)
         }
