@@ -34,6 +34,13 @@ jobs:
     name: bench
     runs-on: bench
     timeout-minutes: 90
+    env: 
+      SE: ${{ github.event.inputs.selector || 'Kyo' }}
+      WI: ${{ github.event.inputs.warmupIterations || '10' }}
+      MI: ${{ github.event.inputs.measurementIterations || '5' }}
+      IT: ${{ github.event.inputs.iterationTime || '1' }}
+      TH: ${{ github.event.inputs.threads || '1' }}
+      PE: ${{ github.event.inputs.profileEvents || 'alloc,cpu' }}
     steps:
       - uses: actions/checkout@v3.0.2
         with:
@@ -53,13 +60,6 @@ jobs:
           sudo sysctl kernel.kptr_restrict=0
 
       - name: run
-        env: 
-          SE: ${{ github.event.inputs.selector || 'Kyo' }}
-          WI: ${{ github.event.inputs.warmupIterations || '10' }}
-          MI: ${{ github.event.inputs.measurementIterations || '5' }}
-          IT: ${{ github.event.inputs.iterationTime || '1' }}
-          TH: ${{ github.event.inputs.threads || '1' }}
-          PE: ${{ github.event.inputs.profileEvents || 'alloc,cpu' }}
         run: |
           IFS=', ' read -r -a array <<< "$PE"
           for EVENT in "${array[@]}"
@@ -74,7 +74,7 @@ jobs:
         run: |
           short_sha=$(echo "${{ github.sha }}" | cut -c 1-7)
           mkdir -p output/
-          cp -r kyo-bench/.jvm/jmh-result.json output/0.${short_sha}-jmh-result.json
+          cp -r kyo-bench/.jvm/jmh-result.json output/#${short_sha}-jmh-result.json
           cp -r kyo-bench/.jvm/kyo.bench.* output/
           rm -rf output/**/*reverse.html
           for file in $(find output -name "*.html"); do
@@ -82,6 +82,10 @@ jobs:
             if [ "$file" != "$newfile" ]; then
               mv "$file" "$newfile"
             fi
+          done
+          for file in $(find output -name "*.html"); do
+            new_name="${short_sha}-$(basename "$file")"
+            mv "$file" "$(dirname "$file")/$new_name"
           done
           ls output/
     
@@ -144,9 +148,9 @@ jobs:
             const indexFileName = 'jmh-github-action.csv';
             const runUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
             const commitUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/commit/${context.sha}`;
+            const commitMessage = process.env.COMMIT_MESSAGE.replace(/,/g, '\\,');
             const selector = process.env.SE;
             const currentDateTime = new Date();
-            const comment = process.env.COMMIT_MESSAGE.substring(0, 15).replace(/,/g, '\\,');
             const gistUrl = process.env.GIST_URL;
             const timestamp = currentDateTime.toLocaleString('en-US', {
                 year: 'numeric',
@@ -205,7 +209,7 @@ jobs:
                   });
                 }
 
-                const newIndexContent = (fileContent ? fileContent + "\n" : "") + `${commitUrl},${comment},${selector},${timestamp},${runUrl},${gistUrl}`;
+                const newIndexContent = (fileContent ? fileContent + "\n" : "") + `${commitUrl},${commitMessage},${selector},${runUrl},${gistUrl}`;
 
                 await github.rest.gists.update({
                   gist_id: indexGist.id,
@@ -216,8 +220,8 @@ jobs:
                   }
                 });
               } else {
-                const header = "commit_url,comment,selector,timestamp,run,gist";
-                const newIndexContent = `${header}\n${commitUrl},${comment},${selector},${timestamp},${runUrl},${gistUrl}`;
+                const header = "commit_url,commit_message,selector,run,gist";
+                const newIndexContent = `${header}\n${commitUrl},${commitMessage},${selector},${runUrl},${gistUrl}`;
 
                 const newGist = await github.rest.gists.create({
                   files: {
