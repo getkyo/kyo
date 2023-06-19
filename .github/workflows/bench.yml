@@ -12,7 +12,7 @@ on:
       warmupIterations:
         description: 'Warmup iterations'     
         required: false
-        default: '10'
+        default: '13'
       measurementIterations:
         description: 'Measurement iterations'     
         required: false
@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 90
     env: 
       SE: ${{ github.event.inputs.selector || 'Kyo' }}
-      WI: ${{ github.event.inputs.warmupIterations || '10' }}
+      WI: ${{ github.event.inputs.warmupIterations || '13' }}
       MI: ${{ github.event.inputs.measurementIterations || '5' }}
       IT: ${{ github.event.inputs.iterationTime || '1' }}
       TH: ${{ github.event.inputs.threads || '1' }}
