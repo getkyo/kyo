@@ -72,8 +72,9 @@ jobs:
 
       - name: prepare results
         run: |
+          short_sha=$(echo "${{ github.sha }}" | cut -c 1-7)
           mkdir -p output/
-          cp -r kyo-bench/.jvm/*.json output/
+          cp -r kyo-bench/.jvm/jmh-result.json output/0.${short_sha}-jmh-result.json
           cp -r kyo-bench/.jvm/kyo.bench.* output/
           rm -rf output/**/*reverse.html
           for file in $(find output -name "*.html"); do
