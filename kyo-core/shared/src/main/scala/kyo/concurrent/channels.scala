@@ -34,9 +34,9 @@ object channels {
       def takeFiber: Fiber[T] > IOs
 
       def put[S](v: T > S): Unit > (S with IOs with Fibers) =
-        Fibers.get(putFiber(v))
+        putFiber(v).map(_.join)
       def take: T > (IOs with Fibers) =
-        Fibers.get(takeFiber)
+        takeFiber.map(_.join)
     }
 
     def bounded[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
