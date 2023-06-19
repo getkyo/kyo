@@ -222,7 +222,7 @@ object fibers {
 
     /*inline*/
     def fork[T]( /*inline*/ v: => T > (IOs with Fibers)): T > (IOs with Fibers) =
-      forkFiber(v).map(_.join)
+      Fibers.get(forkFiber(v))
 
     def fork[T1, T2](
         v1: => T1 > (IOs with Fibers),
@@ -253,14 +253,14 @@ object fibers {
         v1: => T > (IOs with Fibers),
         v2: => T > (IOs with Fibers)
     ): T > (IOs with Fibers) =
-      raceFiber(List(IOs(v1), IOs(v2))).map(_.join)
+      Fibers.get(raceFiber(List(IOs(v1), IOs(v2))))
 
     def race[T](
         v1: => T > (IOs with Fibers),
         v2: => T > (IOs with Fibers),
         v3: => T > (IOs with Fibers)
     ): T > (IOs with Fibers) =
-      raceFiber(List(IOs(v1), IOs(v2), IOs(v2))).map(_.join)
+      Fibers.get(raceFiber(List(IOs(v1), IOs(v2), IOs(v2))))
 
     def race[T](
         v1: => T > (IOs with Fibers),
@@ -268,7 +268,7 @@ object fibers {
         v3: => T > (IOs with Fibers),
         v4: => T > (IOs with Fibers)
     ): T > (IOs with Fibers) =
-      raceFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))).map(_.join)
+      Fibers.get(raceFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))))
 
     private def foreach[T, U](l: List[T])(f: T => Unit): Unit = {
       var curr = l
@@ -302,14 +302,14 @@ object fibers {
         v1: => T > (IOs with Fibers),
         v2: => T > (IOs with Fibers)
     ): Unit > (IOs with Fibers) =
-      awaitFiber(List(IOs(v1), IOs(v2))).map(_.join)
+      Fibers.get(awaitFiber(List(IOs(v1), IOs(v2))))
 
     def await[T](
         v1: => T > (IOs with Fibers),
         v2: => T > (IOs with Fibers),
         v3: => T > (IOs with Fibers)
     ): Unit > (IOs with Fibers) =
-      awaitFiber(List(IOs(v1), IOs(v2), IOs(v2))).map(_.join)
+      Fibers.get(awaitFiber(List(IOs(v1), IOs(v2), IOs(v2))))
 
     def await[T](
         v1: => T > (IOs with Fibers),
@@ -317,7 +317,7 @@ object fibers {
         v3: => T > (IOs with Fibers),
         v4: => T > (IOs with Fibers)
     ): Unit > (IOs with Fibers) =
-      awaitFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))).map(_.join)
+      Fibers.get(awaitFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))))
 
     def awaitFiber[T](l: List[T > (IOs with Fibers)]): Fiber[Unit] > IOs =
       Locals.save.map { st =>
@@ -347,7 +347,7 @@ object fibers {
       }
 
     def collect[T](l: List[T > (IOs with Fibers)]): Seq[T] > (IOs with Fibers) =
-      collectFiber[T](l).map(_.join)
+      Fibers.get(collectFiber[T](l))
 
     def collectFiber[T](l: List[T > (IOs with Fibers)]): Fiber[Seq[T]] > IOs =
       Locals.save.map { st =>
@@ -430,7 +430,7 @@ object fibers {
     }
 
     def join[T](f: Future[T]): T > (IOs with Fibers) =
-      joinFiber(f).map(_.join)
+      Fibers.get(joinFiber(f))
 
     def joinFiber[T](f: Future[T]): Fiber[T] > IOs = {
       import scala.concurrent.ExecutionContext.Implicits.global
