@@ -15,13 +15,14 @@ class ScheduledFuture[T](r: => T) extends TimerTask {
     super.cancel()
   }
   def isCancelled(): Boolean = cancelled
-  def run(): Unit =
+  def run(): Unit = {
     done = true
     try r
     catch {
       case e: Throwable =>
         e.printStackTrace()
     }
+  }
   def isDone(): Boolean = done
 }
 

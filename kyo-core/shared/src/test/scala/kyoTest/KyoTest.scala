@@ -25,7 +25,7 @@ import scala.concurrent.ExecutionContext
 
 class KyoTest extends AsyncFreeSpec with Assertions {
 
-  implicit override def executionContext = Platform.executionContext
+  implicit override def executionContext: ExecutionContext = Platform.executionContext
 
   trait Eq[T] {
     def apply(a: T, b: T): Boolean

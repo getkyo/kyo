@@ -8,7 +8,7 @@ object Scheduler {
   private val queue   = PriorityQueue[IOTask[_]]()
   private var running = false
 
-  def schedule(t: IOTask[_]): Unit =
+  def schedule(t: IOTask[_]): Unit = {
     queue.enqueue(t)
     if (!running) {
       running = true
@@ -20,6 +20,7 @@ object Scheduler {
           0
       )
     }
+  }
 
   def flush(): Unit = {
     while (queue.nonEmpty) {
