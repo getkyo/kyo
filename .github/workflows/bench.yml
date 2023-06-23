@@ -47,7 +47,7 @@ jobs:
           fetch-depth: 0
       - uses: olafurpg/setup-scala@v13
         with:
-          java-version: openjdk@1.17.0
+          java-version: microsoft@17
 
       - name: install async-profiler
         run: |
