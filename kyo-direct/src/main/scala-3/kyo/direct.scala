@@ -20,7 +20,7 @@ object direct {
 
   object internal {
 
-    transparent inline def branch[T, S1, S2, S3](
+    inline def branch[T, S1, S2, S3](
         inline cond: Boolean > S1,
         inline ifTrue: => T > S2,
         inline ifFalse: => T > S3
@@ -30,10 +30,10 @@ object direct {
         case false => ifFalse
       }
 
-    def cont[T, U, S1, S2](v: T > S1)(f: T => U > S2): U > (S1 with S2) =
+    inline def cont(v: Any > Nothing, f: Any => Any > Nothing): Any > Nothing =
       v.map(f)
 
-    transparent inline def loop[T, S1, S2](
+    inline def loop[T, S1, S2](
         inline cond: => Boolean > S1,
         inline v: => T > S1
     ): Unit > (S1 with S2) =

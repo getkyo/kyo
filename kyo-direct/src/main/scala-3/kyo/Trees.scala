@@ -5,15 +5,15 @@ import scala.quoted._
 object Trees {
 
   def transform(using Quotes)(
-      term: quotes.reflect.Tree,
+      term: quotes.reflect.Term,
       owner: quotes.reflect.Symbol
-  )(pf: PartialFunction[quotes.reflect.Tree, quotes.reflect.Tree]) =
+  )(pf: PartialFunction[quotes.reflect.Term, quotes.reflect.Term]) =
     import quotes.reflect._
     (new TreeMap:
-      override def transformTree(tree: Tree)(owner: Symbol): Tree = {
-        pf.lift(tree).getOrElse(super.transformTree(tree)(owner))
+      override def transformTerm(term: Term)(owner: Symbol): Term = {
+        pf.lift(term).getOrElse(super.transformTerm(term)(owner))
       }
-    ).transformTree(term)(owner)
+    ).transformTerm(term)(owner)
 
   def traverse(using Quotes)(
       tree: quotes.reflect.Tree,

@@ -6,8 +6,13 @@
 
 //   import direct._
 
-//   val io: Int > IOs =
-//     defer(await(IOs(1)))
+//   val io = defer {
+//     if (await(IOs(1)) == 1)
+//       print(1)
+//     else {
+//       print(2)
+//     }
+//   }
 
 //   // println(IOs.run {
 //   //   defer(await(IOs(1)))
