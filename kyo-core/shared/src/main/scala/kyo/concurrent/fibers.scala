@@ -195,7 +195,7 @@ object fibers {
           def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
             m.unsafeTransform(f)
         }
-      IOs(deepHandle(v))
+      IOs(deepHandle[Fiber, Fibers, T, Any](Fibers)(v))
     }
 
     def value[T](v: T): Fiber[T] =
