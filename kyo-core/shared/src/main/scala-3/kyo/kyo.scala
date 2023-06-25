@@ -1,10 +1,11 @@
 import scala.language.higherKinds
+import scala.util.NotGiven
 
 package object kyo {
 
   type >[+T, -S] >: T // = T | Kyo[_, _, _, T, S]
 
-  extension [T, S](v: T > S) {
+  extension [T, S](v: T > S)(using NotGiven[Any => S]) {
 
     /*inline*/
     def flatMap[U, S2]( /*inline*/ f: T => U > S2): U > (S with S2) =
@@ -37,7 +38,9 @@ package object kyo {
     /*inline*/
     def forever(implicit ev: T => Unit): Unit > S =
       andThen(forever)
+  }
 
+  extension [T, S](v: T > Any) {
     /*inline*/
     def pure(implicit ev: Any => S): T =
       v.asInstanceOf[T]

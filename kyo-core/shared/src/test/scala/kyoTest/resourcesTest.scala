@@ -83,9 +83,9 @@ class resourcesTest extends KyoTest {
         Resources.run {
           for {
             r1 <- Resources.acquire(r1())
-            i1 <- r1.id * 3
+            i1 = r1.id * 3
             r2 <- Resources.acquire(r2())
-            i2 <- r2.id * 5
+            i2 = r2.id * 5
           } yield i1 + i2
         }
       }

@@ -29,12 +29,17 @@ package object kyo {
 
     def forever(implicit ev: T => Unit): Unit > S =
       andThen(forever)
-
-    def pure(implicit ev: Any => S): T =
-      v.asInstanceOf[T]
   }
 
-  implicit def kyoOps[T, U, S](v: T)(implicit ev: T => U > S): KyoOps[U, S] =
+  implicit class KyoPureOps[+T](private[kyo] val v: T > Any) extends AnyVal {
+
+    def pure: T = v.asInstanceOf[T]
+  }
+
+  implicit def kyoOps[T, U, S](v: T)(implicit
+      ev: T => U > S,
+      ng: NotGiven[Any => S]
+  ): KyoOps[U, S] =
     new KyoOps[U, S](v)
 
   def zip[T1, T2, S](v1: T1 > S, v2: T2 > S): (T1, T2) > S =
