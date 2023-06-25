@@ -18,7 +18,7 @@ object embeddings {
     import Model._
 
     def apply(text: String, model: String = "text-embedding-ada-002"): Embedding > AIs =
-      fiber(text, model).flatMap(_.join)
+      fiber(text, model).map(_.get)
 
     def fiber(text: String, model: String = "text-embedding-ada-002"): Fiber[Embedding] > AIs =
       AIs.ApiKey.get.map { key =>

@@ -26,17 +26,17 @@ class metersTest extends KyoTest {
         p  <- Fibers.promise[Int]
         b1 <- Fibers.promise[Unit]
         f1 <- Fibers.forkFiber(t.run(b1.complete(()).map(_ => p.block)))
-        _  <- b1.join
+        _  <- b1.get
         a1 <- t.isAvailable
         b2 <- Fibers.promise[Unit]
         f2 <- Fibers.forkFiber(b2.complete(()).map(_ => t.run(2)))
-        _  <- b2.join
+        _  <- b2.get
         a2 <- t.isAvailable
         d1 <- f1.isDone
         d2 <- f2.isDone
         _  <- p.complete(1)
-        v1 <- f1.join
-        v2 <- f2.join
+        v1 <- f1.get
+        v2 <- f2.get
         a3 <- t.isAvailable
       } yield assert(!a1 && !d1 && !d2 && !a2 && v1 == 1 && v2 == 2 && a3)
     }
@@ -47,12 +47,12 @@ class metersTest extends KyoTest {
         p   <- Fibers.promise[Int]
         b1  <- Fibers.promise[Unit]
         f1  <- Fibers.forkFiber(sem.tryRun(b1.complete(()).map(_ => p.block)))
-        _   <- b1.join
+        _   <- b1.get
         a1  <- sem.isAvailable
         b1  <- sem.tryRun(2)
         b2  <- f1.isDone
         _   <- p.complete(1)
-        v1  <- f1.join
+        v1  <- f1.get
       } yield assert(!a1 && b1 == None && !b2 && v1 == Some(1))
     }
   }
@@ -72,20 +72,20 @@ class metersTest extends KyoTest {
         p  <- Fibers.promise[Int]
         b1 <- Fibers.promise[Unit]
         f1 <- Fibers.forkFiber(t.run(b1.complete(()).map(_ => p.block)))
-        _  <- b1.join
+        _  <- b1.get
         b2 <- Fibers.promise[Unit]
         f2 <- Fibers.forkFiber(t.run(b2.complete(()).map(_ => p.block)))
-        _  <- b2.join
+        _  <- b2.get
         a1 <- t.isAvailable
         b3 <- Fibers.promise[Unit]
         f2 <- Fibers.forkFiber(b3.complete(()).map(_ => t.run(2)))
-        _  <- b3.join
+        _  <- b3.get
         a2 <- t.isAvailable
         d1 <- f1.isDone
         d2 <- f2.isDone
         _  <- p.complete(1)
-        v1 <- f1.join
-        v2 <- f2.join
+        v1 <- f1.get
+        v2 <- f2.get
         a3 <- t.isAvailable
       } yield assert(!a1 && !d1 && !d2 && !a2 && v1 == 1 && v2 == 2 && a3)
     }
@@ -96,17 +96,17 @@ class metersTest extends KyoTest {
         p   <- Fibers.promise[Int]
         b1  <- Fibers.promise[Unit]
         f1  <- Fibers.forkFiber(sem.tryRun(b1.complete(()).map(_ => p.block)))
-        _   <- b1.join
+        _   <- b1.get
         b2  <- Fibers.promise[Unit]
         f2  <- Fibers.forkFiber(sem.tryRun(b2.complete(()).map(_ => p.block)))
-        _   <- b2.join
+        _   <- b2.get
         a1  <- sem.isAvailable
         b3  <- sem.tryRun(2)
         b4  <- f1.isDone
         b5  <- f2.isDone
         _   <- p.complete(1)
-        v1  <- f1.join
-        v2  <- f2.join
+        v1  <- f1.get
+        v2  <- f2.get
       } yield assert(!a1 && b3 == None && !b4 && !b5 && v1 == Some(1) && v2 == Some(1))
     }
   }

@@ -29,7 +29,7 @@ class SemaphoreBench extends Bench.ForkOnly[Unit] {
     Semaphore[IO](1).flatMap(loop(_, 0))
   }
 
-  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
+  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
 
   override def kyoBenchFiber(): Unit > (IOs with Fibers) = {
     import kyo.concurrent.meters._

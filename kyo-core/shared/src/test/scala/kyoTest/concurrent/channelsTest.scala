@@ -135,10 +135,10 @@ class channelsTest extends KyoTest {
         put   <- Fibers.fork(c.putFiber(2))
         take1 <- Fibers.fork(c.takeFiber)
         take2 <- Fibers.fork(c.takeFiber)
-        v1    <- take1.join
-        _     <- put.join
-        v2    <- take1.join
-        v3    <- take2.join
+        v1    <- take1.get
+        _     <- put.get
+        v2    <- take1.get
+        v3    <- take2.get
       } yield assert(b && v1 == 1 && v2 == 1 && v3 == 2)
     }
     "blocking put" in run {
@@ -163,7 +163,7 @@ class channelsTest extends KyoTest {
         d1 <- f.isDone
         _  <- c.put(1)
         d2 <- f.isDone
-        v  <- f.join
+        v  <- f.get
       } yield assert(!d1 && d2 && v == 1)
     }
   }

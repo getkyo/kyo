@@ -9,9 +9,11 @@ import java.time.ZoneId
 import java.time.{Clock => JClock}
 
 object clocks {
+
   trait Clock {
     def now: Instant > IOs
   }
+
   object Clock {
     implicit val default: Clock =
       new Clock {

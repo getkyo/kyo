@@ -41,7 +41,7 @@ class CountdownLatchBench extends Bench.ForkOnly[Int] {
     } yield 0
   }
 
-  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
+  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
 
   override def kyoBenchFiber() = {
     import kyo._

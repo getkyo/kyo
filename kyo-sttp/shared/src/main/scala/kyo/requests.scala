@@ -44,13 +44,13 @@ object requests {
       run[T, S](b)(v)
 
     def apply[T, S](req: Request[T, Any] > S): Response[T] > (Requests with S) =
-      fiber(req).map(_.join)
+      fiber(req).map(_.get)
 
     def fiber[T, S](req: Request[T, Any] > S): Fiber[Response[T]] > (Requests with S) =
       Envs[Backend].get.map(b => req.map(b.send))
 
     def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (Requests with S) =
-      fiber(f).map(_.join)
+      fiber(f).map(_.get)
 
     def fiber[T, S](f: BasicRequest => Request[T, Any] > S)
         : Fiber[Response[T]] > (Requests with S) =

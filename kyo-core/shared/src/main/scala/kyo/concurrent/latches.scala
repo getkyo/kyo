@@ -37,7 +37,7 @@ object latches {
               val promise = Fibers.unsafePromise[Unit]
               val count   = new AtomicInteger(n)
 
-              val await = promise.join
+              val await = promise.get
 
               val release =
                 IOs {

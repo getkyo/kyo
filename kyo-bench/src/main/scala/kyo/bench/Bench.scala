@@ -31,12 +31,10 @@ import cats.effect.unsafe.implicits.global
 )
 @BenchmarkMode(Array(Mode.Throughput))
 sealed abstract class Bench[T] {
-
   def zioBench(): UIO[T]
   def kyoBenchFiber(): T > (IOs with Fibers) = kyoBench()
   def kyoBench(): T > IOs
   def catsBench(): IO[T]
-
 }
 
 object Bench {

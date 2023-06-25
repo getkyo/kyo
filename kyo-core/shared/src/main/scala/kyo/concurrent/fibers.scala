@@ -58,7 +58,7 @@ object fibers {
           true
       }
 
-    def join: T > Fibers =
+    def get: T > Fibers =
       state match {
         case promise: IOPromise[_] =>
           Fibers.get(state)
@@ -78,7 +78,7 @@ object fibers {
           f(state.asInstanceOf[T > IOs])
       }
 
-    def joinTry: Try[T] > (Fibers with IOs) =
+    def getTry: Try[T] > (Fibers with IOs) =
       state match {
         case promise: IOPromise[T] @unchecked =>
           IOs {
@@ -112,7 +112,7 @@ object fibers {
             val p = new IOPromise[Boolean]()
             ioTask.ensure(() => p.complete(true))
             interrupt.map {
-              case true  => Fiber.promise(p).join
+              case true  => Fiber.promise(p).get
               case false => false
             }
           }
@@ -196,6 +196,26 @@ object fibers {
             m.unsafeTransform(f)
         }
       IOs(deepHandle[Fiber, Fibers, T, Any](Fibers)(v))
+    }
+
+    /*inline*/
+    def runBlocking[T, S](v: T > (Fibers with S)): T > (IOs with S) = {
+      implicit def handler: Handler[Fiber, Fibers] =
+        new Handler[Fiber, Fibers] {
+          def pure[T](v: T) = Fiber.done(v)
+          override def handle[T](ex: Throwable): T > Fibers =
+            Fibers.get(Fiber.failed[T](ex))
+          def apply[T, U, S](m: Fiber[T], f: T => U > (Fibers with S)) =
+            m match {
+              case m: IOPromise[T] @unchecked =>
+                f(m.block())
+              case Failed(ex) =>
+                handle(ex)
+              case _ =>
+                f(m.asInstanceOf[T])
+            }
+        }
+      IOs[T, S](handle[T, IOs with S](v).map(_.block))
     }
 
     def value[T](v: T): Fiber[T] =
@@ -390,10 +410,10 @@ object fibers {
               ()
             }
           Timers.schedule(d)(run).map { t =>
-            IOs.ensure(t.cancel.unit)(p.join)
+            IOs.ensure(t.cancel.unit)(p.get)
           }
         } else {
-          p.join
+          p.get
         }
       }
 
@@ -405,29 +425,9 @@ object fibers {
             ()
           }
         Timers.schedule(d)(timeout).map { t =>
-          IOs.ensure(t.cancel.unit)(f.join)
+          IOs.ensure(t.cancel.unit)(f.get)
         }
       }
-
-    /*inline*/
-    def block[T, S](v: T > (Fibers with S)): T > (IOs with S) = {
-      implicit def handler: Handler[Fiber, Fibers] =
-        new Handler[Fiber, Fibers] {
-          def pure[T](v: T) = Fiber.done(v)
-          override def handle[T](ex: Throwable): T > Fibers =
-            Fibers.get(Fiber.failed[T](ex))
-          def apply[T, U, S](m: Fiber[T], f: T => U > (Fibers with S)) =
-            m match {
-              case m: IOPromise[T] @unchecked =>
-                f(m.block())
-              case Failed(ex) =>
-                handle(ex)
-              case _ =>
-                f(m.asInstanceOf[T])
-            }
-        }
-      IOs[T, S](handle[T, IOs with S](v).map(_.block))
-    }
 
     def join[T](f: Future[T]): T > (IOs with Fibers) =
       Fibers.get(joinFiber(f))

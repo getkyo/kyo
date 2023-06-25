@@ -39,7 +39,7 @@ class InterruptBench extends Bench.ForkOnly[Unit] {
     iterate(depth)
   }
 
-  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
+  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
 
   override def kyoBenchFiber() = {
     import kyo._

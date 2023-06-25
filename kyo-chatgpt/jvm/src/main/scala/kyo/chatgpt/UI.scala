@@ -185,7 +185,7 @@ object UI extends App {
         for {
           p <- Fibers.promise[String]
           _ <- chan.put((message, enabledModes.toList, p))
-          r <- p.join
+          r <- p.get
         } yield r
       }.block
     }

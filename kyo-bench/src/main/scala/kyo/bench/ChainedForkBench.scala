@@ -43,7 +43,7 @@ class ChainedForkBench extends Bench.ForkOnly[Int] {
     } yield 0
   }
 
-  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
+  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
 
   override def kyoBenchFiber() = {
     import kyo._
@@ -57,7 +57,7 @@ class ChainedForkBench extends Bench.ForkOnly[Int] {
     for {
       p <- Fibers.promise[Unit]
       _ <- Fibers.forkFiber(iterate(p, depth))
-      _ <- p.join
+      _ <- p.get
     } yield 0
   }
 

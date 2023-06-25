@@ -35,7 +35,7 @@ class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
     }
   }
 
-  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
+  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
 
   override def kyoBenchFiber(): Unit > (IOs with Fibers) = {
     import kyo.concurrent.atomics._
@@ -48,8 +48,8 @@ class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
       for {
         producer <- Fibers.forkFiber(repeat(depth)(q.put(())))
         consumer <- Fibers.forkFiber(repeat(depth)(q.take))
-        _        <- producer.join
-        _        <- consumer.join
+        _        <- producer.get
+        _        <- consumer.get
       } yield {}
     }
   }

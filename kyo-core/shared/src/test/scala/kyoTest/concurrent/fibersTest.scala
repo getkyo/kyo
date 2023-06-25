@@ -33,7 +33,7 @@ class fibersTest extends KyoTest {
         p <- Fibers.promise[Int]
         a <- p.complete(1)
         b <- p.isDone
-        c <- p.join
+        c <- p.get
       } yield assert(a && b && c == 1)
     }
     "complete twice" in run {
@@ -42,7 +42,7 @@ class fibersTest extends KyoTest {
         a <- p.complete(1)
         b <- p.complete(2)
         c <- p.isDone
-        d <- p.join
+        d <- p.get
       } yield assert(a && !b && c && d == 1)
     }
     "failure" in run {
@@ -51,7 +51,7 @@ class fibersTest extends KyoTest {
         p <- Fibers.promise[Int]
         a <- p.complete(throw ex)
         b <- p.isDone
-        c <- p.joinTry
+        c <- p.getTry
       } yield assert(a && b && c == Failure(ex))
     }
   }
@@ -93,7 +93,7 @@ class fibersTest extends KyoTest {
   }
 
   "timeout" in runJVM {
-    Tries.run(Fibers.block(
+    Tries.run(Fibers.runBlocking(
         Fibers.timeout(10.millis)(Timers.run(Fibers.sleep(1.day).andThen(1)))
     )).map {
       case Failure(_: Fibers.Interrupted) => succeed
@@ -228,7 +228,7 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    Fibers.awaitFiber(List(loop(2, "a"), loop(5, "b"))).map(_.join).map { r =>
+    Fibers.awaitFiber(List(loop(2, "a"), loop(5, "b"))).map(_.get).map { r =>
       assert(ac.get() == 2)
       assert(bc.get() == 5)
     }
@@ -267,7 +267,7 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    Fibers.collectFiber(List(loop(2, "a"), loop(5, "b"))).map(_.join).map { r =>
+    Fibers.collectFiber(List(loop(2, "a"), loop(5, "b"))).map(_.get).map { r =>
       assert(r == List("a", "b"))
       assert(ac.get() == 2)
       assert(bc.get() == 5)

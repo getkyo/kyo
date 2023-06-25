@@ -34,7 +34,8 @@ class ForkManyBench extends Bench.ForkOnly[Int] {
     } yield 0
   }
 
-  def kyoBench() = Fibers.block(Fibers.fork(kyoBenchFiber()))
+  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
+
   override def kyoBenchFiber() = {
     import kyo._
     import kyo.ios._
@@ -55,7 +56,7 @@ class ForkManyBench extends Bench.ForkOnly[Int] {
           false
       }
       _ <- repeat(depth)(Fibers.forkFiber(effect))
-      _ <- promise.join
+      _ <- promise.get
     } yield 0
   }
 
