@@ -15,9 +15,13 @@ import kyo.lists.Lists
 object meters {
 
   trait Meter { self =>
+
     def available: Int > IOs
+
     def isAvailable: Boolean > IOs = available.map(_ > 0)
+
     def run[T, S](v: => T > S): T > (S with IOs with Fibers)
+
     def tryRun[T, S](v: => T > S): Option[T] > (IOs with S)
   }
 
@@ -57,9 +61,10 @@ object meters {
       Channels.blocking[Unit](rate).map { chan =>
         Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())).map { _ =>
           new Meter {
-            val available = chan.size
-            def run[T, S](v: => T > S): T > (S with IOs with Fibers) =
-              chan.take.map(_ => v)
+
+            val available              = chan.size
+            def run[T, S](v: => T > S) = chan.take.map(_ => v)
+
             def tryRun[T, S](v: => T > S) =
               chan.poll.map {
                 case None =>
@@ -92,6 +97,7 @@ object meters {
     def pipeline[S](l: List[Meter > (IOs with S)]): Meter > (IOs with S) =
       Lists.collect(l).map { meters =>
         new Meter {
+
           val available = {
             def loop(l: List[Meter], acc: Int): Int > IOs =
               l match {
@@ -111,6 +117,7 @@ object meters {
               }
             loop(meters)
           }
+
           def tryRun[T, S](v: => T > S) = {
             def loop(l: List[Meter]): Option[T] > (IOs with S) =
               l match {

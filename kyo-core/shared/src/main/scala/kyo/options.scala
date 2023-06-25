@@ -5,12 +5,12 @@ import core._
 object options {
 
   final class Options private[options] () extends Effect[Option, Options] {
-    private val none          = suspend(None)
+
     def empty[T]: T > Options = none
 
     def apply[T](v: T): T > Options =
       if (v == null)
-        none
+        Options.empty
       else
         v
 
@@ -49,6 +49,8 @@ object options {
             case v    => suspend(v)
           }
       }
+
+    private val none = suspend(None)
   }
   val Options = new Options
 

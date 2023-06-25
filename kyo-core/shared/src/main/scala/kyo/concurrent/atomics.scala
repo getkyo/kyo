@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.{AtomicReference => JAtomicReference}
 object atomics {
 
   object Atomics {
+
     def initInt(v: Int): AtomicInt > IOs             = IOs(new AtomicInt(new JAtomicInteger(v)))
     def initLong(v: Long): AtomicLong > IOs          = IOs(new AtomicLong(new JAtomicLong(v)))
     def initBoolean(v: Boolean): AtomicBoolean > IOs = IOs(new AtomicBoolean(new JAtomicBoolean(v)))

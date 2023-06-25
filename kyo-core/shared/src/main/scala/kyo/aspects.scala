@@ -35,14 +35,14 @@ object aspects {
 
     def andThen(other: Cut[T, U, S]): Cut[T, U, S] =
       new Cut[T, U, S] {
-        def apply[S2](v: T > S2)(f: T => U > (Aspects with S)): U > (Aspects with S with S2) =
+        def apply[S2](v: T > S2)(f: T => U > (Aspects with S)) =
           Cut.this(v)(other(_)(f))
       }
   }
 
   final class Aspect[T, U, S] private[aspects] (default: Cut[T, U, S]) extends Cut[T, U, S] {
 
-    def apply[S2](v: T > S2)(f: T => U > (Aspects with S)): U > (Aspects with S with S2) =
+    def apply[S2](v: T > S2)(f: T => U > (Aspects with S)) =
       envs.get.map { map =>
         map.get(this) match {
           case Some(a: Cut[T, U, S] @unchecked) =>

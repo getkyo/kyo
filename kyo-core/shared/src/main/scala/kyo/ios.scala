@@ -55,40 +55,6 @@ object ios {
     def attempt[T, S](v: => T > S): Try[T] > S =
       Tries.run[T, S](v)
 
-    private[kyo] def ensure[T, S](f: => Unit > IOs)(v: => T > S): T > (IOs with S) = {
-      lazy val run: Unit =
-        try IOs.run(f)
-        catch {
-          case ex if NonFatal(ex) =>
-            log.error(s"IOs.ensure function failed", ex)
-        }
-      val ensure = new AbstractFunction0[Unit] {
-        def apply() = run
-      }
-      def ensureLoop(v: T > (IOs with S), p: Preempt): T > (IOs with S) =
-        v match {
-          case kyo: Kyo[MX, EX, Any, T, S with IOs] @unchecked =>
-            new KyoCont[MX, EX, Any, T, S with IOs](kyo) {
-              def apply() = run
-              def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) = {
-                val np =
-                  (s: Any) match {
-                    case s: Preempt =>
-                      s.ensure(ensure)
-                      s
-                    case _ =>
-                      p
-                  }
-                ensureLoop(kyo(v, s, l), np)
-              }
-            }
-          case _ =>
-            p.remove(ensure)
-            IOs[Unit, Any](run).map(_ => v)
-        }
-      ensureLoop(v, Preempt.never)
-    }
-
     /*inline*/
     def apply[T, S](
         /*inline*/ f: => T > (IOs with S)
@@ -128,6 +94,40 @@ object ios {
         }
       }
       lazyRunLoop(v)
+    }
+
+    private[kyo] def ensure[T, S](f: => Unit > IOs)(v: => T > S): T > (IOs with S) = {
+      lazy val run: Unit =
+        try IOs.run(f)
+        catch {
+          case ex if NonFatal(ex) =>
+            log.error(s"IOs.ensure function failed", ex)
+        }
+      val ensure = new AbstractFunction0[Unit] {
+        def apply() = run
+      }
+      def ensureLoop(v: T > (IOs with S), p: Preempt): T > (IOs with S) =
+        v match {
+          case kyo: Kyo[MX, EX, Any, T, S with IOs] @unchecked =>
+            new KyoCont[MX, EX, Any, T, S with IOs](kyo) {
+              def apply() = run
+              def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) = {
+                val np =
+                  (s: Any) match {
+                    case s: Preempt =>
+                      s.ensure(ensure)
+                      s
+                    case _ =>
+                      p
+                  }
+                ensureLoop(kyo(v, s, l), np)
+              }
+            }
+          case _ =>
+            p.remove(ensure)
+            IOs[Unit, Any](run).map(_ => v)
+        }
+      ensureLoop(v, Preempt.never)
     }
   }
   val IOs: IOs = new IOs

@@ -13,28 +13,38 @@ import fibers._
 object channels {
 
   trait Channel[T] { self =>
+
     def size: Int > IOs
+
     def offer[S](v: T > S): Boolean > (IOs with S)
+
     def poll: Option[T] > IOs
+
     def isEmpty: Boolean > IOs
+
     def isFull: Boolean > IOs
   }
 
   object Channels {
 
     trait Unbounded[T] extends Channel[T] {
+
       def offer[S](v: T > S): Boolean > (IOs with S)
+
       def poll: Option[T] > IOs
+
       def put[S](v: T > S): Unit > (IOs with S)
     }
 
     trait Blocking[T] extends Channel[T] {
 
       def putFiber[S](v: T > S): Fiber[Unit] > (IOs with S)
+
       def takeFiber: Fiber[T] > IOs
 
       def put[S](v: T > S): Unit > (S with IOs with Fibers) =
         putFiber(v).map(_.join)
+
       def take: T > (IOs with Fibers) =
         takeFiber.map(_.join)
     }
@@ -116,6 +126,7 @@ object channels {
             val size    = queue.size
             val isEmpty = queue.isEmpty
             val isFull  = queue.isFull
+
             def offer[S](v: T > S) =
               v.map { v =>
                 IOs[Boolean, S] {
@@ -123,12 +134,14 @@ object channels {
                   finally flush()
                 }
               }
+
             val poll =
               IOs {
                 try u.poll()
                 finally flush()
               }
-            def putFiber[S](v: T > S): Fiber[Unit] > (IOs with S) =
+
+            def putFiber[S](v: T > S) =
               v.map { v =>
                 IOs[Fiber[Unit], S] {
                   try {
@@ -144,7 +157,8 @@ object channels {
                   }
                 }
               }
-            val takeFiber: Fiber[T] > IOs =
+
+            val takeFiber =
               IOs {
                 try {
                   u.poll() match {

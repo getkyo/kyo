@@ -15,6 +15,7 @@ object resources {
   type Resources = Sums[Finalizer]
 
   object Resources {
+
     def ensure[T](f: => T > IOs): Unit > Resources =
       Sums[Finalizer].add(() => IOs.run(f)).unit
 
@@ -28,21 +29,26 @@ object resources {
   }
 
   abstract class Finalizer {
+
     def run(): Unit
   }
 
   private object Finalizer {
     val noop = new Finalizer {
+
       def run(): Unit = ()
     }
     implicit val summer: Summer[Finalizer] =
       new Summer[Finalizer] {
+
         def init = noop
+
         def add(a: Finalizer, b: Finalizer) =
           () => {
             b.run()
             a.run()
           }
+
         override def drop(v: Finalizer): Unit > IOs =
           IOs(v.run())
       }
