@@ -111,8 +111,8 @@ private[kyo] object Translate {
                       cq"$pattern if $cond => ${boundary(body)}" :: loop(tail)
                     else
                       cq"""
-                        $pattern => 
-                          ${boundary(cond)}.map {
+                        $pattern =>
+                          ${c.prefix}.internal.cont(${boundary(cond)}) {
                             case true => 
                               ${boundary(body)}
                             case false => 
