@@ -144,7 +144,7 @@ private[kyo] class IOTask[T](
       }
     } catch {
       case ex if (NonFatal(ex)) =>
-        complete(IOs[T, Any](throw ex))
+        complete(IOs.fail(ex))
         curr = nullIO
     }
   }

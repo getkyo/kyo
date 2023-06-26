@@ -195,7 +195,7 @@ object fibers {
           def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
             m.unsafeTransform(f)
         }
-      IOs(deepHandle[Fiber, Fibers, T, Any](Fibers)(v))
+      IOs(deepHandle[Fiber, Fibers, T](Fibers)(v))
     }
 
     /*inline*/
@@ -354,7 +354,7 @@ object fibers {
                 }
               } catch {
                 case ex if (NonFatal(ex)) =>
-                  p.complete(IOs[Unit, Any](throw ex))
+                  p.complete(IOs.fail(ex))
               }
           foreach(l) { io =>
             val fiber = IOTask(IOs(io), st)
@@ -389,7 +389,7 @@ object fibers {
                 }
               } catch {
                 case ex if (NonFatal(ex)) =>
-                  p.complete(IOs[Seq[T], Any](throw ex))
+                  p.complete(IOs.fail(ex))
               }
             }
             i += 1
@@ -444,7 +444,7 @@ object fibers {
                   case Success(v) =>
                     p.complete(v)
                   case Failure(ex) =>
-                    p.complete(IOs(throw ex))
+                    p.complete(IOs.fail(ex))
                 }
               }
             IOTask(io, st)
