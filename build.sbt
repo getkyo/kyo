@@ -200,7 +200,7 @@ lazy val `kyo-chatgpt` =
         libraryDependencies += "com.formdev"          % "flatlaf"            % "3.1.1",
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-all"       % "0.64.8",
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-java"      % "0.64.8",
-        libraryDependencies += "com.knuddels"         % "jtokkit"            % "0.5.0"
+        libraryDependencies += "com.knuddels"         % "jtokkit"            % "0.5.1"
     )
     .settings(
         `kyo-settings`,
