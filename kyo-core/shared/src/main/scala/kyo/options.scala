@@ -6,14 +6,12 @@ import kyo.aborts._
 
 object options {
 
-  type Options = Aborts[Options.Empty]
+  type Options = Aborts[Option[Nothing]]
 
   object Options {
-    abstract class Empty
-    case object Empty extends Empty
 
-    private val aborts = Aborts[Empty]
-    private val none   = aborts.fail(Empty)
+    private val aborts = Aborts[Option[Nothing]]
+    private val none   = aborts.fail(None)
 
     def empty[T]: T > Options = none
 

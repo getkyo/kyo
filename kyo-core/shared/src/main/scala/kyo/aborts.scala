@@ -27,21 +27,21 @@ object aborts {
     def fail[T, S](e: E > S): T > (Aborts[E] with S) =
       e.map(e => suspend(Left(e)))
 
-    def run[T, S](v: T > (Aborts[E] with S)): Either[E, T] > S =
-      handle[T, S](v)
+    def run[T, S](v: => T > (Aborts[E] with S)): Either[E, T] > S =
+      handle[T, S](catching(v))
 
-    def get[T, S](v: Either[E, T] > S): T > (Aborts[E] with S) =
-      v.map {
+    def get[T, S](v: => Either[E, T] > S): T > (Aborts[E] with S) =
+      catching(v).map {
         case Right(value) => value
         case e            => suspend(e)
       }
 
-    def catching[T, S](f: => T > S)(implicit ev: E => Throwable): T > (Aborts[E] with S) =
-      Tries.run[T, S](f).map {
-        case Failure(ex) if tag.closestClass.isAssignableFrom(ex.getClass) =>
-          get(Left(ex.asInstanceOf[E]))
-        case v: Try[T] =>
-          v.get
+    def catching[T, S](f: => T > S): T > (Aborts[E] with S) =
+      try {
+        f
+      } catch {
+        case ex if (tag.closestClass.isAssignableFrom(ex.getClass)) =>
+          fail(ex.asInstanceOf[E])
       }
 
     override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
@@ -71,9 +71,18 @@ object aborts {
         }
     }
 
-  private implicit def handler[E: Tag]: Handler[Abort[E]#Value, Aborts[E]] =
+  private implicit def handler[E](implicit tag: Tag[E]): Handler[Abort[E]#Value, Aborts[E]] =
     new Handler[Abort[E]#Value, Aborts[E]] {
+
       def pure[U](v: U) = Right(v)
+
+      override def handle[T](ex: Throwable): T > Aborts[E] =
+        if (tag.closestClass.isAssignableFrom(ex.getClass)) {
+          Aborts[E].fail(ex.asInstanceOf[E])
+        } else {
+          throw ex
+        }
+
       def apply[U, V, S2](
           m: Either[E, U],
           f: U => V > (Aborts[E] with S2)

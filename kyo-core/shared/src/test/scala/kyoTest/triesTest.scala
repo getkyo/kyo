@@ -9,6 +9,7 @@ import org.scalatest.Status
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
+import kyo.aborts.Aborts
 
 class triesTest extends KyoTest {
 
@@ -146,9 +147,10 @@ class triesTest extends KyoTest {
       )
     }
     "nested effect + failure" in {
+
       checkEquals[Option[Try[Int]], Nothing](
           Options.run(
-              Tries.run(
+              Tries.run[Int, Options](
                   Tries.get(Try(Option(1))).map(opt =>
                     Options.get(opt: Option[Int] > Tries).map(_ => (throw e): Int)
                   )
