@@ -24,11 +24,17 @@ object aborts {
 
     private implicit def _tag: Tag[E] = tag
 
+    def fail[T, S](e: E > S): T > (Aborts[E] with S) =
+      e.map(e => suspend(Left(e)))
+
     def run[T, S](v: T > (Aborts[E] with S)): Either[E, T] > S =
       handle[T, S](v)
 
     def get[T, S](v: Either[E, T] > S): T > (Aborts[E] with S) =
-      suspend(v)
+      v.map {
+        case Right(value) => value
+        case e            => suspend(e)
+      }
 
     def catching[T, S](f: => T > S)(implicit ev: E => Throwable): T > (Aborts[E] with S) =
       Tries.run[T, S](f).map {

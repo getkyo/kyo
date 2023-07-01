@@ -5,6 +5,7 @@ import kyo._
 import kyo.ios._
 import kyo.options._
 import kyo.tries._
+import kyo.envs._
 
 import java.io.Closeable
 import scala.concurrent.duration._
@@ -32,7 +33,7 @@ class iosTest extends KyoTest {
     "next handled effects can execute" in run {
       var called = false
       val v =
-        Options.get(Option(1)).map { i =>
+        Envs[Int].get.map { i =>
           IOs {
             called = true
             i
@@ -41,9 +42,9 @@ class iosTest extends KyoTest {
       assert(!called)
       val v2 = IOs.lazyRun(v)
       assert(!called)
-      checkEquals[Option[Int], Nothing](
-          Options.run(v2),
-          Option(1)
+      checkEquals[Int, Nothing](
+          Envs[Int].run(1)(v2),
+          1
       )
       assert(called)
     }

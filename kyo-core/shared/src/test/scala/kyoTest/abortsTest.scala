@@ -2,7 +2,7 @@ package kyoTest
 
 import kyo.aborts._
 import kyo._
-import kyo.options._
+import kyo.envs._
 import org.scalatest.Args
 import org.scalatest.Status
 
@@ -176,21 +176,21 @@ class abortsTest extends KyoTest {
         }
       }
       "with other effect" - {
-        def test(v: Int > Options): Int > Options =
+        def test(v: Int > Envs[Int]): Int > Envs[Int] =
           v.map {
             case 0 => throw ex1
             case i => 10 / i
           }
         "success" in {
-          checkEquals[Option[Either[Ex1, Int]], Any](
-              Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Options.get(Option(2)))))),
-              Some(Right(5))
+          checkEquals[Either[Ex1, Int], Any](
+              Envs[Int].run(2)(Aborts[Ex1].run(Aborts[Ex1].catching(test(Envs[Int].get)))),
+              Right(5)
           )
         }
         "failure" in {
-          checkEquals[Option[Either[Ex1, Int]], Any](
-              Options.run(Aborts[Ex1].run(Aborts[Ex1].catching(test(Options.get(Option(0)))))),
-              Some(Left(ex1))
+          checkEquals[Either[Ex1, Int], Any](
+              Envs[Int].run(0)(Aborts[Ex1].run(Aborts[Ex1].catching(test(Envs[Int].get)))),
+              Left(ex1)
           )
         }
       }

@@ -2,21 +2,32 @@ package kyo
 
 import kyo.core._
 import kyo.scopes._
+import kyo.aborts._
 
 object options {
 
-  final class Options private[options] () extends Effect[Option, Options] {
+  type Options = Aborts[Options.Empty]
+
+  object Options {
+    abstract class Empty
+    case object Empty extends Empty
+
+    private val aborts = Aborts[Empty]
+    private val none   = aborts.fail(Empty)
 
     def empty[T]: T > Options = none
 
     def apply[T](v: T): T > Options =
       if (v == null)
-        Options.empty
+        empty
       else
         v
 
     def get[T, S](v: Option[T] > S): T > (Options with S) =
-      suspend(v)
+      v.map {
+        case Some(v) => v
+        case None    => empty
+      }
 
     def getOrElse[T, S1, S2](v: Option[T] > S1, default: => T > S2): T > (S1 with S2) =
       v.map {
@@ -24,22 +35,11 @@ object options {
         case Some(v) => v
       }
 
-    def run[T, S](v: T > (Options with S)): Option[T] > S = {
-      implicit val handler: Handler[Option, Options] =
-        new Handler[Option, Options] {
-          def pure[T](v: T) =
-            Option(v)
-          def apply[T, U, S](
-              m: Option[T],
-              f: T => U > (Options with S)
-          ): U > (Options with S) =
-            m match {
-              case None    => Options.empty
-              case Some(v) => f(v)
-            }
-        }
-      handle[T, S](v)
-    }
+    def run[T, S](v: T > (Options with S)): Option[T] > S =
+      aborts.run[T, S](v).map {
+        case Left(e)  => None
+        case Right(v) => Some(v)
+      }
 
     def orElse[T, S](l: (T > (Options with S))*): T > (Options with S) =
       l.toList match {
@@ -47,21 +47,8 @@ object options {
         case h :: t =>
           run[T, S](h).map {
             case None => orElse[T, S](t: _*)
-            case v    => suspend(v)
+            case v    => get(v)
           }
       }
-
-    private val none = suspend(None)
   }
-  val Options = new Options
-
-  implicit val optionsScope: Scopes[Options] =
-    new Scopes[Options] {
-      def sandbox[S1, S2](f: Scopes.Op[S1, S2]) =
-        new Scopes.Op[Options with S1, Options with (S1 with S2)] {
-          def apply[T](v: T > (Options with S1)) =
-            Options.get(f(Options.run[T, S1](v)))
-        }
-    }
-
 }

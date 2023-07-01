@@ -3,6 +3,7 @@ package kyoTest
 import kyo._
 import kyo.ios._
 import kyo.options._
+import kyo.envs._
 import kyo.resources._
 
 import java.io.Closeable
@@ -47,16 +48,16 @@ class resourcesTest extends KyoTest {
     val r2 = Resource(2)
     val r =
       IOs.lazyRun {
-        Resources.run[Int, Options](Resources.acquire(r1()).map { _ =>
+        Resources.run[Int, Envs[Int]](Resources.acquire(r1()).map { _ =>
           assert(r1.closes == 0)
-          Options.get(Option(1))
+          Envs[Int].get
         })
       }
     assert(r1.closes == 0)
     assert(r2.closes == 0)
     assert(r1.acquires == 1)
     assert(r2.acquires == 0)
-    Options.run(r)
+    Envs[Int].run(1)(r)
     assert(r1.closes == 1)
     assert(r2.closes == 0)
     assert(r1.acquires == 1)
@@ -99,15 +100,15 @@ class resourcesTest extends KyoTest {
   "two acquires + effectful for-comp + close" in run {
     val r1 = Resource(1)
     val r2 = Resource(2)
-    val r: Int > Options =
+    val r: Int > Envs[Int] =
       IOs.lazyRun {
-        Resources.run[Int, Options] {
-          val io: Int > (Resources with Options) =
+        Resources.run[Int, Envs[Int]] {
+          val io: Int > (Resources with Envs[Int]) =
             for {
               r1 <- Resources.acquire(r1())
-              i1 <- Options.get(Option(r1.id * 3))
+              i1 <- Envs[Int].get.map(_ * r1.id)
               r2 <- Resources.acquire(r2())
-              i2 <- Options.get(Option(r2.id * 3))
+              i2 <- Envs[Int].get.map(_ * r2.id)
             } yield i1 + i2
           io
         }
@@ -116,7 +117,7 @@ class resourcesTest extends KyoTest {
     assert(r2.closes == 0)
     assert(r1.acquires == 1)
     assert(r2.acquires == 0)
-    Options.run(r)
+    Envs[Int].run(3)(r)
     assert(r1.closes == 1)
     assert(r2.closes == 1)
     assert(r1.acquires == 1)
