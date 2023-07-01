@@ -8,6 +8,7 @@ import scala.util.Failure
 import scala.util.Success
 
 import kyo._
+import kyo.scopes._
 import core._
 import tries._
 import scala.util.Try
@@ -53,6 +54,16 @@ object aborts {
     def apply[T, E](ex: E)(implicit tag: Tag[E]): T > Aborts[E] =
       Aborts[E].get(Left(ex))
   }
+
+  implicit def scope[E: Tag]: Scope[Aborts[E]] =
+    new Scope[Aborts[E]] {
+      def sandbox[T, U, S1, S2](v: T > (Aborts[E] & S1))(f: T > S1 => U > S2)
+          : U > (Aborts[E] & (S1 & S2)) =
+        Aborts[E].run(v).map {
+          case Left(ex)       => Aborts[E].get(Left(ex))
+          case r: Right[E, T] => f(r.value)
+        }
+    }
 
   private implicit def handler[E: Tag]: Handler[Abort[E]#Value, Aborts[E]] =
     new Handler[Abort[E]#Value, Aborts[E]] {

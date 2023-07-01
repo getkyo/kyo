@@ -13,6 +13,12 @@ object core {
 
   import internal._
 
+  abstract class Handler[M[_], E <: Effect[M, E]] {
+    def pure[T](v: T): M[T]
+    def handle[T](ex: Throwable): T > E = throw ex
+    def apply[T, U, S](m: M[T], f: T => U > (E with S)): U > (E with S)
+  }
+
   abstract class Effect[M[_], E <: Effect[M, E]] {
     self: E =>
 
@@ -93,12 +99,6 @@ object core {
           f(v.asInstanceOf[T])
       }
     transformLoop(v)
-  }
-
-  abstract class Handler[M[_], E <: Effect[M, E]] {
-    def pure[T](v: T): M[T]
-    def handle[T](ex: Throwable): T > E = throw ex
-    def apply[T, U, S](m: M[T], f: T => U > (E with S)): U > (E with S)
   }
 
   trait Safepoint[M[_], E <: Effect[M, _]] {

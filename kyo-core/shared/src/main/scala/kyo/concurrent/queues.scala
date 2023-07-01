@@ -51,7 +51,7 @@ object queues {
     def bounded[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
       IOs {
         capacity match {
-          case 0 =>
+          case c if (c <= 0) =>
             zeroCapacity.asInstanceOf[Queue[T]]
           case 1 =>
             new Queue(

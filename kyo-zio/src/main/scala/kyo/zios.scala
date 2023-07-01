@@ -32,7 +32,7 @@ object zios {
           def apply[T, U](m: Task[T], f: T => Task[U]): Task[U] =
             m.flatMap(f)
         }
-      deepHandle[Task, ZIOs, T, Any](ZIOs)(v)
+      deepHandle[Task, ZIOs, T](ZIOs)(v)
     }
 
     def fromZIO[R: ITag, E: ITag, A, S](v: ZIO[R, E, A] > S)
