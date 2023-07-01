@@ -55,10 +55,8 @@ object envs {
 
   implicit def scope[E: Tag]: Scope[Envs[E]] =
     new Scope[Envs[E]] {
-      def sandbox[T, U, S1, S2](v: T > (Envs[E] & S1))(f: T > S1 => U > S2): U > (Envs[E] & (S1 & S2)) =
-        Envs[E].get.map { e =>
-          f(Envs[E].run(e)(v))
-        }
+      def run[T, S](v: T > (Envs[E] with S)) =
+        Envs[E].get.map(Envs[E].run[T, S](_)(v))
     }
 
 }
