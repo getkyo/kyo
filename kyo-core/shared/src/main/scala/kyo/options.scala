@@ -1,6 +1,7 @@
 package kyo
 
-import core._
+import kyo.core._
+import kyo.scopes._
 
 object options {
 
@@ -53,5 +54,14 @@ object options {
     private val none = suspend(None)
   }
   val Options = new Options
+
+  implicit val optionsScope: Scopes[Options] =
+    new Scopes[Options] {
+      def sandbox[S1, S2](f: Scopes.Op[S1, S2]) =
+        new Scopes.Op[Options with S1, Options with (S1 with S2)] {
+          def apply[T](v: T > (Options with S1)) =
+            Options.get(f(Options.run[T, S1](v)))
+        }
+    }
 
 }

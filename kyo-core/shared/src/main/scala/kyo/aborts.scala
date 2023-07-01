@@ -48,7 +48,7 @@ object aborts {
   }
 
   object Aborts {
-    
+
     def apply[E](implicit tag: Tag[E]): Aborts[E] =
       new Aborts(tag)
 
@@ -56,16 +56,13 @@ object aborts {
       Aborts[E].get(Left(ex))
   }
 
-  implicit def scope[E: Tag]: Scope[Aborts[E]] =
-    new Scope[Aborts[E]] {
-      def run[T, S](v: T > (Aborts[E] with S)) = {
-        Aborts[E].run[T, S](v).map {
-          case Left(ex) =>
-            Aborts[E].get(Left(ex))
-          case Right(value) =>
-            value: T > S
+  implicit def abortsScope[E: Tag]: Scopes[Aborts[E]] =
+    new Scopes[Aborts[E]] {
+      def sandbox[S1, S2](f: Scopes.Op[S1, S2]) =
+        new Scopes.Op[Aborts[E] with S1, Aborts[E] with S1 with S2] {
+          def apply[T](v: T > Aborts[E] with S1) =
+            Aborts[E].get(f(Aborts[E].run[T, S1](v)))
         }
-      }
     }
 
   private implicit def handler[E: Tag]: Handler[Abort[E]#Value, Aborts[E]] =

@@ -3,7 +3,8 @@ package kyo
 import scala.util._
 import scala.util.control._
 
-import core._
+import kyo.core._
+import kyo.scopes._
 
 object tries {
 
@@ -53,4 +54,13 @@ object tries {
       }
   }
   val Tries = new Tries
+
+  implicit val triesScope: Scopes[Tries] =
+    new Scopes[Tries] {
+      def sandbox[S1, S2](f: Scopes.Op[S1, S2]) =
+        new Scopes.Op[Tries with S1, Tries with (S1 with S2)] {
+          def apply[T](v: T > (Tries with S1)) =
+            Tries.get(f(Tries.run[T, S1](v)))
+        }
+    }
 }
