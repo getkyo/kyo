@@ -50,9 +50,9 @@ class ChainedForkBench extends Bench.ForkOnly[Int] {
     import kyo.concurrent.fibers._
     import kyo.ios._
 
-    def iterate(p: Promise[Unit], n: Int): Unit > IOs =
+    def iterate(p: Promise[Unit], n: Int): Any > IOs =
       if (n <= 0) p.complete(()).unit
-      else Fibers.forkFiber(iterate(p, n - 1)).unit
+      else IOs.unit.flatMap(_ => Fibers.forkFiber(iterate(p, n - 1)))
 
     for {
       p <- Fibers.promise[Unit]
