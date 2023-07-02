@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo._
-import kyo.ios._
 import kyo.sums._
 
 import scala.util.Success
@@ -19,7 +18,7 @@ class sumsTest extends kyoTest.KyoTest {
         v3 <- Sums[Int].get
       } yield List(v1, v2, v3)
 
-    assert(IOs.run(Sums[Int].run(v)) == List(1, 2, 3))
+    assert(Sums[Int].run(v) == List(1, 2, 3))
   }
   "string" in {
     val v: List[String] > Sums[String] =
@@ -31,7 +30,7 @@ class sumsTest extends kyoTest.KyoTest {
         _  <- Sums[String].add("3")
         v3 <- Sums[String].get
       } yield List(v1, v2, v3)
-    val res = IOs.run(Sums[String].run(v))
+    val res = Sums[String].run(v)
     assert(res == List("1", "12", "123"))
   }
   "int and string" in {
@@ -47,16 +46,16 @@ class sumsTest extends kyoTest.KyoTest {
         v2 <- Sums[String].get
       } yield (v1, v2)
     val res: (Int, String) =
-      IOs.run(Sums[String].run(Sums[Int].run(v)))
+      Sums[String].run(Sums[Int].run[(Int, String), Sums[String]](v)).pure
     assert(res == (3, "123"))
   }
   "initial value" in {
     val r: Int =
-      IOs.run(Sums[Int].run(Sums[Int].get))
+      Sums[Int].run(Sums[Int].get).pure
     assert(r == 0)
 
     val s: String =
-      IOs.run(Sums[String].run(Sums[String].get))
+      Sums[String].run(Sums[String].get).pure
     assert(s == "")
   }
   "list" in {
@@ -69,7 +68,7 @@ class sumsTest extends kyoTest.KyoTest {
         _  <- Sums[List[Int]].add(List(3))
         v3 <- Sums[List[Int]].get
       } yield (v1, v2, v3)
-    val res = IOs.run(Sums[List[Int]].run(v))
+    val res = Sums[List[Int]].run(v)
     assert(res == (List(1), List(1, 2), List(1, 2, 3)))
   }
 }

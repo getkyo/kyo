@@ -4,53 +4,59 @@ import java.io.Closeable
 import scala.util.Try
 import scala.util.control.NonFatal
 
-import ios._
-import envs._
-import sums._
+import kyo.ios._
+import kyo.envs._
+import kyo.sums._
+import kyo.scopes._
+import java.util.concurrent.CopyOnWriteArrayList
+import org.jctools.queues.MpscUnboundedArrayQueue
+import izumi.reflect.Tag
 
 object resources {
 
-  type Resource[T] = Sum[Finalizer]#Value[T]
+  class Finalizer private[resources] () {
+    private val closes = new MpscUnboundedArrayQueue[Unit > IOs](3)
+    private[resources] def add(close: Unit > IOs): Unit > IOs =
+      IOs {
+        closes.add(close)
+        ()
+      }
+    private[resources] val run =
+      IOs {
+        var close = closes.poll()
+        while (close != null) {
+          IOs.run(close)
+          close = closes.poll()
+        }
+      }
+  }
 
-  type Resources = Sums[Finalizer]
+  type Resources = Envs[Finalizer] with IOs
 
   object Resources {
 
-    def ensure[T](f: => T > IOs): Unit > Resources =
-      Sums[Finalizer].add(() => IOs.run(f)).unit
+    private val envs = Envs[Finalizer]
+
+    def ensure[T](f: => Unit > IOs): Unit > Resources =
+      envs.get.map(_.add(f))
 
     def acquire[T <: Closeable](resource: => T): T > Resources = {
       lazy val v = resource
-      Sums[Finalizer].add(() => v.close()).map(_ => v)
+      ensure(IOs(v.close())).andThen(v)
     }
 
-    def run[T, S](v: T > (Resources with S)): T > (IOs with S) =
-      Sums[Finalizer].run[T, S](v)
-  }
-
-  abstract class Finalizer {
-
-    def run(): Unit
-  }
-
-  private object Finalizer {
-    val noop = new Finalizer {
-
-      def run(): Unit = ()
+    def run[T, S](v: T > (Resources with S)): T > (IOs with S) = {
+      val finalizer = new Finalizer()
+      envs.run[T, IOs with S](finalizer)(IOs.ensure(finalizer.run)(v))
     }
-    implicit val summer: Summer[Finalizer] =
-      new Summer[Finalizer] {
-
-        def init = noop
-
-        def add(a: Finalizer, b: Finalizer) =
-          () => {
-            b.run()
-            a.run()
-          }
-
-        override def drop(v: Finalizer): Unit > IOs =
-          IOs(v.run())
-      }
   }
+
+  implicit def resourcesScope[E: Tag]: Scopes[Envs[E]] =
+    new Scopes[Envs[E]] {
+      def sandbox[S1, S2](f: Scopes.Op[S1, S2]) =
+        new Scopes.Op[Envs[E] with S1, Envs[E] with (S1 with S2)] {
+          def apply[T](v: T > (Envs[E] with S1)) =
+            Envs[E].get.map(Envs[E].run[T, S1](_)(v))
+        }
+    }
 }

@@ -6,9 +6,7 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 
-import core._
-import tries._
-import ios._
+import kyo.core._
 
 object sums {
 
@@ -35,7 +33,7 @@ object sums {
     def run[T, S](v: T > (Sums[V] with S))(implicit
         g: Summer[V],
         tag: Tag[V]
-    ): T > (IOs with S) = {
+    ): T > S = {
       var curr = g.init
       implicit def handler: Handler[Sum[V]#Value, Sums[V]] =
         new Handler[Sum[V]#Value, Sums[V]] {
@@ -57,16 +55,14 @@ object sums {
                 f(m.asInstanceOf[T])
             }
         }
-      IOs.ensure(g.drop(curr)) {
-        handle[T, S](v).map {
-          case AddValue(v) =>
-            curr = g.add(curr, v.asInstanceOf[V])
-            curr.asInstanceOf[T]
-          case Get =>
-            curr.asInstanceOf[T]
-          case m =>
-            m.asInstanceOf[T]
-        }
+      handle[T, S](v).map {
+        case AddValue(v) =>
+          curr = g.add(curr, v.asInstanceOf[V])
+          curr.asInstanceOf[T]
+        case Get =>
+          curr.asInstanceOf[T]
+        case m =>
+          m.asInstanceOf[T]
       }
     }
 
@@ -87,7 +83,6 @@ object sums {
   trait Summer[V] {
     def init: V
     def add(v1: V, v2: V): V
-    def drop(v: V): Unit > IOs = IOs.unit
   }
   object Summer {
     def apply[V](_init: V, _add: (V, V) => V): Summer[V] =
