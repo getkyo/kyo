@@ -11,6 +11,8 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 import IOPromise._
+import java.util.concurrent.locks.LockSupport
+import java.util.concurrent.locks.Lock
 
 private[kyo] class IOPromise[T](state: State[T])
     extends AtomicReference(state) {
@@ -136,22 +138,22 @@ private[kyo] class IOPromise[T](state: State[T])
     def loop(promise: IOPromise[T]): T =
       promise.get() match {
         case _: Pending[T] @unchecked =>
-          val b = new AbstractQueuedSynchronizer with (T > IOs => Unit) with (() => T > IOs) {
-            private[this] var result: T > IOs = null.asInstanceOf[T]
-            override def tryAcquireShared(ignored: Int): Int =
-              if (getState != 0) 1 else -1
-            override def tryReleaseShared(ignore: Int): Boolean = {
-              setState(1)
-              true
-            }
+          val b = new (T > IOs => Unit) with (() => T > IOs) {
+            @volatile
+            private var result: T > IOs = null.asInstanceOf[T > IOs]
+            private val waiter          = Thread.currentThread()
             def apply(v: T > IOs) = {
               result = v
-              releaseShared(1)
+              LockSupport.unpark(waiter)
             }
-            def apply() = result
+            def apply() = {
+              while (result == null) {
+                LockSupport.park()
+              }
+              result
+            }
           }
           onComplete(b)
-          b.acquireSharedInterruptibly(1)
           IOs.run(b())
         case l: Linked[T] @unchecked =>
           loop(l.p)
