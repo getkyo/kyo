@@ -12,7 +12,7 @@ import fibers._
 
 object channels {
 
-  trait Channel[T] { self =>
+  abstract class Channel[T] { self =>
 
     def size: Int > IOs
 
@@ -27,7 +27,7 @@ object channels {
 
   object Channels {
 
-    trait Unbounded[T] extends Channel[T] {
+    abstract class Unbounded[T] extends Channel[T] {
 
       def offer[S](v: T > S): Boolean > (IOs with S)
 
@@ -36,7 +36,7 @@ object channels {
       def put[S](v: T > S): Unit > (IOs with S)
     }
 
-    trait Blocking[T] extends Channel[T] {
+    abstract class Blocking[T] extends Channel[T] {
 
       def putFiber[S](v: T > S): Fiber[Unit] > (IOs with S)
 

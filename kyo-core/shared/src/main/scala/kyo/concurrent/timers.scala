@@ -14,7 +14,7 @@ import scala.concurrent.duration.Duration
 
 object timers {
 
-  trait Timer {
+  abstract class Timer {
 
     def shutdown: Unit > IOs
 
@@ -96,7 +96,7 @@ object timers {
       }
   }
 
-  trait TimerTask {
+  abstract class TimerTask {
     def cancel: Boolean > IOs
     def isCancelled: Boolean > IOs
     def isDone: Boolean > IOs

@@ -6,7 +6,7 @@ import ios._
 
 object locals {
 
-  trait Local[T] {
+  abstract class Local[T] {
 
     import Locals._
 

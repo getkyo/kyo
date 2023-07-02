@@ -1,6 +1,6 @@
 package kyo.concurrent
 
-sealed trait Access
+sealed abstract class Access
 
 object Access {
   case object Mpmc extends Access

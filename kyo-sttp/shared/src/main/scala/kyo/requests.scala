@@ -20,7 +20,7 @@ object requests {
 
   type BasicRequest = RequestT[Empty, Either[String, String], Any]
 
-  trait Backend {
+  abstract class Backend {
     def send[T](r: Request[T, Any]): Fiber[Response[T]] > IOs
   }
 

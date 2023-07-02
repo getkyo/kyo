@@ -19,7 +19,7 @@ import aborts._
 import concurrent.fibers._
 import concurrent.timers._
 
-trait KyoZioApp {
+abstract class KyoZioApp {
 
   final def main(args: Array[String]): Unit =
     KyoZioApp.run(Duration.Inf)(run(args.toList))

@@ -1,7 +1,7 @@
 package kyo.concurrent.scheduler
 
 private object Flag {
-  trait Reader[T] {
+  abstract class Reader[T] {
     def apply(s: String): T
   }
   object Reader {

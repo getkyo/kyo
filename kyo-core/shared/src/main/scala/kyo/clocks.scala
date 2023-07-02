@@ -10,7 +10,7 @@ import java.time.{Clock => JClock}
 
 object clocks {
 
-  trait Clock {
+  abstract class Clock {
     def now: Instant > IOs
   }
 

@@ -10,7 +10,7 @@ import atomics._
 
 object latches {
 
-  trait Latch {
+  abstract class Latch {
 
     def await: Unit > Fibers
 

@@ -96,8 +96,8 @@ class fibersTest extends KyoTest {
     Tries.run(Fibers.runBlocking(
         Fibers.timeout(10.millis)(Timers.run(Fibers.sleep(1.day).andThen(1)))
     )).map {
-      case Failure(_: Fibers.Interrupted) => succeed
-      case v                              => fail(v.toString())
+      case Failure(Fibers.Interrupted) => succeed
+      case v                           => fail(v.toString())
     }
   }
 

@@ -28,12 +28,7 @@ object resources {
       suspend(GetFinalizer.asInstanceOf[Resource[Finalizer]])
 
     def ensure(v: => Unit > IOs): Unit > (IOs with Resources) =
-      finalizer.map { f =>
-        IOs {
-          f.closes.add(IOs(v))
-          ()
-        }
-      }
+      finalizer.map(_.add(IOs(v)))
 
     def acquire[T <: Closeable](resource: => T): T > (IOs with Resources) = {
       lazy val v = resource
@@ -68,36 +63,42 @@ object resources {
   }
   val Resources = new Resources
 
-  implicit val resourcesScope: Scopes[Resources with IOs] =
-    new Scopes[Resources with IOs] {
-      def sandbox[S1, S2](f: Scopes.Op[S1, S2]) =
-        new Scopes.Op[Resources with IOs with S1, Resources with IOs with (S1 with S2)] {
-          def apply[T](v: T > (Resources with IOs with S1)) =
-            Resources.finalizer.map { f =>
-              IOs {
-                var p = f.parties.get()
-                while (p > 0 && !f.parties.compareAndSet(p, p + 1)) {
-                  p = f.parties.get()
-                }
-                if (p > 0) {
-                  f
-                } else {
-                  new Finalizer
-                }
-              }.map(Resources.run[T, IOs with S1](v, _))
-            }
-        }
-    }
+  // implicit val resourcesScope: Scopes[Resources with IOs] =
+  //   new Scopes[Resources with IOs] {
+  //     def sandbox[S1, S2](f: Scopes.Op[S1, S2]) =
+  //       new Scopes.Op[Resources with IOs with S1, Resources with IOs with (S1 with S2)] {
+  //         def apply[T](v: T > (Resources with IOs with S1)) =
+  //           Resources.finalizer.map(_.child.map(c => f(Resources.run[T, IOs with S1](v, c))))
+  //       }
+  //   }
 
-  private class Finalizer {
-    val closes  = new MpmcUnboundedXaddArrayQueue[Unit > IOs](3)
-    val parties = new AtomicInteger(1)
-    def run =
-      if (parties.decrementAndGet() == 0) {
-        var close = closes.poll()
-        while (close != null) {
-          IOs.run(close)
-          close = closes.poll()
+  private class Finalizer extends AtomicInteger(1) {
+    private val closes = new MpmcUnboundedXaddArrayQueue[Unit > IOs](3)
+    def add(close: Unit > IOs): Unit > IOs =
+      IOs {
+        closes.add(close)
+        ()
+      }
+    def child: Finalizer > IOs =
+      IOs {
+        var p = get()
+        while (p > 0 && !compareAndSet(p, p + 1)) {
+          p = get()
+        }
+        if (p > 0) {
+          this
+        } else {
+          new Finalizer
+        }
+      }
+    val run: Unit > IOs =
+      IOs {
+        if (decrementAndGet() == 0) {
+          var close = closes.poll()
+          while (close != null) {
+            IOs.run(close)
+            close = closes.poll()
+          }
         }
       }
   }

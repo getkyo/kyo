@@ -80,7 +80,7 @@ object sums {
       new Sums[V]
   }
 
-  trait Summer[V] {
+  abstract class Summer[V] {
     def init: V
     def add(v1: V, v2: V): V
   }

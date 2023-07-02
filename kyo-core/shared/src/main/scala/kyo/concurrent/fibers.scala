@@ -183,9 +183,11 @@ object fibers {
 
   final class Fibers private[fibers] extends Effect[Fiber, Fibers] {
 
-    case class Interrupted()
+    case object Interrupted
         extends RuntimeException
         with NoStackTrace
+
+    private[kyo] val interrupted = IOs.fail(Interrupted)
 
     /*inline*/
     def run[T](v: T > Fibers): Fiber[T] > IOs = {

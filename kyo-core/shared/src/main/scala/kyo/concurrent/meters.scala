@@ -14,7 +14,7 @@ import kyo.lists.Lists
 
 object meters {
 
-  trait Meter { self =>
+  abstract class Meter { self =>
 
     def available: Int > IOs
 

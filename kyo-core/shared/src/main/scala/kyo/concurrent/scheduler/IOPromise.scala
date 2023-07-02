@@ -42,7 +42,7 @@ private[kyo] class IOPromise[T](state: State[T])
     @tailrec def loop(promise: IOPromise[T]): Boolean =
       promise.get() match {
         case p: Pending[T] @unchecked =>
-          promise.complete(p, IOs.fail(Fibers.Interrupted())) || loop(promise)
+          promise.complete(p, Fibers.interrupted) || loop(promise)
         case l: Linked[T] @unchecked =>
           loop(l.p)
         case _ =>
@@ -175,7 +175,8 @@ private[kyo] object IOPromise {
 
     def run(v: T > IOs): Pending[T]
 
-    def add(f: T > IOs => Unit): Pending[T] =
+    /*inline*/
+    def add( /*inline*/ f: T > IOs => Unit): Pending[T] =
       new Pending[T] {
         def run(v: T > IOs) = {
           try f(v)

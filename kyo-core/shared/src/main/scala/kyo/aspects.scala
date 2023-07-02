@@ -30,7 +30,7 @@ object aspects {
       new Aspect[T, U, S](default)
   }
 
-  trait Cut[T, U, S] {
+  abstract class Cut[T, U, S] {
     def apply[S2](v: T > S2)(f: T => U > (Aspects with S)): U > (Aspects with S with S2)
 
     def andThen(other: Cut[T, U, S]): Cut[T, U, S] =

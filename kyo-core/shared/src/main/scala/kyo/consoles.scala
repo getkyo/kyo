@@ -7,7 +7,7 @@ import envs._
 
 object consoles {
 
-  trait Console {
+  abstract class Console {
 
     def readln: String > IOs
 
