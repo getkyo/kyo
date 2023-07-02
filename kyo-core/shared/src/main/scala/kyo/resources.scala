@@ -4,6 +4,7 @@ import java.io.Closeable
 import scala.util.Try
 import scala.util.control.NonFatal
 
+import kyo.core._
 import kyo.ios._
 import kyo.envs._
 import kyo.sums._
@@ -11,18 +12,80 @@ import kyo.scopes._
 import java.util.concurrent.CopyOnWriteArrayList
 import org.jctools.queues.MpscUnboundedArrayQueue
 import izumi.reflect.Tag
+import java.util.concurrent.atomic.AtomicInteger
+import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 
 object resources {
 
-  class Finalizer private[resources] () {
-    private val closes = new MpscUnboundedArrayQueue[Unit > IOs](3)
-    private[resources] def add(close: Unit > IOs): Unit > IOs =
-      IOs {
-        closes.add(close)
-        ()
+  private case object GetFinalizer
+
+  type Resource[T] >: T // = T | GetFinalizer
+
+  final class Resources private[resources] ()
+      extends Effect[Resource, Resources] {
+
+    private[resources] val finalizer: Finalizer > Resources =
+      suspend(GetFinalizer.asInstanceOf[Resource[Finalizer]])
+
+    def ensure(v: => Unit > IOs): Unit > (IOs with Resources) =
+      finalizer.map { f =>
+        IOs {
+          f.closes.add(IOs(v))
+          ()
+        }
       }
-    private[resources] val run =
-      IOs {
+
+    def acquire[T <: Closeable](resource: => T): T > (IOs with Resources) = {
+      lazy val v = resource
+      ensure(v.close()).andThen(v)
+    }
+
+    def run[T, S](v: T > (Resources with S)): T > (IOs with S) =
+      run[T, S](v, new Finalizer)
+
+    private[resources] def run[T, S](
+        v: T > (Resources with S),
+        finalizer: Finalizer
+    ): T > (IOs with S) = {
+      implicit val handler: Handler[Resource, Resources] =
+        new Handler[Resource, Resources] {
+          def pure[U](v: U) = v
+          def apply[U, V, S2](
+              m: Resource[U],
+              f: U => V > (Resources with S2)
+          ): V > (S2 with Resources) =
+            m match {
+              case GetFinalizer =>
+                f(finalizer.asInstanceOf[U])
+              case _ =>
+                f(m.asInstanceOf[U])
+            }
+        }
+      IOs.ensure(finalizer.run) {
+        IOs(finalizer.parties.incrementAndGet()).map { _ =>
+          handle[T, Resources with S](v).asInstanceOf[T > S]
+        }
+      }
+    }
+  }
+  val Resources = new Resources
+
+  implicit val resourcesScope: Scopes[Resources with IOs] =
+    new Scopes[Resources with IOs] {
+      def sandbox[S1, S2](f: Scopes.Op[S1, S2]) =
+        new Scopes.Op[Resources with IOs with S1, Resources with IOs with (S1 with S2)] {
+          def apply[T](v: T > (Resources with IOs with S1)) =
+            Resources.finalizer.map { f =>
+              Resources.run[T, IOs with S1](v, f)
+            }
+        }
+    }
+
+  private class Finalizer {
+    val closes  = new MpmcUnboundedXaddArrayQueue[Unit > IOs](3)
+    val parties = new AtomicInteger(1)
+    def run =
+      if (parties.decrementAndGet() == 0) {
         var close = closes.poll()
         while (close != null) {
           IOs.run(close)
@@ -30,33 +93,4 @@ object resources {
         }
       }
   }
-
-  type Resources = Envs[Finalizer] with IOs
-
-  object Resources {
-
-    private val envs = Envs[Finalizer]
-
-    def ensure[T](f: => Unit > IOs): Unit > Resources =
-      envs.get.map(_.add(f))
-
-    def acquire[T <: Closeable](resource: => T): T > Resources = {
-      lazy val v = resource
-      ensure(IOs(v.close())).andThen(v)
-    }
-
-    def run[T, S](v: T > (Resources with S)): T > (IOs with S) = {
-      val finalizer = new Finalizer()
-      envs.run[T, IOs with S](finalizer)(IOs.ensure(finalizer.run)(v))
-    }
-  }
-
-  implicit def resourcesScope[E: Tag]: Scopes[Envs[E]] =
-    new Scopes[Envs[E]] {
-      def sandbox[S1, S2](f: Scopes.Op[S1, S2]) =
-        new Scopes.Op[Envs[E] with S1, Envs[E] with (S1 with S2)] {
-          def apply[T](v: T > (Envs[E] with S1)) =
-            Envs[E].get.map(Envs[E].run[T, S1](_)(v))
-        }
-    }
 }
