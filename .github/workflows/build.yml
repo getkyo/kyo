@@ -5,8 +5,8 @@ jobs:
     runs-on: build
     timeout-minutes: 15
     env:
-      JAVA_OPTS: -Xms20G -Xmx20G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8 -Xlog:gc:/tmp/output.log -XX:+PrintGCDetails
-      JVM_OPTS: -Xms20G -Xmx20G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8 -Xlog:gc:/tmp/output.log -XX:+PrintGCDetails
+      JAVA_OPTS: -Xms20G -Xmx20G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      JVM_OPTS: -Xms20G -Xmx20G -Xss10M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
     steps:
     - uses: actions/checkout@v3.0.2
       with:
@@ -15,47 +15,4 @@ jobs:
       with:
           java-version: openjdk@1.17.0
     - name: build
-      run: |
-        # Create a named pipe for process output
-        mkfifo /tmp/output.log
-
-        # Start sbt command and redirect its output to named pipe and background it
-        echo "Starting sbt process..."
-        sbt "+test" > /tmp/output.log 2>&1 &
-        pid=$!
-
-        # Start the watchdog loop
-        echo "Starting watchdog..."
-        while true; do
-          # Check if the process is still running
-          kill -0 $pid 2>/dev/null
-          if [ $? -ne 0 ]; then
-            # Process is not running, break the loop
-            echo "Process has finished."
-            wait $pid
-            exit_code=$?
-            break
-          fi
-
-          # Check for new output with a timeout
-          read -t 60 line < /tmp/output.log || true  # prevent script failure on read timeout
-
-          if [ -z "$line" ]; then
-            echo "No output received, checking if process is running..."
-            # Read timed out, check if the process is still running
-            kill -0 $pid 2>/dev/null
-            if [ $? -eq 0 ]; then
-              # Process is still running and no new output, send kill -3, wait for 5 seconds, then send kill -9
-              echo "Process is running but no output, sending kill signals..."
-              kill -3 $pid
-              sleep 5
-              kill -9 $pid
-              exit 1
-            fi
-          else
-            echo "$line"
-          fi
-        done
-        # If there are any remaining lines in the output after the process has finished, print them
-        cat /tmp/output.log
-        exit $exit_code
+      run: sbt "+test"
