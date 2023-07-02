@@ -47,7 +47,7 @@ object resources {
         v: T > (Resources with S),
         finalizer: Finalizer
     ): T > (IOs with S) = {
-      implicit val handler: Handler[Resource, Resources] =
+      implicit def handler: Handler[Resource, Resources] =
         new Handler[Resource, Resources] {
           def pure[U](v: U) = v
           def apply[U, V, S2](
@@ -62,9 +62,7 @@ object resources {
             }
         }
       IOs.ensure(finalizer.run) {
-        IOs(finalizer.parties.incrementAndGet()).map { _ =>
-          handle[T, Resources with S](v).asInstanceOf[T > S]
-        }
+        handle[T, Resources with S](v).asInstanceOf[T > S]
       }
     }
   }
@@ -76,7 +74,17 @@ object resources {
         new Scopes.Op[Resources with IOs with S1, Resources with IOs with (S1 with S2)] {
           def apply[T](v: T > (Resources with IOs with S1)) =
             Resources.finalizer.map { f =>
-              Resources.run[T, IOs with S1](v, f)
+              IOs {
+                var p = f.parties.get()
+                while (p > 0 && !f.parties.compareAndSet(p, p + 1)) {
+                  p = f.parties.get()
+                }
+                if (p > 0) {
+                  f
+                } else {
+                  new Finalizer
+                }
+              }.map(Resources.run[T, IOs with S1](v, _))
             }
         }
     }

@@ -49,9 +49,10 @@ private object Coordinator {
       val endNs = System.nanoTime()
       delayNs.observe(endNs - startNs - 1000000)
       startNs = endNs
-      if ((ticks & cycleMask) == 0)
+      if ((ticks & cycleMask) == 0) {
         cycles += 1
         exec.execute(adapt)
+      }
     } catch {
       case ex if NonFatal(ex) =>
         ex.printStackTrace()
@@ -59,9 +60,10 @@ private object Coordinator {
 
   private val adapt: Runnable =
     () => {
-      // if (cycles % 7 == 0)
+      // if (cycles % 7 == 0) {
       //   println(this)
       //   println(Scheduler)
+      // }
       Scheduler.cycle()
       val j = jitter()
       val l = Scheduler.loadAvg()
