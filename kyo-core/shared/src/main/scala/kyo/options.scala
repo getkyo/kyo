@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.core._
-import kyo.scopes._
 import kyo.aborts._
 
 object options {
