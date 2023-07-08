@@ -59,10 +59,7 @@ object core {
               ))
             }
           case kyo: Kyo[MX, EX, Any, T, S with E] @unchecked =>
-            val e = kyo.effect
-            new Kyo[MX, EX, Any, M[T], S] {
-              def value  = kyo.value
-              def effect = e
+            new KyoCont[MX, EX, Any, M[T], S](kyo) {
               def apply(v: Any, s2: Safepoint[MX, EX], l: Locals.State): M[T] > S =
                 handleLoop {
                   try kyo(v, s2, l)
