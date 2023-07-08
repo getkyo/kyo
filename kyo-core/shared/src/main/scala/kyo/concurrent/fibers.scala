@@ -17,6 +17,7 @@ import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.Future
+import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.Duration
 import scala.util._
 import scala.util.control.NoStackTrace
@@ -435,7 +436,6 @@ object fibers {
       Fibers.get(joinFiber(f))
 
     def joinFiber[T](f: Future[T]): Fiber[T] > IOs = {
-      import scala.concurrent.ExecutionContext.Implicits.global
       Locals.save.map { st =>
         IOs {
           val p = new IOPromise[T]()
@@ -450,7 +450,7 @@ object fibers {
                 }
               }
             IOTask(io, st)
-          }
+          }(ExecutionContext.parasitic)
           Fiber.promise(p)
         }
       }

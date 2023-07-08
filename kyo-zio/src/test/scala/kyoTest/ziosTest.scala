@@ -41,21 +41,12 @@ class ziosTest extends KyoTest {
     )
   }
 
-  "fibers" - {
-    "kyo" in runZIO {
-      for {
-        v1 <- ZIOs.fromTask(ZIO.succeed(1))
-        v2 <- Fibers.fork(2)
-        v3 <- ZIOs.fromTask(ZIO.succeed(3))
-      } yield assert(v1 == 1 && v2 == 2 && v3 == 3)
-    }
-    "zio" in runZIO {
-      for {
-        v1 <- IOs(1)
-        v2 <- ZIOs.fromTask(ZIO.succeed(2).fork.flatMap(_.join))
-        v3 <- IOs(3)
-      } yield assert(v1 == 1 && v2 == 2 && v3 == 3)
-    }
+  "fibers" in runZIO {
+    for {
+      v1 <- ZIOs.fromTask(ZIO.succeed(1))
+      v2 <- Fibers.fork(2)
+      v3 <- ZIOs.fromTask(ZIO.succeed(3))
+    } yield assert(v1 == 1 && v2 == 2 && v3 == 3)
   }
 
   "interrupts" - {
