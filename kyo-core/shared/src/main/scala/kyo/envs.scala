@@ -5,7 +5,6 @@ import izumi.reflect._
 import scala.reflect.ClassTag
 
 import kyo.core._
-import kyo.scopes._
 
 object envs {
 
@@ -52,14 +51,4 @@ object envs {
     def apply[E](implicit tag: Tag[E]): Envs[E] =
       new Envs[E]
   }
-
-  implicit def envsScope[E: Tag]: Scopes[Envs[E]] =
-    new Scopes[Envs[E]] {
-      def sandbox[S1, S2](f: Scopes.Op[S1, S2]) =
-        new Scopes.Op[Envs[E] with S1, Envs[E] with (S1 with S2)] {
-          def apply[T](v: T > (Envs[E] with S1)) =
-            Envs[E].get.map(Envs[E].run[T, S1](_)(v))
-        }
-    }
-
 }
