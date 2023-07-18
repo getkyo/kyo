@@ -37,8 +37,10 @@ object requests {
 
   object Requests {
 
+    private val envs = Envs[Backend]
+
     def run[T, S](b: Backend)(v: T > (Requests with S)): T > (Fibers with IOs with S) =
-      Envs[Backend].run[T, Fibers with IOs with S](b)(v)
+      envs.run[T, Fibers with IOs with S](b)(v)
 
     def run[T, S](v: T > (Requests with S))(implicit b: Backend): T > (Fibers with IOs with S) =
       run[T, S](b)(v)
@@ -47,7 +49,7 @@ object requests {
       fiber(req).map(_.get)
 
     def fiber[T, S](req: Request[T, Any] > S): Fiber[Response[T]] > (Requests with S) =
-      Envs[Backend].get.map(b => req.map(b.send))
+      envs.get.map(b => req.map(b.send))
 
     def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (Requests with S) =
       fiber(f).map(_.get)

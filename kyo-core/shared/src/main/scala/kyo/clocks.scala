@@ -24,13 +24,15 @@ object clocks {
 
   object Clocks {
 
+    private val envs = Envs[Clock]
+
     def run[T, S](c: Clock)(f: => T > (Clocks with S)): T > (IOs with S) =
-      Envs[Clock].run[T, IOs with S](c)(f)
+      envs.run[T, IOs with S](c)(f)
 
     def run[T, S](f: => T > (Clocks with S))(implicit c: Clock): T > (IOs with S) =
-      Envs[Clock].run[T, IOs with S](c)(f)
+      envs.run[T, IOs with S](c)(f)
 
     def now: Instant > Clocks =
-      Envs[Clock].get.map(_.now)
+      envs.get.map(_.now)
   }
 }

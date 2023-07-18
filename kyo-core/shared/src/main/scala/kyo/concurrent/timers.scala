@@ -114,17 +114,19 @@ object timers {
 
   object Timers {
 
+    private val envs = Envs[Timer]
+
     def run[T, S](t: Timer > S)(f: => T > (Timers with S)): T > (IOs with S) =
-      t.map(t => Envs[Timer].run[T, IOs with S](t)(f))
+      t.map(t => envs.run[T, IOs with S](t)(f))
 
     def run[T, S](f: => T > (Timers with S))(implicit t: Timer): T > (IOs with S) =
       run[T, IOs with S](t)(f)
 
     def shutdown: Unit > Timers =
-      Envs[Timer].get.map(_.shutdown)
+      envs.get.map(_.shutdown)
 
     def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > Timers =
-      Envs[Timer].get.map(_.schedule(delay)(f))
+      envs.get.map(_.schedule(delay)(f))
 
     def scheduleAtFixedRate(
         period: Duration
@@ -135,7 +137,7 @@ object timers {
         initialDelay: Duration,
         period: Duration
     )(f: => Unit > IOs): TimerTask > Timers =
-      Envs[Timer].get.map(_.scheduleAtFixedRate(initialDelay, period)(f))
+      envs.get.map(_.scheduleAtFixedRate(initialDelay, period)(f))
 
     def scheduleWithFixedDelay(
         period: Duration
@@ -146,6 +148,6 @@ object timers {
         initialDelay: Duration,
         period: Duration
     )(f: => Unit > IOs): TimerTask > Timers =
-      Envs[Timer].get.map(_.scheduleWithFixedDelay(initialDelay, period)(f))
+      envs.get.map(_.scheduleWithFixedDelay(initialDelay, period)(f))
   }
 }

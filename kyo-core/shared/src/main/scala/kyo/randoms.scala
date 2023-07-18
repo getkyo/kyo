@@ -36,32 +36,34 @@ object randoms {
 
   object Randoms {
 
+    private val envs = Envs[Random]
+
     def run[T, S](r: Random)(f: => T > (Randoms with S)): T > (IOs with S) =
-      Envs[Random].run[T, IOs with S](r)(f)
+      envs.run[T, IOs with S](r)(f)
 
     def run[T, S](f: => T > (Randoms with S))(implicit r: Random): T > (IOs with S) =
       run[T, S](r)(f)
 
     def nextInt: Int > Randoms =
-      Envs[Random].get.map(_.nextInt)
+      envs.get.map(_.nextInt)
 
     def nextInt[S](n: Int > S): Int > (S with Randoms) =
-      n.map(n => Envs[Random].get.map(_.nextInt(n)))
+      n.map(n => envs.get.map(_.nextInt(n)))
 
     def nextLong: Long > Randoms =
-      Envs[Random].get.map(_.nextLong)
+      envs.get.map(_.nextLong)
 
     def nextDouble: Double > Randoms =
-      Envs[Random].get.map(_.nextDouble)
+      envs.get.map(_.nextDouble)
 
     def nextBoolean: Boolean > Randoms =
-      Envs[Random].get.map(_.nextBoolean)
+      envs.get.map(_.nextBoolean)
 
     def nextFloat: Float > Randoms =
-      Envs[Random].get.map(_.nextFloat)
+      envs.get.map(_.nextFloat)
 
     def nextGaussian: Double > Randoms =
-      Envs[Random].get.map(_.nextGaussian)
+      envs.get.map(_.nextGaussian)
 
     def nextValue[T, S](seq: Seq[T] > S): T > (S with Randoms) =
       seq.map(s => nextInt(s.size).map(idx => s(idx)))
