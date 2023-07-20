@@ -226,7 +226,7 @@ lazy val `kyo-bench` =
         libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.5.1",
         libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion,
-        libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.6"
+        libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.7"
     )
 
 lazy val `js-settings` = Seq(
