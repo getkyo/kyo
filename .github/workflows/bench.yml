@@ -21,6 +21,10 @@ on:
         description: 'Iteration time'     
         required: false
         default: '1'
+      forks:
+        description: 'Number of forks'     
+        required: false
+        default: '1'
       threads:
         description: 'Number of threads'     
         required: false
@@ -39,6 +43,7 @@ jobs:
       WI: ${{ github.event.inputs.warmupIterations || '13' }}
       MI: ${{ github.event.inputs.measurementIterations || '5' }}
       IT: ${{ github.event.inputs.iterationTime || '1' }}
+      FK: ${{ github.event.inputs.forks || '1' }}
       TH: ${{ github.event.inputs.threads || '1' }}
       PE: ${{ github.event.inputs.profileEvents || 'alloc,cpu' }}
     steps:
@@ -65,10 +70,10 @@ jobs:
           for EVENT in "${array[@]}"
           do
             ESCAPED_EVENT=$(printf '%q' "$EVENT")
-            sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r $IT -w $IT -t $TH -foe true -prof \"async:event=$ESCAPED_EVENT;output=flamegraph\" $SE"
+            sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r $IT -w $IT -f $FK -t $TH -foe true -prof \"async:event=$ESCAPED_EVENT;output=flamegraph\" $SE"
           done
           
-          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r $IT -w $IT -t $TH -foe true -prof gc -rf json $SE"
+          sbt "kyo-bench/jmh:clean;kyo-bench/jmh:run -wi $WI -i $MI -r $IT -w $IT -f $FK -t $TH -foe true -prof gc -rf json $SE"
 
       - name: prepare results
         run: |
@@ -136,7 +141,7 @@ jobs:
       - name: Get commit message
         id: get-commit-message
         run: |
-          COMMIT_MESSAGE=$(git log --format=%B -n 1 ${{ github.sha }})
+          COMMIT_MESSAGE="$(git log --format=%B -n 1 ${{ github.sha }})"
           echo "COMMIT_MESSAGE=${COMMIT_MESSAGE}" >> $GITHUB_ENV
 
       - name: Update Index
