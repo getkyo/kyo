@@ -71,9 +71,9 @@ class fibersTest extends KyoTest {
     "multiple" in run {
       for {
         v0               <- Fibers.fork(0)
-        (v1, v2)         <- Fibers.fork(1, 2)
-        (v3, v4, v5)     <- Fibers.fork(3, 4, 5)
-        (v6, v7, v8, v9) <- Fibers.fork(6, 7, 8, 9)
+        (v1, v2)         <- Fibers.parallel(1, 2)
+        (v3, v4, v5)     <- Fibers.parallel(3, 4, 5)
+        (v6, v7, v8, v9) <- Fibers.parallel(6, 7, 8, 9)
       } yield assert(v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 == 45)
     }
     "nested" in runJVM {
@@ -247,7 +247,7 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    Fibers.collect(List(loop(1, "a"), loop(5, "b"))).map { r =>
+    Fibers.parallel(List(loop(1, "a"), loop(5, "b"))).map { r =>
       assert(r == List("a", "b"))
       assert(ac.get() == 1)
       assert(bc.get() == 5)
@@ -267,7 +267,7 @@ class fibersTest extends KyoTest {
           s
         }
       }
-    Fibers.collectFiber(List(loop(2, "a"), loop(5, "b"))).map(_.get).map { r =>
+    Fibers.parallelFiber(List(loop(2, "a"), loop(5, "b"))).map(_.get).map { r =>
       assert(r == List("a", "b"))
       assert(ac.get() == 2)
       assert(bc.get() == 5)
@@ -279,8 +279,8 @@ class fibersTest extends KyoTest {
       for {
         v1       <- Fibers.fork(1)
         _        <- Fibers.await(())
-        (v2, v3) <- Fibers.fork(2, 3)
-        l        <- Fibers.collect(List[Int > Any](4, 5))
+        (v2, v3) <- Fibers.parallel(2, 3)
+        l        <- Fibers.parallel(List[Int > Any](4, 5))
       } yield assert(v1 + v2 + v3 + l.sum == 15)
     }
     "interrupt" in runJVM {
@@ -335,7 +335,7 @@ class fibersTest extends KyoTest {
     "multiple" in run {
       val resource1 = new Resource
       val resource2 = new Resource
-      Fibers.fork(
+      Fibers.parallel(
           Resources.run(Resources.acquire(resource1).map(_.incrementAndGet())),
           Resources.run(Resources.acquire(resource2).map(_.incrementAndGet()))
       ).map { r =>
@@ -382,10 +382,10 @@ class fibersTest extends KyoTest {
     }
     "collect" - {
       "default" in run {
-        Fibers.collect(List(l.get, l.get)).map(v => assert(v == List(10, 10)))
+        Fibers.parallel(List(l.get, l.get)).map(v => assert(v == List(10, 10)))
       }
       "let" in run {
-        l.let(20)(Fibers.collect(List(l.get, l.get)).map(v => assert(v == List(20, 20))))
+        l.let(20)(Fibers.parallel(List(l.get, l.get)).map(v => assert(v == List(20, 20))))
       }
     }
     "await" - {

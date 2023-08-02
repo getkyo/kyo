@@ -9,6 +9,7 @@ import kyo.requests._
 import kyo.sums._
 import kyo.tries._
 import kyo.locals._
+import kyo.concurrent.fibers._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
@@ -62,10 +63,48 @@ object ais {
         Tries.run(f).map(r => Sums[State].set(st).map(_ => r.get))
       }
 
-    def run[T, S](v: T > (AIs with S)): T > (Requests with Consoles with Tries with S) =
+    def run[T, S](v: T > (AIs with S)): T > (Requests with Consoles with Tries with S) = {
       val a: T > (Requests with Consoles with Tries with Aspects with S) = Sums[State].run(v)
       val b: T > (Requests with Consoles with Tries with S)              = Aspects.run(a)
       b
+    }
+
+    def parallel[T1, T2](
+        v1: => T1 > AIs,
+        v2: => T2 > AIs
+    ): (T1, T2) > AIs =
+      parallel(List(IOs(v1), IOs(v2))).map(s => (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2]))
+
+    def parallel[T1, T2, T3](
+        v1: => T1 > AIs,
+        v2: => T2 > AIs,
+        v3: => T3 > AIs
+    ): (T1, T2, T3) > AIs =
+      parallel(List(IOs(v1), IOs(v2), IOs(v3))).map(s =>
+        (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3])
+      )
+
+    def parallel[T1, T2, T3, T4](
+        v1: => T1 > AIs,
+        v2: => T2 > AIs,
+        v3: => T3 > AIs,
+        v4: => T4 > AIs
+    ): (T1, T2, T3, T4) > AIs =
+      parallel(List(IOs(v1), IOs(v2), IOs(v3), IOs(v4))).map(s =>
+        (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3], s(3).asInstanceOf[T4])
+      )
+
+    def parallel[T](l: List[T > AIs]): Seq[T] > AIs =
+      Fibers.get(parallelFiber(l))
+
+    // Sums[State] with Requests with Tries with IOs with Aspects with Consoles
+
+    def parallelFiber[T](l: List[T > AIs]): Fiber[Seq[T]] > AIs =
+      Sums[State].get.map { st =>
+        Fibers.parallelFiber(l.map { e =>
+          ???
+        })
+      }
 
     object ApiKey {
       private val local = Locals.init[Option[String]] {
