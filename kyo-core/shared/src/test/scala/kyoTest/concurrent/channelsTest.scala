@@ -141,7 +141,7 @@ class channelsTest extends KyoTest {
         v3    <- take2.get
       } yield assert(b && v1 == 1 && v2 == 1 && v3 == 2)
     }
-    "blocking put" in run {
+    "blocking put" in runJVM {
       for {
         c  <- Channels.blocking[Int](2)
         _  <- c.put(1)

@@ -13,14 +13,14 @@ import scala.concurrent.duration._
 class metersTest extends KyoTest {
 
   "mutex" - {
-    "ok" in run {
+    "ok" in runJVM {
       for {
         t <- Meters.mutex
         v <- t.run(2)
       } yield assert(v == 2)
     }
 
-    "run" in run {
+    "run" in runJVM {
       for {
         t  <- Meters.mutex
         p  <- Fibers.promise[Int]
@@ -58,7 +58,7 @@ class metersTest extends KyoTest {
   }
 
   "semaphore" - {
-    "ok" in run {
+    "ok" in runJVM {
       for {
         t  <- Meters.semaphore(2)
         v1 <- t.run(2)
@@ -115,7 +115,7 @@ class metersTest extends KyoTest {
     meter.run(counter.incrementAndGet).map(_ => loop(meter, counter))
 
   "rate limiter" - {
-    "ok" in run {
+    "ok" in runJVM {
       for {
         t  <- Meters.rateLimiter(2, 10.millis)
         v1 <- t.run(2)
@@ -161,7 +161,7 @@ class metersTest extends KyoTest {
       } yield assert(v1 >= 0 && v1 < 200)
     }
 
-    // "tryRun" in run {
+    // "tryRun" in runJVM {
     //   for {
     //     meter   <- Meters.pipeline(Meters.rateLimiter(2, 1.millis), Meters.mutex)
     //     counter <- Atomics.initInt(0)

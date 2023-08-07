@@ -21,13 +21,12 @@ import scala.concurrent.Future
 import scala.concurrent.Promise
 import scala.util.Try
 import org.scalatest.compatible.Assertion
+import org.scalatest.concurrent.ScalaFutures._
 import scala.concurrent.ExecutionContext
-import org.scalatest.concurrent.TimeLimits
 import org.scalatest.time.Span
-import org.scalatest.time.Units
 import org.scalatest.time.Seconds
 
-class KyoTest extends AsyncFreeSpec with Assertions with TimeLimits {
+class KyoTest extends AsyncFreeSpec with Assertions {
 
   implicit override def executionContext: ExecutionContext = Platform.executionContext
 
@@ -72,12 +71,9 @@ class KyoTest extends AsyncFreeSpec with Assertions with TimeLimits {
 
   def run(
       v: => Assertion > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers)
-  ): Future[Assertion] =
-    failAfter(Span(timeout.toSeconds + 1, Seconds)) {
-      val v1 = KyoApp.runFiber(timeout)(v)
-      val v2 = v1.toFuture
-      IOs.run(KyoApp.runFiber(timeout)(v).toFuture)
-    }
+  ): Future[Assertion] = {
+    IOs.run(KyoApp.runFiber(timeout)(v).toFuture)
+  }
 
   class Check[T, S](equals: Boolean) {
     def apply[T2, S2](value: T2 > S2, expected: Any)(implicit

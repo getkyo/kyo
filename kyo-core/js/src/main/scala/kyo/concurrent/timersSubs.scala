@@ -1,9 +1,6 @@
 package java.util.concurrent
 
-import scalajs.js.timers
 import scala.concurrent.duration._
-import scala.scalajs.js.timers.SetTimeoutHandle
-import scala.scalajs.js.timers.SetIntervalHandle
 import java.util.Timer
 import java.util.TimerTask
 
