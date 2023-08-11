@@ -197,7 +197,7 @@ lazy val `kyo-chatgpt` =
     .jvmSettings(
         libraryDependencies += "org.apache.lucene"    % "lucene-core"        % "9.7.0",
         libraryDependencies += "org.apache.lucene"    % "lucene-queryparser" % "9.7.0",
-        libraryDependencies += "com.formdev"          % "flatlaf"            % "3.1.1",
+        libraryDependencies += "com.formdev"          % "flatlaf"            % "3.2",
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-all"       % "0.64.8",
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-java"      % "0.64.8",
         libraryDependencies += "com.knuddels"         % "jtokkit"            % "0.6.1"
