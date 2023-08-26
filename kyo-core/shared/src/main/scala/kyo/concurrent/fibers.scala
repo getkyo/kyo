@@ -233,8 +233,10 @@ object fibers {
     def fail[T](ex: Throwable): Fiber[T] =
       Fiber.failed(ex)
 
+    private val _promise = IOs(unsafePromise[Object])
+
     def promise[T]: Promise[T] > IOs =
-      IOs(unsafePromise[T])
+      _promise.asInstanceOf[Promise[T] > IOs]
 
     private[kyo] def unsafePromise[T]: Promise[T] =
       Fiber.promise(new IOPromise[T]())

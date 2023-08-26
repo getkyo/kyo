@@ -48,14 +48,12 @@ object locals {
         def default = defaultValue
       }
 
-    /*inline*/
-    def save: State > IOs =
+    val save: State > IOs =
       new KyoIO[State, Any] {
         def apply(v: Unit, s: Safepoint[IO, IOs], l: Locals.State) =
           l
       }
 
-    /*inline*/
     def restore[T, S](st: State)(f: T > S): T > (IOs with S) = {
       def loop(f: T > S): T > S =
         f match {

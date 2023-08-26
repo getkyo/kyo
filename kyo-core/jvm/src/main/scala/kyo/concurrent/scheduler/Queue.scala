@@ -5,9 +5,9 @@ import scala.collection.mutable.PriorityQueue
 
 private final class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
 
-  private val queue = PriorityQueue[T]()
+  private[this] val queue = PriorityQueue[T]()
 
-  @volatile private var items = 0
+  @volatile private[this] var items = 0
 
   def isEmpty() =
     items == 0
