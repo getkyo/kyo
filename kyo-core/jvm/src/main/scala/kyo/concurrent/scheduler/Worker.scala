@@ -28,7 +28,7 @@ private final class Worker(r: Runnable)
     queue.steal(thief.queue)
 
   def enqueueLocal(t: IOTask[_]): Boolean =
-    queue.offer(t)
+    isAvailable() && queue.offer(t)
 
   def enqueue(t: IOTask[_]): Boolean =
     isAvailable() && queue.offer(t) && {

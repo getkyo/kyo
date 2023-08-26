@@ -60,7 +60,6 @@ private[kyo] object Scheduler {
   @tailrec private[concurrent] def schedule(t: IOTask[_], submitter: Worker): Unit = {
     if (
         submitter != null &&
-        submitter.load() == 1 &&
         submitter.enqueueLocal(t)
     ) {
       return
@@ -71,12 +70,6 @@ private[kyo] object Scheduler {
       if (ok) {
         return
       }
-    }
-    if (
-        submitter != null &&
-        submitter.enqueueLocal(t)
-    ) {
-      return
     }
     var w0: Worker = randomWorker(submitter)
     var w1: Worker = randomWorker(submitter)

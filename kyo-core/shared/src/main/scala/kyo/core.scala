@@ -77,7 +77,7 @@ object core {
   }
 
   /*inline*/
-  def transform[T, S, U, S2](v: T > S)(/*inline*/ f: T => (U > S2)): U > (S with S2) = {
+  def transform[T, S, U, S2](v: T > S)( /*inline*/ f: T => (U > S2)): U > (S with S2) = {
     def transformLoop(v: T > S): U > (S with S2) =
       v match {
         case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>

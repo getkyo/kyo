@@ -62,7 +62,7 @@ class PingPongBench extends Bench.ForkOnly[Unit] {
         chan <- Channels.blocking[Unit](1)
         effect =
           for {
-            _ <- Fibers.forkFiber(chan.offer(()))
+            _ <- Fibers.forkFiber(chan.put(()))
             _ <- chan.take
             n <- ref.decrementAndGet
             _ <- if (n == 0) promise.complete(()).unit else IOs.unit
