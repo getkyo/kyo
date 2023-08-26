@@ -67,7 +67,7 @@ class PingPongBench extends Bench.ForkOnly[Unit] {
             n <- ref.decrementAndGet
             _ <- if (n == 0) promise.complete(()).unit else IOs.unit
           } yield ()
-        _ <- repeat(depth)(Fibers.fork(effect))
+        _ <- repeat(depth)(Fibers.forkFiber(effect))
       } yield ()
 
     for {
