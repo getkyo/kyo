@@ -54,16 +54,15 @@ private[kyo] object Scheduler {
     }
   }
 
-  def schedule(t: IOTask[_]): Unit =
-    schedule(t, Worker())
-
-  @tailrec private[concurrent] def schedule(t: IOTask[_], submitter: Worker): Unit = {
-    if (
-        submitter != null &&
-        submitter.enqueueLocal(t)
-    ) {
+  def schedule(t: IOTask[_]): Unit = {
+    val w = Worker()
+    if (w != null && w.enqueueLocal(t)) {
       return
     }
+    schedule(t, w)
+  }
+
+  @tailrec private[concurrent] def schedule(t: IOTask[_], submitter: Worker): Unit = {
     val w = idle.poll()
     if (w != null) {
       val ok = w.enqueue(t)
