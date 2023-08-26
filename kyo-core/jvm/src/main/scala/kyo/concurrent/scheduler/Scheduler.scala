@@ -54,15 +54,17 @@ private[kyo] object Scheduler {
     }
   }
 
-  def schedule(t: IOTask[_]): Unit = {
-    val w = Worker()
-    if (w == null || !w.enqueueLocal(t)) {
-      submit(t)
+  def schedule(t: IOTask[_]): Unit =
+    schedule(t, Worker())
+
+  @tailrec private[concurrent] def schedule(t: IOTask[_], submitter: Worker): Unit = {
+    if (
+        submitter != null &&
+        submitter.load() == 1 &&
+        submitter.enqueueLocal(t)
+    ) {
+      return
     }
-  }
-
-  @tailrec def submit(t: IOTask[_]): Unit = {
-
     val w = idle.poll()
     if (w != null) {
       val ok = w.enqueue(t)
@@ -70,32 +72,37 @@ private[kyo] object Scheduler {
         return
       }
     }
-
-    var w0: Worker = randomWorker()
-    var w1: Worker = randomWorker()
+    if (
+        submitter != null &&
+        submitter.enqueueLocal(t)
+    ) {
+      return
+    }
+    var w0: Worker = randomWorker(submitter)
+    var w1: Worker = randomWorker(submitter)
     if (w0.load() > w1.load()) {
       val w = w0
       w0 = w1
       w1 = w
     }
     if (!w0.enqueue(t) && !w1.enqueue(t)) {
-      submit(t)
+      schedule(t, submitter)
     }
   }
 
-  def steal(w: Worker): IOTask[_] = {
+  def steal(thief: Worker): IOTask[_] = {
     // p2c load stealing
     var r: IOTask[_] = null
-    var w0: Worker   = randomWorker()
-    var w1: Worker   = randomWorker()
+    var w0: Worker   = randomWorker(thief)
+    var w1: Worker   = randomWorker(thief)
     if (w0.load() < w1.load()) {
       val w = w0
       w0 = w1
       w1 = w
     }
-    r = w0.steal(w)
+    r = w0.steal(thief)
     if (r == null) {
-      r = w1.steal(w)
+      r = w1.steal(thief)
     }
     r
   }
@@ -125,9 +132,9 @@ private[kyo] object Scheduler {
     c > concurrencyLimit && concurrency.compareAndSet(c, c - 1)
   }
 
-  private def randomWorker(): Worker = {
+  private def randomWorker(besides: Worker): Worker = {
     var w: Worker = null
-    while (w == null) {
+    while (w == null || w == besides) {
       try {
         w = workers.get(XSRandom.nextInt(workers.size()))
       } catch {

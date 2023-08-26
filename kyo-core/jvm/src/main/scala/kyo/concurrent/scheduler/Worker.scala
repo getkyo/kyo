@@ -16,13 +16,16 @@ private final class Worker(r: Runnable)
   @volatile private var currentTask: IOTask[_] = null
   @volatile private var parkedThread: Thread   = null
 
-  def park() =
+  private val schedule = (t: IOTask[_]) => Scheduler.schedule(t, this)
+
+  def park() = {
     parkedThread = this
     LockSupport.parkNanos(this, 100000000L)
     parkedThread = null
+  }
 
-  def steal(w: Worker): IOTask[_] =
-    queue.steal(w.queue)
+  def steal(thief: Worker): IOTask[_] =
+    queue.steal(thief.queue)
 
   def enqueueLocal(t: IOTask[_]): Boolean =
     queue.offer(t)
@@ -47,7 +50,7 @@ private final class Worker(r: Runnable)
   }
 
   def flush(): Unit =
-    queue.drain(Scheduler.submit)
+    queue.drain(schedule)
 
   def load(): Int = {
     var s = queue.size()
