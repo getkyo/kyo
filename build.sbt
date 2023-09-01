@@ -88,6 +88,7 @@ lazy val kyo =
         `kyo-zio`,
         `kyo-direct`,
         `kyo-sttp`,
+        `kyo-graal`,
         `kyo-chatgpt`,
         `kyo-bench`
     )
@@ -185,6 +186,18 @@ lazy val `kyo-sttp` =
         libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.0"
     )
     .jsSettings(`js-settings`)
+
+lazy val `kyo-graal` =
+  crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Full)
+    .in(file("kyo-graal"))
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .settings(
+        `kyo-settings`,
+        `with-cross-scala`,
+        libraryDependencies += "org.graalvm.sdk" % "graal-sdk" % "23.0.1"
+    )
 
 lazy val `kyo-chatgpt` =
   crossProject(JSPlatform, JVMPlatform)
