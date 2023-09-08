@@ -79,22 +79,22 @@ class ForkManyBench extends Bench.ForkOnly[Int] {
   }
 
   // @Benchmark
-  def forkOx() = {
-    import ox._
-    import ox.channels._
+  // def forkOx() = {
+  //   import ox._
+  //   import ox.channels._
 
-    scoped {
-      val promise = new CompletableFuture[Unit]
-      val ref     = new AtomicInteger(depth)
-      for (_ <- 0 until depth) {
-        fork {
-          ref.decrementAndGet() match {
-            case 1 => promise.complete(())
-            case _ => ()
-          }
-        }
-      }
-      promise.get()
-    }
-  }
+  //   scoped {
+  //     val promise = new CompletableFuture[Unit]
+  //     val ref     = new AtomicInteger(depth)
+  //     for (_ <- 0 until depth) {
+  //       fork {
+  //         ref.decrementAndGet() match {
+  //           case 1 => promise.complete(())
+  //           case _ => ()
+  //         }
+  //       }
+  //     }
+  //     promise.get()
+  //   }
+  // }
 }

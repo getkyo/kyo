@@ -76,19 +76,19 @@ class ChainedForkBench extends Bench.ForkOnly[Int] {
   }
 
   // @Benchmark
-  def forkOx() = {
-    import ox._
-    def iterate(p: CompletableFuture[Unit], n: Int): Unit =
-      if (n <= 0) p.complete(())
-      else
-        scoped {
-          fork(iterate(p, n - 1))
-        }
+  // def forkOx() = {
+  //   import ox._
+  //   def iterate(p: CompletableFuture[Unit], n: Int): Unit =
+  //     if (n <= 0) p.complete(())
+  //     else
+  //       scoped {
+  //         fork(iterate(p, n - 1))
+  //       }
 
-    scoped {
-      val p = new CompletableFuture[Unit]()
-      fork(iterate(p, depth))
-      p.get()
-    }
-  }
+  //   scoped {
+  //     val p = new CompletableFuture[Unit]()
+  //     fork(iterate(p, depth))
+  //     p.get()
+  //   }
+  // }
 }
