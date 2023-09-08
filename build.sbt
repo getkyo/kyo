@@ -206,10 +206,10 @@ lazy val `kyo-chatgpt` =
         `kyo-settings`,
         `without-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.0",
-        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.13",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.13",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.13",
-        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.13"
+        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.14",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.14",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.14",
+        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.14"
     )
     .jsSettings(`js-settings`)
 
@@ -223,9 +223,9 @@ lazy val `kyo-bench` =
     .settings(
         `kyo-settings`,
         `without-cross-scala`,
-        libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.5.1",
-        libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
-        libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion
+        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.5.1",
+        libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
+        libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
         // libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.12"
     )
 
