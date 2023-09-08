@@ -103,7 +103,7 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "zio-test-sbt"      % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC20" % Test,
     libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC20" % Test,
-    libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.16"     % Test,
+    libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.17"     % Test,
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     Global / concurrentRestrictions := Seq(
         Tags.limit(Tags.CPU, java.lang.Runtime.getRuntime().availableProcessors() - 1)
@@ -223,9 +223,9 @@ lazy val `kyo-bench` =
     .settings(
         `kyo-settings`,
         `without-cross-scala`,
-        libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.5.1",
-        libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
-        libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion
+        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.5.1",
+        libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
+        libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
         // libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.12"
     )
 
