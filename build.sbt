@@ -1,5 +1,5 @@
 val scala3Version = "3.3.0"
-val scala2Version = "2.13.11"
+val scala2Version = "2.13.12"
 
 val compilerOptions = Seq(
     "-encoding",
@@ -223,9 +223,9 @@ lazy val `kyo-bench` =
     .settings(
         `kyo-settings`,
         `without-cross-scala`,
-        libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.5.1",
-        libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
-        libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion
+        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.5.1",
+        libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
+        libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
         // libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.12"
     )
 
