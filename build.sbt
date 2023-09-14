@@ -232,6 +232,38 @@ lazy val `kyo-bench` =
         // libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.12"
     )
 
+lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
+
+addCommandAlias("checkReadme", ";readme/rewriteReadmeFile; readme/mdoc")
+
+lazy val readme = 
+  crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Pure)       // new documentation project
+    .in(file("target/readme")) // important: it must not be docs/
+    .enablePlugins(MdocPlugin)
+    .settings(
+      `kyo-settings`,
+      `without-cross-scala`,
+      mdocIn := new File("./../../README-in.md"),
+      mdocOut := new File("./../../README-out.md"),
+      rewriteReadmeFile := {
+        val readmeFile = new File("README.md")
+        val targetReadmeFile = new File("target/README-in.md")
+        val contents = IO.read(readmeFile)
+        val newContents = contents.replaceAll("```scala\n", "```scala mdoc:nest\n")
+        IO.write(targetReadmeFile, newContents)
+      }
+    )
+    .dependsOn(
+      `kyo-core`,
+      `kyo-zio`,
+      `kyo-direct`,
+      `kyo-sttp`,
+      `kyo-chatgpt`,
+      `kyo-bench`
+    )
+
 lazy val `js-settings` = Seq(
     Compile / doc / sources := Seq.empty,
     fork                    := false

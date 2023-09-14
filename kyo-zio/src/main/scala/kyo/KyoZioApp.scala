@@ -56,7 +56,7 @@ object KyoZioApp {
     val v5: T > (IOs with Fibers with ZIOs)                            = Timers.run(v4)
 
     val v6: T > (IOs with ZIOs) = inject[T, Fiber, Task, Fibers, ZIOs, IOs](Fibers, ZIOs)(v5)
-    val v7: T > ZIOs            = IOs.lazyRun(v6)
+    val v7: T > ZIOs            = IOs.runLazy(v6)
     ZIOs.run(v7)
   }
 }

@@ -25,7 +25,7 @@ class iosTest extends KyoTest {
         }
       assert(!called)
       checkEquals[Int, Nothing](
-          IOs.lazyRun(v),
+          IOs.runLazy(v),
           1
       )
       assert(called)
@@ -40,7 +40,7 @@ class iosTest extends KyoTest {
           }
         }
       assert(!called)
-      val v2 = IOs.lazyRun(v)
+      val v2 = IOs.runLazy(v)
       assert(!called)
       checkEquals[Int, Nothing](
           Envs[Int].run(1)(v2),
@@ -59,7 +59,7 @@ class iosTest extends KyoTest {
           IOs(IOs(1)).map(_ => fail)
       )
       ios.foreach { io =>
-        assert(Try(IOs.lazyRun(io)) == Try(fail))
+        assert(Try(IOs.runLazy(io)) == Try(fail))
       }
       succeed
     }
@@ -73,7 +73,7 @@ class iosTest extends KyoTest {
             i
         }
       checkEquals[Int, Nothing](
-          IOs.lazyRun(loop(0)),
+          IOs.runLazy(loop(0)),
           frames
       )
     }

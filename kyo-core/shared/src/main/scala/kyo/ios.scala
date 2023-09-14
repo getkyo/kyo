@@ -78,22 +78,22 @@ object ios {
     }
 
     /*inline*/
-    def lazyRun[T, S](v: T > (IOs with S)): T > S = {
-      def lazyRunLoop(v: T > (IOs with S)): T > S = {
+    def runLazy[T, S](v: T > (IOs with S)): T > S = {
+      def runLazyLoop(v: T > (IOs with S)): T > S = {
         val safepoint = Safepoint.noop[IO, IOs]
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, S with IOs] @unchecked if (kyo.effect eq IOs) =>
-            lazyRunLoop(kyo((), safepoint, Locals.State.empty))
+            runLazyLoop(kyo((), safepoint, Locals.State.empty))
           case kyo: Kyo[MX, EX, Any, T, S with IOs] @unchecked =>
             new KyoCont[MX, EX, Any, T, S](kyo) {
               def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) =
-                lazyRunLoop(kyo(v, s, l))
+                runLazyLoop(kyo(v, s, l))
             }
           case _ =>
             v.asInstanceOf[T]
         }
       }
-      lazyRunLoop(v)
+      runLazyLoop(v)
     }
 
     private[kyo] def ensure[T, S](f: => Unit > IOs)(v: => T > S): T > (IOs with S) = {
