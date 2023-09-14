@@ -8,7 +8,7 @@ val compilerOptions = Seq(
     "-unchecked",
     "-deprecation",
     "-language:implicitConversions"
-    // "-explain",
+    // "-explain"
     // "-Wvalue-discard",
     // "-Vprofile",
 )
@@ -152,6 +152,9 @@ lazy val `kyo-direct` =
         `kyo-settings`,
         `with-cross-scala`,
         libraryDependencies ++= Seq(
+            "com.github.rssh" %%% "dotty-cps-async" % "0.9.18"
+        ).filter(_ => scalaVersion.value.startsWith("3")),
+        libraryDependencies ++= Seq(
             "org.scala-lang"   % "scala-library"  % scalaVersion.value,
             "org.scala-lang"   % "scala-compiler" % scalaVersion.value,
             "org.scala-lang"   % "scala-reflect"  % scalaVersion.value,
@@ -223,9 +226,9 @@ lazy val `kyo-bench` =
     .settings(
         `kyo-settings`,
         `without-cross-scala`,
-        libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.5.1",
-        libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
-        libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion
+        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.5.1",
+        libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
+        libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
         // libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.12"
     )
 

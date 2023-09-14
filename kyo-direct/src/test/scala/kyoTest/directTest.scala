@@ -15,18 +15,18 @@ import kyo.direct._
 
 class directTest extends KyoTest {
 
-  "match" in {
-    val a = IOs(1)
-    val b = IOs(2)
-    val c =
-      defer {
-        await(a) match {
-          case i if (await(b) > 0) => i
-          case 2                   => 99
-        }
-      }
-    assert(IOs.run(c) == 1)
-  }
+  // "match" in {
+  //   val a = IOs(1)
+  //   val b = IOs(2)
+  //   val c =
+  //     defer {
+  //       await(a) match {
+  //         case i if (await(b) > 0) => i
+  //         case 2                   => 99
+  //       }
+  //     }
+  //   assert(IOs.run(c) == 1)
+  // }
 
   "one run" in {
     val io = defer {

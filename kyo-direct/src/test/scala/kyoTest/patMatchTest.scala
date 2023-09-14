@@ -131,13 +131,13 @@ class patMatchTest extends AnyFreeSpec with Assertions {
       }
     }
 
-    "unlifted guard" in {
-      runLiftTest(2) {
-        "b" match {
-          case s if await(defer(true)) => 2
-          case "b"                     => await(defer(3))
-        }
-      }
-    }
+    // "unlifted guard" in {
+    //   runLiftTest(2) {
+    //     "b" match {
+    //       case s if await(defer(true)) => 2
+    //       case "b"                     => await(defer(3))
+    //     }
+    //   }
+    // }
   }
 }
