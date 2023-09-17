@@ -277,10 +277,10 @@ object fibers {
         (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3], s(3).asInstanceOf[T4])
       )
 
-    def parallel[T](l: List[T > (IOs with Fibers)]): Seq[T] > (IOs with Fibers) =
+    def parallel[T](l: Seq[T > (IOs with Fibers)]): Seq[T] > (IOs with Fibers) =
       Fibers.join(parallelFiber[T](l))
 
-    def parallelFiber[T](l: List[T > (IOs with Fibers)]): Fiber[Seq[T]] > IOs =
+    def parallelFiber[T](l: Seq[T > (IOs with Fibers)]): Fiber[Seq[T]] > IOs =
       Locals.save.map { st =>
         IOs {
           val p       = new IOPromise[Seq[T]]
@@ -313,14 +313,14 @@ object fibers {
         v1: => T > (IOs with Fibers),
         v2: => T > (IOs with Fibers)
     ): T > (IOs with Fibers) =
-      Fibers.join(raceFiber(List(IOs(v1), IOs(v2))))
+      race(List(IOs(v1), IOs(v2)))
 
     def race[T](
         v1: => T > (IOs with Fibers),
         v2: => T > (IOs with Fibers),
         v3: => T > (IOs with Fibers)
     ): T > (IOs with Fibers) =
-      Fibers.join(raceFiber(List(IOs(v1), IOs(v2), IOs(v2))))
+      race(List(IOs(v1), IOs(v2), IOs(v2)))
 
     def race[T](
         v1: => T > (IOs with Fibers),
@@ -328,17 +328,12 @@ object fibers {
         v3: => T > (IOs with Fibers),
         v4: => T > (IOs with Fibers)
     ): T > (IOs with Fibers) =
-      Fibers.join(raceFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))))
+      race(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4)))
 
-    private def foreach[T, U](l: List[T])(f: T => Unit): Unit = {
-      var curr = l
-      while (curr ne Nil) {
-        f(curr.head)
-        curr = curr.tail
-      }
-    }
+    def race[T](l: Seq[T > (IOs with Fibers)]): T > (IOs with Fibers) =
+      Fibers.join(raceFiber[T](l))
 
-    def raceFiber[T](l: List[T > (IOs with Fibers)]): Fiber[T] > IOs = {
+    def raceFiber[T](l: Seq[T > (IOs with Fibers)]): Fiber[T] > IOs = {
       require(!l.isEmpty)
       Locals.save.map { st =>
         IOs {
@@ -379,7 +374,7 @@ object fibers {
     ): Unit > (IOs with Fibers) =
       Fibers.join(awaitFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))))
 
-    def awaitFiber[T](l: List[T > (IOs with Fibers)]): Fiber[Unit] > IOs =
+    def awaitFiber[T](l: Seq[T > (IOs with Fibers)]): Fiber[Unit] > IOs =
       Locals.save.map { st =>
         IOs {
           val p       = new IOPromise[Unit]
@@ -458,6 +453,13 @@ object fibers {
           }(ExecutionContext.parasitic)
           Fiber.promise(p)
         }
+      }
+    }
+
+    private def foreach[T, U](l: Seq[T])(f: T => Unit): Unit = {
+      val it = l.iterator
+      while (it.hasNext) {
+        f(it.next())
       }
     }
   }
