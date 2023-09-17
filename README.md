@@ -7,16 +7,16 @@
 
 ### This readme is a working in progress. If you'd like to try Kyo, please build from source.
 
-Kyo is a complete toolkit for Scala development, spanning from browser-based apps in ScalaJS to high-performance backends on the JVM. It introduces a novel approach based on algebraic effects to deliver straightforward APIs in the pure Functional Programming paradigm. Unlike similar solutions, Kyo achieves this without inundating developers with esoteric concepts from Category Theory or using cryptic symbolic operators, making for a development experience that's as intuitive as it is robust.
+Kyo is a complete toolkit for Scala development, spanning from browser-based apps in ScalaJS to high-performance backends on the JVM. It introduces a novel approach, based on algebraic effects, to deliver straightforward APIs in the pure Functional Programming paradigm. Unlike similar solutions, Kyo achieves this without inundating developers with esoteric concepts from Category Theory or using cryptic symbolic operators, resulting in a development experience that is both intuitive and robust.
 
-Drawing inspiration from ZIO's effect rotation, Kyo takes a more generalized approach. While ZIO restricts effects to two channels, dependency injection and short-circuiting, Kyo allows for an arbitrary number of effectful channels. This enhancement affords developers greater flexibility in effect management, while also simplifying Kyo's internal codebase through more principled design patterns.
+Drawing inspiration from ZIO's effect rotation, Kyo takes a more generalized approach. While ZIO restricts effects to two channels, dependency injection and short-circuiting, Kyo allows for an arbitrary number of effectful channels. This enhancement gives developers greater flexibility in effect management, while also simplifying Kyo's internal codebase through more principled design patterns.
 
 ## The `>` type
 
 In Kyo, computations are expressed via the infix type `>`, which takes two parameters:
 
 1. The first parameter specifies the type of the expected output.
-2. The second parameter lists the pending effects that must be handled, represented as an **unordered** type-level set via a type interssection.
+2. The second parameter lists the pending effects that must be handled, represented as an **unordered** type-level set via a type intersection.
 
 ```scala 
 import kyo._
@@ -30,7 +30,7 @@ Int > Options
 String > (Options with IOs)
 ```
 
-> Note: effect types follow a naming convention, which is the plural form of the functionalities they manage.
+> Note: The naming convention for effect types is the plural form of the functionalities they manage.
 
 Kyo is designed so that any type `T` is automatically a `T > Any`, where `Any` signifies an empty set of pending effects.
 
@@ -47,7 +47,7 @@ val b: Int = a.pure
 
 It's possible to directly extract the pure value from a computation marked as `T > Any`. The given example essentially signifies a computation that yields an `Int` without any pending effects. Therefore, it's possible to safely extract the value.
 
-This property removes the need to distinguish between `map` and `flatMap`, as values are automatically lifted to a Kyo computation with no pending effects.
+This unique property removes the need to juggle between `map` and `flatMap`, streamlining your codebase. All values are automatically promoted to a Kyo computation with zero pending effects, enabling you to focus on your application logic rather than the intricacies of effect handling.
 
 ```scala
 import kyo.options._
@@ -62,7 +62,7 @@ def example2(a: Int > Options, b: Int > Tries): Int > (Options with Tries) =
   a.map(v => b.map(_ + v))
 ```
 
-The `map` method in Kyo has the ability to automatically update the set of pending effects. When you apply `map` to computations that have different sets of pending effects, Kyo reconciles these into a new computation type that combines all the unique pending effects from both operands.
+The `map` method automatically updates the set of pending effects. When you apply `map` to computations that have different pending effects, Kyo reconciles these into a new computation type that combines all the unique pending effects from both operands.
 
 ## Effect widening
 
@@ -89,7 +89,7 @@ val d: Int > (Options with Tries) =
   42
 ```
 
-This contravariant encoding enables a fluent API for effectful code. Methods can accept parameters with a specific set of pending effects while also permitting those with fewer or no effects.
+This characteristic enables a fluent API for effectful code. Methods can accept parameters with a specific set of pending effects while also permitting those with fewer or no effects.
 
 ```scala
 // The function expects a parameter with both 
@@ -162,7 +162,7 @@ def triesFirst(a: Int > (Options with Tries)): Option[Try[Int]] = {
 }
 ```
 
-In this example, the order in which effects are handled significantly influences the outcome, particularly when the effects have the ability to short-circuit the computation:
+In this example, the sequence in which effects are handled has a significant impact on the outcome. This is especially true for effects that can short-circuit the computation.
 
 ```scala
 val ex = new Exception
@@ -215,7 +215,7 @@ val d: Int > Aborts[Exception] =
   Aborts[Exception].catching(throw new Exception)
 ```
 
-> Note that `Aborts` effect has a type parameter and its methods can only be accessed if the type parameter is provided.
+> Note that the `Aborts` effect has a type parameter and its methods can only be accessed if the type parameter is provided.
 
 ### IOs: Side Effects
 
@@ -233,7 +233,7 @@ val a: Int > IOs =
 val b: Int > IOs = 
   IOs.value(42)
 
-// 'fail' is returns a computation that 
+// 'fail' returns a computation that 
 // will fail once IOs is handled
 val c: Int > IOs = 
   IOs.fail(new Exception)
@@ -274,7 +274,7 @@ val b: Int > Options =
   IOs.runLazy(a)
 // ** Avoid 'IOs.runLazy' this, use 'kyo.App' instead) **
 
-// Since the computation is suspended withe 
+// Since the computation is suspended with the 
 // 'Options' effect first, the lazy IOs execution 
 // will be triggered once 'Options' is handled
 val c: Option[Int] = 
@@ -285,7 +285,7 @@ val c: Option[Int] =
 
 ### Envs: Dependency Injection
 
-The `Envs` effect is similar to ZIO's environment mechanism but with a more flexible scoping since values can be provided individually. `Envs` doesn't provide a solution like ZIO's layers, though. The user is responsible for initializing environment values, like services, in parallel, for example.
+The `Envs` effect is similar to ZIO's environment mechanism but offers more flexible scoping as values can be provided individually. `Envs` doesn't provide a solution like ZIO's layers, though. The user is responsible for initializing environment values like services for example, in parallel.
 
 ```scala
 import kyo.envs._
@@ -315,7 +315,7 @@ val c: Int > IOs =
   Envs[Database].run(db)(b)
 ```
 
-A computation can also require multiple values from its environment.
+Additionally, a computation can require multiple values from its environment.
 
 ```scala
 // A second interface to be injected
@@ -337,7 +337,7 @@ val a: Unit > (Envs[Database] with Envs[Cache] with IOs) =
 
 ### Locals: Scoped Values
 
-The `Locals` effect operates on top of `IOs` and enables the definition of scoped values. This mechanism is typically used to store contextual information of a computation. For example, in request processing, locals can be used to store the user who performed the request. In a library for database access, locals can be used to propagate transactions.
+The `Locals` effect operates on top of `IOs` and enables the definition of scoped values. This mechanism is typically used to store contextual information of a computation. For example, in request processing, locals can be used to store information about the user who initiated the request. In a library for database access, locals can be used to propagate transactions.
 
 ```scala
 import kyo.locals._
@@ -360,7 +360,7 @@ val b: Int > IOs =
 
 ### Resources: Resource Safety
 
-The `Resources` effect handles the safe use of external resources like network connections, files, and any other resource that needs to be freed once the computation finalizes. It's a mechanism similar to ZIO's `Scope`.
+The `Resources` effect handles the safe use of external resources like network connections, files, and any other resource that needs to be freed once the computation finalizes. It serves as a mechanism similar to ZIO's `Scope`.
 
 ```scala
 import kyo.resources._
@@ -371,18 +371,19 @@ class Database extends Closeable {
   def close() = {}
 }
 
-// The `acquire` method accepts any object that implements Java's 
-// `Closeable` interface
+// The `acquire` method accepts any object that 
+// implements Java's `Closeable` interface
 val db: Database > (Resources with IOs) = 
   Resources.acquire(new Database)
 
-// Use `run` to handle the effect and close the resources 
-// utilized by a computation
+// Use `run` to handle the effect, while also 
+// closing the resources utilized by the 
+// computationation
 val b: Int > IOs = 
   Resources.run(db.map(_.count))
 ```
 
-The `ensure` method is a more low-level API to allow users to handle the finalization of resources directly. The `acquire` method is implemented in terms of `ensure`.
+The `ensure` method provides a low-level API to handle the finalization of resources directly. The `acquire` method is implemented in terms of `ensure`.
 
 ```scala
 // Example method to execute a function on a database
@@ -407,14 +408,14 @@ val b: Int > IOs =
 
 ### Choices: Decision Making and Exploration
 
-The Choices effect is designed to aid in handling and exploring multiple options, pathways, or outcomes in a computation. This effect is particularly useful in scenarios where you're dealing with decision trees, backtracking algorithms, or any situation that involves dynamically exploring multiple options.
+The `Choices` effect is designed to aid in handling and exploring multiple options, pathways, or outcomes in a computation. This effect is particularly useful in scenarios where you're dealing with decision trees, backtracking algorithms, or any situation that involves dynamically exploring multiple options.
 
 ```scala
 import kyo.choices._
 
 // Evaluate each of the provided choices.
 // Note how 'foreach' takes a 'List[T]'
-// returns a 'T > Choices'
+// and returns a 'T > Choices'
 val a: Int > Choices =
   Choices.foreach(List(1, 2, 3, 4))
 
@@ -437,13 +438,13 @@ val d: List[Int] > Any =
   Choices.run(c)
 ```
 
-The Choices effect becomes exceptionally powerful when combined with other effects. This allows you not just to make decisions or explore options in isolation but also to do so in contexts that might involve asynchronicity, resource management, or even user interaction.
+The Choices effect becomes exceptionally powerful when combined with other effects. This allows you not just to make decisions or explore options in isolation but also to do so in contexts that may involve factors such as asynchronicity, resource management, or even user interaction.
 
 ### Aspects: Aspect-Oriented Programming (AOP)
 
 The `Aspects` effect provides a mechanism for users to customize the behavior of a computation from an indirect scope. Aspects in Kyo are expressed as first-class values, which enables flexible scoping. For example, users may instantiate aspects and reduce their visibility via regular field modifiers.
 
-To instantate an aspect, use the `Aspects.init` method. It takes three type parameters:
+To instantiate an aspect, use the `Aspects.init` method. It takes three type parameters:
 
 1. `T`: The input type of the aspect
 2. `U`: The output type of the aspect
@@ -479,7 +480,7 @@ def example(db: Database): Int > (Aspects with IOs) =
   }
 ```
 
-If an aspect is bind to multiple `Cut` implementations, the order in which they're executed follows the order they're scoped in the computation.
+If an aspect is bound to multiple `Cut` implementations, the order of their execution is determined by the sequence in which they are scoped within the computation.
 
 ```scala
 // Another 'Cut' implementation
@@ -519,7 +520,7 @@ def example3(db: Database) =
 ```scala
 import kyo.options._
 
-// 'get' to "extract" the value of an 'Option'
+// 'get' is used to 'extract' the value of an 'Option'
 val a: Int > Options = 
   Options.get(Some(1))
 
@@ -527,14 +528,14 @@ val a: Int > Options =
 val b: Int > Options = 
   Options(1)
 
-// If 'apply' receives a 'null', it's equivalent to 'Options.get(None)'
+// If 'apply' receives a 'null', it becomes equivalent to 'Options.get(None)'
 assert(Options.run(Options(null)) == Options.run(Options.get(None)))
 
 // Effectful version of `Option.getOrElse`
 val c: Int > Options = 
   Options.getOrElse(None, 42)
 
-// Effectful verion of 'Option.orElse'
+// Effectful version of 'Option.orElse
 val d: Int > Options = 
   Options.getOrElse(Some(1), c)
 ```
@@ -544,7 +545,7 @@ val d: Int > Options =
 ```scala
 import kyo.tries._
 
-// 'get' to "extract" the value of an 'Try'
+// 'get' is used to 'extract' the value of a 'Try'
 val a: Int > Tries = 
   Tries.get(Try(1))
 
@@ -560,7 +561,7 @@ val c: Int > Tries =
 val d: Int > Tries = 
   Tries(1)
 
-// 'apply' automatically catches exceptions.
+// The 'apply' method automatically catches exceptions
 val e: Int > Tries = 
   Tries(throw new Exception)
 ```
@@ -574,19 +575,19 @@ import kyo.consoles._
 val a: String > Consoles = 
   Consoles.readln
 
-// Print to the stdout
+// Print to stdout
 val b: Unit > Consoles = 
   Consoles.print("ok")
 
-// Print to the stdout with a new line
+// Print to stdout with a new line
 val c: Unit > Consoles = 
   Consoles.println("ok")
 
-// Print to the stderr
+// Print to stderr
 val d: Unit > Consoles = 
   Consoles.printErr("fail")
 
-// Print to the stderr with a new line
+// Print to stderr with a new line
 val e: Unit > Consoles = 
   Consoles.printlnErr("fail")
 
@@ -626,7 +627,7 @@ val c: Instant > IOs =
 import kyo.randoms._
 
 // Generate a random 'Int'
-val a: Int > Randoms =  Randoms.nextInt
+val a: Int > Randoms = Randoms.nextInt
 
 // Generate a random 'Int' within a bound
 val b: Int > Randoms = Randoms.nextInt(42)
@@ -667,13 +668,13 @@ val d: Unit > IOs =
   b.error("example", new Exception)
 ```
 
-> Important: The `Loggers` effect chooses to consider the initialization of a `Logger` instance as being pure even though it may perform side effects. `Logger` instances need to be stored in constant fields for good performance, something not trivial to achieve if `Loggers.init` required an `IOs` suspension.
+> Important: The `Loggers` effect chooses to consider the initialization of a Logger instance as pure, even though it may perform side effects. For optimal performance, `Logger` instances should be stored in constant fields, a goal that would be challenging to achieve if `Loggers.init` required an `IOs` suspension.
 
 ## Concurrent Effects
 
 The `kyo.concurrent` package provides utilities for dealing with concurrency in Scala applications. It's a powerful set of effects designed for easier asynchronous programming, built on top of other core functionalities provided by the `kyo` package.
 
-### Fibers: Managed Green Threads
+### Fibers: Green Threads
 
 The `Fibers` effect can fork a computation to execute asynchronously in Kyo's managed thread pool. The `forkFiber` method is the fundamental building block of the effect's features. It takes a by-reference computation and properly propagates `Locals`.
 
@@ -686,7 +687,7 @@ val a: Fiber[Int] > (Fibers with IOs) =
 
 // It's possible to "extract" the value of a 
 // 'Fiber' via the 'get' method. This is also
-// refered as "joining the fiber"
+// referred as "joining the fiber"
 val b: Int > (Fibers with IOs) =
   Fibers.get(a)
 
@@ -706,7 +707,7 @@ val e: Fiber[Int] =
   Fibers.fail(new Exception)
 ```
 
-The `parallel` methods fork multiple computations in parallel, join the fibers, and produce a tuple with their results.
+The `parallel` methods fork multiple computations in parallel, join the fibers, and return their results.
 
 ```scala
 // There are method overloadings for up to four
@@ -714,7 +715,7 @@ The `parallel` methods fork multiple computations in parallel, join the fibers, 
 val a: (Int, String) > (Fibers with IOs) =
   Fibers.parallel(Math.cos(42).toInt, "example")
 
-// Alternatively, it's possible to to provide
+// Alternatively, it's possible to provide
 // a 'Seq' of computations and produce a 'Seq'
 // with the results
 val b: Seq[Int] > (Fibers with IOs) =
@@ -797,7 +798,7 @@ val c: Fiber[Int] > IOs =
   Fibers.joinFiber(a)
 ```
 
-> Important: Since Scala's `Future` doesn't provide an interruption mechanism, computations run to completion and don't get automatically interruped in `race` for example.
+> Important: Keep in mind that Scala's Future lacks built-in support for interruption. As a result, any computations executed through Future will run to completion, even if they're involved in a race operation where another computation finishes first.
 
 A `Fiber` instance also provides a few relevant methods.
 
@@ -845,7 +846,7 @@ val i: Fiber[Int] > IOs =
 Similarly to `IOs`, users should avoid handling the `Fibers` effect directly and rely on `kyo.App` instead. If strictly necessary, there are two methods to handle the `Fibers` effect:
 
 1. `run` takes a computation that has only the `Fibers` effect pending and returns a `Fiber` instance without blocking threads.
-2. `runBlocking` accepts computations with arbritary pending effects but it handles asynchronous operations by blocking the current thread.
+2. `runBlocking` accepts computations with arbitrary pending effects but it handles asynchronous operations by blocking the current thread.
 
 ```scala
 // An example computation with fibers
@@ -865,7 +866,7 @@ val c: Int > IOs =
   Fibers.runBlocking(a)
 ```
 
-> Note: Handling the `Fibers` effect doesn't break referential transparecy as with `IOs` but its usage is not trivial due to the limitations of the pending effects, especially `IOs`. Prefer `kyo.App` instead.
+> Note: Handling the `Fibers` effect doesn't break referential transparency as with `IOs` but its usage is not trivial due to the limitations of the pending effects, especially `IOs`. Prefer `kyo.App` instead.
 
 The `Fibers` effect also offers a low-level API to create `Promise`s as way to integrate external async operations with fibers. These APIs should be used only in low-level integration code.
 
