@@ -403,6 +403,40 @@ val b: Int > IOs =
   Resources.run(a)
 ```
 
+### Choices: Decision Making and Exploration
+
+The Choices effect is designed to aid in handling and exploring multiple options, pathways, or outcomes in a computation. This effect is particularly useful in scenarios where you're dealing with decision trees, backtracking algorithms, or any situation that involves dynamically exploring multiple options.
+
+```scala
+import kyo.choices._
+
+// Evaluate each of the provided choices.
+// Note how 'foreach' takes a 'List[T]'
+// returns a 'T > Choices'
+val a: Int > Choices =
+  Choices.foreach(List(1, 2, 3, 4))
+
+// 'dropIf' discards the current choice if 
+// a condition is not met. Produces a 'List(1, 2)'
+val b: Int > Choices =
+  a.map(v => Choices.dropIf(v > 2))
+
+// 'drop' unconditionally discards the 
+// current choice. Produces a 'List(42)'
+val c: Int > Choices = 
+  b.map {
+    case 1 => 42
+    case _ => Choices.discard
+  }
+
+// Handle the effect to evaluate all choices 
+// and return a 'List' with the results
+val d: List[Int] > Any =
+  Choices.run(c)
+```
+
+The Choices effect becomes exceptionally powerful when combined with other effects. This allows you not just to make decisions or explore options in isolation but also to do so in contexts that might involve asynchronicity, resource management, or even user interaction.
+
 ### Aspects: Aspect-Oriented Programming (AOP)
 
 The `Aspects` effects provide a mechanism for users to customize the behavior of a computation. Aspects in Kyo are expressed as first-class values, which enables flexible scoping. For example, users may instantiate aspects and reduce their visibility via regular field modifiers.

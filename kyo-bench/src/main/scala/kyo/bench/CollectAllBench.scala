@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations._
 import cats.effect.IO
 import kyo._
 import kyo.ios._
-import kyo.lists._
+import kyo.choices._
 import kyo.concurrent.fibers._
 
 class CollectAllBench extends Bench.SyncAndFork[Long] {
@@ -16,7 +16,7 @@ class CollectAllBench extends Bench.SyncAndFork[Long] {
     import kyo.ios._
 
     val tasks = (0 until count).map(_ => IOs(1)).toList
-    Lists.collect(tasks).map(_.sum.toLong)
+    Choices.collect(tasks).map(_.sum.toLong)
   }
 
   def catsBench() = {

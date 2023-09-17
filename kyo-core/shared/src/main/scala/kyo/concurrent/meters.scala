@@ -10,7 +10,7 @@ import scala.concurrent.duration.Duration
 import channels._
 import fibers._
 import timers._
-import kyo.lists.Lists
+import kyo.choices.Choices
 
 object meters {
 
@@ -95,7 +95,7 @@ object meters {
       pipeline[S1 with S2 with S3 with S4](List(m1, m2, m3, m4))
 
     def pipeline[S](l: List[Meter > (IOs with S)]): Meter > (IOs with S) =
-      Lists.collect(l).map { meters =>
+      Choices.collect(l).map { meters =>
         new Meter {
 
           val available = {
