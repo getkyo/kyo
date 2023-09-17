@@ -110,9 +110,9 @@ Here, `example1` is designed to accept an `Int > (Options with Tries)`. However,
 
 ## Using effects
 
-Kyo offers a modular approach to effect management, accommodating both built-in and user-defined effects through an organized system of object modules. This organization ensures a consistent API and allows developers to focus on building complex applications without worrying about effect management intricacies.
+Kyo offers a modular approach to effect management, accommodating both built-in and user-defined effects organized in `object` modules. This organization ensures a consistent API and allows developers to focus on building complex applications without worrying about effect management intricacies.
 
-Importing the corresponding object module into scope brings in the effect and any additional implicits it may need. The naming convention uses lowercase object modules for each effect type.
+Importing the corresponding module into scope brings in the effect and any additional implicits it may need. The naming convention uses lowercase module names for each effect type.
 
 ```scala
 // for 'Options' effect
@@ -439,7 +439,7 @@ The Choices effect becomes exceptionally powerful when combined with other effec
 
 ### Aspects: Aspect-Oriented Programming (AOP)
 
-The `Aspects` effects provide a mechanism for users to customize the behavior of a computation. Aspects in Kyo are expressed as first-class values, which enables flexible scoping. For example, users may instantiate aspects and reduce their visibility via regular field modifiers.
+The `Aspects` effect provides a mechanism for users to customize the behavior of a computation from an indirect scope. Aspects in Kyo are expressed as first-class values, which enables flexible scoping. For example, users may instantiate aspects and reduce their visibility via regular field modifiers.
 
 To instantate an aspect, use the `Aspects.init` method. It takes three type parameters:
 
