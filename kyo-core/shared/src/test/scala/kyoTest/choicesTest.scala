@@ -21,7 +21,9 @@ class choicesTest extends KyoTest {
   }
   "nested" in {
     checkEquals[List[Int], Nothing](
-        Choices.run(Choices.foreach(List(1, 2, 3)).map(i => Choices.foreach(List(i * 10, i * 100)))),
+        Choices.run(Choices.foreach(List(1, 2, 3)).map(i =>
+          Choices.foreach(List(i * 10, i * 100))
+        )),
         List(10, 100, 20, 200, 30, 300)
     )
   }

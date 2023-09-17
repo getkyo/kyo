@@ -419,14 +419,14 @@ val a: Int > Choices =
 // 'dropIf' discards the current choice if 
 // a condition is not met. Produces a 'List(1, 2)'
 val b: Int > Choices =
-  a.map(v => Choices.dropIf(v > 2))
+  a.map(v => Choices.dropIf(v > 2).map(_ => v))
 
 // 'drop' unconditionally discards the 
 // current choice. Produces a 'List(42)'
 val c: Int > Choices = 
   b.map {
     case 1 => 42
-    case _ => Choices.discard
+    case _ => Choices.drop
   }
 
 // Handle the effect to evaluate all choices 
