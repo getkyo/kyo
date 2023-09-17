@@ -21,10 +21,12 @@ In Kyo, computations are expressed via the infix type `>`, which takes two param
 ```scala 
 import kyo._
 
-// Expect an Int after handling the 'Options' effect
+// Expect an 'Int' after handling 
+// the 'Options' effect
 Int > Options
 
-// Expect a String after handling both 'Options' and 'IOs' effects
+// Expect a 'String' after handling 
+// both 'Options' and 'IOs' effects
 String > (Options with IOs)
 ```
 
@@ -38,7 +40,8 @@ import kyo._
 // An 'Int' is also an 'Int > Any'
 val a: Int > Any = 1
 
-// Since there are no pending effects, the computation can produce a pure value
+// Since there are no pending effects, 
+// the computation can produce a pure value
 val b: Int = a.pure
 ```
 
@@ -69,25 +72,31 @@ Kyo's set of pending effects is a contravariant type parameter. This encoding pe
 // An 'Int' with an empty effect set (`Any`)
 val a: Int > Any = 1
 
-// Widening the effect set from empty (`Any`) to include `Options`
+// Widening the effect set from empty (`Any`) 
+// to include `Options`
 val b: Int > Options = a
 
-// Further widening the effect set to include both `Options` and `Tries`
+// Further widening the effect set to include 
+// both `Options` and `Tries`
 val c: Int > (Options with Tries) = b
 
-// Directly widening a pure value to have `Options` and `Tries`
+// Directly widening a pure value to have 
+// `Options` and `Tries`
 val d: Int > (Options with Tries) = 42
 ```
 
 This contravariant encoding enables a fluent API for effectful code. Methods can accept parameters with a specific set of pending effects while also permitting those with fewer or no effects.
 
 ```scala
-// The function expects a parameter with both 'Options' and 'Tries' effects pending
+// The function expects a parameter with both 
+// 'Options' and 'Tries' effects pending
 def example1(v: Int > (Options with Tries)) = 
   v.map(_ + 1)
 
-// A value with only the 'Tries' effect can be automatically widened to include 'Options'
-def example2(v: Int > Tries) = example1(v)
+// A value with only the 'Tries' effect can be 
+// automatically widened to include 'Options'
+def example2(v: Int > Tries) = 
+  example1(v)
 
 // A pure value can also be automatically widened
 def example3 = example1(42)
@@ -112,17 +121,20 @@ For effects that support it, a `get` method is provided, which permits the "extr
 
 ```scala
 // Retrieve an 'Int' tagged with 'Options'
-val a: Int > Options = Options.get(Some(1))
+val a: Int > Options = 
+  Options.get(Some(1))
 ```
 
 Effect handling is done using the `run` method. Though it's named `run`, the operation doesn't necessarily execute the computation immediately, as the effect handling can also be suspended if another effect is pending.
 
 ```scala
 // Handle the 'Options' effect
-val b: Option[Int] > Any = Options.run(a)
+val b: Option[Int] > Any = 
+  Options.run(a)
 
 // Retrieve pure value as there are no more pending effects
-val c: Option[Int] = b.pure
+val c: Option[Int] = 
+  b.pure
 ```
 
 The order in which you handle effects in Kyo can significantly influence both the type and value of the result. Since effects are unordered at the type level, the runtime behavior depends on the sequence in which effects are processed.
@@ -131,13 +143,17 @@ The order in which you handle effects in Kyo can significantly influence both th
 import scala.util._
 
 def optionsFirst(a: Int > (Options with Tries)): Try[Option[Int]] = {
-  val b: Option[Int] > Tries    = Options.run(a)
-  val c: Try[Option[Int]] > Any = Tries.run(b)
+  val b: Option[Int] > Tries = 
+    Options.run(a)
+  val c: Try[Option[Int]] > Any = 
+    Tries.run(b)
   c.pure
 }
 def triesFirst(a: Int > (Options with Tries)): Option[Try[Int]] = {
-  val b: Try[Int] > Options     = Tries.run(a)
-  val c: Option[Try[Int]] > Any = Options.run(b)
+  val b: Try[Int] > Options =
+    Tries.run(a)
+  val c: Option[Try[Int]] > Any = 
+    Options.run(b)
   c.pure
 }
 ```
@@ -147,15 +163,18 @@ In this example, the order in which effects are handled significantly influences
 ```scala
 val ex = new Exception
 
-// If the effects don't short-circuit, only the order of nested types in the result changes
+// If the effects don't short-circuit, only the 
+// order of nested types in the result changes
 assert(optionsFirst(Options.get(Some(1))) == Success(Some(1)))
 assert(optionsFirst(Tries.get(Success(1))) == Success(Some(1)))
 
-// Note how the result type changes from 'Try[Option[T]]' to 'Option[Try[T]]'
+// Note how the result type changes from 
+// 'Try[Option[T]]' to 'Option[Try[T]]'
 assert(triesFirst(Options.get(Some(1))) == Some(Success(1)))
 assert(triesFirst(Tries.get(Success(1))) == Some(Success(1)))
 
-// If there's short-circuiting, the resulting value can be different
+// If there's short-circuiting, the 
+// resulting value can be different
 assert(optionsFirst(Options.get(None)) == Success(None))
 assert(optionsFirst(Tries.get(Failure(ex))) == Failure(ex))
 
@@ -172,17 +191,22 @@ The `Aborts` effect is a generic implementation for short-circuiting effects. It
 ```scala
 import kyo.aborts._
 
-// The 'get' method "extracts" the value from an 'Either' (right projection)
-val a: Int > Aborts[String] = Aborts[String].get(Right(1))
+// The 'get' method "extracts" the value
+// from an 'Either' (right projection)
+val a: Int > Aborts[String] = 
+  Aborts[String].get(Right(1))
 
 // short-circuiting via 'Left'
-val b: Int > Aborts[String] = Aborts[String].get(Left("failed!"))
+val b: Int > Aborts[String] = 
+  Aborts[String].get(Left("failed!"))
 
 // short-circuiting via 'Fail'
-val c: Int > Aborts[String] = Aborts[String].fail("failed!")
+val c: Int > Aborts[String] = 
+  Aborts[String].fail("failed!")
 
 // 'catching' automatically catches exceptions
-val d: Int > Aborts[Exception] = Aborts[Exception].catching(throw new Exception)
+val d: Int > Aborts[Exception] = 
+  Aborts[Exception].catching(throw new Exception)
 ```
 
 > Note that `Aborts` effect has a type parameter and its methods can only be accessed if the type parameter is provided.
@@ -195,13 +219,18 @@ Kyo is unlike traditional effect systems since its base type `>` **does not** as
 import kyo.ios._
 
 // 'apply' is used to suspend side effects
-val a: Int > IOs = IOs(Random.nextInt)
+val a: Int > IOs = 
+  IOs(Random.nextInt)
 
-// 'value' is a shorthand to widen a pure value to IOs
-val b: Int > IOs = IOs.value(42)
+// 'value' is a shorthand to widen 
+// a pure value to IOs
+val b: Int > IOs = 
+  IOs.value(42)
 
-// 'fail' is returns a computation that will fail once IOs is handled
-val c: Int > IOs = IOs.fail(new Exception)
+// 'fail' is returns a computation that 
+// will fail once IOs is handled
+val c: Int > IOs = 
+  IOs.fail(new Exception)
 ```
 
 > Note: Kyo's effects and public APIs are designed so any side effect is properly suspended via `IOs`, providing safe building blocks for pure computations.
@@ -211,17 +240,20 @@ Users shouldn't typically handle the `IOs` effect directly since it triggers the
 In some specific cases where Kyo isn't used as the main effect system of an application, it might make sense for the user to handle the `IOs` effect directly. The `run` method can only be used if `IOs` is the only pending effect.
 
 ```scala
-val a: Int > IOs = IOs(42)
+val a: Int > IOs = 
+  IOs(42)
 
 // ** Avoid 'IOs.run' this, use 'kyo.App' instead) **
-val b: Int = IOs.run(a).pure
+val b: Int = 
+  IOs.run(a).pure
 // ** Avoid 'IOs.run' this, use 'kyo.App' instead) **
 ```
 
 The `runLazy` method accepts computations with other effects but it doesn't guarantee that all side effects are performed before the method returns. If other effects still have to be handled, the side effects can be executed later once the other effects are handled. This a low-level API that must be used with caution.
 
 ```scala
-// Computation with an 'Options' and then an 'IOs' suspensions
+// Computation with 'Options' and then 
+// 'IOs' suspensions
 val a: Int > (Options with IOs) = 
   Options.get(Some(42)).map { v => 
     IOs { 
@@ -230,14 +262,17 @@ val a: Int > (Options with IOs) =
     }
   }
 
-// Handle the 'IOs' effect lazily
 // ** Avoid 'IOs.runLazy' this, use 'kyo.App' instead) **
-val b: Int > Options = IOs.runLazy(a)
+// Handle the 'IOs' effect lazily
+val b: Int > Options = 
+  IOs.runLazy(a)
 // ** Avoid 'IOs.runLazy' this, use 'kyo.App' instead) **
 
-// Since the computation is suspended withe 'Options' effect first,
-// the lazy IOs execution will be triggered once 'Options' is handled
-val c: Option[Int] = Options.run(b).pure
+// Since the computation is suspended withe 
+// 'Options' effect first, the lazy IOs execution 
+// will be triggered once 'Options' is handled
+val c: Option[Int] = 
+  Options.run(b).pure
 ```
 
 > IMPORTANT: Avoid handling the `IOs` effect directly since it breaks referential transparency. Use `kyo.App` instead.
@@ -257,10 +292,12 @@ trait Database {
 // The 'Envs' effect can be used to summon an instance.
 // Note how the computation produces a 'Database' but at the
 // same time requires a 'Database' from its environment
-val a: Database > Envs[Database] = Envs[Database].get
+val a: Database > Envs[Database] = 
+  Envs[Database].get
 
 // Use the 'Database' to obtain the count
-val b: Int > (Envs[Database] with IOs) = a.map(_.count)
+val b: Int > (Envs[Database] with IOs) = 
+  a.map(_.count)
 
 // A 'Database' mock implementation
 val db = new Database { 
@@ -268,7 +305,8 @@ val db = new Database {
 }
 
 // Handle the 'Envs' effect with the mock database
-val c: Int > IOs = Envs[Database].run(db)(b)
+val c: Int > IOs = 
+  Envs[Database].run(db)(b)
 ```
 
 A computation can also require multiple values from its environment.
@@ -297,10 +335,12 @@ The `Locals` effect operates on top of `IOs` and enables the definition of scope
 import kyo.locals._
 
 // Locals need to be initialized with a default value
-val myLocal: Local[Int] = Locals.init(42)
+val myLocal: Local[Int] = 
+  Locals.init(42)
 
 // The 'get' method returns the current value of the local
-val a: Int > IOs = myLocal.get
+val a: Int > IOs = 
+  myLocal.get
 
 // The 'let' method assigns a value to a local within the
 // scope of a computation. This code produces 43 (42 + 1)
@@ -330,7 +370,8 @@ val db: Database > (Resources with IOs) =
 
 // Use `run` to handle the effect and close the resources 
 // utilized by a computation
-val b: Int > IOs = Resources.run(db.map(_.count))
+val b: Int > IOs = 
+  Resources.run(db.map(_.count))
 ```
 
 The `ensure` method is a more low-level API to allow users to handle the finalization of resources directly. The `acquire` method is implemented in terms of `ensure`.
@@ -352,7 +393,8 @@ val a: Int > (IOs with Resources) =
   withDb(_.count)
 
 // Close resources
-val b: Int > IOs = Resources.run(a)
+val b: Int > IOs = 
+  Resources.run(a)
 ```
 
 ### Aspects: Aspect-Oriented Programming (AOP)
@@ -436,19 +478,23 @@ def example3(db: Database) =
 import kyo.options._
 
 // 'get' to "extract" the value of an 'Option'
-val a: Int > Options = Options.get(Some(1))
+val a: Int > Options = 
+  Options.get(Some(1))
 
 // 'apply' is the effectful version of 'Option.apply'
-val b: Int > Options = Options(1)
+val b: Int > Options = 
+  Options(1)
 
 // If 'apply' receives a 'null', it's equivalent to 'Options.get(None)'
 assert(Options.run(Options(null)) == Options.run(Options.get(None)))
 
 // Effectful version of `Option.getOrElse`
-val c: Int > Options = Options.getOrElse(None, 42)
+val c: Int > Options = 
+  Options.getOrElse(None, 42)
 
 // Effectful verion of 'Option.orElse'
-val d: Int > Options = Options.getOrElse(Some(1), c)
+val d: Int > Options = 
+  Options.getOrElse(Some(1), c)
 ```
 
 ### Tries: Exception Handling
@@ -457,19 +503,24 @@ val d: Int > Options = Options.getOrElse(Some(1), c)
 import kyo.tries._
 
 // 'get' to "extract" the value of an 'Try'
-val a: Int > Tries = Tries.get(Try(1))
+val a: Int > Tries = 
+  Tries.get(Try(1))
 
 // 'fail' to short-circuit the computation
-val b: Int > Tries = Tries.fail(new Exception)
+val b: Int > Tries = 
+  Tries.fail(new Exception)
 
 // 'fail' has an overload that takes an error message
-val c: Int > Tries = Tries.fail("failed")
+val c: Int > Tries = 
+  Tries.fail("failed")
 
 // 'apply' is the effectful version of 'Try.apply'
-val d: Int > Tries = Tries(1)
+val d: Int > Tries = 
+  Tries(1)
 
-// 'apply' automatically catches exceptions. Equivalent to 'Tries.fail(new Exception)'
-val e: Int > Tries = Tries(throw new Exception)
+// 'apply' automatically catches exceptions.
+val e: Int > Tries = 
+  Tries(throw new Exception)
 ```
 
 ### Consoles: Console Interaction
@@ -478,25 +529,32 @@ val e: Int > Tries = Tries(throw new Exception)
 import kyo.consoles._
 
 // Read a line from the console
-val a: String > Consoles = Consoles.readln
+val a: String > Consoles = 
+  Consoles.readln
 
 // Print to the stdout
-val b: Unit > Consoles = Consoles.print("ok")
+val b: Unit > Consoles = 
+  Consoles.print("ok")
 
 // Print to the stdout with a new line
-val c: Unit > Consoles = Consoles.println("ok")
+val c: Unit > Consoles = 
+  Consoles.println("ok")
 
 // Print to the stderr
-val d: Unit > Consoles = Consoles.printErr("fail")
+val d: Unit > Consoles = 
+  Consoles.printErr("fail")
 
 // Print to the stderr with a new line
-val e: Unit > Consoles = Consoles.printlnErr("fail")
+val e: Unit > Consoles = 
+  Consoles.printlnErr("fail")
 
 // Run with the default implicit 'Console' implementation
-val f: Unit > IOs = Consoles.run(e)
+val f: Unit > IOs = 
+  Consoles.run(e)
 
 // Explicitly specifying the 'Console' implementation
-val g: Unit > IOs = Consoles.run(Console.default)(e)
+val g: Unit > IOs = 
+  Consoles.run(Console.default)(e)
 ```
 
 > Note how `Consoles.run` returns a computation with the `IOs` effect pending, which ensures the implementation of `Consoles` is pure.
@@ -508,13 +566,16 @@ import kyo.clocks._
 import java.time.Instant
 
 // Obtain the current time
-val a: Instant > Clocks = Clocks.now
+val a: Instant > Clocks = 
+  Clocks.now
 
 // Run with default 'Clock'
-val b: Instant > IOs = Clocks.run(a)
+val b: Instant > IOs = 
+  Clocks.run(a)
 
 // Run with an explicit 'Clock'
-val c: Instant > IOs = Clocks.run(Clock.default)(a)
+val c: Instant > IOs = 
+  Clocks.run(Clock.default)(a)
 ```
 
 
