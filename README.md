@@ -70,19 +70,23 @@ Kyo's set of pending effects is a contravariant type parameter. This encoding pe
 
 ```scala
 // An 'Int' with an empty effect set (`Any`)
-val a: Int > Any = 1
+val a: Int > Any = 
+  1
 
 // Widening the effect set from empty (`Any`) 
 // to include `Options`
-val b: Int > Options = a
+val b: Int > Options = 
+  a
 
 // Further widening the effect set to include 
 // both `Options` and `Tries`
-val c: Int > (Options with Tries) = b
+val c: Int > (Options with Tries) = 
+  b
 
 // Directly widening a pure value to have 
 // `Options` and `Tries`
-val d: Int > (Options with Tries) = 42
+val d: Int > (Options with Tries) = 
+  42
 ```
 
 This contravariant encoding enables a fluent API for effectful code. Methods can accept parameters with a specific set of pending effects while also permitting those with fewer or no effects.
@@ -321,8 +325,10 @@ trait Cache {
 val a: Unit > (Envs[Database] with Envs[Cache] with IOs) = 
   Envs[Database].get.map { db =>
     db.count.map {
-      case 0 => Envs[Cache].get.map(_.clear)
-      case _ => ()
+      case 0 => 
+        Envs[Cache].get.map(_.clear)
+      case _ => 
+        ()
     }
   }
 ```
@@ -578,6 +584,56 @@ val c: Instant > IOs =
   Clocks.run(Clock.default)(a)
 ```
 
+### Randoms: Random Values
+
+```scala
+import kyo.randoms._
+
+// Generate a random 'Int'
+val a: Int > Randoms =  Randoms.nextInt
+
+// Generate a random 'Int' within a bound
+val b: Int > Randoms = Randoms.nextInt(42)
+
+// A few method variants
+val c: Long > Randoms = Randoms.nextLong
+val d: Double > Randoms = Randoms.nextDouble
+val e: Boolean > Randoms = Randoms.nextBoolean
+val f: Float > Randoms = Randoms.nextFloat
+val g: Double > Randoms = Randoms.nextGaussian
+
+// Obtain a random value from a sequence
+val h: Int > Randoms = 
+  Randoms.nextValue(List(1, 2, 3))
+```
+
+### Loggers: Logging
+
+```scala
+import kyo.loggers._
+
+// Initialize a 'Logger' instance
+val a: Logger = 
+  Loggers.init("exampleLog")
+
+// It's also possible to specify a class
+val b: Logger =
+  Loggers.init(this.getClass)
+
+// A 'Logger' provides trace, debug, info, 
+// warn, and error method variants. Example:
+val c: Unit > IOs = 
+  b.error("example")
+
+// Each variant also has a method overload
+// that takes a 'Throwable' as a second param
+val d: Unit > IOs = 
+  b.error("example", new Exception)
+```
+
+> Important: The `Loggers` effect chooses to consider the initialization of a `Logger` instance as being pure even though it may perform side effects. `Logger` instances need to be stored in constant fields for good performance, something not trivial to achieve if `Loggers.init` required an `IOs` suspension.
+
+### Lists: 
 
 License
 -------
