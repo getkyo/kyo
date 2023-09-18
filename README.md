@@ -11,6 +11,29 @@ Kyo is a complete toolkit for Scala development, spanning from browser-based app
 
 Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://degoes.net/articles/rotating-effects), Kyo takes a more generalized approach. While ZIO restricts effects to two channels, dependency injection and short-circuiting, Kyo allows for an arbitrary number of effectful channels. This enhancement gives developers greater flexibility in effect management, while also simplifying Kyo's internal codebase through more principled design patterns.
 
+## Index
+
+1. [The `>` type](#the--type)
+2. [Effect widening](#effect-widening)
+3. [Using effects](#using-effects)
+4. [Core Effects](#core-effects)
+    - [Aborts: Short Circuiting](#aborts-short-circuiting)
+    - [IOs: Side Effects](#ios-side-effects)
+    - [Envs: Dependency Injection](#envs-dependency-injection)
+    - [Locals: Scoped Values](#locals-scoped-values)
+    - [Resources: Resource Safety](#resources-resource-safety)
+    - [Choices: Exploratory Branching](#choices-exploratory-branching)
+    - [Aspects: Aspect-Oriented Programming (AOP)](#aspects-aspect-oriented-programming-aop)
+    - [Options: Optional Values](#options-optional-values)
+    - [Tries: Exception Handling](#tries-exception-handling)
+    - [Consoles: Console Interaction](#consoles-console-interaction)
+    - [Clocks: Time Management](#clocks-time-management)
+    - [Randoms: Random Values](#randoms-random-values)
+    - [Loggers: Logging](#loggers-logging)
+5. [Concurrent Effects](#concurrent-effects)
+    - [Fibers: Green Threads](#fibers-green-threads)
+    - [Channels: Asynchronous Communication](#channels-asynchronous-communication)
+
 ## The `>` type
 
 In Kyo, computations are expressed via the infix type `>`, which takes two parameters:
