@@ -29,10 +29,6 @@ object channels {
 
     abstract class Unbounded[T] extends Channel[T] {
 
-      def offer[S](v: T > S): Boolean > (IOs with S)
-
-      def poll: Option[T] > IOs
-
       def put[S](v: T > S): Unit > (IOs with S)
     }
 
