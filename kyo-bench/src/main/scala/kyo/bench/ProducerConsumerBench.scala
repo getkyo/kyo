@@ -44,7 +44,7 @@ class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
       if (n <= 1) io
       else io.flatMap(_ => repeat(n - 1)(io))
 
-    Channels.blocking[Unit](depth / 2, Access.Spsc).flatMap { q =>
+    Channels.init[Unit](depth / 2, Access.Spsc).flatMap { q =>
       for {
         producer <- Fibers.forkFiber(repeat(depth)(q.put(())))
         consumer <- Fibers.forkFiber(repeat(depth)(q.take))

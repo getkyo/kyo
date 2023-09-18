@@ -7,17 +7,18 @@ import org.jctools.queues._
 
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicReference
+import scala.annotation.tailrec
 
 object queues {
 
   class Queue[T] private[queues] (private[kyo] val unsafe: Queues.Unsafe[T]) {
-    def capacity: Int                              = unsafe.capacity
-    def size: Int > IOs                            = IOs(unsafe.size)
-    def isEmpty: Boolean > IOs                     = IOs(unsafe.isEmpty)
-    def isFull: Boolean > IOs                      = IOs(unsafe.isFull)
+    val capacity: Int                              = unsafe.capacity
+    val size: Int > IOs                            = IOs(unsafe.size)
+    val isEmpty: Boolean > IOs                     = IOs(unsafe.isEmpty())
+    val isFull: Boolean > IOs                      = IOs(unsafe.isFull())
     def offer[S](v: T > S): Boolean > (IOs with S) = v.map(v => IOs(unsafe.offer(v)))
-    def poll: Option[T] > IOs                      = IOs(unsafe.poll())
-    def peek: Option[T] > IOs                      = IOs(unsafe.peek())
+    val poll: Option[T] > IOs                      = IOs(unsafe.poll())
+    val peek: Option[T] > IOs                      = IOs(unsafe.peek())
   }
 
   object Queues {
@@ -25,8 +26,8 @@ object queues {
     private[kyo] trait Unsafe[T] {
       def capacity: Int
       def size: Int
-      def isEmpty: Boolean
-      def isFull: Boolean
+      def isEmpty(): Boolean
+      def isFull(): Boolean
       def offer(v: T): Boolean
       def poll(): Option[T]
       def peek(): Option[T]
@@ -41,8 +42,8 @@ object queues {
       new Unsafe[Any] {
         def capacity      = 0
         def size          = 0
-        def isEmpty       = true
-        def isFull        = true
+        def isEmpty()     = true
+        def isFull()      = true
         def offer(v: Any) = false
         def poll()        = None
         def peek()        = None
@@ -58,8 +59,8 @@ object queues {
                 new AtomicReference[T] with Unsafe[T] {
                   def capacity    = 1
                   def size        = if (get == null) 0 else 1
-                  def isEmpty     = get == null
-                  def isFull      = get != null
+                  def isEmpty()   = get == null
+                  def isFull()    = get != null
                   def offer(v: T) = compareAndSet(null.asInstanceOf[T], v)
                   def poll()      = Option(getAndSet(null.asInstanceOf[T]))
                   def peek()      = Option(get)
@@ -93,13 +94,58 @@ object queues {
         }
       }
 
+    def dropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      bounded[T](capacity, access).map { q =>
+        val u = q.unsafe
+        val c = capacity
+        new Unbounded(
+            new Unsafe[T] {
+              def capacity    = c
+              def size        = u.size
+              def isEmpty()   = u.isEmpty()
+              def isFull()    = false
+              def offer(v: T) = u.offer(v)
+              def poll()      = u.poll()
+              def peek()      = u.peek()
+            }
+        )
+      }
+
+    def sliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      bounded[T](capacity, access).map { q =>
+        val u = q.unsafe
+        val c = capacity
+        new Unbounded(
+            new Unsafe[T] {
+              def capacity  = c
+              def size      = u.size
+              def isEmpty() = u.isEmpty()
+              def isFull()  = false
+              def offer(v: T) = {
+                @tailrec def loop(v: T): Unit = {
+                  val u = q.unsafe
+                  if (u.offer(v)) ()
+                  else {
+                    u.poll()
+                    loop(v)
+                  }
+                }
+                loop(v)
+                true
+              }
+              def poll() = u.poll()
+              def peek() = u.peek()
+            }
+        )
+      }
+
     private def fromJava[T](q: java.util.Queue[T]): Unbounded[T] =
       new Unbounded(
           new Unsafe[T] {
             def capacity    = Int.MaxValue
             def size        = q.size
-            def isEmpty     = q.isEmpty()
-            def isFull      = false
+            def isEmpty()   = q.isEmpty()
+            def isFull()    = false
             def offer(v: T) = q.offer(v)
             def poll()      = Option(q.poll)
             def peek()      = Option(q.peek)
@@ -111,8 +157,8 @@ object queues {
           new Unsafe[T] {
             def capacity    = _capacity
             def size        = q.size
-            def isEmpty     = q.isEmpty()
-            def isFull      = q.size >= _capacity
+            def isEmpty()   = q.isEmpty()
+            def isFull()    = q.size >= _capacity
             def offer(v: T) = q.offer(v)
             def poll()      = Option(q.poll)
             def peek()      = Option(q.peek)

@@ -67,4 +67,28 @@ class queuesTest extends KyoTest {
       } yield assert(v == Some(1))
     }
   }
+
+  "dropping" in run {
+    for {
+      q <- Queues.dropping[Int](2)
+      _ <- q.add(1)
+      _ <- q.add(2)
+      _ <- q.add(3)
+      a <- q.poll
+      b <- q.poll
+      c <- q.poll
+    } yield assert(a == Some(1) && b == Some(2) && c == None)
+  }
+
+  "sliding" in run {
+    for {
+      q <- Queues.sliding[Int](2)
+      _ <- q.add(1)
+      _ <- q.add(2)
+      _ <- q.add(3)
+      a <- q.poll
+      b <- q.poll
+      c <- q.poll
+    } yield assert(a == Some(2) && b == Some(3) && c == None)
+  }
 }

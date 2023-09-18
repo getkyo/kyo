@@ -31,7 +31,7 @@ object meters {
       semaphore(1)
 
     def semaphore(permits: Int): Meter > IOs =
-      Channels.blocking[Unit](permits).map { chan =>
+      Channels.init[Unit](permits).map { chan =>
         offer(permits, chan, ()).map { _ =>
           new Meter {
             val available = chan.size
@@ -58,7 +58,7 @@ object meters {
       }
 
     def rateLimiter(rate: Int, period: Duration): Meter > (IOs with Timers) =
-      Channels.blocking[Unit](rate).map { chan =>
+      Channels.init[Unit](rate).map { chan =>
         Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())).map { _ =>
           new Meter {
 

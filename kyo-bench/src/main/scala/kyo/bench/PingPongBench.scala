@@ -59,7 +59,7 @@ class PingPongBench extends Bench.ForkOnly[Unit] {
     def iterate(promise: Promise[Unit], n: Int): Unit > (IOs with Fibers) =
       for {
         ref  <- Atomics.initInt(n)
-        chan <- Channels.blocking[Unit](1)
+        chan <- Channels.init[Unit](1)
         effect =
           for {
             _ <- Fibers.forkFiber(chan.put(()))
