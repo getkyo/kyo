@@ -1200,7 +1200,105 @@ val d: Boolean > Timers =
   a.map(_.isDone)
 ```
 
+### Latches: Fiber Coordination
 
+The `Latches` effect serves as a coordination mechanism for fibers in a concurrent environment, primarily used for task synchronization. It provides a low-level API for controlling the flow of execution and ensuring certain tasks are completed before others, all while maintaining thread safety.
+
+```scala
+import kyo.concurrent.latches._
+
+// Initialize a latch with 'n' permits
+val a: Latch > IOs = 
+  Latches.init(3)
+
+// Await until the latch releases
+val b: Unit > (Fibers with IOs) =
+  a.map(_.await)
+
+// Release a permit from the latch
+val c: Unit > IOs =
+  a.map(_.release)
+
+// Get the number of pending permits
+val d: Int > IOs =
+  a.map(_.pending)
+```
+
+### Atomics: Concurrent State
+
+The `Atomics` effect provides a set of thread-safe atomic variables to manage mutable state in a concurrent setting. Available atomic types include Int, Long, Boolean, and generic references.
+
+```scala
+import kyo.concurrent.atomics._
+
+// Initialize atomic variables
+val aInt: AtomicInt > IOs = 
+  Atomics.initInt(0)
+val aLong: AtomicLong > IOs = 
+  Atomics.initLong(0L)
+val aBool: AtomicBoolean > IOs = 
+  Atomics.initBoolean(false)
+val aRef: AtomicRef[String] > IOs = 
+  Atomics.initRef("initial")
+
+// Fetch values
+val b: Int > IOs = 
+  aInt.map(_.get)
+val c: Long > IOs = 
+  aLong.map(_.get)
+val d: Boolean > IOs = 
+  aBool.map(_.get)
+val e: String > IOs = 
+  aRef.map(_.get)
+
+// Update values
+val f: Unit > IOs = 
+  aInt.map(_.set(1))
+val g: Unit > IOs = 
+  aLong.map(_.lazySet(1L))
+val h: Boolean > IOs = 
+  aBool.map(_.cas(false, true))
+val i: String > IOs = 
+  aRef.map(_.getAndSet("new"))
+```
+
+### Adders: Concurrent Accumulation
+
+The `Adders` effect offers thread-safe variables for efficiently accumulating numeric values. The two primary classes, `LongAdder` and `DoubleAdder`, are optimized for high-throughput scenarios where multiple threads update the same counter.
+
+```scala
+import kyo.concurrent.adders._
+
+// Initialize Adders
+val longAdder: LongAdder > IOs = 
+  Adders.initLong
+val doubleAdder: DoubleAdder > IOs = 
+  Adders.initDouble
+
+// Adding values
+val a: Unit > IOs = 
+  longAdder.map(_.add(10L))
+val b: Unit > IOs = 
+  doubleAdder.map(_.add(10.5))
+
+// Increment and Decrement LongAdder
+val c: Unit > IOs = 
+  longAdder.map(_.increment)
+val d: Unit > IOs = 
+  longAdder.map(_.decrement)
+
+// Fetch summed values
+val e: Long > IOs = 
+  longAdder.map(_.get)
+val f: Double > IOs = 
+  doubleAdder.map(_.get)
+
+// Resetting the adders
+val g: Unit > IOs = 
+  longAdder.map(_.reset)
+val h: Unit > IOs = 
+  doubleAdder.map(_.reset)
+```
 
 License
 -------
