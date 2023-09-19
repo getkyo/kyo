@@ -915,24 +915,27 @@ val b: Boolean > IOs =
 
 > A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` method to manually fulfill the promise.
 
-### Channels: Asynchronous Communication
+### Queues: Concurrent Queuing
 
-The `Channels` effect offers a high-level abstraction for concurrent communication. Built atop `IOs` and `Fibers`, it enables safe data transfer between different parts of your application, whether they're running in different fibers or threads.
+The `Queues` effect operates atop of `IOs` and provides thread-safe queue data structures based on the high-performance [JCTools](https://github.com/JCTools/JCTools) library on the JVM. For ScalaJS, a simple `ArrayQueue` is used.
 
-**Bounded channels**
+**Bounded queues**
 ```scala
-import kyo.concurrent.channels._
+import kyo.concurrent.queues._
 
 // A 'bounded' channel rejects new
-// elements once full, does not provide
-// 'put' and 'take' methods
-val a: Channel[Int] > IOs =
-  Channels.bounded(capacity = 42)
+// elements once full
+val a: Queue[Int] > IOs =
+  Queues.bounded(capacity = 42)
 
-// Obtain the number of items in the channel
-// via the method 'size' in 'Channel'
+// Obtain the number of items in the queue
+// via the method 'size' in 'Queue'
 val b: Int > IOs =
   a.map(_.size)
+
+// Get the queue capacity
+val b: Int > IOs =
+  a.map(_.capacity)
 
 // Try to offer a new item
 val c: Boolean > IOs =
@@ -942,61 +945,123 @@ val c: Boolean > IOs =
 val d: Option[Int] > IOs =
   a.map(_.poll)
 
-// Check if channel is empty
-val e: Boolean > IOs =
+// Try to 'peek' an item without removing it
+val e: Option[Int] > IOs =
+  a.map(_.peek)
+
+// Check if the queue is empty
+val f: Boolean > IOs =
   a.map(_.isEmpty)
 
-// Check if channel is full
-val f: Boolean > IOs =
+// Check if the queue is full
+val g: Boolean > IOs =
   a.map(_.isFull)
 ```
 
-**Dropping and sliding channels**
+**Unbounded queues**
 ```scala
-// A 'dropping' channel discards new entries
-// when full
-val a: Channels.Unbounded[Int] > IOs =
-  Channels.dropping(capacity = 42)
+// Avoid `Queues.unbounded` since if queues can 
+// grow without limits, the GC overhead can make 
+// the system fail
+val a: Queues.Unbounded[Int] > IOs =
+  Queues.ubounded()
 
-// A 'sliding' channel discards the oldest
+// A 'dropping' queue discards new entries
+// when full
+val a: Queues.Unbounded[Int] > IOs =
+  Queues.dropping(capacity = 42)
+
+// A 'sliding' queue discards the oldest
 // entries if necessary to make space for new 
 // entries
-val b: Channels.Unbounded[Int] > IOs =
-  Channels.sliding(capacity = 42)
+val b: Queues.Unbounded[Int] > IOs =
+  Queues.sliding(capacity = 42)
 
-// Note how 'dropping' and 'sliding' channels
-// return 'Channel.Unbounded`. It provides
-// an additional method to 'put' new items
+// Note how 'dropping' and 'sliding' queues
+// return 'Queues.Unbounded`. It provides
+// an additional method to 'add' new items
 // unconditionally
 val c: Unit > IOs =
-  b.map(_.put(42))
+  b.map(_.add(42))
 ```
 
-**Blocking channels**
-```scala
-// A 'blocking' channel integrates with the
-// 'Fibers' effect to provide 'take' and 'put'
-// methods that allow fibers to wait for
-// space in the channel or for new elements
-val a: Channels.Blocking[Int] > IOs =
-  Channels.blocking(capacity = 42)
+**Concurrent access policies**
 
-// The 'put' method suspends the current fiber
-// in case the channel has no space. Once space
-// is made available, the new item is added to the 
-// channel and the fiber is resumed
+It's also possible to specify a concurrent `Access` policy as the second parameter of the `Queues.init` methods. This configuration has an effect only on the JVM and is ignored in ScalaJS.
+
+| Policy | Full Form                           | Description |
+|--------|-------------------------------------|-------------|
+| Mpmc   | Multiple Producers, Multiple Consumers | Supports multiple threads/fibers simultaneously enqueuing and dequeuing elements. This is the most flexible but may incur the most overhead due to the need to synchronize between multiple producers and consumers. |
+| Mpsc   | Multiple Producers, Single Consumer   | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed. |
+| Spmc   | Single Producer, Multiple Consumers   | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers. |
+| Spsc   | Single Producer, Single Consumer      | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements. |
+
+Each policy is suitable for different scenarios and comes with its own trade-offs. For example, `Mpmc` is highly flexible but can be slower due to the need for more complex synchronization. `Spsc`, being the most restrictive, allows for optimizations that could make it faster for specific single-producer, single-consumer scenarios.
+
+You can specify the access policy when initializing a queue, and it is important to choose the one that aligns with your application's needs for optimal performance.
+
+```scala
+// Initialize a bounded queue with a 
+// Multiple Producers, Multiple 
+// Consumers policy
+val a: Queue[Int] > IOs =
+  Queues.bounded(
+    capacity = 42, 
+    access = Access.Mpmc
+  )
+```
+
+### Channels: Asynchronous Communication
+
+The `Channels` effect serves as an advanced concurrency primitive, designed to facilitate seamless and backpressured data transfer between various parts of your application. Built upon the `Fibers` effect, Channels not only ensures thread-safe communication but also incorporates an intelligent backpressure mechanism. This mechanism temporarily suspends fibers under specific conditions—either when waiting for new items to arrive or when awaiting space to add new items.
+
+```scala
+// A 'Channel' is initialized
+// with a fixed capacity
+val a: Channel[Int] > IOs =
+  Channels.init(capacity = 42)
+
+// It's also possible to specify
+// an 'Access' policy
+val b: Channel[Int] > IOs =
+  Channels.init(
+    capacity = 42, 
+    access = Access.Mpmc
+  )
+```
+
+While `Channels` share similarities with `Queues`—such as methods for querying size (`size`), adding an item (`offer`), or retrieving an item (`poll`)—they go a step further by offering backpressure-sensitive methods, namely `put` and `take`.
+
+```scala
+// An example channel
+val a: Channel[Int] > IOs =
+  Channels.init(capacity = 42)
+
+// Adds a new item to the channel.
+// If there's no capacity, the fiber
+// is automatically suspended until
+// space is made available
 val b: Unit > (Fibers with IOs) =
   a.map(_.put(42))
 
-// The 'take' method suspends the current fiber
-// if the channel is empty. Once a new item arrives
-// the fiber is resumed with the new entry
+// Takes an item from the channel.
+// If the channel is empty, the fiber
+// is suspended until a new item is
+// made available
 val c: Int > (Fibers with IOs) =
   a.map(_.take)
+
+// 'putFiber' returns a `Fiber` that
+// will complete once the put completes
+val d: Fiber[Unit] > IOs =
+  a.map(_.putFiber(42))
+
+// 'takeFiber' also returns a fiber
+val e: Fiber[T] > IOs =
+  a.map(_.takeFiber)
 ```
 
-### Queues: Low-level 
-
+> The ability to suspend fibers during `put` and `take` operations allows `Channels` to provide a more controlled form of concurrency. This is particularly beneficial for rate-sensitive or resource-intensive tasks where maintaining system balance is crucial.
 
 License
 -------
