@@ -30,9 +30,9 @@ object meters {
     def mutex: Meter > IOs =
       semaphore(1)
 
-    def semaphore(permits: Int): Meter > IOs =
-      Channels.init[Unit](permits).map { chan =>
-        offer(permits, chan, ()).map { _ =>
+    def semaphore(concurrency: Int): Meter > IOs =
+      Channels.init[Unit](concurrency).map { chan =>
+        offer(concurrency, chan, ()).map { _ =>
           new Meter {
             val available = chan.size
             val release   = chan.offer(()).unit

@@ -934,27 +934,27 @@ val b: Int > IOs =
   a.map(_.size)
 
 // Get the queue capacity
-val b: Int > IOs =
+val c: Int > IOs =
   a.map(_.capacity)
 
 // Try to offer a new item
-val c: Boolean > IOs =
+val d: Boolean > IOs =
   a.map(_.offer(42))
 
 // Try to poll an item
-val d: Option[Int] > IOs =
+val e: Option[Int] > IOs =
   a.map(_.poll)
 
 // Try to 'peek' an item without removing it
-val e: Option[Int] > IOs =
+val f: Option[Int] > IOs =
   a.map(_.peek)
 
 // Check if the queue is empty
-val f: Boolean > IOs =
+val g: Boolean > IOs =
   a.map(_.isEmpty)
 
 // Check if the queue is full
-val g: Boolean > IOs =
+val h: Boolean > IOs =
   a.map(_.isFull)
 ```
 
@@ -964,25 +964,25 @@ val g: Boolean > IOs =
 // grow without limits, the GC overhead can make 
 // the system fail
 val a: Queues.Unbounded[Int] > IOs =
-  Queues.ubounded()
+  Queues.unbounded()
 
 // A 'dropping' queue discards new entries
 // when full
-val a: Queues.Unbounded[Int] > IOs =
+val b: Queues.Unbounded[Int] > IOs =
   Queues.dropping(capacity = 42)
 
 // A 'sliding' queue discards the oldest
 // entries if necessary to make space for new 
 // entries
-val b: Queues.Unbounded[Int] > IOs =
+val c: Queues.Unbounded[Int] > IOs =
   Queues.sliding(capacity = 42)
 
 // Note how 'dropping' and 'sliding' queues
 // return 'Queues.Unbounded`. It provides
 // an additional method to 'add' new items
 // unconditionally
-val c: Unit > IOs =
-  b.map(_.add(42))
+val d: Unit > IOs =
+  c.map(_.add(42))
 ```
 
 **Concurrent access policies**
@@ -1001,6 +1001,8 @@ Each policy is suitable for different scenarios and comes with its own trade-off
 You can specify the access policy when initializing a queue, and it is important to choose the one that aligns with your application's needs for optimal performance.
 
 ```scala
+import kyo.concurrent.Access
+
 // Initialize a bounded queue with a 
 // Multiple Producers, Multiple 
 // Consumers policy
@@ -1013,9 +1015,11 @@ val a: Queue[Int] > IOs =
 
 ### Channels: Asynchronous Communication
 
-The `Channels` effect serves as an advanced concurrency primitive, designed to facilitate seamless and backpressured data transfer between various parts of your application. Built upon the `Fibers` effect, Channels not only ensures thread-safe communication but also incorporates an intelligent backpressure mechanism. This mechanism temporarily suspends fibers under specific conditions—either when waiting for new items to arrive or when awaiting space to add new items.
+The `Channels` effect serves as an advanced concurrency primitive, designed to facilitate seamless and backpressured data transfer between various parts of your application. Built upon the `Fibers` effect, `Channels` not only ensures thread-safe communication but also incorporates a backpressure mechanism. This mechanism temporarily suspends fibers under specific conditions—either when waiting for new items to arrive or when awaiting space to add new items.
 
 ```scala
+import kyo.concurrent.channels._
+
 // A 'Channel' is initialized
 // with a fixed capacity
 val a: Channel[Int] > IOs =
@@ -1057,11 +1061,146 @@ val d: Fiber[Unit] > IOs =
   a.map(_.putFiber(42))
 
 // 'takeFiber' also returns a fiber
-val e: Fiber[T] > IOs =
+val e: Fiber[Int] > IOs =
   a.map(_.takeFiber)
 ```
 
-> The ability to suspend fibers during `put` and `take` operations allows `Channels` to provide a more controlled form of concurrency. This is particularly beneficial for rate-sensitive or resource-intensive tasks where maintaining system balance is crucial.
+The ability to suspend fibers during `put` and `take` operations allows `Channels` to provide a more controlled form of concurrency. This is particularly beneficial for rate-sensitive or resource-intensive tasks where maintaining system balance is crucial.
+
+> Important: While a `Channel` comes with a predefined item capacity, it's crucial to understand that there is no upper limit on the number of fibers that can be suspended by it. In scenarios where your application spawns an unrestricted number of fibers—such as an HTTP service where each incoming request initiates a new fiber—this can lead to significant memory consumption. The channel's internal queue for suspended fibers could grow indefinitely, making it a potential source of unbounded queuing and memory issues. Exercise caution in such use-cases to prevent resource exhaustion.
+
+### Meters: Computational Limits
+
+The `Meters` effect offers utilities to regulate computational execution, be it limiting concurrency or managing rate. It is equipped with a range of pre-set limitations, including mutexes, semaphores, and rate limiters, allowing you to apply fine-grained control over task execution.
+
+```scala
+import kyo.concurrent.meters._
+
+// 'mutex': One computation at a time
+val a: Meter > IOs = 
+  Meters.mutex
+
+// 'semaphore': Limit concurrent tasks
+val b: Meter > IOs =
+  Meters.semaphore(concurrency = 42)
+
+// 'rateLimiter': Tasks per time window
+val c: Meter > (Timers with IOs) =
+  Meters.rateLimiter(
+    rate = 10, 
+    period = 1.second
+  )
+
+// 'pipeline': Combine multiple 'Meter's
+val d: Meter > (Timers with IOs) =
+  Meters.pipeline(a, b, c)
+```
+
+The `Meter` class comes with a handful of methods designed to provide insights into and control over computational execution.
+
+```scala
+// An example 'Meter'
+val a: Meter > IOs = 
+  Meters.mutex
+
+// Get available permits
+val b: Int > IOs =
+  a.map(_.available)
+
+// Check for available permit
+val c: Boolean > IOs =
+  a.map(_.isAvailable)
+
+// Use 'run' to execute tasks
+// respecting meter limits
+val d: Int > (Fibers with IOs) =
+  a.map(_.run(Math.cos(42).toInt))
+
+// 'tryRun' executes if a permit is
+// available; returns 'None' otherwise
+val e: Option[Int] > IOs =
+  a.map(_.tryRun(Math.cos(42).toInt))
+```
+
+### Timers: Scheduled Execution
+
+The `Timers` effect is designed for control over the timing of task execution.
+
+```scala
+import kyo.concurrent.timers._
+
+// An example computation to
+// be scheduled
+val a: Unit > IOs = 
+  IOs(())
+
+// Schedule a delayed task
+val b: TimerTask > Timers =
+  Timers.schedule(delay = 1.second)(a)
+
+// Recurring task with
+// intial delay
+val c: TimerTask > Timers =
+  Timers.scheduleAtFixedRate(
+    initialDelay = 1.minute,
+    period = 1.minute
+  )(a)
+
+// Recurring task without
+// initial delay
+val d: TimerTask > Timers =
+  Timers.scheduleAtFixedRate(
+    period = 1.minute
+  )(a)
+
+// Schedule with fixed delay between tasks
+val e: TimerTask > Timers =
+  Timers.scheduleWithFixedDelay(
+    initialDelay = 1.minute,
+    period = 1.minute
+  )(a)
+
+// without initial delay
+val f: TimerTask > Timers =
+  Timers.scheduleWithFixedDelay(
+    period = 1.minute
+  )(a)
+
+// Shutdown the current timer
+val g: Unit > Timers =
+  Timers.shutdown
+
+// Use 'run' to handle the Timers
+// effect with the default 'Timer'
+val h: Unit > IOs =
+  Timers.run(g)
+
+// Specify the 'Timer' explictly
+val i: Unit > IOs =
+  Timers.run(Timer.default)(g)
+```
+
+`TimerTask` offers methods for more granular control over the scheduled tasks.
+
+```scala
+// Example TimerTask
+val a: TimerTask > Timers = 
+  Timers.schedule(1.second)(())
+
+// Try to cancel the task
+val b: Boolean > Timers =
+  a.map(_.cancel)
+
+// Check if the task is cancelled
+val c: Boolean > Timers =
+  a.map(_.isCancelled)
+
+// Check if the task is done
+val d: Boolean > Timers =
+  a.map(_.isDone)
+```
+
+
 
 License
 -------
