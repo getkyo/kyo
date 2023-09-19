@@ -11,28 +11,34 @@ Kyo is a complete toolkit for Scala development, spanning from browser-based app
 
 Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://degoes.net/articles/rotating-effects), Kyo takes a more generalized approach. While ZIO restricts effects to two channels, dependency injection and short-circuiting, Kyo allows for an arbitrary number of effectful channels. This enhancement gives developers greater flexibility in effect management, while also simplifying Kyo's internal codebase through more principled design patterns.
 
-## Index
+## Table of Contents
 
 1. [The `>` type](#the--type)
 2. [Effect widening](#effect-widening)
 3. [Using effects](#using-effects)
 4. [Core Effects](#core-effects)
-    - [Aborts: Short Circuiting](#aborts-short-circuiting)
-    - [IOs: Side Effects](#ios-side-effects)
-    - [Envs: Dependency Injection](#envs-dependency-injection)
-    - [Locals: Scoped Values](#locals-scoped-values)
-    - [Resources: Resource Safety](#resources-resource-safety)
-    - [Choices: Exploratory Branching](#choices-exploratory-branching)
-    - [Aspects: Aspect-Oriented Programming (AOP)](#aspects-aspect-oriented-programming-aop)
-    - [Options: Optional Values](#options-optional-values)
-    - [Tries: Exception Handling](#tries-exception-handling)
-    - [Consoles: Console Interaction](#consoles-console-interaction)
-    - [Clocks: Time Management](#clocks-time-management)
-    - [Randoms: Random Values](#randoms-random-values)
-    - [Loggers: Logging](#loggers-logging)
+    1. [Aborts: Short Circuiting](#aborts-short-circuiting)
+    2. [IOs: Side Effects](#ios-side-effects)
+    3. [Envs: Dependency Injection](#envs-dependency-injection)
+    4. [Locals: Scoped Values](#locals-scoped-values)
+    5. [Resources: Resource Safety](#resources-resource-safety)
+    6. [Choices: Exploratory Branching](#choices-exploratory-branching)
+    7. [Aspects: Aspect-Oriented Programming](#aspects-aspect-oriented-programming)
+    8. [Options: Optional Values](#options-optional-values)
+    9. [Tries: Exception Handling](#tries-exception-handling)
+    10. [Consoles: Console Interaction](#consoles-console-interaction)
+    11. [Clocks: Time Management](#clocks-time-management)
+    12. [Randoms: Random Values](#randoms-random-values)
+    13. [Loggers: Logging](#loggers-logging)
 5. [Concurrent Effects](#concurrent-effects)
-    - [Fibers: Green Threads](#fibers-green-threads)
-    - [Channels: Asynchronous Communication](#channels-asynchronous-communication)
+    1. [Fibers: Green Threads](#fibers-green-threads)
+    2. [Queues: Concurrent Queuing](#queues-concurrent-queuing)
+    3. [Channels: Asynchronous Communication](#channels-asynchronous-communication)
+    4. [Meters: Computational Limits](#meters-computational-limits)
+    5. [Timers: Scheduled Execution](#timers-scheduled-execution)
+    6. [Latches: Fiber Coordination](#latches-fiber-coordination)
+    7. [Atomics: Concurrent State](#atomics-concurrent-state)
+    8. [Adders: Concurrent Accumulation](#adders-concurrent-accumulation)
 
 ## The `>` type
 
@@ -464,7 +470,7 @@ val d: List[Int] > Any =
 
 The Choices effect becomes exceptionally powerful when combined with other effects. This allows you not just to make decisions or explore options in isolation but also to do so in contexts that may involve factors such as asynchronicity, resource management, or even user interaction.
 
-### Aspects: Aspect-Oriented Programming (AOP)
+### Aspects: Aspect-Oriented Programming
 
 The `Aspects` effect in Kyo allows for high-level customization of behavior across your application. This is similar to how some frameworks use aspects for centralized control over diverse functionalities like database timeouts, authentication, authorization, and transaction management. You can modify these core operations without altering their individual codebases, streamlining how centralized logic is applied across different parts of an application. This makes `Aspects` ideal for implementing cross-cutting concerns in a clean and efficient manner.
 
