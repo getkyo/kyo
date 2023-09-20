@@ -101,8 +101,8 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "zio-test"          % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-test-magnolia" % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-test-sbt"      % zioVersion   % Test,
-    libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC20" % Test,
-    libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC20" % Test,
+    libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC21" % Test,
+    libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC21" % Test,
     libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.16"     % Test,
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     Global / concurrentRestrictions := Seq(
@@ -236,32 +236,32 @@ lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
 
 addCommandAlias("checkReadme", ";readme/rewriteReadmeFile; readme/mdoc")
 
-lazy val readme = 
+lazy val readme =
   crossProject(JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure)       // new documentation project
+    .crossType(CrossType.Pure) // new documentation project
     .in(file("target/readme")) // important: it must not be docs/
     .enablePlugins(MdocPlugin)
     .settings(
-      `kyo-settings`,
-      `without-cross-scala`,
-      mdocIn := new File("./../../README-in.md"),
-      mdocOut := new File("./../../README-out.md"),
-      rewriteReadmeFile := {
-        val readmeFile = new File("README.md")
-        val targetReadmeFile = new File("target/README-in.md")
-        val contents = IO.read(readmeFile)
-        val newContents = contents.replaceAll("```scala\n", "```scala mdoc:nest\n")
-        IO.write(targetReadmeFile, newContents)
-      }
+        `kyo-settings`,
+        `without-cross-scala`,
+        mdocIn  := new File("./../../README-in.md"),
+        mdocOut := new File("./../../README-out.md"),
+        rewriteReadmeFile := {
+          val readmeFile       = new File("README.md")
+          val targetReadmeFile = new File("target/README-in.md")
+          val contents         = IO.read(readmeFile)
+          val newContents      = contents.replaceAll("```scala\n", "```scala mdoc:nest\n")
+          IO.write(targetReadmeFile, newContents)
+        }
     )
     .dependsOn(
-      `kyo-core`,
-      `kyo-zio`,
-      `kyo-direct`,
-      `kyo-sttp`,
-      `kyo-chatgpt`,
-      `kyo-bench`
+        `kyo-core`,
+        `kyo-zio`,
+        `kyo-direct`,
+        `kyo-sttp`,
+        `kyo-chatgpt`,
+        `kyo-bench`
     )
 
 lazy val `js-settings` = Seq(
