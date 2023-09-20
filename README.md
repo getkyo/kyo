@@ -63,7 +63,7 @@ String > (Options with IOs)
 
 In Kyo, any type `T` is automatically considered to be of type `T > Any`, where `Any` denotes an absence of pending effects. In simpler terms, this means that every value in Kyo is automatically a computation, but one without any effects that you need to handle. 
 
-This design choice streamlines your code by removing the necessity to differentiate between pure values and computations that may have effects. So, when you're dealing with a value of type `T > Any`, you can safely extract the `pure` value directly, without worrying about handling any side-effects.
+This design choice streamlines your code by removing the necessity to differentiate between pure values and computations that may have effects. So, when you're dealing with a value of type `T > Any`, you can safely extract the `pure` value directly, without worrying about handling any effects.
 
 ```scala
 import kyo._

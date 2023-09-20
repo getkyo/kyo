@@ -14,5 +14,11 @@ jobs:
     - uses: olafurpg/setup-scala@v13
       with:
           java-version: openjdk@1.17.0
-    - name: build
-      run: sbt "+test"
+
+    - name: Build JVM
+      run: |
+        sbt '+kyo-core/test' '+kyo-core-opt/test' '+kyo-direct/test' '+kyo-sttp/test' '+kyo-zio/test' '+kyo-bench/test' '+kyo-chatgpt/test'
+
+    - name: Build JS
+      run: |
+        sbt '+kyo-coreJS/test' '+kyo-directJS/test' '+kyo-sttpJS/test' '+kyo-zioJS/test' '+kyo-chatgptJS/test'
