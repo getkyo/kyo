@@ -215,6 +215,97 @@ assert(triesFirst(Options.get(None)) == None)
 assert(triesFirst(Tries.get(Failure(ex))) == Some(Failure(ex)))
 ```
 
+## Direct Syntax
+
+Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages two primary constructs: `defer` and `await`.
+
+1. `defer`: This construct is used to define a computation. It acts as a container or a block within which computations are expressed and sequenced.
+2. `await`: Within the defer block, the `await` construct is used to "pause" the computation and wait for a value from another computation. It essentially allows the current computation to yield control until the awaited computation produces a result, after which the original computation resumes.
+
+```scala
+import kyo.direct._
+import scala.util.Try
+
+// Use the direct syntax
+val a: String > (Tries with Options) =
+  defer {
+    val b: String = 
+      await(Options.get(Some("hello")))
+    val c: String = 
+      await(Tries.get(Try("world")))
+    b + " " + c
+  }
+
+// Equivalent desugared
+val b: String > (Tries with Options) =
+  Options.get(Some("hello")).map { b =>
+    Tries.get(Try("world")).map { c =>
+      b + " " + c
+    }
+  }
+```
+
+> Note: In the above example, the await method is used to extract values from computations. Specifically, `await(Options.get(Some("hello")))` takes a computation of type `String > Options` and returns a `String`, while `await(Tries.get(Try("world")))` takes a computation of type `String > Tries` and also returns a `String`.
+
+The use of `await` within the defer `block` provides a syntax sugar that simplifies the expression of effectful computations. Under the hood, the direct macro rewrites the computation in terms of map, allowing developers to work with effectful computations as if they were pure values, seamlessly integrating them into the flow of the program.
+
+The direct syntax emphasizes "effectful hygiene" to ensure that computations are properly sequenced and managed. Within a `defer` block, any computation of the `>` type must be encapsulated by an `await` block. This mechanism guarantees that all effectful computations are explicitly awaited, eliminating the risks of inadvertently overlooking effects or misordering operations.
+
+```scala 
+import kyo.ios._
+
+// This code fails to compile
+val a: Int > (IOs with Options) =
+  defer {
+    // Incorrect usage of a '>' value 
+    // without 'await' 
+    IOs(println(42))
+    val c: Int = 
+      await(Options.get(Some(1)))
+    c + 10
+  }
+```
+
+> Note: In the absence of effectful hygiene, the side effect `IOs(println(42))`  would be overlooked and never executed. With the hygiene in place, such code results in a compilation error.
+
+The syntac sugar supports a variety of constructs to handle effectful computations. These include pure expressions, value definitions, control flow statements like `if`-`else`, logical operations (`&&` and `||`), `while`, and pattern matching.
+
+```scala
+import kyo.direct._
+
+defer {
+  // Pure expression
+  val a: Int = 5
+  
+  // Effectful value
+  val b: Int = await(IOs(10))
+  
+  // Control flow
+  val c: String = 
+    if (await(IOs(true))) "True branch" else "False branch"
+  
+  // Logical operations
+  val d: Boolean = 
+    await(IOs(true)) && await(IOs(false))
+  
+  val e: Boolean = 
+    await(IOs(true)) || await(IOs(true))
+  
+  // Loop (for demonstration; this loop 
+  // won't execute its body)
+  while (await(IOs(false))) { "Looping" }
+  
+  // Pattern matching
+  val matchResult: String = 
+    await(IOs(1)) match {
+      case 1 => "One"
+      case _ => "Other"
+    }
+}
+```
+
+In the context of Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadless](https://github.com/monadless/monadless). For Scala 3, `kyo-direct` is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
+
 ## Core Effects
 
 Kyo's core effects act as the essential building blocks that power your application's various functionalities. Unlike other libraries that might require heavy boilerplate or specialized knowledge, Kyo's core effects are designed to be straightforward and flexible. These core effects not only simplify the management of side-effects, dependencies, and several other aspects but also allow for a modular approach to building maintainable systems.
@@ -737,7 +828,7 @@ val b: Int > (Fibers with IOs) =
 // Alternatively, the 'fork' method is a shorthand 
 // to fork the computation and join the fiber. The
 // parameter is also taken by reference like in 'fork'
-val c: Int > (Fibers with IOs) =x
+val c: Int > (Fibers with IOs) =
   Fibers.fork(Math.cos(42).toInt)
 
 // The 'value' method provides a 'Fiber' instance
@@ -791,12 +882,12 @@ val b: Int > (Fibers with IOs) =
 
 // It's also possible to to provide a 'Seq' 
 // of computations 
-val b: Int > (Fibers with IOs) =
+val c: Int > (Fibers with IOs) =
   Fibers.race(Seq(a, a.map(_ + 1)))
 
 // 'raceFiber' produces a 'Fiber' without
 // joining it
-val c: Fiber[Int] > IOs =
+val d: Fiber[Int] > IOs =
   Fibers.raceFiber(Seq(a, a.map(_ + 1)))
 ```
 
