@@ -16,6 +16,7 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 1. [The `>` type](#the--type)
 2. [Effect widening](#effect-widening)
 3. [Using effects](#using-effects)
+3. [Direct Syntax](#direct-syntax)
 4. [Core Effects](#core-effects)
     1. [Aborts: Short Circuiting](#aborts-short-circuiting)
     2. [IOs: Side Effects](#ios-side-effects)
@@ -219,8 +220,7 @@ assert(triesFirst(Tries.get(Failure(ex))) == Some(Failure(ex)))
 
 Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages two primary constructs: `defer` and `await`.
 
-1. `defer`: This construct is used to define a computation. It acts as a container or a block within which computations are expressed and sequenced.
-2. `await`: Within the defer block, the `await` construct is used to "pause" the computation and wait for a value from another computation. It essentially allows the current computation to yield control until the awaited computation produces a result, after which the original computation resumes.
+Essentially, `await` is a syntactic sugar for the `map` function, allowing developers to directly access values from computations without the need for repetitive `map` chaining. This makes the code more linear and intuitive.
 
 ```scala
 import kyo.direct._
@@ -245,11 +245,9 @@ val b: String > (Tries with Options) =
   }
 ```
 
-> Note: In the above example, the await method is used to extract values from computations. Specifically, `await(Options.get(Some("hello")))` takes a computation of type `String > Options` and returns a `String`, while `await(Tries.get(Try("world")))` takes a computation of type `String > Tries` and also returns a `String`.
+The `defer` macro translates the `defer` and `await` constructs by virtualizing control flow. It modifies value definitions, conditional branches, loops, and pattern matching to express compurations in terms of `map`. 
 
-The use of `await` within the defer `block` provides a syntax sugar that simplifies the expression of effectful computations. Under the hood, the direct macro rewrites the computation in terms of map, allowing developers to work with effectful computations as if they were pure values, seamlessly integrating them into the flow of the program.
-
-The direct syntax emphasizes "effectful hygiene" to ensure that computations are properly sequenced and managed. Within a `defer` block, any computation of the `>` type must be encapsulated by an `await` block. This mechanism guarantees that all effectful computations are explicitly awaited, eliminating the risks of inadvertently overlooking effects or misordering operations.
+For added safety, the direct syntax enforces effectful hygiene. Within a `defer` block, values of the `>` type must be enclosed by an `await` block. This approach ensures all effectful computations are explicitly processed, reducing the potential for missed effects or operation misalignment.
 
 ```scala 
 import kyo.ios._
@@ -266,7 +264,7 @@ val a: Int > (IOs with Options) =
   }
 ```
 
-> Note: In the absence of effectful hygiene, the side effect `IOs(println(42))`  would be overlooked and never executed. With the hygiene in place, such code results in a compilation error.
+> Note: In the absence of effectful hygiene, the side effect `IOs(println(42))` would be overlooked and never executed. With the hygiene in place, such code results in a compilation error.
 
 The syntac sugar supports a variety of constructs to handle effectful computations. These include pure expressions, value definitions, control flow statements like `if`-`else`, logical operations (`&&` and `||`), `while`, and pattern matching.
 
@@ -304,7 +302,9 @@ defer {
 }
 ```
 
-In the context of Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadless](https://github.com/monadless/monadless). For Scala 3, `kyo-direct` is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
+In Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadless](https://github.com/monadless/monadless). For Scala 3, `kyo-direct` is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
+
+> Note: `defer` is currently the only macro in Kyo. All other features use regular language constructs.
 
 ## Core Effects
 
