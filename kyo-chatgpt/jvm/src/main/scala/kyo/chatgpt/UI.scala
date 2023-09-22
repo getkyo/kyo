@@ -187,7 +187,7 @@ object UI extends App {
           _ <- chan.put((message, enabledModes.toList, p))
           r <- p.get
         } yield r
-      }.block
+      }.map(_.block)
     }
 }
 

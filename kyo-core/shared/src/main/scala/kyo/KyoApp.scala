@@ -11,22 +11,25 @@ import randoms._
 import concurrent.fibers._
 import concurrent.timers._
 import scala.concurrent.duration.Duration
+import kyo.KyoApp.Effects
 
 abstract class KyoApp {
 
   final def main(args: Array[String]): Unit =
-    IOs.run(KyoApp.runFiber(Duration.Inf)(run(args.toList)).block)
+    IOs.run(KyoApp.runFiber(Duration.Inf)(run(args.toList)).map(_.block))
 
   def run(
       args: List[String]
-  ): Unit > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers with Aspects)
+  ): Unit > Effects
 
 }
 
 object KyoApp {
-  def runFiber[T](timeout: Duration)(
-      v: T > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers with Aspects)
-  ): Fiber[T] = {
+
+  type Effects =
+    IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers with Aspects
+
+  def runFiber[T](timeout: Duration)(v: T > Effects): Fiber[T] > IOs = {
     val v1
         : T > (IOs with Fibers with Resources with Clocks with Consoles with Timers with Aspects) =
       Randoms.run(v)
@@ -38,7 +41,6 @@ object KyoApp {
     val v6: T > (IOs with Fibers)                                         = Timers.run(v5)
     val v7: T > (IOs with Fibers with Timers) = Fibers.timeout(timeout)(v6)
     val v8: T > (IOs with Fibers)             = Timers.run(v6)
-    val v9: Fiber[T] > IOs                    = Fibers.run(IOs.runLazy(v8))
-    IOs.run(v9)
+    IOs(Fibers.run(IOs.runLazy(v8)))
   }
 }
