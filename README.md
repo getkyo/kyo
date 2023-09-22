@@ -76,6 +76,8 @@ val a: Int > Any = 1
 val b: Int = a.pure
 ```
 
+> Note: This README provides explicit type declarations for clarity. However, Scala's type inference is generally able to infer Kyo types properly.
+
 This unique property removes the need to juggle between `map` and `flatMap`. All values are automatically promoted to a Kyo computation with zero pending effects, enabling you to focus on your application logic rather than the intricacies of effect handling.
 
 ```scala
@@ -720,7 +722,9 @@ The `Fibers` effect allows for the asynchronous execution of computations via a 
 ```scala
 import kyo.concurrent.fibers._
 
-// Fork a computation
+// Fork a computation. The parameter is
+// taken by reference and automatically
+// suspended with 'IOs'
 val a: Fiber[Int] > (Fibers with IOs) =
   Fibers.forkFiber(Math.cos(42).toInt)
 
@@ -731,8 +735,9 @@ val b: Int > (Fibers with IOs) =
   Fibers.get(a)
 
 // Alternatively, the 'fork' method is a shorthand 
-// to fork the computation and join the fiber
-val c: Int > (Fibers with IOs) =
+// to fork the computation and join the fiber. The
+// parameter is also taken by reference like in 'fork'
+val c: Int > (Fibers with IOs) =x
   Fibers.fork(Math.cos(42).toInt)
 
 // The 'value' method provides a 'Fiber' instance
@@ -749,57 +754,70 @@ val e: Fiber[Int] =
 The `parallel` methods fork multiple computations in parallel, join the fibers, and return their results.
 
 ```scala
+// An example computation
+val a: Int > IOs =
+  IOs(Math.cos(42).toInt)
+
 // There are method overloadings for up to four
-// parallel computations
-val a: (Int, String) > (Fibers with IOs) =
-  Fibers.parallel(Math.cos(42).toInt, "example")
+// parallel computations. Paramters taken by
+// reference
+val b: (Int, String) > (Fibers with IOs) =
+  Fibers.parallel(a, "example")
 
 // Alternatively, it's possible to provide
 // a 'Seq' of computations and produce a 'Seq'
 // with the results
-val b: Seq[Int] > (Fibers with IOs) =
-  Fibers.parallel(Seq(Math.cos(42).toInt, Math.sin(42).toInt))
+val c: Seq[Int] > (Fibers with IOs) =
+  Fibers.parallel(Seq(a, a.map(_ + 1)))
 
 // The 'parallelFiber' method is similar but
 // it doesn't automatically join the fibers and
 // produces a 'Fiber[Seq[T]]'
-val c: Fiber[Seq[Int]] > IOs =
-  Fibers.parallelFiber(Seq(Math.cos(42).toInt, Math.sin(42).toInt))
+val d: Fiber[Seq[Int]] > IOs =
+  Fibers.parallelFiber(Seq(a, a.map(_ + 1)))
 ```
 
 The `race` methods are similar to `parallel` but they return the first computation to complete with either a successful result or a failure. Once the first result is produced, the other computations are automatically interrupted.
 
 ```scala
+// An example computation
+val a: Int > IOs =
+  IOs(Math.cos(42).toInt)
+
 // There are method overloadings for up to four
-// computations
-val a: Int > (Fibers with IOs) =
-  Fibers.race(Math.cos(42).toInt, Math.sin(42).toInt)
+// computations. Pameters taken by reference
+val b: Int > (Fibers with IOs) =
+  Fibers.race(a, a.map(_ + 1))
 
 // It's also possible to to provide a 'Seq' 
 // of computations 
 val b: Int > (Fibers with IOs) =
-  Fibers.race(Seq(Math.cos(42).toInt, Math.sin(42).toInt))
+  Fibers.race(Seq(a, a.map(_ + 1)))
 
 // 'raceFiber' produces a 'Fiber' without
 // joining it
 val c: Fiber[Int] > IOs =
-  Fibers.raceFiber(Seq(Math.cos(42).toInt, Math.sin(42).toInt))
+  Fibers.raceFiber(Seq(a, a.map(_ + 1)))
 ```
 
 `Fibers` also provides `await` to wait for the completion of all computations and discard their results.
 
 ```scala
-// Also up to four parallel computations
+val a: Int > IOs =
+  IOs(Math.cos(42).toInt)
+
+// Also up to four parallel computations.
+// Parameters taken by reference
 val a: Unit > (Fibers with IOs) =
-  Fibers.await(Math.cos(42).toInt, "srt")
+  Fibers.await(a, "srt")
 
 // Unit a 'Seq'
 val b: Unit > (Fibers with IOs) =
-  Fibers.await(Seq(Math.cos(42).toInt, Math.sin(42).toInt))
+  Fibers.await(Seq(a, a.map(_ + 1)))
 
 // Awaiting without joining
 val c: Fiber[Unit] > IOs =
-  Fibers.awaitFiber(Seq(Math.cos(42).toInt, Math.sin(42).toInt))
+  Fibers.awaitFiber(Seq(a, a.map(_ + 1)))
 ```
 
 The `sleep` and `timeout` methods combine the `Timers` effect to pause a computation or time it out after a duration.
