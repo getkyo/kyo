@@ -85,17 +85,17 @@ object sums {
     def add(v1: V, v2: V): V
   }
   object Summer {
-    def apply[V](_init: V, _add: (V, V) => V): Summer[V] =
+    def apply[V](_init: V)(_add: (V, V) => V): Summer[V] =
       new Summer[V] {
         def init              = _init
         def add(v1: V, v2: V) = _add(v1, v2)
       }
-    implicit val intSummer: Summer[Int]         = Summer(0, _ + _)
-    implicit val longSummer: Summer[Long]       = Summer(0L, _ + _)
-    implicit val doubleSummer: Summer[Double]   = Summer(0d, _ + _)
-    implicit val floatSummer: Summer[Float]     = Summer(0f, _ + _)
-    implicit val stringSummer: Summer[String]   = Summer("", _ + _)
-    implicit def listSummer[T]: Summer[List[T]] = Summer(Nil, _ ++ _)
-    implicit def setSummer[T]: Summer[Set[T]]   = Summer(Set.empty, _ ++ _)
+    implicit val intSummer: Summer[Int]         = Summer(0)(_ + _)
+    implicit val longSummer: Summer[Long]       = Summer(0L)(_ + _)
+    implicit val doubleSummer: Summer[Double]   = Summer(0d)(_ + _)
+    implicit val floatSummer: Summer[Float]     = Summer(0f)(_ + _)
+    implicit val stringSummer: Summer[String]   = Summer("")(_ + _)
+    implicit def listSummer[T]: Summer[List[T]] = Summer(List.empty[T])(_ ++ _)
+    implicit def setSummer[T]: Summer[Set[T]]   = Summer(Set.empty[T])(_ ++ _)
   }
 }

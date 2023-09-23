@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.KyoApp
 import kyo._
 import kyo.concurrent.fibers._
 import kyo.consoles._

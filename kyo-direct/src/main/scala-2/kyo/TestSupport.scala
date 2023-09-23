@@ -37,7 +37,10 @@ private[kyo] class TestSupportMacro(val c: Context) {
   def runLiftTest[T](expected: Tree)(body: Tree): Tree = {
     c.resetAllAttrs {
       val lifted =
-        q"kyo.ios.IOs.run(kyo.direct.defer($body).asInstanceOf[Any > IOs])"
+        q"""
+          implicit val ng: kyo.NotGiven[(Nothing > Any) => Any] = NotGiven.value
+          kyo.ios.IOs.run(kyo.direct.defer($body).asInstanceOf[Any > IOs])
+        """
 
       val forceLifted = forceLift(body)
 

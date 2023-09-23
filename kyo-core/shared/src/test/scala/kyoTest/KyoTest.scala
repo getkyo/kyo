@@ -1,7 +1,7 @@
 package kyoTest
 
 import izumi.reflect._
-import kyo.KyoApp
+import kyo.App
 import kyo.aborts._
 import kyo.clocks._
 import kyo.concurrent.fibers._
@@ -72,7 +72,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
   def run(
       v: => Assertion > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers)
   ): Future[Assertion] = {
-    IOs.run(KyoApp.runFiber(timeout)(v).map(_.toFuture))
+    IOs.run(App.runFiber(timeout)(v).map(_.toFuture))
   }
 
   class Check[T, S](equals: Boolean) {

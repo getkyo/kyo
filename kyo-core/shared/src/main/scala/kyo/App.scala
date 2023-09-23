@@ -11,12 +11,12 @@ import randoms._
 import concurrent.fibers._
 import concurrent.timers._
 import scala.concurrent.duration.Duration
-import kyo.KyoApp.Effects
+import kyo.App.Effects
 
-abstract class KyoApp {
+abstract class App {
 
   final def main(args: Array[String]): Unit =
-    IOs.run(KyoApp.runFiber(Duration.Inf)(run(args.toList)).map(_.block))
+    IOs.run(App.runFiber(Duration.Inf)(run(args.toList)).map(_.block))
 
   def run(
       args: List[String]
@@ -24,7 +24,7 @@ abstract class KyoApp {
 
 }
 
-object KyoApp {
+object App {
 
   type Effects =
     IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers with Aspects

@@ -5,7 +5,7 @@ import com.vladsch.flexmark.html.HtmlRenderer
 import com.vladsch.flexmark.parser.Parser
 import com.vladsch.flexmark.util.ast.Node
 import com.vladsch.flexmark.util.data.MutableDataSet
-import kyo.KyoApp
+import kyo.App
 import kyo.aspects._
 import kyo.chatgpt.ais._
 import kyo.chatgpt.mode.Reflect
@@ -30,7 +30,7 @@ case class ModeInfo(name: String, prompt: String = "") {
   override def toString: String = name + (if (prompt.nonEmpty) ": " + prompt else "")
 }
 
-object UI extends App {
+object UI extends scala.App {
   FlatDarkLaf.setup()
 
   val predefinedModes = scala.List(
@@ -181,7 +181,7 @@ object UI extends App {
 
   def processMessage(message: String, enabledModes: scala.List[ModeInfo]): String =
     IOs.run {
-      KyoApp.runFiber(Duration.Inf) {
+      App.runFiber(Duration.Inf) {
         for {
           p <- Fibers.promise[String]
           _ <- chan.put((message, enabledModes.toList, p))
