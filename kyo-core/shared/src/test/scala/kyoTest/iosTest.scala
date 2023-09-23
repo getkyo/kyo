@@ -119,6 +119,9 @@ class iosTest extends KyoTest {
       }
       succeed
     }
+    "doesn't accept other pending effects" in {
+      assertDoesNotCompile("IOs.run[Int > Options](Options.get(Some(1)))")
+    }
   }
 
   "attempt" - {

@@ -65,11 +65,12 @@ object ios {
       }
 
     /*inline*/
-    def run[T](v: T > IOs): T = {
+    def run[T](v: T > IOs)(implicit ng: kyo.NotGiven[(Nothing > Any) => T]): T = {
       val safepoint = Safepoint.noop[IO, IOs]
       @tailrec def runLoop(v: T > IOs): T =
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, IOs] @unchecked =>
+            require(kyo.effect == IOs, "Unhandled effect: " + kyo.effect)
             runLoop(kyo((), safepoint, Locals.State.empty))
           case _ =>
             v.asInstanceOf[T]

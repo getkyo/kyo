@@ -191,7 +191,7 @@ object fibers {
     private[kyo] val interrupted = IOs.fail(Interrupted)
 
     /*inline*/
-    def run[T](v: T > Fibers): Fiber[T] > IOs = {
+    def run[T](v: T > Fibers)(implicit ng: kyo.NotGiven[(Nothing > Any) => T]): Fiber[T] > IOs = {
       implicit val handler: DeepHandler[Fiber, Fibers] =
         new DeepHandler[Fiber, Fibers] {
           def pure[T](v: T) = Fiber.done(v)

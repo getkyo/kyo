@@ -1,7 +1,8 @@
 import scala.language.higherKinds
-import scala.util.NotGiven
 
 package object kyo {
+
+  type NotGiven[T] = scala.util.NotGiven[T]
 
   type >[+T, -S] >: T // = T | Kyo[_, _, _, T, S]
 

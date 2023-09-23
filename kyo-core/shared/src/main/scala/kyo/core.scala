@@ -122,6 +122,7 @@ object core {
       def deepHandleLoop(v: T > E): M[T] =
         v match {
           case kyo: Kyo[M, E, Any, T, E] @unchecked =>
+            require(kyo.effect == e, "Unhandled effect: " + kyo.effect)
             h.apply(kyo.value, (v: Any) => deepHandleLoop(kyo(v, s, Locals.State.empty)))
           case _ =>
             h.pure(v.asInstanceOf[T])
