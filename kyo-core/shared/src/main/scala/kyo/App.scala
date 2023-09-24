@@ -26,8 +26,6 @@ abstract class App {
 
 object App {
 
-  private val defaultTimeout = Duration(System.getProperty("kyo.App.defaultTimeout", "1.minute"))
-
   type Effects =
     IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers with Aspects
 
@@ -35,10 +33,10 @@ object App {
     IOs.run(runFiber(timeout)(v).map(_.block))
 
   def run[T](v: T > Effects): T =
-    run(defaultTimeout)(v)
+    run(Duration.Inf)(v)
 
   def runFiber[T](v: T > Effects): Fiber[T] > IOs =
-    runFiber(defaultTimeout)(v)
+    runFiber(Duration.Inf)(v)
 
   def runFiber[T](timeout: Duration)(v: T > Effects): Fiber[T] > IOs = {
     val v1

@@ -306,6 +306,35 @@ In Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadl
 
 > Note: `defer` is currently the only macro in Kyo. All other features use regular language constructs.
 
+## Defining an App
+
+`App` is a foundational structure, offering an integrated solution for handling a collection of core effects, such as consoles, random number generation, clocks, and more. By extending `App`, developers can use these effects in their applications without manually managing each one.
+
+```scala
+object MyApp extends App {
+  def run(args: List[String]) = 
+    for {
+      _ <- Consoles.println("Starting the app...")
+      currentTime <- Clocks.now
+      _ <- Consoles.println(s"Current time is: $currentTime")
+      randomNumber <- Randoms.nextInt(100)
+      _ <- Consoles.println(s"Generated random number: $randomNumber")
+    } yield ()
+}
+```
+
+The companion object of `App` also provides utility methods for running these effectful computations, ensuring they are executed in the right sequence and with the proper handling mechanisms in place. 
+
+```scala
+// To run the application with a specific timeout
+val outputWithTimeout: Unit = 
+  App.run(2.minutes)(MyApp.run(List.empty))
+
+// To run the application without specifying a timeout
+val defaultOutput: Unit = 
+  App.run(MyApp.run(List.empty))
+```
+
 ## Core Effects
 
 Kyo's core effects act as the essential building blocks that power your application's various functionalities. Unlike other libraries that might require heavy boilerplate or specialized knowledge, Kyo's core effects are designed to be straightforward and flexible. These core effects not only simplify the management of side-effects, dependencies, and several other aspects but also allow for a modular approach to building maintainable systems.
