@@ -308,7 +308,7 @@ In Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadl
 
 ## Defining an App
 
-`App` is a foundational structure, offering an integrated solution for handling a collection of core effects, such as consoles, random number generation, clocks, and more. By extending `App`, developers can use these effects in their applications without manually managing each one.
+`kyo.App` offers a structured approach similar to Scala's `App` for defining application entry points. However, it comes with added capabilities, handling a suite of default effects. As a result, the `run` method within `kyo.App` can accommodate various effects, such as IOs, Fibers, Resources, Clocks, Consoles, Randoms, Timers, and Aspects.
 
 ```scala
 object MyApp extends App {
@@ -323,16 +323,20 @@ object MyApp extends App {
 }
 ```
 
-The companion object of `App` also provides utility methods for running these effectful computations, ensuring they are executed in the right sequence and with the proper handling mechanisms in place. 
+While the companion object of `App` provides utility methods to run isolated effectful computations, it's crucial to approach these with caution. Direct handling of effects like `IOs` through these methods can compromise referential transparency, an essential property for functional programming.
 
 ```scala
-// To run the application with a specific timeout
-val outputWithTimeout: Unit = 
-  App.run(2.minutes)(MyApp.run(List.empty))
+// An example computation
+val a: Int > (Fibers with IOs) =
+  Fibers.fork(Math.cos(42).toInt)
 
-// To run the application without specifying a timeout
-val defaultOutput: Unit = 
-  App.run(MyApp.run(List.empty))
+// Avoid! Run the application with a specific timeout
+val b: Int = 
+  App.run(2.minutes)(a)
+
+// Avoid! Run the application without specifying a timeout
+val c: Int = 
+  App.run(a)
 ```
 
 ## Core Effects
