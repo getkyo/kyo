@@ -25,6 +25,7 @@ import scala.util.control.NonFatal
 
 import scheduler._
 import timers._
+import scala.annotation.implicitNotFound
 
 object fibers {
 
@@ -191,7 +192,13 @@ object fibers {
     private[kyo] val interrupted = IOs.fail(Interrupted)
 
     /*inline*/
-    def run[T](v: T > Fibers)(implicit ng: kyo.NotGiven[(Nothing > Any) => T]): Fiber[T] > IOs = {
+    def run[T](v: T > Fibers)(implicit
+        @implicitNotFound(
+            "Computation can have only `Fibers` pending. Found: `${T}`"
+        ) ng: kyo.NotGiven[(
+            Nothing > Any
+        ) => T]
+    ): Fiber[T] > IOs = {
       implicit val handler: DeepHandler[Fiber, Fibers] =
         new DeepHandler[Fiber, Fibers] {
           def pure[T](v: T) = Fiber.done(v)
