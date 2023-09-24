@@ -22,13 +22,13 @@ object randoms {
       new Random {
 
         val random          = new java.util.Random
-        def nextInt         = IOs(random.nextInt())
+        val nextInt         = IOs(random.nextInt())
         def nextInt(n: Int) = IOs(random.nextInt(n))
-        def nextLong        = IOs(random.nextLong())
-        def nextDouble      = IOs(random.nextDouble())
-        def nextBoolean     = IOs(random.nextBoolean())
-        def nextFloat       = IOs(random.nextFloat())
-        def nextGaussian    = IOs(random.nextGaussian())
+        val nextLong        = IOs(random.nextLong())
+        val nextDouble      = IOs(random.nextDouble())
+        val nextBoolean     = IOs(random.nextBoolean())
+        val nextFloat       = IOs(random.nextFloat())
+        val nextGaussian    = IOs(random.nextGaussian())
       }
   }
 
