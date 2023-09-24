@@ -1,6 +1,6 @@
 package kyoTest
 
-import kyo.KyoZioApp
+import kyo.ZiosApp
 import kyo.aborts.Aborts
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
@@ -24,7 +24,7 @@ class ziosTest extends KyoTest {
   def runZIO(v: => Assertion > (IOs with Fibers with ZIOs)): Future[Assertion] =
     zio.Unsafe.unsafe(implicit u =>
       zio.Runtime.default.unsafe.runToFuture(
-          KyoZioApp.runTask(v)
+          ZiosApp.runTask(v)
       )
     )
 
@@ -65,9 +65,9 @@ class ziosTest extends KyoTest {
             a <- Atomics.initInt(0)
             _ <- Fibers.fork(kyoLoop(a))
           } yield ()
-        KyoZioApp.block(1.day) {
+        ZiosApp.block(1.day) {
           for {
-            f <- KyoZioApp.runTask(v).fork
+            f <- ZiosApp.runTask(v).fork
             _ <- f.interrupt
             r <- f.await
           } yield assert(r.isFailure)
@@ -79,9 +79,9 @@ class ziosTest extends KyoTest {
             a <- ZIOs.fromTask(Ref.make(0))
             _ <- ZIOs.fromTask(zioLoop(a))
           } yield ()
-        KyoZioApp.block(1.second) {
+        ZiosApp.block(1.second) {
           for {
-            f <- KyoZioApp.runTask(v).fork
+            f <- ZiosApp.runTask(v).fork
             _ <- f.interrupt
             r <- f.await
           } yield assert(r.isFailure)
@@ -95,9 +95,9 @@ class ziosTest extends KyoTest {
             a2 <- Atomics.initInt(0)
             _  <- Fibers.fork(kyoLoop(a2))
           } yield ()
-        KyoZioApp.block(1.second) {
+        ZiosApp.block(1.second) {
           for {
-            f <- KyoZioApp.runTask(v).fork
+            f <- ZiosApp.runTask(v).fork
             _ <- f.interrupt
             r <- f.await
           } yield assert(r.isFailure)

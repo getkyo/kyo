@@ -74,6 +74,8 @@ object core {
         }
       handleLoop(v)
     }
+
+    override def toString = getClass.getSimpleName()
   }
 
   /*inline*/

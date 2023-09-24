@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.core.internal._
 import kyo.randoms.Randoms
 import kyo.zios.ZIOs
 import zio.Task
@@ -9,7 +10,6 @@ import java.util.concurrent.TimeoutException
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
-import kyo.core.internal._
 import ios._
 import clocks._
 import consoles._
@@ -18,11 +18,12 @@ import tries._
 import aborts._
 import concurrent.fibers._
 import concurrent.timers._
+import kyo.envs.Envs
 
-abstract class KyoZioApp {
+abstract class ZiosApp {
 
   final def main(args: Array[String]): Unit =
-    KyoZioApp.run(Duration.Inf)(run(args.toList))
+    ZiosApp.run(Duration.Inf)(run(args.toList))
 
   def run(
       args: List[String]
@@ -30,7 +31,7 @@ abstract class KyoZioApp {
 
 }
 
-object KyoZioApp {
+object ZiosApp {
 
   def block[T](timeout: Duration)(t: Task[T]): T =
     zio.Unsafe.unsafe(implicit u =>

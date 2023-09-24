@@ -45,6 +45,8 @@ object envs {
         case _ =>
           false
       }
+
+    override def toString = s"Envs[${tag.tag.longNameWithPrefix}]"
   }
 
   object Envs {

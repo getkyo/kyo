@@ -50,6 +50,8 @@ object aborts {
         case _ =>
           false
       }
+
+    override def toString = s"Aborts[${tag.tag.longNameWithPrefix}]"
   }
 
   object Aborts {

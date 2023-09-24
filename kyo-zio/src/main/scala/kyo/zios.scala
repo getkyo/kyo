@@ -19,12 +19,17 @@ import aborts._
 import zios._
 import ios._
 import concurrent.fibers._
+import scala.annotation.implicitNotFound
 
 object zios {
 
   final class ZIOs private[zios] () extends Effect[Task, ZIOs] {
 
-    def run[T](v: T > ZIOs)(implicit ng: kyo.NotGiven[(Nothing > Any) => T]): Task[T] = {
+    def run[T](v: T > ZIOs)(implicit
+        @implicitNotFound(
+            "Computation can have only `ZIOs` pending. Found: `${T}`"
+        ) ng: kyo.NotGiven[(Nothing > Any) => T]
+    ): Task[T] = {
       implicit val handler: DeepHandler[Task, ZIOs] =
         new DeepHandler[Task, ZIOs] {
           def pure[T](v: T): Task[T] =
