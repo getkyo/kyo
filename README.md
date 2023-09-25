@@ -1463,31 +1463,32 @@ trait Service {
 }
 
 // An example ZIO computation
-val a: ZIO[Service, String, Int] = 
-  ZIO.accessM[Service](service => ZIO.effect(service.compute))
+// requiring a service in the environment
+val a: ZIO[Service, Throwable, Int] = 
+  ZIO.serviceWithZIO[Service](service => ZIO.attempt(service.compute))
 
-// Convert ZIO computation with environment 
-// and error channels to Kyo
-val b: Int > (Envs[Service] with Aborts[String] with ZIOs) = 
-  ZIOs.fromZIO(serviceComputation)
+// Convert ZIO computation with environment
+// and error channel to Kyo
+val b: Int > (Envs[Service] with Aborts[Throwable] with ZIOs) = 
+  ZIOs.fromZIO(a)
 
 // An example 'Task'
-val c: Task[Int] = 
-  ZIO.effectTotal(42)
+val c: UIO[Int] = 
+  ZIO.succeed(42)
 
 // Use 'fromTask' to lift a computation that
 // doesn't have error and environment requirements
 val d: Int > ZIOs = 
-  ZIOs.fromTask(simpleTask)
+  ZIOs.fromTask(c)
 
 // An example 'IO'
 val e: IO[String, Int] = 
   ZIO.fail("An error!")
 
 // Use 'fromIO' to lift a computation that
-// doesn't have specified errors
+// doesn't require a specific Env
 val f: Int > (Aborts[String] with ZIOs) = 
-  ZIOs.fromIO(f)
+  ZIOs.fromIO(e)
 ```
 
 > Note: The integration properly handles fibers to propagate interruption between the Kyo's and ZIO's runtimes. `Locals` aren't propagated between the libraries.
