@@ -97,8 +97,6 @@ object ais {
     def parallel[T](l: List[T > AIs]): Seq[T] > AIs =
       Fibers.get(parallelFiber(l))
 
-    // Sums[State] with Requests with Tries with IOs with Aspects with Consoles
-
     def parallelFiber[T](l: List[T > AIs]): Fiber[Seq[T]] > AIs =
       Sums[State].get.map { st =>
         Fibers.parallelFiber(l.map { e =>
