@@ -19,7 +19,6 @@ private[kyo] class IOPromise[T](state: State[T])
 
   def this() = this(Pending())
 
-  /*inline*/
   final def isDone(): Boolean = {
     @tailrec def loop(promise: IOPromise[T]): Boolean =
       promise.get() match {
@@ -33,13 +32,11 @@ private[kyo] class IOPromise[T](state: State[T])
     loop(this)
   }
 
-  /*inline*/
   final def interrupts(p: IOPromise[_]): Unit =
     onComplete { _ =>
       p.interrupt()
     }
 
-  /*inline*/
   final def interrupt(): Boolean = {
     @tailrec def loop(promise: IOPromise[T]): Boolean =
       promise.get() match {
@@ -94,8 +91,7 @@ private[kyo] class IOPromise[T](state: State[T])
     loop(other.compress())
   }
 
-  /*inline*/
-  final def onComplete( /*inline*/ f: T > IOs => Unit): Unit = {
+  final def onComplete(f: T > IOs => Unit): Unit = {
     @tailrec def loop(promise: IOPromise[T]): Unit =
       promise.get() match {
         case p: Pending[T] @unchecked =>
@@ -122,7 +118,6 @@ private[kyo] class IOPromise[T](state: State[T])
       true
     }
 
-  /*inline*/
   final def complete(v: T > IOs): Boolean = {
     @tailrec def loop(): Boolean =
       get() match {
@@ -177,8 +172,7 @@ private[kyo] object IOPromise {
 
     def run(v: T > IOs): Pending[T]
 
-    /*inline*/
-    def add( /*inline*/ f: T > IOs => Unit): Pending[T] =
+    def add(f: T > IOs => Unit): Pending[T] =
       new Pending[T] {
         def run(v: T > IOs) = {
           try f(v)

@@ -12,8 +12,7 @@ object locals {
 
     def default: T
 
-    /*inline*/
-    def get: T > IOs =
+    val get: T > IOs =
       new KyoIO[T, Any] {
         def apply(v: Unit, s: Safepoint[IO, IOs], l: Locals.State) =
           l.getOrElse(Local.this, default).asInstanceOf[T]
@@ -42,7 +41,6 @@ object locals {
       val empty: State = Map.empty
     }
 
-    /*inline*/
     def init[T](defaultValue: T): Local[T] =
       new Local[T] {
         def default = defaultValue

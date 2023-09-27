@@ -116,7 +116,6 @@ object core {
 
   private[kyo] object internal {
 
-    /*inline*/
     def deepHandle[M[_], E <: Effect[M, E], T](e: E)(v: T > E)(implicit
         h: DeepHandler[M, E],
         s: Safepoint[M, E]

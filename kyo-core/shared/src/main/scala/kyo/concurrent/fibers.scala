@@ -191,7 +191,6 @@ object fibers {
 
     private[kyo] val interrupted = IOs.fail(Interrupted)
 
-    /*inline*/
     def run[T](v: T > Fibers)(implicit
         @implicitNotFound(
             "Computation can have only `Fibers` pending. Found: `${T}`"
@@ -208,7 +207,6 @@ object fibers {
       IOs(deepHandle[Fiber, Fibers, T](Fibers)(v))
     }
 
-    /*inline*/
     def runBlocking[T, S](v: T > (Fibers with S)): T > (IOs with S) = {
       implicit def handler: Handler[Fiber, Fibers] =
         new Handler[Fiber, Fibers] {
