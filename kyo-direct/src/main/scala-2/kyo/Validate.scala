@@ -10,7 +10,7 @@ private[kyo] object Validate {
     import c.universe._
 
     def fail(t: Tree, msg: String) =
-      c.abort(t.pos, msg + ": " + t)
+      c.abort(t.pos, msg)
 
     def pure(tree: Tree) =
       !Trees.exists(c)(tree) {
@@ -20,32 +20,49 @@ private[kyo] object Validate {
     Trees.traverse(c)(tree) {
       case q"$pack.await[$t, $s]($v)" =>
       case q"$pack.defer[$t]($v)" =>
-        fail(tree, "nested defer blocks aren't supported")
+        fail(tree, "Nested `defer` blocks are not allowed.")
       case tree if (tree.tpe.typeSymbol == c.typeOf[(Any > Any)].typeSymbol) =>
-        fail(tree, "effectful computation must be in an await block")
+        fail(tree, "Effectful computation must be inside an `await` block.")
       case tree @ q"var $name = $body" =>
-        fail(tree, "`var` is not allowed in a defer block")
+        fail(tree, "`var` declarations are not allowed inside a `defer` block.")
       case tree @ q"return $v" =>
-        fail(tree, "`return` are not allowed in a defer block")
+        fail(tree, "`return` statements are not allowed inside a `defer` block.")
       case q"$mods val $name = $body" if mods.hasFlag(Flag.LAZY) =>
-        fail(tree, "`lazy val` is not allowed in a defer block")
+        fail(tree, "`lazy val` declarations are not allowed inside a `defer` block.")
       case tree @ q"(..$params) => $body" if (!pure(body)) =>
-        fail(tree, "functions can't use await blocks")
-      case tree @ q"$method[..$t](...$values)" if values.size > 0 && method.symbol.isMethod =>
-        val pit = method.symbol.asMethod.paramLists.flatten.iterator
-        val vit = values.flatten.iterator
-        while (pit.hasNext && vit.hasNext) {
-          val param = pit.next()
-          val value = vit.next()
-          (param.asTerm.isByNameParam, value) match {
-            case (true, t) if (!pure(t)) =>
-              c.abort(t.pos, "await can't be used in a by-name param: " + t)
-            case other => ()
-          }
-        }
-        values.flatten.foreach(Validate(c)(_))
+        fail(tree, "Lambda functions containing `await` are not supported.")
       case tree @ q"$mods def $method[..$t](...$params): $r = $body" if (!pure(body)) =>
-        fail(tree, "can't use await in a `def`")
+        fail(tree, "`def` declarations containing `await` are not supported.")
+      case tree @ q"try $block catch { case ..$cases }" =>
+        fail(tree, "`try/catch` blocks are not supported inside a `defer` block.")
+      case tree @ q"try $block catch { case ..$cases } finally $finalizer" =>
+        fail(tree, "`try/catch` blocks are not supported inside a `defer` block.")
+      case tree @ q"$method[..$t](...$values)" if values.size > 0 && method.symbol.isMethod =>
+        method.symbol.asMethod.paramLists.flatten.foreach {
+          param =>
+            if (param.asTerm.isByNameParam)
+              fail(tree, "`await` cannot be used in by-name parameters.")
+        }
+      case tree @ q"new $t(..$args)" if (args.size > 0) =>
+        t.tpe.decls.foreach {
+          case m: MethodSymbol if m.paramLists.flatten.exists(_.asTerm.isByNameParam) =>
+            fail(tree, "Constructors with by-name parameters are not supported.")
+          case _ =>
+        }
+      case tree @ q"$value match { case ..$cases }" if tree.symbol != null && tree.symbol.isMacro =>
+        fail(tree, "`match` expressions using macros are not supported.")
+      case tree @ q"throw $expr" =>
+        fail(tree, "Throwing exceptions is not supported inside a `defer` block.")
+      case tree @ q"$mods class $tpname[..$tparams] $ctorMods(...$paramss) extends { ..$earlydefns } with ..$parents { $self => ..$stats }" =>
+        fail(tree, "`class` declarations are not supported inside a `defer` block.")
+      case tree @ q"for (...$enumerators) yield $expr" =>
+        fail(tree, "`for yield` comprehensions are not allowed inside a `defer` block.")
+      case tree @ q"for (...$enumerators) $expr" =>
+        fail(tree, "`for` comprehensions are not allowed inside a `defer` block.")
+      case tree @ q"$mods trait $tpname[..$tparams] extends { ..$earlydefns } with ..$parents { $self => ..$stats }" =>
+        fail(tree, "`trait` declarations are not supported inside a `defer` block.")
+      case tree @ q"$mods object $tname extends { ..$earlydefns } with ..$parents { $self => ..$stats }" =>
+        fail(tree, "`object` declarations are not supported inside a `defer` block.")
     }
   }
 }
