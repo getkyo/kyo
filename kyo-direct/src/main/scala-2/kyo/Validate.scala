@@ -49,8 +49,6 @@ private[kyo] object Validate {
             fail(tree, "Constructors with by-name parameters are not supported.")
           case _ =>
         }
-      case tree @ q"$value match { case ..$cases }" if tree.symbol != null && tree.symbol.isMacro =>
-        fail(tree, "`match` expressions using macros are not supported.")
       case tree @ q"throw $expr" =>
         fail(tree, "Throwing exceptions is not supported inside a `defer` block.")
       case tree @ q"$mods class $tpname[..$tparams] $ctorMods(...$paramss) extends { ..$earlydefns } with ..$parents { $self => ..$stats }" =>

@@ -303,6 +303,8 @@ defer {
 }
 ```
 
+The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `defer`, features like nested `defer` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `await`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
+
 In Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadless](https://github.com/monadless/monadless). For Scala 3, `kyo-direct` is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
 
 > Note: `defer` is currently the only macro in Kyo. All other features use regular language constructs.

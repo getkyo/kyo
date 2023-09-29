@@ -22,6 +22,8 @@ object direct {
     import quotes.reflect._
     import quotes.reflect.report._
 
+    Validate(f)
+
     var effects = List.empty[Type[_]]
 
     Trees.traverse(f.asTerm) {

@@ -10,7 +10,7 @@ class hygieneTest extends AnyFreeSpec with Assertions {
   "use of var" in {
     assertDoesNotCompile("""
         defer {
-          var x = 1
+          var willFail = 1
           await(IOs(1))
         }
       """)
