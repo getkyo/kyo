@@ -249,26 +249,41 @@ object fibers {
     // compiler bug workaround
     private val IOTask = kyo.concurrent.scheduler.IOTask
 
+    private val invalidEffects
+        : "Forked computations allow only `Fibers` and `IOs`. Plase handle other effects before forking. Found: `${T}`" =
+      "Forked computations allow only `Fibers` and `IOs`. Plase handle other effects before forking. Found: `${T}`"
+
     /*inline*/
-    def forkFiber[T]( /*inline*/ v: => T > (IOs with Fibers)): Fiber[T] > IOs =
+    def forkFiber[T]( /*inline*/ v: => T > (IOs with Fibers))(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
+    ): Fiber[T] > IOs =
       Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
     /*inline*/
-    def fork[T]( /*inline*/ v: => T > (IOs with Fibers)): T > (IOs with Fibers) =
+    def fork[T]( /*inline*/ v: => T > (IOs with Fibers))(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
+    ): T > (IOs with Fibers) =
       Fibers.join(forkFiber(v))
 
     def parallel[T1, T2](
         v1: => T1 > (IOs with Fibers),
         v2: => T2 > (IOs with Fibers)
+    )(implicit
+        @implicitNotFound(invalidEffects) ng1: kyo.NotGiven[(Nothing > Any) => T1],
+        @implicitNotFound(invalidEffects) ng2: kyo.NotGiven[(Nothing > Any) => T2]
     ): (T1, T2) > (IOs with Fibers) =
-      parallel(List(IOs(v1), IOs(v2))).map(s => (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2]))
+      parallel(List(IOs(v1), IOs(v2)))(ng1).map(s => (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2]))
 
     def parallel[T1, T2, T3](
         v1: => T1 > (IOs with Fibers),
         v2: => T2 > (IOs with Fibers),
         v3: => T3 > (IOs with Fibers)
+    )(implicit
+        @implicitNotFound(invalidEffects) ng1: kyo.NotGiven[(Nothing > Any) => T1],
+        @implicitNotFound(invalidEffects) ng2: kyo.NotGiven[(Nothing > Any) => T2],
+        @implicitNotFound(invalidEffects) ng3: kyo.NotGiven[(Nothing > Any) => T3]
     ): (T1, T2, T3) > (IOs with Fibers) =
-      parallel(List(IOs(v1), IOs(v2), IOs(v3))).map(s =>
+      parallel(List(IOs(v1), IOs(v2), IOs(v3)))(ng1).map(s =>
         (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3])
       )
 
@@ -277,15 +292,24 @@ object fibers {
         v2: => T2 > (IOs with Fibers),
         v3: => T3 > (IOs with Fibers),
         v4: => T4 > (IOs with Fibers)
+    )(implicit
+        @implicitNotFound(invalidEffects) ng1: kyo.NotGiven[(Nothing > Any) => T1],
+        @implicitNotFound(invalidEffects) ng2: kyo.NotGiven[(Nothing > Any) => T2],
+        @implicitNotFound(invalidEffects) ng3: kyo.NotGiven[(Nothing > Any) => T3],
+        @implicitNotFound(invalidEffects) ng4: kyo.NotGiven[(Nothing > Any) => T4]
     ): (T1, T2, T3, T4) > (IOs with Fibers) =
-      parallel(List(IOs(v1), IOs(v2), IOs(v3), IOs(v4))).map(s =>
+      parallel(List(IOs(v1), IOs(v2), IOs(v3), IOs(v4)))(ng1).map(s =>
         (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3], s(3).asInstanceOf[T4])
       )
 
-    def parallel[T](l: Seq[T > (IOs with Fibers)]): Seq[T] > (IOs with Fibers) =
+    def parallel[T](l: Seq[T > (IOs with Fibers)])(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
+    ): Seq[T] > (IOs with Fibers) =
       Fibers.join(parallelFiber[T](l))
 
-    def parallelFiber[T](l: Seq[T > (IOs with Fibers)]): Fiber[Seq[T]] > IOs =
+    def parallelFiber[T](l: Seq[T > (IOs with Fibers)])(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
+    ): Fiber[Seq[T]] > IOs =
       Locals.save.map { st =>
         IOs {
           val p       = new IOPromise[Seq[T]]
@@ -317,6 +341,8 @@ object fibers {
     def race[T](
         v1: => T > (IOs with Fibers),
         v2: => T > (IOs with Fibers)
+    )(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
     ): T > (IOs with Fibers) =
       race(List(IOs(v1), IOs(v2)))
 
@@ -324,6 +350,8 @@ object fibers {
         v1: => T > (IOs with Fibers),
         v2: => T > (IOs with Fibers),
         v3: => T > (IOs with Fibers)
+    )(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
     ): T > (IOs with Fibers) =
       race(List(IOs(v1), IOs(v2), IOs(v2)))
 
@@ -332,13 +360,19 @@ object fibers {
         v2: => T > (IOs with Fibers),
         v3: => T > (IOs with Fibers),
         v4: => T > (IOs with Fibers)
+    )(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
     ): T > (IOs with Fibers) =
       race(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4)))
 
-    def race[T](l: Seq[T > (IOs with Fibers)]): T > (IOs with Fibers) =
+    def race[T](l: Seq[T > (IOs with Fibers)])(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
+    ): T > (IOs with Fibers) =
       Fibers.join(raceFiber[T](l))
 
-    def raceFiber[T](l: Seq[T > (IOs with Fibers)]): Fiber[T] > IOs = {
+    def raceFiber[T](l: Seq[T > (IOs with Fibers)])(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
+    ): Fiber[T] > IOs = {
       require(!l.isEmpty)
       Locals.save.map { st =>
         IOs {
@@ -355,12 +389,16 @@ object fibers {
 
     def await[T](
         v1: => T > (IOs with Fibers)
+    )(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
     ): Unit > (IOs with Fibers) =
       fork(v1).map(_ => ())
 
     def await[T](
         v1: => T > (IOs with Fibers),
         v2: => T > (IOs with Fibers)
+    )(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
     ): Unit > (IOs with Fibers) =
       Fibers.join(awaitFiber(List(IOs(v1), IOs(v2))))
 
@@ -368,6 +406,8 @@ object fibers {
         v1: => T > (IOs with Fibers),
         v2: => T > (IOs with Fibers),
         v3: => T > (IOs with Fibers)
+    )(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
     ): Unit > (IOs with Fibers) =
       Fibers.join(awaitFiber(List(IOs(v1), IOs(v2), IOs(v2))))
 
@@ -376,10 +416,14 @@ object fibers {
         v2: => T > (IOs with Fibers),
         v3: => T > (IOs with Fibers),
         v4: => T > (IOs with Fibers)
+    )(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
     ): Unit > (IOs with Fibers) =
       Fibers.join(awaitFiber(List(IOs(v1), IOs(v2), IOs(v2), IOs(v4))))
 
-    def awaitFiber[T](l: Seq[T > (IOs with Fibers)]): Fiber[Unit] > IOs =
+    def awaitFiber[T](l: Seq[T > (IOs with Fibers)])(implicit
+        @implicitNotFound(invalidEffects) ng: kyo.NotGiven[(Nothing > Any) => T]
+    ): Fiber[Unit] > IOs =
       Locals.save.map { st =>
         IOs {
           val p       = new IOPromise[Unit]
