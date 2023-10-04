@@ -131,37 +131,6 @@ object core {
       deepHandleLoop(v)
     }
 
-    abstract class Injection[M1[_], E1 <: Effect[M1, E1], M2[_], E2 <: Effect[M2, E2]] {
-      def apply[T](m: M1[T]): M2[T]
-    }
-
-    def inject[T, M1[_], M2[_], E1 <: Effect[M1, E1], E2 <: Effect[M2, E2], S](
-        from: E1,
-        to: E2
-    )(v: T > (E1 with E2 with S))(
-        implicit i: Injection[M1, E1, M2, E2]
-    ): T > (E2 with S) = {
-      def injectLoop(v: T > (S with E1 with E2)): T > (E2 with S) = {
-        v match {
-          case kyo: Kyo[M1, E1, Any, T, S with E1 with E2] @unchecked if from.accepts(kyo.effect) =>
-            new Kyo[M2, E2, Any, T, E2 with S] {
-              val value: M2[Any] = i(kyo.value)
-              def effect: E2     = to
-              def apply(v: Any, s: Safepoint[M2, E2], l: State) =
-                injectLoop(kyo(v, Safepoint.noop, l))
-            }
-          case kyo: Kyo[MX, EX, Any, T, S with E1 with E2] @unchecked =>
-            new KyoCont[MX, EX, Any, T, E2 with S](kyo) {
-              def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) =
-                injectLoop(kyo(v, s, l))
-            }
-          case _ =>
-            v.asInstanceOf[T > (E2 with S)]
-        }
-      }
-      injectLoop(v)
-    }
-
     type MX[_] = Any
     type EX    = Effect[MX, _]
 
