@@ -85,7 +85,6 @@ lazy val kyo =
     ).aggregate(
         `kyo-core`,
         `kyo-core-opt`,
-        `kyo-zio`,
         `kyo-direct`,
         `kyo-sttp`,
         `kyo-chatgpt`,
@@ -160,19 +159,6 @@ lazy val `kyo-direct` =
             "org.scala-lang"   % "scala-reflect"  % scalaVersion.value,
             "org.scalamacros" %% "resetallattrs"  % "1.0.0"
         ).filter(_ => scalaVersion.value.startsWith("2"))
-    )
-    .jsSettings(`js-settings`)
-
-lazy val `kyo-zio` =
-  crossProject(JSPlatform, JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure)
-    .in(file("kyo-zio"))
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .settings(
-        `kyo-settings`,
-        `with-cross-scala`,
-        libraryDependencies += "dev.zio" %%% "zio" % zioVersion
     )
     .jsSettings(`js-settings`)
 
@@ -257,7 +243,6 @@ lazy val readme =
     )
     .dependsOn(
         `kyo-core`,
-        `kyo-zio`,
         `kyo-direct`,
         `kyo-sttp`,
         `kyo-chatgpt`,
