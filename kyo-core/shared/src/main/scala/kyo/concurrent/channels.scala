@@ -38,7 +38,7 @@ object channels {
   object Channels {
 
     def init[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
-      Queues.bounded[T](capacity, access).map { queue =>
+      Queues.initBounded[T](capacity, access).map { queue =>
         IOs {
           new Channel[T] {
 
@@ -71,7 +71,7 @@ object channels {
                     if (u.offer(v)) {
                       Fibers.value(())
                     } else {
-                      val p = Fibers.unsafePromise[Unit]
+                      val p = Fibers.unsafeInitPromise[Unit]
                       puts.add((v, p))
                       p
                     }
@@ -88,7 +88,7 @@ object channels {
                     case Some(v) =>
                       Fibers.value(v)
                     case None =>
-                      val p = Fibers.unsafePromise[T]
+                      val p = Fibers.unsafeInitPromise[T]
                       takes.add(p)
                       p
                   }
@@ -108,7 +108,7 @@ object channels {
                       takes.add(p)
                     case Some(v) =>
                       if (!p.unsafeComplete(v) && !u.offer(v)) {
-                        val p = Fibers.unsafePromise[Unit]
+                        val p = Fibers.unsafeInitPromise[Unit]
                         puts.add((v, p))
                       }
                   }

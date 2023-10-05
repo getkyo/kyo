@@ -49,7 +49,7 @@ object queues {
         def peek()        = None
       }
 
-    def bounded[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
+    def initBounded[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
       IOs {
         capacity match {
           case c if (c <= 0) =>
@@ -80,7 +80,7 @@ object queues {
         }
       }
 
-    def unbounded[T](access: Access = Access.Mpmc, chunkSize: Int = 8): Unbounded[T] > IOs =
+    def initUnbounded[T](access: Access = Access.Mpmc, chunkSize: Int = 8): Unbounded[T] > IOs =
       IOs {
         access match {
           case Access.Mpmc =>
@@ -94,8 +94,8 @@ object queues {
         }
       }
 
-    def dropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      bounded[T](capacity, access).map { q =>
+    def initDropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      initBounded[T](capacity, access).map { q =>
         val u = q.unsafe
         val c = capacity
         new Unbounded(
@@ -111,8 +111,8 @@ object queues {
         )
       }
 
-    def sliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
-      bounded[T](capacity, access).map { q =>
+    def initSliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+      initBounded[T](capacity, access).map { q =>
         val u = q.unsafe
         val c = capacity
         new Unbounded(

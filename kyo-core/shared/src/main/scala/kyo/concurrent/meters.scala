@@ -27,10 +27,10 @@ object meters {
 
   object Meters {
 
-    def mutex: Meter > IOs =
-      semaphore(1)
+    val initMutex: Meter > IOs =
+      initSemaphore(1)
 
-    def semaphore(concurrency: Int): Meter > IOs =
+    def initSemaphore(concurrency: Int): Meter > IOs =
       Channels.init[Unit](concurrency).map { chan =>
         offer(concurrency, chan, ()).map { _ =>
           new Meter {
@@ -57,7 +57,7 @@ object meters {
         }
       }
 
-    def rateLimiter(rate: Int, period: Duration): Meter > (IOs with Timers) =
+    def initRateLimiter(rate: Int, period: Duration): Meter > (IOs with Timers) =
       Channels.init[Unit](rate).map { chan =>
         Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())).map { _ =>
           new Meter {

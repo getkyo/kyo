@@ -40,7 +40,7 @@ class SemaphoreBench extends Bench.ForkOnly[Unit] {
       else
         s.run(()).flatMap(_ => loop(s, i + 1))
 
-    Meters.semaphore(1).flatMap(loop(_, 0))
+    Meters.initSemaphore(1).flatMap(loop(_, 0))
   }
 
   def zioBench(): UIO[Unit] = {

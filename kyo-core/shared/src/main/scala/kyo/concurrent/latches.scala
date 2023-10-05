@@ -34,7 +34,7 @@ object latches {
         } else {
           IOs {
             new Latch {
-              val promise = Fibers.unsafePromise[Unit]
+              val promise = Fibers.unsafeInitPromise[Unit]
               val count   = new AtomicInteger(n)
 
               val await = promise.get

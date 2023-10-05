@@ -30,7 +30,7 @@ class fibersTest extends KyoTest {
   "promise" - {
     "complete" in run {
       for {
-        p <- Fibers.promise[Int]
+        p <- Fibers.initPromise[Int]
         a <- p.complete(1)
         b <- p.isDone
         c <- p.get
@@ -38,7 +38,7 @@ class fibersTest extends KyoTest {
     }
     "complete twice" in run {
       for {
-        p <- Fibers.promise[Int]
+        p <- Fibers.initPromise[Int]
         a <- p.complete(1)
         b <- p.complete(2)
         c <- p.isDone
@@ -48,7 +48,7 @@ class fibersTest extends KyoTest {
     "failure" in run {
       val ex = new Exception
       for {
-        p <- Fibers.promise[Int]
+        p <- Fibers.initPromise[Int]
         a <- p.complete(throw ex)
         b <- p.isDone
         c <- p.getTry

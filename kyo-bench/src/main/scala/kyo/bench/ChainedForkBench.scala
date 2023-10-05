@@ -55,7 +55,7 @@ class ChainedForkBench extends Bench.ForkOnly[Int] {
       else IOs.unit.flatMap(_ => Fibers.forkFiber(iterate(p, n - 1)).unit)
 
     for {
-      p <- Fibers.promise[Unit]
+      p <- Fibers.initPromise[Unit]
       _ <- Fibers.forkFiber(iterate(p, depth))
       _ <- p.get
     } yield 0

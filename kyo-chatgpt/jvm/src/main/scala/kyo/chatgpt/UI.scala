@@ -183,7 +183,7 @@ object UI extends scala.App {
     IOs.run {
       App.runFiber(Duration.Inf) {
         for {
-          p <- Fibers.promise[String]
+          p <- Fibers.initPromise[String]
           _ <- chan.put((message, enabledModes.toList, p))
           r <- p.get
         } yield r

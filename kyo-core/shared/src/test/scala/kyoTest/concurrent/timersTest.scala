@@ -14,7 +14,7 @@ class timersTest extends KyoTest {
 
   "schedule" in run {
     for {
-      p     <- Fibers.promise[String]
+      p     <- Fibers.initPromise[String]
       _     <- Timers.schedule(1.milli)(p.complete("hello").map(require(_)))
       hello <- p.get
     } yield assert(hello == "hello")
@@ -22,7 +22,7 @@ class timersTest extends KyoTest {
 
   "cancel" in runJVM {
     for {
-      p         <- Fibers.promise[String]
+      p         <- Fibers.initPromise[String]
       task      <- Timers.schedule(5.second)(p.complete("hello").map(require(_)))
       _         <- task.cancel
       cancelled <- retry(task.isCancelled)

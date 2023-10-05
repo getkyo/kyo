@@ -47,7 +47,7 @@ class ForkManyBench extends Bench.ForkOnly[Int] {
       else io.flatMap(_ => repeat(n - 1)(io))
 
     for {
-      promise <- Fibers.promise[Unit]
+      promise <- Fibers.initPromise[Unit]
       ref     <- Atomics.initInt(depth)
       effect = ref.decrementAndGet.flatMap {
         case 1 =>

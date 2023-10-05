@@ -1164,7 +1164,7 @@ val a: Queue[Int] > IOs =
   )
 ```
 
-### Channels: Asynchronous Communication
+### Channels: Backpressured Communication
 
 The `Channels` effect serves as an advanced concurrency primitive, designed to facilitate seamless and backpressured data transfer between various parts of your application. Built upon the `Fibers` effect, `Channels` not only ensures thread-safe communication but also incorporates a backpressure mechanism. This mechanism temporarily suspends fibers under specific conditions—either when waiting for new items to arrive or when awaiting space to add new items.
 

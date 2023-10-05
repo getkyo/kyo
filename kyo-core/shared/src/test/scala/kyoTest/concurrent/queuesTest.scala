@@ -10,27 +10,27 @@ class queuesTest extends KyoTest {
   "bounded" - {
     "isEmpty" in run {
       for {
-        q <- Queues.bounded[Int](2)
+        q <- Queues.initBounded[Int](2)
         b <- q.isEmpty
       } yield assert(b)
     }
     "offer and poll" in run {
       for {
-        q <- Queues.bounded[Int](2)
+        q <- Queues.initBounded[Int](2)
         b <- q.offer(1)
         v <- q.poll
       } yield assert(b && v == Some(1))
     }
     "peek" in run {
       for {
-        q <- Queues.bounded[Int](2)
+        q <- Queues.initBounded[Int](2)
         _ <- q.offer(1)
         v <- q.peek
       } yield assert(v == Some(1))
     }
     "full" in run {
       for {
-        q <- Queues.bounded[Int](2)
+        q <- Queues.initBounded[Int](2)
         _ <- q.offer(1)
         _ <- q.offer(2)
         b <- q.offer(3)
@@ -41,27 +41,27 @@ class queuesTest extends KyoTest {
   "unbounded" - {
     "isEmpty" in run {
       for {
-        q <- Queues.unbounded[Int]()
+        q <- Queues.initUnbounded[Int]()
         b <- q.isEmpty
       } yield assert(b)
     }
     "offer and poll" in run {
       for {
-        q <- Queues.unbounded[Int]()
+        q <- Queues.initUnbounded[Int]()
         b <- q.offer(1)
         v <- q.poll
       } yield assert(b && v == Some(1))
     }
     "peek" in run {
       for {
-        q <- Queues.unbounded[Int]()
+        q <- Queues.initUnbounded[Int]()
         _ <- q.offer(1)
         v <- q.peek
       } yield assert(v == Some(1))
     }
     "add and poll" in run {
       for {
-        q <- Queues.unbounded[Int]()
+        q <- Queues.initUnbounded[Int]()
         _ <- q.add(1)
         v <- q.poll
       } yield assert(v == Some(1))
@@ -70,7 +70,7 @@ class queuesTest extends KyoTest {
 
   "dropping" in run {
     for {
-      q <- Queues.dropping[Int](2)
+      q <- Queues.initDropping[Int](2)
       _ <- q.add(1)
       _ <- q.add(2)
       _ <- q.add(3)
@@ -82,7 +82,7 @@ class queuesTest extends KyoTest {
 
   "sliding" in run {
     for {
-      q <- Queues.sliding[Int](2)
+      q <- Queues.initSliding[Int](2)
       _ <- q.add(1)
       _ <- q.add(2)
       _ <- q.add(3)

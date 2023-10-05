@@ -71,7 +71,7 @@ class PingPongBench extends Bench.ForkOnly[Unit] {
       } yield ()
 
     for {
-      promise <- Fibers.promise[Unit]
+      promise <- Fibers.initPromise[Unit]
       _       <- Fibers.forkFiber(iterate(promise, depth))
       _       <- promise.get
     } yield ()

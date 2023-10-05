@@ -243,12 +243,12 @@ object fibers {
     def fail[T](ex: Throwable): Fiber[T] =
       Fiber.failed(ex)
 
-    private val _promise = IOs(unsafePromise[Object])
+    private val _promise = IOs(unsafeInitPromise[Object])
 
-    def promise[T]: Promise[T] > IOs =
+    def initPromise[T]: Promise[T] > IOs =
       _promise.asInstanceOf[Promise[T] > IOs]
 
-    private[kyo] def unsafePromise[T]: Promise[T] =
+    private[kyo] def unsafeInitPromise[T]: Promise[T] =
       Fiber.promise(new IOPromise[T]())
 
     // compiler bug workaround
@@ -459,7 +459,7 @@ object fibers {
       IOs(Fiber.promise(new IOPromise[Unit]))
 
     def sleep(d: Duration): Unit > (IOs with Fibers with Timers) =
-      promise[Unit].map { p =>
+      initPromise[Unit].map { p =>
         if (d.isFinite) {
           val run: Unit > IOs =
             IOs {
