@@ -104,7 +104,7 @@ object ios {
       runLazyLoop(v)
     }
 
-    private[kyo] def ensure[T, S](f: => Unit > IOs)(v: => T > S): T > (IOs with S) = {
+    private[kyo] def ensure[T, S](f: => Unit > IOs)(v: T > S): T > (IOs with S) = {
       lazy val run: Unit =
         try IOs.run(f)
         catch {
@@ -128,7 +128,14 @@ object ios {
                     case _ =>
                       p
                   }
-                ensureLoop(kyo(v, s, l), np)
+                val v2 =
+                  try kyo(v, s, l)
+                  catch {
+                    case ex if (NonFatal(ex)) =>
+                      run
+                      throw ex
+                  }
+                ensureLoop(v2, np)
               }
             }
           case _ =>

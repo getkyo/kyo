@@ -1,5 +1,6 @@
-package kyoTest
+package kyo
 
+import kyoTest.KyoTest
 import kyo.concurrent.atomics.AtomicInt
 import kyo._
 import kyo.ios._
@@ -12,6 +13,7 @@ import scala.concurrent.duration._
 import scala.util.Success
 import scala.util.Try
 import org.scalatest.compatible.Assertion
+import scala.util.Failure
 
 class iosTest extends KyoTest {
 
@@ -140,6 +142,28 @@ class iosTest extends KyoTest {
           IOs.run[Try[Int]](IOs.attempt(io)),
           Try(fail)
       )
+    }
+  }
+
+  "ensure" - {
+    "success" in {
+      var called = false
+      checkEquals[Try[Int], Any](
+          Tries.run(IOs.run(IOs.ensure[Int, Any] { called = true }(1))),
+          Try(1)
+      )
+      assert(called)
+    }
+    "failure" in {
+      val ex     = new Exception
+      var called = false
+      checkEquals[Try[Int], Any](
+          Tries.run(IOs.run(IOs.ensure { called = true } {
+            IOs[Int, Any](throw ex)
+          })),
+          Failure(ex)
+      )
+      assert(called)
     }
   }
 }
