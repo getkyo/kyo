@@ -32,7 +32,7 @@ object clocks {
     def run[T, S](f: => T > (Clocks with S))(implicit c: Clock): T > (IOs with S) =
       envs.run[T, IOs with S](c)(f)
 
-    def now: Instant > Clocks =
+    val now: Instant > Clocks =
       envs.get.map(_.now)
   }
 }

@@ -17,7 +17,7 @@ object envs {
   final class Envs[E] private[envs] (implicit private val tag: Tag[_])
       extends Effect[Env[E]#Value, Envs[E]] {
 
-    def get: E > Envs[E] =
+    val get: E > Envs[E] =
       suspend(Input.asInstanceOf[Env[E]#Value[E]])
 
     def run[T, S](e: E)(v: T > (Envs[E] with S)): T > S = {

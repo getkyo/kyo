@@ -43,7 +43,7 @@ object consoles {
     def run[T, S](f: => T > (Consoles with S))(implicit c: Console): T > (IOs with S) =
       run[T, IOs with S](c)(f)
 
-    def readln: String > Consoles =
+    val readln: String > Consoles =
       envs.get.map(_.readln)
 
     def print[S](s: => String > S): Unit > (S with Consoles) =

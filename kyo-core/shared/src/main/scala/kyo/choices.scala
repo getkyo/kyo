@@ -41,8 +41,8 @@ object choices {
           drop
       }
 
-    def drop[T]: T > Choices =
-      suspend(List.empty[T])
+    val drop: Nothing > Choices =
+      suspend(List.empty[Nothing])
 
     def traverse[T, U, S, S2](v: List[T] > S)(f: T => U > S2): List[U] > (S with S2) =
       v.map { v =>

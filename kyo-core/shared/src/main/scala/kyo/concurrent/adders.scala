@@ -9,9 +9,8 @@ import java.util.concurrent.atomic.{LongAdder => JLongAdder}
 object adders {
 
   object Adders {
-
-    def initLong: LongAdder > IOs     = IOs(new LongAdder(new JLongAdder()))
-    def initDouble: DoubleAdder > IOs = IOs(new DoubleAdder(new JDoubleAdder()))
+    val initLong: LongAdder > IOs     = IOs(new LongAdder(new JLongAdder()))
+    val initDouble: DoubleAdder > IOs = IOs(new DoubleAdder(new JDoubleAdder()))
   }
 
   class LongAdder private[adders] (private val ref: JLongAdder) extends AnyVal {

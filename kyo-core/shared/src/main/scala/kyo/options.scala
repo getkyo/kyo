@@ -11,7 +11,7 @@ object options {
     private val aborts = Aborts[Option[Nothing]]
     private val none   = aborts.fail(None)
 
-    def empty[T]: T > Options = none
+    val empty: Nothing > Options = none
 
     def apply[T](v: T): T > Options =
       if (v == null)
