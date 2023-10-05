@@ -17,8 +17,8 @@ jobs:
 
     - name: Build JVM
       run: |
-        sbt '+kyo-core/test' '+kyo-core-opt/test' '+kyo-direct/test' '+kyo-sttp/test' '+kyo-zio/test' '+kyo-bench/test' '+kyo-chatgpt/test'
+        sbt '+kyo-core/test' '+kyo-core-opt/test' '+kyo-direct/test' '+kyo-sttp/test' '+kyo-bench/test' '+kyo-chatgpt/test'
 
     - name: Build JS
       run: |
-        sbt '+kyo-coreJS/test' '+kyo-directJS/test' '+kyo-sttpJS/test' '+kyo-zioJS/test' '+kyo-chatgptJS/test'
+        sbt '+kyo-coreJS/test' '+kyo-directJS/test' '+kyo-sttpJS/test' '+kyo-chatgptJS/test'

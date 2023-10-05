@@ -214,13 +214,18 @@ object fibers {
           override def handle[T](ex: Throwable): T > Fibers =
             Fibers.join(Fiber.failed[T](ex))
           def apply[T, U, S](m: Fiber[T], f: T => U > (Fibers with S)) =
-            m match {
-              case m: IOPromise[T] @unchecked =>
-                f(m.block())
-              case Failed(ex) =>
+            try {
+              m match {
+                case m: IOPromise[T] @unchecked =>
+                  f(m.block())
+                case Failed(ex) =>
+                  handle(ex)
+                case _ =>
+                  f(m.asInstanceOf[T])
+              }
+            } catch {
+              case ex if (NonFatal(ex)) =>
                 handle(ex)
-              case _ =>
-                f(m.asInstanceOf[T])
             }
         }
       IOs[T, S](handle[T, IOs with S](v).map(_.block))
