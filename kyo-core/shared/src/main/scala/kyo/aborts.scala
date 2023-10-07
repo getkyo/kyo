@@ -66,11 +66,13 @@ object aborts {
   private implicit def handler[E](implicit tag: Tag[E]): Handler[Abort[E]#Value, Aborts[E]] =
     new Handler[Abort[E]#Value, Aborts[E]] {
 
+      val aborts = Aborts[E]
+
       def pure[U](v: U) = Right(v)
 
       override def handle[T](ex: Throwable): T > Aborts[E] =
         if (tag.closestClass.isAssignableFrom(ex.getClass)) {
-          Aborts[E].fail(ex.asInstanceOf[E])
+          aborts.fail(ex.asInstanceOf[E])
         } else {
           throw ex
         }
@@ -81,9 +83,9 @@ object aborts {
       ): V > (S2 with Aborts[E]) =
         m match {
           case left: Left[_, _] =>
-            Aborts[E].get(left.asInstanceOf[Left[E, V]])
+            aborts.get(left.asInstanceOf[Left[E, V]])
           case Right(v) =>
-            f(v.asInstanceOf[U])
+            f(v)
         }
     }
 }

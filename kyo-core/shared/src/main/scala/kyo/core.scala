@@ -97,6 +97,7 @@ object core {
         case _ =>
           f(v.asInstanceOf[T])
       }
+    require(v != null, "Kyo computation is null")
     transformLoop(v)
   }
 
