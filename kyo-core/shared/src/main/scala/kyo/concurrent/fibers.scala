@@ -193,10 +193,8 @@ object fibers {
 
     def run[T](v: T > Fibers)(implicit
         @implicitNotFound(
-            "Computation can have only `Fibers` pending. Found: `${T}`"
-        ) ng: kyo.NotGiven[(
-            Nothing > Any
-        ) => T]
+            "'Fibers.run' only accepts the 'Fibers' effects pending. Found: '${T}'"
+        ) ng: kyo.NotGiven[(Nothing > Any) => T]
     ): Fiber[T] > IOs = {
       implicit val handler: DeepHandler[Fiber, Fibers] =
         new DeepHandler[Fiber, Fibers] {
@@ -255,8 +253,8 @@ object fibers {
     private val IOTask = kyo.concurrent.scheduler.IOTask
 
     private val invalidEffects
-        : "Forked computations allow only `Fibers` and `IOs`. Plase handle other effects before forking. Found: `${T}`" =
-      "Forked computations allow only `Fibers` and `IOs`. Plase handle other effects before forking. Found: `${T}`"
+        : "Forked computations support only the `Fibers` and `IOs` effects pending. Please handle other effects before forking. Found: '${T}'" =
+      "Forked computations support only the `Fibers` and `IOs` effects pending. Please handle other effects before forking. Found: '${T}'"
 
     /*inline*/
     def forkFiber[T]( /*inline*/ v: => T > (IOs with Fibers))(implicit

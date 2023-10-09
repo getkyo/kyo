@@ -68,10 +68,8 @@ object ios {
     /*inline*/
     def run[T](v: T > IOs)(implicit
         @implicitNotFound(
-            "Computation can have only `IOs` pending. Found: `${T}`"
-        ) ng: kyo.NotGiven[(
-            Nothing > Any
-        ) => T]
+            "'IOs.run' only accepts the 'IOs' effect pending. Found: '${T}'"
+        ) ng: kyo.NotGiven[(Nothing > Any) => T]
     ): T = {
       val safepoint = Safepoint.noop[IO, IOs]
       @tailrec def runLoop(v: T > IOs): T =
