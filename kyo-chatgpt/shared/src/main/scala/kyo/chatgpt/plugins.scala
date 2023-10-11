@@ -7,6 +7,7 @@ import kyo.locals._
 import zio.json.JsonEncoder
 import zio.schema.DeriveSchema
 import zio.schema.codec.JsonCodec
+import zio.schema.Schema
 
 object plugins {
 
@@ -15,12 +16,7 @@ object plugins {
       description: String,
       schema: JsonSchema,
       call: String => String > AIs
-  ) {
-    def enable[T, S](v: T > S): T > (S with AIs) =
-      Plugins.local.get.map { set =>
-        Plugins.local.let(set + this)(v)
-      }
-  }
+  )
 
   object Plugins {
 
@@ -30,9 +26,22 @@ object plugins {
 
     val get: Set[Plugin] > AIs = local.get
 
+    def enable[T, S](p: Plugin)(v: => T > S) =
+      Plugins.local.get.map { set =>
+        Plugins.local.let(set + p)(v)
+      }
+
     inline def init[T, U](name: String, description: String)(f: T => U > AIs): Plugin = {
-      val t       = DeriveSchema.gen[Value[T]]
-      val u       = DeriveSchema.gen[Value[U]]
+      init(name, description, f, DeriveSchema.gen[Value[T]], DeriveSchema.gen[Value[U]])
+    }
+
+    private def init[T, U](
+        name: String,
+        description: String,
+        f: T => U > AIs,
+        t: Schema[Value[T]],
+        u: Schema[Value[U]]
+    ): Plugin = {
       val schema  = JsonSchema(t)
       val decoder = JsonCodec.jsonDecoder(t)
       val encoder = JsonCodec.jsonEncoder(u)

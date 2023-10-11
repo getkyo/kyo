@@ -1,34 +1,33 @@
 package kyo.chatgpt
 
+import kyo._
 import kyo.aspects._
 import kyo.chatgpt.contexts._
+import kyo.chatgpt.embeddings.Embeddings
+import kyo.chatgpt.plugins._
+import kyo.chatgpt.util.JsonSchema
+import kyo.concurrent.fibers._
 import kyo.consoles._
-import kyo._
 import kyo.ios._
+import kyo.locals._
+import kyo.options.Options
 import kyo.requests._
 import kyo.sums._
 import kyo.tries._
-import kyo.locals._
-import kyo.concurrent.fibers._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
-import zio.json.internal.Write
-
-import scala.annotation.targetName
-import scala.util.Failure
-import scala.util.Success
-import scala.util.control.NoStackTrace
-import kyo.chatgpt.embeddings.Embeddings
-import kyo.chatgpt.plugins._
-import java.lang.ref.WeakReference
-import kyo.options.Options
 import zio.json.ast.Json
 import zio.json.internal.Write
 import zio.schema.DeriveSchema
 import zio.schema.Schema
 import zio.schema.codec.JsonCodec
-import kyo.chatgpt.util.JsonSchema
+
+import java.lang.ref.WeakReference
+import scala.annotation.targetName
+import scala.util.Failure
+import scala.util.Success
+import scala.util.control.NoStackTrace
 
 object ais {
 
@@ -81,23 +80,18 @@ object ais {
         Option(System.getenv(apiKeyProp))
           .orElse(Option(System.getProperty(apiKeyProp)))
       }
-      private val example = "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"
 
       val get: String > AIs =
         Options.getOrElse(local.get, AIs.fail("No API key found"))
 
       def let[T, S1, S2](key: String > S1)(f: => T > S2): T > (S1 with S2 with AIs) =
         key.map { k =>
-          if (k.size != example.size) {
-            AIs.fail(s"Invalid API key: $k")
-          } else {
-            local.let(Some(k)) {
-              Tries.run(AIs.init.map(_.ask("ping"))).map {
-                case Failure(_) =>
-                  AIs.fail(s"Invalid API key: $k")
-                case Success(_) =>
-                  f
-              }
+          local.let(Some(k)) {
+            Tries.run(AIs.init.map(_.ask("ping"))).map {
+              case Failure(_) =>
+                AIs.fail(s"Invalid API key: $k")
+              case Success(_) =>
+                f
             }
           }
         }
@@ -162,6 +156,24 @@ object ais {
 
     import AIs._
 
+    def ask[S](msg: String > S): String > (AIs with S) = {
+      def eval(plugins: Set[Plugin]): String > AIs =
+        fetch(plugins).map {
+          case (msg, Some(call)) =>
+            plugins.find(_.name == call.function) match {
+              case None =>
+                function(call.function, "Invalid function call: " + call)
+                  .andThen(eval(plugins))
+              case Some(plugin) =>
+                function(call.function, plugin.call(call.arguments))
+                  .andThen(eval(plugins))
+            }
+          case (msg, None) =>
+            msg
+        }
+      user(msg).andThen(Plugins.get.map(eval))
+    }
+
     inline def infer[T](msg: String): T > AIs =
       infer(msg, DeriveSchema.gen[Value[T]])
 
@@ -220,24 +232,6 @@ object ais {
         _ <- Consoles.println("assistant: " + content)
         _ <- assistant(content, call)
       } yield (content, call)
-
-    def ask[S](msg: String > S): String > (AIs with S) = {
-      def eval(plugins: Set[Plugin]): String > AIs =
-        fetch(plugins).map {
-          case (msg, Some(call)) =>
-            plugins.find(_.name == call.function) match {
-              case None =>
-                function(call.function, "Invalid function call: " + call)
-                  .andThen(eval(plugins))
-              case Some(plugin) =>
-                function(call.function, plugin.call(call.arguments))
-                  .andThen(eval(plugins))
-            }
-          case (msg, None) =>
-            msg
-        }
-      user(msg).andThen(Plugins.get.map(eval))
-    }
   }
 
   class AIRef(ai: AI) extends WeakReference[AI](ai) {

@@ -17,7 +17,7 @@ import scala.util.Try
 abstract class App {
 
   final def main(args: Array[String]): Unit =
-    IOs.run(App.runFiber(run(args.toList)).map(_.block))
+    IOs.run(App.runFiber(run(args.toList)).map(_.block).map(_.get))
 
   def run(
       args: List[String]
@@ -41,22 +41,18 @@ object App {
     runFiber(Duration.Inf)(v)
 
   def runFiber[T](timeout: Duration)(v: T > Effects): Fiber[Try[T]] > IOs = {
-    val v0: Try[
-        T
-    ] > (IOs with Fibers with Resources with Clocks with Consoles with Timers with Aspects with Randoms) =
-      Tries.run(v)
-    val v1: Try[
-        T
-    ] > (IOs with Fibers with Resources with Clocks with Consoles with Timers with Aspects) =
-      Randoms.run(v0)
-    val v2: Try[T] > (IOs with Fibers with Resources with Clocks with Timers with Aspects) =
+    def v1: T > (IOs with Fibers with Resources with Clocks with Consoles with Timers with Aspects with Tries) =
+      Randoms.run(v)
+    def v2: T > (IOs with Fibers with Resources with Clocks with Timers with Aspects with Tries) =
       Consoles.run(v1)
-    val v3: Try[T] > (IOs with Fibers with Resources with Timers with Aspects) = Clocks.run(v2)
-    val v4: Try[T] > (IOs with Fibers with Timers with Aspects)                = Resources.run(v3)
-    val v5: Try[T] > (IOs with Fibers with Timers)                             = Aspects.run(v4)
-    val v6: Try[T] > (IOs with Fibers)                                         = Timers.run(v5)
-    val v7: Try[T] > (IOs with Fibers with Timers) = Fibers.timeout(timeout)(v6)
-    val v8: Try[T] > (IOs with Fibers)             = Timers.run(v6)
-    IOs(Fibers.run(IOs.runLazy(v8)))
+    def v3: T > (IOs with Fibers with Resources with Timers with Aspects with Tries) =
+      Clocks.run(v2)
+    def v4: T > (IOs with Fibers with Timers with Aspects with Tries) = Resources.run(v3)
+    def v5: T > (IOs with Fibers with Timers with Tries)              = Aspects.run(v4)
+    def v6: T > (IOs with Fibers with Tries)                          = Timers.run(v5)
+    def v7: Try[T] > (IOs with Fibers)                                = Tries.run(v6)
+    def v8: Try[T] > (IOs with Fibers with Timers)                    = Fibers.timeout(timeout)(v7)
+    def v9: Try[T] > (IOs with Fibers)                                = Timers.run(v8)
+    IOs(Fibers.run(IOs.runLazy(v9)))
   }
 }
