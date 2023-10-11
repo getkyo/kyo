@@ -60,21 +60,21 @@ class consolesTest extends KyoTest {
         readlns = readlns.tail
         v
       }
-    def print(s: => String): Unit > IOs =
+    def print[T](s: => T): Unit > IOs =
       IOs {
-        prints ::= s
+        prints ::= s.toString
       }
-    def printErr(s: => String): Unit > IOs =
+    def printErr[T](s: => T): Unit > IOs =
       IOs {
-        printErrs ::= s
+        printErrs ::= s.toString
       }
-    def println(s: => String): Unit > IOs =
+    def println[T](s: => T): Unit > IOs =
       IOs {
-        printlns ::= s
+        printlns ::= s.toString
       }
-    def printlnErr(s: => String): Unit > IOs =
+    def printlnErr[T](s: => T): Unit > IOs =
       IOs {
-        printlnErrs ::= s
+        printlnErrs ::= s.toString
       }
   }
 }

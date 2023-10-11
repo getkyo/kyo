@@ -157,7 +157,7 @@ object ais {
     import AIs._
 
     def ask[S](msg: String > S): String > (AIs with S) = {
-      def eval(plugins: Set[Plugin]): String > AIs =
+      def eval(plugins: Set[Plugin[_, _]]): String > AIs =
         fetch(plugins).map {
           case (msg, Some(call)) =>
             plugins.find(_.name == call.function) match {
@@ -165,7 +165,7 @@ object ais {
                 function(call.function, "Invalid function call: " + call)
                   .andThen(eval(plugins))
               case Some(plugin) =>
-                function(call.function, plugin.call(call.arguments))
+                function(call.function, plugin(call.arguments))
                   .andThen(eval(plugins))
             }
           case (msg, None) =>
@@ -179,25 +179,45 @@ object ais {
 
     private def infer[T](msg: String, t: Schema[Value[T]]): T > AIs = {
       val decoder = JsonCodec.jsonDecoder(t)
-      val plugin  = new Plugin("result", "returns the result", JsonSchema(t), identity(_))
-      user(msg).andThen {
-        fetch(Set(plugin), Some(plugin)).map {
+      val resultPlugin =
+        Plugins.init[String, String](
+            "resultPlugin",
+            "Call this function once you have the final result. Feel free to use other functions to gather data before returning the result."
+        )(identity((_)))
+
+      def eval(plugins: Set[Plugin[_, _]]): T > AIs =
+        fetch(plugins).map {
           case (msg, Some(call)) =>
-            decoder.decodeJson(call.arguments) match {
-              case Left(error) =>
-                AIs.fail("Failed to read the inferred value: " + error)
-              case Right(value) =>
-                value.value
+            plugins.find(_.name == call.function) match {
+              case None =>
+                function(call.function, "Invalid function call: " + call)
+                  .andThen(eval(plugins))
+              case Some(`resultPlugin`) =>
+                decoder.decodeJson(call.arguments) match {
+                  case Left(error) =>
+                    function(
+                        resultPlugin.name,
+                        "Failed to read the result: " + error
+                    ).andThen(eval(plugins))
+                  case Right(value) =>
+                    value.value
+                }
+              case Some(plugin) =>
+                function(call.function, plugin(call.arguments))
+                  .andThen(eval(plugins))
             }
           case (msg, None) =>
-            AIs.fail("Expected a function call")
+            function(
+                resultPlugin.name,
+                s"Feel free to gather any data you might need from other plugins but please provide the final result to '${resultPlugin.name}' once you're done."
+            ).andThen(eval(plugins))
         }
-      }
+      user(msg).andThen(Plugins.get.map(p => eval(p + resultPlugin)))
     }
 
     private def fetch(
-        plugins: Set[Plugin],
-        constrain: Option[Plugin] = None
+        plugins: Set[Plugin[_, _]],
+        constrain: Option[Plugin[_, _]] = None
     ): (String, Option[Call]) > AIs =
       for {
         _   <- Consoles.println(s"**************")
@@ -213,8 +233,7 @@ object ais {
               .response(asJson[Response])
         )).map(_.body match {
           case Left(error) =>
-            val a = req.toJson
-            Tries.fail(a + " => " + error)
+            Tries.fail(req.toJson + " => " + error)
           case Right(value) =>
             value
         })
@@ -271,7 +290,11 @@ object ais {
     )
 
     object Request {
-      def apply(ctx: Context, plugins: Set[Plugin], constrain: Option[Plugin]): Request =
+      def apply(
+          ctx: Context,
+          plugins: Set[Plugin[_, _]],
+          constrain: Option[Plugin[_, _]]
+      ): Request =
         val entries =
           ctx.messages.reverse.map(msg =>
             Entry(

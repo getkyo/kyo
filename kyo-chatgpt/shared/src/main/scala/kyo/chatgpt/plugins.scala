@@ -8,32 +8,41 @@ import zio.json.JsonEncoder
 import zio.schema.DeriveSchema
 import zio.schema.codec.JsonCodec
 import zio.schema.Schema
+import zio.json.JsonDecoder
+import AIs.Value
 
-object plugins {
+package object plugins {
 
-  case class Plugin(
-      name: String,
-      description: String,
-      schema: JsonSchema,
-      call: String => String > AIs
-  )
+  class Plugin[T, U] private[plugins] (
+      val name: String,
+      val description: String,
+      val schema: JsonSchema,
+      val decoder: JsonDecoder[Value[T]],
+      val encoder: JsonEncoder[Value[U]],
+      val call: T => U > AIs
+  ) {
+    def apply(v: String): String > AIs =
+      decoder.decodeJson(v) match {
+        case Left(error) =>
+          AIs.fail("Fail to decode plugin input: " + error)
+        case Right(value) =>
+          call(value.value).map(v => encoder.encodeJson(Value(v)).toString())
+      }
+  }
 
   object Plugins {
 
-    import AIs.Value
+    private[plugins] val local = Locals.init(Set.empty[Plugin[_, _]])
 
-    private[plugins] val local = Locals.init(Set.empty[Plugin])
+    val get: Set[Plugin[_, _]] > AIs = local.get
 
-    val get: Set[Plugin] > AIs = local.get
-
-    def enable[T, S](p: Plugin)(v: => T > S) =
+    def enable[T, S](p: Plugin[_, _]*)(v: => T > S) =
       Plugins.local.get.map { set =>
-        Plugins.local.let(set + p)(v)
+        Plugins.local.let(set ++ p.toSeq)(v)
       }
 
-    inline def init[T, U](name: String, description: String)(f: T => U > AIs): Plugin = {
+    inline def init[T, U](name: String, description: String)(f: T => U > AIs): Plugin[T, U] =
       init(name, description, f, DeriveSchema.gen[Value[T]], DeriveSchema.gen[Value[U]])
-    }
 
     private def init[T, U](
         name: String,
@@ -41,22 +50,14 @@ object plugins {
         f: T => U > AIs,
         t: Schema[Value[T]],
         u: Schema[Value[U]]
-    ): Plugin = {
-      val schema  = JsonSchema(t)
-      val decoder = JsonCodec.jsonDecoder(t)
-      val encoder = JsonCodec.jsonEncoder(u)
+    ): Plugin[T, U] =
       Plugin(
           name,
           description,
-          schema,
-          input =>
-            decoder.decodeJson(input) match {
-              case Left(error) =>
-                AIs.fail("Fail to decode plugin input: " + error)
-              case Right(value) =>
-                f(value.value).map(v => encoder.encodeJson(Value(v)).toString())
-            }
+          JsonSchema(t),
+          JsonCodec.jsonDecoder(t),
+          JsonCodec.jsonEncoder(u),
+          f
       )
-    }
   }
 }

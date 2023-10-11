@@ -119,15 +119,15 @@ class directTest extends KyoTest {
   "consoles" in {
     object console extends Console {
 
-      def printErr(s: => String): Unit > IOs = ???
+      def printErr[T](s: => T): Unit > IOs = ???
 
-      def println(s: => String): Unit > IOs = ???
+      def println[T](s: => T): Unit > IOs = ???
 
-      def print(s: => String): Unit > IOs = ???
+      def print[T](s: => T): Unit > IOs = ???
 
       def readln: String > IOs = "hello"
 
-      def printlnErr(s: => String): Unit > IOs = ???
+      def printlnErr[T](s: => T): Unit > IOs = ???
     }
     val io: String > IOs = Consoles.run(console)(defer(await(Consoles.readln)))
     assert(IOs.run(io) == "hello")

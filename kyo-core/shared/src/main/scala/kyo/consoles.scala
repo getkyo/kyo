@@ -8,26 +8,21 @@ import envs._
 object consoles {
 
   abstract class Console {
-
     def readln: String > IOs
-
-    def print(s: => String): Unit > IOs
-
-    def printErr(s: => String): Unit > IOs
-
-    def println(s: => String): Unit > IOs
-
-    def printlnErr(s: => String): Unit > IOs
+    def print[T](s: => T): Unit > IOs
+    def printErr[T](s: => T): Unit > IOs
+    def println[T](s: => T): Unit > IOs
+    def printlnErr[T](s: => T): Unit > IOs
   }
 
   object Console {
     implicit val default: Console =
       new Console {
-        val readln                   = IOs(scala.Console.in.readLine())
-        def print(s: => String)      = IOs(scala.Console.out.print(s))
-        def printErr(s: => String)   = IOs(scala.Console.err.print(s))
-        def println(s: => String)    = IOs(scala.Console.out.println(s))
-        def printlnErr(s: => String) = IOs(scala.Console.err.println(s))
+        val readln                 = IOs(scala.Console.in.readLine())
+        def print[T](s: => T)      = IOs(scala.Console.out.print(s))
+        def printErr[T](s: => T)   = IOs(scala.Console.err.print(s))
+        def println[T](s: => T)    = IOs(scala.Console.out.println(s))
+        def printlnErr[T](s: => T) = IOs(scala.Console.err.println(s))
       }
   }
 
@@ -46,16 +41,16 @@ object consoles {
     val readln: String > Consoles =
       envs.get.map(_.readln)
 
-    def print[S](s: => String > S): Unit > (S with Consoles) =
+    def print[T, S](s: => T > S): Unit > (S with Consoles) =
       s.map(s => envs.get.map(_.print(s)))
 
-    def printErr[S](s: => String > S): Unit > (S with Consoles) =
+    def printErr[T, S](s: => T > S): Unit > (S with Consoles) =
       s.map(s => envs.get.map(_.printErr(s)))
 
-    def println[S](s: => String > S): Unit > (S with Consoles) =
+    def println[T, S](s: => T > S): Unit > (S with Consoles) =
       s.map(s => envs.get.map(_.println(s)))
 
-    def printlnErr[S](s: => String > S): Unit > (S with Consoles) =
+    def printlnErr[T, S](s: => T > S): Unit > (S with Consoles) =
       s.map(s => envs.get.map(_.printlnErr(s)))
   }
 }
