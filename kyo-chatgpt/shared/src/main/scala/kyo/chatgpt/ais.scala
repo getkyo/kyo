@@ -3,7 +3,6 @@ package kyo.chatgpt
 import kyo._
 import kyo.aspects._
 import kyo.chatgpt.contexts._
-import kyo.chatgpt.embeddings.Embeddings
 import kyo.chatgpt.plugins._
 import kyo.chatgpt.util.JsonSchema
 import kyo.concurrent.fibers._
@@ -17,8 +16,6 @@ import kyo.tries._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
-import zio.json.ast.Json
-import zio.json.internal.Write
 import zio.schema.DeriveSchema
 import zio.schema.Schema
 import zio.schema.codec.JsonCodec
@@ -138,7 +135,7 @@ object ais {
     val dump: String > AIs =
       save.map { ctx =>
         ctx.messages.reverse.map(msg =>
-          s"${msg.role.name}: ${msg.content} ${msg.call.getOrElse("")}"
+          s"${msg.role.name}: ${msg.name.getOrElse("")} ${msg.content} ${msg.call.getOrElse("")}"
         )
           .mkString("\n")
       }
@@ -174,45 +171,79 @@ object ais {
       user(msg).andThen(Plugins.get.map(eval))
     }
 
-    inline def infer[T](msg: String): T > AIs =
-      infer(msg, DeriveSchema.gen[Value[T]])
+    inline def gen[T](msg: String): T > AIs =
+      gen(msg)(DeriveSchema.gen[T])
 
-    private def infer[T](msg: String, t: Schema[Value[T]]): T > AIs = {
+    private def gen[T](msg: String)(implicit t: Schema[T]): T > AIs = {
       val decoder = JsonCodec.jsonDecoder(t)
       val resultPlugin =
-        Plugins.init[String, String](
-            "resultPlugin",
-            "Call this function once you have the final result. Feel free to use other functions to gather data before returning the result."
-        )(identity((_)))
+        Plugins.init[T, T]("resultPlugin", "call this function with the result")(identity((_)))
+      def eval(): T > AIs =
+        fetch(Set(resultPlugin), Some(resultPlugin)).map {
+          case (msg, Some(call)) =>
+            if (call.function != resultPlugin.name) {
+              function(call.function, "Invalid function call: " + call)
+                .andThen(eval())
+            } else {
+              resultPlugin.decoder.decodeJson(call.arguments) match {
+                case Left(error) =>
+                  function(
+                      resultPlugin.name,
+                      "Failed to read the result: " + error
+                  ).andThen(eval())
+                case Right(value) =>
+                  value.value
+              }
+            }
+          case (msg, None) =>
+            AIs.fail("Expected a function call")
+        }
+      user(msg).andThen(eval())
+    }
 
-      def eval(plugins: Set[Plugin[_, _]]): T > AIs =
-        fetch(plugins).map {
+    private val inferPrompt = """
+    | ==============================IMPORTANT===================================
+    | == Note the 'resultPlugin' function I provided. Feel free to call other ==
+    | == functions but please invoke 'resultPlugin' as soon as you're done.   ==
+    | ==========================================================================
+    """.stripMargin
+
+    inline def infer[T](msg: String): T > AIs =
+      infer(msg)(DeriveSchema.gen[T])
+
+    private def infer[T](msg: String)(implicit t: Schema[T]): T > AIs = {
+      val decoder = JsonCodec.jsonDecoder(t)
+      val resultPlugin =
+        Plugins.init[T, T]("resultPlugin", "call this function with the result")(identity((_)))
+      def eval(plugins: Set[Plugin[_, _]], constrain: Option[Plugin[_, _]]): T > AIs =
+        fetch(plugins, constrain).map {
           case (msg, Some(call)) =>
             plugins.find(_.name == call.function) match {
               case None =>
                 function(call.function, "Invalid function call: " + call)
-                  .andThen(eval(plugins))
+                  .andThen(eval(plugins, constrain))
               case Some(`resultPlugin`) =>
-                decoder.decodeJson(call.arguments) match {
+                resultPlugin.decoder.decodeJson(call.arguments) match {
                   case Left(error) =>
                     function(
                         resultPlugin.name,
                         "Failed to read the result: " + error
-                    ).andThen(eval(plugins))
+                    ).andThen(eval(plugins, constrain))
                   case Right(value) =>
                     value.value
                 }
               case Some(plugin) =>
                 function(call.function, plugin(call.arguments))
-                  .andThen(eval(plugins))
+                  .andThen(eval(plugins, constrain))
             }
           case (msg, None) =>
-            function(
-                resultPlugin.name,
-                s"Feel free to gather any data you might need from other plugins but please provide the final result to '${resultPlugin.name}' once you're done."
-            ).andThen(eval(plugins))
+            eval(plugins, Some(resultPlugin))
         }
-      user(msg).andThen(Plugins.get.map(p => eval(p + resultPlugin)))
+      user(msg)
+        .andThen(function(resultPlugin.name, inferPrompt))
+        .andThen(Plugins.get.map(p =>
+          eval(p + resultPlugin, None)
+        ))
     }
 
     private def fetch(

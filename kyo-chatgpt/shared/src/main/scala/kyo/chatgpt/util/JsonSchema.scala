@@ -39,7 +39,7 @@ object JsonSchema {
         Map("type" -> Json.Str("boolean"))
 
       case Schema.Optional(innerSchema, _) =>
-        Map("type" -> Json.Str("array"), "items" -> Json.Obj(convert(innerSchema).toSeq: _*))
+        convert(innerSchema)
 
       case Schema.Sequence(innerSchema, _, _, _, _) =>
         Map("type" -> Json.Str("array"), "items" -> Json.Obj(convert(innerSchema).toSeq: _*))
