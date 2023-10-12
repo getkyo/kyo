@@ -24,6 +24,7 @@ import java.lang.ref.WeakReference
 import scala.annotation.targetName
 import scala.util.Failure
 import scala.util.Success
+import scala.util.Try
 import scala.util.control.NoStackTrace
 
 object ais {
@@ -233,8 +234,14 @@ object ais {
                     value.value
                 }
               case Some(plugin) =>
-                function(call.function, plugin(call.arguments))
-                  .andThen(eval(plugins, constrain))
+                Tries.run[String, AIs](plugin(call.arguments)).map {
+                  case Success(result) =>
+                    function(call.function, result)
+                      .andThen(eval(plugins, constrain))
+                  case Failure(ex) =>
+                    function(call.function, "Failure: " + ex)
+                      .andThen(eval(plugins, constrain))
+                }
             }
           case (msg, None) =>
             eval(plugins, Some(resultPlugin))
@@ -256,15 +263,15 @@ object ais {
         ctx <- save
         key <- AIs.ApiKey.get
         req = Request(ctx, plugins, constrain)
-        response <- Tries(Requests(
+        response <- Requests(
             _.contentType("application/json")
               .header("Authorization", s"Bearer $key")
               .post(uri"https://api.openai.com/v1/chat/completions")
               .body(req)
               .response(asJson[Response])
-        )).map(_.body match {
+        ).map(_.body match {
           case Left(error) =>
-            Tries.fail(req.toJson + " => " + error)
+            Tries.fail(error)
           case Right(value) =>
             value
         })
@@ -273,7 +280,6 @@ object ais {
             case None =>
               AIs.fail("no choices")
             case Some(v) =>
-              val a = req.toJson
               (
                   v.message.content.getOrElse(""),
                   v.message.function_call.map(c => Call(c.name, c.arguments))

@@ -52,7 +52,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
   implicit def toFuture(a: Assertion): Future[Assertion] = Future.successful(a)
 
   def runJVM(
-      v: => Assertion > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers)
+      v: => Assertion > App.Effects
   ): Future[Assertion] =
     if (Platform.isJVM) {
       run(v)
@@ -61,7 +61,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     }
 
   def runJS(
-      v: => Assertion > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers)
+      v: => Assertion > App.Effects
   ): Future[Assertion] =
     if (Platform.isJS) {
       run(v)
@@ -70,7 +70,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     }
 
   def run(
-      v: => Assertion > (IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers)
+      v: => Assertion > App.Effects
   ): Future[Assertion] = {
     IOs.run(App.runFiber(timeout)(v).map(_.toFuture)).map(_.get)
   }

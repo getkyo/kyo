@@ -13,13 +13,13 @@ import AIs.Value
 
 package object plugins {
 
-  class Plugin[T, U] private[plugins] (
-      val name: String,
-      val description: String,
-      val schema: JsonSchema,
-      val decoder: JsonDecoder[Value[T]],
-      val encoder: JsonEncoder[Value[U]],
-      val call: T => U > AIs
+  case class Plugin[T, U] private[plugins] (
+      name: String,
+      description: String,
+      schema: JsonSchema,
+      decoder: JsonDecoder[Value[T]],
+      encoder: JsonEncoder[Value[U]],
+      call: T => U > AIs
   ) {
     def apply(v: String): String > AIs =
       decoder.decodeJson(v) match {
