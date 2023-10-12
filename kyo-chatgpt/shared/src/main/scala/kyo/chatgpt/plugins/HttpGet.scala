@@ -17,7 +17,7 @@ object HttpGet {
   val plugin = Plugins.init[String, String](
       "http_get",
       "returns the contents of a URL"
-  ) { url =>
+  ) { (ai, url) =>
     Requests(
         _.contentType("text/html; charset=utf-8")
           .get(uri"$url")

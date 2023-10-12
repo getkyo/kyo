@@ -10,7 +10,7 @@ object BackoffSleep {
       "Sleeps for the specified number of milliseconds. Feel free to use this plugin as backoff " +
         "mechanism but use a reasonable backoff policy to ensure you're able to fullfill the " +
         "user's request in a reasonable time frame."
-  ) { v =>
+  ) { (ai, v) =>
     Fibers.sleep(v.millis).unit
   }
 }

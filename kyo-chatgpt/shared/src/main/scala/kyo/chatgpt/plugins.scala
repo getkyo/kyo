@@ -13,20 +13,20 @@ import AIs.Value
 
 package object plugins {
 
-  case class Plugin[T, U] private[plugins] (
+  case class Plugin[T, U](
       name: String,
       description: String,
       schema: JsonSchema,
       decoder: JsonDecoder[Value[T]],
       encoder: JsonEncoder[Value[U]],
-      call: T => U > AIs
+      call: (AI, T) => U > AIs
   ) {
-    def apply(v: String): String > AIs =
+    def apply(ai: AI, v: String): String > AIs =
       decoder.decodeJson(v) match {
         case Left(error) =>
           AIs.fail("Fail to decode plugin input: " + error)
         case Right(value) =>
-          call(value.value).map(v => encoder.encodeJson(Value(v)).toString())
+          call(ai, value.value).map(v => encoder.encodeJson(Value(v)).toString())
       }
   }
 
@@ -41,16 +41,15 @@ package object plugins {
         Plugins.local.let(set ++ p.toSeq)(v)
       }
 
-    inline def init[T, U](name: String, description: String)(f: T => U > AIs): Plugin[T, U] =
-      init(name, description, f, DeriveSchema.gen[Value[T]], DeriveSchema.gen[Value[U]])
+    inline def init[T, U](name: String, description: String)(f: (AI, T) => U > AIs): Plugin[T, U] =
+      init(name, description, DeriveSchema.gen[Value[T]], DeriveSchema.gen[Value[U]])(f)
 
-    private def init[T, U](
+    def init[T, U](
         name: String,
         description: String,
-        f: T => U > AIs,
         t: Schema[Value[T]],
         u: Schema[Value[U]]
-    ): Plugin[T, U] =
+    )(f: (AI, T) => U > AIs): Plugin[T, U] =
       Plugin(
           name,
           description,

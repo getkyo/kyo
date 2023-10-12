@@ -86,8 +86,8 @@ object ais {
         key.map { k =>
           local.let(Some(k)) {
             Tries.run(AIs.init.map(_.ask("ping"))).map {
-              case Failure(_) =>
-                AIs.fail(s"Invalid API key: $k")
+              case Failure(error) =>
+                AIs.fail(s"Invalid API key. " + error)
               case Success(_) =>
                 f
             }
@@ -163,7 +163,7 @@ object ais {
                 function(call.function, "Invalid function call: " + call)
                   .andThen(eval(plugins))
               case Some(plugin) =>
-                function(call.function, plugin(call.arguments))
+                function(call.function, plugin(this, call.arguments))
                   .andThen(eval(plugins))
             }
           case (msg, None) =>
@@ -178,7 +178,7 @@ object ais {
     private def gen[T](msg: String)(implicit t: Schema[T]): T > AIs = {
       val decoder = JsonCodec.jsonDecoder(t)
       val resultPlugin =
-        Plugins.init[T, T]("resultPlugin", "call this function with the result")(identity((_)))
+        Plugins.init[T, T]("resultPlugin", "call this function with the result")((ai, v) => v)
       def eval(): T > AIs =
         fetch(Set(resultPlugin), Some(resultPlugin)).map {
           case (msg, Some(call)) =>
@@ -210,12 +210,11 @@ object ais {
     """.stripMargin
 
     inline def infer[T](msg: String): T > AIs =
-      infer(msg)(DeriveSchema.gen[T])
+      infer(msg)(DeriveSchema.gen[Value[T]])
 
-    private def infer[T](msg: String)(implicit t: Schema[T]): T > AIs = {
-      val decoder = JsonCodec.jsonDecoder(t)
+    private def infer[T](msg: String)(implicit t: Schema[Value[T]]): T > AIs = {
       val resultPlugin =
-        Plugins.init[T, T]("resultPlugin", "call this function with the result")(identity((_)))
+        Plugins.init[T, T]("resultPlugin", "call this function with the result", t, t)((ai, v) => v)
       def eval(plugins: Set[Plugin[_, _]], constrain: Option[Plugin[_, _]]): T > AIs =
         fetch(plugins, constrain).map {
           case (msg, Some(call)) =>
@@ -234,7 +233,7 @@ object ais {
                     value.value
                 }
               case Some(plugin) =>
-                Tries.run[String, AIs](plugin(call.arguments)).map {
+                Tries.run[String, AIs](plugin(this, call.arguments)).map {
                   case Success(result) =>
                     function(call.function, result)
                       .andThen(eval(plugins, constrain))
