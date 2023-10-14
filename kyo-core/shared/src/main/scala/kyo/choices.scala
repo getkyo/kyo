@@ -27,6 +27,9 @@ object choices {
     def run[T, S](v: T > (Choices with S)): List[T] > S =
       handle[T, S](v)
 
+    def repeat(n: Int): Unit > Choices =
+      foreach(List.fill(n)(()))
+
     def foreach[T, S](v: List[T] > S): T > (Choices with S) =
       v.map {
         case head :: Nil => head

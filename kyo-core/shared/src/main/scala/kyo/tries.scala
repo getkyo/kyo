@@ -15,6 +15,12 @@ object tries {
     def run[T, S](v: => T > (Tries with S)): Try[T] > S =
       aborts.run[T, S](v).map(_.toTry)
 
+    def handle[T, S](f: Throwable => T > S)(v: => T > S): T > S =
+      run(v).map {
+        case Success(v) => v
+        case Failure(e) => f(e)
+      }
+
     def fail[T](ex: Throwable): T > Tries =
       aborts.fail(ex)
 

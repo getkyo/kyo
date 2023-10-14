@@ -26,6 +26,7 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 import scala.util.control.NoStackTrace
+import kyo.concurrent.atomics.Atomics
 
 object ais {
 
@@ -33,13 +34,29 @@ object ais {
 
   type State = Map[AIRef, Context]
 
-  type AIs = Sums[State] with Requests with Tries with IOs with Aspects with Consoles
+  type AIs = Sums[State] with Requests with Tries with IOs with Aspects
 
   object AIs {
 
     private[kyo] case class Value[T](value: T)
 
-    val init: AI > IOs = IOs(new AI())
+    private val nextId = IOs.run(Atomics.initLong(0))
+
+    val init: AI > AIs = nextId.incrementAndGet.map(AI(_))
+
+    def init[S](prompt: String > S): AI > (AIs with S) =
+      init.map { ai =>
+        ai.system(prompt).andThen(ai)
+      }
+
+    def ask[S](msg: String > S): String > (AIs with S) =
+      init.map(_.ask(msg))
+
+    inline def gen[T](msg: String): T > AIs =
+      init.map(_.gen[T](msg))
+
+    inline def infer[T](msg: String): T > AIs =
+      init.map(_.infer[T](msg))
 
     def restore[S](ctx: Context > S): AI > (AIs with S) =
       init.map { ai =>
@@ -66,9 +83,9 @@ object ais {
         Tries.run(f).map(r => Sums[State].set(st).map(_ => r.get))
       }
 
-    def run[T, S](v: T > (AIs with S)): T > (Requests with Consoles with Tries with S) = {
-      val a: T > (Requests with Consoles with Tries with Aspects with S) = Sums[State].run(v)
-      val b: T > (Requests with Consoles with Tries with S)              = Aspects.run(a)
+    def run[T, S](v: T > (AIs with S)): T > (Requests with Tries with S) = {
+      val a: T > (Requests with Tries with Aspects with S) = Sums[State].run(v)
+      val b: T > (Requests with Tries with S)              = Aspects.run(a)
       b
     }
 
@@ -85,7 +102,7 @@ object ais {
       def let[T, S1, S2](key: String > S1)(f: => T > S2): T > (S1 with S2 with AIs) =
         key.map { k =>
           local.let(Some(k)) {
-            Tries.run(AIs.init.map(_.ask("ping"))).map {
+            Tries.run[String, AIs](AIs.ask("ping")).map {
               case Failure(error) =>
                 AIs.fail(s"Invalid API key. " + error)
               case Success(_) =>
@@ -96,7 +113,7 @@ object ais {
     }
   }
 
-  class AI private[ais] () {
+  class AI private[ais] (val id: Long) {
 
     private val ref = AIRef(this)
 
@@ -257,8 +274,6 @@ object ais {
         constrain: Option[Plugin[_, _]] = None
     ): (String, Option[Call]) > AIs =
       for {
-        _   <- Consoles.println(s"**************")
-        _   <- Consoles.println(dump)
         ctx <- save
         key <- AIs.ApiKey.get
         req = Request(ctx, plugins, constrain)
@@ -284,7 +299,6 @@ object ais {
                   v.message.function_call.map(c => Call(c.name, c.arguments))
               )
           }
-        _ <- Consoles.println("assistant: " + content)
         _ <- assistant(content, call)
       } yield (content, call)
   }
