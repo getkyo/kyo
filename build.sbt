@@ -87,6 +87,7 @@ lazy val kyo =
         `kyo-core-opt`,
         `kyo-direct`,
         `kyo-sttp`,
+        `kyo-tapir`,
         `kyo-chatgpt`,
         `kyo-bench`
     )
@@ -175,6 +176,19 @@ lazy val `kyo-sttp` =
     )
     .jsSettings(`js-settings`)
 
+lazy val `kyo-tapir` =
+  crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Pure)
+    .in(file("kyo-tapir"))
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .settings(
+        `kyo-settings`,
+        `with-cross-scala`,
+        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core" % "1.7.6",
+        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.7.6"
+    )
+
 lazy val `kyo-chatgpt` =
   crossProject(JSPlatform, JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
@@ -245,6 +259,7 @@ lazy val readme =
         `kyo-core`,
         `kyo-direct`,
         `kyo-sttp`,
+        `kyo-tapir`,
         `kyo-chatgpt`,
         `kyo-bench`
     )

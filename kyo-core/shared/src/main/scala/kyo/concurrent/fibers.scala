@@ -458,6 +458,9 @@ object fibers {
     def never: Fiber[Unit] > IOs =
       IOs(Fiber.promise(new IOPromise[Unit]))
 
+    def delay[T, S](d: Duration)(v: => T > S): T > (S with IOs with Fibers with Timers) =
+      sleep(d).andThen(v)
+
     def sleep(d: Duration): Unit > (IOs with Fibers with Timers) =
       initPromise[Unit].map { p =>
         if (d.isFinite) {

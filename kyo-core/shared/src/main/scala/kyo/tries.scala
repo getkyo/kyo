@@ -15,10 +15,12 @@ object tries {
     def run[T, S](v: => T > (Tries with S)): Try[T] > S =
       aborts.run[T, S](v).map(_.toTry)
 
-    def handle[T, S](f: Throwable => T > S)(v: => T > S): T > S =
+    def handle[T, S](v: => T > S)(f: PartialFunction[Throwable, T > S]): T > S =
       run[T, S](v).map {
-        case Success(v) => v
-        case Failure(e) => f(e)
+        case Failure(e) if (f.isDefinedAt(e)) =>
+          f(e)
+        case r =>
+          r.get
       }
 
     def fail[T](ex: Throwable): T > Tries =
