@@ -22,15 +22,8 @@ trait NettyKyoServerInterpreter {
   def toRoute(ses: List[ServerEndpoint[Any, kyo.routes.internal.M]])
       : Route[kyo.routes.internal.M] = {
 
-    val runAsync = new RunAsync[kyo.routes.internal.M] {
-      override def apply[T](f: => T > (Fibers with IOs)): Unit =
-        App.run(Fibers.forkFiber {
-          App.run(f)
-          ()
-        })
-    }
     implicit val bodyListener: BodyListener[internal.M, NettyResponse] = {
-      new NettyBodyListener(runAsync)
+      new NettyBodyListener(NettyKyoServer.runAsync)
     }
 
     val interceptors = nettyServerOptions.interceptors

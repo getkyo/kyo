@@ -13,6 +13,7 @@ import sttp.monad.MonadError
 import sttp.tapir.server.ServerEndpoint
 import kyo.server.internal.KyoUtil.{nettyChannelFutureToScala, nettyFutureToScala}
 import sttp.tapir.server.netty.internal.{NettyBootstrap, NettyServerHandler}
+import sttp.tapir.server.netty.internal.RunAsync
 import sttp.tapir.server.netty.{NettyConfig, Route}
 
 import java.net.{InetSocketAddress, SocketAddress}
@@ -83,10 +84,7 @@ case class NettyKyoServer(
           new NettyServerHandler[kyo.routes.internal.M](
               route,
               (f: () => Unit > (Fibers with IOs)) =>
-                App.run(Fibers.forkFiber {
-                  App.run(f())
-                  ()
-                }),
+                NettyKyoServer.runAsync(f()),
               config.maxContentLength
           ),
           eventLoopGroup,
@@ -102,7 +100,7 @@ case class NettyKyoServer(
     IOs {
       nettyFutureToScala(ch.close()).flatMap { _ =>
         if (config.shutdownEventLoopGroupOnClose) {
-          nettyFutureToScala(eventLoopGroup.shutdownGracefully()).map(_ => ())
+          nettyFutureToScala(eventLoopGroup.shutdownGracefully()).unit
         } else
           ()
       }
@@ -111,6 +109,17 @@ case class NettyKyoServer(
 }
 
 object NettyKyoServer {
+
+  private[kyo] val runAsync = new RunAsync[kyo.routes.internal.M] {
+    override def apply[T](f: => T > (Fibers with IOs)): Unit =
+      IOs.run {
+        Fibers.forkFiber {
+          Fibers.run(IOs.runLazy(f))
+          ()
+        }
+      }
+  }
+
   def apply(): NettyKyoServer =
     NettyKyoServer(
         Vector.empty,

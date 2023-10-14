@@ -27,7 +27,7 @@ object KyoMonadError {
         Tries.handle(rt)(h)
 
       def ensure[T](f: T > Fibers with IOs, e: => Unit > Fibers with IOs) =
-        IOs.ensure(App.run(e))(f)
+        IOs.ensure(Fibers.run(IOs.runLazy(e)).unit)(f)
 
       def error[T](t: Throwable) =
         IOs.fail(t)

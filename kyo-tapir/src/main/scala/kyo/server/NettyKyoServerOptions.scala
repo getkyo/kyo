@@ -59,11 +59,8 @@ object NettyKyoServerOptions {
     )
 
   private def debugLog(msg: String, exOpt: Option[Throwable]) =
-    IOs {
-      NettyDefaults.debugLog(log, msg, exOpt)
-    }
+    NettyDefaults.debugLog(log, msg, exOpt)
 
-  private def errorLog(msg: String, ex: Throwable): Unit > IOs = IOs {
+  private def errorLog(msg: String, ex: Throwable): Unit > IOs =
     log.error(msg, ex)
-  }
 }

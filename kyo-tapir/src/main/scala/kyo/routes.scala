@@ -14,15 +14,16 @@ import sttp.tapir._
 import sttp.tapir.server.ServerEndpoint
 import kyo.App.Effects
 
-object test extends App {
+object kyoMain extends App {
   import scala.concurrent.duration._
   import routes._
+  import sttp.tapir._
 
   def run(args: List[String]) = {
-    Routes.run(NettyKyoServer())(Routes.add[String, String, Any](_.get
+    Routes.run(NettyKyoServer().port(8089))(Routes.add[String, String, Any](_.get
       .in("hello").in(query[String]("name"))
       .out(stringBody)) { name =>
-      Timers.run(Fibers.delay(1.second)(s"Hello, $name!"))
+      s"Hello, $name!"
     }).unit
   }
 }

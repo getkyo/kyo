@@ -3,7 +3,6 @@ package kyo.concurrent.scheduler
 import kyo._
 import kyo.ios._
 
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -22,8 +21,6 @@ private[kyo] object Scheduler {
   @volatile
   private var concurrencyLimit = coreWorkers
   private val concurrency      = new AtomicInteger(0)
-
-  private[scheduler] val workers = new CopyOnWriteArrayList[Worker]
 
   private val idle = new MpmcUnboundedXaddArrayQueue[Worker](8)
   private val pool = Executors.newCachedThreadPool(Threads("kyo-worker", new Worker(_)))
@@ -101,7 +98,7 @@ private[kyo] object Scheduler {
 
   def loadAvg(): Double = {
     var sum = 0L
-    val it  = workers.iterator()
+    val it  = Worker.all.iterator()
     var c   = 0
     while (it.hasNext()) {
       sum += it.next().load()
@@ -111,7 +108,7 @@ private[kyo] object Scheduler {
   }
 
   def cycle(): Unit =
-    workers.forEach(_.cycle())
+    Worker.all.forEach(_.cycle())
 
   def idle(w: Worker): Unit =
     if (w.load() == 0) {
@@ -128,7 +125,8 @@ private[kyo] object Scheduler {
     var w: Worker = null
     while (w == null || w == besides) {
       try {
-        w = workers.get(XSRandom.nextInt(workers.size()))
+        val a = Worker.all
+        w = a.get(XSRandom.nextInt(a.size()))
       } catch {
         case _: ArrayIndexOutOfBoundsException | _: IllegalArgumentException =>
       }

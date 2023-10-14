@@ -6,6 +6,7 @@ import java.util.Comparator
 import java.util.PriorityQueue
 import java.util.concurrent.Semaphore
 import java.util.concurrent.locks.LockSupport
+import java.util.concurrent.CopyOnWriteArrayList
 
 private final class Worker(r: Runnable)
     extends Thread(r) {
@@ -64,7 +65,7 @@ private final class Worker(r: Runnable)
         stop
       }
     running = true
-    Scheduler.workers.add(this)
+    Worker.all.add(this)
     while (!stop()) {
       if (task == null) {
         task = queue.poll()
@@ -85,7 +86,7 @@ private final class Worker(r: Runnable)
         }
       }
     }
-    Scheduler.workers.remove(this)
+    Worker.all.remove(this)
     running = false
     if (task != null) {
       queue.add(task)
@@ -98,6 +99,8 @@ private final class Worker(r: Runnable)
 }
 
 private object Worker {
+  private[kyo] val all = new CopyOnWriteArrayList[Worker]
+
   def apply(): Worker =
     Thread.currentThread() match {
       case w: Worker => w
