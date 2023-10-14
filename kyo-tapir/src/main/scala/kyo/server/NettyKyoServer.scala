@@ -114,8 +114,7 @@ object NettyKyoServer {
     override def apply[T](f: => T > (Fibers with IOs)): Unit =
       IOs.run {
         Fibers.forkFiber {
-          Fibers.run(IOs.runLazy(f))
-          ()
+          IOs.run(Fibers.run(IOs.runLazy(f)).unit)
         }
       }
   }
