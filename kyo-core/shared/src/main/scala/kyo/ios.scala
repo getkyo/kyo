@@ -69,7 +69,7 @@ object ios {
     def run[T](v: T > IOs)(implicit
         @implicitNotFound(
             "'IOs.run' only accepts the 'IOs' effect pending. Found: '${T}'"
-        ) ng: kyo.NotGiven[(Nothing > Any) => T]
+        ) ng: Pure[T]
     ): T = {
       val safepoint = Safepoint.noop[IO, IOs]
       @tailrec def runLoop(v: T > IOs): T =

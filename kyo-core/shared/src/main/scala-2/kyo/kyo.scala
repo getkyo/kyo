@@ -4,6 +4,8 @@ package object kyo {
 
   type >[+T, -S] >: T // = T | Kyo[_, _, _, T, S]
 
+  type Pure[T] = NotGiven[(Nothing > Any) => T]
+
   class KyoOps[+T, -S](private[kyo] val v: T > S) extends AnyVal {
 
     def flatMap[U, S2](f: T => U > S2): U > (S with S2) =
@@ -55,5 +57,4 @@ package object kyo {
       v4: T4 > S
   ): (T1, T2, T3, T4) > S =
     v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
-
 }
