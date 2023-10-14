@@ -11,6 +11,8 @@ import cps.CpsMonad
 
 object direct {
 
+  import internal._
+
   private inline given kyoCpsMonad[S]: KyoCpsMonad[S] = KyoCpsMonad[S]
 
   transparent inline def defer[T](inline f: T) = ${ impl[T]('f) }
@@ -77,21 +79,23 @@ object direct {
     }
   }
 
-  private[kyo] class KyoCpsMonad[S]
-      extends CpsMonadContext[[T] =>> T > S]
-      with CpsMonad[[T] =>> T > S] {
+  object internal {
+    class KyoCpsMonad[S]
+        extends CpsMonadContext[[T] =>> T > S]
+        with CpsMonad[[T] =>> T > S] {
 
-    type Context = KyoCpsMonad[S]
+      type Context = KyoCpsMonad[S]
 
-    override def monad: CpsMonad[[T] =>> T > S] = this
+      override def monad: CpsMonad[[T] =>> T > S] = this
 
-    override def apply[T](op: Context => T > S): T > S = op(this)
+      override def apply[T](op: Context => T > S): T > S = op(this)
 
-    override inline def pure[T](t: T): T > S = t
+      override inline def pure[T](t: T): T > S = t
 
-    override inline def map[A, B](fa: A > S)(f: A => B): B > S = fa.map(f(_))
+      override inline def map[A, B](fa: A > S)(f: A => B): B > S = fa.map(f(_))
 
-    override inline def flatMap[A, B](fa: A > S)(f: A => B > S): B > S = fa.flatMap(f)
+      override inline def flatMap[A, B](fa: A > S)(f: A => B > S): B > S = fa.flatMap(f)
 
+    }
   }
 }
