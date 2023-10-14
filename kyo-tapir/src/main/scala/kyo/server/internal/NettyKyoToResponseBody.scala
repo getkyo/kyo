@@ -1,19 +1,22 @@
 package kyo.server.internal
 
-import sttp.tapir.server.netty.internal.NettyToResponseBody
 import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelHandlerContext
-import io.netty.handler.codec.http.{DefaultHttpContent, HttpContent}
+import io.netty.handler.codec.http.DefaultHttpContent
+import io.netty.handler.codec.http.HttpContent
 import org.reactivestreams.Publisher
+import sttp.capabilities.Streams
 import sttp.model.HasHeaders
+import sttp.tapir.CodecFormat
+import sttp.tapir.RawBodyType
+import sttp.tapir.WebSocketBodyOutput
 import sttp.tapir.server.interpreter.ToResponseBody
 import sttp.tapir.server.netty.NettyResponse
 import sttp.tapir.server.netty.NettyResponseContent._
-import sttp.tapir.{CodecFormat, RawBodyType, WebSocketBodyOutput}
+import sttp.tapir.server.netty.internal.NettyToResponseBody
 
 import java.io.InputStream
 import java.nio.charset.Charset
-import sttp.capabilities.Streams
 
 class NettyKyoToResponseBody(delegate: NettyToResponseBody)
     extends ToResponseBody[NettyResponse, Any] {

@@ -1,23 +1,25 @@
 package kyo.server
 
-import kyo._
-import kyo.routes._
-import kyo.ios._
-import kyo.tries._
-import kyo.concurrent.fibers._
-import kyo.server.internal.KyoMonadError._
-
 import io.netty.channel._
 import io.netty.channel.unix.DomainSocketAddress
-import sttp.monad.MonadError
+import kyo._
+import kyo.concurrent.fibers._
+import kyo.ios._
+import kyo.routes._
+import kyo.server.internal.KyoMonadError._
+import kyo.server.internal.KyoUtil._
+import kyo.tries._
 import sttp.tapir.server.ServerEndpoint
-import kyo.server.internal.KyoUtil.{nettyChannelFutureToScala, nettyFutureToScala}
-import sttp.tapir.server.netty.internal.{NettyBootstrap, NettyServerHandler}
+import sttp.tapir.server.netty.NettyConfig
+import sttp.tapir.server.netty.Route
+import sttp.tapir.server.netty.internal.NettyBootstrap
+import sttp.tapir.server.netty.internal.NettyServerHandler
 import sttp.tapir.server.netty.internal.RunAsync
-import sttp.tapir.server.netty.{NettyConfig, Route}
 
-import java.net.{InetSocketAddress, SocketAddress}
-import java.nio.file.{Path, Paths}
+import java.net.InetSocketAddress
+import java.net.SocketAddress
+import java.nio.file.Path
+import java.nio.file.Paths
 import java.util.UUID
 
 case class NettyKyoServer(

@@ -1,16 +1,18 @@
 package kyo.server
 
-import kyo._
-import kyo.ios._
-import kyo.tries._
-import kyo.concurrent.fibers._
-import kyo.routes._
 import com.typesafe.scalalogging.Logger
+import kyo._
+import kyo.concurrent.fibers._
+import kyo.ios._
+import kyo.routes._
+import kyo.tries._
+import sttp.tapir.Defaults
+import sttp.tapir.TapirFile
 import sttp.tapir.model.ServerRequest
+import sttp.tapir.server.interceptor.CustomiseInterceptors
+import sttp.tapir.server.interceptor.Interceptor
 import sttp.tapir.server.interceptor.log.DefaultServerLog
-import sttp.tapir.server.interceptor.{CustomiseInterceptors, Interceptor}
 import sttp.tapir.server.netty.internal.NettyDefaults
-import sttp.tapir.{Defaults, TapirFile}
 
 /** Options configuring the [[NettyKyoServerInterpreter]], which is being used by [[NettyKyoServer]]
   * to interpret tapir's [[sttp.tapir.server.ServerEndpoint]]s so that they can be served using a

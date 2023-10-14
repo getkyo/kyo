@@ -1,11 +1,12 @@
 package kyo.server.internal
 
+import io.netty.channel.Channel
+import io.netty.channel.ChannelFuture
 import kyo._
-import kyo.ios._
-import kyo.tries._
-import kyo.routes._
 import kyo.concurrent.fibers._
-import io.netty.channel.{Channel, ChannelFuture}
+import kyo.ios._
+import kyo.routes._
+import kyo.tries._
 
 import scala.concurrent.CancellationException
 
