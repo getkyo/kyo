@@ -14,10 +14,6 @@ import sttp.tapir.server.interceptor.Interceptor
 import sttp.tapir.server.interceptor.log.DefaultServerLog
 import sttp.tapir.server.netty.internal.NettyDefaults
 
-/** Options configuring the [[NettyKyoServerInterpreter]], which is being used by [[NettyKyoServer]]
-  * to interpret tapir's [[sttp.tapir.server.ServerEndpoint]]s so that they can be served using a
-  * Netty server. Contains the interceptors stack and functions for file handling.
-  */
 case class NettyKyoServerOptions(
     interceptors: List[Interceptor[kyo.routes.internal.M]],
     createFile: ServerRequest => TapirFile > Routes,

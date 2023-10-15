@@ -46,9 +46,7 @@ object routes {
     def run[T, S](server: NettyKyoServer)(v: Unit > (Routes with S))
         : NettyKyoServerBinding > (Fibers with IOs with S) =
       sums.run[NettyKyoServerBinding, Fibers with IOs with S] {
-        v.map { r =>
-          sums.get.map(server.addEndpoints(_)).map(_.start())
-        }
+        v.andThen(sums.get.map(server.addEndpoints(_)).map(_.start()))
       }
 
     def add[T, U, E, S](e: Endpoint[Unit, T, Unit, U, Unit])(
