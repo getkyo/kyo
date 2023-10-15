@@ -86,6 +86,7 @@ lazy val kyo =
         `kyo-core`,
         `kyo-core-opt`,
         `kyo-direct`,
+        `kyo-otel`,
         `kyo-sttp`,
         `kyo-tapir`,
         `kyo-chatgpt`,
@@ -162,6 +163,18 @@ lazy val `kyo-direct` =
         ).filter(_ => scalaVersion.value.startsWith("2"))
     )
     .jsSettings(`js-settings`)
+
+lazy val `kyo-otel` =
+  crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Pure)
+    .in(file("kyo-otel"))
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .settings(
+        `kyo-settings`,
+        `with-cross-scala`,
+        libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.31.0",
+    )
 
 lazy val `kyo-sttp` =
   crossProject(JSPlatform, JVMPlatform)
