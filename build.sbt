@@ -86,7 +86,7 @@ lazy val kyo =
         `kyo-core`,
         `kyo-core-opt`,
         `kyo-direct`,
-        `kyo-otel`,
+        `kyo-stats-otel`,
         `kyo-sttp`,
         `kyo-tapir`,
         `kyo-chatgpt`,
@@ -164,11 +164,11 @@ lazy val `kyo-direct` =
     )
     .jsSettings(`js-settings`)
 
-lazy val `kyo-otel` =
+lazy val `kyo-stats-otel` =
   crossProject(JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Pure)
-    .in(file("kyo-otel"))
+    .in(file("kyo-stats-otel"))
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
