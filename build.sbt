@@ -173,7 +173,7 @@ lazy val `kyo-stats-otel` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.31.0",
+        libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.31.0"
     )
 
 lazy val `kyo-sttp` =
@@ -198,8 +198,8 @@ lazy val `kyo-tapir` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core" % "1.7.6",
-        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.7.6"
+        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.8.1",
+        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.1"
     )
 
 lazy val `kyo-chatgpt` =
