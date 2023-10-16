@@ -2,7 +2,6 @@ package kyo.stats
 
 import kyo._
 import kyo.ios._
-import kyo.stats.Attributes
 
 trait Stats {
 
@@ -109,6 +108,6 @@ object Stats {
       )(v: => T > S): T > (IOs with S) =
         Span.init(path.reverse, name, attributes)(v)
 
-      override def toString = s"Stats(scope = ${path})"
+      override def toString = s"Stats(scope = ${path.reverse})"
     }
 }
