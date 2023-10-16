@@ -15,7 +15,7 @@ class OTelTraceReceiver extends TraceReceiver {
 
   private val tracer = GlobalOpenTelemetry.get().getTracer("kyo")
 
-  def span[T, S](name: String, parent: Option[Span], attributes: Attributes) =
+  def span[T, S](name: String, parent: Option[Span], attributes: Attributes): Span > IOs =
     IOs {
       val b =
         tracer.spanBuilder(name)

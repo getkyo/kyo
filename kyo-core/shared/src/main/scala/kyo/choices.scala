@@ -52,7 +52,7 @@ object choices {
         collect(v.map(f))
       }
 
-    def foreach[T, U, S, S2](v: List[T] > S)(f: T => Unit > S2): Unit > (S with S2) =
+    def traverseUnit[T, U, S, S2](v: List[T] > S)(f: T => Unit > S2): Unit > (S with S2) =
       v.map { v =>
         def loop(l: List[T]): Unit > (S with S2) =
           l match {

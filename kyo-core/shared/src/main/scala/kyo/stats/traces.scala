@@ -31,9 +31,9 @@ object traces {
     def all(l: List[Span] > IOs): Span =
       new Span {
         def end =
-          Choices.foreach(l)(_.end)
+          Choices.traverseUnit(l)(_.end)
         def event(name: String, a: Attributes) =
-          Choices.foreach(l)(_.event(name, a))
+          Choices.traverseUnit(l)(_.event(name, a))
       }
   }
 

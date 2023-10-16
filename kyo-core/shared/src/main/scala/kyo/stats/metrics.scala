@@ -44,8 +44,8 @@ object metrics {
 
     def all(l: List[Counter]): Counter =
       new Counter {
-        def add(v: Long)                = Choices.foreach(l)(_.add(v))
-        def add(v: Long, b: Attributes) = Choices.foreach(l)(_.add(v, b))
+        def add(v: Long)                = Choices.traverseUnit(l)(_.add(v))
+        def add(v: Long, b: Attributes) = Choices.traverseUnit(l)(_.add(v, b))
         def attributes(b: Attributes)   = all(l.map(_.attributes(b)))
       }
   }
@@ -70,8 +70,8 @@ object metrics {
 
     def all(l: List[Histogram]): Histogram =
       new Histogram {
-        def observe(v: Double)                = Choices.foreach(l)(_.observe(v))
-        def observe(v: Double, b: Attributes) = Choices.foreach(l)(_.observe(v, b))
+        def observe(v: Double)                = Choices.traverseUnit(l)(_.observe(v))
+        def observe(v: Double, b: Attributes) = Choices.traverseUnit(l)(_.observe(v, b))
         def attributes(b: Attributes)         = all(l.map(_.attributes(b)))
       }
   }
