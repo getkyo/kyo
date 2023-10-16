@@ -1,7 +1,6 @@
 package kyo.stats
 
-import kyo.stats.metrics._
-import kyo.stats.attributes._
+import kyo.stats.Attributes
 import java.util.ServiceLoader
 import scala.jdk.CollectionConverters._
 

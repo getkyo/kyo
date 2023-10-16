@@ -2,7 +2,19 @@ package kyo.stats
 
 import scala.annotation.implicitNotFound
 
-object attributes {
+case class Attributes(get: List[Attributes.Attribute]) extends AnyVal {
+  def add(a: Attributes): Attributes =
+    Attributes(get ++ a.get)
+}
+
+object Attributes {
+  val empty: Attributes = Attributes(Nil)
+
+  def of[T](name: String, value: T)(implicit a: AsAttribute[T]) =
+    Attributes(a.f(name, value) :: Nil)
+
+  def all(l: List[Attributes]): Attributes =
+    Attributes(l.flatMap(_.get))
 
   sealed trait Attribute
   object Attribute {
@@ -14,21 +26,6 @@ object attributes {
     case class LongAttribute(name: String, value: Long)                 extends Attribute
     case class StringListAttribute(name: String, value: List[String])   extends Attribute
     case class StringAttribute(name: String, value: String)             extends Attribute
-  }
-
-  case class Attributes(get: List[Attribute]) extends AnyVal {
-    def add(a: Attributes): Attributes =
-      Attributes(get ++ a.get)
-  }
-
-  object Attributes {
-    val empty: Attributes = Attributes(Nil)
-
-    def of[T](name: String, value: T)(implicit a: AsAttribute[T]) =
-      Attributes(a.f(name, value) :: Nil)
-
-    def all(l: List[Attributes]): Attributes =
-      Attributes(l.flatMap(_.get))
   }
 
   @implicitNotFound(

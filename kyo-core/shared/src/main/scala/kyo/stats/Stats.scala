@@ -2,9 +2,7 @@ package kyo.stats
 
 import kyo._
 import kyo.ios._
-import kyo.stats.attributes._
-import kyo.stats.metrics._
-import kyo.stats.traces._
+import kyo.stats.Attributes
 
 trait Stats {
 
@@ -24,6 +22,13 @@ trait Stats {
       a: Attributes = Attributes.empty
   ): Histogram
 
+  def initGauge(
+      name: String,
+      description: String = "",
+      unit: String = "",
+      a: Attributes = Attributes.empty
+  )(f: => Double): Gauge
+
   def span[T, S](
       name: String,
       attributes: Attributes = Attributes.empty
@@ -41,14 +46,24 @@ object Stats {
           description: String,
           unit: String,
           a: Attributes
-      ) = Counter.noop
+      ) =
+        Counter.noop
 
       def initHistogram(
           name: String,
           description: String,
           unit: String,
           a: Attributes
-      ) = Histogram.noop
+      ) =
+        Histogram.noop
+
+      def initGauge(
+          name: String,
+          description: String = "",
+          unit: String = "",
+          a: Attributes = Attributes.empty
+      )(f: => Double) =
+        Gauge.noop
 
       def span[T, S](
           name: String,
@@ -70,7 +85,7 @@ object Stats {
           unit: String,
           a: Attributes
       ) =
-        Metrics.initCounter(path.reverse, name, description, unit, a)
+        MetricReceiver.get.counter(path.reverse, name, description, unit, a)
 
       def initHistogram(
           name: String,
@@ -78,13 +93,21 @@ object Stats {
           unit: String,
           a: Attributes
       ) =
-        Metrics.initHistogram(path.reverse, name, description, unit, a)
+        MetricReceiver.get.histogram(path.reverse, name, description, unit, a)
+
+      def initGauge(
+          name: String,
+          description: String = "",
+          unit: String = "",
+          a: Attributes = Attributes.empty
+      )(f: => Double) =
+        MetricReceiver.get.gauge(path.reverse, name, description, unit, a)(f)
 
       def span[T, S](
           name: String,
           attributes: Attributes
       )(v: => T > S): T > (IOs with S) =
-        Traces.span(path.reverse, name, attributes)(v)
+        Span.init(path.reverse, name, attributes)(v)
 
       override def toString = s"Stats(scope = ${path})"
     }

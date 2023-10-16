@@ -2,8 +2,9 @@ package kyo.stats.otel
 
 import io.opentelemetry.api.common.AttributesBuilder
 import io.opentelemetry.api.common.{Attributes => OAttributes}
-import kyo.stats.attributes.Attribute._
-import kyo.stats.attributes._
+import kyo.stats.Attributes.Attribute._
+import kyo.stats.Attributes.Attribute
+import kyo.stats.Attributes
 
 import scala.jdk.CollectionConverters._
 

@@ -3,8 +3,7 @@ package kyo.stats
 import kyo._
 import kyo.ios._
 import kyo.choices._
-import kyo.stats.attributes._
-import kyo.stats.traces._
+import kyo.stats.Attributes
 import java.util.ServiceLoader
 import scala.jdk.CollectionConverters._
 

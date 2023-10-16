@@ -7,9 +7,9 @@ import io.opentelemetry.context.Context
 import kyo._
 import kyo.ios.IOs
 import kyo.stats.TraceReceiver
-import kyo.stats.attributes.Attributes
-import kyo.stats.metrics._
-import kyo.stats.traces.Span
+import kyo.stats.Attributes
+import kyo.stats._
+import kyo.stats.Span
 
 class OTelTraceReceiver extends TraceReceiver {
 

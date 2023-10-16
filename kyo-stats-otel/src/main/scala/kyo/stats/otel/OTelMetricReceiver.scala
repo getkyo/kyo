@@ -5,8 +5,8 @@ import io.opentelemetry.api.metrics._
 import kyo._
 import kyo.ios.IOs
 import kyo.stats.MetricReceiver
-import kyo.stats.attributes.Attributes
-import kyo.stats.metrics._
+import kyo.stats.Attributes
+import kyo.stats._
 
 class OTelMetricReceiver extends MetricReceiver {
 
