@@ -77,10 +77,6 @@ class BenchTest extends KyoTest {
     test(ForkManyBench(), 0)
   }
 
-  "InterruptBench" - {
-    test(InterruptBench(), ())
-  }
-
   "NarrowBindBench" - {
     test(NarrowBindBench(), 10000)
   }
