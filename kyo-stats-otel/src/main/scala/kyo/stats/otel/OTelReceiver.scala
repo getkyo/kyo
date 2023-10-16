@@ -1,14 +1,14 @@
 package kyo.stats.otel
 
+import io.opentelemetry.api.trace.{Span => OSpan}
+import io.opentelemetry.context.Context
 import io.opentelemetry.api._
 import io.opentelemetry.api.metrics._
 import kyo._
 import kyo.ios.IOs
-import kyo.stats.MetricReceiver
-import kyo.stats.Attributes
 import kyo.stats._
 
-class OTelMetricReceiver extends MetricReceiver {
+class OTelMetricReceiver extends Receiver {
 
   private val otel = GlobalOpenTelemetry.get()
 
@@ -77,5 +77,35 @@ class OTelMetricReceiver extends MetricReceiver {
       def close =
         IOs(impl.close())
     }
+
+  def startSpan(
+      scope: List[String],
+      name: String,
+      parent: Option[Span],
+      attributes: Attributes
+  ): Span > IOs =
+    IOs {
+      val b =
+        otel.getTracer(scope.mkString("_"))
+          .spanBuilder(name)
+          .setAllAttributes(OTelAttributes(attributes))
+      parent.collect {
+        case SpanImpl(c) =>
+          b.setParent(c)
+      }
+      SpanImpl(b.startSpan().storeInContext(Context.current()))
+    }
+
+  private case class SpanImpl(c: Context) extends Span {
+
+    def end: Unit > IOs =
+      IOs(OSpan.fromContext(c).end())
+
+    def event(name: String, a: Attributes) =
+      IOs {
+        OSpan.fromContext(c).addEvent(name, OTelAttributes(a))
+        ()
+      }
+  }
 
 }

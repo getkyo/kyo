@@ -4,7 +4,6 @@ import kyo._
 import kyo.ios._
 import kyo.choices._
 import kyo.locals._
-import kyo.stats.Attributes
 
 trait Span {
 
@@ -33,14 +32,14 @@ object Span {
 
   private val local = Locals.init[Option[Span]](None)
 
-  def init[T, S](
+  def trace[T, S](
       scope: List[String],
       name: String,
       attributes: Attributes = Attributes.empty
   )(v: => T > S): T > (IOs with S) =
     local.get.map { parent =>
-      TraceReceiver.get
-        .span(scope, name, parent, attributes)
+      Receiver.get
+        .startSpan(scope, name, parent, attributes)
         .map { child =>
           IOs.ensure(child.end) {
             local.let(Some(child))(v)

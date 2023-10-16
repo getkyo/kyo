@@ -1,10 +1,13 @@
 package kyo.stats
 
-import kyo.stats.Attributes
+import kyo._
+import kyo.ios._
+
 import java.util.ServiceLoader
 import scala.jdk.CollectionConverters._
+import kyo.choices.Choices
 
-trait MetricReceiver {
+trait Receiver {
 
   def counter(
       scope: List[String],
@@ -29,22 +32,29 @@ trait MetricReceiver {
       unit: String,
       a: Attributes
   )(f: => Double): Gauge
+
+  def startSpan(
+      scope: List[String],
+      name: String,
+      parent: Option[Span] = None,
+      attributes: Attributes = Attributes.empty
+  ): Span > IOs
 }
 
-object MetricReceiver {
+object Receiver {
 
-  val get: MetricReceiver =
-    ServiceLoader.load(classOf[MetricReceiver]).iterator().asScala.toList match {
+  val get: Receiver =
+    ServiceLoader.load(classOf[Receiver]).iterator().asScala.toList match {
       case Nil =>
-        MetricReceiver.noop
+        Receiver.noop
       case head :: Nil =>
         head
       case l =>
-        MetricReceiver.all(l)
+        Receiver.all(l)
     }
 
-  val noop: MetricReceiver =
-    new MetricReceiver {
+  val noop: Receiver =
+    new Receiver {
       def counter(
           scope: List[String],
           name: String,
@@ -70,10 +80,18 @@ object MetricReceiver {
           a: Attributes
       )(f: => Double) =
         Gauge.noop
+
+      def startSpan(
+          scope: List[String],
+          name: String,
+          parent: Option[Span] = None,
+          attributes: Attributes = Attributes.empty
+      ) =
+        Span.noop
     }
 
-  def all(receivers: List[MetricReceiver]): MetricReceiver =
-    new MetricReceiver {
+  def all(receivers: List[Receiver]): Receiver =
+    new Receiver {
 
       def counter(
           scope: List[String],
@@ -101,5 +119,15 @@ object MetricReceiver {
           a: Attributes
       )(f: => Double) =
         Gauge.all(receivers.map(_.gauge(scope, name, description, unit, a)(f)))
+
+      def startSpan(
+          scope: List[String],
+          name: String,
+          parent: Option[Span] = None,
+          a: Attributes = Attributes.empty
+      ) =
+        Choices
+          .traverse(receivers)(_.startSpan(scope, name, None, a))
+          .map(Span.all)
     }
 }

@@ -3,7 +3,6 @@ package kyo.stats
 import kyo._
 import kyo.ios._
 import kyo.choices._
-import kyo.stats.Attributes
 
 trait Histogram {
 

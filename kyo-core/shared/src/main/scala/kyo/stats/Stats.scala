@@ -28,7 +28,7 @@ trait Stats {
       a: Attributes = Attributes.empty
   )(f: => Double): Gauge
 
-  def span[T, S](
+  def traceSpan[T, S](
       name: String,
       attributes: Attributes = Attributes.empty
   )(v: => T > S): T > (IOs with S)
@@ -64,7 +64,7 @@ object Stats {
       )(f: => Double) =
         Gauge.noop
 
-      def span[T, S](
+      def traceSpan[T, S](
           name: String,
           attributes: Attributes
       )(v: => T > S): T > (IOs with S) = v
@@ -84,7 +84,7 @@ object Stats {
           unit: String,
           a: Attributes
       ) =
-        MetricReceiver.get.counter(path.reverse, name, description, unit, a)
+        Receiver.get.counter(path.reverse, name, description, unit, a)
 
       def initHistogram(
           name: String,
@@ -92,7 +92,7 @@ object Stats {
           unit: String,
           a: Attributes
       ) =
-        MetricReceiver.get.histogram(path.reverse, name, description, unit, a)
+        Receiver.get.histogram(path.reverse, name, description, unit, a)
 
       def initGauge(
           name: String,
@@ -100,13 +100,13 @@ object Stats {
           unit: String = "",
           a: Attributes = Attributes.empty
       )(f: => Double) =
-        MetricReceiver.get.gauge(path.reverse, name, description, unit, a)(f)
+        Receiver.get.gauge(path.reverse, name, description, unit, a)(f)
 
-      def span[T, S](
+      def traceSpan[T, S](
           name: String,
           attributes: Attributes
       )(v: => T > S): T > (IOs with S) =
-        Span.init(path.reverse, name, attributes)(v)
+        Span.trace(path.reverse, name, attributes)(v)
 
       override def toString = s"Stats(scope = ${path.reverse})"
     }
