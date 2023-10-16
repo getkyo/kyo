@@ -52,6 +52,17 @@ object choices {
         collect(v.map(f))
       }
 
+    def foreach[T, U, S, S2](v: List[T] > S)(f: T => Unit > S2): Unit > (S with S2) =
+      v.map { v =>
+        def loop(l: List[T]): Unit > (S with S2) =
+          l match {
+            case Nil => ()
+            case h :: t =>
+              f(h).andThen(loop(t))
+          }
+        loop(v)
+      }
+
     def collect[T, S](v: List[T > S]): List[T] > S = {
       val buff = ListBuffer[T]()
       def loop(v: List[T > S]): List[T] > S =
