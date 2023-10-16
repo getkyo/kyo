@@ -139,28 +139,6 @@ class fibersTest extends KyoTest {
     }
   }
 
-  "interruptAwait" in runJVM {
-
-    def loop(ref: AtomicInt): Unit > IOs =
-      ref.incrementAndGet.map(_ => loop(ref))
-
-    def runLoop(started: Latch, done: Latch): Unit > IOs =
-      Resources.run[Unit, IOs] {
-        Resources.ensure(done.release).map { _ =>
-          started.release.map(_ => Atomics.initInt(0).map(loop))
-        }
-      }
-
-    for {
-      started     <- Latches.init(1)
-      done        <- Latches.init(1)
-      fiber       <- Fibers.forkFiber(runLoop(started, done))
-      _           <- started.await
-      interrupted <- fiber.interruptAwait
-      pending     <- done.pending
-    } yield assert(interrupted && pending == 0)
-  }
-
   "forkFiber" - {
     "executes in a different thread" in runJVM {
       for {

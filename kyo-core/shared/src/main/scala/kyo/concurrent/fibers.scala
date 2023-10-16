@@ -107,23 +107,6 @@ object fibers {
           state.asInstanceOf[T > IOs]
       }
 
-    def interruptAwait: Boolean > (Fibers with IOs) =
-      state match {
-        case ioTask: IOTask[T] @unchecked =>
-          IOs {
-            val p = new IOPromise[Boolean]()
-            ioTask.ensure(() => p.complete(true))
-            interrupt.map {
-              case true  => Fiber.promise(p).get
-              case false => false
-            }
-          }
-        case promise: IOPromise[T] @unchecked =>
-          interrupt
-        case _ =>
-          false
-      }
-
     def interrupt: Boolean > IOs =
       state match {
         case promise: IOPromise[T] @unchecked =>
