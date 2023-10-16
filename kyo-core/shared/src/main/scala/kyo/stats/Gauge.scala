@@ -15,7 +15,14 @@ object Gauge {
     }
 
   def all(l: List[Gauge]): Gauge =
-    new Gauge {
-      def close = Choices.traverseUnit(l)(_.close)
+    l match {
+      case Nil =>
+        noop
+      case h :: Nil =>
+        h
+      case l =>
+        new Gauge {
+          def close = Choices.traverseUnit(l)(_.close)
+        }
     }
 }

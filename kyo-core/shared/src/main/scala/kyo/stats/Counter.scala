@@ -21,9 +21,16 @@ object Counter {
     }
 
   def all(l: List[Counter]): Counter =
-    new Counter {
-      def add(v: Long)                = Choices.traverseUnit(l)(_.add(v))
-      def add(v: Long, b: Attributes) = Choices.traverseUnit(l)(_.add(v, b))
-      def attributes(b: Attributes)   = all(l.map(_.attributes(b)))
+    l match {
+      case Nil =>
+        noop
+      case h :: Nil =>
+        h
+      case l =>
+        new Counter {
+          def add(v: Long)                = Choices.traverseUnit(l)(_.add(v))
+          def add(v: Long, b: Attributes) = Choices.traverseUnit(l)(_.add(v, b))
+          def attributes(b: Attributes)   = all(l.map(_.attributes(b)))
+        }
     }
 }
