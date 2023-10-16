@@ -58,4 +58,24 @@ class OTelMetricReceiver extends MetricReceiver {
         histogram(scope, name, description, unit, a.add(b))
     }
 
+  def gauge(
+      scope: List[String],
+      name: String,
+      description: String,
+      unit: String,
+      a: Attributes
+  )(f: => Double) =
+    new Gauge {
+
+      val impl =
+        otel.getMeter(scope.mkString("_"))
+          .gaugeBuilder(name)
+          .setDescription(description)
+          .setUnit(unit)
+          .buildWithCallback(m => m.record(f))
+
+      def close =
+        IOs(impl.close())
+    }
+
 }

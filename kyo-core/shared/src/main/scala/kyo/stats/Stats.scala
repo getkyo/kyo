@@ -7,6 +7,7 @@ import kyo.stats.metrics._
 import kyo.stats.traces._
 
 trait Stats {
+
   def scope(name: String): Stats
 
   def initCounter(
@@ -84,5 +85,7 @@ object Stats {
           attributes: Attributes
       )(v: => T > S): T > (IOs with S) =
         Traces.span(path.reverse, name, attributes)(v)
+
+      override def toString = s"Stats(scope = ${path})"
     }
 }

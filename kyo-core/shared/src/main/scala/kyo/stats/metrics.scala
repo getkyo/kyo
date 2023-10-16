@@ -26,6 +26,15 @@ object metrics {
         a: Attributes = Attributes.empty
     ): Histogram =
       MetricReceiver.get.histogram(scope, name, description, unit, a)
+
+    def initGauge(
+        scope: List[String],
+        name: String,
+        description: String = "",
+        unit: String = "",
+        a: Attributes = Attributes.empty
+    )(f: => Double): Gauge =
+      MetricReceiver.get.gauge(scope, name, description, unit, a)(f)
   }
 
   trait Counter {
@@ -75,6 +84,22 @@ object metrics {
         def observe(v: Double)                = Choices.traverseUnit(l)(_.observe(v))
         def observe(v: Double, b: Attributes) = Choices.traverseUnit(l)(_.observe(v, b))
         def attributes(b: Attributes)         = all(l.map(_.attributes(b)))
+      }
+  }
+
+  trait Gauge {
+    def close: Unit > IOs
+  }
+
+  object Gauge {
+    val noop: Gauge =
+      new Gauge {
+        def close = ()
+      }
+
+    def all(l: List[Gauge]): Gauge =
+      new Gauge {
+        def close = Choices.traverseUnit(l)(_.close)
       }
   }
 }

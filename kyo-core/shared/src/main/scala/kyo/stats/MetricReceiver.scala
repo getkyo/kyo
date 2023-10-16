@@ -22,6 +22,14 @@ trait MetricReceiver {
       unit: String,
       a: Attributes
   ): Histogram
+
+  def gauge(
+      scope: List[String],
+      name: String,
+      description: String,
+      unit: String,
+      a: Attributes
+  )(f: => Double): Gauge
 }
 
 object MetricReceiver {
@@ -54,10 +62,20 @@ object MetricReceiver {
           a: Attributes
       ) =
         Histogram.noop
+
+      def gauge(
+          scope: List[String],
+          name: String,
+          description: String,
+          unit: String,
+          a: Attributes
+      )(f: => Double) =
+        Gauge.noop
     }
 
   def all(receivers: List[MetricReceiver]): MetricReceiver =
     new MetricReceiver {
+
       def counter(
           scope: List[String],
           name: String,
@@ -66,6 +84,7 @@ object MetricReceiver {
           a: Attributes
       ) =
         Counter.all(receivers.map(_.counter(scope, name, description, unit, a)))
+
       def histogram(
           scope: List[String],
           name: String,
@@ -74,5 +93,14 @@ object MetricReceiver {
           a: Attributes
       ) =
         Histogram.all(receivers.map(_.histogram(scope, name, description, unit, a)))
+
+      def gauge(
+          scope: List[String],
+          name: String,
+          description: String,
+          unit: String,
+          a: Attributes
+      )(f: => Double) =
+        Gauge.all(receivers.map(_.gauge(scope, name, description, unit, a)(f)))
     }
 }
