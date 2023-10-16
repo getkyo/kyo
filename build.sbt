@@ -173,7 +173,7 @@ lazy val `kyo-stats-otel` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.31.0",
+        libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.31.0"
     )
 
 lazy val `kyo-sttp` =
@@ -198,7 +198,7 @@ lazy val `kyo-tapir` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core" % "1.7.6",
+        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.7.6",
         libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.7.6"
     )
 
@@ -213,7 +213,7 @@ lazy val `kyo-chatgpt` =
     .jvmSettings(
         libraryDependencies += "org.apache.lucene"    % "lucene-core"        % "9.8.0",
         libraryDependencies += "org.apache.lucene"    % "lucene-queryparser" % "9.8.0",
-        libraryDependencies += "com.formdev"          % "flatlaf"            % "3.2.1",
+        libraryDependencies += "com.formdev"          % "flatlaf"            % "3.2.2",
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-all"       % "0.64.8",
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-java"      % "0.64.8",
         libraryDependencies += "com.knuddels"         % "jtokkit"            % "0.6.1"
