@@ -8,6 +8,7 @@ import kyo.stats.attributes._
 object metrics {
 
   object Metrics {
+
     def initCounter(
         name: String,
         description: String = "",
@@ -33,12 +34,14 @@ object metrics {
   }
 
   object Counter {
+
     val noop: Counter =
       new Counter {
         def add(v: Long)                = ()
         def add(v: Long, b: Attributes) = ()
         def attributes(b: Attributes)   = this
       }
+
     def all(l: List[Counter]): Counter =
       new Counter {
         def add(v: Long)                = Choices.foreach(l)(_.add(v))
@@ -48,18 +51,23 @@ object metrics {
   }
 
   trait Histogram {
+
     def observe(v: Double): Unit > IOs
+
     def observe(v: Double, b: Attributes): Unit > IOs
+
     def attributes(b: Attributes): Histogram
   }
 
   object Histogram {
+
     val noop: Histogram =
       new Histogram {
         def observe(v: Double)                = ()
         def observe(v: Double, b: Attributes) = ()
         def attributes(b: Attributes)         = this
       }
+
     def all(l: List[Histogram]): Histogram =
       new Histogram {
         def observe(v: Double)                = Choices.foreach(l)(_.observe(v))

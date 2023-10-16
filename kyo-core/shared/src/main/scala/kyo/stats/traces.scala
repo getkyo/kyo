@@ -12,11 +12,14 @@ import scala.jdk.CollectionConverters._
 object traces {
 
   trait Span {
+
     def end: Unit > IOs
+
     def event(name: String, a: Attributes): Unit > IOs
   }
 
   object Span {
+
     val noop: Span =
       new Span {
         def end =
@@ -24,6 +27,7 @@ object traces {
         def event(name: String, a: Attributes) =
           ()
       }
+
     def all(l: List[Span] > IOs): Span =
       new Span {
         def end =
@@ -34,6 +38,7 @@ object traces {
   }
 
   object Traces {
+
     private val local = Locals.init[Option[Span]](None)
 
     def span[T, S](

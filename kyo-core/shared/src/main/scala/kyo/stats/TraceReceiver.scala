@@ -15,7 +15,9 @@ trait TraceReceiver {
       attributes: Attributes = Attributes.empty
   ): Span > IOs
 }
+
 object TraceReceiver {
+
   val get: TraceReceiver =
     ServiceLoader.load(classOf[TraceReceiver]).iterator().asScala.toList match {
       case Nil =>
@@ -25,6 +27,7 @@ object TraceReceiver {
       case l =>
         TraceReceiver.all(l)
     }
+
   val noop: TraceReceiver =
     new TraceReceiver {
       def span[T, S](
@@ -34,6 +37,7 @@ object TraceReceiver {
       ) =
         Span.noop
     }
+
   def all(l: List[TraceReceiver]): TraceReceiver =
     new TraceReceiver {
       def span[T, S](

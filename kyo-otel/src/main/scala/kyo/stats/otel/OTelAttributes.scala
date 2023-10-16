@@ -10,6 +10,7 @@ import scala.jdk.CollectionConverters._
 object OTelAttributes {
 
   def apply(a: Attributes): OAttributes = {
+
     def loop(l: List[Attribute], b: AttributesBuilder): AttributesBuilder =
       a.get match {
         case Nil => b

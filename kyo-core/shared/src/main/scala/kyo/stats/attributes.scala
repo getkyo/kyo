@@ -25,24 +25,19 @@ object attributes {
     val empty: Attributes = Attributes(Nil)
 
     def of[T](name: String, value: T)(implicit a: AsAttribute[T]) =
-      Attributes(a(name, value) :: Nil)
+      Attributes(a.f(name, value) :: Nil)
 
     def all(l: List[Attributes]): Attributes =
       Attributes(l.flatMap(_.get))
   }
 
   @implicitNotFound(
-      "Invalid attribute type: '${T}'. Supported: 'Boolean', 'Double', 'Long', 'String', and 'List's of these types."
+      "Invalid attribute type: '${T}'. Supported: 'Boolean', " +
+        "'Double', 'Long', 'String', and 'List's of these types."
   )
-  sealed trait AsAttribute[T] {
-    def apply(name: String, value: T): Attribute
-  }
+  case class AsAttribute[T](f: (String, T) => Attribute)
 
   object AsAttribute {
-    def apply[T](f: (String, T) => Attribute): AsAttribute[T] =
-      new AsAttribute[T] {
-        def apply(name: String, value: T) = f(name, value)
-      }
     implicit val booleanList: AsAttribute[List[Boolean]] =
       AsAttribute(Attribute.BooleanListAttribute(_, _))
     implicit val boolean: AsAttribute[Boolean] =

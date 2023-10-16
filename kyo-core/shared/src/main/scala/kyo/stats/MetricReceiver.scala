@@ -6,11 +6,14 @@ import java.util.ServiceLoader
 import scala.jdk.CollectionConverters._
 
 trait MetricReceiver {
+
   def counter(name: String, description: String, unit: String, a: Attributes): Counter
+
   def histogram(name: String, description: String, unit: String, a: Attributes): Histogram
 }
 
 object MetricReceiver {
+
   val get: MetricReceiver =
     ServiceLoader.load(classOf[MetricReceiver]).iterator().asScala.toList match {
       case Nil =>
@@ -20,6 +23,7 @@ object MetricReceiver {
       case l =>
         MetricReceiver.all(l)
     }
+
   val noop: MetricReceiver =
     new MetricReceiver {
       def counter(name: String, description: String, unit: String, a: Attributes) =
@@ -27,6 +31,7 @@ object MetricReceiver {
       def histogram(name: String, description: String, unit: String, a: Attributes) =
         Histogram.noop
     }
+
   def all(receivers: List[MetricReceiver]): MetricReceiver =
     new MetricReceiver {
       def counter(name: String, description: String, unit: String, a: Attributes) =
