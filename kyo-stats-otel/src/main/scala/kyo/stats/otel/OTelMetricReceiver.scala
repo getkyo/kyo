@@ -10,12 +10,17 @@ import kyo.stats.metrics._
 
 class OTelMetricReceiver extends MetricReceiver {
 
-  private val meter = GlobalOpenTelemetry.get().getMeter("kyo")
+  private val otel = GlobalOpenTelemetry.get()
 
-  def counter(name: String, description: String, unit: String, a: Attributes) =
+  def counter(scope: List[String], name: String, description: String, unit: String, a: Attributes) =
     new Counter {
 
-      val impl = meter.counterBuilder(name).setDescription(description).setUnit(unit).build()
+      val impl =
+        otel.getMeter(scope.mkString("_"))
+          .counterBuilder(name)
+          .setDescription(description)
+          .setUnit(unit)
+          .build()
 
       def add(v: Long, a: Attributes) =
         IOs(impl.add(v, OTelAttributes(a)))
@@ -24,13 +29,24 @@ class OTelMetricReceiver extends MetricReceiver {
         IOs(impl.add(v))
 
       def attributes(b: Attributes) =
-        counter(name, description, unit, a.add(b))
+        counter(scope, name, description, unit, a.add(b))
     }
 
-  def histogram(name: String, description: String, unit: String, a: Attributes) =
+  def histogram(
+      scope: List[String],
+      name: String,
+      description: String,
+      unit: String,
+      a: Attributes
+  ) =
     new Histogram {
 
-      val impl = meter.histogramBuilder(name).setDescription(description).setUnit(unit).build()
+      val impl =
+        otel.getMeter(scope.mkString("_"))
+          .histogramBuilder(name)
+          .setDescription(description)
+          .setUnit(unit)
+          .build()
 
       def observe(v: Double, b: Attributes) =
         IOs(impl.record(v, OTelAttributes(b)))
@@ -39,7 +55,7 @@ class OTelMetricReceiver extends MetricReceiver {
         IOs(impl.record(v))
 
       def attributes(b: Attributes) =
-        histogram(name, description, unit, a.add(b))
+        histogram(scope, name, description, unit, a.add(b))
     }
 
 }

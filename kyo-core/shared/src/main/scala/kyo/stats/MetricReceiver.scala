@@ -7,9 +7,21 @@ import scala.jdk.CollectionConverters._
 
 trait MetricReceiver {
 
-  def counter(name: String, description: String, unit: String, a: Attributes): Counter
+  def counter(
+      scope: List[String],
+      name: String,
+      description: String,
+      unit: String,
+      a: Attributes
+  ): Counter
 
-  def histogram(name: String, description: String, unit: String, a: Attributes): Histogram
+  def histogram(
+      scope: List[String],
+      name: String,
+      description: String,
+      unit: String,
+      a: Attributes
+  ): Histogram
 }
 
 object MetricReceiver {
@@ -26,17 +38,41 @@ object MetricReceiver {
 
   val noop: MetricReceiver =
     new MetricReceiver {
-      def counter(name: String, description: String, unit: String, a: Attributes) =
+      def counter(
+          scope: List[String],
+          name: String,
+          description: String,
+          unit: String,
+          a: Attributes
+      ) =
         Counter.noop
-      def histogram(name: String, description: String, unit: String, a: Attributes) =
+      def histogram(
+          scope: List[String],
+          name: String,
+          description: String,
+          unit: String,
+          a: Attributes
+      ) =
         Histogram.noop
     }
 
   def all(receivers: List[MetricReceiver]): MetricReceiver =
     new MetricReceiver {
-      def counter(name: String, description: String, unit: String, a: Attributes) =
-        Counter.all(receivers.map(_.counter(name, description, unit, a)))
-      def histogram(name: String, description: String, unit: String, a: Attributes) =
-        Histogram.all(receivers.map(_.histogram(name, description, unit, a)))
+      def counter(
+          scope: List[String],
+          name: String,
+          description: String,
+          unit: String,
+          a: Attributes
+      ) =
+        Counter.all(receivers.map(_.counter(scope, name, description, unit, a)))
+      def histogram(
+          scope: List[String],
+          name: String,
+          description: String,
+          unit: String,
+          a: Attributes
+      ) =
+        Histogram.all(receivers.map(_.histogram(scope, name, description, unit, a)))
     }
 }

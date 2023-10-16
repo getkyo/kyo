@@ -10,20 +10,22 @@ object metrics {
   object Metrics {
 
     def initCounter(
+        scope: List[String],
         name: String,
         description: String = "",
         unit: String = "",
         a: Attributes = Attributes.empty
     ): Counter =
-      MetricReceiver.get.counter(name, description, unit, a)
+      MetricReceiver.get.counter(scope, name, description, unit, a)
 
     def initHistogram(
+        scope: List[String],
         name: String,
         description: String = "",
         unit: String = "",
         a: Attributes = Attributes.empty
     ): Histogram =
-      MetricReceiver.get.histogram(name, description, unit, a)
+      MetricReceiver.get.histogram(scope, name, description, unit, a)
   }
 
   trait Counter {

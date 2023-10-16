@@ -13,12 +13,18 @@ import kyo.stats.traces.Span
 
 class OTelTraceReceiver extends TraceReceiver {
 
-  private val tracer = GlobalOpenTelemetry.get().getTracer("kyo")
+  private val otel = GlobalOpenTelemetry.get()
 
-  def span[T, S](name: String, parent: Option[Span], attributes: Attributes): Span > IOs =
+  def span[T, S](
+      scope: List[String],
+      name: String,
+      parent: Option[Span],
+      attributes: Attributes
+  ): Span > IOs =
     IOs {
       val b =
-        tracer.spanBuilder(name)
+        otel.getTracer(scope.mkString("_"))
+          .spanBuilder(name)
           .setAllAttributes(OTelAttributes(attributes))
       parent.collect {
         case SpanImpl(c) =>

@@ -10,6 +10,7 @@ import scala.jdk.CollectionConverters._
 
 trait TraceReceiver {
   def span[T, S](
+      scope: List[String],
       name: String,
       parent: Option[Span] = None,
       attributes: Attributes = Attributes.empty
@@ -31,6 +32,7 @@ object TraceReceiver {
   val noop: TraceReceiver =
     new TraceReceiver {
       def span[T, S](
+          scope: List[String],
           name: String,
           parent: Option[Span] = None,
           attributes: Attributes = Attributes.empty
@@ -41,10 +43,11 @@ object TraceReceiver {
   def all(l: List[TraceReceiver]): TraceReceiver =
     new TraceReceiver {
       def span[T, S](
+          scope: List[String],
           name: String,
           parent: Option[Span] = None,
           attributes: Attributes = Attributes.empty
       ) =
-        Span.all(Choices.traverse(l)(_.span(name, parent, attributes)))
+        Span.all(Choices.traverse(l)(_.span(scope, name, parent, attributes)))
     }
 }

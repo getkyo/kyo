@@ -42,15 +42,18 @@ object traces {
     private val local = Locals.init[Option[Span]](None)
 
     def span[T, S](
+        scope: List[String],
         name: String,
         attributes: Attributes = Attributes.empty
     )(v: => T > S): T > (IOs with S) =
       local.get.map { parent =>
-        TraceReceiver.get.span(name, parent, attributes).map { child =>
-          IOs.ensure(child.end) {
-            local.let(Some(child))(v)
+        TraceReceiver.get
+          .span(scope, name, parent, attributes)
+          .map { child =>
+            IOs.ensure(child.end) {
+              local.let(Some(child))(v)
+            }
           }
-        }
       }
   }
 }
