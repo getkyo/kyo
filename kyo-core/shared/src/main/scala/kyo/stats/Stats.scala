@@ -84,7 +84,7 @@ object Stats {
           unit: String,
           a: Attributes
       ) =
-        Receiver.get.counter(path.reverse, name, description, unit, a)
+        internal.Receiver.get.counter(path.reverse, name, description, unit, a)
 
       def initHistogram(
           name: String,
@@ -92,7 +92,7 @@ object Stats {
           unit: String,
           a: Attributes
       ) =
-        Receiver.get.histogram(path.reverse, name, description, unit, a)
+        internal.Receiver.get.histogram(path.reverse, name, description, unit, a)
 
       def initGauge(
           name: String,
@@ -100,13 +100,13 @@ object Stats {
           unit: String = "",
           a: Attributes = Attributes.empty
       )(f: => Double) =
-        Receiver.get.gauge(path.reverse, name, description, unit, a)(f)
+        internal.Receiver.get.gauge(path.reverse, name, description, unit, a)(f)
 
       def traceSpan[T, S](
           name: String,
           attributes: Attributes
       )(v: => T > S): T > (IOs with S) =
-        Span.trace(path.reverse, name, attributes)(v)
+        internal.Span.trace(path.reverse, name, attributes)(v)
 
       override def toString = s"Stats(scope = ${path.reverse})"
     }

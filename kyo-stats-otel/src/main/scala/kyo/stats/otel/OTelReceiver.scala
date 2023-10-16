@@ -7,6 +7,8 @@ import io.opentelemetry.api.metrics._
 import kyo._
 import kyo.ios.IOs
 import kyo.stats._
+import kyo.stats.internal.Span
+import kyo.stats.internal.Receiver
 
 class OTelMetricReceiver extends Receiver {
 

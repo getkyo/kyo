@@ -1,9 +1,10 @@
-package kyo.stats
+package kyo.stats.internal
 
 import kyo._
 import kyo.ios._
 import kyo.choices._
 import kyo.locals._
+import kyo.stats._
 
 trait Span {
 

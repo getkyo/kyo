@@ -1,7 +1,8 @@
-package kyo.stats
+package kyo.stats.internal
 
 import kyo._
 import kyo.ios._
+import kyo.stats._
 
 import java.util.ServiceLoader
 import scala.jdk.CollectionConverters._
@@ -87,7 +88,7 @@ object Receiver {
           parent: Option[Span] = None,
           attributes: Attributes = Attributes.empty
       ) =
-        Span.noop
+        internal.Span.noop
     }
 
   def all(receivers: List[Receiver]): Receiver =
@@ -128,6 +129,6 @@ object Receiver {
       ) =
         Choices
           .traverse(receivers)(_.startSpan(scope, name, None, a))
-          .map(Span.all)
+          .map(internal.Span.all)
     }
 }
