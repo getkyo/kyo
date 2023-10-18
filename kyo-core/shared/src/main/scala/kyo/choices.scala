@@ -64,15 +64,16 @@ object choices {
       }
 
     def collect[T, S](v: List[T > S]): List[T] > S = {
-      val buff = ListBuffer[T]()
+      val b = List.newBuilder[T]
       def loop(v: List[T > S]): List[T] > S =
         v match {
-          case Nil => buff.toList
+          case Nil =>
+            b.result()
           case h :: t =>
-            h.map(t1 => {
-              buff.addOne(t1)
+            h.map { t1 =>
+              b += t1
               loop(t)
-            })
+            }
         }
       loop(v)
     }

@@ -97,7 +97,8 @@ object core {
         case _ =>
           f(v.asInstanceOf[T])
       }
-    require(v != null, "Kyo computation is null")
+    if(v == null) 
+      throw new NullPointerException
     transformLoop(v)
   }
 
@@ -162,6 +163,7 @@ object core {
       final val effect: E   = prev.effect
     }
 
+    /*inline*/
     implicit def fromKyo[M[_], E <: Effect[M, _], T, U, S](v: Kyo[M, E, T, U, S]): U > S =
       v.asInstanceOf[U > S]
   }

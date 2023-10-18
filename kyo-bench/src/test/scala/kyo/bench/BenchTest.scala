@@ -100,4 +100,8 @@ class BenchTest extends KyoTest {
   "SuspensionBench" - {
     test(SuspensionBench(), ())
   }
+
+  "SchedulingBench" - {
+    test(SchedulingBench(), 1001000)
+  }
 }
