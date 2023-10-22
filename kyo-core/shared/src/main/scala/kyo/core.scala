@@ -37,6 +37,9 @@ object core {
             new KyoRoot[M, E, T, S with E](v.asInstanceOf[M[T]], this) {}
         }
       }
+      if (v == null) {
+        throw new NullPointerException
+      }
       suspendLoop(v)
     }
 
@@ -72,6 +75,9 @@ object core {
           case _ =>
             h.pure(v.asInstanceOf[T])
         }
+      if (v == null) {
+        throw new NullPointerException
+      }
       handleLoop(v)
     }
 
@@ -97,8 +103,9 @@ object core {
         case _ =>
           f(v.asInstanceOf[T])
       }
-    if(v == null) 
+    if (v == null) {
       throw new NullPointerException
+    }
     transformLoop(v)
   }
 
@@ -130,6 +137,9 @@ object core {
           case _ =>
             h.pure(v.asInstanceOf[T])
         }
+      if (v == null) {
+        throw new NullPointerException
+      }
       deepHandleLoop(v)
     }
 
