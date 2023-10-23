@@ -26,8 +26,7 @@ import kyo.internal.KyoSttpMonad._
 trait NettyKyoServerInterpreter {
   def nettyServerOptions: NettyKyoServerOptions
 
-  def toRoute(ses: List[ServerEndpoint[Any, KyoSttpMonad.M]])
-      : Route[KyoSttpMonad.M] = {
+  def toRoute(ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]): Route[KyoSttpMonad.M] = {
 
     implicit val bodyListener: BodyListener[KyoSttpMonad.M, NettyResponse] = {
       new NettyBodyListener(NettyKyoServer.runAsync)

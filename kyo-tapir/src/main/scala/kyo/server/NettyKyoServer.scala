@@ -78,7 +78,7 @@ case class NettyKyoServer(
 
   private def startUsingSocketOverride[SA <: SocketAddress](socketOverride: Option[SA])
       : (SA, () => Unit > (Fibers with IOs)) > (Fibers with IOs) = {
-    val eventLoopGroup                      = config.eventLoopConfig.initEventLoopGroup()
+    val eventLoopGroup               = config.eventLoopConfig.initEventLoopGroup()
     val route: Route[KyoSttpMonad.M] = Route.combine(routes)
 
     val channelFuture =
