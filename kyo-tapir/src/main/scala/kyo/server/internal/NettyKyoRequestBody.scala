@@ -20,9 +20,11 @@ import sttp.tapir.server.interpreter.RequestBody
 
 import java.io.ByteArrayInputStream
 import java.nio.ByteBuffer
+import kyo.internal.KyoSttpMonad
+import kyo.internal.KyoSttpMonad._
 
 private[kyo] class NettyKyoRequestBody(createFile: ServerRequest => TapirFile > Routes)
-    extends RequestBody[internal.M, Any] {
+    extends RequestBody[KyoSttpMonad.M, Any] {
 
   val streams = new Streams[Any] {
     override type BinaryStream = Nothing

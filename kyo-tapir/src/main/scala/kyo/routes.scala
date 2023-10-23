@@ -13,6 +13,8 @@ import kyo.concurrent.timers._
 import sttp.tapir._
 import sttp.tapir.server.ServerEndpoint
 import kyo.App.Effects
+import kyo.internal.KyoSttpMonad
+import kyo.internal.KyoSttpMonad._
 
 object kyoMain extends App {
   import scala.concurrent.duration._
@@ -30,9 +32,7 @@ object kyoMain extends App {
 
 object routes {
 
-  import internal._
-
-  type Route[+T] = ServerEndpoint[Any, internal.M]
+  type Route[+T] = ServerEndpoint[Any, KyoSttpMonad.M]
 
   type Routes = Sums[List[Route[Any]]] with Fibers with IOs
 
@@ -53,7 +53,7 @@ object routes {
         f: T => U > (Fibers with IOs)
     ): Unit > Routes =
       sums.add(List(
-          e.serverLogic[internal.M](f(_).map(Right(_))).asInstanceOf[Route[Any]]
+          e.serverLogic[KyoSttpMonad.M](f(_).map(Right(_))).asInstanceOf[Route[Any]]
       )).unit
 
     def add[T, U, S](
@@ -62,9 +62,5 @@ object routes {
         f: T => U > (Fibers with IOs)
     ): Unit > Routes =
       add(e(endpoint))(f)
-  }
-
-  object internal {
-    type M[T] = T > Fibers with IOs
   }
 }

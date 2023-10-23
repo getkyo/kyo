@@ -195,6 +195,7 @@ lazy val `kyo-tapir` =
     .crossType(CrossType.Pure)
     .in(file("kyo-tapir"))
     .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .dependsOn(`kyo-sttp`)
     .settings(
         `kyo-settings`,
         `with-cross-scala`,

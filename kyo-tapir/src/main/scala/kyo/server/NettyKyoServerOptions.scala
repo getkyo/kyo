@@ -13,15 +13,17 @@ import sttp.tapir.server.interceptor.CustomiseInterceptors
 import sttp.tapir.server.interceptor.Interceptor
 import sttp.tapir.server.interceptor.log.DefaultServerLog
 import sttp.tapir.server.netty.internal.NettyDefaults
+import kyo.internal.KyoSttpMonad
+import kyo.internal.KyoSttpMonad._
 
 case class NettyKyoServerOptions(
-    interceptors: List[Interceptor[kyo.routes.internal.M]],
+    interceptors: List[Interceptor[KyoSttpMonad.M]],
     createFile: ServerRequest => TapirFile > Routes,
     deleteFile: TapirFile => Unit > (Fibers with IOs)
 ) {
-  def prependInterceptor(i: Interceptor[kyo.routes.internal.M]): NettyKyoServerOptions =
+  def prependInterceptor(i: Interceptor[KyoSttpMonad.M]): NettyKyoServerOptions =
     copy(interceptors = i :: interceptors)
-  def appendInterceptor(i: Interceptor[kyo.routes.internal.M]): NettyKyoServerOptions =
+  def appendInterceptor(i: Interceptor[KyoSttpMonad.M]): NettyKyoServerOptions =
     copy(interceptors = interceptors :+ i)
 }
 
@@ -31,7 +33,7 @@ object NettyKyoServerOptions {
     customiseInterceptors().options
 
   private def default(
-      interceptors: List[Interceptor[kyo.routes.internal.M]]
+      interceptors: List[Interceptor[KyoSttpMonad.M]]
   ): NettyKyoServerOptions =
     NettyKyoServerOptions(
         interceptors,
@@ -39,16 +41,16 @@ object NettyKyoServerOptions {
         file => IOs(Defaults.deleteFile()(file))
     )
 
-  def customiseInterceptors(): CustomiseInterceptors[kyo.routes.internal.M, NettyKyoServerOptions] =
+  def customiseInterceptors(): CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions] =
     CustomiseInterceptors(
-        createOptions = (ci: CustomiseInterceptors[kyo.routes.internal.M, NettyKyoServerOptions]) =>
+        createOptions = (ci: CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions]) =>
           default(ci.interceptors)
     ).serverLog(defaultServerLog)
 
   private val log = Logger[NettyKyoServerInterpreter]
 
-  def defaultServerLog: DefaultServerLog[kyo.routes.internal.M] =
-    DefaultServerLog[kyo.routes.internal.M](
+  def defaultServerLog: DefaultServerLog[KyoSttpMonad.M] =
+    DefaultServerLog[KyoSttpMonad.M](
         doLogWhenReceived = debugLog(_, None),
         doLogWhenHandled = debugLog,
         doLogAllDecodeFailures = debugLog,

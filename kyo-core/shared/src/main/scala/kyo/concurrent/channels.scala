@@ -38,7 +38,7 @@ object channels {
   object Channels {
 
     def init[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
-      Queues.initBounded[T](capacity, access).map { queue =>
+      Queues.init[T](capacity, access).map { queue =>
         IOs {
           new Channel[T] {
 

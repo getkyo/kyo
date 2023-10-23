@@ -27,6 +27,7 @@ import scala.util.Success
 import scala.util.Try
 import scala.util.control.NoStackTrace
 import kyo.concurrent.atomics.Atomics
+import scala.concurrent.duration.Duration
 
 object ais {
 
@@ -282,6 +283,7 @@ object ais {
               .header("Authorization", s"Bearer $key")
               .post(uri"https://api.openai.com/v1/chat/completions")
               .body(req)
+              .readTimeout(Duration.Inf)
               .response(asJson[Response])
         ).map(_.body match {
           case Left(error) =>

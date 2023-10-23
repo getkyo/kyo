@@ -15,22 +15,19 @@ import sttp.client3.basicRequest
 
 import scala.concurrent.Future
 import kyo.tries.Tries
+import sttp.client3.SttpBackend
+import kyo.internal.KyoSttpMonad
 
 object requests {
 
   type BasicRequest = RequestT[Empty, Either[String, String], Any]
 
   abstract class Backend {
-    def send[T](r: Request[T, Any]): Fiber[Response[T]] > IOs
+    def send[T](r: Request[T, Any]): Response[T] > (Fibers with IOs)
   }
 
   object Backend {
-    implicit val default: Backend =
-      new Backend {
-        val backend = PlatformBackend.instance
-        def send[T](r: Request[T, Any]): Fiber[Response[T]] > IOs =
-          Fibers.joinFiber(r.send(backend))
-      }
+    implicit val default: Backend = PlatformBackend.default
   }
 
   type Requests = Envs[Backend] with Fibers with IOs with Tries
@@ -48,16 +45,9 @@ object requests {
       run[T, S](b)(v)
 
     def apply[T, S](req: Request[T, Any] > S): Response[T] > (Requests with S) =
-      fiber(req).map(_.get)
-
-    def fiber[T, S](req: Request[T, Any] > S): Fiber[Response[T]] > (Requests with S) =
       envs.get.map(b => req.map(b.send))
 
     def apply[T, S](f: BasicRequest => Request[T, Any] > S): Response[T] > (Requests with S) =
-      fiber(f).map(_.get)
-
-    def fiber[T, S](f: BasicRequest => Request[T, Any] > S)
-        : Fiber[Response[T]] > (Requests with S) =
-      fiber(f(basicRequest))
+      apply((f(basicRequest)))
   }
 }

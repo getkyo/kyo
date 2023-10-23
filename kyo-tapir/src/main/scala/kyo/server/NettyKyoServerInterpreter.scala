@@ -4,7 +4,6 @@ import kyo._
 import kyo.concurrent.fibers._
 import kyo.ios._
 import kyo.routes._
-import kyo.server.internal.KyoMonadError._
 import kyo.server.internal._
 import kyo.tries._
 import sttp.monad.MonadError
@@ -21,14 +20,16 @@ import sttp.tapir.server.netty.Route
 import sttp.tapir.server.netty.internal.NettyBodyListener
 import sttp.tapir.server.netty.internal.RunAsync
 import sttp.tapir.server.netty.internal._
+import kyo.internal.KyoSttpMonad
+import kyo.internal.KyoSttpMonad._
 
 trait NettyKyoServerInterpreter {
   def nettyServerOptions: NettyKyoServerOptions
 
-  def toRoute(ses: List[ServerEndpoint[Any, kyo.routes.internal.M]])
-      : Route[kyo.routes.internal.M] = {
+  def toRoute(ses: List[ServerEndpoint[Any, KyoSttpMonad.M]])
+      : Route[KyoSttpMonad.M] = {
 
-    implicit val bodyListener: BodyListener[internal.M, NettyResponse] = {
+    implicit val bodyListener: BodyListener[KyoSttpMonad.M, NettyResponse] = {
       new NettyBodyListener(NettyKyoServer.runAsync)
     }
 
@@ -36,7 +37,7 @@ trait NettyKyoServerInterpreter {
     val createFile   = nettyServerOptions.createFile
     val deleteFile   = nettyServerOptions.deleteFile
 
-    val serverInterpreter = new ServerInterpreter[Any, kyo.routes.internal.M, NettyResponse, Any](
+    val serverInterpreter = new ServerInterpreter[Any, KyoSttpMonad.M, NettyResponse, Any](
         FilterServerEndpoints(ses),
         new NettyKyoRequestBody(createFile),
         new NettyKyoToResponseBody(
@@ -46,7 +47,7 @@ trait NettyKyoServerInterpreter {
         deleteFile
     )
 
-    val handler: Route[kyo.routes.internal.M] = { (request: NettyServerRequest) =>
+    val handler: Route[KyoSttpMonad.M] = { (request: NettyServerRequest) =>
       serverInterpreter(request)
         .map {
           case RequestResult.Response(response) => Some(response)

@@ -6,7 +6,6 @@ import kyo._
 import kyo.concurrent.fibers._
 import kyo.ios._
 import kyo.routes._
-import kyo.server.internal.KyoMonadError._
 import kyo.server.internal.KyoUtil._
 import kyo.tries._
 import sttp.tapir.server.ServerEndpoint
@@ -21,32 +20,34 @@ import java.net.SocketAddress
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.UUID
+import kyo.internal.KyoSttpMonad
+import kyo.internal.KyoSttpMonad._
 
 case class NettyKyoServer(
-    routes: Vector[Route[kyo.routes.internal.M]],
+    routes: Vector[Route[KyoSttpMonad.M]],
     options: NettyKyoServerOptions,
     config: NettyConfig
 ) {
-  def addEndpoint(se: ServerEndpoint[Any, kyo.routes.internal.M]): NettyKyoServer =
+  def addEndpoint(se: ServerEndpoint[Any, KyoSttpMonad.M]): NettyKyoServer =
     addEndpoints(List(se))
   def addEndpoint(
-      se: ServerEndpoint[Any, kyo.routes.internal.M],
+      se: ServerEndpoint[Any, KyoSttpMonad.M],
       overrideOptions: NettyKyoServerOptions
   ): NettyKyoServer =
     addEndpoints(List(se), overrideOptions)
-  def addEndpoints(ses: List[ServerEndpoint[Any, kyo.routes.internal.M]]): NettyKyoServer =
+  def addEndpoints(ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]): NettyKyoServer =
     addRoute(
         NettyKyoServerInterpreter(options).toRoute(ses)
     )
   def addEndpoints(
-      ses: List[ServerEndpoint[Any, kyo.routes.internal.M]],
+      ses: List[ServerEndpoint[Any, KyoSttpMonad.M]],
       overrideOptions: NettyKyoServerOptions
   ): NettyKyoServer = addRoute(
       NettyKyoServerInterpreter(overrideOptions).toRoute(ses)
   )
 
-  def addRoute(r: Route[kyo.routes.internal.M]): NettyKyoServer = copy(routes = routes :+ r)
-  def addRoutes(r: Iterable[Route[kyo.routes.internal.M]]): NettyKyoServer =
+  def addRoute(r: Route[KyoSttpMonad.M]): NettyKyoServer = copy(routes = routes :+ r)
+  def addRoutes(r: Iterable[Route[KyoSttpMonad.M]]): NettyKyoServer =
     copy(routes = routes ++ r)
 
   def options(o: NettyKyoServerOptions): NettyKyoServer = copy(options = o)
@@ -78,12 +79,12 @@ case class NettyKyoServer(
   private def startUsingSocketOverride[SA <: SocketAddress](socketOverride: Option[SA])
       : (SA, () => Unit > (Fibers with IOs)) > (Fibers with IOs) = {
     val eventLoopGroup                      = config.eventLoopConfig.initEventLoopGroup()
-    val route: Route[kyo.routes.internal.M] = Route.combine(routes)
+    val route: Route[KyoSttpMonad.M] = Route.combine(routes)
 
     val channelFuture =
       NettyBootstrap(
           config,
-          new NettyServerHandler[kyo.routes.internal.M](
+          new NettyServerHandler[KyoSttpMonad.M](
               route,
               (f: () => Unit > (Fibers with IOs)) =>
                 NettyKyoServer.runAsync(f()),
@@ -112,7 +113,7 @@ case class NettyKyoServer(
 
 object NettyKyoServer {
 
-  private[kyo] val runAsync = new RunAsync[kyo.routes.internal.M] {
+  private[kyo] val runAsync = new RunAsync[KyoSttpMonad.M] {
     override def apply[T](f: => T > (Fibers with IOs)): Unit =
       IOs.run {
         Fibers.forkFiber {
