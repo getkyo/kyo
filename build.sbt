@@ -1,4 +1,4 @@
-val scala3Version = "3.3.0"
+val scala3Version = "3.3.1"
 val scala2Version = "2.13.12"
 
 val compilerOptions = Seq(
@@ -237,13 +237,15 @@ lazy val `kyo-bench` =
     .in(file("kyo-bench"))
     .enablePlugins(JmhPlugin)
     .dependsOn(`kyo-core-opt` % "test->test;compile->compile")
+    .dependsOn(`kyo-sttp`)
+    .dependsOn(`kyo-tapir`)
     .settings(
         `kyo-settings`,
         `without-cross-scala`,
-        libraryDependencies += "org.typelevel" %% "cats-effect"    % "3.5.2",
-        libraryDependencies += "dev.zio"       %% "zio"            % zioVersion,
-        libraryDependencies += "dev.zio"       %% "zio-concurrent" % zioVersion
-        // libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.12"
+        libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.5.2",
+        libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
+        libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion,
+        libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.14"
     )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
