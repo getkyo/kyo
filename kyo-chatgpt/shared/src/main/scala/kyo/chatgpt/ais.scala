@@ -29,12 +29,15 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 import scala.util.control.NoStackTrace
+import scala.annotation.StaticAnnotation
 
 object ais {
 
   type State = Map[AIRef, Context]
 
   type AIs = Sums[State] with Requests with Tries with IOs with Aspects
+
+  final case class desc(value: String) extends StaticAnnotation
 
   object AIs {
 

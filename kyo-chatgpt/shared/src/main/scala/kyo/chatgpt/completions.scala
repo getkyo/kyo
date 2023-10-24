@@ -21,6 +21,8 @@ object completions {
 
   object Completions {
 
+    private val logger = Loggers.init(getClass)
+
     case class Result(content: String, call: Option[Call])
 
     def apply(
@@ -31,7 +33,7 @@ object completions {
       for {
         config <- Configs.get
         req = Request(ctx, config.model, plugins, constrain)
-        _ <- log(req)
+        _ <- logger.debug(req.toJsonPretty)
         response <- Requests(
             _.contentType("application/json")
               .header("Authorization", s"Bearer ${config.apiKey}")
@@ -45,6 +47,7 @@ object completions {
           case Right(value) =>
             value
         })
+        _ <- logger.debug(response.toJsonPretty)
         (content, call) <-
           response.choices.headOption match {
             case None =>
@@ -59,60 +62,6 @@ object completions {
   }
 
   private object internal {
-
-    private val logger = Loggers.init("Completions")
-
-    def log(r: Request) = {
-      import r._
-      val indent       = "  "
-      val doubleIndent = indent + indent
-
-      val modelLog = s"Model: $model"
-
-      val functionCallLog =
-        function_call.map(fc => s"${indent}Function Call: ${fc.name}").getOrElse("")
-
-      val functionsLog = functions.map { funcs =>
-        s"${indent}Functions:\n" + funcs.map { func =>
-          s"$doubleIndent${func.name}: ${func.description} [Parameters: ${func.parameters}]"
-        }.mkString("\n")
-      }.getOrElse("")
-
-      val messagesLog = if (messages.nonEmpty) {
-        s"Messages:\n" + messages.map { message =>
-          val base = s"$doubleIndent${message.role}: ${message.content.getOrElse("")}"
-          val funcCall = message.function_call.map(fc =>
-            s" [Function Call: ${fc.name}(${fc.arguments})]"
-          ).getOrElse("")
-          base + funcCall
-        }.mkString("\n")
-      } else {
-        ""
-      }
-
-      def log(r: Result) = {
-        import r._
-        val indent = "  "
-
-        val contentLog = s"Content: $content"
-
-        val callLog = call.map { c =>
-          s"${indent}Function Call: ${c.function}(${c.arguments})"
-        }.getOrElse("")
-
-        logger.debug(
-            List(contentLog, callLog)
-              .filter(_.nonEmpty)
-              .mkString("\n")
-        )
-      }
-
-      logger.debug(
-          List(modelLog, functionCallLog, functionsLog, messagesLog)
-            .filter(_.nonEmpty)
-            .mkString("\n")
-      )
-    }
 
     case class Name(name: String)
     case class Function(description: String, name: String, parameters: JsonSchema)
@@ -165,6 +114,8 @@ object completions {
     implicit val callEncoder: JsonEncoder[FunctionCall] = DeriveJsonEncoder.gen[FunctionCall]
     implicit val entryEncoder: JsonEncoder[Entry]       = DeriveJsonEncoder.gen[Entry]
     implicit val requestEncoder: JsonEncoder[Request]   = DeriveJsonEncoder.gen[Request]
+    implicit val choiceEncoder: JsonEncoder[Choice]     = DeriveJsonEncoder.gen[Choice]
+    implicit val responseEncoder: JsonEncoder[Response] = DeriveJsonEncoder.gen[Response]
     implicit val callDecoder: JsonDecoder[FunctionCall] = DeriveJsonDecoder.gen[FunctionCall]
     implicit val entryDecoder: JsonDecoder[Entry]       = DeriveJsonDecoder.gen[Entry]
     implicit val choiceDecoder: JsonDecoder[Choice]     = DeriveJsonDecoder.gen[Choice]
