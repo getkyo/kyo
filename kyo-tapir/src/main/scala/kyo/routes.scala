@@ -16,20 +16,6 @@ import kyo.App.Effects
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad._
 
-object kyoMain extends App {
-  import scala.concurrent.duration._
-  import routes._
-  import sttp.tapir._
-
-  def run(args: List[String]) = {
-    Routes.run(NettyKyoServer().port(8089))(Routes.add[String, String, Any](_.get
-      .in("hello").in(query[String]("name"))
-      .out(stringBody)) { name =>
-      s"Hello, $name!"
-    }).unit
-  }
-}
-
 object routes {
 
   type Route[+T] = ServerEndpoint[Any, KyoSttpMonad.M]

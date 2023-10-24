@@ -52,8 +52,11 @@ object KyoSttpMonad {
               case Left(t)  => p.unsafeComplete(IOs.fail(t))
               case Right(t) => p.unsafeComplete(t)
             }
-          p.onComplete(_ => canceller.cancel())
-            .andThen(p.get)
+          p.onComplete { r =>
+            if (r == Fibers.interrupted) {
+              canceller.cancel()
+            }
+          }.andThen(p.get)
         }
       }
     }

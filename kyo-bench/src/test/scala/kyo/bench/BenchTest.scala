@@ -1,8 +1,9 @@
 package kyo.bench
 
-import kyoTest.KyoTest
+import org.scalatest.freespec.AsyncFreeSpec
+import org.scalatest.Assertions
 
-class BenchTest extends KyoTest {
+class BenchTest extends AsyncFreeSpec with Assertions {
 
   def test[T](b: Bench.SyncAndFork[T], expected: T): Unit = {
     "cats" - {

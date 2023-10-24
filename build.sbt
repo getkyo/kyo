@@ -236,7 +236,9 @@ lazy val `kyo-bench` =
     .crossType(CrossType.Pure)
     .in(file("kyo-bench"))
     .enablePlugins(JmhPlugin)
-    .dependsOn(`kyo-core-opt` % "test->test;compile->compile")
+    .dependsOn(`kyo-core`)
+    // .dependsOn(`kyo-core` % "runtime")
+    // .dependsOn(`kyo-core-opt` % "provided")
     .dependsOn(`kyo-sttp`)
     .dependsOn(`kyo-tapir`)
     .settings(
@@ -245,7 +247,8 @@ lazy val `kyo-bench` =
         libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.5.2",
         libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion,
-        libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.14"
+        libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.14",
+        libraryDependencies += "org.scalatest"       %% "scalatest"      % "3.2.16" % Test
     )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
