@@ -60,7 +60,9 @@ object JsonSchema {
 
         case schema: Schema.Record[_] =>
           val properties = schema.fields.foldLeft(Map.empty[String, Json]) { (acc, field) =>
-            acc + (field.name -> Json.Obj((convert(field.schema) ++ desc(field.annotations)).toSeq: _*))
+            acc + (field.name -> Json.Obj(
+                (convert(field.schema) ++ desc(field.annotations)).toSeq: _*
+            ))
           }
           val requiredFields = schema.fields.collect {
             case field if !field.schema.isInstanceOf[Schema.Optional[_]] => Json.Str(field.name)
