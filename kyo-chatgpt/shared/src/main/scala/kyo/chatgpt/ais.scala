@@ -115,14 +115,6 @@ object ais {
         _   <- Sums[State].set(st + (res.ref -> st.getOrElse(ref, Contexts.init)))
       } yield res
 
-    val dump: String > AIs =
-      save.map { ctx =>
-        ctx.messages.reverse.map(msg =>
-          s"${msg.role.name}: ${msg.name.getOrElse("")} ${msg.content} ${msg.call.getOrElse("")}"
-        )
-          .mkString("\n")
-      }
-
     def user[S](msg: String > S): Unit > (AIs with S) =
       add(Role.user, msg, None, None)
     def system[S](msg: String > S): Unit > (AIs with S) =

@@ -15,7 +15,12 @@ object configs {
     val gpt35_turbo_16k = Model("gpt-3.5-turbo-16k", 16385)
   }
 
-  case class Config(apiKey: String, model: Model)
+  case class Config(apiKey: String, model: Model) {
+    def apiKey(key: String): Config =
+      copy(apiKey = key)
+    def model(model: Model): Config =
+      copy(model = model)
+  }
 
   object Configs {
 
