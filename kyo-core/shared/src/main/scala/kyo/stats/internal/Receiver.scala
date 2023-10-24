@@ -6,7 +6,7 @@ import kyo.stats._
 
 import java.util.ServiceLoader
 import scala.jdk.CollectionConverters._
-import kyo.choices.Choices
+import kyo.lists.Lists
 
 trait Receiver {
 
@@ -127,7 +127,7 @@ object Receiver {
           parent: Option[Span] = None,
           a: Attributes = Attributes.empty
       ) =
-        Choices
+        Lists
           .traverse(receivers)(_.startSpan(scope, name, None, a))
           .map(internal.Span.all)
     }

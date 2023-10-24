@@ -23,7 +23,7 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
     3. [Envs: Dependency Injection](#envs-dependency-injection)
     4. [Locals: Scoped Values](#locals-scoped-values)
     5. [Resources: Resource Safety](#resources-resource-safety)
-    6. [Choices: Exploratory Branching](#choices-exploratory-branching)
+    6. [Lists: Exploratory Branching](#lists-exploratory-branching)
     7. [Aspects: Aspect-Oriented Programming](#aspects-aspect-oriented-programming)
     8. [Options: Optional Values](#options-optional-values)
     9. [Tries: Exception Handling](#tries-exception-handling)
@@ -562,42 +562,42 @@ val b: Int > IOs =
   Resources.run(a)
 ```
 
-### Choices: Exploratory Branching
+### Lists: Exploratory Branching
 
-The `Choices` effect is designed to aid in handling and exploring multiple options, pathways, or outcomes in a computation. This effect is particularly useful in scenarios where you're dealing with decision trees, backtracking algorithms, or any situation that involves dynamically exploring multiple options.
+The `Lists` effect is designed to aid in handling and exploring multiple options, pathways, or outcomes in a computation. This effect is particularly useful in scenarios where you're dealing with decision trees, backtracking algorithms, or any situation that involves dynamically exploring multiple options.
 
 ```scala
-import kyo.choices._
+import kyo.lists._
 
-// Evaluate each of the provided choices.
+// Evaluate each of the provided lists.
 // Note how 'foreach' takes a 'List[T]'
-// and returns a 'T > Choices'
-val a: Int > Choices =
-  Choices.foreach(List(1, 2, 3, 4))
+// and returns a 'T > Lists'
+val a: Int > Lists =
+  Lists.foreach(List(1, 2, 3, 4))
 
 // 'dropIf' discards the current choice if 
 // a condition is not met. Produces a 'List(1, 2)'
 // since values greater than 2 are dropped
-val b: Int > Choices =
-  a.map(v => Choices.dropIf(v > 2).map(_ => v))
+val b: Int > Lists =
+  a.map(v => Lists.dropIf(v > 2).map(_ => v))
 
 // 'drop' unconditionally discards the 
 // current choice. Produces a 'List(42)'
 // since only the value 1 is transformed
 // to 42 and all other values are dropped
-val c: Int > Choices = 
+val c: Int > Lists = 
   b.map {
     case 1 => 42
-    case _ => Choices.drop
+    case _ => Lists.drop
   }
 
-// Handle the effect to evaluate all choices 
+// Handle the effect to evaluate all lists 
 // and return a 'List' with the results
 val d: List[Int] > Any =
-  Choices.run(c)
+  Lists.run(c)
 ```
 
-The Choices effect becomes exceptionally powerful when combined with other effects. This allows you not just to make decisions or explore options in isolation but also to do so in contexts that may involve factors such as asynchronicity, resource management, or even user interaction.
+The `Lists` effect becomes exceptionally powerful when combined with other effects. This allows you not just to make decisions or explore options in isolation but also to do so in contexts that may involve factors such as asynchronicity, resource management, or even user interaction.
 
 ### Aspects: Aspect-Oriented Programming
 

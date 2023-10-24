@@ -5,38 +5,38 @@ import kyo.core._
 import kyo.options._
 import scala.collection.mutable.ListBuffer
 
-object choices {
+object lists {
 
-  final class Choices private[choices] () extends Effect[List, Choices] {
+  final class Lists private[lists] () extends Effect[List, Lists] {
 
-    private implicit val handler: Handler[List, Choices] =
-      new Handler[List, Choices] {
+    private implicit val handler: Handler[List, Lists] =
+      new Handler[List, Lists] {
         def pure[T](v: T) = List(v)
-        def apply[T, U, S](v: List[T], f: T => U > (Choices with S)): U > (Choices with S) = {
-          def loop(l: List[T], acc: List[List[U]]): U > (Choices with S) =
+        def apply[T, U, S](v: List[T], f: T => U > (Lists with S)): U > (Lists with S) = {
+          def loop(l: List[T], acc: List[List[U]]): U > (Lists with S) =
             l match {
               case Nil =>
-                Choices.foreach(acc.reverse.flatten: List[U])
+                Lists.foreach(acc.reverse.flatten: List[U])
               case t :: ts =>
-                Choices.run[U, S](f(t)).map(l => loop(ts, l :: acc))
+                Lists.run[U, S](f(t)).map(l => loop(ts, l :: acc))
             }
           loop(v, Nil)
         }
       }
 
-    def run[T, S](v: T > (Choices with S)): List[T] > S =
+    def run[T, S](v: T > (Lists with S)): List[T] > S =
       handle[T, S](v)
 
-    def repeat(n: Int): Unit > Choices =
+    def repeat(n: Int): Unit > Lists =
       foreach(List.fill(n)(()))
 
-    def foreach[T, S](v: List[T] > S): T > (Choices with S) =
+    def foreach[T, S](v: List[T] > S): T > (Lists with S) =
       v.map {
         case head :: Nil => head
         case _           => suspend(v)
       }
 
-    def dropIf[S](v: Boolean > S): Unit > (Choices with S) =
+    def dropIf[S](v: Boolean > S): Unit > (Lists with S) =
       v.map {
         case true =>
           ()
@@ -44,7 +44,7 @@ object choices {
           drop
       }
 
-    val drop: Nothing > Choices =
+    val drop: Nothing > Lists =
       suspend(List.empty[Nothing])
 
     def traverse[T, U, S, S2](v: List[T] > S)(f: T => U > S2): List[U] > (S with S2) =
@@ -78,5 +78,5 @@ object choices {
       loop(v)
     }
   }
-  val Choices = new Choices
+  val Lists = new Lists
 }

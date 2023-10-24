@@ -2,7 +2,7 @@ package kyo.stats
 
 import kyo._
 import kyo.ios._
-import kyo.choices._
+import kyo.lists._
 
 trait Counter {
   def inc: Unit > IOs = add(1)
@@ -28,8 +28,8 @@ object Counter {
         h
       case l =>
         new Counter {
-          def add(v: Long)                = Choices.traverseUnit(l)(_.add(v))
-          def add(v: Long, b: Attributes) = Choices.traverseUnit(l)(_.add(v, b))
+          def add(v: Long)                = Lists.traverseUnit(l)(_.add(v))
+          def add(v: Long, b: Attributes) = Lists.traverseUnit(l)(_.add(v, b))
           def attributes(b: Attributes)   = all(l.map(_.attributes(b)))
         }
     }

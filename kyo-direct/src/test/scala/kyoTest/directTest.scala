@@ -153,12 +153,12 @@ class directTest extends KyoTest {
   }
 
   "lists" in {
-    import kyo.choices._
+    import kyo.lists._
 
-    val x = Choices.foreach(List(1, -2, -3))
-    val y = Choices.foreach(List("ab", "cde"))
+    val x = Lists.foreach(List(1, -2, -3))
+    val y = Lists.foreach(List("ab", "cde"))
 
-    val v: Int > Choices =
+    val v: Int > Lists =
       defer {
         val xx = await(x)
         xx + (
@@ -167,17 +167,17 @@ class directTest extends KyoTest {
         )
       }
 
-    val a: List[Int] = Choices.run(v).pure
+    val a: List[Int] = Lists.run(v).pure
     assert(a == List(3, -3, -5, 4, -5, -8, 0, 1, -1, 0))
   }
 
   "lists + filter" in {
-    import kyo.choices._
+    import kyo.lists._
 
-    val x = Choices.foreach(List(1, -2, -3))
-    val y = Choices.foreach(List("ab", "cde"))
+    val x = Lists.foreach(List(1, -2, -3))
+    val y = Lists.foreach(List("ab", "cde"))
 
-    val v: Int > Choices =
+    val v: Int > Lists =
       defer {
         val xx = await(x)
         val r =
@@ -185,10 +185,10 @@ class directTest extends KyoTest {
               if (xx > 0) await(y).length * await(x)
               else await(y).length
           )
-        await(Choices.dropIf(r > 0))
+        await(Lists.dropIf(r > 0))
         r
       }
 
-    assert(Choices.run(v).pure == List(3, 4, 1))
+    assert(Lists.run(v).pure == List(3, 4, 1))
   }
 }

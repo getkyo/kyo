@@ -2,7 +2,7 @@ package kyo.stats.internal
 
 import kyo._
 import kyo.ios._
-import kyo.choices._
+import kyo.lists._
 import kyo.locals._
 import kyo.stats._
 
@@ -26,9 +26,9 @@ object Span {
   def all(l: List[Span] > IOs): Span =
     new Span {
       def end =
-        Choices.traverseUnit(l)(_.end)
+        Lists.traverseUnit(l)(_.end)
       def event(name: String, a: Attributes) =
-        Choices.traverseUnit(l)(_.event(name, a))
+        Lists.traverseUnit(l)(_.event(name, a))
     }
 
   private val local = Locals.init[Option[Span]](None)

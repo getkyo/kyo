@@ -2,7 +2,7 @@ package kyo.stats
 
 import kyo._
 import kyo.ios._
-import kyo.choices._
+import kyo.lists._
 
 trait Histogram {
 
@@ -30,8 +30,8 @@ object Histogram {
         h
       case l =>
         new Histogram {
-          def observe(v: Double)                = Choices.traverseUnit(l)(_.observe(v))
-          def observe(v: Double, b: Attributes) = Choices.traverseUnit(l)(_.observe(v, b))
+          def observe(v: Double)                = Lists.traverseUnit(l)(_.observe(v))
+          def observe(v: Double, b: Attributes) = Lists.traverseUnit(l)(_.observe(v, b))
           def attributes(b: Attributes)         = all(l.map(_.attributes(b)))
         }
     }

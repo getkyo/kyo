@@ -2,7 +2,7 @@ package kyo.stats
 
 import kyo._
 import kyo.ios._
-import kyo.choices._
+import kyo.lists._
 
 trait Gauge {
   def close: Unit > IOs
@@ -22,7 +22,7 @@ object Gauge {
         h
       case l =>
         new Gauge {
-          def close = Choices.traverseUnit(l)(_.close)
+          def close = Lists.traverseUnit(l)(_.close)
         }
     }
 }

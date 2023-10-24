@@ -3,7 +3,7 @@ package kyo.bench
 import cats.effect.IO
 import kyo._
 import kyo.bench.Bench
-import kyo.choices._
+import kyo.lists._
 import kyo.concurrent.fibers._
 import kyo.ios._
 import zio.UIO
@@ -50,10 +50,10 @@ class SchedulingBench extends Bench.ForkOnly[Int] {
         }
       }
 
-    Choices.traverse(range) { i =>
+    Lists.traverse(range) { i =>
       Fibers.forkFiber(fiber(i))
     }.map { fibers =>
-      Choices.traverse(fibers)(_.get)
+      Lists.traverse(fibers)(_.get)
     }.map(_.sum)
   }
 

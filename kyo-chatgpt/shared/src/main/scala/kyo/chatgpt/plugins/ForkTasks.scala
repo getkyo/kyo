@@ -4,7 +4,7 @@ import kyo._
 import scala.concurrent.duration._
 import kyo.concurrent.fibers.Fibers
 import kyo.chatgpt.ais.AIs
-import kyo.choices.Choices
+import kyo.lists.Lists
 
 object ForkTasks {
   val plugin = Plugins.init[List[String], List[String]](
@@ -13,7 +13,7 @@ object ForkTasks {
         "Each task will continue this session in isolation and then later the task results will be provided back to you."
   ) { (ai, tasks) =>
     AIs.ephemeral {
-      Choices.traverse(tasks) { task =>
+      Lists.traverse(tasks) { task =>
         ai.infer[String](task)
       }
     }
