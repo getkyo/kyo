@@ -1,9 +1,8 @@
 package kyo.chatgpt
 
 import kyo._
-import kyo.chatgpt.embeddings._
-import kyo.chatgpt.ais._
 import kyo.aspects._
+import kyo.chatgpt.embeddings._
 
 object contexts {
 
@@ -25,10 +24,7 @@ object contexts {
       call: Option[Call]
   )
 
-  case class Model(name: String, maxTokens: Int, maxMessageSize: Int)
-
   case class Context(
-      model: Model,
       messages: List[Message]
   ) {
 
@@ -37,26 +33,25 @@ object contexts {
         msg: String,
         name: Option[String],
         call: Option[Call]
-    ): Context > AIs =
+    ): Context =
       Context(
-          model,
           Message(role, msg, name, call) :: messages
       )
 
     def ++(that: Context): Context =
-      Context(model, that.messages ++ messages)
+      Context(that.messages ++ messages)
   }
 
   object Contexts {
-    val init = Context(Model("gpt-4", 8192, 8192), Nil)
+    val init = Context(Nil)
 
-    def init(entries: (Role, String)*): Context > AIs = {
-      def loop(ctx: Context, entries: List[(Role, String)]): Context > AIs =
+    def init(entries: (Role, String)*): Context = {
+      def loop(ctx: Context, entries: List[(Role, String)]): Context =
         entries match {
           case Nil =>
             ctx
           case (role, msg) :: t =>
-            ctx.add(role, msg.stripMargin, None, None).map(loop(_, t))
+            loop(ctx.add(role, msg.stripMargin, None, None), t)
         }
       loop(init, entries.toList)
     }

@@ -1,44 +1,42 @@
 package kyo.chatgpt
 
-import kyo.chatgpt.ais._
 import kyo._
+import kyo.chatgpt.ais
+import kyo.chatgpt.ais._
+import kyo.chatgpt.configs._
 import kyo.concurrent.fibers._
+import kyo.ios._
 import kyo.requests._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
-
-import kyo.chatgpt.ais
 
 object embeddings {
 
   case class Embedding(tokens: Int, vector: List[Float])
 
   object Embeddings {
-    import Model._
+    import internal._
 
     def apply(text: String, model: String = "text-embedding-ada-002"): Embedding > AIs =
-      fiber(text, model).map(_.get)
-
-    def fiber(text: String, model: String = "text-embedding-ada-002"): Fiber[Embedding] > AIs =
-      AIs.ApiKey.get.map { key =>
+      Configs.get.map { config =>
         Requests(
             _.contentType("application/json")
-              .header("Authorization", s"Bearer $key")
+              .header("Authorization", s"Bearer ${config.apiKey}")
               .post(uri"https://api.openai.com/v1/embeddings")
               .body(Request(text, model))
               .response(asJson[Response])
         ).map { r =>
           r.body match {
             case Left(error) =>
-              Fibers.fail(error)
+              IOs.fail(error)
             case Right(value) =>
-              Fibers.value(Embedding(value.usage.prompt_tokens, value.data.head.embedding))
+              Embedding(value.usage.prompt_tokens, value.data.head.embedding)
           }
         }
       }
 
-    private object Model {
+    private object internal {
       case class Request(input: String, model: String)
       case class Data(embedding: List[Float])
       case class Usage(prompt_tokens: Int)

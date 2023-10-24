@@ -2,11 +2,13 @@ package kyo.chatgpt
 
 import kyo._
 import kyo.aspects._
+import kyo.chatgpt.configs._
 import kyo.chatgpt.contexts._
+import kyo.chatgpt.completions._
 import kyo.chatgpt.plugins._
 import kyo.chatgpt.util.JsonSchema
+import kyo.concurrent.atomics.Atomics
 import kyo.concurrent.fibers._
-import kyo.consoles._
 import kyo.ios._
 import kyo.locals._
 import kyo.options.Options
@@ -22,16 +24,13 @@ import zio.schema.codec.JsonCodec
 
 import java.lang.ref.WeakReference
 import scala.annotation.targetName
+import scala.concurrent.duration.Duration
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 import scala.util.control.NoStackTrace
-import kyo.concurrent.atomics.Atomics
-import scala.concurrent.duration.Duration
 
 object ais {
-
-  import Model._
 
   type State = Map[AIRef, Context]
 
@@ -67,18 +66,6 @@ object ais {
     def fail[T, S](cause: String > S): T > (AIs with S) =
       cause.map(cause => Tries.fail(AIException(cause)))
 
-    def transactional[T, S](f: => T > S): T > (AIs with S) =
-      Sums[State].get.map { st =>
-        IOs.attempt(f).map {
-          case Failure(ex) =>
-            Sums[State].set(st).map { _ =>
-              Tries.fail(ex)
-            }
-          case Success(value) =>
-            value
-        }
-      }
-
     def ephemeral[T, S](f: => T > S): T > (AIs with S) =
       Sums[State].get.map { st =>
         Tries.run(f).map(r => Sums[State].set(st).map(_ => r.get))
@@ -88,29 +75,6 @@ object ais {
       val a: T > (Requests with Tries with Aspects with S) = Sums[State].run(v)
       val b: T > (Requests with Tries with S)              = Aspects.run(a)
       b
-    }
-
-    object ApiKey {
-      private val local = Locals.init[Option[String]] {
-        val apiKeyProp = "OPENAI_API_KEY"
-        Option(System.getenv(apiKeyProp))
-          .orElse(Option(System.getProperty(apiKeyProp)))
-      }
-
-      val get: String > AIs =
-        Options.getOrElse(local.get, AIs.fail("No API key found"))
-
-      def let[T, S1, S2](key: String > S1)(f: => T > S2): T > (S1 with S2 with AIs) =
-        key.map { k =>
-          local.let(Some(k)) {
-            Tries.run[String, AIs](AIs.ask("ping")).map {
-              case Failure(error) =>
-                AIs.fail(s"Invalid API key. " + error)
-              case Success(_) =>
-                f
-            }
-          }
-        }
     }
   }
 
@@ -128,7 +92,7 @@ object ais {
         content.map { content =>
           call.map { call =>
             save.map { ctx =>
-              ctx.add(role, content, name, call).map(restore)
+              restore(ctx.add(role, content, name, call))
             }
           }
         }
@@ -174,8 +138,8 @@ object ais {
 
     def ask[S](msg: String > S): String > (AIs with S) = {
       def eval(plugins: Set[Plugin[_, _]]): String > AIs =
-        fetch(plugins).map {
-          case (msg, Some(call)) =>
+        fetch(plugins).map { r =>
+          r.call.map { call =>
             plugins.find(_.name == call.function) match {
               case None =>
                 function(call.function, "Invalid function call: " + call)
@@ -184,8 +148,7 @@ object ais {
                 function(call.function, plugin(this, call.arguments))
                   .andThen(eval(plugins))
             }
-          case (msg, None) =>
-            msg
+          }.getOrElse(r.content)
         }
       user(msg).andThen(Plugins.get.map(eval))
     }
@@ -198,8 +161,8 @@ object ais {
       val resultPlugin =
         Plugins.init[T, T]("resultPlugin", "call this function with the result")((ai, v) => v)
       def eval(): T > AIs =
-        fetch(Set(resultPlugin), Some(resultPlugin)).map {
-          case (msg, Some(call)) =>
+        fetch(Set(resultPlugin), Some(resultPlugin)).map { r =>
+          r.call.map { call =>
             if (call.function != resultPlugin.name) {
               function(call.function, "Invalid function call: " + call)
                 .andThen(eval())
@@ -214,8 +177,7 @@ object ais {
                   value.value
               }
             }
-          case (msg, None) =>
-            AIs.fail("Expected a function call")
+          }.getOrElse(AIs.fail("Expected a function call"))
         }
       user(msg).andThen(eval())
     }
@@ -234,8 +196,8 @@ object ais {
       val resultPlugin =
         Plugins.init[T, T]("resultPlugin", "call this function with the result", t, t)((ai, v) => v)
       def eval(plugins: Set[Plugin[_, _]], constrain: Option[Plugin[_, _]]): T > AIs =
-        fetch(plugins, constrain).map {
-          case (msg, Some(call)) =>
+        fetch(plugins, constrain).map { r =>
+          r.call.map { call =>
             plugins.find(_.name == call.function) match {
               case None =>
                 function(call.function, "Invalid function call: " + call)
@@ -260,8 +222,7 @@ object ais {
                       .andThen(eval(plugins, constrain))
                 }
             }
-          case (msg, None) =>
-            eval(plugins, Some(resultPlugin))
+          }.getOrElse(eval(plugins, Some(resultPlugin)))
         }
       user(msg)
         .andThen(function(resultPlugin.name, inferPrompt))
@@ -273,36 +234,12 @@ object ais {
     private def fetch(
         plugins: Set[Plugin[_, _]],
         constrain: Option[Plugin[_, _]] = None
-    ): (String, Option[Call]) > AIs =
+    ): Completions.Result > AIs =
       for {
         ctx <- save
-        key <- AIs.ApiKey.get
-        req = Request(ctx, plugins, constrain)
-        response <- Requests(
-            _.contentType("application/json")
-              .header("Authorization", s"Bearer $key")
-              .post(uri"https://api.openai.com/v1/chat/completions")
-              .body(req)
-              .readTimeout(Duration.Inf)
-              .response(asJson[Response])
-        ).map(_.body match {
-          case Left(error) =>
-            Tries.fail(error)
-          case Right(value) =>
-            value
-        })
-        (content, call) <-
-          response.choices.headOption match {
-            case None =>
-              AIs.fail("no choices")
-            case Some(v) =>
-              (
-                  v.message.content.getOrElse(""),
-                  v.message.function_call.map(c => Call(c.name, c.arguments))
-              )
-          }
-        _ <- assistant(content, call)
-      } yield (content, call)
+        r   <- Completions(ctx, plugins, constrain)
+        _   <- assistant(r.content, r.call)
+      } yield r
   }
 
   class AIRef(ai: AI) extends WeakReference[AI](ai) {
@@ -323,61 +260,4 @@ object ais {
         val merged = x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Contexts.init) ++ v) }
         merged.filter { case (k, v) => k.isValid() && v.messages.nonEmpty }
     }
-
-  private object Model {
-    case class Name(name: String)
-    case class Function(description: String, name: String, parameters: JsonSchema)
-    case class FunctionCall(arguments: String, name: String)
-    case class Entry(
-        role: String,
-        name: Option[String],
-        content: Option[String],
-        function_call: Option[FunctionCall]
-    )
-    case class Request(
-        model: String,
-        messages: List[Entry],
-        function_call: Option[Name],
-        functions: Option[Set[Function]]
-    )
-
-    object Request {
-      def apply(
-          ctx: Context,
-          plugins: Set[Plugin[_, _]],
-          constrain: Option[Plugin[_, _]]
-      ): Request =
-        val entries =
-          ctx.messages.reverse.map(msg =>
-            Entry(
-                msg.role.name,
-                msg.name,
-                Some(msg.content),
-                msg.call.map(c => FunctionCall(c.arguments, c.function))
-            )
-          )
-        val functions =
-          if (plugins.isEmpty) None
-          else Some(plugins.map(p => Function(p.description, p.name, p.schema)))
-        Request(
-            ctx.model.name,
-            entries,
-            constrain.map(p => Name(p.name)),
-            functions
-        )
-    }
-
-    case class Choice(message: Entry)
-    case class Response(choices: List[Choice])
-
-    implicit val nameEncoder: JsonEncoder[Name]         = DeriveJsonEncoder.gen[Name]
-    implicit val functionEncoder: JsonEncoder[Function] = DeriveJsonEncoder.gen[Function]
-    implicit val callEncoder: JsonEncoder[FunctionCall] = DeriveJsonEncoder.gen[FunctionCall]
-    implicit val entryEncoder: JsonEncoder[Entry]       = DeriveJsonEncoder.gen[Entry]
-    implicit val requestEncoder: JsonEncoder[Request]   = DeriveJsonEncoder.gen[Request]
-    implicit val callDecoder: JsonDecoder[FunctionCall] = DeriveJsonDecoder.gen[FunctionCall]
-    implicit val entryDecoder: JsonDecoder[Entry]       = DeriveJsonDecoder.gen[Entry]
-    implicit val choiceDecoder: JsonDecoder[Choice]     = DeriveJsonDecoder.gen[Choice]
-    implicit val responseDecoder: JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
-  }
 }

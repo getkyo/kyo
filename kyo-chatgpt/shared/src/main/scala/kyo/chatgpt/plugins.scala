@@ -4,11 +4,12 @@ import kyo._
 import kyo.chatgpt.ais._
 import kyo.chatgpt.util.JsonSchema
 import kyo.locals._
+import zio.json.JsonDecoder
 import zio.json.JsonEncoder
 import zio.schema.DeriveSchema
-import zio.schema.codec.JsonCodec
 import zio.schema.Schema
-import zio.json.JsonDecoder
+import zio.schema.codec.JsonCodec
+
 import AIs.Value
 
 package object plugins {

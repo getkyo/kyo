@@ -51,7 +51,11 @@ object ios {
 
     def value[T](v: T): T > IOs = v
 
-    def fail[T](ex: Throwable): T > IOs = IOs(throw ex)
+    def fail[T](ex: Throwable): T > IOs =
+      IOs(throw ex)
+
+    def fail[T](msg: String): T > IOs =
+      fail(new Exception(msg))
 
     def attempt[T, S](v: => T > S): Try[T] > S =
       Tries.run[T, S](v)
