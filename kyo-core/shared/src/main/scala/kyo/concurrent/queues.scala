@@ -39,15 +39,17 @@ object queues {
     }
 
     private val zeroCapacity =
-      new Unsafe[Any] {
-        def capacity      = 0
-        def size          = 0
-        def isEmpty()     = true
-        def isFull()      = true
-        def offer(v: Any) = false
-        def poll()        = None
-        def peek()        = None
-      }
+      new Queue(
+          new Unsafe[Any] {
+            def capacity      = 0
+            def size          = 0
+            def isEmpty()     = true
+            def isFull()      = true
+            def offer(v: Any) = false
+            def poll()        = None
+            def peek()        = None
+          }
+      )
 
     def init[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
       IOs {

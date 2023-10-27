@@ -82,4 +82,11 @@ class channelsTest extends KyoTest {
       v  <- f.get
     } yield assert(!d1 && d2 && v == 1)
   }
+  "no buffer" in runJVM {
+    for {
+      c <- Channels.init[Int](0)
+      _ <- c.putFiber(1)
+      v <- c.take
+    } yield assert(v == 1)
+  }
 }

@@ -126,6 +126,19 @@ object channels {
                   }
                 }
               }
+              if (u.isEmpty() && !puts.isEmpty() && !takes.isEmpty()) {
+                loop = true
+                val t = puts.poll()
+                if (t != null) {
+                  val (v, p) = t
+                  val p2     = takes.poll()
+                  if (p2 != null && p2.unsafeComplete(v)) {
+                    p.unsafeComplete(())
+                  } else {
+                    puts.add(t)
+                  }
+                }
+              }
               if (loop) flush()
             }
           }

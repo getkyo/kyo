@@ -36,6 +36,13 @@ class queuesTest extends KyoTest {
         b <- q.offer(3)
       } yield assert(!b)
     }
+    "zero capacity" in run {
+      for {
+        q <- Queues.init[Int](0)
+        b <- q.offer(1)
+        v <- q.poll
+      } yield assert(!b && v == None)
+    }
   }
 
   "unbounded" - {
