@@ -5,6 +5,10 @@ on:
   #     - main
   workflow_dispatch:
     inputs:
+      index:
+        description: 'Benchmark index'     
+        required: false
+        default: 'default' 
       selector:
         description: 'Benchmark selector'     
         required: false
@@ -39,6 +43,7 @@ jobs:
     runs-on: bench
     timeout-minutes: 90
     env: 
+      IX: ${{ github.event.inputs.index || 'default' }}
       SE: ${{ github.event.inputs.selector || 'Kyo' }}
       WI: ${{ github.event.inputs.warmupIterations || '13' }}
       MI: ${{ github.event.inputs.measurementIterations || '5' }}
@@ -150,7 +155,7 @@ jobs:
         with:
           github-token: ${{ secrets.GIST_PAT }}
           script: |
-            const indexFileName = 'jmh-github-action.csv';
+            const indexFileName = 'jmh-github-action-$IX.csv';
             const runUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
             const commitUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/commit/${context.sha}`;
             const commitMessage = process.env.COMMIT_MESSAGE.replace(/,/g, '\\,');
