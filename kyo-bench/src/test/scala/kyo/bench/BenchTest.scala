@@ -105,4 +105,9 @@ class BenchTest extends AsyncFreeSpec with Assertions {
   "SchedulingBench" - {
     test(SchedulingBench(), 1001000)
   }
+
+  "RendezvousBench" - {
+    val b = RendezvousBench()
+    test(b, b.depth * (b.depth + 1) / 2)
+  }
 }
