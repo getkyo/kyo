@@ -49,7 +49,7 @@ class fibersTest extends KyoTest {
       val ex = new Exception
       for {
         p <- Fibers.initPromise[Int]
-        a <- p.complete(throw ex)
+        a <- p.complete(IOs.fail(ex))
         b <- p.isDone
         c <- p.getTry
       } yield assert(a && b && c == Failure(ex))

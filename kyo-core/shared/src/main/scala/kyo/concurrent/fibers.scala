@@ -37,8 +37,8 @@ object fibers {
 
   implicit class PromiseOps[T](private val p: Promise[T]) extends AnyVal {
 
-    def complete(v: => T > IOs): Boolean > IOs =
-      IOs(p.asInstanceOf[IOPromise[T]].complete(IOs(v)))
+    def complete(v: T > IOs): Boolean > IOs =
+      IOs(p.asInstanceOf[IOPromise[T]].complete(v))
 
     private[kyo] def unsafeComplete(v: T > IOs): Boolean =
       p.asInstanceOf[IOPromise[T]].complete(v)
