@@ -250,9 +250,10 @@ object ais {
 
   private implicit val summer: Summer[State] =
     new Summer[State] {
-      val init: State = Map.empty
-      def add(x: State, y: State): State =
+      val init = Map.empty
+      def add(x: State, y: State) = {
         val merged = x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Contexts.init) ++ v) }
         merged.filter { case (k, v) => k.isValid() && v.messages.nonEmpty }
+      }
     }
 }

@@ -85,7 +85,7 @@ object completions {
           model: Model,
           plugins: Set[Plugin[_, _]],
           constrain: Option[Plugin[_, _]]
-      ): Request =
+      ): Request = {
         val entries =
           ctx.messages.reverse.map(msg =>
             Entry(
@@ -104,6 +104,7 @@ object completions {
             constrain.map(p => Name(p.name)),
             functions
         )
+      }
     }
 
     case class Choice(message: Entry)

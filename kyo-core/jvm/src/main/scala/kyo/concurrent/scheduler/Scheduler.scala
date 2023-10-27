@@ -32,9 +32,10 @@ private[kyo] object Scheduler {
     if (concurrencyLimit > coreWorkers)
       concurrencyLimit = Math.max(1, concurrency.get() - 1)
 
-  def addWorker(): Unit =
+  def addWorker(): Unit = {
     concurrencyLimit = Math.max(concurrencyLimit, concurrency.get()) + 1
     startWorkers()
+  }
 
   private def startWorkers(): Unit = {
     var c = concurrency.get()
