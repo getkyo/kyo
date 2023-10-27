@@ -236,11 +236,7 @@ lazy val `kyo-bench` =
     .crossType(CrossType.Pure)
     .in(file("kyo-bench"))
     .enablePlugins(JmhPlugin)
-    .dependsOn(`kyo-core`)
-    // .dependsOn(`kyo-core` % "runtime")
-    // .dependsOn(`kyo-core-opt` % "provided")
-    .dependsOn(`kyo-sttp`)
-    .dependsOn(`kyo-tapir`)
+    .dependsOn(`kyo-core-opt`)
     .settings(
         `kyo-settings`,
         `without-cross-scala`,
