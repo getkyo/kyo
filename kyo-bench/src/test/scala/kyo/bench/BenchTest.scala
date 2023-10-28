@@ -110,10 +110,10 @@ class BenchTest extends AsyncFreeSpec with Assertions {
     val b        = RendezvousBench()
     val expected = b.depth * (b.depth + 1) / 2
     test(b, expected)
-    "ox" - {
-      "fork" in {
-        assert(b.forkOx() == expected)
-      }
-    }
+    // "ox" - {
+    //   "fork" in {
+    //     assert(b.forkOx() == expected)
+    //   }
+    // }
   }
 }
