@@ -172,4 +172,51 @@ class RendezvousBench extends Bench.ForkOnly[Int] {
     } yield res
   }
 
+  @Benchmark
+  def forkOx() = {
+    import ox._
+    import java.util.concurrent.atomic.AtomicReference
+    import java.util.concurrent.CompletableFuture
+
+    def produce(waiting: AtomicReference[Any]): Unit =
+      for (n <- 0 to depth) {
+        val p = new CompletableFuture[Unit]()
+        if (!waiting.compareAndSet(null, (p, n))) {
+          waiting.getAndSet(null)
+            .asInstanceOf[CompletableFuture[Int]]
+            .complete(n)
+        } else {
+          p.join()
+        }
+      }
+
+    def consume(waiting: AtomicReference[Any]): Int = {
+      var acc = 0
+      for (n <- 0 to depth) {
+        val p = new CompletableFuture[Int]()
+        if (!waiting.compareAndSet(null, p)) {
+          val (p, n) =
+            waiting.getAndSet(null)
+              .asInstanceOf[(CompletableFuture[Unit], Int)]
+          p.complete(())
+          acc += n
+        } else {
+          acc += p.join()
+        }
+      }
+      acc
+    }
+
+    scoped {
+      val waiting = new AtomicReference[Any]()
+      val f1 = fork {
+        produce(waiting)
+      }
+      val f2 = fork {
+        consume(waiting)
+      }
+      f1.join()
+      f2.join()
+    }
+  }
 }
