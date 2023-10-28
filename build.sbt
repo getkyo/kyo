@@ -223,10 +223,10 @@ lazy val `kyo-chatgpt` =
         `kyo-settings`,
         `without-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.0",
-        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.14",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.14",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.14",
-        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.14"
+        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.15",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.15",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.15",
+        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.15"
     )
     .jsSettings(`js-settings`)
 
