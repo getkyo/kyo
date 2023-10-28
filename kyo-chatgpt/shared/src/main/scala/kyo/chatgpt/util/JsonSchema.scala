@@ -8,7 +8,7 @@ import zio.json.internal.Write
 import scala.annotation.StaticAnnotation
 import zio.Chunk
 
-case class JsonSchema(data: Map[String, Json])
+case class JsonSchema(data: List[(String, Json)])
 
 object JsonSchema {
 
@@ -21,53 +21,53 @@ object JsonSchema {
   def apply(schema: Schema[_]): JsonSchema =
     new JsonSchema(convert(schema))
 
-  def desc(c: Chunk[Any]): Map[String, Json] =
+  def desc(c: Chunk[Any]): List[(String, Json)] =
     c.collect {
       case desc(v) =>
         "description" -> Json.Str(v.stripMargin)
-    }.toMap
+    }.toList
 
-  def convert(schema: Schema[_]): Map[String, Json] =
+  def convert(schema: Schema[_]): List[(String, Json)] =
     desc(schema.annotations) ++ {
       schema match {
         case Schema.Primitive(StandardType.StringType, _) =>
-          Map("type" -> Json.Str("string"))
+          List("type" -> Json.Str("string"))
 
         case Schema.Primitive(StandardType.IntType, _) =>
-          Map("type" -> Json.Str("integer"), "format" -> Json.Str("int32"))
+          List("type" -> Json.Str("integer"), "format" -> Json.Str("int32"))
 
         case Schema.Primitive(StandardType.LongType, _) =>
-          Map("type" -> Json.Str("integer"), "format" -> Json.Str("int64"))
+          List("type" -> Json.Str("integer"), "format" -> Json.Str("int64"))
 
         case Schema.Primitive(StandardType.DoubleType, _) =>
-          Map("type" -> Json.Str("number"))
+          List("type" -> Json.Str("number"))
 
         case Schema.Primitive(StandardType.FloatType, _) =>
-          Map("type" -> Json.Str("number"), "format" -> Json.Str("float"))
+          List("type" -> Json.Str("number"), "format" -> Json.Str("float"))
 
         case Schema.Primitive(StandardType.BoolType, _) =>
-          Map("type" -> Json.Str("boolean"))
+          List("type" -> Json.Str("boolean"))
 
         case Schema.Optional(innerSchema, _) =>
           convert(innerSchema)
 
         case Schema.Sequence(innerSchema, _, _, _, _) =>
-          Map("type" -> Json.Str("array"), "items" -> Json.Obj(convert(innerSchema).toSeq: _*))
+          List("type" -> Json.Str("array"), "items" -> Json.Obj(convert(innerSchema).toSeq: _*))
 
         case schema: Schema.Enum[_] =>
           val cases = schema.cases.map(c => Json.Obj(convert(c.schema).toSeq: _*))
-          Map("oneOf" -> Json.Arr(cases: _*))
+          List("oneOf" -> Json.Arr(cases: _*))
 
         case schema: Schema.Record[_] =>
-          val properties = schema.fields.foldLeft(Map.empty[String, Json]) { (acc, field) =>
-            acc + (field.name -> Json.Obj(
+          val properties = schema.fields.foldLeft(List.empty[(String, Json)]) { (acc, field) =>
+            acc :+ (field.name -> Json.Obj(
                 (convert(field.schema) ++ desc(field.annotations)).toSeq: _*
             ))
           }
           val requiredFields = schema.fields.collect {
             case field if !field.schema.isInstanceOf[Schema.Optional[_]] => Json.Str(field.name)
           }
-          Map(
+          List(
               "type"       -> Json.Str("object"),
               "properties" -> Json.Obj(properties.toSeq: _*),
               "required"   -> Json.Arr(requiredFields: _*)
