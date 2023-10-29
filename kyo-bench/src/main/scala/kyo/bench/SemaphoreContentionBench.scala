@@ -83,4 +83,24 @@ class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
       _   <- cdl.await
     } yield {}
   }
+
+  @Benchmark
+  def forkOx() = {
+    import java.util.concurrent._
+    import ox._
+    scoped {
+      val sem = new Semaphore(permits, true)
+      val cdl = new CountDownLatch(fibers)
+      for (_ <- 0 until fibers) {
+        fork {
+          for (_ <- 0 to depth) {
+            sem.acquire()
+            sem.release()
+          }
+          cdl.countDown()
+        }
+      }
+      cdl.await()
+    }
+  }
 }

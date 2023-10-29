@@ -52,4 +52,20 @@ class SemaphoreBench extends Bench.ForkOnly[Unit] {
 
     Semaphore.make(1).flatMap(loop(_, 0))
   }
+
+  @Benchmark
+  def forkOx() = {
+    import java.util.concurrent.Semaphore
+    import ox._
+    scoped {
+      val sem = new Semaphore(1, true)
+      val f = fork {
+        for (_ <- 0 to depth) {
+          sem.acquire()
+          sem.release()
+        }
+      }
+      f.join()
+    }
+  }
 }
