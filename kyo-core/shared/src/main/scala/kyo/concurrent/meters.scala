@@ -34,7 +34,7 @@ object meters {
       Channels.init[Unit](concurrency).map { chan =>
         offer(concurrency, chan, ()).map { _ =>
           new Meter {
-            val available = chan.size
+            def available = chan.size
             val release   = chan.offerUnit(())
 
             def run[T, S](v: => T > S) =
@@ -62,7 +62,7 @@ object meters {
         Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())).map { _ =>
           new Meter {
 
-            val available              = chan.size
+            def available              = chan.size
             def run[T, S](v: => T > S) = chan.take.map(_ => v)
 
             def tryRun[T, S](v: => T > S) =

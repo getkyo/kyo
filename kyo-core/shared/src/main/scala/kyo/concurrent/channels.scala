@@ -48,9 +48,9 @@ object channels {
             val takes = new MpmcUnboundedXaddArrayQueue[Promise[T]](8)
             val puts  = new MpmcUnboundedXaddArrayQueue[(T, Promise[Unit])](8)
 
-            val size    = queue.size
-            val isEmpty = queue.isEmpty
-            val isFull  = queue.isFull
+            def size    = queue.size
+            def isEmpty = queue.isEmpty
+            def isFull  = queue.isFull
 
             def offer[S](v: T > S) =
               v.map { v =>
