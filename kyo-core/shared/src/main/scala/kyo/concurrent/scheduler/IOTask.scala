@@ -117,7 +117,7 @@ private[kyo] class IOTask[T](
               this.interrupts(promise)
               runtime += (Coordinator.tick() - start).asInstanceOf[Int]
               promise.onComplete { (v: Any > IOs) =>
-                val io = v.map(kyo(_, this.asInstanceOf[Safepoint[Fiber, Fibers]], locals))
+                val io = IOs(v.map(kyo(_, this.asInstanceOf[Safepoint[Fiber, Fibers]], locals)))
                 this.become(IOTask(io, locals, ensures, runtime))
               }
             case Failed(ex) =>
@@ -153,9 +153,7 @@ private[kyo] class IOTask[T](
     curr != nullIO
 
   def ensure(f: () => Unit): Unit =
-    if (curr == nullIO) {
-      f()
-    } else {
+    if (curr != nullIO) {
       ensures match {
         case null =>
           ensures = f
