@@ -108,8 +108,11 @@ object channels {
               }
 
             @tailrec private def flush(): Unit = {
-              var loop = false
-              if (!u.isEmpty() && !takes.isEmpty()) {
+              var loop       = false
+              val queueSize  = u.size()
+              val takesEmpty = takes.isEmpty()
+              val putsEmpty  = puts.isEmpty()
+              if (queueSize > 0 && !takesEmpty) {
                 loop = true
                 val p = takes.poll()
                 if (p != null.asInstanceOf[Promise[T]]) {
@@ -123,8 +126,7 @@ object channels {
                       }
                   }
                 }
-              }
-              if (!u.isFull() && !puts.isEmpty()) {
+              } else if (queueSize < capacity && !putsEmpty) {
                 loop = true
                 val t = puts.poll()
                 if (t != null) {
@@ -135,8 +137,7 @@ object channels {
                     puts.add(t)
                   }
                 }
-              }
-              if (u.isEmpty() && !puts.isEmpty() && !takes.isEmpty()) {
+              } else if (queueSize == 0 && !putsEmpty && !takesEmpty) {
                 loop = true
                 val t = puts.poll()
                 if (t != null) {
