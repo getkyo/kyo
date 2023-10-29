@@ -1,25 +1,15 @@
 package kyo.bench
 
-import org.openjdk.jmh.annotations._
-import cats.effect.IO
-import kyo._
-import kyo.ios._
-import zio.{ZIO, UIO}
-import java.util.concurrent.Executors
-import kyo.concurrent.fibers._
-import kyo.concurrent.channels._
-import kyo.concurrent.Access
-
-import kyo.bench.Bench
-import java.util.concurrent.atomic.AtomicInteger
+import org.openjdk.jmh.annotations.Benchmark
 
 class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
 
   val depth = 10000
 
-  def catsBench(): IO[Unit] = {
-    import cats.effect.std.Queue
-    import cats.effect.kernel.Ref
+  def catsBench() = {
+    import cats.effect._
+    import cats.effect.std._
+    import cats.effect.kernel._
 
     def repeat[A](n: Int)(io: IO[A]): IO[A] =
       if (n <= 1) io
@@ -35,8 +25,12 @@ class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
     }
   }
 
-  override def kyoBenchFiber(): Unit > (IOs with Fibers) = {
-    import kyo.concurrent.atomics._
+  override def kyoBenchFiber() = {
+    import kyo._
+    import kyo.ios._
+    import kyo.concurrent.fibers._
+    import kyo.concurrent.channels._
+    import kyo.concurrent.Access
 
     def repeat[A](n: Int)(io: A > (IOs with Fibers)): A > (IOs with Fibers) =
       if (n <= 1) io
@@ -52,7 +46,7 @@ class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
     }
   }
 
-  def zioBench(): UIO[Unit] = {
+  def zioBench() = {
     import zio._
 
     def repeat[R, E, A](n: Int)(zio: ZIO[R, E, A]): ZIO[R, E, A] =

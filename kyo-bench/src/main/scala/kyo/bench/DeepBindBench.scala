@@ -1,21 +1,12 @@
 package kyo.bench
 
-import cats.effect.IO
-import kyo._
-import kyo.ios._
-import org.openjdk.jmh.annotations._
-import zio.UIO
-import zio.ZIO
-
-import java.util.concurrent.atomic.AtomicInteger
-
-import kyo.bench.Bench
-
 class DeepBindBench extends Bench.SyncAndFork[Unit] {
 
   val depth = 10000
 
   def kyoBench() = {
+    import kyo._
+    import kyo.ios._
     def loop(i: Int): Unit > IOs =
       IOs {
         if (i > depth)
@@ -27,6 +18,7 @@ class DeepBindBench extends Bench.SyncAndFork[Unit] {
   }
 
   def catsBench() = {
+    import cats.effect._
     def loop(i: Int): IO[Unit] =
       IO.unit.flatMap { _ =>
         if (i > depth)
@@ -38,6 +30,7 @@ class DeepBindBench extends Bench.SyncAndFork[Unit] {
   }
 
   def zioBench() = {
+    import zio._
     def loop(i: Int): UIO[Unit] =
       ZIO.unit.flatMap { _ =>
         if (i > depth)

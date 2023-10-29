@@ -1,16 +1,6 @@
 package kyo.bench
 
 import org.openjdk.jmh.annotations._
-import cats.effect.kernel.Fiber
-
-import kyo.bench.Bench
-import kyo._
-import kyo.concurrent.fibers.Fibers
-import kyo.ios.IOs
-
-import kyo.concurrent.atomics._
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.atomic.AtomicInteger
 
 class ForkManyBench extends Bench.ForkOnly[Int] {
 
@@ -80,6 +70,8 @@ class ForkManyBench extends Bench.ForkOnly[Int] {
   def forkOx() = {
     import ox._
     import ox.channels._
+    import java.util.concurrent.CompletableFuture
+    import java.util.concurrent.atomic.AtomicInteger
 
     scoped {
       val promise = new CompletableFuture[Unit]

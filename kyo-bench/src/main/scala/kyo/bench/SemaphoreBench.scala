@@ -1,24 +1,14 @@
 package kyo.bench
 
-import org.openjdk.jmh.annotations._
-import cats.effect.IO
-import kyo._
-import kyo.ios._
-import zio.{ZIO, UIO}
-import java.util.concurrent.Executors
-import kyo.concurrent.fibers._
-import kyo.concurrent.channels._
-import kyo.concurrent.Access
-
-import kyo.bench.Bench
-import java.util.concurrent.atomic.AtomicInteger
+import org.openjdk.jmh.annotations.Benchmark
 
 class SemaphoreBench extends Bench.ForkOnly[Unit] {
 
   val depth = 10000
 
-  def catsBench(): IO[Unit] = {
-    import cats.effect.std.Semaphore
+  def catsBench() = {
+    import cats.effect._
+    import cats.effect.std._
 
     def loop(s: Semaphore[IO], i: Int): IO[Unit] =
       if (i >= depth)
@@ -29,8 +19,11 @@ class SemaphoreBench extends Bench.ForkOnly[Unit] {
     Semaphore[IO](1).flatMap(loop(_, 0))
   }
 
-  override def kyoBenchFiber(): Unit > (IOs with Fibers) = {
+  override def kyoBenchFiber() = {
+    import kyo._
+    import kyo.ios._
     import kyo.concurrent.meters._
+    import kyo.concurrent.fibers._
 
     def loop(s: Meter, i: Int): Unit > (IOs with Fibers) =
       if (i >= depth)
@@ -41,8 +34,8 @@ class SemaphoreBench extends Bench.ForkOnly[Unit] {
     Meters.initSemaphore(1).flatMap(loop(_, 0))
   }
 
-  def zioBench(): UIO[Unit] = {
-    import zio.Semaphore
+  def zioBench() = {
+    import zio._
 
     def loop(s: Semaphore, i: Int): ZIO[Any, Nothing, Unit] =
       if (i >= depth)

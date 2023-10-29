@@ -1,20 +1,12 @@
 package kyo.bench
 
-import cats.effect.IO
-import kyo._
-import kyo.bench.Bench
-import kyo.lists._
-import kyo.concurrent.fibers._
-import kyo.ios._
-import zio.UIO
-import zio.ZIO
-
 class SchedulingBench extends Bench.ForkOnly[Int] {
 
   val depth = 1000
   val range = List.range(0, depth)
 
   def catsBench() = {
+    import cats.effect._
     import cats.implicits._
 
     def fiber(i: Int): IO[Int] =
@@ -35,6 +27,10 @@ class SchedulingBench extends Bench.ForkOnly[Int] {
   }
 
   override def kyoBenchFiber() = {
+    import kyo._
+    import kyo.ios._
+    import kyo.lists._
+    import kyo.concurrent.fibers._
 
     def fiber(i: Int): Int > IOs =
       IOs.unit.flatMap { _ =>
@@ -56,6 +52,7 @@ class SchedulingBench extends Bench.ForkOnly[Int] {
   }
 
   def zioBench() = {
+    import zio._
     def fiber(i: Int): UIO[Int] =
       ZIO.yieldNow.flatMap { _ =>
         ZIO.succeed(i).flatMap { j =>

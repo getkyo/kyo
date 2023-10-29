@@ -1,24 +1,12 @@
 package kyo.bench
 
-import org.openjdk.jmh.annotations._
-import cats.effect.IO
-import kyo._
-import kyo.ios._
-import zio.{ZIO, UIO}
-import java.util.concurrent.Executors
-import kyo.concurrent.fibers._
-import kyo.concurrent.channels._
-import kyo.concurrent.Access
-
-import kyo.bench.Bench
-import java.util.concurrent.atomic.AtomicInteger
-
 class EnqueueDequeueBench extends Bench.ForkOnly[Unit] {
 
   val depth = 10000
 
-  def catsBench(): IO[Unit] = {
-    import cats.effect.std.Queue
+  def catsBench() = {
+    import cats.effect._
+    import cats.effect.std._
 
     def loop(q: Queue[IO, Unit], i: Int): IO[Unit] =
       if (i >= depth)
@@ -29,7 +17,12 @@ class EnqueueDequeueBench extends Bench.ForkOnly[Unit] {
     Queue.bounded[IO, Unit](1).flatMap(loop(_, 0))
   }
 
-  override def kyoBenchFiber(): Unit > (IOs with Fibers) = {
+  override def kyoBenchFiber() = {
+    import kyo._
+    import kyo.ios._
+    import kyo.concurrent.fibers._
+    import kyo.concurrent.channels._
+    import kyo.concurrent.Access
 
     def loop(c: Channel[Unit], i: Int): Unit > (IOs with Fibers) =
       if (i >= depth)
@@ -40,8 +33,8 @@ class EnqueueDequeueBench extends Bench.ForkOnly[Unit] {
     Channels.init[Unit](1, Access.Spsc).flatMap(loop(_, 0))
   }
 
-  def zioBench(): UIO[Unit] = {
-    import zio.Queue
+  def zioBench() = {
+    import zio._
 
     def loop(q: Queue[Unit], i: Int): ZIO[Any, Nothing, Unit] =
       if (i >= depth)

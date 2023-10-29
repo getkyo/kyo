@@ -1,21 +1,10 @@
 package kyo.bench
 
-import org.openjdk.jmh.annotations._
-import cats.effect.IO
-import kyo._
-import kyo.ios._
-import zio.{ZIO, UIO}
-import java.util.concurrent.Executors
-import kyo.concurrent.fibers._
-import kyo.concurrent.channels._
-import kyo.concurrent.Access
-
-import kyo.bench.Bench
-import java.util.concurrent.atomic.AtomicInteger
-
 class SuspensionBench extends Bench.SyncAndFork[Unit] {
 
-  def catsBench(): IO[Unit] = {
+  def catsBench() = {
+    import cats.effect._
+
     IO(())
       .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
       .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
@@ -25,6 +14,9 @@ class SuspensionBench extends Bench.SyncAndFork[Unit] {
   }
 
   def kyoBench() = {
+    import kyo._
+    import kyo.ios._
+
     IOs(())
       .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
       .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
@@ -33,7 +25,8 @@ class SuspensionBench extends Bench.SyncAndFork[Unit] {
       .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
   }
 
-  def zioBench(): UIO[Unit] = {
+  def zioBench() = {
+    import zio._
     ZIO.succeed(())
       .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
       .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())

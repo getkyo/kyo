@@ -1,20 +1,14 @@
 package kyo.bench
 
 import org.openjdk.jmh.annotations._
-import cats.effect.IO
-import kyo._
-import kyo.ios._
-import zio.{ZIO, UIO}
-import java.util.concurrent.Executors
-
-import kyo.bench.Bench
-import java.util.concurrent.CompletableFuture
 
 class BroadFlatMapBench extends Bench.SyncAndFork[BigInt] {
 
   val depth = 15
 
-  def catsBench(): IO[BigInt] = {
+  def catsBench() = {
+    import cats.effect._
+
     def catsFib(n: Int): IO[BigInt] =
       if (n <= 1) IO.pure(BigInt(n))
       else
@@ -23,7 +17,9 @@ class BroadFlatMapBench extends Bench.SyncAndFork[BigInt] {
     catsFib(depth)
   }
 
-  def kyoBench(): BigInt > IOs = {
+  def kyoBench() = {
+    import kyo._
+    import kyo.ios._
     def kyoFib(n: Int): BigInt > IOs =
       if (n <= 1) IOs.value(BigInt(n))
       else kyoFib(n - 1).flatMap(a => kyoFib(n - 2).flatMap(b => IOs.value(a + b)))
@@ -31,7 +27,8 @@ class BroadFlatMapBench extends Bench.SyncAndFork[BigInt] {
     kyoFib(depth)
   }
 
-  def zioBench(): UIO[BigInt] = {
+  def zioBench() = {
+    import zio._
     def zioFib(n: Int): UIO[BigInt] =
       if (n <= 1)
         ZIO.succeed(BigInt(n))

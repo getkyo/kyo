@@ -2,9 +2,6 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations._
 
-import kyo.bench.Bench
-import kyo.concurrent.fibers._
-
 class RendezvousBench extends Bench.ForkOnly[Int] {
 
   val depth = 10000
@@ -65,11 +62,11 @@ class RendezvousBench extends Bench.ForkOnly[Int] {
   }
 
   override def kyoBenchFiber() = {
-
     import kyo._
     import kyo._
     import kyo.ios._
     import kyo.concurrent.atomics._
+    import kyo.concurrent.fibers._
 
     def produce(waiting: AtomicRef[Any], n: Int = 0): Unit > (Fibers with IOs) =
       if (n <= depth) {

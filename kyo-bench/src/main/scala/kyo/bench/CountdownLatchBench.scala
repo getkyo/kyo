@@ -1,34 +1,12 @@
 package kyo.bench
 
-import org.openjdk.jmh.annotations._
-import scala.util._
-import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.ArrayDeque
-import scala.concurrent.duration.Duration
-import scala.concurrent.ExecutionContext.Implicits.global
-import java.util.concurrent.Executors
-import kyo.concurrent.scheduler.Scheduler
-import org.openjdk.jmh.infra.Blackhole
-import kyo._
-import kyo.concurrent.fibers._
-import kyo.ios.IOs
-import java.util.concurrent.locks.LockSupport
-import cats.effect.kernel.Deferred
-import cats.effect.IO
-
-import kyo.bench.Bench
-
-import kyo.concurrent.fibers
-import kyo.concurrent.scheduler.Scheduler
-import kyo.concurrent.fibers
-
 class CountdownLatchBench extends Bench.ForkOnly[Int] {
 
   val depth = 10000
 
   def catsBench() = {
-    import cats.effect.std.CountDownLatch
+    import cats.effect._
+    import cats.effect.std._
 
     def iterate(l: CountDownLatch[IO], n: Int): IO[Any] =
       if (n <= 0) IO.unit
@@ -43,9 +21,9 @@ class CountdownLatchBench extends Bench.ForkOnly[Int] {
 
   override def kyoBenchFiber() = {
     import kyo._
+    import kyo.ios._
     import kyo.concurrent.fibers._
     import kyo.concurrent.latches._
-    import kyo.ios._
 
     def iterate(l: Latch, n: Int): Unit > IOs =
       if (n <= 0) IOs.unit

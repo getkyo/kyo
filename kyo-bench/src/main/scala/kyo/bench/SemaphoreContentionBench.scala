@@ -1,10 +1,6 @@
 package kyo.bench
 
-import kyo.bench.Bench
 import org.openjdk.jmh.annotations._
-
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicInteger
 
 class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
 
