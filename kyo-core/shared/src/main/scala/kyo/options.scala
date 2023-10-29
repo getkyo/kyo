@@ -4,9 +4,11 @@ import kyo.aborts._
 
 object options {
 
-  type Options = Aborts[Option[Nothing]]
+  type Options >: Options.Effects <: Options.Effects
 
   object Options {
+
+    type Effects = Aborts[Option[Nothing]]
 
     private val aborts = Aborts[Option[Nothing]]
     private val none   = aborts.fail(None)

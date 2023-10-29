@@ -20,9 +20,12 @@ object clocks {
         val now = IOs(Instant.now())
       }
   }
-  type Clocks = Envs[Clock] with IOs
+
+  type Clocks >: Clocks.Effects <: Clocks.Effects
 
   object Clocks {
+
+    type Effects = Envs[Clock] with IOs
 
     private val envs = Envs[Clock]
 

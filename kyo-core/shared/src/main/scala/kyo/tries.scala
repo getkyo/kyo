@@ -6,9 +6,11 @@ import scala.util._
 
 object tries {
 
-  type Tries = Aborts[Throwable]
+  type Tries >: Tries.Effects <: Tries.Effects
 
   object Tries {
+
+    type Effects = Aborts[Throwable]
 
     private val aborts = Aborts[Throwable]
 

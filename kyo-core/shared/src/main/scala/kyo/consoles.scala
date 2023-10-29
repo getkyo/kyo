@@ -26,9 +26,11 @@ object consoles {
       }
   }
 
-  type Consoles = Envs[Console] with IOs
+  type Consoles >: Consoles.Effects <: Consoles.Effects
 
   object Consoles {
+
+    type Effects = Envs[Console] with IOs
 
     private val envs = Envs[Console]
 

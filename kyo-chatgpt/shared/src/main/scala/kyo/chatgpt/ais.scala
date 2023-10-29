@@ -35,11 +35,13 @@ object ais {
 
   type State = Map[AIRef, Context]
 
-  type AIs = Sums[State] with Requests with Tries with IOs with Aspects
+  type AIs >: AIs.Effects <: AIs.Effects
 
   final case class desc(value: String) extends StaticAnnotation
 
   object AIs {
+
+    type Effects = Sums[State] with Requests with Tries with IOs with Aspects
 
     private[kyo] case class Value[T](value: T)
 

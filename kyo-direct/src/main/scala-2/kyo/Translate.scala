@@ -101,7 +101,7 @@ private[kyo] object Translate {
               val matchValue = TermName(c.freshName("matchValue"))
 
               def loop(cases: List[CaseDef]): List[Tree] =
-                cases match {
+                (cases: @unchecked) match {
                   case Nil =>
                     cq"_ => throw new scala.MatchError($matchValue)" :: Nil
                   case t @ cq"$pattern => $body" :: tail =>

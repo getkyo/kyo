@@ -41,18 +41,15 @@ object App {
     runFiber(Duration.Inf)(v)
 
   def runFiber[T](timeout: Duration)(v: T > Effects): Fiber[Try[T]] > IOs = {
-    def v1: T > (IOs with Fibers with Resources with Clocks with Consoles with Timers with Aspects with Tries) =
-      Randoms.run(v)
-    def v2: T > (IOs with Fibers with Resources with Clocks with Timers with Aspects with Tries) =
-      Consoles.run(v1)
-    def v3: T > (IOs with Fibers with Resources with Timers with Aspects with Tries) =
-      Clocks.run(v2)
-    def v4: T > (IOs with Fibers with Timers with Aspects with Tries) = Resources.run(v3)
-    def v5: T > (IOs with Fibers with Timers with Tries)              = Aspects.run(v4)
-    def v6: T > (IOs with Fibers with Tries)                          = Timers.run(v5)
-    def v7: Try[T] > (IOs with Fibers)                                = Tries.run(v6)
-    def v8: Try[T] > (IOs with Fibers with Timers)                    = Fibers.timeout(timeout)(v7)
-    def v9: Try[T] > (IOs with Fibers)                                = Timers.run(v8)
+    def v1 = Randoms.run(v)
+    def v2 = Consoles.run(v1)
+    def v3 = Clocks.run(v2)
+    def v4 = Resources.run(v3)
+    def v5 = Aspects.run(v4)
+    def v6 = Timers.run(v5)
+    def v7 = Tries.run(v6)
+    def v8 = Fibers.timeout(timeout)(v7)
+    def v9 = Timers.run(v8)
     IOs(Fibers.run(IOs.runLazy(v9)))
   }
 }

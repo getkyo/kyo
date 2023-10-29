@@ -30,9 +30,11 @@ object requests {
     implicit val default: Backend = PlatformBackend.default
   }
 
-  type Requests = Envs[Backend] with Fibers with IOs with Tries
+  type Requests >: Requests.Effects <: Requests.Effects
 
   object Requests {
+
+    type Effects = Envs[Backend] with Fibers with IOs with Tries
 
     private val envs = Envs[Backend]
 

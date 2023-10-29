@@ -20,9 +20,11 @@ object routes {
 
   type Route[+T] = ServerEndpoint[Any, KyoSttpMonad.M]
 
-  type Routes = Sums[List[Route[Any]]] with Fibers with IOs
+  type Routes >: Routes.Effects <: Routes.Effects
 
   object Routes {
+
+    type Effects = Sums[List[Route[Any]]] with Fibers with IOs
 
     private val sums = Sums[List[Route[Any]]]
 

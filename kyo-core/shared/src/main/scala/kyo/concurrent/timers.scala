@@ -110,9 +110,11 @@ object timers {
     }
   }
 
-  type Timers = Envs[Timer] with IOs
+  type Timers >: Timers.Effects <: Timers.Effects
 
   object Timers {
+
+    type Effects = Envs[Timer] with IOs
 
     private val envs = Envs[Timer]
 

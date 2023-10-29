@@ -32,9 +32,11 @@ object randoms {
       }
   }
 
-  type Randoms = Envs[Random] with IOs
+  type Randoms >: Randoms.Effects <: Randoms.Effects
 
   object Randoms {
+
+    type Effects = Envs[Random] with IOs
 
     private val envs = Envs[Random]
 

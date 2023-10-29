@@ -13,9 +13,11 @@ import kyo.concurrent.timers.Timers
 
 object aspects {
 
-  type Aspects = Envs[Map[Aspect[_, _, _], Cut[_, _, _]]]
+  type Aspects >: Aspects.Effects <: Aspects.Effects
 
   object Aspects {
+
+    type Effects = Envs[Map[Aspect[_, _, _], Cut[_, _, _]]]
 
     def run[T, S](v: T > (Aspects with S)): T > S =
       envs.run[T, S](Map.empty)(v)
