@@ -17,6 +17,7 @@ import tries._
 import options._
 import locals._
 import scala.annotation.implicitNotFound
+import java.util.concurrent.atomic.AtomicReference
 
 object ios {
 
@@ -106,21 +107,34 @@ object ios {
       runLazyLoop(v)
     }
 
-    private[kyo] def ensure[T, S](f: => Unit > IOs)(v: T > S): T > (IOs with S) = {
-      lazy val run: Unit =
-        try IOs.run(f)
-        catch {
-          case ex if NonFatal(ex) =>
-            log.error(s"IOs.ensure function failed", ex)
-        }
-      val ensure = new AbstractFunction0[Unit] {
-        def apply() = run
+    object internal {
+
+      abstract class Ensure
+          extends AtomicReference[Any]
+          with Function0[Unit] {
+
+        protected def run: Unit > IOs
+
+        def apply(): Unit =
+          if (compareAndSet(null, ())) {
+            try IOs.run(run)
+            catch {
+              case ex if NonFatal(ex) =>
+                log.error(s"IOs.ensure function failed", ex)
+            }
+          }
+      }
+    }
+
+    /*inline*/
+    private[kyo] def ensure[T, S]( /*inline*/ f: => Unit > IOs)(v: T > S): T > (IOs with S) = {
+      val ensure = new internal.Ensure {
+        def run = f
       }
       def ensureLoop(v: T > (IOs with S), p: Preempt): T > (IOs with S) =
         v match {
           case kyo: Kyo[MX, EX, Any, T, S with IOs] @unchecked =>
             new KyoCont[MX, EX, Any, T, S with IOs](kyo) {
-              def apply() = run
               def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) = {
                 val np =
                   (s: Any) match {
@@ -128,13 +142,13 @@ object ios {
                       s.ensure(ensure)
                       s
                     case _ =>
-                      p
+                      Preempt.never
                   }
                 val v2 =
                   try kyo(v, s, l)
                   catch {
                     case ex if (NonFatal(ex)) =>
-                      run
+                      ensure()
                       throw ex
                   }
                 ensureLoop(v2, np)
@@ -142,7 +156,10 @@ object ios {
             }
           case _ =>
             p.remove(ensure)
-            IOs[Unit, Any](run).map(_ => v)
+            IOs[T, S] {
+              ensure()
+              v
+            }
         }
       ensureLoop(v, Preempt.never)
     }
