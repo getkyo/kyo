@@ -35,11 +35,11 @@ object meters {
         offer(concurrency, chan, ()).map { _ =>
           new Meter {
             val available = chan.size
-            val release   = chan.offer(()).unit
+            val release   = chan.offerUnit(())
 
             def run[T, S](v: => T > S) =
               IOs.ensure(release) {
-                chan.take.map(_ => v)
+                chan.take.andThen(v)
               }
 
             def tryRun[T, S](v: => T > S) =

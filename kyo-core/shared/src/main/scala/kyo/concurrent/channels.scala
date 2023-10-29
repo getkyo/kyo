@@ -18,6 +18,8 @@ object channels {
 
     def offer[S](v: T > S): Boolean > (IOs with S)
 
+    def offerUnit[S](v: T > S): Unit > (IOs with S)
+
     def poll: Option[T] > IOs
 
     def isEmpty: Boolean > IOs
@@ -57,7 +59,15 @@ object channels {
                   finally flush()
                 }
               }
-
+            def offerUnit[S](v: T > S) =
+              v.map { v =>
+                IOs[Unit, S] {
+                  try {
+                    u.offer(v)
+                    ()
+                  } finally flush()
+                }
+              }
             val poll =
               IOs {
                 try u.poll()
