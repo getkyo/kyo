@@ -24,12 +24,10 @@ class SemaphoreBench extends Bench.ForkOnly[Unit] {
       if (i >= depth)
         IO.unit
       else
-        s.acquire.flatMap(_ => s.release.flatMap(_ => loop(s, i + 1)))
+        s.acquire.flatMap(_ => s.release).flatMap(_ => loop(s, i + 1))
 
     Semaphore[IO](1).flatMap(loop(_, 0))
   }
-
-  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
 
   override def kyoBenchFiber(): Unit > (IOs with Fibers) = {
     import kyo.concurrent.meters._

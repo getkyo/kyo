@@ -98,6 +98,10 @@ class BenchTest extends AsyncFreeSpec with Assertions {
     test(SemaphoreBench(), ())
   }
 
+  "SemaphoreContentionBench" - {
+    test(SemaphoreContentionBench(), ())
+  }
+
   "SuspensionBench" - {
     test(SuspensionBench(), ())
   }

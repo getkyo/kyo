@@ -34,8 +34,6 @@ class SchedulingBench extends Bench.ForkOnly[Int] {
       .map(_.sum)
   }
 
-  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
-
   override def kyoBenchFiber() = {
 
     def fiber(i: Int): Int > IOs =

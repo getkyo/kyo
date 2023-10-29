@@ -39,8 +39,7 @@ sealed abstract class Bench[T] {
 
 object Bench {
 
-  abstract class ForkOnly[T] extends Bench[T] {
-
+  abstract class Fork[T] extends Bench[T] {
     @Benchmark
     def forkKyo(): T = IOs.run(Fibers.forkFiber(kyoBenchFiber()).flatMap(_.block))
 
@@ -53,7 +52,11 @@ object Bench {
     )
   }
 
-  abstract class SyncAndFork[T] extends ForkOnly[T] {
+  abstract class ForkOnly[T] extends Fork[T] {
+    def kyoBench() = ???
+  }
+
+  abstract class SyncAndFork[T] extends Fork[T] {
 
     @Benchmark
     def syncKyo(): T = IOs.run(kyoBench())

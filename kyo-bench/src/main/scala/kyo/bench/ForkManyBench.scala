@@ -34,8 +34,6 @@ class ForkManyBench extends Bench.ForkOnly[Int] {
     } yield 0
   }
 
-  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
-
   override def kyoBenchFiber() = {
     import kyo._
     import kyo.ios._

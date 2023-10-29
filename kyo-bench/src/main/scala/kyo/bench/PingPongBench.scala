@@ -47,8 +47,6 @@ class PingPongBench extends Bench.ForkOnly[Unit] {
     } yield ()
   }
 
-  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
-
   override def kyoBenchFiber(): Unit > (IOs with Fibers) = {
     import kyo.concurrent.queues._
 

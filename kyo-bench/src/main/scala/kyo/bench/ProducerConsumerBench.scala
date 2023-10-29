@@ -35,8 +35,6 @@ class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
     }
   }
 
-  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
-
   override def kyoBenchFiber(): Unit > (IOs with Fibers) = {
     import kyo.concurrent.atomics._
 

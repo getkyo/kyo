@@ -64,8 +64,6 @@ class RendezvousBench extends Bench.ForkOnly[Int] {
     } yield res
   }
 
-  def kyoBench() = Fibers.runBlocking(Fibers.fork(kyoBenchFiber()))
-
   override def kyoBenchFiber() = {
 
     import kyo._
