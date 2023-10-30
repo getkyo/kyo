@@ -63,6 +63,15 @@ object ais {
     inline def infer[T](msg: String): T > AIs =
       init.map(_.infer[T](msg))
 
+    def ask[S](prompt: String > S, msg: String > S): String > (AIs with S) =
+      init(prompt).map(_.ask(msg))
+
+    inline def gen[T](prompt: String, msg: String): T > AIs =
+      init(prompt).map(_.gen[T](msg))
+
+    inline def infer[T](prompt: String, msg: String): T > AIs =
+      init(prompt).map(_.infer[T](msg))
+
     def restore[S](ctx: Context > S): AI > (AIs with S) =
       init.map { ai =>
         ai.restore(ctx).map(_ => ai)
@@ -156,7 +165,11 @@ object ais {
     private def gen[T](msg: String)(implicit t: Schema[T]): T > AIs = {
       val decoder = JsonCodec.jsonDecoder(t)
       val resultPlugin =
-        Plugins.init[T, T]("resultPlugin", "call this function with the result")((ai, v) => v)
+        Plugins.init[T, T](
+            "resultPlugin",
+            "Call this function with the result. Note how the schema " +
+              "is wrapped in an object with a `value` field."
+        )((ai, v) => v)
       def eval(): T > AIs =
         fetch(Set(resultPlugin), Some(resultPlugin)).map { r =>
           r.call.map { call =>
