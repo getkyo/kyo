@@ -21,7 +21,7 @@ private final class Worker(r: Runnable)
 
   def park() = {
     parkedThread = this
-    LockSupport.parkNanos(this, 100000000L)
+    LockSupport.parkNanos(this, 1000000L)
     parkedThread = null
   }
 
