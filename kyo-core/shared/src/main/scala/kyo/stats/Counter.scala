@@ -4,7 +4,7 @@ import kyo._
 import kyo.ios._
 import kyo.lists._
 
-trait Counter {
+abstract class Counter {
   def inc: Unit > IOs = add(1)
   def add(v: Long): Unit > IOs
   def add(v: Long, b: Attributes): Unit > IOs

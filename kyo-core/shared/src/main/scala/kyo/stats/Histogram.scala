@@ -4,7 +4,7 @@ import kyo._
 import kyo.ios._
 import kyo.lists._
 
-trait Histogram {
+abstract class Histogram {
 
   def observe(v: Double): Unit > IOs
 

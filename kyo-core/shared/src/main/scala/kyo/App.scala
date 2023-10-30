@@ -28,8 +28,9 @@ abstract class App {
 object App {
 
   type Effects =
-    IOs with Fibers with Resources with Clocks with Consoles with Randoms with Timers with Aspects
-      with Tries
+    IOs with Fibers with Resources with Clocks
+      with Consoles with Randoms with Timers
+      with Aspects with Tries
 
   def run[T](timeout: Duration)(v: T > Effects): T =
     IOs.run(runFiber(timeout)(v).map(_.block).map(_.get))

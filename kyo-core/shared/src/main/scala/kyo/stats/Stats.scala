@@ -3,7 +3,7 @@ package kyo.stats
 import kyo._
 import kyo.ios._
 
-trait Stats {
+abstract class Stats {
 
   def scope(name: String): Stats
 

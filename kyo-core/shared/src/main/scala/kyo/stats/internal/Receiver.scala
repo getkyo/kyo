@@ -8,7 +8,7 @@ import java.util.ServiceLoader
 import scala.jdk.CollectionConverters._
 import kyo.lists.Lists
 
-trait Receiver {
+abstract class Receiver {
 
   def counter(
       scope: List[String],

@@ -6,7 +6,7 @@ import kyo.lists._
 import kyo.locals._
 import kyo.stats._
 
-trait Span {
+abstract class Span {
 
   def end: Unit > IOs
 

@@ -4,7 +4,7 @@ import kyo._
 import kyo.ios._
 import kyo.lists._
 
-trait Gauge {
+abstract class Gauge {
   def close: Unit > IOs
 }
 
