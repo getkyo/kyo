@@ -25,8 +25,12 @@ object contexts {
   )
 
   case class Context(
+      seed: Option[String],
       messages: List[Message]
   ) {
+
+    def seed(seed: String) =
+      Context(Some(seed), messages)
 
     def add(
         role: Role,
@@ -35,15 +39,16 @@ object contexts {
         call: Option[Call]
     ): Context =
       Context(
+          seed,
           Message(role, msg, name, call) :: messages
       )
 
     def ++(that: Context): Context =
-      Context(that.messages ++ messages)
+      Context(seed, that.messages ++ messages)
   }
 
   object Contexts {
-    val init = Context(Nil)
+    val init = Context(None, Nil)
 
     def init(entries: (Role, String)*): Context = {
       def loop(ctx: Context, entries: List[(Role, String)]): Context =

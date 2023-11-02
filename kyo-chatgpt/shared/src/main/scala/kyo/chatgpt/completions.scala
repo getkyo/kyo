@@ -87,20 +87,27 @@ object completions {
           constrain: Option[Plugin[_, _]]
       ): Request = {
         val entries =
-          ctx.messages.reverse.map(msg =>
+          ctx.messages.map(msg =>
             Entry(
                 msg.role.name,
                 msg.name,
                 Some(msg.content),
                 msg.call.map(c => FunctionCall(c.arguments, c.function))
             )
-          )
+          ) ++ ctx.seed.map { seed =>
+            Entry(
+                Role.system.name,
+                None,
+                Some(seed),
+                None
+            )
+          }
         val functions =
           if (plugins.isEmpty) None
           else Some(plugins.map(p => Function(p.description, p.name, p.schema)))
         Request(
             model.name,
-            entries,
+            entries.reverse,
             constrain.map(p => Name(p.name)),
             functions
         )

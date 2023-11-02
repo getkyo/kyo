@@ -49,9 +49,9 @@ object ais {
 
     val init: AI > AIs = nextId.incrementAndGet.map(AI(_))
 
-    def init[S](prompt: String > S): AI > (AIs with S) =
+    def init[S](seed: String > S): AI > (AIs with S) =
       init.map { ai =>
-        ai.system(prompt).andThen(ai)
+        ai.seed(seed).andThen(ai)
       }
 
     def ask[S](msg: String > S): String > (AIs with S) =
@@ -63,14 +63,14 @@ object ais {
     inline def infer[T](msg: String): T > AIs =
       init.map(_.infer[T](msg))
 
-    def ask[S](prompt: String > S, msg: String > S): String > (AIs with S) =
-      init(prompt).map(_.ask(msg))
+    def ask[S](seed: String > S, msg: String > S): String > (AIs with S) =
+      init(seed).map(_.ask(msg))
 
-    inline def gen[T](prompt: String, msg: String): T > AIs =
-      init(prompt).map(_.gen[T](msg))
+    inline def gen[T](seed: String, msg: String): T > AIs =
+      init(seed).map(_.gen[T](msg))
 
-    inline def infer[T](prompt: String, msg: String): T > AIs =
-      init(prompt).map(_.infer[T](msg))
+    inline def infer[T](seed: String, msg: String): T > AIs =
+      init(seed).map(_.infer[T](msg))
 
     def restore[S](ctx: Context > S): AI > (AIs with S) =
       init.map { ai =>
@@ -95,22 +95,6 @@ object ais {
   class AI private[ais] (val id: Long) {
 
     private val ref = AIRef(this)
-
-    private def add[S](
-        role: Role,
-        content: String > S,
-        name: Option[String] > S = None,
-        call: Option[Call] > S = None
-    ): Unit > (AIs with S) =
-      name.map { name =>
-        content.map { content =>
-          call.map { call =>
-            save.map { ctx =>
-              restore(ctx.add(role, content, name, call))
-            }
-          }
-        }
-      }
 
     val save: Context > AIs = Sums[State].get.map(_.getOrElse(ref, Contexts.init))
 
@@ -139,6 +123,29 @@ object ais {
       add(Role.assistant, msg, None, call)
     def function[S](name: String, msg: String > S): Unit > (AIs with S) =
       add(Role.function, msg, Some(name))
+
+    def seed[S](msg: String > S): Unit > (AIs with S) =
+      msg.map { msg =>
+        save.map { ctx =>
+          restore(ctx.seed(msg))
+        }
+      }
+
+    private def add[S](
+        role: Role,
+        content: String > S,
+        name: Option[String] > S = None,
+        call: Option[Call] > S = None
+    ): Unit > (AIs with S) =
+      name.map { name =>
+        content.map { content =>
+          call.map { call =>
+            save.map { ctx =>
+              restore(ctx.add(role, content, name, call))
+            }
+          }
+        }
+      }
 
     import AIs._
 
