@@ -54,14 +54,7 @@ private[kyo] object Scheduler {
 
   def schedule(t: IOTask[_]): Unit = {
     val local = Worker()
-    if (local != null && local.load() <= 1 && local.enqueueLocal(t)) {
-      return
-    }
-    val w = idle.poll()
-    if (w != null && w.enqueue(t)) {
-      return
-    }
-    if (local != null && local.enqueueLocal(t)) {
+    if (local != null && (local.load() <= 1 || idle.isEmpty()) && local.enqueueLocal(t)) {
       return
     }
     schedule(t, local)
@@ -69,8 +62,8 @@ private[kyo] object Scheduler {
 
   @tailrec private[concurrent] def schedule(t: IOTask[_], submitter: Worker): Unit = {
     val w = idle.poll()
-    if (w != null && w.enqueue(t)) {
-      return
+    if (w != null && w != submitter && w.enqueue(t)) {
+        return
     }
     var w0: Worker = randomWorker(submitter)
     var w1: Worker = randomWorker(submitter)
