@@ -21,7 +21,7 @@ object configs {
     def model(model: Model): Config =
       copy(model = model)
     def temperature(temperature: Double): Config =
-      copy(temperature = temperature.min(0).max(2))
+      copy(temperature = temperature.max(0).min(2))
   }
 
   object Configs {
