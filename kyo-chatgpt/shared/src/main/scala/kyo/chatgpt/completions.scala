@@ -32,7 +32,7 @@ object completions {
     ): Result > (IOs with Requests) =
       for {
         config <- Configs.get
-        req = Request(ctx, config.model, plugins, constrain)
+        req = Request(ctx, config.model, config.temperature, plugins, constrain)
         _               <- logger.debug(req.toJsonPretty)
         response        <- fetch(config, req)
         _               <- logger.debug(response.toJsonPretty)
@@ -79,6 +79,7 @@ object completions {
     )
     case class Request(
         model: String,
+        temperature: Double,
         messages: List[Entry],
         function_call: Option[Name],
         functions: Option[Set[Function]]
@@ -88,6 +89,7 @@ object completions {
       def apply(
           ctx: Context,
           model: Model,
+          temperature: Double,
           plugins: Set[Plugin[_, _]],
           constrain: Option[Plugin[_, _]]
       ): Request = {
@@ -112,6 +114,7 @@ object completions {
           else Some(plugins.map(p => Function(p.description, p.name, p.schema)))
         Request(
             model.name,
+            temperature,
             entries.reverse,
             constrain.map(p => Name(p.name)),
             functions

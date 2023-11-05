@@ -15,11 +15,13 @@ object configs {
     val gpt35_turbo_16k = Model("gpt-3.5-turbo-16k", 16385)
   }
 
-  case class Config(apiKey: String, model: Model) {
+  case class Config(apiKey: String, model: Model, temperature: Double) {
     def apiKey(key: String): Config =
       copy(apiKey = key)
     def model(model: Model): Config =
       copy(model = model)
+    def temperature(temperature: Double): Config =
+      copy(temperature = temperature.min(0).max(2))
   }
 
   object Configs {
@@ -30,7 +32,7 @@ object configs {
         Option(System.getenv(apiKeyProp))
           .orElse(Option(System.getProperty(apiKeyProp)))
           .getOrElse("undefined")
-      Config(apiKey, Model.gpt4)
+      Config(apiKey, Model.gpt4, 0.7)
     }
 
     def get: Config > IOs =
