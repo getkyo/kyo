@@ -33,32 +33,37 @@ object completions {
       for {
         config <- Configs.get
         req = Request(ctx, config.model, plugins, constrain)
-        _ <- logger.debug(req.toJsonPretty)
-        response <- Requests(
-            _.contentType("application/json")
-              .header("Authorization", s"Bearer ${config.apiKey}")
-              .post(uri"https://api.openai.com/v1/chat/completions")
-              .body(req)
-              .readTimeout(Duration.Inf)
-              .response(asJson[Response])
-        ).map(_.body match {
-          case Left(error) =>
-            Tries.fail(error)
-          case Right(value) =>
-            value
-        })
-        _ <- logger.debug(response.toJsonPretty)
-        (content, call) <-
-          response.choices.headOption match {
-            case None =>
-              IOs.fail("no choices")
-            case Some(v) =>
-              (
-                  v.message.content.getOrElse(""),
-                  v.message.function_call.map(c => Call(c.name, c.arguments))
-              )
-          }
-      } yield Result(content, call)
+        _               <- logger.debug(req.toJsonPretty)
+        response        <- fetch(config, req)
+        _               <- logger.debug(response.toJsonPretty)
+        (content, call) <- read(response)
+      } yield new Result(content, call)
+
+    private def read(response: Response): (String, Option[Call]) > (IOs with Requests) =
+      response.choices.headOption match {
+        case None =>
+          IOs.fail("no choices")
+        case Some(v) =>
+          (
+              v.message.content.getOrElse(""),
+              v.message.function_call.map(c => Call(c.name, c.arguments))
+          )
+      }
+
+    private def fetch(config: Config, req: Request): Response > Requests =
+      Requests(
+          _.contentType("application/json")
+            .header("Authorization", s"Bearer ${config.apiKey}")
+            .post(uri"https://api.openai.com/v1/chat/completions")
+            .body(req)
+            .readTimeout(Duration.Inf)
+            .response(asJson[Response])
+      ).map(_.body match {
+        case Left(error) =>
+          Tries.fail(error)
+        case Right(value) =>
+          value
+      })
   }
 
   private object internal {

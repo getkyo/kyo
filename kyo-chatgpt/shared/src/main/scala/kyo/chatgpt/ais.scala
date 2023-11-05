@@ -6,6 +6,7 @@ import kyo.chatgpt.configs._
 import kyo.chatgpt.contexts._
 import kyo.chatgpt.completions._
 import kyo.chatgpt.plugins._
+import kyo.chatgpt.ValueSchema._
 import kyo.chatgpt.util.JsonSchema
 import kyo.concurrent.atomics.Atomics
 import kyo.concurrent.fibers._
@@ -23,7 +24,6 @@ import zio.schema.Schema
 import zio.schema.codec.JsonCodec
 
 import java.lang.ref.WeakReference
-import scala.annotation.targetName
 import scala.concurrent.duration.Duration
 import scala.util.Failure
 import scala.util.Success
@@ -43,11 +43,9 @@ object ais {
 
     type Effects = Sums[State] with Requests with Tries with IOs with Aspects
 
-    private[kyo] case class Value[T](value: T)
-
     private val nextId = IOs.run(Atomics.initLong(0))
 
-    val init: AI > AIs = nextId.incrementAndGet.map(AI(_))
+    val init: AI > AIs = nextId.incrementAndGet.map(new AI(_))
 
     def init[S](seed: String > S): AI > (AIs with S) =
       init.map { ai =>
@@ -57,19 +55,19 @@ object ais {
     def ask[S](msg: String > S): String > (AIs with S) =
       init.map(_.ask(msg))
 
-    inline def gen[T](msg: String): T > AIs =
+    def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
       init.map(_.gen[T](msg))
 
-    inline def infer[T](msg: String): T > AIs =
+    def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
       init.map(_.infer[T](msg))
 
     def ask[S](seed: String > S, msg: String > S): String > (AIs with S) =
       init(seed).map(_.ask(msg))
 
-    inline def gen[T](seed: String, msg: String): T > AIs =
+    def gen[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
       init(seed).map(_.gen[T](msg))
 
-    inline def infer[T](seed: String, msg: String): T > AIs =
+    def infer[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
       init(seed).map(_.infer[T](msg))
 
     def restore[S](ctx: Context > S): AI > (AIs with S) =
@@ -82,19 +80,21 @@ object ais {
 
     def ephemeral[T, S](f: => T > S): T > (AIs with S) =
       Sums[State].get.map { st =>
-        Tries.run(f).map(r => Sums[State].set(st).map(_ => r.get))
+        Tries.run[T, S](f).map(r => Sums[State].set(st).map(_ => r.get))
       }
 
     def run[T, S](v: T > (AIs with S)): T > (Requests with Tries with S) = {
-      val a: T > (Requests with Tries with Aspects with S) = Sums[State].run(v)
-      val b: T > (Requests with Tries with S)              = Aspects.run(a)
+      val a: T > (Requests with Tries with Aspects with S) =
+        Sums[State].run[T, Requests with Tries with Aspects with S](v)
+      val b: T > (Requests with Tries with S) =
+        Aspects.run[T, Requests with Tries with S](a)
       b
     }
   }
 
   class AI private[ais] (val id: Long) {
 
-    private val ref = AIRef(this)
+    private val ref = new AIRef(this)
 
     val save: Context > AIs = Sums[State].get.map(_.getOrElse(ref, Contexts.init))
 
@@ -105,8 +105,7 @@ object ais {
         }
       }
 
-    @targetName("cloneAI")
-    val clone: AI > AIs =
+    val initClone: AI > AIs =
       for {
         res <- AIs.init
         st  <- Sums[State].get
@@ -166,11 +165,8 @@ object ais {
       user(msg).andThen(Plugins.get.map(eval))
     }
 
-    inline def gen[T](msg: String): T > AIs =
-      gen(msg)(DeriveSchema.gen[T])
-
-    private def gen[T](msg: String)(implicit t: Schema[T]): T > AIs = {
-      val decoder = JsonCodec.jsonDecoder(t)
+    def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs = {
+      val decoder = JsonCodec.jsonDecoder(t.get)
       val resultPlugin =
         Plugins.init[T, T](
             "resultPlugin",
@@ -206,12 +202,9 @@ object ais {
     | ==========================================================================
     """.stripMargin
 
-    inline def infer[T](msg: String): T > AIs =
-      infer(msg)(DeriveSchema.gen[Value[T]])
-
-    private def infer[T](msg: String)(implicit t: Schema[Value[T]]): T > AIs = {
+    def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs = {
       val resultPlugin =
-        Plugins.init[T, T]("resultPlugin", "call this function with the result", t, t)((ai, v) => v)
+        Plugins.init[T, T]("resultPlugin", "call this function with the result")((ai, v) => v)
       def eval(plugins: Set[Plugin[_, _]], constrain: Option[Plugin[_, _]]): T > AIs =
         fetch(plugins, constrain).map { r =>
           r.call.map { call =>

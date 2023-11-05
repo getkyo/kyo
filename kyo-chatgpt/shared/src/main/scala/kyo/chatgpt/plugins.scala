@@ -3,14 +3,13 @@ package kyo.chatgpt
 import kyo._
 import kyo.chatgpt.ais._
 import kyo.chatgpt.util.JsonSchema
+import kyo.chatgpt.ValueSchema._
 import kyo.locals._
 import zio.json.JsonDecoder
 import zio.json.JsonEncoder
 import zio.schema.DeriveSchema
 import zio.schema.Schema
 import zio.schema.codec.JsonCodec
-
-import AIs.Value
 
 package object plugins {
 
@@ -42,21 +41,16 @@ package object plugins {
         Plugins.local.let(set ++ p.toSeq)(v)
       }
 
-    inline def init[T, U](name: String, description: String)(f: (AI, T) => U > AIs): Plugin[T, U] =
-      init(name, description, DeriveSchema.gen[Value[T]], DeriveSchema.gen[Value[U]])(f)
-
     def init[T, U](
         name: String,
-        description: String,
-        t: Schema[Value[T]],
-        u: Schema[Value[U]]
-    )(f: (AI, T) => U > AIs): Plugin[T, U] =
+        description: String
+    )(f: (AI, T) => U > AIs)(implicit t: ValueSchema[T], u: ValueSchema[U]): Plugin[T, U] =
       Plugin(
           name,
           description,
-          JsonSchema(t),
-          JsonCodec.jsonDecoder(t),
-          JsonCodec.jsonEncoder(u),
+          JsonSchema(t.get),
+          JsonCodec.jsonDecoder(t.get),
+          JsonCodec.jsonEncoder(u.get),
           f
       )
   }

@@ -203,6 +203,25 @@ lazy val `kyo-tapir` =
         libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.4"
     )
 
+lazy val `kyo-chatgpt-macros` =
+  crossProject(JSPlatform, JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Full)
+    .in(file("kyo-chatgpt-macros"))
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .settings(
+        `kyo-settings`,
+        scalaVersion                     := scala3Version,
+        crossScalaVersions               := List(scala2Version, scala3Version),
+        libraryDependencies += "dev.zio" %% "zio-schema"            % "0.4.15",
+        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.15",
+          libraryDependencies ++=(CrossVersion.partialVersion(scalaVersion.value) match {
+            case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
+            case _            => Seq.empty
+          })
+    )
+    .jsSettings(`js-settings`)
+
 lazy val `kyo-chatgpt` =
   crossProject(JSPlatform, JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
@@ -211,6 +230,7 @@ lazy val `kyo-chatgpt` =
     .dependsOn(`kyo-sttp`)
     .dependsOn(`kyo-direct`)
     .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .dependsOn(`kyo-chatgpt-macros`)
     .jvmSettings(
         libraryDependencies += "org.apache.lucene"    % "lucene-core"        % "9.8.0",
         libraryDependencies += "org.apache.lucene"    % "lucene-queryparser" % "9.8.0",
@@ -221,12 +241,11 @@ lazy val `kyo-chatgpt` =
     )
     .settings(
         `kyo-settings`,
-        `without-cross-scala`,
+        `with-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.0",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.15",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.15",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.15",
-        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.15"
+        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.15"
     )
     .jsSettings(`js-settings`)
 
