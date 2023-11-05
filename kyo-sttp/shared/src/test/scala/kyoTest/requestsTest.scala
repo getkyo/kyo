@@ -23,11 +23,11 @@ class requestsTest extends KyoTest {
     "mocked" in run {
       val backend = new Backend {
         def send[T](r: Request[T, Any]) =
-          Response.ok(Left("mocked")).asInstanceOf[Response[T]]
+          Response.ok(Right("mocked")).asInstanceOf[Response[T]]
       }
       Requests.run(backend) {
         for {
-          r <- Requests(_.get(uri"https://httpbin.org/get"))
+          r <- Requests[String](_.get(uri"https://httpbin.org/get"))
         } yield {
           assert(r == "mocked")
         }
