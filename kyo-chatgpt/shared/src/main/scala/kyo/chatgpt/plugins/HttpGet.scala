@@ -21,11 +21,6 @@ object HttpGet {
     Requests(
         _.contentType("text/html; charset=utf-8")
           .get(uri"$url")
-    ).map(_.body).map {
-      case Left(error) =>
-        AIs.fail("BraveSearch plugin failed: " + error)
-      case Right(value) =>
-        value
-    }
+    )
   }
 }

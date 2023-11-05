@@ -20,19 +20,14 @@ object embeddings {
 
     def apply(text: String, model: String = "text-embedding-ada-002"): Embedding > AIs =
       Configs.get.map { config =>
-        Requests(
+        Requests[Response](
             _.contentType("application/json")
               .header("Authorization", s"Bearer ${config.apiKey}")
               .post(uri"https://api.openai.com/v1/embeddings")
               .body(Request(text, model))
               .response(asJson[Response])
-        ).map { r =>
-          r.body match {
-            case Left(error) =>
-              IOs.fail(error)
-            case Right(value) =>
-              Embedding(value.usage.prompt_tokens, value.data.head.embedding)
-          }
+        ).map { value =>
+          Embedding(value.usage.prompt_tokens, value.data.head.embedding)
         }
       }
 

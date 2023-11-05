@@ -14,13 +14,9 @@ object ValueSchema {
 
   def genMacro[T](c: blackbox.Context)(implicit t: c.WeakTypeTag[T]): c.Tree = {
     import c.universe._
-    val res =
-      q"""
+    q"""
       import kyo.chatgpt.Value
       kyo.chatgpt.ValueSchema[$t](zio.schema.DeriveSchema.gen)
-      """
-    c.info(c.enclosingPosition, res.toString, true)
-    res
+    """
   }
-
 }

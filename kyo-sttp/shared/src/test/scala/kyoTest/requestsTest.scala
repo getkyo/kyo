@@ -29,7 +29,7 @@ class requestsTest extends KyoTest {
         for {
           r <- Requests(_.get(uri"https://httpbin.org/get"))
         } yield {
-          assert(r.body == Left("mocked"))
+          assert(r == "mocked")
         }
       }
     }

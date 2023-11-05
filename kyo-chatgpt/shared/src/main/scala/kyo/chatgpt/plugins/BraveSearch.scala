@@ -22,17 +22,12 @@ object BraveSearch {
       "performs a web search using brave.com's API given a search query"
   ) { (ai, query) =>
     ApiKey.get.map { key =>
-      Requests(
+      Requests[SearchResponse](
           _.contentType("application/json")
             .header("X-Subscription-Token", key)
             .get(uri"https://api.search.brave.com/res/v1/web/search?q=$query")
             .response(asJson[SearchResponse])
-      ).map(_.body).map {
-        case Left(error) =>
-          AIs.fail("BraveSearch plugin failed: " + error)
-        case Right(value) =>
-          value
-      }
+      )
     }
   }
 

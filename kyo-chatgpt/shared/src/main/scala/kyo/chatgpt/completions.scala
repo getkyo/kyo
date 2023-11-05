@@ -51,19 +51,14 @@ object completions {
       }
 
     private def fetch(config: Config, req: Request): Response > Requests =
-      Requests(
+      Requests[Response](
           _.contentType("application/json")
             .header("Authorization", s"Bearer ${config.apiKey}")
             .post(uri"https://api.openai.com/v1/chat/completions")
             .body(req)
             .readTimeout(Duration.Inf)
             .response(asJson[Response])
-      ).map(_.body match {
-        case Left(error) =>
-          Tries.fail(error)
-        case Right(value) =>
-          value
-      })
+      )
   }
 
   private object internal {
