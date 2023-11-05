@@ -1,6 +1,5 @@
 package kyo.server.internal
 
-import com.typesafe.netty.http.StreamedHttpRequest
 import io.netty.buffer.ByteBufUtil
 import io.netty.handler.codec.http.FullHttpRequest
 import io.netty.handler.codec.http.HttpContent

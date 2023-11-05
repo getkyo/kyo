@@ -89,6 +89,7 @@ lazy val kyo =
         `kyo-stats-otel`,
         `kyo-sttp`,
         `kyo-tapir`,
+        `kyo-chatgpt-macros`,
         `kyo-chatgpt`,
         `kyo-bench`
     )

@@ -9,11 +9,13 @@ import kyo.routes._
 import kyo.server.internal.KyoUtil._
 import kyo.tries._
 import sttp.tapir.server.ServerEndpoint
-import sttp.tapir.server.netty.NettyConfig
+import sttp.tapir.server.model._
+import sttp.tapir.server.netty._
 import sttp.tapir.server.netty.Route
 import sttp.tapir.server.netty.internal.NettyBootstrap
 import sttp.tapir.server.netty.internal.NettyServerHandler
 import sttp.tapir.server.netty.internal.RunAsync
+import scala.concurrent.Future
 
 import java.net.InetSocketAddress
 import java.net.SocketAddress
@@ -80,14 +82,28 @@ case class NettyKyoServer(
       : (SA, () => Unit > (Fibers with IOs)) > (Fibers with IOs) = {
     val eventLoopGroup               = config.eventLoopConfig.initEventLoopGroup()
     val route: Route[KyoSttpMonad.M] = Route.combine(routes)
-
+    val handler: (() => KyoSttpMonad.M[ServerResponse[NettyResponse]]) => (
+        Future[ServerResponse[NettyResponse]],
+        () => Future[Unit]
+    ) =
+      f => {
+        val fiber: Fiber[ServerResponse[NettyResponse]] =
+          IOs.run(Fibers.run(IOs.runLazy(Fibers.forkFiber[ServerResponse[NettyResponse]](f())))
+            .map(_.transform(identity(_))))
+        (
+            IOs.run(fiber.toFuture),
+            () => {
+              IOs.run(fiber.interrupt)
+              Future.unit
+            }
+        )
+      }
     val channelFuture =
       NettyBootstrap(
           config,
           new NettyServerHandler[KyoSttpMonad.M](
               route,
-              (f: () => Unit > (Fibers with IOs)) =>
-                NettyKyoServer.runAsync(f()),
+              handler,
               config.maxContentLength
           ),
           eventLoopGroup,
