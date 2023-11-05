@@ -199,8 +199,8 @@ lazy val `kyo-tapir` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.8.3",
-        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.3"
+        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.8.4",
+        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.4"
     )
 
 lazy val `kyo-chatgpt-macros` =
