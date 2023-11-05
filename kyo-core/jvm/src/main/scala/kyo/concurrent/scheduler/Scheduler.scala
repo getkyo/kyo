@@ -54,7 +54,7 @@ private[kyo] object Scheduler {
 
   def schedule(t: IOTask[_]): Unit = {
     val local = Worker()
-    if (local != null && (local.load() <= 1 || idle.isEmpty()) && local.enqueueLocal(t)) {
+    if (local != null && local.enqueueLocal(t)) {
       return
     }
     schedule(t, local)
