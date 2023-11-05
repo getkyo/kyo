@@ -21,7 +21,9 @@ import cats.effect.unsafe.implicits.global
         // "-Dgraal.Dump=", //, "-Dgraal.MethodFilter=kyo2.*",
         // "-XX:+PrintCompilation", "-XX:+PrintInlining",
         // "-XX:+TraceTypeProfile",
-        "-Dcats.effect.tracing.mode=DISABLED"
+        "-Dcats.effect.tracing.mode=DISABLED",
+        "-XX:+UnlockExperimentalVMOptions",
+        "-XX:-DoJVMTIVirtualThreadTransitions"
     )
     // jvmArgsPrepend = Array(
     //     "--enable-preview",

@@ -54,8 +54,8 @@ class BenchTest extends AsyncFreeSpec with Assertions {
     test(BroadFlatMapBench(), BigInt(610))
   }
 
-  "ChainedForkBench" - {
-    test(ChainedForkBench(), 0)
+  "ForkChainedBench" - {
+    test(ForkChainedBench(), 0)
   }
 
   "CollectAllBench" - {
@@ -114,10 +114,9 @@ class BenchTest extends AsyncFreeSpec with Assertions {
     val b        = RendezvousBench()
     val expected = b.depth * (b.depth + 1) / 2
     test(b, expected)
-    // "ox" - {
-    //   "fork" in {
-    //     assert(b.forkOx() == expected)
-    //   }
-    // }
+  }
+
+  "ForkSpawnBench" - {
+    test(ForkSpawnBench(), ())
   }
 }

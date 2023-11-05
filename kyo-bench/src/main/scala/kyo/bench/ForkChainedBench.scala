@@ -2,7 +2,7 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations._
 
-class ChainedForkBench extends Bench.ForkOnly[Int] {
+class ForkChainedBench extends Bench.ForkOnly[Int] {
 
   val depth = 10000
 
