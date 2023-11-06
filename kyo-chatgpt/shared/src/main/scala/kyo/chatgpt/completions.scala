@@ -7,8 +7,8 @@ import kyo.requests._
 import kyo.chatgpt.util.JsonSchema
 import kyo.chatgpt.contexts._
 import kyo.chatgpt.configs._
-import kyo.chatgpt.plugins._
 import zio.json._
+import kyo.chatgpt.tools._
 import scala.concurrent.duration.Duration
 import kyo.tries.Tries
 import kyo.ios._
@@ -27,12 +27,12 @@ object completions {
 
     def apply(
         ctx: Context,
-        plugins: Set[Plugin[_, _]] = Set.empty,
-        constrain: Option[Plugin[_, _]] = None
+        tools: Set[Tool[_, _]] = Set.empty,
+        constrain: Option[Tool[_, _]] = None
     ): Result > (IOs with Requests) =
       for {
         config <- Configs.get
-        req = Request(ctx, config.model, config.temperature, plugins, constrain)
+        req = Request(ctx, config.model, config.temperature, tools, constrain)
         _               <- logger.debug(req.toJsonPretty)
         response        <- fetch(config, req)
         _               <- logger.debug(response.toJsonPretty)
@@ -85,8 +85,8 @@ object completions {
           ctx: Context,
           model: Model,
           temperature: Double,
-          plugins: Set[Plugin[_, _]],
-          constrain: Option[Plugin[_, _]]
+          tools: Set[Tool[_, _]],
+          constrain: Option[Tool[_, _]]
       ): Request = {
         val entries =
           ctx.messages.map(msg =>
@@ -105,8 +105,8 @@ object completions {
             )
           }
         val functions =
-          if (plugins.isEmpty) None
-          else Some(plugins.map(p => Function(p.description, p.name, p.schema)))
+          if (tools.isEmpty) None
+          else Some(tools.map(p => Function(p.description, p.name, p.schema)))
         Request(
             model.name,
             temperature,

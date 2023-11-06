@@ -1,4 +1,4 @@
-package kyo.chatgpt.plugins
+package kyo.chatgpt.tools
 
 import kyo._
 import kyo.chatgpt.ais._
@@ -12,12 +12,13 @@ import zio.json._
 
 import scala.util.Failure
 import scala.util.Success
+import kyo.chatgpt.tools.Tools
 
 object BraveSearch {
 
   import model._
 
-  val plugin = Plugins.init[String, SearchResponse](
+  val tool = Tools.init[String, SearchResponse](
       "brave_search",
       "performs a web search using brave.com's API given a search query"
   ) { (ai, query) =>

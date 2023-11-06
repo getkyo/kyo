@@ -63,7 +63,7 @@ private[kyo] object Scheduler {
   @tailrec private[concurrent] def schedule(t: IOTask[_], submitter: Worker): Unit = {
     val w = idle.poll()
     if (w != null && w != submitter && w.enqueue(t)) {
-        return
+      return
     }
     var w0: Worker = randomWorker(submitter)
     var w1: Worker = randomWorker(submitter)

@@ -11,9 +11,9 @@ import zio.schema.DeriveSchema
 import zio.schema.Schema
 import zio.schema.codec.JsonCodec
 
-package object plugins {
+package object tools {
 
-  case class Plugin[T, U](
+  case class Tool[T, U](
       name: String,
       description: String,
       schema: JsonSchema,
@@ -24,28 +24,28 @@ package object plugins {
     def apply(ai: AI, v: String): String > AIs =
       decoder.decodeJson(v) match {
         case Left(error) =>
-          AIs.fail("Fail to decode plugin input: " + error)
+          AIs.fail("Fail to decode tool input: " + error)
         case Right(value) =>
           call(ai, value.value).map(v => encoder.encodeJson(Value(v)).toString())
       }
   }
 
-  object Plugins {
+  object Tools {
 
-    private[plugins] val local = Locals.init(Set.empty[Plugin[_, _]])
+    private[tools] val local = Locals.init(Set.empty[Tool[_, _]])
 
-    val get: Set[Plugin[_, _]] > AIs = local.get
+    val get: Set[Tool[_, _]] > AIs = local.get
 
-    def enable[T, S](p: Plugin[_, _]*)(v: => T > S) =
-      Plugins.local.get.map { set =>
-        Plugins.local.let(set ++ p.toSeq)(v)
+    def enable[T, S](p: Tool[_, _]*)(v: => T > S) =
+      Tools.local.get.map { set =>
+        Tools.local.let(set ++ p.toSeq)(v)
       }
 
     def init[T, U](
         name: String,
         description: String
-    )(f: (AI, T) => U > AIs)(implicit t: ValueSchema[T], u: ValueSchema[U]): Plugin[T, U] =
-      Plugin(
+    )(f: (AI, T) => U > AIs)(implicit t: ValueSchema[T], u: ValueSchema[U]): Tool[T, U] =
+      Tool(
           name,
           description,
           JsonSchema(t.get),

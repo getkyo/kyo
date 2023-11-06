@@ -5,7 +5,7 @@ import kyo.aspects._
 import kyo.chatgpt.configs._
 import kyo.chatgpt.contexts._
 import kyo.chatgpt.completions._
-import kyo.chatgpt.plugins._
+import kyo.chatgpt.tools._
 import kyo.chatgpt.ValueSchema._
 import kyo.chatgpt.util.JsonSchema
 import kyo.concurrent.atomics.Atomics
@@ -149,41 +149,41 @@ object ais {
     import AIs._
 
     def ask[S](msg: String > S): String > (AIs with S) = {
-      def eval(plugins: Set[Plugin[_, _]]): String > AIs =
-        fetch(plugins).map { r =>
+      def eval(tools: Set[Tool[_, _]]): String > AIs =
+        fetch(tools).map { r =>
           r.call.map { call =>
-            plugins.find(_.name == call.function) match {
+            tools.find(_.name == call.function) match {
               case None =>
                 function(call.function, "Invalid function call: " + call)
-                  .andThen(eval(plugins))
-              case Some(plugin) =>
-                function(call.function, plugin(this, call.arguments))
-                  .andThen(eval(plugins))
+                  .andThen(eval(tools))
+              case Some(tool) =>
+                function(call.function, tool(this, call.arguments))
+                  .andThen(eval(tools))
             }
           }.getOrElse(r.content)
         }
-      user(msg).andThen(Plugins.get.map(eval))
+      user(msg).andThen(Tools.get.map(eval))
     }
 
     def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs = {
       val decoder = JsonCodec.jsonDecoder(t.get)
-      val resultPlugin =
-        Plugins.init[T, T](
-            "resultPlugin",
+      val resultTool =
+        Tools.init[T, T](
+            "resultTool",
             "Call this function with the result. Note how the schema " +
               "is wrapped in an object with a `value` field."
         )((ai, v) => v)
       def eval(): T > AIs =
-        fetch(Set(resultPlugin), Some(resultPlugin)).map { r =>
+        fetch(Set(resultTool), Some(resultTool)).map { r =>
           r.call.map { call =>
-            if (call.function != resultPlugin.name) {
+            if (call.function != resultTool.name) {
               function(call.function, "Invalid function call: " + call)
                 .andThen(eval())
             } else {
-              resultPlugin.decoder.decodeJson(call.arguments) match {
+              resultTool.decoder.decodeJson(call.arguments) match {
                 case Left(error) =>
                   function(
-                      resultPlugin.name,
+                      resultTool.name,
                       "Failed to read the result: " + error
                   ).andThen(eval())
                 case Right(value) =>
@@ -197,57 +197,57 @@ object ais {
 
     private val inferPrompt = """
     | ==============================IMPORTANT===================================
-    | == Note the 'resultPlugin' function I provided. Feel free to call other ==
-    | == functions but please invoke 'resultPlugin' as soon as you're done.   ==
+    | == Note the 'resultTool' function I provided. Feel free to call other ==
+    | == functions but please invoke 'resultTool' as soon as you're done.   ==
     | ==========================================================================
     """.stripMargin
 
     def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs = {
-      val resultPlugin =
-        Plugins.init[T, T]("resultPlugin", "call this function with the result")((ai, v) => v)
-      def eval(plugins: Set[Plugin[_, _]], constrain: Option[Plugin[_, _]]): T > AIs =
-        fetch(plugins, constrain).map { r =>
+      val resultTool =
+        Tools.init[T, T]("resultTool", "call this function with the result")((ai, v) => v)
+      def eval(tools: Set[Tool[_, _]], constrain: Option[Tool[_, _]]): T > AIs =
+        fetch(tools, constrain).map { r =>
           r.call.map { call =>
-            plugins.find(_.name == call.function) match {
+            tools.find(_.name == call.function) match {
               case None =>
                 function(call.function, "Invalid function call: " + call)
-                  .andThen(eval(plugins, constrain))
-              case Some(`resultPlugin`) =>
-                resultPlugin.decoder.decodeJson(call.arguments) match {
+                  .andThen(eval(tools, constrain))
+              case Some(`resultTool`) =>
+                resultTool.decoder.decodeJson(call.arguments) match {
                   case Left(error) =>
                     function(
-                        resultPlugin.name,
+                        resultTool.name,
                         "Failed to read the result: " + error
-                    ).andThen(eval(plugins, constrain))
+                    ).andThen(eval(tools, constrain))
                   case Right(value) =>
                     value.value
                 }
-              case Some(plugin) =>
-                Tries.run[String, AIs](plugin(this, call.arguments)).map {
+              case Some(tool) =>
+                Tries.run[String, AIs](tool(this, call.arguments)).map {
                   case Success(result) =>
                     function(call.function, result)
-                      .andThen(eval(plugins, constrain))
+                      .andThen(eval(tools, constrain))
                   case Failure(ex) =>
                     function(call.function, "Failure: " + ex)
-                      .andThen(eval(plugins, constrain))
+                      .andThen(eval(tools, constrain))
                 }
             }
-          }.getOrElse(eval(plugins, Some(resultPlugin)))
+          }.getOrElse(eval(tools, Some(resultTool)))
         }
       user(msg)
-        .andThen(function(resultPlugin.name, inferPrompt))
-        .andThen(Plugins.get.map(p =>
-          eval(p + resultPlugin, None)
+        .andThen(function(resultTool.name, inferPrompt))
+        .andThen(Tools.get.map(p =>
+          eval(p + resultTool, None)
         ))
     }
 
     private def fetch(
-        plugins: Set[Plugin[_, _]],
-        constrain: Option[Plugin[_, _]] = None
+        tools: Set[Tool[_, _]],
+        constrain: Option[Tool[_, _]] = None
     ): Completions.Result > AIs =
       for {
         ctx <- save
-        r   <- Completions(ctx, plugins, constrain)
+        r   <- Completions(ctx, tools, constrain)
         _   <- assistant(r.content, r.call)
       } yield r
   }
