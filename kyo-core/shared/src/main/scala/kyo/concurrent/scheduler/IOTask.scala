@@ -53,11 +53,11 @@ private[kyo] object IOTask {
 
   object TaskOrdering extends Ordering[IOTask[_]] {
     override def lt(x: IOTask[_], y: IOTask[_]): Boolean = {
-      val r = x.runtime
-      r == 0 || r < y.runtime
+      val r = x.runtime()
+      r == 0 || r < y.runtime()
     }
     def compare(x: IOTask[_], y: IOTask[_]): Int =
-      y.runtime - x.runtime
+      y.state - x.state
   }
 
   implicit def ord: Ordering[IOTask[_]] = TaskOrdering
@@ -66,7 +66,7 @@ private[kyo] object IOTask {
 private[kyo] class IOTask[T](
     private var curr: T > (IOs with Fibers),
     private var ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
-    @volatile private var runtime: Int
+    @volatile private var state: Int // Math.abs(state) => runtime; state < 0 => preempting
 ) extends IOPromise[T]
     with Preempt {
   import IOTask._
@@ -74,12 +74,15 @@ private[kyo] class IOTask[T](
   def locals: Locals.State = Locals.State.empty
 
   def apply(): Boolean =
-    runtime < 0
+    state < 0
 
   def preempt() =
-    if (runtime > 0) {
-      runtime = -runtime;
+    if (state > 0) {
+      state = -state;
     }
+
+  private def runtime(): Int =
+    Math.abs(state)
 
   override protected def onComplete(): Unit =
     preempt()
@@ -115,7 +118,7 @@ private[kyo] class IOTask[T](
           kyo.value match {
             case promise: IOPromise[T] @unchecked =>
               this.interrupts(promise)
-              runtime += (Coordinator.tick() - start).asInstanceOf[Int]
+              val runtime = this.runtime() + (Coordinator.tick() - start).asInstanceOf[Int]
               promise.onComplete { (v: Any > IOs) =>
                 val io = IOs(v.map(kyo(_, this.asInstanceOf[Safepoint[Fiber, Fibers]], locals)))
                 this.become(IOTask(io, locals, ensures, runtime))
@@ -138,15 +141,12 @@ private[kyo] class IOTask[T](
     val start = Coordinator.tick()
     try {
       curr = eval(start, curr)
-      runtime = Math.abs(runtime);
-      if (curr != nullIO) {
-        runtime += (Coordinator.tick() - start).asInstanceOf[Int]
-      }
     } catch {
       case ex if (NonFatal(ex)) =>
         complete(IOs.fail(ex))
         curr = nullIO
     }
+    state = runtime() + (Coordinator.tick() - start).asInstanceOf[Int]
   }
 
   def reenqueue(): Boolean =
@@ -187,6 +187,6 @@ private[kyo] class IOTask[T](
       case arr: ArrayDeque[() => Unit] @unchecked =>
         Arrays.toString(arr.toArray)
     }
-    s"IOTask(id=${hashCode},preempting=${apply()},curr=$curr,ensures=$ensures,runtime=$runtime,state=${get()})"
+    s"IOTask(id=${hashCode},preempting=${apply()},curr=$curr,ensures=$ensures,runtime=${runtime()},state=${get()})"
   }
 }
