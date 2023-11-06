@@ -113,7 +113,7 @@ class fibersTest extends KyoTest {
         }
       }
 
-    "one fiber" in run {
+    "one fiber" in runJVM {
       for {
         started     <- Latches.init(1)
         done        <- Latches.init(1)

@@ -299,7 +299,10 @@ lazy val readme =
         `kyo-bench`
     )
 
+import org.scalajs.jsenv.nodejs._
+
 lazy val `js-settings` = Seq(
     Compile / doc / sources := Seq.empty,
-    fork                    := false
+    fork                    := false,
+    jsEnv                   := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120")))
 )
