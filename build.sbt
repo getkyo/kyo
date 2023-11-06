@@ -200,8 +200,8 @@ lazy val `kyo-tapir` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.8.4",
-        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.4"
+        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.8.5",
+        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.5"
     )
 
 lazy val `kyo-chatgpt-macros` =
@@ -216,10 +216,10 @@ lazy val `kyo-chatgpt-macros` =
         crossScalaVersions               := List(scala2Version, scala3Version),
         libraryDependencies += "dev.zio" %% "zio-schema"            % "0.4.15",
         libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.15",
-          libraryDependencies ++=(CrossVersion.partialVersion(scalaVersion.value) match {
-            case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
-            case _            => Seq.empty
-          })
+        libraryDependencies ++= (CrossVersion.partialVersion(scalaVersion.value) match {
+          case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
+          case _            => Seq.empty
+        })
     )
     .jsSettings(`js-settings`)
 
