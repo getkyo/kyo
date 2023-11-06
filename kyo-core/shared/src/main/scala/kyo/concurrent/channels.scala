@@ -39,6 +39,8 @@ object channels {
 
   object Channels {
 
+    private val placeholder = Fibers.unsafeInitPromise[Unit]
+
     def init[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
       Queues.init[T](capacity, access).map { queue =>
         IOs {
@@ -108,44 +110,67 @@ object channels {
               }
 
             @tailrec private def flush(): Unit = {
-              // never discards a value even if fibers are interrupted
-              // interrupted fibers are automatically discarded
+              // This method ensures that all values are processed
+              // and handles interrupted fibers by discarding them.
               val queueSize  = u.size()
               val takesEmpty = takes.isEmpty()
               val putsEmpty  = puts.isEmpty()
+
               if (queueSize > 0 && !takesEmpty) {
+                // Attempt to transfer a value from the queue to
+                // a waiting consumer (take).
                 val p = takes.poll()
                 if (p != null.asInstanceOf[Promise[T]]) {
                   u.poll() match {
                     case None =>
+                      // If the queue has been emptied before the
+                      // transfer, requeue the consumer's promise.
                       takes.add(p)
                     case Some(v) =>
                       if (!p.unsafeComplete(v) && !u.offer(v)) {
-                        val p2 = Fibers.unsafeInitPromise[Unit]
-                        puts.add((v, p2))
+                        // If completing the take fails and the queue
+                        // cannot accept the value back, enqueue a
+                        // placeholder put operation to preserve the value.
+                        val placeholder = Fibers.unsafeInitPromise[Unit]
+                        puts.add((v, placeholder))
                       }
                   }
                 }
                 flush()
               } else if (queueSize < capacity && !putsEmpty) {
+                // Attempt to transfer a value from a waiting
+                // producer (put) to the queue.
                 val t = puts.poll()
                 if (t != null) {
                   val (v, p) = t
                   if (u.offer(v)) {
+                    // Complete the put's promise if the value is
+                    // successfully enqueued. If the fiber became
+                    // interrupted, the completion will be ignored.
                     p.unsafeComplete(())
                   } else {
+                    // If the queue becomes full before the transfer,
+                    // requeue the producer's operation.
                     puts.add(t)
                   }
                 }
                 flush()
               } else if (queueSize == 0 && !putsEmpty && !takesEmpty) {
+                // Directly transfer a value from a producer to a
+                // consumer when the queue is empty.
                 val t = puts.poll()
                 if (t != null) {
                   val (v, p) = t
                   val p2     = takes.poll()
                   if (p2 != null && p2.unsafeComplete(v)) {
+                    // If the transfer is successful, complete
+                    // the put's promise. If the consumer's fiber
+                    // became interrupted, the completion will be
+                    // ignored.
                     p.unsafeComplete(())
                   } else {
+                    // If the transfer to the consumer fails, requeue
+                    // the producer's operation.
                     puts.add(t)
                   }
                 }
