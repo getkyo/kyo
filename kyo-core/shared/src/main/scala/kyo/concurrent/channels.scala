@@ -108,12 +108,12 @@ object channels {
               }
 
             @tailrec private def flush(): Unit = {
-              var loop       = false
+              // never discards a value even if fibers are interrupted
+              // interrupted fibers are automatically discarded
               val queueSize  = u.size()
               val takesEmpty = takes.isEmpty()
               val putsEmpty  = puts.isEmpty()
               if (queueSize > 0 && !takesEmpty) {
-                loop = true
                 val p = takes.poll()
                 if (p != null.asInstanceOf[Promise[T]]) {
                   u.poll() match {
@@ -121,13 +121,13 @@ object channels {
                       takes.add(p)
                     case Some(v) =>
                       if (!p.unsafeComplete(v) && !u.offer(v)) {
-                        val p = Fibers.unsafeInitPromise[Unit]
-                        puts.add((v, p))
+                        val p2 = Fibers.unsafeInitPromise[Unit]
+                        puts.add((v, p2))
                       }
                   }
                 }
+                flush()
               } else if (queueSize < capacity && !putsEmpty) {
-                loop = true
                 val t = puts.poll()
                 if (t != null) {
                   val (v, p) = t
@@ -137,8 +137,8 @@ object channels {
                     puts.add(t)
                   }
                 }
+                flush()
               } else if (queueSize == 0 && !putsEmpty && !takesEmpty) {
-                loop = true
                 val t = puts.poll()
                 if (t != null) {
                   val (v, p) = t
@@ -149,8 +149,8 @@ object channels {
                     puts.add(t)
                   }
                 }
+                flush()
               }
-              if (loop) flush()
             }
           }
         }
