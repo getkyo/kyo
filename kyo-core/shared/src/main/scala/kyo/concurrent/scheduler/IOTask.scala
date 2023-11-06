@@ -44,13 +44,6 @@ private[kyo] object IOTask {
     else b
   }
 
-  private var token = 0
-  private def avoidUnstableIf(): Boolean =
-    token < 20000 && {
-      token += 1
-      token % 2 == 0
-    }
-
   object TaskOrdering extends Ordering[IOTask[_]] {
     override def lt(x: IOTask[_], y: IOTask[_]): Boolean = {
       val r = x.runtime()
@@ -102,7 +95,7 @@ private[kyo] class IOTask[T](
       }
       ensures = null
     }
-    if (apply() || avoidUnstableIf()) {
+    if (apply()) {
       if (isDone()) {
         finalize()
         nullIO
