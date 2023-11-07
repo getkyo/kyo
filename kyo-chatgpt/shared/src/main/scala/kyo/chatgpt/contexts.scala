@@ -51,6 +51,7 @@ object contexts {
         case Role.user      => UserMessage(content)
         case Role.assistant => AssistantMessage(content)
         case Role.tool      => ToolMessage(content)
+        case _              => throw new IllegalArgumentException("invalid role: " + role)
       }
   }
 
