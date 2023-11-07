@@ -45,7 +45,7 @@ object completions {
           IOs.fail("no choices")
         case Some(v) =>
           (
-              v.message.content,
+              v.message.content.getOrElse(""),
               v.message.tool_calls.getOrElse(Nil).map(c =>
                 ToolCall(c.id, c.function.name, c.function.arguments)
               )
@@ -69,14 +69,14 @@ object completions {
     case class ToolChoice(function: Name, `type`: String = "function")
 
     case class FunctionCall(arguments: String, name: String)
-    case class ToolCall(id: String, function: FunctionCall)
+    case class ToolCall(id: String, function: FunctionCall, `type`: String = "function")
 
     case class FunctionDef(description: String, name: String, parameters: JsonSchema)
     case class ToolDef(function: FunctionDef, `type`: String = "function")
 
     case class Entry(
         role: String,
-        content: String,
+        content: Option[String],
         tool_calls: Option[List[ToolCall]],
         tool_call_id: Option[String]
     )
@@ -92,7 +92,9 @@ object completions {
       val toolCalls =
         msg match {
           case msg: Message.AssistantMessage =>
-            Some(msg.toolCalls.map(c => ToolCall(c.id, FunctionCall(c.arguments, c.function))))
+            Some(
+                msg.toolCalls.map(c => ToolCall(c.id, FunctionCall(c.arguments, c.function)))
+            ).filter(_.nonEmpty)
           case _ =>
             None
         }
@@ -103,7 +105,7 @@ object completions {
           case _ =>
             None
         }
-      Entry(msg.role.name, msg.content, toolCalls, toolCallId)
+      Entry(msg.role.name, Some(msg.content), toolCalls, toolCallId)
     }
 
     object Request {

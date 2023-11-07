@@ -172,7 +172,10 @@ object ais {
                       "Failed to read the result: " + error
                   ).andThen(eval())
                 case Right(value) =>
-                  value.value
+                  toolMessage(
+                      call.id,
+                      "Result processed"
+                  ).andThen(value.value)
               }
             case calls =>
               AIs.fail("Expected a function call to the resultTool")
@@ -206,11 +209,14 @@ object ais {
                     resultTool.decoder.decodeJson(call.arguments) match {
                       case Left(error) =>
                         toolMessage(
-                            resultTool.name,
+                            call.id,
                             "Failed to read the result: " + error
                         ).andThen(eval(tools, Some(resultTool)))
                       case Right(value) =>
-                        value.value
+                        toolMessage(
+                            call.id,
+                            "Result processed."
+                        ).andThen(value.value)
                     }
                   case Some(tool) =>
                     Tries.run[String, AIs](tool(this, call.arguments)).map {
