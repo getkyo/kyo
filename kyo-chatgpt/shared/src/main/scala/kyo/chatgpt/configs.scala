@@ -10,6 +10,7 @@ object configs {
 
   object Model {
     val gpt4            = Model("gpt-4", 8192)
+    val gpt4_turbo      = Model("gpt-4-1106-preview", 128000)
     val gpt4_32k        = Model("gpt-4-32k", 32768)
     val gpt35_turbo     = Model("gpt-3.5-turbo", 4097)
     val gpt35_turbo_16k = Model("gpt-3.5-turbo-16k", 16385)
@@ -32,7 +33,7 @@ object configs {
         Option(System.getenv(apiKeyProp))
           .orElse(Option(System.getProperty(apiKeyProp)))
           .getOrElse("undefined")
-      Config(apiKey, Model.gpt4, 0.7)
+      Config(apiKey, Model.gpt4_turbo, 0.7)
     }
 
     def get: Config > IOs =
