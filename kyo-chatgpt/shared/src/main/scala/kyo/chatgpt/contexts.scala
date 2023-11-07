@@ -12,17 +12,47 @@ object contexts {
     val system: Role    = Role("system")
     val user: Role      = Role("user")
     val assistant: Role = Role("assistant")
-    val function: Role  = Role("function")
+    val tool: Role      = Role("tool")
   }
 
-  case class Call(function: String, arguments: String)
+  case class ToolCall(id: String, function: String, arguments: String)
 
-  case class Message(
-      role: Role,
-      content: String,
-      name: Option[String],
-      call: Option[Call]
-  )
+  sealed trait Message {
+    def role: Role
+    def content: String
+  }
+
+  object Message {
+    case class SystemMessage(
+        content: String,
+        role: Role = Role.system
+    ) extends Message
+
+    case class UserMessage(
+        content: String,
+        role: Role = Role.user
+    ) extends Message
+
+    case class AssistantMessage(
+        content: String,
+        toolCalls: List[ToolCall] = Nil,
+        role: Role = Role.assistant
+    ) extends Message
+
+    case class ToolMessage(
+        content: String,
+        toolCallId: String = "unknown",
+        role: Role = Role.tool
+    ) extends Message
+
+    def apply(role: Role, content: String): Message =
+      role match {
+        case Role.system    => SystemMessage(content)
+        case Role.user      => UserMessage(content)
+        case Role.assistant => AssistantMessage(content)
+        case Role.tool      => ToolMessage(content)
+      }
+  }
 
   case class Context(
       seed: Option[String],
@@ -32,15 +62,10 @@ object contexts {
     def seed(seed: String) =
       Context(Some(seed), messages)
 
-    def add(
-        role: Role,
-        msg: String,
-        name: Option[String],
-        call: Option[Call]
-    ): Context =
+    def add(msg: Message): Context =
       Context(
           seed,
-          Message(role, msg, name, call) :: messages
+          msg :: messages
       )
 
     def ++(that: Context): Context =
@@ -56,7 +81,7 @@ object contexts {
           case Nil =>
             ctx
           case (role, msg) :: t =>
-            loop(ctx.add(role, msg.stripMargin, None, None), t)
+            loop(ctx.add(Message(role, msg)), t)
         }
       loop(init, entries.toList)
     }

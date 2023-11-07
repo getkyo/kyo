@@ -2,34 +2,26 @@ package kyo.chatgpt
 
 import kyo._
 import kyo.aspects._
+import kyo.chatgpt.ValueSchema._
+import kyo.chatgpt.completions._
 import kyo.chatgpt.configs._
 import kyo.chatgpt.contexts._
-import kyo.chatgpt.completions._
 import kyo.chatgpt.tools._
-import kyo.chatgpt.ValueSchema._
 import kyo.chatgpt.util.JsonSchema
 import kyo.concurrent.atomics.Atomics
 import kyo.concurrent.fibers._
 import kyo.ios._
-import kyo.locals._
-import kyo.options.Options
+import kyo.lists._
 import kyo.requests._
 import kyo.sums._
 import kyo.tries._
-import sttp.client3._
-import sttp.client3.ziojson._
-import zio.json._
-import zio.schema.DeriveSchema
-import zio.schema.Schema
 import zio.schema.codec.JsonCodec
 
 import java.lang.ref.WeakReference
-import scala.concurrent.duration.Duration
+import scala.annotation.StaticAnnotation
 import scala.util.Failure
 import scala.util.Success
-import scala.util.Try
 import scala.util.control.NoStackTrace
-import scala.annotation.StaticAnnotation
 
 object ais {
 
@@ -47,12 +39,12 @@ object ais {
 
     val init: AI > AIs = nextId.incrementAndGet.map(new AI(_))
 
-    def init[S](seed: String > S): AI > (AIs with S) =
+    def init(seed: String): AI > AIs =
       init.map { ai =>
         ai.seed(seed).andThen(ai)
       }
 
-    def ask[S](msg: String > S): String > (AIs with S) =
+    def ask(msg: String): String > AIs =
       init.map(_.ask(msg))
 
     def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
@@ -61,7 +53,7 @@ object ais {
     def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
       init.map(_.infer[T](msg))
 
-    def ask[S](seed: String > S, msg: String > S): String > (AIs with S) =
+    def ask(seed: String, msg: String): String > AIs =
       init(seed).map(_.ask(msg))
 
     def gen[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
@@ -70,13 +62,13 @@ object ais {
     def infer[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
       init(seed).map(_.infer[T](msg))
 
-    def restore[S](ctx: Context > S): AI > (AIs with S) =
+    def restore(ctx: Context): AI > AIs =
       init.map { ai =>
         ai.restore(ctx).map(_ => ai)
       }
 
-    def fail[T, S](cause: String > S): T > (AIs with S) =
-      cause.map(cause => Tries.fail(AIException(cause)))
+    def fail[T](cause: String): T > AIs =
+      Tries.fail(AIException(cause))
 
     def ephemeral[T, S](f: => T > S): T > (AIs with S) =
       Sums[State].get.map { st =>
@@ -112,57 +104,53 @@ object ais {
         _   <- Sums[State].set(st + (res.ref -> st.getOrElse(ref, Contexts.init)))
       } yield res
 
-    def user[S](msg: String > S): Unit > (AIs with S) =
-      add(Role.user, msg, None, None)
-    def system[S](msg: String > S): Unit > (AIs with S) =
-      add(Role.system, msg, None)
-    def assistant[S](msg: String > S): Unit > (AIs with S) =
-      assistant(msg, None)
-    def assistant[S](msg: String > S, call: Option[Call] > S): Unit > (AIs with S) =
-      add(Role.assistant, msg, None, call)
-    def function[S](name: String, msg: String > S): Unit > (AIs with S) =
-      add(Role.function, msg, Some(name))
-
-    def seed[S](msg: String > S): Unit > (AIs with S) =
-      msg.map { msg =>
-        save.map { ctx =>
-          restore(ctx.seed(msg))
-        }
+    def addMessage(msg: Message): Unit > AIs =
+      save.map { ctx =>
+        restore(ctx.add(msg))
       }
 
-    private def add[S](
-        role: Role,
-        content: String > S,
-        name: Option[String] > S = None,
-        call: Option[Call] > S = None
-    ): Unit > (AIs with S) =
-      name.map { name =>
-        content.map { content =>
-          call.map { call =>
-            save.map { ctx =>
-              restore(ctx.add(role, content, name, call))
-            }
-          }
-        }
+    def userMessage(msg: String): Unit > AIs =
+      addMessage(Message.UserMessage(msg))
+
+    def systemMessage(msg: String): Unit > AIs =
+      addMessage(Message.SystemMessage(msg))
+
+    def assistantMessage(msg: String, toolCalls: List[ToolCall] = Nil): Unit > AIs =
+      addMessage(Message.AssistantMessage(msg, toolCalls))
+
+    def toolMessage(callId: String, msg: String): Unit > AIs =
+      addMessage(Message.ToolMessage(msg, callId))
+
+    def seed[S](msg: String): Unit > AIs =
+      save.map { ctx =>
+        restore(ctx.seed(msg))
       }
 
     import AIs._
 
-    def ask[S](msg: String > S): String > (AIs with S) = {
+    def ask(msg: String): String > AIs = {
       def eval(tools: Set[Tool[_, _]]): String > AIs =
         fetch(tools).map { r =>
-          r.call.map { call =>
-            tools.find(_.name == call.function) match {
-              case None =>
-                function(call.function, "Invalid function call: " + call)
-                  .andThen(eval(tools))
-              case Some(tool) =>
-                function(call.function, tool(this, call.arguments))
-                  .andThen(eval(tools))
-            }
-          }.getOrElse(r.content)
+          r.toolCalls match {
+            case Nil =>
+              r.content
+            case calls =>
+              Lists.traverse(calls) { call =>
+                tools.find(_.name == call.function) match {
+                  case None =>
+                    toolMessage(call.id, "Invalid function call: " + call)
+                  case Some(tool) =>
+                    Tries.run[String, AIs](tool(this, call.arguments)).map {
+                      case Success(result) =>
+                        toolMessage(call.id, result)
+                      case Failure(ex) =>
+                        toolMessage(call.id, "Failure: " + ex)
+                    }
+                }
+              }.map(_ => eval(tools))
+          }
         }
-      user(msg).andThen(Tools.get.map(eval))
+      userMessage(msg).andThen(Tools.get.map(eval))
     }
 
     def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs = {
@@ -175,69 +163,77 @@ object ais {
         )((ai, v) => v)
       def eval(): T > AIs =
         fetch(Set(resultTool), Some(resultTool)).map { r =>
-          r.call.map { call =>
-            if (call.function != resultTool.name) {
-              function(call.function, "Invalid function call: " + call)
-                .andThen(eval())
-            } else {
+          r.toolCalls match {
+            case call :: Nil if (call.function == resultTool.name) =>
               resultTool.decoder.decodeJson(call.arguments) match {
                 case Left(error) =>
-                  function(
-                      resultTool.name,
+                  toolMessage(
+                      call.id,
                       "Failed to read the result: " + error
                   ).andThen(eval())
                 case Right(value) =>
                   value.value
               }
-            }
-          }.getOrElse(AIs.fail("Expected a function call"))
+            case calls =>
+              AIs.fail("Expected a function call to the resultTool")
+          }
         }
-      user(msg).andThen(eval())
+      userMessage(msg).andThen(eval())
     }
 
     private val inferPrompt = """
-    | ==============================IMPORTANT===================================
+    | ==============================IMPORTANT=================================
     | == Note the 'resultTool' function I provided. Feel free to call other ==
     | == functions but please invoke 'resultTool' as soon as you're done.   ==
-    | ==========================================================================
+    | ========================================================================
     """.stripMargin
 
     def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs = {
       val resultTool =
         Tools.init[T, T]("resultTool", "call this function with the result")((ai, v) => v)
-      def eval(tools: Set[Tool[_, _]], constrain: Option[Tool[_, _]]): T > AIs =
+      def eval(tools: Set[Tool[_, _]], constrain: Option[Tool[_, _]] = None): T > AIs =
         fetch(tools, constrain).map { r =>
-          r.call.map { call =>
-            tools.find(_.name == call.function) match {
-              case None =>
-                function(call.function, "Invalid function call: " + call)
-                  .andThen(eval(tools, constrain))
-              case Some(`resultTool`) =>
-                resultTool.decoder.decodeJson(call.arguments) match {
-                  case Left(error) =>
-                    function(
-                        resultTool.name,
-                        "Failed to read the result: " + error
-                    ).andThen(eval(tools, constrain))
-                  case Right(value) =>
-                    value.value
-                }
-              case Some(tool) =>
-                Tries.run[String, AIs](tool(this, call.arguments)).map {
-                  case Success(result) =>
-                    function(call.function, result)
-                      .andThen(eval(tools, constrain))
-                  case Failure(ex) =>
-                    function(call.function, "Failure: " + ex)
-                      .andThen(eval(tools, constrain))
+          def loop(calls: List[ToolCall]): T > AIs =
+            calls match {
+              case Nil =>
+                eval(tools)
+              case call :: tail =>
+                tools.find(_.name == call.function) match {
+                  case None =>
+                    toolMessage(call.id, "Invalid function call: " + call)
+                      .andThen(loop(tail))
+                  case Some(`resultTool`) =>
+                    resultTool.decoder.decodeJson(call.arguments) match {
+                      case Left(error) =>
+                        toolMessage(
+                            resultTool.name,
+                            "Failed to read the result: " + error
+                        ).andThen(eval(tools, Some(resultTool)))
+                      case Right(value) =>
+                        value.value
+                    }
+                  case Some(tool) =>
+                    Tries.run[String, AIs](tool(this, call.arguments)).map {
+                      case Success(result) =>
+                        toolMessage(call.id, result)
+                          .andThen(loop(tail))
+                      case Failure(ex) =>
+                        toolMessage(call.id, "Failure: " + ex)
+                          .andThen(loop(tail))
+                    }
                 }
             }
-          }.getOrElse(eval(tools, Some(resultTool)))
+          r.toolCalls match {
+            case Nil =>
+              eval(tools, Some(resultTool))
+            case calls =>
+              loop(calls)
+          }
         }
-      user(msg)
-        .andThen(function(resultTool.name, inferPrompt))
+      userMessage(msg)
+        .andThen(toolMessage("", inferPrompt))
         .andThen(Tools.get.map(p =>
-          eval(p + resultTool, None)
+          eval(p + resultTool)
         ))
     }
 
@@ -248,7 +244,7 @@ object ais {
       for {
         ctx <- save
         r   <- Completions(ctx, tools, constrain)
-        _   <- assistant(r.content, r.call)
+        _   <- assistantMessage(r.content, r.toolCalls)
       } yield r
   }
 

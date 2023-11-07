@@ -1,29 +1,29 @@
 package kyo.chatgpt
 
 import kyo._
-import sttp.client3._
-import sttp.client3.ziojson._
-import kyo.requests._
-import kyo.chatgpt.util.JsonSchema
-import kyo.chatgpt.contexts._
 import kyo.chatgpt.configs._
-import zio.json._
+import kyo.chatgpt.contexts._
 import kyo.chatgpt.tools._
-import scala.concurrent.duration.Duration
-import kyo.tries.Tries
+import kyo.chatgpt.util.JsonSchema
 import kyo.ios._
 import kyo.loggers._
-import kyo.chatgpt.completions.Completions.Result
+import kyo.requests._
+import kyo.tries._
+import sttp.client3._
+import sttp.client3.ziojson._
+import zio.json._
+
+import scala.concurrent.duration.Duration
 
 object completions {
 
-  import internal._
+  import internal.{Request, Response}
 
   object Completions {
 
     private val logger = Loggers.init(getClass)
 
-    case class Result(content: String, call: Option[Call])
+    case class Result(content: String, toolCalls: List[ToolCall])
 
     def apply(
         ctx: Context,
@@ -39,14 +39,16 @@ object completions {
         (content, call) <- read(response)
       } yield new Result(content, call)
 
-    private def read(response: Response): (String, Option[Call]) > (IOs with Requests) =
+    private def read(response: Response): (String, List[ToolCall]) > (IOs with Requests) =
       response.choices.headOption match {
         case None =>
           IOs.fail("no choices")
         case Some(v) =>
           (
-              v.message.content.getOrElse(""),
-              v.message.function_call.map(c => Call(c.name, c.arguments))
+              v.message.content,
+              v.message.tool_calls.getOrElse(Nil).map(c =>
+                ToolCall(c.id, c.function.name, c.function.arguments)
+              )
           )
       }
 
@@ -64,21 +66,45 @@ object completions {
   private object internal {
 
     case class Name(name: String)
-    case class Function(description: String, name: String, parameters: JsonSchema)
+    case class ToolChoice(function: Name, `type`: String = "function")
+
     case class FunctionCall(arguments: String, name: String)
+    case class ToolCall(id: String, function: FunctionCall)
+
+    case class FunctionDef(description: String, name: String, parameters: JsonSchema)
+    case class ToolDef(function: FunctionDef, `type`: String = "function")
+
     case class Entry(
         role: String,
-        name: Option[String],
-        content: Option[String],
-        function_call: Option[FunctionCall]
+        content: String,
+        tool_calls: Option[List[ToolCall]],
+        tool_call_id: Option[String]
     )
     case class Request(
         model: String,
         temperature: Double,
         messages: List[Entry],
-        function_call: Option[Name],
-        functions: Option[Set[Function]]
+        tools: Option[List[ToolDef]],
+        tool_choice: Option[ToolChoice]
     )
+
+    private def toEntry(msg: Message) = {
+      val toolCalls =
+        msg match {
+          case msg: Message.AssistantMessage =>
+            Some(msg.toolCalls.map(c => ToolCall(c.id, FunctionCall(c.arguments, c.function))))
+          case _ =>
+            None
+        }
+      val toolCallId =
+        msg match {
+          case msg: Message.ToolMessage =>
+            Some(msg.toolCallId)
+          case _ =>
+            None
+        }
+      Entry(msg.role.name, msg.content, toolCalls, toolCallId)
+    }
 
     object Request {
       def apply(
@@ -88,31 +114,18 @@ object completions {
           tools: Set[Tool[_, _]],
           constrain: Option[Tool[_, _]]
       ): Request = {
-        val entries =
-          ctx.messages.map(msg =>
-            Entry(
-                msg.role.name,
-                msg.name,
-                Some(msg.content),
-                msg.call.map(c => FunctionCall(c.arguments, c.function))
-            )
-          ) ++ ctx.seed.map { seed =>
-            Entry(
-                Role.system.name,
-                None,
-                Some(seed),
-                None
-            )
-          }
-        val functions =
+        val entries: List[Entry] =
+          (ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
+            .map(toEntry).reverse
+        val toolDefs =
           if (tools.isEmpty) None
-          else Some(tools.map(p => Function(p.description, p.name, p.schema)))
+          else Some(tools.map(p => ToolDef(FunctionDef(p.description, p.name, p.schema))).toList)
         Request(
             model.name,
             temperature,
-            entries.reverse,
-            constrain.map(p => Name(p.name)),
-            functions
+            entries,
+            toolDefs,
+            constrain.map(p => ToolChoice(Name(p.name)))
         )
       }
     }
@@ -120,16 +133,20 @@ object completions {
     case class Choice(message: Entry)
     case class Response(choices: List[Choice])
 
-    implicit val nameEncoder: JsonEncoder[Name]         = DeriveJsonEncoder.gen[Name]
-    implicit val functionEncoder: JsonEncoder[Function] = DeriveJsonEncoder.gen[Function]
-    implicit val callEncoder: JsonEncoder[FunctionCall] = DeriveJsonEncoder.gen[FunctionCall]
-    implicit val entryEncoder: JsonEncoder[Entry]       = DeriveJsonEncoder.gen[Entry]
-    implicit val requestEncoder: JsonEncoder[Request]   = DeriveJsonEncoder.gen[Request]
-    implicit val choiceEncoder: JsonEncoder[Choice]     = DeriveJsonEncoder.gen[Choice]
-    implicit val responseEncoder: JsonEncoder[Response] = DeriveJsonEncoder.gen[Response]
-    implicit val callDecoder: JsonDecoder[FunctionCall] = DeriveJsonDecoder.gen[FunctionCall]
-    implicit val entryDecoder: JsonDecoder[Entry]       = DeriveJsonDecoder.gen[Entry]
-    implicit val choiceDecoder: JsonDecoder[Choice]     = DeriveJsonDecoder.gen[Choice]
-    implicit val responseDecoder: JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
+    implicit val nameEncoder: JsonEncoder[Name]               = DeriveJsonEncoder.gen[Name]
+    implicit val functionDefEncoder: JsonEncoder[FunctionDef] = DeriveJsonEncoder.gen[FunctionDef]
+    implicit val callEncoder: JsonEncoder[FunctionCall]       = DeriveJsonEncoder.gen[FunctionCall]
+    implicit val toolCallEncoder: JsonEncoder[ToolCall]       = DeriveJsonEncoder.gen[ToolCall]
+    implicit val entryEncoder: JsonEncoder[Entry]             = DeriveJsonEncoder.gen[Entry]
+    implicit val toolDefEncoder: JsonEncoder[ToolDef]         = DeriveJsonEncoder.gen[ToolDef]
+    implicit val toolChoiceEncoder: JsonEncoder[ToolChoice]   = DeriveJsonEncoder.gen[ToolChoice]
+    implicit val requestEncoder: JsonEncoder[Request]         = DeriveJsonEncoder.gen[Request]
+    implicit val choiceEncoder: JsonEncoder[Choice]           = DeriveJsonEncoder.gen[Choice]
+    implicit val responseEncoder: JsonEncoder[Response]       = DeriveJsonEncoder.gen[Response]
+    implicit val callDecoder: JsonDecoder[FunctionCall]       = DeriveJsonDecoder.gen[FunctionCall]
+    implicit val toolCallDecoder: JsonDecoder[ToolCall]       = DeriveJsonDecoder.gen[ToolCall]
+    implicit val entryDecoder: JsonDecoder[Entry]             = DeriveJsonDecoder.gen[Entry]
+    implicit val choiceDecoder: JsonDecoder[Choice]           = DeriveJsonDecoder.gen[Choice]
+    implicit val responseDecoder: JsonDecoder[Response]       = DeriveJsonDecoder.gen[Response]
   }
 }
