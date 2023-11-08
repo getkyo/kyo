@@ -14,6 +14,8 @@ import sttp.client3.ziojson._
 import zio.json._
 
 import scala.concurrent.duration.Duration
+import kyo.chatgpt.contexts.Message.UserMessage
+import zio.json.internal.Write
 
 object completions {
 
@@ -32,7 +34,7 @@ object completions {
     ): Result > (IOs with Requests) =
       for {
         config <- Configs.get
-        req = Request(ctx, config.model, config.temperature, tools, constrain)
+        req = Request(ctx, config, tools, constrain)
         _               <- logger.debug(req.toJsonPretty)
         response        <- fetch(config, req)
         _               <- logger.debug(response.toJsonPretty)
@@ -74,57 +76,82 @@ object completions {
     case class FunctionDef(description: String, name: String, parameters: JsonSchema)
     case class ToolDef(function: FunctionDef, `type`: String = "function")
 
-    case class Entry(
+    sealed trait Entry
+
+    case class MessageEntry(
         role: String,
         content: Option[String],
         tool_calls: Option[List[ToolCall]],
         tool_call_id: Option[String]
-    )
+    ) extends Entry
+
+    case class VisionEntry(
+        content: List[VisionEntry.Content],
+        role: String = "user"
+    ) extends Entry
+
+    object VisionEntry {
+      sealed trait Content
+      object Content {
+        case class Text(text: String, `type`: String = "text")            extends Content
+        case class Image(image_url: String, `type`: String = "image_url") extends Content
+      }
+    }
+
     case class Request(
         model: String,
         temperature: Double,
+        max_tokens: Option[Int],
         messages: List[Entry],
         tools: Option[List[ToolDef]],
         tool_choice: Option[ToolChoice]
     )
 
     private def toEntry(msg: Message) = {
-      val toolCalls =
-        msg match {
-          case msg: Message.AssistantMessage =>
-            Some(
-                msg.toolCalls.map(c => ToolCall(c.id, FunctionCall(c.arguments, c.function)))
-            ).filter(_.nonEmpty)
-          case _ =>
-            None
-        }
-      val toolCallId =
-        msg match {
-          case msg: Message.ToolMessage =>
-            Some(msg.toolCallId)
-          case _ =>
-            None
-        }
-      Entry(msg.role.name, Some(msg.content), toolCalls, toolCallId)
+      msg match {
+        case msg: UserMessage if (msg.imageUrls.nonEmpty) =>
+          VisionEntry(
+              msg.imageUrls.map(VisionEntry.Content.Image(_)) :+
+                VisionEntry.Content.Text(msg.content)
+          )
+        case _ =>
+          val toolCalls =
+            msg match {
+              case msg: Message.AssistantMessage =>
+                Some(
+                    msg.toolCalls.map(c => ToolCall(c.id, FunctionCall(c.arguments, c.function)))
+                ).filter(_.nonEmpty)
+              case _ =>
+                None
+            }
+          val toolCallId =
+            msg match {
+              case msg: Message.ToolMessage =>
+                Some(msg.toolCallId)
+              case _ =>
+                None
+            }
+          MessageEntry(msg.role.name, Some(msg.content), toolCalls, toolCallId)
+      }
     }
 
     object Request {
       def apply(
           ctx: Context,
-          model: Model,
-          temperature: Double,
+          config: Config,
           tools: Set[Tool[_, _]],
           constrain: Option[Tool[_, _]]
       ): Request = {
-        val entries: List[Entry] =
+        val entries =
           (ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
             .map(toEntry).reverse
         val toolDefs =
           if (tools.isEmpty) None
           else Some(tools.map(p => ToolDef(FunctionDef(p.description, p.name, p.schema))).toList)
         Request(
-            model.name,
-            temperature,
+            config.model.name,
+            config.temperature,
+            config.maxTokens,
             entries,
             toolDefs,
             constrain.map(p => ToolChoice(Name(p.name)))
@@ -132,23 +159,49 @@ object completions {
       }
     }
 
-    case class Choice(message: Entry)
+    case class Choice(message: MessageEntry)
     case class Response(choices: List[Choice])
 
     implicit val nameEncoder: JsonEncoder[Name]               = DeriveJsonEncoder.gen[Name]
     implicit val functionDefEncoder: JsonEncoder[FunctionDef] = DeriveJsonEncoder.gen[FunctionDef]
     implicit val callEncoder: JsonEncoder[FunctionCall]       = DeriveJsonEncoder.gen[FunctionCall]
     implicit val toolCallEncoder: JsonEncoder[ToolCall]       = DeriveJsonEncoder.gen[ToolCall]
-    implicit val entryEncoder: JsonEncoder[Entry]             = DeriveJsonEncoder.gen[Entry]
     implicit val toolDefEncoder: JsonEncoder[ToolDef]         = DeriveJsonEncoder.gen[ToolDef]
     implicit val toolChoiceEncoder: JsonEncoder[ToolChoice]   = DeriveJsonEncoder.gen[ToolChoice]
-    implicit val requestEncoder: JsonEncoder[Request]         = DeriveJsonEncoder.gen[Request]
-    implicit val choiceEncoder: JsonEncoder[Choice]           = DeriveJsonEncoder.gen[Choice]
-    implicit val responseEncoder: JsonEncoder[Response]       = DeriveJsonEncoder.gen[Response]
-    implicit val callDecoder: JsonDecoder[FunctionCall]       = DeriveJsonDecoder.gen[FunctionCall]
-    implicit val toolCallDecoder: JsonDecoder[ToolCall]       = DeriveJsonDecoder.gen[ToolCall]
-    implicit val entryDecoder: JsonDecoder[Entry]             = DeriveJsonDecoder.gen[Entry]
-    implicit val choiceDecoder: JsonDecoder[Choice]           = DeriveJsonDecoder.gen[Choice]
-    implicit val responseDecoder: JsonDecoder[Response]       = DeriveJsonDecoder.gen[Response]
+    implicit val msgEntryEncoder: JsonEncoder[MessageEntry]   = DeriveJsonEncoder.gen[MessageEntry]
+    implicit val visionEntryEncoder: JsonEncoder[VisionEntry] = DeriveJsonEncoder.gen[VisionEntry]
+
+    implicit val visionEntryContentTextEncoder: JsonEncoder[VisionEntry.Content.Text] =
+      DeriveJsonEncoder.gen[VisionEntry.Content.Text]
+
+    implicit val visionEntryContentImageEncoder: JsonEncoder[VisionEntry.Content.Image] =
+      DeriveJsonEncoder.gen[VisionEntry.Content.Image]
+
+    implicit val visionContentEncoder: JsonEncoder[VisionEntry.Content] =
+      new JsonEncoder[VisionEntry.Content] {
+        def unsafeEncode(a: VisionEntry.Content, indent: Option[Int], out: Write): Unit =
+          a match {
+            case a: VisionEntry.Content.Text =>
+              visionEntryContentTextEncoder.unsafeEncode(a, indent, out)
+            case a: VisionEntry.Content.Image =>
+              visionEntryContentImageEncoder.unsafeEncode(a, indent, out)
+          }
+      }
+
+    implicit val entryEncoder: JsonEncoder[Entry] = new JsonEncoder[Entry] {
+      def unsafeEncode(a: Entry, indent: Option[Int], out: Write): Unit = a match {
+        case a: MessageEntry => msgEntryEncoder.unsafeEncode(a, indent, out)
+        case a: VisionEntry  => visionEntryEncoder.unsafeEncode(a, indent, out)
+      }
+    }
+
+    implicit val requestEncoder: JsonEncoder[Request]    = DeriveJsonEncoder.gen[Request]
+    implicit val choiceEncoder: JsonEncoder[Choice]      = DeriveJsonEncoder.gen[Choice]
+    implicit val responseEncoder: JsonEncoder[Response]  = DeriveJsonEncoder.gen[Response]
+    implicit val callDecoder: JsonDecoder[FunctionCall]  = DeriveJsonDecoder.gen[FunctionCall]
+    implicit val toolCallDecoder: JsonDecoder[ToolCall]  = DeriveJsonDecoder.gen[ToolCall]
+    implicit val entryDecoder: JsonDecoder[MessageEntry] = DeriveJsonDecoder.gen[MessageEntry]
+    implicit val choiceDecoder: JsonDecoder[Choice]      = DeriveJsonDecoder.gen[Choice]
+    implicit val responseDecoder: JsonDecoder[Response]  = DeriveJsonDecoder.gen[Response]
   }
 }

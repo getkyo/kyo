@@ -128,7 +128,7 @@ object ais {
 
     import AIs._
 
-    def ask(msg: String): String > AIs = {
+    def ask: String > AIs = {
       def eval(tools: Set[Tool[_, _]]): String > AIs =
         fetch(tools).map { r =>
           r.toolCalls match {
@@ -150,8 +150,11 @@ object ais {
               }.map(_ => eval(tools))
           }
         }
-      userMessage(msg).andThen(Tools.get.map(eval))
+      Tools.get.map(eval)
     }
+
+    def ask(msg: String): String > AIs =
+      userMessage(msg).andThen(ask)
 
     def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs = {
       val decoder = JsonCodec.jsonDecoder(t.get)

@@ -10,6 +10,7 @@ import zio.json.JsonEncoder
 import zio.schema.DeriveSchema
 import zio.schema.Schema
 import zio.schema.codec.JsonCodec
+import kyo.ios.IOs
 
 package object tools {
 
@@ -36,10 +37,13 @@ package object tools {
 
     val get: Set[Tool[_, _]] > AIs = local.get
 
-    def enable[T, S](p: Tool[_, _]*)(v: => T > S) =
-      Tools.local.get.map { set =>
-        Tools.local.let(set ++ p.toSeq)(v)
+    def enable[T, S](p: Tool[_, _]*)(v: => T > S): T > (IOs with S) =
+      local.get.map { set =>
+        local.let(set ++ p.toSeq)(v)
       }
+
+    def disabled[T, S](f: T > S): T > (IOs with S) =
+      local.let(Set.empty)(f)
 
     def init[T, U](
         name: String,

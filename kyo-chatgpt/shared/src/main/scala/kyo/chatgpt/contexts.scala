@@ -30,6 +30,7 @@ object contexts {
 
     case class UserMessage(
         content: String,
+        imageUrls: List[String] = Nil,
         role: Role = Role.user
     ) extends Message
 
