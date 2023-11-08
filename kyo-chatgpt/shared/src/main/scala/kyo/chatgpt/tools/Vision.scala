@@ -16,9 +16,14 @@ import java.util.Base64
 object Vision {
 
   case class Task(
-      @desc("The question the AI needs to asnwer regarding the provided image.")
+      @desc("A description of the environment in which the image is displayed. " +
+        "This includes the webpage or application interface, nearby visual elements, " +
+        "and surrounding textual content, which may provide additional insight or " +
+        "relevance to the image in question.")
+      environment: String,
+      @desc("The question the AI needs to answer regarding the provided image.")
       question: String,
-      @desc("The image's URL.")
+      @desc("The URL where the image can be found.")
       imageUrl: String
   )
 
@@ -35,7 +40,10 @@ object Vision {
           val payload = encodeImage(bytes)
           val msg =
             Message.UserMessage(
-                task.question,
+                s"""
+                | Context: ${task.environment}
+                | Question: ${task.question}
+                """.stripMargin,
                 s"data:image/jpeg;base64,$payload" :: Nil
             )
           AIs.init.map { ai =>

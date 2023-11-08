@@ -51,7 +51,7 @@ package object tools {
     )(f: (AI, T) => U > AIs)(implicit t: ValueSchema[T], u: ValueSchema[U]): Tool[T, U] =
       Tool(
           name,
-          description,
+          description + " **Note how the input and output are wrapped into a `value` field**",
           JsonSchema(t.get),
           JsonCodec.jsonDecoder(t.get),
           JsonCodec.jsonEncoder(u.get),
