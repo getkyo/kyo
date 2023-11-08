@@ -263,7 +263,11 @@ object ais {
       case other: AIRef => get() == other.get()
       case _            => false
     }
-    override def hashCode(): Int = get().hashCode()
+    override def hashCode(): Int =
+      get() match {
+        case null => 0
+        case v    => v.hashCode()
+      }
   }
 
   case class AIException(cause: String) extends Exception(cause) with NoStackTrace
