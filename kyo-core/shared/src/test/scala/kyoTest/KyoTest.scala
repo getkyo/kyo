@@ -72,7 +72,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
   def run(
       v: => Assertion > App.Effects
   ): Future[Assertion] = {
-    IOs.run(App.runFiber(timeout)(v).map(_.toFuture)).map(_.get)
+    IOs.run(App.runFiber(timeout)(v).toFuture).map(_.get)
   }
 
   class Check[T, S](equals: Boolean) {
