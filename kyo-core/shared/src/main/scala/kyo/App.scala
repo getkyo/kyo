@@ -17,7 +17,7 @@ import scala.util.Try
 abstract class App {
 
   final def main(args: Array[String]): Unit =
-    IOs.run(App.runFiber(run(args.toList)).map(_.block).map(_.get))
+    App.run(run(args.toList))
 
   def run(
       args: List[String]
@@ -33,15 +33,15 @@ object App {
       with Aspects with Tries
 
   def run[T](timeout: Duration)(v: T > Effects): T =
-    IOs.run(runFiber(timeout)(v).map(_.block).map(_.get))
+    IOs.run(runFiber(timeout)(v).block.map(_.get))
 
   def run[T](v: T > Effects): T =
     run(Duration.Inf)(v)
 
-  def runFiber[T](v: T > Effects): Fiber[Try[T]] > IOs =
+  def runFiber[T](v: T > Effects): Fiber[Try[T]] =
     runFiber(Duration.Inf)(v)
 
-  def runFiber[T](timeout: Duration)(v: T > Effects): Fiber[Try[T]] > IOs = {
+  def runFiber[T](timeout: Duration)(v: T > Effects): Fiber[Try[T]] = {
     def v1 = Randoms.run(v)
     def v2 = Consoles.run(v1)
     def v3 = Clocks.run(v2)
@@ -51,6 +51,6 @@ object App {
     def v7 = Tries.run(v6)
     def v8 = Fibers.timeout(timeout)(v7)
     def v9 = Timers.run(v8)
-    IOs(Fibers.run(IOs.runLazy(v9)))
+    IOs.run(Fibers.run(IOs.runLazy(Fibers.fork(v9))))
   }
 }
