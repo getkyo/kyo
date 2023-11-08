@@ -28,7 +28,7 @@ object Vision {
   ) { (_, task) =>
     Tools.disabled {
       Configs.let(_.model(Model.gpt4_vision).maxTokens(Some(4000))) {
-        Requests(
+        Requests[Array[Byte]](
             _.get(uri"${task.imageUrl}")
               .response(asByteArray)
         ).map { bytes =>

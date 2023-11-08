@@ -169,7 +169,6 @@ object completions {
     implicit val toolDefEncoder: JsonEncoder[ToolDef]         = DeriveJsonEncoder.gen[ToolDef]
     implicit val toolChoiceEncoder: JsonEncoder[ToolChoice]   = DeriveJsonEncoder.gen[ToolChoice]
     implicit val msgEntryEncoder: JsonEncoder[MessageEntry]   = DeriveJsonEncoder.gen[MessageEntry]
-    implicit val visionEntryEncoder: JsonEncoder[VisionEntry] = DeriveJsonEncoder.gen[VisionEntry]
 
     implicit val visionEntryContentTextEncoder: JsonEncoder[VisionEntry.Content.Text] =
       DeriveJsonEncoder.gen[VisionEntry.Content.Text]
@@ -187,6 +186,8 @@ object completions {
               visionEntryContentImageEncoder.unsafeEncode(a, indent, out)
           }
       }
+
+    implicit val visionEntryEncoder: JsonEncoder[VisionEntry] = DeriveJsonEncoder.gen[VisionEntry]
 
     implicit val entryEncoder: JsonEncoder[Entry] = new JsonEncoder[Entry] {
       def unsafeEncode(a: Entry, indent: Option[Int], out: Write): Unit = a match {

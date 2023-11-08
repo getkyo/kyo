@@ -258,16 +258,16 @@ object ais {
   }
 
   class AIRef(ai: AI) extends WeakReference[AI](ai) {
+    private val id = System.identityHashCode(ai)
+
     def isValid(): Boolean = get() != null
+
     override def equals(obj: Any): Boolean = obj match {
-      case other: AIRef => get() == other.get()
+      case other: AIRef => id == other.id
       case _            => false
     }
-    override def hashCode(): Int =
-      get() match {
-        case null => 0
-        case v    => v.hashCode()
-      }
+
+    override val hashCode = (31 * id) + 31
   }
 
   case class AIException(cause: String) extends Exception(cause) with NoStackTrace
