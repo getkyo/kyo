@@ -102,6 +102,7 @@ object completions {
         model: String,
         temperature: Double,
         max_tokens: Option[Int],
+        seed: Option[Int],
         messages: List[Entry],
         tools: Option[List[ToolDef]],
         tool_choice: Option[ToolChoice]
@@ -152,6 +153,7 @@ object completions {
             config.model.name,
             config.temperature,
             config.maxTokens,
+            config.seed,
             entries,
             toolDefs,
             constrain.map(p => ToolChoice(Name(p.name)))
