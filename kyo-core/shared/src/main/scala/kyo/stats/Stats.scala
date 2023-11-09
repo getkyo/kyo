@@ -2,6 +2,8 @@ package kyo.stats
 
 import kyo._
 import kyo.ios._
+import kyo.locals.Locals
+import kyo.stats.internal.TraceReceiver
 
 abstract class Stats {
 
@@ -70,6 +72,13 @@ object Stats {
       )(v: => T > S): T > (IOs with S) = v
     }
 
+  private val traceReceiver = Locals.init[TraceReceiver](TraceReceiver.get)
+
+  def traceListen[T, S](receiver: TraceReceiver)(v: T > S): T > (IOs with S) =
+    traceReceiver.get.map { curr =>
+      traceReceiver.let(TraceReceiver.all(List(curr, receiver)))(v)
+    }
+
   def scope(name: String): Stats =
     scope(name :: Nil)
 
@@ -84,7 +93,7 @@ object Stats {
           unit: String,
           a: Attributes
       ) =
-        internal.Receiver.get.counter(path.reverse, name, description, unit, a)
+        internal.MetricReceiver.get.counter(path.reverse, name, description, unit, a)
 
       def initHistogram(
           name: String,
@@ -92,7 +101,7 @@ object Stats {
           unit: String,
           a: Attributes
       ) =
-        internal.Receiver.get.histogram(path.reverse, name, description, unit, a)
+        internal.MetricReceiver.get.histogram(path.reverse, name, description, unit, a)
 
       def initGauge(
           name: String,
@@ -100,13 +109,13 @@ object Stats {
           unit: String = "",
           a: Attributes = Attributes.empty
       )(f: => Double) =
-        internal.Receiver.get.gauge(path.reverse, name, description, unit, a)(f)
+        internal.MetricReceiver.get.gauge(path.reverse, name, description, unit, a)(f)
 
       def traceSpan[T, S](
           name: String,
           attributes: Attributes
       )(v: => T > S): T > (IOs with S) =
-        internal.Span.trace(path.reverse, name, attributes)(v)
+        traceReceiver.get.map(internal.Span.trace(_, path.reverse, name, attributes)(v))
 
       override def toString = s"Stats(scope = ${path.reverse})"
     }

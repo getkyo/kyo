@@ -7,8 +7,9 @@ import kyo.stats._
 import java.util.ServiceLoader
 import scala.jdk.CollectionConverters._
 import kyo.lists.Lists
+import kyo.stats.Attributes
 
-abstract class Receiver {
+trait MetricReceiver {
 
   def counter(
       scope: List[String],
@@ -42,20 +43,20 @@ abstract class Receiver {
   ): Span > IOs
 }
 
-object Receiver {
+object MetricReceiver {
 
-  val get: Receiver =
-    ServiceLoader.load(classOf[Receiver]).iterator().asScala.toList match {
+  val get: MetricReceiver =
+    ServiceLoader.load(classOf[MetricReceiver]).iterator().asScala.toList match {
       case Nil =>
-        Receiver.noop
+        MetricReceiver.noop
       case head :: Nil =>
         head
       case l =>
-        Receiver.all(l)
+        MetricReceiver.all(l)
     }
 
-  val noop: Receiver =
-    new Receiver {
+  val noop: MetricReceiver =
+    new MetricReceiver {
       def counter(
           scope: List[String],
           name: String,
@@ -91,8 +92,8 @@ object Receiver {
         internal.Span.noop
     }
 
-  def all(receivers: List[Receiver]): Receiver =
-    new Receiver {
+  def all(receivers: List[MetricReceiver]): MetricReceiver =
+    new MetricReceiver {
 
       def counter(
           scope: List[String],

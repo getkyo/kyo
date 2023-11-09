@@ -8,9 +8,11 @@ import kyo._
 import kyo.ios.IOs
 import kyo.stats._
 import kyo.stats.internal.Span
-import kyo.stats.internal.Receiver
+import kyo.stats.internal.MetricReceiver
+import kyo.stats.Attributes
+import kyo.stats.internal.TraceReceiver
 
-class OTelMetricReceiver extends Receiver {
+class OTelMetricReceiver extends MetricReceiver with TraceReceiver {
 
   private val otel = GlobalOpenTelemetry.get()
 

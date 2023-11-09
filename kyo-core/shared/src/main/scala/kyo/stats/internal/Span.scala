@@ -5,6 +5,7 @@ import kyo.ios._
 import kyo.lists._
 import kyo.locals._
 import kyo.stats._
+import kyo.stats.Attributes
 
 abstract class Span {
 
@@ -31,19 +32,20 @@ object Span {
         Lists.traverseUnit(l)(_.event(name, a))
     }
 
-  private val local = Locals.init[Option[Span]](None)
+  private val currentSpan = Locals.init[Option[Span]](None)
 
   def trace[T, S](
+      receiver: TraceReceiver,
       scope: List[String],
       name: String,
       attributes: Attributes = Attributes.empty
   )(v: => T > S): T > (IOs with S) =
-    local.get.map { parent =>
-      Receiver.get
+    currentSpan.get.map { parent =>
+      receiver
         .startSpan(scope, name, parent, attributes)
         .map { child =>
           IOs.ensure(child.end) {
-            local.let(Some(child))(v)
+            currentSpan.let(Some(child))(v)
           }
         }
     }
