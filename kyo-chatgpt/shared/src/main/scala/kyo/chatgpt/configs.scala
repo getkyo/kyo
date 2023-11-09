@@ -37,15 +37,19 @@ object configs {
       copy(seed = seed)
   }
 
-  object Configs {
-
-    private val local = Locals.init[Config] {
+  object Config {
+    val default = {
       val apiKeyProp = "OPENAI_API_KEY"
       val apiKey =
         Option(System.getenv(apiKeyProp))
           .orElse(Option(System.getProperty(apiKeyProp)))
       Config(apiKey, Model.gpt4_turbo, 0.7, None, None)
     }
+  }
+
+  object Configs {
+
+    private val local = Locals.init(Config.default)
 
     def get: Config > IOs =
       local.get
