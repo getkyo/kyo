@@ -23,7 +23,7 @@ object embeddings {
         Requests[Response](
             _.contentType("application/json")
               .header("Authorization", s"Bearer ${config.apiKey}")
-              .post(uri"https://api.openai.com/v1/embeddings")
+              .post(uri"${config.apiUrl}/v1/embeddings")
               .body(Request(text, model))
               .response(asJson[Response])
         ).map { value =>

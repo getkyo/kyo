@@ -48,16 +48,18 @@ object Image {
         task.style
     )
     Configs.apiKey.map { key =>
-      Requests[Response](
-          _.contentType("application/json")
-            .header("Authorization", s"Bearer $key")
-            .post(uri"https://api.openai.com/v1/images/generations")
-            .body(req)
-            .readTimeout(Duration.Inf)
-            .response(asJson[Response])
-      ).map { resp =>
-        resp.data.headOption.map(_.url)
-          .getOrElse(AIs.fail[String]("Can't find the generated image URL."))
+      Configs.get.map { config =>
+        Requests[Response](
+            _.contentType("application/json")
+              .header("Authorization", s"Bearer $key")
+              .post(uri"${config.apiUrl}/v1/images/generations")
+              .body(req)
+              .readTimeout(Duration.Inf)
+              .response(asJson[Response])
+        ).map { resp =>
+          resp.data.headOption.map(_.url)
+            .getOrElse(AIs.fail[String]("Can't find the generated image URL."))
+        }
       }
     }
   }

@@ -19,12 +19,15 @@ object configs {
   }
 
   case class Config(
+      apiUrl: String,
       apiKey: Option[String],
       model: Model,
       temperature: Double,
       maxTokens: Option[Int],
       seed: Option[Int]
   ) {
+    def apiUrl(url: String): Config =
+      copy(apiUrl = url)
     def apiKey(key: String): Config =
       copy(apiKey = Some(key))
     def model(model: Model): Config =
@@ -43,7 +46,7 @@ object configs {
       val apiKey =
         Option(System.getenv(apiKeyProp))
           .orElse(Option(System.getProperty(apiKeyProp)))
-      Config(apiKey, Model.gpt4_turbo, 0.7, None, None)
+      Config("https://api.openai.com", apiKey, Model.gpt4_turbo, 0.7, None, None)
     }
   }
 
