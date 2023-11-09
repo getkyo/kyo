@@ -3,6 +3,7 @@ package kyo.chatgpt
 import kyo._
 import kyo.ios._
 import kyo.locals._
+import kyo.chatgpt.ais.AIs
 
 object configs {
 
@@ -18,14 +19,14 @@ object configs {
   }
 
   case class Config(
-      apiKey: String,
+      apiKey: Option[String],
       model: Model,
       temperature: Double,
       maxTokens: Option[Int],
       seed: Option[Int]
   ) {
     def apiKey(key: String): Config =
-      copy(apiKey = key)
+      copy(apiKey = Some(key))
     def model(model: Model): Config =
       copy(model = model)
     def temperature(temperature: Double): Config =
@@ -43,12 +44,14 @@ object configs {
       val apiKey =
         Option(System.getenv(apiKeyProp))
           .orElse(Option(System.getProperty(apiKeyProp)))
-          .getOrElse("undefined")
       Config(apiKey, Model.gpt4_turbo, 0.7, None, None)
     }
 
     def get: Config > IOs =
       local.get
+
+    def apiKey: String > IOs =
+      get.map(_.apiKey.getOrElse(IOs.fail[String]("Can't locate the OpenAI API key")))
 
     def let[T, S](f: Config => Config)(v: T > S): T > (IOs with S) =
       local.get.map { c =>

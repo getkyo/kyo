@@ -187,13 +187,6 @@ object ais {
       userMessage(msg).andThen(eval())
     }
 
-    private val inferPrompt = """
-    | ==============================IMPORTANT=================================
-    | == Note the 'resultTool' function I provided. Feel free to call other ==
-    | == functions but please invoke 'resultTool' as soon as you're done.   ==
-    | ========================================================================
-    """.stripMargin
-
     def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs = {
       val resultTool =
         Tools.init[T, T]("resultTool", "call this function with the result")((ai, v) => v)
@@ -240,7 +233,6 @@ object ais {
           }
         }
       userMessage(msg)
-        .andThen(toolMessage("", inferPrompt))
         .andThen(Tools.get.map(p =>
           eval(p + resultTool)
         ))

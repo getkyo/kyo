@@ -55,8 +55,22 @@ object JsonSchema {
         List("type" -> Json.Str("array"), "items" -> Json.Obj(convert(innerSchema): _*))
 
       case schema: Schema.Enum[_] =>
-        val cases = schema.cases.map(c => Json.Obj(convert(c.schema): _*))
-        List("oneOf" -> Json.Arr(cases: _*))
+        val cases = schema.cases.map { c =>
+          val caseProperties = c.schema match {
+            case record: Schema.Record[_] =>
+              val fields = record.fields.map { field =>
+                field.name -> Json.Obj(convert(field.schema): _*)
+              }
+              Json.Obj("type" -> Json.Str("object"), "properties" -> Json.Obj(fields: _*))
+            case _ =>
+              throw new UnsupportedOperationException("Non-record enum case is not supported")
+          }
+          c.id -> caseProperties
+        }
+        desc ++ List(
+            "type"       -> Json.Str("object"),
+            "properties" -> Json.Obj(cases: _*)
+        )
 
       case schema: Schema.Record[_] =>
         val properties = schema.fields.foldLeft(List.empty[(String, Json)]) { (acc, field) =>
