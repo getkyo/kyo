@@ -94,7 +94,7 @@ lazy val kyo =
         `kyo-bench`
     )
 
-val zioVersion = "2.0.18"
+val zioVersion = "2.0.19"
 
 lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.8",
