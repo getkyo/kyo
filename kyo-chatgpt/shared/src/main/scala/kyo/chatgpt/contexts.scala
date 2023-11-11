@@ -61,6 +61,9 @@ object contexts {
       messages: List[Message]
   ) {
 
+    def isEmpty: Boolean =
+      seed.isEmpty && messages.isEmpty
+
     def seed(seed: String) =
       Context(Some(seed), messages)
 

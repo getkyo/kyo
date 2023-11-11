@@ -2,13 +2,10 @@ package kyo.chatgpt
 
 import kyo._
 import kyo.aspects._
-import kyo.chatgpt.ValueSchema._
 import kyo.chatgpt.completions._
-import kyo.chatgpt.configs._
 import kyo.chatgpt.contexts._
 import kyo.chatgpt.tools._
-import kyo.chatgpt.util.JsonSchema
-import kyo.concurrent.atomics.Atomics
+import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
 import kyo.ios._
 import kyo.lists._
@@ -25,7 +22,7 @@ import scala.util.control.NoStackTrace
 
 object ais {
 
-  type State = Map[AIRef, Context]
+  import internal._
 
   type AIs >: AIs.Effects <: AIs.Effects
 
@@ -33,7 +30,10 @@ object ais {
 
   object AIs {
 
+    type State   = Map[AIRef, Context]
     type Effects = Sums[State] with Requests with Tries with IOs with Aspects
+
+    case class AIException(cause: String) extends Exception(cause) with NoStackTrace
 
     private val nextId = IOs.run(Atomics.initLong(0))
 
@@ -84,30 +84,37 @@ object ais {
     }
   }
 
+  import AIs.State
+
   class AI private[ais] (val id: Long) {
 
     private val ref = new AIRef(this)
 
-    val save: Context > AIs = Sums[State].get.map(_.getOrElse(ref, Contexts.init))
+    def save: Context > AIs =
+      Sums[State].get.map(_.getOrElse(ref, Contexts.init))
 
-    def restore[T, S](ctx: Context > S): Unit > (AIs with S) =
-      ctx.map { ctx =>
-        Sums[State].get.map { st =>
-          Sums[State].set(st + (ref -> ctx)).unit
-        }
+    def restore(ctx: Context): Unit > AIs =
+      Sums[State].get.map { st =>
+        Sums[State].set(st + (ref -> ctx)).unit
       }
 
-    val initClone: AI > AIs =
+    def update(f: Context => Context): Unit > AIs =
+      save.map { ctx =>
+        restore(f(ctx))
+      }
+
+    def copy: AI > AIs =
       for {
         res <- AIs.init
         st  <- Sums[State].get
         _   <- Sums[State].set(st + (res.ref -> st.getOrElse(ref, Contexts.init)))
       } yield res
 
+    def seed[S](msg: String): Unit > AIs =
+      update(_.seed(msg))
+
     def addMessage(msg: Message): Unit > AIs =
-      save.map { ctx =>
-        restore(ctx.add(msg))
-      }
+      update(_.add(msg))
 
     def userMessage(msg: String): Unit > AIs =
       addMessage(Message.UserMessage(msg))
@@ -120,13 +127,6 @@ object ais {
 
     def toolMessage(callId: String, msg: String): Unit > AIs =
       addMessage(Message.ToolMessage(msg, callId))
-
-    def seed[S](msg: String): Unit > AIs =
-      save.map { ctx =>
-        restore(ctx.seed(msg))
-      }
-
-    import AIs._
 
     def ask: String > AIs = {
       def eval(tools: Set[Tool[_, _]]): String > AIs =
@@ -249,27 +249,31 @@ object ais {
       } yield r
   }
 
-  class AIRef(ai: AI) extends WeakReference[AI](ai) {
-    private val id = System.identityHashCode(ai)
+  object internal {
 
-    def isValid(): Boolean = get() != null
+    class AIRef(ai: AI) extends WeakReference[AI](ai) {
 
-    override def equals(obj: Any): Boolean = obj match {
-      case other: AIRef => id == other.id
-      case _            => false
+      private val id = ai.id
+
+      def isValid(): Boolean = get() != null
+
+      override def equals(obj: Any): Boolean =
+        obj match {
+          case other: AIRef => id == other.id
+          case _            => false
+        }
+
+      override def hashCode =
+        (31 * id.toInt) + 31
     }
 
-    override val hashCode = (31 * id) + 31
-  }
-
-  case class AIException(cause: String) extends Exception(cause) with NoStackTrace
-
-  private implicit val summer: Summer[State] =
-    new Summer[State] {
-      val init = Map.empty
-      def add(x: State, y: State) = {
-        val merged = x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Contexts.init) ++ v) }
-        merged.filter { case (k, v) => k.isValid() && v.messages.nonEmpty }
+    implicit val summer: Summer[State] =
+      new Summer[State] {
+        val init = Map.empty
+        def add(x: State, y: State) = {
+          val merged = x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Contexts.init) ++ v) }
+          merged.filter { case (k, v) => k.isValid() && !v.isEmpty }
+        }
       }
-    }
+  }
 }
