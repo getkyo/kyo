@@ -186,7 +186,8 @@ lazy val `kyo-sttp` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.1"
+        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core"          % "3.9.1",
+        libraryDependencies += "com.softwaremill.sttp.client3" %% "slf4j-backend" % "3.9.1"
     )
     .jsSettings(`js-settings`)
 
