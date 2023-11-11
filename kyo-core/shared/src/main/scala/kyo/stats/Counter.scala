@@ -21,7 +21,7 @@ object Counter {
     }
 
   def all(l: List[Counter]): Counter =
-    l match {
+    l.filter(_ ne noop) match {
       case Nil =>
         noop
       case h :: Nil =>

@@ -23,7 +23,7 @@ object Histogram {
     }
 
   def all(l: List[Histogram]): Histogram =
-    l match {
+    l.filter(_ ne noop) match {
       case Nil =>
         noop
       case h :: Nil =>
