@@ -186,7 +186,7 @@ lazy val `kyo-sttp` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.0"
+        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.1"
     )
     .jsSettings(`js-settings`)
 
@@ -216,10 +216,10 @@ lazy val `kyo-chatgpt-macros` =
         crossScalaVersions               := List(scala2Version, scala3Version),
         libraryDependencies += "dev.zio" %% "zio-schema"            % "0.4.15",
         libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.15",
-          libraryDependencies ++=(CrossVersion.partialVersion(scalaVersion.value) match {
-            case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
-            case _            => Seq.empty
-          })
+        libraryDependencies ++= (CrossVersion.partialVersion(scalaVersion.value) match {
+          case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
+          case _            => Seq.empty
+        })
     )
     .jsSettings(`js-settings`)
 
@@ -243,7 +243,7 @@ lazy val `kyo-chatgpt` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.0",
+        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.1",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.15",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.15",
         libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.15"
@@ -304,5 +304,5 @@ import org.scalajs.jsenv.nodejs._
 lazy val `js-settings` = Seq(
     Compile / doc / sources := Seq.empty,
     fork                    := false,
-    jsEnv                   := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120")))
+    jsEnv := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120")))
 )
