@@ -17,24 +17,26 @@ class OTelMetricReceiver extends MetricReceiver with TraceReceiver {
   private val otel = GlobalOpenTelemetry.get()
 
   def counter(scope: List[String], name: String, description: String, unit: String, a: Attributes) =
-    new Counter {
+    Counter(
+        new Counter.Unsafe {
 
-      val impl =
-        otel.getMeter(scope.mkString("_"))
-          .counterBuilder(name)
-          .setDescription(description)
-          .setUnit(unit)
-          .build()
+          val impl =
+            otel.getMeter(scope.mkString("_"))
+              .counterBuilder(name)
+              .setDescription(description)
+              .setUnit(unit)
+              .build()
 
-      def add(v: Long, a: Attributes) =
-        IOs(impl.add(v, OTelAttributes(a)))
+          def add(v: Long, a: Attributes) =
+            impl.add(v, OTelAttributes(a))
 
-      def add(v: Long) =
-        IOs(impl.add(v))
+          def add(v: Long) =
+            impl.add(v)
 
-      def attributes(b: Attributes) =
-        counter(scope, name, description, unit, a.add(b))
-    }
+          def attributes(b: Attributes) =
+            counter(scope, name, description, unit, a.add(b)).unsafe
+        }
+    )
 
   def histogram(
       scope: List[String],
@@ -43,24 +45,26 @@ class OTelMetricReceiver extends MetricReceiver with TraceReceiver {
       unit: String,
       a: Attributes
   ) =
-    new Histogram {
+    Histogram(
+        new Histogram.Unsafe {
 
-      val impl =
-        otel.getMeter(scope.mkString("_"))
-          .histogramBuilder(name)
-          .setDescription(description)
-          .setUnit(unit)
-          .build()
+          val impl =
+            otel.getMeter(scope.mkString("_"))
+              .histogramBuilder(name)
+              .setDescription(description)
+              .setUnit(unit)
+              .build()
 
-      def observe(v: Double, b: Attributes) =
-        IOs(impl.record(v, OTelAttributes(b)))
+          def observe(v: Double, b: Attributes) =
+            impl.record(v, OTelAttributes(b))
 
-      def observe(v: Double): Unit > IOs =
-        IOs(impl.record(v))
+          def observe(v: Double) =
+            impl.record(v)
 
-      def attributes(b: Attributes) =
-        histogram(scope, name, description, unit, a.add(b))
-    }
+          def attributes(b: Attributes) =
+            histogram(scope, name, description, unit, a.add(b)).unsafe
+        }
+    )
 
   def gauge(
       scope: List[String],
@@ -69,18 +73,20 @@ class OTelMetricReceiver extends MetricReceiver with TraceReceiver {
       unit: String,
       a: Attributes
   )(f: => Double) =
-    new Gauge {
+    Gauge(
+        new Gauge.Unsafe {
 
-      val impl =
-        otel.getMeter(scope.mkString("_"))
-          .gaugeBuilder(name)
-          .setDescription(description)
-          .setUnit(unit)
-          .buildWithCallback(m => m.record(f))
+          val impl =
+            otel.getMeter(scope.mkString("_"))
+              .gaugeBuilder(name)
+              .setDescription(description)
+              .setUnit(unit)
+              .buildWithCallback(m => m.record(f))
 
-      def close =
-        IOs(impl.close())
-    }
+          def close() =
+            impl.close()
+        }
+    )
 
   def startSpan(
       scope: List[String],

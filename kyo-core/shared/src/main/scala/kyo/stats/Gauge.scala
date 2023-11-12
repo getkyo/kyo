@@ -4,25 +4,40 @@ import kyo._
 import kyo.ios._
 import kyo.lists._
 
-abstract class Gauge {
-  def close: Unit > IOs
+case class Gauge(unsafe: Gauge.Unsafe) extends AnyVal {
+  def close: Unit > IOs = IOs(unsafe.close())
 }
 
 object Gauge {
+
+  abstract class Unsafe {
+    def close(): Unit
+  }
+
   val noop: Gauge =
-    new Gauge {
-      def close = ()
-    }
+    Gauge(
+        new Unsafe {
+          def close() = ()
+        }
+    )
 
   def all(l: List[Gauge]): Gauge =
-    l.filter(_ ne noop) match {
+    l.filter(_ != noop) match {
       case Nil =>
         noop
       case h :: Nil =>
         h
       case l =>
-        new Gauge {
-          def close = Lists.traverseUnit(l)(_.close)
-        }
+        Gauge(
+            new Unsafe {
+              def close() = {
+                var c = l
+                while (c ne Nil) {
+                  c.head.unsafe.close()
+                  c = c.tail
+                }
+              }
+            }
+        )
     }
 }

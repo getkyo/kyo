@@ -7,30 +7,51 @@ import kyo.locals._
 import kyo.stats._
 import kyo.stats.Attributes
 
-abstract class Span {
+class Span(unsafe: Span.Unsafe) {
 
-  def end: Unit > IOs
+  def end: Unit > IOs =
+    IOs(unsafe.end)
 
-  def event(name: String, a: Attributes): Unit > IOs
+  def event(name: String, a: Attributes): Unit > IOs =
+    IOs(unsafe.event(name, a))
 }
 
 object Span {
 
-  val noop: Span =
-    new Span {
-      def end =
-        ()
-      def event(name: String, a: Attributes) =
-        ()
-    }
+  abstract class Unsafe {
+    def end: Unit
+    def event(name: String, a: Attributes): Unit
+  }
 
-  def all(l: List[Span] > IOs): Span =
-    new Span {
-      def end =
-        Lists.traverseUnit(l)(_.end)
-      def event(name: String, a: Attributes) =
-        Lists.traverseUnit(l)(_.event(name, a))
-    }
+  val noop: Span =
+    Span(
+        new Unsafe {
+          def end =
+            ()
+          def event(name: String, a: Attributes) =
+            ()
+        }
+    )
+
+  def all(l: List[Span]): Span =
+    Span(
+        new Span.Unsafe {
+          def end = {
+            var c = l
+            while (c ne Nil) {
+              c.head.end
+              c = c.tail
+            }
+          }
+          def event(name: String, a: Attributes) = {
+            var c = l
+            while (c ne Nil) {
+              c.head.event(name, a)
+              c = c.tail
+            }
+          }
+        }
+    )
 
   private val currentSpan = Locals.init[Option[Span]](None)
 

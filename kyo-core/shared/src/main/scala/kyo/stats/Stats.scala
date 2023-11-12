@@ -79,8 +79,8 @@ object Stats {
       traceReceiver.let(TraceReceiver.all(List(curr, receiver)))(v)
     }
 
-  def scope(name: String): Stats =
-    scope(name :: Nil)
+  def scope(first: String, rest: String*): Stats =
+    scope(first :: rest.toList)
 
   private def scope(path: List[String]): Stats =
     new Stats {
