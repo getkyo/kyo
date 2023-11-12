@@ -6,7 +6,7 @@ import kyo.lists._
 
 case class Counter(unsafe: Counter.Unsafe) extends AnyVal {
   def inc: Unit > IOs =
-    IOs(unsafe.add(1))
+    IOs(unsafe.inc())
   def add(v: Long): Unit > IOs =
     IOs(unsafe.add(v))
   def add(v: Long, b: Attributes): Unit > IOs =
@@ -18,6 +18,7 @@ case class Counter(unsafe: Counter.Unsafe) extends AnyVal {
 object Counter {
 
   abstract class Unsafe {
+    def inc(): Unit
     def add(v: Long): Unit
     def add(v: Long, b: Attributes): Unit
     def attributes(b: Attributes): Unsafe
@@ -26,6 +27,7 @@ object Counter {
   val noop: Counter =
     Counter(
         new Unsafe {
+          def inc()                       = ()
           def add(v: Long)                = ()
           def add(v: Long, b: Attributes) = ()
           def attributes(b: Attributes)   = this
@@ -41,6 +43,7 @@ object Counter {
       case l =>
         Counter(
             new Unsafe {
+              def inc() = add(1)
               def add(v: Long) = {
                 var c = l
                 while (c ne Nil) {
