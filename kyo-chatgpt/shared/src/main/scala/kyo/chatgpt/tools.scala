@@ -78,7 +78,7 @@ package object tools {
                       call.id,
                       p"""
                         Entering the tool execution flow. Further interactions 
-                        are automated and not directly initiated by a human.
+                        are automated and indirectly initiated by a human.
                       """
                   ).andThen {
                     tool.handle(ai, call.arguments)

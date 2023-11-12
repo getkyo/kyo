@@ -21,25 +21,33 @@ object Image {
 
   import internal._
 
-  case class Task(
+  case class Input(
       @desc("A text description of the desired image")
       prompt: String,
-      @desc("The quality of the image that will be generated. hd " +
-        "creates images with finer details and greater consistency " +
-        "across the image.")
+      @desc("""
+        The quality of the image that will be generated. hd creates 
+        images with finer details and greater consistency across the image.
+      """)
       hdQuality: Boolean,
       @desc("Must be one of 1024x1024, 1792x1024, or 1024x1792")
       size: String,
-      @desc("The style of the generated images. Must be one of vivid " +
-        "or natural. Vivid causes the model to lean towards generating " +
-        "hyper-real and dramatic images. Natural causes the model to produce " +
-        "more natural, less hyper-real looking images.")
+      @desc("""
+        The style of the generated images. Must be one of vivid 
+        or natural. Vivid causes the model to lean towards generating
+        hyper-real and dramatic images. Natural causes the model to produce
+        more natural, less hyper-real looking images.
+      """)
       style: String
   )
 
-  val tool = Tools.init[Task, String](
+  case class Output(
+      imageUrl: String,
+      revisedPrompt: String
+  )
+
+  val tool = Tools.init[Input, Output](
       "image_generation",
-      "Generates an image via DALL-E and returns its URL"
+      "Generates an image via DALL-E"
   ) { (_, task) =>
     val req = Request(
         task.prompt,
@@ -57,15 +65,18 @@ object Image {
               .readTimeout(Duration.Inf)
               .response(asJson[Response])
         ).map { resp =>
-          resp.data.headOption.map(_.url)
-            .getOrElse(AIs.fail[String]("Can't find the generated image URL."))
+          resp.data.headOption.map(r => Output(r.url, r.revised_prompt))
+            .getOrElse(AIs.fail[Output]("Can't find the generated image URL."))
         }
       }
     }
   }
 
   object internal {
-    case class Data(url: String)
+    case class Data(
+        url: String,
+        revised_prompt: String
+    )
     case class Request(
         prompt: String,
         quality: String,
