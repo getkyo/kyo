@@ -44,4 +44,30 @@ class listsTest extends KyoTest {
         List(20, 200, 30, 300)
     )
   }
+  "collect" in {
+    checkEquals[List[Int], Nothing](
+        Lists.collect(List(1, 2)).pure,
+        List(1, 2)
+    )
+  }
+  "repeat" in {
+    checkEquals[List[Int], Nothing](
+        Lists.run(Lists.repeat(3).andThen(42)),
+        List(42, 42, 42)
+    )
+  }
+  "traverse" in {
+    checkEquals[List[Int], Nothing](
+        Lists.traverse(List(1, 2))(_ + 1).pure,
+        List(2, 3)
+    )
+  }
+  "traverseUnit" in {
+    var acc = List.empty[Int]
+    checkEquals[Unit, Nothing](
+        Lists.traverseUnit(List(1, 2))(acc :+= _).pure,
+        ()
+    )
+    assert(acc == List(1, 2))
+  }
 }

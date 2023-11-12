@@ -114,7 +114,7 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
 
 lazy val `without-cross-scala` = Seq(
     scalaVersion       := scala3Version,
-    crossScalaVersions := List(scala3Version)
+    crossScalaVersions := List(scala3Version),
 )
 
 lazy val `with-cross-scala` = Seq(
@@ -141,7 +141,8 @@ lazy val `kyo-core-opt` =
     .settings(
         `kyo-core-settings`,
         `without-cross-scala`,
-        scalafmtOnCompile := false
+        scalafmtOnCompile := false,
+        jacocoExcludes += "**/*"
     )
 
 lazy val `kyo-direct` =
@@ -187,7 +188,7 @@ lazy val `kyo-sttp` =
         `kyo-settings`,
         `with-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.client3" %%% "core"          % "3.9.1",
-        libraryDependencies += "com.softwaremill.sttp.client3" %% "slf4j-backend" % "3.9.1"
+        libraryDependencies += "com.softwaremill.sttp.client3"  %% "slf4j-backend" % "3.9.1"
     )
     .jsSettings(`js-settings`)
 
@@ -265,7 +266,8 @@ lazy val `kyo-bench` =
         libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion,
         libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.14",
-        libraryDependencies += "org.scalatest"       %% "scalatest"      % "3.2.16" % Test
+        libraryDependencies += "org.scalatest"       %% "scalatest"      % "3.2.16" % Test,
+        jacocoExcludes += "**/*"
     )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")

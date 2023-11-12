@@ -28,9 +28,6 @@ package object kyo {
 
     def repeat(i: Int)(implicit ev: T => Unit): Unit > S =
       if (i <= 0) () else andThen(repeat(i - 1))
-
-    def forever(implicit ev: T => Unit): Unit > S =
-      andThen(forever)
   }
 
   implicit class KyoPureOps[+T](private[kyo] val v: T > Any) extends AnyVal {

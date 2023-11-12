@@ -58,7 +58,18 @@ class sumsTest extends kyoTest.KyoTest {
       Sums[String].run(Sums[String].get).pure
     assert(s == "")
   }
-  "list" in {
+  "set" in {
+    val v =
+      for {
+        _  <- Sums[List[Int]].add(List(1))
+        v1 <- Sums[List[Int]].get
+        _  <- Sums[List[Int]].set(List(3))
+        v2 <- Sums[List[Int]].get
+      } yield (v1, v2)
+    val res = Sums[List[Int]].run(v)
+    assert(res == (List(1), List(3)))
+  }
+  "List" in {
     val v =
       for {
         _  <- Sums[List[Int]].add(List(1))
@@ -70,5 +81,19 @@ class sumsTest extends kyoTest.KyoTest {
       } yield (v1, v2, v3)
     val res = Sums[List[Int]].run(v)
     assert(res == (List(1), List(1, 2), List(1, 2, 3)))
+  }
+
+  "Set" in {
+    val v =
+      for {
+        _  <- Sums[Set[Int]].add(Set(1))
+        v1 <- Sums[Set[Int]].get
+        _  <- Sums[Set[Int]].add(Set(2))
+        v2 <- Sums[Set[Int]].get
+        _  <- Sums[Set[Int]].add(Set(3))
+        v3 <- Sums[Set[Int]].get
+      } yield (v1, v2, v3)
+    val res = Sums[Set[Int]].run(v)
+    assert(res == (Set(1), Set(1, 2), Set(1, 2, 3)))
   }
 }

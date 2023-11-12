@@ -8,7 +8,7 @@ class randomsTest extends KyoTest {
 
   implicit def testRandom: Random = new Random {
     def nextInt         = 10
-    def nextInt(n: Int) = 11 + n
+    def nextInt(n: Int) = Math.min(55, n - 1)
     def nextLong        = 20L
     def nextBoolean     = true
     def nextDouble      = 30d
@@ -22,7 +22,7 @@ class randomsTest extends KyoTest {
   }
   "nextInt(n)" in {
     val v = IOs.run(Randoms.run(Randoms.nextInt(42)))
-    assert(v == 53)
+    assert(v == 41)
   }
   "nextLong" in {
     val v = IOs.run(Randoms.run(Randoms.nextLong))
@@ -43,5 +43,9 @@ class randomsTest extends KyoTest {
   "nextGaussian" in {
     val v = IOs.run(Randoms.run(Randoms.nextGaussian))
     assert(v == 50d)
+  }
+  "nextValue" in {
+    val v = IOs.run(Randoms.run(Randoms.nextValue(List(1, 2))))
+    assert(v == 2)
   }
 }

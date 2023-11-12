@@ -30,6 +30,18 @@ class aspectsTest extends KyoTest {
       }
     }
 
+    "sandboxed" in run {
+      val cut = new Cut[Int, Int, IOs] {
+        def apply[S](v: Int > S)(f: Int => Int > (Aspects with IOs)) =
+          v.map(v => f(v + 1))
+      }
+      aspect.let[Assertion, IOs](cut) {
+        aspect.sandbox {
+          test(1)
+        }.map(v => assert(v == 2))
+      }
+    }
+
     "nested cuts" in run {
       val cut1 = new Cut[Int, Int, IOs] {
         def apply[S](v: Int > S)(f: Int => Int > (Aspects with IOs)) =

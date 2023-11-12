@@ -37,10 +37,6 @@ package object kyo {
     /*inline*/
     def repeat(i: Int)(implicit ev: T => Unit): Unit > S =
       if (i <= 0) () else andThen(repeat(i - 1))
-
-    /*inline*/
-    def forever(implicit ev: T => Unit): Unit > S =
-      andThen(forever)
   }
 
   extension [T, S](v: T > Any) {
