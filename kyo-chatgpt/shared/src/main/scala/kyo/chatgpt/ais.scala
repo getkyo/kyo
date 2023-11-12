@@ -28,6 +28,13 @@ object ais {
 
   final case class desc(value: String) extends StaticAnnotation
 
+  implicit class PromptInterpolator(val sc: StringContext) extends AnyVal {
+    def p(args: Any*): String =
+      sc.s(args: _*)
+        .replaceAll("\n\\s+", "\n") // remove whitespace at the start of a line
+        .trim
+  }
+
   object AIs {
 
     type State   = Map[AIRef, Context]

@@ -1,6 +1,6 @@
 package kyo.chatgpt.util
 
-import kyo.chatgpt.ais.desc
+import kyo.chatgpt.ais._
 import zio.schema._
 import zio.json._
 import zio.json.ast._
@@ -24,7 +24,7 @@ object JsonSchema {
   def desc(c: Chunk[Any]): List[(String, Json)] =
     c.collect {
       case desc(v) =>
-        "description" -> Json.Str(v.stripMargin)
+        "description" -> Json.Str(p"$v")
     }.distinct.toList
 
   def convert(schema: Schema[_]): List[(String, Json)] = {

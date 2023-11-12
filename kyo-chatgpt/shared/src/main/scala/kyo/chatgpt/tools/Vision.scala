@@ -39,10 +39,10 @@ object Vision {
         val payload = encodeImage(bytes)
         val msg =
           Message.UserMessage(
-              s"""
-                | Context: ${task.environment}
-                | Question: ${task.question}
-                """.stripMargin,
+              p"""
+                Context: ${task.environment}
+                Question: ${task.question}
+              """,
               s"data:image/jpeg;base64,$payload" :: Nil
           )
         AIs.init.map { ai =>

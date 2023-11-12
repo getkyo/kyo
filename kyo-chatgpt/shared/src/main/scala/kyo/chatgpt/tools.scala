@@ -76,10 +76,10 @@ package object tools {
                 Tries.run[String, AIs] {
                   ai.toolMessage(
                       call.id,
+                      p"""
+                        Entering the tool execution flow. Further interactions 
+                        are automated and not directly initiated by a human.
                       """
-                      | Entering the tool execution flow. Further interactions 
-                      | are automated and not directly initiated by a human.
-                      """.stripMargin
                   ).andThen {
                     tool.handle(ai, call.arguments)
                   }
