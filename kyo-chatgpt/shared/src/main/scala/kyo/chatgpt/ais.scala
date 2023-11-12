@@ -135,19 +135,8 @@ object ais {
             case Nil =>
               r.content
             case calls =>
-              Lists.traverse(calls) { call =>
-                tools.find(_.name == call.function) match {
-                  case None =>
-                    toolMessage(call.id, "Invalid function call: " + call)
-                  case Some(tool) =>
-                    Tries.run[String, AIs](tool(this, call.arguments)).map {
-                      case Success(result) =>
-                        toolMessage(call.id, result)
-                      case Failure(ex) =>
-                        toolMessage(call.id, "Failure: " + ex)
-                    }
-                }
-              }.map(_ => eval(tools))
+              Tools.handle(this, tools, calls)
+                .andThen(eval(tools))
           }
         }
       Tools.get.map(eval)
@@ -192,44 +181,25 @@ object ais {
         Tools.init[T, T]("resultTool", "call this function with the result")((ai, v) => v)
       def eval(tools: Set[Tool[_, _]], constrain: Option[Tool[_, _]] = None): T > AIs =
         fetch(tools, constrain).map { r =>
-          def loop(calls: List[Call]): T > AIs =
-            calls match {
-              case Nil =>
-                eval(tools)
-              case call :: tail =>
-                tools.find(_.name == call.function) match {
-                  case None =>
-                    toolMessage(call.id, "Invalid function call: " + call)
-                      .andThen(loop(tail))
-                  case Some(`resultTool`) =>
-                    resultTool.decoder.decodeJson(call.arguments) match {
-                      case Left(error) =>
-                        toolMessage(
-                            call.id,
-                            "Failed to read the result: " + error
-                        ).andThen(eval(tools, Some(resultTool)))
-                      case Right(value) =>
-                        toolMessage(
-                            call.id,
-                            "Result processed."
-                        ).andThen(value.value)
-                    }
-                  case Some(tool) =>
-                    Tries.run[String, AIs](tool(this, call.arguments)).map {
-                      case Success(result) =>
-                        toolMessage(call.id, result)
-                          .andThen(loop(tail))
-                      case Failure(ex) =>
-                        toolMessage(call.id, "Failure: " + ex)
-                          .andThen(loop(tail))
-                    }
-                }
-            }
           r.calls match {
             case Nil =>
               eval(tools, Some(resultTool))
+            case call :: _ if (call.function == resultTool.name) =>
+              resultTool.decoder.decodeJson(call.arguments) match {
+                case Left(error) =>
+                  toolMessage(
+                      call.id,
+                      "Failed to read the result: " + error
+                  ).andThen(eval(tools, Some(resultTool)))
+                case Right(value) =>
+                  toolMessage(
+                      call.id,
+                      "Result processed."
+                  ).andThen(value.value)
+              }
             case calls =>
-              loop(calls)
+              Tools.handle(this, tools, calls)
+                .andThen(eval(tools))
           }
         }
       userMessage(msg)

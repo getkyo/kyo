@@ -31,24 +31,22 @@ object Vision {
       "vision_interpret_image",
       "interprets the contents of the provided image"
   ) { (_, task) =>
-    Tools.disabled {
-      Configs.let(_.model(Model.gpt4_vision).maxTokens(Some(4000))) {
-        Requests[Array[Byte]](
-            _.get(uri"${task.imageUrl}")
-              .response(asByteArray)
-        ).map { bytes =>
-          val payload = encodeImage(bytes)
-          val msg =
-            Message.UserMessage(
-                s"""
+    Configs.let(_.model(Model.gpt4_vision).maxTokens(Some(4000))) {
+      Requests[Array[Byte]](
+          _.get(uri"${task.imageUrl}")
+            .response(asByteArray)
+      ).map { bytes =>
+        val payload = encodeImage(bytes)
+        val msg =
+          Message.UserMessage(
+              s"""
                 | Context: ${task.environment}
                 | Question: ${task.question}
                 """.stripMargin,
-                s"data:image/jpeg;base64,$payload" :: Nil
-            )
-          AIs.init.map { ai =>
-            ai.addMessage(msg).andThen(ai.ask)
-          }
+              s"data:image/jpeg;base64,$payload" :: Nil
+          )
+        AIs.init.map { ai =>
+          ai.addMessage(msg).andThen(ai.ask)
         }
       }
     }

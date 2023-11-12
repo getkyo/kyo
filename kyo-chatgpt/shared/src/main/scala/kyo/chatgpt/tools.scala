@@ -5,12 +5,16 @@ import kyo.chatgpt.ais._
 import kyo.chatgpt.util.JsonSchema
 import kyo.chatgpt.ValueSchema._
 import kyo.locals._
+import kyo.tries._
 import zio.json.JsonDecoder
 import zio.json.JsonEncoder
 import zio.schema.DeriveSchema
 import zio.schema.Schema
 import zio.schema.codec.JsonCodec
 import kyo.ios.IOs
+import kyo.chatgpt.contexts.Call
+import scala.util.{Try, Success, Failure}
+import kyo.lists.Lists
 
 package object tools {
 
@@ -22,12 +26,15 @@ package object tools {
       encoder: JsonEncoder[Value[U]],
       call: (AI, T) => U > AIs
   ) {
-    def apply(ai: AI, v: String): String > AIs =
+    private[kyo] def handle(ai: AI, v: String): String > AIs =
       decoder.decodeJson(v) match {
         case Left(error) =>
-          AIs.fail("Fail to decode tool input: " + error)
+          AIs.fail(
+              "Invalid json input. **Correct any mistakes before retrying**. " + error
+          )
         case Right(value) =>
-          call(ai, value.value).map(v => encoder.encodeJson(Value(v)).toString())
+          call(ai, value.value)
+            .map(v => encoder.encodeJson(Value(v)).toString())
       }
   }
 
@@ -35,14 +42,14 @@ package object tools {
 
     private[tools] val local = Locals.init(Set.empty[Tool[_, _]])
 
-    val get: Set[Tool[_, _]] > AIs = local.get
+    def get: Set[Tool[_, _]] > AIs = local.get
 
     def enable[T, S](p: Tool[_, _]*)(v: => T > S): T > (IOs with S) =
       local.get.map { set =>
         local.let(set ++ p.toSeq)(v)
       }
 
-    def disabled[T, S](f: T > S): T > (IOs with S) =
+    def disable[T, S](f: T > S): T > (IOs with S) =
       local.let(Set.empty)(f)
 
     def init[T, U](
@@ -57,5 +64,34 @@ package object tools {
           JsonCodec.jsonEncoder(u.get),
           f
       )
+
+    private[kyo] def handle(ai: AI, tools: Set[Tool[_, _]], calls: List[Call]): Unit > AIs =
+      Lists.traverseUnit(calls) { call =>
+        tools.find(_.name == call.function) match {
+          case None =>
+            ai.toolMessage(call.id, "Tool not found: " + call)
+          case Some(tool) =>
+            AIs.ephemeral {
+              Tools.disable {
+                Tries.run[String, AIs] {
+                  ai.toolMessage(
+                      call.id,
+                      """
+                      | Entering the tool execution flow. Further interactions 
+                      | are automated and not directly initiated by a human.
+                      """.stripMargin
+                  ).andThen {
+                    tool.handle(ai, call.arguments)
+                  }
+                }
+              }
+            }.map {
+              case Success(result) =>
+                ai.toolMessage(call.id, result)
+              case Failure(ex) =>
+                ai.toolMessage(call.id, "Failure:" + ex)
+            }
+        }
+      }
   }
 }
