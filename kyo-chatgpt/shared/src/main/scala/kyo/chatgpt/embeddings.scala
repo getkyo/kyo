@@ -23,7 +23,6 @@ object embeddings {
         apiKey <- Configs.apiKey
         config <- Configs.get
         req = Request(text, model)
-        _ <- logger.debug(req.toJsonPretty)
         res <- Requests[Response](
             _.contentType("application/json")
               .header("Authorization", s"Bearer $apiKey")
@@ -31,7 +30,6 @@ object embeddings {
               .body(req)
               .response(asJson[Response])
         )
-        _ <- logger.debug(res.toJsonPretty)
       } yield {
         Embedding(res.usage.prompt_tokens, res.data.head.embedding)
       }

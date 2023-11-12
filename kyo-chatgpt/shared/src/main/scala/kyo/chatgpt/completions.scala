@@ -32,9 +32,7 @@ object completions {
       for {
         config <- Configs.get
         req = Request(ctx, config, tools, constrain)
-        _                <- logger.debug(req.toJsonPretty)
         response         <- fetch(config, req)
-        _                <- logger.debug(response.toJsonPretty)
         (content, calls) <- read(response)
       } yield new Result(content, calls)
 
