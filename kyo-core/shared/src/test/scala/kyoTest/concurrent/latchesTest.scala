@@ -8,6 +8,14 @@ import kyoTest.KyoTest
 
 class latchesTest extends KyoTest {
 
+  "zero" in run {
+    for {
+      latch <- Latches.init(0)
+      _     <- latch.release
+      _     <- latch.await
+    } yield succeed
+  }
+
   "countDown + await" in run {
     for {
       latch <- Latches.init(1)
@@ -37,6 +45,14 @@ class latchesTest extends KyoTest {
     for {
       latch <- Latches.init(2)
       _     <- Fibers.parallel(latch.release, latch.release)
+      _     <- latch.await
+    } yield succeed
+  }
+
+  "contention" in runJVM {
+    for {
+      latch <- Latches.init(1000)
+      _     <- Fibers.parallelFiber(List.fill(1000)(latch.release))
       _     <- latch.await
     } yield succeed
   }

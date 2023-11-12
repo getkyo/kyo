@@ -79,7 +79,11 @@ object queues {
               case Access.Spmc =>
                 fromJava(new SpmcArrayQueue[T](capacity), capacity)
               case Access.Spsc =>
-                fromJava(new SpscArrayQueue[T](capacity), capacity)
+                if (capacity >= 4)
+                  fromJava(new SpscArrayQueue[T](capacity), capacity)
+                else
+                  // Spsc queue doesn't support capacity < 4
+                  fromJava(new SpmcArrayQueue[T](capacity), capacity)
             }
         }
       }

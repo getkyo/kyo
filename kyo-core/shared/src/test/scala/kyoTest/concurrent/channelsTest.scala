@@ -42,20 +42,22 @@ class channelsTest extends KyoTest {
       _  <- c.put(2)
       v1 <- c.poll
       v2 <- c.poll
-    } yield assert(b && v1 == Some(1) && v2 == Some(2))
+      b2 <- c.isEmpty
+    } yield assert(b && v1 == Some(1) && v2 == Some(2) && b2)
   }
   "offer, put, and take in parallel" in runJVM {
     for {
       c     <- Channels.init[Int](2)
       b     <- Fibers.fork(c.offer(1))
       put   <- Fibers.fork(c.putFiber(2))
+      f     <- c.isFull
       take1 <- Fibers.fork(c.takeFiber)
       take2 <- Fibers.fork(c.takeFiber)
       v1    <- take1.get
       _     <- put.get
       v2    <- take1.get
       v3    <- take2.get
-    } yield assert(b && v1 == 1 && v2 == 1 && v3 == 2)
+    } yield assert(b && f && v1 == 1 && v2 == 1 && v3 == 2)
   }
   "blocking put" in runJVM {
     for {
@@ -87,6 +89,31 @@ class channelsTest extends KyoTest {
       c <- Channels.init[Int](0)
       _ <- c.putFiber(1)
       v <- c.take
-    } yield assert(v == 1)
+      f <- c.isFull
+      e <- c.isEmpty
+    } yield assert(v == 1 && f && e)
+  }
+  "contention" - {
+    "with buffer" in runJVM {
+      for {
+        c  <- Channels.init[Int](10)
+        f1 <- Fibers.parallelFiber(List.fill(1000)(Fibers.parallel(List.fill(100)(c.put(1)))))
+        f2 <- Fibers.parallelFiber(List.fill(1000)(Fibers.parallel(List.fill(100)(c.take))))
+        _  <- f1.get
+        _  <- f2.get
+        b  <- c.isEmpty
+      } yield assert(b)
+    }
+
+    "no buffer" in runJVM {
+      for {
+        c  <- Channels.init[Int](0)
+        f1 <- Fibers.parallelFiber(List.fill(1000)(Fibers.parallel(List.fill(100)(c.put(1)))))
+        f2 <- Fibers.parallelFiber(List.fill(1000)(Fibers.parallel(List.fill(100)(c.take))))
+        _  <- f1.get
+        _  <- f2.get
+        b  <- c.isEmpty
+      } yield assert(b)
+    }
   }
 }

@@ -16,8 +16,6 @@ object timers {
 
   abstract class Timer {
 
-    def shutdown: Unit > IOs
-
     def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > IOs
 
     def scheduleAtFixedRate(
@@ -47,8 +45,6 @@ object timers {
           def isCancelled: Boolean > IOs = IOs(task.isCancelled())
           def isDone: Boolean > IOs      = IOs(task.isDone())
         }
-
-        def shutdown = IOs.unit
 
         def schedule(delay: Duration)(f: => Unit > IOs) =
           if (delay.isFinite) {
@@ -123,9 +119,6 @@ object timers {
 
     def run[T, S](f: => T > (Timers with S))(implicit t: Timer): T > (IOs with S) =
       run[T, IOs with S](t)(f)
-
-    def shutdown: Unit > Timers =
-      envs.get.map(_.shutdown)
 
     def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > Timers =
       envs.get.map(_.schedule(delay)(f))

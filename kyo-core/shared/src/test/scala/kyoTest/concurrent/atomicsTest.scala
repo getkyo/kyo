@@ -66,6 +66,20 @@ class atomicsTest extends KyoTest {
         v   <- ref.getAndAdd(5)
       } yield assert(v == 5)
     }
+    "lazySet" in run {
+      for {
+        ref <- Atomics.initInt(5)
+        _   <- ref.lazySet(5)
+        v   <- ref.get
+      } yield assert(v == 5)
+    }
+    "getAndSet" in run {
+      for {
+        ref <- Atomics.initInt(5)
+        v1  <- ref.getAndSet(6)
+        v2  <- ref.get
+      } yield assert(v1 == 5 && v2 == 6)
+    }
   }
 
   "AtomicLong" - {
@@ -128,6 +142,20 @@ class atomicsTest extends KyoTest {
         v   <- ref.getAndAdd(5L)
       } yield assert(v == 5L)
     }
+    "lazySet" in run {
+      for {
+        ref <- Atomics.initLong(5)
+        _   <- ref.lazySet(5)
+        v   <- ref.get
+      } yield assert(v == 5)
+    }
+    "getAndSet" in run {
+      for {
+        ref <- Atomics.initLong(5)
+        v1  <- ref.getAndSet(6)
+        v2  <- ref.get
+      } yield assert(v1 == 5 && v2 == 6)
+    }
   }
 
   "AtomicBoolean" - {
@@ -153,6 +181,20 @@ class atomicsTest extends KyoTest {
         assert(v == true)
         assert(r == false)
       }
+    }
+    "lazySet" in run {
+      for {
+        ref <- Atomics.initBoolean(true)
+        _   <- ref.lazySet(false)
+        v   <- ref.get
+      } yield assert(!v)
+    }
+    "getAndSet" in run {
+      for {
+        ref <- Atomics.initBoolean(true)
+        v1  <- ref.getAndSet(false)
+        v2  <- ref.get
+      } yield assert(v1 && !v2)
     }
   }
 

@@ -57,4 +57,16 @@ class timersTest extends KyoTest {
       cancelled <- task.cancel
     } yield assert(n > 0 && cancelled)
   }
+
+  "scheduleWithFixedDelay 2" in runJVM {
+    for {
+      ref <- Atomics.initInt(0)
+      task <- Timers.scheduleWithFixedDelay(
+          10.millis
+      )(ref.incrementAndGet.unit)
+      _         <- Fibers.sleep(50.millis)
+      n         <- ref.get
+      cancelled <- task.cancel
+    } yield assert(n > 0 && cancelled)
+  }
 }

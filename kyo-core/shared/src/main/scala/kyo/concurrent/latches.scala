@@ -41,9 +41,12 @@ object latches {
 
               val release =
                 IOs {
-                  if (count.get() > 0 && count.decrementAndGet() == 0) {
+                  var c = count.get()
+                  while (c > 0 && !count.compareAndSet(c, c - 1)) {
+                    c = count.get()
+                  }
+                  if (c == 1) {
                     promise.unsafeComplete(())
-                    ()
                   }
                 }
 

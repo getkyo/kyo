@@ -20,6 +20,14 @@ class addersTest extends KyoTest {
         v   <- ref.get
       } yield assert(v == 5)
     }
+    "should increment the value" in run {
+      for {
+        ref <- Adders.initLong
+        _   <- ref.add(5)
+        _   <- ref.increment
+        v   <- ref.get
+      } yield assert(v == 6)
+    }
     "should decrement the value" in run {
       for {
         ref <- Adders.initLong
