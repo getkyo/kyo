@@ -15,7 +15,7 @@ object contexts {
     val tool: Role      = Role("tool")
   }
 
-  case class ToolCall(id: String, function: String, arguments: String)
+  case class Call(id: String, function: String, arguments: String)
 
   sealed trait Message {
     def role: Role
@@ -36,7 +36,7 @@ object contexts {
 
     case class AssistantMessage(
         content: String,
-        toolCalls: List[ToolCall] = Nil,
+        calls: List[Call] = Nil,
         role: Role = Role.assistant
     ) extends Message
 

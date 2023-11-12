@@ -27,6 +27,8 @@ class OTelMetricReceiver extends MetricReceiver with TraceReceiver {
               .setUnit(unit)
               .build()
 
+          def inc() = add(1)
+
           def add(v: Long, a: Attributes) =
             impl.add(v, OTelAttributes(a))
 
@@ -100,22 +102,19 @@ class OTelMetricReceiver extends MetricReceiver with TraceReceiver {
           .spanBuilder(name)
           .setAllAttributes(OTelAttributes(attributes))
       parent.collect {
-        case SpanImpl(c) =>
+        case Span(SpanImpl(c)) =>
           b.setParent(c)
       }
-      SpanImpl(b.startSpan().storeInContext(Context.current()))
+      Span(SpanImpl(b.startSpan().storeInContext(Context.current())))
     }
 
-  private case class SpanImpl(c: Context) extends Span {
+  private case class SpanImpl(c: Context) extends Span.Unsafe {
 
-    def end: Unit > IOs =
-      IOs(OSpan.fromContext(c).end())
+    def end(): Unit =
+      OSpan.fromContext(c).end()
 
     def event(name: String, a: Attributes) =
-      IOs {
-        OSpan.fromContext(c).addEvent(name, OTelAttributes(a))
-        ()
-      }
+      OSpan.fromContext(c).addEvent(name, OTelAttributes(a))
   }
 
 }

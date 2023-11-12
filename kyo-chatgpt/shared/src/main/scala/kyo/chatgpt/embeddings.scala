@@ -10,7 +10,6 @@ import kyo.requests._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
-import kyo.loggers._
 
 object embeddings {
 
@@ -18,8 +17,6 @@ object embeddings {
 
   object Embeddings {
     import internal._
-
-    private val logger = Loggers.init(getClass)
 
     def init(text: String, model: String = "text-embedding-ada-002"): Embedding > AIs =
       for {

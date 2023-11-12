@@ -122,7 +122,7 @@ object ais {
     def systemMessage(msg: String): Unit > AIs =
       addMessage(Message.SystemMessage(msg))
 
-    def assistantMessage(msg: String, toolCalls: List[ToolCall] = Nil): Unit > AIs =
+    def assistantMessage(msg: String, toolCalls: List[Call] = Nil): Unit > AIs =
       addMessage(Message.AssistantMessage(msg, toolCalls))
 
     def toolMessage(callId: String, msg: String): Unit > AIs =
@@ -131,7 +131,7 @@ object ais {
     def ask: String > AIs = {
       def eval(tools: Set[Tool[_, _]]): String > AIs =
         fetch(tools).map { r =>
-          r.toolCalls match {
+          r.calls match {
             case Nil =>
               r.content
             case calls =>
@@ -166,7 +166,7 @@ object ais {
         )((ai, v) => v)
       def eval(): T > AIs =
         fetch(Set(resultTool), Some(resultTool)).map { r =>
-          r.toolCalls match {
+          r.calls match {
             case call :: Nil if (call.function == resultTool.name) =>
               resultTool.decoder.decodeJson(call.arguments) match {
                 case Left(error) =>
@@ -192,7 +192,7 @@ object ais {
         Tools.init[T, T]("resultTool", "call this function with the result")((ai, v) => v)
       def eval(tools: Set[Tool[_, _]], constrain: Option[Tool[_, _]] = None): T > AIs =
         fetch(tools, constrain).map { r =>
-          def loop(calls: List[ToolCall]): T > AIs =
+          def loop(calls: List[Call]): T > AIs =
             calls match {
               case Nil =>
                 eval(tools)
@@ -225,7 +225,7 @@ object ais {
                     }
                 }
             }
-          r.toolCalls match {
+          r.calls match {
             case Nil =>
               eval(tools, Some(resultTool))
             case calls =>
@@ -245,7 +245,7 @@ object ais {
       for {
         ctx <- save
         r   <- Completions(ctx, tools, constrain)
-        _   <- assistantMessage(r.content, r.toolCalls)
+        _   <- assistantMessage(r.content, r.calls)
       } yield r
   }
 

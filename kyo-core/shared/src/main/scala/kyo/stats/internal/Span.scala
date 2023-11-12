@@ -7,10 +7,10 @@ import kyo.locals._
 import kyo.stats._
 import kyo.stats.Attributes
 
-class Span(unsafe: Span.Unsafe) {
+case class Span(unsafe: Span.Unsafe) {
 
   def end: Unit > IOs =
-    IOs(unsafe.end)
+    IOs(unsafe.end())
 
   def event(name: String, a: Attributes): Unit > IOs =
     IOs(unsafe.event(name, a))
@@ -19,14 +19,14 @@ class Span(unsafe: Span.Unsafe) {
 object Span {
 
   abstract class Unsafe {
-    def end: Unit
+    def end(): Unit
     def event(name: String, a: Attributes): Unit
   }
 
   val noop: Span =
     Span(
         new Unsafe {
-          def end =
+          def end() =
             ()
           def event(name: String, a: Attributes) =
             ()
@@ -36,7 +36,7 @@ object Span {
   def all(l: List[Span]): Span =
     Span(
         new Span.Unsafe {
-          def end = {
+          def end() = {
             var c = l
             while (c ne Nil) {
               c.head.end

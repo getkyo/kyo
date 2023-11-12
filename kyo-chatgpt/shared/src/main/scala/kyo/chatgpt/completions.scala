@@ -6,7 +6,6 @@ import kyo.chatgpt.contexts._
 import kyo.chatgpt.tools._
 import kyo.chatgpt.util.JsonSchema
 import kyo.ios._
-import kyo.loggers._
 import kyo.requests._
 import kyo.tries._
 import sttp.client3._
@@ -23,9 +22,7 @@ object completions {
 
   object Completions {
 
-    private val logger = Loggers.init(getClass)
-
-    case class Result(content: String, toolCalls: List[ToolCall])
+    case class Result(content: String, calls: List[Call])
 
     def apply(
         ctx: Context,
@@ -35,13 +32,13 @@ object completions {
       for {
         config <- Configs.get
         req = Request(ctx, config, tools, constrain)
-        _               <- logger.debug(req.toJsonPretty)
-        response        <- fetch(config, req)
-        _               <- logger.debug(response.toJsonPretty)
-        (content, call) <- read(response)
-      } yield new Result(content, call)
+        _                <- logger.debug(req.toJsonPretty)
+        response         <- fetch(config, req)
+        _                <- logger.debug(response.toJsonPretty)
+        (content, calls) <- read(response)
+      } yield new Result(content, calls)
 
-    private def read(response: Response): (String, List[ToolCall]) > (IOs with Requests) =
+    private def read(response: Response): (String, List[Call]) > (IOs with Requests) =
       response.choices.headOption match {
         case None =>
           IOs.fail("no choices")
@@ -49,7 +46,7 @@ object completions {
           (
               v.message.content.getOrElse(""),
               v.message.tool_calls.getOrElse(Nil).map(c =>
-                ToolCall(c.id, c.function.name, c.function.arguments)
+                Call(c.id, c.function.name, c.function.arguments)
               )
           )
       }
@@ -124,7 +121,7 @@ object completions {
             msg match {
               case msg: Message.AssistantMessage =>
                 Some(
-                    msg.toolCalls.map(c => ToolCall(c.id, FunctionCall(c.arguments, c.function)))
+                    msg.calls.map(c => ToolCall(c.id, FunctionCall(c.arguments, c.function)))
                 ).filter(_.nonEmpty)
               case _ =>
                 None
