@@ -20,7 +20,8 @@ class methodsTest extends KyoTest {
   }
 
   "flatten" in {
-    val a: Int > IOs > IOs = IOs[Int > IOs, Any](IOs(1))
+    def test[T](v: T)      = IOs(v)
+    val a: Int > IOs > IOs = test(IOs(1))
     val b: Int > IOs       = a.flatten
     assert(IOs.run(b) == 1)
   }

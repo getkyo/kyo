@@ -47,6 +47,7 @@ object latches {
                   }
                   if (c == 1) {
                     promise.unsafeComplete(())
+                    ()
                   }
                 }
 
