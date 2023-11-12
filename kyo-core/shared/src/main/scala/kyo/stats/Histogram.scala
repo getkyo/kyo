@@ -45,14 +45,14 @@ object Histogram {
               def observe(v: Double) = {
                 var c = l
                 while (c ne Nil) {
-                  c.head.observe(v)
+                  c.head.unsafe.observe(v)
                   c = c.tail
                 }
               }
               def observe(v: Double, b: Attributes) = {
                 var c = l
                 while (c ne Nil) {
-                  c.head.observe(v, b)
+                  c.head.unsafe.observe(v, b)
                   c = c.tail
                 }
               }

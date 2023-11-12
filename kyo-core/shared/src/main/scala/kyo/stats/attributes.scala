@@ -41,8 +41,12 @@ object Attributes {
       AsAttribute(Attribute.BooleanAttribute(_, _))
     implicit val doubleList: AsAttribute[List[Double]] =
       AsAttribute(Attribute.DoubleListAttribute(_, _))
+    implicit val int: AsAttribute[Int] =
+      AsAttribute(Attribute.LongAttribute(_, _))
     implicit val double: AsAttribute[Double] =
       AsAttribute(Attribute.DoubleAttribute(_, _))
+    implicit val intList: AsAttribute[List[Int]] =
+      AsAttribute((k, v) => Attribute.LongListAttribute(k, v.map(_.toLong)))
     implicit val longList: AsAttribute[List[Long]] =
       AsAttribute(Attribute.LongListAttribute(_, _))
     implicit val long: AsAttribute[Long] =

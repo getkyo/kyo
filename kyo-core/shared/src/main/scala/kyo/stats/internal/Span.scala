@@ -34,24 +34,31 @@ object Span {
     )
 
   def all(l: List[Span]): Span =
-    Span(
-        new Span.Unsafe {
-          def end() = {
-            var c = l
-            while (c ne Nil) {
-              c.head.end
-              c = c.tail
+    l match {
+      case Nil =>
+        Span.noop
+      case h :: Nil =>
+        h
+      case l =>
+        Span(
+            new Span.Unsafe {
+              def end() = {
+                var c = l
+                while (c ne Nil) {
+                  c.head.unsafe.end()
+                  c = c.tail
+                }
+              }
+              def event(name: String, a: Attributes) = {
+                var c = l
+                while (c ne Nil) {
+                  c.head.unsafe.event(name, a)
+                  c = c.tail
+                }
+              }
             }
-          }
-          def event(name: String, a: Attributes) = {
-            var c = l
-            while (c ne Nil) {
-              c.head.event(name, a)
-              c = c.tail
-            }
-          }
-        }
-    )
+        )
+    }
 
   private val currentSpan = Locals.init[Option[Span]](None)
 

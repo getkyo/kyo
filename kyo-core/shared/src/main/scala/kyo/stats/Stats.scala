@@ -68,7 +68,7 @@ object Stats {
 
       def traceSpan[T, S](
           name: String,
-          attributes: Attributes
+          attributes: Attributes = Attributes.empty
       )(v: => T > S): T > (IOs with S) = v
     }
 
@@ -113,7 +113,7 @@ object Stats {
 
       def traceSpan[T, S](
           name: String,
-          attributes: Attributes
+          attributes: Attributes = Attributes.empty
       )(v: => T > S): T > (IOs with S) =
         traceReceiver.get.map(internal.Span.trace(_, path.reverse, name, attributes)(v))
 

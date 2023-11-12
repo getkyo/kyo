@@ -45,16 +45,6 @@ trait MetricReceiver {
 
 object MetricReceiver {
 
-  val get: MetricReceiver =
-    ServiceLoader.load(classOf[MetricReceiver]).iterator().asScala.toList match {
-      case Nil =>
-        MetricReceiver.noop
-      case head :: Nil =>
-        head
-      case l =>
-        MetricReceiver.all(l)
-    }
-
   val noop: MetricReceiver =
     new MetricReceiver {
       def counter(
@@ -131,5 +121,15 @@ object MetricReceiver {
         Lists
           .traverse(receivers)(_.startSpan(scope, name, None, a))
           .map(internal.Span.all)
+    }
+
+  val get: MetricReceiver =
+    ServiceLoader.load(classOf[MetricReceiver]).iterator().asScala.toList match {
+      case Nil =>
+        MetricReceiver.noop
+      case head :: Nil =>
+        head
+      case l =>
+        MetricReceiver.all(l)
     }
 }

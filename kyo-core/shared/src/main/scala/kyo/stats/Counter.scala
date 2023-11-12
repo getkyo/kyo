@@ -47,7 +47,7 @@ object Counter {
               def add(v: Long) = {
                 var c = l
                 while (c ne Nil) {
-                  l.head.unsafe.add(v)
+                  c.head.unsafe.add(v)
                   c = c.tail
                 }
               }
