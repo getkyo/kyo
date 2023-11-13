@@ -36,7 +36,9 @@ object embeddings {
               .body(req)
               .response(asJson[Response])
         )
-        _ <- logger.debug(res.toJsonPretty)
+        _ <- logger.debug(res.copy(data =
+          res.data.map(d => d.copy(embedding = d.embedding.take(3)))
+        ).toJsonPretty)
       } yield {
         Embedding(res.data.head.embedding)
       }
