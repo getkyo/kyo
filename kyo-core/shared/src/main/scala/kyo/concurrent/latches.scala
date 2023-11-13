@@ -12,7 +12,7 @@ object latches {
 
   abstract class Latch {
 
-    def await: Unit > Fibers
+    def await: Unit > (IOs with Fibers)
 
     def release: Unit > IOs
 

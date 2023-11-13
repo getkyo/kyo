@@ -60,12 +60,17 @@ object fibers {
           true
       }
 
-    def get: T > Fibers =
+    def get: T > (IOs with Fibers) =
       state match {
         case promise: IOPromise[_] =>
-          Fibers.join(state)
+          isDone.map {
+            case true =>
+              block
+            case false =>
+              Fibers.join(state)
+          }
         case failed: Failed =>
-          Fibers.join(state)
+          IOs.fail(failed.reason)
         case _ =>
           state.asInstanceOf[T > Fibers]
       }
@@ -89,7 +94,7 @@ object fibers {
             promise.onComplete { t =>
               p.complete(Try(IOs.run(t)))
             }
-            Fibers.join(Fiber.promise(p))
+            Fiber.promise(p).get
           }
         case Failed(ex) =>
           Failure(ex)
@@ -215,7 +220,7 @@ object fibers {
     def value[T](v: T): Fiber[T] =
       Fiber.done(v)
 
-    def get[T, S](v: Fiber[T] > S): T > (Fibers with S) =
+    def get[T, S](v: Fiber[T] > S): T > (IOs with Fibers with S) =
       v.map(_.get)
 
     private[fibers] def join[T, S](v: Fiber[T] > S): T > (Fibers with S) =
@@ -310,14 +315,16 @@ object fibers {
             p.interrupts(fiber)
             val j = i
             fiber.onComplete { r =>
-              try {
-                results(j) = IOs.run(r)
-                if (pending.decrementAndGet() == 0) {
-                  p.complete(ArraySeq.unsafeWrapArray(results))
+              if (!p.isDone()) {
+                try {
+                  results(j) = IOs.run(r)
+                  if (pending.decrementAndGet() == 0) {
+                    p.complete(ArraySeq.unsafeWrapArray(results))
+                  }
+                } catch {
+                  case ex if (NonFatal(ex)) =>
+                    p.complete(IOs.fail(ex))
                 }
-              } catch {
-                case ex if (NonFatal(ex)) =>
-                  p.complete(IOs.fail(ex))
               }
             }
             i += 1
