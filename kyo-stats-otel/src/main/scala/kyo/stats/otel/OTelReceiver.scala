@@ -12,7 +12,7 @@ import kyo.stats.internal.MetricReceiver
 import kyo.stats.Attributes
 import kyo.stats.internal.TraceReceiver
 
-class OTelMetricReceiver extends MetricReceiver with TraceReceiver {
+class OTelReceiver extends MetricReceiver with TraceReceiver {
 
   private val otel = GlobalOpenTelemetry.get()
 
