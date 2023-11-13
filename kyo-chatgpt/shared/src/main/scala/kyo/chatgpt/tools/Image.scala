@@ -16,8 +16,11 @@ import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
 import scala.concurrent.duration.Duration
+import kyo.loggers.Loggers
 
 object Image {
+
+  private val logger = Loggers.init("kyo.chatgpt.tools.Image")
 
   import internal._
 
@@ -55,21 +58,22 @@ object Image {
         task.size,
         task.style
     )
-    Configs.apiKey.map { key =>
-      Configs.get.map { config =>
-        Requests[Response](
-            _.contentType("application/json")
-              .header("Authorization", s"Bearer $key")
-              .post(uri"${config.apiUrl}/v1/images/generations")
-              .body(req)
-              .readTimeout(Duration.Inf)
-              .response(asJson[Response])
-        ).map { resp =>
-          resp.data.headOption.map(r => Output(r.url, r.revised_prompt))
-            .getOrElse(AIs.fail[Output]("Can't find the generated image URL."))
-        }
-      }
-    }
+    for {
+      key    <- Configs.apiKey
+      config <- Configs.get
+      _      <- logger.debug(req.toJsonPretty)
+      resp <- Requests[Response](
+          _.contentType("application/json")
+            .header("Authorization", s"Bearer $key")
+            .post(uri"${config.apiUrl}/v1/images/generations")
+            .body(req)
+            .readTimeout(Duration.Inf)
+            .response(asJson[Response])
+      )
+      _ <- logger.debug(resp.toJsonPretty)
+      r <- resp.data.headOption.map(r => Output(r.url, r.revised_prompt))
+        .getOrElse(AIs.fail[Output]("Can't find the generated image URL."))
+    } yield r
   }
 
   object internal {
@@ -92,6 +96,8 @@ object Image {
 
     implicit val requestEncoder: JsonEncoder[Request]   = DeriveJsonEncoder.gen[Request]
     implicit val dataDecoder: JsonDecoder[Data]         = DeriveJsonDecoder.gen[Data]
+    implicit val dataEncoder: JsonEncoder[Data]         = DeriveJsonEncoder.gen[Data]
+    implicit val responseEncoder: JsonEncoder[Response] = DeriveJsonEncoder.gen[Response]
     implicit val responseDecoder: JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
   }
 }

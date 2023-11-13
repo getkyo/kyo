@@ -15,12 +15,15 @@ import zio.json._
 import scala.concurrent.duration.Duration
 import kyo.chatgpt.contexts.Message.UserMessage
 import zio.json.internal.Write
+import kyo.loggers.Loggers
 
 object completions {
 
   import internal.{Request, Response}
 
   object Completions {
+
+    private val logger = Loggers.init("kyo.chatgpt.completions")
 
     case class Result(content: String, calls: List[Call])
 
@@ -32,7 +35,9 @@ object completions {
       for {
         config <- Configs.get
         req = Request(ctx, config, tools, constrain)
+        _                <- logger.debug(req.toJsonPretty)
         response         <- fetch(config, req)
+        _                <- logger.debug(response.toJsonPretty)
         (content, calls) <- read(response)
       } yield new Result(content, calls)
 

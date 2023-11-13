@@ -13,8 +13,11 @@ import zio.json._
 import scala.util.Failure
 import scala.util.Success
 import kyo.chatgpt.tools.Tools
+import kyo.loggers.Loggers
 
 object BraveSearch {
+
+  private val logger = Loggers.init("kyo.chatgpt.tools.BraveSearch")
 
   import model._
 
@@ -22,14 +25,17 @@ object BraveSearch {
       "brave_search",
       "performs a web search using brave.com's API given a search query"
   ) { (ai, query) =>
-    ApiKey.get.map { key =>
-      Requests[SearchResponse](
+    for {
+      key <- ApiKey.get
+      _   <- logger.debug(query)
+      res <- Requests[SearchResponse](
           _.contentType("application/json")
             .header("X-Subscription-Token", key)
             .get(uri"https://api.search.brave.com/res/v1/web/search?q=$query")
             .response(asJson[SearchResponse])
       )
-    }
+      _ <- logger.debug(res.toJsonPretty)
+    } yield res
   }
 
   object ApiKey {
@@ -75,5 +81,20 @@ object BraveSearch {
       DeriveJsonDecoder.gen[Search]
     implicit val responseDecoder: JsonDecoder[SearchResponse] =
       DeriveJsonDecoder.gen[SearchResponse]
+
+    implicit val qaEncoder: JsonEncoder[QA] =
+      DeriveJsonEncoder.gen[QA]
+    implicit val faqEncoder: JsonEncoder[FAQ] =
+      DeriveJsonEncoder.gen[FAQ]
+    implicit val newsResultEncoder: JsonEncoder[NewsResult] =
+      DeriveJsonEncoder.gen[NewsResult]
+    implicit val newsEncoder: JsonEncoder[News] =
+      DeriveJsonEncoder.gen[News]
+    implicit val searchResultEncoder: JsonEncoder[SearchResult] =
+      DeriveJsonEncoder.gen[SearchResult]
+    implicit val searchEncoder: JsonEncoder[Search] =
+      DeriveJsonEncoder.gen[Search]
+    implicit val responseEncoder: JsonEncoder[SearchResponse] =
+      DeriveJsonEncoder.gen[SearchResponse]
   }
 }

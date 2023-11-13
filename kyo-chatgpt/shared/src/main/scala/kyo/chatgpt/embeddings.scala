@@ -10,19 +10,25 @@ import kyo.requests._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
+import kyo.loggers.Loggers
 
 object embeddings {
 
-  case class Embedding(tokens: Int, vector: List[Float])
+  case class Embedding(vector: List[Float]) {
+    override def toString() = s"Embedding(${vector.take(3).mkString(", ")}...)"
+  }
 
   object Embeddings {
     import internal._
+
+    private val logger = Loggers.init("kyo.chatgpt.embeddings")
 
     def init(text: String, model: String = "text-embedding-ada-002"): Embedding > AIs =
       for {
         apiKey <- Configs.apiKey
         config <- Configs.get
         req = Request(text, model)
+        _ <- logger.debug(req.toJsonPretty)
         res <- Requests[Response](
             _.contentType("application/json")
               .header("Authorization", s"Bearer $apiKey")
@@ -30,8 +36,9 @@ object embeddings {
               .body(req)
               .response(asJson[Response])
         )
+        _ <- logger.debug(res.toJsonPretty)
       } yield {
-        Embedding(res.usage.prompt_tokens, res.data.head.embedding)
+        Embedding(res.data.head.embedding)
       }
 
     private object internal {

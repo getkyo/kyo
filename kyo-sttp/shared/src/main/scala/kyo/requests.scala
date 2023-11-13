@@ -2,11 +2,22 @@ package kyo
 
 import kyo._
 import kyo.concurrent.fibers._
+import kyo.consoles._
 import kyo.envs._
+import kyo.internal.KyoSttpMonad
 import kyo.ios._
+import kyo.tries.Tries
+import sttp.client3.Empty
+import sttp.client3.Request
+import sttp.client3.RequestT
+import sttp.client3.Response
+import sttp.client3.SttpBackend
+import sttp.client3.UriContext
 import sttp.client3._
+import sttp.client3.basicRequest
 
 import scala.concurrent.Future
+import kyo.loggers._
 
 object requests {
 
