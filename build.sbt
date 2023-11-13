@@ -87,6 +87,7 @@ lazy val kyo =
         `kyo-core-opt`,
         `kyo-direct`,
         `kyo-stats-otel`,
+        `kyo-cache`,
         `kyo-sttp`,
         `kyo-tapir`,
         `kyo-chatgpt-macros`,
@@ -177,6 +178,19 @@ lazy val `kyo-stats-otel` =
         libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.31.0",
         libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk" % "1.31.0",
         libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1" % Test
+    )
+
+lazy val `kyo-cache` =
+  crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Full)
+    .in(file("kyo-cache"))
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .settings(
+        `kyo-settings`,
+        `with-cross-scala`,
+        libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine"   % "3.1.8",
+        libraryDependencies += "com.lihaoyi"                 %%% "sourcecode" % "0.3.1"
     )
 
 lazy val `kyo-sttp` =
@@ -296,6 +310,7 @@ lazy val readme =
     .dependsOn(
         `kyo-core`,
         `kyo-direct`,
+        `kyo-cache`,
         `kyo-sttp`,
         `kyo-tapir`,
         `kyo-chatgpt`,
