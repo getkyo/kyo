@@ -40,10 +40,10 @@ object Curl {
       method: String,
       contentType: String,
       url: String,
-      headers: Option[Map[String, String]] = None,
-      data: Option[String] = None,
-      followRedirects: Boolean = false,
-      timeoutSeconds: Option[Int] = None
+      headers: Option[Map[String, String]],
+      data: Option[String],
+      followRedirects: Boolean,
+      timeoutSeconds: Option[Int]
   )
 
   def tool(f: Methods => Methods): Tool[Input, String] =
