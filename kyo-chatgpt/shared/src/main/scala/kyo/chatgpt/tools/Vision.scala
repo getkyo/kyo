@@ -29,7 +29,8 @@ object Vision {
 
   val tool = Tools.init[Input, String](
       "vision_interpret_image",
-      "interprets the contents of the provided image"
+      "interprets the contents of the provided image",
+      task => s"Using GPT Vision to interpret image: ${task.question}"
   ) { (_, task) =>
     Configs.let(_.model(Model.gpt4_vision).maxTokens(Some(4000))) {
       Requests[Array[Byte]](

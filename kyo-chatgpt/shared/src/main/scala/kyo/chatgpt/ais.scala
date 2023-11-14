@@ -167,7 +167,8 @@ object ais {
         Tools.init[T, T](
             "resultTool",
             "Call this function with the result. Note how the schema " +
-              "is wrapped in an object with a `value` field."
+              "is wrapped in an object with a `value` field.",
+            _ => s"Generating: ${t}"
         )((ai, v) => v)
       def eval(): T > AIs =
         fetch(Set(resultTool), Some(resultTool)).map { r =>
@@ -196,8 +197,7 @@ object ais {
       userMessage(msg).andThen(infer[T])
 
     def infer[T](implicit t: ValueSchema[T]): T > AIs = {
-      val resultTool =
-        Tools.init[T, T]("resultTool", "call this function with the result")((ai, v) => v)
+      val resultTool = Tools.result[T]
       def eval(tools: Set[Tool[_, _]], constrain: Option[Tool[_, _]] = None): T > AIs =
         fetch(tools, constrain).map { r =>
           r.calls match {

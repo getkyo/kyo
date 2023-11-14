@@ -48,33 +48,35 @@ object Image {
       revisedPrompt: String
   )
 
-  val tool = Tools.init[Input, Output](
-      "image_generation",
-      "Generates an image via DALL-E"
-  ) { (_, task) =>
-    val req = Request(
-        task.prompt,
-        if (task.hdQuality) "hd" else "standard",
-        task.size,
-        task.style
-    )
-    for {
-      key    <- Configs.apiKey
-      config <- Configs.get
-      _      <- logger.debug(req.toJsonPretty)
-      resp <- Requests[Response](
-          _.contentType("application/json")
-            .header("Authorization", s"Bearer $key")
-            .post(uri"${config.apiUrl}/v1/images/generations")
-            .body(req)
-            .readTimeout(Duration.Inf)
-            .response(asJson[Response])
+  val createTool =
+    Tools.init[Input, Output](
+        "image_create",
+        "Generates an image via DALL-E",
+        task => s"Generating an image via DALL-E: ${task.prompt}"
+    ) { (_, task) =>
+      val req = Request(
+          task.prompt,
+          if (task.hdQuality) "hd" else "standard",
+          task.size,
+          task.style
       )
-      _ <- logger.debug(resp.toJsonPretty)
-      r <- resp.data.headOption.map(r => Output(r.url, r.revised_prompt))
-        .getOrElse(AIs.fail[Output]("Can't find the generated image URL."))
-    } yield r
-  }
+      for {
+        key    <- Configs.apiKey
+        config <- Configs.get
+        _      <- logger.debug(req.toJsonPretty)
+        resp <- Requests[Response](
+            _.contentType("application/json")
+              .header("Authorization", s"Bearer $key")
+              .post(uri"${config.apiUrl}/v1/images/generations")
+              .body(req)
+              .readTimeout(Duration.Inf)
+              .response(asJson[Response])
+        )
+        _ <- logger.debug(resp.toJsonPretty)
+        r <- resp.data.headOption.map(r => Output(r.url, r.revised_prompt))
+          .getOrElse(AIs.fail[Output]("Can't find the generated image URL."))
+      } yield r
+    }
 
   object internal {
     case class Data(

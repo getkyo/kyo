@@ -23,7 +23,8 @@ object BraveSearch {
 
   val tool = Tools.init[String, SearchResponse](
       "brave_search",
-      "performs a web search using brave.com's API given a search query"
+      "performs a web search using brave.com's API given a search query",
+      q => s"Executing a Brave search: $q"
   ) { (ai, query) =>
     for {
       key <- ApiKey.get

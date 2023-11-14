@@ -24,7 +24,8 @@ package object tools {
       schema: JsonSchema,
       decoder: JsonDecoder[Value[T]],
       encoder: JsonEncoder[Value[U]],
-      call: (AI, T) => U > AIs
+      call: (AI, T) => U > AIs,
+      userStatus: T => String > AIs
   ) {
     private[kyo] def handle(ai: AI, v: String): String > AIs =
       decoder.decodeJson(v) match {
@@ -33,14 +34,21 @@ package object tools {
               "Invalid json input. **Correct any mistakes before retrying**. " + error
           )
         case Right(value) =>
-          call(ai, value.value)
-            .map(v => encoder.encodeJson(Value(v)).toString())
+          for {
+            l   <- Tools.listeners.get
+            msg <- userStatus(value.value)
+            _   <- Lists.traverseUnit(l)(_(msg))
+            v   <- call(ai, value.value)
+          } yield {
+            encoder.encodeJson(Value(v)).toString()
+          }
       }
   }
 
   object Tools {
 
-    private[tools] val local = Locals.init(Set.empty[Tool[_, _]])
+    private[tools] val listeners = Locals.init(List.empty[String => Unit > AIs])
+    private[tools] val local     = Locals.init(Set.empty[Tool[_, _]])
 
     def get: Set[Tool[_, _]] > AIs = local.get
 
@@ -54,7 +62,8 @@ package object tools {
 
     def init[T, U](
         name: String,
-        description: String
+        description: String,
+        userStatus: T => String
     )(f: (AI, T) => U > AIs)(implicit t: ValueSchema[T], u: ValueSchema[U]): Tool[T, U] =
       Tool(
           name,
@@ -62,8 +71,21 @@ package object tools {
           JsonSchema(t.get),
           JsonCodec.jsonDecoder(t.get),
           JsonCodec.jsonEncoder(u.get),
-          f
+          f,
+          userStatus
       )
+
+    def listen[T, S](listener: String => Unit > AIs)(f: T > S): T > (AIs with S) =
+      listeners.get.map { l =>
+        listeners.let(listener :: l)(f)
+      }
+
+    private[kyo] def result[T](implicit t: ValueSchema[T]) =
+      Tools.init[T, T](
+          "resultTool",
+          "call this function with the result",
+          (_: T) => "Generating result..."
+      )((ai, v) => v)
 
     private[kyo] def handle(ai: AI, tools: Set[Tool[_, _]], calls: List[Call]): Unit > AIs =
       Lists.traverseUnit(calls) { call =>

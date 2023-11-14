@@ -53,7 +53,8 @@ object Curl {
     val allow = methods.s
     Tools.init[Input, String](
         s"http_curl",
-        s"Performs an HTTP request. Allowed methods: ${allow.mkString(", ")}"
+        s"Performs an HTTP request. Allowed methods: ${allow.mkString(", ")}",
+        params => s"Performing HTTP request: $params"
     ) { (ai, params) =>
       if (!allow.contains(params.method)) {
         AIs.fail(s"Method not allowed: ${params.method}. Allowed: ${allow.mkString(", ")}")
