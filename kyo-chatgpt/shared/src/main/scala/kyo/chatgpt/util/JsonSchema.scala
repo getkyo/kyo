@@ -87,11 +87,22 @@ object JsonSchema {
             "required"   -> Json.Arr(requiredFields: _*)
         )
 
+      case Schema.Map(keySchema, valueSchema, _) =>
+        keySchema match {
+          case Schema.Primitive(StandardType.StringType, _) =>
+            List(
+                "type"                 -> Json.Str("object"),
+                "additionalProperties" -> Json.Obj(convert(valueSchema): _*)
+            )
+          case _ =>
+            throw new UnsupportedOperationException("Non-string map keys are not supported")
+        }
+
       case schema: Schema.Lazy[_] =>
         convert(schema.schema)
 
       case _ =>
-        throw new UnsupportedOperationException("This schema type is not supported")
+        throw new UnsupportedOperationException("This schema type is not supported: " + schema)
     }
   }
 }

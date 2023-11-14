@@ -15,7 +15,7 @@ import java.util.Base64
 
 object Vision {
 
-  case class Task(
+  case class Input(
       @desc("A description of the environment in which the image is displayed. " +
         "This includes the webpage or application interface, nearby visual elements, " +
         "and surrounding textual content, which may provide additional insight or " +
@@ -27,7 +27,7 @@ object Vision {
       imageUrl: String
   )
 
-  val tool = Tools.init[Task, String](
+  val tool = Tools.init[Input, String](
       "vision_interpret_image",
       "interprets the contents of the provided image"
   ) { (_, task) =>

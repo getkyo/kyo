@@ -130,7 +130,7 @@ object ais {
       update(_.seed(msg))
 
     def userMessage(msg: String, imageUrls: List[String] = Nil): Unit > AIs =
-      update(_.userMessage(msg))
+      update(_.userMessage(msg, imageUrls))
 
     def systemMessage(msg: String): Unit > AIs =
       update(_.systemMessage(msg))
