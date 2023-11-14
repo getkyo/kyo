@@ -2,6 +2,7 @@ package kyo.chatgpt
 
 import kyo._
 import kyo.aspects._
+import kyo.chatgpt.ais._
 import kyo.chatgpt.embeddings._
 
 object contexts {
@@ -15,7 +16,9 @@ object contexts {
     val tool: Role      = Role("tool")
   }
 
-  case class Call(id: String, function: String, arguments: String)
+  case class CallId(id: String)
+
+  case class Call(id: CallId, function: String, arguments: String)
 
   sealed trait Message {
     def role: Role
@@ -41,8 +44,8 @@ object contexts {
     ) extends Message
 
     case class ToolMessage(
+        callId: CallId,
         content: String,
-        toolCallId: String = "unknown",
         role: Role = Role.tool
     ) extends Message
 
@@ -51,7 +54,6 @@ object contexts {
         case Role.system    => SystemMessage(content)
         case Role.user      => UserMessage(content)
         case Role.assistant => AssistantMessage(content)
-        case Role.tool      => ToolMessage(content)
         case _              => throw new IllegalArgumentException("invalid role: " + role)
       }
   }
@@ -60,6 +62,18 @@ object contexts {
       seed: Option[String],
       messages: List[Message]
   ) {
+
+    def systemMessage(content: String): Context =
+      add(Message.SystemMessage(content))
+
+    def userMessage(content: String, imageUrls: List[String] = Nil): Context =
+      add(Message.UserMessage(content, imageUrls))
+
+    def assistantMessage(content: String, calls: List[Call] = Nil): Context =
+      add(Message.AssistantMessage(content, calls))
+
+    def toolMessage(callId: CallId, content: String): Context =
+      add(Message.ToolMessage(callId, content))
 
     def isEmpty: Boolean =
       seed.isEmpty && messages.isEmpty
@@ -90,5 +104,60 @@ object contexts {
         }
       loop(init, entries.toList)
     }
+
+    def dump(ctx: Context): String = {
+      val seedStr = ctx.seed.map(s => s".seed(p\"\"\"$s\"\"\")").getOrElse("")
+      val messagesStr = ctx.messages.reverse.map {
+        case Message.SystemMessage(content, _) =>
+          s"\n  .systemMessage(p\"\"\"$content\"\"\")"
+        case Message.UserMessage(content, imageUrls, _) =>
+          val imageUrlsStr = imageUrls.map(url => s"\"$url\"").mkString(", ")
+          s"\n  .userMessage(p\"\"\"$content\"\"\", List($imageUrlsStr))"
+        case Message.AssistantMessage(content, calls, _) =>
+          val callsStr = calls.map(call =>
+            s"Call(CallId(\"${call.id.id}\"), \"${call.function}\", p\"\"\"${call.arguments}\"\"\")"
+          ).mkString(", ")
+          s"\n  .assistantMessage(p\"\"\"$content\"\"\", List($callsStr))"
+        case Message.ToolMessage(callId, content, _) =>
+          s"\n  .toolMessage(CallId(\"${callId.id}\"), p\"\"\"$content\"\"\")"
+      }.mkString
+      s"Contexts.init$seedStr$messagesStr"
+    }
+
+    def parse(ctxStr: String): Context = {
+      val seedPattern             = """\.seed\(p\"\"\"(.*?)\"\"\"\)""".r
+      val userMessagePattern      = """\.userMessage\(p\"\"\"(.*?)\"\"\", List\((.*?)\)\)""".r
+      val systemMessagePattern    = """\.systemMessage\(p\"\"\"(.*?)\"\"\"\)""".r
+      val assistantMessagePattern = """\.assistantMessage\(p\"\"\"(.*?)\"\"\", List\((.*?)\)\)""".r
+      val toolMessagePattern      = """\.toolMessage\(CallId\(\"(.*?)\"\), p\"\"\"(.*?)\"\"\"\)""".r
+
+      val lines = ctxStr.split("\n").map(_.trim).filter(_.nonEmpty)
+      lines.foldLeft(Context(None, Nil)) { (context, line) =>
+        line match {
+          case seedPattern(seed) =>
+            context.copy(seed = Some(seed))
+          case userMessagePattern(content, imageUrlsStr) =>
+            val imageUrls =
+              imageUrlsStr.split(", ").map(_.stripPrefix("\"").stripSuffix("\"")).toList
+            context.userMessage(content, imageUrls)
+          case systemMessagePattern(content) =>
+            context.systemMessage(content)
+          case assistantMessagePattern(content, callsStr) =>
+            val calls = callsStr.split(", ").map { callStr =>
+              val parts     = callStr.split(", ")
+              val callId    = parts(0).stripPrefix("Call(CallId(\"").stripSuffix("\")")
+              val function  = parts(1).stripPrefix("\"").stripSuffix("\"")
+              val arguments = parts(2).stripPrefix("p\"\"\"").stripSuffix("\"\"\")")
+              Call(CallId(callId), function, arguments)
+            }.toList
+            context.assistantMessage(content, calls)
+          case toolMessagePattern(callId, content) =>
+            context.toolMessage(CallId(callId), content)
+          case _ =>
+            throw new IllegalStateException("Can't parse context string: " + ctxStr)
+        }
+      }
+    }
+
   }
 }

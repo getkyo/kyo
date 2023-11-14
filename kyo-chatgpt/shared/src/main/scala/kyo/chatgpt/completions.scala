@@ -49,7 +49,7 @@ object completions {
           (
               v.message.content.getOrElse(""),
               v.message.tool_calls.getOrElse(Nil).map(c =>
-                Call(c.id, c.function.name, c.function.arguments)
+                Call(CallId(c.id), c.function.name, c.function.arguments)
               )
           )
       }
@@ -124,19 +124,21 @@ object completions {
             msg match {
               case msg: Message.AssistantMessage =>
                 Some(
-                    msg.calls.map(c => ToolCall(c.id, FunctionCall(c.arguments, c.function)))
+                    msg.calls.map(c =>
+                      ToolCall(c.id.id, FunctionCall(c.arguments, c.function))
+                    )
                 ).filter(_.nonEmpty)
               case _ =>
                 None
             }
-          val toolCallId =
+          val callId =
             msg match {
               case msg: Message.ToolMessage =>
-                Some(msg.toolCallId)
+                Some(msg.callId.id)
               case _ =>
                 None
             }
-          MessageEntry(msg.role.name, Some(msg.content), toolCalls, toolCallId)
+          MessageEntry(msg.role.name, Some(msg.content), toolCalls, callId)
       }
     }
 

@@ -74,6 +74,11 @@ object ais {
         ai.restore(ctx).map(_ => ai)
       }
 
+    def restore(ctxStr: String): AI > AIs =
+      init.map { ai =>
+        ai.restore(ctxStr).map(_ => ai)
+      }
+
     def fail[T](cause: String): T > AIs =
       Tries.fail(AIException(cause))
 
@@ -100,9 +105,17 @@ object ais {
     def save: Context > AIs =
       Sums[State].get.map(_.getOrElse(ref, Contexts.init))
 
+    def dump: String > AIs =
+      Sums[State].get.map(s => Contexts.dump(s.getOrElse(ref, Contexts.init)))
+
     def restore(ctx: Context): Unit > AIs =
       Sums[State].get.map { st =>
         Sums[State].set(st + (ref -> ctx)).unit
+      }
+
+    def restore(ctxStr: String): Unit > AIs =
+      Sums[State].get.map { st =>
+        Sums[State].set(st + (ref -> Contexts.parse(ctxStr))).unit
       }
 
     def update(f: Context => Context): Unit > AIs =
@@ -120,20 +133,17 @@ object ais {
     def seed[S](msg: String): Unit > AIs =
       update(_.seed(msg))
 
-    def addMessage(msg: Message): Unit > AIs =
-      update(_.add(msg))
-
-    def userMessage(msg: String): Unit > AIs =
-      addMessage(Message.UserMessage(msg))
+    def userMessage(msg: String, imageUrls: List[String] = Nil): Unit > AIs =
+      update(_.userMessage(msg))
 
     def systemMessage(msg: String): Unit > AIs =
-      addMessage(Message.SystemMessage(msg))
+      update(_.systemMessage(msg))
 
-    def assistantMessage(msg: String, toolCalls: List[Call] = Nil): Unit > AIs =
-      addMessage(Message.AssistantMessage(msg, toolCalls))
+    def assistantMessage(msg: String, calls: List[Call] = Nil): Unit > AIs =
+      update(_.assistantMessage(msg, calls))
 
-    def toolMessage(callId: String, msg: String): Unit > AIs =
-      addMessage(Message.ToolMessage(msg, callId))
+    def toolMessage(callId: CallId, msg: String): Unit > AIs =
+      update(_.toolMessage(callId, msg))
 
     def ask: String > AIs = {
       def eval(tools: Set[Tool[_, _]]): String > AIs =
@@ -152,7 +162,10 @@ object ais {
     def ask(msg: String): String > AIs =
       userMessage(msg).andThen(ask)
 
-    def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs = {
+    def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
+      userMessage(msg).andThen(gen[T])
+
+    def gen[T](implicit t: ValueSchema[T]): T > AIs = {
       val decoder = JsonCodec.jsonDecoder(t.get)
       val resultTool =
         Tools.init[T, T](
@@ -180,10 +193,13 @@ object ais {
               AIs.fail("Expected a function call to the resultTool")
           }
         }
-      userMessage(msg).andThen(eval())
+      eval()
     }
 
-    def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs = {
+    def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
+      userMessage(msg).andThen(infer[T])
+
+    def infer[T](implicit t: ValueSchema[T]): T > AIs = {
       val resultTool =
         Tools.init[T, T]("resultTool", "call this function with the result")((ai, v) => v)
       def eval(tools: Set[Tool[_, _]], constrain: Option[Tool[_, _]] = None): T > AIs =
@@ -209,10 +225,7 @@ object ais {
                 .andThen(eval(tools))
           }
         }
-      userMessage(msg)
-        .andThen(Tools.get.map(p =>
-          eval(p + resultTool)
-        ))
+      Tools.get.map(p => eval(p + resultTool))
     }
 
     private def fetch(
