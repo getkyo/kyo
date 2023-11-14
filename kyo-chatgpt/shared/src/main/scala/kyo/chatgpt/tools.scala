@@ -44,12 +44,12 @@ package object tools {
 
     def get: Set[Tool[_, _]] > AIs = local.get
 
-    def enable[T, S](p: Tool[_, _]*)(v: => T > S): T > (IOs with S) =
+    def enable[T, S](p: Tool[_, _]*)(v: => T > S): T > (AIs with S) =
       local.get.map { set =>
         local.let(set ++ p.toSeq)(v)
       }
 
-    def disable[T, S](f: T > S): T > (IOs with S) =
+    def disable[T, S](f: T > S): T > (AIs with S) =
       local.let(Set.empty)(f)
 
     def init[T, U](

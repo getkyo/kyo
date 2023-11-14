@@ -46,7 +46,7 @@ object configs {
       val apiKey =
         Option(System.getenv(apiKeyProp))
           .orElse(Option(System.getProperty(apiKeyProp)))
-      Config("https://api.openai.com", apiKey, Model.gpt4_turbo, 0.7, None, None)
+      Config("https://api.openai.com", apiKey, Model.gpt4_turbo, 0.2, None, None)
     }
   }
 

@@ -37,14 +37,14 @@ object ais {
 
   object AIs {
 
-    type State   = Map[AIRef, Context]
     type Effects = Sums[State] with Requests with Tries with IOs with Aspects
 
     case class AIException(cause: String) extends Exception(cause) with NoStackTrace
 
     private val nextId = IOs.run(Atomics.initLong(0))
 
-    val init: AI > AIs = nextId.incrementAndGet.map(new AI(_))
+    val init: AI > AIs =
+      nextId.incrementAndGet.map(new AI(_))
 
     def init(seed: String): AI > AIs =
       init.map { ai =>
@@ -96,8 +96,6 @@ object ais {
     }
   }
 
-  import AIs.State
-
   class AI private[ais] (val id: Long) {
 
     private val ref = new AIRef(this)
@@ -106,7 +104,7 @@ object ais {
       Sums[State].get.map(_.getOrElse(ref, Contexts.init))
 
     def dump: String > AIs =
-      Sums[State].get.map(s => Contexts.dump(s.getOrElse(ref, Contexts.init)))
+      save.map(Contexts.dump)
 
     def restore(ctx: Context): Unit > AIs =
       Sums[State].get.map { st =>
@@ -114,9 +112,7 @@ object ais {
       }
 
     def restore(ctxStr: String): Unit > AIs =
-      Sums[State].get.map { st =>
-        Sums[State].set(st + (ref -> Contexts.parse(ctxStr))).unit
-      }
+      restore(Contexts.parse(ctxStr))
 
     def update(f: Context => Context): Unit > AIs =
       save.map { ctx =>
@@ -145,6 +141,9 @@ object ais {
     def toolMessage(callId: CallId, msg: String): Unit > AIs =
       update(_.toolMessage(callId, msg))
 
+    def ask(msg: String): String > AIs =
+      userMessage(msg).andThen(ask)
+
     def ask: String > AIs = {
       def eval(tools: Set[Tool[_, _]]): String > AIs =
         fetch(tools).map { r =>
@@ -158,9 +157,6 @@ object ais {
         }
       Tools.get.map(eval)
     }
-
-    def ask(msg: String): String > AIs =
-      userMessage(msg).andThen(ask)
 
     def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
       userMessage(msg).andThen(gen[T])
@@ -240,6 +236,8 @@ object ais {
   }
 
   object internal {
+
+    type State = Map[AIRef, Context]
 
     class AIRef(ai: AI) extends WeakReference[AI](ai) {
 
