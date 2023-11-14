@@ -89,7 +89,7 @@ object JsonSchema {
 
       case Schema.Map(keySchema, valueSchema, _) =>
         keySchema match {
-          case Schema.Primitive(StandardType.StringType, _) =>
+          case Schema.Primitive(tpe, _) if (tpe == StandardType.StringType) =>
             List(
                 "type"                 -> Json.Str("object"),
                 "additionalProperties" -> Json.Obj(convert(valueSchema): _*)
