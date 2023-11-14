@@ -38,6 +38,7 @@ object Curl {
 
   case class Input(
       method: String,
+      contentType: String,
       url: String,
       headers: Option[Map[String, String]] = None,
       data: Option[String] = None,
@@ -52,7 +53,7 @@ object Curl {
     val allow = methods.s
     Tools.init[Input, String](
         s"http_curl",
-        s"Performs an http request (text/html). Allowed methods: ${allow.mkString(", ")}"
+        s"Performs an HTTP request. Allowed methods: ${allow.mkString(", ")}"
     ) { (ai, params) =>
       if (!allow.contains(params.method)) {
         AIs.fail(s"Method not allowed: ${params.method}. Allowed: ${allow.mkString(", ")}")
@@ -61,7 +62,7 @@ object Curl {
           _ <- logger.debug(params.toJsonPretty)
           res <- Requests(
               _.method(Method(params.method), uri"${params.url}")
-                .contentType("text/html; charset=utf-8")
+                .contentType(params.contentType)
                 .headers(params.headers.getOrElse(Map.empty))
                 .body(params.data.getOrElse(""))
                 .followRedirects(params.followRedirects)
