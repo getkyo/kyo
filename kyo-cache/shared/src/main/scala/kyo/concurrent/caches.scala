@@ -16,7 +16,7 @@ object caches {
   import Cache._
 
   class Cache(private[caches] val store: Store) {
-    def memo[T, S, U](
+    def memo[T, U, S](
         f: T => U > S
     )(implicit id: sourcecode.Enclosing): T => U > (Fibers with IOs with S) = {
       (v: T) =>
@@ -48,6 +48,27 @@ object caches {
             }
           }
         }
+    }
+
+    def memo2[T1, T2, S, U](
+        f: (T1, T2) => U > S
+    )(implicit id: sourcecode.Enclosing): (T1, T2) => U > (Fibers with IOs with S) = {
+      val m = memo[(T1, T2), U, S](f(_, _))
+      (t1, t2) => m((t1, t2))
+    }
+
+    def memo3[T1, T2, T3, S, U](
+        f: (T1, T2, T3) => U > S
+    )(implicit id: sourcecode.Enclosing): (T1, T2, T3) => U > (Fibers with IOs with S) = {
+      val m = memo[(T1, T2, T3), U, S](f(_, _, _))
+      (t1, t2, t3) => m((t1, t2, t3))
+    }
+
+    def memo4[T1, T2, T3, T4, S, U](
+        f: (T1, T2, T3, T4) => U > S
+    )(implicit id: sourcecode.Enclosing): (T1, T2, T3, T4) => U > (Fibers with IOs with S) = {
+      val m = memo[(T1, T2, T3, T4), U, S](f(_, _, _, _))
+      (t1, t2, t3, t4) => m((t1, t2, t3, t4))
     }
   }
 
