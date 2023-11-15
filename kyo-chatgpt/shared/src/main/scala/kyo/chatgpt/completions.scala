@@ -4,6 +4,7 @@ import kyo._
 import kyo.chatgpt.configs._
 import kyo.chatgpt.contexts._
 import kyo.chatgpt.tools._
+import kyo.chatgpt.ais._
 import kyo.chatgpt.util.JsonSchema
 import kyo.ios._
 import kyo.requests._
@@ -149,9 +150,18 @@ object completions {
           tools: Set[Tool[_, _]],
           constrain: Option[Tool[_, _]]
       ): Request = {
+        val reminder =
+          ctx.reminder.map(r =>
+            Message.SystemMessage(
+                p"""
+                  IMPORTANT REMINDER
+                  ==================
+                  $r
+                """
+            )
+          ).toList
         val entries =
-          (ctx.reminder.map(r => Message.UserMessage(s"(reminder: $r)")).toList ++
-            ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
+          (reminder ++ ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
             .map(toEntry).reverse
         val toolDefs =
           if (tools.isEmpty) None

@@ -61,7 +61,14 @@ object JsonSchema {
               val fields = record.fields.map { field =>
                 field.name -> Json.Obj(convert(field.schema): _*)
               }
-              Json.Obj("type" -> Json.Str("object"), "properties" -> Json.Obj(fields: _*))
+              val requiredFields = record.fields.collect {
+                case field if !field.schema.isInstanceOf[Schema.Optional[_]] => Json.Str(field.name)
+              }
+              Json.Obj(
+                  "type"       -> Json.Str("object"),
+                  "properties" -> Json.Obj(fields: _*),
+                  "required"   -> Json.Arr(requiredFields: _*)
+              )
             case _ =>
               throw new UnsupportedOperationException("Non-record enum case is not supported")
           }

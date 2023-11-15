@@ -99,8 +99,8 @@ object ais {
     def save: Context > AIs =
       Sums[State].get.map(_.getOrElse(ref, Context.empty))
 
-    def dump: String > (AIs with Consoles) =
-      save.map(_.dump).map(r => Consoles.println(r).map(_ => r))
+    def dump: Unit > (AIs with Consoles) =
+      save.map(_.dump).map(Consoles.println)
 
     def restore(ctx: Context): Unit > AIs =
       Sums[State].get.map { st =>
