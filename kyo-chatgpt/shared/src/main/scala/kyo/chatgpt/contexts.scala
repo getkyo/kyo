@@ -60,8 +60,15 @@ object contexts {
 
   case class Context(
       seed: Option[String],
+      reminder: Option[String],
       messages: List[Message]
   ) {
+
+    def seed(seed: String): Context =
+      copy(seed = Some(seed))
+
+    def reminder(reminder: String): Context =
+      copy(reminder = Some(reminder))
 
     def systemMessage(content: String): Context =
       add(Message.SystemMessage(content))
@@ -78,86 +85,40 @@ object contexts {
     def isEmpty: Boolean =
       seed.isEmpty && messages.isEmpty
 
-    def seed(seed: String) =
-      Context(Some(seed), messages)
-
     def add(msg: Message): Context =
-      Context(
-          seed,
-          msg :: messages
-      )
+      copy(messages = msg :: messages)
 
     def ++(that: Context): Context =
-      Context(seed, that.messages ++ messages)
-  }
+      copy(messages = that.messages ++ messages)
 
-  object Contexts {
-    val init = Context(None, Nil)
-
-    def init(entries: (Role, String)*): Context = {
-      def loop(ctx: Context, entries: List[(Role, String)]): Context =
-        entries match {
-          case Nil =>
-            ctx
-          case (role, msg) :: t =>
-            loop(ctx.add(Message(role, msg)), t)
-        }
-      loop(init, entries.toList)
-    }
-
-    def dump(ctx: Context): String = {
-      val seedStr = ctx.seed.map(s => s".seed(p\"\"\"$s\"\"\")").getOrElse("")
-      val messagesStr = ctx.messages.reverse.map {
+    def dump: String = {
+      def stringify(s: String): String = {
+        if (s.contains('\n') || s.contains('"') || s.contains('\\')) s"p\"\"\"$s\"\"\""
+        else s""""$s""""
+      }
+      val seedStr     = seed.map(s => s".seed(${stringify(s)})").getOrElse("")
+      val reminderStr = reminder.map(s => s".reminder(${stringify(s)})").getOrElse("")
+      val messagesStr = messages.reverse.map {
         case Message.SystemMessage(content, _) =>
-          s"\n  .systemMessage(p\"\"\"$content\"\"\")"
+          s"\n  .systemMessage(${stringify(content)})"
         case Message.UserMessage(content, imageUrls, _) =>
           val imageUrlsStr = imageUrls.map(url => s"\"$url\"").mkString(", ")
-          s"\n  .userMessage(p\"\"\"$content\"\"\", List($imageUrlsStr))"
+          s"\n  .userMessage(${stringify(content)}${if (imageUrls.isEmpty) ""
+            else s", List($imageUrlsStr)"})"
         case Message.AssistantMessage(content, calls, _) =>
           val callsStr = calls.map(call =>
-            s"Call(CallId(\"${call.id.id}\"), \"${call.function}\", p\"\"\"${call.arguments}\"\"\")"
+            s"Call(CallId(\"${call.id.id}\"), \"${call.function}\", ${stringify(call.arguments)})"
           ).mkString(", ")
-          s"\n  .assistantMessage(p\"\"\"$content\"\"\", List($callsStr))"
+          s"\n  .assistantMessage(${stringify(content)}${if (calls.isEmpty) ""
+            else s", List($callsStr)"})"
         case Message.ToolMessage(callId, content, _) =>
-          s"\n  .toolMessage(CallId(\"${callId.id}\"), p\"\"\"$content\"\"\")"
+          s"\n  .toolMessage(CallId(\"${callId.id}\"), ${stringify(content)})"
       }.mkString
-      s"Contexts.init$seedStr$messagesStr"
+      s"Contexts.init$seedStr$reminderStr$messagesStr"
     }
+  }
 
-    def parse(ctxStr: String): Context = {
-      val seedPattern             = """\.seed\(p\"\"\"(.*?)\"\"\"\)""".r
-      val userMessagePattern      = """\.userMessage\(p\"\"\"(.*?)\"\"\", List\((.*?)\)\)""".r
-      val systemMessagePattern    = """\.systemMessage\(p\"\"\"(.*?)\"\"\"\)""".r
-      val assistantMessagePattern = """\.assistantMessage\(p\"\"\"(.*?)\"\"\", List\((.*?)\)\)""".r
-      val toolMessagePattern      = """\.toolMessage\(CallId\(\"(.*?)\"\), p\"\"\"(.*?)\"\"\"\)""".r
-
-      val lines = ctxStr.split("\n").map(_.trim).filter(_.nonEmpty)
-      lines.foldLeft(Context(None, Nil)) { (context, line) =>
-        line match {
-          case seedPattern(seed) =>
-            context.copy(seed = Some(seed))
-          case userMessagePattern(content, imageUrlsStr) =>
-            val imageUrls =
-              imageUrlsStr.split(", ").map(_.stripPrefix("\"").stripSuffix("\"")).toList
-            context.userMessage(content, imageUrls)
-          case systemMessagePattern(content) =>
-            context.systemMessage(content)
-          case assistantMessagePattern(content, callsStr) =>
-            val calls = callsStr.split(", ").map { callStr =>
-              val parts     = callStr.split(", ")
-              val callId    = parts(0).stripPrefix("Call(CallId(\"").stripSuffix("\")")
-              val function  = parts(1).stripPrefix("\"").stripSuffix("\"")
-              val arguments = parts(2).stripPrefix("p\"\"\"").stripSuffix("\"\"\")")
-              Call(CallId(callId), function, arguments)
-            }.toList
-            context.assistantMessage(content, calls)
-          case toolMessagePattern(callId, content) =>
-            context.toolMessage(CallId(callId), content)
-          case _ =>
-            throw new IllegalStateException("Can't parse context string: " + ctxStr)
-        }
-      }
-    }
-
+  object Context {
+    val empty = Context(None, None, Nil)
   }
 }

@@ -19,6 +19,7 @@ import scala.annotation.StaticAnnotation
 import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NoStackTrace
+import kyo.consoles.Consoles
 
 object ais {
 
@@ -74,11 +75,6 @@ object ais {
         ai.restore(ctx).map(_ => ai)
       }
 
-    def restore(ctxStr: String): AI > AIs =
-      init.map { ai =>
-        ai.restore(ctxStr).map(_ => ai)
-      }
-
     def fail[T](cause: String): T > AIs =
       Tries.fail(AIException(cause))
 
@@ -101,18 +97,15 @@ object ais {
     private val ref = new AIRef(this)
 
     def save: Context > AIs =
-      Sums[State].get.map(_.getOrElse(ref, Contexts.init))
+      Sums[State].get.map(_.getOrElse(ref, Context.empty))
 
-    def dump: String > AIs =
-      save.map(Contexts.dump)
+    def dump: String > (AIs with Consoles) =
+      save.map(_.dump).map(r => Consoles.println(r).map(_ => r))
 
     def restore(ctx: Context): Unit > AIs =
       Sums[State].get.map { st =>
         Sums[State].set(st + (ref -> ctx)).unit
       }
-
-    def restore(ctxStr: String): Unit > AIs =
-      restore(Contexts.parse(ctxStr))
 
     def update(f: Context => Context): Unit > AIs =
       save.map { ctx =>
@@ -123,7 +116,7 @@ object ais {
       for {
         res <- AIs.init
         st  <- Sums[State].get
-        _   <- Sums[State].set(st + (res.ref -> st.getOrElse(ref, Contexts.init)))
+        _   <- Sums[State].set(st + (res.ref -> st.getOrElse(ref, Context.empty)))
       } yield res
 
     def seed[S](msg: String): Unit > AIs =
@@ -259,7 +252,7 @@ object ais {
       new Summer[State] {
         val init = Map.empty
         def add(x: State, y: State) = {
-          val merged = x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Contexts.init) ++ v) }
+          val merged = x ++ y.map { case (k, v) => k -> (x.get(k).getOrElse(Context.empty) ++ v) }
           merged.filter { case (k, v) => k.isValid() && !v.isEmpty }
         }
       }

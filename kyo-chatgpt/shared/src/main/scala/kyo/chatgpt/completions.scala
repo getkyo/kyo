@@ -150,7 +150,8 @@ object completions {
           constrain: Option[Tool[_, _]]
       ): Request = {
         val entries =
-          (ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
+          (ctx.reminder.map(r => Message.UserMessage(s"(reminder: $r)")).toList ++
+            ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
             .map(toEntry).reverse
         val toolDefs =
           if (tools.isEmpty) None
