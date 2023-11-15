@@ -17,11 +17,11 @@ import scala.util.Try
 abstract class App {
 
   final def main(args: Array[String]): Unit =
-    App.run(run(args.toList))
+    App.run(run(args.toList).map(Consoles.println(_)))
 
   def run(
       args: List[String]
-  ): Unit > Effects
+  ): Any > Effects
 
 }
 
