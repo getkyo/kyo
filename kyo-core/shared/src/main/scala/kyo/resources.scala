@@ -28,8 +28,8 @@ object resources {
 
     def run[T, S](v: T > (Resources with S)): T > (IOs with S) = {
       val finalizer = new Finalizer
-      implicit def handler: Handler[Resource, Resources] =
-        new Handler[Resource, Resources] {
+      implicit def handler: Handler[Resource, Resources, Any] =
+        new Handler[Resource, Resources, Any] {
           def pure[U](v: U) = v
           def apply[U, V, S2](
               m: Resource[U],
@@ -43,7 +43,7 @@ object resources {
             }
         }
       IOs.ensure(finalizer.run) {
-        handle[T, Resources with S](v).asInstanceOf[T > S]
+        handle[T, Resources with S, Any](v).asInstanceOf[T > S]
       }
     }
   }

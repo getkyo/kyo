@@ -189,8 +189,8 @@ object fibers {
     }
 
     def runBlocking[T, S](v: T > (Fibers with S)): T > (IOs with S) = {
-      implicit def handler: Handler[Fiber, Fibers] =
-        new Handler[Fiber, Fibers] {
+      implicit def handler: Handler[Fiber, Fibers, Any] =
+        new Handler[Fiber, Fibers, Any] {
           def pure[T](v: T) = Fiber.done(v)
           override def handle[T](ex: Throwable): T > Fibers =
             Fibers.join(Fiber.failed[T](ex))
@@ -209,7 +209,7 @@ object fibers {
                 handle(ex)
             }
         }
-      IOs[T, S](handle[T, IOs with S](v).map(_.block))
+      IOs[T, S](handle[T, IOs with S, Any](v).map(_.block))
     }
 
     def value[T](v: T): Fiber[T] =

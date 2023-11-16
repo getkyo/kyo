@@ -35,8 +35,8 @@ object sums {
         tag: Tag[V]
     ): T > S = {
       var curr = g.init
-      implicit def handler: Handler[Sum[V]#Value, Sums[V]] =
-        new Handler[Sum[V]#Value, Sums[V]] {
+      implicit def handler: Handler[Sum[V]#Value, Sums[V], Any] =
+        new Handler[Sum[V]#Value, Sums[V], Any] {
           def pure[U](v: U) = v
           def apply[T, U, S2](
               m: Sum[V]#Value[T],
@@ -55,7 +55,7 @@ object sums {
                 f(m.asInstanceOf[T])
             }
         }
-      handle[T, S](v).map {
+      handle[T, S, Any](v).map {
         case AddValue(v) =>
           curr = g.add(curr, v.asInstanceOf[V])
           curr.asInstanceOf[T]

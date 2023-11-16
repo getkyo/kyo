@@ -9,8 +9,8 @@ object lists {
 
   final class Lists private[lists] () extends Effect[List, Lists] {
 
-    private implicit val handler: Handler[List, Lists] =
-      new Handler[List, Lists] {
+    private implicit val handler: Handler[List, Lists, Any] =
+      new Handler[List, Lists, Any] {
         def pure[T](v: T) = List(v)
         def apply[T, U, S](v: List[T], f: T => U > (Lists with S)): U > (Lists with S) = {
           def loop(l: List[T], acc: List[List[U]]): U > (Lists with S) =
@@ -25,7 +25,7 @@ object lists {
       }
 
     def run[T, S](v: T > (Lists with S)): List[T] > S =
-      handle[T, S](v)
+      handle[T, S, Any](v)
 
     def repeat(n: Int): Unit > Lists =
       foreach(List.fill(n)(()))

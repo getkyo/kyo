@@ -21,8 +21,8 @@ object envs {
       suspend(Input.asInstanceOf[Env[E]#Value[E]])
 
     def run[T, S](e: E)(v: T > (Envs[E] with S)): T > S = {
-      implicit val handler: Handler[Env[E]#Value, Envs[E]] =
-        new Handler[Env[E]#Value, Envs[E]] {
+      implicit val handler: Handler[Env[E]#Value, Envs[E], Any] =
+        new Handler[Env[E]#Value, Envs[E], Any] {
           def pure[U](v: U) = v
           def apply[U, V, S2](
               m: Env[E]#Value[U],
@@ -35,7 +35,7 @@ object envs {
                 f(m.asInstanceOf[U])
             }
         }
-      handle[T, Envs[E] with S](v).asInstanceOf[T > S]
+      handle[T, Envs[E] with S, Any](v).asInstanceOf[T > S]
     }
 
     override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =

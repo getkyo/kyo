@@ -27,7 +27,7 @@ object aborts {
       e.map(e => suspend(Left(e)))
 
     def run[T, S](v: => T > (Aborts[E] with S))(implicit p: Pure[T]): Either[E, T] > S =
-      handle[T, S](catching(v))
+      handle[T, S, Any](catching(v))
 
     def get[T, S](v: => Either[E, T] > S): T > (Aborts[E] with S) =
       catching(v).map {
@@ -63,8 +63,8 @@ object aborts {
       Aborts[E].get(Left(ex))
   }
 
-  private implicit def handler[E](implicit tag: Tag[E]): Handler[Abort[E]#Value, Aborts[E]] =
-    new Handler[Abort[E]#Value, Aborts[E]] {
+  private implicit def handler[E](implicit tag: Tag[E]): Handler[Abort[E]#Value, Aborts[E], Any] =
+    new Handler[Abort[E]#Value, Aborts[E], Any] {
 
       val aborts = Aborts[E]
 

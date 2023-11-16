@@ -53,21 +53,21 @@ object caches {
     def memo2[T1, T2, S, U](
         f: (T1, T2) => U > S
     )(implicit id: sourcecode.Enclosing): (T1, T2) => U > (Fibers with IOs with S) = {
-      val m = memo[(T1, T2), U, S](f(_, _))
+      val m = memo[(T1, T2), U, S](f.tupled)
       (t1, t2) => m((t1, t2))
     }
 
     def memo3[T1, T2, T3, S, U](
         f: (T1, T2, T3) => U > S
     )(implicit id: sourcecode.Enclosing): (T1, T2, T3) => U > (Fibers with IOs with S) = {
-      val m = memo[(T1, T2, T3), U, S](f(_, _, _))
+      val m = memo[(T1, T2, T3), U, S](f.tupled)
       (t1, t2, t3) => m((t1, t2, t3))
     }
 
     def memo4[T1, T2, T3, T4, S, U](
         f: (T1, T2, T3, T4) => U > S
     )(implicit id: sourcecode.Enclosing): (T1, T2, T3, T4) => U > (Fibers with IOs with S) = {
-      val m = memo[(T1, T2, T3, T4), U, S](f(_, _, _, _))
+      val m = memo[(T1, T2, T3, T4), U, S](f.tupled)
       (t1, t2, t3, t4) => m((t1, t2, t3, t4))
     }
   }
