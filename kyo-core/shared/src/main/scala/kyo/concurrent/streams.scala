@@ -1,164 +1,192 @@
-package kyo.concurrent
+// package kyo.concurrent
 
-import kyo._
-import kyo.core._
-import kyo.core.internal._
-import kyo.concurrent.channels._
-import kyo.concurrent.fibers._
-import kyo.ios._
-import kyo.lists._
-import kyo.App.Effects
+// import kyo._
+// import kyo.core._
+// import kyo.core.internal._
+// import kyo.concurrent.channels._
+// import kyo.concurrent.fibers._
+// import kyo.ios._
+// import kyo.lists._
+// import kyo.App.Effects
 
-object Test extends App {
+// object Test extends App {
 
-  import streams._
+//   import streams._
 
-  def run(args: List[String]) = {
-    Streams.run {
-      Streams.source(List(1, 2)).map(_ + 1).map(i => Streams.source(List(i, i + 1)))
-    }.map(_.foreach(println(_)))
-  }
+//   def run(args: List[String]) = {
+//     Streams.run {
+//       Streams.source(List(1, 2)).map(_ + 1) // .map(i => Streams.source(List(i, i + 1)))
+//     }.map(_.foreach(println(_)))
+//   }
 
-}
+// }
 
-object streams {
+// object streams {
 
-  import Stream._
+//   import Stream._
 
-  sealed trait Stream[+T] {
+//   sealed trait Stream[+T] {
 
-    def get: T > Streams = Streams.get(this)
+//     def get: T > (Fibers with IOs with Streams) =
+//       this match {
+//         case Done =>
+//           Streams.done
+//         case More(v, Done) =>
+//           v
+//         case _ =>
+//           Streams.get(this)
+//       }
 
-    def sink[B >: T](ch: Channel[B]): Unit > (Fibers with IOs) = {
-      def loop(s: Stream[T]): Unit > (Fibers with IOs) =
-        s match {
-          case Done => ()
-          case More(v, tail) =>
-            ch.put(v).andThen {
-              Streams.run(tail).map(loop(_))
-            }
-        }
-      loop(this)
-    }
+//     // def flatten[U](implicit ev: T => Stream[U]): Stream[U] > (Fibers with IOs) = {
+//     //   def loop(s: Stream[T]): Stream[U] > (Fibers with IOs) =
+//     //     s match {
+//     //       case Done => Done
+//     //       case More(v, tail) =>
+//     //         val a: Stream[U] > (Fibers & IOs) = v.map(ev)
+//     //         a.map {
+//     //           case Done => Done
+//     //           case More(u, utail) =>
+//     //             More(u, ???)
+//     //         }
+//     //     }
+//     //   loop(this)
+//     // }
 
-    def drain: Unit > (Fibers with IOs) =
-      this match {
-        case Done => ()
-        case More(_, tail) =>
-          Streams.run(tail).map(_.drain)
-      }
+//     def sink[B >: T](ch: Channel[B]): Unit > (Fibers with IOs) = {
+//       def loop(s: Stream[T]): Unit > (Fibers with IOs) =
+//         s match {
+//           case Done => ()
+//           case More(v, tail) =>
+//             ch.put(v).andThen {
+//               tail.map(loop(_))
+//             }
+//         }
+//       loop(this)
+//     }
 
-    def foreach(f: T => Unit > (Fibers with IOs)): Unit > (Fibers with IOs) =
-      this match {
-        case Done => ()
-        case More(v, tail) =>
-          v.map(f).andThen {
-            Streams.run(tail).map(_.foreach(f))
-          }
-      }
+//     def drain: Unit > (Fibers with IOs) =
+//       this match {
+//         case Done => ()
+//         case More(_, tail) =>
+//           tail.map(_.drain)
+//       }
 
-    def head: Option[T] > (Fibers with IOs) =
-      this match {
-        case Done       => None
-        case More(v, _) => v.map(Some(_))
-      }
+//     def foreach(f: T => Unit > (Fibers with IOs)): Unit > (Fibers with IOs) =
+//       this match {
+//         case Done => ()
+//         case More(v, tail) =>
+//           v.map(f).andThen {
+//             tail.map(_.foreach(f))
+//           }
+//       }
 
-    def last: Option[T] > (Fibers with IOs) = {
-      def loop(s: Stream[T], prev: Option[T]): Option[T] > (Fibers with IOs) =
-        s match {
-          case Done => prev
-          case More(v, tail) =>
-            Streams.run(tail).map { s =>
-              v.map(v => loop(s, Some(v)))
-            }
-        }
-      loop(this, None)
-    }
+//     def head: Option[T] > (Fibers with IOs) =
+//       this match {
+//         case Done       => None
+//         case More(v, _) => v.map(Some(_))
+//       }
 
-    def count: Int > (Fibers with IOs) = {
-      def loop(s: Stream[T], acc: Int): Int > (Fibers with IOs) =
-        s match {
-          case Done => acc
-          case More(_, tail) =>
-            Streams.run(tail)
-              .map(loop(_, acc + 1))
-        }
-      loop(this, 0)
-    }
+//     def last: Option[T] > (Fibers with IOs) = {
+//       def loop(s: Stream[T], prev: Option[T]): Option[T] > (Fibers with IOs) =
+//         s match {
+//           case Done => prev
+//           case More(v, tail) =>
+//             tail.map { s =>
+//               v.map(v => loop(s, Some(v)))
+//             }
+//         }
+//       loop(this, None)
+//     }
 
-    def take(n: Int): List[T] > (Fibers with IOs) = {
-      def loop(s: Stream[T], acc: List[T]): List[T] > (Fibers with IOs) =
-        s match {
-          case Done => acc.reverse
-          case More(v, tail) =>
-            v.map { v =>
-              Streams.run(tail)
-                .map(loop(_, v :: acc))
-            }
-        }
-      loop(this, Nil)
-    }
-  }
+//     def count: Int > (Fibers with IOs) = {
+//       def loop(s: Stream[T], acc: Int): Int > (Fibers with IOs) =
+//         s match {
+//           case Done => acc
+//           case More(_, tail) =>
+//             tail.map(loop(_, acc + 1))
+//         }
+//       loop(this, 0)
+//     }
 
-  object Stream {
+//     def take(n: Int): List[T] > (Fibers with IOs) = {
+//       def loop(s: Stream[T], acc: List[T]): List[T] > (Fibers with IOs) =
+//         s match {
+//           case Done => acc.reverse
+//           case More(v, tail) =>
+//             v.map { v =>
+//               tail.map(loop(_, v :: acc))
+//             }
+//         }
+//       loop(this, Nil)
+//     }
+//   }
 
-    case object Done
-        extends Stream[Nothing]
+//   object Stream {
 
-    case class More[T](v: T > (Fibers with IOs), tail: T > (Fibers with IOs with Streams))
-        extends Stream[T]
-  }
+//     case object Done
+//         extends Stream[Nothing]
 
-  final class Streams private[streams] () extends Effect[Stream, Streams] {
+//     case class More[T](v: T > (Fibers with IOs), tail: Stream[T] > (Fibers with IOs))
+//         extends Stream[T]
+//   }
 
-    def run[T, S](v: T > (Streams with S)): Stream[T] > (Fibers with IOs with S) =
-      handle[T, S, Fibers with IOs](v)
+//   type Streams >: Streams.Effects <: Streams.Effects
 
-    def source[T](v: T > (Fibers with IOs), tail: T > (Fibers with IOs with Streams)): T > Streams =
-      More(v, tail).get
+//   object Streams {
+//     type Effects = StreamsEffect with Fibers with IOs
 
-    def source[T](f: () => T > Streams): T > Streams =
-      f().map(v => source(v, source(f)))
+//     def run
+//   }
 
-    def source[T](ch: Channel[T]): T > Streams =
-      source(ch.take, source(ch))
+//   final class StreamsEffect private[streams] () extends Effect[Stream, StreamsEffect] {
 
-    def source[T, S](i: Iterable[T > Streams]): T > Streams = {
-      val it = i.iterator
-      def loop(): T > Streams =
-        if (!it.hasNext) {
-          done
-        } else {
-          it.next().map { v =>
-            More[T](v, loop()).get
-          }
-        }
-      loop()
-    }
+//     def run[T, S](v: T > (Streams with S)): Stream[T] > (Fibers with IOs with S) =
+//       handle[T, S, Fibers with IOs](v)
 
-    val done: Nothing > Streams = suspend(Done)
+//     def source[T](v: T > (Fibers with IOs), tail: Stream[T] > (Fibers with IOs)): T > Streams =
+//       More(v, tail).get
 
-    private[streams] def get[T](s: Stream[T]): T > Streams =
-      suspend(s)
+//     def source[T](f: () => Stream[T]): T > Streams =
+//       f().get.map(v => source(v, Streams.run(source(f))))
 
-    private implicit val handler: Handler[Stream, Streams, Fibers with IOs] =
-      new Handler[Stream, Streams, Fibers with IOs] {
-        def pure[T](v: T) = More(v, done)
-        def apply[T, U, S](s: Stream[T], f: T => U > (Streams with S)) = {
-          def loop(s: Stream[T], acc: List[Stream[U]]): U > (Streams with Fibers with IOs with S) =
-            s match {
-              case Done =>
-                source(acc.map(_.get))
-              case More(v, tail) =>
-                run(v.map(f)).map { r =>
-                  run(tail).map { s =>
-                    loop(s, r :: acc)
-                  }
-                }
-            }
-          loop(s, Nil)
-        }
-      }
-  }
-  val Streams = new Streams
-}
+//     def source[T](ch: Channel[T]): T > Streams =
+//       source(ch.take, Streams.run(source(ch)))
+
+//     def source[T, S](i: Iterable[T > (Fibers with IOs)]): T > Streams = {
+//       val it = i.iterator
+//       def loop: T > Streams =
+//         it.nextOption() match {
+//           case None =>
+//             done
+//           case Some(v) =>
+//             source(v, Streams.run(loop))
+//         }
+//       loop
+//     }
+
+//     val done: Nothing > Streams = suspend(Done)
+
+//     private[streams] def get[T](s: Stream[T]): T > Streams =
+//       suspend(s)
+
+//     private implicit val handler: Handler[Stream, Streams, Fibers with IOs] =
+//       new Handler[Stream, Streams, Fibers with IOs] {
+//         def pure[T](v: T) =
+//           More(v, Done)
+//         def apply[T, U, S](s: Stream[T], f: T => U > (Streams with S)) = {
+//           def loop(s: Stream[T]): Stream[Stream[U]] > (Fibers with IOs with S) =
+//             s match {
+//               case Done =>
+//                 Done
+//               case More(v, tail) =>
+//                 run(v.map(f)).map { su =>
+//                   tail.map(loop).map { ntail =>
+//                     More(su, ntail)
+//                   }
+//                 }
+//             }
+//           loop(s).map(_.get).map(_.get)
+//         }
+//       }
+//   }
+// }
