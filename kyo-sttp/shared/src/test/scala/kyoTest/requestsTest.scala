@@ -13,18 +13,26 @@ import scala.util._
 
 class requestsTest extends KyoTest {
 
-  "requests" - {
-    "mocked" in run {
-      val backend = new Backend {
-        def send[T](r: Request[T, Any]) =
-          Response.ok(Right("mocked")).asInstanceOf[Response[T]]
+  val backend = new Backend {
+    def send[T](r: Request[T, Any]) =
+      Response.ok(Right("mocked")).asInstanceOf[Response[T]]
+  }
+
+  "apply" in run {
+    Requests.run(backend) {
+      for {
+        r <- Requests[String](_.get(uri"https://httpbin.org/get"))
+      } yield {
+        assert(r == "mocked")
       }
-      Requests.run(backend) {
-        for {
-          r <- Requests[String](_.get(uri"https://httpbin.org/get"))
-        } yield {
-          assert(r == "mocked")
-        }
+    }
+  }
+  "request" in run {
+    Requests.run(backend) {
+      for {
+        r <- Requests.request[String](Requests.basicRequest.get(uri"https://httpbin.org/get"))
+      } yield {
+        assert(r == "mocked")
       }
     }
   }

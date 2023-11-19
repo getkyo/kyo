@@ -2,22 +2,10 @@ package kyo
 
 import kyo._
 import kyo.concurrent.fibers._
-import kyo.consoles._
 import kyo.envs._
-import kyo.internal.KyoSttpMonad
 import kyo.ios._
-import kyo.tries.Tries
-import sttp.client3.Empty
-import sttp.client3.Request
-import sttp.client3.RequestT
-import sttp.client3.Response
-import sttp.client3.SttpBackend
-import sttp.client3.UriContext
-import sttp.client3._
-import sttp.client3.basicRequest
-
-import scala.concurrent.Future
 import kyo.loggers._
+import sttp.client3._
 
 object requests {
 
@@ -45,18 +33,21 @@ object requests {
     ): T > (Fibers with IOs with S) =
       run[T, S](b)(v)
 
-    type SeedRequest = RequestT[Empty, Either[_, String], Any]
+    type BasicRequest = sttp.client3.RequestT[Empty, Either[_, String], Any]
 
-    private val SeedRequest: SeedRequest =
-      basicRequest.mapResponse {
+    val basicRequest: BasicRequest =
+      sttp.client3.basicRequest.mapResponse {
         case Left(s) =>
           Left(new Exception(s))
         case Right(v) =>
           Right(v)
       }
 
-    def apply[T](f: SeedRequest => Request[Either[_, T], Any]): T > Requests =
-      envs.get.map(b => b.send(f(SeedRequest))).map {
+    def apply[T](f: BasicRequest => Request[Either[_, T], Any]): T > Requests =
+      request(f(basicRequest))
+
+    def request[T](req: Request[Either[_, T], Any]): T > Requests =
+      envs.get.map(_.send(req)).map {
         _.body match {
           case Left(ex: Throwable) =>
             IOs.fail[T](ex)
