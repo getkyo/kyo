@@ -241,7 +241,7 @@ class fibersTest extends KyoTest {
     "transform" in run {
       for {
         v1       <- Fibers.fork(1).map(_.get)
-        _        <- Fibers.await(())
+        _        <- Fibers.await((), ())
         (v2, v3) <- Fibers.parallel(2, 3)
         l        <- Fibers.parallel(List[Int > Any](4, 5))
       } yield assert(v1 + v2 + v3 + l.sum == 15)
@@ -354,10 +354,10 @@ class fibersTest extends KyoTest {
     }
     "await" - {
       "default" in run {
-        Fibers.await(l.get.map(v => assert(v == 10))).map(_ => succeed)
+        Fibers.await(List(l.get.map(v => assert(v == 10)))).map(_ => succeed)
       }
       "let" in run {
-        l.let(20)(Fibers.await(l.get.map(v => assert(v == 20))).map(_ => succeed))
+        l.let(20)(Fibers.await(List(l.get.map(v => assert(v == 20)))).map(_ => succeed))
       }
     }
   }

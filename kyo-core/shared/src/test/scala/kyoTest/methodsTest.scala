@@ -16,7 +16,8 @@ class methodsTest extends KyoTest {
   }
 
   "unit" in {
-    assert(IOs.run(IOs(1).unit) == ())
+    IOs.run(IOs(1).unit)
+    succeed
   }
 
   "flatten" in {
