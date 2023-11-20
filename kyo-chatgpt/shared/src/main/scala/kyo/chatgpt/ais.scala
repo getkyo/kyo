@@ -149,7 +149,7 @@ object ais {
       } yield r
   }
 
-  object AIs {
+  object AIs extends Joins[AIs] {
 
     type Effects = Sums[State] with Requests
 
@@ -166,6 +166,9 @@ object ais {
       init.map { ai =>
         ai.seed(seed).andThen(ai)
       }
+
+    def run[T, S](v: T > (AIs with S)): T > (Requests with S) =
+      State.run[T, Requests with S](v).map(_._1)
 
     def ask(msg: String): String > AIs =
       init.map(_.ask(msg))
@@ -198,8 +201,29 @@ object ais {
         Tries.run[T, S](f).map(r => State.set(st).map(_ => r.get))
       }
 
-    def run[T, S](v: T > (AIs with S)): T > (Requests with S) =
-      State.run[T, Requests with S](v).map(_._1)
+    def race[T](l: Seq[T > AIs]): T > AIs =
+      State.get.map { st =>
+        Requests.race[(T, State)](l.map(State.run[T, Requests](st)))
+          .map {
+            case (v, st) =>
+              State.set(st).map(_ => v)
+          }
+      }
+
+    def parallel[T](l: Seq[T > AIs]): Seq[T] > AIs =
+      State.get.map { st =>
+        Requests.parallel[(T, State)](l.map(State.run[T, Requests](st)))
+          .map { rl =>
+            val r = rl.map(_._1)
+            val st =
+              rl.map(_._2)
+                .foldLeft(Map.empty: State) {
+                  case (acc, st) =>
+                    summer.add(acc, st)
+                }
+            State.set(st).map(_ => r)
+          }
+      }
   }
 
   object internal {

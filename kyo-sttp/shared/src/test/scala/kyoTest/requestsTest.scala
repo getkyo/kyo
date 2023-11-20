@@ -55,29 +55,5 @@ class requestsTest extends KyoTest {
       }
     }
   }
-  "await" in run {
-    val backend = new TestBackend
-    Requests.run(backend) {
-      val call = Requests.request[String](Requests.basicRequest.get(uri"https://httpbin.org/get"))
-      for {
-        r <- Requests.await(call, call)
-      } yield {
-        assert(backend.calls == 2)
-      }
-    }
-  }
-  "parallel" in run {
-    val backend = new TestBackend
-    Requests.run(backend) {
-      val call = Requests.request[String](Requests.basicRequest.get(uri"https://httpbin.org/get"))
-      for {
-        (r1, r2) <- Requests.parallel(call, call)
-      } yield {
-        assert(r1 == "mocked")
-        assert(r2 == "mocked")
-        assert(backend.calls == 2)
-      }
-    }
-  }
 
 }

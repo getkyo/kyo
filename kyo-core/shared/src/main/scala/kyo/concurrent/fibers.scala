@@ -291,36 +291,6 @@ object fibers {
       }
     }
 
-    def await[T](l: Seq[T > (IOs with Fibers)]): Unit > (IOs with Fibers) =
-      awaitFiber(l).map(_.get)
-
-    def awaitFiber[T](l: Seq[T > (IOs with Fibers)]): Fiber[Unit] > IOs =
-      Locals.save.map { st =>
-        IOs {
-          val p       = new IOPromise[Unit]
-          val pending = new AtomicInteger(l.size)
-          var i       = 0
-          val f: T > IOs => Unit =
-            r =>
-              try {
-                IOs.run(r)
-                if (pending.decrementAndGet() == 0) {
-                  p.complete(())
-                }
-              } catch {
-                case ex if (NonFatal(ex)) =>
-                  p.complete(IOs.fail(ex))
-              }
-          foreach(l) { io =>
-            val fiber = IOTask(IOs(io), st)
-            p.interrupts(fiber)
-            fiber.onComplete(f)
-            i += 1
-          }
-          Fiber.promise(p)
-        }
-      }
-
     def never: Fiber[Unit] > IOs =
       IOs(Fiber.promise(new IOPromise[Unit]))
 

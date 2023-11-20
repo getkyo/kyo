@@ -159,44 +159,6 @@ class fibersTest extends KyoTest {
     }
   }
 
-  "await" in run {
-    val ac = new JAtomicInteger(0)
-    val bc = new JAtomicInteger(0)
-    def loop(i: Int, s: String): String > IOs =
-      IOs {
-        if (i > 0) {
-          if (s.equals("a")) ac.incrementAndGet()
-          else bc.incrementAndGet()
-          loop(i - 1, s)
-        } else {
-          s
-        }
-      }
-    Fibers.await(loop(2, "a"), loop(4, "b")).map { r =>
-      assert(ac.get() == 2)
-      assert(bc.get() == 4)
-    }
-  }
-
-  "awaitFiber" in run {
-    val ac = new JAtomicInteger(0)
-    val bc = new JAtomicInteger(0)
-    def loop(i: Int, s: String): String > IOs =
-      IOs {
-        if (i > 0) {
-          if (s.equals("a")) ac.incrementAndGet()
-          else bc.incrementAndGet()
-          loop(i - 1, s)
-        } else {
-          s
-        }
-      }
-    Fibers.awaitFiber(List(loop(2, "a"), loop(5, "b"))).map(_.get).map { r =>
-      assert(ac.get() == 2)
-      assert(bc.get() == 5)
-    }
-  }
-
   "collect" in run {
     val ac = new JAtomicInteger(0)
     val bc = new JAtomicInteger(0)
@@ -241,7 +203,6 @@ class fibersTest extends KyoTest {
     "transform" in run {
       for {
         v1       <- Fibers.fork(1).map(_.get)
-        _        <- Fibers.await((), ())
         (v2, v3) <- Fibers.parallel(2, 3)
         l        <- Fibers.parallel(List[Int > Any](4, 5))
       } yield assert(v1 + v2 + v3 + l.sum == 15)
@@ -350,14 +311,6 @@ class fibersTest extends KyoTest {
       }
       "let" in run {
         l.let(20)(Fibers.parallel(List(l.get, l.get)).map(v => assert(v == List(20, 20))))
-      }
-    }
-    "await" - {
-      "default" in run {
-        Fibers.await(List(l.get.map(v => assert(v == 10)))).map(_ => succeed)
-      }
-      "let" in run {
-        l.let(20)(Fibers.await(List(l.get.map(v => assert(v == 20)))).map(_ => succeed))
       }
     }
   }

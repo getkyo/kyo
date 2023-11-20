@@ -64,11 +64,6 @@ object requests {
         Fibers.race(l.map(Requests.run(b)(_)))
       }
 
-    def await[T](l: Seq[T > Requests]): Unit > Requests =
-      envs.get.map { b =>
-        Fibers.await(l.map(Requests.run(b)(_)))
-      }
-
     def parallel[T](l: Seq[T > Requests]): Seq[T] > Requests =
       envs.get.map { b =>
         Fibers.parallel(l.map(Requests.run(b)(_)))

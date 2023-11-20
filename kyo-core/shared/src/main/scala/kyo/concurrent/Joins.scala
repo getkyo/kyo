@@ -7,8 +7,6 @@ trait Joins[E] {
 
   def race[T](l: Seq[T > E]): T > E
 
-  def await[T](l: Seq[T > E]): Unit > E
-
   def parallel[T](l: Seq[T > E]): Seq[T] > E
 
   def race[T](
@@ -31,27 +29,6 @@ trait Joins[E] {
       v4: => T > E
   ): T > E =
     race(List(v1, v2, v3, v4))
-
-  def await[T](
-      v1: => T > E,
-      v2: => T > E
-  ): Unit > E =
-    await(List(v1, v2))
-
-  def await[T](
-      v1: => T > E,
-      v2: => T > E,
-      v3: => T > E
-  ): Unit > E =
-    await(List(v1, v2, v3))
-
-  def await[T](
-      v1: => T > E,
-      v2: => T > E,
-      v3: => T > E,
-      v4: => T > E
-  ): Unit > E =
-    await(List(v1, v2, v3, v4))
 
   def parallel[T1, T2](
       v1: => T1 > E,
