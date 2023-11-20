@@ -5,6 +5,7 @@ import kyo.aspects._
 import kyo.chatgpt.completions._
 import kyo.chatgpt.contexts._
 import kyo.chatgpt.tools._
+import kyo.concurrent.Joins
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
 import kyo.ios._
@@ -36,76 +37,18 @@ object ais {
         .trim
   }
 
-  object AIs {
-
-    type Effects = Sums[State] with Requests with Tries with IOs with Aspects
-
-    case class AIException(cause: String) extends Exception(cause) with NoStackTrace
-
-    private val nextId = IOs.run(Atomics.initLong(0))
-
-    val init: AI > AIs =
-      nextId.incrementAndGet.map(new AI(_))
-
-    def init(seed: String): AI > AIs =
-      init.map { ai =>
-        ai.seed(seed).andThen(ai)
-      }
-
-    def ask(msg: String): String > AIs =
-      init.map(_.ask(msg))
-
-    def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
-      init.map(_.gen[T](msg))
-
-    def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
-      init.map(_.infer[T](msg))
-
-    def ask(seed: String, msg: String): String > AIs =
-      init(seed).map(_.ask(msg))
-
-    def gen[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
-      init(seed).map(_.gen[T](msg))
-
-    def infer[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
-      init(seed).map(_.infer[T](msg))
-
-    def restore(ctx: Context): AI > AIs =
-      init.map { ai =>
-        ai.restore(ctx).map(_ => ai)
-      }
-
-    def fail[T](cause: String): T > AIs =
-      Tries.fail(AIException(cause))
-
-    def ephemeral[T, S](f: => T > S): T > (AIs with S) =
-      Sums[State].get.map { st =>
-        Tries.run[T, S](f).map(r => Sums[State].set(st).map(_ => r.get))
-      }
-
-    def run[T, S](v: T > (AIs with S)): T > (Requests with Tries with S) = {
-      val a: T > (Requests with Tries with Aspects with S) =
-        Sums[State].run[T, Requests with Tries with Aspects with S](v)
-      val b: T > (Requests with Tries with S) =
-        Aspects.run[T, Requests with Tries with S](a)
-      b
-    }
-  }
-
   class AI private[ais] (val id: Long) {
 
     private val ref = new AIRef(this)
 
     def save: Context > AIs =
-      Sums[State].get.map(_.getOrElse(ref, Context.empty))
+      State.get.map(_.getOrElse(ref, Context.empty))
 
     def dump: Unit > (AIs with Consoles) =
       save.map(_.dump).map(Consoles.println(_))
 
     def restore(ctx: Context): Unit > AIs =
-      Sums[State].get.map { st =>
-        Sums[State].set(st + (ref -> ctx)).unit
-      }
+      State.add(Map(ref -> ctx)).unit
 
     def update(f: Context => Context): Unit > AIs =
       save.map { ctx =>
@@ -114,10 +57,9 @@ object ais {
 
     def copy: AI > AIs =
       for {
-        res <- AIs.init
-        st  <- Sums[State].get
-        _   <- Sums[State].set(st + (res.ref -> st.getOrElse(ref, Context.empty)))
-      } yield res
+        ai <- AIs.init
+        _  <- State.update(st => st + (ai.ref -> st.getOrElse(ref, Context.empty)))
+      } yield ai
 
     def seed[S](msg: String): Unit > AIs =
       update(_.seed(msg))
@@ -228,9 +170,67 @@ object ais {
       } yield r
   }
 
+  object AIs {
+
+    type Effects = Sums[State] with Requests with Tries with IOs with Aspects
+
+    case class AIException(cause: String) extends Exception(cause) with NoStackTrace
+
+    private val nextId = IOs.run(Atomics.initLong(0))
+
+    val init: AI > AIs =
+      nextId.incrementAndGet.map(new AI(_))
+
+    def init(seed: String): AI > AIs =
+      init.map { ai =>
+        ai.seed(seed).andThen(ai)
+      }
+
+    def ask(msg: String): String > AIs =
+      init.map(_.ask(msg))
+
+    def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
+      init.map(_.gen[T](msg))
+
+    def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
+      init.map(_.infer[T](msg))
+
+    def ask(seed: String, msg: String): String > AIs =
+      init(seed).map(_.ask(msg))
+
+    def gen[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
+      init(seed).map(_.gen[T](msg))
+
+    def infer[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
+      init(seed).map(_.infer[T](msg))
+
+    def restore(ctx: Context): AI > AIs =
+      init.map { ai =>
+        ai.restore(ctx).map(_ => ai)
+      }
+
+    def fail[T](cause: String): T > AIs =
+      Tries.fail(AIException(cause))
+
+    def ephemeral[T, S](f: => T > S): T > (AIs with S) =
+      State.get.map { st =>
+        Tries.run[T, S](f).map(r => State.set(st).map(_ => r.get))
+      }
+
+    def run[T, S](v: T > (AIs with S)): T > (Requests with Tries with S) = {
+      val a: T > (Requests with Tries with Aspects with S) =
+        State.run[T, Requests with Tries with Aspects with S](v)
+      val b: T > (Requests with Tries with S) =
+        Aspects.run[T, Requests with Tries with S](a)
+      b
+    }
+  }
+
   object internal {
 
     type State = Map[AIRef, Context]
+
+    val State = Sums[State]
 
     class AIRef(ai: AI) extends WeakReference[AI](ai) {
 
