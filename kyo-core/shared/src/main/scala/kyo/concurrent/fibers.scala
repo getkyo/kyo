@@ -240,16 +240,10 @@ object fibers {
       "Forked computations support only the `Fibers` and `IOs` effects pending. Please handle other effects before forking. Found: '${T}'"
 
     /*inline*/
-    def forkFiber[T]( /*inline*/ v: => T > (IOs with Fibers))(implicit
+    def fork[T]( /*inline*/ v: => T > (IOs with Fibers))(implicit
         @implicitNotFound(invalidEffects) ng: Pure[T]
     ): Fiber[T] > IOs =
       Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
-
-    /*inline*/
-    def fork[T]( /*inline*/ v: => T > (IOs with Fibers))(implicit
-        @implicitNotFound(invalidEffects) ng: Pure[T]
-    ): T > (IOs with Fibers) =
-      Fibers.join(forkFiber(v))
 
     def parallel[T1, T2](
         v1: => T1 > (IOs with Fibers),
@@ -461,7 +455,7 @@ object fibers {
       }
 
     def timeout[T](d: Duration)(v: => T > (IOs with Fibers)): T > (IOs with Fibers with Timers) =
-      forkFiber(v).map { f =>
+      fork(v).map { f =>
         val timeout: Unit > IOs =
           IOs {
             IOTask(IOs(f.interrupt), Locals.State.empty)

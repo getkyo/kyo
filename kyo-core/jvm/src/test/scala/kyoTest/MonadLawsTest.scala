@@ -24,9 +24,9 @@ object MonadLawsTest extends ZIOSpecDefault {
         Gen.oneOf(
             gen.map(v => (v: A > (IOs with Fibers))),
             gen.map(v => IOs(v)),
-            gen.map(v => Fibers.fork(v)),
-            gen.map(v => IOs(Fibers.fork(v))),
-            gen.map(v => Fibers.fork(IOs(v)))
+            gen.map(v => Fibers.fork(v).map(_.get)),
+            gen.map(v => IOs(Fibers.fork(v).map(_.get))),
+            gen.map(v => Fibers.fork(IOs(v)).map(_.get))
         ).map(Myo(_))
     }
 

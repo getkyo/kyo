@@ -31,7 +31,7 @@ class CountdownLatchBench extends Bench.ForkOnly[Int] {
 
     for {
       l <- Latches.init(depth)
-      _ <- Fibers.forkFiber(iterate(l, depth))
+      _ <- Fibers.fork(iterate(l, depth))
       _ <- l.await
     } yield 0
   }

@@ -31,7 +31,7 @@ class cachesTest extends KyoTest {
         Fibers.fork {
           calls += 1
           v + 1
-        }
+        }.map(_.get)
       }
       v1 <- m(1)
       v2 <- m(1)

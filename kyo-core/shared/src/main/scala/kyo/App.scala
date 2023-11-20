@@ -52,6 +52,6 @@ object App {
     def v8  = Fibers.timeout(timeout)(v7)
     def v9  = Timers.run(v8)
     def v10 = Tries.run(v9).map(_.flatten)
-    IOs.run(Fibers.run(IOs.runLazy(Fibers.fork(v10))))
+    IOs.run(Fibers.run(IOs.runLazy(Fibers.fork(v10).map(_.get))))
   }
 }

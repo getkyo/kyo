@@ -43,7 +43,7 @@ class ForkManyBench extends Bench.ForkOnly[Int] {
         case _ =>
           false
       }
-      _ <- repeat(depth)(Fibers.forkFiber(effect))
+      _ <- repeat(depth)(Fibers.fork(effect))
       _ <- promise.get
     } yield 0
   }

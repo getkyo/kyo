@@ -52,7 +52,7 @@ class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
     for {
       sem <- Meters.initSemaphore(permits)
       cdl <- Latches.init(fibers)
-      _   <- repeat(fibers)(Fibers.forkFiber(loop(sem, cdl)))
+      _   <- repeat(fibers)(Fibers.fork(loop(sem, cdl)))
       _   <- cdl.await
     } yield {}
   }

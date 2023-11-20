@@ -59,18 +59,18 @@ class fibersTest extends KyoTest {
   "fork" - {
     "value" in run {
       for {
-        v <- Fibers.fork(1)
+        v <- Fibers.fork(1).map(_.get)
       } yield assert(v == 1)
     }
     "executes in a different thread" in runJVM {
       val t1 = Thread.currentThread()
       for {
-        t2 <- Fibers.fork(Thread.currentThread())
+        t2 <- Fibers.fork(Thread.currentThread()).map(_.get)
       } yield assert(t1 != t2)
     }
     "multiple" in run {
       for {
-        v0               <- Fibers.fork(0)
+        v0               <- Fibers.fork(0).map(_.get)
         (v1, v2)         <- Fibers.parallel(1, 2)
         (v3, v4, v5)     <- Fibers.parallel(3, 4, 5)
         (v6, v7, v8, v9) <- Fibers.parallel(6, 7, 8, 9)
@@ -79,7 +79,7 @@ class fibersTest extends KyoTest {
     "nested" in runJVM {
       val t1 = Thread.currentThread()
       for {
-        t2 <- Fibers.fork(IOs(Fibers.fork(Thread.currentThread())))
+        t2 <- Fibers.fork(IOs(Fibers.fork(Thread.currentThread()).map(_.get))).map(_.get)
       } yield assert(t1 != t2)
     }
   }
@@ -117,7 +117,7 @@ class fibersTest extends KyoTest {
       for {
         started     <- Latches.init(1)
         done        <- Latches.init(1)
-        fiber       <- Fibers.forkFiber(runLoop(started, done))
+        fiber       <- Fibers.fork(runLoop(started, done))
         _           <- started.await
         interrupted <- fiber.interrupt
         _           <- done.await
@@ -127,30 +127,15 @@ class fibersTest extends KyoTest {
       for {
         started      <- Latches.init(3)
         done         <- Latches.init(3)
-        fiber1       <- Fibers.forkFiber(runLoop(started, done))
-        fiber2       <- Fibers.forkFiber(runLoop(started, done))
-        fiber3       <- Fibers.forkFiber(runLoop(started, done))
+        fiber1       <- Fibers.fork(runLoop(started, done))
+        fiber2       <- Fibers.fork(runLoop(started, done))
+        fiber3       <- Fibers.fork(runLoop(started, done))
         _            <- started.await
         interrupted1 <- fiber1.interrupt
         interrupted2 <- fiber2.interrupt
         interrupted3 <- fiber3.interrupt
         _            <- done.await
       } yield assert(interrupted1 && interrupted2 && interrupted3)
-    }
-  }
-
-  "forkFiber" - {
-    "executes in a different thread" in runJVM {
-      for {
-        t1 <- IOs.value(Thread.currentThread())
-        t2 <- Fibers.fork(Thread.currentThread())
-      } yield assert(t1 != t2)
-    }
-    "nested" in runJVM {
-      for {
-        t1 <- IOs.value(Thread.currentThread())
-        t2 <- Fibers.fork(Fibers.fork(Thread.currentThread()))
-      } yield assert(t1 != t2)
     }
   }
 
@@ -255,7 +240,7 @@ class fibersTest extends KyoTest {
   "deep handler" - {
     "transform" in run {
       for {
-        v1       <- Fibers.fork(1)
+        v1       <- Fibers.fork(1).map(_.get)
         _        <- Fibers.await(())
         (v2, v3) <- Fibers.parallel(2, 3)
         l        <- Fibers.parallel(List[Int > Any](4, 5))
@@ -294,7 +279,7 @@ class fibersTest extends KyoTest {
         for {
           r  <- Resources.acquire(resource1)
           v1 <- IOs(r.incrementAndGet())
-          v2 <- Fibers.fork(r.incrementAndGet())
+          v2 <- Fibers.fork(r.incrementAndGet()).map(_.get)
         } yield (r, Set(v1, v2))
       Resources.run[(JAtomicInteger with Closeable, Set[Int]), IOs with Fibers](io1).map {
         case (r, v) =>
@@ -305,10 +290,11 @@ class fibersTest extends KyoTest {
     "inner" in run {
       val resource1 = new Resource
       val resource2 = new Resource
-      Fibers.fork(Resources.run(Resources.acquire(resource1).map(_.incrementAndGet()))).map { r =>
-        assert(r == 1)
-        assert(resource1.get() == -1)
-      }
+      Fibers.fork(Resources.run(Resources.acquire(resource1).map(_.incrementAndGet())))
+        .map(_.get).map { r =>
+          assert(r == 1)
+          assert(resource1.get() == -1)
+        }
     }
     "multiple" in run {
       val resource1 = new Resource
@@ -329,7 +315,7 @@ class fibersTest extends KyoTest {
         for {
           r  <- Resources.acquire(resource1)
           v1 <- IOs(r.incrementAndGet())
-          v2 <- Fibers.fork(r.incrementAndGet())
+          v2 <- Fibers.fork(r.incrementAndGet()).map(_.get)
           v3 <- Resources.run(Resources.acquire(resource2).map(_.incrementAndGet()))
         } yield Set(v1, v2, v3)
       Resources.run[Set[Int], IOs with Fibers](io1).map { r =>
@@ -344,10 +330,10 @@ class fibersTest extends KyoTest {
     val l = Locals.init(10)
     "fork" - {
       "default" in run {
-        Fibers.fork(l.get).map(v => assert(v == 10))
+        Fibers.fork(l.get).map(_.get).map(v => assert(v == 10))
       }
       "let" in run {
-        l.let(20)(Fibers.fork(l.get)).map(v => assert(v == 20))
+        l.let(20)(Fibers.fork(l.get).map(_.get)).map(v => assert(v == 20))
       }
     }
     "race" - {

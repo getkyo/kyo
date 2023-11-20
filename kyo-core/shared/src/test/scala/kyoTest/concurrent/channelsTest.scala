@@ -48,8 +48,8 @@ class channelsTest extends KyoTest {
   "offer, put, and take in parallel" in runJVM {
     for {
       c     <- Channels.init[Int](2)
-      b     <- Fibers.fork(c.offer(1))
-      put   <- Fibers.fork(c.putFiber(2))
+      b     <- c.offer(1)
+      put   <- c.putFiber(2)
       f     <- c.isFull
       take1 <- Fibers.fork(c.takeFiber)
       take2 <- Fibers.fork(c.takeFiber)
