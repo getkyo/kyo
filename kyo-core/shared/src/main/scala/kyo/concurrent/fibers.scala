@@ -168,7 +168,7 @@ object fibers {
 
   final class Fibers private[fibers]
       extends Effect[Fiber, Fibers]
-      with Joins[IOs with Fibers] {
+      with joins.Joins[IOs with Fibers] {
 
     case object Interrupted
         extends RuntimeException
