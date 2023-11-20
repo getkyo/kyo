@@ -18,7 +18,7 @@ class sumsTest extends kyoTest.KyoTest {
         v3 <- Sums[Int].get
       } yield List(v1, v2, v3)
 
-    assert(Sums[Int].run(v) == List(1, 2, 3))
+    assert(Sums[Int].run(v) == (List(1, 2, 3), 3))
   }
   "string" in {
     val v: List[String] > Sums[String] =
@@ -31,7 +31,7 @@ class sumsTest extends kyoTest.KyoTest {
         v3 <- Sums[String].get
       } yield List(v1, v2, v3)
     val res = Sums[String].run(v)
-    assert(res == List("1", "12", "123"))
+    assert(res == (List("1", "12", "123"), "123"))
   }
   "int and string" in {
     val v: (Int, String) > (Sums[Int] with Sums[String]) =
@@ -45,18 +45,18 @@ class sumsTest extends kyoTest.KyoTest {
         v1 <- Sums[Int].get
         v2 <- Sums[String].get
       } yield (v1, v2)
-    val res: (Int, String) =
+    val res: (((Int, String), Int), String) =
       Sums[String].run(Sums[Int].run[(Int, String), Sums[String]](v)).pure
-    assert(res == (3, "123"))
+    assert(res == (((3, "123"), 3), "123"))
   }
   "initial value" in {
-    val r: Int =
+    val t =
       Sums[Int].run(Sums[Int].get).pure
-    assert(r == 0)
+    assert(t == (0, 0))
 
-    val s: String =
-      Sums[String].run(Sums[String].get).pure
-    assert(s == "")
+    val t2 =
+      Sums[String].run(Sums[String].get)
+    assert(t2 == ("", ""))
   }
   "set" in {
     val v =
@@ -67,7 +67,7 @@ class sumsTest extends kyoTest.KyoTest {
         v2 <- Sums[List[Int]].get
       } yield (v1, v2)
     val res = Sums[List[Int]].run(v)
-    assert(res == (List(1), List(3)))
+    assert(res == ((List(1), List(3)), List(3)))
   }
   "update" in {
     val v =
@@ -78,7 +78,7 @@ class sumsTest extends kyoTest.KyoTest {
         v2 <- Sums[List[Int]].get
       } yield (v1, v2)
     val res = Sums[List[Int]].run(v)
-    assert(res == (List(1), List(2, 1)))
+    assert(res == ((List(1), List(2, 1)), List(2, 1)))
   }
   "List" in {
     val v =
@@ -91,7 +91,7 @@ class sumsTest extends kyoTest.KyoTest {
         v3 <- Sums[List[Int]].get
       } yield (v1, v2, v3)
     val res = Sums[List[Int]].run(v)
-    assert(res == (List(1), List(1, 2), List(1, 2, 3)))
+    assert(res == ((List(1), List(1, 2), List(1, 2, 3)), List(1, 2, 3)))
   }
 
   "Set" in {
@@ -105,6 +105,6 @@ class sumsTest extends kyoTest.KyoTest {
         v3 <- Sums[Set[Int]].get
       } yield (v1, v2, v3)
     val res = Sums[Set[Int]].run(v)
-    assert(res == (Set(1), Set(1, 2), Set(1, 2, 3)))
+    assert(res == ((Set(1), Set(1, 2), Set(1, 2, 3)), Set(1, 2, 3)))
   }
 }

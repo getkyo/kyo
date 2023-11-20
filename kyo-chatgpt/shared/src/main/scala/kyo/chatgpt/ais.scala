@@ -199,13 +199,8 @@ object ais {
         Tries.run[T, S](f).map(r => State.set(st).map(_ => r.get))
       }
 
-    def run[T, S](v: T > (AIs with S)): T > (Requests with Tries with S) = {
-      val a: T > (Requests with Tries with Aspects with S) =
-        State.run[T, Requests with Tries with Aspects with S](v)
-      val b: T > (Requests with Tries with S) =
-        Aspects.run[T, Requests with Tries with S](a)
-      b
-    }
+    def run[T, S](v: T > (AIs with S)): T > (Requests with S) =
+      State.run[T, Requests with S](v).map(_._1)
   }
 
   object internal {

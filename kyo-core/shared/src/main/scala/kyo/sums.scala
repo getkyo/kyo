@@ -33,11 +33,11 @@ object sums {
     def update(f: V => V): V > Sums[V] =
       suspend(UpdateValue(f).asInstanceOf[Sum[V]#Value[V]])
 
-    def run[T, S](v: T > (Sums[V] with S))(implicit
-        g: Summer[V],
-        tag: Tag[V]
-    ): T > S = {
-      var curr = g.init
+    def run[T, S](v: T > (Sums[V] with S))(implicit g: Summer[V]): (T, V) > S =
+      run[T, S](g.init)(v)
+
+    def run[T, S](init: V)(v: T > (Sums[V] with S))(implicit g: Summer[V]): (T, V) > S = {
+      var curr = init
       implicit def handler: Handler[Sum[V]#Value, Sums[V], Any] =
         new Handler[Sum[V]#Value, Sums[V], Any] {
           def pure[U](v: U) = v
@@ -69,7 +69,7 @@ object sums {
           curr.asInstanceOf[T]
         case m =>
           m.asInstanceOf[T]
-      }
+      }.map((_, curr))
     }
 
     override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
