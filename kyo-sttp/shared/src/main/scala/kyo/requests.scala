@@ -1,7 +1,7 @@
 package kyo
 
 import kyo._
-import kyo.concurrent.joins._
+import kyo.concurrent.Joins
 import kyo.concurrent.fibers._
 import kyo.envs._
 import kyo.ios._
@@ -59,12 +59,10 @@ object requests {
         }
       }
 
-    private val joiner = Joiner.envs[Backend]
-
-    def race[T](l: Seq[T > Requests]): T > Requests = {
-      // joiner.seq(l)(l => Fibers.race(l))
-      ???
-    }
+    def race[T](l: Seq[T > Requests]): T > Requests =
+      envs.get.map { b =>
+        Fibers.race(l.map(Requests.run(b)(_)))
+      }
 
     def await[T](l: Seq[T > Requests]): Unit > Requests =
       envs.get.map { b =>

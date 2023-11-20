@@ -5,6 +5,7 @@ import kyo.chatgpt.completions._
 import kyo.chatgpt.configs._
 import kyo.chatgpt.contexts._
 import kyo.chatgpt.tools._
+import kyo.concurrent.Joins
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
 import kyo.ios._
