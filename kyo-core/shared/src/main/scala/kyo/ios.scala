@@ -18,6 +18,7 @@ import options._
 import locals._
 import scala.annotation.implicitNotFound
 import java.util.concurrent.atomic.AtomicReference
+import kyo.locals.Locals.State
 
 object ios {
 
@@ -66,7 +67,7 @@ object ios {
         /*inline*/ f: => T > (IOs with S)
     ): T > (IOs with S) =
       new KyoIO[T, S] {
-        def apply(v: Unit, s: Safepoint[IO, IOs], l: Locals.State) =
+        def apply(v: Unit > (IOs with S), s: Safepoint[IO, IOs], l: Locals.State) =
           f
       }
 
@@ -97,7 +98,7 @@ object ios {
             runLazyLoop(kyo((), safepoint, Locals.State.empty))
           case kyo: Kyo[MX, EX, Any, T, S with IOs] @unchecked =>
             new KyoCont[MX, EX, Any, T, S](kyo) {
-              def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) =
+              def apply(v: Any > S, s: Safepoint[MX, EX], l: Locals.State) =
                 runLazyLoop(kyo(v, s, l))
             }
           case _ =>
@@ -135,7 +136,7 @@ object ios {
         v match {
           case kyo: Kyo[MX, EX, Any, T, S with IOs] @unchecked =>
             new KyoCont[MX, EX, Any, T, S with IOs](kyo) {
-              def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) = {
+              def apply(v: Any > (S with IOs), s: Safepoint[MX, EX], l: State) = {
                 val np =
                   (s: Any) match {
                     case s: Preempt =>

@@ -30,7 +30,7 @@ object core {
         v match {
           case kyo: Kyo[MX, EX, Any, M[T], S] @unchecked =>
             new KyoCont[MX, EX, Any, T, S with E](kyo) {
-              def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) =
+              def apply(v: Any > (S with E), s: Safepoint[MX, EX], l: Locals.State) =
                 suspendLoop(kyo(v, s, l))
             }
           case _ =>
@@ -63,7 +63,7 @@ object core {
             }
           case kyo: Kyo[MX, EX, Any, T, S with E] @unchecked =>
             new KyoCont[MX, EX, Any, M[T], S with S2](kyo) {
-              def apply(v: Any, s2: Safepoint[MX, EX], l: Locals.State) =
+              def apply(v: Any > (S with S2), s2: Safepoint[MX, EX], l: Locals.State) =
                 handleLoop {
                   try kyo(v, s2, l)
                   catch {
@@ -90,7 +90,7 @@ object core {
       v match {
         case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>
           new KyoCont[MX, EX, Any, U, S with S2](kyo) {
-            def apply(v: Any, s: Safepoint[MX, EX], l: Locals.State) = {
+            def apply(v: Any > (S with S2), s: Safepoint[MX, EX], l: Locals.State) = {
               val n = kyo(v, s, l)
               if (s()) {
                 s[U, S with S2](transformLoop(n))
@@ -154,7 +154,7 @@ object core {
     abstract class Kyo[M[_], E <: Effect[M, _], T, U, S] {
       def value: M[T]
       def effect: E
-      def apply(v: T, s: Safepoint[M, E], l: Locals.State): U > S
+      def apply(v: T > S, s: Safepoint[M, E], l: Locals.State): U > S
       def isRoot: Boolean = false
     }
 
@@ -162,8 +162,8 @@ object core {
         extends Kyo[M, E, T, T, S] {
       final def value  = v
       final def effect = e
-      final def apply(v: T, s: Safepoint[M, E], l: Locals.State) =
-        v.asInstanceOf[T > S]
+      final def apply(v: T > S, s: Safepoint[M, E], l: Locals.State) =
+        v
       override final def isRoot = true
     }
 

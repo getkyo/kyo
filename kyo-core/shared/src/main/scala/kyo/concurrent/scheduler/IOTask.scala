@@ -113,7 +113,7 @@ private[kyo] class IOTask[T](
               this.interrupts(promise)
               val runtime = this.runtime() + (Coordinator.tick() - start).asInstanceOf[Int]
               promise.onComplete { (v: Any > IOs) =>
-                val io = IOs(v.map(kyo(_, this.asInstanceOf[Safepoint[Fiber, Fibers]], locals)))
+                val io = IOs(kyo(v, this.asInstanceOf[Safepoint[Fiber, Fibers]], locals))
                 this.become(IOTask(io, locals, ensures, runtime))
               }
             case Failed(ex) =>

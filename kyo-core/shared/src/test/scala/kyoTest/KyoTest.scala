@@ -46,8 +46,12 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     loop()
   }
 
-  // def timeout = Duration.Inf
-  def timeout = 10.seconds
+  def timeout =
+    if (Platform.isDebugEnabled) {
+      Duration.Inf
+    } else {
+      5.seconds
+    }
 
   implicit def toFuture(a: Assertion): Future[Assertion] = Future.successful(a)
 
