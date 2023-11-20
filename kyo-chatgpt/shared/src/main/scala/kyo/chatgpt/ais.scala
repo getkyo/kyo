@@ -1,7 +1,6 @@
 package kyo.chatgpt
 
 import kyo._
-import kyo.aspects._
 import kyo.chatgpt.completions._
 import kyo.chatgpt.configs._
 import kyo.chatgpt.contexts._
@@ -152,7 +151,7 @@ object ais {
 
   object AIs {
 
-    type Effects = Sums[State] with Requests with Tries with IOs with Aspects
+    type Effects = Sums[State] with Requests
 
     case class AIException(cause: String) extends Exception(cause) with NoStackTrace
 
@@ -192,7 +191,7 @@ object ais {
       }
 
     def fail[T](cause: String): T > AIs =
-      Tries.fail(AIException(cause))
+      IOs.fail(AIException(cause))
 
     def ephemeral[T, S](f: => T > S): T > (AIs with S) =
       State.get.map { st =>
