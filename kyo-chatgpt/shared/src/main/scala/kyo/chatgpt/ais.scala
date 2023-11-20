@@ -3,6 +3,7 @@ package kyo.chatgpt
 import kyo._
 import kyo.aspects._
 import kyo.chatgpt.completions._
+import kyo.chatgpt.configs._
 import kyo.chatgpt.contexts._
 import kyo.chatgpt.tools._
 import kyo.concurrent.Joins
@@ -48,7 +49,7 @@ object ais {
       save.map(_.dump).map(Consoles.println(_))
 
     def restore(ctx: Context): Unit > AIs =
-      State.add(Map(ref -> ctx)).unit
+      State.update(_ + (ref -> ctx)).unit
 
     def update(f: Context => Context): Unit > AIs =
       save.map { ctx =>
@@ -177,6 +178,8 @@ object ais {
     case class AIException(cause: String) extends Exception(cause) with NoStackTrace
 
     private val nextId = IOs.run(Atomics.initLong(0))
+
+    val configs = Configs
 
     val init: AI > AIs =
       nextId.incrementAndGet.map(new AI(_))
