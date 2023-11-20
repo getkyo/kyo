@@ -11,11 +11,11 @@ import kyo.core._
 object sums {
 
   private case class AddValue[V](v: V)
-  private case class SetValue[V](v: V)
+  private case class UpdateValue[V](f: V => V)
   private case object Get
 
   type Sum[V] = {
-    type Value[T] >: T // = T | AddValue[V] | SetValue[V] | Get.type
+    type Value[T] >: T // = T | AddValue[V] | UpdateValue[V] | Get.type
   }
 
   final class Sums[V] private[sums] (implicit private val tag: Tag[_])
@@ -28,7 +28,10 @@ object sums {
       suspend(AddValue(v).asInstanceOf[Sum[V]#Value[V]])
 
     def set(v: V): V > Sums[V] =
-      suspend(SetValue(v).asInstanceOf[Sum[V]#Value[V]])
+      update(_ => v)
+
+    def update(f: V => V): V > Sums[V] =
+      suspend(UpdateValue(f).asInstanceOf[Sum[V]#Value[V]])
 
     def run[T, S](v: T > (Sums[V] with S))(implicit
         g: Summer[V],
@@ -46,8 +49,8 @@ object sums {
               case AddValue(v) =>
                 curr = g.add(curr, v.asInstanceOf[V])
                 f(curr.asInstanceOf[T])
-              case SetValue(v) =>
-                curr = v.asInstanceOf[V]
+              case UpdateValue(u) =>
+                curr = u.asInstanceOf[V => V](curr)
                 f(curr.asInstanceOf[T])
               case Get =>
                 f(curr.asInstanceOf[T])
@@ -58,6 +61,9 @@ object sums {
       handle[T, S, Any](v).map {
         case AddValue(v) =>
           curr = g.add(curr, v.asInstanceOf[V])
+          curr.asInstanceOf[T]
+        case UpdateValue(u) =>
+          curr = u.asInstanceOf[V => V](curr)
           curr.asInstanceOf[T]
         case Get =>
           curr.asInstanceOf[T]

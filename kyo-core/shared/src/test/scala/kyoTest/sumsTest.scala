@@ -69,6 +69,17 @@ class sumsTest extends kyoTest.KyoTest {
     val res = Sums[List[Int]].run(v)
     assert(res == (List(1), List(3)))
   }
+  "update" in {
+    val v =
+      for {
+        _  <- Sums[List[Int]].add(List(1))
+        v1 <- Sums[List[Int]].get
+        _  <- Sums[List[Int]].update(2 :: _)
+        v2 <- Sums[List[Int]].get
+      } yield (v1, v2)
+    val res = Sums[List[Int]].run(v)
+    assert(res == (List(1), List(2, 1)))
+  }
   "List" in {
     val v =
       for {
