@@ -30,10 +30,10 @@ object channels {
 
     def takeFiber: Fiber[T] > IOs
 
-    def put[S](v: T > S): Unit > (S with IOs with Fibers) =
+    def put[S](v: T > S): Unit > (S with Fibers) =
       putFiber(v).map(_.get)
 
-    def take: T > (IOs with Fibers) =
+    def take: T > Fibers =
       takeFiber.map(_.get)
   }
 

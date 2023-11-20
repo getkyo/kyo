@@ -29,6 +29,8 @@ import scala.annotation.implicitNotFound
 
 object fibers {
 
+  import internal._
+
   private[concurrent] case class Failed(reason: Throwable)
 
   type Fiber[+T] // = T | Failed[T] | IOPromise[T]
@@ -80,7 +82,7 @@ object fibers {
           f(state.asInstanceOf[T > IOs])
       }
 
-    def getTry: Try[T] > (Fibers with IOs) =
+    def getTry: Try[T] > Fibers =
       state match {
         case promise: IOPromise[T] @unchecked =>
           IOs {
@@ -166,9 +168,11 @@ object fibers {
       }
   }
 
-  final class Fibers private[fibers]
-      extends Effect[Fiber, Fibers]
-      with Joins[IOs with Fibers] {
+  type Fibers >: Fibers.Effects <: Fibers.Effects
+
+  object Fibers extends Joins[Fibers] {
+
+    type Effects = FiberGets with IOs
 
     case object Interrupted
         extends RuntimeException
@@ -176,43 +180,11 @@ object fibers {
 
     private[kyo] val interrupted = IOs.fail(Interrupted)
 
-    def run[T](v: T > Fibers)(implicit
-        @implicitNotFound(
-            "'Fibers.run' only accepts the 'Fibers' effects pending. Found: '${T}'"
-        ) ng: Pure[T]
-    ): Fiber[T] > IOs = {
-      implicit val handler: DeepHandler[Fiber, Fibers] =
-        new DeepHandler[Fiber, Fibers] {
-          def pure[T](v: T) = Fiber.done(v)
-          def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
-            m.unsafeTransform(f)
-        }
-      IOs(deepHandle[Fiber, Fibers, T](Fibers)(v))
-    }
+    def run[T](v: T > Fibers): Fiber[T] > IOs =
+      FiberGets.run(v)
 
-    def runBlocking[T, S](v: T > (Fibers with S)): T > (IOs with S) = {
-      implicit def handler: Handler[Fiber, Fibers, Any] =
-        new Handler[Fiber, Fibers, Any] {
-          def pure[T](v: T) = Fiber.done(v)
-          override def handle[T](ex: Throwable): T > Fibers =
-            Fibers.join(Fiber.failed[T](ex))
-          def apply[T, U, S](m: Fiber[T], f: T => U > (Fibers with S)) =
-            try {
-              m match {
-                case m: IOPromise[T] @unchecked =>
-                  f(m.block())
-                case Failed(ex) =>
-                  handle(ex)
-                case _ =>
-                  f(m.asInstanceOf[T])
-              }
-            } catch {
-              case ex if (NonFatal(ex)) =>
-                handle(ex)
-            }
-        }
-      IOs[T, S](handle[T, IOs with S, Any](v).map(_.block))
-    }
+    def runBlocking[T, S](v: T > (Fibers with S)): T > (IOs with S) =
+      FiberGets.runBlocking[T, S](v)
 
     def value[T](v: T): Fiber[T] =
       Fiber.done(v)
@@ -221,7 +193,7 @@ object fibers {
       v.map(_.get)
 
     private[fibers] def join[T, S](v: Fiber[T] > S): T > (Fibers with S) =
-      suspend(v)
+      FiberGets(v)
 
     def fail[T](ex: Throwable): Fiber[T] =
       Fiber.failed(ex)
@@ -238,13 +210,13 @@ object fibers {
     private val IOTask = kyo.concurrent.scheduler.IOTask
 
     /*inline*/
-    def fork[T]( /*inline*/ v: => T > (IOs with Fibers)): Fiber[T] > IOs =
+    def fork[T]( /*inline*/ v: => T > Fibers): Fiber[T] > IOs =
       Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
-    def parallel[T](l: Seq[T > (IOs with Fibers)]): Seq[T] > (IOs with Fibers) =
+    def parallel[T](l: Seq[T > Fibers]): Seq[T] > Fibers =
       Fibers.join(parallelFiber[T](l))
 
-    def parallelFiber[T](l: Seq[T > (IOs with Fibers)]): Fiber[Seq[T]] > IOs =
+    def parallelFiber[T](l: Seq[T > Fibers]): Fiber[Seq[T]] > IOs =
       Locals.save.map { st =>
         IOs {
           val p       = new IOPromise[Seq[T]]
@@ -273,10 +245,10 @@ object fibers {
         }
       }
 
-    def race[T](l: Seq[T > (IOs with Fibers)]): T > (IOs with Fibers) =
+    def race[T](l: Seq[T > Fibers]): T > Fibers =
       Fibers.join(raceFiber[T](l))
 
-    def raceFiber[T](l: Seq[T > (IOs with Fibers)]): Fiber[T] > IOs = {
+    def raceFiber[T](l: Seq[T > Fibers]): Fiber[T] > IOs = {
       require(!l.isEmpty)
       Locals.save.map { st =>
         IOs {
@@ -294,10 +266,10 @@ object fibers {
     def never: Fiber[Unit] > IOs =
       IOs(Fiber.promise(new IOPromise[Unit]))
 
-    def delay[T, S](d: Duration)(v: => T > S): T > (S with IOs with Fibers with Timers) =
+    def delay[T, S](d: Duration)(v: => T > S): T > (S with Fibers with Timers) =
       sleep(d).andThen(v)
 
-    def sleep(d: Duration): Unit > (IOs with Fibers with Timers) =
+    def sleep(d: Duration): Unit > (Fibers with Timers) =
       initPromise[Unit].map { p =>
         if (d.isFinite) {
           val run: Unit > IOs =
@@ -313,7 +285,7 @@ object fibers {
         }
       }
 
-    def timeout[T](d: Duration)(v: => T > (IOs with Fibers)): T > (IOs with Fibers with Timers) =
+    def timeout[T](d: Duration)(v: => T > Fibers): T > (Fibers with Timers) =
       fork(v).map { f =>
         val timeout: Unit > IOs =
           IOs {
@@ -325,7 +297,7 @@ object fibers {
         }
       }
 
-    def join[T, S](f: Future[T]): T > (IOs with Fibers) =
+    def join[T, S](f: Future[T]): T > Fibers =
       Fibers.join(joinFiber(f))
 
     def joinFiber[T](f: Future[T]): Fiber[T] > IOs = {
@@ -356,6 +328,47 @@ object fibers {
       }
     }
   }
-  val Fibers = new Fibers
 
+  object internal {
+    final class FiberGets private[fibers] () extends Effect[Fiber, FiberGets] {
+
+      def apply[T, S](f: Fiber[T] > S): T > (FiberGets with S) =
+        suspend(f)
+
+      def run[T](v: T > Fibers): Fiber[T] > IOs = {
+        implicit val handler: DeepHandler[Fiber, FiberGets] =
+          new DeepHandler[Fiber, FiberGets] {
+            def pure[T](v: T) = Fiber.done(v)
+            def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
+              m.unsafeTransform(f)
+          }
+        IOs(deepHandle[Fiber, FiberGets, T](FiberGets)(IOs.runLazy(v)))
+      }
+
+      def runBlocking[T, S](v: T > (Fibers with S)): T > (IOs with S) = {
+        implicit def handler: Handler[Fiber, FiberGets, Any] =
+          new Handler[Fiber, FiberGets, Any] {
+            def pure[T](v: T) = Fiber.done(v)
+            override def handle[T](ex: Throwable): T > FiberGets =
+              FiberGets(Fiber.failed[T](ex))
+            def apply[T, U, S](m: Fiber[T], f: T => U > (FiberGets with S)) =
+              try {
+                m match {
+                  case m: IOPromise[T] @unchecked =>
+                    f(m.block())
+                  case Failed(ex) =>
+                    handle(ex)
+                  case _ =>
+                    f(m.asInstanceOf[T])
+                }
+              } catch {
+                case ex if (NonFatal(ex)) =>
+                  handle(ex)
+              }
+          }
+        IOs[T, S](handle[T, IOs with S, Any](v).map(_.block))
+      }
+    }
+    val FiberGets = new FiberGets
+  }
 }

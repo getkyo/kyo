@@ -42,7 +42,7 @@ class ForkSpawnBench extends Bench.ForkOnly[Unit] {
       if (n <= 1) io
       else io.flatMap(_ => repeat(n - 1)(io))
 
-    def loop(cdl: Latch, level: Int): Unit > (IOs with Fibers) =
+    def loop(cdl: Latch, level: Int): Unit > Fibers =
       if (level == depth) {
         cdl.release
       } else {

@@ -19,7 +19,7 @@ import kyo.internal.KyoSttpMonad._
 case class NettyKyoServerOptions(
     interceptors: List[Interceptor[KyoSttpMonad.M]],
     createFile: ServerRequest => TapirFile > Routes,
-    deleteFile: TapirFile => Unit > (Fibers with IOs)
+    deleteFile: TapirFile => Unit > Fibers
 ) {
   def prependInterceptor(i: Interceptor[KyoSttpMonad.M]): NettyKyoServerOptions =
     copy(interceptors = i :: interceptors)

@@ -20,7 +20,7 @@ object meters {
 
     def isAvailable: Boolean > IOs = available.map(_ > 0)
 
-    def run[T, S](v: => T > S): T > (S with IOs with Fibers)
+    def run[T, S](v: => T > S): T > (S with Fibers)
 
     def tryRun[T, S](v: => T > S): Option[T] > (IOs with S)
   }
@@ -109,7 +109,7 @@ object meters {
           }
 
           def run[T, S](v: => T > S) = {
-            def loop(l: List[Meter]): T > (S with IOs with Fibers) =
+            def loop(l: List[Meter]): T > (S with Fibers) =
               l match {
                 case Nil => v
                 case h :: t =>

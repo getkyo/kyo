@@ -9,5 +9,5 @@ import kyo.ios.IOs
 class KyoSequencer(mutex: Meter) extends Sequencer[KyoSttpMonad.M] {
 
   def apply[T](t: => KyoSttpMonad.M[T]) =
-    mutex.run[T, Fibers with IOs](t)
+    mutex.run[T, Fibers](t)
 }

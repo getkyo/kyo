@@ -43,7 +43,7 @@ class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
       if (n <= 1) io
       else io.flatMap(_ => repeat(n - 1)(io))
 
-    def loop(sem: Meter, cdl: Latch, i: Int = 0): Unit > (IOs with Fibers) =
+    def loop(sem: Meter, cdl: Latch, i: Int = 0): Unit > Fibers =
       if (i >= depth)
         cdl.release
       else

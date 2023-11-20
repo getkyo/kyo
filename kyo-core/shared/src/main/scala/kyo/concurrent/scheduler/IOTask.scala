@@ -1,5 +1,6 @@
 package kyo.concurrent.scheduler
 
+import kyo.concurrent.fibers.internal._
 import kyo.concurrent.fibers._
 import kyo._
 import kyo.core._
@@ -20,7 +21,7 @@ private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T > IOs]
   /*inline*/
   def apply[T](
-      v: T > (IOs with Fibers),
+      v: T > Fibers,
       st: Locals.State,
       ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
       runtime: Int = 1
@@ -57,7 +58,7 @@ private[kyo] object IOTask {
 }
 
 private[kyo] class IOTask[T](
-    private var curr: T > (IOs with Fibers),
+    private var curr: T > Fibers,
     private var ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
     @volatile private var state: Int // Math.abs(state) => runtime; state < 0 => preempting
 ) extends IOPromise[T]
@@ -80,7 +81,7 @@ private[kyo] class IOTask[T](
   override protected def onComplete(): Unit =
     preempt()
 
-  @tailrec private def eval(start: Long, curr: T > (IOs with Fibers)): T > (IOs with Fibers) = {
+  @tailrec private def eval(start: Long, curr: T > Fibers): T > Fibers = {
     def finalize() = {
       ensures match {
         case null =>
@@ -104,16 +105,16 @@ private[kyo] class IOTask[T](
       }
     } else {
       curr match {
-        case kyo: Kyo[IO, IOs, Unit, T, IOs with Fibers] @unchecked if (kyo.effect eq IOs) =>
+        case kyo: Kyo[IO, IOs, Unit, T, Fibers] @unchecked if (kyo.effect eq IOs) =>
           eval(start, kyo((), this, locals))
-        case kyo: Kyo[Fiber, Fibers, Any, T, IOs with Fibers] @unchecked
-            if (kyo.effect eq Fibers) =>
+        case kyo: Kyo[Fiber, FiberGets, Any, T, Fibers] @unchecked
+            if (kyo.effect eq FiberGets) =>
           kyo.value match {
             case promise: IOPromise[T] @unchecked =>
               this.interrupts(promise)
               val runtime = this.runtime() + (Coordinator.tick() - start).asInstanceOf[Int]
               promise.onComplete { (v: Any > IOs) =>
-                val io = IOs(kyo(v, this.asInstanceOf[Safepoint[Fiber, Fibers]], locals))
+                val io = IOs(kyo(v, this.asInstanceOf[Safepoint[Fiber, FiberGets]], locals))
                 this.become(IOTask(io, locals, ensures, runtime))
               }
             case Failed(ex) =>

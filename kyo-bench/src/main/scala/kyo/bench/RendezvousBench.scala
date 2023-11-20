@@ -68,7 +68,7 @@ class RendezvousBench extends Bench.ForkOnly[Int] {
     import kyo.concurrent.atomics._
     import kyo.concurrent.fibers._
 
-    def produce(waiting: AtomicRef[Any], n: Int = 0): Unit > (Fibers with IOs) =
+    def produce(waiting: AtomicRef[Any], n: Int = 0): Unit > Fibers =
       if (n <= depth) {
         Fibers.initPromise[Unit].flatMap { p =>
           waiting.cas(null, (p, n)).flatMap {
@@ -86,7 +86,7 @@ class RendezvousBench extends Bench.ForkOnly[Int] {
         IOs.unit
       }
 
-    def consume(waiting: AtomicRef[Any], n: Int = 0, acc: Int = 0): Int > (Fibers with IOs) =
+    def consume(waiting: AtomicRef[Any], n: Int = 0, acc: Int = 0): Int > Fibers =
       if (n <= depth) {
         Fibers.initPromise[Int].flatMap { p =>
           waiting.cas(null, p).flatMap {

@@ -25,7 +25,7 @@ class SemaphoreBench extends Bench.ForkOnly[Unit] {
     import kyo.concurrent.meters._
     import kyo.concurrent.fibers._
 
-    def loop(s: Meter, i: Int): Unit > (IOs with Fibers) =
+    def loop(s: Meter, i: Int): Unit > Fibers =
       if (i >= depth)
         IOs.unit
       else

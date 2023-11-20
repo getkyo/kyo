@@ -79,7 +79,7 @@ case class NettyKyoServer(
     }
 
   private def startUsingSocketOverride[SA <: SocketAddress](socketOverride: Option[SA])
-      : (SA, () => Unit > (Fibers with IOs)) > (Fibers with IOs) = {
+      : (SA, () => Unit > Fibers) > Fibers = {
     val eventLoopGroup               = config.eventLoopConfig.initEventLoopGroup()
     val route: Route[KyoSttpMonad.M] = Route.combine(routes)
     val handler: (() => KyoSttpMonad.M[ServerResponse[NettyResponse]]) => (
@@ -115,7 +115,7 @@ case class NettyKyoServer(
     )
   }
 
-  private def stop(ch: Channel, eventLoopGroup: EventLoopGroup): Unit > (Fibers with IOs) = {
+  private def stop(ch: Channel, eventLoopGroup: EventLoopGroup): Unit > Fibers = {
     IOs {
       nettyFutureToScala(ch.close()).flatMap { _ =>
         if (config.shutdownEventLoopGroupOnClose) {
@@ -130,7 +130,7 @@ case class NettyKyoServer(
 object NettyKyoServer {
 
   private[kyo] val runAsync = new RunAsync[KyoSttpMonad.M] {
-    override def apply[T](f: => T > (Fibers with IOs)): Unit =
+    override def apply[T](f: => T > Fibers): Unit =
       IOs.run {
         Fibers.fork {
           IOs.run(Fibers.run(IOs.runLazy(f)).unit)
@@ -162,7 +162,7 @@ case class NettyKyoServerBinding(localSocket: InetSocketAddress, stop: () => Uni
 
 case class NettyKyoDomainSocketBinding(
     localSocket: DomainSocketAddress,
-    stop: () => Unit > (Fibers with IOs)
+    stop: () => Unit > Fibers
 ) {
   def path: String = localSocket.path()
 }

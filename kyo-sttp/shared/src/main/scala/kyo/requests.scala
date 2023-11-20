@@ -11,7 +11,7 @@ import sttp.client3._
 object requests {
 
   abstract class Backend {
-    def send[T](r: Request[T, Any]): Response[T] > (Fibers with IOs)
+    def send[T](r: Request[T, Any]): Response[T] > Fibers
   }
 
   object Backend {
@@ -22,16 +22,16 @@ object requests {
 
   object Requests extends Joins[Requests] {
 
-    type Effects = Envs[Backend] with Fibers with IOs
+    type Effects = Envs[Backend] with Fibers
 
     private val envs = Envs[Backend]
 
-    def run[T, S](b: Backend)(v: T > (Requests with S)): T > (Fibers with IOs with S) =
-      envs.run[T, Fibers with IOs with S](b)(v)
+    def run[T, S](b: Backend)(v: T > (Requests with S)): T > (Fibers with S) =
+      envs.run[T, Fibers with S](b)(v)
 
     def run[T, S](v: T > (Requests with S))(implicit
         b: Backend
-    ): T > (Fibers with IOs with S) =
+    ): T > (Fibers with S) =
       run[T, S](b)(v)
 
     type BasicRequest = sttp.client3.RequestT[Empty, Either[_, String], Any]

@@ -35,7 +35,7 @@ private[kyo] class NettyKyoRequestBody(createFile: ServerRequest => TapirFile > 
   override def toRaw[R](
       serverRequest: ServerRequest,
       bodyType: RawBodyType[R]
-  ): RawValue[R] > (Fibers with IOs) = {
+  ): RawValue[R] > Fibers = {
 
     bodyType match {
       case RawBodyType.StringBody(charset) =>
@@ -57,7 +57,7 @@ private[kyo] class NettyKyoRequestBody(createFile: ServerRequest => TapirFile > 
     }
   }
 
-  private def nettyRequestBytes(serverRequest: ServerRequest): Array[Byte] > (Fibers with IOs) =
+  private def nettyRequestBytes(serverRequest: ServerRequest): Array[Byte] > Fibers =
     serverRequest.underlying match {
       case req: FullHttpRequest => IOs(ByteBufUtil.getBytes(req.content()))
       case other => IOs.fail(new UnsupportedOperationException(

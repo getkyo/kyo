@@ -28,7 +28,7 @@ abstract class App {
 object App {
 
   type Effects =
-    IOs with Fibers with Resources with Clocks
+    Fibers with Resources with Clocks
       with Consoles with Randoms with Timers
       with Aspects with Tries
 
@@ -52,6 +52,6 @@ object App {
     def v8  = Fibers.timeout(timeout)(v7)
     def v9  = Timers.run(v8)
     def v10 = Tries.run(v9).map(_.flatten)
-    IOs.run(Fibers.run(IOs.runLazy(Fibers.fork(v10).map(_.get))))
+    IOs.run(Fibers.run(Fibers.fork(v10).map(_.get)))
   }
 }

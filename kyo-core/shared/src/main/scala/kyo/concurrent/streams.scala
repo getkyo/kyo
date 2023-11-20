@@ -27,7 +27,7 @@
 
 //   sealed trait Stream[+T] {
 
-//     def get: T > (Fibers with IOs with Streams) =
+//     def get: T > (Fibers with Streams) =
 //       this match {
 //         case Done =>
 //           Streams.done
@@ -37,8 +37,8 @@
 //           Streams.get(this)
 //       }
 
-//     // def flatten[U](implicit ev: T => Stream[U]): Stream[U] > (Fibers with IOs) = {
-//     //   def loop(s: Stream[T]): Stream[U] > (Fibers with IOs) =
+//     // def flatten[U](implicit ev: T => Stream[U]): Stream[U] > Fibers = {
+//     //   def loop(s: Stream[T]): Stream[U] > Fibers =
 //     //     s match {
 //     //       case Done => Done
 //     //       case More(v, tail) =>
@@ -52,8 +52,8 @@
 //     //   loop(this)
 //     // }
 
-//     def sink[B >: T](ch: Channel[B]): Unit > (Fibers with IOs) = {
-//       def loop(s: Stream[T]): Unit > (Fibers with IOs) =
+//     def sink[B >: T](ch: Channel[B]): Unit > Fibers = {
+//       def loop(s: Stream[T]): Unit > Fibers =
 //         s match {
 //           case Done => ()
 //           case More(v, tail) =>
@@ -64,14 +64,14 @@
 //       loop(this)
 //     }
 
-//     def drain: Unit > (Fibers with IOs) =
+//     def drain: Unit > Fibers =
 //       this match {
 //         case Done => ()
 //         case More(_, tail) =>
 //           tail.map(_.drain)
 //       }
 
-//     def foreach(f: T => Unit > (Fibers with IOs)): Unit > (Fibers with IOs) =
+//     def foreach(f: T => Unit > Fibers): Unit > Fibers =
 //       this match {
 //         case Done => ()
 //         case More(v, tail) =>
@@ -80,14 +80,14 @@
 //           }
 //       }
 
-//     def head: Option[T] > (Fibers with IOs) =
+//     def head: Option[T] > Fibers =
 //       this match {
 //         case Done       => None
 //         case More(v, _) => v.map(Some(_))
 //       }
 
-//     def last: Option[T] > (Fibers with IOs) = {
-//       def loop(s: Stream[T], prev: Option[T]): Option[T] > (Fibers with IOs) =
+//     def last: Option[T] > Fibers = {
+//       def loop(s: Stream[T], prev: Option[T]): Option[T] > Fibers =
 //         s match {
 //           case Done => prev
 //           case More(v, tail) =>
@@ -98,8 +98,8 @@
 //       loop(this, None)
 //     }
 
-//     def count: Int > (Fibers with IOs) = {
-//       def loop(s: Stream[T], acc: Int): Int > (Fibers with IOs) =
+//     def count: Int > Fibers = {
+//       def loop(s: Stream[T], acc: Int): Int > Fibers =
 //         s match {
 //           case Done => acc
 //           case More(_, tail) =>
@@ -108,8 +108,8 @@
 //       loop(this, 0)
 //     }
 
-//     def take(n: Int): List[T] > (Fibers with IOs) = {
-//       def loop(s: Stream[T], acc: List[T]): List[T] > (Fibers with IOs) =
+//     def take(n: Int): List[T] > Fibers = {
+//       def loop(s: Stream[T], acc: List[T]): List[T] > Fibers =
 //         s match {
 //           case Done => acc.reverse
 //           case More(v, tail) =>
@@ -126,24 +126,24 @@
 //     case object Done
 //         extends Stream[Nothing]
 
-//     case class More[T](v: T > (Fibers with IOs), tail: Stream[T] > (Fibers with IOs))
+//     case class More[T](v: T > Fibers, tail: Stream[T] > Fibers)
 //         extends Stream[T]
 //   }
 
 //   type Streams >: Streams.Effects <: Streams.Effects
 
 //   object Streams {
-//     type Effects = StreamsEffect with Fibers with IOs
+//     type Effects = StreamsEffect with Fibers
 
 //     def run
 //   }
 
 //   final class StreamsEffect private[streams] () extends Effect[Stream, StreamsEffect] {
 
-//     def run[T, S](v: T > (Streams with S)): Stream[T] > (Fibers with IOs with S) =
-//       handle[T, S, Fibers with IOs](v)
+//     def run[T, S](v: T > (Streams with S)): Stream[T] > (Fibers with S) =
+//       handle[T, S, Fibers](v)
 
-//     def source[T](v: T > (Fibers with IOs), tail: Stream[T] > (Fibers with IOs)): T > Streams =
+//     def source[T](v: T > Fibers, tail: Stream[T] > Fibers): T > Streams =
 //       More(v, tail).get
 
 //     def source[T](f: () => Stream[T]): T > Streams =
@@ -152,7 +152,7 @@
 //     def source[T](ch: Channel[T]): T > Streams =
 //       source(ch.take, Streams.run(source(ch)))
 
-//     def source[T, S](i: Iterable[T > (Fibers with IOs)]): T > Streams = {
+//     def source[T, S](i: Iterable[T > Fibers]): T > Streams = {
 //       val it = i.iterator
 //       def loop: T > Streams =
 //         it.nextOption() match {
@@ -169,12 +169,12 @@
 //     private[streams] def get[T](s: Stream[T]): T > Streams =
 //       suspend(s)
 
-//     private implicit val handler: Handler[Stream, Streams, Fibers with IOs] =
-//       new Handler[Stream, Streams, Fibers with IOs] {
+//     private implicit val handler: Handler[Stream, Streams, Fibers] =
+//       new Handler[Stream, Streams, Fibers] {
 //         def pure[T](v: T) =
 //           More(v, Done)
 //         def apply[T, U, S](s: Stream[T], f: T => U > (Streams with S)) = {
-//           def loop(s: Stream[T]): Stream[Stream[U]] > (Fibers with IOs with S) =
+//           def loop(s: Stream[T]): Stream[Stream[U]] > (Fibers with S) =
 //             s match {
 //               case Done =>
 //                 Done
