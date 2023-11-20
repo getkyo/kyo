@@ -15,6 +15,7 @@ import kyo.ios.IOs
 import kyo.chatgpt.contexts.Call
 import scala.util.{Try, Success, Failure}
 import kyo.lists.Lists
+import kyo.concurrent.atomics.Atomics
 
 package object tools {
 
@@ -80,12 +81,21 @@ package object tools {
         listeners.let(listener :: l)(f)
       }
 
-    private[kyo] def result[T](implicit t: ValueSchema[T]) =
-      Tools.init[T, T](
-          "resultTool",
-          "call this function with the result",
-          (_: T) => "Generating result..."
-      )((ai, v) => v)
+    private[kyo] def resultTool[T](implicit
+        t: ValueSchema[T]
+    ): (Tool[T, T], Option[T] > AIs) > AIs = {
+      Atomics.initRef(Option.empty[T]).map { ref =>
+        val tool =
+          init[T, T](
+              "resultTool",
+              "call this function with the result",
+              (_: T) => "Generating result."
+          ) { (_, v) =>
+            ref.set(Some(v)).andThen(v)
+          }
+        (tool, ref.get)
+      }
+    }
 
     private[kyo] def handle(ai: AI, tools: Set[Tool[_, _]], calls: List[Call]): Unit > AIs =
       Lists.traverseUnit(calls) { call =>

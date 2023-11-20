@@ -98,66 +98,45 @@ object ais {
       userMessage(msg).andThen(gen[T])
 
     def gen[T](implicit t: ValueSchema[T]): T > AIs = {
-      val decoder = JsonCodec.jsonDecoder(t.get)
-      val resultTool =
-        Tools.init[T, T](
-            "resultTool",
-            "Call this function with the result. Note how the schema " +
-              "is wrapped in an object with a `value` field.",
-            _ => s"Generating: ${t}"
-        )((ai, v) => v)
-      def eval(): T > AIs =
-        fetch(Set(resultTool), Some(resultTool)).map { r =>
-          r.calls match {
-            case call :: Nil if (call.function == resultTool.name) =>
-              resultTool.decoder.decodeJson(call.arguments) match {
-                case Left(error) =>
-                  toolMessage(
-                      call.id,
-                      "Failed to read the result: " + error
-                  ).andThen(eval())
-                case Right(value) =>
-                  toolMessage(
-                      call.id,
-                      "Result processed"
-                  ).andThen(value.value)
+      Tools.resultTool[T].map { case (resultTool, result) =>
+        def eval(): T > AIs =
+          fetch(Set(resultTool), Some(resultTool)).map { r =>
+            Tools.handle(this, Set(resultTool), r.calls).andThen {
+              result.map {
+                case Some(v) =>
+                  v
+                case None =>
+                  AIs.fail("Expected a function call to the resultTool")
               }
-            case calls =>
-              AIs.fail("Expected a function call to the resultTool")
+            }
           }
-        }
-      eval()
+        eval()
+      }
     }
 
     def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
       userMessage(msg).andThen(infer[T])
 
     def infer[T](implicit t: ValueSchema[T]): T > AIs = {
-      val resultTool = Tools.result[T]
-      def eval(tools: Set[Tool[_, _]], constrain: Option[Tool[_, _]] = None): T > AIs =
-        fetch(tools, constrain).map { r =>
-          r.calls match {
-            case Nil =>
-              eval(tools, Some(resultTool))
-            case call :: _ if (call.function == resultTool.name) =>
-              resultTool.decoder.decodeJson(call.arguments) match {
-                case Left(error) =>
-                  toolMessage(
-                      call.id,
-                      "Failed to read the result: " + error
-                  ).andThen(eval(tools, Some(resultTool)))
-                case Right(value) =>
-                  toolMessage(
-                      call.id,
-                      "Result processed."
-                  ).andThen(value.value)
-              }
-            case calls =>
-              Tools.handle(this, tools, calls)
-                .andThen(eval(tools))
+      Tools.resultTool[T].map { case (resultTool, result) =>
+        def eval(tools: Set[Tool[_, _]], constrain: Option[Tool[_, _]] = None): T > AIs =
+          fetch(tools, constrain).map { r =>
+            r.calls match {
+              case Nil =>
+                eval(tools, Some(resultTool))
+              case calls =>
+                Tools.handle(this, tools, calls).andThen {
+                  result.map {
+                    case None =>
+                      eval(tools)
+                    case Some(v) =>
+                      v
+                  }
+                }
+            }
           }
-        }
-      Tools.get.map(p => eval(p + resultTool))
+        Tools.get.map(p => eval(p + resultTool))
+      }
     }
 
     private def fetch(
