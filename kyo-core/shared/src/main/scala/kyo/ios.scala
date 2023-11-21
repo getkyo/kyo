@@ -128,7 +128,7 @@ object ios {
     }
 
     /*inline*/
-    private[kyo] def ensure[T, S]( /*inline*/ f: => Unit > IOs)(v: T > S): T > (IOs with S) = {
+    def ensure[T, S]( /*inline*/ f: => Unit > IOs)(v: T > S): T > (IOs with S) = {
       val ensure = new internal.Ensure {
         def run = f
       }
