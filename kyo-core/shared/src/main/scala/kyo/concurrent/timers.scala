@@ -32,7 +32,7 @@ object timers {
 
   object Timer {
 
-    implicit val default: Timer =
+    val default: Timer =
       new Timer {
 
         private val exec =

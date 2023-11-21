@@ -29,7 +29,7 @@ object App {
 
   type Effects =
     Fibers with Resources with Clocks
-      with Consoles with Aspects with Tries
+      with Consoles with Tries
 
   def run[T](timeout: Duration)(v: T > Effects): T =
     IOs.run(runFiber(timeout)(v).block.map(_.get))
@@ -44,10 +44,9 @@ object App {
     def v1 = Consoles.run(v)
     def v2 = Clocks.run(v1)
     def v3 = Resources.run(v2)
-    def v4 = Aspects.run(v3)
-    def v5 = Tries.run(v4)
-    def v6 = Fibers.timeout(timeout)(v5)
-    def v7 = Tries.run(v6).map(_.flatten)
-    IOs.run(Fibers.run(Fibers.fork(v7).map(_.get)))
+    def v4 = Tries.run(v3)
+    def v5 = Fibers.timeout(timeout)(v4)
+    def v6 = Tries.run(v5).map(_.flatten)
+    IOs.run(Fibers.run(Fibers.fork(v6).map(_.get)))
   }
 }

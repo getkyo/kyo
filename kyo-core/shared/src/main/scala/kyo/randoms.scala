@@ -19,7 +19,7 @@ object randoms {
   }
 
   object Random {
-    implicit val default: Random =
+    val default: Random =
       new Random {
 
         val random          = new java.util.Random

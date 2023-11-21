@@ -8,8 +8,8 @@ import scala.concurrent.Future
 
 class aspectsTest extends KyoTest {
 
-  private def run(v: Assertion > (Aspects with IOs)) = {
-    Future.successful(IOs.run(Aspects.run[Assertion, IOs](v)))
+  private def run(v: Assertion > IOs) = {
+    Future.successful(IOs.run(v))
   }
 
   "one aspect" - {
@@ -22,7 +22,7 @@ class aspectsTest extends KyoTest {
 
     "with cut" in run {
       val cut = new Cut[Int, Int, IOs] {
-        def apply[S](v: Int > S)(f: Int => Int > (Aspects with IOs)) =
+        def apply[S](v: Int > S)(f: Int => Int > IOs) =
           v.map(v => f(v + 1))
       }
       aspect.let[Assertion, IOs](cut) {
@@ -32,7 +32,7 @@ class aspectsTest extends KyoTest {
 
     "sandboxed" in run {
       val cut = new Cut[Int, Int, IOs] {
-        def apply[S](v: Int > S)(f: Int => Int > (Aspects with IOs)) =
+        def apply[S](v: Int > S)(f: Int => Int > IOs) =
           v.map(v => f(v + 1))
       }
       aspect.let[Assertion, IOs](cut) {
@@ -44,11 +44,11 @@ class aspectsTest extends KyoTest {
 
     "nested cuts" in run {
       val cut1 = new Cut[Int, Int, IOs] {
-        def apply[S](v: Int > S)(f: Int => Int > (Aspects with IOs)) =
+        def apply[S](v: Int > S)(f: Int => Int > IOs) =
           v.map(v => f(v * 3))
       }
       val cut2 = new Cut[Int, Int, IOs] {
-        def apply[S](v: Int > S)(f: Int => Int > (Aspects with IOs)) =
+        def apply[S](v: Int > S)(f: Int => Int > IOs) =
           v.map(v => f(v + 5))
       }
       aspect.let[Assertion, IOs](cut1) {
@@ -70,11 +70,11 @@ class aspectsTest extends KyoTest {
       } yield (v1, v2)
 
     val cut1 = new Cut[Int, Int, IOs] {
-      def apply[S](v: Int > S)(f: Int => Int > (Aspects with IOs)) =
+      def apply[S](v: Int > S)(f: Int => Int > IOs) =
         v.map(v => f(v * 3))
     }
     val cut2 = new Cut[Int, Int, IOs] {
-      def apply[S](v: Int > S)(f: Int => Int > (Aspects with IOs)) =
+      def apply[S](v: Int > S)(f: Int => Int > IOs) =
         v.map(v => f(v + 5))
     }
     aspect1.let[Assertion, IOs](cut1) {
@@ -95,7 +95,7 @@ class aspectsTest extends KyoTest {
       } yield (v1, v2)
 
     val cut = new Cut[Int, Int, IOs] {
-      def apply[S](v: Int > S)(f: Int => Int > (Aspects with IOs)) =
+      def apply[S](v: Int > S)(f: Int => Int > IOs) =
         v.map(v => f(v * 3))
     }
     aspect1.let[Assertion, IOs](cut) {
