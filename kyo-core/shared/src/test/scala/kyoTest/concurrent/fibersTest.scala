@@ -4,7 +4,6 @@ import kyo.concurrent.atomics.AtomicInt
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
 import kyo.concurrent.latches._
-import kyo.concurrent.timers._
 import kyo._
 import kyo.ios._
 import kyo.locals._
@@ -94,7 +93,7 @@ class fibersTest extends KyoTest {
 
   "timeout" in runJVM {
     Tries.run(Fibers.runBlocking(
-        Fibers.timeout(10.millis)(Timers.run(Fibers.sleep(1.day).andThen(1)))
+        Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
     )).map {
       case Failure(Fibers.Interrupted) => succeed
       case v                           => fail(v.toString())

@@ -57,7 +57,7 @@ object meters {
         }
       }
 
-    def initRateLimiter(rate: Int, period: Duration): Meter > (IOs with Timers) =
+    def initRateLimiter(rate: Int, period: Duration): Meter > IOs =
       Channels.init[Unit](rate).map { chan =>
         Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())).map { _ =>
           new Meter {

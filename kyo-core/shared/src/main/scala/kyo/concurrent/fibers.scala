@@ -266,10 +266,10 @@ object fibers {
     def never: Fiber[Unit] > IOs =
       IOs(Fiber.promise(new IOPromise[Unit]))
 
-    def delay[T, S](d: Duration)(v: => T > S): T > (S with Fibers with Timers) =
+    def delay[T, S](d: Duration)(v: => T > S): T > (S with Fibers) =
       sleep(d).andThen(v)
 
-    def sleep(d: Duration): Unit > (Fibers with Timers) =
+    def sleep(d: Duration): Unit > Fibers =
       initPromise[Unit].map { p =>
         if (d.isFinite) {
           val run: Unit > IOs =
@@ -285,7 +285,7 @@ object fibers {
         }
       }
 
-    def timeout[T](d: Duration)(v: => T > Fibers): T > (Fibers with Timers) =
+    def timeout[T](d: Duration)(v: => T > Fibers): T > Fibers =
       fork(v).map { f =>
         val timeout: Unit > IOs =
           IOs {

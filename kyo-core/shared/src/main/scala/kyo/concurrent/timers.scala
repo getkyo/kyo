@@ -11,6 +11,7 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.Duration
+import kyo.locals.Locals
 
 object timers {
 
@@ -106,43 +107,36 @@ object timers {
     }
   }
 
-  type Timers >: Timers.Effects <: Timers.Effects
-
   object Timers {
 
-    type Effects = Envs[Timer] with IOs
+    private val local = Locals.init(Timer.default)
 
-    private val envs = Envs[Timer]
+    def let[T, S](timer: Timer)(v: T > S): T > (IOs with S) =
+      local.let(timer)(v)
 
-    def run[T, S](t: Timer > S)(f: => T > (Timers with S)): T > (IOs with S) =
-      t.map(t => envs.run[T, IOs with S](t)(f))
-
-    def run[T, S](f: => T > (Timers with S))(implicit t: Timer): T > (IOs with S) =
-      run[T, IOs with S](t)(f)
-
-    def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > Timers =
-      envs.get.map(_.schedule(delay)(f))
+    def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > IOs =
+      local.get.map(_.schedule(delay)(f))
 
     def scheduleAtFixedRate(
         period: Duration
-    )(f: => Unit > IOs): TimerTask > Timers =
+    )(f: => Unit > IOs): TimerTask > IOs =
       scheduleAtFixedRate(Duration.Zero, period)(f)
 
     def scheduleAtFixedRate(
         initialDelay: Duration,
         period: Duration
-    )(f: => Unit > IOs): TimerTask > Timers =
-      envs.get.map(_.scheduleAtFixedRate(initialDelay, period)(f))
+    )(f: => Unit > IOs): TimerTask > IOs =
+      local.get.map(_.scheduleAtFixedRate(initialDelay, period)(f))
 
     def scheduleWithFixedDelay(
         period: Duration
-    )(f: => Unit > IOs): TimerTask > Timers =
+    )(f: => Unit > IOs): TimerTask > IOs =
       scheduleWithFixedDelay(Duration.Zero, period)(f)
 
     def scheduleWithFixedDelay(
         initialDelay: Duration,
         period: Duration
-    )(f: => Unit > IOs): TimerTask > Timers =
-      envs.get.map(_.scheduleWithFixedDelay(initialDelay, period)(f))
+    )(f: => Unit > IOs): TimerTask > IOs =
+      local.get.map(_.scheduleWithFixedDelay(initialDelay, period)(f))
   }
 }
