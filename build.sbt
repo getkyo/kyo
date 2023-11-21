@@ -230,8 +230,8 @@ lazy val `kyo-chatgpt-macros` =
         `kyo-settings`,
         scalaVersion                     := scala3Version,
         crossScalaVersions               := List(scala2Version, scala3Version),
-        libraryDependencies += "dev.zio" %% "zio-schema"            % "0.4.15",
-        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.15",
+        libraryDependencies += "dev.zio" %% "zio-schema"            % "0.4.16",
+        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.16",
         libraryDependencies ++= (CrossVersion.partialVersion(scalaVersion.value) match {
           case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
           case _            => Seq.empty
@@ -260,9 +260,9 @@ lazy val `kyo-chatgpt` =
         `kyo-settings`,
         `with-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.1",
-        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.15",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.15",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.15"
+        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.16",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.16",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.16"
     )
     .jsSettings(`js-settings`)
 
