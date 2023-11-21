@@ -29,8 +29,7 @@ object App {
 
   type Effects =
     Fibers with Resources with Clocks
-      with Consoles with Randoms
-      with Aspects with Tries
+      with Consoles with Aspects with Tries
 
   def run[T](timeout: Duration)(v: T > Effects): T =
     IOs.run(runFiber(timeout)(v).block.map(_.get))
@@ -42,14 +41,13 @@ object App {
     runFiber(Duration.Inf)(v)
 
   def runFiber[T](timeout: Duration)(v: T > Effects): Fiber[Try[T]] = {
-    def v1 = Randoms.run(v)
-    def v2 = Consoles.run(v1)
-    def v3 = Clocks.run(v2)
-    def v4 = Resources.run(v3)
-    def v5 = Aspects.run(v4)
-    def v6 = Tries.run(v5)
-    def v7 = Fibers.timeout(timeout)(v6)
-    def v8 = Tries.run(v7).map(_.flatten)
-    IOs.run(Fibers.run(Fibers.fork(v8).map(_.get)))
+    def v1 = Consoles.run(v)
+    def v2 = Clocks.run(v1)
+    def v3 = Resources.run(v2)
+    def v4 = Aspects.run(v3)
+    def v5 = Tries.run(v4)
+    def v6 = Fibers.timeout(timeout)(v5)
+    def v7 = Tries.run(v6).map(_.flatten)
+    IOs.run(Fibers.run(Fibers.fork(v7).map(_.get)))
   }
 }

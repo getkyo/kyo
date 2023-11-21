@@ -17,35 +17,35 @@ class randomsTest extends KyoTest {
   }
 
   "nextInt" in {
-    val v = IOs.run(Randoms.run(Randoms.nextInt))
+    val v = IOs.run(Randoms.let(testRandom)(Randoms.nextInt))
     assert(v == 10)
   }
   "nextInt(n)" in {
-    val v = IOs.run(Randoms.run(Randoms.nextInt(42)))
+    val v = IOs.run(Randoms.let(testRandom)(Randoms.nextInt(42)))
     assert(v == 41)
   }
   "nextLong" in {
-    val v = IOs.run(Randoms.run(Randoms.nextLong))
+    val v = IOs.run(Randoms.let(testRandom)(Randoms.nextLong))
     assert(v == 20L)
   }
   "nextBoolean" in {
-    val v = IOs.run(Randoms.run(Randoms.nextBoolean))
+    val v = IOs.run(Randoms.let(testRandom)(Randoms.nextBoolean))
     assert(v == true)
   }
   "nextDouble" in {
-    val v = IOs.run(Randoms.run(Randoms.nextDouble))
+    val v = IOs.run(Randoms.let(testRandom)(Randoms.nextDouble))
     assert(v == 30d)
   }
   "nextFloat" in {
-    val v = IOs.run(Randoms.run(Randoms.nextFloat))
+    val v = IOs.run(Randoms.let(testRandom)(Randoms.nextFloat))
     assert(v == 40f)
   }
   "nextGaussian" in {
-    val v = IOs.run(Randoms.run(Randoms.nextGaussian))
+    val v = IOs.run(Randoms.let(testRandom)(Randoms.nextGaussian))
     assert(v == 50d)
   }
   "nextValue" in {
-    val v = IOs.run(Randoms.run(Randoms.nextValue(List(1, 2))))
+    val v = IOs.run(Randoms.let(testRandom)(Randoms.nextValue(List(1, 2))))
     assert(v == 2)
   }
 }

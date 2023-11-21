@@ -4,6 +4,7 @@ import scala.Console
 
 import ios._
 import envs._
+import kyo.locals.Locals
 
 object randoms {
 
@@ -32,42 +33,35 @@ object randoms {
       }
   }
 
-  type Randoms >: Randoms.Effects <: Randoms.Effects
-
   object Randoms {
 
-    type Effects = Envs[Random] with IOs
+    private val local = Locals.init(Random.default)
 
-    private val envs = Envs[Random]
+    def let[T, S](r: Random)(v: T > S): T > (S with IOs) =
+      local.let(r)(v)
 
-    def run[T, S](r: Random)(f: => T > (Randoms with S)): T > (IOs with S) =
-      envs.run[T, IOs with S](r)(f)
+    val nextInt: Int > IOs =
+      local.get.map(_.nextInt)
 
-    def run[T, S](f: => T > (Randoms with S))(implicit r: Random): T > (IOs with S) =
-      run[T, S](r)(f)
+    def nextInt[S](n: Int > S): Int > (S with IOs) =
+      n.map(n => local.get.map(_.nextInt(n)))
 
-    val nextInt: Int > Randoms =
-      envs.get.map(_.nextInt)
+    val nextLong: Long > IOs =
+      local.get.map(_.nextLong)
 
-    def nextInt[S](n: Int > S): Int > (S with Randoms) =
-      n.map(n => envs.get.map(_.nextInt(n)))
+    val nextDouble: Double > IOs =
+      local.get.map(_.nextDouble)
 
-    val nextLong: Long > Randoms =
-      envs.get.map(_.nextLong)
+    val nextBoolean: Boolean > IOs =
+      local.get.map(_.nextBoolean)
 
-    val nextDouble: Double > Randoms =
-      envs.get.map(_.nextDouble)
+    val nextFloat: Float > IOs =
+      local.get.map(_.nextFloat)
 
-    val nextBoolean: Boolean > Randoms =
-      envs.get.map(_.nextBoolean)
+    val nextGaussian: Double > IOs =
+      local.get.map(_.nextGaussian)
 
-    val nextFloat: Float > Randoms =
-      envs.get.map(_.nextFloat)
-
-    val nextGaussian: Double > Randoms =
-      envs.get.map(_.nextGaussian)
-
-    def nextValue[T, S](seq: Seq[T] > S): T > (S with Randoms) =
+    def nextValue[T, S](seq: Seq[T] > S): T > (S with IOs) =
       seq.map(s => nextInt(s.size).map(idx => s(idx)))
   }
 }
