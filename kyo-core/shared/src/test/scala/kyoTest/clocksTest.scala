@@ -25,16 +25,7 @@ class clocksTest extends KyoTest {
   "now" in run {
     val instant = Instant.now()
     testClock.nows = List(instant)
-    val io = Clocks.run(testClock)(Clocks.now)
+    val io = Clocks.let(testClock)(Clocks.now)
     assert(IOs.run(io) == instant)
   }
-
-  "now implicit clock" in run {
-    implicit def clock: Clock = testClock
-    val instant               = Instant.now()
-    testClock.nows = List(instant)
-    val io = Clocks.run(Clocks.now)
-    assert(IOs.run(io) == instant)
-  }
-
 }
