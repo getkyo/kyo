@@ -27,14 +27,30 @@ object FlatImplicits {
   def inferMacro[T: Type, S: Type](using Quotes): Expr[Flat[T, S]] = {
     import quotes.reflect._
 
-    val tpe = TypeRepr.of[T]
+    def formatType(t: TypeRepr): String = {
+      t match {
+        case AppliedType(TypeRef(_, ">"), List(lhs, rhs)) =>
+          s"${formatType(lhs)} > ${formatType(rhs)}"
+        case _ => t.show
+      }
+    }
 
-    val isConcrete = tpe.typeSymbol.isClassDef
+    val t             = TypeRepr.of[T]
+    val formattedType = formatType(t)
+    val s             = TypeRepr.of[S]
 
-    if (isConcrete) {
+    if (t.typeSymbol.isClassDef) {
       '{ Flat.unsafe.checked[T, S] }
     } else {
-      report.errorAndAbort("not pure: " + tpe.show)
+      report.errorAndAbort(
+          s"""
+          |Unable to prove ${Console.YELLOW}'${formattedType}'${Console.RESET} is not a Kyo computation. Possible reasons:
+          |1. Mismatch with expected pending effects ${Console.YELLOW}'${s.show}'${Console.RESET}. Handle any extra effects first.
+          |2. Nested computation detected. Use ${Console.YELLOW}'flatten'${Console.RESET} to unnest.
+          |3. Generic type parameter. Provide an implicit evidence ${Console.YELLOW}'Flat[${formattedType}, ${s.show}]'${Console.YELLOW}.
+          """.stripMargin
+      )
     }
   }
+
 }
