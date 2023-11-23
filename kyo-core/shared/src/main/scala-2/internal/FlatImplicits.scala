@@ -5,36 +5,38 @@ import scala.language.experimental.macros
 import scala.reflect.macros.blackbox._
 
 trait FlatImplicits0 {
-  implicit def infer[T, S]: Flat[T, S] = macro FlatMacros.inferMacro[T, S]
+  implicit def infer[T]: Flat[T] = macro FlatMacros.inferMacro[T]
 }
 
 trait FlatImplicits1 extends FlatImplicits0 {
-  implicit def derived[T, S](implicit f: Flat[T, _]): Flat[T, S] =
-    Flat.unsafe.derived[T, S]
+  implicit def derived[T](implicit f: Flat[T]): Flat[T] =
+    Flat.unsafe.derived[T]
 }
 
 trait FlatImplicits2 extends FlatImplicits1 {
-  implicit def product[T <: Product, S]: Flat[T, S] =
-    Flat.unsafe.checked[T, S]
+  implicit def product[T <: Product]: Flat[T] =
+    Flat.unsafe.checked[T]
 }
 
 trait FlatImplicits extends FlatImplicits2 {
-  implicit def anyVal[T <: AnyVal, S]: Flat[T, S] =
-    Flat.unsafe.checked[T, S]
+  implicit def anyVal[T <: AnyVal]: Flat[T] =
+    Flat.unsafe.checked[T]
 }
 
 object FlatMacros {
-  def inferMacro[T: c.WeakTypeTag, S: c.WeakTypeTag](c: Context): c.Expr[Flat[T, S]] = {
+  def inferMacro[T: c.WeakTypeTag](c: Context): c.Expr[Flat[T]] = {
     import c.universe._
 
-    val tpe = weakTypeOf[T]
+    val t = weakTypeOf[T]
 
-    val isConcrete = tpe.typeSymbol.isClass
+    c.abort(c.enclosingPosition, "AAA " + t)
 
-    if (isConcrete || tpe.toString.startsWith("kyo.concurrent.fibers.Fiber")) {
-      c.Expr[Flat[T, S]](q"Flat.unsafe.checked[$tpe, ${weakTypeOf[S]}]")
+    val isConcrete = t.typeSymbol.isClass
+
+    if (isConcrete || t.toString.startsWith("kyo.concurrent.fibers.Fiber")) {
+      c.Expr[Flat[T]](q"Flat.unsafe.checked[$t]")
     } else {
-      c.abort(c.enclosingPosition, "not pure: " + tpe.toString)
+      c.abort(c.enclosingPosition, "not pure: " + t.toString)
     }
   }
 }

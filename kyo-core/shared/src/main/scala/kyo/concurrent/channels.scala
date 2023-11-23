@@ -44,7 +44,7 @@ object channels {
     def init[T](
         capacity: Int,
         access: Access = Access.Mpmc
-    )(implicit f: Flat[T, Any]): Channel[T] > IOs =
+    )(implicit f: Flat[T > Any]): Channel[T] > IOs =
       Queues.init[T](capacity, access).map { queue =>
         IOs {
           new Channel[T] {

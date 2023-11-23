@@ -50,12 +50,12 @@ object fibers {
     private[kyo] def done[T](value: T): Fiber[T]             = value.asInstanceOf[Fiber[T]]
     private[kyo] def failed[T](reason: Throwable): Fiber[T]  = Failed(reason).asInstanceOf[Fiber[T]]
     private[kyo] def promise[T](p: IOPromise[T]): Promise[T] = p.asInstanceOf[Promise[T]]
-    implicit def flat[T, S]: Flat[Fiber[T], S]               = Flat.unsafe.unchecked[Fiber[T], S]
+    implicit def flat[T]: Flat[Fiber[T]]                     = Flat.unsafe.checked[Fiber[T]]
   }
 
   implicit class FiberOps[T](private val state: Fiber[T]) extends AnyVal {
 
-    private implicit def flat: Flat[T, Any] = Flat.unsafe.unchecked[T, Any]
+    private implicit def flat: Flat[T] = Flat.unsafe.checked[T]
 
     def isDone: Boolean > IOs =
       state match {
@@ -183,15 +183,15 @@ object fibers {
 
     private[kyo] val interrupted = IOs.fail(Interrupted)
 
-    def run[T](v: T > Fibers)(implicit f: Flat[T, Fibers]): Fiber[T] > IOs =
+    def run[T](v: T > Fibers)(implicit f: Flat[T > Fibers]): Fiber[T] > IOs =
       FiberGets.run(v)
 
     def runBlocking[T, S](v: T > (Fibers with S))(implicit
-        f: Flat[T, Fibers with S]
+        f: Flat[T > (Fibers with S)]
     ): T > (IOs with S) =
       FiberGets.runBlocking[T, S](v)
 
-    def value[T](v: T)(implicit f: Flat[T, Any]): Fiber[T] =
+    def value[T](v: T)(implicit f: Flat[T > Any]): Fiber[T] =
       Fiber.done(v)
 
     def get[T, S](v: Fiber[T] > S): T > (Fibers with S) =
@@ -215,13 +215,13 @@ object fibers {
     private val IOTask = kyo.concurrent.scheduler.IOTask
 
     /*inline*/
-    def fork[T]( /*inline*/ v: => T > Fibers)(implicit f: Flat[T, Fibers]): Fiber[T] > IOs =
+    def fork[T]( /*inline*/ v: => T > Fibers)(implicit f: Flat[T > Fibers]): Fiber[T] > IOs =
       Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
-    def parallel[T](l: Seq[T > Fibers])(implicit f: Flat[T, Fibers]): Seq[T] > Fibers =
+    def parallel[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Seq[T] > Fibers =
       Fibers.join(parallelFiber[T](l))
 
-    def parallelFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T, Fibers]): Fiber[Seq[T]] > IOs =
+    def parallelFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[Seq[T]] > IOs =
       Locals.save.map { st =>
         IOs {
           val p       = new IOPromise[Seq[T]]
@@ -250,10 +250,10 @@ object fibers {
         }
       }
 
-    def race[T](l: Seq[T > Fibers])(implicit f: Flat[T, Fibers]): T > Fibers =
+    def race[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): T > Fibers =
       Fibers.join(raceFiber[T](l))
 
-    def raceFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T, Fibers]): Fiber[T] > IOs = {
+    def raceFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[T] > IOs = {
       require(!l.isEmpty)
       Locals.save.map { st =>
         IOs {
@@ -290,7 +290,7 @@ object fibers {
         }
       }
 
-    def timeout[T](d: Duration)(v: => T > Fibers)(implicit f: Flat[T, Fibers]): T > Fibers =
+    def timeout[T](d: Duration)(v: => T > Fibers)(implicit f: Flat[T > Fibers]): T > Fibers =
       fork(v).map { f =>
         val timeout: Unit > IOs =
           IOs {
@@ -340,7 +340,7 @@ object fibers {
       def apply[T, S](f: Fiber[T] > S): T > (FiberGets with S) =
         suspend(f)
 
-      def run[T](v: T > Fibers)(implicit f: Flat[T, Fibers]): Fiber[T] > IOs = {
+      def run[T](v: T > Fibers)(implicit f: Flat[T > Fibers]): Fiber[T] > IOs = {
         implicit val handler: DeepHandler[Fiber, FiberGets] =
           new DeepHandler[Fiber, FiberGets] {
             def pure[T](v: T) = Fiber.done(v)
@@ -351,7 +351,7 @@ object fibers {
       }
 
       def runBlocking[T, S](v: T > (Fibers with S))(implicit
-          f: Flat[T, Fibers with S]
+          f: Flat[T > (Fibers with S)]
       ): T > (IOs with S) = {
         implicit def handler: Handler[Fiber, FiberGets, Any] =
           new Handler[Fiber, FiberGets, Any] {

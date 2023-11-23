@@ -29,7 +29,7 @@ object aborts {
     def run[T, S](
         v: => T > (Aborts[E] with S)
     )(implicit
-        flat: Flat[T, Aborts[E] with S]
+        flat: Flat[T > Aborts[E] with S]
     ): Either[E, T] > S =
       handle[T, S, Any](catching(v))
 

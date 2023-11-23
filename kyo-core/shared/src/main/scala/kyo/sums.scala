@@ -35,13 +35,13 @@ object sums {
 
     def run[T, S](v: T > (Sums[V] with S))(implicit
         g: Summer[V],
-        f: Flat[T, Sums[V] with S]
+        f: Flat[T > (Sums[V] with S)]
     ): (T, V) > S =
       run[T, S](g.init)(v)
 
     def run[T, S](init: V)(v: T > (Sums[V] with S))(implicit
         g: Summer[V],
-        f: Flat[T, Sums[V] with S]
+        f: Flat[T > (Sums[V] with S)]
     ): (T, V) > S = {
       var curr = init
       implicit def handler: Handler[Sum[V]#Value, Sums[V], Any] =

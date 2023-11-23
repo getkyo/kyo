@@ -27,7 +27,7 @@ object resources {
     }
 
     def run[T, S](v: T > (Resources with S))(
-        implicit f: Flat[T, Resources with S]
+        implicit f: Flat[T > (Resources with S)]
     ): T > (IOs with S) = {
       val finalizer = new Finalizer
       implicit def handler: Handler[Resource, Resources, Any] =

@@ -33,14 +33,14 @@ object options {
         case Some(v) => v
       }
 
-    def run[T, S](v: T > (Options with S))(implicit f: Flat[T, Options with S]): Option[T] > S =
+    def run[T, S](v: T > (Options with S))(implicit f: Flat[T > (Options with S)]): Option[T] > S =
       aborts.run[T, S](v).map {
         case Left(e)  => None
         case Right(v) => Some(v)
       }
 
     def orElse[T, S](l: (T > (Options with S))*)(implicit
-        f: Flat[T, Options with S]
+        f: Flat[T > (Options with S)]
     ): T > (Options with S) =
       l.toList match {
         case Nil => Options.empty

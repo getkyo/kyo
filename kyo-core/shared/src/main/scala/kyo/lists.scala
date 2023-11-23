@@ -25,7 +25,7 @@ object lists {
         }
       }
 
-    def run[T, S](v: T > (Lists with S))(implicit f: Flat[T, Lists with S]): List[T] > S =
+    def run[T, S](v: T > (Lists with S))(implicit f: Flat[T > (Lists with S)]): List[T] > S =
       handle[T, S, Any](v)
 
     def repeat(n: Int): Unit > Lists =

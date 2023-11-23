@@ -59,7 +59,7 @@ object ios {
     def fail[T](msg: String): T > IOs =
       fail(new Exception(msg))
 
-    def attempt[T, S](v: => T > S)(implicit f: Flat[T, S]): Try[T] > S =
+    def attempt[T, S](v: => T > S)(implicit f: Flat[T > S]): Try[T] > S =
       Tries.run[T, S](v)
 
     /*inline*/
@@ -72,7 +72,7 @@ object ios {
       }
 
     /*inline*/
-    def run[T](v: T > IOs)(implicit f: Flat[T, IOs]): T = {
+    def run[T](v: T > IOs)(implicit f: Flat[T > IOs]): T = {
       val safepoint = Safepoint.noop[IO, IOs]
       @tailrec def runLoop(v: T > IOs): T =
         v match {
@@ -86,7 +86,7 @@ object ios {
     }
 
     /*inline*/
-    def runLazy[T, S](v: T > (IOs with S))(implicit f: Flat[T, IOs with S]): T > S = {
+    def runLazy[T, S](v: T > (IOs with S))(implicit f: Flat[T > (IOs with S)]): T > S = {
       def runLazyLoop(v: T > (IOs with S)): T > S = {
         val safepoint = Safepoint.noop[IO, IOs]
         v match {
