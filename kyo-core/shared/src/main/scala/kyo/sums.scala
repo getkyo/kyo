@@ -33,10 +33,16 @@ object sums {
     def update(f: V => V): V > Sums[V] =
       suspend(UpdateValue(f).asInstanceOf[Sum[V]#Value[V]])
 
-    def run[T, S](v: T > (Sums[V] with S))(implicit g: Summer[V]): (T, V) > S =
+    def run[T, S](v: T > (Sums[V] with S))(implicit
+        g: Summer[V],
+        f: Flat[T, Sums[V] with S]
+    ): (T, V) > S =
       run[T, S](g.init)(v)
 
-    def run[T, S](init: V)(v: T > (Sums[V] with S))(implicit g: Summer[V]): (T, V) > S = {
+    def run[T, S](init: V)(v: T > (Sums[V] with S))(implicit
+        g: Summer[V],
+        f: Flat[T, Sums[V] with S]
+    ): (T, V) > S = {
       var curr = init
       implicit def handler: Handler[Sum[V]#Value, Sums[V], Any] =
         new Handler[Sum[V]#Value, Sums[V], Any] {

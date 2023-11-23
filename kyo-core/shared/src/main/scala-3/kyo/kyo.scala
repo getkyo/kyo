@@ -6,8 +6,6 @@ package object kyo {
 
   type >[+T, -S] >: T // = T | Kyo[_, _, _, T, S]
 
-  type Pure[T] = NotGiven[(Nothing > Any) => T]
-
   extension [T, S](v: T > S)(using NotGiven[Any => S]) {
 
     /*inline*/

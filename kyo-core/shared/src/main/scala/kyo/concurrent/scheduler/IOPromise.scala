@@ -17,6 +17,8 @@ import java.util.concurrent.locks.Lock
 private[kyo] class IOPromise[T](state: State[T])
     extends AtomicReference(state) {
 
+  private implicit def flat: Flat[T, Any] = Flat.unsafe.unchecked[T, Any]
+
   def this() = this(Pending())
 
   final def isDone(): Boolean = {

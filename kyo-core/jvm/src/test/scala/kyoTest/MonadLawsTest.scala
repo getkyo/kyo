@@ -41,6 +41,7 @@ object MonadLawsTest extends ZIOSpecDefault {
       override def derive[A: Equal]: Equal[Myo[A]] =
         new Equal[Myo[A]] {
           protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean = {
+            import Flat.unsafe.unchecked
             def run(m: Myo[A]): A = IOs.run(Fibers.runBlocking(m.v))
             run(l) == run(r)
           }

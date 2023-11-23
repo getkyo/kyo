@@ -46,7 +46,8 @@ object core {
     /*inline*/
     protected final def handle[T, S, S2](v: T > (E with S))(implicit
         h: Handler[M, E, S2],
-        s: Safepoint[M, E]
+        s: Safepoint[M, E],
+        f: Flat[T, E with S]
     ): M[T] > (S with S2) = {
       def handleLoop(
           v: T > (S with S2 with E)

@@ -20,7 +20,7 @@ object envs {
     val get: E > Envs[E] =
       suspend(Input.asInstanceOf[Env[E]#Value[E]])
 
-    def run[T, S](e: E)(v: T > (Envs[E] with S)): T > S = {
+    def run[T, S](e: E)(v: T > (Envs[E] with S))(implicit f: Flat[T, Envs[E] with S]): T > S = {
       implicit val handler: Handler[Env[E]#Value, Envs[E], Any] =
         new Handler[Env[E]#Value, Envs[E], Any] {
           def pure[U](v: U) = v

@@ -3,7 +3,11 @@ package kyoTest
 import kyo._
 import kyo.ios._
 
+case class A(v: Int > IOs) extends AnyVal
+
 class methodsTest extends KyoTest {
+
+  def test(a: A > IOs) = IOs.run(a)
 
   "map" in {
     assert(IOs.run(IOs(1).map(_ + 1)) == 2)
@@ -41,6 +45,17 @@ class methodsTest extends KyoTest {
     assert(IOs.run(zip(IOs(1), IOs(2))) == (1, 2))
     assert(IOs.run(zip(IOs(1), IOs(2), IOs(3))) == (1, 2, 3))
     assert(IOs.run(zip(IOs(1), IOs(2), IOs(3), IOs(4))) == (1, 2, 3, 4))
+  }
+
+  "nested" - {
+    val io: Int > IOs > IOs = IOs.value[Int > IOs](IOs(1)).map(_.map(_ + 1))
+    "map + flatten" in {
+      val n: Int > IOs = io.flatten
+      assert(IOs.run(n) == 2)
+    }
+    "run doesn't compile" in {
+      assertDoesNotCompile("IOs.run(io)")
+    }
   }
 
 }

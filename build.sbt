@@ -77,6 +77,7 @@ lazy val kyo =
         gen := {
           val origin = new File("kyo-core/")
           val dest   = new File(s"kyo-core-opt/")
+          IO.delete(dest)
           IO.copyDirectory(origin, dest)
           transformFiles(dest) {
             _.replaceAllLiterally(s"/*inline*/", "inline")
@@ -130,7 +131,11 @@ lazy val `kyo-core` =
     .in(file("kyo-core"))
     .settings(
         `kyo-core-settings`,
-        `with-cross-scala`
+        `with-cross-scala`,
+        libraryDependencies ++= (CrossVersion.partialVersion(scalaVersion.value) match {
+          case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
+          case _            => Seq.empty
+        })
     )
     .jsSettings(`js-settings`)
 

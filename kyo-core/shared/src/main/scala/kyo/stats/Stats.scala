@@ -3,6 +3,7 @@ package kyo.stats
 import kyo._
 import kyo.ios._
 import kyo.locals.Locals
+import kyo.stats.internal
 import kyo.stats.internal.TraceReceiver
 
 abstract class Stats {

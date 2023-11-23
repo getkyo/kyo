@@ -79,7 +79,7 @@ object MetricReceiver {
           parent: Option[Span] = None,
           attributes: Attributes = Attributes.empty
       ) =
-        internal.Span.noop
+        Span.noop
     }
 
   def all(receivers: List[MetricReceiver]): MetricReceiver =
@@ -120,7 +120,7 @@ object MetricReceiver {
       ) =
         Lists
           .traverse(receivers)(_.startSpan(scope, name, None, a))
-          .map(internal.Span.all)
+          .map(Span.all)
     }
 
   val get: MetricReceiver =

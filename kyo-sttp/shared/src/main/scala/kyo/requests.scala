@@ -26,11 +26,14 @@ object requests {
 
     private val envs = Envs[Backend]
 
-    def run[T, S](b: Backend)(v: T > (Requests with S)): T > (Fibers with S) =
+    def run[T, S](b: Backend)(v: T > (Requests with S))(implicit
+        f: Flat[T, Requests with S]
+    ): T > (Fibers with S) =
       envs.run[T, Fibers with S](b)(v)
 
     def run[T, S](v: T > (Requests with S))(implicit
-        b: Backend
+        b: Backend,
+        f: Flat[T, Requests with S]
     ): T > (Fibers with S) =
       run[T, S](b)(v)
 
@@ -59,12 +62,12 @@ object requests {
         }
       }
 
-    def race[T](l: Seq[T > Requests]): T > Requests =
+    def race[T](l: Seq[T > Requests])(implicit f: Flat[T, Requests]): T > Requests =
       envs.get.map { b =>
         Fibers.race(l.map(Requests.run(b)(_)))
       }
 
-    def parallel[T](l: Seq[T > Requests]): Seq[T] > Requests =
+    def parallel[T](l: Seq[T > Requests])(implicit f: Flat[T, Requests]): Seq[T] > Requests =
       envs.get.map { b =>
         Fibers.parallel(l.map(Requests.run(b)(_)))
       }

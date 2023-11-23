@@ -14,10 +14,12 @@ object tries {
 
     private val aborts = Aborts[Throwable]
 
-    def run[T, S](v: => T > (Tries with S)): Try[T] > S =
+    def run[T, S](v: => T > (Tries with S))(implicit f: Flat[T, Tries with S]): Try[T] > S =
       aborts.run[T, S](v).map(_.toTry)
 
-    def handle[T, S](v: => T > S)(f: PartialFunction[Throwable, T > S]): T > S =
+    def handle[T, S](v: => T > S)(f: PartialFunction[Throwable, T > S])(
+        implicit flat: Flat[T, S]
+    ): T > S =
       run[T, S](v).map {
         case Failure(e) if (f.isDefinedAt(e)) =>
           f(e)

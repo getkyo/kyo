@@ -18,13 +18,14 @@ object lists {
               case Nil =>
                 Lists.foreach(acc.reverse.flatten: List[U])
               case t :: ts =>
+                import Flat.unsafe._
                 Lists.run[U, S](f(t)).map(l => loop(ts, l :: acc))
             }
           loop(v, Nil)
         }
       }
 
-    def run[T, S](v: T > (Lists with S)): List[T] > S =
+    def run[T, S](v: T > (Lists with S))(implicit f: Flat[T, Lists with S]): List[T] > S =
       handle[T, S, Any](v)
 
     def repeat(n: Int): Unit > Lists =

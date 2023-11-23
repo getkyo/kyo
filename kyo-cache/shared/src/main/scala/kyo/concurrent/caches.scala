@@ -18,7 +18,11 @@ object caches {
   class Cache(private[caches] val store: Store) {
     def memo[T, U, S](
         f: T => U > S
-    )(implicit id: sourcecode.Enclosing): T => U > (Fibers with S) = {
+    )(implicit
+        id: sourcecode.Enclosing,
+        ft: Flat[T, Any],
+        fu: Flat[U, Any]
+    ): T => U > (Fibers with S) = {
       (v: T) =>
         Fibers.initPromise[U].map { p =>
           val key = (id, v)
@@ -52,21 +56,39 @@ object caches {
 
     def memo2[T1, T2, S, U](
         f: (T1, T2) => U > S
-    )(implicit id: sourcecode.Enclosing): (T1, T2) => U > (Fibers with S) = {
+    )(implicit
+        id: sourcecode.Enclosing,
+        ft1: Flat[T1, Any],
+        ft2: Flat[T2, Any],
+        fu: Flat[U, Any]
+    ): (T1, T2) => U > (Fibers with S) = {
       val m = memo[(T1, T2), U, S](f.tupled)
       (t1, t2) => m((t1, t2))
     }
 
     def memo3[T1, T2, T3, S, U](
         f: (T1, T2, T3) => U > S
-    )(implicit id: sourcecode.Enclosing): (T1, T2, T3) => U > (Fibers with S) = {
+    )(implicit
+        id: sourcecode.Enclosing,
+        ft1: Flat[T1, Any],
+        ft2: Flat[T2, Any],
+        ft3: Flat[T3, Any],
+        fu: Flat[U, Any]
+    ): (T1, T2, T3) => U > (Fibers with S) = {
       val m = memo[(T1, T2, T3), U, S](f.tupled)
       (t1, t2, t3) => m((t1, t2, t3))
     }
 
     def memo4[T1, T2, T3, T4, S, U](
         f: (T1, T2, T3, T4) => U > S
-    )(implicit id: sourcecode.Enclosing): (T1, T2, T3, T4) => U > (Fibers with S) = {
+    )(implicit
+        id: sourcecode.Enclosing,
+        ft1: Flat[T1, Any],
+        ft2: Flat[T2, Any],
+        ft3: Flat[T3, Any],
+        ft4: Flat[T4, Any],
+        fu: Flat[U, Any]
+    ): (T1, T2, T3, T4) => U > (Fibers with S) = {
       val m = memo[(T1, T2, T3, T4), U, S](f.tupled)
       (t1, t2, t3, t4) => m((t1, t2, t3, t4))
     }

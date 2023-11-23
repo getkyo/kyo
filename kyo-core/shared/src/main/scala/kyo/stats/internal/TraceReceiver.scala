@@ -39,7 +39,7 @@ object TraceReceiver {
           parent: Option[Span] = None,
           attributes: Attributes = Attributes.empty
       ) =
-        internal.Span.noop
+        Span.noop
     }
 
   def all(receivers: List[TraceReceiver]): TraceReceiver =
@@ -52,6 +52,6 @@ object TraceReceiver {
       ) =
         Lists
           .traverse(receivers)(_.startSpan(scope, name, None, a))
-          .map(internal.Span.all)
+          .map(Span.all)
     }
 }

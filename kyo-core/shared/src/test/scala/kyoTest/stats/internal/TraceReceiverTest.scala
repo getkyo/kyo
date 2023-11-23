@@ -11,7 +11,7 @@ class TraceReceiverTest extends KyoTest {
   "TraceReceiver.noop" in {
     val noopReceiver = TraceReceiver.noop
     val span         = noopReceiver.startSpan(Nil, "noopSpan", None, Attributes.empty)
-    assert(span == internal.Span.noop)
+    assert(span == Span.noop)
   }
 
   "TraceReceiver.all" in {
@@ -33,7 +33,7 @@ class TraceReceiverTest extends KyoTest {
         attributes: Attributes
     ): Span > IOs = {
       spanStarted = true
-      internal.Span.noop
+      Span.noop
     }
   }
 }

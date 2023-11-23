@@ -103,18 +103,16 @@ class directTest extends KyoTest {
   }
 
   "options" in {
-    def test[T](opt: Option[T]) =
+    def test(opt: Option[Int]) =
       assert(opt == Options.run(defer(await(Options.get(opt)))))
     test(Some(1))
     test(None)
-    test(Some("a"))
   }
   "tries" in {
-    def test[T](t: Try[T]) =
+    def test(t: Try[Int]) =
       assert(t == Tries.run(defer(await(Tries.get(t)))))
     test(Try(1))
     test(Try(throw new Exception("a")))
-    test(Try("a"))
   }
   "consoles" in {
     object console extends Console {

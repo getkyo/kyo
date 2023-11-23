@@ -36,7 +36,7 @@ class MetricReceiverTest extends KyoTest {
         "testSpan",
         None,
         Attributes.empty
-    ) == internal.Span.noop)
+    ) == Span.noop)
   }
 
   "MetricReceiver.all" - {
@@ -76,7 +76,7 @@ class MetricReceiverTest extends KyoTest {
         attributes: Attributes
     ): Span > IOs = {
       spanStarted = true
-      internal.Span.noop
+      Span.noop
     }
 
     var counterCreated   = false

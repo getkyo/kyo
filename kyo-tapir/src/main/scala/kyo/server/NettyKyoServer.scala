@@ -133,6 +133,7 @@ object NettyKyoServer {
     override def apply[T](f: => T > Fibers): Unit =
       IOs.run {
         Fibers.fork {
+          import Flat.unsafe.unchecked
           IOs.run(Fibers.run(IOs.runLazy(f)).unit)
         }
       }
