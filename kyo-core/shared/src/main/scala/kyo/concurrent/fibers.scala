@@ -191,7 +191,7 @@ object fibers {
     ): T > (IOs with S) =
       FiberGets.runBlocking[T, S](v)
 
-    def value[T](v: T): Fiber[T] =
+    def value[T](v: T)(implicit f: Flat[T, Any]): Fiber[T] =
       Fiber.done(v)
 
     def get[T, S](v: Fiber[T] > S): T > (Fibers with S) =
@@ -215,7 +215,7 @@ object fibers {
     private val IOTask = kyo.concurrent.scheduler.IOTask
 
     /*inline*/
-    def fork[T]( /*inline*/ v: => T > Fibers): Fiber[T] > IOs =
+    def fork[T]( /*inline*/ v: => T > Fibers)(implicit f: Flat[T, Fibers]): Fiber[T] > IOs =
       Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
     def parallel[T](l: Seq[T > Fibers])(implicit f: Flat[T, Fibers]): Seq[T] > Fibers =
@@ -290,7 +290,7 @@ object fibers {
         }
       }
 
-    def timeout[T](d: Duration)(v: => T > Fibers): T > Fibers =
+    def timeout[T](d: Duration)(v: => T > Fibers)(implicit f: Flat[T, Fibers]): T > Fibers =
       fork(v).map { f =>
         val timeout: Unit > IOs =
           IOs {

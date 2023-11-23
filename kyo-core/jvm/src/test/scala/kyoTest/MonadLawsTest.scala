@@ -10,6 +10,7 @@ import zio.prelude.coherent.CovariantDeriveEqualIdentityFlatten
 import zio.prelude.laws._
 import zio.test._
 import zio.test.laws._
+import Flat.unsafe.unchecked
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration
@@ -41,7 +42,6 @@ object MonadLawsTest extends ZIOSpecDefault {
       override def derive[A: Equal]: Equal[Myo[A]] =
         new Equal[Myo[A]] {
           protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean = {
-            import Flat.unsafe.unchecked
             def run(m: Myo[A]): A = IOs.run(Fibers.runBlocking(m.v))
             run(l) == run(r)
           }

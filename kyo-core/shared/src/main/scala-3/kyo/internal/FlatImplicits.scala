@@ -3,13 +3,24 @@ package kyo.internal
 import kyo.Flat
 import scala.quoted._
 
-trait FlatLowImplicits {
-  implicit def derived[T, S](implicit f: Flat[T, _]): Flat[T, S] =
-    f.asInstanceOf[Flat[T, S]]
+trait FlatImplicits0 {
+  inline implicit def infer[T, S]: Flat[T, S] =
+    ${ FlatImplicits.inferMacro[T, S] }
 }
 
-trait FlatImplicits {
-  inline implicit def infer[T, S]: Flat[T, S] = ${ FlatImplicits.inferMacro[T, S] }
+trait FlatImplicits1 extends FlatImplicits0 {
+  implicit def derived[T, S](implicit f: Flat[T, _]): Flat[T, S] =
+    Flat.unsafe.derived[T, S]
+}
+
+trait FlatImplicits2 extends FlatImplicits1 {
+  implicit def product[T <: Product, S]: Flat[T, S] =
+    Flat.unsafe.checked[T, S]
+}
+
+trait FlatImplicits extends FlatImplicits2 {
+  implicit def anyVal[T <: AnyVal, S]: Flat[T, S] =
+    Flat.unsafe.checked[T, S]
 }
 
 object FlatImplicits {
@@ -19,11 +30,11 @@ object FlatImplicits {
     val tpe = TypeRepr.of[T]
 
     val isConcrete = tpe.typeSymbol.isClassDef
-    val canDerive  = Expr.summon[Flat[T, Nothing]].isDefined
 
-    if (isConcrete || canDerive)
+    if (isConcrete) {
       '{ Flat.unsafe.checked[T, S] }
-    else
+    } else {
       report.errorAndAbort("not pure: " + tpe.show)
+    }
   }
 }

@@ -41,7 +41,10 @@ object channels {
 
     private val placeholder = Fibers.unsafeInitPromise[Unit]
 
-    def init[T](capacity: Int, access: Access = Access.Mpmc): Channel[T] > IOs =
+    def init[T](
+        capacity: Int,
+        access: Access = Access.Mpmc
+    )(implicit f: Flat[T, Any]): Channel[T] > IOs =
       Queues.init[T](capacity, access).map { queue =>
         IOs {
           new Channel[T] {

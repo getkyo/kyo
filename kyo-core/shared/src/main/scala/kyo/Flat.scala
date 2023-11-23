@@ -18,6 +18,8 @@ object Flat extends internal.FlatImplicits {
   object unsafe {
     def checked[T, S]: Checked[T, S] =
       cachedChecked.asInstanceOf[Checked[T, S]]
+    def derived[T, S]: Derived[T, S] =
+      cachedDerived.asInstanceOf[Derived[T, S]]
     implicit def unchecked[T, S]: Unchecked[T, S] =
       cachedUnchecked.asInstanceOf[Unchecked[T, S]]
   }
