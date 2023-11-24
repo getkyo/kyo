@@ -126,25 +126,6 @@ class iosTest extends KyoTest {
     }
   }
 
-  "attempt" - {
-    "success" in run {
-      val io = IOs(1).map(_ + 1)
-      checkEquals[Try[Int], Nothing](
-          IOs.run[Try[Int]](IOs.attempt(io)),
-          Success(2)
-      )
-    }
-    "failure" in run {
-      val ex        = new Exception
-      def fail: Int = throw ex
-      val io        = IOs(fail)
-      checkEquals[Try[Int], Nothing](
-          IOs.run[Try[Int]](IOs.attempt(io)),
-          Try(fail)
-      )
-    }
-  }
-
   "ensure" - {
     "success" in {
       var called = false

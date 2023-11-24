@@ -17,7 +17,7 @@ import java.util.concurrent.locks.Lock
 private[kyo] class IOPromise[T](state: State[T])
     extends AtomicReference(state) {
 
-  private implicit def flat: Flat[T] = Flat.unsafe.checked[T]
+  private implicit def flat[S]: Flat[T > S] = Flat.unsafe.checked[T > S]
 
   def this() = this(Pending())
 

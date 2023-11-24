@@ -17,8 +17,8 @@ object tries {
     def run[T, S](v: => T > (Tries with S))(implicit f: Flat[T > (Tries with S)]): Try[T] > S =
       aborts.run[T, S](v).map(_.toTry)
 
-    def handle[T, S](v: => T > S)(f: PartialFunction[Throwable, T > S])(
-        implicit flat: Flat[T > S]
+    def handle[T, S](v: => T > (Tries with S))(f: PartialFunction[Throwable, T > S])(
+        implicit flat: Flat[T > (Tries with S)]
     ): T > S =
       run[T, S](v).map {
         case Failure(e) if (f.isDefinedAt(e)) =>

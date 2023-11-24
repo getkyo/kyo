@@ -59,9 +59,6 @@ object ios {
     def fail[T](msg: String): T > IOs =
       fail(new Exception(msg))
 
-    def attempt[T, S](v: => T > S)(implicit f: Flat[T > S]): Try[T] > S =
-      Tries.run[T, S](v)
-
     /*inline*/
     def apply[T, S](
         /*inline*/ f: => T > (IOs with S)

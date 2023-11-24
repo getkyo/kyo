@@ -15,6 +15,8 @@ object Flat extends FlatImplicits {
   private val cachedUnchecked = new Unchecked[Any] {}
   private val cachedDerived   = new Derived[Any] {}
 
+  implicit def unit[S]: Flat[Unit > S] = unsafe.checked[Unit > S]
+
   object unsafe {
     def checked[T]: Checked[T] =
       cachedChecked.asInstanceOf[Checked[T]]

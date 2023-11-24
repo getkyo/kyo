@@ -55,7 +55,7 @@ object fibers {
 
   implicit class FiberOps[T](private val state: Fiber[T]) extends AnyVal {
 
-    private implicit def flat: Flat[T] = Flat.unsafe.checked[T]
+    private implicit def flat[S]: Flat[T > S] = Flat.unsafe.checked[T > S]
 
     def isDone: Boolean > IOs =
       state match {
@@ -235,7 +235,7 @@ object fibers {
             val j = i
             fiber.onComplete { r =>
               try {
-                results(j) = IOs.run(r)
+                results(j) = IOs.run(r)(Flat.unsafe.checked)
                 if (pending.decrementAndGet() == 0) {
                   p.complete(ArraySeq.unsafeWrapArray(results))
                 }

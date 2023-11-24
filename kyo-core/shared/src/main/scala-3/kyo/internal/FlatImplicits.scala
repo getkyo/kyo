@@ -19,6 +19,7 @@ trait FlatImplicits extends FlatImplicits1 {
 }
 
 object FlatImplicits {
+
   def inferMacro[T: Type](using Quotes): Expr[Flat[T]] = {
     import quotes.reflect._
 
@@ -44,46 +45,44 @@ object FlatImplicits {
       }
     }
 
+    def fail(msg: String) =
+      report.errorAndAbort(s"Method doesn't accept nested Kyo computations.\n$msg")
+
     def canDerive(t: TypeRepr) =
       t.asType match {
         case '[nt] =>
           Expr.summon[Flat[nt]]
-            .orElse(Expr.summon[Flat[nt > Nothing]])
+            .orElse(Expr.summon[Flat[nt > Any]])
             .isDefined
       }
 
-    def ok = '{ Flat.unsafe.checked[T] }
+    def isConcrete(t: TypeRepr) =
+      t.typeSymbol.isClassDef && t.typeSymbol != TypeRepr.of[Any].typeSymbol
 
-    def fail(msg: String) =
-      report.errorAndAbort(s"Method doesn't accept nested Kyo computations.\n$msg")
+    def check(t: TypeRepr): Expr[Flat[T]] =
+      if (!isConcrete(t) && !canDerive(t)) {
+        fail(
+            s"Cannot prove ${code(print(t))} isn't nested. Provide an implicit evidence ${code(s"kyo.Flat[${print(t)}]")}."
+        )
+      } else {
+        '{ Flat.unsafe.checked[T] }
+      }
 
     t match {
       case Kyo(Kyo(nt, s1), s2) =>
-        val potentialMismatch =
-          if (s1 != s2) {
+        val mismatch =
+          if (print(s1) != print(s2)) {
             s"\nPossible pending effects mismatch: Expected ${code(print(s2))}, found ${code(print(s1))}."
           } else {
             ""
           }
         fail(
-            s"Detected: ${code(print(t))}. Consider using ${code("flatten")} to resolve. " + potentialMismatch
+            s"Detected: ${code(print(t))}. Consider using ${code("flatten")} to resolve. " + mismatch
         )
       case Kyo(nt, s) =>
-        if (!nt.typeSymbol.isClassDef && !canDerive(nt)) {
-          fail(
-              s"Cannot prove ${code(print(nt))} isn't nested. Provide an implicit evidence ${code(s"kyo.Flat[${print(nt)}]")}."
-          )
-        } else {
-          ok
-        }
+        check(nt)
       case t =>
-        if (!t.typeSymbol.isClassDef) {
-          fail(
-              s"Cannot prove ${code(print(t))} isn't nested. Provide an implicit evidence ${code(s"kyo.Flat[${print(t)}]")}."
-          )
-        } else {
-          ok
-        }
+        check(t)
     }
   }
 }
