@@ -167,7 +167,7 @@ object ais {
         ai.seed(seed).andThen(ai)
       }
 
-    def run[T, S](v: T > (AIs with S))(implicit f: Flat[T, AIs with S]): T > (Requests with S) =
+    def run[T, S](v: T > (AIs with S))(implicit f: Flat[T > AIs with S]): T > (Requests with S) =
       State.run[T, Requests with S](v).map(_._1)
 
     def ask(msg: String): String > AIs =
@@ -196,12 +196,12 @@ object ais {
     def fail[T](cause: String): T > AIs =
       IOs.fail(AIException(cause))
 
-    def ephemeral[T, S](f: => T > S)(implicit flat: Flat[T, S]): T > (AIs with S) =
+    def ephemeral[T, S](f: => T > S)(implicit flat: Flat[T > S]): T > (AIs with S) =
       State.get.map { st =>
         Tries.run[T, S](f).map(r => State.set(st).map(_ => r.get))
       }
 
-    def race[T](l: Seq[T > AIs])(implicit f: Flat[T, AIs]): T > AIs =
+    def race[T](l: Seq[T > AIs])(implicit f: Flat[T > AIs]): T > AIs =
       State.get.map { st =>
         Requests.race[(T, State)](l.map(State.run[T, Requests](st)))
           .map {
@@ -210,7 +210,7 @@ object ais {
           }
       }
 
-    def parallel[T](l: Seq[T > AIs])(implicit f: Flat[T, AIs]): Seq[T] > AIs =
+    def parallel[T](l: Seq[T > AIs])(implicit f: Flat[T > AIs]): Seq[T] > AIs =
       State.get.map { st =>
         Requests.parallel[(T, State)](l.map(State.run[T, Requests](st)))
           .map { rl =>

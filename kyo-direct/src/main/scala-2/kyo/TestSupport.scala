@@ -38,7 +38,7 @@ private[kyo] class TestSupportMacro(val c: Context) {
     c.resetAllAttrs {
       val lifted =
         q"""
-          implicit val ng: kyo.NotGiven[(Nothing > Any) => Any] = NotGiven.value
+          implicit val flat: kyo.Flat[Any] = kyo.Flat.unsafe.unchecked
           kyo.ios.IOs.run(kyo.direct.defer($body).asInstanceOf[Any > IOs])
         """
 

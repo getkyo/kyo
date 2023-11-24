@@ -42,9 +42,6 @@ object FlatImplicits {
     def canDerive(t: Type): Boolean = {
       val flatType = appliedType(typeOf[Flat[_]].typeConstructor, List(t))
       val v        = c.inferImplicitValue(flatType, silent = true, withMacrosDisabled = true)
-      if (v != EmptyTree) {
-        println((c.enclosingPosition, t, t.typeSymbol.isClass, v))
-      }
       v != EmptyTree
     }
 

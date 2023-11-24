@@ -5,7 +5,6 @@ import kyo._
 import kyo.ios._
 import kyo.requests._
 import kyo.tries._
-import kyoTest.KyoTest
 import sttp.client3._
 import sttp.model.StatusCode
 import kyo.resources.Resources
