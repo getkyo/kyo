@@ -23,13 +23,13 @@ object FlatImplicits {
   def inferMacro[T: Type](using Quotes): Expr[Flat[T]] = {
     import quotes.reflect._
 
-    val t = TypeRepr.of[T]
+    val t = TypeRepr.of[T].dealias
 
     object Kyo {
       def unapply(tpe: TypeRepr): Option[(TypeRepr, TypeRepr)] =
         tpe match {
-          case AppliedType(TypeRef(_, ">"), List(t, u)) =>
-            Some((t, u))
+          case AppliedType(_, List(t, u)) if (tpe.typeSymbol == TypeRepr.of[>].typeSymbol) =>
+            Some((t.dealias, u.dealias))
           case _ => None
         }
     }
@@ -51,16 +51,17 @@ object FlatImplicits {
     def canDerive(t: TypeRepr) =
       t.asType match {
         case '[nt] =>
-          Expr.summon[Flat[nt]]
-            .orElse(Expr.summon[Flat[nt > Any]])
-            .isDefined
+          Expr.summon[Flat[nt]].isDefined
       }
 
+    def isAny(t: TypeRepr) =
+      t.typeSymbol == TypeRepr.of[Any].typeSymbol
+
     def isConcrete(t: TypeRepr) =
-      t.typeSymbol.isClassDef && t.typeSymbol != TypeRepr.of[Any].typeSymbol
+      t.typeSymbol.isClassDef
 
     def check(t: TypeRepr): Expr[Flat[T]] =
-      if (!isConcrete(t) && !canDerive(t)) {
+      if (isAny(t) || (!isConcrete(t.dealias) && !canDerive(t))) {
         fail(
             s"Cannot prove ${code(print(t))} isn't nested. Provide an implicit evidence ${code(s"kyo.Flat[${print(t)}]")}."
         )
