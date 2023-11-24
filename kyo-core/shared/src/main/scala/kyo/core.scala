@@ -128,7 +128,8 @@ object core {
 
     def deepHandle[M[_], E <: Effect[M, E], T](e: E)(v: T > E)(implicit
         h: DeepHandler[M, E],
-        s: Safepoint[M, E]
+        s: Safepoint[M, E],
+        f: Flat[T > E]
     ): M[T] = {
       def deepHandleLoop(v: T > E): M[T] =
         v match {

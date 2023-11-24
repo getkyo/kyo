@@ -5,16 +5,8 @@ import kyo.core._
 import kyo.core.internal._
 import kyo.ios._
 import kyo.locals._
-import kyo.resources._
 
-import java.io.Closeable
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
-import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.Future
 import scala.concurrent.ExecutionContext
@@ -25,7 +17,6 @@ import scala.util.control.NonFatal
 
 import scheduler._
 import timers._
-import scala.annotation.implicitNotFound
 
 object fibers {
 
