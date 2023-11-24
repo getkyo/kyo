@@ -39,13 +39,25 @@ object FlatImplicits {
         }
     }
 
+    def code(str: String) =
+      s"${Console.YELLOW}'$str'${Console.RESET}"
+
+    def print(t: Type): String = {
+      t match {
+        case Kyo(t, s) =>
+          s"${print(t)} > ${print(s)}"
+        case _ => t.toString
+      }
+    }
+
+    def fail(msg: String) =
+      c.abort(c.enclosingPosition, s"Method doesn't accept nested Kyo computations.\n$msg")
+
     def canDerive(t: Type): Boolean = {
       val flatType = appliedType(typeOf[Flat[_]].typeConstructor, List(t))
       val v        = c.inferImplicitValue(flatType, silent = true, withMacrosDisabled = true)
       v != EmptyTree
     }
-
-    def fail(msg: String) = c.abort(c.enclosingPosition, msg)
 
     def isAny(t: Type) =
       t.typeSymbol == c.typeOf[Any].typeSymbol
@@ -59,15 +71,23 @@ object FlatImplicits {
     def check(t: Type): Expr[Flat[T]] =
       if (isAny(t) || (!isConcrete(t) && !canDerive(t) && !isFiber(t))) {
         fail(
-            s"Cannot prove ${t} isn't nested."
+            s"Cannot prove ${code(print(t))} isn't nested. Provide an implicit evidence ${code(s"kyo.Flat[${print(t)}]")}."
         )
       } else {
         c.Expr[Flat[T]](q"kyo.Flat.unsafe.checked")
       }
 
     t match {
-      case Kyo(Kyo(_, _), _) =>
-        fail("Nested Kyo computations are not allowed.")
+      case Kyo(Kyo(nt, s1), s2) =>
+        val mismatch =
+          if (print(s1) != print(s2)) {
+            s"\nPossible pending effects mismatch: Expected ${code(print(s2))}, found ${code(print(s1))}."
+          } else {
+            ""
+          }
+        fail(
+            s"Detected: ${code(print(t))}. Consider using ${code("flatten")} to resolve. " + mismatch
+        )
       case Kyo(nt, _) =>
         check(nt)
       case t =>
