@@ -11,14 +11,14 @@ trait FlatImplicits0 {
 
 trait FlatImplicits1 extends FlatImplicits0 {
   implicit def product[T <: Product]: Flat[T] =
-    Flat.unsafe.checked[T]
+    Flat.unsafe.checked
 }
 
 trait FlatImplicits extends FlatImplicits1 {
   implicit def derive[T, S](implicit f: Flat[T > S]): Flat[T] =
-    Flat.unsafe.derived
+    Flat.unsafe.checked
   implicit def anyVal[T <: AnyVal]: Flat[T] =
-    Flat.unsafe.checked[T]
+    Flat.unsafe.checked
 }
 
 object FlatImplicits {
