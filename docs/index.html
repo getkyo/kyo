@@ -12,6 +12,7 @@
 
 <body>
   <div id="app"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.23.0/components/prism-scala.min.js"></script>
   <script>
     window.$docsify = {
       name: '',
@@ -37,7 +38,19 @@
             return content;
           });
         }
-      ]
+      ],
+      markdown: {
+        renderer: {
+          code: function (code, lang) {
+            if (lang === 'scala') {
+              // Use Prism to highlight Scala code
+              return Prism.highlight(code, Prism.languages.scala, 'scala');
+            }
+            // Fallback for other languages
+            return this.origin.code.apply(this, arguments);
+          }
+        }
+      }
     }
   </script>
   <!-- Docsify v4 -->
