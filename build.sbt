@@ -91,8 +91,8 @@ lazy val kyo =
         `kyo-cache`,
         `kyo-sttp`,
         `kyo-tapir`,
-        `kyo-chatgpt-macros`,
-        `kyo-chatgpt`,
+        `kyo-llm-macros`,
+        `kyo-llm`,
         `kyo-bench`
     )
 
@@ -225,11 +225,11 @@ lazy val `kyo-tapir` =
         libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.4"
     )
 
-lazy val `kyo-chatgpt-macros` =
+lazy val `kyo-llm-macros` =
   crossProject(JSPlatform, JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Full)
-    .in(file("kyo-chatgpt-macros"))
+    .in(file("kyo-llm-macros"))
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
@@ -244,15 +244,15 @@ lazy val `kyo-chatgpt-macros` =
     )
     .jsSettings(`js-settings`)
 
-lazy val `kyo-chatgpt` =
+lazy val `kyo-llm` =
   crossProject(JSPlatform, JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
     .crossType(CrossType.Full)
-    .in(file("kyo-chatgpt"))
+    .in(file("kyo-llm"))
     .dependsOn(`kyo-sttp`)
     .dependsOn(`kyo-direct`)
     .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .dependsOn(`kyo-chatgpt-macros`)
+    .dependsOn(`kyo-llm-macros`)
     .jvmSettings(
         libraryDependencies += "org.apache.lucene"    % "lucene-core"        % "9.8.0",
         libraryDependencies += "org.apache.lucene"    % "lucene-queryparser" % "9.8.0",
@@ -317,7 +317,7 @@ lazy val readme =
         `kyo-cache`,
         `kyo-sttp`,
         `kyo-tapir`,
-        `kyo-chatgpt`,
+        `kyo-llm`,
         `kyo-bench`
     )
 
