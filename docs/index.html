@@ -12,11 +12,6 @@
 
 <body>
   <div id="app"></div>
-
-  <!-- Include Prism Core and Scala Language Support -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.23.0/prism.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.23.0/components/prism-scala.min.js"></script>
-
   <script>
     window.$docsify = {
       name: '',
@@ -25,43 +20,29 @@
       plugins: [
         function (hook, vm) {
           hook.beforeEach(function (content) {
-            // Your existing content processing logic
+            const startPattern = '## Table of Contents';
+            const endPattern = '## ';
+
+            let startIndex = content.indexOf(startPattern);
+            let endIndex = content.indexOf(endPattern, startIndex + startPattern.length);
+
+            if (startIndex !== -1 && endIndex === -1) {
+              endIndex = content.length;
+            }
+
+            if (startIndex !== -1 && endIndex !== -1) {
+              content = content.substring(0, startIndex) + content.substring(endIndex);
+            }
+
             return content;
           });
         }
-      ],
-      markdown: {
-        renderer: {
-          code: function (code, lang) {
-            if (lang === 'scala') {
-              // Check if Prism and the Scala language are defined
-              if (Prism && Prism.languages.scala) {
-                return Prism.highlight(code, Prism.languages.scala, 'scala');
-              } else {
-                console.error('Prism or Scala language definition not found');
-                return code;
-              }
-            }
-            // Fallback for other languages
-            return this.origin.code.apply(this, arguments);
-          }
-        }
-      }
+      ]
     }
   </script>
 
-  <!-- Docsify v4 -->
   <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
-
-  <!-- Manual Initialization of Prism (if needed) -->
-  <script>
-    document.addEventListener('DOMContentLoaded', function() {
-      if (Prism) {
-        Prism.highlightAll();
-      }
-    });
-  </script>
-
+  <script src="//cdn.jsdelivr.net/npm/prismjs@1/components/prism-scala.min.js"></script>
 </body>
 
 </html>
