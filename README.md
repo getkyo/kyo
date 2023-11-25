@@ -1,11 +1,9 @@
 ![kyo](https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png)
--------------------
+----------
 
 ![Build Status](https://github.com/getkyo/kyo/workflows/build/badge.svg)
 ![Chat](https://img.shields.io/discord/1087005439859904574)
 <!---![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3)--->
-
-### This readme is a working in progress. If you'd like to try Kyo, please build from source.
 
 Kyo is a complete toolkit for Scala development, spanning from browser-based apps in ScalaJS to high-performance backends on the JVM. It introduces a novel approach based on algebraic effects to deliver straightforward APIs in the pure Functional Programming paradigm. Unlike similar solutions, Kyo achieves this without inundating developers with esoteric concepts from Category Theory or using cryptic symbolic operators, resulting in a development experience that is both intuitive and robust.
 

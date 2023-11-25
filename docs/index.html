@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Document</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+  <meta name="description" content="Description">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify@4/lib/themes/vue.css">
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    window.$docsify = {
+      name: '',
+      repo: 'getkyo/kyo',
+      homepage: 'https://raw.githubusercontent.com/getkyo/kyo/main/README.md',
+      plugins: [
+        function (hook, vm) {
+          hook.beforeEach(function (content) {
+            const startPattern = '## Table of Contents';
+            const endPattern = '## ';
+
+            let startIndex = content.indexOf(startPattern);
+            let endIndex = content.indexOf(endPattern, startIndex + startPattern.length);
+
+            if (startIndex !== -1 && endIndex === -1) {
+              endIndex = content.length;
+            }
+
+            if (startIndex !== -1 && endIndex !== -1) {
+              content = content.substring(0, startIndex) + content.substring(endIndex);
+            }
+
+            return content;
+          });
+        }
+      ]
+    }
+  </script>
+  <!-- Docsify v4 -->
+  <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
+  <script src="//cdn.jsdelivr.net/npm/prismjs@1.22/components/prism-java.min.js"></script>
+  <script src="//cdn.jsdelivr.net/npm/prismjs@1.22/components/prism-scala.min.js"></script>
+</body>
+</html>
