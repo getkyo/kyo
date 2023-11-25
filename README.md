@@ -1,4 +1,5 @@
 ![kyo](https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png)
+Kyõ
 -------------------
 
 ![Build Status](https://github.com/getkyo/kyo/workflows/build/badge.svg)
