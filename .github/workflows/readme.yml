@@ -1,0 +1,13 @@
+name: build
+on: [push, pull_request]
+jobs:
+  readme:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v3.0.2
+        with:
+          fetch-depth: 0
+      - uses: olafurpg/setup-scala@v13
+        with:
+          java-version: openjdk@1.17.0
+      - run: sbt checkReadme
