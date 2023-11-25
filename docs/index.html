@@ -18,8 +18,8 @@
       plugins: [
         function (hook, vm) {
           hook.beforeEach(function (content) {
-            const startPattern = '## Table of Contents';
-            const endPattern = '## ';
+            const startPattern = '# Please visit';
+            const endPattern = '# ';
 
             let startIndex = content.indexOf(startPattern);
             let endIndex = content.indexOf(endPattern, startIndex + startPattern.length);

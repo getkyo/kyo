@@ -9,38 +9,11 @@ Kyo is a complete toolkit for Scala development, spanning from browser-based app
 
 Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://degoes.net/articles/rotating-effects), Kyo takes a more generalized approach. While ZIO restricts effects to two channels, dependency injection and short-circuiting, Kyo allows for an arbitrary number of effectful channels. This enhancement gives developers greater flexibility in effect management, while also simplifying Kyo's internal codebase through more principled design patterns.
 
-## Table of Contents
+# Please visit [getkyo.io](https://getkyo.io/) for an indexed version of this documentation
 
-1. [The `>` type](#the--type)
-2. [Effect widening](#effect-widening)
-3. [Using effects](#using-effects)
-3. [Direct Syntax](#direct-syntax)
-4. [Core Effects](#core-effects)
-    1. [Aborts: Short Circuiting](#aborts-short-circuiting)
-    2. [IOs: Side Effects](#ios-side-effects)
-    3. [Envs: Dependency Injection](#envs-dependency-injection)
-    4. [Locals: Scoped Values](#locals-scoped-values)
-    5. [Resources: Resource Safety](#resources-resource-safety)
-    6. [Lists: Exploratory Branching](#lists-exploratory-branching)
-    7. [Aspects: Aspect-Oriented Programming](#aspects-aspect-oriented-programming)
-    8. [Options: Optional Values](#options-optional-values)
-    9. [Tries: Exception Handling](#tries-exception-handling)
-    10. [Consoles: Console Interaction](#consoles-console-interaction)
-    11. [Clocks: Time Management](#clocks-time-management)
-    12. [Randoms: Random Values](#randoms-random-values)
-    13. [Loggers: Logging](#loggers-logging)
-5. [Concurrent Effects](#concurrent-effects)
-    1. [Fibers: Green Threads](#fibers-green-threads)
-    2. [Queues: Concurrent Queuing](#queues-concurrent-queuing)
-    3. [Channels: Asynchronous Communication](#channels-asynchronous-communication)
-    4. [Meters: Computational Limits](#meters-computational-limits)
-    5. [Timers: Scheduled Execution](#timers-scheduled-execution)
-    6. [Latches: Fiber Coordination](#latches-fiber-coordination)
-    7. [Atomics: Concurrent State](#atomics-concurrent-state)
-    8. [Adders: Concurrent Accumulation](#adders-concurrent-accumulation)
-6. [ZIOs: ZIO Integration](#zios-zio-integration)
+## Introduction
 
-## The `>` type
+### The `>` type
 
 In Kyo, computations are expressed via the infix type `>`, which takes two parameters:
 
@@ -95,7 +68,7 @@ def example2(a: Int > Options, b: Int > Tries): Int > (Options with Tries) =
 
 The `map` method automatically updates the set of pending effects. When you apply `map` to computations that have different pending effects, Kyo reconciles these into a new computation type that combines all the unique pending effects from both operands.
 
-## Effect widening
+### Effect widening
 
 Kyo's set of pending effects is a contravariant type parameter. This encoding permits computations to be widened to encompass a larger set of effects.
 
@@ -139,7 +112,7 @@ def example3 = example1(42)
 
 Here, `example1` is designed to accept an `Int > (Options with Tries)`. However, thanks to the contravariant encoding of the type-level set of effects, `example2` and `example3` demonstrate that you can also pass in computations with a smaller set of effects—or even a pure value—and they will be automatically widened to fit the expected type.
 
-## Using effects
+### Using effects
 
 Kyo offers a modular approach to effect management, accommodating both built-in and user-defined effects organized in `object` modules. Importing the corresponding module into scope brings in the effect and any additional types or implicits it may need. The naming convention uses lowercase module names for each effect type.
 
@@ -215,7 +188,7 @@ assert(triesFirst(Options.get(None)) == None)
 assert(triesFirst(Tries.get(Failure(ex))) == Some(Failure(ex)))
 ```
 
-## Direct Syntax
+### Direct Syntax
 
 Kyo provides direct syntax for a more intuitive and concise way to express computations, especially when dealing with multiple effects. This syntax leverages two primary constructs: `defer` and `await`.
 
@@ -308,7 +281,7 @@ In Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadl
 
 > Note: `defer` is currently the only macro in Kyo. All other features use regular language constructs.
 
-## Defining an App
+### Defining an App
 
 `kyo.App` offers a structured approach similar to Scala's `App` for defining application entry points. However, it comes with added capabilities, handling a suite of default effects. As a result, the `run` method within `kyo.App` can accommodate various effects, such as IOs, Fibers, Resources, Clocks, Consoles, Randoms, Timers, and Aspects.
 
