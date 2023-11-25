@@ -295,8 +295,8 @@ addCommandAlias("checkReadme", ";readme/rewriteReadmeFile; readme/mdoc")
 lazy val readme =
   crossProject(JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure) // new documentation project
-    .in(file("target/readme")) // important: it must not be docs/
+    .crossType(CrossType.Pure)
+    .in(file("target/readme"))
     .enablePlugins(MdocPlugin)
     .settings(
         `kyo-settings`,

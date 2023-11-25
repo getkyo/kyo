@@ -271,6 +271,7 @@ The syntac sugar supports a variety of constructs to handle effectful computatio
 
 ```scala
 import kyo.direct._
+import kyo.ios._
 
 defer {
   // Pure expression
@@ -314,6 +315,10 @@ In Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadl
 `kyo.App` offers a structured approach similar to Scala's `App` for defining application entry points. However, it comes with added capabilities, handling a suite of default effects. As a result, the `run` method within `kyo.App` can accommodate various effects, such as IOs, Fibers, Resources, Clocks, Consoles, Randoms, Timers, and Aspects.
 
 ```scala
+import kyo.clocks._
+import kyo.consoles._
+import kyo.randoms._
+
 object MyApp extends App {
   def run(args: List[String]) = 
     for {
@@ -329,9 +334,12 @@ object MyApp extends App {
 While the companion object of `App` provides utility methods to run isolated effectful computations, it's crucial to approach these with caution. Direct handling of effects like `IOs` through these methods can compromise referential transparency, an essential property for functional programming.
 
 ```scala
+import kyo.concurrent.fibers._
+import scala.concurrent.duration._
+
 // An example computation
-val a: Int > (Fibers with IOs) =
-  Fibers.fork(Math.cos(42).toInt)
+val a: Int > IOs =
+  IOs(Math.cos(42).toInt)
 
 // Avoid! Run the application with a specific timeout
 val b: Int = 
@@ -380,9 +388,11 @@ Kyo is unlike traditional effect systems since its base type `>` does not assume
 ```scala
 import kyo.ios._
 
+def aSideEffect = 1 // placeholder
+
 // 'apply' is used to suspend side effects
 val a: Int > IOs = 
-  IOs(Random.nextInt)
+  IOs(aSideEffect)
 
 // 'value' is a shorthand to widen 
 // a pure value to IOs
@@ -618,7 +628,7 @@ val countAspect: Aspect[Database, Int, IOs] =
   Aspects.init[Database, Int, IOs]
 
 // The method 'apply' activates the aspect for a computation
-def count(db: Database): Int > (Aspects with IOs) =
+def count(db: Database): Int > IOs =
   countAspect(db)(_.count)
 
 // To bind an aspect to an implementation, first create a new 'Cut'
@@ -626,14 +636,14 @@ val countPlusOne =
   new Cut[Database, Int, IOs] {
     // The first param is the input of the computation and the second is
     // the computation being handled
-    def apply[S](v: Database > S)(f: Database => Int > (Aspects with IOs)) =
+    def apply[S](v: Database > S)(f: Database => Int > IOs) =
       v.map(db => f(db).map(_ + 1))
   }
 
 // Bind the 'Cut' to a computation with the 'let' method.
 // The first param is the 'Cut' and the second is the computation
 // that will run with the custom binding of the aspect
-def example(db: Database): Int > (Aspects with IOs) =
+def example(db: Database): Int > IOs =
   countAspect.let(countPlusOne) {
     count(db)
   }
@@ -645,7 +655,7 @@ If an aspect is bound to multiple `Cut` implementations, the order of their exec
 // Another 'Cut' implementation
 val countTimesTen =
   new Cut[Database, Int, IOs] {
-    def apply[S](v: Database > S)(f: Database => Int > (Aspects with IOs)) =
+    def apply[S](v: Database > S)(f: Database => Int > IOs) =
       v.map(db => f(db).map(_ * 10))
   }
 
@@ -768,16 +778,12 @@ import kyo.clocks._
 import java.time.Instant
 
 // Obtain the current time
-val a: Instant > Clocks = 
+val a: Instant > IOs = 
   Clocks.now
-
-// Run with default 'Clock'
-val b: Instant > IOs = 
-  Clocks.run(a)
 
 // Run with an explicit 'Clock'
 val c: Instant > IOs = 
-  Clocks.run(Clock.default)(a)
+  Clocks.let(Clock.default)(a)
 ```
 
 ### Randoms: Random Values
@@ -786,30 +792,25 @@ val c: Instant > IOs =
 import kyo.randoms._
 
 // Generate a random 'Int'
-val a: Int > Randoms = Randoms.nextInt
+val a: Int > IOs = Randoms.nextInt
 
 // Generate a random 'Int' within a bound
-val b: Int > Randoms = Randoms.nextInt(42)
+val b: Int > IOs = Randoms.nextInt(42)
 
 // A few method variants
-val c: Long > Randoms = Randoms.nextLong
-val d: Double > Randoms = Randoms.nextDouble
-val e: Boolean > Randoms = Randoms.nextBoolean
-val f: Float > Randoms = Randoms.nextFloat
-val g: Double > Randoms = Randoms.nextGaussian
+val c: Long > IOs = Randoms.nextLong
+val d: Double > IOs = Randoms.nextDouble
+val e: Boolean > IOs = Randoms.nextBoolean
+val f: Float > IOs = Randoms.nextFloat
+val g: Double > IOs = Randoms.nextGaussian
 
 // Obtain a random value from a sequence
-val h: Int > Randoms = 
+val h: Int > IOs = 
   Randoms.nextValue(List(1, 2, 3))
-
-// Handle the 'Randoms' effect with the
-// default implicit `Random` implementation
-val j: Int > IOs =
-  Randoms.run(h)
 
 // Explicitly specify the `Random` implementation
 val k: Int > IOs =
-  Randoms.run(Random.default)(h)
+  Randoms.let(Random.default)(h)
 ```
 
 ### Loggers: Logging
@@ -852,30 +853,19 @@ import kyo.concurrent.fibers._
 // Fork a computation. The parameter is
 // taken by reference and automatically
 // suspended with 'IOs'
-val a: Fiber[Int] > (Fibers with IOs) =
-  Fibers.forkFiber(Math.cos(42).toInt)
+val a: Fiber[Int] > Fibers =
+  Fibers.fork(Math.cos(42).toInt)
 
 // It's possible to "extract" the value of a 
 // 'Fiber' via the 'get' method. This is also
 // referred as "joining the fiber"
-val b: Int > (Fibers with IOs) =
-  Fibers.get(a)
-
-// Alternatively, the 'fork' method is a shorthand 
-// to fork the computation and join the fiber. The
-// parameter is also taken by reference like in 'fork'
-val c: Int > (Fibers with IOs) =
-  Fibers.fork(Math.cos(42).toInt)
+val b: Int > Fibers =
+  a.map(_.get)
 
 // The 'value' method provides a 'Fiber' instance
 // fulfilled with the provided pure value
 val d: Fiber[Int] =
   Fibers.value(42)
-
-// Use 'fail' to create a fiber that will fail
-// with the provided exception
-val e: Fiber[Int] =
-  Fibers.fail(new Exception)
 ```
 
 The `parallel` methods fork multiple computations in parallel, join the fibers, and return their results.
@@ -888,13 +878,13 @@ val a: Int > IOs =
 // There are method overloadings for up to four
 // parallel computations. Paramters taken by
 // reference
-val b: (Int, String) > (Fibers with IOs) =
+val b: (Int, String) > Fibers =
   Fibers.parallel(a, "example")
 
 // Alternatively, it's possible to provide
 // a 'Seq' of computations and produce a 'Seq'
 // with the results
-val c: Seq[Int] > (Fibers with IOs) =
+val c: Seq[Int] > Fibers =
   Fibers.parallel(Seq(a, a.map(_ + 1)))
 
 // The 'parallelFiber' method is similar but
@@ -913,38 +903,18 @@ val a: Int > IOs =
 
 // There are method overloadings for up to four
 // computations. Pameters taken by reference
-val b: Int > (Fibers with IOs) =
+val b: Int > Fibers =
   Fibers.race(a, a.map(_ + 1))
 
 // It's also possible to to provide a 'Seq' 
 // of computations 
-val c: Int > (Fibers with IOs) =
+val c: Int > Fibers =
   Fibers.race(Seq(a, a.map(_ + 1)))
 
 // 'raceFiber' produces a 'Fiber' without
 // joining it
 val d: Fiber[Int] > IOs =
   Fibers.raceFiber(Seq(a, a.map(_ + 1)))
-```
-
-`Fibers` also provides `await` to wait for the completion of all computations and discard their results.
-
-```scala
-val a: Int > IOs =
-  IOs(Math.cos(42).toInt)
-
-// Also up to four parallel computations.
-// Parameters taken by reference
-val a: Unit > (Fibers with IOs) =
-  Fibers.await(a, "srt")
-
-// Unit a 'Seq'
-val b: Unit > (Fibers with IOs) =
-  Fibers.await(Seq(a, a.map(_ + 1)))
-
-// Awaiting without joining
-val c: Fiber[Unit] > IOs =
-  Fibers.awaitFiber(Seq(a, a.map(_ + 1)))
 ```
 
 The `sleep` and `timeout` methods combine the `Timers` effect to pause a computation or time it out after a duration.
@@ -954,13 +924,13 @@ import kyo.concurrent.timers._
 import scala.concurrent.duration._
 
 // A computation that sleeps for 1s
-val a: Unit > (Fibers with IOs with Timers) =
+val a: Unit > Fibers =
   Fibers.sleep(1.second)
 
 // Times out and interrupts the provided 
 // computation in case it doesn't produce 
 // a result within 1s
-val b: Int > (Fibers with IOs with Timers) =
+val b: Int > Fibers =
   Fibers.timeout(1.second)(Math.cos(42).toInt)
 ```
 
@@ -973,7 +943,7 @@ import scala.concurrent.Future
 val a: Future[Int] = Future.successful(42)
 
 // Join the result of a 'Future'
-val b: Int > (Fibers with IOs) =
+val b: Int > Fibers =
   Fibers.join(a)
 
 // Use 'joinFiber' to produce 'Fiber' 
@@ -1005,17 +975,12 @@ val d: Unit > IOs =
 
 // A variant of `get` that returns a `Try`
 // with the failed or successful result
-val e: Try[Int] > (Fibers with IOs) =
+val e: Try[Int] > Fibers =
   a.getTry
 
 // Try to interrupt/cancel a fiber
 val f: Boolean > IOs =
   a.interrupt
-
-// Try to interrupt a fiber and wait for 
-// its finalization
-val g: Boolean > (Fibers with IOs) =
-  a.interruptAwait
 
 // Transforms a fiber into a Scala 'Future'
 val h: Future[Int] > IOs =
@@ -1034,8 +999,8 @@ Similarly to `IOs`, users should avoid handling the `Fibers` effect directly and
 
 ```scala
 // An example computation with fibers
-val a: Int > (Fibers with IOs) =
-  Fibers.fork(Math.cos(42).toInt)
+val a: Int > Fibers =
+  Fibers.fork(Math.cos(42).toInt).map(_.get)
 
 // Avoid handling 'Fibers' directly
 // Note how the code has to handle the
@@ -1057,7 +1022,7 @@ The `Fibers` effect also offers a low-level API to create `Promise`s as way to i
 ```scala
 // Initialize a promise
 val a: Promise[Int] > IOs =
-  Fibers.promise[Int]
+  Fibers.initPromise[Int]
 
 // Try to fulfill a promise
 val b: Boolean > IOs =
@@ -1074,10 +1039,10 @@ The `Queues` effect operates atop of `IOs` and provides thread-safe queue data s
 ```scala
 import kyo.concurrent.queues._
 
-// A 'bounded' channel rejects new
+// A bounded channel rejects new
 // elements once full
 val a: Queue[Int] > IOs =
-  Queues.bounded(capacity = 42)
+  Queues.init(capacity = 42)
 
 // Obtain the number of items in the queue
 // via the method 'size' in 'Queue'
@@ -1115,18 +1080,18 @@ val h: Boolean > IOs =
 // grow without limits, the GC overhead can make 
 // the system fail
 val a: Queues.Unbounded[Int] > IOs =
-  Queues.unbounded()
+  Queues.initUnbounded()
 
 // A 'dropping' queue discards new entries
 // when full
 val b: Queues.Unbounded[Int] > IOs =
-  Queues.dropping(capacity = 42)
+  Queues.initDropping(capacity = 42)
 
 // A 'sliding' queue discards the oldest
 // entries if necessary to make space for new 
 // entries
 val c: Queues.Unbounded[Int] > IOs =
-  Queues.sliding(capacity = 42)
+  Queues.initSliding(capacity = 42)
 
 // Note how 'dropping' and 'sliding' queues
 // return 'Queues.Unbounded`. It provides
@@ -1158,7 +1123,7 @@ import kyo.concurrent.Access
 // Multiple Producers, Multiple 
 // Consumers policy
 val a: Queue[Int] > IOs =
-  Queues.bounded(
+  Queues.init(
     capacity = 42, 
     access = Access.Mpmc
   )
@@ -1196,14 +1161,14 @@ val a: Channel[Int] > IOs =
 // If there's no capacity, the fiber
 // is automatically suspended until
 // space is made available
-val b: Unit > (Fibers with IOs) =
+val b: Unit > Fibers =
   a.map(_.put(42))
 
 // Takes an item from the channel.
 // If the channel is empty, the fiber
 // is suspended until a new item is
 // made available
-val c: Int > (Fibers with IOs) =
+val c: Int > Fibers =
   a.map(_.take)
 
 // 'putFiber' returns a `Fiber` that
@@ -1229,21 +1194,21 @@ import kyo.concurrent.meters._
 
 // 'mutex': One computation at a time
 val a: Meter > IOs = 
-  Meters.mutex
+  Meters.initMutex
 
 // 'semaphore': Limit concurrent tasks
 val b: Meter > IOs =
-  Meters.semaphore(concurrency = 42)
+  Meters.initSemaphore(concurrency = 42)
 
 // 'rateLimiter': Tasks per time window
-val c: Meter > (Timers with IOs) =
-  Meters.rateLimiter(
+val c: Meter > IOs =
+  Meters.initRateLimiter(
     rate = 10, 
     period = 1.second
   )
 
 // 'pipeline': Combine multiple 'Meter's
-val d: Meter > (Timers with IOs) =
+val d: Meter > IOs =
   Meters.pipeline(a, b, c)
 ```
 
@@ -1252,7 +1217,7 @@ The `Meter` class comes with a handful of methods designed to provide insights i
 ```scala
 // An example 'Meter'
 val a: Meter > IOs = 
-  Meters.mutex
+  Meters.initMutex
 
 // Get available permits
 val b: Int > IOs =
@@ -1264,7 +1229,7 @@ val c: Boolean > IOs =
 
 // Use 'run' to execute tasks
 // respecting meter limits
-val d: Int > (Fibers with IOs) =
+val d: Int > Fibers =
   a.map(_.run(Math.cos(42).toInt))
 
 // 'tryRun' executes if a permit is
@@ -1286,12 +1251,12 @@ val a: Unit > IOs =
   IOs(())
 
 // Schedule a delayed task
-val b: TimerTask > Timers =
+val b: TimerTask > IOs =
   Timers.schedule(delay = 1.second)(a)
 
 // Recurring task with
 // intial delay
-val c: TimerTask > Timers =
+val c: TimerTask > IOs =
   Timers.scheduleAtFixedRate(
     initialDelay = 1.minute,
     period = 1.minute
@@ -1299,55 +1264,46 @@ val c: TimerTask > Timers =
 
 // Recurring task without
 // initial delay
-val d: TimerTask > Timers =
+val d: TimerTask > IOs =
   Timers.scheduleAtFixedRate(
     period = 1.minute
   )(a)
 
 // Schedule with fixed delay between tasks
-val e: TimerTask > Timers =
+val e: TimerTask > IOs =
   Timers.scheduleWithFixedDelay(
     initialDelay = 1.minute,
     period = 1.minute
   )(a)
 
 // without initial delay
-val f: TimerTask > Timers =
+val f: TimerTask > IOs =
   Timers.scheduleWithFixedDelay(
     period = 1.minute
   )(a)
 
-// Shutdown the current timer
-val g: Unit > Timers =
-  Timers.shutdown
-
-// Use 'run' to handle the Timers
-// effect with the default 'Timer'
-val h: Unit > IOs =
-  Timers.run(g)
-
 // Specify the 'Timer' explictly
-val i: Unit > IOs =
-  Timers.run(Timer.default)(g)
+val i: TimerTask > IOs =
+  Timers.let(Timer.default)(f)
 ```
 
 `TimerTask` offers methods for more granular control over the scheduled tasks.
 
 ```scala
 // Example TimerTask
-val a: TimerTask > Timers = 
+val a: TimerTask > IOs = 
   Timers.schedule(1.second)(())
 
 // Try to cancel the task
-val b: Boolean > Timers =
+val b: Boolean > IOs =
   a.map(_.cancel)
 
 // Check if the task is cancelled
-val c: Boolean > Timers =
+val c: Boolean > IOs =
   a.map(_.isCancelled)
 
 // Check if the task is done
-val d: Boolean > Timers =
+val d: Boolean > IOs =
   a.map(_.isDone)
 ```
 
@@ -1363,7 +1319,7 @@ val a: Latch > IOs =
   Latches.init(3)
 
 // Await until the latch releases
-val b: Unit > (Fibers with IOs) =
+val b: Unit > Fibers =
   a.map(_.await)
 
 // Release a permit from the latch
