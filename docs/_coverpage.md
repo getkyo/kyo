@@ -1,4 +1,4 @@
-![logo](https://github.com/getkyo/kyo/blob/main/kyo.png?raw=true)
+<img src="https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png" width="200" alt="Kyo">
 
 > Toolkit for Scala Development
 

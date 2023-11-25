@@ -1,6 +1,6 @@
 ## Please visit [getkyo.io](https://getkyo.io/) for an indexed version of this documentation.
 
-![kyo](https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png)
+<img src="https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png" width="200" alt="Kyo">
 
 ## Introduction
 
