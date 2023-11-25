@@ -284,7 +284,7 @@ lazy val `kyo-bench` =
         libraryDependencies += "org.typelevel"       %% "cats-effect"    % "3.5.2",
         libraryDependencies += "dev.zio"             %% "zio"            % zioVersion,
         libraryDependencies += "dev.zio"             %% "zio-concurrent" % zioVersion,
-        libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.14",
+        libraryDependencies += "com.softwaremill.ox" %% "core"           % "0.0.15",
         libraryDependencies += "org.scalatest"       %% "scalatest"      % "3.2.16" % Test
     )
 
