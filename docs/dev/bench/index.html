@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Benchmark Runs</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      color: #444;
+    }
+    #container {
+      display: flex;
+      height: 100vh;
+    }
+    #run-list {
+      flex: 0.5;
+      padding: 20px;
+      background: #f5f5f5;
+      overflow-y: auto;
+      position: relative; /* Add this to enable positioning children */
+    }
+    #run-details {
+      flex: 2;
+      padding: 20px;
+    }
+    #run-table {
+      font-size: 0.85em;
+    }
+    #divider {
+      border-right: 1px solid #ccc;
+      margin: 0 20px;
+      height: 100%;
+    }
+    #jmh-iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+    .selected {
+      background-color: #dddddd;
+      color: #444;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.75em;  /* Reduce font size */
+    }
+    th, td {
+      border: 0.5px solid #ddd;  /* Reduce border thickness */
+      padding: 5px;  /* Reduce padding */
+      text-align: left;
+    }
+    a {
+      color: #007BFF;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    dialog {
+      border: none;
+      border-radius: 6px;
+      width: 500px; /* reduce the width of the dialog */
+      padding: 20px;
+      background-color: #f5f5f5;
+      box-shadow: 0px 0px 5px 0px rgba(0,0,0,0.3);
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    .dialog-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .dialog-table td {
+      border: 1px solid #ddd;
+      padding: 10px;
+      text-align: left;
+    }
+    .dialog-table td:last-child {
+      width: 1%;  /* Make this column as small as possible */
+      white-space: nowrap;  /* Prevent contents from wrapping */
+    }
+    .open-button {
+      border: none;
+      padding: 10px 20px;
+      background-color: #007BFF;
+      color: white;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .open-button:hover {
+      background-color: #0056b3;
+    }
+    #dialog-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    #dialog-close {
+      border: none;
+      padding: 10px 20px;
+      background-color: #007BFF;
+      color: white;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    #type-selection {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    #dialog-close:hover {
+      background-color: #0056b3;
+    }
+
+    #type-selection {
+      float: right;
+      padding-bottom: 20px;
+    }
+    #iframe-container {
+      position: relative;
+    }
+    #copy-button {
+      position: absolute;
+      top: 0;
+      right: 0;  /* Keep it as 'right' */
+      margin: 5px;
+      padding: 5px 10px;
+      background-color: #007BFF;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    #copy-button:hover {
+      background-color: #0056b3;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="run-list">
+      <button id="copy-button">Copy URL</button>
+      </br>
+      <table id="run-table">
+        <thead>
+          <tr>
+            <th>Commit</th>
+            <th>Message</th>
+            <th>Profiling</th>
+            <th>Gist</th>
+            <th>Run</th>
+          </tr>
+        </thead>
+        <tbody id="run-table-body"></tbody>
+      </table>
+    </div>
+    <div id="divider"></div>
+    <div id="run-details">
+      <iframe id="jmh-iframe"></iframe>
+    </div>
+  </div>
+
+  <dialog id="flamegraph-dialog">
+    <div id="dialog-header">
+      <button id="dialog-close">Close</button>
+      <div id="type-selection">
+        <input type="radio" id="cpu" name="flamegraphType" value="cpu" checked>
+        <label for="cpu">CPU</label>
+        <input type="radio" id="alloc" name="flamegraphType" value="alloc">
+        <label for="alloc">Alloc</label>
+      </div>
+    </div>
+    <table class="dialog-table">
+      <tbody id="dialog-content"></tbody>
+    </table>
+  </dialog>
+
+  <script>
+    let pastRuns = [];
+    const indexGist = `https://gist.github.com/${window.location.search.substring(1)}`;
+
+    function gistUrlToRawFileUrl(gistUrl, filename) {
+      const urlParts = gistUrl.split('/');
+      const username = urlParts[3];
+      const gistId = urlParts[4];
+      return `https://gist.githubusercontent.com/${username}/${gistId}/raw/${filename}`;
+    }
+
+    async function getGistFiles(gistId) {
+      const response = await fetch(`https://api.github.com/gists/${gistId}`);
+      const data = await response.json();
+      return Object.values(data.files).map(file => file.raw_url);
+    }
+
+    async function loadBenchmarkRuns() {
+      if (!indexGist) {
+        console.error('Missing indexGist query parameter');
+        return;
+      }
+
+      const rawIndexUrl = gistUrlToRawFileUrl(indexGist, 'jmh-github-action.csv');
+      const response = await fetch(rawIndexUrl);
+      const csvText = await response.text();
+      const lines = csvText.split('\n').slice(1);  // Skip header
+
+      // Create an empty Map to store unique runs
+      let uniqueRuns = new Map();
+
+      lines.forEach(line => {
+        const [commitUrl, comment, selector, runUrl, gistUrl] = line.split(',');
+        // If this run is already in the Map, skip it
+        if (!uniqueRuns.has(runUrl)) {
+          uniqueRuns.set(runUrl, {commitUrl, comment, selector, runUrl, gistUrl});
+        }
+      });
+
+      // Convert the Map values back to an array
+      pastRuns = Array.from(uniqueRuns.values());
+
+      pastRuns.reverse();
+
+      const tableBody = document.getElementById('run-table-body');
+      var i = 0;
+      pastRuns.forEach(run => {
+        const row = document.createElement('tr');
+        const gistId = run.gistUrl.split('/')[4];
+        run.gistId = gistId;
+        run.gistFiles = getGistFiles(gistId);
+        const shortSha = run.commitUrl.split('/').pop().substring(0,7)
+        row.innerHTML = `
+          <td><a href="${run.commitUrl}" target="_blank">${shortSha}</a></td>
+          <td>${run.comment}</a>
+          <td><a href="#" class="flamegraph" data-gist-id="${gistId}">View</a></td>
+          <td><a href="${run.gistUrl}" target="_blank">${gistId.substring(0,7)}</a></td>
+          <td><a href="${run.runUrl}" target="_blank">${run.runUrl.split('/').pop().substring(5,10)}</a></td>
+        `;
+        tableBody.appendChild(row);
+        if(i < 5) {
+          row.classList.toggle('selected');
+          i++;
+        }
+
+        row.addEventListener('click', function() {
+          this.classList.toggle('selected');
+          loadJMHResults();
+        });
+      });
+
+      loadJMHResults();
+
+      const flamegraphLinks = document.getElementsByClassName('flamegraph');
+      for (let i = 0; i < flamegraphLinks.length; i++) {
+        flamegraphLinks[i].addEventListener('click', async function(event) {
+          event.preventDefault();
+          const gistId = event.target.getAttribute('data-gist-id');
+          const run = pastRuns.find(run => run.gistId === gistId);
+          const flamegraphFiles = (await run.gistFiles).filter(file => file.endsWith('.html'));
+          const benchmarks = flamegraphFiles.map(url => url.split('/').pop().replace('-cpu.html', '').replace('-alloc.html', ''));
+          const uniqueBenchmarks = [...new Set(benchmarks)];
+          const content = uniqueBenchmarks.map(benchmark => {
+            return `<tr>
+                <td>${benchmark}</td>
+                <td><button class="open-button" onclick="loadFlamegraph('${benchmark}', '${gistId}')">Open</button></td>
+              </tr>`;
+          }).join('');
+          document.getElementById('dialog-close').addEventListener('click', function() {
+            document.getElementById('flamegraph-dialog').close();
+          });
+          document.getElementById("dialog-content").innerHTML = content;
+          document.getElementById('flamegraph-dialog').showModal();
+        });
+      }
+    }
+
+    async function loadFlamegraph(benchmarkName, gistId) {
+      const type = document.querySelector(`input[name="flamegraphType"]:checked`).value;
+      const run = pastRuns.find(run => run.gistId === gistId);
+      const flamegraphUrl = (await run.gistFiles).find(url => url.includes(`${benchmarkName}-${type}`));
+      document.getElementById('jmh-iframe').src = `https://htmlpreview.github.io/?${encodeURIComponent(flamegraphUrl)}`;
+      document.getElementById('flamegraph-dialog').close();
+    }
+
+    function loadJMHResults() {
+      const selectedRows = document.getElementsByClassName('selected');
+      const sources = [];
+      for(let i = 0; i < selectedRows.length; i++){
+        const runUrl = selectedRows[i].children[4].children[0].href;
+        const run = pastRuns.find(run => run.runUrl === runUrl)
+        const shortSha = run.commitUrl.split('/').pop().substring(0,7)
+        const gistUrl = run.gistUrl;
+        const rawFileUrl = gistUrlToRawFileUrl(gistUrl, `%23${shortSha}-jmh-result.json`);
+        sources.push(rawFileUrl);
+      }
+
+      if (sources.length > 0) {
+        const visualizerUrl = `https://jmh.morethan.io/?sources=${sources.reverse().join(',')}`;
+        const iframe = document.getElementById("jmh-iframe");
+        iframe.src = visualizerUrl;
+      }
+    }
+
+    document.getElementById('copy-button').addEventListener('click', function() {
+      const urlToCopy = document.getElementById('jmh-iframe').src;
+      navigator.clipboard.writeText(urlToCopy).then(function() {
+        console.log('Copying to clipboard was successful!');
+      }, function(err) {
+        console.error('Could not copy text: ', err);
+      });
+    });
+
+    document.addEventListener('DOMContentLoaded', loadBenchmarkRuns);
+  </script>
+</body>
+</html>
