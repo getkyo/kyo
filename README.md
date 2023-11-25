@@ -1,5 +1,5 @@
 ![kyo](https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png)
-# Kyō
+----------
 
 ![Build Status](https://github.com/getkyo/kyo/workflows/build/badge.svg)
 ![Chat](https://img.shields.io/discord/1087005439859904574)
