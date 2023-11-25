@@ -1,7 +1,6 @@
-![kyo](https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png)
-----------
-
 ## Please visit [getkyo.io](https://getkyo.io/) for an indexed version of this documentation.
+
+![kyo](https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png)
 
 ## Introduction
 
