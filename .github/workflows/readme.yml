@@ -1,4 +1,4 @@
-name: build
+name: readme
 on: [push, pull_request]
 jobs:
   readme:
