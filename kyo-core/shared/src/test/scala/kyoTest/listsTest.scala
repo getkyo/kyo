@@ -70,4 +70,10 @@ class listsTest extends KyoTest {
     )
     assert(acc == List(1, 2))
   }
+  "fill" in {
+    checkEquals[List[Int], Nothing](
+        IOs.run(Lists.fill(100)(IOs(1))),
+        List.fill(100)(1)
+    )
+  }
 }

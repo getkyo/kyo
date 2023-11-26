@@ -78,6 +78,15 @@ object lists {
         }
       loop(v)
     }
+
+    def fill[T, S](n: Int)(v: => T > S): List[T] > S = {
+      def loop(n: Int, acc: List[T]): List[T] > S =
+        n match {
+          case 0 => acc.reverse
+          case n => v.map(v => loop(n - 1, v :: acc))
+        }
+      loop(n, Nil)
+    }
   }
   val Lists = new Lists
 }

@@ -108,6 +108,12 @@ object hubs {
 
   class Listener[T] private[hubs] (hub: Hub[T], child: Channel[T]) {
 
+    def size: Int > IOs = child.size
+
+    def isEmpty: Boolean > IOs = child.isEmpty
+
+    def isFull: Boolean > IOs = child.isFull
+
     def poll: Option[T] > IOs = child.poll
 
     def takeFiber: Fiber[T] > IOs = child.takeFiber
