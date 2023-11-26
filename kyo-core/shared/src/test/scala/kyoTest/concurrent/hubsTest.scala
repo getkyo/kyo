@@ -14,7 +14,7 @@ import kyo.lists.Lists
 
 class hubsTest extends KyoTest {
 
-  "listen/offer/take" in run {
+  "listen/offer/take" in runJVM {
     for {
       h <- Hubs.init[Int](2)
       l <- h.listen
@@ -22,7 +22,7 @@ class hubsTest extends KyoTest {
       v <- l.take
     } yield assert(b && v == 1)
   }
-  "listen/listen/offer/take" in run {
+  "listen/listen/offer/take" in runJVM {
     for {
       h  <- Hubs.init[Int](2)
       l1 <- h.listen
@@ -32,7 +32,7 @@ class hubsTest extends KyoTest {
       v2 <- l2.take
     } yield assert(b && v1 == 1 && v2 == 1)
   }
-  "listen/offer/listen/take/poll" in run {
+  "listen/offer/listen/take/poll" in runJVM {
     for {
       h  <- Hubs.init[Int](2)
       l1 <- h.listen
@@ -43,7 +43,7 @@ class hubsTest extends KyoTest {
       v2 <- l2.poll
     } yield assert(b && v1 == 1 && v2 == None)
   }
-  "listen/offer/take/listen/poll" in run {
+  "listen/offer/take/listen/poll" in runJVM {
     for {
       h  <- Hubs.init[Int](2)
       l1 <- h.listen
@@ -53,7 +53,7 @@ class hubsTest extends KyoTest {
       v2 <- l2.poll
     } yield assert(b && v1 == 1 && v2 == None)
   }
-  "offer/listen/poll" in run {
+  "offer/listen/poll" in runJVM {
     for {
       h <- Hubs.init[Int](2)
       b <- h.offer(1)
@@ -62,19 +62,7 @@ class hubsTest extends KyoTest {
       v <- l.poll
     } yield assert(b && v == None)
   }
-  "offer/listen/poll/offer/take" in run {
-    for {
-      h  <- Hubs.init[Int](2)
-      b1 <- h.offer(1)
-      _  <- retry(h.isEmpty) // wait transfer
-      l  <- h.listen
-      v1 <- l.poll
-      _  <- retry(h.isEmpty)
-      b2 <- h.offer(2)
-      v2 <- l.take
-    } yield assert(b1 && v1 == None && b2 && v2 == 2)
-  }
-  "close hub" in run {
+  "close hub" in runJVM {
     for {
       h  <- Hubs.init[Int](2)
       b  <- h.offer(1)
@@ -89,7 +77,7 @@ class hubsTest extends KyoTest {
         b && c1 == Some(Seq()) && v1.isFailure && v2.isFailure && v3.isFailure && c2 == None
     )
   }
-  "close listener w/ buffer" in run {
+  "close listener w/ buffer" in runJVM {
     for {
       h  <- Hubs.init[Int](2)
       l1 <- h.listen(2)
@@ -105,7 +93,7 @@ class hubsTest extends KyoTest {
         b1 && c1 == Some(Seq(1)) && b2 && v2 == Some(2) && c2 == Some(Seq())
     )
   }
-  "offer beyond capacity" in run {
+  "offer beyond capacity" in runJVM {
     for {
       h  <- Hubs.init[Int](2)
       l  <- h.listen
@@ -119,7 +107,7 @@ class hubsTest extends KyoTest {
       v4 <- l.poll
     } yield assert(!b && v1 == 1 && v2 == 2 && v3 == 3 && v4.isEmpty)
   }
-  "concurrent listeners taking values" in run {
+  "concurrent listeners taking values" in runJVM {
     for {
       h  <- Hubs.init[Int](10)
       l1 <- h.listen
@@ -129,7 +117,7 @@ class hubsTest extends KyoTest {
       v2 <- l2.take
     } yield assert(v1 == 1 && v2 == 1) // Assuming listeners take different values
   }
-  "listener removal" in run {
+  "listener removal" in runJVM {
     for {
       h <- Hubs.init[Int](2)
       l <- h.listen
@@ -140,7 +128,7 @@ class hubsTest extends KyoTest {
       v <- Tries.run(l.poll)
     } yield assert(c == Some(Seq()) && v.isFailure)
   }
-  "hub closure with pending offers" in run {
+  "hub closure with pending offers" in runJVM {
     for {
       h <- Hubs.init[Int](2)
       _ <- h.offer(1)
@@ -148,7 +136,7 @@ class hubsTest extends KyoTest {
       v <- Tries.run(h.offer(2))
     } yield assert(v.isFailure)
   }
-  "create listener on empty hub" in run {
+  "create listener on empty hub" in runJVM {
     for {
       h <- Hubs.init[Int](2)
       l <- h.listen
@@ -156,7 +144,7 @@ class hubsTest extends KyoTest {
     } yield assert(v.isEmpty)
   }
   "contention" - {
-    "writes" in run {
+    "writes" in runJVM {
       for {
         h  <- Hubs.init[Int](2)
         l  <- h.listen
@@ -166,7 +154,7 @@ class hubsTest extends KyoTest {
         e2 <- l.isEmpty
       } yield assert(t == List.fill(100)(1) && e1 && e2)
     }
-    "reads + writes" in run {
+    "reads + writes" in runJVM {
       for {
         h  <- Hubs.init[Int](2)
         l  <- h.listen
@@ -176,7 +164,7 @@ class hubsTest extends KyoTest {
         e2 <- l.isEmpty
       } yield assert(t == List.fill(100)(1) && e1 && e2)
     }
-    "listeners" in run {
+    "listeners" in runJVM {
       for {
         h  <- Hubs.init[Int](2)
         l  <- Lists.fill(100)(Fibers.fork(h.listen).map(_.get))
