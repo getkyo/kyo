@@ -69,6 +69,7 @@ class hubsTest extends KyoTest {
       _  <- retry(h.isEmpty) // wait transfer
       l  <- h.listen
       v1 <- l.poll
+      _  <- retry(h.isEmpty)
       b2 <- h.offer(2)
       v2 <- l.take
     } yield assert(b1 && v1 == None && b2 && v2 == 2)
