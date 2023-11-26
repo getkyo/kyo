@@ -220,7 +220,7 @@ object fibers {
     def parallelFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[Seq[T]] > IOs =
       l.size match {
         case 0 => Fiber.done(Seq.empty)
-        case 1 => Fibers.run(l(0).map(Seq(_)))
+        case 1 => Fibers.run(l(0).map(Seq(_)))(Flat.unsafe.checked)
         case _ =>
           Locals.save.map { st =>
             IOs {
