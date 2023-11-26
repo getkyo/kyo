@@ -210,54 +210,72 @@ object fibers {
       Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
     def parallel[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Seq[T] > Fibers =
-      Fibers.join(parallelFiber[T](l))
+      l.size match {
+        case 0 => Seq.empty
+        case 1 => l(0).map(Seq(_))
+        case _ =>
+          Fibers.join(parallelFiber[T](l))
+      }
 
     def parallelFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[Seq[T]] > IOs =
-      Locals.save.map { st =>
-        IOs {
-          val p       = new IOPromise[Seq[T]]
-          val size    = l.size
-          val results = (new Array[Any](size)).asInstanceOf[Array[T]]
-          val pending = new AtomicInteger(size)
-          var i       = 0
-          foreach(l) { io =>
-            val fiber = IOTask(IOs(io), st)
-            p.interrupts(fiber)
-            val j = i
-            fiber.onComplete { r =>
-              try {
-                results(j) = IOs.run(r)(Flat.unsafe.checked)
-                if (pending.decrementAndGet() == 0) {
-                  p.complete(ArraySeq.unsafeWrapArray(results))
+      l.size match {
+        case 0 => Fiber.done(Seq.empty)
+        case 1 => Fibers.run(l(0).map(Seq(_)))
+        case _ =>
+          Locals.save.map { st =>
+            IOs {
+              val p       = new IOPromise[Seq[T]]
+              val size    = l.size
+              val results = (new Array[Any](size)).asInstanceOf[Array[T]]
+              val pending = new AtomicInteger(size)
+              var i       = 0
+              foreach(l) { io =>
+                val fiber = IOTask(IOs(io), st)
+                p.interrupts(fiber)
+                val j = i
+                fiber.onComplete { r =>
+                  try {
+                    results(j) = IOs.run(r)(Flat.unsafe.checked)
+                    if (pending.decrementAndGet() == 0) {
+                      p.complete(ArraySeq.unsafeWrapArray(results))
+                    }
+                  } catch {
+                    case ex if (NonFatal(ex)) =>
+                      p.complete(IOs.fail(ex))
+                  }
                 }
-              } catch {
-                case ex if (NonFatal(ex)) =>
-                  p.complete(IOs.fail(ex))
+                i += 1
               }
+              Fiber.promise(p)
             }
-            i += 1
           }
-          Fiber.promise(p)
-        }
       }
 
     def race[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): T > Fibers =
-      Fibers.join(raceFiber[T](l))
-
-    def raceFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[T] > IOs = {
-      require(!l.isEmpty)
-      Locals.save.map { st =>
-        IOs {
-          val p = new IOPromise[T]
-          foreach(l) { io =>
-            val f = IOTask(IOs(io), st)
-            p.interrupts(f)
-            f.onComplete(p.complete(_))
-          }
-          Fiber.promise(p)
-        }
+      l.size match {
+        case 0 => IOs.fail("Can't race an empty list.")
+        case 1 => l(0)
+        case _ =>
+          Fibers.join(raceFiber[T](l))
       }
-    }
+
+    def raceFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[T] > IOs =
+      l.size match {
+        case 0 => IOs.fail("Can't race an empty list.")
+        case 1 => Fibers.run(l(0))
+        case _ =>
+          Locals.save.map { st =>
+            IOs {
+              val p = new IOPromise[T]
+              foreach(l) { io =>
+                val f = IOTask(IOs(io), st)
+                p.interrupts(f)
+                f.onComplete(p.complete(_))
+              }
+              Fiber.promise(p)
+            }
+          }
+      }
 
     def never: Fiber[Unit] > IOs =
       IOs(Fiber.promise(new IOPromise[Unit]))

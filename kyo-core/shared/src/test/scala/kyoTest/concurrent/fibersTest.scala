@@ -138,63 +138,131 @@ class fibersTest extends KyoTest {
     }
   }
 
-  "race" in runJVM {
-    val ac = new JAtomicInteger(0)
-    val bc = new JAtomicInteger(0)
-    def loop(i: Int, s: String): String > IOs =
-      IOs {
-        if (i > 0) {
-          if (s.equals("a")) ac.incrementAndGet()
-          else bc.incrementAndGet()
-          loop(i - 1, s)
-        } else {
-          s
-        }
+  "race" - {
+    "zero" in runJVM {
+      Tries.run(Fibers.race(Seq())).map { r =>
+        assert(r.isFailure)
       }
-    Fibers.race(loop(10, "a"), loop(Int.MaxValue, "b")).map { r =>
-      assert(r == "a")
-      assert(ac.get() == 10)
-      assert(bc.get() <= Int.MaxValue)
+    }
+    "one" in runJVM {
+      Fibers.race(Seq(1)).map { r =>
+        assert(r == 1)
+      }
+    }
+    "n" in runJVM {
+      val ac = new JAtomicInteger(0)
+      val bc = new JAtomicInteger(0)
+      def loop(i: Int, s: String): String > IOs =
+        IOs {
+          if (i > 0) {
+            if (s.equals("a")) ac.incrementAndGet()
+            else bc.incrementAndGet()
+            loop(i - 1, s)
+          } else {
+            s
+          }
+        }
+      Fibers.race(loop(10, "a"), loop(Int.MaxValue, "b")).map { r =>
+        assert(r == "a")
+        assert(ac.get() == 10)
+        assert(bc.get() <= Int.MaxValue)
+      }
     }
   }
 
-  "collect" in run {
-    val ac = new JAtomicInteger(0)
-    val bc = new JAtomicInteger(0)
-    def loop(i: Int, s: String): String > IOs =
-      IOs {
-        if (i > 0) {
-          if (s.equals("a")) ac.incrementAndGet()
-          else bc.incrementAndGet()
-          loop(i - 1, s)
-        } else {
-          s
-        }
+  "raceFiber" - {
+    "zero" in runJVM {
+      Tries.run(Fibers.raceFiber(Seq()).map(_.get)).map { r =>
+        assert(r.isFailure)
       }
-    Fibers.parallel(List(loop(1, "a"), loop(5, "b"))).map { r =>
-      assert(r == List("a", "b"))
-      assert(ac.get() == 1)
-      assert(bc.get() == 5)
+    }
+    "one" in runJVM {
+      Fibers.raceFiber(Seq(1)).map(_.get).map { r =>
+        assert(r == 1)
+      }
+    }
+    "n" in runJVM {
+      val ac = new JAtomicInteger(0)
+      val bc = new JAtomicInteger(0)
+      def loop(i: Int, s: String): String > IOs =
+        IOs {
+          if (i > 0) {
+            if (s.equals("a")) ac.incrementAndGet()
+            else bc.incrementAndGet()
+            loop(i - 1, s)
+          } else {
+            s
+          }
+        }
+      Fibers.raceFiber(List(loop(10, "a"), loop(Int.MaxValue, "b"))).map(_.get).map { r =>
+        assert(r == "a")
+        assert(ac.get() == 10)
+        assert(bc.get() <= Int.MaxValue)
+      }
     }
   }
 
-  "collectFiber" in run {
-    val ac = new JAtomicInteger(0)
-    val bc = new JAtomicInteger(0)
-    def loop(i: Int, s: String): String > IOs =
-      IOs {
-        if (i > 0) {
-          if (s.equals("a")) ac.incrementAndGet()
-          else bc.incrementAndGet()
-          loop(i - 1, s)
-        } else {
-          s
-        }
+  "parallel" - {
+    "zero" in run {
+      Fibers.parallel(Seq()).map { r =>
+        assert(r == Seq())
       }
-    Fibers.parallelFiber(List(loop(2, "a"), loop(5, "b"))).map(_.get).map { r =>
-      assert(r == List("a", "b"))
-      assert(ac.get() == 2)
-      assert(bc.get() == 5)
+    }
+    "one" in run {
+      Fibers.parallel(Seq(1)).map { r =>
+        assert(r == Seq(1))
+      }
+    }
+    "n" in run {
+      val ac = new JAtomicInteger(0)
+      val bc = new JAtomicInteger(0)
+      def loop(i: Int, s: String): String > IOs =
+        IOs {
+          if (i > 0) {
+            if (s.equals("a")) ac.incrementAndGet()
+            else bc.incrementAndGet()
+            loop(i - 1, s)
+          } else {
+            s
+          }
+        }
+      Fibers.parallel(List(loop(1, "a"), loop(5, "b"))).map { r =>
+        assert(r == List("a", "b"))
+        assert(ac.get() == 1)
+        assert(bc.get() == 5)
+      }
+    }
+  }
+
+  "parallelFiber" - {
+    "zero" in run {
+      Fibers.parallelFiber(Seq()).map(_.get).map { r =>
+        assert(r == Seq())
+      }
+    }
+    "one" in run {
+      Fibers.parallelFiber(Seq(1)).map(_.get).map { r =>
+        assert(r == Seq(1))
+      }
+    }
+    "n" in run {
+      val ac = new JAtomicInteger(0)
+      val bc = new JAtomicInteger(0)
+      def loop(i: Int, s: String): String > IOs =
+        IOs {
+          if (i > 0) {
+            if (s.equals("a")) ac.incrementAndGet()
+            else bc.incrementAndGet()
+            loop(i - 1, s)
+          } else {
+            s
+          }
+        }
+      Fibers.parallelFiber(List(loop(1, "a"), loop(5, "b"))).map(_.get).map { r =>
+        assert(r == List("a", "b"))
+        assert(ac.get() == 1)
+        assert(bc.get() == 5)
+      }
     }
   }
 
