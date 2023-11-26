@@ -3,6 +3,7 @@ package kyoTest.concurrent
 import kyo.concurrent.queues._
 import kyo._
 import kyo.ios._
+import kyo.tries._
 import kyoTest.KyoTest
 import kyo.concurrent.Access
 
@@ -60,6 +61,41 @@ class queuesTest extends KyoTest {
         }
       }
     }
+  }
+
+  "close" in run {
+    for {
+      q  <- Queues.init[Int](2)
+      b  <- q.offer(1)
+      c1 <- q.close
+      v1 <- Tries.run(q.size)
+      v2 <- Tries.run(q.isEmpty)
+      v3 <- Tries.run(q.isFull)
+      v4 <- Tries.run(q.offer(2))
+      v5 <- Tries.run(q.poll)
+      v6 <- Tries.run(q.peek)
+      v7 <- Tries.run(q.drain)
+      c2 <- q.close
+    } yield assert(
+        b && c1 == Some(Seq(1)) &&
+          v1.isFailure &&
+          v2.isFailure &&
+          v3.isFailure &&
+          v4.isFailure &&
+          v5.isFailure &&
+          v6.isFailure &&
+          v7.isFailure &&
+          c2.isEmpty
+    )
+  }
+
+  "drain" in run {
+    for {
+      q <- Queues.init[Int](2)
+      _ <- q.offer(1)
+      _ <- q.offer(2)
+      v <- q.drain
+    } yield assert(v == Seq(1, 2))
   }
 
   "unbounded" - {

@@ -8,22 +8,41 @@ import org.jctools.queues._
 import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
+import java.util.concurrent.atomic.AtomicBoolean
 
 object queues {
 
+  private val closed = IOs.fail("Queue closed!")
+
   class Queue[T] private[queues] (private[kyo] val unsafe: Queues.Unsafe[T]) {
-    def capacity: Int                              = unsafe.capacity
-    def size: Int > IOs                            = IOs(unsafe.size())
-    def isEmpty: Boolean > IOs                     = IOs(unsafe.isEmpty())
-    def isFull: Boolean > IOs                      = IOs(unsafe.isFull())
-    def offer[S](v: T > S): Boolean > (IOs with S) = v.map(v => IOs(unsafe.offer(v)))
-    def poll: Option[T] > IOs                      = IOs(unsafe.poll())
-    def peek: Option[T] > IOs                      = IOs(unsafe.peek())
+
+    def capacity: Int               = unsafe.capacity
+    def size: Int > IOs             = op(unsafe.size())
+    def isEmpty: Boolean > IOs      = op(unsafe.isEmpty())
+    def isFull: Boolean > IOs       = op(unsafe.isFull())
+    def offer(v: T): Boolean > IOs  = op(unsafe.offer(v))
+    def poll: Option[T] > IOs       = op(unsafe.poll())
+    def peek: Option[T] > IOs       = op(unsafe.peek())
+    def drain: Seq[T] > IOs         = op(unsafe.drain())
+    def isClosed: Boolean > IOs     = IOs(unsafe.isClosed())
+    def close: Option[Seq[T]] > IOs = IOs(unsafe.close())
+
+    /*inline*/
+    private def op[T]( /*inline*/ v: => T): T > IOs =
+      IOs {
+        if (unsafe.isClosed()) {
+          closed
+        } else {
+          v
+        }
+      }
   }
 
   object Queues {
 
-    private[kyo] trait Unsafe[T] {
+    private[kyo] abstract class Unsafe[T]
+        extends AtomicBoolean(false) {
+
       def capacity: Int
       def size(): Int
       def isEmpty(): Boolean
@@ -31,6 +50,28 @@ object queues {
       def offer(v: T): Boolean
       def poll(): Option[T]
       def peek(): Option[T]
+
+      def drain(): Seq[T] = {
+        def loop(acc: List[T]): List[T] =
+          poll() match {
+            case None =>
+              acc.reverse
+            case Some(v) =>
+              loop(v :: acc)
+          }
+        loop(Nil)
+      }
+
+      def isClosed(): Boolean =
+        super.get()
+
+      def close(): Option[Seq[T]] =
+        super.compareAndSet(false, true) match {
+          case false =>
+            None
+          case true =>
+            Some(drain())
+        }
     }
 
     class Unbounded[T] private[queues] (unsafe: Queues.Unsafe[T]) extends Queue[T](unsafe) {
@@ -38,34 +79,32 @@ object queues {
       def add[S](v: T > S): Unit > (IOs with S) = v.map(offer(_)).unit
     }
 
-    private val zeroCapacity =
-      new Queue(
-          new Unsafe[Any] {
-            def capacity      = 0
-            def size()        = 0
-            def isEmpty()     = true
-            def isFull()      = true
-            def offer(v: Any) = false
-            def poll()        = None
-            def peek()        = None
-          }
-      )
-
     def init[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
       IOs {
         capacity match {
           case c if (c <= 0) =>
-            zeroCapacity.asInstanceOf[Queue[T]]
+            new Queue(
+                new Unsafe[T] {
+                  def capacity    = 0
+                  def size()      = 0
+                  def isEmpty()   = true
+                  def isFull()    = true
+                  def offer(v: T) = false
+                  def poll()      = None
+                  def peek()      = None
+                }
+            )
           case 1 =>
             new Queue(
-                new AtomicReference[T] with Unsafe[T] {
+                new Unsafe[T] {
+                  val state       = new AtomicReference[T]
                   def capacity    = 1
-                  def size()      = if (get == null) 0 else 1
-                  def isEmpty()   = get == null
-                  def isFull()    = get != null
-                  def offer(v: T) = compareAndSet(null.asInstanceOf[T], v)
-                  def poll()      = Option(getAndSet(null.asInstanceOf[T]))
-                  def peek()      = Option(get)
+                  def size()      = if (state.get() == null) 0 else 1
+                  def isEmpty()   = state.get() == null
+                  def isFull()    = state.get() != null
+                  def offer(v: T) = state.compareAndSet(null.asInstanceOf[T], v)
+                  def poll()      = Option(state.getAndSet(null.asInstanceOf[T]))
+                  def peek()      = Option(state.get())
                 }
             )
           case Int.MaxValue =>

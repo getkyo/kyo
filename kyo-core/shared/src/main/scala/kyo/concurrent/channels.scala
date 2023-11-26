@@ -16,9 +16,9 @@ object channels {
 
     def size: Int > IOs
 
-    def offer[S](v: T > S): Boolean > (IOs with S)
+    def offer(v: T): Boolean > IOs
 
-    def offerUnit[S](v: T > S): Unit > (IOs with S)
+    def offerUnit(v: T): Unit > IOs
 
     def poll: Option[T] > IOs
 
@@ -26,20 +26,25 @@ object channels {
 
     def isFull: Boolean > IOs
 
-    def putFiber[S](v: T > S): Fiber[Unit] > (IOs with S)
+    def putFiber(v: T): Fiber[Unit] > IOs
 
     def takeFiber: Fiber[T] > IOs
 
-    def put[S](v: T > S): Unit > (S with Fibers) =
+    def put(v: T): Unit > Fibers =
       putFiber(v).map(_.get)
 
     def take: T > Fibers =
       takeFiber.map(_.get)
+
+    def isClosed: Boolean > IOs
+
+    def close: Option[Seq[T]] > IOs
   }
 
   object Channels {
 
     private val placeholder = Fibers.unsafeInitPromise[Unit]
+    private val closed      = IOs.fail("Channel closed!")
 
     def init[T](
         capacity: Int,
@@ -53,51 +58,45 @@ object channels {
             val takes = new MpmcUnboundedXaddArrayQueue[Promise[T]](8)
             val puts  = new MpmcUnboundedXaddArrayQueue[(T, Promise[Unit])](8)
 
-            def size    = queue.size
-            def isEmpty = queue.isEmpty
-            def isFull  = queue.isFull
+            def size    = op(u.size())
+            def isEmpty = op(u.isEmpty())
+            def isFull  = op(u.isFull())
 
-            def offer[S](v: T > S) =
-              v.map { v =>
-                IOs[Boolean, S] {
-                  try u.offer(v)
-                  finally flush()
-                }
+            def offer(v: T) =
+              op {
+                try u.offer(v)
+                finally flush()
               }
-            def offerUnit[S](v: T > S) =
-              v.map { v =>
-                IOs[Unit, S] {
-                  try {
-                    u.offer(v)
-                    ()
-                  } finally flush()
-                }
+            def offerUnit(v: T) =
+              op {
+                try {
+                  u.offer(v)
+                  ()
+                } finally flush()
               }
             val poll =
-              IOs {
+              op {
                 try u.poll()
                 finally flush()
               }
 
-            def putFiber[S](v: T > S) =
-              v.map { v =>
-                IOs[Fiber[Unit], S] {
-                  try {
-                    if (u.offer(v)) {
-                      Fibers.value(())
-                    } else {
-                      val p = Fibers.unsafeInitPromise[Unit]
-                      puts.add((v, p))
-                      p
-                    }
-                  } finally {
-                    flush()
+            def putFiber(v: T) =
+              op {
+                try {
+                  if (u.offer(v)) {
+                    Fibers.value(())
+                  } else {
+                    val p = Fibers.unsafeInitPromise[Unit]
+                    puts.add((v, p))
+                    p
                   }
+                } finally {
+                  flush()
                 }
               }
 
             val takeFiber =
-              IOs {
+              op {
                 try {
                   u.poll() match {
                     case Some(v) =>
@@ -109,6 +108,42 @@ object channels {
                   }
                 } finally {
                   flush()
+                }
+              }
+
+            /*inline*/
+            def op[T]( /*inline*/ v: => T): T > IOs =
+              IOs[T, Any] {
+                if (u.isClosed()) {
+                  closed
+                } else {
+                  v
+                }
+              }
+
+            def isClosed = queue.isClosed
+
+            def close =
+              IOs[Option[Seq[T]], Any] {
+                u.close() match {
+                  case None =>
+                    None
+                  case r: Some[Seq[T]] =>
+                    def dropTakes(): Unit > IOs =
+                      takes.poll() match {
+                        case null => ()
+                        case p =>
+                          p.interrupt.map(_ => dropTakes())
+                      }
+                    def dropPuts(): Unit > IOs =
+                      puts.poll() match {
+                        case null => ()
+                        case (_, p) =>
+                          p.interrupt.map(_ => dropPuts())
+                      }
+                    dropTakes()
+                      .andThen(dropPuts())
+                      .andThen(r)
                 }
               }
 

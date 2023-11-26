@@ -6,6 +6,7 @@ import kyo.concurrent.queues._
 import kyo.concurrent.timers._
 import kyo._
 import kyo.ios._
+import kyo.tries._
 import kyoTest.KyoTest
 
 import scala.concurrent.duration._
@@ -83,6 +84,62 @@ class channelsTest extends KyoTest {
       d2 <- f.isDone
       v  <- f.get
     } yield assert(!d1 && d2 && v == 1)
+  }
+  "close" - {
+    "empty" in runJVM {
+      for {
+        c <- Channels.init[Int](2)
+        r <- c.close
+        t <- Tries.run(c.offer(1))
+      } yield assert(r == Some(Seq()) && t.isFailure)
+    }
+    "non-empty" in runJVM {
+      for {
+        c <- Channels.init[Int](2)
+        _ <- c.put(1)
+        _ <- c.put(2)
+        r <- c.close
+        t <- Tries.run(c.isEmpty)
+      } yield assert(r == Some(Seq(1, 2)) && t.isFailure)
+    }
+    "pending take" in runJVM {
+      for {
+        c <- Channels.init[Int](2)
+        f <- c.takeFiber
+        r <- c.close
+        d <- f.getTry
+        t <- Tries.run(c.isFull)
+      } yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
+    }
+    "pending put" in runJVM {
+      for {
+        c <- Channels.init[Int](2)
+        _ <- c.put(1)
+        _ <- c.put(2)
+        f <- c.putFiber(3)
+        r <- c.close
+        d <- f.getTry
+        t <- Tries.run(c.offerUnit(1))
+      } yield assert(r == Some(Seq(1, 2)) && d.isFailure && t.isFailure)
+    }
+    "no buffer w/ pending put" in runJVM {
+      for {
+        c <- Channels.init[Int](0)
+        f <- c.putFiber(1)
+        r <- c.close
+        d <- f.getTry
+        t <- Tries.run(c.poll)
+      } yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
+    }
+    "no buffer w/ pending take" in runJVM {
+      for {
+        c <- Channels.init[Int](0)
+        f <- c.takeFiber
+        r <- c.close
+        d <- f.getTry
+        t <- Tries.run(c.put(1))
+      } yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
+    }
   }
   "no buffer" in runJVM {
     for {
