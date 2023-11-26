@@ -1042,6 +1042,16 @@ val g: Boolean > IOs =
 // Check if the queue is full
 val h: Boolean > IOs =
   a.map(_.isFull)
+
+// Drain the queue items
+val i: Seq[Int] > IOs =
+  a.map(_.drain)
+
+// Close the queue. If successful,
+// returns a Some with the drained
+// elements
+val j: Option[Seq[Int]] > IOs =
+  a.map(_.close)
 ```
 
 **Unbounded queues**
@@ -1149,6 +1159,13 @@ val d: Fiber[Unit] > IOs =
 // 'takeFiber' also returns a fiber
 val e: Fiber[Int] > IOs =
   a.map(_.takeFiber)
+
+// Closes the channel. If successful,
+// returns a Some with the drained
+// elements. All pending puts and takes
+// are automatically interrupted
+val f: Option[Seq[Int]] > IOs =
+  a.map(_.close)
 ```
 
 The ability to suspend fibers during `put` and `take` operations allows `Channels` to provide a more controlled form of concurrency. This is particularly beneficial for rate-sensitive or resource-intensive tasks where maintaining system balance is crucial.
