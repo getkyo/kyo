@@ -7,6 +7,7 @@ import kyo.concurrent.fibers._
 import kyo.concurrent.channels._
 import java.util.concurrent.ConcurrentSkipListSet
 import java.util.concurrent.CopyOnWriteArraySet
+import Flat.unsafe._
 
 object hubs {
 
@@ -30,7 +31,7 @@ object hubs {
               }
             loop()
           }.map { fiber =>
-            new Hub(ch, fiber, listeners)
+            new Hub(ch, fiber, listeners)(f)
           }
         }
       }
