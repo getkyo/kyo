@@ -68,7 +68,7 @@ package object tools {
     )(f: (AI, T) => U > AIs)(implicit t: ValueSchema[T], u: ValueSchema[U]): Tool[T, U] =
       Tool(
           name,
-          description + " **Note how the input and output are wrapped into a `value` field**",
+          description,
           JsonSchema(t.get),
           JsonCodec.jsonDecoder(t.get),
           JsonCodec.jsonEncoder(u.get),
@@ -83,15 +83,15 @@ package object tools {
 
     private[kyo] def resultTool[T](implicit
         t: ValueSchema[T]
-    ): (Tool[T, T], Option[T] > AIs) > AIs = {
+    ): (Tool[T, String], Option[T] > AIs) > AIs = {
       Atomics.initRef(Option.empty[T]).map { ref =>
         val tool =
-          init[T, T](
+          init[T, String](
               "resultTool",
               "call this function with the result",
               (_: T) => "Generating result."
           ) { (_, v) =>
-            ref.set(Some(v)).andThen(v)
+            ref.set(Some(v)).andThen("Result processed.")
           }
         (tool, ref.get)
       }

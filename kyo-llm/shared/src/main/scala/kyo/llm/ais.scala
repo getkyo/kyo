@@ -16,7 +16,6 @@ import kyo.tries._
 import zio.schema.codec.JsonCodec
 
 import java.lang.ref.WeakReference
-import scala.annotation.StaticAnnotation
 import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NoStackTrace
@@ -28,7 +27,8 @@ object ais {
 
   type AIs >: AIs.Effects <: AIs.Effects
 
-  final case class desc(value: String) extends StaticAnnotation
+  type desc = kyo.llm.desc
+  val desc = kyo.llm.desc
 
   implicit class PromptInterpolator(val sc: StringContext) extends AnyVal {
     def p(args: Any*): String =

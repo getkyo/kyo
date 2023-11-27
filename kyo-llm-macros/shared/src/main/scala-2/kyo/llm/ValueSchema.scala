@@ -4,8 +4,6 @@ import zio.schema._
 import scala.language.experimental.macros
 import scala.reflect.macros.blackbox
 
-case class Value[T](value: T)
-
 case class ValueSchema[T](get: Schema[Value[T]])
 
 object ValueSchema {
