@@ -29,13 +29,16 @@ object embeddings {
         config <- Configs.get
         req = Request(text, model)
         _ <- logger.debug(req.toJsonPretty)
-        res <- Requests[Response](
-            _.contentType("application/json")
-              .header("Authorization", s"Bearer $apiKey")
-              .post(uri"${config.apiUrl}/v1/embeddings")
-              .body(req)
-              .response(asJson[Response])
-        )
+        res <-
+          config.embeddingsMeter.run {
+            Requests[Response](
+                _.contentType("application/json")
+                  .header("Authorization", s"Bearer $apiKey")
+                  .post(uri"${config.apiUrl}/v1/embeddings")
+                  .body(req)
+                  .response(asJson[Response])
+            )
+          }
         _ <- logger.debug(res.copy(data =
           res.data.map(d => d.copy(embedding = d.embedding.take(3)))
         ).toJsonPretty)

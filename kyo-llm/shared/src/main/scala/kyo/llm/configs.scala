@@ -3,6 +3,7 @@ package kyo.llm
 import kyo._
 import kyo.ios._
 import kyo.locals._
+import kyo.concurrent.meters._
 import kyo.llm.ais.AIs
 
 object configs {
@@ -24,7 +25,9 @@ object configs {
       model: Model,
       temperature: Double,
       maxTokens: Option[Int],
-      seed: Option[Int]
+      seed: Option[Int],
+      completionsMeter: Meter,
+      embeddingsMeter: Meter
   ) {
     def apiUrl(url: String): Config =
       copy(apiUrl = url)
@@ -38,6 +41,10 @@ object configs {
       copy(maxTokens = maxTokens)
     def seed(seed: Option[Int]): Config =
       copy(seed = seed)
+    def completionsMeter(meter: Meter): Config =
+      copy(completionsMeter = meter)
+    def embeddingsMeter(meter: Meter): Config =
+      copy(embeddingsMeter = meter)
   }
 
   object Config {
@@ -46,7 +53,16 @@ object configs {
       val apiKey =
         Option(System.getenv(apiKeyProp))
           .orElse(Option(System.getProperty(apiKeyProp)))
-      Config("https://api.openai.com", apiKey, Model.gpt4_turbo, 0.2, None, None)
+      Config(
+          "https://api.openai.com",
+          apiKey,
+          Model.gpt4_turbo,
+          0.2,
+          None,
+          None,
+          Meters.initNoop,
+          Meters.initNoop
+      )
     }
   }
 

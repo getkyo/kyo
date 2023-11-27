@@ -27,7 +27,14 @@ object meters {
 
   object Meters {
 
-    val initMutex: Meter > IOs =
+    def initNoop: Meter =
+      new Meter {
+        def available                 = Int.MaxValue
+        def run[T, S](v: => T > S)    = v
+        def tryRun[T, S](v: => T > S) = v.map(Some(_))
+      }
+
+    def initMutex: Meter > IOs =
       initSemaphore(1)
 
     def initSemaphore(concurrency: Int): Meter > IOs =
