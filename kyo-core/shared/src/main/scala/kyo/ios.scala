@@ -25,7 +25,7 @@ object ios {
   trait Preempt extends Safepoint[IO, IOs] {
     def ensure(f: () => Unit): Unit
     def remove(f: () => Unit): Unit
-    def apply[T, S](v: => T > S): T > (IOs with S) =
+    def suspend[T, S](v: => T > S): T > (IOs with S) =
       IOs[T, S](v)
   }
   object Preempt {
@@ -33,7 +33,7 @@ object ios {
       new Preempt {
         def ensure(f: () => Unit) = ()
         def remove(f: () => Unit) = ()
-        def apply()               = false
+        def check()               = false
       }
   }
 

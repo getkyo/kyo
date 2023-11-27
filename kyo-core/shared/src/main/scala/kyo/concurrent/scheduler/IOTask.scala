@@ -67,7 +67,7 @@ private[kyo] class IOTask[T](
 
   def locals: Locals.State = Locals.State.empty
 
-  def apply(): Boolean =
+  def check(): Boolean =
     state < 0
 
   def preempt() =
@@ -96,7 +96,7 @@ private[kyo] class IOTask[T](
       }
       ensures = null
     }
-    if (apply()) {
+    if (check()) {
       if (isDone()) {
         finalize()
         nullIO
@@ -181,6 +181,6 @@ private[kyo] class IOTask[T](
       case arr: ArrayDeque[() => Unit] @unchecked =>
         Arrays.toString(arr.toArray)
     }
-    s"IOTask(id=${hashCode},preempting=${apply()},curr=$curr,ensures=$ensures,runtime=${runtime()},state=${get()})"
+    s"IOTask(id=${hashCode},preempting=${check()},curr=$curr,ensures=$ensures,runtime=${runtime()},state=${get()})"
   }
 }

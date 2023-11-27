@@ -93,8 +93,8 @@ object core {
           new KyoCont[MX, EX, Any, U, S with S2](kyo) {
             def apply(v: Any > (S with S2), s: Safepoint[MX, EX], l: Locals.State) = {
               val n = kyo(v, s, l)
-              if (s()) {
-                s[U, S with S2](transformLoop(n))
+              if (s.check()) {
+                s.suspend[U, S with S2](transformLoop(n))
                   .asInstanceOf[U > (S with S2)]
               } else {
                 transformLoop(n)
@@ -111,14 +111,14 @@ object core {
   }
 
   trait Safepoint[M[_], E <: Effect[M, _]] {
-    def apply(): Boolean
-    def apply[T, S](v: => T > S): T > (S with E)
+    def check(): Boolean
+    def suspend[T, S](v: => T > S): T > (S with E)
   }
 
   object Safepoint {
     private val _noop = new Safepoint[MX, EX] {
-      def apply()                  = false
-      def apply[T, S](v: => T > S) = v
+      def check()                    = false
+      def suspend[T, S](v: => T > S) = v
     }
     implicit def noop[M[_], E <: Effect[M, E]]: Safepoint[M, E] =
       _noop.asInstanceOf[Safepoint[M, E]]
