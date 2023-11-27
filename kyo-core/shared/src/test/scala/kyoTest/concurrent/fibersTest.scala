@@ -234,6 +234,12 @@ class fibersTest extends KyoTest {
     }
   }
 
+  "parallelTraverse" in run {
+    Fibers.parallelTraverse(Seq(1, 2))(_ + 1).map { r =>
+      assert(r == Seq(2, 3))
+    }
+  }
+
   "parallelFiber" - {
     "zero" in run {
       Fibers.parallelFiber(Seq()).map(_.get).map { r =>

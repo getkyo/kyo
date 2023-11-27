@@ -2,12 +2,16 @@ package kyo.concurrent
 
 import kyo._
 import scala.annotation.implicitNotFound
+import kyo.lists.Lists
 
 trait Joins[E] {
 
   def race[T](l: Seq[T > E])(implicit f: Flat[T > E]): T > E
 
   def parallel[T](l: Seq[T > E])(implicit f: Flat[T > E]): Seq[T] > E
+
+  def parallelTraverse[T, U](v: Seq[T] > E)(f: T => U > E)(implicit flat: Flat[U > E]): Seq[U] > E =
+    v.map(_.map(f)).map(parallel[U](_))
 
   def race[T](
       v1: => T > E,
