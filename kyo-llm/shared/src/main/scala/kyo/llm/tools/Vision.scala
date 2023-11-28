@@ -12,6 +12,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import javax.imageio.ImageIO
 import java.util.Base64
+import java.awt.image.BufferedImage
 
 object Vision {
 
@@ -38,24 +39,49 @@ object Vision {
             .response(asByteArray)
       ).map { bytes =>
         val payload = encodeImage(bytes)
-        AIs.init.map { ai =>
-          ai.userMessage(
-              p"""
+        if (payload.isEmpty) {
+          AIs.fail(s"Failed to encode image at ${task.imageUrl}")
+        } else {
+          AIs.init.map { ai =>
+            ai.userMessage(
+                p"""
                 Context: ${task.environment}
                 Question: ${task.question}
               """,
-              s"data:image/jpeg;base64,$payload" :: Nil
-          ).andThen(ai.ask)
+                s"data:image/jpeg;base64,$payload" :: Nil
+            ).andThen(ai.ask)
+          }
         }
       }
     }
   }
 
   private def encodeImage(bytes: Array[Byte]) = {
-    val inputStream = new ByteArrayInputStream(bytes)
-    val image       = ImageIO.read(inputStream)
-    val jpegStream  = new ByteArrayOutputStream()
+    val inputStream   = new ByteArrayInputStream(bytes)
+    val originalImage = ImageIO.read(inputStream)
+
+    // Convert image to a type compatible with JPEG (if needed)
+    val image =
+      if (
+          originalImage.getType == BufferedImage.TYPE_INT_ARGB ||
+          originalImage.getType == BufferedImage.TYPE_4BYTE_ABGR
+      ) {
+        val convertedImg = new BufferedImage(
+            originalImage.getWidth,
+            originalImage.getHeight,
+            BufferedImage.TYPE_INT_RGB
+        )
+        val g = convertedImg.createGraphics()
+        g.drawImage(originalImage, 0, 0, null)
+        g.dispose()
+        convertedImg
+      } else {
+        originalImage
+      }
+
+    val jpegStream = new ByteArrayOutputStream()
     ImageIO.write(image, "jpg", jpegStream)
     Base64.getEncoder.encodeToString(jpegStream.toByteArray())
   }
+
 }
