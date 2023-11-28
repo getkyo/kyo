@@ -122,15 +122,13 @@ import kyo.options._
 import kyo.tries._ 
 ```
 
-For effects that support it, a `get` method is provided, which permits the "extraction" of the underlying value from a container type.
+Effects follow a naming convention for common operations:
 
-```scala
-// Retrieve an 'Int' tagged with 'Options'
-val a: Int > Options = 
-  Options.get(Some(1))
-```
+- `init*`: Initializes an instance of the container type handled by the effect. For instance, `Fibers.init` returns a new `Fiber`.
+- `get*`: Allows the "extraction" of the value of the container type. `Fibers.get` returns a `T > Fibers` for a `Fiber[T]`.
+- `run*`: Handles the effect.
 
-Effect handling is done using the `run*` methods. Though named `run`, the operation doesn't necessarily execute the computation immediately, as the effect handling can also be suspended if another effect is pending.
+Though named `run`, effect handling doesn't necessarily execute the computation immediately, as the effect handling itself can also be suspended if another effect is pending.
 
 ```scala
 // Handle the 'Options' effect
