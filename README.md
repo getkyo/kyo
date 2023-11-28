@@ -1172,6 +1172,66 @@ The ability to suspend fibers during `put` and `take` operations allows `Channel
 
 > Important: While a `Channel` comes with a predefined item capacity, it's crucial to understand that there is no upper limit on the number of fibers that can be suspended by it. In scenarios where your application spawns an unrestricted number of fibers—such as an HTTP service where each incoming request initiates a new fiber—this can lead to significant memory consumption. The channel's internal queue for suspended fibers could grow indefinitely, making it a potential source of unbounded queuing and memory issues. Exercise caution in such use-cases to prevent resource exhaustion.
 
+### Hubs: Broadcasting with Backpressure
+
+`Hubs` provide a broadcasting mechanism where messages are sent to multiple listeners simultaneously. They are similar to `Channels`, but they are uniquely designed for scenarios involving multiple consumers. The key feature of `Hubs` is their ability to apply backpressure automatically. This means if the `Hub` and any of its listeners' buffers are full, the `Hub` will pause both the producers and consumers to prevent overwhelming the system. Unlike `Channels`, `Hubs` don't offer customization in concurrent access policy as they are inherently meant for multi-producer, multi-consumer environments.
+
+```scala
+import kyo.concurrent.hubs._
+
+// Initialize a Hub with a buffer
+val a: Hub[Int] > IOs =
+  Hubs.init[Int](3)
+
+// Hubs provide APIs similar to
+// channels: size, offer, isEmpty,
+// isFull, putFiber, put
+val b: Boolean > IOs =
+  a.map(_.offer(1))
+
+// But reading from hubs can only 
+// happen via listener. Listeners
+// only receive messages sent after
+// their cration. To create call 
+// `listen`:
+val c: Listener[Int] > IOs =
+  a.map(_.listen)
+
+// Each listener can have an
+// additional message buffer
+val d: Listener[Int] > IOs =
+  a.map(_.listen(bufferSize = 3))
+
+// Listeners provide methods for
+// receiving messages similar to
+// channels: size, isEmpty, isFull,
+// poll, takeFiber, take
+val e: Int > Fibers =
+  d.map(_.take)
+
+// A listener can be closed
+// individually. If successful,
+// a Some with the backlog of 
+// pending messages is returned
+val f: Option[Seq[Int]] > IOs =
+  d.map(_.close)
+
+// If the Hub is closed, all
+// listeners are automatically
+// closed. The returned backlog
+// only include items pending in
+// the hub's buffer. The listener
+// buffers are discarded
+val g: Option[Seq[Int]] > IOs =
+  a.map(_.close)
+```
+
+Hubs are implemented with an internal structure that efficiently manages message distribution. At their core, Hubs utilize a single channel for incoming messages. This central channel acts as the primary point for all incoming data. For each listener attached to a Hub, a separate channel is created. These individual channels are dedicated to each listener, ensuring that messages are distributed appropriately.
+
+The functioning of Hubs is orchestrated by a dedicated fiber. This fiber continuously monitors the main incoming channel. Whenever a new message arrives, it takes this message and concurrently distributes it to all the listener channels. This process involves submitting the message to each listener's channel in parallel, ensuring simultaneous delivery of messages.
+
+After distributing a message, the fiber waits until all the listener channels have successfully received it. This waiting mechanism is crucial for maintaining the integrity of message distribution, ensuring that each listener gets the message before the fiber proceeds to the next one and backpressure is properly applied.
+
 ### Meters: Computational Limits
 
 The `Meters` effect offers utilities to regulate computational execution, be it limiting concurrency or managing rate. It is equipped with a range of pre-set limitations, including mutexes, semaphores, and rate limiters, allowing you to apply fine-grained control over task execution.
@@ -1392,6 +1452,125 @@ val g: Unit > IOs =
   longAdder.map(_.reset)
 val h: Unit > IOs = 
   doubleAdder.map(_.reset)
+```
+
+## Restrictions
+
+### Recursive Computations
+
+Kyo evaluates pure computations strictly, without the need for suspensions or extra memory allocations. This approach enhances performance but requires careful handling of recursive computations to maintain stack safety.
+
+```scala
+// An example method that accepts
+// a computation with arbitrary
+// effects
+def test[S](v: Int > S) = 
+  v.map(_ + 1)
+
+// If the input has no pending effects,
+// `S`` is inferred  to `Any` and the
+// value is evaluated immediatelly 
+// to 43
+val a: Int > Any =
+  test(42)
+
+// Although users need to call `pure`
+// to obtain an `Int`, the value is 
+// represented internally as `T` without 
+// the need for extra boxing
+println(a) 
+// prints 43
+
+// But if there are pending effects,
+// a suspended computation is produced
+println(test(IOs(a)))
+// prints kyo.ios$IOs$$anon$2@6cd8737
+```
+
+Given this characteristic, recursive computations need to introduce an effect suspension, like `IOs`, to ensure the evaluation is stack safe.
+
+```scala
+// AVOID! An unsafe recursive computation
+def unsafeLoop[S](n: Int > S): Unit > S =
+  n.map {
+    case 0 => ()
+    case n => unsafeLoop(n - 1)
+  }
+
+// Introduce an effect suspension to
+// ensure stack safety
+def safeLoop[S](n: Int > S): Unit > (S with IOs) =
+  IOs {
+    n.map {
+      case 0 => ()
+      case n => safeLoop(n - 1)
+    }
+  }
+```
+
+In the `safeLoop` function, the use of `IOs` suspends each recursive call, preventing the stack from overflowing. This technique is essential for safely handling recursive computations in Kyo.
+
+### Nested Effects
+
+In addition recursion, Kyo's unboxed representation of computations in certain scenarios introduces a restriction where it's not possible to handle effects of computations with nested effects like `Int > IOs > IOs`.
+
+```scala
+// An example computation with
+// nested effects
+val a: Int > IOs > Options = 
+  Options.get(Some(IOs(1)))
+
+// Can't handle a effects of a
+// computation with nested effects
+
+// Options.run(a)
+// Compilation failure:
+//   Method doesn't accept nested Kyo computations.
+//   Detected: 'scala.Int > kyo.ios.IOs > kyo.options.Options'. Consider using 'flatten' to resolve.
+
+// Use `flatten` before handling
+Options.run(a.flatten)
+```
+
+Kyo performs checks at compilation time to ensure that nested effects are not used. This includes generic methods where the type system cannot confirm whether the computation is nested:
+
+```scala 
+// def test[T](v: T > Options) =
+//   Options.run(v)
+// Compilation failure:
+//   Method doesn't accept nested Kyo computations.
+//   Cannot prove 'T' isn't nested. Provide an implicit evidence 'kyo.Flat[T]'.
+
+// It's possible to provide an implicit
+// evidence of `Flat` to resolve
+def test[T](v: T > Options)(implicit f: Flat[T]) =
+  Options.run(v)
+```
+
+All APIs that trigger effect handling have this restriction, which includes not only methods that handle effects directly but also methods that use effect handling internally. For example, `Fibers.fork` handles effects internally and doesn't allow nested effects.
+
+```scala
+// An example nested computation
+val a: Int > IOs > IOs = 
+  IOs(IOs(1))
+
+// Fails to compile:
+// Fibers.fork(a)
+```
+
+The compile-time checking mechanism can also be triggered in scenarios where Scala's type inference artificially introduces nesting due to a mismatch between the effects suported by a method and the provided input. In this scenario, the error message contains an additional observation regarding this possibility. For example, `Fibers.fork` only accepts computations with `Fibers` pending.
+
+```scala
+// Example computation with a
+// mismatching effect (Options)
+val a: Int > Options = 
+  Options.get(Some(1))
+
+// Fibers.fork(a)
+// Compilation failure:
+//   Method doesn't accept nested Kyo computations.
+//   Detected: 'scala.Int > kyo.options.Options > kyo.concurrent.fibers.Fibers'. Consider using 'flatten' to resolve. 
+//   Possible pending effects mismatch: Expected 'kyo.concurrent.fibers.Fibers', found 'kyo.options.Options'.
 ```
 
 License
