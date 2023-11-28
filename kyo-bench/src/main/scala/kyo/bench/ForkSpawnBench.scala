@@ -46,7 +46,7 @@ class ForkSpawnBench extends Bench.ForkOnly[Unit] {
       if (level == depth) {
         cdl.release
       } else {
-        repeat(width)(Fibers.fork(loop(cdl, level + 1)).map(_ => ()))
+        repeat(width)(Fibers.init(loop(cdl, level + 1)).map(_ => ()))
       }
 
     for {

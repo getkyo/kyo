@@ -38,8 +38,8 @@ class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
 
     Channels.init[Unit](depth / 2, Access.Spsc).flatMap { q =>
       for {
-        producer <- Fibers.fork(repeat(depth)(q.put(())))
-        consumer <- Fibers.fork(repeat(depth)(q.take))
+        producer <- Fibers.init(repeat(depth)(q.put(())))
+        consumer <- Fibers.init(repeat(depth)(q.take))
         _        <- producer.get
         _        <- consumer.get
       } yield {}

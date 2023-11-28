@@ -88,7 +88,7 @@ case class NettyKyoServer(
     ) =
       f => {
         val fiber: Fiber[ServerResponse[NettyResponse]] =
-          IOs.run(Fibers.run(IOs.runLazy(Fibers.fork[ServerResponse[NettyResponse]](f())))
+          IOs.run(Fibers.run(IOs.runLazy(Fibers.init[ServerResponse[NettyResponse]](f())))
             .map(_.transform(identity(_))))
         (
             IOs.run(fiber.toFuture),
@@ -132,7 +132,7 @@ object NettyKyoServer {
   private[kyo] val runAsync = new RunAsync[KyoSttpMonad.M] {
     override def apply[T](f: => T > Fibers): Unit =
       IOs.run {
-        Fibers.fork {
+        Fibers.init {
           import Flat.unsafe.unchecked
           IOs.run(Fibers.run(IOs.runLazy(f)).unit)
         }

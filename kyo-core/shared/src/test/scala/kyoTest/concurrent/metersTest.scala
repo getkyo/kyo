@@ -25,11 +25,11 @@ class metersTest extends KyoTest {
         t  <- Meters.initMutex
         p  <- Fibers.initPromise[Int]
         b1 <- Fibers.initPromise[Unit]
-        f1 <- Fibers.fork(t.run(b1.complete(()).map(_ => p.block)))
+        f1 <- Fibers.init(t.run(b1.complete(()).map(_ => p.block)))
         _  <- b1.get
         a1 <- t.isAvailable
         b2 <- Fibers.initPromise[Unit]
-        f2 <- Fibers.fork(b2.complete(()).map(_ => t.run(2)))
+        f2 <- Fibers.init(b2.complete(()).map(_ => t.run(2)))
         _  <- b2.get
         a2 <- t.isAvailable
         d1 <- f1.isDone
@@ -46,7 +46,7 @@ class metersTest extends KyoTest {
         sem <- Meters.initSemaphore(1)
         p   <- Fibers.initPromise[Int]
         b1  <- Fibers.initPromise[Unit]
-        f1  <- Fibers.fork(sem.tryRun(b1.complete(()).map(_ => p.block)))
+        f1  <- Fibers.init(sem.tryRun(b1.complete(()).map(_ => p.block)))
         _   <- b1.get
         a1  <- sem.isAvailable
         b1  <- sem.tryRun(2)
@@ -71,14 +71,14 @@ class metersTest extends KyoTest {
         t  <- Meters.initSemaphore(2)
         p  <- Fibers.initPromise[Int]
         b1 <- Fibers.initPromise[Unit]
-        f1 <- Fibers.fork(t.run(b1.complete(()).map(_ => p.block)))
+        f1 <- Fibers.init(t.run(b1.complete(()).map(_ => p.block)))
         _  <- b1.get
         b2 <- Fibers.initPromise[Unit]
-        f2 <- Fibers.fork(t.run(b2.complete(()).map(_ => p.block)))
+        f2 <- Fibers.init(t.run(b2.complete(()).map(_ => p.block)))
         _  <- b2.get
         a1 <- t.isAvailable
         b3 <- Fibers.initPromise[Unit]
-        f2 <- Fibers.fork(b3.complete(()).map(_ => t.run(2)))
+        f2 <- Fibers.init(b3.complete(()).map(_ => t.run(2)))
         _  <- b3.get
         a2 <- t.isAvailable
         d1 <- f1.isDone
@@ -95,10 +95,10 @@ class metersTest extends KyoTest {
         sem <- Meters.initSemaphore(2)
         p   <- Fibers.initPromise[Int]
         b1  <- Fibers.initPromise[Unit]
-        f1  <- Fibers.fork(sem.tryRun(b1.complete(()).map(_ => p.block)))
+        f1  <- Fibers.init(sem.tryRun(b1.complete(()).map(_ => p.block)))
         _   <- b1.get
         b2  <- Fibers.initPromise[Unit]
-        f2  <- Fibers.fork(sem.tryRun(b2.complete(()).map(_ => p.block)))
+        f2  <- Fibers.init(sem.tryRun(b2.complete(()).map(_ => p.block)))
         _   <- b2.get
         a1  <- sem.isAvailable
         b3  <- sem.tryRun(2)
@@ -126,7 +126,7 @@ class metersTest extends KyoTest {
       for {
         meter   <- Meters.initRateLimiter(10, 10.millis)
         counter <- Atomics.initInt(0)
-        f1      <- Fibers.fork(loop(meter, counter))
+        f1      <- Fibers.init(loop(meter, counter))
         _       <- Fibers.sleep(50.millis)
         _       <- f1.interrupt
         v1      <- counter.get
@@ -136,8 +136,8 @@ class metersTest extends KyoTest {
       for {
         meter   <- Meters.initRateLimiter(10, 10.millis)
         counter <- Atomics.initInt(0)
-        f1      <- Fibers.fork(loop(meter, counter))
-        f2      <- Fibers.fork(loop(meter, counter))
+        f1      <- Fibers.init(loop(meter, counter))
+        f2      <- Fibers.init(loop(meter, counter))
         _       <- Fibers.sleep(50.millis)
         _       <- f1.interrupt
         _       <- f2.interrupt
@@ -152,8 +152,8 @@ class metersTest extends KyoTest {
       for {
         meter   <- Meters.pipeline(Meters.initRateLimiter(2, 1.millis), Meters.initMutex)
         counter <- Atomics.initInt(0)
-        f1      <- Fibers.fork(loop(meter, counter))
-        f2      <- Fibers.fork(loop(meter, counter))
+        f1      <- Fibers.init(loop(meter, counter))
+        f2      <- Fibers.init(loop(meter, counter))
         _       <- Fibers.sleep(50.millis)
         _       <- f1.interrupt
         _       <- f2.interrupt
@@ -165,7 +165,7 @@ class metersTest extends KyoTest {
     //   for {
     //     meter   <- Meters.pipeline(Meters.rateLimiter(2, 1.millis), Meters.mutex)
     //     counter <- Atomics.initInt(0)
-    //     f1      <- Fibers.fork(loop(meter, counter))
+    //     f1      <- Fibers.init(loop(meter, counter))
     //     _       <- Fibers.sleep(50.millis)
     //     _       <- retry(meter.isAvailable(!_))
     //     _       <- Fibers.sleep(50.millis)

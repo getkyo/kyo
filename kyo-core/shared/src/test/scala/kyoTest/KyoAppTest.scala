@@ -31,7 +31,7 @@ class AppTest extends KyoTest {
         _ <- Consoles.println("1")
         _ <- Clocks.now
         _ <- Resources.ensure(())
-        _ <- Fibers.fork(())
+        _ <- Fibers.init(())
       } yield ()
     }
     app.main(Array())

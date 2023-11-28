@@ -18,7 +18,7 @@ object hubs {
       Channels.init[T](capacity).map { ch =>
         IOs {
           val listeners = new CopyOnWriteArraySet[Channel[T]]
-          Fibers.fork {
+          Fibers.init {
             def loop(): Unit > Fibers =
               ch.take.map { v =>
                 IOs {

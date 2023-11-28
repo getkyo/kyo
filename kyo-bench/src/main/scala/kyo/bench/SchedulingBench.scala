@@ -45,7 +45,7 @@ class SchedulingBench extends Bench.ForkOnly[Int] {
       }
 
     Lists.traverse(range) { i =>
-      Fibers.fork(fiber(i))
+      Fibers.init(fiber(i))
     }.map { fibers =>
       Lists.traverse(fibers)(_.get)
     }.map(_.sum)

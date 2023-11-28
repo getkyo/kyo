@@ -59,9 +59,9 @@ object fibers {
     def get: T > Fibers =
       state match {
         case promise: IOPromise[_] =>
-          Fibers.join(state)
+          FiberGets(state)
         case failed: Failed =>
-          Fibers.join(state)
+          FiberGets(state)
         case _ =>
           state.asInstanceOf[T > Fibers]
       }
@@ -85,7 +85,7 @@ object fibers {
             promise.onComplete { t =>
               p.complete(Try(IOs.run(t)))
             }
-            Fibers.join(Fiber.promise(p))
+            Fibers.get(Fiber.promise(p))
           }
         case Failed(ex) =>
           Failure(ex)
@@ -157,7 +157,7 @@ object fibers {
           try t(state.asInstanceOf[T])
           catch {
             case ex if (NonFatal(ex)) =>
-              Fibers.fail(ex)
+              Fiber.failed(ex)
           }
       }
   }
@@ -188,12 +188,6 @@ object fibers {
     def get[T, S](v: Fiber[T] > S): T > (Fibers with S) =
       v.map(_.get)
 
-    private[fibers] def join[T, S](v: Fiber[T] > S): T > (Fibers with S) =
-      FiberGets(v)
-
-    def fail[T](ex: Throwable): Fiber[T] =
-      Fiber.failed(ex)
-
     private val _promise = IOs(unsafeInitPromise[Object])
 
     def initPromise[T]: Promise[T] > IOs =
@@ -206,7 +200,7 @@ object fibers {
     private val IOTask = kyo.concurrent.scheduler.IOTask
 
     /*inline*/
-    def fork[T]( /*inline*/ v: => T > Fibers)(implicit f: Flat[T > Fibers]): Fiber[T] > IOs =
+    def init[T]( /*inline*/ v: => T > Fibers)(implicit f: Flat[T > Fibers]): Fiber[T] > IOs =
       Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
     def parallel[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Seq[T] > Fibers =
@@ -214,7 +208,7 @@ object fibers {
         case 0 => Seq.empty
         case 1 => l(0).map(Seq(_))
         case _ =>
-          Fibers.join(parallelFiber[T](l))
+          Fibers.get(parallelFiber[T](l))
       }
 
     def parallelFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[Seq[T]] > IOs =
@@ -256,7 +250,7 @@ object fibers {
         case 0 => IOs.fail("Can't race an empty list.")
         case 1 => l(0)
         case _ =>
-          Fibers.join(raceFiber[T](l))
+          Fibers.get(raceFiber[T](l))
       }
 
     def raceFiber[T](l: Seq[T > Fibers])(implicit f: Flat[T > Fibers]): Fiber[T] > IOs =
@@ -300,7 +294,7 @@ object fibers {
       }
 
     def timeout[T](d: Duration)(v: => T > Fibers)(implicit f: Flat[T > Fibers]): T > Fibers =
-      fork(v).map { f =>
+      init(v).map { f =>
         val timeout: Unit > IOs =
           IOs {
             IOTask(IOs(f.interrupt), Locals.State.empty)
@@ -311,10 +305,10 @@ object fibers {
         }
       }
 
-    def join[T, S](f: Future[T]): T > Fibers =
-      Fibers.join(joinFiber(f))
+    def fromFuture[T, S](f: Future[T]): T > Fibers =
+      Fibers.get(fromFutureFiber(f))
 
-    def joinFiber[T](f: Future[T]): Fiber[T] > IOs = {
+    def fromFutureFiber[T](f: Future[T]): Fiber[T] > IOs = {
       Locals.save.map { st =>
         IOs {
           val p = new IOPromise[T]()

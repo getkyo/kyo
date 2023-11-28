@@ -9,6 +9,6 @@ private[kyo] object PlatformBackend {
     new Backend {
       val b = FetchBackend()
       def send[T](r: Request[T, Any]) =
-        Fibers.join(r.send(b))
+        Fibers.fromFuture(r.send(b))
     }
 }

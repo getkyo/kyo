@@ -43,7 +43,7 @@ object Bench {
 
   abstract class Fork[T](implicit f: Flat[T]) extends Bench[T] {
     @Benchmark
-    def forkKyo(): T = IOs.run(Fibers.fork(kyoBenchFiber()).flatMap(_.block))
+    def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block))
 
     @Benchmark
     def forkCats(): T = IO.cede.flatMap(_ => catsBench()).unsafeRunSync()

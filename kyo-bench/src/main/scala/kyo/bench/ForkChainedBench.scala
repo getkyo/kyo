@@ -27,11 +27,11 @@ class ForkChainedBench extends Bench.ForkOnly[Int] {
 
     def iterate(p: Promise[Unit], n: Int): Unit > IOs =
       if (n <= 0) p.complete(()).unit
-      else IOs.unit.flatMap(_ => Fibers.fork(iterate(p, n - 1)).unit)
+      else IOs.unit.flatMap(_ => Fibers.init(iterate(p, n - 1)).unit)
 
     for {
       p <- Fibers.initPromise[Unit]
-      _ <- Fibers.fork(iterate(p, depth))
+      _ <- Fibers.init(iterate(p, depth))
       _ <- p.get
     } yield 0
   }

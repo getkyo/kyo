@@ -107,8 +107,8 @@ class RendezvousBench extends Bench.ForkOnly[Int] {
 
     for {
       waiting  <- Atomics.initRef[Any](null)
-      _        <- Fibers.fork(produce(waiting))
-      consumer <- Fibers.fork(consume(waiting))
+      _        <- Fibers.init(produce(waiting))
+      consumer <- Fibers.init(consume(waiting))
       res      <- consumer.get
     } yield res
   }

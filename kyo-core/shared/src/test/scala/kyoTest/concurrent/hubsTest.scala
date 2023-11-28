@@ -148,7 +148,7 @@ class hubsTest extends KyoTest {
       for {
         h  <- Hubs.init[Int](2)
         l  <- h.listen
-        _  <- Lists.fill(100)(Fibers.fork(h.put(1)))
+        _  <- Lists.fill(100)(Fibers.init(h.put(1)))
         t  <- Lists.fill(100)(l.take)
         e1 <- h.isEmpty
         e2 <- l.isEmpty
@@ -158,8 +158,8 @@ class hubsTest extends KyoTest {
       for {
         h  <- Hubs.init[Int](2)
         l  <- h.listen
-        _  <- Lists.fill(100)(Fibers.fork(h.put(1)))
-        t  <- Lists.fill(100)(Fibers.fork(l.take).map(_.get))
+        _  <- Lists.fill(100)(Fibers.init(h.put(1)))
+        t  <- Lists.fill(100)(Fibers.init(l.take).map(_.get))
         e1 <- h.isEmpty
         e2 <- l.isEmpty
       } yield assert(t == List.fill(100)(1) && e1 && e2)
@@ -167,9 +167,9 @@ class hubsTest extends KyoTest {
     "listeners" in runJVM {
       for {
         h  <- Hubs.init[Int](2)
-        l  <- Lists.fill(100)(Fibers.fork(h.listen).map(_.get))
-        _  <- Fibers.fork(h.put(1))
-        t  <- Lists.traverse(l)(l => Fibers.fork(l.take).map(_.get))
+        l  <- Lists.fill(100)(Fibers.init(h.listen).map(_.get))
+        _  <- Fibers.init(h.put(1))
+        t  <- Lists.traverse(l)(l => Fibers.init(l.take).map(_.get))
         e1 <- h.isEmpty
         e2 <- Lists.traverse(l)(_.isEmpty)
       } yield assert(t == List.fill(100)(1) && e1 && e2 == Lists.fill(100)(true))

@@ -51,17 +51,17 @@ class PingPongBench extends Bench.ForkOnly[Unit] {
         chan <- Channels.init[Unit](1)
         effect =
           for {
-            _ <- Fibers.fork(chan.put(()))
+            _ <- Fibers.init(chan.put(()))
             _ <- chan.take
             n <- ref.decrementAndGet
             _ <- if (n == 0) promise.complete(()).unit else IOs.unit
           } yield ()
-        _ <- repeat(depth)(Fibers.fork(effect))
+        _ <- repeat(depth)(Fibers.init(effect))
       } yield ()
 
     for {
       promise <- Fibers.initPromise[Unit]
-      _       <- Fibers.fork(iterate(promise, depth))
+      _       <- Fibers.init(iterate(promise, depth))
       _       <- promise.get
     } yield ()
   }

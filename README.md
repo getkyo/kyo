@@ -815,7 +815,7 @@ The `kyo.concurrent` package provides utilities for dealing with concurrency in 
 
 ### Fibers: Green Threads
 
-The `Fibers` effect allows for the asynchronous execution of computations via a managed thread pool. The core function, `forkFiber`, spawns a new "green thread," also known as a fiber, to handle the given computation. This provides a powerful mechanism for parallel execution and efficient use of system resources. Moreover, fibers maintain proper propagation of `Locals`, ensuring that context information is carried along during the forking process.
+The `Fibers` effect allows for the asynchronous execution of computations via a managed thread pool. The core function, `init`, spawns a new "green thread," also known as a fiber, to handle the given computation. This provides a powerful mechanism for parallel execution and efficient use of system resources. Moreover, fibers maintain proper propagation of `Locals`, ensuring that context information is carried along during the forking process.
 
 ```scala
 import kyo.concurrent.fibers._
@@ -823,19 +823,14 @@ import kyo.concurrent.fibers._
 // Fork a computation. The parameter is
 // taken by reference and automatically
 // suspended with 'IOs'
-val a: Fiber[Int] > Fibers =
-  Fibers.fork(Math.cos(42).toInt)
+val a: Fiber[Int] > IOs =
+  Fibers.init(Math.cos(42).toInt)
 
 // It's possible to "extract" the value of a 
 // 'Fiber' via the 'get' method. This is also
 // referred as "joining the fiber"
 val b: Int > Fibers =
-  a.map(_.get)
-
-// The 'value' method provides a 'Fiber' instance
-// fulfilled with the provided pure value
-val d: Fiber[Int] =
-  Fibers.value(42)
+  Fibers.get(a)
 ```
 
 The `parallel` methods fork multiple computations in parallel, join the fibers, and return their results.
@@ -887,7 +882,7 @@ val d: Fiber[Int] > IOs =
   Fibers.raceFiber(Seq(a, a.map(_ + 1)))
 ```
 
-The `sleep` and `timeout` methods combine the `Timers` effect to pause a computation or time it out after a duration.
+The `sleep` and `timeout` methods pause a computation or time it out after a duration.
 
 ```scala
 import kyo.concurrent.timers._
@@ -904,7 +899,7 @@ val b: Int > Fibers =
   Fibers.timeout(1.second)(Math.cos(42).toInt)
 ```
 
-The `join` methods provide interoperability with Scala's `Future`.
+The `fromFuture` methods provide interoperability with Scala's `Future`.
 
 ```scala
 import scala.concurrent.Future
@@ -914,12 +909,12 @@ val a: Future[Int] = Future.successful(42)
 
 // Join the result of a 'Future'
 val b: Int > Fibers =
-  Fibers.join(a)
+  Fibers.fromFuture(a)
 
-// Use 'joinFiber' to produce 'Fiber' 
+// Use 'fromFutureFiber' to produce 'Fiber' 
 // instead of joining the computation
 val c: Fiber[Int] > IOs =
-  Fibers.joinFiber(a)
+  Fibers.fromFutureFiber(a)
 ```
 
 > Important: Keep in mind that Scala's Future lacks built-in support for interruption. As a result, any computations executed through Future will run to completion, even if they're involved in a race operation where another computation finishes first.
@@ -970,7 +965,7 @@ Similarly to `IOs`, users should avoid handling the `Fibers` effect directly and
 ```scala
 // An example computation with fibers
 val a: Int > Fibers =
-  Fibers.fork(Math.cos(42).toInt).map(_.get)
+  Fibers.init(Math.cos(42).toInt).map(_.get)
 
 // Avoid handling 'Fibers' directly
 // Note how the code has to handle the
@@ -1547,7 +1542,7 @@ def test[T](v: T > Options)(implicit f: Flat[T]) =
   Options.run(v)
 ```
 
-All APIs that trigger effect handling have this restriction, which includes not only methods that handle effects directly but also methods that use effect handling internally. For example, `Fibers.fork` handles effects internally and doesn't allow nested effects.
+All APIs that trigger effect handling have this restriction, which includes not only methods that handle effects directly but also methods that use effect handling internally. For example, `Fibers.init` handles effects internally and doesn't allow nested effects.
 
 ```scala
 // An example nested computation
@@ -1555,10 +1550,10 @@ val a: Int > IOs > IOs =
   IOs(IOs(1))
 
 // Fails to compile:
-// Fibers.fork(a)
+// Fibers.init(a)
 ```
 
-The compile-time checking mechanism can also be triggered in scenarios where Scala's type inference artificially introduces nesting due to a mismatch between the effects suported by a method and the provided input. In this scenario, the error message contains an additional observation regarding this possibility. For example, `Fibers.fork` only accepts computations with `Fibers` pending.
+The compile-time checking mechanism can also be triggered in scenarios where Scala's type inference artificially introduces nesting due to a mismatch between the effects suported by a method and the provided input. In this scenario, the error message contains an additional observation regarding this possibility. For example, `Fibers.init` only accepts computations with `Fibers` pending.
 
 ```scala
 // Example computation with a
@@ -1566,7 +1561,7 @@ The compile-time checking mechanism can also be triggered in scenarios where Sca
 val a: Int > Options = 
   Options.get(Some(1))
 
-// Fibers.fork(a)
+// Fibers.init(a)
 // Compilation failure:
 //   Method doesn't accept nested Kyo computations.
 //   Detected: 'scala.Int > kyo.options.Options > kyo.concurrent.fibers.Fibers'. Consider using 'flatten' to resolve. 

@@ -55,7 +55,7 @@ object App {
     def v3: Try[T] > Fibers         = Tries.run(v2)
     def v4: Try[T] > Fibers         = Fibers.timeout(timeout)(v3)
     def v5: Try[T] > Fibers         = Tries.run(v4).map(_.flatten)
-    def v6: Try[T] > Fibers         = Fibers.fork(v5).map(_.get)
+    def v6: Try[T] > Fibers         = Fibers.init(v5).map(_.get)
     def v7: Fiber[Try[T]] > IOs     = Fibers.run(v6)
     IOs.run(v7)
   }
