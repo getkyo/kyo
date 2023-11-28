@@ -373,8 +373,6 @@ val c: Int > IOs =
   IOs.fail(new Exception)
 ```
 
-> Note: Kyo's effects and public APIs are designed so any side effect is properly suspended via `IOs`, providing safe building blocks for pure computations.
-
 Users shouldn't typically handle the `IOs` effect directly since it triggers the execution of side effects, which breaks referential transparency. Prefer `kyo.App` instead.
 
 In some specific cases where Kyo isn't used as the main effect system of an application, it might make sense for the user to handle the `IOs` effect directly. The `run` method can only be used if `IOs` is the only pending effect.
@@ -806,6 +804,57 @@ val d: Unit > IOs =
 ```
 
 > Important: The `Loggers` effect chooses to consider the initialization of a Logger instance as pure, even though it may perform side effects. For optimal performance, `Logger` instances should be stored in constant fields, a goal that would be challenging to achieve if `Loggers.init` required an `IOs` suspension.
+
+### Stats: Observability
+
+`Stats` is a pluggable implementation that provides counters, histograms, gauges, and tracing. It uses Java's [service loading](https://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html) to locate exporters. 
+
+The module [`kyo-stats-otel`](https://central.sonatype.com/artifact/io.getkyo/kyo-stats-otel_3) provides exporters for [OpenTelemetry](https://opentelemetry.io/).
+
+```scala
+import kyo.stats._
+
+// Initialize a counter
+val a: Counter =
+  Stats.initCounter("my_counter")
+
+// It's also possible to provide
+// metadata when initializing
+val b: Histogram =
+  Stats.initHistogram(
+    name = "my_histogram"
+    description = "some description"
+    unit = "some unit",
+    attributes = Attributes.of("key", "value")
+  )
+
+// Gauges take a function to be 
+// observed periodically
+val c: Gauge =
+  Stats.initGauge("free_memory") {
+    Runtime.getRuntime().freeMemory()
+  }
+
+// Ensure gauges are closed once 
+// they're not needed to avoid leaks
+val d: Unit > IOs =
+  c.close
+```
+
+> Note: Although stats initialization may perform side effects, Kyo chooses to consider the operation pure since stats are meant to be initialized in a static scope for optimal performance.
+
+Tracing can be performed via the `traceSpan` method. It automatically initializes the span and closes it at the end of the traced computation even in the presence of failures or asynchronous operations. Nested traces are bound to their parent span via `Locals`.
+
+```scala
+// Some example computation
+val a: Int > IOs =
+  IOs(42)
+
+// Trace the execution of the
+// `a` example computation
+val b: Int > IOs =
+  Stats.traceSpan("my_span")(a)
+```
 
 ## Concurrent Effects
 
@@ -1447,9 +1496,11 @@ val h: Unit > IOs =
   doubleAdder.map(_.reset)
 ```
 
-## Requests: HTTP Client via Sttp
+## Integrations
 
-The `Requests` effect provides a simplified API for [Sttp 3](https://github.com/softwaremill/sttp) with a backend implemented on top of Kyo's concurrent package.
+### Requests: HTTP Client via Sttp
+
+The `Requests` effect provides a simplified API for [Sttp 3](https://github.com/softwaremill/sttp) implemented on top of Kyo's concurrent package.
 
 To perform a request, use the `apply` method. It takes a builder function based on Sttp's request building API.
 
@@ -1461,8 +1512,8 @@ import sttp.client3._
 val a: String > Requests =
   Requests[String](_.get(uri"https://httpbin.org/get"))
 
-// Alternatively, requests can be defined
-// separatelly and provided via `request`
+// Alternatively, requests can be 
+// defined separately
 val b: String > Requests =
   Requests.request[String](Requests.basicRequest.get(uri"https://httpbin.org/get"))
 ```
@@ -1474,11 +1525,13 @@ When handling the `Requests` effect, it's possible to use the default implementa
 val a: String > Requests =
   Requests[String](_.get(uri"https://httpbin.org/get"))
 
-// Use the default backend
+// Use the default backend for 
+// handling the request
 val b: String > Fibers =
   Requests.run(a)
 
-// A custom mock backend
+// Implementing a custom 
+// mock backend
 val backend: Backend =
   new Backend {
     def send[T](r: Request[T, Any]) = {
@@ -1491,9 +1544,9 @@ val d: String > Fibers =
   Requests.run(backend)(a)
 ```
 
-Please refer to Sttp's documentation for details on how to build requests. The user is free to use any of the json libraries supported by Sttp but [zio-json](https://github.com/zio/zio-json) is recommended since it's the library used in Kyo's tests and modules that require HTTP communication like `AIs`.
+Please refer to Sttp's documentation for details on how to build requests. 
 
-## Restrictions
+Users are free to use any JSON libraries supported by Sttp; however, [zio-json](https://github.com/zio/zio-json) is recommended, as it is used in Kyo's tests and modules requiring HTTP communication, such as `AIs``.
 
 ### Recursive Computations
 

@@ -12,23 +12,23 @@ abstract class Stats {
 
   def initCounter(
       name: String,
-      description: String = "",
+      description: String = "empty",
       unit: String = "",
-      a: Attributes = Attributes.empty
+      attributes: Attributes = Attributes.empty
   ): Counter
 
   def initHistogram(
       name: String,
-      description: String = "",
+      description: String = "empty",
       unit: String = "",
-      a: Attributes = Attributes.empty
+      attributes: Attributes = Attributes.empty
   ): Histogram
 
   def initGauge(
       name: String,
-      description: String = "",
+      description: String = "empty",
       unit: String = "",
-      a: Attributes = Attributes.empty
+      attributes: Attributes = Attributes.empty
   )(f: => Double): Gauge
 
   def traceSpan[T, S](
