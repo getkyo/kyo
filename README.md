@@ -1447,6 +1447,52 @@ val h: Unit > IOs =
   doubleAdder.map(_.reset)
 ```
 
+## Requests: HTTP Client via Sttp
+
+The `Requests` effect provides a simplified API for [Sttp 3](https://github.com/softwaremill/sttp) with a backend implemented on top of Kyo's concurrent package.
+
+To perform a request, use the `apply` method. It takes a builder function based on Sttp's request building API.
+
+```scala
+import kyo.requests._
+import sttp.client3._
+
+// Perform a request using a builder function
+val a: String > Requests =
+  Requests[String](_.get(uri"https://httpbin.org/get"))
+
+// Alternatively, requests can be defined
+// separatelly and provided via `request`
+val b: String > Requests =
+  Requests.request[String](Requests.basicRequest.get(uri"https://httpbin.org/get"))
+```
+
+When handling the `Requests` effect, it's possible to use the default implementation or provide a custom `Backend`.
+
+```scala
+// An example request
+val a: String > Requests =
+  Requests[String](_.get(uri"https://httpbin.org/get"))
+
+// Use the default backend
+val b: String > Fibers =
+  Requests.run(a)
+
+// A custom mock backend
+val backend: Backend =
+  new Backend {
+    def send[T](r: Request[T, Any]) = {
+      Response.ok(Right("mocked")).asInstanceOf[Response[T]]
+    }
+  }
+
+// Use the custom backend
+val d: String > Fibers =
+  Requests.run(backend)(a)
+```
+
+Please refer to Sttp's documentation for details on how to build requests. The user is free to use any of the json libraries supported by Sttp but [zio-json](https://github.com/zio/zio-json) is recommended since it's the library used in Kyo's tests and modules that require HTTP communication like `AIs`.
+
 ## Restrictions
 
 ### Recursive Computations
