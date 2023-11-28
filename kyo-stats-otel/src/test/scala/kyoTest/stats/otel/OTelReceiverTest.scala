@@ -19,7 +19,7 @@ import io.opentelemetry.sdk.OpenTelemetrySdkBuilder
 class OTelReceiverTest extends KyoTest {
 
   "metrics" in run {
-    val stats     = Stats.scope("test")
+    val stats     = Stats.initScope("test")
     val counter   = stats.initCounter("a")
     val histogram = stats.initHistogram("b")
     stats.initGauge("c")(99d)
@@ -33,7 +33,7 @@ class OTelReceiverTest extends KyoTest {
   }
 
   "traces" in run {
-    val stats = Stats.scope("test")
+    val stats = Stats.initScope("test")
     stats.traceSpan("tspan") {
       42d
     }.map { r =>

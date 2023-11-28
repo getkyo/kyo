@@ -12,6 +12,10 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 
 ## Please visit https://getkyo.io for an indexed version of this documentation.
 
+### Getting Started
+
+TODO
+
 ### The `>` type
 
 In Kyo, computations are expressed via the infix type `>`, which takes two parameters:
@@ -814,24 +818,29 @@ The module [`kyo-stats-otel`](https://central.sonatype.com/artifact/io.getkyo/ky
 ```scala
 import kyo.stats._
 
+// Initialize a Stats instance
+// for a scope path
+val stats: Stats =
+  Stats.initScope("my_application", "my_module")
+
 // Initialize a counter
 val a: Counter =
-  Stats.initCounter("my_counter")
+  stats.initCounter("my_counter")
 
 // It's also possible to provide
 // metadata when initializing
 val b: Histogram =
-  Stats.initHistogram(
-    name = "my_histogram"
-    description = "some description"
+  stats.initHistogram(
+    name = "my_histogram",
+    description = "some description",
     unit = "some unit",
     attributes = Attributes.of("key", "value")
   )
 
-// Gauges take a function to be 
-// observed periodically
+// Gauges take a by-name function to 
+// be observed periodically
 val c: Gauge =
-  Stats.initGauge("free_memory") {
+  stats.initGauge("free_memory") {
     Runtime.getRuntime().freeMemory()
   }
 
@@ -853,7 +862,7 @@ val a: Int > IOs =
 // Trace the execution of the
 // `a` example computation
 val b: Int > IOs =
-  Stats.traceSpan("my_span")(a)
+  stats.traceSpan("my_span")(a)
 ```
 
 ## Concurrent Effects
@@ -1544,9 +1553,19 @@ val d: String > Fibers =
   Requests.run(backend)(a)
 ```
 
-Please refer to Sttp's documentation for details on how to build requests. 
+Please refer to Sttp's documentation for details on how to build requests. Streaming is currently unsupported.
 
 Users are free to use any JSON libraries supported by Sttp; however, [zio-json](https://github.com/zio/zio-json) is recommended, as it is used in Kyo's tests and modules requiring HTTP communication, such as `AIs``.
+
+### Routes: HTTP Server via Tapir
+
+TODO
+
+### AIs: Large Language Models
+
+TODO
+
+## Restrictions
 
 ### Recursive Computations
 
@@ -1664,6 +1683,10 @@ val a: Int > Options =
 //   Detected: 'scala.Int > kyo.options.Options > kyo.concurrent.fibers.Fibers'. Consider using 'flatten' to resolve. 
 //   Possible pending effects mismatch: Expected 'kyo.concurrent.fibers.Fibers', found 'kyo.options.Options'.
 ```
+
+## Performance Benchmarks
+
+TODO
 
 ## Acknowledgements
 

@@ -17,7 +17,7 @@ class StatsTest extends KyoTest {
   }
 
   "scope" in {
-    val stats = Stats.scope("test")
+    val stats = Stats.initScope("test")
     assert(stats.initCounter("a") == Counter.noop)
     assert(stats.initHistogram("a") == Histogram.noop)
     assert(stats.initGauge("a")(1) == Gauge.noop)
