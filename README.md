@@ -1573,6 +1573,16 @@ val a: Int > Options =
 //   Possible pending effects mismatch: Expected 'kyo.concurrent.fibers.Fibers', found 'kyo.options.Options'.
 ```
 
+## Acknowledgements
+
+Kyo's development was originally inspired by the paper ["Do Be Do Be Do"](https://arxiv.org/pdf/1611.09259.pdf) and its implementation in the [Unison](https://www.unison-lang.org/learn/language-reference/abilities-and-ability-handlers/) programming language. Kyo's design evolved from using interfaces for effects to using concrete values with tagged effect types, making it more efficient when executed on the JVM.
+
+Additionally, Kyo draws inspiration from [ZIO](https://zio.dev/) in various aspects. The core mechanism for algebraic effects is a generalization of ZIO's effect rotation, and many of Kyo's effects are directly influenced by ZIO's mature set of primitives. For instance, `Envs` and `Aborts` correspond to ZIO's effect channels, `Resources` function similarly to `Scope`, and `Hubs` was introduced based on ZIO's implementation.
+
+Kyo's asynchronous primitives take cues from [Twitter's util](https://github.com/twitter/util) and [Finagle](https://github.com/twitter/finagle), including features like async root compression, which ensures stack safety, and support for cancellations (interruptions in Kyo).
+
+Lastly, the name "Kyo" is derived from the last character of Nam-myoho-renge-kyo, the mantra practiced in [SGI Buddhism](https://www.sokaglobal.org/). It literally translates to "Sutra," referring to a compiled teaching of the original Buddha Shakyamuni, and is also interpreted as the "threads" that weave the fundamental fabric of life's reality.
+
 License
 -------
 
