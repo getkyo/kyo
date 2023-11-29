@@ -18,11 +18,11 @@ Kyo is available on Maven Central in multiple modules:
 
 | Module           | Scala 2 | Scala 3 | Scala JS | Description                         |
 |------------------|---------|---------|----------|-------------------------------------|
-| `kyo-core`       | X       | X       | X        | Core and concurrent effects         |
-| `kyo-direct`     | X       | X       | X        | Direct syntax support               |
-| `kyo-cache`      | X       | X       |          | Caffeine caching                    |
-| `kyo-stats-otel` | X       | X       |          | Stats exporter for OpenTelemetry    |
-| `kyo-sttp`       | X       | X       | X        | Sttp HTTP Client                    |
+| kyo-core         | X       | X       | X        | Core and concurrent effects         |
+| kyo-direct       | X       | X       | X        | Direct syntax support               |
+| kyo-cache        | X       | X       |          | Caffeine caching                    |
+| kyo-stats-otel   | X       | X       |          | Stats exporter for OpenTelemetry    |
+| kyo-sttp         | X       | X       | X        | Sttp HTTP Client                    |
 
 For Scala 2 and 3:
 
@@ -43,7 +43,7 @@ libraryDependencies += "io.getkyo" %%% "kyo-sttp" % "<version>"
 ```
 
 Replace `<version>` with the latest version on Maven Central: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3).
-
+-------------------
 ### The `>` type
 
 In Kyo, computations are expressed via the infix type `>`, which takes two parameters:
