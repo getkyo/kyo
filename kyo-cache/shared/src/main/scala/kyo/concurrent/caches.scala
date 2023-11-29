@@ -58,7 +58,6 @@ object caches {
     def memo2[T1, T2, S, U](
         f: (T1, T2) => U > S
     )(implicit
-        id: sourcecode.Enclosing,
         ft1: Flat[T1 > Any],
         ft2: Flat[T2 > Any],
         fu: Flat[U > Any]
@@ -70,7 +69,6 @@ object caches {
     def memo3[T1, T2, T3, S, U](
         f: (T1, T2, T3) => U > S
     )(implicit
-        id: sourcecode.Enclosing,
         ft1: Flat[T1 > Any],
         ft2: Flat[T2 > Any],
         ft3: Flat[T3 > Any],
@@ -83,7 +81,6 @@ object caches {
     def memo4[T1, T2, T3, T4, S, U](
         f: (T1, T2, T3, T4) => U > S
     )(implicit
-        id: sourcecode.Enclosing,
         ft1: Flat[T1 > Any],
         ft2: Flat[T2 > Any],
         ft3: Flat[T3 > Any],
