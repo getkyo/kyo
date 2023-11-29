@@ -14,7 +14,37 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 
 ### Getting Started
 
-TODO
+Kyo is available on Maven Central in multiple modules:
+
+| Module           | Scala 2 | Scala 3 | Scala JS | Description                         |
+|------------------|---------|---------|----------|-------------------------------------|
+| `kyo-core`       | X       | X       | X        | Core and concurrent effects         |
+| `kyo-direct`     | X       | X       | X        | Direct syntax support               |
+| `kyo-cache`      | X       | X       |          | Caffeine caching                    |
+| `kyo-stats-otel` | X       | X       |          | Stats exporter for OpenTelemetry    |
+| `kyo-sttp`       | X       | X       | X        | Sttp HTTP Client                    |
+
+#### SBT Configuration Examples:
+
+For Scala 2 and 3:
+
+```scala 
+libraryDependencies += "io.getkyo" %% "kyo-core" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-direct" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-cache" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-stats-otel" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-sttp" % "<version>"
+```
+
+For Scala.js (applicable only to `kyo-core`, `kyo-direct`, and `kyo-sttp`):
+
+```scala 
+libraryDependencies += "io.getkyo" %%% "kyo-core" % "<version>"
+libraryDependencies += "io.getkyo" %%% "kyo-direct" % "<version>"
+libraryDependencies += "io.getkyo" %%% "kyo-sttp" % "<version>"
+```
+
+Replace `<version>` with the latest version on Maven Central: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3).
 
 ### The `>` type
 
@@ -1715,10 +1745,6 @@ val a: Int > Options =
 //   Detected: 'scala.Int > kyo.options.Options > kyo.concurrent.fibers.Fibers'. Consider using 'flatten' to resolve. 
 //   Possible pending effects mismatch: Expected 'kyo.concurrent.fibers.Fibers', found 'kyo.options.Options'.
 ```
-
-## Performance Benchmarks
-
-TODO
 
 ## Acknowledgements
 
