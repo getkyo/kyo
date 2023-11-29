@@ -27,7 +27,7 @@
         function (hook, vm) {
           hook.beforeEach(function (content) {
             const startPattern = '### Please visit';
-            const endPattern = '### ';
+            const endPattern = '<img';
 
             let startIndex = content.indexOf(startPattern);
             let endIndex = content.indexOf(endPattern, startIndex + startPattern.length);
