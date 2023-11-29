@@ -10,6 +10,7 @@ import com.github.benmanes.caffeine.cache.Caffeine
 import java.util.concurrent.TimeUnit
 import scala.util.Success
 import scala.util.Failure
+import scala.runtime.AbstractFunction1
 
 object caches {
 
@@ -19,40 +20,40 @@ object caches {
     def memo[T, U, S](
         f: T => U > S
     )(implicit
-        id: sourcecode.Enclosing,
         ft: Flat[T > Any],
         fu: Flat[U > Any]
-    ): T => U > (Fibers with S) = {
-      (v: T) =>
-        Fibers.initPromise[U].map { p =>
-          val key = (id, v)
-          IOs[U, Fibers with S] {
-            store.get(key, _ => p) match {
-              case `p` =>
-                IOs.ensure {
-                  p.interrupt.map {
-                    case true =>
-                      IOs(store.invalidate(key))
-                    case false =>
-                      ()
+    ): T => U > (Fibers with S) =
+      new AbstractFunction1[T, U > (Fibers with S)] {
+        def apply(v: T) =
+          Fibers.initPromise[U].map { p =>
+            val key = (this, v)
+            IOs[U, Fibers with S] {
+              store.get(key, _ => p) match {
+                case `p` =>
+                  IOs.ensure {
+                    p.interrupt.map {
+                      case true =>
+                        IOs(store.invalidate(key))
+                      case false =>
+                        ()
+                    }
+                  } {
+                    Tries.run[U, S](f(v)).map {
+                      case Success(v) =>
+                        p.complete(v)
+                          .unit.andThen(v)
+                      case Failure(ex) =>
+                        IOs(store.invalidate(key))
+                          .andThen(p.complete(IOs.fail(ex)))
+                          .unit.andThen(IOs.fail(ex))
+                    }
                   }
-                } {
-                  Tries.run[U, S](f(v)).map {
-                    case Success(v) =>
-                      p.complete(v)
-                        .unit.andThen(v)
-                    case Failure(ex) =>
-                      IOs(store.invalidate(key))
-                        .andThen(p.complete(IOs.fail(ex)))
-                        .unit.andThen(IOs.fail(ex))
-                  }
-                }
-              case p2 =>
-                p2.asInstanceOf[Promise[U]].get
+                case p2 =>
+                  p2.asInstanceOf[Promise[U]].get
+              }
             }
           }
-        }
-    }
+      }
 
     def memo2[T1, T2, S, U](
         f: (T1, T2) => U > S
@@ -95,7 +96,7 @@ object caches {
   }
 
   object Cache {
-    type Store = caffeine.cache.Cache[(sourcecode.Enclosing, Any), Promise[Any]]
+    type Store = caffeine.cache.Cache[Any, Promise[Any]]
   }
 
   object Caches {
@@ -121,7 +122,7 @@ object caches {
       IOs {
         new Cache(
             f(new Builder(Caffeine.newBuilder())).b
-              .build[(sourcecode.Enclosing, Any), Promise[Any]]()
+              .build[Any, Promise[Any]]()
         )
       }
   }

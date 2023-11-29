@@ -1507,6 +1507,38 @@ val h: Unit > IOs =
 
 ## Integrations
 
+### Caches: Memoized Functions via Caffeine
+
+Kyo provides caching through memoization. A single `Cache` instance can be reused by multiple memoized functions. This allows for flexible scoping of caches, enabling users to use the same cache for various operations.
+
+```scala
+import kyo.concurrent.caches._
+import scala.concurrent.duration._
+
+val a: Int > (Fibers with Tries) =
+  for {
+
+    // The initialization takes a 
+    // builder function that mirrors
+    // Caffeine's builder
+    cache <- Caches.init(_.maxSize(100))
+
+    // Create a memoized function
+    fun = cache.memo { (v: String) =>
+      // Note how the implementation
+      // can use other effects
+      Tries(v.toInt)
+    }
+
+    // Use the function
+    v <- fun("10")
+  } yield {
+    v
+  }
+```
+
+Although multiple memoized functions can reuse the same `Cache`, each function operates as an isolated cache and doesn't share any values with others. Internally, cache entries include the instance of the function as part of the key to ensure this separation. Only the cache space is shared, allowing for efficient use of resources without compromising the independence of each function's cache.
+
 ### Requests: HTTP Client via Sttp
 
 The `Requests` effect provides a simplified API for [Sttp 3](https://github.com/softwaremill/sttp) implemented on top of Kyo's concurrent package.
@@ -1559,11 +1591,11 @@ Users are free to use any JSON libraries supported by Sttp; however, [zio-json](
 
 ### Routes: HTTP Server via Tapir
 
-TODO
+Coming soon..
 
-### AIs: Large Language Models
+### AIs: LLM Abstractions via OpenAI
 
-TODO
+Coming soon..
 
 ## Restrictions
 

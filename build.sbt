@@ -194,8 +194,7 @@ lazy val `kyo-cache` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine"   % "3.1.8",
-        libraryDependencies += "com.lihaoyi"                 %%% "sourcecode" % "0.3.1"
+        libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
     )
 
 lazy val `kyo-sttp` =
