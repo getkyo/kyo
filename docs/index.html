@@ -26,7 +26,7 @@
       plugins: [
         function (hook, vm) {
           hook.beforeEach(function (content) {
-            const startPattern = '## Please visit';
+            const startPattern = '### Please visit';
             const endPattern = '### ';
 
             let startIndex = content.indexOf(startPattern);

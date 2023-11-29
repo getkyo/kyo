@@ -10,7 +10,7 @@ Kyo is a toolkit for Scala development, spanning from browser-based apps in Scal
 
 Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://degoes.net/articles/rotating-effects), Kyo takes a more generalized approach. While ZIO restricts effects to two channels, dependency injection and short-circuiting, Kyo allows for an arbitrary number of effectful channels. This enhancement gives developers greater flexibility in effect management, while also simplifying Kyo's internal codebase through more principled design patterns.
 
-## Please visit https://getkyo.io for an indexed version of this documentation.
+### Please visit https://getkyo.io for an indexed version of this documentation.
 
 ### Getting Started
 
@@ -23,8 +23,6 @@ Kyo is available on Maven Central in multiple modules:
 | `kyo-cache`      | X       | X       |          | Caffeine caching                    |
 | `kyo-stats-otel` | X       | X       |          | Stats exporter for OpenTelemetry    |
 | `kyo-sttp`       | X       | X       | X        | Sttp HTTP Client                    |
-
-#### SBT Configuration Examples:
 
 For Scala 2 and 3:
 
