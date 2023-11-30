@@ -43,7 +43,7 @@ libraryDependencies += "io.getkyo" %%% "kyo-direct" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-sttp" % "<version>"
 ```
 
-Replace `<version>` with the latest version on Maven Central: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3).
+Replace `<version>` with the latest version: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3).
 
 
 ### The `>` type
