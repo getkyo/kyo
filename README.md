@@ -1641,7 +1641,7 @@ def test[S](v: Int > S) =
   v.map(_ + 1)
 
 // If the input has no pending effects,
-// `S`` is inferred  to `Any` and the
+// `S` is inferred  to `Any` and the
 // value is evaluated immediatelly 
 // to 43
 val a: Int > Any =
