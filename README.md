@@ -1617,7 +1617,7 @@ val d: String > Fibers =
 
 Please refer to Sttp's documentation for details on how to build requests. Streaming is currently unsupported.
 
-Users are free to use any JSON libraries supported by Sttp; however, [zio-json](https://github.com/zio/zio-json) is recommended, as it is used in Kyo's tests and modules requiring HTTP communication, such as `AIs``.
+Users are free to use any JSON libraries supported by Sttp; however, [zio-json](https://github.com/zio/zio-json) is recommended, as it is used in Kyo's tests and modules requiring HTTP communication, such as `AIs`.
 
 ### Routes: HTTP Server via Tapir
 
