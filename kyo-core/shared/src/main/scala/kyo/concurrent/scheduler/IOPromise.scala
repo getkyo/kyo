@@ -3,7 +3,7 @@ package kyo.concurrent.scheduler
 import kyo._
 import kyo.concurrent.fibers.Fibers
 import kyo.ios._
-import kyo.loggers.Loggers
+import kyo.logs._
 
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.AbstractQueuedSynchronizer
@@ -106,7 +106,7 @@ private[kyo] class IOPromise[T](state: State[T])
           try f(v.asInstanceOf[T > IOs])
           catch {
             case ex if NonFatal(ex) =>
-              log.error("uncaught exception", ex)
+              Logs.unsafe.error("uncaught exception", ex)
           }
       }
     loop(this)
@@ -165,8 +165,6 @@ private[kyo] class IOPromise[T](state: State[T])
 
 private[kyo] object IOPromise {
 
-  private val log = Loggers.init(getClass())
-
   type State[T] = Any // (T > IOs) | Pending[T] | Linked[T]
 
   case class Linked[T](p: IOPromise[T])
@@ -181,7 +179,7 @@ private[kyo] object IOPromise {
           try f(v)
           catch {
             case ex if NonFatal(ex) =>
-              IOs.run(log.error("uncaught exception", ex))
+              Logs.unsafe.error("uncaught exception", ex)
           }
           self
         }

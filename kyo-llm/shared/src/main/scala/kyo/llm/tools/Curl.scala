@@ -5,7 +5,7 @@ import kyo.requests._
 import sttp.client3._
 import sttp.model._
 import sttp.client3.ziojson._
-import kyo.loggers.Loggers
+import kyo.logs._
 import zio.json._
 import scala.concurrent.duration._
 import kyo.llm.ais.AIs
@@ -13,8 +13,6 @@ import kyo.llm.ais.AIs
 object Curl {
 
   import internal._
-
-  private val logger = Loggers.init("kyo.llm.tools.Curl")
 
   case class Methods(s: Set[String]) {
     def get: Methods     = Methods(s + "GET")
@@ -60,7 +58,7 @@ object Curl {
         AIs.fail(s"Method not allowed: ${params.method}. Allowed: ${allow.mkString(", ")}")
       } else {
         for {
-          _ <- logger.debug(params.toJsonPretty)
+          _ <- Logs.debug(params.toJsonPretty)
           res <- Requests(
               _.method(Method(params.method), uri"${params.url}")
                 .contentType(params.contentType)
@@ -69,7 +67,7 @@ object Curl {
                 .followRedirects(params.followRedirects)
                 .readTimeout(params.timeoutSeconds.getOrElse(0).seconds)
           )
-          _ <- logger.debug(res)
+          _ <- Logs.debug(res)
         } yield res
       }
     }

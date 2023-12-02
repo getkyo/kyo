@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.loggers.Loggers
+import kyo.logs._
 
 import java.io.Closeable
 import java.util.concurrent.ThreadLocalRandom
@@ -46,8 +46,6 @@ object ios {
   }
 
   final class IOs private[ios] () extends Effect[IO, IOs] {
-
-    private[this] val log = Loggers.init(getClass())
 
     val unit: Unit > IOs = ()
 
@@ -114,7 +112,7 @@ object ios {
             try IOs.run(run)
             catch {
               case ex if NonFatal(ex) =>
-                log.error(s"IOs.ensure function failed", ex)
+                Logs.unsafe.error(s"IOs.ensure function failed", ex)
             }
           }
       }

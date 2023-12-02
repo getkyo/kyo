@@ -13,11 +13,9 @@ import zio.json._
 import scala.util.Failure
 import scala.util.Success
 import kyo.llm.tools.Tools
-import kyo.loggers.Loggers
+import kyo.logs._
 
 object BraveSearch {
-
-  private val logger = Loggers.init("kyo.llm.tools.BraveSearch")
 
   import model._
 
@@ -28,14 +26,14 @@ object BraveSearch {
   ) { (ai, query) =>
     for {
       key <- ApiKey.get
-      _   <- logger.debug(query)
+      _   <- Logs.debug(query)
       res <- Requests[SearchResponse](
           _.contentType("application/json")
             .header("X-Subscription-Token", key)
             .get(uri"https://api.search.brave.com/res/v1/web/search?q=$query")
             .response(asJson[SearchResponse])
       )
-      _ <- logger.debug(res.toJsonPretty)
+      _ <- Logs.debug(res.toJsonPretty)
     } yield res
   }
 

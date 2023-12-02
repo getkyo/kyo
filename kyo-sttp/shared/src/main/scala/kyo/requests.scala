@@ -5,7 +5,6 @@ import kyo.concurrent.Joins
 import kyo.concurrent.fibers._
 import kyo.envs._
 import kyo.ios._
-import kyo.loggers._
 import sttp.client3._
 
 object requests {

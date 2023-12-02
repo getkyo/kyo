@@ -10,7 +10,7 @@ import kyo.requests._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
-import kyo.loggers.Loggers
+import kyo.logs._
 
 object embeddings {
 
@@ -21,14 +21,12 @@ object embeddings {
   object Embeddings {
     import internal._
 
-    private val logger = Loggers.init("kyo.llm.embeddings")
-
     def init(text: String, model: String = "text-embedding-ada-002"): Embedding > AIs =
       for {
         apiKey <- Configs.apiKey
         config <- Configs.get
         req = Request(text, model)
-        _ <- logger.debug(req.toJsonPretty)
+        _ <- Logs.debug(req.toJsonPretty)
         res <-
           config.embeddingsMeter.run {
             Requests[Response](
@@ -39,7 +37,7 @@ object embeddings {
                   .response(asJson[Response])
             )
           }
-        _ <- logger.debug(res.copy(data =
+        _ <- Logs.debug(res.copy(data =
           res.data.map(d => d.copy(embedding = d.embedding.take(3)))
         ).toJsonPretty)
       } yield {

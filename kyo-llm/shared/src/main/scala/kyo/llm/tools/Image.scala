@@ -16,11 +16,9 @@ import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
 import scala.concurrent.duration.Duration
-import kyo.loggers.Loggers
+import kyo.logs._
 
 object Image {
-
-  private val logger = Loggers.init("kyo.llm.tools.Image")
 
   import internal._
 
@@ -63,7 +61,7 @@ object Image {
       for {
         key    <- Configs.apiKey
         config <- Configs.get
-        _      <- logger.debug(req.toJsonPretty)
+        _      <- Logs.debug(req.toJsonPretty)
         resp <- Requests[Response](
             _.contentType("application/json")
               .header("Authorization", s"Bearer $key")
@@ -72,7 +70,7 @@ object Image {
               .readTimeout(Duration.Inf)
               .response(asJson[Response])
         )
-        _ <- logger.debug(resp.toJsonPretty)
+        _ <- Logs.debug(resp.toJsonPretty)
         r <- resp.data.headOption.map(r => Output(r.url, r.revised_prompt))
           .getOrElse(AIs.fail[Output]("Can't find the generated image URL."))
       } yield r

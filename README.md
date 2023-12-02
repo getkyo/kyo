@@ -815,31 +815,23 @@ val k: Int > IOs =
   Randoms.let(Random.default)(h)
 ```
 
-### Loggers: Logging
+### Logs: Logging
 
-```scala
-import kyo.loggers._
+`Logs` is designed to streamline the logging process without requiring the instantiation of a `Logger`. By leveraging the [sourcecode](https://github.com/com-lihaoyi/sourcecode) library, log messages automatically include source code position information, enhancing the clarity and usefulness of the logs.
 
-// Initialize a 'Logger' instance
-val a: Logger = 
-  Loggers.init("exampleLog")
+```scala 
+import kyo.logs._
 
-// It's also possible to specify a class
-val b: Logger =
-  Loggers.init(this.getClass)
-
-// A 'Logger' provides trace, debug, info, 
-// warn, and error method variants. Example:
-val c: Unit > IOs = 
-  b.error("example")
+// Logs provide trace, debug, info, 
+// warn, and error method variants.
+val a: Unit > IOs = 
+  Logs.error("example")
 
 // Each variant also has a method overload
 // that takes a 'Throwable' as a second param
 val d: Unit > IOs = 
-  b.error("example", new Exception)
+  Logs.error("example", new Exception)
 ```
-
-> Important: The `Loggers` effect chooses to consider the initialization of a Logger instance as pure, even though it may perform side effects. For optimal performance, `Logger` instances should be stored in constant fields, a goal that would be challenging to achieve if `Loggers.init` required an `IOs` suspension.
 
 ### Stats: Observability
 

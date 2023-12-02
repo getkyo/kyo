@@ -102,6 +102,7 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.8",
     libraryDependencies += "org.slf4j"       % "slf4j-api"         % "2.0.9",
     libraryDependencies += "org.jctools"     % "jctools-core"      % "4.0.2",
+    libraryDependencies += "com.lihaoyi"   %%% "sourcecode"        % "0.3.1",
     libraryDependencies += "dev.zio"       %%% "zio-test"          % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-test-magnolia" % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-test-sbt"      % zioVersion   % Test,
