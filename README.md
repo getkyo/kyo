@@ -415,10 +415,10 @@ In some specific cases where Kyo isn't used as the main effect system of an appl
 val a: Int > IOs = 
   IOs(42)
 
-// ** Avoid 'IOs.run', use 'kyo.App' instead) **
+// ** Avoid 'IOs.run', use 'kyo.App' instead. **
 val b: Int = 
   IOs.run(a).pure
-// ** Avoid 'IOs.run', use 'kyo.App' instead) **
+// ** Avoid 'IOs.run', use 'kyo.App' instead. **
 ```
 
 The `runLazy` method accepts computations with other effects but it doesn't guarantee that all side effects are performed before the method returns. If other effects still have to be handled, the side effects can be executed later once the other effects are handled. This a low-level API that must be used with caution.
@@ -434,11 +434,11 @@ val a: Int > (Options with IOs) =
     }
   }
 
-// ** Avoid 'IOs.runLazy', use 'kyo.App' instead) **
+// ** Avoid 'IOs.runLazy', use 'kyo.App' instead. **
 // Handle the 'IOs' effect lazily
 val b: Int > Options = 
   IOs.runLazy(a)
-// ** Avoid 'IOs.runLazy', use 'kyo.App' instead) **
+// ** Avoid 'IOs.runLazy', use 'kyo.App' instead. **
 
 // Since the computation is suspended with the 
 // 'Options' effect first, the lazy 'IOs' execution 
