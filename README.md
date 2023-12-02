@@ -165,6 +165,8 @@ Effects follow a naming convention for common operations:
 Though named `run`, effect handling doesn't necessarily execute the computation immediately, as the effect handling itself can also be suspended if another effect is pending.
 
 ```scala
+val a: Int > Options = 42
+
 // Handle the 'Options' effect
 val b: Option[Int] > Any = 
   Options.run(a)
