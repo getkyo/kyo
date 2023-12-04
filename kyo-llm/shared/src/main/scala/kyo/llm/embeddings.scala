@@ -21,7 +21,18 @@ object embeddings {
   object Embeddings {
     import internal._
 
-    def init(text: String, model: String = "text-embedding-ada-002"): Embedding > AIs =
+    def init(weighted: (Int, String)*): Embedding > AIs =
+      init {
+        val n = weighted.map(_._1).min
+        require(n > 0)
+        (0 to n).flatMap { _ =>
+          weighted.flatMap {
+            case (w, text) => List.fill(w / n)(text)
+          }
+        }.mkString("\n")
+      }
+
+    def init(text: String): Embedding > AIs =
       for {
         apiKey <- Configs.apiKey
         config <- Configs.get
@@ -45,6 +56,9 @@ object embeddings {
       }
 
     private object internal {
+
+      val model: String = "text-embedding-ada-002"
+
       case class Request(input: String, model: String)
       case class Data(embedding: List[Float])
       case class Usage(prompt_tokens: Int)
