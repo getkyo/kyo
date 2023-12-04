@@ -26,10 +26,7 @@ class iosTest extends KyoTest {
           1
         }
       assert(!called)
-      checkEquals[Int, Nothing](
-          IOs.runLazy(v),
-          1
-      )
+      assert(IOs.runLazy(v) == 1)
       assert(called)
     }
     "next handled effects can execute" in run {
@@ -44,9 +41,9 @@ class iosTest extends KyoTest {
       assert(!called)
       val v2 = IOs.runLazy(v)
       assert(!called)
-      checkEquals[Int, Nothing](
-          Envs[Int].run(1)(v2),
-          1
+      assert(
+          Envs[Int].run(1)(v2) ==
+            1
       )
       assert(called)
     }
@@ -74,9 +71,9 @@ class iosTest extends KyoTest {
           else
             i
         }
-      checkEquals[Int, Nothing](
-          IOs.runLazy(loop(0)),
-          frames
+      assert(
+          IOs.runLazy(loop(0)) ==
+            frames
       )
     }
   }
@@ -89,9 +86,9 @@ class iosTest extends KyoTest {
           1
         }
       assert(!called)
-      checkEquals[Int, Nothing](
-          IOs.run[Int](v),
-          1
+      assert(
+          IOs.run[Int](v) ==
+            1
       )
       assert(called)
     }
@@ -129,20 +126,20 @@ class iosTest extends KyoTest {
   "ensure" - {
     "success" in {
       var called = false
-      checkEquals[Try[Int], Any](
-          Tries.run(IOs.run(IOs.ensure[Int, Any] { called = true }(1))),
-          Try(1)
+      assert(
+          Tries.run(IOs.run(IOs.ensure[Int, Any] { called = true }(1))) ==
+            Try(1)
       )
       assert(called)
     }
     "failure" in {
       val ex     = new Exception
       var called = false
-      checkEquals[Try[Int], Any](
+      assert(
           Tries.run(IOs.run(IOs.ensure { called = true } {
             IOs[Int, Any](throw ex)
-          })),
-          Failure(ex)
+          })) ==
+            Failure(ex)
       )
       assert(called)
     }
