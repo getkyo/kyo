@@ -105,7 +105,7 @@ object ais {
                 case Some(v) =>
                   v
                 case None =>
-                  AIs.fail("Expected a function call to the resultTool")
+                  eval()
               }
             }
           }

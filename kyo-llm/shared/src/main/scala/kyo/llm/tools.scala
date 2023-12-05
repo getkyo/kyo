@@ -28,6 +28,13 @@ package object tools {
       call: (AI, T) => U > AIs,
       userStatus: T => String > AIs
   ) {
+
+    def apply(input: T): U > AIs =
+      AIs.init.map(call(_, input))
+
+    def apply(ai: AI, input: T): U > AIs =
+      call(ai, input)
+
     private[kyo] def handle(ai: AI, v: String): String > AIs =
       decoder.decodeJson(v) match {
         case Left(error) =>
