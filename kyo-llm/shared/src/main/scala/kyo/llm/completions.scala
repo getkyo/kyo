@@ -58,7 +58,11 @@ object completions {
         Configs.get.map { cfg =>
           Requests[Response](
               _.contentType("application/json")
-                .header("Authorization", s"Bearer $key")
+                .headers(
+                    Map(
+                        "Authorization" -> s"Bearer $key"
+                    ) ++ cfg.apiOrg.map("OpenAI-Organization" -> _)
+                )
                 .post(uri"${cfg.apiUrl}/v1/chat/completions")
                 .body(req)
                 .readTimeout(Duration.Inf)

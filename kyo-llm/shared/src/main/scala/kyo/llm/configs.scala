@@ -22,6 +22,7 @@ object configs {
   case class Config(
       apiUrl: String,
       apiKey: Option[String],
+      apiOrg: Option[String],
       model: Model,
       temperature: Double,
       maxTokens: Option[Int],
@@ -50,12 +51,16 @@ object configs {
   object Config {
     val default = {
       val apiKeyProp = "OPENAI_API_KEY"
+      val apiOrgProp = "OPENAI_API_ORG"
       val apiKey =
         Option(System.getenv(apiKeyProp))
           .orElse(Option(System.getProperty(apiKeyProp)))
+      val apiOrg =
+        Option(System.getenv(apiOrgProp))
       Config(
           "https://api.openai.com",
           apiKey,
+          apiOrg,
           Model.gpt4_turbo,
           0.2,
           None,
