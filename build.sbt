@@ -254,8 +254,8 @@ lazy val `kyo-llm` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .dependsOn(`kyo-llm-macros`)
     .jvmSettings(
-        libraryDependencies += "org.apache.lucene"    % "lucene-core"        % "9.8.0",
-        libraryDependencies += "org.apache.lucene"    % "lucene-queryparser" % "9.8.0",
+        libraryDependencies += "org.apache.lucene"    % "lucene-core"        % "9.9.0",
+        libraryDependencies += "org.apache.lucene"    % "lucene-queryparser" % "9.9.0",
         libraryDependencies += "com.formdev"          % "flatlaf"            % "3.2.5",
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-all"       % "0.64.8",
         libraryDependencies += "com.vladsch.flexmark" % "flexmark-java"      % "0.64.8",
