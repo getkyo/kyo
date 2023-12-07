@@ -12,7 +12,6 @@ import kyo.concurrent.timers._
 
 import sttp.tapir._
 import sttp.tapir.server.ServerEndpoint
-import kyo.App.Effects
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad._
 

@@ -1,8 +1,8 @@
 package kyoTest
 
 import izumi.reflect._
-import kyo.App
 import kyo.aborts._
+import kyo.apps._
 import kyo.clocks._
 import kyo.concurrent.fibers._
 import kyo.concurrent.timers._

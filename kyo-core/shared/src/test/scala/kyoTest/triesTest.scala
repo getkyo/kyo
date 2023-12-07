@@ -15,16 +15,16 @@ class triesTest extends KyoTest {
 
   val e = new Exception
 
-  "apply" - {
+  ".catching" - {
     "failure" in {
       assert(
-          Tries.run(Tries((throw e): Int)) ==
+          Tries.run(Tries.catching((throw e): Int)) ==
             Failure(e)
       )
     }
     "success" in {
       assert(
-          Tries.run(Tries(1)) ==
+          Tries.run(Tries.catching(1)) ==
             Success(1)
       )
     }
@@ -33,13 +33,13 @@ class triesTest extends KyoTest {
   "run" - {
     "failure" in {
       assert(
-          Tries.run(Tries((throw e): Int)) ==
+          Tries.run(Tries.catching((throw e): Int)) ==
             Failure(e)
       )
     }
     "success" in {
       assert(
-          Tries.run(Tries(1)) ==
+          Tries.run(Tries.catching(1)) ==
             Success(1)
       )
     }

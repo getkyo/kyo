@@ -4,6 +4,8 @@ import scala.Console
 
 import ios._
 import envs._
+import java.io.IOException
+import java.io.EOFException
 
 object consoles {
 
@@ -18,7 +20,14 @@ object consoles {
   object Console {
     implicit val default: Console =
       new Console {
-        val readln                 = IOs(scala.Console.in.readLine())
+        val readln =
+          IOs {
+            val line = scala.Console.in.readLine()
+            if (line == null)
+              throw new EOFException("Consoles.readln failed.")
+            else
+              line
+          }
         def print[T](s: => T)      = IOs(scala.Console.out.print(s))
         def printErr[T](s: => T)   = IOs(scala.Console.err.print(s))
         def println[T](s: => T)    = IOs(scala.Console.out.println(s))

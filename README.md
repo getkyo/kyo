@@ -90,11 +90,11 @@ This unique property removes the need to juggle between `map` and `flatMap`. All
 import kyo.options._
 import kyo.tries._
 
-// Kyo still supports both `map` and `flatMap`
+// Kyo still supports both `map` and `flatMap`.
 def example1(a: Int > Options, b: Int > Tries): Int > (Options with Tries) =
   a.flatMap(v => b.map(_ + v))
 
-// but using only `map` is recommended 
+// But using only `map` is recommended since it funcions like `flatMap` due to effect widening.
 def example2(a: Int > Options, b: Int > Tries): Int > (Options with Tries) =
   a.map(v => b.map(_ + v))
 ```
@@ -316,15 +316,18 @@ In Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadl
 
 ### Defining an App
 
-`kyo.App` offers a structured approach similar to Scala's `App` for defining application entry points. However, it comes with added capabilities, handling a suite of default effects. As a result, the `run` method within `kyo.App` can accommodate various effects, such as IOs, Fibers, Resources, Clocks, Consoles, Randoms, Timers, and Aspects.
+`kyo.apps.App` offers a structured approach similar to Scala's `App` for defining application entry points. However, it comes with added capabilities, handling a suite of default effects. As a result, the `run` method within `kyo.apps.App` can accommodate various effects, such as IOs, Fibers, Resources, Clocks, Consoles, Randoms, Timers, and Aspects.
 
 ```scala
 import kyo.clocks._
 import kyo.consoles._
 import kyo.randoms._
+import kyo.apps._
 
 object MyApp extends App {
-  def run(args: List[String]) = 
+  // Must return `Unit` and only use `Fibers`, `Resources`, `Consoles` and `Tries`.
+  // Handle other effects like `Options` before returning.
+  def run(args: List[String]): Unit > (Fibers with Resources with Consoles with Tries) = 
     for {
       _ <- Consoles.println("Starting the app...")
       currentTime <- Clocks.now
@@ -409,7 +412,7 @@ val c: Int > IOs =
   IOs.fail(new Exception)
 ```
 
-Users shouldn't typically handle the `IOs` effect directly since it triggers the execution of side effects, which breaks referential transparency. Prefer `kyo.App` instead.
+Users shouldn't typically handle the `IOs` effect directly since it triggers the execution of side effects, which breaks referential transparency. Prefer `kyo.apps.App` instead.
 
 In some specific cases where Kyo isn't used as the main effect system of an application, it might make sense for the user to handle the `IOs` effect directly. The `run` method can only be used if `IOs` is the only pending effect.
 
@@ -417,10 +420,10 @@ In some specific cases where Kyo isn't used as the main effect system of an appl
 val a: Int > IOs = 
   IOs(42)
 
-// ** Avoid 'IOs.run', use 'kyo.App' instead. **
+// ** Avoid 'IOs.run', use 'kyo.apps.App' instead. **
 val b: Int = 
   IOs.run(a).pure
-// ** Avoid 'IOs.run', use 'kyo.App' instead. **
+// ** Avoid 'IOs.run', use 'kyo.apps.App' instead. **
 ```
 
 The `runLazy` method accepts computations with other effects but it doesn't guarantee that all side effects are performed before the method returns. If other effects still have to be handled, the side effects can be executed later once the other effects are handled. This a low-level API that must be used with caution.
@@ -436,11 +439,11 @@ val a: Int > (Options with IOs) =
     }
   }
 
-// ** Avoid 'IOs.runLazy', use 'kyo.App' instead. **
+// ** Avoid 'IOs.runLazy', use 'kyo.apps.App' instead. **
 // Handle the 'IOs' effect lazily
 val b: Int > Options = 
   IOs.runLazy(a)
-// ** Avoid 'IOs.runLazy', use 'kyo.App' instead. **
+// ** Avoid 'IOs.runLazy', use 'kyo.apps.App' instead. **
 
 // Since the computation is suspended with the 
 // 'Options' effect first, the lazy 'IOs' execution 
@@ -449,7 +452,7 @@ val c: Option[Int] =
   Options.run(b).pure
 ```
 
-> IMPORTANT: Avoid handling the `IOs` effect directly since it breaks referential transparency. Use `kyo.App` instead.
+> IMPORTANT: Avoid handling the `IOs` effect directly since it breaks referential transparency. Use `kyo.apps.App` instead.
 
 ### Envs: Dependency Injection
 
@@ -728,13 +731,13 @@ val b: Int > Tries =
 val c: Int > Tries = 
   Tries.fail("failed")
 
-// 'apply' is the effectful version of 'Try.apply'
+// 'catching' is the effectful version of 'Try.apply'
 val d: Int > Tries = 
-  Tries(1)
+  Tries.catching(1)
 
-// The 'apply' method automatically catches exceptions
+// The 'catching' method automatically catches exceptions
 val e: Int > Tries = 
-  Tries(throw new Exception)
+  Tries.catching(throw new Exception)
 ```
 
 ### Consoles: Console Interaction
@@ -1037,7 +1040,7 @@ val i: Fiber[Int] > IOs =
   a.transform(v => Fibers.value(v + 1))
 ```
 
-Similarly to `IOs`, users should avoid handling the `Fibers` effect directly and rely on `kyo.App` instead. If strictly necessary, there are two methods to handle the `Fibers` effect:
+Similarly to `IOs`, users should avoid handling the `Fibers` effect directly and rely on `kyo.apps.App` instead. If strictly necessary, there are two methods to handle the `Fibers` effect:
 
 1. `run` takes a computation that has only the `Fibers` effect pending and returns a `Fiber` instance without blocking threads.
 2. `runBlocking` accepts computations with arbitrary pending effects but it handles asynchronous operations by blocking the current thread.
@@ -1060,7 +1063,7 @@ val c: Int > IOs =
   Fibers.runBlocking(a)
 ```
 
-> Note: Handling the `Fibers` effect doesn't break referential transparency as with `IOs` but its usage is not trivial due to the limitations of the pending effects, especially `IOs`. Prefer `kyo.App` instead.
+> Note: Handling the `Fibers` effect doesn't break referential transparency as with `IOs` but its usage is not trivial due to the limitations of the pending effects, especially `IOs`. Prefer `kyo.apps.App` instead.
 
 The `Fibers` effect also offers a low-level API to create `Promise`s as way to integrate external async operations with fibers. These APIs should be used only in low-level integration code.
 

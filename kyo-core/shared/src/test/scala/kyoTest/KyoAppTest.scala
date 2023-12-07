@@ -8,6 +8,7 @@ import kyo._
 import kyo.ios._
 import kyo.randoms._
 import kyo.resources._
+import kyo.apps._
 
 import scala.concurrent.duration._
 
@@ -15,7 +16,7 @@ class AppTest extends KyoTest {
 
   "args" in {
     var args: List[String] = Nil
-    val app: kyo.App = (a: List[String]) => {
+    val app: App = (a: List[String]) => {
       args = a
       ()
     }
@@ -24,7 +25,7 @@ class AppTest extends KyoTest {
   }
 
   "effects" in run {
-    val app: kyo.App = (a: List[String]) => {
+    val app: App = (a: List[String]) => {
       for {
         _ <- Timers.scheduleAtFixedRate(1.second, 1.second)(())
         _ <- Randoms.nextInt

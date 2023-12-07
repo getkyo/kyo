@@ -33,7 +33,7 @@ object tries {
     def fail[T](msg: String): T > Tries =
       fail(new Exception(msg))
 
-    def apply[T, S](v: => T > S): T > (Tries with S) =
+    def catching[T, S](v: => T > S): T > (Tries with S) =
       aborts.catching(v)
 
     def get[T, S](v: Try[T] > S): T > (Tries with S) =

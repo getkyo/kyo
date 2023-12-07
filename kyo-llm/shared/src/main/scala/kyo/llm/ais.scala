@@ -64,6 +64,12 @@ object ais {
     def seed[S](msg: String): Unit > AIs =
       update(_.seed(msg))
 
+    def seed[S](msg: String, reminder: String): Unit > AIs =
+      update(_.seed(msg).reminder(reminder))
+
+    def reminder[S](msg: String): Unit > AIs =
+      update(_.reminder(msg))
+
     def userMessage(msg: String, imageUrls: List[String] = Nil): Unit > AIs =
       update(_.userMessage(msg, imageUrls))
 
@@ -167,6 +173,11 @@ object ais {
         ai.seed(seed).andThen(ai)
       }
 
+    def init(seed: String, reminder: String): AI > AIs =
+      init(seed).map { ai =>
+        ai.reminder(reminder).andThen(ai)
+      }
+
     def run[T, S](v: T > (AIs with S))(implicit f: Flat[T > AIs with S]): T > (Requests with S) =
       State.run[T, Requests with S](v).map(_._1)
 
@@ -187,6 +198,15 @@ object ais {
 
     def infer[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
       init(seed).map(_.infer[T](msg))
+
+    def ask(seed: String, reminder: String, msg: String): String > AIs =
+      init(seed, reminder).map(_.ask(msg))
+
+    def gen[T](seed: String, reminder: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
+      init(seed, reminder).map(_.gen[T](msg))
+
+    def infer[T](seed: String, reminder: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
+      init(seed, reminder).map(_.infer[T](msg))
 
     def restore(ctx: Context): AI > AIs =
       init.map { ai =>

@@ -18,6 +18,15 @@ object aborts {
     type Value[T] = Either[E, T]
   }
 
+  object Aborts {
+
+    def apply[E](implicit tag: Tag[E]): Aborts[E] =
+      new Aborts(tag)
+
+    def apply[T, E](ex: E)(implicit tag: Tag[E]): T > Aborts[E] =
+      Aborts[E].get(Left(ex))
+  }
+
   final class Aborts[E] private[aborts] (private val tag: Tag[E])
       extends Effect[Abort[E]#Value, Aborts[E]] {
 
@@ -55,41 +64,32 @@ object aborts {
           false
       }
 
+    implicit def handler[E](implicit tag: Tag[E]): Handler[Abort[E]#Value, Aborts[E], Any] =
+      new Handler[Abort[E]#Value, Aborts[E], Any] {
+
+        val aborts = Aborts[E]
+
+        def pure[U](v: U) = Right(v)
+
+        override def handle[T](ex: Throwable): T > Aborts[E] =
+          if (tag.closestClass.isAssignableFrom(ex.getClass)) {
+            aborts.fail(ex.asInstanceOf[E])
+          } else {
+            throw ex
+          }
+
+        def apply[U, V, S2](
+            m: Either[E, U],
+            f: U => V > (Aborts[E] with S2)
+        ): V > (S2 with Aborts[E]) =
+          m match {
+            case left: Left[_, _] =>
+              aborts.get(left.asInstanceOf[Left[E, V]])
+            case Right(v) =>
+              f(v)
+          }
+      }
+
     override def toString = s"Aborts[${tag.tag.longNameWithPrefix}]"
   }
-
-  object Aborts {
-
-    def apply[E](implicit tag: Tag[E]): Aborts[E] =
-      new Aborts(tag)
-
-    def apply[T, E](ex: E)(implicit tag: Tag[E]): T > Aborts[E] =
-      Aborts[E].get(Left(ex))
-  }
-
-  private implicit def handler[E](implicit tag: Tag[E]): Handler[Abort[E]#Value, Aborts[E], Any] =
-    new Handler[Abort[E]#Value, Aborts[E], Any] {
-
-      val aborts = Aborts[E]
-
-      def pure[U](v: U) = Right(v)
-
-      override def handle[T](ex: Throwable): T > Aborts[E] =
-        if (tag.closestClass.isAssignableFrom(ex.getClass)) {
-          aborts.fail(ex.asInstanceOf[E])
-        } else {
-          throw ex
-        }
-
-      def apply[U, V, S2](
-          m: Either[E, U],
-          f: U => V > (Aborts[E] with S2)
-      ): V > (S2 with Aborts[E]) =
-        m match {
-          case left: Left[_, _] =>
-            aborts.get(left.asInstanceOf[Left[E, V]])
-          case Right(v) =>
-            f(v)
-        }
-    }
 }
