@@ -3,14 +3,22 @@ package kyo
 import kyo.>
 import scala.reflect.macros.whitebox.Context
 import scala.collection.mutable.Stack
+import scala.util.control.NonFatal
 
 private[kyo] object Validate {
 
   def apply(c: Context)(tree: c.Tree): Unit = {
     import c.universe._
 
-    def fail(t: Tree, msg: String) =
-      c.abort(t.pos, msg)
+    def fail(t: Tree, msg: String) = {
+      val s =
+        try s" Found: ${show(tree)}"
+        catch {
+          case ex if (NonFatal(ex)) =>
+            ""
+        }
+      c.abort(t.pos, msg + s)
+    }
 
     def pure(tree: Tree) =
       !Trees.exists(c)(tree) {
