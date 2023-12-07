@@ -174,6 +174,11 @@ val b: Option[Int] > Any =
 // Retrieve pure value as there are no more pending effects
 val c: Option[Int] = 
   b.pure
+
+// Computations with no pending effects 
+// (`Any`) provide only the `pure` method. 
+// For example, this code fails to compile:
+// val c: String > Any = a.map(_.toString)
 ```
 
 The order in which you handle effects in Kyo can significantly influence both the type and value of the result. Since effects are unordered at the type level, the runtime behavior depends on the sequence in which effects are processed.
@@ -319,10 +324,12 @@ In Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadl
 `kyo.apps.App` offers a structured approach similar to Scala's `App` for defining application entry points. However, it comes with added capabilities, handling a suite of default effects. As a result, the `run` method within `kyo.apps.App` can accommodate various effects, such as IOs, Fibers, Resources, Clocks, Consoles, Randoms, Timers, and Aspects.
 
 ```scala
+import kyo.apps._
 import kyo.clocks._
 import kyo.consoles._
 import kyo.randoms._
-import kyo.apps._
+import kyo.resources._
+import kyo.concurrent.fibers._
 
 object MyApp extends App {
   // Must return `Unit` and only use `Fibers`, `Resources`, `Consoles` and `Tries`.
@@ -1554,7 +1561,7 @@ val a: Int > (Fibers with Tries) =
     fun = cache.memo { (v: String) =>
       // Note how the implementation
       // can use other effects
-      Tries(v.toInt)
+      Tries.catching(v.toInt)
     }
 
     // Use the function
