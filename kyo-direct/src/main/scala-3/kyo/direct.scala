@@ -31,8 +31,6 @@ object direct {
     Trees.traverse(f.asTerm) {
       case Apply(TypeApply(Ident("await"), List(t, s)), List(v)) =>
         effects ::= s.tpe.asType
-      case tree: Term if (tree.tpe.typeSymbol.name == ">") =>
-        error("Kyo computations must used within an `await` block: " + tree.show, tree.asExpr)
     }
 
     val s =

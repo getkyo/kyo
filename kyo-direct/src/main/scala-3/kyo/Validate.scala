@@ -1,6 +1,7 @@
 package kyo
 
 import scala.quoted._
+import scala.util.control.NonFatal
 
 private[kyo] object Validate {
 
@@ -9,8 +10,15 @@ private[kyo] object Validate {
 
     val tree = expr.asTerm
 
-    def fail(tree: Tree, msg: String): Unit =
-      report.error(msg, tree.pos)
+    def fail(tree: Tree, msg: String): Unit = {
+      val show =
+        try s" Found: ${tree.show}"
+        catch {
+          case ex if (NonFatal(ex)) =>
+            ""
+        }
+      report.error(s"$msg $show", tree.pos)
+    }
 
     def pure(tree: Tree): Boolean =
       !Trees.exists(tree) {
