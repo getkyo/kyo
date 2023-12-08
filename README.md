@@ -584,42 +584,42 @@ val b: Int > IOs =
   Resources.run(a)
 ```
 
-### Lists: Exploratory Branching
+### Seqs: Exploratory Branching
 
-The `Lists` effect is designed to aid in handling and exploring multiple options, pathways, or outcomes in a computation. This effect is particularly useful in scenarios where you're dealing with decision trees, backtracking algorithms, or any situation that involves dynamically exploring multiple options.
+The `Seqs` effect is designed to aid in handling and exploring multiple options, pathways, or outcomes in a computation. This effect is particularly useful in scenarios where you're dealing with decision trees, backtracking algorithms, or any situation that involves dynamically exploring multiple options.
 
 ```scala
-import kyo.lists._
+import kyo.seqs._
 
-// Evaluate each of the provided lists.
-// Note how 'get' takes a 'List[T]'
-// and returns a 'T > Lists'
-val a: Int > Lists =
-  Lists.get(List(1, 2, 3, 4))
+// Evaluate each of the provided `Seq`s.
+// Note how 'get' takes a 'Seq[T]'
+// and returns a 'T > Seqs'
+val a: Int > Seqs =
+  Seqs.get(Seq(1, 2, 3, 4))
 
-// 'dropIf' discards the current choice if 
-// a condition is not met. Produces a 'List(1, 2)'
+// 'filter' discards the current element if 
+// a condition is not met. Produces a 'Seq(1, 2)'
 // since values greater than 2 are dropped
-val b: Int > Lists =
-  a.map(v => Lists.filter(v > 2).map(_ => v))
+val b: Int > Seqs =
+  a.map(v => Seqs.filter(v > 2).map(_ => v))
 
 // 'drop' unconditionally discards the 
-// current choice. Produces a 'List(42)'
+// current choice. Produces a 'Seq(42)'
 // since only the value 1 is transformed
 // to 42 and all other values are dropped
-val c: Int > Lists = 
+val c: Int > Seqs = 
   b.map {
     case 1 => 42
-    case _ => Lists.drop
+    case _ => Seqs.drop
   }
 
-// Handle the effect to evaluate all lists 
-// and return a 'List' with the results
-val d: List[Int] > Any =
-  Lists.run(c)
+// Handle the effect to evaluate all elements 
+// and return a 'Seq' with the results
+val d: Seq[Int] > Any =
+  Seqs.run(c)
 ```
 
-The `Lists` effect becomes exceptionally powerful when combined with other effects. This allows you not just to make decisions or explore options in isolation but also to do so in contexts that may involve factors such as asynchronicity, resource management, or even user interaction.
+The `Seqs` effect becomes exceptionally powerful when combined with other effects. This allows you not just to make decisions or explore options in isolation but also to do so in contexts that may involve factors such as asynchronicity, resource management, or even user interaction.
 
 ### Aspects: Aspect-Oriented Programming
 

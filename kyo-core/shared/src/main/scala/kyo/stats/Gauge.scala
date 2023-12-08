@@ -2,7 +2,6 @@ package kyo.stats
 
 import kyo._
 import kyo.ios._
-import kyo.lists._
 
 case class Gauge(unsafe: Gauge.Unsafe) extends AnyVal {
   def close: Unit > IOs = IOs(unsafe.close())

@@ -10,7 +10,7 @@ import scala.concurrent.duration.Duration
 import channels._
 import fibers._
 import timers._
-import kyo.lists.Lists
+import kyo.seqs._
 
 object meters {
 
@@ -101,35 +101,35 @@ object meters {
     ): Meter > (IOs with S1 with S2 with S3 with S4) =
       pipeline[S1 with S2 with S3 with S4](List(m1, m2, m3, m4))
 
-    def pipeline[S](l: List[Meter > (IOs with S)]): Meter > (IOs with S) =
-      Lists.collect(l).map { meters =>
+    def pipeline[S](l: Seq[Meter > (IOs with S)]): Meter > (IOs with S) =
+      Seqs.collect(l).map { meters =>
         new Meter {
 
           val available = {
-            def loop(l: List[Meter], acc: Int): Int > IOs =
+            def loop(l: Seq[Meter], acc: Int): Int > IOs =
               l match {
-                case Nil => acc
-                case h :: t =>
+                case Seq() => acc
+                case h +: t =>
                   h.available.map(v => loop(t, acc + v))
               }
             loop(meters, 0)
           }
 
           def run[T, S](v: => T > S) = {
-            def loop(l: List[Meter]): T > (S with Fibers) =
+            def loop(l: Seq[Meter]): T > (S with Fibers) =
               l match {
-                case Nil => v
-                case h :: t =>
+                case Seq() => v
+                case h +: t =>
                   h.run(loop(t))
               }
             loop(meters)
           }
 
           def tryRun[T, S](v: => T > S) = {
-            def loop(l: List[Meter]): Option[T] > (IOs with S) =
+            def loop(l: Seq[Meter]): Option[T] > (IOs with S) =
               l match {
-                case Nil => v.map(Some(_))
-                case h :: t =>
+                case Seq() => v.map(Some(_))
+                case h +: t =>
                   h.tryRun(loop(t)).map {
                     case None => None
                     case r    => r.flatten: Option[T]

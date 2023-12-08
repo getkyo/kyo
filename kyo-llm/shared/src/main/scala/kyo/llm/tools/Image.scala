@@ -5,7 +5,6 @@ import kyo.requests._
 import kyo.llm.ais._
 import kyo.llm.contexts._
 import kyo.llm.configs._
-import kyo.lists.Lists
 import java.util.Base64
 import sttp.client3._
 import java.io.ByteArrayInputStream

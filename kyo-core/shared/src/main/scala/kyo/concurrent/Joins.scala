@@ -2,7 +2,6 @@ package kyo.concurrent
 
 import kyo._
 import scala.annotation.implicitNotFound
-import kyo.lists.Lists
 
 trait Joins[E] {
 

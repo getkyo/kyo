@@ -57,7 +57,7 @@ class directTest extends KyoTest {
   }
 
   "if" in {
-    var calls = List.empty[Int]
+    var calls = Seq.empty[Int]
     val io: Boolean > IOs =
       defer {
         if (await(IOs { calls :+= 1; true }))
@@ -66,27 +66,27 @@ class directTest extends KyoTest {
           await(IOs { calls :+= 3; true })
       }
     assert(IOs.run(io))
-    assert(calls == List(1, 2))
+    assert(calls == Seq(1, 2))
   }
 
   "booleans" - {
     "&&" in {
-      var calls = List.empty[Int]
+      var calls = Seq.empty[Int]
       val io: Boolean > IOs =
         defer {
           (await(IOs { calls :+= 1; true }) && await(IOs { calls :+= 2; true }))
         }
       assert(IOs.run(io))
-      assert(calls == List(1, 2))
+      assert(calls == Seq(1, 2))
     }
     "||" in {
-      var calls = List.empty[Int]
+      var calls = Seq.empty[Int]
       val io: Boolean > IOs =
         defer {
           (await(IOs { calls :+= 1; true }) || await(IOs { calls :+= 2; true }))
         }
       assert(IOs.run(io))
-      assert(calls == List(1))
+      assert(calls == Seq(1))
     }
   }
 
@@ -151,12 +151,12 @@ class directTest extends KyoTest {
   }
 
   "lists" in {
-    import kyo.lists._
+    import kyo.seqs._
 
-    val x = Lists.get(List(1, -2, -3))
-    val y = Lists.get(List("ab", "cde"))
+    val x = Seqs.get(Seq(1, -2, -3))
+    val y = Seqs.get(Seq("ab", "cde"))
 
-    val v: Int > Lists =
+    val v: Int > Seqs =
       defer {
         val xx = await(x)
         xx + (
@@ -165,17 +165,17 @@ class directTest extends KyoTest {
         )
       }
 
-    val a: List[Int] = Lists.run(v).pure
-    assert(a == List(3, -3, -5, 4, -5, -8, 0, 1, -1, 0))
+    val a: Seq[Int] = Seqs.run(v).pure
+    assert(a == Seq(3, -3, -5, 4, -5, -8, 0, 1, -1, 0))
   }
 
   "lists + filter" in {
-    import kyo.lists._
+    import kyo.seqs._
 
-    val x = Lists.get(List(1, -2, -3))
-    val y = Lists.get(List("ab", "cde"))
+    val x = Seqs.get(Seq(1, -2, -3))
+    val y = Seqs.get(Seq("ab", "cde"))
 
-    val v: Int > Lists =
+    val v: Int > Seqs =
       defer {
         val xx = await(x)
         val r =
@@ -183,10 +183,10 @@ class directTest extends KyoTest {
               if (xx > 0) await(y).length * await(x)
               else await(y).length
           )
-        await(Lists.filter(r > 0))
+        await(Seqs.filter(r > 0))
         r
       }
 
-    assert(Lists.run(v).pure == List(3, 4, 1))
+    assert(Seqs.run(v).pure == Seq(3, 4, 1))
   }
 }

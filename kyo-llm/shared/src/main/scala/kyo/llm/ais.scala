@@ -9,7 +9,7 @@ import kyo.concurrent.Joins
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
 import kyo.ios._
-import kyo.lists._
+import kyo.seqs._
 import kyo.requests._
 import kyo.sums._
 import kyo.tries._

@@ -14,7 +14,7 @@ import zio.schema.codec.JsonCodec
 import kyo.ios.IOs
 import kyo.llm.contexts.Call
 import scala.util.{Try, Success, Failure}
-import kyo.lists.Lists
+import kyo.seqs.Seqs
 import kyo.concurrent.atomics.Atomics
 
 package object tools {
@@ -45,7 +45,7 @@ package object tools {
           for {
             l   <- Tools.listeners.get
             msg <- userStatus(value.value)
-            _   <- Lists.traverseUnit(l)(_(msg))
+            _   <- Seqs.traverseUnit(l)(_(msg))
             v   <- call(ai, value.value)
           } yield {
             encoder.encodeJson(Value(v)).toString()
@@ -105,7 +105,7 @@ package object tools {
     }
 
     private[kyo] def handle(ai: AI, tools: Set[Tool[_, _]], calls: List[Call]): Unit > AIs =
-      Lists.traverseUnit(calls) { call =>
+      Seqs.traverseUnit(calls) { call =>
         tools.find(_.name == call.function) match {
           case None =>
             ai.toolMessage(call.id, "Tool not found: " + call)

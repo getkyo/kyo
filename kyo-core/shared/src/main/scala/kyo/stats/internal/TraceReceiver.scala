@@ -6,7 +6,7 @@ import kyo.stats._
 
 import java.util.ServiceLoader
 import scala.jdk.CollectionConverters._
-import kyo.lists.Lists
+import kyo.seqs._
 import kyo.stats.Attributes
 
 trait TraceReceiver {
@@ -50,7 +50,7 @@ object TraceReceiver {
           parent: Option[Span] = None,
           a: Attributes = Attributes.empty
       ) =
-        Lists
+        Seqs
           .traverse(receivers)(_.startSpan(scope, name, None, a))
           .map(Span.all)
     }

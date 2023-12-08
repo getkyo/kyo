@@ -2,7 +2,7 @@ package kyo.stats.internal
 
 import kyo._
 import kyo.ios._
-import kyo.lists._
+import kyo.seqs._
 import kyo.locals._
 import kyo.stats._
 import kyo.stats.Attributes
@@ -33,11 +33,11 @@ object Span {
         }
     )
 
-  def all(l: List[Span]): Span =
+  def all(l: Seq[Span]): Span =
     l match {
-      case Nil =>
+      case Seq() =>
         Span.noop
-      case h :: Nil =>
+      case h +: Nil =>
         h
       case l =>
         Span(

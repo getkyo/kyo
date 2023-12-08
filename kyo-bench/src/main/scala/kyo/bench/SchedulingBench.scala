@@ -29,7 +29,7 @@ class SchedulingBench extends Bench.ForkOnly[Int] {
   override def kyoBenchFiber() = {
     import kyo._
     import kyo.ios._
-    import kyo.lists._
+    import kyo.seqs._
     import kyo.concurrent.fibers._
 
     def fiber(i: Int): Int > IOs =
@@ -44,10 +44,10 @@ class SchedulingBench extends Bench.ForkOnly[Int] {
         }
       }
 
-    Lists.traverse(range) { i =>
+    Seqs.traverse(range) { i =>
       Fibers.init(fiber(i))
     }.map { fibers =>
-      Lists.traverse(fibers)(_.get)
+      Seqs.traverse(fibers)(_.get)
     }.map(_.sum)
   }
 
