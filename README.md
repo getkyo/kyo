@@ -46,9 +46,9 @@ libraryDependencies += "io.getkyo" %%% "kyo-sttp" % "<version>"
 Replace `<version>` with the latest version: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3).
 
 
-### The `>` type
+### The "Pending" type: `>`
 
-In Kyo, computations are expressed via the infix type `>`, which takes two parameters:
+In Kyo, computations are expressed via the infix type `>`, known as "Pending". It takes two type parameters:
 
 1. The type of the expected output.
 2. The pending effects that need to be handled, represented as an unordered type-level set via a type intersection.
@@ -56,18 +56,27 @@ In Kyo, computations are expressed via the infix type `>`, which takes two param
 ```scala 
 import kyo._
 
-// Expect an 'Int' after handling 
-// the 'Options' effect
+// 'Int' pending 'Options'
 Int > Options
 
-// Expect a 'String' after handling 
-// both 'Options' and 'IOs' effects
+// 'String' pending 'Options' and 'Tries'
 String > (Options with IOs)
 ```
 
 > Note: The naming convention for effect types is the plural form of the functionalities they manage.
 
-In Kyo, any type `T` is automatically considered to be of type `T > Any`, where `Any` denotes an absence of pending effects. In simpler terms, this means that every value in Kyo is automatically a computation, but one without any effects that you need to handle. 
+When expressing the set of pending effects, this documentation uses `with` for compatibility with both Scala 2 and 3. If you're using Scala 3, the type intersection can also be expressed via `&`.
+
+```scala 
+// Scala 2 only supports `with`
+// for the pending effects
+String > (Options with IOs)
+
+// Scala 3 also supports `&`
+String > (Options & IOs)
+```
+
+Any type `T` is automatically considered to be of type `T > Any`, where `Any` denotes an absence of pending effects. In simpler terms, this means that every value in Kyo is automatically a computation, but one without any effects that you need to handle. 
 
 This design choice streamlines your code by removing the necessity to differentiate between pure values and computations that may have effects. So, when you're dealing with a value of type `T > Any`, you can safely extract the `pure` value directly, without worrying about handling any effects.
 
