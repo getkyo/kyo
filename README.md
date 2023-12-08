@@ -59,7 +59,7 @@ import kyo._
 // 'Int' pending 'Options'
 Int > Options
 
-// 'String' pending 'Options' and 'Tries'
+// 'String' pending 'Options' and 'IOs'
 String > (Options with IOs)
 ```
 
