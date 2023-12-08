@@ -153,8 +153,8 @@ class directTest extends KyoTest {
   "lists" in {
     import kyo.lists._
 
-    val x = Lists.foreach(List(1, -2, -3))
-    val y = Lists.foreach(List("ab", "cde"))
+    val x = Lists.get(List(1, -2, -3))
+    val y = Lists.get(List("ab", "cde"))
 
     val v: Int > Lists =
       defer {
@@ -172,8 +172,8 @@ class directTest extends KyoTest {
   "lists + filter" in {
     import kyo.lists._
 
-    val x = Lists.foreach(List(1, -2, -3))
-    val y = Lists.foreach(List("ab", "cde"))
+    val x = Lists.get(List(1, -2, -3))
+    val y = Lists.get(List("ab", "cde"))
 
     val v: Int > Lists =
       defer {
@@ -183,7 +183,7 @@ class directTest extends KyoTest {
               if (xx > 0) await(y).length * await(x)
               else await(y).length
           )
-        await(Lists.dropIf(r > 0))
+        await(Lists.filter(r > 0))
         r
       }
 

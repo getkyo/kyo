@@ -16,7 +16,7 @@ object lists {
           def loop(l: List[T], acc: List[List[U]]): U > (Lists with S) =
             l match {
               case Nil =>
-                Lists.foreach(acc.reverse.flatten: List[U])
+                Lists.get(acc.reverse.flatten: List[U])
               case t :: ts =>
                 import Flat.unsafe._
                 Lists.run[U, S](f(t)).map(l => loop(ts, l :: acc))
@@ -29,15 +29,15 @@ object lists {
       handle[T, S, Any](v)
 
     def repeat(n: Int): Unit > Lists =
-      foreach(List.fill(n)(()))
+      get(List.fill(n)(()))
 
-    def foreach[T, S](v: List[T] > S): T > (Lists with S) =
+    def get[T, S](v: List[T] > S): T > (Lists with S) =
       v.map {
         case head :: Nil => head
         case _           => suspend(v)
       }
 
-    def dropIf[S](v: Boolean > S): Unit > (Lists with S) =
+    def filter[S](v: Boolean > S): Unit > (Lists with S) =
       v.map {
         case true =>
           ()

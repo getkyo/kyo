@@ -9,37 +9,37 @@ class listsTest extends KyoTest {
 
   "one" in {
     assert(
-        Lists.run(Lists.foreach(List(1)).map(_ + 1)) ==
+        Lists.run(Lists.get(List(1)).map(_ + 1)) ==
           List(2)
     )
   }
   "multiple" in {
     assert(
-        Lists.run(Lists.foreach(List(1, 2, 3)).map(_ + 1)) ==
+        Lists.run(Lists.get(List(1, 2, 3)).map(_ + 1)) ==
           List(2, 3, 4)
     )
   }
   "nested" in {
     assert(
-        Lists.run(Lists.foreach(List(1, 2, 3)).map(i =>
-          Lists.foreach(List(i * 10, i * 100))
+        Lists.run(Lists.get(List(1, 2, 3)).map(i =>
+          Lists.get(List(i * 10, i * 100))
         )) ===
           List(10, 100, 20, 200, 30, 300)
     )
   }
   "drop" in {
     assert(
-        Lists.run(Lists.foreach(List(1, 2, 3)).map(i =>
+        Lists.run(Lists.get(List(1, 2, 3)).map(i =>
           if (i < 2) Lists.drop
-          else Lists.foreach(List(i * 10, i * 100))
+          else Lists.get(List(i * 10, i * 100))
         )) ==
           List(20, 200, 30, 300)
     )
   }
   "filter" in {
     assert(
-        Lists.run(Lists.foreach(List(1, 2, 3)).map(i =>
-          Lists.dropIf(i >= 2).map(_ => Lists.foreach(List(i * 10, i * 100)))
+        Lists.run(Lists.get(List(1, 2, 3)).map(i =>
+          Lists.filter(i >= 2).map(_ => Lists.get(List(i * 10, i * 100)))
         )) ==
           List(20, 200, 30, 300)
     )

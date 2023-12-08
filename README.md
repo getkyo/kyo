@@ -592,16 +592,16 @@ The `Lists` effect is designed to aid in handling and exploring multiple options
 import kyo.lists._
 
 // Evaluate each of the provided lists.
-// Note how 'foreach' takes a 'List[T]'
+// Note how 'get' takes a 'List[T]'
 // and returns a 'T > Lists'
 val a: Int > Lists =
-  Lists.foreach(List(1, 2, 3, 4))
+  Lists.get(List(1, 2, 3, 4))
 
 // 'dropIf' discards the current choice if 
 // a condition is not met. Produces a 'List(1, 2)'
 // since values greater than 2 are dropped
 val b: Int > Lists =
-  a.map(v => Lists.dropIf(v > 2).map(_ => v))
+  a.map(v => Lists.filter(v > 2).map(_ => v))
 
 // 'drop' unconditionally discards the 
 // current choice. Produces a 'List(42)'
