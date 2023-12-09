@@ -99,16 +99,38 @@ This unique property removes the need to juggle between `map` and `flatMap`. All
 import kyo.options._
 import kyo.tries._
 
-// Kyo still supports both `map` and `flatMap`.
-def example1(a: Int > Options, b: Int > Tries): Int > (Options with Tries) =
-  a.flatMap(v => b.map(_ + v))
+// Kyo still supports both `map` 
+// and `flatMap`.
+def example1(
+    a: Int > Options, 
+    b: Int > Tries
+  ): Int > (Options with Tries) =
+    a.flatMap(v => b.map(_ + v))
 
-// But using only `map` is recommended since it funcions like `flatMap` due to effect widening.
-def example2(a: Int > Options, b: Int > Tries): Int > (Options with Tries) =
-  a.map(v => b.map(_ + v))
+// But using only `map` is recommended 
+// since it funcions like `flatMap` due 
+// to effect widening.
+def example2(
+    a: Int > Options, 
+    b: Int > Tries
+  ): Int > (Options with Tries) =
+    a.map(v => b.map(_ + v))
 ```
 
 The `map` method automatically updates the set of pending effects. When you apply `map` to computations that have different pending effects, Kyo reconciles these into a new computation type that combines all the unique pending effects from both operands.
+
+When a computation produces a `Unit` value, Kyo also offers an `andThen` method for more fluent code:
+
+```scala
+// An example computation that 
+// produces 'Unit'.
+val a: Unit > IOs = 
+  IOs(println("hello"))
+
+// Use 'andThen'.
+val b: String > IOs =
+  a.andThen(IOs(println(" world")))
+```
 
 ### Effect widening
 
@@ -341,16 +363,20 @@ import kyo.resources._
 import kyo.concurrent.fibers._
 
 object MyApp extends App {
-  // Must return `Unit` and only use `Fibers`, `Resources`, `Consoles` and `Tries`.
+  // Only return pending `Fibers`, `Resources`, `Consoles` and `Tries`.
   // Handle other effects like `Options` before returning.
-  def run(args: List[String]): Unit > (Fibers with Resources with Consoles with Tries) = 
+  // The produced value can be of any type and is automatically
+  // printed to the console.
+  def run: String > (Fibers with Resources with Consoles with Tries) = 
     for {
       _ <- Consoles.println("Starting the app...")
       currentTime <- Clocks.now
       _ <- Consoles.println(s"Current time is: $currentTime")
       randomNumber <- Randoms.nextInt(100)
       _ <- Consoles.println(s"Generated random number: $randomNumber")
-    } yield ()
+    } yield {
+      "example"
+    }
 }
 ```
 

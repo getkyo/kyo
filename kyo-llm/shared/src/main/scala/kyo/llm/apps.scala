@@ -9,18 +9,20 @@ object apps {
 
   abstract class App {
 
-    final def main(args: Array[String]): Unit =
+    private var _args: List[String]  = List.empty
+    protected def args: List[String] = _args
+
+    final def main(args: Array[String]): Unit = {
+      _args = args.toList
       kyo.apps.App.run {
         Requests.run {
           AIs.run {
-            run(args.toList)
-              .map(Consoles.println(_))
+            run.map(Consoles.println(_))
           }
         }
       }
+    }
 
-    def run(
-        args: List[String]
-    ): Any > (kyo.apps.App.Effects with AIs)
+    def run: Any > (kyo.apps.App.Effects with AIs)
   }
 }

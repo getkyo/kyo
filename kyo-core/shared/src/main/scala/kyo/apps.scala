@@ -17,14 +17,15 @@ object apps {
 
   abstract class App {
 
-    // TODO initialization issues
+    private var _args: List[String]  = List.empty
+    protected def args: List[String] = _args
 
-    final def main(args: Array[String]): Unit =
-      App.run(run(args.toList))(Flat.unsafe.checked)
+    final def main(args: Array[String]): Unit = {
+      _args = args.toList
+      App.run(run.map(Consoles.println(_)))(Flat.unsafe.checked)
+    }
 
-    def run(
-        args: List[String]
-    ): Unit > (Fibers with Resources with Consoles with Tries)
+    def run: Any > (Fibers with Resources with Consoles with Tries)
 
   }
 
