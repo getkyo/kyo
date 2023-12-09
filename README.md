@@ -122,6 +122,8 @@ The `map` method automatically updates the set of pending effects. When you appl
 When a computation produces a `Unit` value, Kyo also offers an `andThen` method for more fluent code:
 
 ```scala
+import kyo.ios._
+
 // An example computation that 
 // produces 'Unit'.
 val a: Unit > IOs = 
@@ -365,16 +367,16 @@ import kyo.concurrent.fibers._
 object MyApp extends App {
   // Only return pending `Fibers`, `Resources`, `Consoles` and `Tries`.
   // Handle other effects like `Options` before returning.
-  // The produced value can be of any type and is automatically
-  // printed to the console.
   def run: String > (Fibers with Resources with Consoles with Tries) = 
     for {
-      _ <- Consoles.println("Starting the app...")
+      _ <- Consoles.println(s"Main args: $args")
       currentTime <- Clocks.now
       _ <- Consoles.println(s"Current time is: $currentTime")
       randomNumber <- Randoms.nextInt(100)
       _ <- Consoles.println(s"Generated random number: $randomNumber")
     } yield {
+      // The produced value can be of any type and is 
+      // automatically printed to the console.
       "example"
     }
 }
