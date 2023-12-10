@@ -3,7 +3,7 @@ package kyo.llm
 import kyo._
 import kyo.llm.configs._
 import kyo.llm.contexts._
-import kyo.llm.tools._
+import kyo.llm.agents._
 import kyo.llm.ais._
 import kyo.llm.util.JsonSchema
 import kyo.ios._
@@ -28,12 +28,12 @@ object completions {
 
     def apply(
         ctx: Context,
-        tools: Set[Tool[_, _]] = Set.empty,
-        constrain: Option[Tool[_, _]] = None
+        agents: Set[Agent] = Set.empty,
+        constrain: Option[Agent] = None
     ): Result > (IOs with Requests) =
       for {
         config <- Configs.get
-        req = Request(ctx, config, tools, constrain)
+        req = Request(ctx, config, agents, constrain)
         _                <- Logs.debug(req.toJsonPretty)
         response         <- config.completionsMeter.run(fetch(config, req))
         _                <- Logs.debug(response.toJsonPretty)
@@ -123,7 +123,7 @@ object completions {
                 VisionEntry.Content.Text(msg.content)
           )
         case _ =>
-          val toolCalls =
+          val agentCalls =
             msg match {
               case msg: Message.AssistantMessage =>
                 Some(
@@ -136,12 +136,12 @@ object completions {
             }
           val callId =
             msg match {
-              case msg: Message.ToolMessage =>
+              case msg: Message.AgentMessage =>
                 Some(msg.callId.id)
               case _ =>
                 None
             }
-          MessageEntry(msg.role.name, Some(msg.content), toolCalls, callId)
+          MessageEntry(msg.role.name, Some(msg.content), agentCalls, callId)
       }
     }
 
@@ -149,8 +149,8 @@ object completions {
       def apply(
           ctx: Context,
           config: Config,
-          tools: Set[Tool[_, _]],
-          constrain: Option[Tool[_, _]]
+          agents: Set[Agent],
+          constrain: Option[Agent]
       ): Request = {
         val reminder =
           ctx.reminder.map(r =>
@@ -165,17 +165,25 @@ object completions {
         val entries =
           (reminder ++ ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
             .map(toEntry).reverse
-        val toolDefs =
-          if (tools.isEmpty) None
-          else Some(tools.map(p => ToolDef(FunctionDef(p.description, p.name, p.schema))).toList)
+        val agentDefs =
+          if (agents.isEmpty)
+            None
+          else
+            Some(agents.map(p =>
+              ToolDef(FunctionDef(
+                  p.info.description,
+                  p.info.name,
+                  p.info.schema
+              ))
+            ).toList)
         Request(
             config.model.name,
             config.temperature,
             config.maxTokens,
             config.seed,
             entries,
-            toolDefs,
-            constrain.map(p => ToolChoice(Name(p.name)))
+            agentDefs,
+            constrain.map(p => ToolChoice(Name(p.info.name)))
         )
       }
     }

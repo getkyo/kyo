@@ -4,7 +4,7 @@ import kyo._
 import kyo.llm.completions._
 import kyo.llm.configs._
 import kyo.llm.contexts._
-import kyo.llm.tools._
+import kyo.llm.agents._
 import kyo.concurrent.Joins
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
@@ -79,34 +79,34 @@ object ais {
     def assistantMessage(msg: String, calls: List[Call] = Nil): Unit > AIs =
       update(_.assistantMessage(msg, calls))
 
-    def toolMessage(callId: CallId, msg: String): Unit > AIs =
-      update(_.toolMessage(callId, msg))
+    def agentMessage(callId: CallId, msg: String): Unit > AIs =
+      update(_.agentMessage(callId, msg))
 
     def ask(msg: String): String > AIs =
       userMessage(msg).andThen(ask)
 
     def ask: String > AIs = {
-      def eval(tools: Set[Tool[_, _]]): String > AIs =
-        fetch(tools).map { r =>
+      def eval(agents: Set[Agent]): String > AIs =
+        fetch(agents).map { r =>
           r.calls match {
             case Nil =>
               r.content
             case calls =>
-              Tools.handle(this, tools, calls)
-                .andThen(eval(tools))
+              Agents.handle(this, agents, calls)
+                .andThen(eval(agents))
           }
         }
-      Tools.get.map(eval)
+      Agents.get.map(eval)
     }
 
     def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
       userMessage(msg).andThen(gen[T])
 
     def gen[T](implicit t: ValueSchema[T]): T > AIs = {
-      Tools.resultTool[T].map { case (resultTool, result) =>
+      Agents.resultAgent[T].map { case (resultAgent, result) =>
         def eval(): T > AIs =
-          fetch(Set(resultTool), Some(resultTool)).map { r =>
-            Tools.handle(this, Set(resultTool), r.calls).andThen {
+          fetch(Set(resultAgent), Some(resultAgent)).map { r =>
+            Agents.handle(this, Set(resultAgent), r.calls).andThen {
               result.map {
                 case Some(v) =>
                   v
@@ -123,34 +123,34 @@ object ais {
       userMessage(msg).andThen(infer[T])
 
     def infer[T](implicit t: ValueSchema[T]): T > AIs = {
-      Tools.resultTool[T].map { case (resultTool, result) =>
-        def eval(tools: Set[Tool[_, _]], constrain: Option[Tool[_, _]] = None): T > AIs =
-          fetch(tools, constrain).map { r =>
+      Agents.resultAgent[T].map { case (resultAgent, result) =>
+        def eval(agents: Set[Agent], constrain: Option[Agent] = None): T > AIs =
+          fetch(agents, constrain).map { r =>
             r.calls match {
               case Nil =>
-                eval(tools, Some(resultTool))
+                eval(agents, Some(resultAgent))
               case calls =>
-                Tools.handle(this, tools, calls).andThen {
+                Agents.handle(this, agents, calls).andThen {
                   result.map {
                     case None =>
-                      eval(tools)
+                      eval(agents)
                     case Some(v) =>
                       v
                   }
                 }
             }
           }
-        Tools.get.map(p => eval(p + resultTool))
+        Agents.get.map(p => eval(p + resultAgent))
       }
     }
 
     private def fetch(
-        tools: Set[Tool[_, _]],
-        constrain: Option[Tool[_, _]] = None
+        agents: Set[Agent],
+        constrain: Option[Agent] = None
     ): Completions.Result > AIs =
       for {
         ctx <- save
-        r   <- Completions(ctx, tools, constrain)
+        r   <- Completions(ctx, agents, constrain)
         _   <- assistantMessage(r.content, r.calls)
       } yield r
   }

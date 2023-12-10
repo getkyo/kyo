@@ -12,20 +12,25 @@ import zio.json._
 
 import scala.util.Failure
 import scala.util.Success
-import kyo.llm.tools.Tools
+import kyo.llm.agents._
 import kyo.logs._
 
-object BraveSearch {
+object BraveSearch extends Agent {
 
   import model._
 
-  val tool = Tools.init[String, SearchResponse](
-      "brave_search",
-      "performs a web search using brave.com's API given a search query",
-      q => s"Executing a Brave search: $q"
-  ) { (ai, query) =>
+  type Input  = String
+  type Output = SearchResponse
+
+  val info =
+    Info(
+        "brave_search",
+        "performs a web search using brave.com's API given a search query"
+    )
+
+  def run(query: String) =
     for {
-      key <- ApiKey.get
+      key <- BraveSearch.apiKey.get
       _   <- Logs.debug(query)
       res <- Requests[SearchResponse](
           _.contentType("application/json")
@@ -35,9 +40,8 @@ object BraveSearch {
       )
       _ <- Logs.debug(res.toJsonPretty)
     } yield res
-  }
 
-  object ApiKey {
+  object apiKey {
     private val local = Locals.init[Option[String]] {
       val apiKeyProp = "BRAVE_SEARCH_API_KEY"
       Option(System.getenv(apiKeyProp))

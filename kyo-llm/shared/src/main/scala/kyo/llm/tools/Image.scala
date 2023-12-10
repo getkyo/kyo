@@ -1,23 +1,19 @@
 package kyo.llm.tools
 
 import kyo._
-import kyo.requests._
+import kyo.llm.agents._
 import kyo.llm.ais._
-import kyo.llm.contexts._
 import kyo.llm.configs._
-import java.util.Base64
-import sttp.client3._
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import javax.imageio.ImageIO
-import java.util.Base64
+import kyo.llm.contexts._
+import kyo.logs._
+import kyo.requests._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
-import scala.concurrent.duration.Duration
-import kyo.logs._
 
-object Image {
+import scala.concurrent.duration.Duration
+
+object Image extends Agent {
 
   import internal._
 
@@ -45,37 +41,38 @@ object Image {
       revisedPrompt: String
   )
 
-  val createTool =
-    Tools.init[Input, Output](
+  val info =
+    Info(
         "image_create",
-        "Generates an image via DALL-E",
-        task => s"Generating an image via DALL-E: ${task.prompt}"
-    ) { (_, task) =>
-      val req = Request(
-          task.prompt,
-          if (task.hdQuality) "hd" else "standard",
-          task.size,
-          task.style
-      )
-      for {
-        key    <- Configs.apiKey
-        config <- Configs.get
-        _      <- Logs.debug(req.toJsonPretty)
-        resp <- Requests[Response](
-            _.contentType("application/json")
-              .header("Authorization", s"Bearer $key")
-              .post(uri"${config.apiUrl}/v1/images/generations")
-              .body(req)
-              .readTimeout(Duration.Inf)
-              .response(asJson[Response])
-        )
-        _ <- Logs.debug(resp.toJsonPretty)
-        r <- resp.data.headOption.map(r => Output(r.url, r.revised_prompt))
-          .getOrElse(AIs.fail[Output]("Can't find the generated image URL."))
-      } yield r
-    }
+        "Generates an image via DALL-E"
+    )
 
-  object internal {
+  def run(input: Input) = {
+    val req = Request(
+        input.prompt,
+        if (input.hdQuality) "hd" else "standard",
+        input.size,
+        input.style
+    )
+    for {
+      key    <- Configs.apiKey
+      config <- Configs.get
+      _      <- Logs.debug(req.toJsonPretty)
+      resp <- Requests[Response](
+          _.contentType("application/json")
+            .header("Authorization", s"Bearer $key")
+            .post(uri"${config.apiUrl}/v1/images/generations")
+            .body(req)
+            .readTimeout(Duration.Inf)
+            .response(asJson[Response])
+      )
+      _ <- Logs.debug(resp.toJsonPretty)
+      r <- resp.data.headOption.map(r => Output(r.url, r.revised_prompt))
+        .getOrElse(AIs.fail[Output]("Can't find the generated image URL."))
+    } yield r
+  }
+
+  private object internal {
     case class Data(
         url: String,
         revised_prompt: String

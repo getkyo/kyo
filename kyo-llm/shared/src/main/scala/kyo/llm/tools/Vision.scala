@@ -1,19 +1,20 @@
 package kyo.llm.tools
 
 import kyo._
-import kyo.requests._
+import kyo.llm.agents._
 import kyo.llm.ais._
-import kyo.llm.contexts._
 import kyo.llm.configs._
-import java.util.Base64
+import kyo.llm.contexts._
+import kyo.requests._
 import sttp.client3._
+
+import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import javax.imageio.ImageIO
 import java.util.Base64
-import java.awt.image.BufferedImage
+import javax.imageio.ImageIO
 
-object Vision {
+object Vision extends Agent {
 
   case class Input(
       @desc("A description of the environment in which the image is displayed. " +
@@ -27,25 +28,29 @@ object Vision {
       imageUrl: String
   )
 
-  val tool = Tools.init[Input, String](
-      "vision_interpret_image",
-      "interprets the contents of the provided image",
-      task => s"Using GPT Vision to interpret image: ${task.question}"
-  ) { (_, task) =>
+  type Output = String
+
+  val info =
+    Info(
+        "vision_interpret_image",
+        "interprets the contents of the provided image"
+    )
+
+  def run(input: Input) =
     Configs.let(_.model(Model.gpt4_vision).maxTokens(Some(4000))) {
       Requests[Array[Byte]](
-          _.get(uri"${task.imageUrl}")
+          _.get(uri"${input.imageUrl}")
             .response(asByteArray)
       ).map { bytes =>
         val payload = encodeImage(bytes)
         if (payload.isEmpty) {
-          AIs.fail(s"Failed to encode image at ${task.imageUrl}")
+          AIs.fail(s"Failed to encode image at ${input.imageUrl}")
         } else {
           AIs.init.map { ai =>
             ai.userMessage(
                 p"""
-                Context: ${task.environment}
-                Question: ${task.question}
+                Context: ${input.environment}
+                Question: ${input.question}
               """,
                 s"data:image/jpeg;base64,$payload" :: Nil
             ).andThen(ai.ask)
@@ -53,7 +58,6 @@ object Vision {
         }
       }
     }
-  }
 
   private def encodeImage(bytes: Array[Byte]) = {
     val inputStream   = new ByteArrayInputStream(bytes)
