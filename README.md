@@ -131,7 +131,7 @@ val a: Unit > IOs =
 
 // Use 'andThen'.
 val b: String > IOs =
-  a.andThen(IOs(println(" world")))
+  a.andThen("test")
 ```
 
 ### Effect widening

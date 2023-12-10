@@ -14,7 +14,7 @@ import zio.schema.codec.JsonCodec
 import kyo.llm.util.JsonSchema
 import scala.annotation.implicitNotFound
 
-object agents {
+package object agents {
 
   abstract class Agent {
 
