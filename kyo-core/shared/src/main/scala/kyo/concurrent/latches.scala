@@ -12,16 +12,16 @@ object latches {
 
   abstract class Latch {
 
-    def await: Unit > Fibers
+    def await: Unit < Fibers
 
-    def release: Unit > IOs
+    def release: Unit < IOs
 
-    def pending: Int > IOs
+    def pending: Int < IOs
   }
 
   object Latches {
 
-    def init[S](n: Int > S): Latch > (IOs with S) =
+    def init[S](n: Int < S): Latch < (IOs with S) =
       n.map { n =>
         if (n <= 0) {
           new Latch {

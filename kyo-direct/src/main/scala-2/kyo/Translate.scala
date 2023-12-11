@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.>
+import kyo._
 import scala.reflect.macros.whitebox.Context
 import scala.collection.mutable.Stack
 import org.scalamacros.resetallattrs._

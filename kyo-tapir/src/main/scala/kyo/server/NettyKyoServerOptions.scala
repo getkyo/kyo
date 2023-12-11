@@ -18,8 +18,8 @@ import kyo.internal.KyoSttpMonad._
 
 case class NettyKyoServerOptions(
     interceptors: List[Interceptor[KyoSttpMonad.M]],
-    createFile: ServerRequest => TapirFile > Routes,
-    deleteFile: TapirFile => Unit > Fibers
+    createFile: ServerRequest => TapirFile < Routes,
+    deleteFile: TapirFile => Unit < Fibers
 ) {
   def prependInterceptor(i: Interceptor[KyoSttpMonad.M]): NettyKyoServerOptions =
     copy(interceptors = i :: interceptors)
@@ -61,6 +61,6 @@ object NettyKyoServerOptions {
   private def debugLog(msg: String, exOpt: Option[Throwable]) =
     NettyDefaults.debugLog(log, msg, exOpt)
 
-  private def errorLog(msg: String, ex: Throwable): Unit > IOs =
+  private def errorLog(msg: String, ex: Throwable): Unit < IOs =
     log.error(msg, ex)
 }

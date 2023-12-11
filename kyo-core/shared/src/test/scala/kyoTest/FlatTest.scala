@@ -11,28 +11,28 @@ class FlatTest extends KyoTest {
   "ok" - {
     "concrete" in {
       implicitly[Flat[Int]]
-      implicitly[Flat[Int > Any]]
-      implicitly[Flat[Int > Options]]
-      implicitly[Flat[Int > Nothing]]
+      implicitly[Flat[Int < Any]]
+      implicitly[Flat[Int < Options]]
+      implicitly[Flat[Int < Nothing]]
       succeed
     }
     "fiber" in {
-      implicitly[Flat[Fiber[Int] > Options]]
+      implicitly[Flat[Fiber[Int] < Options]]
       succeed
     }
     "by evidence" in {
       def test1[T: Flat] = {
-        implicitly[Flat[T > IOs]]
-        implicitly[Flat[T > Options]]
-        implicitly[Flat[T > Any]]
+        implicitly[Flat[T < IOs]]
+        implicitly[Flat[T < Options]]
+        implicitly[Flat[T < Any]]
       }
       succeed
     }
     "derived" in {
-      def test2[T](implicit f: Flat[T > IOs]) = {
+      def test2[T](implicit f: Flat[T < IOs]) = {
         implicitly[Flat[T]]
-        implicitly[Flat[T > Options]]
-        implicitly[Flat[T > Any]]
+        implicitly[Flat[T < Options]]
+        implicitly[Flat[T < Any]]
       }
       succeed
     }
@@ -41,13 +41,13 @@ class FlatTest extends KyoTest {
   "nok" - {
 
     "nested" in {
-      assertDoesNotCompile("implicitly[Flat[Int > IOs > IOs]]")
-      assertDoesNotCompile("implicitly[Flat[Any > IOs > IOs]]")
+      assertDoesNotCompile("implicitly[Flat[Int < IOs < IOs]]")
+      assertDoesNotCompile("implicitly[Flat[Any < IOs < IOs]]")
     }
 
     "nested w/ mismatch" in {
-      assertDoesNotCompile("implicitly[Flat[Int > Options > IOs]]")
-      assertDoesNotCompile("implicitly[Flat[Int > IOs > Options]]")
+      assertDoesNotCompile("implicitly[Flat[Int > Options < IOs]]")
+      assertDoesNotCompile("implicitly[Flat[Int < IOs > Options]]")
     }
 
     "generic" in {
@@ -62,7 +62,7 @@ class FlatTest extends KyoTest {
 
     "any" in {
       assertDoesNotCompile("implicitly[Flat[Any]]")
-      assertDoesNotCompile("implicitly[Flat[Any > IOs]]")
+      assertDoesNotCompile("implicitly[Flat[Any < IOs]]")
     }
   }
 

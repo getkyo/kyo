@@ -10,11 +10,11 @@ import java.io.EOFException
 object consoles {
 
   abstract class Console {
-    def readln: String > IOs
-    def print[T](s: => T): Unit > IOs
-    def printErr[T](s: => T): Unit > IOs
-    def println[T](s: => T): Unit > IOs
-    def printlnErr[T](s: => T): Unit > IOs
+    def readln: String < IOs
+    def print[T](s: => T): Unit < IOs
+    def printErr[T](s: => T): Unit < IOs
+    def println[T](s: => T): Unit < IOs
+    def printlnErr[T](s: => T): Unit < IOs
   }
 
   object Console {
@@ -43,30 +43,30 @@ object consoles {
 
     private val envs = Envs[Console]
 
-    def run[T, S](c: Console)(f: => T > (Consoles with S))(implicit
-        flat: Flat[T > (Consoles with S)]
-    ): T > (IOs with S) =
+    def run[T, S](c: Console)(f: => T < (Consoles with S))(implicit
+        flat: Flat[T < (Consoles with S)]
+    ): T < (IOs with S) =
       envs.run[T, IOs with S](c)(f)
 
-    def run[T, S](f: => T > (Consoles with S))(implicit
+    def run[T, S](f: => T < (Consoles with S))(implicit
         c: Console,
-        flat: Flat[T > (Consoles with S)]
-    ): T > (IOs with S) =
+        flat: Flat[T < (Consoles with S)]
+    ): T < (IOs with S) =
       run[T, IOs with S](c)(f)
 
-    val readln: String > Consoles =
+    val readln: String < Consoles =
       envs.get.map(_.readln)
 
-    def print[T, S](s: => T > S): Unit > (S with Consoles) =
+    def print[T, S](s: => T < S): Unit < (S with Consoles) =
       s.map(s => envs.get.map(_.print(s)))
 
-    def printErr[T, S](s: => T > S): Unit > (S with Consoles) =
+    def printErr[T, S](s: => T < S): Unit < (S with Consoles) =
       s.map(s => envs.get.map(_.printErr(s)))
 
-    def println[T, S](s: => T > S): Unit > (S with Consoles) =
+    def println[T, S](s: => T < S): Unit < (S with Consoles) =
       s.map(s => envs.get.map(_.println(s)))
 
-    def printlnErr[T, S](s: => T > S): Unit > (S with Consoles) =
+    def printlnErr[T, S](s: => T < S): Unit < (S with Consoles) =
       s.map(s => envs.get.map(_.printlnErr(s)))
   }
 }

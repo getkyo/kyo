@@ -37,8 +37,8 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     implicit def eq[T]: Eq[T] = _ == _
   }
 
-  def retry[S](f: => Boolean > S): Boolean > S = {
-    def loop(): Boolean > S =
+  def retry[S](f: => Boolean < S): Boolean < S = {
+    def loop(): Boolean < S =
       f.map {
         case true  => true
         case false => loop()
@@ -56,7 +56,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
   implicit def toFuture(a: Assertion): Future[Assertion] = Future.successful(a)
 
   def runJVM(
-      v: => Assertion > App.Effects
+      v: => Assertion < App.Effects
   ): Future[Assertion] =
     if (Platform.isJVM) {
       run(v)
@@ -65,7 +65,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     }
 
   def runJS(
-      v: => Assertion > App.Effects
+      v: => Assertion < App.Effects
   ): Future[Assertion] =
     if (Platform.isJS) {
       run(v)
@@ -74,7 +74,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     }
 
   def run(
-      v: => Assertion > App.Effects
+      v: => Assertion < App.Effects
   ): Future[Assertion] = {
     IOs.run(App.runFiber(timeout)(v).toFuture).map(_.get)
   }

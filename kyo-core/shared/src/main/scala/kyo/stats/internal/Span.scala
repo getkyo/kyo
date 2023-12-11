@@ -9,10 +9,10 @@ import kyo.stats.Attributes
 
 case class Span(unsafe: Span.Unsafe) {
 
-  def end: Unit > IOs =
+  def end: Unit < IOs =
     IOs(unsafe.end())
 
-  def event(name: String, a: Attributes): Unit > IOs =
+  def event(name: String, a: Attributes): Unit < IOs =
     IOs(unsafe.event(name, a))
 }
 
@@ -67,7 +67,7 @@ object Span {
       scope: List[String],
       name: String,
       attributes: Attributes = Attributes.empty
-  )(v: => T > S): T > (IOs with S) =
+  )(v: => T < S): T < (IOs with S) =
     currentSpan.get.map { parent =>
       receiver
         .startSpan(scope, name, parent, attributes)

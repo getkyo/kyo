@@ -31,25 +31,25 @@ class optionsTest extends KyoTest {
   "pure" - {
     "handle" in {
       assert(
-          Options.run(1: Int > Options) ==
+          Options.run(1: Int < Options) ==
             Option(1)
       )
     }
     "handle + transform" in {
       assert(
-          Options.run((1: Int > Options).map(_ + 1)) ==
+          Options.run((1: Int < Options).map(_ + 1)) ==
             Option(2)
       )
     }
     "handle + effectful transform" in {
       assert(
-          Options.run((1: Int > Options).map(i => Options.get(Option(i + 1)))) ==
+          Options.run((1: Int < Options).map(i => Options.get(Option(i + 1)))) ==
             Option(2)
       )
     }
     "handle + transform + effectful transform" in {
       assert(
-          Options.run((1: Int > Options).map(_ + 1).map(i => Options.get(Option(i + 1)))) ==
+          Options.run((1: Int < Options).map(_ + 1).map(i => Options.get(Option(i + 1)))) ==
             Option(3)
       )
     }
@@ -85,7 +85,7 @@ class optionsTest extends KyoTest {
   "Options.run" - {
     "pure" in {
       assert(
-          Options.run(1: Int > Options) ==
+          Options.run(1: Int < Options) ==
             Option(1)
       )
     }
@@ -197,7 +197,7 @@ class optionsTest extends KyoTest {
     }
     "or fail" in {
       val e              = new Exception()
-      val a: Int > Tries = Options.getOrElse(Option.empty[Int], Tries.fail("fail"))
+      val a: Int < Tries = Options.getOrElse(Option.empty[Int], Tries.fail("fail"))
       assert(
           Tries.run(Options.getOrElse(Option.empty[Int], Tries.fail(e))) ==
             Failure(e)

@@ -23,6 +23,6 @@ object apps {
       }
     }
 
-    def run: Any > (kyo.apps.App.Effects with AIs)
+    def run: Any < (kyo.apps.App.Effects with AIs)
   }
 }

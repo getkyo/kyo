@@ -15,8 +15,8 @@ object core {
 
   abstract class Handler[M[_], E <: Effect[M, E], S] {
     def pure[T](v: T): M[T]
-    def handle[T](ex: Throwable): T > E = throw ex
-    def apply[T, U, S2](m: M[T], f: T => U > (E with S2)): U > (E with S with S2)
+    def handle[T](ex: Throwable): T < E = throw ex
+    def apply[T, U, S2](m: M[T], f: T => U < (E with S2)): U < (E with S with S2)
   }
 
   abstract class Effect[M[_], E <: Effect[M, E]] {
@@ -25,12 +25,12 @@ object core {
     def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]): Boolean = this eq other
 
     /*inline*/
-    protected final def suspend[T, S](v: M[T] > S): T > (S with E) = {
-      def suspendLoop(v: M[T] > S): T > (S with E) = {
+    protected final def suspend[T, S](v: M[T] < S): T < (S with E) = {
+      def suspendLoop(v: M[T] < S): T < (S with E) = {
         v match {
           case kyo: Kyo[MX, EX, Any, M[T], S] @unchecked =>
             new KyoCont[MX, EX, Any, T, S with E](kyo) {
-              def apply(v: Any > (S with E), s: Safepoint[MX, EX], l: Locals.State) =
+              def apply(v: Any < (S with E), s: Safepoint[MX, EX], l: Locals.State) =
                 suspendLoop(kyo(v, s, l))
             }
           case _ =>
@@ -44,18 +44,18 @@ object core {
     }
 
     /*inline*/
-    protected final def handle[T, S, S2](v: T > (E with S))(implicit
+    protected final def handle[T, S, S2](v: T < (E with S))(implicit
         h: Handler[M, E, S2],
         s: Safepoint[M, E],
-        f: Flat[T > (E with S)]
-    ): M[T] > (S with S2) = {
+        f: Flat[T < (E with S)]
+    ): M[T] < (S with S2) = {
       def handleLoop(
-          v: T > (S with S2 with E)
-      ): M[T] > (S with S2) =
+          v: T < (S with S2 with E)
+      ): M[T] < (S with S2) =
         v match {
           case kyo: Kyo[M, E, Any, T, S with E] @unchecked if (accepts(kyo.effect)) =>
             if (kyo.isRoot) {
-              kyo.value.asInstanceOf[M[T] > S]
+              kyo.value.asInstanceOf[M[T] < S]
             } else {
               handleLoop(h[Any, T, S with E](
                   kyo.value,
@@ -64,7 +64,7 @@ object core {
             }
           case kyo: Kyo[MX, EX, Any, T, S with E] @unchecked =>
             new KyoCont[MX, EX, Any, M[T], S with S2](kyo) {
-              def apply(v: Any > (S with S2), s2: Safepoint[MX, EX], l: Locals.State) =
+              def apply(v: Any < (S with S2), s2: Safepoint[MX, EX], l: Locals.State) =
                 handleLoop {
                   try kyo(v, s2, l)
                   catch {
@@ -86,16 +86,16 @@ object core {
   }
 
   /*inline*/
-  def transform[T, S, U, S2](v: T > S)( /*inline*/ f: T => (U > S2)): U > (S with S2) = {
-    def transformLoop(v: T > S): U > (S with S2) =
+  def transform[T, S, U, S2](v: T < S)( /*inline*/ f: T => (U < S2)): U < (S with S2) = {
+    def transformLoop(v: T < S): U < (S with S2) =
       v match {
         case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>
           new KyoCont[MX, EX, Any, U, S with S2](kyo) {
-            def apply(v: Any > (S with S2), s: Safepoint[MX, EX], l: Locals.State) = {
+            def apply(v: Any < (S with S2), s: Safepoint[MX, EX], l: Locals.State) = {
               val n = kyo(v, s, l)
               if (s.check()) {
                 s.suspend[U, S with S2](transformLoop(n))
-                  .asInstanceOf[U > (S with S2)]
+                  .asInstanceOf[U < (S with S2)]
               } else {
                 transformLoop(n)
               }
@@ -112,13 +112,13 @@ object core {
 
   trait Safepoint[M[_], E <: Effect[M, _]] {
     def check(): Boolean
-    def suspend[T, S](v: => T > S): T > (S with E)
+    def suspend[T, S](v: => T < S): T < (S with E)
   }
 
   object Safepoint {
     private val _noop = new Safepoint[MX, EX] {
       def check()                    = false
-      def suspend[T, S](v: => T > S) = v
+      def suspend[T, S](v: => T < S) = v
     }
     implicit def noop[M[_], E <: Effect[M, E]]: Safepoint[M, E] =
       _noop.asInstanceOf[Safepoint[M, E]]
@@ -126,11 +126,11 @@ object core {
 
   private[kyo] object internal {
 
-    def deepHandle[M[_], E <: Effect[M, E], T](e: E)(v: T > E)(implicit
+    def deepHandle[M[_], E <: Effect[M, E], T](e: E)(v: T < E)(implicit
         h: DeepHandler[M, E],
         s: Safepoint[M, E]
     ): M[T] = {
-      def deepHandleLoop(v: T > E): M[T] =
+      def deepHandleLoop(v: T < E): M[T] =
         v match {
           case kyo: Kyo[M, E, Any, T, E] @unchecked =>
             require(kyo.effect == e, "Unhandled effect: " + kyo.effect)
@@ -155,7 +155,7 @@ object core {
     abstract class Kyo[M[_], E <: Effect[M, _], T, U, S] {
       def value: M[T]
       def effect: E
-      def apply(v: T > S, s: Safepoint[M, E], l: Locals.State): U > S
+      def apply(v: T < S, s: Safepoint[M, E], l: Locals.State): U < S
       def isRoot: Boolean = false
     }
 
@@ -163,7 +163,7 @@ object core {
         extends Kyo[M, E, T, T, S] {
       final def value  = v
       final def effect = e
-      final def apply(v: T > S, s: Safepoint[M, E], l: Locals.State) =
+      final def apply(v: T < S, s: Safepoint[M, E], l: Locals.State) =
         v
       override final def isRoot = true
     }
@@ -175,7 +175,7 @@ object core {
     }
 
     /*inline*/
-    implicit def fromKyo[M[_], E <: Effect[M, _], T, U, S](v: Kyo[M, E, T, U, S]): U > S =
-      v.asInstanceOf[U > S]
+    implicit def fromKyo[M[_], E <: Effect[M, _], T, U, S](v: Kyo[M, E, T, U, S]): U < S =
+      v.asInstanceOf[U < S]
   }
 }

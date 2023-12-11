@@ -94,7 +94,7 @@ class abortsTest extends KyoTest {
       }
     }
     "failure" - {
-      val v: Int > Aborts[Ex1] = Aborts[Ex1].get(Left(ex1))
+      val v: Int < Aborts[Ex1] = Aborts[Ex1].get(Left(ex1))
       "handle" in {
         assert(
             Aborts[Ex1].run(v) ==
@@ -130,7 +130,7 @@ class abortsTest extends KyoTest {
   }
 
   "Aborts" - {
-    def test(v: Int): Int > Aborts[Ex1] =
+    def test(v: Int): Int < Aborts[Ex1] =
       v match {
         case 0 => Aborts(ex1)
         case i => 10 / i
@@ -176,7 +176,7 @@ class abortsTest extends KyoTest {
         }
       }
       "with other effect" - {
-        def test(v: Int > Envs[Int]): Int > Envs[Int] =
+        def test(v: Int < Envs[Int]): Int < Envs[Int] =
           v.map {
             case 0 => throw ex1
             case i => 10 / i

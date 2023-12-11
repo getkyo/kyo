@@ -4,11 +4,11 @@ import kyo._
 import kyo.ios._
 
 case class Counter(unsafe: Counter.Unsafe) extends AnyVal {
-  def inc: Unit > IOs =
+  def inc: Unit < IOs =
     IOs(unsafe.inc())
-  def add(v: Long): Unit > IOs =
+  def add(v: Long): Unit < IOs =
     IOs(unsafe.add(v))
-  def add(v: Long, b: Attributes): Unit > IOs =
+  def add(v: Long, b: Attributes): Unit < IOs =
     IOs(unsafe.add(v, b))
   def attributes(b: Attributes): Counter =
     Counter(unsafe.attributes(b))

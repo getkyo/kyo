@@ -22,8 +22,8 @@ class methodsTest extends KyoTest {
 
   "flatten" in {
     def test[T](v: T)      = IOs(v)
-    val a: Int > IOs > IOs = test(IOs(1))
-    val b: Int > IOs       = a.flatten
+    val a: Int < IOs < IOs = test(IOs(1))
+    val b: Int < IOs       = a.flatten
     assert(IOs.run(b) == 1)
   }
 
@@ -44,10 +44,10 @@ class methodsTest extends KyoTest {
   }
 
   "nested" - {
-    val io: Int > IOs > IOs =
-      IOs.value[Int > IOs](IOs(1))
+    val io: Int < IOs < IOs =
+      IOs.value[Int < IOs](IOs(1))
     "map + flatten" in {
-      val n: Int > IOs = io.map(_.map(_ + 1)).flatten
+      val n: Int < IOs = io.map(_.map(_ + 1)).flatten
       assert(IOs.run(n) == 2)
     }
     "run doesn't compile" in {

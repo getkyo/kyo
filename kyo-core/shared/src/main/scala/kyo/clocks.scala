@@ -12,7 +12,7 @@ import kyo.locals.Locals
 object clocks {
 
   abstract class Clock {
-    def now: Instant > IOs
+    def now: Instant < IOs
   }
 
   object Clock {
@@ -26,10 +26,10 @@ object clocks {
 
     private val local = Locals.init(Clock.default)
 
-    def let[T, S](c: Clock)(f: => T > (IOs with S)): T > (IOs with S) =
+    def let[T, S](c: Clock)(f: => T < (IOs with S)): T < (IOs with S) =
       local.let(c)(f)
 
-    val now: Instant > IOs =
+    val now: Instant < IOs =
       local.get.map(_.now)
   }
 }

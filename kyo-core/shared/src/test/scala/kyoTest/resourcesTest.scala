@@ -100,10 +100,10 @@ class resourcesTest extends KyoTest {
   "two acquires + effectful for-comp + close" in run {
     val r1 = Resource(1)
     val r2 = Resource(2)
-    val r: Int > Envs[Int] =
+    val r: Int < Envs[Int] =
       IOs.runLazy {
         Resources.run[Int, IOs with Envs[Int]] {
-          val io: Int > (Resources with IOs with Envs[Int]) =
+          val io: Int < (Resources with IOs with Envs[Int]) =
             for {
               r1 <- Resources.acquire(r1())
               i1 <- Envs[Int].get.map(_ * r1.id)

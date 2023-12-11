@@ -21,36 +21,36 @@ object sums {
   final class Sums[V] private[sums] (implicit private val tag: Tag[_])
       extends Effect[Sum[V]#Value, Sums[V]] {
 
-    val get: V > Sums[V] =
+    val get: V < Sums[V] =
       suspend(Get.asInstanceOf[Sum[V]#Value[V]])
 
-    def add(v: V): V > Sums[V] =
+    def add(v: V): V < Sums[V] =
       suspend(AddValue(v).asInstanceOf[Sum[V]#Value[V]])
 
-    def set(v: V): V > Sums[V] =
+    def set(v: V): V < Sums[V] =
       update(_ => v)
 
-    def update(f: V => V): V > Sums[V] =
+    def update(f: V => V): V < Sums[V] =
       suspend(UpdateValue(f).asInstanceOf[Sum[V]#Value[V]])
 
-    def run[T, S](v: T > (Sums[V] with S))(implicit
+    def run[T, S](v: T < (Sums[V] with S))(implicit
         g: Summer[V],
-        f: Flat[T > (Sums[V] with S)]
-    ): (T, V) > S =
+        f: Flat[T < (Sums[V] with S)]
+    ): (T, V) < S =
       run[T, S](g.init)(v)
 
-    def run[T, S](init: V)(v: T > (Sums[V] with S))(implicit
+    def run[T, S](init: V)(v: T < (Sums[V] with S))(implicit
         g: Summer[V],
-        f: Flat[T > (Sums[V] with S)]
-    ): (T, V) > S = {
+        f: Flat[T < (Sums[V] with S)]
+    ): (T, V) < S = {
       var curr = init
       implicit def handler: Handler[Sum[V]#Value, Sums[V], Any] =
         new Handler[Sum[V]#Value, Sums[V], Any] {
           def pure[U](v: U) = v
           def apply[T, U, S2](
               m: Sum[V]#Value[T],
-              f: T => U > (Sums[V] with S2)
-          ): U > (S2 with Sums[V]) =
+              f: T => U < (Sums[V] with S2)
+          ): U < (S2 with Sums[V]) =
             m match {
               case AddValue(v) =>
                 curr = g.add(curr, v.asInstanceOf[V])

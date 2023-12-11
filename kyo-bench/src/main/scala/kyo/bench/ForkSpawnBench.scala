@@ -38,11 +38,11 @@ class ForkSpawnBench extends Bench.ForkOnly[Unit] {
     import kyo.concurrent.meters._
     import kyo.concurrent.latches._
 
-    def repeat[A](n: Int)(io: A > IOs): A > IOs =
+    def repeat[A](n: Int)(io: A < IOs): A < IOs =
       if (n <= 1) io
       else io.flatMap(_ => repeat(n - 1)(io))
 
-    def loop(cdl: Latch, level: Int): Unit > Fibers =
+    def loop(cdl: Latch, level: Int): Unit < Fibers =
       if (level == depth) {
         cdl.release
       } else {

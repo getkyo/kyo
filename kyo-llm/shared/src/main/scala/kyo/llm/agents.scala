@@ -35,17 +35,17 @@ package object agents {
 
     val info: Info
 
-    def run(input: Input): Output > AIs
+    def run(input: Input): Output < AIs
 
     private val local = Locals.init(Option.empty[AI])
 
-    protected def caller: AI > AIs =
+    protected def caller: AI < AIs =
       local.get.map {
         case Some(ai) => ai
         case None     => AIs.init
       }
 
-    private[kyo] def handle(ai: AI, v: String): String > AIs =
+    private[kyo] def handle(ai: AI, v: String): String < AIs =
       info.decoder.decodeJson(v) match {
         case Left(error) =>
           AIs.fail(
@@ -63,19 +63,19 @@ package object agents {
   object Agents {
     private val local = Locals.init(Set.empty[Agent])
 
-    def get: Set[Agent] > AIs = local.get
+    def get: Set[Agent] < AIs = local.get
 
-    def enable[T, S](p: Agent*)(v: => T > S): T > (AIs with S) =
+    def enable[T, S](p: Agent*)(v: => T < S): T < (AIs with S) =
       local.get.map { set =>
         local.let(set ++ p.toSeq)(v)
       }
 
-    def disable[T, S](f: T > S): T > (AIs with S) =
+    def disable[T, S](f: T < S): T < (AIs with S) =
       local.let(Set.empty)(f)
 
     private[kyo] def resultAgent[T](implicit
         t: ValueSchema[T]
-    ): (Agent, Option[T] > AIs) > AIs =
+    ): (Agent, Option[T] < AIs) < AIs =
       Atomics.initRef(Option.empty[T]).map { ref =>
         val agent =
           new Agent {
@@ -93,7 +93,7 @@ package object agents {
         (agent, ref.get)
       }
 
-    private[kyo] def handle(ai: AI, agents: Set[Agent], calls: List[Call]): Unit > AIs =
+    private[kyo] def handle(ai: AI, agents: Set[Agent], calls: List[Call]): Unit < AIs =
       Seqs.traverseUnit(calls) { call =>
         agents.find(_.info.name == call.function) match {
           case None =>

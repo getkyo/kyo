@@ -10,20 +10,20 @@ class consolesTest extends KyoTest {
   "run" in run {
     val testConsole = new TestConsole
     testConsole.readlns = List("readln")
-    val io: String > IOs = Consoles.run(testConsole)(Consoles.readln)
+    val io: String < IOs = Consoles.run(testConsole)(Consoles.readln)
     assert(IOs.run(io) == "readln")
   }
   "run implicit console" in run {
     val testConsole               = new TestConsole
     implicit def console: Console = testConsole
     testConsole.readlns = List("readln")
-    val io: String > IOs = Consoles.run(Consoles.readln)
+    val io: String < IOs = Consoles.run(Consoles.readln)
     assert(IOs.run(io) == "readln")
   }
   "readln" in run {
     val testConsole = new TestConsole
     testConsole.readlns = List("readln")
-    val io: String > IOs = Consoles.run(testConsole)(Consoles.readln)
+    val io: String < IOs = Consoles.run(testConsole)(Consoles.readln)
     assert(IOs.run(io) == "readln")
   }
   "print" in run {
@@ -54,25 +54,25 @@ class consolesTest extends KyoTest {
     var printlns    = List.empty[String]
     var printlnErrs = List.empty[String]
 
-    def readln: String > IOs =
+    def readln: String < IOs =
       IOs {
         val v = readlns.head
         readlns = readlns.tail
         v
       }
-    def print[T](s: => T): Unit > IOs =
+    def print[T](s: => T): Unit < IOs =
       IOs {
         prints ::= s.toString
       }
-    def printErr[T](s: => T): Unit > IOs =
+    def printErr[T](s: => T): Unit < IOs =
       IOs {
         printErrs ::= s.toString
       }
-    def println[T](s: => T): Unit > IOs =
+    def println[T](s: => T): Unit < IOs =
       IOs {
         printlns ::= s.toString
       }
-    def printlnErr[T](s: => T): Unit > IOs =
+    def printlnErr[T](s: => T): Unit < IOs =
       IOs {
         printlnErrs ::= s.toString
       }

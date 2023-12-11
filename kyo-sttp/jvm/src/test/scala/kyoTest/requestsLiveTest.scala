@@ -41,7 +41,7 @@ class requestsLiveTest extends KyoTest {
       endpointPath: String,
       response: Try[String],
       port: Int = 8000
-  ): Int > (IOs with Resources) =
+  ): Int < (IOs with Resources) =
     IOs {
 
       import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}

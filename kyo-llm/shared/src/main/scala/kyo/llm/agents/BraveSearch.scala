@@ -48,10 +48,10 @@ object BraveSearch extends Agent {
         .orElse(Option(System.getProperty(apiKeyProp)))
     }
 
-    val get: String > AIs =
+    val get: String < AIs =
       Options.getOrElse(local.get, AIs.fail("No Brave API key found"))
 
-    def let[T, S1, S2](key: String > S1)(f: => T > S2): T > (S1 with S2 with AIs) =
+    def let[T, S1, S2](key: String < S1)(f: => T < S2): T < (S1 with S2 with AIs) =
       key.map { k =>
         local.let(Some(k))(f)
       }

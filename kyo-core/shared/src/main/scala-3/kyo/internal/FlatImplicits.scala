@@ -28,7 +28,7 @@ object FlatImplicits {
     object Kyo {
       def unapply(tpe: TypeRepr): Option[(TypeRepr, TypeRepr)] =
         tpe match {
-          case AppliedType(_, List(t, u)) if (tpe.typeSymbol == TypeRepr.of[>].typeSymbol) =>
+          case AppliedType(_, List(t, u)) if (tpe.typeSymbol == TypeRepr.of[<].typeSymbol) =>
             Some((t.dealias, u.dealias))
           case _ => None
         }

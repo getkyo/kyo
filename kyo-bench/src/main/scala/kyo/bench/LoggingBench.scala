@@ -8,7 +8,7 @@ class LoggingBench extends Bench.SyncAndFork[Unit] {
     import kyo._
     import kyo.ios._
     import kyo.logs._
-    def loop(i: Int): Unit > IOs =
+    def loop(i: Int): Unit < IOs =
       if (i > depth)
         ()
       else

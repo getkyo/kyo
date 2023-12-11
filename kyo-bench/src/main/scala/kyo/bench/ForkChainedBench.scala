@@ -25,7 +25,7 @@ class ForkChainedBench extends Bench.ForkOnly[Int] {
     import kyo.ios._
     import kyo.concurrent.fibers._
 
-    def iterate(p: Promise[Unit], n: Int): Unit > IOs =
+    def iterate(p: Promise[Unit], n: Int): Unit < IOs =
       if (n <= 0) p.complete(()).unit
       else IOs.unit.flatMap(_ => Fibers.init(iterate(p, n - 1)).unit)
 

@@ -17,18 +17,18 @@ object queues {
   class Queue[T] private[queues] (private[kyo] val unsafe: Queues.Unsafe[T]) {
 
     def capacity: Int               = unsafe.capacity
-    def size: Int > IOs             = op(unsafe.size())
-    def isEmpty: Boolean > IOs      = op(unsafe.isEmpty())
-    def isFull: Boolean > IOs       = op(unsafe.isFull())
-    def offer(v: T): Boolean > IOs  = op(unsafe.offer(v))
-    def poll: Option[T] > IOs       = op(unsafe.poll())
-    def peek: Option[T] > IOs       = op(unsafe.peek())
-    def drain: Seq[T] > IOs         = op(unsafe.drain())
-    def isClosed: Boolean > IOs     = IOs(unsafe.isClosed())
-    def close: Option[Seq[T]] > IOs = IOs(unsafe.close())
+    def size: Int < IOs             = op(unsafe.size())
+    def isEmpty: Boolean < IOs      = op(unsafe.isEmpty())
+    def isFull: Boolean < IOs       = op(unsafe.isFull())
+    def offer(v: T): Boolean < IOs  = op(unsafe.offer(v))
+    def poll: Option[T] < IOs       = op(unsafe.poll())
+    def peek: Option[T] < IOs       = op(unsafe.peek())
+    def drain: Seq[T] < IOs         = op(unsafe.drain())
+    def isClosed: Boolean < IOs     = IOs(unsafe.isClosed())
+    def close: Option[Seq[T]] < IOs = IOs(unsafe.close())
 
     /*inline*/
-    private def op[T]( /*inline*/ v: => T): T > IOs =
+    private def op[T]( /*inline*/ v: => T): T < IOs =
       IOs {
         if (unsafe.isClosed()) {
           closed
@@ -76,10 +76,10 @@ object queues {
 
     class Unbounded[T] private[queues] (unsafe: Queues.Unsafe[T]) extends Queue[T](unsafe) {
 
-      def add[S](v: T > S): Unit > (IOs with S) = v.map(offer(_)).unit
+      def add[S](v: T < S): Unit < (IOs with S) = v.map(offer(_)).unit
     }
 
-    def init[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] > IOs =
+    def init[T](capacity: Int, access: Access = Access.Mpmc): Queue[T] < IOs =
       IOs {
         capacity match {
           case c if (c <= 0) =>
@@ -127,7 +127,7 @@ object queues {
         }
       }
 
-    def initUnbounded[T](access: Access = Access.Mpmc, chunkSize: Int = 8): Unbounded[T] > IOs =
+    def initUnbounded[T](access: Access = Access.Mpmc, chunkSize: Int = 8): Unbounded[T] < IOs =
       IOs {
         access match {
           case Access.Mpmc =>
@@ -141,7 +141,7 @@ object queues {
         }
       }
 
-    def initDropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+    def initDropping[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] < IOs =
       init[T](capacity, access).map { q =>
         val u = q.unsafe
         val c = capacity
@@ -158,7 +158,7 @@ object queues {
         )
       }
 
-    def initSliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] > IOs =
+    def initSliding[T](capacity: Int, access: Access = Access.Mpmc): Unbounded[T] < IOs =
       init[T](capacity, access).map { q =>
         val u = q.unsafe
         val c = capacity

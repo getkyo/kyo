@@ -5,10 +5,10 @@ import kyo.ios._
 
 case class Histogram(unsafe: Histogram.Unsafe) extends AnyVal {
 
-  def observe(v: Double): Unit > IOs =
+  def observe(v: Double): Unit < IOs =
     IOs(unsafe.observe(v))
 
-  def observe(v: Double, b: Attributes): Unit > IOs =
+  def observe(v: Double, b: Attributes): Unit < IOs =
     IOs(unsafe.observe(v, b))
 
   def attributes(b: Attributes): Histogram =

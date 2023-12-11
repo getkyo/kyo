@@ -24,7 +24,7 @@ class EnqueueDequeueBench extends Bench.ForkOnly[Unit] {
     import kyo.concurrent.channels._
     import kyo.concurrent.Access
 
-    def loop(c: Channel[Unit], i: Int): Unit > Fibers =
+    def loop(c: Channel[Unit], i: Int): Unit < Fibers =
       if (i >= depth)
         IOs.unit
       else

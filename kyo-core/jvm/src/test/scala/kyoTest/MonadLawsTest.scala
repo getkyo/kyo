@@ -17,13 +17,13 @@ import scala.concurrent.duration.Duration
 
 object MonadLawsTest extends ZIOSpecDefault {
 
-  case class Myo[+T](v: T > Fibers)
+  case class Myo[+T](v: T < Fibers)
 
   val listGenF: GenF[Any, Myo] =
     new GenF[Any, Myo] {
       def apply[R, A](gen: Gen[R, A])(implicit trace: Trace) =
         Gen.oneOf(
-            gen.map(v => (v: A > Fibers)),
+            gen.map(v => (v: A < Fibers)),
             gen.map(v => IOs(v)),
             gen.map(v => Fibers.init(v).map(_.get)),
             gen.map(v => IOs(Fibers.init(v).map(_.get))),

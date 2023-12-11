@@ -14,31 +14,31 @@ object channels {
 
   abstract class Channel[T] { self =>
 
-    def size: Int > IOs
+    def size: Int < IOs
 
-    def offer(v: T): Boolean > IOs
+    def offer(v: T): Boolean < IOs
 
-    def offerUnit(v: T): Unit > IOs
+    def offerUnit(v: T): Unit < IOs
 
-    def poll: Option[T] > IOs
+    def poll: Option[T] < IOs
 
-    def isEmpty: Boolean > IOs
+    def isEmpty: Boolean < IOs
 
-    def isFull: Boolean > IOs
+    def isFull: Boolean < IOs
 
-    def putFiber(v: T): Fiber[Unit] > IOs
+    def putFiber(v: T): Fiber[Unit] < IOs
 
-    def takeFiber: Fiber[T] > IOs
+    def takeFiber: Fiber[T] < IOs
 
-    def put(v: T): Unit > Fibers =
+    def put(v: T): Unit < Fibers =
       putFiber(v).map(_.get)
 
-    def take: T > Fibers =
+    def take: T < Fibers =
       takeFiber.map(_.get)
 
-    def isClosed: Boolean > IOs
+    def isClosed: Boolean < IOs
 
-    def close: Option[Seq[T]] > IOs
+    def close: Option[Seq[T]] < IOs
   }
 
   object Channels {
@@ -49,7 +49,7 @@ object channels {
     def init[T](
         capacity: Int,
         access: Access = Access.Mpmc
-    )(implicit f: Flat[T > Any]): Channel[T] > IOs =
+    )(implicit f: Flat[T < Any]): Channel[T] < IOs =
       Queues.init[T](capacity, access).map { queue =>
         IOs {
           new Channel[T] {
@@ -112,7 +112,7 @@ object channels {
               }
 
             /*inline*/
-            def op[T]( /*inline*/ v: => T): T > IOs =
+            def op[T]( /*inline*/ v: => T): T < IOs =
               IOs[T, Any] {
                 if (u.isClosed()) {
                   closed
@@ -129,13 +129,13 @@ object channels {
                   case None =>
                     None
                   case r: Some[Seq[T]] =>
-                    def dropTakes(): Unit > IOs =
+                    def dropTakes(): Unit < IOs =
                       takes.poll() match {
                         case null => ()
                         case p =>
                           p.interrupt.map(_ => dropTakes())
                       }
-                    def dropPuts(): Unit > IOs =
+                    def dropPuts(): Unit < IOs =
                       puts.poll() match {
                         case null => ()
                         case (_, p) =>

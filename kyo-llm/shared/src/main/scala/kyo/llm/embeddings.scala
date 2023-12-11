@@ -21,10 +21,9 @@ object embeddings {
   object Embeddings {
     import internal._
 
-    def init(weighted: (Int, String)*): Embedding > AIs =
+    def init(weighted: (Int, String)*): Embedding < AIs =
       init {
         val n = weighted.map(_._1).min
-        require(n > 0)
         (0 to n).flatMap { _ =>
           weighted.flatMap {
             case (w, text) => List.fill(w / n)(text)
@@ -32,7 +31,7 @@ object embeddings {
         }.mkString("\n")
       }
 
-    def init(text: String): Embedding > AIs =
+    def init(text: String): Embedding < AIs =
       for {
         apiKey <- Configs.apiKey
         config <- Configs.get
