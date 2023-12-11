@@ -58,8 +58,14 @@ class BenchTest extends AsyncFreeSpec with Assertions {
     test(ForkChainedBench(), 0)
   }
 
-  "CollectAllBench" - {
-    test(CollectAllBench(), 1000L)
+  "CollectBench" - {
+    val b = CollectBench()
+    test(b, List.fill(b.count)(1))
+  }
+
+  "CollectParBench" - {
+    val b = CollectParBench()
+    test(b, List.fill(b.count)(1))
   }
 
   "CountdownLatchBench" - {
