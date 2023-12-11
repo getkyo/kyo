@@ -35,9 +35,14 @@ package object agents {
 
     val info: Info
 
+    private val local = Locals.init(Option.empty[AI])
+
     def run(input: Input): Output > AIs
 
-    private val local = Locals.init(Option.empty[AI])
+    def run(caller: AI, input: Input): Output > AIs =
+      local.let(Some(caller)) {
+        run(input)
+      }
 
     protected def caller: AI > AIs =
       local.get.map {
@@ -52,9 +57,7 @@ package object agents {
               "Invalid json input. **Correct any mistakes before retrying**. " + error
           )
         case Right(value) =>
-          local.let(Some(ai)) {
-            run(value.value)
-          }.map { v =>
+          run(ai, value.value).map { v =>
             info.encoder.encodeJson(Value(v)).toString()
           }
       }
