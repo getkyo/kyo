@@ -49,8 +49,8 @@ object envs {
 
     override def toString = s"Envs[${tag.tag.longNameWithPrefix}]"
 
-    def layer[Sd](construct: E > Sd): Layer[Sd, Envs[E]] =
-      new Layer[Sd, Envs[E]] {
+    def layer[Sd](construct: E > Sd): Layer[Envs[E], Sd] =
+      new Layer[Envs[E], Sd] {
         override def run[T, S](effect: T > (S with Envs[E]))(implicit
             fl: Flat[T > (S with Envs[E])]
         ): T > (S with Sd) =

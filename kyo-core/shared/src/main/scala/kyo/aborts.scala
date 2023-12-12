@@ -93,8 +93,8 @@ object aborts {
 
     override def toString = s"Aborts[${tag.tag.longNameWithPrefix}]"
 
-    def layer[Se](handle: E => Nothing > Se): Layer[Se, Aborts[E]] =
-      new Layer[Se, Aborts[E]] {
+    def layer[Se](handle: E => Nothing > Se): Layer[Aborts[E], Se] =
+      new Layer[Aborts[E], Se] {
         override def run[T, S](
             effect: T > (S with Aborts[E])
         )(

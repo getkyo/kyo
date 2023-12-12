@@ -5,6 +5,7 @@ import kyo.envs._
 import kyo.aborts._
 import kyo.tries._
 import kyo.options._
+import kyo.layers._
 import scala.util.Failure
 
 class layersTest extends KyoTest {
@@ -21,7 +22,7 @@ class layersTest extends KyoTest {
   val dep3Layer = Envs[Dep3].layer(Envs[Dep].get.map(v => Dep3(v.dep3)))
 
   "Envs layers should be composable and provide multiple dependencies" in {
-    val layer = depLayer >>> (dep1Layer ++ dep2Layer ++ dep3Layer)
+    val layer = (dep1Layer add dep2Layer add dep3Layer) chain depLayer
 
     val effect = for {
       dep1 <- Envs[Dep1].get
@@ -44,7 +45,8 @@ class layersTest extends KyoTest {
     Aborts[TestError1].layer(err => Aborts[TestError2].fail(TestError2(err.msg)))
 
   "Aborts layers should be composable and handle multiple error types" in {
-    val layer = testError1ToTE2Layer >>> (stringToTE1Layer ++ dep1ToTE1Layer ++ throwableToTE1Layer)
+    val layer =
+      (stringToTE1Layer add dep1ToTE1Layer add throwableToTE1Layer) chain testError1ToTE2Layer
 
     val effect1 = for {
       _ <- Aborts[String].fail("string failure")

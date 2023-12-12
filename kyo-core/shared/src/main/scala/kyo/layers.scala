@@ -2,145 +2,88 @@ package kyo
 
 object layers {
 
-  trait Layer[Sin, Sout] { self =>
-    def run[T, S](effect: T > (S with Sout))(implicit fl: Flat[T > (S with Sout)]): T > (S with Sin)
+  trait Layer[In, Out] { self =>
+    def run[T, S](effect: T > (S with In))(implicit fl: Flat[T > (S with In)]): T > (S with Out)
 
-    final def ++[Sin1, Sout1](other: Layer[Sin1, Sout1]): Layer[Sin with Sin1, Sout with Sout1] =
-      new Layer[Sin with Sin1, Sout with Sout1] {
+    final def add[Out1, In1](other: Layer[In1, Out1]): Layer[In with In1, Out with Out1] =
+      new Layer[In with In1, Out with Out1] {
         override def run[T, S](
-            effect: T > (S with Sout with Sout1)
+            effect: T > (S with In with In1)
         )(
-            implicit fl: Flat[T > (S with Sout with Sout1)]
-        ): T > (S with Sin with Sin1) = {
-          val selfRun: T > (S with Sout1 with Sin) =
-            self.run[T, S with Sout1](effect: T > (S with Sout1 with Sout))
-          val otherRun: T > (S with Sin with Sin1) =
-            other.run[T, S with Sin](selfRun)(Flat.unsafe.unchecked)
+            implicit fl: Flat[T > (S with In with In1)]
+        ): T > (S with Out with Out1) = {
+          val selfRun: T > (S with In1 with Out) =
+            self.run[T, S with In1](effect: T > (S with In1 with In))
+          val otherRun: T > (S with Out with Out1) =
+            other.run[T, S with Out](selfRun)(Flat.unsafe.unchecked)
           otherRun
         }
       }
 
-    final def >>>[Sin1, Sout1](other: Layer[Sin1, Sout1])(implicit
-        ap: ApplyLayer[Sout, Sin1]
-    ): Layer[Sin with ap.Sin, Sout1 with ap.Sout] = {
-      ap.applyLayer[Sin, Sout1](self, other)
+    final def chain[In2, Out2](other: Layer[In2, Out2])(
+        implicit ap: ChainLayer[Out, In2]
+    ): Layer[In, Out2 with ap.RemainingOut1] = {
+      ap.applyLayer[In, Out2](self, other)
     }
   }
 
-  sealed trait ApplyLayer[S1, S2] {
-    type Sin
-    type Sout
+  /** Use layer1 to handle unhandled dependencies (Out) of layer2
+    */
+  sealed trait ChainLayer[Out1, In2] {
+    type RemainingOut1
 
-    def applyLayer[Sin1, Sout2](
-        layer1: Layer[Sin1, S1],
-        layer2: Layer[S2, Sout2]
-    ): Layer[Sin1 with Sin, Sout2 with Sout]
+    def applyLayer[In1, Out2](
+        layer1: Layer[In1, Out1],
+        layer2: Layer[In2, Out2]
+    ): Layer[In1, RemainingOut1 with Out2]
   }
 
-  trait LowPriorityApplyLayers1 {
-    implicit def partialApplication[Sshared, Sextra1, Sextra2]
-        : ApplyLayer[Sshared with Sextra1, Sshared with Sextra2] {
-          type Sin = Sextra2; type Sout = Sextra1
-        } = {
-      new ApplyLayer[Sshared with Sextra1, Sshared with Sextra2] {
-        type Sin  = Sextra2
-        type Sout = Sextra1
+  trait ChainLayers2 {
 
-        override def applyLayer[Sin1, Sout2](
-            layer1: Layer[Sin1, Sshared with Sextra1],
-            layer2: Layer[Sshared with Sextra2, Sout2]
-        ): Layer[Sin1 with Sextra2, Sout2 with Sextra1] = {
-          new Layer[Sin1 with Sextra2, Sout2 with Sextra1] {
-            override def run[T, S](
-                effect: T > (S with Sout2 with Sextra1)
-            )(
-                implicit fl: Flat[T > (S with Sout2 with Sextra1)]
-            ): T > (S with Sin1 with Sextra2) = {
-              val run2: T > (S with Sshared with Sextra2 with Sextra1) =
-                layer2.run[T, S with Sextra1](effect)
-              val run1: T > (S with Sin1 with Sextra2) =
-                layer1.run[T, S with Sextra2](run2)(Flat.unsafe.unchecked)
-              run1
+    implicit def application[Out1, Shared, In2]
+        : ChainLayer.Aux[Out1 with Shared, In2 with Shared, Out1] =
+      new ChainLayer[Out1 with Shared, In2 with Shared] {
+        type RemainingOut1 = Out1
+        override def applyLayer[In1, Out2](
+            layer1: Layer[In1, Out1 with Shared],
+            layer2: Layer[In2 with Shared, Out2]
+        ): Layer[In1, Out1 with Out2] =
+          new Layer[In1, Out1 with Out2] {
+            override def run[T, S](effect: T > (S with In1))(implicit
+                fl: Flat[T > (S with In1)]
+            ): T > (S with Out2 with Out1) = {
+              val handled1: T > (S with Out1 with Shared) = layer1.run[T, S](effect)
+              val handled2: T > (S with Out2 with Out1) =
+                layer2.run[T, S with Out1](handled1)(Flat.unsafe.unchecked)
+              handled2
             }
           }
-        }
+
       }
-    }
   }
 
-  trait LowPriorityApplyLayers extends LowPriorityApplyLayers1 {
-    implicit def partialApplicationLeft[Sshared, Sextra]
-        : ApplyLayer[Sshared, Sshared with Sextra] { type Sin = Sextra; type Sout = Any } = {
-      new ApplyLayer[Sshared, Sshared with Sextra] {
-        type Sin  = Sextra
-        type Sout = Any
+  object ChainLayer extends ChainLayers2 {
+    type Aux[Out1, In2, R] = ChainLayer[Out1, In2] { type RemainingOut1 = R }
 
-        def applyLayer[Sin1, Sout2](
-            layer1: Layer[Sin1, Sshared],
-            layer2: Layer[Sshared with Sextra, Sout2]
-        ): Layer[Sin1 with Sextra, Sout2] = {
-          new Layer[Sin1 with Sextra, Sout2] {
-            override def run[T, S](effect: T > (S with Sout2))(
-                implicit fl: Flat[T > (S with Sout2)]
-            ): T > (S with Sin1 with Sextra) = {
-              val run2: T > (S with Sshared with Sextra) = layer2.run[T, S](effect)
-              val run1: T > (S with Sextra with Sin1) =
-                layer1.run[T, S with Sextra](run2)(Flat.unsafe.unchecked)
-              run1
+    implicit def simpleChain[Out]: ChainLayer.Aux[Out, Out, Any] =
+      new ChainLayer[Out, Out] {
+        type RemainingOut1 = Any
+
+        override def applyLayer[In1, Out2](
+            layer1: Layer[In1, Out],
+            layer2: Layer[Out, Out2]
+        ): Layer[In1, Any with Out2] =
+          new Layer[In1, Any with Out2] {
+            override def run[T, S](effect: T > (S with In1))(implicit
+                fl: Flat[T > (S with In1)]
+            ): T > (S with Out2) = {
+              val handled1: T > (S with Out) = layer1.run[T, S](effect)
+              val handled2: T > (S with Out2) =
+                layer2.run[T, S](handled1)(Flat.unsafe.unchecked)
+              handled2
             }
           }
-        }
-      }
-    }
 
-    implicit def partialApplicationRight[Sshared, Sextra]
-        : ApplyLayer[Sshared with Sextra, Sshared] { type Sin = Any; type Sout = Sextra } = {
-      new ApplyLayer[Sshared with Sextra, Sshared] {
-        type Sin  = Any
-        type Sout = Sextra
-
-        override def applyLayer[Sin1, Sout2](
-            layer1: Layer[Sin1, Sshared with Sextra],
-            layer2: Layer[Sshared, Sout2]
-        ): Layer[Sin1 with Any, Sout2 with Sextra] = {
-          new Layer[Sin1 with Any, Sout2 with Sextra] {
-            override def run[T, S](
-                effect: T > (S with Sout2 with Sextra)
-            )(
-                implicit fl: Flat[T > (S with Sout2 with Sextra)]
-            ): T > (S with Sin1) = {
-              val run2: T > (S with Sshared with Sextra) = layer2.run[T, S with Sextra](effect)
-              val run1: T > (S with Sin1) = layer1.run[T, S](run2)(Flat.unsafe.unchecked)
-              run1
-            }
-          }
-        }
-      }
-    }
-  }
-
-  object ApplyLayer extends LowPriorityApplyLayers {
-    type Aux[S1, S2, Sin0, Sout0] = ApplyLayer[S1, S2] { type Sin = Sin0; type Sout = Sout0 }
-
-    implicit def simpleApplication[Sshare]: ApplyLayer.Aux[Sshare, Sshare, Any, Any] =
-      new ApplyLayer[Sshare, Sshare] {
-        type Sin  = Any
-        type Sout = Any
-
-        def applyLayer[Sin1, Sout2](
-            layer1: Layer[Sin1, Sshare],
-            layer2: Layer[Sshare, Sout2]
-        ): Layer[Sin1, Sout2] = {
-          new Layer[Sin1, Sout2] {
-            override def run[T, S](effect: T > (S with Sout2))(implicit
-                fl: Flat[T > (S with Sout2)]
-            ): T > (S with Sin1) = {
-              val run2: T > (S with Sshare) = layer2.run[T, S](effect)
-              val run1: T > (S with Sin1)   = layer1.run[T, S](run2)(Flat.unsafe.unchecked)
-              run1
-            }
-          }
-        }
       }
   }
 
