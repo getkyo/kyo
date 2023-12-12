@@ -55,7 +55,7 @@ object options {
     def layer[Se](onEmpty: => Nothing > Se): Layer[Se, Options] =
       new Layer[Se, Options] {
         override def run[T, S](effect: T > (S with Options))(implicit
-            fl: Flat[T]
+            fl: Flat[T > (S with Options)]
         ): T > (S with Se) =
           Options.run[T, S](effect).map {
             case None    => onEmpty

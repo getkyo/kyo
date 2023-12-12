@@ -47,7 +47,9 @@ object tries {
 
     def layer[Se](handle: Throwable => Nothing > Se): Layer[Se, Tries] =
       new Layer[Se, Tries] {
-        override def run[T, S](effect: T > (S with Tries))(implicit fl: Flat[T]): T > (S with Se) =
+        override def run[T, S](effect: T > (S with Tries))(implicit
+            fl: Flat[T > (S with Tries)]
+        ): T > (S with Se) =
           Tries.run[T, S](effect).map {
             case Failure(exception) => handle(exception)
             case Success(t)         => t

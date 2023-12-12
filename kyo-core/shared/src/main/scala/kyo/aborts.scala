@@ -98,9 +98,9 @@ object aborts {
         override def run[T, S](
             effect: T > (S with Aborts[E])
         )(
-            implicit fl: Flat[T]
+            implicit flat: Flat[T > (S with Aborts[E])]
         ): T > (S with Se) =
-          self.run[T, S](effect).map {
+          self.run[T, S](effect)(flat).map {
             case Left(err) => handle(err)
             case Right(t)  => t
           }

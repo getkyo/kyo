@@ -3,18 +3,19 @@ package kyo
 object layers {
 
   trait Layer[Sin, Sout] { self =>
-    def run[T, S](effect: T > (S with Sout))(implicit fl: Flat[T]): T > (S with Sin)
+    def run[T, S](effect: T > (S with Sout))(implicit fl: Flat[T > (S with Sout)]): T > (S with Sin)
 
     final def ++[Sin1, Sout1](other: Layer[Sin1, Sout1]): Layer[Sin with Sin1, Sout with Sout1] =
       new Layer[Sin with Sin1, Sout with Sout1] {
         override def run[T, S](
             effect: T > (S with Sout with Sout1)
         )(
-            implicit fl: Flat[T]
+            implicit fl: Flat[T > (S with Sout with Sout1)]
         ): T > (S with Sin with Sin1) = {
           val selfRun: T > (S with Sout1 with Sin) =
             self.run[T, S with Sout1](effect: T > (S with Sout1 with Sout))
-          val otherRun: T > (S with Sin with Sin1) = other.run[T, S with Sin](selfRun)
+          val otherRun: T > (S with Sin with Sin1) =
+            other.run[T, S with Sin](selfRun)(Flat.unsafe.unchecked)
           otherRun
         }
       }
@@ -53,11 +54,12 @@ object layers {
             override def run[T, S](
                 effect: T > (S with Sout2 with Sextra1)
             )(
-                implicit fl: Flat[T]
+                implicit fl: Flat[T > (S with Sout2 with Sextra1)]
             ): T > (S with Sin1 with Sextra2) = {
               val run2: T > (S with Sshared with Sextra2 with Sextra1) =
                 layer2.run[T, S with Sextra1](effect)
-              val run1: T > (S with Sin1 with Sextra2) = layer1.run[T, S with Sextra2](run2)
+              val run1: T > (S with Sin1 with Sextra2) =
+                layer1.run[T, S with Sextra2](run2)(Flat.unsafe.unchecked)
               run1
             }
           }
@@ -79,10 +81,11 @@ object layers {
         ): Layer[Sin1 with Sextra, Sout2] = {
           new Layer[Sin1 with Sextra, Sout2] {
             override def run[T, S](effect: T > (S with Sout2))(
-                implicit fl: Flat[T]
+                implicit fl: Flat[T > (S with Sout2)]
             ): T > (S with Sin1 with Sextra) = {
               val run2: T > (S with Sshared with Sextra) = layer2.run[T, S](effect)
-              val run1: T > (S with Sextra with Sin1)    = layer1.run[T, S with Sextra](run2)
+              val run1: T > (S with Sextra with Sin1) =
+                layer1.run[T, S with Sextra](run2)(Flat.unsafe.unchecked)
               run1
             }
           }
@@ -104,10 +107,10 @@ object layers {
             override def run[T, S](
                 effect: T > (S with Sout2 with Sextra)
             )(
-                implicit fl: Flat[T]
+                implicit fl: Flat[T > (S with Sout2 with Sextra)]
             ): T > (S with Sin1) = {
               val run2: T > (S with Sshared with Sextra) = layer2.run[T, S with Sextra](effect)
-              val run1: T > (S with Sin1)                = layer1.run[T, S](run2)
+              val run1: T > (S with Sin1) = layer1.run[T, S](run2)(Flat.unsafe.unchecked)
               run1
             }
           }
@@ -130,10 +133,10 @@ object layers {
         ): Layer[Sin1, Sout2] = {
           new Layer[Sin1, Sout2] {
             override def run[T, S](effect: T > (S with Sout2))(implicit
-                fl: Flat[T]
+                fl: Flat[T > (S with Sout2)]
             ): T > (S with Sin1) = {
               val run2: T > (S with Sshare) = layer2.run[T, S](effect)
-              val run1: T > (S with Sin1)   = layer1.run[T, S](run2)
+              val run1: T > (S with Sin1)   = layer1.run[T, S](run2)(Flat.unsafe.unchecked)
               run1
             }
           }
