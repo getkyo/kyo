@@ -6,7 +6,7 @@ import java.net.http.HttpClient
 import kyo.internal.KyoSttpMonad
 import sttp.capabilities.WebSockets
 
-private[kyo] object PlatformBackend {
+object PlatformBackend {
 
   def apply(backend: SttpBackend[KyoSttpMonad.M, WebSockets]): Backend =
     new Backend {

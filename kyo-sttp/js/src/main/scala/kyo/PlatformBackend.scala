@@ -4,7 +4,7 @@ import sttp.client3._
 import kyo.requests.Backend
 import kyo.concurrent.fibers.Fibers
 
-private[kyo] object PlatformBackend {
+object PlatformBackend {
   val default =
     new Backend {
       val b = FetchBackend()
