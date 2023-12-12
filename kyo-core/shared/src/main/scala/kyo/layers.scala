@@ -27,8 +27,6 @@ object layers {
     }
   }
 
-  /** Use layer1 to handle unhandled dependencies (Out) of layer2
-    */
   sealed trait ChainLayer[Out1, In2] {
     type RemainingOut1
 
@@ -39,7 +37,6 @@ object layers {
   }
 
   trait ChainLayers2 {
-
     implicit def application[Out1, Shared, In2]
         : ChainLayer.Aux[Out1 with Shared, In2 with Shared, Out1] =
       new ChainLayer[Out1 with Shared, In2 with Shared] {
@@ -62,7 +59,51 @@ object layers {
       }
   }
 
-  object ChainLayer extends ChainLayers2 {
+  trait ChainLayers1 {
+    implicit def applyAll1[Shared, In2]: ChainLayer.Aux[Shared, In2 with Shared, Any] =
+      new ChainLayer[Shared, In2 with Shared] {
+        type RemainingOut1 = Any
+
+        override def applyLayer[In1, Out2](
+            layer1: Layer[In1, Shared],
+            layer2: Layer[In2 with Shared, Out2]
+        ): Layer[In1, Out2] =
+          new Layer[In1, Out2] {
+            override def run[T, S](effect: T > (S with In1))(implicit
+                fl: Flat[T > (S with In1)]
+            ): T > (S with Out2) = {
+              val handled1: T > (S with Shared) = layer1.run[T, S](effect)
+              val handled2: T > (S with Out2) =
+                layer2.run[T, S](handled1)(Flat.unsafe.unchecked)
+              handled2
+            }
+          }
+
+      }
+
+    implicit def applyAll2[Out1, Shared]: ChainLayer.Aux[Out1 with Shared, Shared, Out1] =
+      new ChainLayer[Out1 with Shared, Shared] {
+        type RemainingOut1 = Out1
+
+        override def applyLayer[In1, Out2](
+            layer1: Layer[In1, Out1 with Shared],
+            layer2: Layer[Shared, Out2]
+        ): Layer[In1, Out1 with Out2] =
+          new Layer[In1, Out1 with Out2] {
+            override def run[T, S](effect: T > (S with In1))(implicit
+                fl: Flat[T > (S with In1)]
+            ): T > (S with Out1 with Out2) = {
+              val handled1: T > (S with Out1 with Shared) = layer1.run[T, S](effect)
+              val handled2: T > (S with Out1 with Out2) =
+                layer2.run[T, S with Out1](handled1)(Flat.unsafe.unchecked)
+              handled2
+            }
+          }
+
+      }
+  }
+
+  object ChainLayer extends ChainLayers1 {
     type Aux[Out1, In2, R] = ChainLayer[Out1, In2] { type RemainingOut1 = R }
 
     implicit def simpleChain[Out]: ChainLayer.Aux[Out, Out, Any] =
