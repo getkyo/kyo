@@ -96,8 +96,8 @@ object contexts {
         if (s.contains('\n') || s.contains('"') || s.contains('\\')) s"p\"\"\"$s\"\"\""
         else s""""$s""""
       }
-      val seedStr     = seed.map(s => s".seed(${stringify(s)})").getOrElse("")
-      val reminderStr = reminder.map(s => s".reminder(${stringify(s)})").getOrElse("")
+      val seedStr     = seed.map(s => s"\n  .seed(${stringify(s)})").getOrElse("")
+      val reminderStr = reminder.map(s => s"\n  .reminder(${stringify(s)})").getOrElse("")
       val messagesStr = messages.reverse.map {
         case Message.SystemMessage(content, _) =>
           s"\n  .systemMessage(${stringify(content)})"
@@ -112,9 +112,9 @@ object contexts {
           s"\n  .assistantMessage(${stringify(content)}${if (calls.isEmpty) ""
             else s", List($callsStr)"})"
         case Message.AgentMessage(callId, content, _) =>
-          s"\n  .toolMessage(CallId(\"${callId.id}\"), ${stringify(content)})"
+          s"\n  .agentMessage(CallId(\"${callId.id}\"), ${stringify(content)})"
       }.mkString
-      s"Contexts.init$seedStr$reminderStr$messagesStr"
+      s"Context.empty$seedStr$reminderStr$messagesStr"
     }
   }
 
