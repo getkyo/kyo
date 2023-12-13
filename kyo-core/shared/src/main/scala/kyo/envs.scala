@@ -51,10 +51,10 @@ object envs {
 
     def layer[Sd](construct: E > Sd): Layer[Envs[E], Sd] =
       new Layer[Envs[E], Sd] {
-        override def run[T, S](effect: T > (S with Envs[E]))(implicit
-            fl: Flat[T > (S with Envs[E])]
-        ): T > (S with Sd) =
-          construct.map(e => self.run[T, S](e)(effect: T > (Envs[E] with S)))
+        override def run[T, S](effect: T > (Envs[E] with S))(implicit
+            fl: Flat[T > (Envs[E] with S)]
+        ): T > (Sd with S) =
+          construct.map(e => self.run[T, S](e)(effect))
       }
   }
 

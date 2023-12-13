@@ -3,18 +3,18 @@ package kyo
 object layers {
 
   trait Layer[In, Out] { self =>
-    def run[T, S](effect: T > (S with In))(implicit fl: Flat[T > (S with In)]): T > (S with Out)
+    def run[T, S](effect: T > (In with S))(implicit fl: Flat[T > (In with S)]): T > (S with Out)
 
     final def add[Out1, In1](other: Layer[In1, Out1]): Layer[In with In1, Out with Out1] =
       new Layer[In with In1, Out with Out1] {
         override def run[T, S](
-            effect: T > (S with In with In1)
+            effect: T > (In with In1 with S)
         )(
-            implicit fl: Flat[T > (S with In with In1)]
+            implicit fl: Flat[T > (In with In1 with S)]
         ): T > (S with Out with Out1) = {
-          val selfRun: T > (S with In1 with Out) =
-            self.run[T, S with In1](effect: T > (S with In1 with In))
-          val otherRun: T > (S with Out with Out1) =
+          val selfRun: T > (In1 with Out with S) =
+            self.run[T, S with In1](effect: T > (In1 with In with S))
+          val otherRun: T > (Out with Out1 with S) =
             other.run[T, S with Out](selfRun)(Flat.unsafe.unchecked)
           otherRun
         }
@@ -46,8 +46,8 @@ object layers {
             layer2: Layer[In2 with Shared, Out2]
         ): Layer[In1, Out1 with Out2] =
           new Layer[In1, Out1 with Out2] {
-            override def run[T, S](effect: T > (S with In1))(implicit
-                fl: Flat[T > (S with In1)]
+            override def run[T, S](effect: T > (In1 with S))(implicit
+                fl: Flat[T > (In1 with S)]
             ): T > (S with Out2 with Out1) = {
               val handled1: T > (S with Out1 with Shared) = layer1.run[T, S](effect)
               val handled2: T > (S with Out2 with Out1) =
@@ -69,8 +69,8 @@ object layers {
             layer2: Layer[In2 with Shared, Out2]
         ): Layer[In1, Out2] =
           new Layer[In1, Out2] {
-            override def run[T, S](effect: T > (S with In1))(implicit
-                fl: Flat[T > (S with In1)]
+            override def run[T, S](effect: T > (In1 with S))(implicit
+                fl: Flat[T > (In1 with S)]
             ): T > (S with Out2) = {
               val handled1: T > (S with Shared) = layer1.run[T, S](effect)
               val handled2: T > (S with Out2) =
@@ -90,8 +90,8 @@ object layers {
             layer2: Layer[Shared, Out2]
         ): Layer[In1, Out1 with Out2] =
           new Layer[In1, Out1 with Out2] {
-            override def run[T, S](effect: T > (S with In1))(implicit
-                fl: Flat[T > (S with In1)]
+            override def run[T, S](effect: T > (In1 with S))(implicit
+                fl: Flat[T > (In1 with S)]
             ): T > (S with Out1 with Out2) = {
               val handled1: T > (S with Out1 with Shared) = layer1.run[T, S](effect)
               val handled2: T > (S with Out1 with Out2) =
@@ -115,10 +115,10 @@ object layers {
             layer2: Layer[Out, Out2]
         ): Layer[In1, Any with Out2] =
           new Layer[In1, Any with Out2] {
-            override def run[T, S](effect: T > (S with In1))(implicit
-                fl: Flat[T > (S with In1)]
+            override def run[T, S](effect: T > (In1 with S))(implicit
+                fl: Flat[T > (In1 with S)]
             ): T > (S with Out2) = {
-              val handled1: T > (S with Out) = layer1.run[T, S](effect)
+              val handled1: T > (Out with S) = layer1.run[T, S](effect)
               val handled2: T > (S with Out2) =
                 layer2.run[T, S](handled1)(Flat.unsafe.unchecked)
               handled2

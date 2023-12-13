@@ -96,9 +96,9 @@ object aborts {
     def layer[Se](handle: E => Nothing > Se): Layer[Aborts[E], Se] =
       new Layer[Aborts[E], Se] {
         override def run[T, S](
-            effect: T > (S with Aborts[E])
+            effect: T > (Aborts[E] with S)
         )(
-            implicit flat: Flat[T > (S with Aborts[E])]
+            implicit flat: Flat[T > (Aborts[E] with S)]
         ): T > (S with Se) =
           self.run[T, S](effect)(flat).map {
             case Left(err) => handle(err)
