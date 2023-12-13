@@ -5,7 +5,7 @@ object layers {
   trait Layer[In, Out] { self =>
     def run[T, S](effect: T > (In with S))(implicit fl: Flat[T > (In with S)]): T > (S with Out)
 
-    final def add[Out1, In1](other: Layer[In1, Out1]): Layer[In with In1, Out with Out1] =
+    final def andThen[Out1, In1](other: Layer[In1, Out1]): Layer[In with In1, Out with Out1] =
       new Layer[In with In1, Out with Out1] {
         override def run[T, S](
             effect: T > (In with In1 with S)

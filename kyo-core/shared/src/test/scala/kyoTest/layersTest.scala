@@ -22,7 +22,7 @@ class layersTest extends KyoTest {
   val dep3Layer = Envs[Dep3].layer(Envs[Dep].get.map(v => Dep3(v.dep3)))
 
   "Envs layers should be composable and provide multiple dependencies" in {
-    val layer = (dep1Layer add dep2Layer add dep3Layer) chain depLayer
+    val layer = (dep1Layer andThen dep2Layer andThen dep3Layer) chain depLayer
 
     val effect = for {
       dep1 <- Envs[Dep1].get
@@ -46,7 +46,7 @@ class layersTest extends KyoTest {
 
   "Aborts layers should be composable and handle multiple error types" in {
     val layer =
-      (stringToTE1Layer add dep1ToTE1Layer add throwableToTE1Layer) chain testError1ToTE2Layer
+      (stringToTE1Layer andThen dep1ToTE1Layer andThen throwableToTE1Layer) chain testError1ToTE2Layer
 
     val effect1 = for {
       _ <- Aborts[String].fail("string failure")
