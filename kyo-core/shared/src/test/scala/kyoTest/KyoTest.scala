@@ -2,7 +2,6 @@ package kyoTest
 
 import izumi.reflect._
 import kyo.aborts._
-import kyo.apps._
 import kyo.clocks._
 import kyo.concurrent.fibers._
 import kyo.concurrent.timers._
@@ -56,7 +55,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
   implicit def toFuture(a: Assertion): Future[Assertion] = Future.successful(a)
 
   def runJVM(
-      v: => Assertion > App.Effects
+      v: => Assertion > KyoApp.Effects
   ): Future[Assertion] =
     if (Platform.isJVM) {
       run(v)
@@ -65,7 +64,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     }
 
   def runJS(
-      v: => Assertion > App.Effects
+      v: => Assertion > KyoApp.Effects
   ): Future[Assertion] =
     if (Platform.isJS) {
       run(v)
@@ -74,9 +73,9 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     }
 
   def run(
-      v: => Assertion > App.Effects
+      v: => Assertion > KyoApp.Effects
   ): Future[Assertion] = {
-    IOs.run(App.runFiber(timeout)(v).toFuture).map(_.get)
+    IOs.run(KyoApp.runFiber(timeout)(v).toFuture).map(_.get)
   }
 
 }

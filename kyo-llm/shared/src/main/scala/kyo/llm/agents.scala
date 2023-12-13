@@ -68,10 +68,13 @@ package object agents {
 
     def get: Set[Agent] > AIs = local.get
 
-    def enable[T, S](p: Agent*)(v: => T > S): T > (AIs with S) =
+    def enable[T, S](p: Seq[Agent])(v: => T > S): T > (AIs with S) =
       local.get.map { set =>
-        local.let(set ++ p.toSeq)(v)
+        local.let(set ++ p)(v)
       }
+
+    def enable[T, S](first: Agent, rest: Agent*)(v: => T > S): T > (AIs with S) =
+      enable(first +: rest)(v)
 
     def disable[T, S](f: T > S): T > (AIs with S) =
       local.let(Set.empty)(f)

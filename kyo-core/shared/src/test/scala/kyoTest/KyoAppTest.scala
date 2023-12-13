@@ -8,15 +8,14 @@ import kyo._
 import kyo.ios._
 import kyo.randoms._
 import kyo.resources._
-import kyo.apps._
 
 import scala.concurrent.duration._
 
-class AppTest extends KyoTest {
+class KyoAppTest extends KyoTest {
 
   "args" in {
     var _args: List[String] = Nil
-    val app = new App {
+    val app = new KyoApp {
       def run = IOs {
         _args = args
       }
