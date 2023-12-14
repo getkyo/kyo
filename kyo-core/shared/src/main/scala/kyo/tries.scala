@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.aborts._
+import kyo.layers._
 
 import scala.util._
 
@@ -42,6 +43,17 @@ object tries {
           v
         case Failure(ex) =>
           fail(ex)
+      }
+
+    def layer[Se](handle: Throwable => Nothing > Se): Layer[Tries, Se] =
+      new Layer[Tries, Se] {
+        override def run[T, S](effect: T > (Tries with S))(implicit
+            fl: Flat[T > (Tries with S)]
+        ): T > (S with Se) =
+          Tries.run[T, S](effect).map {
+            case Failure(exception) => handle(exception)
+            case Success(t)         => t
+          }
       }
   }
 }

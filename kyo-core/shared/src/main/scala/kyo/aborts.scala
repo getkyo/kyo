@@ -10,6 +10,7 @@ import scala.util.Success
 import kyo._
 import core._
 import tries._
+import layers._
 import scala.util.Try
 
 object aborts {
@@ -28,7 +29,7 @@ object aborts {
   }
 
   final class Aborts[E] private[aborts] (private val tag: Tag[E])
-      extends Effect[Abort[E]#Value, Aborts[E]] {
+      extends Effect[Abort[E]#Value, Aborts[E]] { self =>
 
     private implicit def _tag: Tag[E] = tag
 
@@ -91,5 +92,19 @@ object aborts {
       }
 
     override def toString = s"Aborts[${tag.tag.longNameWithPrefix}]"
+
+    def layer[Se](handle: E => Nothing > Se): Layer[Aborts[E], Se] =
+      new Layer[Aborts[E], Se] {
+        override def run[T, S](
+            effect: T > (Aborts[E] with S)
+        )(
+            implicit flat: Flat[T > (Aborts[E] with S)]
+        ): T > (S with Se) =
+          self.run[T, S](effect)(flat).map {
+            case Left(err) => handle(err)
+            case Right(t)  => t
+          }
+      }
   }
+
 }

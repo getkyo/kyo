@@ -5,6 +5,7 @@ import izumi.reflect._
 import scala.reflect.ClassTag
 
 import kyo.core._
+import kyo.layers.Layer
 
 object envs {
 
@@ -15,7 +16,7 @@ object envs {
   }
 
   final class Envs[E] private[envs] (implicit private val tag: Tag[_])
-      extends Effect[Env[E]#Value, Envs[E]] {
+      extends Effect[Env[E]#Value, Envs[E]] { self =>
 
     val get: E > Envs[E] =
       suspend(Input.asInstanceOf[Env[E]#Value[E]])
@@ -47,6 +48,14 @@ object envs {
       }
 
     override def toString = s"Envs[${tag.tag.longNameWithPrefix}]"
+
+    def layer[Sd](construct: E > Sd): Layer[Envs[E], Sd] =
+      new Layer[Envs[E], Sd] {
+        override def run[T, S](effect: T > (Envs[E] with S))(implicit
+            fl: Flat[T > (Envs[E] with S)]
+        ): T > (Sd with S) =
+          construct.map(e => self.run[T, S](e)(effect))
+      }
   }
 
   object Envs {
