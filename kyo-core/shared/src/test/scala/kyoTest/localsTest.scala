@@ -77,6 +77,40 @@ class localsTest extends KyoTest {
     }
   }
 
+  "update" - {
+    "get" in {
+      val l = Locals.init(10)
+      assert(
+          IOs.run[Int](l.update(_ + 10)(l.get)) ==
+            20
+      )
+    }
+    "effect + get" in {
+      val l = Locals.init(10)
+      assert(
+          IOs.run[Option[Int]](Options.run(Options(1).map(_ => l.update(_ + 10)(l.get)))) ==
+            Some(20)
+      )
+    }
+    "effect + get + effect" in {
+      val l = Locals.init(10)
+      assert(
+          IOs.run[Option[Int]](
+              Options.run(Options(1).map(_ => l.update(_ + 10)(l.get).map(Options(_))))
+          ) ==
+            Some(20)
+      )
+    }
+    "multiple" in {
+      val l1 = Locals.init(10)
+      val l2 = Locals.init(20)
+      assert(
+          IOs.run[(Int, Int)](zip(l1.update(_ + 10)(l1.get), l2.update(_ + 10)(l2.get))) ==
+            (20, 30)
+      )
+    }
+  }
+
   "save" - {
     "let + save" in {
       val l = Locals.init(10)

@@ -14,24 +14,40 @@ object locals {
 
     val get: T > IOs =
       new KyoIO[T, Any] {
-
         def apply(v: Unit > (IOs with Any), s: Safepoint[IO, IOs], l: State) =
-          l.getOrElse(Local.this, default).asInstanceOf[T]
+          get(l)
       }
 
-    def let[U, S1, S2](v: T > S1)(f: U > S2): U > (S1 with S2 with IOs) = {
-      def loop(v: T, f: U > S2): U > S2 =
-        f match {
-          case kyo: Kyo[MX, EX, Any, U, S2] @unchecked =>
-            new KyoCont[MX, EX, Any, U, S2](kyo) {
-              def apply(v2: Any > S2, s: Safepoint[MX, EX], l: Locals.State) =
-                loop(v, kyo(v2, s, l.updated(Local.this, v)))
+    def let[U, S](f: T)(v: U > S): U > (S with IOs) = {
+      def letLoop(f: T, v: U > S): U > S =
+        v match {
+          case kyo: Kyo[MX, EX, Any, U, S] @unchecked =>
+            new KyoCont[MX, EX, Any, U, S](kyo) {
+              def apply(v2: Any > S, s: Safepoint[MX, EX], l: Locals.State) =
+                letLoop(f, kyo(v2, s, l.updated(Local.this, f)))
             }
           case _ =>
-            f
+            v
         }
-      v.map(loop(_, f))
+      letLoop(f, v)
     }
+
+    def update[U, S](f: T => T)(v: U > S): U > (S with IOs) = {
+      def updateLoop(f: T => T, v: U > S): U > S =
+        v match {
+          case kyo: Kyo[MX, EX, Any, U, S] @unchecked =>
+            new KyoCont[MX, EX, Any, U, S](kyo) {
+              def apply(v2: Any > S, s: Safepoint[MX, EX], l: Locals.State) =
+                updateLoop(f, kyo(v2, s, l.updated(Local.this, f(get(l)))))
+            }
+          case _ =>
+            v
+        }
+      updateLoop(f, v)
+    }
+
+    private def get(l: Locals.State) =
+      l.getOrElse(Local.this, default).asInstanceOf[T]
   }
 
   object Locals {
