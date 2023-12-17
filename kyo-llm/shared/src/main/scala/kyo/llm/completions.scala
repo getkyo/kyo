@@ -80,7 +80,7 @@ object completions {
     case class FunctionCall(arguments: String, name: String)
     case class ToolCall(id: String, function: FunctionCall, `type`: String = "function")
 
-    case class FunctionDef(description: String, name: String, parameters: JsonSchema)
+    case class FunctionDef(description: String, name: String, parameters: Schema)
     case class ToolDef(function: FunctionDef, `type`: String = "function")
 
     sealed trait Entry

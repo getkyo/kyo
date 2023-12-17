@@ -56,12 +56,7 @@ object thoughts {
     )
   }
 
-  case class NonEmptyString(
-      `I understand I can not generate an empty string in the next field`: Boolean,
-      nonEmptyString: String
-  ) {
-    def string: String = nonEmptyString
-  }
+  type NonEmpty = "Non-empty"
 
   case class Constrain[T, C <: String](
       @desc("Constraints to consider when generating the value")
@@ -69,3 +64,34 @@ object thoughts {
       value: T
   )
 }
+
+// object tt extends KyoLLMApp {
+
+//   import thoughts._
+//   import kyo.llm.ais._
+
+//   case class CQA(
+//       @desc("Excerpt from the input text")
+//       excerpt: Constrain[String, NonEmpty],
+//       @desc("An elaborate question regarding the excerpt")
+//       question: Constrain[String, NonEmpty],
+//       @desc("A comprehensive answer")
+//       answer: Constrain[String, NonEmpty]
+//   )
+//   case class Req(
+//       reasoning: Reasoning,
+//       @desc("Comprehensive set of questions covering all information in the input text")
+//       questions: Collect[Constrain[String, NonEmpty]],
+//       @desc("Process each question")
+//       processed: Collect[CQA]
+//   )
+
+//   run {
+//     AIs.gen[Req](text)
+//   }
+
+//   def text =
+//     p"""
+//     General relativity is a theory of gravitation developed by Einstein in the years 1907–1915. The development of general relativity began with the equivalence principle, under which the states of accelerated motion and being at rest in a gravitational field (for example, when standing on the surface of the Earth) are physically identical. The upshot of this is that free fall is inertial motion: an object in free fall is falling because that is how objects move when there is no force being exerted on them, instead of this being due to the force of gravity as is the case in classical mechanics. This is incompatible with classical mechanics and special relativity because in those theories inertially moving objects cannot accelerate with respect to each other, but objects in free fall do so. To resolve this difficulty Einstein first proposed that spacetime is curved. Einstein discussed his idea with mathematician Marcel Grossmann and they concluded that general relativity could be formulated in the context of Riemannian geometry which had been developed in the 1800s.[10] In 1915, he devised the Einstein field equations which relate the curvature of spacetime with the mass, energy, and any momentum within it.
+//     """
+// }
