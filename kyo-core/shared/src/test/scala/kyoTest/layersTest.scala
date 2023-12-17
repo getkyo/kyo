@@ -10,11 +10,11 @@ import scala.util.Failure
 
 class layersTest extends KyoTest {
 
-  final case class Dep1(int: Int)
-  final case class Dep2(str: String)
-  final case class Dep3(bool: Boolean)
+  case class Dep1(int: Int)
+  case class Dep2(str: String)
+  case class Dep3(bool: Boolean)
 
-  final case class Dep(dep1: Int, dep2: String, dep3: Boolean)
+  case class Dep(dep1: Int, dep2: String, dep3: Boolean)
 
   val depLayer  = Envs[Dep].layer(Dep(1, "hello", true))
   val dep1Layer = Envs[Dep1].layer(Envs[Dep].get.map(v => Dep1(v.dep1)))
@@ -35,8 +35,8 @@ class layersTest extends KyoTest {
     assert(handledEffect == "1-hello-true")
   }
 
-  final case class TestError1(msg: String)
-  final case class TestError2(msg: String)
+  case class TestError1(msg: String)
+  case class TestError2(msg: String)
   val stringToTE1Layer = Aborts[String].layer(str => Aborts[TestError1].fail(TestError1(str)))
   val dep1ToTE1Layer   = Aborts[Dep2].layer(dep => Aborts[TestError1].fail(TestError1(dep.str)))
   val throwableToTE1Layer =
