@@ -11,7 +11,6 @@ import kyo.llm.contexts._
 import kyo.concurrent.atomics._
 import zio.schema.Schema
 import zio.schema.codec.JsonCodec
-import kyo.llm.util.JsonSchema
 import scala.annotation.implicitNotFound
 
 package object agents {
@@ -25,13 +24,9 @@ package object agents {
         name: String,
         description: String
     )(implicit
-        val input: ValueSchema[Input],
-        val output: ValueSchema[Output]
-    ) {
-      val schema  = JsonSchema(input.get)
-      val decoder = JsonCodec.jsonDecoder(input.get)
-      val encoder = JsonCodec.jsonEncoder(output.get)
-    }
+        val input: Json[Input],
+        val output: Json[Output]
+    )
 
     val info: Info
 
@@ -51,16 +46,9 @@ package object agents {
       }
 
     private[kyo] def handle(ai: AI, v: String): String > AIs =
-      info.decoder.decodeJson(v) match {
-        case Left(error) =>
-          AIs.fail(
-              "Invalid json input. **Correct any mistakes before retrying**. " + error
-          )
-        case Right(value) =>
-          run(ai, value.value).map { v =>
-            info.encoder.encodeJson(Value(v)).toString()
-          }
-      }
+      info.input.decode(v)
+        .map(run(ai, _))
+        .map(info.output.encode)
   }
 
   object Agents {
@@ -79,8 +67,8 @@ package object agents {
     def disable[T, S](f: T > S): T > (AIs with S) =
       local.let(Set.empty)(f)
 
-    private[kyo] def resultAgent[T](implicit
-        t: ValueSchema[T]
+    private[kyo] def resultAgent[T](
+        implicit t: Json[T]
     ): (Agent, Option[T] > AIs) > AIs =
       Atomics.initRef(Option.empty[T]).map { ref =>
         val agent =

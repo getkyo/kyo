@@ -10,9 +10,7 @@ object tokens {
 
   private val encoding = Encodings.newLazyEncodingRegistry.getEncoding(EncodingType.CL100K_BASE)
 
-
   private case class Concat(a: Tokens, b: Tokens)
-
 
   type Tokens // = Unit | Array[Int] | Concat
 
@@ -20,7 +18,7 @@ object tokens {
 
     def append(s: String): Tokens =
       if (!s.isEmpty()) {
-        append(encoding.encode(s).toArray[Int].asInstanceOf[Tokens])
+        append(encoding.encode(s).toArray.asInstanceOf[Tokens])
       } else {
         a
       }

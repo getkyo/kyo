@@ -234,9 +234,13 @@ lazy val `kyo-llm-macros` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        scalaVersion                     := scala3Version,
-        crossScalaVersions               := List(scala2Version, scala3Version),
-        libraryDependencies += "dev.zio" %% "zio-schema"            % "0.4.16",
+        scalaVersion       := scala3Version,
+        crossScalaVersions := List(scala2Version, scala3Version),
+        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.1",
+        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.16",
+        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.16",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.16",
+        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.16",
         libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.16",
         libraryDependencies ++= (CrossVersion.partialVersion(scalaVersion.value) match {
           case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
@@ -257,11 +261,7 @@ lazy val `kyo-llm` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.1",
-        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.16",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.16",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.16",
-        libraryDependencies += "com.knuddels"                   % "jtokkit"             % "0.6.1"
+        libraryDependencies += "com.knuddels" % "jtokkit" % "0.6.1"
     )
     .jsSettings(`js-settings`)
 

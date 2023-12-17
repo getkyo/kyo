@@ -1,6 +1,5 @@
-package kyo.llm.util
+package kyo.llm.json
 
-import kyo.llm.ais._
 import zio.schema._
 import zio.json._
 import zio.json.ast._
@@ -24,7 +23,7 @@ object JsonSchema {
   def desc(c: Chunk[Any]): List[(String, Json)] =
     c.collect {
       case desc(v) =>
-        "description" -> Json.Str(p"$v")
+        "description" -> Json.Str(v)
     }.distinct.toList
 
   def convert(schema: Schema[_]): List[(String, Json)] = {

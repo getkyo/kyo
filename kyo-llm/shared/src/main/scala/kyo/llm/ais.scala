@@ -27,8 +27,11 @@ object ais {
 
   type AIs >: AIs.Effects <: AIs.Effects
 
-  type desc = kyo.llm.desc
-  val desc = kyo.llm.desc
+  type desc = kyo.llm.json.desc
+  val desc = kyo.llm.json.desc
+
+  type Json[T] = kyo.llm.json.Json[T]
+  val Json = kyo.llm.json.Json
 
   implicit class PromptInterpolator(val sc: StringContext) extends AnyVal {
     def p(args: Any*): String =
@@ -44,7 +47,7 @@ object ais {
     def save: Context > AIs =
       State.get.map(_.getOrElse(ref, Context.empty))
 
-    def dump: Unit > (AIs with Consoles) =
+    def dump: Unit > AIs =
       save.map(_.dump).map(Consoles.println(_))
 
     def restore(ctx: Context): Unit > AIs =
@@ -99,10 +102,10 @@ object ais {
       Agents.get.map(eval)
     }
 
-    def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
+    def gen[T](msg: String)(implicit t: Json[T]): T > AIs =
       userMessage(msg).andThen(gen[T])
 
-    def gen[T](implicit t: ValueSchema[T]): T > AIs = {
+    def gen[T](implicit t: Json[T]): T > AIs = {
       Agents.resultAgent[T].map { case (resultAgent, result) =>
         def eval(): T > AIs =
           fetch(Set(resultAgent), Some(resultAgent)).map { r =>
@@ -119,10 +122,10 @@ object ais {
       }
     }
 
-    def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
+    def infer[T](msg: String)(implicit t: Json[T]): T > AIs =
       userMessage(msg).andThen(infer[T])
 
-    def infer[T](implicit t: ValueSchema[T]): T > AIs = {
+    def infer[T](implicit t: Json[T]): T > AIs = {
       Agents.resultAgent[T].map { case (resultAgent, result) =>
         def eval(agents: Set[Agent], constrain: Option[Agent] = None): T > AIs =
           fetch(agents, constrain).map { r =>
@@ -184,28 +187,28 @@ object ais {
     def ask(msg: String): String > AIs =
       init.map(_.ask(msg))
 
-    def gen[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
+    def gen[T](msg: String)(implicit t: Json[T]): T > AIs =
       init.map(_.gen[T](msg))
 
-    def infer[T](msg: String)(implicit t: ValueSchema[T]): T > AIs =
+    def infer[T](msg: String)(implicit t: Json[T]): T > AIs =
       init.map(_.infer[T](msg))
 
     def ask(seed: String, msg: String): String > AIs =
       init(seed).map(_.ask(msg))
 
-    def gen[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
+    def gen[T](seed: String, msg: String)(implicit t: Json[T]): T > AIs =
       init(seed).map(_.gen[T](msg))
 
-    def infer[T](seed: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
+    def infer[T](seed: String, msg: String)(implicit t: Json[T]): T > AIs =
       init(seed).map(_.infer[T](msg))
 
     def ask(seed: String, reminder: String, msg: String): String > AIs =
       init(seed, reminder).map(_.ask(msg))
 
-    def gen[T](seed: String, reminder: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
+    def gen[T](seed: String, reminder: String, msg: String)(implicit t: Json[T]): T > AIs =
       init(seed, reminder).map(_.gen[T](msg))
 
-    def infer[T](seed: String, reminder: String, msg: String)(implicit t: ValueSchema[T]): T > AIs =
+    def infer[T](seed: String, reminder: String, msg: String)(implicit t: Json[T]): T > AIs =
       init(seed, reminder).map(_.infer[T](msg))
 
     def restore(ctx: Context): AI > AIs =

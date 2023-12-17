@@ -5,7 +5,7 @@ import kyo.llm.configs._
 import kyo.llm.contexts._
 import kyo.llm.agents._
 import kyo.llm.ais._
-import kyo.llm.util.JsonSchema
+import kyo.llm.json._
 import kyo.ios._
 import kyo.requests._
 import kyo.tries._
@@ -173,7 +173,7 @@ object completions {
               ToolDef(FunctionDef(
                   p.info.description,
                   p.info.name,
-                  p.info.schema
+                  p.info.input.schema
               ))
             ).toList)
         Request(
