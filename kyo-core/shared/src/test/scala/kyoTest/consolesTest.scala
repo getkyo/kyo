@@ -7,43 +7,34 @@ import kyo.ios._
 
 class consolesTest extends KyoTest {
 
-  "run" in run {
-    val testConsole = new TestConsole
-    testConsole.readlns = List("readln")
-    val io: String > IOs = Consoles.run(testConsole)(Consoles.readln)
-    assert(IOs.run(io) == "readln")
-  }
-  "run implicit console" in run {
-    val testConsole               = new TestConsole
-    implicit def console: Console = testConsole
-    testConsole.readlns = List("readln")
-    val io: String > IOs = Consoles.run(Consoles.readln)
-    assert(IOs.run(io) == "readln")
-  }
+  case class Obj(a: String)
+  val obj       = Obj("a")
+  val pprintObj = pprint.apply(obj).toString
+
   "readln" in run {
     val testConsole = new TestConsole
     testConsole.readlns = List("readln")
-    val io: String > IOs = Consoles.run(testConsole)(Consoles.readln)
+    val io: String > IOs = Consoles.let(testConsole)(Consoles.readln)
     assert(IOs.run(io) == "readln")
   }
   "print" in run {
     val testConsole = new TestConsole
-    IOs.run(Consoles.run(testConsole)(Consoles.print("print")))
+    IOs.run(Consoles.let(testConsole)(Consoles.print("print")))
     assert(testConsole.prints == List("print"))
   }
   "printErr" in run {
     val testConsole = new TestConsole
-    IOs.run(Consoles.run(testConsole)(Consoles.printErr("printErr")))
+    IOs.run(Consoles.let(testConsole)(Consoles.printErr("printErr")))
     assert(testConsole.printErrs == List("printErr"))
   }
   "println" in run {
     val testConsole = new TestConsole
-    IOs.run(Consoles.run(testConsole)(Consoles.println("println")))
+    IOs.run(Consoles.let(testConsole)(Consoles.println("println")))
     assert(testConsole.printlns == List("println"))
   }
   "printlnErr" in run {
     val testConsole = new TestConsole
-    IOs.run(Consoles.run(testConsole)(Consoles.printlnErr("printlnErr")))
+    IOs.run(Consoles.let(testConsole)(Consoles.printlnErr("printlnErr")))
     assert(testConsole.printlnErrs == List("printlnErr"))
   }
 
@@ -60,21 +51,21 @@ class consolesTest extends KyoTest {
         readlns = readlns.tail
         v
       }
-    def print[T](s: => T): Unit > IOs =
+    def print(s: String): Unit > IOs =
       IOs {
-        prints ::= s.toString
+        prints ::= s
       }
-    def printErr[T](s: => T): Unit > IOs =
+    def printErr(s: String): Unit > IOs =
       IOs {
-        printErrs ::= s.toString
+        printErrs ::= s
       }
-    def println[T](s: => T): Unit > IOs =
+    def println(s: String): Unit > IOs =
       IOs {
-        printlns ::= s.toString
+        printlns ::= s
       }
-    def printlnErr[T](s: => T): Unit > IOs =
+    def printlnErr(s: String): Unit > IOs =
       IOs {
-        printlnErrs ::= s.toString
+        printlnErrs ::= s
       }
   }
 }

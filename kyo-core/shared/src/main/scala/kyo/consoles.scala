@@ -2,23 +2,24 @@ package kyo
 
 import scala.Console
 
-import ios._
-import envs._
+import kyo.ios._
+import kyo.locals._
 import java.io.IOException
 import java.io.EOFException
+import pprint.TPrint
 
 object consoles {
 
   abstract class Console {
     def readln: String > IOs
-    def print[T](s: => T): Unit > IOs
-    def printErr[T](s: => T): Unit > IOs
-    def println[T](s: => T): Unit > IOs
-    def printlnErr[T](s: => T): Unit > IOs
+    def print(s: String): Unit > IOs
+    def printErr(s: String): Unit > IOs
+    def println(s: String): Unit > IOs
+    def printlnErr(s: String): Unit > IOs
   }
 
   object Console {
-    implicit val default: Console =
+    val default: Console =
       new Console {
         val readln =
           IOs {
@@ -28,45 +29,41 @@ object consoles {
             else
               line
           }
-        def print[T](s: => T)      = IOs(scala.Console.out.print(s))
-        def printErr[T](s: => T)   = IOs(scala.Console.err.print(s))
-        def println[T](s: => T)    = IOs(scala.Console.out.println(s))
-        def printlnErr[T](s: => T) = IOs(scala.Console.err.println(s))
+        def print(s: String)      = IOs(scala.Console.out.print(s))
+        def printErr(s: String)   = IOs(scala.Console.err.print(s))
+        def println(s: String)    = IOs(scala.Console.out.println(s))
+        def printlnErr(s: String) = IOs(scala.Console.err.println(s))
       }
   }
 
-  type Consoles >: Consoles.Effects <: Consoles.Effects
-
   object Consoles {
 
-    type Effects = Envs[Console] with IOs
+    private val local = Locals.init(Console.default)
 
-    private val envs = Envs[Console]
+    def let[T, S](c: Console)(v: T > S): T > (S with IOs) =
+      local.let(c)(v)
 
-    def run[T, S](c: Console)(f: => T > (Consoles with S))(implicit
-        flat: Flat[T > (Consoles with S)]
-    ): T > (IOs with S) =
-      envs.run[T, IOs with S](c)(f)
+    val readln: String > IOs =
+      local.get.map(_.readln)
 
-    def run[T, S](f: => T > (Consoles with S))(implicit
-        c: Console,
-        flat: Flat[T > (Consoles with S)]
-    ): T > (IOs with S) =
-      run[T, IOs with S](c)(f)
+    private def toString(v: Any): String =
+      v match {
+        case v: String =>
+          v
+        case v =>
+          pprint.apply(v).plainText
+      }
 
-    val readln: String > Consoles =
-      envs.get.map(_.readln)
+    def print[T](v: T): Unit > IOs =
+      local.get.map(_.print(toString(v)))
 
-    def print[T, S](s: => T > S): Unit > (S with Consoles) =
-      s.map(s => envs.get.map(_.print(s)))
+    def printErr[T](v: T): Unit > IOs =
+      local.get.map(_.printErr(toString(v)))
 
-    def printErr[T, S](s: => T > S): Unit > (S with Consoles) =
-      s.map(s => envs.get.map(_.printErr(s)))
+    def println[T](v: T): Unit > IOs =
+      local.get.map(_.println(toString(v)))
 
-    def println[T, S](s: => T > S): Unit > (S with Consoles) =
-      s.map(s => envs.get.map(_.println(s)))
-
-    def printlnErr[T, S](s: => T > S): Unit > (S with Consoles) =
-      s.map(s => envs.get.map(_.printlnErr(s)))
+    def printlnErr[T](v: T): Unit > IOs =
+      local.get.map(_.printlnErr(toString(v)))
   }
 }

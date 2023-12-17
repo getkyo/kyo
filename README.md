@@ -790,35 +790,29 @@ val e: Int > Tries =
 import kyo.consoles._
 
 // Read a line from the console
-val a: String > Consoles = 
+val a: String > IOs = 
   Consoles.readln
 
 // Print to stdout
-val b: Unit > Consoles = 
+val b: Unit > IOs = 
   Consoles.print("ok")
 
 // Print to stdout with a new line
-val c: Unit > Consoles = 
+val c: Unit > IOs = 
   Consoles.println("ok")
 
 // Print to stderr
-val d: Unit > Consoles = 
+val d: Unit > IOs = 
   Consoles.printErr("fail")
 
 // Print to stderr with a new line
-val e: Unit > Consoles = 
+val e: Unit > IOs = 
   Consoles.printlnErr("fail")
-
-// Run with the default implicit 'Console' implementation
-val f: Unit > IOs = 
-  Consoles.run(e)
 
 // Explicitly specifying the 'Console' implementation
 val g: Unit > IOs = 
-  Consoles.run(Console.default)(e)
+  Consoles.let(Console.default)(e)
 ```
-
-> Note how `Consoles.run` returns a computation with the `IOs` effect pending, which ensures the implementation of `Consoles` is pure.
 
 ### Clocks: Time Management
 
