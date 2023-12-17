@@ -259,7 +259,8 @@ lazy val `kyo-llm` =
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.1",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.16",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.16",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.16"
+        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.16",
+        libraryDependencies += "com.knuddels"                   % "jtokkit"             % "0.6.1"
     )
     .jsSettings(`js-settings`)
 
