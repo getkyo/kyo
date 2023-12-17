@@ -11,27 +11,22 @@ import concurrent.timers._
 import scala.concurrent.duration.Duration
 import scala.util.Try
 
-abstract class KyoLLMApp {
-
-  private var _args: List[String]  = List.empty
-  protected def args: List[String] = _args
+abstract class KyoLLMApp extends App {
 
   def agents: List[Agent] = Nil
 
   def config: Config = Config.default
 
-  final def main(args: Array[String]): Unit = {
-    _args = args.toList
+  protected def run[T](v: T > KyoLLMApp.Effects)(implicit
+      f: Flat[T > KyoLLMApp.Effects]
+  ) =
     KyoLLMApp.run {
       AIs.configs.let(config) {
         Agents.enable(agents) {
-          run.map(Consoles.println(_))
+          v.map(Consoles.println(_))
         }
       }
     }
-  }
-
-  def run: Any > KyoLLMApp.Effects
 }
 
 object KyoLLMApp {

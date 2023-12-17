@@ -365,9 +365,8 @@ import kyo.resources._
 import kyo.concurrent.fibers._
 
 object MyApp extends KyoApp {
-  // Only return pending `Fibers`, `Resources`, `Consoles` and `Tries`.
-  // Handle other effects like `Options` before returning.
-  def run: String > (Fibers with Resources with Consoles with Tries) = 
+  // Use 'run' blocks to execute Kyo computations
+  run {
     for {
       _ <- Consoles.println(s"Main args: $args")
       currentTime <- Clocks.now
@@ -379,6 +378,7 @@ object MyApp extends KyoApp {
       // automatically printed to the console.
       "example"
     }
+  }
 }
 ```
 

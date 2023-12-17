@@ -13,17 +13,6 @@ import scala.concurrent.duration._
 
 class KyoAppTest extends KyoTest {
 
-  "args" in {
-    var _args: List[String] = Nil
-    val app = new KyoApp {
-      def run = IOs {
-        _args = args
-      }
-    }
-    app.main(Array("hello", "world"))
-    assert(_args == List("hello", "world"))
-  }
-
   "effects" in run {
     val app = new App {
       def run =
