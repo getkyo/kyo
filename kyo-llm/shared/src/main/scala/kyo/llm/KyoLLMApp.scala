@@ -17,8 +17,8 @@ abstract class KyoLLMApp extends KyoApp.Base[KyoLLMApp.Effects] {
 
   def config: Config = Config.default
 
-  protected def handle[T](v: T > KyoLLMApp.Effects)(implicit
-      f: Flat[T > KyoLLMApp.Effects]
+  override protected def handle[T](v: T > KyoLLMApp.Effects)(
+      implicit f: Flat[T > KyoLLMApp.Effects]
   ) =
     KyoLLMApp.run {
       AIs.configs.let(config) {

@@ -17,7 +17,7 @@ import scala.annotation.nowarn
 
 abstract class KyoApp extends KyoApp.Base[KyoApp.Effects] {
 
-  protected def handle[T](v: T > Effects): Unit =
+  override protected def handle[T](v: T > Effects)(implicit f: Flat[T > Effects]): Unit =
     KyoApp.run(v.map(Consoles.println(_)))
 
 }
