@@ -4,10 +4,10 @@ import kyo.llm.ais._
 
 @desc(
     p"""
-    The Reflection thought involves reviewing the reasoning process.
-    - Identifies errors or biases in reasoning.
-    - Considers ways to improve future responses.
-    - Relevant techniques: Reflective Practice, Bias Identification.
+      The Reflection thought involves reviewing the reasoning process.
+      - Identifies errors or biases in reasoning.
+      - Considers ways to improve future responses.
+      - Relevant techniques: Reflective Practice, Bias Identification.
     """
 )
 case class Reflection(

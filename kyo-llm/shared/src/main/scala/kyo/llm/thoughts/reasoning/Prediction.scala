@@ -4,11 +4,11 @@ import kyo.llm.ais._
 
 @desc(
     p"""
-    The Prediction thought involves forecasting future scenarios.
-    - Forecasts based on current understanding.
-    - Identifies trends for future developments.
-    - Considers impact of variables on outcomes.
-    - Relevant techniques: Forecasting Methods, Scenario Planning.
+      The Prediction thought involves forecasting future scenarios.
+      - Forecasts based on current understanding.
+      - Identifies trends for future developments.
+      - Considers impact of variables on outcomes.
+      - Relevant techniques: Forecasting Methods, Scenario Planning.
     """
 )
 case class Prediction(

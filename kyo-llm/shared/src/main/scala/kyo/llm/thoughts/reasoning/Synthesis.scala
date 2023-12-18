@@ -4,11 +4,11 @@ import kyo.llm.ais._
 
 @desc(
     p"""
-    The Synthesis thought combines disparate elements into a coherent whole.
-    - Integrates information for unified understanding.
-    - Develops hypotheses based on integration.
-    - Creates comprehensive summaries.
-    - Relevant techniques: Idea Integration, Summary Creation.
+      The Synthesis thought combines disparate elements into a coherent whole.
+      - Integrates information for unified understanding.
+      - Develops hypotheses based on integration.
+      - Creates comprehensive summaries.
+      - Relevant techniques: Idea Integration, Summary Creation.
     """
 )
 case class Synthesis(

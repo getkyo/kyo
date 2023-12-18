@@ -4,11 +4,11 @@ import kyo.llm.ais._
 
 @desc(
     p"""
-    The Planning thought outlines strategic steps based on analysis.
-    - Develops a plan of action based on analysis.
-    - Outlines specific measures to address the task.
-    - Prepares for potential challenges in implementation.
-    - Relevant techniques: Strategic Planning, Action Formulation.
+      The Planning thought outlines strategic steps based on analysis.
+      - Develops a plan of action based on analysis.
+      - Outlines specific measures to address the task.
+      - Prepares for potential challenges in implementation.
+      - Relevant techniques: Strategic Planning, Action Formulation.
     """
 )
 case class ActionPlanning(
