@@ -70,6 +70,8 @@ object atomics {
     def lazySet(v: T): Unit > IOs            = IOs(ref.lazySet(v))
     def getAndSet(v: T): T > IOs             = IOs(ref.getAndSet(v))
     def cas(curr: T, next: T): Boolean > IOs = IOs(ref.compareAndSet(curr, next))
+    def update[S](f: T => T): Unit > IOs     = updateAndGet(f).unit
+    def updateAndGet[S](f: T => T): T > IOs  = IOs(ref.updateAndGet(f(_)))
 
     override def toString = ref.toString()
   }

@@ -12,6 +12,7 @@ import kyo.concurrent.atomics._
 import zio.schema.Schema
 import zio.schema.codec.JsonCodec
 import scala.annotation.implicitNotFound
+import kyo.llm.listeners.Listeners
 
 package object agents {
 
@@ -24,7 +25,7 @@ package object agents {
         name: String,
         description: String
     )(implicit
-        val input: Json[Input],
+        val input: Json[Agents.Request[Input]],
         val output: Json[Output]
     )
 
@@ -46,13 +47,23 @@ package object agents {
       }
 
     private[kyo] def handle(ai: AI, v: String): String > AIs =
-      info.input.decode(v)
-        .map(run(ai, _))
-        .map(info.output.encode)
+      info.input.decode(v).map { req =>
+        Listeners.observe(req.actionNarrationToBeShownToTheUser) {
+          run(ai, req.inputOfTheFunctionCall).map(info.output.encode)
+        }
+      }
+
   }
 
   object Agents {
     private val local = Locals.init(Set.empty[Agent])
+
+    case class Request[T](
+        @desc("A short text to provide a status update to the user. " +
+          "Note that this field is new and might not be in your previous executions.")
+        actionNarrationToBeShownToTheUser: String,
+        inputOfTheFunctionCall: T
+    )
 
     def get: Set[Agent] > AIs = local.get
 
@@ -68,7 +79,7 @@ package object agents {
       local.let(Set.empty)(f)
 
     private[kyo] def resultAgent[T](
-        implicit t: Json[T]
+        implicit t: Json[Request[T]]
     ): (Agent, Option[T] > AIs) > AIs =
       Atomics.initRef(Option.empty[T]).map { ref =>
         val agent =
