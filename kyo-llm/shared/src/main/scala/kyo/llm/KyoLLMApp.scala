@@ -11,13 +11,13 @@ import concurrent.timers._
 import scala.concurrent.duration.Duration
 import scala.util.Try
 
-abstract class KyoLLMApp extends App {
+abstract class KyoLLMApp extends KyoApp.Base[KyoLLMApp.Effects] {
 
   def agents: List[Agent] = Nil
 
   def config: Config = Config.default
 
-  protected def run[T](v: T > KyoLLMApp.Effects)(implicit
+  protected def handle[T](v: T > KyoLLMApp.Effects)(implicit
       f: Flat[T > KyoLLMApp.Effects]
   ) =
     KyoLLMApp.run {

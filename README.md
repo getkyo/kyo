@@ -365,7 +365,9 @@ import kyo.resources._
 import kyo.concurrent.fibers._
 
 object MyApp extends KyoApp {
-  // Use 'run' blocks to execute Kyo computations
+  // Use 'run' blocks to execute Kyo computations.
+  // The execution of the run block is lazy to avoid
+  // field initialization issues.
   run {
     for {
       _ <- Consoles.println(s"Main args: $args")

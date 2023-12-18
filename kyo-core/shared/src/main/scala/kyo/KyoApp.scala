@@ -12,16 +12,28 @@ import concurrent.fibers._
 import concurrent.timers._
 import scala.concurrent.duration.Duration
 import scala.util.Try
+import kyo.KyoApp.Effects
+import scala.annotation.nowarn
 
-abstract class KyoApp extends App {
+abstract class KyoApp extends KyoApp.Base[KyoApp.Effects] {
 
-  protected def run[T](v: T > KyoApp.Effects)(
-      implicit f: Flat[T > KyoApp.Effects]
-  ) =
+  protected def handle[T](v: T > Effects): Unit =
     KyoApp.run(v.map(Consoles.println(_)))
+
 }
 
 object KyoApp {
+
+  abstract class Base[S] extends App {
+
+    protected def handle[T](v: T > S)(implicit f: Flat[T > S]): Unit
+
+    @nowarn
+    protected def run[T](v: => T > S)(
+        implicit f: Flat[T > S]
+    ): Unit =
+      delayedInit(handle(v))
+  }
 
   type Effects =
     Fibers with Resources with Tries
