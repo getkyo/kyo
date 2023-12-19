@@ -18,17 +18,17 @@ object envs {
   final class Envs[E] private[envs] (implicit private val tag: Tag[_])
       extends Effect[Env[E]#Value, Envs[E]] { self =>
 
-    val get: E > Envs[E] =
+    val get: E < Envs[E] =
       suspend(Input.asInstanceOf[Env[E]#Value[E]])
 
-    def run[T, S](e: E)(v: T > (Envs[E] with S))(implicit f: Flat[T > (Envs[E] with S)]): T > S = {
+    def run[T, S](e: E)(v: T < (Envs[E] with S))(implicit f: Flat[T < (Envs[E] with S)]): T < S = {
       implicit val handler: Handler[Env[E]#Value, Envs[E], Any] =
         new Handler[Env[E]#Value, Envs[E], Any] {
           def pure[U](v: U) = v
           def apply[U, V, S2](
               m: Env[E]#Value[U],
-              f: U => V > (Envs[E] with S2)
-          ): V > (S2 with Envs[E]) =
+              f: U => V < (Envs[E] with S2)
+          ): V < (S2 with Envs[E]) =
             m match {
               case Input =>
                 f(e.asInstanceOf[U])
@@ -36,7 +36,7 @@ object envs {
                 f(m.asInstanceOf[U])
             }
         }
-      handle[T, Envs[E] with S, Any](v).asInstanceOf[T > S]
+      handle[T, Envs[E] with S, Any](v).asInstanceOf[T < S]
     }
 
     override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
@@ -49,11 +49,11 @@ object envs {
 
     override def toString = s"Envs[${tag.tag.longNameWithPrefix}]"
 
-    def layer[Sd](construct: E > Sd): Layer[Envs[E], Sd] =
+    def layer[Sd](construct: E < Sd): Layer[Envs[E], Sd] =
       new Layer[Envs[E], Sd] {
-        override def run[T, S](effect: T > (Envs[E] with S))(implicit
-            fl: Flat[T > (Envs[E] with S)]
-        ): T > (Sd with S) =
+        override def run[T, S](effect: T < (Envs[E] with S))(implicit
+            fl: Flat[T < (Envs[E] with S)]
+        ): T < (Sd with S) =
           construct.map(e => self.run[T, S](e)(effect))
       }
   }

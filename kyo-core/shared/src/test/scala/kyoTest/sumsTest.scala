@@ -8,7 +8,7 @@ import scala.util.Try
 
 class sumsTest extends KyoTest {
   "int" in {
-    val v: List[Int] > Sums[Int] =
+    val v: List[Int] < Sums[Int] =
       for {
         _  <- Sums[Int].add(1)
         v1 <- Sums[Int].get
@@ -21,7 +21,7 @@ class sumsTest extends KyoTest {
     assert(Sums[Int].run(v) == (List(1, 2, 3), 3))
   }
   "string" in {
-    val v: List[String] > Sums[String] =
+    val v: List[String] < Sums[String] =
       for {
         _  <- Sums[String].add("1")
         v1 <- Sums[String].get
@@ -34,7 +34,7 @@ class sumsTest extends KyoTest {
     assert(res == (List("1", "12", "123"), "123"))
   }
   "int and string" in {
-    val v: (Int, String) > (Sums[Int] with Sums[String]) =
+    val v: (Int, String) < (Sums[Int] with Sums[String]) =
       for {
         _  <- Sums[Int].add(1)
         _  <- Sums[String].add("1")

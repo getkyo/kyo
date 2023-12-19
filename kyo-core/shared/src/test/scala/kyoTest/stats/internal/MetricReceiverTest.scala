@@ -74,7 +74,7 @@ class MetricReceiverTest extends KyoTest {
         name: String,
         parent: Option[Span],
         attributes: Attributes
-    ): Span > IOs = {
+    ): Span < IOs = {
       spanStarted = true
       Span.noop
     }

@@ -11,11 +11,11 @@ import pprint.TPrint
 object consoles {
 
   abstract class Console {
-    def readln: String > IOs
-    def print(s: String): Unit > IOs
-    def printErr(s: String): Unit > IOs
-    def println(s: String): Unit > IOs
-    def printlnErr(s: String): Unit > IOs
+    def readln: String < IOs
+    def print(s: String): Unit < IOs
+    def printErr(s: String): Unit < IOs
+    def println(s: String): Unit < IOs
+    def printlnErr(s: String): Unit < IOs
   }
 
   object Console {
@@ -40,10 +40,10 @@ object consoles {
 
     private val local = Locals.init(Console.default)
 
-    def let[T, S](c: Console)(v: T > S): T > (S with IOs) =
+    def let[T, S](c: Console)(v: T < S): T < (S with IOs) =
       local.let(c)(v)
 
-    val readln: String > IOs =
+    val readln: String < IOs =
       local.get.map(_.readln)
 
     private def toString(v: Any): String =
@@ -54,16 +54,16 @@ object consoles {
           pprint.apply(v).plainText
       }
 
-    def print[T](v: T): Unit > IOs =
+    def print[T](v: T): Unit < IOs =
       local.get.map(_.print(toString(v)))
 
-    def printErr[T](v: T): Unit > IOs =
+    def printErr[T](v: T): Unit < IOs =
       local.get.map(_.printErr(toString(v)))
 
-    def println[T](v: T): Unit > IOs =
+    def println[T](v: T): Unit < IOs =
       local.get.map(_.println(toString(v)))
 
-    def printlnErr[T](v: T): Unit > IOs =
+    def printlnErr[T](v: T): Unit < IOs =
       local.get.map(_.printlnErr(toString(v)))
   }
 }

@@ -12,25 +12,25 @@ import sttp.monad.Canceler
 import kyo.tries.Tries
 
 object KyoSttpMonad {
-  type M[T] = T > Fibers
+  type M[T] = T < Fibers
 
   implicit val kyoSttpMonad: MonadAsyncError[M] =
     new MonadAsyncError[M] {
 
-      def map[T, T2](fa: T > Fibers)(f: T => T2): T2 > Fibers =
+      def map[T, T2](fa: T < Fibers)(f: T => T2): T2 < Fibers =
         fa.map(f)
 
-      def flatMap[T, T2](fa: T > Fibers)(
-          f: T => T2 > Fibers
-      ): T2 > Fibers =
+      def flatMap[T, T2](fa: T < Fibers)(
+          f: T => T2 < Fibers
+      ): T2 < Fibers =
         fa.flatMap(f)
 
-      protected def handleWrappedError[T](rt: T > Fibers)(
-          h: PartialFunction[Throwable, T > Fibers]
+      protected def handleWrappedError[T](rt: T < Fibers)(
+          h: PartialFunction[Throwable, T < Fibers]
       ) =
         Tries.handle(rt)(h)(Flat.unsafe.unchecked)
 
-      def ensure[T](f: T > Fibers, e: => Unit > Fibers) =
+      def ensure[T](f: T < Fibers, e: => Unit < Fibers) =
         IOs.ensure(Fibers.run(IOs.runLazy(e)).unit)(f)
 
       def error[T](t: Throwable) =

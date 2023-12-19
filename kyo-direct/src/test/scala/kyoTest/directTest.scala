@@ -47,7 +47,7 @@ class directTest extends KyoTest {
   }
 
   "two effects" in {
-    val io: String > (IOs with Options) =
+    val io: String < (IOs with Options) =
       defer {
         val a = await(Options.get(Some("hello")))
         val b = await(IOs("world"))
@@ -58,7 +58,7 @@ class directTest extends KyoTest {
 
   "if" in {
     var calls = Seq.empty[Int]
-    val io: Boolean > IOs =
+    val io: Boolean < IOs =
       defer {
         if (await(IOs { calls :+= 1; true }))
           await(IOs { calls :+= 2; true })
@@ -72,7 +72,7 @@ class directTest extends KyoTest {
   "booleans" - {
     "&&" in {
       var calls = Seq.empty[Int]
-      val io: Boolean > IOs =
+      val io: Boolean < IOs =
         defer {
           (await(IOs { calls :+= 1; true }) && await(IOs { calls :+= 2; true }))
         }
@@ -81,7 +81,7 @@ class directTest extends KyoTest {
     }
     "||" in {
       var calls = Seq.empty[Int]
-      val io: Boolean > IOs =
+      val io: Boolean < IOs =
         defer {
           (await(IOs { calls :+= 1; true }) || await(IOs { calls :+= 2; true }))
         }
@@ -117,17 +117,17 @@ class directTest extends KyoTest {
   "consoles" in {
     object console extends Console {
 
-      def printErr(s: String): Unit > IOs = ???
+      def printErr(s: String): Unit < IOs = ???
 
-      def println(s: String): Unit > IOs = ???
+      def println(s: String): Unit < IOs = ???
 
-      def print(s: String): Unit > IOs = ???
+      def print(s: String): Unit < IOs = ???
 
-      def readln: String > IOs = "hello"
+      def readln: String < IOs = "hello"
 
-      def printlnErr(s: String): Unit > IOs = ???
+      def printlnErr(s: String): Unit < IOs = ???
     }
-    val io: String > IOs = Consoles.let(console)(defer(await(Consoles.readln)))
+    val io: String < IOs = Consoles.let(console)(defer(await(Consoles.readln)))
     assert(IOs.run(io) == "hello")
   }
 
@@ -156,7 +156,7 @@ class directTest extends KyoTest {
     val x = Seqs.get(Seq(1, -2, -3))
     val y = Seqs.get(Seq("ab", "cde"))
 
-    val v: Int > Seqs =
+    val v: Int < Seqs =
       defer {
         val xx = await(x)
         xx + (
@@ -175,7 +175,7 @@ class directTest extends KyoTest {
     val x = Seqs.get(Seq(1, -2, -3))
     val y = Seqs.get(Seq("ab", "cde"))
 
-    val v: Int > Seqs =
+    val v: Int < Seqs =
       defer {
         val xx = await(x)
         val r =

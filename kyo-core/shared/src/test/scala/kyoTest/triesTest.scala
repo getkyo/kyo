@@ -70,32 +70,32 @@ class triesTest extends KyoTest {
   "pure" - {
     "handle" in {
       assert(
-          Tries.run(1: Int > Tries) ==
+          Tries.run(1: Int < Tries) ==
             Try(1)
       )
     }
     "handle + transform" in {
       assert(
-          Tries.run((1: Int > Tries).map(_ + 1)) ==
+          Tries.run((1: Int < Tries).map(_ + 1)) ==
             Try(2)
       )
     }
     "handle + effectful transform" in {
       assert(
-          Tries.run((1: Int > Tries).map(i => Tries.get(Try(i + 1)))) ==
+          Tries.run((1: Int < Tries).map(i => Tries.get(Try(i + 1)))) ==
             Try(2)
       )
     }
     "handle + transform + effectful transform" in {
       assert(
-          Tries.run((1: Int > Tries).map(_ + 1).map(i => Tries.get(Try(i + 1)))) ==
+          Tries.run((1: Int < Tries).map(_ + 1).map(i => Tries.get(Try(i + 1)))) ==
             Try(3)
       )
     }
     "handle + transform + failed effectful transform" in {
       val e = new Exception
       assert(
-          Tries.run((1: Int > Tries).map(_ + 1).map(i => Tries.get(Try[Int](throw e)))) ==
+          Tries.run((1: Int < Tries).map(_ + 1).map(i => Tries.get(Try[Int](throw e)))) ==
             Failure(e)
       )
     }
@@ -152,7 +152,7 @@ class triesTest extends KyoTest {
           Options.run(
               Tries.run[Int, Options](
                   Tries.get(Try(Option(1))).map(opt =>
-                    Options.get(opt: Option[Int] > Tries).map(_ => (throw e): Int)
+                    Options.get(opt: Option[Int] < Tries).map(_ => (throw e): Int)
                   )
               )
           ) ==

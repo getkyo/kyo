@@ -18,9 +18,9 @@ object listeners {
   import Listener._
 
   object Listeners {
-    def observe[T, S](event: String)(v: T > S)(implicit f: Flat[T > S]): T > (AIs with S) =
+    def observe[T, S](event: String)(v: T < S)(implicit f: Flat[T < S]): T < (AIs with S) =
       listeners.get.map { l =>
-        def loop(l: List[Listener]): T > (AIs with S) =
+        def loop(l: List[Listener]): T < (AIs with S) =
           l match {
             case Nil => v
             case h :: t =>
@@ -28,11 +28,11 @@ object listeners {
           }
         loop(l)
       }
-    def listen[T, S](f: State => Unit > IOs, interval: Duration)(v: T > S): T > (AIs with S) =
+    def listen[T, S](f: State => Unit < IOs, interval: Duration)(v: T < S): T < (AIs with S) =
       Atomics.initRef[State](State(Nil)).map { ref =>
         val l = new Listener(ref)
         Fibers.init {
-          def loop(curr: State): Unit > Fibers =
+          def loop(curr: State): Unit < Fibers =
             Fibers.sleep(interval).andThen {
               ref.get.map {
                 case `curr` => loop(curr)
@@ -54,7 +54,7 @@ object listeners {
   private class Listener(
       state: AtomicRef[State]
   ) {
-    def apply[T, S](event: String)(v: T > S)(implicit flat: Flat[T > S]): T > (AIs with S) =
+    def apply[T, S](event: String)(v: T < S)(implicit flat: Flat[T < S]): T < (AIs with S) =
       parent.get.map { p =>
         val id = (p, event, v).hashCode
         state.update(_.upsert(p, Task(id, event, Status.Running, Nil))).andThen {

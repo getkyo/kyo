@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.>
+import kyo.<
 import scala.reflect.macros.whitebox.Context
 import scala.collection.mutable.Stack
 import scala.util.control.NonFatal
@@ -29,7 +29,7 @@ private[kyo] object Validate {
       case q"$pack.await[$t, $s]($v)" =>
       case q"$pack.defer[$t]($v)" =>
         fail(tree, "Nested `defer` blocks are not allowed.")
-      case tree if (tree.tpe.typeSymbol == c.typeOf[(Any > Any)].typeSymbol) =>
+      case tree if (tree.tpe.typeSymbol == c.typeOf[(Any < Any)].typeSymbol) =>
         fail(tree, "Effectful computation must be inside an `await` block.")
       case tree @ q"var $name = $body" =>
         fail(tree, "`var` declarations are not allowed inside a `defer` block.")

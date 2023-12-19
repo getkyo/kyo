@@ -35,7 +35,7 @@ private[kyo] object Validate {
       case Apply(TypeApply(Ident("await"), List(t, s)), List(v)) => // Do nothing
       case Apply(TypeApply(Ident("defer"), List(t)), List(v)) =>
         fail(tree, "Nested `defer` blocks are not allowed.")
-      case tree: Term if tree.tpe.typeSymbol.name == ">" =>
+      case tree: Term if tree.tpe.typeSymbol.name == "<" =>
         fail(tree, "Effectful computation must be inside an `await` block.")
       case tree @ ValDef(_, _, _) if show(tree).startsWith("var ") =>
         fail(tree, "`var` declarations are not allowed inside a `defer` block.")

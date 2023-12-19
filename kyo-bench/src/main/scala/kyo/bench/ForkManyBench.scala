@@ -30,7 +30,7 @@ class ForkManyBench extends Bench.ForkOnly[Int] {
     import kyo.concurrent.atomics._
     import kyo.concurrent.fibers._
 
-    def repeat[A](n: Int)(io: A > IOs): A > IOs =
+    def repeat[A](n: Int)(io: A < IOs): A < IOs =
       if (n <= 1) io
       else io.flatMap(_ => repeat(n - 1)(io))
 

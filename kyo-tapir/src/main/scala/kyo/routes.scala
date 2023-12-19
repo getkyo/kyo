@@ -27,18 +27,18 @@ object routes {
 
     private val sums = Sums[List[Route[Any]]]
 
-    def run[T, S](v: Unit > (Routes with S)): NettyKyoServerBinding > (Fibers with S) =
+    def run[T, S](v: Unit < (Routes with S)): NettyKyoServerBinding < (Fibers with S) =
       run[T, S](NettyKyoServer())(v)
 
-    def run[T, S](server: NettyKyoServer)(v: Unit > (Routes with S))
-        : NettyKyoServerBinding > (Fibers with S) =
+    def run[T, S](server: NettyKyoServer)(v: Unit < (Routes with S))
+        : NettyKyoServerBinding < (Fibers with S) =
       sums.run[NettyKyoServerBinding, Fibers with S] {
         v.andThen(sums.get.map(server.addEndpoints(_)).map(_.start()))
       }.map(_._1)
 
     def add[T, U, E, S](e: Endpoint[Unit, T, Unit, U, Unit])(
-        f: T => U > Fibers
-    ): Unit > Routes =
+        f: T => U < Fibers
+    ): Unit < Routes =
       sums.add(List(
           e.serverLogic[KyoSttpMonad.M](f(_).map(Right(_))).asInstanceOf[Route[Any]]
       )).unit
@@ -46,8 +46,8 @@ object routes {
     def add[T, U, S](
         e: PublicEndpoint[Unit, Unit, Unit, Any] => Endpoint[Unit, T, Unit, U, Any]
     )(
-        f: T => U > Fibers
-    ): Unit > Routes =
+        f: T => U < Fibers
+    ): Unit < Routes =
       add(e(endpoint))(f)
   }
 }

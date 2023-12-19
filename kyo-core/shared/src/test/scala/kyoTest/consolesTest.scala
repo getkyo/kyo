@@ -14,7 +14,7 @@ class consolesTest extends KyoTest {
   "readln" in run {
     val testConsole = new TestConsole
     testConsole.readlns = List("readln")
-    val io: String > IOs = Consoles.let(testConsole)(Consoles.readln)
+    val io: String < IOs = Consoles.let(testConsole)(Consoles.readln)
     assert(IOs.run(io) == "readln")
   }
   "print" in run {
@@ -45,25 +45,25 @@ class consolesTest extends KyoTest {
     var printlns    = List.empty[String]
     var printlnErrs = List.empty[String]
 
-    def readln: String > IOs =
+    def readln: String < IOs =
       IOs {
         val v = readlns.head
         readlns = readlns.tail
         v
       }
-    def print(s: String): Unit > IOs =
+    def print(s: String): Unit < IOs =
       IOs {
         prints ::= s
       }
-    def printErr(s: String): Unit > IOs =
+    def printErr(s: String): Unit < IOs =
       IOs {
         printErrs ::= s
       }
-    def println(s: String): Unit > IOs =
+    def println(s: String): Unit < IOs =
       IOs {
         printlns ::= s
       }
-    def printlnErr(s: String): Unit > IOs =
+    def printlnErr(s: String): Unit < IOs =
       IOs {
         printlnErrs ::= s
       }

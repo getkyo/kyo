@@ -30,7 +30,7 @@ object completions {
         ctx: Context,
         agents: Set[Agent] = Set.empty,
         constrain: Option[Agent] = None
-    ): Result > (IOs with Requests) =
+    ): Result < (IOs with Requests) =
       for {
         config <- Configs.get
         req = Request(ctx, config, agents, constrain)
@@ -40,7 +40,7 @@ object completions {
         (content, calls) <- read(response)
       } yield new Result(content, calls)
 
-    private def read(response: Response): (String, List[Call]) > (IOs with Requests) =
+    private def read(response: Response): (String, List[Call]) < (IOs with Requests) =
       response.choices.headOption match {
         case None =>
           IOs.fail("no choices")
@@ -53,7 +53,7 @@ object completions {
           )
       }
 
-    private def fetch(config: Config, req: Request): Response > Requests =
+    private def fetch(config: Config, req: Request): Response < Requests =
       Configs.apiKey.map { key =>
         Configs.get.map { cfg =>
           Requests[Response](

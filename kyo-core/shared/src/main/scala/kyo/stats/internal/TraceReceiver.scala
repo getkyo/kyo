@@ -16,7 +16,7 @@ trait TraceReceiver {
       name: String,
       parent: Option[Span] = None,
       attributes: Attributes = Attributes.empty
-  ): Span > IOs
+  ): Span < IOs
 }
 
 object TraceReceiver {

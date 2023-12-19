@@ -17,17 +17,17 @@ object timers {
 
   abstract class Timer {
 
-    def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > IOs
+    def schedule(delay: Duration)(f: => Unit < IOs): TimerTask < IOs
 
     def scheduleAtFixedRate(
         initalDelay: Duration,
         period: Duration
-    )(f: => Unit > IOs): TimerTask > IOs
+    )(f: => Unit < IOs): TimerTask < IOs
 
     def scheduleWithFixedDelay(
         initalDelay: Duration,
         period: Duration
-    )(f: => Unit > IOs): TimerTask > IOs
+    )(f: => Unit < IOs): TimerTask < IOs
   }
 
   object Timer {
@@ -42,12 +42,12 @@ object timers {
           )
 
         private final class Task(task: ScheduledFuture[_]) extends TimerTask {
-          def cancel: Boolean > IOs      = IOs(task.cancel(false))
-          def isCancelled: Boolean > IOs = IOs(task.isCancelled())
-          def isDone: Boolean > IOs      = IOs(task.isDone())
+          def cancel: Boolean < IOs      = IOs(task.cancel(false))
+          def isCancelled: Boolean < IOs = IOs(task.isCancelled())
+          def isDone: Boolean < IOs      = IOs(task.isDone())
         }
 
-        def schedule(delay: Duration)(f: => Unit > IOs) =
+        def schedule(delay: Duration)(f: => Unit < IOs) =
           if (delay.isFinite) {
             val call = new Callable[Unit] {
               def call: Unit = IOs.run(f)
@@ -60,7 +60,7 @@ object timers {
         def scheduleAtFixedRate(
             initalDelay: Duration,
             period: Duration
-        )(f: => Unit > IOs) =
+        )(f: => Unit < IOs) =
           if (period.isFinite && initalDelay.isFinite) {
             IOs(new Task(
                 exec.scheduleAtFixedRate(
@@ -77,7 +77,7 @@ object timers {
         def scheduleWithFixedDelay(
             initalDelay: Duration,
             period: Duration
-        )(f: => Unit > IOs) =
+        )(f: => Unit < IOs) =
           if (period.isFinite && initalDelay.isFinite) {
             IOs(new Task(
                 exec.scheduleWithFixedDelay(
@@ -94,9 +94,9 @@ object timers {
   }
 
   abstract class TimerTask {
-    def cancel: Boolean > IOs
-    def isCancelled: Boolean > IOs
-    def isDone: Boolean > IOs
+    def cancel: Boolean < IOs
+    def isCancelled: Boolean < IOs
+    def isDone: Boolean < IOs
   }
 
   object TimerTask {
@@ -111,32 +111,32 @@ object timers {
 
     private val local = Locals.init(Timer.default)
 
-    def let[T, S](timer: Timer)(v: T > S): T > (IOs with S) =
+    def let[T, S](timer: Timer)(v: T < S): T < (IOs with S) =
       local.let(timer)(v)
 
-    def schedule(delay: Duration)(f: => Unit > IOs): TimerTask > IOs =
+    def schedule(delay: Duration)(f: => Unit < IOs): TimerTask < IOs =
       local.get.map(_.schedule(delay)(f))
 
     def scheduleAtFixedRate(
         period: Duration
-    )(f: => Unit > IOs): TimerTask > IOs =
+    )(f: => Unit < IOs): TimerTask < IOs =
       scheduleAtFixedRate(Duration.Zero, period)(f)
 
     def scheduleAtFixedRate(
         initialDelay: Duration,
         period: Duration
-    )(f: => Unit > IOs): TimerTask > IOs =
+    )(f: => Unit < IOs): TimerTask < IOs =
       local.get.map(_.scheduleAtFixedRate(initialDelay, period)(f))
 
     def scheduleWithFixedDelay(
         period: Duration
-    )(f: => Unit > IOs): TimerTask > IOs =
+    )(f: => Unit < IOs): TimerTask < IOs =
       scheduleWithFixedDelay(Duration.Zero, period)(f)
 
     def scheduleWithFixedDelay(
         initialDelay: Duration,
         period: Duration
-    )(f: => Unit > IOs): TimerTask > IOs =
+    )(f: => Unit < IOs): TimerTask < IOs =
       local.get.map(_.scheduleWithFixedDelay(initialDelay, period)(f))
   }
 }

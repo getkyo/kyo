@@ -61,25 +61,25 @@ case class NettyKyoServer(
 
   def port(p: Int): NettyKyoServer = modifyConfig(_.port(p))
 
-  def start(): NettyKyoServerBinding > Routes =
+  def start(): NettyKyoServerBinding < Routes =
     startUsingSocketOverride[InetSocketAddress](None).map { case (socket, stop) =>
       NettyKyoServerBinding(socket, stop)
     }
 
-  def startUsingDomainSocket(path: Option[Path] = None): NettyKyoDomainSocketBinding > Routes =
+  def startUsingDomainSocket(path: Option[Path] = None): NettyKyoDomainSocketBinding < Routes =
     startUsingDomainSocket(path.getOrElse(Paths.get(
         System.getProperty("java.io.tmpdir"),
         UUID.randomUUID().toString
     )))
 
-  def startUsingDomainSocket(path: Path): NettyKyoDomainSocketBinding > Routes =
+  def startUsingDomainSocket(path: Path): NettyKyoDomainSocketBinding < Routes =
     startUsingSocketOverride(Some(new DomainSocketAddress(path.toFile))).map {
       case (socket, stop) =>
         NettyKyoDomainSocketBinding(socket, stop)
     }
 
   private def startUsingSocketOverride[SA <: SocketAddress](socketOverride: Option[SA])
-      : (SA, () => Unit > Fibers) > Fibers = {
+      : (SA, () => Unit < Fibers) < Fibers = {
     val eventLoopGroup               = config.eventLoopConfig.initEventLoopGroup()
     val route: Route[KyoSttpMonad.M] = Route.combine(routes)
     val handler: (() => KyoSttpMonad.M[ServerResponse[NettyResponse]]) => (
@@ -115,7 +115,7 @@ case class NettyKyoServer(
     )
   }
 
-  private def stop(ch: Channel, eventLoopGroup: EventLoopGroup): Unit > Fibers = {
+  private def stop(ch: Channel, eventLoopGroup: EventLoopGroup): Unit < Fibers = {
     IOs {
       nettyFutureToScala(ch.close()).flatMap { _ =>
         if (config.shutdownEventLoopGroupOnClose) {
@@ -130,7 +130,7 @@ case class NettyKyoServer(
 object NettyKyoServer {
 
   private[kyo] val runAsync = new RunAsync[KyoSttpMonad.M] {
-    override def apply[T](f: => T > Fibers): Unit =
+    override def apply[T](f: => T < Fibers): Unit =
       IOs.run {
         Fibers.init {
           import Flat.unsafe.unchecked
@@ -156,14 +156,14 @@ object NettyKyoServer {
     NettyKyoServer(Vector.empty, options, config)
 }
 
-case class NettyKyoServerBinding(localSocket: InetSocketAddress, stop: () => Unit > Routes) {
+case class NettyKyoServerBinding(localSocket: InetSocketAddress, stop: () => Unit < Routes) {
   def hostName: String = localSocket.getHostName
   def port: Int        = localSocket.getPort
 }
 
 case class NettyKyoDomainSocketBinding(
     localSocket: DomainSocketAddress,
-    stop: () => Unit > Fibers
+    stop: () => Unit < Fibers
 ) {
   def path: String = localSocket.path()
 }

@@ -17,7 +17,7 @@ object direct {
 
   transparent inline def defer[T](inline f: T) = ${ impl[T]('f) }
 
-  inline def await[T, S](v: T > S): T =
+  inline def await[T, S](v: T < S): T =
     compiletime.error("`await` must be used within a `defer` block")
 
   private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] = {
@@ -63,36 +63,36 @@ object direct {
               t.tpe.asType match {
                 case '[t] =>
                   '{
-                    cps.await[[T] =>> T > s, t, [T] =>> T > s](${ v.asExprOf[t > s] })
+                    cps.await[[T] =>> T < s, t, [T] =>> T < s](${ v.asExprOf[t < s] })
                   }.asTerm
               }
           }
 
         '{
           given KyoCpsMonad[s] = KyoCpsMonad[s]
-          async[[U] =>> U > s] {
+          async[[U] =>> U < s] {
             ${ body.asExprOf[T] }
-          }: T > s
+          }: T < s
         }
     }
   }
 
   object internal {
     class KyoCpsMonad[S]
-        extends CpsMonadContext[[T] =>> T > S]
-        with CpsMonad[[T] =>> T > S] {
+        extends CpsMonadContext[[T] =>> T < S]
+        with CpsMonad[[T] =>> T < S] {
 
       type Context = KyoCpsMonad[S]
 
-      override def monad: CpsMonad[[T] =>> T > S] = this
+      override def monad: CpsMonad[[T] =>> T < S] = this
 
-      override def apply[T](op: Context => T > S): T > S = op(this)
+      override def apply[T](op: Context => T < S): T < S = op(this)
 
-      override inline def pure[T](t: T): T > S = t
+      override inline def pure[T](t: T): T < S = t
 
-      override inline def map[A, B](fa: A > S)(f: A => B): B > S = fa.map(f(_))
+      override inline def map[A, B](fa: A < S)(f: A => B): B < S = fa.map(f(_))
 
-      override inline def flatMap[A, B](fa: A > S)(f: A => B > S): B > S = fa.flatMap(f)
+      override inline def flatMap[A, B](fa: A < S)(f: A => B < S): B < S = fa.flatMap(f)
 
     }
   }

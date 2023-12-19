@@ -39,11 +39,11 @@ class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
     import kyo.concurrent.meters._
     import kyo.concurrent.latches._
 
-    def repeat[A](n: Int)(io: A > IOs): A > IOs =
+    def repeat[A](n: Int)(io: A < IOs): A < IOs =
       if (n <= 1) io
       else io.flatMap(_ => repeat(n - 1)(io))
 
-    def loop(sem: Meter, cdl: Latch, i: Int = 0): Unit > Fibers =
+    def loop(sem: Meter, cdl: Latch, i: Int = 0): Unit < Fibers =
       if (i >= depth)
         cdl.release
       else

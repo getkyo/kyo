@@ -25,7 +25,7 @@ object ios {
   trait Preempt extends Safepoint[IO, IOs] {
     def ensure(f: () => Unit): Unit
     def remove(f: () => Unit): Unit
-    def suspend[T, S](v: => T > S): T > (IOs with S) =
+    def suspend[T, S](v: => T < S): T < (IOs with S) =
       IOs[T, S](v)
   }
   object Preempt {
@@ -47,29 +47,29 @@ object ios {
 
   final class IOs private[ios] () extends Effect[IO, IOs] {
 
-    val unit: Unit > IOs = ()
+    val unit: Unit < IOs = ()
 
-    def value[T](v: T): T > IOs = v
+    def value[T](v: T): T < IOs = v
 
-    def fail[T](ex: Throwable): T > IOs =
+    def fail[T](ex: Throwable): T < IOs =
       IOs(throw ex)
 
-    def fail[T](msg: String): T > IOs =
+    def fail[T](msg: String): T < IOs =
       fail(new Exception(msg))
 
     /*inline*/
     def apply[T, S](
-        /*inline*/ f: => T > (IOs with S)
-    ): T > (IOs with S) =
+        /*inline*/ f: => T < (IOs with S)
+    ): T < (IOs with S) =
       new KyoIO[T, S] {
-        def apply(v: Unit > (IOs with S), s: Safepoint[IO, IOs], l: Locals.State) =
+        def apply(v: Unit < (IOs with S), s: Safepoint[IO, IOs], l: Locals.State) =
           f
       }
 
     /*inline*/
-    def run[T](v: T > IOs)(implicit f: Flat[T > IOs]): T = {
+    def run[T](v: T < IOs)(implicit f: Flat[T < IOs]): T = {
       val safepoint = Safepoint.noop[IO, IOs]
-      @tailrec def runLoop(v: T > IOs): T =
+      @tailrec def runLoop(v: T < IOs): T =
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, IOs] @unchecked =>
             require(kyo.effect == IOs, "Unhandled effect: " + kyo.effect)
@@ -81,15 +81,15 @@ object ios {
     }
 
     /*inline*/
-    def runLazy[T, S](v: T > (IOs with S))(implicit f: Flat[T > (IOs with S)]): T > S = {
-      def runLazyLoop(v: T > (IOs with S)): T > S = {
+    def runLazy[T, S](v: T < (IOs with S))(implicit f: Flat[T < (IOs with S)]): T < S = {
+      def runLazyLoop(v: T < (IOs with S)): T < S = {
         val safepoint = Safepoint.noop[IO, IOs]
         v match {
           case kyo: Kyo[IO, IOs, Unit, T, S with IOs] @unchecked if (kyo.effect eq IOs) =>
             runLazyLoop(kyo((), safepoint, Locals.State.empty))
           case kyo: Kyo[MX, EX, Any, T, S with IOs] @unchecked =>
             new KyoCont[MX, EX, Any, T, S](kyo) {
-              def apply(v: Any > S, s: Safepoint[MX, EX], l: Locals.State) =
+              def apply(v: Any < S, s: Safepoint[MX, EX], l: Locals.State) =
                 runLazyLoop(kyo(v, s, l))
             }
           case _ =>
@@ -105,7 +105,7 @@ object ios {
           extends AtomicReference[Any]
           with Function0[Unit] {
 
-        protected def run: Unit > IOs
+        protected def run: Unit < IOs
 
         def apply(): Unit =
           if (compareAndSet(null, ())) {
@@ -119,15 +119,15 @@ object ios {
     }
 
     /*inline*/
-    def ensure[T, S]( /*inline*/ f: => Unit > IOs)(v: T > S): T > (IOs with S) = {
+    def ensure[T, S]( /*inline*/ f: => Unit < IOs)(v: T < S): T < (IOs with S) = {
       val ensure = new internal.Ensure {
         def run = f
       }
-      def ensureLoop(v: T > (IOs with S), p: Preempt): T > (IOs with S) =
+      def ensureLoop(v: T < (IOs with S), p: Preempt): T < (IOs with S) =
         v match {
           case kyo: Kyo[MX, EX, Any, T, S with IOs] @unchecked =>
             new KyoCont[MX, EX, Any, T, S with IOs](kyo) {
-              def apply(v: Any > (S with IOs), s: Safepoint[MX, EX], l: State) = {
+              def apply(v: Any < (S with IOs), s: Safepoint[MX, EX], l: State) = {
                 val np =
                   (s: Any) match {
                     case s: Preempt =>

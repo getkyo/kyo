@@ -18,10 +18,10 @@ import java.util.Arrays
 import kyo.locals.Locals.State
 
 private[kyo] object IOTask {
-  private def nullIO[T] = null.asInstanceOf[T > IOs]
+  private def nullIO[T] = null.asInstanceOf[T < IOs]
   /*inline*/
   def apply[T](
-      v: T > Fibers,
+      v: T < Fibers,
       st: Locals.State,
       ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
       runtime: Int = 1
@@ -58,7 +58,7 @@ private[kyo] object IOTask {
 }
 
 private[kyo] class IOTask[T](
-    private var curr: T > Fibers,
+    private var curr: T < Fibers,
     private var ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
     @volatile private var state: Int // Math.abs(state) => runtime; state < 0 => preempting
 ) extends IOPromise[T]
@@ -81,7 +81,7 @@ private[kyo] class IOTask[T](
   override protected def onComplete(): Unit =
     preempt()
 
-  @tailrec private def eval(start: Long, curr: T > Fibers): T > Fibers = {
+  @tailrec private def eval(start: Long, curr: T < Fibers): T < Fibers = {
     def finalize() = {
       ensures match {
         case null =>
@@ -113,18 +113,18 @@ private[kyo] class IOTask[T](
             case promise: IOPromise[T] @unchecked =>
               this.interrupts(promise)
               val runtime = this.runtime() + (Coordinator.tick() - start).asInstanceOf[Int]
-              promise.onComplete { (v: Any > IOs) =>
+              promise.onComplete { (v: Any < IOs) =>
                 val io = IOs(kyo(v, this.asInstanceOf[Safepoint[Fiber, FiberGets]], locals))
                 this.become(IOTask(io, locals, ensures, runtime))
               }
             case Failed(ex) =>
               complete(IOs.fail(ex))
             case v =>
-              complete(v.asInstanceOf[T > IOs])
+              complete(v.asInstanceOf[T < IOs])
           }
           nullIO
         case _ =>
-          complete(curr.asInstanceOf[T > IOs])
+          complete(curr.asInstanceOf[T < IOs])
           finalize()
           nullIO
       }

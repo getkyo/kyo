@@ -22,7 +22,7 @@ import java.nio.ByteBuffer
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad._
 
-private[kyo] class NettyKyoRequestBody(createFile: ServerRequest => TapirFile > Routes)
+private[kyo] class NettyKyoRequestBody(createFile: ServerRequest => TapirFile < Routes)
     extends RequestBody[KyoSttpMonad.M, Any] {
 
   val streams = new Streams[Any] {
@@ -35,7 +35,7 @@ private[kyo] class NettyKyoRequestBody(createFile: ServerRequest => TapirFile > 
   override def toRaw[R](
       serverRequest: ServerRequest,
       bodyType: RawBodyType[R]
-  ): RawValue[R] > Fibers = {
+  ): RawValue[R] < Fibers = {
 
     bodyType match {
       case RawBodyType.StringBody(charset) =>
@@ -57,7 +57,7 @@ private[kyo] class NettyKyoRequestBody(createFile: ServerRequest => TapirFile > 
     }
   }
 
-  private def nettyRequestBytes(serverRequest: ServerRequest): Array[Byte] > Fibers =
+  private def nettyRequestBytes(serverRequest: ServerRequest): Array[Byte] < Fibers =
     serverRequest.underlying match {
       case req: FullHttpRequest => IOs(ByteBufUtil.getBytes(req.content()))
       case other => IOs.fail(new UnsupportedOperationException(

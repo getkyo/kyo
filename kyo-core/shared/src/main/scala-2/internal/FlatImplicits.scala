@@ -15,7 +15,7 @@ trait FlatImplicits1 extends FlatImplicits0 {
 }
 
 trait FlatImplicits extends FlatImplicits1 {
-  implicit def derive[T, S](implicit f: Flat[T > S]): Flat[T] =
+  implicit def derive[T, S](implicit f: Flat[T < S]): Flat[T] =
     Flat.unsafe.checked
   implicit def anyVal[T <: AnyVal]: Flat[T] =
     Flat.unsafe.checked
@@ -32,7 +32,7 @@ object FlatImplicits {
       def unapply(tpe: Type): Option[(Type, Type)] =
         tpe match {
           case TypeRef(_, sym, List(t, u))
-              if (sym == c.typeOf[Nothing > Any].typeSymbol) =>
+              if (sym == c.typeOf[Nothing < Any].typeSymbol) =>
             Some((t.dealias, u.dealias))
           case _ =>
             None

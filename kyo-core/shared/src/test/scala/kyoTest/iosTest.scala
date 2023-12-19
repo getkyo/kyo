@@ -64,7 +64,7 @@ class iosTest extends KyoTest {
     }
     "stack-safe" in run {
       val frames = 100000
-      def loop(i: Int): Int > IOs =
+      def loop(i: Int): Int < IOs =
         IOs {
           if (i < frames)
             loop(i + 1)
@@ -80,7 +80,7 @@ class iosTest extends KyoTest {
   "run" - {
     "execution" in run {
       var called = false
-      val v: Int > IOs =
+      val v: Int < IOs =
         IOs {
           called = true
           1
@@ -94,7 +94,7 @@ class iosTest extends KyoTest {
     }
     "stack-safe" in run {
       val frames = 100000
-      def loop(i: Int): Assertion > IOs =
+      def loop(i: Int): Assertion < IOs =
         IOs {
           if (i < frames)
             loop(i + 1)
@@ -119,7 +119,7 @@ class iosTest extends KyoTest {
       succeed
     }
     "doesn't accept other pending effects" in {
-      assertDoesNotCompile("IOs.run[Int > Options](Options.get(Some(1)))")
+      assertDoesNotCompile("IOs.run[Int < Options](Options.get(Some(1)))")
     }
   }
 

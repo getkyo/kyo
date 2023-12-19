@@ -8,8 +8,8 @@ import zio.Chunk
 
 trait Json[T] {
   def schema: Schema
-  def encode(v: T): String > IOs
-  def decode(s: String): T > IOs
+  def encode(v: T): String < IOs
+  def decode(s: String): T < IOs
 }
 
 object Json extends JsonDerive {
@@ -17,10 +17,10 @@ object Json extends JsonDerive {
   def schema[T](implicit j: Json[T]): Schema =
     j.schema
 
-  def encode[T](v: T)(implicit j: Json[T]): String > IOs =
+  def encode[T](v: T)(implicit j: Json[T]): String < IOs =
     j.encode(v)
 
-  def decode[T](s: String)(implicit j: Json[T]): T > IOs =
+  def decode[T](s: String)(implicit j: Json[T]): T < IOs =
     j.decode(s)
 
   implicit def primitive[T](implicit t: StandardType[T]): Json[T] =
@@ -32,10 +32,10 @@ object Json extends JsonDerive {
       private lazy val decoder = JsonCodec.jsonDecoder(z)
       private lazy val encoder = JsonCodec.jsonEncoder(z)
 
-      def encode(v: T): String > IOs =
+      def encode(v: T): String < IOs =
         IOs(encoder.encodeJson(v).toString)
 
-      def decode(s: String): T > IOs =
+      def decode(s: String): T < IOs =
         IOs {
           decoder.decodeJson(s) match {
             case Left(fail) => IOs.fail(fail)

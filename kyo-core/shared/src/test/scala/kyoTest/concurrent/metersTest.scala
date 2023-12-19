@@ -111,7 +111,7 @@ class metersTest extends KyoTest {
     }
   }
 
-  def loop(meter: Meter, counter: AtomicInt): Unit > Fibers =
+  def loop(meter: Meter, counter: AtomicInt): Unit < Fibers =
     meter.run(counter.incrementAndGet).map(_ => loop(meter, counter))
 
   "rate limiter" - {

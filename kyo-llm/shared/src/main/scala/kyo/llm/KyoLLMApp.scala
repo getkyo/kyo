@@ -17,8 +17,8 @@ abstract class KyoLLMApp extends KyoApp.Base[KyoLLMApp.Effects] {
 
   def config: Config = Config.default
 
-  override protected def handle[T](v: T > KyoLLMApp.Effects)(
-      implicit f: Flat[T > KyoLLMApp.Effects]
+  override protected def handle[T](v: T < KyoLLMApp.Effects)(
+      implicit f: Flat[T < KyoLLMApp.Effects]
   ) =
     KyoLLMApp.run {
       AIs.configs.let(config) {
@@ -33,28 +33,28 @@ object KyoLLMApp {
 
   type Effects = KyoApp.Effects with AIs
 
-  private def handle[T](v: T > Effects)(
-      implicit f: Flat[T > Effects]
-  ): T > KyoApp.Effects =
+  private def handle[T](v: T < Effects)(
+      implicit f: Flat[T < Effects]
+  ): T < KyoApp.Effects =
     Requests.run(AIs.run(v))
 
-  def run[T](timeout: Duration)(v: T > Effects)(
-      implicit f: Flat[T > Effects]
+  def run[T](timeout: Duration)(v: T < Effects)(
+      implicit f: Flat[T < Effects]
   ): T =
     KyoApp.run(timeout)(handle(v))
 
-  def run[T](v: T > Effects)(
-      implicit f: Flat[T > Effects]
+  def run[T](v: T < Effects)(
+      implicit f: Flat[T < Effects]
   ): T =
     KyoApp.run(handle(v))
 
-  def runFiber[T](v: T > Effects)(
-      implicit f: Flat[T > Effects]
+  def runFiber[T](v: T < Effects)(
+      implicit f: Flat[T < Effects]
   ): Fiber[Try[T]] =
     KyoApp.runFiber(handle(v))
 
-  def runFiber[T](timeout: Duration)(v: T > Effects)(
-      implicit f: Flat[T > Effects]
+  def runFiber[T](timeout: Duration)(v: T < Effects)(
+      implicit f: Flat[T < Effects]
   ): Fiber[Try[T]] =
     KyoApp.runFiber(timeout)(handle(v))
 }

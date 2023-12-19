@@ -95,7 +95,7 @@ class OTelReceiver extends MetricReceiver with TraceReceiver {
       name: String,
       parent: Option[Span],
       attributes: Attributes
-  ): Span > IOs =
+  ): Span < IOs =
     IOs {
       val b =
         otel.getTracer(scope.mkString("_"))

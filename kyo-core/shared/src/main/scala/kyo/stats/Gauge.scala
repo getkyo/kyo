@@ -4,7 +4,7 @@ import kyo._
 import kyo.ios._
 
 case class Gauge(unsafe: Gauge.Unsafe) extends AnyVal {
-  def close: Unit > IOs = IOs(unsafe.close())
+  def close: Unit < IOs = IOs(unsafe.close())
 }
 
 object Gauge {

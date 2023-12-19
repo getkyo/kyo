@@ -102,7 +102,7 @@ class fibersTest extends KyoTest {
 
   "interrupt" - {
 
-    def loop(ref: AtomicInt): Unit > IOs =
+    def loop(ref: AtomicInt): Unit < IOs =
       ref.incrementAndGet.map(_ => loop(ref))
 
     def runLoop(started: Latch, done: Latch) =
@@ -152,7 +152,7 @@ class fibersTest extends KyoTest {
     "n" in runJVM {
       val ac = new JAtomicInteger(0)
       val bc = new JAtomicInteger(0)
-      def loop(i: Int, s: String): String > IOs =
+      def loop(i: Int, s: String): String < IOs =
         IOs {
           if (i > 0) {
             if (s.equals("a")) ac.incrementAndGet()
@@ -184,7 +184,7 @@ class fibersTest extends KyoTest {
     "n" in runJVM {
       val ac = new JAtomicInteger(0)
       val bc = new JAtomicInteger(0)
-      def loop(i: Int, s: String): String > IOs =
+      def loop(i: Int, s: String): String < IOs =
         IOs {
           if (i > 0) {
             if (s.equals("a")) ac.incrementAndGet()
@@ -216,7 +216,7 @@ class fibersTest extends KyoTest {
     "n" in run {
       val ac = new JAtomicInteger(0)
       val bc = new JAtomicInteger(0)
-      def loop(i: Int, s: String): String > IOs =
+      def loop(i: Int, s: String): String < IOs =
         IOs {
           if (i > 0) {
             if (s.equals("a")) ac.incrementAndGet()
@@ -254,7 +254,7 @@ class fibersTest extends KyoTest {
     "n" in run {
       val ac = new JAtomicInteger(0)
       val bc = new JAtomicInteger(0)
-      def loop(i: Int, s: String): String > IOs =
+      def loop(i: Int, s: String): String < IOs =
         IOs {
           if (i > 0) {
             if (s.equals("a")) ac.incrementAndGet()
@@ -277,14 +277,14 @@ class fibersTest extends KyoTest {
       for {
         v1       <- Fibers.init(1).map(_.get)
         (v2, v3) <- Fibers.parallel(2, 3)
-        l        <- Fibers.parallel(List[Int > Any](4, 5))
+        l        <- Fibers.parallel(List[Int < Any](4, 5))
       } yield assert(v1 + v2 + v3 + l.sum == 15)
     }
     "interrupt" in runJVM {
-      def loop(ref: AtomicInt): Unit > IOs =
+      def loop(ref: AtomicInt): Unit < IOs =
         ref.incrementAndGet.map(_ => loop(ref))
 
-      def task(l: Latch): Unit > IOs =
+      def task(l: Latch): Unit < IOs =
         Resources.run[Unit, IOs] {
           Resources.ensure(l.release).map { _ =>
             Atomics.initInt(0).map(loop)
@@ -309,7 +309,7 @@ class fibersTest extends KyoTest {
     "outer" in run {
       val resource1 = new Resource
       val resource2 = new Resource
-      val io1: (JAtomicInteger with Closeable, Set[Int]) > (Resources with Fibers) =
+      val io1: (JAtomicInteger with Closeable, Set[Int]) < (Resources with Fibers) =
         for {
           r  <- Resources.acquire(resource1)
           v1 <- IOs(r.incrementAndGet())
@@ -345,7 +345,7 @@ class fibersTest extends KyoTest {
     "mixed" in run {
       val resource1 = new Resource
       val resource2 = new Resource
-      val io1: Set[Int] > (Resources with (Fibers)) =
+      val io1: Set[Int] < (Resources with (Fibers)) =
         for {
           r  <- Resources.acquire(resource1)
           v1 <- IOs(r.incrementAndGet())
@@ -389,7 +389,7 @@ class fibersTest extends KyoTest {
   }
 
   "stack safety" in run {
-    def loop(i: Int): Assertion > Fibers =
+    def loop(i: Int): Assertion < Fibers =
       if (i > 0) {
         Fibers.init(List.fill(1000)(())).map(_ => loop(i - 1))
       } else {

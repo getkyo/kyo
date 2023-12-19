@@ -12,18 +12,18 @@ object locals {
 
     def default: T
 
-    val get: T > IOs =
+    val get: T < IOs =
       new KyoIO[T, Any] {
-        def apply(v: Unit > (IOs with Any), s: Safepoint[IO, IOs], l: State) =
+        def apply(v: Unit < (IOs with Any), s: Safepoint[IO, IOs], l: State) =
           get(l)
       }
 
-    def let[U, S](f: T)(v: U > S): U > (S with IOs) = {
-      def letLoop(f: T, v: U > S): U > S =
+    def let[U, S](f: T)(v: U < S): U < (S with IOs) = {
+      def letLoop(f: T, v: U < S): U < S =
         v match {
           case kyo: Kyo[MX, EX, Any, U, S] @unchecked =>
             new KyoCont[MX, EX, Any, U, S](kyo) {
-              def apply(v2: Any > S, s: Safepoint[MX, EX], l: Locals.State) =
+              def apply(v2: Any < S, s: Safepoint[MX, EX], l: Locals.State) =
                 letLoop(f, kyo(v2, s, l.updated(Local.this, f)))
             }
           case _ =>
@@ -32,12 +32,12 @@ object locals {
       letLoop(f, v)
     }
 
-    def update[U, S](f: T => T)(v: U > S): U > (S with IOs) = {
-      def updateLoop(f: T => T, v: U > S): U > S =
+    def update[U, S](f: T => T)(v: U < S): U < (S with IOs) = {
+      def updateLoop(f: T => T, v: U < S): U < S =
         v match {
           case kyo: Kyo[MX, EX, Any, U, S] @unchecked =>
             new KyoCont[MX, EX, Any, U, S](kyo) {
-              def apply(v2: Any > S, s: Safepoint[MX, EX], l: Locals.State) =
+              def apply(v2: Any < S, s: Safepoint[MX, EX], l: Locals.State) =
                 updateLoop(f, kyo(v2, s, l.updated(Local.this, f(get(l)))))
             }
           case _ =>
@@ -63,18 +63,18 @@ object locals {
         def default = defaultValue
       }
 
-    val save: State > IOs =
+    val save: State < IOs =
       new KyoIO[State, Any] {
-        def apply(v: Unit > (IOs with Any), s: Safepoint[IO, IOs], l: Locals.State) =
+        def apply(v: Unit < (IOs with Any), s: Safepoint[IO, IOs], l: Locals.State) =
           l
       }
 
-    def restore[T, S](st: State)(f: T > S): T > (IOs with S) = {
-      def loop(f: T > S): T > S =
+    def restore[T, S](st: State)(f: T < S): T < (IOs with S) = {
+      def loop(f: T < S): T < S =
         f match {
           case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>
             new KyoCont[MX, EX, Any, T, S](kyo) {
-              def apply(v2: Any > S, s: Safepoint[MX, EX], l: Locals.State) =
+              def apply(v2: Any < S, s: Safepoint[MX, EX], l: Locals.State) =
                 loop(kyo(v2, s, l ++ st))
             }
           case _ =>

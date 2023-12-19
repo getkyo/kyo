@@ -25,7 +25,7 @@ class CountdownLatchBench extends Bench.ForkOnly[Int] {
     import kyo.concurrent.fibers._
     import kyo.concurrent.latches._
 
-    def iterate(l: Latch, n: Int): Unit > IOs =
+    def iterate(l: Latch, n: Int): Unit < IOs =
       if (n <= 0) IOs.unit
       else l.release.flatMap(_ => iterate(l, n - 1))
 

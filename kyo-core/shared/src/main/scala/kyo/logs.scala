@@ -16,7 +16,7 @@ object logs {
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit > IOs = {
+    ): Unit < IOs = {
       // Discard wrappers so their allocation
       // can be elided by the JIT. The values
       // are `String`s from the constant pool
@@ -37,7 +37,7 @@ object logs {
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit > IOs = {
+    ): Unit < IOs = {
       val f = file.value
       val l = line.value
       IOs(if (logger.isTraceEnabled) logger.trace(s"[$f:$l] $msg", t))
@@ -48,7 +48,7 @@ object logs {
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit > IOs = {
+    ): Unit < IOs = {
       val f = file.value
       val l = line.value
       IOs(if (logger.isDebugEnabled) logger.debug(s"[$f:$l] $msg"))
@@ -59,7 +59,7 @@ object logs {
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit > IOs = {
+    ): Unit < IOs = {
       val f = file.value
       val l = line.value
       IOs(if (logger.isDebugEnabled) logger.debug(s"[$f:$l] $msg", t))
@@ -70,7 +70,7 @@ object logs {
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit > IOs = {
+    ): Unit < IOs = {
       val f = file.value
       val l = line.value
       IOs(if (logger.isInfoEnabled) logger.info(s"[$f:$l] $msg"))
@@ -81,7 +81,7 @@ object logs {
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit > IOs = {
+    ): Unit < IOs = {
       val f = file.value
       val l = line.value
       IOs(if (logger.isInfoEnabled) logger.info(s"[$f:$l] $msg", t))
@@ -92,7 +92,7 @@ object logs {
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit > IOs = {
+    ): Unit < IOs = {
       val f = file.value
       val l = line.value
       IOs(if (logger.isWarnEnabled) logger.warn(s"[$f:$l] $msg"))
@@ -103,7 +103,7 @@ object logs {
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit > IOs = {
+    ): Unit < IOs = {
       val f = file.value
       val l = line.value
       IOs(if (logger.isWarnEnabled) logger.warn(s"[$f:$l] $msg", t))
@@ -114,7 +114,7 @@ object logs {
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit > IOs = {
+    ): Unit < IOs = {
       val f = file.value
       val l = line.value
       IOs(if (logger.isErrorEnabled) logger.error(s"[$f:$l] $msg"))
@@ -125,7 +125,7 @@ object logs {
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit > IOs = {
+    ): Unit < IOs = {
       val f = file.value
       val l = line.value
       IOs(if (logger.isErrorEnabled) logger.error(s"[$f:$l] $msg", t))
@@ -170,7 +170,7 @@ object logs {
           implicit
           file: sourcecode.FileName,
           line: sourcecode.Line
-      ): Unit > IOs = {
+      ): Unit < IOs = {
         val f = file.value
         val l = line.value
         if (logger.isDebugEnabled) logger.debug(s"[$f:$l] $msg", t)
@@ -214,7 +214,7 @@ object logs {
           implicit
           file: sourcecode.FileName,
           line: sourcecode.Line
-      ): Unit > IOs = {
+      ): Unit < IOs = {
         val f = file.value
         val l = line.value
         if (logger.isWarnEnabled) logger.warn(s"[$f:$l] $msg", t)
