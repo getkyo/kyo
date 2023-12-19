@@ -20,6 +20,7 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NoStackTrace
 import kyo.consoles.Consoles
+import kyo.llm.listeners.Listeners
 
 object ais {
 
@@ -96,16 +97,20 @@ object ais {
               r.content
             case calls =>
               Agents.handle(this, agents, calls)
-                .andThen(eval(agents))
+                .andThen {
+                  Listeners.observe("Processing results") {
+                    eval(agents)
+                  }
+                }
           }
         }
       Agents.get.map(eval)
     }
 
-    def gen[T](msg: String)(implicit t: Json[Agents.Request[T]]): T > AIs =
+    def gen[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T > AIs =
       userMessage(msg).andThen(gen[T])
 
-    def gen[T](implicit t: Json[Agents.Request[T]]): T > AIs = {
+    def gen[T](implicit t: Json[Agents.Request[T]], f: Flat[T]): T > AIs = {
       Agents.resultAgent[T].map { case (resultAgent, result) =>
         def eval(): T > AIs =
           fetch(Set(resultAgent), Some(resultAgent)).map { r =>
@@ -114,7 +119,9 @@ object ais {
                 case Some(v) =>
                   v
                 case None =>
-                  eval()
+                  Listeners.observe("Processing results") {
+                    eval()
+                  }
               }
             }
           }
@@ -122,10 +129,10 @@ object ais {
       }
     }
 
-    def infer[T](msg: String)(implicit t: Json[Agents.Request[T]]): T > AIs =
+    def infer[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T > AIs =
       userMessage(msg).andThen(infer[T])
 
-    def infer[T](implicit t: Json[Agents.Request[T]]): T > AIs = {
+    def infer[T](implicit t: Json[Agents.Request[T]], f: Flat[T]): T > AIs = {
       Agents.resultAgent[T].map { case (resultAgent, result) =>
         def eval(agents: Set[Agent], constrain: Option[Agent] = None): T > AIs =
           fetch(agents, constrain).map { r =>
@@ -136,7 +143,9 @@ object ais {
                 Agents.handle(this, agents, calls).andThen {
                   result.map {
                     case None =>
-                      eval(agents)
+                      Listeners.observe("Processing results") {
+                        eval(agents)
+                      }
                     case Some(v) =>
                       v
                   }
@@ -187,31 +196,43 @@ object ais {
     def ask(msg: String): String > AIs =
       init.map(_.ask(msg))
 
-    def gen[T](msg: String)(implicit t: Json[Agents.Request[T]]): T > AIs =
+    def gen[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T > AIs =
       init.map(_.gen[T](msg))
 
-    def infer[T](msg: String)(implicit t: Json[Agents.Request[T]]): T > AIs =
+    def infer[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T > AIs =
       init.map(_.infer[T](msg))
 
     def ask(seed: String, msg: String): String > AIs =
       init(seed).map(_.ask(msg))
 
-    def gen[T](seed: String, msg: String)(implicit t: Json[Agents.Request[T]]): T > AIs =
+    def gen[T](seed: String, msg: String)(
+        implicit
+        t: Json[Agents.Request[T]],
+        f: Flat[T]
+    ): T > AIs =
       init(seed).map(_.gen[T](msg))
 
-    def infer[T](seed: String, msg: String)(implicit t: Json[Agents.Request[T]]): T > AIs =
+    def infer[T](seed: String, msg: String)(
+        implicit
+        t: Json[Agents.Request[T]],
+        f: Flat[T]
+    ): T > AIs =
       init(seed).map(_.infer[T](msg))
 
     def ask(seed: String, reminder: String, msg: String): String > AIs =
       init(seed, reminder).map(_.ask(msg))
 
-    def gen[T](seed: String, reminder: String, msg: String)(implicit
-        t: Json[Agents.Request[T]]
+    def gen[T](seed: String, reminder: String, msg: String)(
+        implicit
+        t: Json[Agents.Request[T]],
+        f: Flat[T]
     ): T > AIs =
       init(seed, reminder).map(_.gen[T](msg))
 
-    def infer[T](seed: String, reminder: String, msg: String)(implicit
-        t: Json[Agents.Request[T]]
+    def infer[T](seed: String, reminder: String, msg: String)(
+        implicit
+        t: Json[Agents.Request[T]],
+        f: Flat[T]
     ): T > AIs =
       init(seed, reminder).map(_.infer[T](msg))
 
