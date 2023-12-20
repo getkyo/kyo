@@ -25,6 +25,9 @@ object files {
     ): String < IOs =
       IOs(os.read(osPath, charSet, offset, count))
 
+    def readAll(extension: String): IndexedSeq[(String, String)] < IOs =
+      IOs(os.list(osPath).filter(_.ext == extension).map(p => p.baseName -> os.read(p)))
+
     def readBytes: Array[Byte] < IOs =
       IOs(os.read.bytes(osPath))
 
@@ -56,6 +59,9 @@ object files {
 
     def list(sort: Boolean): IndexedSeq[Files] < IOs =
       IOs(os.list(osPath, sort).map(p => new Files(p.segments.toList)))
+
+    def list(extension: String): IndexedSeq[Files] < IOs =
+      IOs(os.list(osPath).filter(_.last.endsWith(extension)).map(p => new Files(p.segments.toList)))
 
     def isDir: Boolean < IOs =
       IOs(os.isDir(osPath))
@@ -123,7 +129,7 @@ object files {
           case h :: t =>
             h match {
               case h: String =>
-                loop(t, h :: acc)
+                loop(t, h.split('/').toList.reverse ::: acc)
               case h: Files =>
                 loop(h.path ::: t, acc)
             }

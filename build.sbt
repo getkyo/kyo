@@ -278,6 +278,20 @@ lazy val `kyo-llm` =
     )
     .jsSettings(`js-settings`)
 
+lazy val `kyo-llm-bench` =
+  crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Full)
+    .in(file("kyo-llm-bench"))
+    .dependsOn(`kyo-llm`)
+    .dependsOn(`kyo-os-lib`)
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .settings(
+        `kyo-settings`,
+        `without-cross-scala`,
+        libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.4.14"
+    )
+
 lazy val `kyo-bench` =
   crossProject(JVMPlatform)
     .withoutSuffixFor(JVMPlatform)

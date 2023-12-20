@@ -1,0 +1,3 @@
+[submodule "kyo-llm-bench/jvm/BIG-Bench-Hard"]
+	path = kyo-llm-bench/jvm/BIG-Bench-Hard
+	url = https://github.com/suzgunmirac/BIG-Bench-Hard
