@@ -18,6 +18,10 @@ object listeners {
   import Listener._
 
   object Listeners {
+
+    def silent[T, S](v: T < S): T < (AIs with S) =
+      listeners.let(Nil)(v)
+
     def observe[T, S](event: String)(v: T < S)(implicit f: Flat[T < S]): T < (AIs with S) =
       listeners.get.map { l =>
         def loop(l: List[Listener]): T < (AIs with S) =
