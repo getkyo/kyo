@@ -200,6 +200,18 @@ lazy val `kyo-cache` =
         libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
     )
 
+lazy val `kyo-os-lib` =
+  crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Full)
+    .in(file("kyo-os-lib"))
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .settings(
+        `kyo-settings`,
+        `with-cross-scala`,
+        libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.9.2"
+    )
+
 lazy val `kyo-sttp` =
   crossProject(JSPlatform, JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
@@ -265,6 +277,20 @@ lazy val `kyo-llm` =
         libraryDependencies += "com.knuddels" % "jtokkit" % "0.6.1"
     )
     .jsSettings(`js-settings`)
+
+lazy val `kyo-llm-bench` =
+  crossProject(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Full)
+    .in(file("kyo-llm-bench"))
+    .dependsOn(`kyo-llm`)
+    .dependsOn(`kyo-os-lib`)
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .settings(
+        `kyo-settings`,
+        `without-cross-scala`,
+        libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.4.14"
+    )
 
 lazy val `kyo-bench` =
   crossProject(JVMPlatform)
