@@ -12,15 +12,15 @@ import kyo.llm.ais._
     """
 )
 case class EquivalenceChecking(
-    initialExpr1: Expr,
-    initialExpr2: Expr,
+    initialExpr1: String,
+    initialExpr2: String,
     equivalenceSteps: List[EquivalenceStep],
     finalEquivalence: Boolean
 )
 
 case class EquivalenceStep(
     stepDescription: String,
-    expr1Transformation: Expr,
-    expr2Transformation: Expr,
+    expr1Transformation: String,
+    expr2Transformation: String,
     areEquivalent: Boolean
 )

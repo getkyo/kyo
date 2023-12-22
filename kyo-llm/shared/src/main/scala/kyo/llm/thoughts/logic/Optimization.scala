@@ -10,13 +10,13 @@ import kyo.llm.ais._
       - Results in an optimized expression that is logically equivalent to the original.
     """
 )
-case class ExpressionOptimization(
+case class ExpressionOptimization[Expr](
     originalExpression: Expr,
-    optimizationSteps: List[OptimizationStep],
+    optimizationSteps: List[OptimizationStep[Expr]],
     optimizedExpression: Expr
 )
 
-case class OptimizationStep(
+case class OptimizationStep[Expr](
     stepDescription: String,
     inputExpression: Expr,
     outputExpression: Expr
