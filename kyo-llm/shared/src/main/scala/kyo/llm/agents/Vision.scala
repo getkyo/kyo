@@ -16,7 +16,7 @@ import javax.imageio.ImageIO
 
 object Vision extends Agent {
 
-  case class Input(
+  case class In(
       @desc("A description of the environment in which the image is displayed. " +
         "This includes the webpage or application interface, nearby visual elements, " +
         "and surrounding textual content, which may provide additional insight or " +
@@ -28,7 +28,7 @@ object Vision extends Agent {
       imageUrl: String
   )
 
-  type Output = String
+  type Out = String
 
   val info =
     Info(
@@ -36,7 +36,7 @@ object Vision extends Agent {
         "interprets the contents of the provided image"
     )
 
-  def run(input: Input) =
+  def run(input: In) =
     Configs.let(_.model(Model.gpt4_vision).maxTokens(Some(4000))) {
       Requests[Array[Byte]](
           _.get(uri"${input.imageUrl}")

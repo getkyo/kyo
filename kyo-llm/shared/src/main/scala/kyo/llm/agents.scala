@@ -19,24 +19,24 @@ package object agents {
 
   abstract class Agent {
 
-    type Input
-    type Output
+    type In
+    type Out
 
     case class Info(
         name: String,
         description: String
     )(implicit
-        val input: Json[Agents.Request[Input]],
-        val output: Json[Output]
+        val input: Json[Agents.Request[In]],
+        val output: Json[Out]
     )
 
     val info: Info
 
     private val local = Locals.init(Option.empty[AI])
 
-    def run(input: Input): Output < AIs
+    def run(input: In): Out < AIs
 
-    def run(caller: AI, input: Input): Output < AIs =
+    def run(caller: AI, input: In): Out < AIs =
       local.let(Some(caller)) {
         run(input)
       }
@@ -85,8 +85,8 @@ package object agents {
       Atomics.initRef(Option.empty[T]).map { ref =>
         val agent =
           new Agent {
-            type Input  = T
-            type Output = String
+            type In  = T
+            type Out = String
 
             val info = Info(
                 "resultAgent",

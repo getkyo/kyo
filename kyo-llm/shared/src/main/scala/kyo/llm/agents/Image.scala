@@ -17,7 +17,7 @@ object Image extends Agent {
 
   import internal._
 
-  case class Input(
+  case class In(
       @desc("A text description of the desired image")
       prompt: String,
       @desc("""
@@ -36,7 +36,7 @@ object Image extends Agent {
       style: String
   )
 
-  case class Output(
+  case class Out(
       imageUrl: String,
       revisedPrompt: String
   )
@@ -47,7 +47,7 @@ object Image extends Agent {
         "Generates an image via DALL-E"
     )
 
-  def run(input: Input) = {
+  def run(input: In) = {
     val req = Request(
         input.prompt,
         if (input.hdQuality) "hd" else "standard",
@@ -67,8 +67,8 @@ object Image extends Agent {
             .response(asJson[Response])
       )
       _ <- Logs.debug(resp.toJsonPretty)
-      r <- resp.data.headOption.map(r => Output(r.url, r.revised_prompt))
-        .getOrElse(AIs.fail[Output]("Can't find the generated image URL."))
+      r <- resp.data.headOption.map(r => Out(r.url, r.revised_prompt))
+        .getOrElse(AIs.fail[Out]("Can't find the generated image URL."))
     } yield r
   }
 

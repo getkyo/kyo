@@ -15,7 +15,7 @@ import scala.concurrent.duration._
 class Curl(methods: Curl.Methods) extends Agent {
   private val allow = methods.s
 
-  case class Input(
+  case class In(
       method: String,
       contentType: String,
       url: String,
@@ -24,7 +24,7 @@ class Curl(methods: Curl.Methods) extends Agent {
       followRedirects: Boolean,
       timeoutSeconds: Option[Int]
   )
-  type Output = String
+  type Out = String
 
   val info =
     Info(
@@ -32,12 +32,12 @@ class Curl(methods: Curl.Methods) extends Agent {
         s"Performs an HTTP request. Allowed methods: ${allow.mkString(", ")}"
     )
 
-  def run(input: Input) =
+  def run(input: In) =
     if (!allow.contains(input.method)) {
       AIs.fail(s"Method not allowed: ${input.method}. Allowed: ${allow.mkString(", ")}")
     } else {
-      implicit val inputDecoder: JsonDecoder[Input] = DeriveJsonDecoder.gen[Input]
-      implicit val inputEncoder: JsonEncoder[Input] = DeriveJsonEncoder.gen[Input]
+      implicit val inputDecoder: JsonDecoder[In] = DeriveJsonDecoder.gen[In]
+      implicit val inputEncoder: JsonEncoder[In] = DeriveJsonEncoder.gen[In]
       for {
         _ <- Logs.debug(input.toJsonPretty)
         res <- Requests(

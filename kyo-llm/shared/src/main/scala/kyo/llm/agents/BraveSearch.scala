@@ -19,8 +19,8 @@ object BraveSearch extends Agent {
 
   import model._
 
-  type Input  = String
-  type Output = SearchResponse
+  type In  = String
+  type Out = SearchResponse
 
   val info =
     Info(
