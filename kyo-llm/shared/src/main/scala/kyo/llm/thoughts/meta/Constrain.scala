@@ -4,14 +4,14 @@ import kyo.llm.ais._
 
 @desc(
     p"""
-    The Constrain thought is a tool for applying specific constraints to the AI's reasoning process.
-    - The `Apply specific constraints to the value generation` field, defined as a string literal type, outlines the nature of the constraints that should govern the AI's thought generation.
-    - The `value` is the main focus where the AI applies the defined constraints during its reasoning or output generation.
-    - This mechanism is instrumental in guiding the AI to produce results within specific parameters or conditions, enhancing the relevance and precision of the output.
-    - Example: Constrain["Must be within ethical guidelines", EthicalReasoning] would direct the AI to ensure that the reasoning adheres to ethical guidelines.
+    The Constrain thought applies specific constraints to the AI's reasoning.
+    - Outlines constraints in the 'Apply specific constraints to the value generation' field.
+    - 'value' is where the AI applies these constraints in its process.
+    - Aims to enhance output precision and relevance.
+    - Example: Constrain["Adhere to ethical guidelines", EthicalReasoning] guides the AI to follow ethical standards.
     """
 )
 case class Constrain[C <: String, T](
-    `Apply specific constraints to the value generation`: C,
+    `Apply specific constraints`: C,
     value: T
 )

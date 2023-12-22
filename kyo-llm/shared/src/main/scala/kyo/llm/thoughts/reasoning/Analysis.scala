@@ -4,11 +4,11 @@ import kyo.llm.ais._
 
 @desc(
     p"""
-    The Analysis thought breaks down the input into more manageable parts.
-    - Dissects the input into fundamental elements.
-    - Explores connections among elements.
-    - Critically assesses the validity and logic.
-    - Relevant techniques: Data Decomposition, Logical Analysis.
+        The Analysis thought breaks down the input into more manageable parts.
+        - Dissects the input into fundamental elements.
+        - Explores connections among elements.
+        - Critically assesses the validity and logic.
+        - Relevant techniques: Data Decomposition, Logical Analysis.
     """
 )
 case class Analysis(

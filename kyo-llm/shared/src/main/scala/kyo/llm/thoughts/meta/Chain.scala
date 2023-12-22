@@ -6,10 +6,9 @@ object Chain {
 
   val chainDesc =
     p"""
-    The Chain thought enable sequential linking of multiple reasoning processes.
-    - Facilitates the flow of reasoning from one thought to another.
-    - Ensures coherence and logical progression in the reasoning chain.
-    - Allows complex reasoning to be broken down into manageable segments.
+      The Chain thought enable sequential linking of multiple reasoning processes.
+      - Facilitates the flow of reasoning from one thought to another.
+      - Ensures coherence and logical progression in the reasoning chain.
     """
 }
 import Chain._

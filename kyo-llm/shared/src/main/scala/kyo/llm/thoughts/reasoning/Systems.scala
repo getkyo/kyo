@@ -4,30 +4,14 @@ import kyo.llm.ais._
 
 @desc(
     p"""
-      The Systems thought is designed to apply systems theory in AI reasoning.
-      - Utilizes principles from systems theory to analyze component interactions.
-      - Employs methods from complexity science for systemic dynamics evaluation.
-      - Integrates techniques like causal loop diagramming for predicting outcomes.
-      - Relevant techniques: Feedback Systems, Network Analysis.
+      The Systems thought applies systems theory principles in AI reasoning.
+      - Analyzes interactions within systems.
+      - Evaluates systemic dynamics and feedback loops.
+      - Predicts outcomes using network analysis and causal diagrams.
     """
 )
-case class SystemsThinking(
-    identifyComponents: IdentifyComponents,
-    analyzeInteractions: AnalyzeInteractions,
-    predictOutcomes: PredictOutcomes
-)
-
-case class IdentifyComponents(
-    `List major elements of the system and their roles`: String,
-    `Recognize relationships among system components`: String
-)
-
-case class AnalyzeInteractions(
-    `Examine causal links within the system`: String,
-    `Evaluate feedback loops and systemic dynamics`: String
-)
-
-case class PredictOutcomes(
-    `Anticipate possible changes within the system`: String,
-    `Propose potential interventions in the system`: String
+case class Systems(
+    `List system elements and their roles`: String,
+    `Examine causal links and feedback dynamics`: String,
+    `Anticipate system changes and propose interventions`: String
 )
