@@ -208,7 +208,7 @@ lazy val `kyo-os-lib` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        `with-cross-scala`,
+        `without-cross-scala`,
         libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.9.2"
     )
 
