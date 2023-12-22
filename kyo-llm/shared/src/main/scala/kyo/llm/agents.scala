@@ -6,6 +6,7 @@ import kyo.seqs._
 import kyo.tries._
 import kyo.locals._
 import kyo.llm.ais._
+import kyo.llm.thoughts.reasoning._
 import scala.util._
 import kyo.llm.contexts._
 import kyo.concurrent.atomics._
@@ -99,10 +100,11 @@ package object agents {
       }
 
     private[kyo] def handle(ai: AI, agents: Set[Agent], calls: List[Call]): Unit < AIs =
-      Seqs.traverseUnit(calls) { call =>
+      Seqs.traverse(calls) { call =>
         agents.find(_.info.name == call.function) match {
           case None =>
-            ai.agentMessage(call.id, "Agent not found: " + call)
+            ai.agentMessage(call.id, "Agent doesn't exist anymore: " + Json.encode(call))
+              .andThen(false)
           case Some(agent) =>
             AIs.ephemeral {
               Agents.disable {
@@ -120,10 +122,16 @@ package object agents {
               }
             }.map {
               case Success(result) =>
-                ai.agentMessage(call.id, result)
+                ai.agentMessage(call.id, result).andThen(true)
               case Failure(ex) =>
-                ai.agentMessage(call.id, "Failure:" + ex)
+                ai.agentMessage(call.id, "Agent failure:" + ex).andThen(false)
             }
+        }
+      }.map { l =>
+        if (!l.forall(identity)) {
+          ai.gen[Repair]("One or more agents failed.").unit
+        } else {
+          ()
         }
       }
   }
