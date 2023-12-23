@@ -1,45 +1,76 @@
-package kyo.llm.thoughts.logic
+package kyo.llm.thoughts.reasoning.logic
 
 import kyo._
 import kyo.ios._
 import kyo.llm.ais._
+import kyo.llm.thoughts.meta._
 import kyo.llm.KyoLLMApp
 import kyo.llm.configs.Config
 import scala.util.Random
 import kyo.llm.thoughts.meta.Collect
 import kyo.consoles.Consoles
+import kyo.llm.agents.Agent
+import kyo.llm.thoughts.meta._
 
 @desc(
     p"""
-      The Reduction thought allows you to apply reduction steps to simplify an expression.
-      - Outlines each step of the reduction process with rule descriptions and expression transformations.
-      - Iteratively simplifies the expression using rules.
-      - Normalize the input expression using prefix operators. Example: (&& false false)
-      - Apply reduction steps to produce the final outcome.
-      - **Do not produce fields with empty values**
+      The Reduction thought allows for detailed tracking and explanation of each step in the expression reduction process.
+      - Includes detailed rule descriptions and expression transformations.
+      - Tracks intermediate expressions and sub-expressions.
+      - Normalizes input expression and iteratively simplifies it.
+      - **None of the fields can be empty**
+      - **No empty arrays and no empty strings**
     """
 )
-case class Reduction(
-    initialExpression: String,
-    `Normalize the expression`: Boolean,
-    normalizedExpression: String,
-    reductionSteps: List[ReductionStep],
-    finalOutcome: String
+case class Reduction[Expr, Result](
+    initialExpression: Expr,
+    `Reduction steps can not be empty`: Boolean,
+    completeStepByStepReduction: List[ReductionStep[Expr]],
+    fullyReducedResult: Result,
+    `Reduction steps and result are not empty`: Boolean
 )
 
 @desc(
     p"""
-      Make sure to use small steps to reason through
-      the reduction process. One for each sub-expression.
+      The Reduction thought allows for detailed tracking and explanation of each step in the expression reduction process.
+      - Includes detailed rule descriptions and expression transformations.
+      - Tracks intermediate expressions and sub-expressions.
+      - Normalizes input expression and iteratively simplifies it.
+      - **None of the fields can be empty**
+      - **No empty arrays and no empty strings**
     """
 )
-case class ReductionStep(
+case class ReductionStep[Expr](
     ruleDescription: String,
-    inputExpression: String,
-    outputExpression: String
+    inputExpression: Expr,
+    `Description of inputExpression`: String,
+    `Method to apply rule`: String,
+    outputExpression: Expr
 )
 
 object tt extends KyoLLMApp {
+
+  override def config: Config =
+    super.config.apiKey("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").seed(
+        Some(8931)
+    ).temperature(0)
+
+  run {
+    def loop(): Unit < AIs =
+      IOs {
+        val e = booleanExpr(10)
+        println(e.show)
+        AIs.gen[Refine[Reduction[String, Boolean]]](e.show).map { r =>
+          Consoles.println(r).andThen {
+            if (r.finalCorrectSolution.fullyReducedResult != e.eval) {
+              println("FAIL!!! " + e.show)
+            }
+            loop()
+          }
+        }
+      }
+    AIs.parallel(List.fill(10)(loop()))
+  }
 
   sealed trait BooleanExpr {
     def eval: Boolean
@@ -67,7 +98,7 @@ object tt extends KyoLLMApp {
     def show = s"(${left.show} || ${right.show})"
   }
 
-  def gen(size: Int): BooleanExpr =
+  def booleanExpr(size: Int): BooleanExpr =
     if (size <= 1) {
       Random.nextBoolean() match {
         case true  => True
@@ -75,29 +106,49 @@ object tt extends KyoLLMApp {
       }
     } else {
       Random.nextInt(3) match {
-        case 0 => And(gen(size / 2), gen(size / 2))
-        case 1 => Or(gen(size / 2), gen(size / 2))
-        case 2 => Not(gen(size - 1))
+        case 0 => And(booleanExpr(size / 2), booleanExpr(size / 2))
+        case 1 => Or(booleanExpr(size / 2), booleanExpr(size / 2))
+        case 2 => Not(booleanExpr(size - 1))
       }
     }
 
-  override def config: Config =
-    super.config.apiKey("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")
+  import scala.util.Random
 
-  run {
-    def loop(): Unit < AIs =
-      IOs {
-        val e = gen(5)
-        println(e.show)
-        AIs.gen[Reduction](e.show).map { r =>
-          Consoles.println(r).andThen {
-            if (r.finalOutcome.toBoolean != e.eval) {
-              println("FAIL: " + e.show)
-            }
-            loop()
-          }
-        }
-      }
-    AIs.parallel(List.fill(5)(loop()))
+  sealed trait MathExpr {
+    def eval: Int
+    def show: String
   }
+
+  case class Const(value: Int) extends MathExpr {
+    def eval = value
+    def show = value.toString
+  }
+
+  case class Add(left: MathExpr, right: MathExpr) extends MathExpr {
+    def eval = left.eval + right.eval
+    def show = s"(${left.show} + ${right.show})"
+  }
+
+  case class Subtract(left: MathExpr, right: MathExpr) extends MathExpr {
+    def eval = left.eval - right.eval
+    def show = s"(${left.show} - ${right.show})"
+  }
+
+  case class Multiply(left: MathExpr, right: MathExpr) extends MathExpr {
+    def eval = left.eval * right.eval
+    def show = s"(${left.show} * ${right.show})"
+  }
+
+  def mathExpr(size: Int): MathExpr = {
+    if (size <= 1) {
+      Const(Random.nextInt(10))
+    } else {
+      Random.nextInt(3) match {
+        case 0 => Add(mathExpr(size / 2), mathExpr(size / 2))
+        case 1 => Subtract(mathExpr(size / 2), mathExpr(size / 2))
+        case 2 => Multiply(mathExpr(size / 2), mathExpr(size / 2))
+      }
+    }
+  }
+
 }

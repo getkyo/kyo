@@ -60,9 +60,13 @@ package object agents {
     private val local = Locals.init(Set.empty[Agent])
 
     case class Request[T](
-        @desc("A short text to provide a status update to the user. " +
-          "Note that this field is new and might not be in your previous executions.")
+        @desc("A short text to provide a status update to the user.")
         actionNarrationToBeShownToTheUser: String,
+        @desc("Fields with text as the name aren't free text, use all field names literally.")
+        `Use field names like this one literally`: Boolean,
+        @desc("Fields with text as names are meant as an inner-dialog mechanism. " +
+          "Elaborate them to guide your reasoning and consider them for next steps.")
+        `I understand text field names function as an inner-dialog reasoning mechanism`: Boolean,
         inputOfTheFunctionCall: T
     )
 
