@@ -1,20 +1,17 @@
-package kyo.llm.thoughts.reasoning.logic
+package kyo.llm.thoughts
 
 import kyo._
 import kyo.ios._
 import kyo.llm.ais._
-import kyo.llm.thoughts.meta._
 import kyo.llm.KyoLLMApp
 import kyo.llm.configs.Config
 import scala.util.Random
-import kyo.llm.thoughts.meta.Collect
 import kyo.consoles.Consoles
 import kyo.llm.agents.Agent
-import kyo.llm.thoughts.meta._
 
 @desc(
     p"""
-      The Reduction thought allows for detailed tracking and explanation of each step in the expression reduction process.
+      The Reduce thought allows for detailed tracking and explanation of each step in the expression reduction process.
       - Includes detailed rule descriptions and expression transformations.
       - Tracks intermediate expressions and sub-expressions.
       - Normalizes input expression and iteratively simplifies it.
@@ -22,17 +19,17 @@ import kyo.llm.thoughts.meta._
       - **No empty arrays and no empty strings**
     """
 )
-case class Reduction[Expr, Result](
+case class Reduce[Expr, Result](
     initialExpression: Expr,
-    `Reduction steps can not be empty`: Boolean,
-    completeStepByStepReduction: List[ReductionStep[Expr]],
+    `Reduce steps can not be empty`: Boolean,
+    completeStepByStepReduce: List[ReduceStep[Expr]],
     fullyReducedResult: Result,
-    `Reduction steps and result are not empty`: Boolean
+    `Reduce steps and result are not empty`: Boolean
 )
 
 @desc(
     p"""
-      The Reduction thought allows for detailed tracking and explanation of each step in the expression reduction process.
+      The Reduce thought allows for detailed tracking and explanation of each step in the expression reduction process.
       - Includes detailed rule descriptions and expression transformations.
       - Tracks intermediate expressions and sub-expressions.
       - Normalizes input expression and iteratively simplifies it.
@@ -40,7 +37,7 @@ case class Reduction[Expr, Result](
       - **No empty arrays and no empty strings**
     """
 )
-case class ReductionStep[Expr](
+case class ReduceStep[Expr](
     ruleDescription: String,
     inputExpression: Expr,
     `Description of inputExpression`: String,
@@ -60,7 +57,7 @@ object tt extends KyoLLMApp {
       IOs {
         val e = booleanExpr(10)
         println(e.show)
-        AIs.gen[Refine[Reduction[String, Boolean]]](e.show).map { r =>
+        AIs.gen[Refine[Reduce[String, Boolean]]](e.show).map { r =>
           Consoles.println(r).andThen {
             if (r.finalCorrectSolution.fullyReducedResult != e.eval) {
               println("FAIL!!! " + e.show)

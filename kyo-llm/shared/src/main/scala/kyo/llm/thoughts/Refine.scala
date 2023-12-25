@@ -1,4 +1,4 @@
-package kyo.llm.thoughts.meta
+package kyo.llm.thoughts
 
 import kyo.llm.ais._
 

@@ -6,7 +6,6 @@ import kyo.seqs._
 import kyo.tries._
 import kyo.locals._
 import kyo.llm.ais._
-import kyo.llm.thoughts.reasoning._
 import scala.util._
 import kyo.llm.contexts._
 import kyo.concurrent.atomics._
@@ -14,6 +13,7 @@ import zio.schema.Schema
 import zio.schema.codec.JsonCodec
 import scala.annotation.implicitNotFound
 import kyo.llm.listeners.Listeners
+import thoughts.Repair
 
 package object agents {
 
@@ -59,15 +59,29 @@ package object agents {
   object Agents {
     private val local = Locals.init(Set.empty[Agent])
 
+    @desc(
+        p"""
+        1. This function call is a mechanism that mixes an inner-dialog mechanism
+           to enhance the quality of the generated json.
+        2. If you encounter field names with text instead of regular identifiers,
+           they're meant as thoughts in an inner-dialog mechanism. Leverage them 
+           to enhance your generation.
+        3. Thought fields with text identifiers aren't free text, strictly follow
+           the provided json schema.
+      """
+    )
     case class Request[T](
         @desc("A short text to provide a status update to the user.")
         actionNarrationToBeShownToTheUser: String,
-        @desc("Fields with text as the name aren't free text, use all field names literally.")
-        `Use field names like this one literally`: Boolean,
-        @desc("Fields with text as names are meant as an inner-dialog mechanism. " +
-          "Elaborate them to guide your reasoning and consider them for next steps.")
+        strictlyFollowTheJsonSchema: Boolean,
+        `Even when the the field name is a text like here`: Boolean,
+        @desc("Make sure to generate all required fields by the json schema.")
         `I understand text field names function as an inner-dialog reasoning mechanism`: Boolean,
-        inputOfTheFunctionCall: T
+        `Now I'll proceed to generate a complete function call input`: Boolean,
+        inputOfTheFunctionCall: T,
+        `The input is complete and follows the json schema`: Boolean,
+        @desc("There's a common issue where you output many new line characters after the json.")
+        `I will not generate a sequence of several new line charaters`: Boolean
     )
 
     def get: Set[Agent] < AIs = local.get

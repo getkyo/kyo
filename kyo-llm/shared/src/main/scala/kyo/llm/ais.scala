@@ -5,6 +5,7 @@ import kyo.llm.completions._
 import kyo.llm.configs._
 import kyo.llm.contexts._
 import kyo.llm.agents._
+import kyo.llm.thoughts._
 import kyo.concurrent.Joins
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
@@ -14,6 +15,7 @@ import kyo.requests._
 import kyo.sums._
 import kyo.tries._
 import zio.schema.codec.JsonCodec
+import zio.schema.{Schema => ZSchema}
 
 import java.lang.ref.WeakReference
 import scala.util.Failure
@@ -86,84 +88,96 @@ object ais {
     def agentMessage(callId: CallId, msg: String): Unit < AIs =
       update(_.agentMessage(callId, msg))
 
+    def addThought[T](implicit s: ZSchema[T]): Unit < AIs =
+      update(_.thought(Thoughts.init[T]))
+
+    def addCheck(desc: String): Unit < AIs =
+      update(_.thought(Thoughts.initCheck(desc)))
+
+    def addCheck[T](desc: String)(f: T => Boolean)(implicit s: ZSchema[T]): Unit < AIs =
+      update(_.thought(Thoughts.initCheck[T](desc)(f)))
+
     def ask(msg: String): String < AIs =
       userMessage(msg).andThen(ask)
 
-    def ask: String < AIs = {
-      def eval(agents: Set[Agent]): String < AIs =
-        fetch(agents).map { r =>
-          r.calls match {
-            case Nil =>
-              r.content
-            case calls =>
-              Agents.handle(this, agents, calls)
-                .andThen {
-                  Listeners.observe("Processing results") {
-                    eval(agents)
+    def ask: String < AIs =
+      save.map { ctx =>
+        def eval(agents: Set[Agent]): String < AIs =
+          fetch(ctx, agents).map { r =>
+            r.calls match {
+              case Nil =>
+                r.content
+              case calls =>
+                Agents.handle(this, agents, calls)
+                  .andThen {
+                    Listeners.observe("Processing results") {
+                      eval(agents)
+                    }
                   }
-                }
+            }
           }
-        }
-      Agents.get.map(eval)
-    }
+        Agents.get.map(eval)
+      }
 
     def gen[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
       userMessage(msg).andThen(gen[T])
 
-    def gen[T](implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs = {
-      Agents.resultAgent[T].map { case (resultAgent, result) =>
-        def eval(): T < AIs =
-          fetch(Set(resultAgent), Some(resultAgent)).map { r =>
-            Agents.handle(this, Set(resultAgent), r.calls).andThen {
-              result.map {
-                case Some(v) =>
-                  v
-                case None =>
-                  Listeners.observe("Processing results") {
-                    eval()
-                  }
+    def gen[T](implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
+      save.map { ctx =>
+        Agents.resultAgent[T].map { case (resultAgent, result) =>
+          def eval(): T < AIs =
+            fetch(ctx, Set(resultAgent), Some(resultAgent)).map { r =>
+              Agents.handle(this, Set(resultAgent), r.calls).andThen {
+                result.map {
+                  case Some(v) =>
+                    v
+                  case None =>
+                    Listeners.observe("Processing results") {
+                      eval()
+                    }
+                }
               }
             }
-          }
-        eval()
+          eval()
+        }
       }
-    }
 
     def infer[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
       userMessage(msg).andThen(infer[T])
 
-    def infer[T](implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs = {
-      Agents.resultAgent[T].map { case (resultAgent, result) =>
-        def eval(agents: Set[Agent], constrain: Option[Agent] = None): T < AIs =
-          fetch(agents, constrain).map { r =>
-            r.calls match {
-              case Nil =>
-                eval(agents, Some(resultAgent))
-              case calls =>
-                Agents.handle(this, agents, calls).andThen {
-                  result.map {
-                    case None =>
-                      Listeners.observe("Processing results") {
-                        eval(agents)
-                      }
-                    case Some(v) =>
-                      v
+    def infer[T](implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
+      save.map { ctx =>
+        Agents.resultAgent[T].map { case (resultAgent, result) =>
+          def eval(agents: Set[Agent], constrain: Option[Agent] = None): T < AIs =
+            fetch(ctx, agents, constrain).map { r =>
+              r.calls match {
+                case Nil =>
+                  eval(agents, Some(resultAgent))
+                case calls =>
+                  Agents.handle(this, agents, calls).andThen {
+                    result.map {
+                      case None =>
+                        Listeners.observe("Processing results") {
+                          eval(agents)
+                        }
+                      case Some(v) =>
+                        v
+                    }
                   }
-                }
+              }
             }
-          }
-        Agents.get.map(p => eval(p + resultAgent))
+          Agents.get.map(p => eval(p + resultAgent))
+        }
       }
-    }
 
     private def fetch(
+        ctx: Context,
         agents: Set[Agent],
         constrain: Option[Agent] = None
     ): Completions.Result < AIs =
       for {
-        ctx <- save
-        r   <- Completions(ctx, agents, constrain)
-        _   <- assistantMessage(r.content, r.calls)
+        r <- Completions(ctx, agents, constrain)
+        _ <- assistantMessage(r.content, r.calls)
       } yield r
   }
 
@@ -195,6 +209,9 @@ object ais {
 
     def ask(msg: String): String < AIs =
       init.map(_.ask(msg))
+
+    def gen[T](implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
+      init.map(_.gen[T])
 
     def gen[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
       init.map(_.gen[T](msg))

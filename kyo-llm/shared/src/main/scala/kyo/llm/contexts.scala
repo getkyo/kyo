@@ -4,6 +4,8 @@ import kyo._
 import kyo.aspects._
 import kyo.llm.ais._
 import kyo.llm.embeddings._
+import kyo.llm.thoughts._
+import zio.schema.{Schema => ZSchema}
 
 object contexts {
 
@@ -61,7 +63,8 @@ object contexts {
   case class Context(
       seed: Option[String],
       reminder: Option[String],
-      messages: List[Message]
+      messages: List[Message],
+      thoughts: List[Thought]
   ) {
 
     def seed(seed: String): Context =
@@ -69,6 +72,9 @@ object contexts {
 
     def reminder(reminder: String): Context =
       copy(reminder = Some(reminder))
+
+    def thought(t: Thought): Context =
+      copy(thoughts = thoughts :+ t)
 
     def systemMessage(content: String): Context =
       add(Message.SystemMessage(content))
@@ -119,6 +125,6 @@ object contexts {
   }
 
   object Context {
-    val empty = Context(None, None, Nil)
+    val empty = Context(None, None, Nil, Nil)
   }
 }

@@ -30,7 +30,7 @@ object Schema {
 
   def constDesc: List[(String, Json)] =
     List("description" -> Json.Str(
-        "Note the json schema 'const' definition. It is the only possible value for the field."
+        "Constant field, use the value in 'const'."
     ))
 
   def convert(schema: ZSchema[_]): List[(String, Json)] = {

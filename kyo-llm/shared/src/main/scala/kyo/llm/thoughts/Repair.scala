@@ -1,4 +1,4 @@
-package kyo.llm.thoughts.reasoning
+package kyo.llm.thoughts
 
 import kyo.llm.ais._
 
@@ -11,7 +11,8 @@ import kyo.llm.ais._
     """
 )
 case class Repair(
-    `Identify causes of past failures`: String,
+    `Check for failures from function calls`: String,
+    `Identify causes of the failures`: String,
     `Formulate strategies to prevent future errors`: String,
     `Detail corrective measures for improvement`: String
 )

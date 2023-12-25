@@ -1,4 +1,4 @@
-package kyo.llm.thoughts.meta
+package kyo.llm.thoughts
 
 import kyo.llm.ais._
 
@@ -6,9 +6,9 @@ object Chain {
 
   val chainDesc =
     p"""
-      The Chain thought enable sequential linking of multiple reasoning processes.
-      - Facilitates the flow of reasoning from one thought to another.
+      The Chain thought enables sequential linking of multiple reasoning processes.
       - Ensures coherence and logical progression in the reasoning chain.
+      - On each thought, consider the previous ones in the chain.
     """
 }
 import Chain._
