@@ -28,49 +28,59 @@ object Schema {
         "description" -> Json.Str(v)
     }.distinct.toList
 
-  def constDesc: List[(String, Json)] =
-    List("description" -> Json.Str(
-        "Constant field, use the value in 'const'."
-    ))
-
   def convert(schema: ZSchema[_]): List[(String, Json)] = {
     def desc = this.desc(schema.annotations)
     schema match {
 
       case ZSchema.Primitive(StandardType.StringType, Chunk(Const(v))) =>
-        constDesc ++ List("type" -> Json.Str("string"), "const" -> Json.Str(v.asInstanceOf[String]))
+        desc ++ List(
+            "type" -> Json.Str("string"),
+            "enum" -> Json.Arr(Json.Str(v.asInstanceOf[String]))
+        )
 
       case ZSchema.Primitive(StandardType.StringType, _) =>
         desc ++ List("type" -> Json.Str("string"))
 
       case ZSchema.Primitive(StandardType.IntType, Chunk(Const(v))) =>
-        constDesc ++ List("type" -> Json.Str("integer"), "const" -> Json.Num(v.asInstanceOf[Int]))
+        desc ++ List(
+            "type" -> Json.Str("integer"),
+            "enum" -> Json.Arr(Json.Num(v.asInstanceOf[Int]))
+        )
 
       case ZSchema.Primitive(StandardType.IntType, _) =>
         desc ++ List("type" -> Json.Str("integer"), "format" -> Json.Str("int32"))
 
       case ZSchema.Primitive(StandardType.LongType, Chunk(Const(v))) =>
-        constDesc ++ List("type" -> Json.Str("integer"), "const" -> Json.Num(v.asInstanceOf[Long]))
+        desc ++ List(
+            "type" -> Json.Str("integer"),
+            "enum" -> Json.Arr(Json.Num(v.asInstanceOf[Long]))
+        )
 
       case ZSchema.Primitive(StandardType.LongType, _) =>
         desc ++ List("type" -> Json.Str("integer"), "format" -> Json.Str("int64"))
 
       case ZSchema.Primitive(StandardType.DoubleType, Chunk(Const(v))) =>
-        constDesc ++ List("type" -> Json.Str("number"), "const" -> Json.Num(v.asInstanceOf[Double]))
+        desc ++ List(
+            "type" -> Json.Str("number"),
+            "enum" -> Json.Arr(Json.Num(v.asInstanceOf[Double]))
+        )
 
       case ZSchema.Primitive(StandardType.DoubleType, _) =>
         desc ++ List("type" -> Json.Str("number"))
 
       case ZSchema.Primitive(StandardType.FloatType, Chunk(Const(v))) =>
-        constDesc ++ List("type" -> Json.Str("number"), "const" -> Json.Num(v.asInstanceOf[Float]))
+        desc ++ List(
+            "type" -> Json.Str("number"),
+            "enum" -> Json.Arr(Json.Num(v.asInstanceOf[Float]))
+        )
 
       case ZSchema.Primitive(StandardType.FloatType, _) =>
         desc ++ List("type" -> Json.Str("number"), "format" -> Json.Str("float"))
 
       case ZSchema.Primitive(StandardType.BoolType, Chunk(Const(v))) =>
-        constDesc ++ List(
-            "type"  -> Json.Str("boolean"),
-            "const" -> Json.Bool(v.asInstanceOf[Boolean])
+        desc ++ List(
+            "type" -> Json.Str("boolean"),
+            "enum" -> Json.Arr(Json.Bool(v.asInstanceOf[Boolean]))
         )
 
       case ZSchema.Primitive(StandardType.BoolType, _) =>

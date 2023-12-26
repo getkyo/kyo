@@ -102,11 +102,13 @@ package object agents {
         """
     )
     case class Request[Opening, T, Closing](
-        @desc("A short text to provide a status update to the user.")
+        // @desc("A short text to provide a status update to the user.")
         actionNarrationToBeShownToTheUser: String,
         openingThoughts: Request.OpeningThoughts[Opening],
-        `agentInput must be complete, it's only thing the user will see`: Boolean,
-        @desc("String fields are text, not json. Change the tone as if you're addressing the user. Analyze and leverage the thoughts so far.")
+        `List opening thoughts`: String,
+        `Strategy to adhere to all opening thoughts`: String,
+        `agentInput must be not empty and complete, it's only thing the user will see`: Boolean,
+        // @desc("Do not skip! String fields are text, not json. Change the tone as if you're addressing the user. Analyze and leverage the thoughts so far.")
         agentInput: T,
         closingThoughts: Request.ClosingThoughts[Closing]
     )
@@ -115,20 +117,18 @@ package object agents {
       case class OpeningThoughts[T](
           strictlyFollowTheJsonSchema: Boolean,
           `Even when the the field name is a text like here`: Boolean,
-          @desc("Make sure to generate all required fields by the json schema.")
+          // @desc("Make sure to generate all required fields by the json schema.")
           `I understand text field names function as an inner-dialog reasoning mechanism`: Boolean,
           additionalOpeningThoughts: T,
-          `Elaborate on how I can use the opening thoughts`: String,
           `Do not output json in string fields`: Boolean,
-          `Now I'll proceed to generate a complete function call input`: Boolean,
-          `Opening thoughts finalized`: Boolean,
-          `I'll change the tone as if I'm addressing the user`: Boolean
+          `I'll change the tone as if I'm addressing the user`: Boolean,
+          `Next json schema fields to generate, which include agentInput`: String
       )
       case class ClosingThoughts[T](
           `The opening thoughts were considered`: Boolean,
           `The input is complete and follows the json schema`: Boolean,
           additionalClosingThoughts: T,
-          @desc("There's a common issue where you output many new line characters after the json.")
+          // @desc("There's a common issue where you output many new line characters after the json.")
           `I will not generate a sequence of several new line charaters`: Boolean
       )
     }
