@@ -8,6 +8,7 @@ import zio.Chunk
 
 trait Json[T] {
   def schema: Schema
+  def zSchema: ZSchema[T]
   def encode(v: T): String < IOs
   def decode(s: String): T < IOs
 }
@@ -28,6 +29,7 @@ object Json extends JsonDerive {
 
   def fromZio[T](z: ZSchema[T]) =
     new Json[T] {
+      val zSchema = z
       lazy val schema: Schema  = Schema(z)
       private lazy val decoder = JsonCodec.jsonDecoder(z)
       private lazy val encoder = JsonCodec.jsonEncoder(z)

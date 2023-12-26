@@ -9,13 +9,21 @@ import kyo.llm.ais._
 import scala.util._
 import kyo.llm.contexts._
 import kyo.concurrent.atomics._
-import zio.schema.Schema
+import zio.schema.{Schema => ZSchema}
 import zio.schema.codec.JsonCodec
 import scala.annotation.implicitNotFound
 import kyo.llm.listeners.Listeners
 import thoughts.Repair
+import kyo.llm.thoughts.Thought
+import kyo.llm.json.Schema
+import zio.schema.TypeId
+import zio.schema.FieldSet
+import zio.schema.Schema.Field
+import zio.Chunk
+import zio.schema.validation.Validation
+import scala.collection.immutable.ListMap
 
-package object agents {
+package object agents { 
 
   abstract class Agent {
 
@@ -26,11 +34,13 @@ package object agents {
         name: String,
         description: String
     )(implicit
-        val input: Json[Agents.Request[In]],
+        val input: Json[In],
         val output: Json[Out]
     )
 
-    val info: Info
+    def info: Info
+
+    def thoughts: List[Thought.Info] = Nil
 
     private val local = Locals.init(Option.empty[AI])
 
@@ -47,13 +57,34 @@ package object agents {
         case None     => AIs.init
       }
 
+    private[kyo] def request: Schema = {
+      def schema[T](name: String, l: List[Thought.Info]): ZSchema[T] = {
+        val fields = l.map { t =>
+          import zio.schema.Schema._
+          Field[ListMap[String, Any], Any](
+            t.name, 
+            t.zSchema.asInstanceOf[ZSchema[Any]], 
+            Chunk.empty, 
+            Validation.succeed, 
+            identity, 
+            (_, _) => ListMap.empty)
+        }
+        ZSchema.record(TypeId.fromTypeName(name), FieldSet(fields:_*)).asInstanceOf[ZSchema[T]]
+      }
+      val (opening, closing) = thoughts.partition(_.opening)
+      implicit val o: ZSchema[opening.type] = schema("OpeningThoughts", opening)
+      implicit val c: ZSchema[closing.type] = schema("ClosingThoughts", closing)
+      implicit val i: ZSchema[In] = info.input.zSchema
+      Json.schema[Agents.Request[opening.type, In, closing.type]]
+    }
+
     private[kyo] def handle(ai: AI, v: String): String < AIs =
-      info.input.decode(v).map { req =>
-        Listeners.observe(req.actionNarrationToBeShownToTheUser) {
-          run(ai, req.inputOfTheFunctionCall).map(info.output.encode)
+      implicit def s: ZSchema[In] = info.input.zSchema
+      Json.decode[Agents.RequestPayload[In]](v).map { res =>
+        Listeners.observe(res.actionNarrationToBeShownToTheUser) {
+          run(ai, res.agentInput).map(info.output.encode)
         }
       }
-
   }
 
   object Agents {
@@ -61,27 +92,50 @@ package object agents {
 
     @desc(
         p"""
-        1. This function call is a mechanism that mixes an inner-dialog mechanism
-           to enhance the quality of the generated json.
-        2. If you encounter field names with text instead of regular identifiers,
-           they're meant as thoughts in an inner-dialog mechanism. Leverage them 
-           to enhance your generation.
-        3. Thought fields with text identifiers aren't free text, strictly follow
-           the provided json schema.
-      """
+          1. This function call is a mechanism that mixes an inner-dialog mechanism
+             to enhance the quality of the generated data.
+          2. If you encounter field names with text instead of regular identifiers,
+             they're meant as thoughts in an inner-dialog mechanism. Leverage them 
+             to enhance your generation.
+          3. Thought fields with text identifiers aren't free text, strictly follow
+             the provided json schema.
+        """
     )
-    case class Request[T](
+    case class Request[Opening, T, Closing](
         @desc("A short text to provide a status update to the user.")
         actionNarrationToBeShownToTheUser: String,
-        strictlyFollowTheJsonSchema: Boolean,
-        `Even when the the field name is a text like here`: Boolean,
-        @desc("Make sure to generate all required fields by the json schema.")
-        `I understand text field names function as an inner-dialog reasoning mechanism`: Boolean,
-        `Now I'll proceed to generate a complete function call input`: Boolean,
-        inputOfTheFunctionCall: T,
-        `The input is complete and follows the json schema`: Boolean,
-        @desc("There's a common issue where you output many new line characters after the json.")
-        `I will not generate a sequence of several new line charaters`: Boolean
+        openingThoughts: Request.OpeningThoughts[Opening],
+        `agentInput must be complete, it's only thing the user will see`: Boolean,
+        @desc("String fields are text, not json. Change the tone as if you're addressing the user. Analyze and leverage the thoughts so far.")
+        agentInput: T,
+        closingThoughts: Request.ClosingThoughts[Closing]
+    )
+
+    object Request {
+      case class OpeningThoughts[T](
+          strictlyFollowTheJsonSchema: Boolean,
+          `Even when the the field name is a text like here`: Boolean,
+          @desc("Make sure to generate all required fields by the json schema.")
+          `I understand text field names function as an inner-dialog reasoning mechanism`: Boolean,
+          additionalOpeningThoughts: T,
+          `Elaborate on how I can use the opening thoughts`: String,
+          `Do not output json in string fields`: Boolean,
+          `Now I'll proceed to generate a complete function call input`: Boolean,
+          `Opening thoughts finalized`: Boolean,
+          `I'll change the tone as if I'm addressing the user`: Boolean
+      )
+      case class ClosingThoughts[T](
+          `The opening thoughts were considered`: Boolean,
+          `The input is complete and follows the json schema`: Boolean,
+          additionalClosingThoughts: T,
+          @desc("There's a common issue where you output many new line characters after the json.")
+          `I will not generate a sequence of several new line charaters`: Boolean
+      )
+    }
+
+    case class RequestPayload[T](
+        actionNarrationToBeShownToTheUser: String,
+        agentInput: T
     )
 
     def get: Set[Agent] < AIs = local.get
@@ -97,8 +151,8 @@ package object agents {
     def disable[T, S](f: T < S): T < (AIs with S) =
       local.let(Set.empty)(f)
 
-    private[kyo] def resultAgent[T](
-        implicit t: Json[Request[T]]
+    private[kyo] def resultAgent[T](_thoughts: List[Thought.Info])(
+        implicit t: Json[T]
     ): (Agent, Option[T] < AIs) < AIs =
       Atomics.initRef(Option.empty[T]).map { ref =>
         val agent =
@@ -110,6 +164,9 @@ package object agents {
                 "resultAgent",
                 "Call this agent with the result."
             )
+
+            override def thoughts: List[Thought.Info] = 
+              _thoughts
 
             def run(input: T) =
               ref.set(Some(input)).andThen("Result processed.")

@@ -16,4 +16,4 @@ case class Contextualize(
     `Assess how the current input relates to previous discussions or knowledge`: String,
     `Identify the broader context or background relevant to the input`: String,
     `Identify any ambiguous or unclear aspects that need further clarification`: String
-)
+) extends Thought.Opening

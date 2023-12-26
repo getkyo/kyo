@@ -7,14 +7,14 @@
 //   import exprs._
 
 //   "small exprs" - {
-//     // "baseline" - {
-//     //   "boolean" in {
-//     //     test["reduce expression", Boolean](BooleanTask(5), 0.9)
-//     //   }
-//     //   "math" in {
-//     //     test["reduce expression", Int](MathTask(5), 0.9)
-//     //   }
-//     // }
+//     "baseline" - {
+//       "boolean" in {
+//         test["reduce expression", Boolean](BooleanTask(5), 0.9)
+//       }
+//       // "math" in {
+//       //   test["reduce expression", Int](MathTask(5), 0.9)
+//       // }
+//     }
 //     // "reduction" - {
 //     //   "boolean" in {
 //     //     test[Reduction[String, Boolean], Boolean](BooleanTask(5), 0.5)
@@ -31,14 +31,14 @@
 //     //     test[Refine[Reduction[String, Boolean]], Int](MathTask(5), 1)
 //     //   }
 //     // }
-//     "reduction + refine" - {
-//       "boolean" in {
-//         test[Refine[Reduction[String, Boolean]], Boolean](BooleanTask(5), 1)
-//       }
-//       "math" in {
-//         test[Refine[Reduction[String, Boolean]], Int](MathTask(5), 1)
-//       }
-//     }
+//     // "reduction + refine" - {
+//     //   "boolean" in {
+//     //     test[Refine[Reduction[String, Boolean]], Boolean](BooleanTask(5), 1)
+//     //   }
+//     //   "math" in {
+//     //     test[Refine[Reduction[String, Boolean]], Int](MathTask(5), 1)
+//     //   }
+//     // }
 //   }
 
 //   // "large exprs" - {

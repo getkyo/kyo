@@ -12,4 +12,4 @@ case class Refine[T](
     `Aspects to double check for mistakes`: List[String],
     `Elaborate on how to fix mistakes`: String,
     finalCorrectSolution: T
-)
+) extends Thought.Opening

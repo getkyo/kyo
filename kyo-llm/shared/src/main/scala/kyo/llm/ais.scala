@@ -23,6 +23,7 @@ import scala.util.Success
 import scala.util.control.NoStackTrace
 import kyo.consoles.Consoles
 import kyo.llm.listeners.Listeners
+import scala.reflect.ClassTag
 
 object ais {
 
@@ -88,14 +89,8 @@ object ais {
     def agentMessage(callId: CallId, msg: String): Unit < AIs =
       update(_.agentMessage(callId, msg))
 
-    def addThought[T](implicit s: ZSchema[T]): Unit < AIs =
-      update(_.thought(Thoughts.init[T]))
-
-    def addCheck(desc: String): Unit < AIs =
-      update(_.thought(Thoughts.initCheck(desc)))
-
-    def addCheck[T](desc: String)(f: T => Boolean)(implicit s: ZSchema[T]): Unit < AIs =
-      update(_.thought(Thoughts.initCheck[T](desc)(f)))
+    def thought[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Unit < AIs =
+      update(_.thought(Thought.info[T]))
 
     def ask(msg: String): String < AIs =
       userMessage(msg).andThen(ask)
@@ -119,12 +114,12 @@ object ais {
         Agents.get.map(eval)
       }
 
-    def gen[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
+    def gen[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
       userMessage(msg).andThen(gen[T])
 
-    def gen[T](implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
+    def gen[T](implicit t: Json[T], f: Flat[T]): T < AIs =
       save.map { ctx =>
-        Agents.resultAgent[T].map { case (resultAgent, result) =>
+        Agents.resultAgent[T](ctx.thoughts).map { case (resultAgent, result) =>
           def eval(): T < AIs =
             fetch(ctx, Set(resultAgent), Some(resultAgent)).map { r =>
               Agents.handle(this, Set(resultAgent), r.calls).andThen {
@@ -142,12 +137,12 @@ object ais {
         }
       }
 
-    def infer[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
+    def infer[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
       userMessage(msg).andThen(infer[T])
 
-    def infer[T](implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
+    def infer[T](implicit t: Json[T], f: Flat[T]): T < AIs =
       save.map { ctx =>
-        Agents.resultAgent[T].map { case (resultAgent, result) =>
+        Agents.resultAgent[T](ctx.thoughts).map { case (resultAgent, result) =>
           def eval(agents: Set[Agent], constrain: Option[Agent] = None): T < AIs =
             fetch(ctx, agents, constrain).map { r =>
               r.calls match {
@@ -210,13 +205,13 @@ object ais {
     def ask(msg: String): String < AIs =
       init.map(_.ask(msg))
 
-    def gen[T](implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
+    def gen[T](implicit t: Json[T], f: Flat[T]): T < AIs =
       init.map(_.gen[T])
 
-    def gen[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
+    def gen[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
       init.map(_.gen[T](msg))
 
-    def infer[T](msg: String)(implicit t: Json[Agents.Request[T]], f: Flat[T]): T < AIs =
+    def infer[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
       init.map(_.infer[T](msg))
 
     def ask(seed: String, msg: String): String < AIs =
@@ -224,14 +219,14 @@ object ais {
 
     def gen[T](seed: String, msg: String)(
         implicit
-        t: Json[Agents.Request[T]],
+        t: Json[T],
         f: Flat[T]
     ): T < AIs =
       init(seed).map(_.gen[T](msg))
 
     def infer[T](seed: String, msg: String)(
         implicit
-        t: Json[Agents.Request[T]],
+        t: Json[T],
         f: Flat[T]
     ): T < AIs =
       init(seed).map(_.infer[T](msg))
@@ -241,14 +236,14 @@ object ais {
 
     def gen[T](seed: String, reminder: String, msg: String)(
         implicit
-        t: Json[Agents.Request[T]],
+        t: Json[T],
         f: Flat[T]
     ): T < AIs =
       init(seed, reminder).map(_.gen[T](msg))
 
     def infer[T](seed: String, reminder: String, msg: String)(
         implicit
-        t: Json[Agents.Request[T]],
+        t: Json[T],
         f: Flat[T]
     ): T < AIs =
       init(seed, reminder).map(_.infer[T](msg))
