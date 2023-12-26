@@ -92,28 +92,6 @@ object ais {
     def thought[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Unit < AIs =
       update(_.thought(Thought.info[T]))
 
-    def ask(msg: String): String < AIs =
-      userMessage(msg).andThen(ask)
-
-    def ask: String < AIs =
-      save.map { ctx =>
-        def eval(agents: Set[Agent]): String < AIs =
-          fetch(ctx, agents).map { r =>
-            r.calls match {
-              case Nil =>
-                r.content
-              case calls =>
-                Agents.handle(this, agents, calls)
-                  .andThen {
-                    Listeners.observe("Processing results") {
-                      eval(agents)
-                    }
-                  }
-            }
-          }
-        Agents.get.map(eval)
-      }
-
     def gen[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
       userMessage(msg).andThen(gen[T])
 
@@ -202,9 +180,6 @@ object ais {
     def run[T, S](v: T < (AIs with S))(implicit f: Flat[T < AIs with S]): T < (Requests with S) =
       State.run[T, Requests with S](v).map(_._1)
 
-    def ask(msg: String): String < AIs =
-      init.map(_.ask(msg))
-
     def gen[T](implicit t: Json[T], f: Flat[T]): T < AIs =
       init.map(_.gen[T])
 
@@ -213,9 +188,6 @@ object ais {
 
     def infer[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
       init.map(_.infer[T](msg))
-
-    def ask(seed: String, msg: String): String < AIs =
-      init(seed).map(_.ask(msg))
 
     def gen[T](seed: String, msg: String)(
         implicit
@@ -230,9 +202,6 @@ object ais {
         f: Flat[T]
     ): T < AIs =
       init(seed).map(_.infer[T](msg))
-
-    def ask(seed: String, reminder: String, msg: String): String < AIs =
-      init(seed, reminder).map(_.ask(msg))
 
     def gen[T](seed: String, reminder: String, msg: String)(
         implicit

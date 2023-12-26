@@ -53,7 +53,7 @@ object Vision extends Agent {
                 Question: ${input.question}
               """,
                 s"data:image/jpeg;base64,$payload" :: Nil
-            ).andThen(ai.ask)
+            ).andThen(ai.gen[String])
           }
         }
       }
