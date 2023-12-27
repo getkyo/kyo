@@ -101,6 +101,7 @@ package object agents {
              to enhance your generation.
           3. Thought fields with text identifiers aren't free text, strictly follow
              the provided json schema.
+          4. Do not create fields not present in the json schema, including thoughts.
         """
     )
     case class Request[Opening, T, Closing](
@@ -112,6 +113,7 @@ package object agents {
         `I'll change the tone as if I'm addressing the user`: true,
         `I won't have another oportunity to elaborate further`: true,
         `agentInput is the only field visible to the user`: true,
+        @desc("Generate a complete input, do not end with an indication that you'll do something.")
         agentInput: T,
         `agentInput is complete, elaborate, and fully satisfies the user's resquest`: true,
         closingThoughts: Closing,

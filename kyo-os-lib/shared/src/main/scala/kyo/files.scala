@@ -13,7 +13,7 @@ object files {
 
     def parts: List[Part] = path
 
-    def osPath = path.foldLeft(os.pwd)(_ / _)
+    def osPath = path.foldLeft(os.root)(_ / _)
 
     def read: String < IOs =
       IOs(os.read(osPath))
@@ -129,7 +129,7 @@ object files {
           case h :: t =>
             h match {
               case h: String =>
-                loop(t, h.split('/').toList.reverse ::: acc)
+                loop(t, h.split('/').filter(_.nonEmpty).toList.reverse ::: acc)
               case h: Files =>
                 loop(h.path ::: t, acc)
             }

@@ -1,4 +1,4 @@
-package kyo.llm.thoughts.old.reasoning
+package kyo.llm.thoughts
 
 import kyo.llm.ais._
 
