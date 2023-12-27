@@ -1083,7 +1083,7 @@ val i: Fiber[Int] < IOs =
 Similarly to `IOs`, users should avoid handling the `Fibers` effect directly and rely on `KyoApp` instead. If strictly necessary, there are two methods to handle the `Fibers` effect:
 
 1. `run` takes a computation that has only the `Fibers` effect pending and returns a `Fiber` instance without blocking threads.
-2. `runBlocking` accepts computations with arbitrary pending effects but it handles asynchronous operations by blocking the current thread.
+2. `runAndBlock` accepts computations with arbitrary pending effects but it handles asynchronous operations by blocking the current thread.
 
 ```scala
 // An example computation with fibers
@@ -1096,11 +1096,11 @@ val a: Int < Fibers =
 val b: Fiber[Int] < IOs =
   Fibers.run(IOs.runLazy(a))
 
-// The 'runBlocking' method accepts
+// The 'runAndBlock' method accepts
 // arbitrary pending effects but relies
 // on thread blocking.
 val c: Int < IOs =
-  Fibers.runBlocking(a)
+  Fibers.runAndBlock(a)
 ```
 
 > Note: Handling the `Fibers` effect doesn't break referential transparency as with `IOs` but its usage is not trivial due to the limitations of the pending effects, especially `IOs`. Prefer `KyoApp` instead.

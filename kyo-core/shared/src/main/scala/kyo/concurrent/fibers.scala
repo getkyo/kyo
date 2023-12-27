@@ -180,7 +180,7 @@ object fibers {
     def runBlocking[T, S](v: T < (Fibers with S))(implicit
         f: Flat[T < (Fibers with S)]
     ): T < (IOs with S) =
-      FiberGets.runBlocking[T, S](v)
+      FiberGets.runAndBlock[T, S](v)
 
     def value[T](v: T)(implicit f: Flat[T < Any]): Fiber[T] =
       Fiber.done(v)
@@ -353,7 +353,7 @@ object fibers {
         IOs(deepHandle[Fiber, FiberGets, T](FiberGets)(IOs.runLazy(v)))
       }
 
-      def runBlocking[T, S](v: T < (Fibers with S))(implicit
+      def runAndBlock[T, S](v: T < (Fibers with S))(implicit
           f: Flat[T < (Fibers with S)]
       ): T < (IOs with S) = {
         implicit def handler: Handler[Fiber, FiberGets, Any] =
