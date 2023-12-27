@@ -62,7 +62,7 @@ object configs {
           apiKey,
           apiOrg,
           Model.gpt4_turbo,
-          0.2,
+          0.7,
           None,
           None,
           Meters.initNoop,

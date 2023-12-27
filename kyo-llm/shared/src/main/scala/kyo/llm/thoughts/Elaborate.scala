@@ -2,10 +2,8 @@ package kyo.llm.thoughts
 
 import kyo.llm.ais._
 
-@desc(
-    "All text and any other field from this point on must be complete and with **as much detail as possible**. Perfer long texts."
-)
 case class Elaborate(
-    `I'll generate a json that is complete and as detailed as possible`: Boolean,
-    `Stragegy to generate a complete and well elaborated output`: String
+    `Generate a json that is complete and as detailed as possible`: true,
+    `Strategy to elaborate outputs and generate long texts`: String,
+    `I'll elaborate the outputs and use bulleted lists if appropiate`: true
 ) extends Thought.Opening

@@ -23,7 +23,7 @@ import zio.Chunk
 import zio.schema.validation.Validation
 import scala.collection.immutable.ListMap
 
-package object agents { 
+package object agents {
 
   abstract class Agent {
 
@@ -62,29 +62,31 @@ package object agents {
         val fields = l.map { t =>
           import zio.schema.Schema._
           Field[ListMap[String, Any], Any](
-            t.name, 
-            t.zSchema.asInstanceOf[ZSchema[Any]], 
-            Chunk.empty, 
-            Validation.succeed, 
-            identity, 
-            (_, _) => ListMap.empty)
+              t.name,
+              t.zSchema.asInstanceOf[ZSchema[Any]],
+              Chunk.empty,
+              Validation.succeed,
+              identity,
+              (_, _) => ListMap.empty
+          )
         }
-        ZSchema.record(TypeId.fromTypeName(name), FieldSet(fields:_*)).asInstanceOf[ZSchema[T]]
+        ZSchema.record(TypeId.fromTypeName(name), FieldSet(fields: _*)).asInstanceOf[ZSchema[T]]
       }
-      val (opening, closing) = thoughts.partition(_.opening)
+      val (opening, closing)                = thoughts.partition(_.opening)
       implicit val o: ZSchema[opening.type] = schema("OpeningThoughts", opening)
       implicit val c: ZSchema[closing.type] = schema("ClosingThoughts", closing)
-      implicit val i: ZSchema[In] = info.input.zSchema
+      implicit val i: ZSchema[In]           = info.input.zSchema
       Json.schema[Agents.Request[opening.type, In, closing.type]]
     }
 
-    private[kyo] def handle(ai: AI, v: String): String < AIs =
+    private[kyo] def handle(ai: AI, v: String): String < AIs = {
       implicit def s: ZSchema[In] = info.input.zSchema
       Json.decode[Agents.RequestPayload[In]](v).map { res =>
-        Listeners.observe(res.actionNarrationToBeShownToTheUser) {
+        Listeners.observe(res.shortActionNarrationToBeShownToTheUser) {
           run(ai, res.agentInput).map(info.output.encode)
         }
       }
+    }
   }
 
   object Agents {
@@ -102,39 +104,23 @@ package object agents {
         """
     )
     case class Request[Opening, T, Closing](
-        // @desc("A short text to provide a status update to the user.")
-        actionNarrationToBeShownToTheUser: String,
-        openingThoughts: Request.OpeningThoughts[Opening],
-        `List opening thoughts`: String,
-        `Strategy to adhere to all opening thoughts`: String,
-        `agentInput must be not empty and complete, it's only thing the user will see`: Boolean,
-        // @desc("Do not skip! String fields are text, not json. Change the tone as if you're addressing the user. Analyze and leverage the thoughts so far.")
+        strictlyFollowTheJsonSchema: true,
+        `Even when the the field name is a text like here`: true,
+        `Text field names function as an inner-dialog reasoning mechanism`: true,
+        openingThoughts: Opening,
+        `Summary of all opening thoughts`: String,
+        `I'll change the tone as if I'm addressing the user`: true,
+        `I won't have another oportunity to elaborate further`: true,
+        `agentInput is the only field visible to the user`: true,
         agentInput: T,
-        closingThoughts: Request.ClosingThoughts[Closing]
+        `agentInput is complete, elaborate, and fully satisfies the user's resquest`: true,
+        closingThoughts: Closing,
+        shortActionNarrationToBeShownToTheUser: String,
+        `I will not generate a sequence of several spaces or new line charaters`: true
     )
 
-    object Request {
-      case class OpeningThoughts[T](
-          strictlyFollowTheJsonSchema: Boolean,
-          `Even when the the field name is a text like here`: Boolean,
-          // @desc("Make sure to generate all required fields by the json schema.")
-          `I understand text field names function as an inner-dialog reasoning mechanism`: Boolean,
-          additionalOpeningThoughts: T,
-          `Do not output json in string fields`: Boolean,
-          `I'll change the tone as if I'm addressing the user`: Boolean,
-          `Next json schema fields to generate, which include agentInput`: String
-      )
-      case class ClosingThoughts[T](
-          `The opening thoughts were considered`: Boolean,
-          `The input is complete and follows the json schema`: Boolean,
-          additionalClosingThoughts: T,
-          // @desc("There's a common issue where you output many new line characters after the json.")
-          `I will not generate a sequence of several new line charaters`: Boolean
-      )
-    }
-
     case class RequestPayload[T](
-        actionNarrationToBeShownToTheUser: String,
+        shortActionNarrationToBeShownToTheUser: String,
         agentInput: T
     )
 
@@ -165,7 +151,7 @@ package object agents {
                 "Call this agent with the result."
             )
 
-            override def thoughts: List[Thought.Info] = 
+            override def thoughts: List[Thought.Info] =
               _thoughts
 
             def run(input: T) =
