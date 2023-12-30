@@ -15,7 +15,7 @@ case class Reduce[Expr, Result](
     completeStepByStepReduce: List[ReduceStep[Expr]],
     fullyReducedResult: Result,
     `Reduce steps and result are not empty`: Boolean
-) extends Thought.Opening
+) extends Thought
 
 case class ReduceStep[Expr](
     ruleDescription: String,
@@ -23,4 +23,4 @@ case class ReduceStep[Expr](
     `Description of inputExpression`: String,
     `Method to apply rule`: String,
     outputExpression: Expr
-) extends Thought.Opening
+)

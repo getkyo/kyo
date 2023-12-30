@@ -4,29 +4,35 @@ import kyo._
 import kyo.llm.ais._
 import zio.schema.{Schema => ZSchema}
 import scala.reflect.ClassTag
+import kyo.concurrent.fibers.Fibers
+import kyo.stats.Stats
 
-sealed abstract class Thought {
+abstract class Thought {
   self: Product =>
 
-  class Check(
-      name: String,
-      description: String,
-      f: () => Boolean < AIs
-  )
-
-  object Check {
-    def apply(name: String, description: String = "")(f: => Boolean < AIs): Check =
-      new Check(name, description, () => f)
+  final def handle(path: List[String], ai: AI): Unit < AIs = {
+    val npath = productPrefix :: path
+    val thoughts =
+      eval(npath, ai).andThen {
+        (0 until productArity).flatMap { idx =>
+          productElement(idx) match {
+            case v: Thought =>
+              Some((productElementName(idx), v))
+            case _ =>
+              None
+          }
+        }
+      }
+    AIs.parallelTraverse(thoughts)((f, t) => t.eval(f :: npath, ai)).unit
   }
 
-  def checks: List[Check] = Nil
+  def eval(path: List[String], ai: AI): Unit < AIs = ()
 }
 
 object Thought {
 
-  abstract class Opening extends Thought {
-    self: Product =>
-  }
+  val stats = Stats.initScope("thoughts")
+
   abstract class Closing extends Thought {
     self: Product =>
   }
@@ -42,7 +48,7 @@ object Thought {
     new Info {
       type Thought = T
       val name    = t.runtimeClass.getSimpleName()
-      val opening = classOf[Opening].isAssignableFrom(t.runtimeClass)
+      val opening = !classOf[Closing].isAssignableFrom(t.runtimeClass)
       val zSchema = j.zSchema
     }
 }
