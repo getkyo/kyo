@@ -38,9 +38,9 @@ package object agents {
         val output: Json[Out]
     )
 
-    def info: Info
+    val info: Info
 
-    def thoughts: List[Thought.Info] = Nil
+    val thoughts: List[Thought.Info] = Nil
 
     private val local = Locals.init(Option.empty[AI])
 
@@ -57,7 +57,7 @@ package object agents {
         case None     => AIs.init
       }
 
-    private[kyo] def request: Schema = {
+    private[kyo] val schema: Schema = {
       def schema[T](name: String, l: List[Thought.Info]): ZSchema[T] = {
         val fields = l.map { t =>
           import zio.schema.Schema._
@@ -68,7 +68,7 @@ package object agents {
               Validation.succeed,
               identity,
               (_, _) => ListMap.empty
-          )
+          ) 
         }
         ZSchema.record(TypeId.fromTypeName(name), FieldSet(fields: _*)).asInstanceOf[ZSchema[T]]
       }
@@ -153,7 +153,7 @@ package object agents {
                 "Call this agent with the result."
             )
 
-            override def thoughts: List[Thought.Info] =
+            override val thoughts: List[Thought.Info] =
               _thoughts
 
             def run(input: T) =

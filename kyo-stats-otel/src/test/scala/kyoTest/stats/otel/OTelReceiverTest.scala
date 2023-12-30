@@ -26,9 +26,9 @@ class OTelReceiverTest extends KyoTest {
     for {
       _ <- counter.inc
       _ <- counter.add(1)
-      _ <- counter.add(2, Attributes.of("test", 3))
+      _ <- counter.add(2, Attributes.add("test", 3))
       _ <- histogram.observe(42d)
-      _ <- histogram.observe(24d, Attributes.of("test", 3))
+      _ <- histogram.observe(24d, Attributes.add("test", 3))
     } yield succeed
   }
 

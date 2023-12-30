@@ -10,10 +10,11 @@ import kyo.stats.Stats
 abstract class Thought {
   self: Product =>
 
-  final def handle(path: List[String], ai: AI): Unit < AIs = {
-    val npath = productPrefix :: path
+  def name = productPrefix
+
+  final def handle(parent: Thought, field: String, ai: AI): Unit < AIs = {
     val thoughts =
-      eval(npath, ai).andThen {
+      eval(parent, field, ai).andThen {
         (0 until productArity).flatMap { idx =>
           productElement(idx) match {
             case v: Thought =>
@@ -23,10 +24,11 @@ abstract class Thought {
           }
         }
       }
-    AIs.parallelTraverse(thoughts)((f, t) => t.eval(f :: npath, ai)).unit
+    AIs.parallelTraverse(thoughts)((f, t) => t.eval(self, f, ai)).unit
   }
 
-  def eval(path: List[String], ai: AI): Unit < AIs = ()
+  def eval(parent: Thought, field: String, ai: AI): Unit < AIs = ()
+
 }
 
 object Thought {

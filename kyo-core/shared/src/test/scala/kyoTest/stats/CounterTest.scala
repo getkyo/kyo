@@ -10,7 +10,7 @@ class CounterTest extends KyoTest {
     for {
       _ <- Counter.noop.inc
       _ <- Counter.noop.add(1)
-      _ <- Counter.noop.add(1, Attributes.of("test", 1))
+      _ <- Counter.noop.add(1, Attributes.add("test", 1))
     } yield succeed
   }
 
@@ -20,7 +20,7 @@ class CounterTest extends KyoTest {
     for {
       _ <- counter.inc
       _ <- counter.add(1)
-      _ <- counter.add(1, Attributes.of("test", 1))
+      _ <- counter.add(1, Attributes.add("test", 1))
     } yield assert(unsafe.curr == 3)
   }
 
@@ -39,7 +39,7 @@ class CounterTest extends KyoTest {
       for {
         _ <- counter.inc
         _ <- counter.add(1)
-        _ <- counter.add(1, Attributes.of("test", 1))
+        _ <- counter.add(1, Attributes.add("test", 1))
       } yield {
         assert(unsafe1.curr == 3 && unsafe2.curr == 3)
       }

@@ -173,7 +173,7 @@ object completions {
               ToolDef(FunctionDef(
                   p.info.description,
                   p.info.name,
-                  p.request
+                  p.schema
               ))
             ).toList)
         Request(

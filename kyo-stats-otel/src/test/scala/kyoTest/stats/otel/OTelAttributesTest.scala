@@ -10,15 +10,15 @@ class OTelAttributesTest extends KyoTest {
 
   "test" in {
     val kyoAttrs = Attributes.all(List(
-        Attributes.of("boolAttr", true),
-        Attributes.of("doubleAttr", 2.0),
-        Attributes.of("intAttr", 42),
-        Attributes.of("longAttr", 123L),
-        Attributes.of("stringAttr", "test"),
-        Attributes.of("boolListAttr", List(true, false)),
-        Attributes.of("doubleListAttr", List(1.1, 2.2)),
-        Attributes.of("longListAttr", List(100L, 200L)),
-        Attributes.of("stringListAttr", List("a", "b"))
+        Attributes.add("boolAttr", true),
+        Attributes.add("doubleAttr", 2.0),
+        Attributes.add("intAttr", 42),
+        Attributes.add("longAttr", 123L),
+        Attributes.add("stringAttr", "test"),
+        Attributes.add("boolListAttr", List(true, false)),
+        Attributes.add("doubleListAttr", List(1.1, 2.2)),
+        Attributes.add("longListAttr", List(100L, 200L)),
+        Attributes.add("stringListAttr", List("a", "b"))
     ))
 
     val oTelAttrs = OTelAttributes(kyoAttrs)

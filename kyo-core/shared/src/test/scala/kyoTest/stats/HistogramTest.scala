@@ -9,7 +9,7 @@ class HistogramTest extends KyoTest {
   "noop" in run {
     for {
       _ <- Histogram.noop.observe(1.0)
-      _ <- Histogram.noop.observe(1.0, Attributes.of("test", 1))
+      _ <- Histogram.noop.observe(1.0, Attributes.add("test", 1))
     } yield succeed
   }
 
@@ -18,7 +18,7 @@ class HistogramTest extends KyoTest {
     val histogram = Histogram(unsafe)
     for {
       _ <- histogram.observe(1.0)
-      _ <- histogram.observe(1.0, Attributes.of("test", 1))
+      _ <- histogram.observe(1.0, Attributes.add("test", 1))
     } yield assert(unsafe.observations == 2)
   }
 
@@ -36,7 +36,7 @@ class HistogramTest extends KyoTest {
       val histogram = Histogram.all(List(Histogram(unsafe1), Histogram(unsafe2)))
       for {
         _ <- histogram.observe(1.0)
-        _ <- histogram.observe(1.0, Attributes.of("test", 1))
+        _ <- histogram.observe(1.0, Attributes.add("test", 1))
       } yield {
         assert(unsafe1.observations == 2 && unsafe2.observations == 2)
       }

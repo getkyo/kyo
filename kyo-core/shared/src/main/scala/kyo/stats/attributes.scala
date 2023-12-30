@@ -1,16 +1,19 @@
 package kyo.stats
 
 import scala.annotation.implicitNotFound
+import kyo.stats.Attributes.AsAttribute
 
 case class Attributes(get: List[Attributes.Attribute]) extends AnyVal {
   def add(a: Attributes): Attributes =
     Attributes(get ++ a.get)
+  def add[T](name: String, value: T)(implicit a: AsAttribute[T]): Attributes =
+    add(Attributes.add(name, value))
 }
 
 object Attributes {
   val empty: Attributes = Attributes(Nil)
 
-  def of[T](name: String, value: T)(implicit a: AsAttribute[T]) =
+  def add[T](name: String, value: T)(implicit a: AsAttribute[T]) =
     Attributes(a.f(name, value) :: Nil)
 
   def all(l: List[Attributes]): Attributes =
