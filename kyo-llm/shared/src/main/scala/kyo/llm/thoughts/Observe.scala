@@ -5,10 +5,11 @@ import zio.schema.{Schema => ZSchema}
 import kyo._
 import kyo.ios._
 import kyo.stats._
+import kyo.logs.Logs
 
 object Observe {
 
-  private val stats = Thought.stats.scope("observe")
+  private val stats = Thoughts.stats.scope("observe")
   private val count = stats.initCounter("count")
   private val sum   = stats.initCounter("sum")
   private val hist  = stats.initHistogram("distribution")
@@ -52,5 +53,55 @@ object Observe {
   object Distribution {
     implicit val schema: ZSchema[Distribution] =
       ZSchema.primitive[Double].transform(Distribution(_), _.v)
+  }
+
+  object Log {
+
+    private def log(f: String => Unit < IOs, parent: Thought, field: String, s: String) =
+      if (s.nonEmpty) {
+        f(s"(thought=${parent.name}, field=$field): $s")
+      } else {
+        ()
+      }
+
+    case class Debug(s: String) extends Thought {
+      override def eval(parent: Thought, field: String, ai: AI) =
+        log(Logs.debug, parent, field, s)
+    }
+
+    object Debug {
+      implicit val schema: ZSchema[Debug] =
+        ZSchema.primitive[String].transform(Debug(_), _.s)
+    }
+
+    case class Info(s: String) extends Thought {
+      override def eval(parent: Thought, field: String, ai: AI) =
+        log(Logs.info, parent, field, s)
+    }
+
+    object Info {
+      implicit val schema: ZSchema[Info] =
+        ZSchema.primitive[String].transform(Info(_), _.s)
+    }
+
+    case class Warn(s: String) extends Thought {
+      override def eval(parent: Thought, field: String, ai: AI) =
+        log(Logs.warn, parent, field, s)
+    }
+
+    object Warn {
+      implicit val schema: ZSchema[Warn] =
+        ZSchema.primitive[String].transform(Warn(_), _.s)
+    }
+
+    case class Error(s: String) extends Thought {
+      override def eval(parent: Thought, field: String, ai: AI) =
+        log(Logs.error, parent, field, s)
+    }
+
+    object Error {
+      implicit val schema: ZSchema[Error] =
+        ZSchema.primitive[String].transform(Error(_), _.s)
+    }
   }
 }

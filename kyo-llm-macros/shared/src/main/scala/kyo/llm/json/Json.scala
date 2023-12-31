@@ -15,6 +15,9 @@ trait Json[T] {
 
 object Json extends JsonDerive {
 
+  def apply[T](implicit j: Json[T]): Json[T] =
+    j
+
   def schema[T](implicit j: Json[T]): Schema =
     j.schema
 

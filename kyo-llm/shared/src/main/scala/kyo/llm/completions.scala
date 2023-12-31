@@ -28,7 +28,7 @@ object completions {
 
     def apply(
         ctx: Context,
-        agents: Set[Agent] = Set.empty,
+        agents: List[Agent] = List.empty,
         constrain: Option[Agent] = None
     ): Result < (IOs with Requests) =
       for {
@@ -149,7 +149,7 @@ object completions {
       def apply(
           ctx: Context,
           config: Config,
-          agents: Set[Agent],
+          agents: List[Agent],
           constrain: Option[Agent]
       ): Request = {
         val reminder =
@@ -173,7 +173,7 @@ object completions {
               ToolDef(FunctionDef(
                   p.info.description,
                   p.info.name,
-                  p.schema
+                  p.json.schema
               ))
             ).toList)
         Request(

@@ -9,12 +9,74 @@ import kyo.ios.IOs
 
 object Check {
 
-  private val stats   = Thought.stats.scope("check")
+  private val stats   = Thoughts.stats.scope("check")
   private val success = stats.initCounter("success")
   private val failure = stats.initCounter("failure")
 
-  case class CheckFailed(ai: AI, thought: Thought, invariant: String, analysis: String)
-      extends RuntimeException
+  case class CheckFailed(
+      thought: Thought,
+      field: String,
+      analysis: String
+  ) extends RuntimeException {
+    override def toString =
+      p"""
+        Thought Invariant Failure
+        =========================
+        Thought: ${thought.name}
+        Field: $field
+        Analysis: $analysis
+        **Please take all corrective measures to avoid another failure**
+      """
+  }
+
+  case class Info(
+      `The outer field name is an invariant description`: Boolean,
+      `Analyze if the invariant has been violated`: String,
+      invariantViolated: Boolean
+  ) extends Thought {
+    override def eval(parent: Thought, field: String, ai: AI) =
+      observe(parent, field, !invariantViolated)
+  }
+
+  case class Warn(
+      `The outer field name is an invariant description`: Boolean,
+      `Analyze if the invariant has been violated`: String,
+      invariantViolated: Boolean
+  ) extends Thought {
+    override def eval(parent: Thought, field: String, ai: AI) =
+      observe(parent, field, !invariantViolated).andThen {
+        if (!invariantViolated) {
+          ()
+        } else {
+          ai.systemMessage(
+              CheckFailed(
+                  parent,
+                  field,
+                  `Analyze if the invariant has been violated`
+              ).toString
+          )
+        }
+      }
+  }
+
+  case class Fail(
+      `The outer field name is an invariant description`: Boolean,
+      `Analyze if the invariant has been violated`: String,
+      invariantViolated: Boolean
+  ) extends Thought {
+    override def eval(parent: Thought, field: String, ai: AI) =
+      observe(parent, field, !invariantViolated).andThen {
+        if (!invariantViolated) {
+          ()
+        } else {
+          IOs.fail(CheckFailed(
+              parent,
+              field,
+              `Analyze if the invariant has been violated`
+          ))
+        }
+      }
+  }
 
   private def observe(parent: Thought, field: String, result: Boolean) = {
     val c = if (result) success else failure
@@ -25,97 +87,4 @@ object Check {
     ).inc
   }
 
-  private def warn(
-      ai: AI,
-      parent: Thought,
-      field: String,
-      invariant: String,
-      analysis: String = "Plase reason about the failure and fix any mistakes.",
-      repair: Option[Repair] = None
-  ): Unit < AIs =
-    ai.systemMessage(
-        p"""
-          Thought Invariant Failure
-          =========================
-          Thought: ${parent.name}
-          Field: $field
-          Description: $invariant
-          Analysis: $analysis
-          ${repair.map(pprint(_).plainText).map("Repair: " + _).getOrElse("")}
-        """
-    )
-
-  case class Info(result: Boolean) extends Thought {
-    override def eval(parent: Thought, field: String, ai: AI) =
-      observe(parent, field, result)
-  }
-
-  object Info {
-    implicit val schema: ZSchema[Info] =
-      ZSchema.primitive[Boolean].transform(Info(_), _.result)
-  }
-
-  case class Warn[Invarant <: String](
-      `Invariant check description`: Invarant,
-      `Invariant holds`: Boolean
-  ) extends Thought {
-    override def eval(parent: Thought, field: String, ai: AI) =
-      observe(parent, field, `Invariant holds`).andThen {
-        warn(ai, parent, field, `Invariant check description`)
-      }
-  }
-
-  case class Fail[Invarant <: String](
-      `Invariant check description`: Invarant,
-      `Invariant check analysis`: String,
-      `Invariant holds`: Boolean
-  ) extends Thought {
-    override def eval(parent: Thought, field: String, ai: AI) =
-      observe(parent, field, `Invariant holds`).andThen {
-        warn(
-            ai,
-            parent,
-            field,
-            `Invariant check description`,
-            `Invariant check analysis`
-        ).andThen {
-          IOs.fail(CheckFailed(
-              ai,
-              parent,
-              `Invariant check description`,
-              `Invariant check analysis`
-          ))
-        }
-      }
-  }
-
-  case class SelfRepair[Invarant <: String](
-      `Invariant check description`: Invarant,
-      `Invariant check analysis`: String,
-      `Invariant holds`: Boolean
-  ) extends Thought {
-    override def eval(parent: Thought, field: String, ai: AI) =
-      observe(parent, field, `Invariant holds`).andThen {
-        AIs.ephemeral {
-          warn(
-              ai,
-              parent,
-              field,
-              `Invariant check description`,
-              `Invariant check analysis`
-          ).andThen {
-            ai.gen[Repair]("Provide a repair for the last failed thought invariant.")
-          }
-        }.map { repair =>
-          warn(
-              ai,
-              parent,
-              field,
-              `Invariant check description`,
-              `Invariant check analysis`,
-              Some(repair)
-          )
-        }
-      }
-  }
 }

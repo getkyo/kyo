@@ -14,7 +14,7 @@ import zio.schema.codec.JsonCodec
 import scala.annotation.implicitNotFound
 import kyo.llm.listeners.Listeners
 import thoughts.Repair
-import kyo.llm.thoughts.Thought
+import kyo.llm.thoughts._
 import kyo.llm.json.Schema
 import zio.schema.TypeId
 import zio.schema.FieldSet
@@ -38,9 +38,9 @@ package object agents {
         val output: Json[Out]
     )
 
-    val info: Info
+    def info: Info
 
-    val thoughts: List[Thought.Info] = Nil
+    def thoughts: List[Thoughts.Info] = Nil
 
     private val local = Locals.init(Option.empty[AI])
 
@@ -57,76 +57,40 @@ package object agents {
         case None     => AIs.init
       }
 
-    private[kyo] val schema: Schema = {
-      def schema[T](name: String, l: List[Thought.Info]): ZSchema[T] = {
-        val fields = l.map { t =>
-          import zio.schema.Schema._
-          Field[ListMap[String, Any], Any](
-              t.name,
-              t.zSchema.asInstanceOf[ZSchema[Any]],
-              Chunk.empty,
-              Validation.succeed,
-              identity,
-              (_, _) => ListMap.empty
-          ) 
-        }
-        ZSchema.record(TypeId.fromTypeName(name), FieldSet(fields: _*)).asInstanceOf[ZSchema[T]]
-      }
-      val (opening, closing)                = thoughts.partition(_.opening)
-      implicit val o: ZSchema[opening.type] = schema("OpeningThoughts", opening)
-      implicit val c: ZSchema[closing.type] = schema("ClosingThoughts", closing)
-      implicit val i: ZSchema[In]           = info.input.zSchema
-      Json.schema[Agents.Request[opening.type, In, closing.type]]
-    }
+    protected[kyo] def isResult: Boolean = false
 
-    private[kyo] def handle(ai: AI, v: String): String < AIs = {
-      implicit def s: ZSchema[In] = info.input.zSchema
-      Json.decode[Agents.RequestPayload[In]](v).map { res =>
-        Listeners.observe(res.shortActionNarrationToBeShownToTheUser) {
-          run(ai, res.agentInput).map(info.output.encode)
+    private[kyo] def json: Json[Thoughts.Result[In]] =
+      Thoughts.result(thoughts, info.input, isResult)
+
+    private[kyo] def handle(ai: AI, call: Call): Boolean < AIs =
+      Agents.disable {
+        implicit def s: ZSchema[In] = info.input.zSchema
+        Tries.run(json.decode(call.arguments)).map {
+          case Failure(ex) =>
+            ai.agentMessage(call.id, "Invalid agent input: " + ex).andThen(false)
+          case Success(res) =>
+            ai.agentMessage(call.id, "Agent processing.").andThen {
+              res.handle(ai).andThen {
+                Listeners.observe(res.shortActionNarrationToBeShownToTheUser) {
+                  AIs.ephemeral {
+                    Tries.run(run(ai, res.agentInput).map(info.output.encode)).map {
+                      case Failure(ex) =>
+                        ai.agentMessage(call.id, "Agent failure: " + ex).andThen(false)
+                      case Success(value) =>
+                        ai.agentMessage(call.id, value).andThen(true)
+                    }
+                  }
+                }
+              }
+            }
         }
       }
-    }
   }
 
   object Agents {
-    private val local = Locals.init(Set.empty[Agent])
+    private val local = Locals.init(List.empty[Agent])
 
-    @desc(
-        p"""
-          1. This function call is a mechanism that mixes an inner-dialog mechanism
-             to enhance the quality of the generated data.
-          2. If you encounter field names with text instead of regular identifiers,
-             they're meant as thoughts in an inner-dialog mechanism. Leverage them 
-             to enhance your generation.
-          3. Thought fields with text identifiers aren't free text, strictly follow
-             the provided json schema.
-          4. Do not create fields not present in the json schema, including thoughts.
-        """
-    )
-    case class Request[Opening, T, Closing](
-        strictlyFollowTheJsonSchema: true,
-        `Even when the the field name is a text like here`: true,
-        `Text field names function as an inner-dialog reasoning mechanism`: true,
-        openingThoughts: Opening,
-        `Summary of all opening thoughts`: String,
-        `I'll change the tone as if I'm addressing the user`: true,
-        `I won't have another oportunity to elaborate further`: true,
-        `agentInput is the only field visible to the user`: true,
-        @desc("Generate a complete input, do not end with an indication that you'll do something.")
-        agentInput: T,
-        `agentInput is complete, elaborate, and fully satisfies the user's resquest`: true,
-        closingThoughts: Closing,
-        shortActionNarrationToBeShownToTheUser: String,
-        `I will not generate a sequence of several spaces or new line charaters`: true
-    )
-
-    case class RequestPayload[T](
-        shortActionNarrationToBeShownToTheUser: String,
-        agentInput: T
-    )
-
-    def get: Set[Agent] < AIs = local.get
+    def get: List[Agent] < AIs = local.get
 
     def enable[T, S](p: Seq[Agent])(v: => T < S): T < (AIs with S) =
       local.get.map { set =>
@@ -137,9 +101,9 @@ package object agents {
       enable(first +: rest)(v)
 
     def disable[T, S](f: T < S): T < (AIs with S) =
-      local.let(Set.empty)(f)
+      local.let(List.empty)(f)
 
-    private[kyo] def resultAgent[T](_thoughts: List[Thought.Info])(
+    private[kyo] def resultAgent[T](_thoughts: List[Thoughts.Info])(
         implicit t: Json[T]
     ): (Agent, Option[T] < AIs) < AIs =
       Atomics.initRef(Option.empty[T]).map { ref =>
@@ -153,7 +117,9 @@ package object agents {
                 "Call this agent with the result."
             )
 
-            override val thoughts: List[Thought.Info] =
+            override def isResult = true
+
+            override val thoughts: List[Thoughts.Info] =
               _thoughts
 
             def run(input: T) =
@@ -162,33 +128,14 @@ package object agents {
         (agent, ref.get)
       }
 
-    private[kyo] def handle(ai: AI, agents: Set[Agent], calls: List[Call]): Unit < AIs =
+    private[kyo] def handle(ai: AI, agents: List[Agent], calls: List[Call]): Unit < AIs =
       Seqs.traverse(calls) { call =>
         agents.find(_.info.name == call.function) match {
           case None =>
             ai.agentMessage(call.id, "Agent doesn't exist anymore: " + Json.encode(call))
               .andThen(false)
           case Some(agent) =>
-            AIs.ephemeral {
-              Agents.disable {
-                Tries.run[String, AIs] {
-                  ai.agentMessage(
-                      call.id,
-                      p"""
-                        Entering the agent execution flow. Further interactions 
-                        are automated and indirectly initiated by a human.
-                      """
-                  ).andThen {
-                    agent.handle(ai, call.arguments)
-                  }
-                }
-              }
-            }.map {
-              case Success(result) =>
-                ai.agentMessage(call.id, result).andThen(true)
-              case Failure(ex) =>
-                ai.agentMessage(call.id, "Agent failure:" + ex).andThen(false)
-            }
+            agent.handle(ai, call)
         }
       }.map { l =>
         if (!l.forall(identity)) {

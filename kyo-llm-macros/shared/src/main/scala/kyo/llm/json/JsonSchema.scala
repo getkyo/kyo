@@ -30,7 +30,7 @@ object Schema {
 
   def convert(schema: ZSchema[_]): List[(String, Json)] = {
     def desc = this.desc(schema.annotations)
-    schema match {
+    ZSchema.force(schema) match {
 
       case ZSchema.Primitive(StandardType.StringType, Chunk(Const(v))) =>
         desc ++ List(
@@ -134,7 +134,7 @@ object Schema {
         )
 
       case ZSchema.Map(keySchema, valueSchema, _) =>
-        keySchema match {
+        ZSchema.force(keySchema) match {
           case ZSchema.Primitive(tpe, _) if (tpe == StandardType.StringType) =>
             List(
                 "type"                 -> Json.Str("object"),
@@ -144,10 +144,10 @@ object Schema {
             throw new UnsupportedOperationException("Non-string map keys are not supported")
         }
 
-      case schema: ZSchema.Lazy[_] =>
-        convert(schema.schema)
+      case ZSchema.Transform(schema, f, g, ann, id) =>
+        convert(schema)
 
-      case _ =>
+      case schema =>
         throw new UnsupportedOperationException("This schema type is not supported: " + schema)
     }
   }

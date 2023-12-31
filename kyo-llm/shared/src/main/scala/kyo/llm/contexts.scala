@@ -64,7 +64,7 @@ object contexts {
       seed: Option[String],
       reminder: Option[String],
       messages: List[Message],
-      thoughts: List[Thought.Info]
+      thoughts: List[Thoughts.Info]
   ) {
 
     def seed(seed: String): Context =
@@ -73,7 +73,7 @@ object contexts {
     def reminder(reminder: String): Context =
       copy(reminder = Some(reminder))
 
-    def thought(info: Thought.Info): Context =
+    def thought(info: Thoughts.Info): Context =
       copy(thoughts = thoughts :+ info)
 
     def systemMessage(content: String): Context =

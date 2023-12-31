@@ -90,7 +90,10 @@ object ais {
       update(_.agentMessage(callId, msg))
 
     def thought[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Unit < AIs =
-      update(_.thought(Thought.info[T]))
+      update(_.thought(Thoughts.opening[T]))
+
+    def closingThought[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Unit < AIs =
+      update(_.thought(Thoughts.closing[T]))
 
     def gen[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
       userMessage(msg).andThen(gen[T])
@@ -99,8 +102,8 @@ object ais {
       save.map { ctx =>
         Agents.resultAgent[T](ctx.thoughts).map { case (resultAgent, result) =>
           def eval(): T < AIs =
-            fetch(ctx, Set(resultAgent), Some(resultAgent)).map { r =>
-              Agents.handle(this, Set(resultAgent), r.calls).andThen {
+            fetch(ctx, List(resultAgent), Some(resultAgent)).map { r =>
+              Agents.handle(this, List(resultAgent), r.calls).andThen {
                 result.map {
                   case Some(v) =>
                     v
@@ -121,7 +124,7 @@ object ais {
     def infer[T](implicit t: Json[T], f: Flat[T]): T < AIs =
       save.map { ctx =>
         Agents.resultAgent[T](ctx.thoughts).map { case (resultAgent, result) =>
-          def eval(agents: Set[Agent], constrain: Option[Agent] = None): T < AIs =
+          def eval(agents: List[Agent], constrain: Option[Agent] = None): T < AIs =
             fetch(ctx, agents, constrain).map { r =>
               r.calls match {
                 case Nil =>
@@ -139,13 +142,13 @@ object ais {
                   }
               }
             }
-          Agents.get.map(p => eval(p + resultAgent))
+          Agents.get.map(p => eval(resultAgent :: p))
         }
       }
 
     private def fetch(
         ctx: Context,
-        agents: Set[Agent],
+        agents: List[Agent],
         constrain: Option[Agent] = None
     ): Completions.Result < AIs =
       for {
