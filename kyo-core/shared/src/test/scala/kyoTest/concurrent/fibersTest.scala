@@ -92,7 +92,7 @@ class fibersTest extends KyoTest {
   }
 
   "timeout" in runJVM {
-    Tries.run(Fibers.runBlocking(
+    Tries.run(Fibers.runAndBlock(
         Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
     )).map {
       case Failure(Fibers.Interrupted) => succeed

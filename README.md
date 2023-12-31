@@ -901,7 +901,7 @@ val b: Histogram =
     name = "my_histogram",
     description = "some description",
     unit = "some unit",
-    attributes = Attributes.of("key", "value")
+    attributes = Attributes.add("key", "value")
   )
 
 // Gauges take a by-name function to 

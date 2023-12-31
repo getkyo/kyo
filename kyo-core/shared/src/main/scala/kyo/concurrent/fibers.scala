@@ -177,7 +177,7 @@ object fibers {
     def run[T](v: T < Fibers)(implicit f: Flat[T < Fibers]): Fiber[T] < IOs =
       FiberGets.run(v)
 
-    def runBlocking[T, S](v: T < (Fibers with S))(implicit
+    def runAndBlock[T, S](v: T < (Fibers with S))(implicit
         f: Flat[T < (Fibers with S)]
     ): T < (IOs with S) =
       FiberGets.runAndBlock[T, S](v)
