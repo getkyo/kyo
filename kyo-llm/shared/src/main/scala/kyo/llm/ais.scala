@@ -287,6 +287,8 @@ object ais {
         - Strictly follow the json schema with **all required fields**.
         - Leverage text name fields as an inner-dialog thought mechanism.
         - Provide all required thought fields and do not create arbitrary ones.
+        - The quality of your thoughts will be used by the system administrator to judge your performance.
+        - Make sure to use thoughts to perform necessary analysis to guarantee high-quality information.
       """
 
     val reminder =
