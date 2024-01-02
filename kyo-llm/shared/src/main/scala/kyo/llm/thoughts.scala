@@ -27,11 +27,11 @@ package object thoughts {
 
     def name = productPrefix
 
-    final def handle(ai: AI): Unit < AIs =
-      handle(Thoughts.Empty, "", ai)
+    final def eval(ai: AI): Unit < AIs =
+      eval(Thoughts.Empty, "", ai)
 
-    final def handle(parent: Thought, field: String, ai: AI): Unit < AIs = {
-      eval(parent, field, ai).andThen {
+    def eval(parent: Thought, field: String, ai: AI): Unit < AIs = {
+      val thoughts =
         (0 until productArity).flatMap { idx =>
           val name = productElementName(idx)
           productElement(idx) match {
@@ -43,13 +43,8 @@ package object thoughts {
               None
           }
         }
-      }.map { thoughts =>
-        Seqs.traverse(thoughts)((f, t) => t.handle(self, f, ai)).unit
-      }
+      Seqs.traverse(thoughts)((f, t) => t.eval(self, f, ai)).unit
     }
-
-    def eval(parent: Thought, field: String, ai: AI): Unit < AIs = ()
-
   }
 
   object Thoughts {

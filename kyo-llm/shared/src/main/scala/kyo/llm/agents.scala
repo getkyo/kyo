@@ -70,7 +70,7 @@ package object agents {
             ai.agentMessage(call.id, "Invalid agent input: " + ex).andThen(false)
           case Success(res) =>
             ai.agentMessage(call.id, "Agent processing.").andThen {
-              res.handle(ai).andThen {
+              res.eval(ai).andThen {
                 Listeners.observe(res.shortActionNarrationToBeShownToTheUser) {
                   AIs.ephemeral {
                     Tries.run(run(ai, res.agentInput).map(info.output.encode)).map {

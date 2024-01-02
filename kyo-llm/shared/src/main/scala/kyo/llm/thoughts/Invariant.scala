@@ -6,32 +6,23 @@ import kyo._
 import kyo.stats.Stats
 import kyo.stats.Attributes
 import kyo.ios.IOs
+import kyo.llm.contexts.Context
 
-object Check {
+object Invariant {
 
-  private val stats   = Thoughts.stats.scope("check")
+  private val stats   = Thoughts.stats.scope("invariant")
   private val success = stats.initCounter("success")
   private val failure = stats.initCounter("failure")
 
-  case class CheckFailed(
+  case class InvariantViolated(
+      state: Context,
       thought: Thought,
       field: String,
       analysis: String
-  ) extends RuntimeException {
-    override def toString =
-      p"""
-        Thought Invariant Failure
-        =========================
-        Thought: ${thought.name}
-        Field: $field
-        Analysis: $analysis
-        **Please take all corrective measures to avoid another failure**
-      """
-  }
+  ) extends RuntimeException
 
   case class Info(
-      `The outer field name is an invariant description`: Boolean,
-      `Analyze if the invariant has been violated`: String,
+      `The outer field name is an invariant`: Boolean,
       invariantViolated: Boolean
   ) extends Thought {
     override def eval(parent: Thought, field: String, ai: AI) =
@@ -49,11 +40,11 @@ object Check {
           ()
         } else {
           ai.systemMessage(
-              CheckFailed(
+              failure(
                   parent,
                   field,
                   `Analyze if the invariant has been violated`
-              ).toString
+              )
           )
         }
       }
@@ -69,13 +60,27 @@ object Check {
         if (!invariantViolated) {
           ()
         } else {
-          IOs.fail(CheckFailed(
-              parent,
-              field,
-              `Analyze if the invariant has been violated`
-          ))
+          ai.save.map { ctx =>
+            IOs.fail(InvariantViolated(
+                ctx,
+                parent,
+                field,
+                `Analyze if the invariant has been violated`
+            ))
+          }
         }
       }
+  }
+
+  private def failure(thought: Thought, field: String, analysis: String) = {
+    p"""
+      Thought Invariant Failure
+      =========================
+      Thought: ${thought.name}
+      Field: $field
+      Analysis: $analysis
+      **Please take all corrective measures to avoid another failure**
+    """
   }
 
   private def observe(parent: Thought, field: String, result: Boolean) = {
