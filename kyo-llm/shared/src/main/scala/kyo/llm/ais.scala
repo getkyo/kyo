@@ -99,62 +99,58 @@ object ais {
       userMessage(msg).andThen(gen[T])
 
     def gen[T](implicit t: Json[T], f: Flat[T]): T < AIs =
-      save.map { ctx =>
-        Agents.resultAgent[T](ctx.thoughts).map { case (resultAgent, result) =>
-          def eval(): T < AIs =
-            fetch(ctx, List(resultAgent), Some(resultAgent)).map { r =>
-              Agents.handle(this, List(resultAgent), r.calls).andThen {
-                result.map {
-                  case Some(v) =>
-                    v
-                  case None =>
-                    Listeners.observe("Processing results") {
-                      eval()
-                    }
-                }
-              }
-            }
-          eval()
-        }
-      }
+      infer[T](Nil)
 
     def infer[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
       userMessage(msg).andThen(infer[T])
 
     def infer[T](implicit t: Json[T], f: Flat[T]): T < AIs =
       save.map { ctx =>
-        Agents.resultAgent[T](ctx.thoughts).map { case (resultAgent, result) =>
-          def eval(agents: List[Agent], constrain: Option[Agent] = None): T < AIs =
-            fetch(ctx, agents, constrain).map { r =>
-              r.calls match {
-                case Nil =>
-                  eval(agents, Some(resultAgent))
-                case calls =>
-                  Agents.handle(this, agents, calls).andThen {
-                    result.map {
-                      case None =>
-                        Listeners.observe("Processing results") {
-                          eval(agents)
-                        }
-                      case Some(v) =>
-                        v
-                    }
+        infer[T](ctx.thoughts)
+      }
+
+    private def infer[T](thoughts: List[Thoughts.Info])(implicit t: Json[T], f: Flat[T]): T < AIs =
+      Agents.resultAgent[T](thoughts).map { case (resultAgent, result) =>
+        def eval(agents: List[Agent], constrain: Option[Agent] = None): T < AIs =
+          fetch(agents, constrain).map { r =>
+            r.calls match {
+              case Nil =>
+                eval(agents, Some(resultAgent))
+              case calls =>
+                Agents.handle(this, agents, calls).andThen {
+                  result.map {
+                    case None =>
+                      Listeners.observe("Processing results") {
+                        eval(agents)
+                      }
+                    case Some(v) =>
+                      v
                   }
-              }
+                }
             }
-          Agents.get.map(p => eval(resultAgent :: p))
-        }
+          }
+        Agents.get.map(p => eval(resultAgent :: p))
       }
 
     private def fetch(
-        ctx: Context,
         agents: List[Agent],
         constrain: Option[Agent] = None
     ): Completions.Result < AIs =
-      for {
-        r <- Completions(ctx, agents, constrain)
-        _ <- assistantMessage(r.content, r.calls)
-      } yield r
+      save.map { ctx =>
+        val patch =
+          ctx.seed(internal.seed + "\n\n\n" + ctx.seed.getOrElse(""))
+            .reminder(internal.reminder + "\n\n\n" + ctx.reminder.getOrElse(""))
+        val call =
+          if (constrain.isEmpty && agents.size == 1) {
+            agents.headOption
+          } else {
+            constrain
+          }
+        Completions(patch, agents, call)
+          .map { r =>
+            assistantMessage(r.content, r.calls).andThen(r)
+          }
+      }
   }
 
   object AIs extends Joins[AIs] {
@@ -279,6 +275,27 @@ object ais {
       override def hashCode =
         (31 * id.toInt) + 31
     }
+
+    val seed =
+      p"""
+        - "Agent" is the nomenclature for the tools/functions available for you to call.
+        - The only way to interact with the user is via agent calls.
+        - Do not output simple text as replies, always call an agent.
+        - The 'agentInput' field is the only information sent to the user.
+        - Do not assume you'll have other opportunity to elaborate.
+        - The 'agentInput' field must be complete and fully satisfy the user's request.
+        - Strictly follow the json schema with **all required fields**.
+        - Leverage text name fields as an inner-dialog thought mechanism.
+        - Provide all required thought fields and do not create arbitrary ones.
+      """
+
+    val reminder =
+      p"""
+        - Only interact via function calls
+        - 'agentInput' is the only opportunity to return to the user.
+        - Strictly follow the json schema with all required fields.
+        - Leverage text name fields as inner-dialog.
+      """
 
     implicit val summer: Summer[State] =
       new Summer[State] {

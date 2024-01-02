@@ -139,7 +139,11 @@ package object agents {
         }
       }.map { l =>
         if (!l.forall(identity)) {
-          ai.gen[Repair]("One or more agents failed.").unit
+          ai.systemMessage(
+              "Analyze the agent execution errors. Please provide repair analysis for self-correction."
+          ).andThen {
+            ai.gen[Repair].unit
+          }
         } else {
           ()
         }

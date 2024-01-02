@@ -72,7 +72,7 @@ package object thoughts {
     def closing[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Info =
       Info(t.runtimeClass.getSimpleName(), Position.Closing, j)
 
-    def result[T](thoughts: List[Info], j: Json[T], full: Boolean): Json[Result[T]] = {
+    private[kyo] def result[T](thoughts: List[Info], j: Json[T], full: Boolean): Json[Result[T]] = {
       def schema[T](name: String, l: List[Thoughts.Info]): ZSchema[T] = {
         val fields = l.map { t =>
           import zio.schema.Schema._
@@ -98,9 +98,27 @@ package object thoughts {
       implicit val c: ZSchema[Closing] = schema("ClosingThoughts", closing)
       implicit val t: ZSchema[T]       = j.zSchema
       (if (full) {
-         Json[Result.Full[Opening, T, Closing]]
+         (opening.nonEmpty, closing.nonEmpty) match {
+           case (true, true) =>
+             Json[Result.Full.OpeningAndClosing[Opening, T, Closing]]
+           case (true, false) =>
+             Json[Result.Full.OnlyOpening[Opening, T]]
+           case (false, true) =>
+             Json[Result.Full.OnlyClosing[T, Closing]]
+           case (false, false) =>
+             Json[Result.Full.NoThoughts[T]]
+         }
        } else {
-         Json[Result.Short[Opening, T]]
+         (opening.nonEmpty, closing.nonEmpty) match {
+           case (true, true) =>
+             Json[Result.Short.OpeningAndClosing[Opening, T, Closing]]
+           case (true, false) =>
+             Json[Result.Short.OnlyOpening[Opening, T]]
+           case (false, true) =>
+             Json[Result.Short.OnlyClosing[T, Closing]]
+           case (false, false) =>
+             Json[Result.Short.NoThoughts[T]]
+         }
        }).asInstanceOf[Json[Result[T]]]
     }
 
@@ -112,30 +130,88 @@ package object thoughts {
 
     object Result {
 
-      case class Full[Opening, T, Closing](
-          strictlyFollowTheJsonSchema: Boolean,
-          `Always use the correct json type from the schema`: Boolean,
-          `This is a required thought field for inner-dialog`: Boolean,
-          `Strictly follow the required fields including thoughts`: Boolean,
-          openingThoughts: Opening,
-          `Opening thoughts summary`: String,
-          `Only agentInput is visible to the user`: Boolean,
-          agentInput: T,
-          `agentInput fully satisfies the user's resquest`: Boolean,
-          shortActionNarrationToBeShownToTheUser: String,
-          closingThoughts: Closing,
-          allFieldsAdhereToTheJsonSchema: Boolean
-      ) extends Result[T]
+      object Full {
 
-      case class Short[Thoughts, T](
-          `I won't skip any of the required fields`: Boolean,
-          openingThoughts: Thoughts,
-          `Opening thoughts summary`: String,
-          agentInput: T,
-          `agentInput fully satisfies the user's resquest`: Boolean,
-          shortActionNarrationToBeShownToTheUser: String,
-          allFieldsAdhereToTheJsonSchema: Boolean
-      ) extends Result[T]
+        case class OpeningAndClosing[Opening, T, Closing](
+            strictlyFollowTheJsonSchema: Boolean,
+            `This is a required thought field for inner-dialog`: Boolean,
+            `Strictly follow the required fields including thoughts`: Boolean,
+            openingThoughts: Opening,
+            `Opening thoughts summary`: String,
+            `Only agentInput is visible to the user`: Boolean,
+            agentInput: T,
+            `agentInput fully satisfies the user's resquest`: Boolean,
+            shortActionNarrationToBeShownToTheUser: String,
+            closingThoughts: Closing,
+            allFieldsAdhereToTheJsonSchema: Boolean
+        ) extends Result[T]
+
+        case class OnlyOpening[Opening, T](
+            strictlyFollowTheJsonSchema: Boolean,
+            `This is a required thought field for inner-dialog`: Boolean,
+            `Strictly follow the required fields including thoughts`: Boolean,
+            openingThoughts: Opening,
+            `Opening thoughts summary`: String,
+            `Only agentInput is visible to the user`: Boolean,
+            agentInput: T,
+            `agentInput fully satisfies the user's resquest`: Boolean,
+            shortActionNarrationToBeShownToTheUser: String,
+            allFieldsAdhereToTheJsonSchema: Boolean
+        ) extends Result[T]
+
+        case class OnlyClosing[T, Closing](
+            @desc("Always use the correct json type from the schema")
+            strictlyFollowTheJsonSchema: Boolean,
+            `This is a required thought field for inner-dialog`: Boolean,
+            `Strictly follow the required fields including thoughts`: Boolean,
+            `Only agentInput is visible to the user`: Boolean,
+            agentInput: T,
+            `agentInput fully satisfies the user's resquest`: Boolean,
+            shortActionNarrationToBeShownToTheUser: String,
+            closingThoughts: Closing,
+            allFieldsAdhereToTheJsonSchema: Boolean
+        ) extends Result[T]
+
+        case class NoThoughts[T](
+            strictlyFollowTheJsonSchema: Boolean,
+            agentInput: T,
+            shortActionNarrationToBeShownToTheUser: String,
+            allFieldsAdhereToTheJsonSchema: Boolean
+        ) extends Result[T]
+      }
+
+      object Short {
+
+        case class OpeningAndClosing[Opening, T, Closing](
+            openingThoughts: Opening,
+            `Opening thoughts summary`: String,
+            agentInput: T,
+            shortActionNarrationToBeShownToTheUser: String,
+            closingThoughts: Closing,
+            allFieldsAdhereToTheJsonSchema: Boolean
+        ) extends Result[T]
+
+        case class OnlyOpening[Opening, T](
+            openingThoughts: Opening,
+            `Opening thoughts summary`: String,
+            agentInput: T,
+            shortActionNarrationToBeShownToTheUser: String,
+            allFieldsAdhereToTheJsonSchema: Boolean
+        ) extends Result[T]
+
+        case class OnlyClosing[T, Closing](
+            agentInput: T,
+            shortActionNarrationToBeShownToTheUser: String,
+            closingThoughts: Closing,
+            allFieldsAdhereToTheJsonSchema: Boolean
+        ) extends Result[T]
+
+        case class NoThoughts[T](
+            agentInput: T,
+            shortActionNarrationToBeShownToTheUser: String,
+            allFieldsAdhereToTheJsonSchema: Boolean
+        ) extends Result[T]
+      }
     }
   }
 }
