@@ -1,10 +1,8 @@
 package kyoTest
 
 import izumi.reflect._
-import kyo.clocks._
 import kyo.fibers._
 import kyo.timers._
-import kyo.consoles._
 import kyo._
 import kyo.ios._
 import kyo.randoms.Randoms

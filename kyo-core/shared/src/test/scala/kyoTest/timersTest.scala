@@ -1,6 +1,5 @@
 package kyoTest
 
-import kyo.atomics._
 import kyo.fibers._
 import kyo.timers._
 import kyo._

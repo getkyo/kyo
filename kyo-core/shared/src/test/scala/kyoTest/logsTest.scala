@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo._
-import kyo.envs._
 import kyo.ios._
 import kyo.logs._
 

@@ -1,7 +1,6 @@
 package kyo
 
 import kyo._
-import kyo.envs._
 import kyo.ios._
 
 import java.time.Instant
@@ -9,27 +8,24 @@ import java.time.ZoneId
 import java.time.{Clock => JClock}
 import kyo.locals.Locals
 
-object clocks {
+abstract class Clock {
+  def now: Instant < IOs
+}
 
-  abstract class Clock {
-    def now: Instant < IOs
-  }
+object Clock {
+  val default: Clock =
+    new Clock {
+      val now = IOs(Instant.now())
+    }
+}
 
-  object Clock {
-    val default: Clock =
-      new Clock {
-        val now = IOs(Instant.now())
-      }
-  }
+object Clocks {
 
-  object Clocks {
+  private val local = Locals.init(Clock.default)
 
-    private val local = Locals.init(Clock.default)
+  def let[T, S](c: Clock)(f: => T < (IOs with S)): T < (IOs with S) =
+    local.let(c)(f)
 
-    def let[T, S](c: Clock)(f: => T < (IOs with S)): T < (IOs with S) =
-      local.let(c)(f)
-
-    val now: Instant < IOs =
-      local.get.map(_.now)
-  }
+  val now: Instant < IOs =
+    local.get.map(_.now)
 }

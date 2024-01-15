@@ -4,7 +4,6 @@ import kyo._
 import kyo.requests._
 import kyo.llm.ais._
 import kyo.llm.configs._
-import kyo.consoles._
 import fibers._
 import kyo.llm.tools._
 import timers._

@@ -1,7 +1,6 @@
 package kyo.llm
 
 import kyo._
-import kyo.aspects._
 import kyo.llm.ais._
 import kyo.llm.embeddings._
 import kyo.llm.thoughts._

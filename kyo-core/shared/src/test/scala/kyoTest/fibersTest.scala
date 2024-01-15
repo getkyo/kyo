@@ -1,7 +1,5 @@
 package kyoTest
 
-import kyo.atomics.AtomicInt
-import kyo.atomics._
 import kyo.fibers._
 import kyo.latches._
 import kyo._
@@ -19,8 +17,6 @@ import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Try
 import org.scalatest.compatible.Assertion
-import kyo.envs.Envs
-import kyo.consoles.Consoles
 
 class fibersTest extends KyoTest {
 

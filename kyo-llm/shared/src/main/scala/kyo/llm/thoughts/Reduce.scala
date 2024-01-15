@@ -6,7 +6,6 @@ import kyo.llm.ais._
 import kyo.llm.KyoLLMApp
 import kyo.llm.configs.Config
 import scala.util.Random
-import kyo.consoles.Consoles
 import kyo.llm.tools.Tool
 
 case class Reduce[Expr, Result](

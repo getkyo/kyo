@@ -8,7 +8,6 @@ import kyo.locals._
 import kyo.llm.ais._
 import scala.util._
 import kyo.llm.contexts._
-import kyo.atomics._
 import zio.schema.{Schema => ZSchema}
 import zio.schema.codec.JsonCodec
 import scala.annotation.implicitNotFound

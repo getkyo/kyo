@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo._
-import kyo.envs._
 import kyo.tries._
 import kyo.options._
 import kyo.layers._

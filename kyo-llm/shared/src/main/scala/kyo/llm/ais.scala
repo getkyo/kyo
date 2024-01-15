@@ -7,7 +7,6 @@ import kyo.llm.contexts._
 import kyo.llm.thoughts._
 import kyo.llm.tools._
 import kyo.Joins
-import kyo.atomics._
 import kyo.fibers._
 import kyo.ios._
 import kyo.seqs._
@@ -21,7 +20,6 @@ import java.lang.ref.WeakReference
 import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NoStackTrace
-import kyo.consoles.Consoles
 import kyo.llm.listeners.Listeners
 import scala.reflect.ClassTag
 

@@ -115,7 +115,7 @@ case class NettyKyoServer(
     )
   }
 
-  private def stop(ch: Channel, eventLoopGroup: EventLoopGroup): Unit < Fibers = {
+  private def stop(ch: io.netty.channel.Channel, eventLoopGroup: EventLoopGroup): Unit < Fibers = {
     IOs {
       nettyFutureToScala(ch.close()).flatMap { _ =>
         if (config.shutdownEventLoopGroupOnClose) {

@@ -3,8 +3,6 @@ package kyo.llm
 import kyo._
 import kyo.llm.ais._
 import kyo.ios._
-import kyo.consoles._
-import kyo.atomics._
 import kyo.locals.Locals
 import kyo.tries.Tries
 import scala.util.Success

@@ -7,7 +7,6 @@ import kyo.llm.thoughts._
 import kyo.llm.KyoLLMApp
 import kyo.llm.configs.Config
 import kyo.llm.configs.Model
-import kyo.consoles.Consoles
 
 object ttt extends KyoLLMApp {
 

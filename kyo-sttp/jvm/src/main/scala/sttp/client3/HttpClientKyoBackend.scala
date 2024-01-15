@@ -20,7 +20,6 @@ import java.util.zip.{GZIPInputStream, InflaterInputStream}
 import kyo.internal.KyoSttpMonad._
 import kyo.internal.KyoSttpMonad
 import kyo.meters.Meters
-import kyo.channels.Channels
 
 class HttpClientKyoBackend private (
     client: HttpClient,

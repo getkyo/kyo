@@ -40,7 +40,7 @@ object FlatImplicits {
     }
 
     def code(str: String) =
-      s"${Console.YELLOW}'$str'${Console.RESET}"
+      s"${scala.Console.YELLOW}'$str'${scala.Console.RESET}"
 
     def print(t: Type): String = {
       t match {

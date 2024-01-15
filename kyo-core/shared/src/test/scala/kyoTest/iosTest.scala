@@ -1,12 +1,10 @@
 package kyo
 
 import kyoTest.KyoTest
-import atomics.AtomicInt
 import kyo._
 import kyo.ios._
 import kyo.options._
 import kyo.tries._
-import kyo.envs._
 
 import java.io.Closeable
 import scala.concurrent.duration._

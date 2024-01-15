@@ -1,6 +1,5 @@
 package kyoTest
 
-import kyo.atomics._
 import kyo._
 
 class atomicsTest extends KyoTest {

@@ -6,9 +6,8 @@ import sttp.ws.WebSocketBufferFull
 
 import sttp.client3.internal.ws.SimpleQueue
 import kyo.internal.KyoSttpMonad
-import kyo.channels.Channels
 import kyo.ios.IOs
-import kyo.channels.Channel
+import kyo._
 
 class KyoSimpleQueue[T](ch: Channel[T]) extends SimpleQueue[KyoSttpMonad.M, T] {
 

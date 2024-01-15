@@ -7,11 +7,9 @@ import kyo.resources._
 import scala.annotation.tailrec
 import scala.concurrent.duration.Duration
 
-import channels._
 import fibers._
 import timers._
 import kyo.seqs._
-import kyo.channels
 import kyo.fibers
 import kyo.timers
 

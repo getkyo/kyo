@@ -1,8 +1,6 @@
 package kyoTest
 
-import kyo.clocks._
 import kyo._
-import kyo.envs._
 import kyo.ios._
 
 import java.time.Instant

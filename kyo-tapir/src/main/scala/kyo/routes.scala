@@ -3,7 +3,6 @@ package kyo
 import kyo._
 import kyo.ios._
 import kyo.sums._
-import kyo.envs._
 import kyo.tries._
 import kyo.server._
 import fibers._

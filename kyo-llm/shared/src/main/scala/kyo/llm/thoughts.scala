@@ -18,7 +18,6 @@ import zio.schema.{Schema => ZSchema}
 
 import scala.collection.immutable.ListMap
 import scala.reflect.ClassTag
-import kyo.consoles.Consoles
 
 package object thoughts {
 

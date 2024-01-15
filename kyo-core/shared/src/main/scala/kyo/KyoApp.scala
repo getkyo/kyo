@@ -1,11 +1,8 @@
 package kyo
 
 import ios._
-import clocks._
-import consoles._
 import resources._
 import tries._
-import aspects._
 import randoms._
 import fibers._
 import timers._

@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo._
-import kyo.envs._
 import org.scalatest.Args
 import org.scalatest.Status
 

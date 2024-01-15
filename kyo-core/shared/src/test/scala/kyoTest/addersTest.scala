@@ -1,6 +1,5 @@
 package kyoTest
 
-import kyo.adders._
 import kyo._
 
 class addersTest extends KyoTest {

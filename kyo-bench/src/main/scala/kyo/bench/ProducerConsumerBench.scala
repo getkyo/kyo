@@ -29,7 +29,6 @@ class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
     import kyo._
     import kyo.ios._
     import kyo.fibers._
-    import kyo.channels._
     import kyo.Access
 
     def repeat[A](n: Int)(io: A < Fibers): A < Fibers =
