@@ -1,6 +1,6 @@
 package kyo.internal
 
-import kyo.concurrent.fibers.Fiber
+import kyo.fibers.Fiber
 import scala.language.experimental.macros
 import scala.reflect.macros.blackbox.Context
 import kyo._

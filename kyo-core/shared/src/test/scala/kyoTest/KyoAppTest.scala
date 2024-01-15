@@ -1,8 +1,8 @@
 package kyoTest
 
 import kyo.clocks._
-import kyo.concurrent.fibers._
-import kyo.concurrent.timers._
+import kyo.fibers._
+import kyo.timers._
 import kyo.consoles._
 import kyo._
 import kyo.ios._

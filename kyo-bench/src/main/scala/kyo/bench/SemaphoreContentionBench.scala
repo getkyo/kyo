@@ -4,9 +4,9 @@ import org.openjdk.jmh.annotations._
 
 class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
 
-  val permits = 10
-  val fibers  = 100
-  val depth   = 1000
+  val permits   = 10
+  val parallism = 100
+  val depth     = 1000
 
   def catsBench() = {
     import cats.effect.IO
@@ -26,8 +26,8 @@ class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
 
     for {
       sem <- Semaphore[IO](permits)
-      cdl <- CountDownLatch[IO](fibers)
-      _   <- repeat(fibers)(loop(sem, cdl).start)
+      cdl <- CountDownLatch[IO](parallism)
+      _   <- repeat(parallism)(loop(sem, cdl).start)
       _   <- cdl.await
     } yield {}
   }
@@ -35,9 +35,9 @@ class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
   override def kyoBenchFiber() = {
     import kyo._
     import kyo.ios._
-    import kyo.concurrent.fibers._
-    import kyo.concurrent.meters._
-    import kyo.concurrent.latches._
+    import kyo.fibers._
+    import kyo.meters._
+    import kyo.latches._
 
     def repeat[A](n: Int)(io: A < IOs): A < IOs =
       if (n <= 1) io
@@ -51,8 +51,8 @@ class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
 
     for {
       sem <- Meters.initSemaphore(permits)
-      cdl <- Latches.init(fibers)
-      _   <- repeat(fibers)(Fibers.init(loop(sem, cdl)))
+      cdl <- Latches.init(parallism)
+      _   <- repeat(parallism)(Fibers.init(loop(sem, cdl)))
       _   <- cdl.await
     } yield {}
   }
@@ -74,8 +74,8 @@ class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
 
     for {
       sem <- Semaphore.make(permits)
-      cdl <- CountdownLatch.make(fibers)
-      _   <- repeat(fibers)(loop(sem, cdl).forkDaemon)
+      cdl <- CountdownLatch.make(parallism)
+      _   <- repeat(parallism)(loop(sem, cdl).forkDaemon)
       _   <- cdl.await
     } yield {}
   }
@@ -86,8 +86,8 @@ class SemaphoreContentionBench extends Bench.ForkOnly[Unit] {
     import ox._
     scoped {
       val sem = new Semaphore(permits, true)
-      val cdl = new CountDownLatch(fibers)
-      for (_ <- 0 until fibers) {
+      val cdl = new CountDownLatch(parallism)
+      for (_ <- 0 until parallism) {
         fork {
           for (_ <- 0 to depth) {
             sem.acquire()

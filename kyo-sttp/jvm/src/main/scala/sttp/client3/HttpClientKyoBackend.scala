@@ -2,7 +2,7 @@ package sttp.client3
 
 import kyo._
 import kyo.ios._
-import kyo.concurrent.fibers._
+import kyo.fibers._
 import sttp.capabilities.WebSockets
 import sttp.client3.HttpClientBackend.EncodingHandler
 import sttp.client3.HttpClientFutureBackend.InputStreamEncodingHandler
@@ -19,8 +19,8 @@ import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.util.zip.{GZIPInputStream, InflaterInputStream}
 import kyo.internal.KyoSttpMonad._
 import kyo.internal.KyoSttpMonad
-import kyo.concurrent.meters.Meters
-import kyo.concurrent.channels.Channels
+import kyo.meters.Meters
+import kyo.channels.Channels
 
 class HttpClientKyoBackend private (
     client: HttpClient,

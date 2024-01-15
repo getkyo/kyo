@@ -2,7 +2,7 @@ package kyo.server
 
 import com.typesafe.scalalogging.Logger
 import kyo._
-import kyo.concurrent.fibers._
+import kyo.fibers._
 import kyo.ios._
 import kyo.routes._
 import kyo.tries._

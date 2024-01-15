@@ -1,8 +1,7 @@
 package kyo
 
 import kyo._
-import kyo.concurrent.Joins
-import kyo.concurrent.fibers._
+import fibers._
 import kyo.envs._
 import kyo.ios._
 import sttp.client3._

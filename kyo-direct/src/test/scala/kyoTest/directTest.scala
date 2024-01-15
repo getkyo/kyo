@@ -7,10 +7,10 @@ import kyo.direct._
 import kyo.direct
 import kyo.ios._
 import kyo.envs._
-import kyo.concurrent.fibers._
+import kyo.fibers._
 import scala.util.Try
 import kyo.consoles._
-import kyo.concurrent.atomics._
+import kyo.atomics._
 import kyo.direct._
 
 class directTest extends KyoTest {

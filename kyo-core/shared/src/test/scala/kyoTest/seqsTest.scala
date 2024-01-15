@@ -1,6 +1,6 @@
 package kyoTest
 
-import kyo.concurrent.fibers._
+import kyo.fibers._
 import kyo._
 import kyo.ios.IOs
 import kyo.seqs._

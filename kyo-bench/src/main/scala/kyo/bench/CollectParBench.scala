@@ -1,6 +1,6 @@
 package kyo.bench
 
-import kyo.concurrent.fibers.Fibers
+import kyo.fibers.Fibers
 
 class CollectParBench extends Bench.ForkOnly[Seq[Int]] {
 

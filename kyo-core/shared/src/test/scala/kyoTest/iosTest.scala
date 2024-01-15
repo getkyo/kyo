@@ -1,7 +1,7 @@
 package kyo
 
 import kyoTest.KyoTest
-import kyo.concurrent.atomics.AtomicInt
+import atomics.AtomicInt
 import kyo._
 import kyo.ios._
 import kyo.options._

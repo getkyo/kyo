@@ -20,9 +20,9 @@ class EnqueueDequeueBench extends Bench.ForkOnly[Unit] {
   override def kyoBenchFiber() = {
     import kyo._
     import kyo.ios._
-    import kyo.concurrent.fibers._
-    import kyo.concurrent.channels._
-    import kyo.concurrent.Access
+    import kyo.fibers._
+    import kyo.channels._
+    import kyo.Access
 
     def loop(c: Channel[Unit], i: Int): Unit < Fibers =
       if (i >= depth)

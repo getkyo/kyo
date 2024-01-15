@@ -4,11 +4,11 @@ import kyo._
 import locals._
 import kyo.clocks.Clocks
 import kyo.consoles.Consoles
-import kyo.concurrent.fibers.Fibers
+import fibers.Fibers
 import kyo.ios.IOs
 import kyo.randoms.Randoms
 import kyo.resources.Resources
-import kyo.concurrent.timers.Timers
+import timers.Timers
 
 object aspects {
 

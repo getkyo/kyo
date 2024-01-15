@@ -5,11 +5,10 @@ import clocks._
 import consoles._
 import resources._
 import tries._
-import aborts._
 import aspects._
 import randoms._
-import concurrent.fibers._
-import concurrent.timers._
+import fibers._
+import timers._
 import scala.concurrent.duration.Duration
 import scala.util.Try
 import kyo.KyoApp.Effects

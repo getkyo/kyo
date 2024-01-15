@@ -4,7 +4,7 @@ import io.netty.buffer.ByteBufUtil
 import io.netty.handler.codec.http.FullHttpRequest
 import io.netty.handler.codec.http.HttpContent
 import kyo._
-import kyo.concurrent.fibers._
+import kyo.fibers._
 import kyo.ios._
 import kyo.routes._
 import kyo.tries._

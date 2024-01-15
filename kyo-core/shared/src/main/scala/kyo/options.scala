@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.aborts._
 import kyo.layers._
 
 object options {

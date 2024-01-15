@@ -9,7 +9,6 @@ import org.scalatest.Status
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
-import kyo.aborts.Aborts
 
 class triesTest extends KyoTest {
 

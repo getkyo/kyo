@@ -3,7 +3,7 @@ package kyo.llm
 import kyo._
 import kyo.ios._
 import kyo.locals._
-import kyo.concurrent.meters._
+import kyo.meters._
 import kyo.llm.ais.AIs
 
 object configs {

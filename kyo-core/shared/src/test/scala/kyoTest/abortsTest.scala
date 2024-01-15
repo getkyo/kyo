@@ -1,6 +1,5 @@
 package kyoTest
 
-import kyo.aborts._
 import kyo._
 import kyo.envs._
 import org.scalatest.Args

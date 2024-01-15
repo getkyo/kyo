@@ -15,7 +15,7 @@ object contexts {
     val system: Role    = Role("system")
     val user: Role      = Role("user")
     val assistant: Role = Role("assistant")
-    val tool: Role     = Role("tool")
+    val tool: Role      = Role("tool")
   }
 
   case class CallId(id: String)

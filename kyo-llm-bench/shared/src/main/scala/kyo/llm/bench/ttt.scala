@@ -10,7 +10,7 @@ import kyo.llm.configs.Model
 import kyo.consoles.Consoles
 
 object ttt extends KyoLLMApp {
- 
+
   // run {
   //   def loop(ai: AI): Unit < AIs =
   //     for {

@@ -65,8 +65,8 @@ class RendezvousBench extends Bench.ForkOnly[Int] {
     import kyo._
     import kyo._
     import kyo.ios._
-    import kyo.concurrent.atomics._
-    import kyo.concurrent.fibers._
+    import kyo.atomics._
+    import kyo.fibers._
 
     def produce(waiting: AtomicRef[Any], n: Int = 0): Unit < Fibers =
       if (n <= depth) {

@@ -1,7 +1,7 @@
 import kyo._
 import kyo.ios._
 import kyo.direct._
-import kyo.concurrent.atomics._
+import kyo.atomics._
 import kyo.TestSupport._
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec

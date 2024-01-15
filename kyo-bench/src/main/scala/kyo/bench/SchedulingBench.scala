@@ -30,7 +30,7 @@ class SchedulingBench extends Bench.ForkOnly[Int] {
     import kyo._
     import kyo.ios._
     import kyo.seqs._
-    import kyo.concurrent.fibers._
+    import kyo.fibers._
 
     def fiber(i: Int): Int < IOs =
       IOs.unit.flatMap { _ =>

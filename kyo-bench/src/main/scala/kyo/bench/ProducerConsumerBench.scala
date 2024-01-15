@@ -28,9 +28,9 @@ class ProducerConsumerBench extends Bench.ForkOnly[Unit] {
   override def kyoBenchFiber() = {
     import kyo._
     import kyo.ios._
-    import kyo.concurrent.fibers._
-    import kyo.concurrent.channels._
-    import kyo.concurrent.Access
+    import kyo.fibers._
+    import kyo.channels._
+    import kyo.Access
 
     def repeat[A](n: Int)(io: A < Fibers): A < Fibers =
       if (n <= 1) io

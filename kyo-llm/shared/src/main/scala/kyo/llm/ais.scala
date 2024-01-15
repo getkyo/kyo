@@ -6,9 +6,9 @@ import kyo.llm.configs._
 import kyo.llm.contexts._
 import kyo.llm.thoughts._
 import kyo.llm.tools._
-import kyo.concurrent.Joins
-import kyo.concurrent.atomics._
-import kyo.concurrent.fibers._
+import kyo.Joins
+import kyo.atomics._
+import kyo.fibers._
 import kyo.ios._
 import kyo.seqs._
 import kyo.requests._
