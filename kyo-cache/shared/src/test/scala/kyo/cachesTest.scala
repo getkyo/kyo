@@ -6,7 +6,6 @@ import kyo.tries._
 import kyoTest._
 import scala.util._
 import kyo.caches._
-import kyo.fibers.Fibers
 
 class cachesTest extends KyoTest {
 

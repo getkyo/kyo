@@ -2,7 +2,6 @@ package kyo
 
 import sttp.client3._
 import kyo.requests.Backend
-import kyo.fibers.Fibers
 
 object PlatformBackend {
   val default =

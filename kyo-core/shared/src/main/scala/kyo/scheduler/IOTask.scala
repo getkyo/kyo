@@ -1,7 +1,6 @@
 package kyo.scheduler
 
-import kyo.fibers.internal._
-import kyo.fibers._
+import kyo.fibersInternal._
 import kyo._
 import kyo.core._
 import kyo.core.internal._

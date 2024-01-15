@@ -5,7 +5,6 @@ import kyo.ios._
 import kyo.sums._
 import kyo.tries._
 import kyo.server._
-import fibers._
 import timers._
 
 import sttp.tapir._

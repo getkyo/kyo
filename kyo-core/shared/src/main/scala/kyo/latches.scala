@@ -5,9 +5,6 @@ import kyo.ios._
 
 import java.util.concurrent.atomic.AtomicInteger
 
-import fibers._
-import kyo.fibers
-
 object latches {
 
   abstract class Latch {

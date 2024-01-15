@@ -1,7 +1,6 @@
 package kyo.llm
 
 import kyo._
-import kyo.fibers.Fibers
 import kyo.llm.ais._
 import kyo.llm.json.Schema
 import kyo.llm.json._

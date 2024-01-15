@@ -8,9 +8,7 @@ import java.util.concurrent.Executors
 import scala.annotation.tailrec
 
 import queues._
-import fibers._
 import kyo.Access
-import kyo.fibers
 import kyo.queues
 
 abstract class Channel[T] { self =>

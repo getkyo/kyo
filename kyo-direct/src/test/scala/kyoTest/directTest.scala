@@ -6,7 +6,7 @@ import kyo.options._
 import kyo.direct._
 import kyo.direct
 import kyo.ios._
-import kyo.fibers._
+
 import scala.util.Try
 import kyo.direct._
 

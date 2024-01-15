@@ -4,7 +4,6 @@ package kyoTest
 import kyo._
 import kyo.ios._
 import kyo.options._
-import kyo.fibers._
 
 class FlatTest extends KyoTest {
 

@@ -4,7 +4,6 @@ import ios._
 import resources._
 import tries._
 import randoms._
-import fibers._
 import timers._
 import scala.concurrent.duration.Duration
 import scala.util.Try

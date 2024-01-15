@@ -9,7 +9,6 @@ import scala.util.Success
 import scala.util.Failure
 import scala.util.hashing.MurmurHash3
 import scala.concurrent.duration._
-import kyo.fibers.Fibers
 
 object listeners {
 

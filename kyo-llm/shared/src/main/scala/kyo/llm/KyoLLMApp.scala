@@ -4,12 +4,10 @@ import kyo._
 import kyo.requests._
 import kyo.llm.ais._
 import kyo.llm.configs._
-import fibers._
 import kyo.llm.tools._
 import timers._
 import scala.concurrent.duration.Duration
 import scala.util.Try
-import kyo.fibers
 import kyo.timers
 
 abstract class KyoLLMApp extends KyoApp.Base[KyoLLMApp.Effects] {

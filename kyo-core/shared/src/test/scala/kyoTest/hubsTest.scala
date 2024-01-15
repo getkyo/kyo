@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo.hubs._
-import kyo.fibers._
+
 import kyo.queues._
 import kyo.timers._
 import kyo._

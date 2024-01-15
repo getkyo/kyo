@@ -1,7 +1,5 @@
 package kyo.bench
 
-import kyo.fibers.Fibers
-
 class CollectParBench extends Bench.ForkOnly[Seq[Int]] {
 
   val count = 1000

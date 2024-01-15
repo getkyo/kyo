@@ -1,7 +1,6 @@
 package kyo.scheduler
 
 import kyo._
-import kyo.fibers.Fibers
 import kyo.ios._
 import kyo.logs._
 

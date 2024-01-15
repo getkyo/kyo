@@ -1,7 +1,6 @@
 package kyo.bench
 
 import kyo._
-import kyo.fibers._
 import kyo.ios.IOs
 import zio.UIO
 import org.openjdk.jmh.annotations._

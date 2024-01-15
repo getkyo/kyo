@@ -1,6 +1,5 @@
 package kyoTest
 
-import kyo.fibers._
 import kyo._
 import kyo.ios._
 import zio.Trace

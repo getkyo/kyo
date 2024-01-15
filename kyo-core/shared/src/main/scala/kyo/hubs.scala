@@ -3,7 +3,6 @@ package kyo
 import kyo._
 import kyo.ios._
 import kyo.tries._
-import kyo.fibers._
 import java.util.concurrent.ConcurrentSkipListSet
 import java.util.concurrent.CopyOnWriteArraySet
 import Flat.unsafe._

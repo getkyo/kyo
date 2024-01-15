@@ -52,4 +52,18 @@ package object kyo {
       v4: T4 < S
   ): (T1, T2, T3, T4) < S =
     v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
+
+  type Fiber[+T] // = T | Failed[T] | IOPromise[T]
+
+  type Promise[+T] <: Fiber[T] // = IOPromise[T]
+
+  type Fibers >: Fibers.Effects <: Fibers.Effects
+
+  implicit def promiseOps[T](p: Promise[T]): PromiseOps[T] =
+    new PromiseOps(p)
+
+  implicit def fiberOps[T](p: Fiber[T]): FiberOps[T] =
+    new FiberOps(p)
+
+  implicit def flat[T]: Flat[Fiber[T]] = Flat.unsafe.checked[Fiber[T]]
 }

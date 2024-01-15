@@ -3,7 +3,7 @@ package kyo.server
 import io.netty.channel._
 import io.netty.channel.unix.DomainSocketAddress
 import kyo._
-import kyo.fibers._
+
 import kyo.ios._
 import kyo.routes._
 import kyo.server.internal.KyoUtil._

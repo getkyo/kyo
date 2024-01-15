@@ -2,7 +2,6 @@ package kyo
 
 import kyo._
 import locals._
-import fibers.Fibers
 import kyo.ios.IOs
 import kyo.randoms.Randoms
 import kyo.resources.Resources

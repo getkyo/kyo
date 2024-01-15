@@ -1,7 +1,6 @@
 package kyo
 
 import kyo._
-import fibers._
 import kyo.ios._
 import sttp.client3._
 

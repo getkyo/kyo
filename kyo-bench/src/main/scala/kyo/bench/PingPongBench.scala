@@ -37,7 +37,6 @@ class PingPongBench extends Bench.ForkOnly[Unit] {
     import kyo._
     import kyo.ios._
     import kyo.queues._
-    import kyo.fibers._
 
     def repeat[A](n: Int)(io: A < Fibers): A < Fibers =
       if (n <= 1) io
