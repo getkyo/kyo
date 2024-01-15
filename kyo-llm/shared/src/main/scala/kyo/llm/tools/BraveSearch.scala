@@ -1,4 +1,4 @@
-package kyo.llm.agents
+package kyo.llm.tools
 
 import kyo._
 import kyo.llm.ais._
@@ -12,10 +12,10 @@ import zio.json._
 
 import scala.util.Failure
 import scala.util.Success
-import kyo.llm.agents._
 import kyo.logs._
+import kyo.llm.tools.Tool
 
-object BraveSearch extends Agent {
+object BraveSearch extends Tool {
 
   import model._
 

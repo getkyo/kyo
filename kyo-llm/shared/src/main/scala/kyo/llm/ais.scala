@@ -4,8 +4,8 @@ import kyo._
 import kyo.llm.completions._
 import kyo.llm.configs._
 import kyo.llm.contexts._
-import kyo.llm.agents._
 import kyo.llm.thoughts._
+import kyo.llm.tools._
 import kyo.concurrent.Joins
 import kyo.concurrent.atomics._
 import kyo.concurrent.fibers._
@@ -86,8 +86,8 @@ object ais {
     def assistantMessage(msg: String, calls: List[Call] = Nil): Unit < AIs =
       update(_.assistantMessage(msg, calls))
 
-    def agentMessage(callId: CallId, msg: String): Unit < AIs =
-      update(_.agentMessage(callId, msg))
+    def toolMessage(callId: CallId, msg: String): Unit < AIs =
+      update(_.toolMessage(callId, msg))
 
     def thought[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Unit < AIs =
       update(_.thought(Thoughts.opening[T]))
@@ -110,18 +110,18 @@ object ais {
       }
 
     private def infer[T](thoughts: List[Thoughts.Info])(implicit t: Json[T], f: Flat[T]): T < AIs =
-      Agents.resultAgent[T](thoughts).map { case (resultAgent, result) =>
-        def eval(agents: List[Agent], constrain: Option[Agent] = None): T < AIs =
-          fetch(agents, constrain).map { r =>
+      Tools.resultTool[T](thoughts).map { case (resultTool, result) =>
+        def eval(tools: List[Tool], constrain: Option[Tool] = None): T < AIs =
+          fetch(tools, constrain).map { r =>
             r.calls match {
               case Nil =>
-                eval(agents, Some(resultAgent))
+                eval(tools, Some(resultTool))
               case calls =>
-                Agents.handle(this, agents, calls).andThen {
+                Tools.handle(this, tools, calls).andThen {
                   result.map {
                     case None =>
                       Listeners.observe("Processing results") {
-                        eval(agents)
+                        eval(tools)
                       }
                     case Some(v) =>
                       v
@@ -129,24 +129,24 @@ object ais {
                 }
             }
           }
-        Agents.get.map(p => eval(resultAgent :: p))
+        Tools.get.map(p => eval(resultTool :: p))
       }
 
     private def fetch(
-        agents: List[Agent],
-        constrain: Option[Agent] = None
+        tools: List[Tool],
+        constrain: Option[Tool] = None
     ): Completions.Result < AIs =
       save.map { ctx =>
         val patch =
           ctx.seed(internal.seed + "\n\n\n" + ctx.seed.getOrElse(""))
             .reminder(internal.reminder + "\n\n\n" + ctx.reminder.getOrElse(""))
         val call =
-          if (constrain.isEmpty && agents.size == 1) {
-            agents.headOption
+          if (constrain.isEmpty && tools.size == 1) {
+            tools.headOption
           } else {
             constrain
           }
-        Completions(patch, agents, call)
+        Completions(patch, tools, call)
           .map { r =>
             assistantMessage(r.content, r.calls).andThen(r)
           }
@@ -278,12 +278,12 @@ object ais {
 
     val seed =
       p"""
-        - "Agent" is the nomenclature for the tools/functions available for you to call.
-        - The only way to interact with the user is via agent calls.
-        - Do not output simple text as replies, always call an agent.
-        - The 'agentInput' field is the only information sent to the user.
+        - "Tool" is the nomenclature for the tools/functions available for you to call.
+        - The only way to interact with the user is via tool calls.
+        - Do not output simple text as replies, always call an tool.
+        - The 'toolInput' field is the only information sent to the user.
         - Do not assume you'll have other opportunity to elaborate.
-        - The 'agentInput' field must be complete and fully satisfy the user's request.
+        - The 'toolInput' field must be complete and fully satisfy the user's request.
         - Strictly follow the json schema with **all required fields**.
         - Leverage text name fields as an inner-dialog thought mechanism.
         - Provide all required thought fields and do not create arbitrary ones.
@@ -294,7 +294,7 @@ object ais {
     val reminder =
       p"""
         - Only interact via function calls
-        - 'agentInput' is the only opportunity to return to the user.
+        - 'toolInput' is the only opportunity to return to the user.
         - Strictly follow the json schema with all required fields.
         - Leverage text name fields as inner-dialog.
       """

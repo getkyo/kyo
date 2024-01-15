@@ -3,9 +3,9 @@ package kyo.llm
 import kyo._
 import kyo.llm.configs._
 import kyo.llm.contexts._
-import kyo.llm.agents._
 import kyo.llm.ais._
 import kyo.llm.json._
+import kyo.llm.tools._
 import kyo.ios._
 import kyo.requests._
 import kyo.tries._
@@ -28,12 +28,12 @@ object completions {
 
     def apply(
         ctx: Context,
-        agents: List[Agent] = List.empty,
-        constrain: Option[Agent] = None
+        tools: List[Tool] = List.empty,
+        constrain: Option[Tool] = None
     ): Result < (IOs with Requests) =
       for {
         config <- Configs.get
-        req = Request(ctx, config, agents, constrain)
+        req = Request(ctx, config, tools, constrain)
         _                <- Logs.debug(req.toJsonPretty)
         response         <- config.completionsMeter.run(fetch(config, req))
         _                <- Logs.debug(response.toJsonPretty)
@@ -123,7 +123,7 @@ object completions {
                 VisionEntry.Content.Text(msg.content)
           )
         case _ =>
-          val agentCalls =
+          val toolCalls =
             msg match {
               case msg: Message.AssistantMessage =>
                 Some(
@@ -136,12 +136,12 @@ object completions {
             }
           val callId =
             msg match {
-              case msg: Message.AgentMessage =>
+              case msg: Message.ToolMessage =>
                 Some(msg.callId.id)
               case _ =>
                 None
             }
-          MessageEntry(msg.role.name, Some(msg.content), agentCalls, callId)
+          MessageEntry(msg.role.name, Some(msg.content), toolCalls, callId)
       }
     }
 
@@ -149,8 +149,8 @@ object completions {
       def apply(
           ctx: Context,
           config: Config,
-          agents: List[Agent],
-          constrain: Option[Agent]
+          tools: List[Tool],
+          constrain: Option[Tool]
       ): Request = {
         val reminder =
           ctx.reminder.map(r =>
@@ -165,11 +165,11 @@ object completions {
         val entries =
           (reminder ++ ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
             .map(toEntry).reverse
-        val agentDefs =
-          if (agents.isEmpty)
+        val toolDefs =
+          if (tools.isEmpty)
             None
           else
-            Some(agents.map(p =>
+            Some(tools.map(p =>
               ToolDef(FunctionDef(
                   p.info.description,
                   p.info.name,
@@ -182,7 +182,7 @@ object completions {
             config.maxTokens,
             config.seed,
             entries,
-            agentDefs,
+            toolDefs,
             constrain.map(p => ToolChoice(Name(p.info.name)))
         )
       }

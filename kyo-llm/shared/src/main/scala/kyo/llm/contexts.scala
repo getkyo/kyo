@@ -15,7 +15,7 @@ object contexts {
     val system: Role    = Role("system")
     val user: Role      = Role("user")
     val assistant: Role = Role("assistant")
-    val agent: Role     = Role("tool")
+    val tool: Role     = Role("tool")
   }
 
   case class CallId(id: String)
@@ -45,10 +45,10 @@ object contexts {
         role: Role = Role.assistant
     ) extends Message
 
-    case class AgentMessage(
+    case class ToolMessage(
         callId: CallId,
         content: String,
-        role: Role = Role.agent
+        role: Role = Role.tool
     ) extends Message
 
     def apply(role: Role, content: String): Message =
@@ -85,8 +85,8 @@ object contexts {
     def assistantMessage(content: String, calls: List[Call] = Nil): Context =
       add(Message.AssistantMessage(content, calls))
 
-    def agentMessage(callId: CallId, content: String): Context =
-      add(Message.AgentMessage(callId, content))
+    def toolMessage(callId: CallId, content: String): Context =
+      add(Message.ToolMessage(callId, content))
 
     def isEmpty: Boolean =
       seed.isEmpty && messages.isEmpty
@@ -117,8 +117,8 @@ object contexts {
           ).mkString(", ")
           s"\n  .assistantMessage(${stringify(content)}${if (calls.isEmpty) ""
             else s", List($callsStr)"})"
-        case Message.AgentMessage(callId, content, _) =>
-          s"\n  .agentMessage(CallId(\"${callId.id}\"), ${stringify(content)})"
+        case Message.ToolMessage(callId, content, _) =>
+          s"\n  .toolMessage(CallId(\"${callId.id}\"), ${stringify(content)})"
       }.mkString
       s"Context.empty$seedStr$reminderStr$messagesStr"
     }

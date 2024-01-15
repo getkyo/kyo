@@ -4,16 +4,16 @@ import kyo._
 import kyo.requests._
 import kyo.llm.ais._
 import kyo.llm.configs._
-import kyo.llm.agents._
 import kyo.consoles._
 import concurrent.fibers._
+import kyo.llm.tools._
 import concurrent.timers._
 import scala.concurrent.duration.Duration
 import scala.util.Try
 
 abstract class KyoLLMApp extends KyoApp.Base[KyoLLMApp.Effects] {
 
-  def agents: List[Agent] = Nil
+  def tools: List[Tool] = Nil
 
   def config: Config = Config.default
 
@@ -22,7 +22,7 @@ abstract class KyoLLMApp extends KyoApp.Base[KyoLLMApp.Effects] {
   ) =
     KyoLLMApp.run {
       AIs.configs.let(config) {
-        Agents.enable(agents) {
+        Tools.enable(tools) {
           v.map(Consoles.println(_))
         }
       }

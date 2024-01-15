@@ -1,7 +1,7 @@
-package kyo.llm.agents
+package kyo.llm.tools
 
 import kyo._
-import kyo.llm.agents._
+import kyo.llm.tools._
 import kyo.llm.ais._
 import kyo.llm.configs._
 import kyo.llm.contexts._
@@ -14,7 +14,7 @@ import java.io.ByteArrayOutputStream
 import java.util.Base64
 import javax.imageio.ImageIO
 
-object Vision extends Agent {
+object Vision extends Tool {
 
   case class In(
       @desc("A description of the environment in which the image is displayed. " +

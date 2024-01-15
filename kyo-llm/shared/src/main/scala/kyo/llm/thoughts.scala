@@ -124,7 +124,7 @@ package object thoughts {
 
     sealed trait Result[T] extends Thought {
       self: Product =>
-      val agentInput: T
+      val toolInput: T
       val shortActionNarrationToBeShownToTheUser: String
     }
 
@@ -138,9 +138,9 @@ package object thoughts {
             `Strictly follow the required fields including thoughts`: Boolean,
             openingThoughts: Opening,
             `Opening thoughts summary`: String,
-            `Only agentInput is visible to the user`: Boolean,
-            agentInput: T,
-            `agentInput fully satisfies the user's resquest`: Boolean,
+            `Only toolInput is visible to the user`: Boolean,
+            toolInput: T,
+            `toolInput fully satisfies the user's resquest`: Boolean,
             shortActionNarrationToBeShownToTheUser: String,
             closingThoughts: Closing,
             allFieldsAdhereToTheJsonSchema: Boolean
@@ -152,9 +152,9 @@ package object thoughts {
             `Strictly follow the required fields including thoughts`: Boolean,
             openingThoughts: Opening,
             `Opening thoughts summary`: String,
-            `Only agentInput is visible to the user`: Boolean,
-            agentInput: T,
-            `agentInput fully satisfies the user's resquest`: Boolean,
+            `Only toolInput is visible to the user`: Boolean,
+            toolInput: T,
+            `toolInput fully satisfies the user's resquest`: Boolean,
             shortActionNarrationToBeShownToTheUser: String,
             allFieldsAdhereToTheJsonSchema: Boolean
         ) extends Result[T]
@@ -164,9 +164,9 @@ package object thoughts {
             strictlyFollowTheJsonSchema: Boolean,
             `This is a required thought field for inner-dialog`: Boolean,
             `Strictly follow the required fields including thoughts`: Boolean,
-            `Only agentInput is visible to the user`: Boolean,
-            agentInput: T,
-            `agentInput fully satisfies the user's resquest`: Boolean,
+            `Only toolInput is visible to the user`: Boolean,
+            toolInput: T,
+            `toolInput fully satisfies the user's resquest`: Boolean,
             shortActionNarrationToBeShownToTheUser: String,
             closingThoughts: Closing,
             allFieldsAdhereToTheJsonSchema: Boolean
@@ -174,7 +174,7 @@ package object thoughts {
 
         case class NoThoughts[T](
             strictlyFollowTheJsonSchema: Boolean,
-            agentInput: T,
+            toolInput: T,
             shortActionNarrationToBeShownToTheUser: String,
             allFieldsAdhereToTheJsonSchema: Boolean
         ) extends Result[T]
@@ -185,7 +185,7 @@ package object thoughts {
         case class OpeningAndClosing[Opening, T, Closing](
             openingThoughts: Opening,
             `Opening thoughts summary`: String,
-            agentInput: T,
+            toolInput: T,
             shortActionNarrationToBeShownToTheUser: String,
             closingThoughts: Closing,
             allFieldsAdhereToTheJsonSchema: Boolean
@@ -194,20 +194,20 @@ package object thoughts {
         case class OnlyOpening[Opening, T](
             openingThoughts: Opening,
             `Opening thoughts summary`: String,
-            agentInput: T,
+            toolInput: T,
             shortActionNarrationToBeShownToTheUser: String,
             allFieldsAdhereToTheJsonSchema: Boolean
         ) extends Result[T]
 
         case class OnlyClosing[T, Closing](
-            agentInput: T,
+            toolInput: T,
             shortActionNarrationToBeShownToTheUser: String,
             closingThoughts: Closing,
             allFieldsAdhereToTheJsonSchema: Boolean
         ) extends Result[T]
 
         case class NoThoughts[T](
-            agentInput: T,
+            toolInput: T,
             shortActionNarrationToBeShownToTheUser: String,
             allFieldsAdhereToTheJsonSchema: Boolean
         ) extends Result[T]

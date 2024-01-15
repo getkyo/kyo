@@ -23,9 +23,9 @@ import zio.Chunk
 import zio.schema.validation.Validation
 import scala.collection.immutable.ListMap
 
-package object agents {
+package object tools {
 
-  abstract class Agent {
+  abstract class Tool {
 
     type In
     type Out
@@ -63,21 +63,21 @@ package object agents {
       Thoughts.result(thoughts, info.input, isResult)
 
     private[kyo] def handle(ai: AI, call: Call): Boolean < AIs =
-      Agents.disable {
+      Tools.disable {
         implicit def s: ZSchema[In] = info.input.zSchema
         Tries.run(json.decode(call.arguments)).map {
           case Failure(ex) =>
-            ai.agentMessage(call.id, "Invalid agent input: " + ex).andThen(false)
+            ai.toolMessage(call.id, "Invalid tool input: " + ex).andThen(false)
           case Success(res) =>
-            ai.agentMessage(call.id, "Agent processing.").andThen {
+            ai.toolMessage(call.id, "Tool processing.").andThen {
               res.eval(ai).andThen {
                 Listeners.observe(res.shortActionNarrationToBeShownToTheUser) {
                   AIs.ephemeral {
-                    Tries.run(run(ai, res.agentInput).map(info.output.encode)).map {
+                    Tries.run(run(ai, res.toolInput).map(info.output.encode)).map {
                       case Failure(ex) =>
-                        ai.agentMessage(call.id, "Agent failure: " + ex).andThen(false)
+                        ai.toolMessage(call.id, "Tool failure: " + ex).andThen(false)
                       case Success(value) =>
-                        ai.agentMessage(call.id, value).andThen(true)
+                        ai.toolMessage(call.id, value).andThen(true)
                     }
                   }
                 }
@@ -87,34 +87,34 @@ package object agents {
       }
   }
 
-  object Agents {
-    private val local = Locals.init(List.empty[Agent])
+  object Tools {
+    private val local = Locals.init(List.empty[Tool])
 
-    def get: List[Agent] < AIs = local.get
+    def get: List[Tool] < AIs = local.get
 
-    def enable[T, S](p: Seq[Agent])(v: => T < S): T < (AIs with S) =
+    def enable[T, S](p: Seq[Tool])(v: => T < S): T < (AIs with S) =
       local.get.map { set =>
         local.let(set ++ p)(v)
       }
 
-    def enable[T, S](first: Agent, rest: Agent*)(v: => T < S): T < (AIs with S) =
+    def enable[T, S](first: Tool, rest: Tool*)(v: => T < S): T < (AIs with S) =
       enable(first +: rest)(v)
 
     def disable[T, S](f: T < S): T < (AIs with S) =
       local.let(List.empty)(f)
 
-    private[kyo] def resultAgent[T](_thoughts: List[Thoughts.Info])(
+    private[kyo] def resultTool[T](_thoughts: List[Thoughts.Info])(
         implicit t: Json[T]
-    ): (Agent, Option[T] < AIs) < AIs =
+    ): (Tool, Option[T] < AIs) < AIs =
       Atomics.initRef(Option.empty[T]).map { ref =>
-        val agent =
-          new Agent {
+        val tool =
+          new Tool {
             type In  = T
             type Out = String
 
             val info = Info(
-                "resultAgent",
-                "Call this agent with the result."
+                "resultTool",
+                "Call this tool with the result."
             )
 
             override def isResult = true
@@ -125,22 +125,22 @@ package object agents {
             def run(input: T) =
               ref.set(Some(input)).andThen("Result processed.")
           }
-        (agent, ref.get)
+        (tool, ref.get)
       }
 
-    private[kyo] def handle(ai: AI, agents: List[Agent], calls: List[Call]): Unit < AIs =
+    private[kyo] def handle(ai: AI, tools: List[Tool], calls: List[Call]): Unit < AIs =
       Seqs.traverse(calls) { call =>
-        agents.find(_.info.name == call.function) match {
+        tools.find(_.info.name == call.function) match {
           case None =>
-            ai.agentMessage(call.id, "Agent doesn't exist anymore: " + Json.encode(call))
+            ai.toolMessage(call.id, "Tool doesn't exist anymore: " + Json.encode(call))
               .andThen(false)
-          case Some(agent) =>
-            agent.handle(ai, call)
+          case Some(tool) =>
+            tool.handle(ai, call)
         }
       }.map { l =>
         if (!l.forall(identity)) {
           ai.systemMessage(
-              "Analyze the agent execution errors. Please provide repair analysis for self-correction."
+              "Analyze the tool execution errors. Please provide repair analysis for self-correction."
           ).andThen {
             ai.gen[Repair].unit
           }

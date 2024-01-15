@@ -1,7 +1,7 @@
-package kyo.llm.agents
+package kyo.llm.tools
 
 import kyo._
-import kyo.llm.agents._
+import kyo.llm.tools._
 import kyo.llm.ais._
 import kyo.logs._
 import kyo.requests._
@@ -12,7 +12,7 @@ import zio.json._
 
 import scala.concurrent.duration._
 
-class Curl(methods: Curl.Methods) extends Agent {
+class Curl(methods: Curl.Methods) extends Tool {
   private val allow = methods.s
 
   case class In(
@@ -55,10 +55,10 @@ class Curl(methods: Curl.Methods) extends Agent {
 
 object Curl {
 
-  def apply(f: Methods => Methods): Agent =
+  def apply(f: Methods => Methods): Tool =
     apply(f(Methods.init))
 
-  def apply(methods: Methods): Agent =
+  def apply(methods: Methods): Tool =
     new Curl(methods)
 
   case class Methods(s: Set[String]) {

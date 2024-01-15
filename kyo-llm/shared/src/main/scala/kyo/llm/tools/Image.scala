@@ -1,7 +1,7 @@
-package kyo.llm.agents
+package kyo.llm.tools
 
 import kyo._
-import kyo.llm.agents._
+import kyo.llm.tools._
 import kyo.llm.ais._
 import kyo.llm.configs._
 import kyo.llm.contexts._
@@ -13,7 +13,7 @@ import zio.json._
 
 import scala.concurrent.duration.Duration
 
-object Image extends Agent {
+object Image extends Tool {
 
   import internal._
 
