@@ -78,21 +78,21 @@ class AI private[llm] (val id: Long) {
   def closingThought[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Unit < AIs =
     update(_.thought(Thoughts.closing[T]))
 
+  def genNow[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
+    userMessage(msg).andThen(genNow[T])
+
+  def genNow[T](implicit t: Json[T], f: Flat[T]): T < AIs =
+    Tools.disable(gen[T](Nil))
+
   def gen[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
     userMessage(msg).andThen(gen[T])
 
   def gen[T](implicit t: Json[T], f: Flat[T]): T < AIs =
-    infer[T](Nil)
-
-  def infer[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
-    userMessage(msg).andThen(infer[T])
-
-  def infer[T](implicit t: Json[T], f: Flat[T]): T < AIs =
     save.map { ctx =>
-      infer[T](ctx.thoughts)
+      gen[T](ctx.thoughts)
     }
 
-  private def infer[T](thoughts: List[Thoughts.Info])(implicit t: Json[T], f: Flat[T]): T < AIs =
+  private def gen[T](thoughts: List[Thoughts.Info])(implicit t: Json[T], f: Flat[T]): T < AIs =
     Tools.resultTool[T](thoughts).map { case (resultTool, result) =>
       def eval(tools: List[Tool], constrain: Option[Tool] = None): T < AIs =
         fetch(tools, constrain).map { r =>
@@ -162,14 +162,21 @@ object AIs extends Joins[AIs] {
   def run[T, S](v: T < (AIs with S))(implicit f: Flat[T < AIs with S]): T < (Fibers with S) =
     State.run[T, Fibers with S](v).map(_._1)
 
-  def gen[T](implicit t: Json[T], f: Flat[T]): T < AIs =
-    init.map(_.gen[T])
+  def genNow[T](implicit t: Json[T], f: Flat[T]): T < AIs =
+    init.map(_.genNow[T])
+
+  def genNow[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
+    init.map(_.genNow[T](msg))
 
   def gen[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
     init.map(_.gen[T](msg))
 
-  def infer[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
-    init.map(_.infer[T](msg))
+  def genNow[T](seed: String, msg: String)(
+      implicit
+      t: Json[T],
+      f: Flat[T]
+  ): T < AIs =
+    init(seed).map(_.genNow[T](msg))
 
   def gen[T](seed: String, msg: String)(
       implicit
@@ -178,12 +185,12 @@ object AIs extends Joins[AIs] {
   ): T < AIs =
     init(seed).map(_.gen[T](msg))
 
-  def infer[T](seed: String, msg: String)(
+  def genNow[T](seed: String, reminder: String, msg: String)(
       implicit
       t: Json[T],
       f: Flat[T]
   ): T < AIs =
-    init(seed).map(_.infer[T](msg))
+    init(seed, reminder).map(_.genNow[T](msg))
 
   def gen[T](seed: String, reminder: String, msg: String)(
       implicit
@@ -191,13 +198,6 @@ object AIs extends Joins[AIs] {
       f: Flat[T]
   ): T < AIs =
     init(seed, reminder).map(_.gen[T](msg))
-
-  def infer[T](seed: String, reminder: String, msg: String)(
-      implicit
-      t: Json[T],
-      f: Flat[T]
-  ): T < AIs =
-    init(seed, reminder).map(_.infer[T](msg))
 
   def restore(ctx: Context): AI < AIs =
     init.map { ai =>
