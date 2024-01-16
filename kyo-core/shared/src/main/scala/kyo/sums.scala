@@ -104,7 +104,7 @@ object Summer {
   implicit def mapSummer[T, U]: Summer[Map[T, U]] = Summer(Map.empty[T, U])(_ ++ _)
 }
 
-object sumsInternal {
+private[kyo] object sumsInternal {
 
   private[kyo] case class AddValue[V](v: V)
   private[kyo] case class UpdateValue[V](f: V => V)

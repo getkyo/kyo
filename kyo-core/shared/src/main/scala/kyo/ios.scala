@@ -15,32 +15,7 @@ import scala.annotation.implicitNotFound
 import java.util.concurrent.atomic.AtomicReference
 import kyo.Locals.State
 
-object iosInternal {
-
-  trait Preempt extends Safepoint[IO, IOs] {
-    def ensure(f: () => Unit): Unit
-    def remove(f: () => Unit): Unit
-    def suspend[T, S](v: => T < S): T < (IOs with S) =
-      IOs[T, S](v)
-  }
-  object Preempt {
-    val never: Preempt =
-      new Preempt {
-        def ensure(f: () => Unit) = ()
-        def remove(f: () => Unit) = ()
-        def check()               = false
-      }
-  }
-  type IO[+T] = T
-}
-
 import iosInternal._
-
-private[kyo] abstract class KyoIO[T, S]
-    extends Kyo[IO, IOs, Unit, T, (IOs with S)] {
-  final def value  = ()
-  final def effect = IOs
-}
 
 sealed trait IOs extends Effect[IO, IOs] {
 
@@ -96,28 +71,9 @@ sealed trait IOs extends Effect[IO, IOs] {
     runLazyLoop(v)
   }
 
-  object internal {
-
-    abstract class Ensure
-        extends AtomicReference[Any]
-        with Function0[Unit] {
-
-      protected def run: Unit < IOs
-
-      def apply(): Unit =
-        if (compareAndSet(null, ())) {
-          try IOs.run(run)
-          catch {
-            case ex if NonFatal(ex) =>
-              Logs.unsafe.error(s"IOs.ensure function failed", ex)
-          }
-        }
-    }
-  }
-
   /*inline*/
   def ensure[T, S]( /*inline*/ f: => Unit < IOs)(v: T < S): T < (IOs with S) = {
-    val ensure = new internal.Ensure {
+    val ensure = new Ensure {
       def run = f
     }
     def ensureLoop(v: T < (IOs with S), p: Preempt): T < (IOs with S) =
@@ -154,3 +110,44 @@ sealed trait IOs extends Effect[IO, IOs] {
   }
 }
 object IOs extends IOs
+
+private[kyo] object iosInternal {
+
+  abstract class Ensure
+      extends AtomicReference[Any]
+      with Function0[Unit] {
+
+    protected def run: Unit < IOs
+
+    def apply(): Unit =
+      if (compareAndSet(null, ())) {
+        try IOs.run(run)
+        catch {
+          case ex if NonFatal(ex) =>
+            Logs.unsafe.error(s"IOs.ensure function failed", ex)
+        }
+      }
+  }
+
+  private[kyo] abstract class KyoIO[T, S]
+      extends Kyo[IO, IOs, Unit, T, (IOs with S)] {
+    final def value  = ()
+    final def effect = IOs
+  }
+
+  trait Preempt extends Safepoint[IO, IOs] {
+    def ensure(f: () => Unit): Unit
+    def remove(f: () => Unit): Unit
+    def suspend[T, S](v: => T < S): T < (IOs with S) =
+      IOs[T, S](v)
+  }
+  object Preempt {
+    val never: Preempt =
+      new Preempt {
+        def ensure(f: () => Unit) = ()
+        def remove(f: () => Unit) = ()
+        def check()               = false
+      }
+  }
+  type IO[+T] = T
+}

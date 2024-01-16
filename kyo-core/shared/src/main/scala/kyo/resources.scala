@@ -47,7 +47,7 @@ sealed abstract class Resources private[kyo] ()
 }
 object Resources extends Resources
 
-object resourcesInternal {
+private[kyo] object resourcesInternal {
   type Resource[T] >: T // = T | GetFinalizer
 
   private[kyo] case object GetFinalizer
