@@ -1,6 +1,6 @@
 package kyo.llm.thoughts
 
-import kyo.llm.ais._
+import kyo.llm._
 
 case class Predict(
     `Forecast potential future scenarios based on current understanding`: String,

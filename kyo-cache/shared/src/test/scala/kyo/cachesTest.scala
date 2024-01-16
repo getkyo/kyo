@@ -4,7 +4,6 @@ import kyo._
 
 import kyoTest._
 import scala.util._
-import kyo.caches._
 
 class cachesTest extends KyoTest {
 

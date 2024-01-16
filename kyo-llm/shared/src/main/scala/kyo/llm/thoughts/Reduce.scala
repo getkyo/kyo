@@ -2,11 +2,7 @@ package kyo.llm.thoughts
 
 import kyo._
 
-import kyo.llm.ais._
-import kyo.llm.KyoLLMApp
-import kyo.llm.configs.Config
-import scala.util.Random
-import kyo.llm.tools.Tool
+import kyo.llm._
 
 case class Reduce[Expr, Result](
     initialExpression: Expr,

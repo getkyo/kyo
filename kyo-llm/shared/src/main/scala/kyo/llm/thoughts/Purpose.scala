@@ -1,5 +1,7 @@
 package kyo.llm.thoughts
 
+import kyo.llm._
+
 case class Purpose[T <: String](
     `My single purpose is`: T,
     `Don't approach any other subject`: Boolean,

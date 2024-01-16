@@ -1,7 +1,5 @@
 package kyo
 
-import kyo._
-
 import kyo.server._
 
 import sttp.tapir._

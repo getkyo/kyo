@@ -1,6 +1,6 @@
 package kyo.llm.thoughts
 
-import kyo.llm.ais._
+import kyo.llm._
 
 case class Contextualize(
     `Determine the core message or question in the input`: String,

@@ -1,5 +1,7 @@
 package kyo.llm.thoughts
 
+import kyo.llm._
+
 case class Think(
     `Consider all the information so far`: Boolean,
     `Reflect on the user's intent`: Boolean,

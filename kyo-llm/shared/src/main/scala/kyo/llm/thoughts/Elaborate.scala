@@ -1,6 +1,6 @@
 package kyo.llm.thoughts
 
-import kyo.llm.ais._
+import kyo.llm._
 
 case class Elaborate(
     `Analyze the thoughts so far to plan your reply`: true,

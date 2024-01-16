@@ -1,12 +1,9 @@
 package kyo.llm.bench
 
 import kyo._
-import kyo.llm.ais._
-import kyo.files._
+import kyo.llm._
 import kyo.llm.thoughts._
 import kyo.llm.KyoLLMApp
-import kyo.llm.configs.Config
-import kyo.llm.configs.Model
 
 object ttt extends KyoLLMApp {
 
