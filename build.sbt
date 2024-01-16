@@ -209,7 +209,7 @@ lazy val `kyo-os-lib` =
     .settings(
         `kyo-settings`,
         `without-cross-scala`,
-        libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.9.2"
+        libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.9.3"
     )
 
 lazy val `kyo-sttp` =
