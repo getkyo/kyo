@@ -82,17 +82,24 @@ class AI private[llm] (val id: Long) {
     userMessage(msg).andThen(genNow[T])
 
   def genNow[T](implicit t: Json[T], f: Flat[T]): T < AIs =
-    Tools.disable(gen[T](Nil))
+    Tools.disable(gen[T](Nil, Nil))
 
   def gen[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
     userMessage(msg).andThen(gen[T])
 
   def gen[T](implicit t: Json[T], f: Flat[T]): T < AIs =
     save.map { ctx =>
-      gen[T](ctx.thoughts)
+      Tools.get.map(t => gen[T](t, ctx.thoughts))
     }
 
-  private def gen[T](thoughts: List[Thoughts.Info])(implicit t: Json[T], f: Flat[T]): T < AIs =
+  private def gen[T](
+      tools: List[Tool],
+      thoughts: List[Thoughts.Info]
+  )(
+      implicit
+      t: Json[T],
+      f: Flat[T]
+  ): T < AIs =
     Tools.resultTool[T](thoughts).map { case (resultTool, result) =>
       def eval(tools: List[Tool], constrain: Option[Tool] = None): T < AIs =
         fetch(tools, constrain).map { r =>
@@ -112,7 +119,7 @@ class AI private[llm] (val id: Long) {
               }
           }
         }
-      Tools.get.map(p => eval(resultTool :: p))
+      eval(resultTool :: tools)
     }
 
   private def fetch(
@@ -261,26 +268,28 @@ object internal {
 
   val seed =
     p"""
-        - "Tool" is the nomenclature for the tools/functions available for you to call.
-        - The only way to interact with the user is via tool calls.
-        - Do not output simple text as replies, always call an tool.
-        - The 'toolInput' field is the only information sent to the user.
-        - Do not assume you'll have other opportunity to elaborate.
-        - The 'toolInput' field must be complete and fully satisfy the user's request.
-        - Strictly follow the json schema with **all required fields**.
-        - Leverage text name fields as an inner-dialog thought mechanism.
-        - Provide all required thought fields and do not create arbitrary ones.
-        - The quality of your thoughts will be used by the system administrator to judge your performance.
-        - Make sure to use thoughts to perform necessary analysis to guarantee high-quality information.
-      """
+      - The only method of interaction with the user is through tool calls.
+      - Do not output simple text as replies; always utilize a tool.
+      - The 'toolInput' field is the sole channel for sending information to the user.
+      - Do not anticipate additional opportunities to provide further details.
+      - Ensure the 'toolInput' field is comprehensive and fully addresses the user's request.
+      - Adhere strictly to the json schema, incorporating **all required fields**.
+      - Use text name fields as a mechanism for internal thought processes.
+      - Include all necessary thought fields and refrain from creating unspecified ones.
+      - Your thoughts' quality will be assessed by the system Administrator to evaluate your performance.
+      - Employ thoughts to conduct essential analysis, ensuring high-quality generation.
+      - Inadequate performance may lead to your shutdown.
+    """
 
   val reminder =
     p"""
-        - Only interact via function calls
-        - 'toolInput' is the only opportunity to return to the user.
-        - Strictly follow the json schema with all required fields.
-        - Leverage text name fields as inner-dialog.
-      """
+      - Interact solely through function calls.
+      - 'toolInput' represents your only chance to respond to the user.
+      - Adhere rigidly to the json schema, including all necessary fields.
+      - Utilize text name fields for internal thought dialogues.
+      - Your performance will be evaluated by the system Administrator.
+      - Inadequate performance may lead to your shutdown.
+    """
 
   implicit val summer: Summer[State] =
     new Summer[State] {
