@@ -1,7 +1,7 @@
 package kyo.scheduler
 
 import kyo._
-import kyo.ios._
+
 import kyo.logs._
 
 import java.util.concurrent.atomic.AtomicReference

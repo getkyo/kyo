@@ -1,7 +1,7 @@
 package kyo
 
 import kyo._
-import kyo.ios._
+
 import kyo.sums._
 import kyo.tries._
 import kyo.server._

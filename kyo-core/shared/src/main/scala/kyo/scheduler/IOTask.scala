@@ -1,10 +1,11 @@
 package kyo.scheduler
 
 import kyo.fibersInternal._
+import kyo.iosInternal._
 import kyo._
 import kyo.core._
 import kyo.core.internal._
-import kyo.ios._
+
 import kyo.locals._
 import kyo.resources._
 

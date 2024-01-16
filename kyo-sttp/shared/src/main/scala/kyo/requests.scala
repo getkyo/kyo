@@ -1,7 +1,7 @@
 package kyo
 
 import kyo._
-import kyo.ios._
+
 import sttp.client3._
 
 object requests {

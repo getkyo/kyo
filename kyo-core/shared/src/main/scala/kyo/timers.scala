@@ -2,7 +2,6 @@ package kyo
 
 import kyo._
 import kyo.scheduler.Threads
-import kyo.ios._
 
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors

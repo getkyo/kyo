@@ -1,6 +1,5 @@
 package kyo
 
-import ios._
 import resources._
 import tries._
 import randoms._

@@ -1,7 +1,6 @@
 package kyo.scheduler
 
 import kyo._
-import kyo.ios._
 
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger

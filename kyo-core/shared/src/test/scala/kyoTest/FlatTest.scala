@@ -2,7 +2,7 @@ package kyoTest
 package kyoTest
 
 import kyo._
-import kyo.ios._
+
 import kyo.options._
 
 class FlatTest extends KyoTest {

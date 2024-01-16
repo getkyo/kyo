@@ -5,7 +5,6 @@ import scala.reflect.macros.whitebox.Context
 import org.scalamacros.resetallattrs._
 import language.higherKinds
 import scala.reflect.macros.TypecheckException
-import kyo.ios.IOs
 
 object TestSupport {
   def showTree[T](t: T): T = macro TestSupportMacro.showTree
@@ -30,7 +29,7 @@ private[kyo] class TestSupportMacro(val c: Context) {
     c.resetAllAttrs {
       Trees.Transform(c)(t) {
         case q"$pack.await[$t, $s]($v)" =>
-          q"kyo.ios.IOs.run($v.asInstanceOf[$t < IOs])"
+          q"kyo.IOs.run($v.asInstanceOf[$t < IOs])"
       }
     }
 
@@ -39,7 +38,7 @@ private[kyo] class TestSupportMacro(val c: Context) {
       val lifted =
         q"""
           implicit val flat: kyo.Flat[Any] = kyo.Flat.unsafe.unchecked
-          kyo.ios.IOs.run(kyo.direct.defer($body).asInstanceOf[Any < IOs])
+          kyo.IOs.run(kyo.direct.defer($body).asInstanceOf[Any < IOs])
         """
 
       val forceLifted = forceLift(body)

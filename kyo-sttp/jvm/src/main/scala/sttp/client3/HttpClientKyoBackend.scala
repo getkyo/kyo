@@ -1,7 +1,6 @@
 package sttp.client3
 
 import kyo._
-import kyo.ios._
 
 import sttp.capabilities.WebSockets
 import sttp.client3.HttpClientBackend.EncodingHandler

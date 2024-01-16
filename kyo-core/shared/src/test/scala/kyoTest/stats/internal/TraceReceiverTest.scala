@@ -4,7 +4,6 @@ import kyoTest.KyoTest
 import kyo.stats._
 import kyo.stats.internal._
 import kyo._
-import kyo.ios.IOs
 
 class TraceReceiverTest extends KyoTest {
 

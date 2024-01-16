@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo._
-import kyo.ios._
+
 import zio.Trace
 import zio.prelude.{Equal}
 import zio.prelude.coherent.CovariantDeriveEqual

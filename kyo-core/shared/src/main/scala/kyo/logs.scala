@@ -2,7 +2,6 @@ package kyo
 
 import org.slf4j.LoggerFactory
 
-import ios._
 import scala.languageFeature.implicitConversions
 
 object logs {

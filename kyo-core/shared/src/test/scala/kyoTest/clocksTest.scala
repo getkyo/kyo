@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo._
-import kyo.ios._
 
 import java.time.Instant
 import java.time.ZoneId

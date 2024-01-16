@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.ios._
 import kyo.locals._
 import java.io.IOException
 import java.io.EOFException

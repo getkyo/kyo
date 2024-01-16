@@ -1,7 +1,6 @@
 package kyo.stats
 
 import kyo._
-import kyo.ios._
 
 case class Histogram(unsafe: Histogram.Unsafe) extends AnyVal {
 

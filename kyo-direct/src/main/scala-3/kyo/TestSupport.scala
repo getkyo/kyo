@@ -2,7 +2,6 @@ package kyo
 
 import scala.language.experimental.macros
 import language.higherKinds
-import kyo.ios._
 
 import kyo.direct._
 

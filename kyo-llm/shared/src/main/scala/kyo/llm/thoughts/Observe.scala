@@ -3,7 +3,7 @@ package kyo.llm.thoughts
 import kyo.llm.ais._
 import zio.schema.{Schema => ZSchema}
 import kyo._
-import kyo.ios._
+
 import kyo.stats._
 import kyo.logs.Logs
 

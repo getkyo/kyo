@@ -1,7 +1,7 @@
 package kyo.internal
 
 import kyo._
-import kyo.ios._
+
 import sttp.monad.MonadAsyncError
 import KyoSttpMonad.M
 import scala.util.Try

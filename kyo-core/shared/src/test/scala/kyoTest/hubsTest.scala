@@ -1,11 +1,9 @@
 package kyoTest
 
-import kyo.hubs._
-
 import kyo.queues._
 import kyo.timers._
 import kyo._
-import kyo.ios._
+
 import kyo.tries._
 
 import scala.concurrent.duration._

@@ -5,7 +5,6 @@ import kyo.tries._
 import kyo.options._
 import kyo.direct._
 import kyo.direct
-import kyo.ios._
 
 import scala.util.Try
 import kyo.direct._

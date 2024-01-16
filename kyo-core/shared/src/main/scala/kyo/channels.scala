@@ -1,7 +1,7 @@
 package kyo
 
 import kyo._
-import kyo.ios._
+
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 
 import java.util.concurrent.Executors

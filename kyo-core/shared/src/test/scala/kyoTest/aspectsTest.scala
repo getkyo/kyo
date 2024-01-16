@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo._
-import kyo.ios._
+
 import org.scalatest.compatible.Assertion
 import scala.concurrent.Future
 

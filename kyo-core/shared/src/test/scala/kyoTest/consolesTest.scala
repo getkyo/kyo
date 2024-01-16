@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo._
-import kyo.ios._
 
 class consolesTest extends KyoTest {
 

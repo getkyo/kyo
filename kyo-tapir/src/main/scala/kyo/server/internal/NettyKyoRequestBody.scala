@@ -5,7 +5,6 @@ import io.netty.handler.codec.http.FullHttpRequest
 import io.netty.handler.codec.http.HttpContent
 import kyo._
 
-import kyo.ios._
 import kyo.routes._
 import kyo.tries._
 import sttp.capabilities.Streams

@@ -1,6 +1,6 @@
 package kyo.scheduler
 
-import kyo.ios.Preempt
+import kyo.iosInternal._
 
 import java.util.Comparator
 import java.util.PriorityQueue

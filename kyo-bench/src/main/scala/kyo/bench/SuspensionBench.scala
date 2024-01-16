@@ -15,7 +15,6 @@ class SuspensionBench extends Bench.SyncAndFork[Unit] {
 
   def kyoBench() = {
     import kyo._
-    import kyo.ios._
 
     IOs(())
       .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())

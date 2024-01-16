@@ -3,7 +3,7 @@ package kyo
 import kyo._
 import kyo.core._
 import kyo.core.internal._
-import kyo.ios._
+
 import kyo.locals._
 
 import java.util.concurrent.atomic.AtomicInteger

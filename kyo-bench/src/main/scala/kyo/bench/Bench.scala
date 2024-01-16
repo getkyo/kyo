@@ -1,7 +1,7 @@
 package kyo.bench
 
 import kyo._
-import kyo.ios.IOs
+
 import zio.UIO
 import org.openjdk.jmh.annotations._
 import cats.effect.IO

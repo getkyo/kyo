@@ -28,7 +28,7 @@ class SchedulingBench extends Bench.ForkOnly[Int] {
 
   override def kyoBenchFiber() = {
     import kyo._
-    import kyo.ios._
+
     import kyo.seqs._
 
     def fiber(i: Int): Int < IOs =

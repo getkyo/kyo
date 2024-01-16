@@ -4,7 +4,6 @@ import io.netty.channel.Channel
 import io.netty.channel.ChannelFuture
 import kyo._
 
-import kyo.ios._
 import kyo.routes._
 import kyo.tries._
 

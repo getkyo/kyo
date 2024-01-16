@@ -35,7 +35,7 @@ class PingPongBench extends Bench.ForkOnly[Unit] {
 
   override def kyoBenchFiber() = {
     import kyo._
-    import kyo.ios._
+
     import kyo.queues._
 
     def repeat[A](n: Int)(io: A < Fibers): A < Fibers =

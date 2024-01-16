@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo._
-import kyo.ios._
+
 import kyo.locals._
 import kyo.options._
 

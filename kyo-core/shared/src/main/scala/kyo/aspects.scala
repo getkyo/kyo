@@ -2,7 +2,6 @@ package kyo
 
 import kyo._
 import locals._
-import kyo.ios.IOs
 import kyo.randoms.Randoms
 import kyo.resources.Resources
 import timers.Timers

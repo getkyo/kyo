@@ -1,7 +1,7 @@
 package kyo
 
 import kyo._
-import kyo.ios._
+
 import kyo.resources._
 
 import scala.annotation.tailrec

@@ -2,7 +2,7 @@ package kyo
 
 import core._
 import core.internal._
-import ios._
+import kyo.iosInternal._
 
 object locals {
 

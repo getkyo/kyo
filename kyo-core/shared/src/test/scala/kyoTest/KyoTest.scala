@@ -4,7 +4,7 @@ import izumi.reflect._
 
 import kyo.timers._
 import kyo._
-import kyo.ios._
+
 import kyo.randoms.Randoms
 import kyo.resources._
 import kyo.tries._

@@ -1,7 +1,6 @@
 package kyo
 
 import kyo._
-import kyo.ios._
 
 import java.util.concurrent.atomic.{AtomicBoolean => JAtomicBoolean}
 import java.util.concurrent.atomic.{AtomicInteger => JAtomicInteger}

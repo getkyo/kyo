@@ -6,7 +6,7 @@ import kyo.llm.contexts._
 import kyo.llm.ais._
 import kyo.llm.json._
 import kyo.llm.tools._
-import kyo.ios._
+
 import kyo.requests._
 import kyo.tries._
 import sttp.client3._

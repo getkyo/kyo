@@ -3,7 +3,6 @@ package kyo.server
 import com.typesafe.scalalogging.Logger
 import kyo._
 
-import kyo.ios._
 import kyo.routes._
 import kyo.tries._
 import sttp.tapir.Defaults

@@ -21,7 +21,7 @@ class CountdownLatchBench extends Bench.ForkOnly[Int] {
 
   override def kyoBenchFiber() = {
     import kyo._
-    import kyo.ios._
+
     import kyo.latches._
 
     def iterate(l: Latch, n: Int): Unit < IOs =

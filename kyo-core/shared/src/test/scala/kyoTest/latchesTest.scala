@@ -2,7 +2,6 @@ package kyoTest
 
 import kyo.latches._
 import kyo._
-import kyo.ios._
 
 class latchesTest extends KyoTest {
 

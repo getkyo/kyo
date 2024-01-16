@@ -22,7 +22,6 @@ class ForkChainedBench extends Bench.ForkOnly[Int] {
 
   override def kyoBenchFiber() = {
     import kyo._
-    import kyo.ios._
 
     def iterate(p: Promise[Unit], n: Int): Unit < IOs =
       if (n <= 0) p.complete(()).unit

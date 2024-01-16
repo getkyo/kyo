@@ -2,7 +2,7 @@ package kyo
 
 import kyoTest.KyoTest
 import kyo._
-import kyo.ios._
+
 import kyo.options._
 import kyo.tries._
 

@@ -1,7 +1,7 @@
 package kyo.llm.thoughts
 
 import kyo._
-import kyo.ios._
+
 import kyo.llm.ais._
 import kyo.llm.KyoLLMApp
 import kyo.llm.configs.Config

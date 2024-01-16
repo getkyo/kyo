@@ -1,7 +1,6 @@
 package kyo.stats
 
 import kyo._
-import kyo.ios._
 
 case class Counter(unsafe: Counter.Unsafe) extends AnyVal {
   def inc: Unit < IOs =

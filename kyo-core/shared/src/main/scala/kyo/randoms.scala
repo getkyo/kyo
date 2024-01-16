@@ -2,7 +2,6 @@ package kyo
 
 import scala.Console
 
-import ios._
 import kyo.locals.Locals
 
 object randoms {

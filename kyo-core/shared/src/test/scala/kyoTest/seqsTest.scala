@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo._
-import kyo.ios.IOs
+
 import kyo.seqs._
 
 class seqsTest extends KyoTest {

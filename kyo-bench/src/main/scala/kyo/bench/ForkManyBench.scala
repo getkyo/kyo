@@ -26,7 +26,6 @@ class ForkManyBench extends Bench.ForkOnly[Int] {
 
   override def kyoBenchFiber() = {
     import kyo._
-    import kyo.ios._
 
     def repeat[A](n: Int)(io: A < IOs): A < IOs =
       if (n <= 1) io

@@ -3,7 +3,7 @@ package kyo
 import java.io.Closeable
 
 import kyo.core._
-import kyo.ios._
+
 import java.util.ArrayList
 
 object resources {

@@ -1,7 +1,7 @@
 package kyo.llm.json
 
 import kyo._
-import kyo.ios._
+
 import zio.schema.codec.JsonCodec
 import scala.compiletime._
 import zio.schema.{Schema => ZSchema, _}

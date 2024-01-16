@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo._
-import kyo.ios._
+
 import kyo.direct._
 import kyo.TestSupport._
 import org.scalatest.Assertions

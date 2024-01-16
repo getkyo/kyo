@@ -21,7 +21,7 @@ class SemaphoreBench extends Bench.ForkOnly[Unit] {
 
   override def kyoBenchFiber() = {
     import kyo._
-    import kyo.ios._
+
     import kyo.meters._
 
     def loop(s: Meter, i: Int): Unit < Fibers =
