@@ -5,7 +5,6 @@ import kyo._
 import java.time.Instant
 import java.time.ZoneId
 import java.time.{Clock => JClock}
-import kyo.locals.Locals
 
 abstract class Clock {
   def now: Instant < IOs

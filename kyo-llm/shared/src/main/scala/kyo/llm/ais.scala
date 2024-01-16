@@ -8,10 +8,6 @@ import kyo.llm.thoughts._
 import kyo.llm.tools._
 import kyo.Joins
 
-import kyo.seqs._
-import kyo.requests._
-import kyo.sums._
-import kyo.tries._
 import zio.schema.codec.JsonCodec
 import zio.schema.{Schema => ZSchema}
 
@@ -152,7 +148,7 @@ object ais {
 
   object AIs extends Joins[AIs] {
 
-    type Effects = Sums[State] with Requests
+    type Effects = Sums[State] with Fibers
 
     case class AIException(cause: String) extends Exception(cause) with NoStackTrace
 
@@ -173,8 +169,8 @@ object ais {
         ai.reminder(reminder).andThen(ai)
       }
 
-    def run[T, S](v: T < (AIs with S))(implicit f: Flat[T < AIs with S]): T < (Requests with S) =
-      State.run[T, Requests with S](v).map(_._1)
+    def run[T, S](v: T < (AIs with S))(implicit f: Flat[T < AIs with S]): T < (Fibers with S) =
+      State.run[T, Fibers with S](v).map(_._1)
 
     def gen[T](implicit t: Json[T], f: Flat[T]): T < AIs =
       init.map(_.gen[T])
@@ -228,7 +224,7 @@ object ais {
 
     def race[T](l: Seq[T < AIs])(implicit f: Flat[T < AIs]): T < AIs =
       State.get.map { st =>
-        Requests.race[(T, State)](l.map(State.run[T, Requests](st)))
+        Fibers.race[(T, State)](l.map(State.run[T, Fibers](st)))
           .map {
             case (v, st) =>
               State.set(st).map(_ => v)
@@ -237,7 +233,7 @@ object ais {
 
     def parallel[T](l: Seq[T < AIs])(implicit f: Flat[T < AIs]): Seq[T] < AIs =
       State.get.map { st =>
-        Requests.parallel[(T, State)](l.map(State.run[T, Requests](st)))
+        Fibers.parallel[(T, State)](l.map(State.run[T, Fibers](st)))
           .map { rl =>
             val r = rl.map(_._1)
             val st =

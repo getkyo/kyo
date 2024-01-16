@@ -34,9 +34,6 @@ class ForkSpawnBench extends Bench.ForkOnly[Unit] {
   override def kyoBenchFiber() = {
     import kyo._
 
-    import kyo.meters._
-    import kyo.latches._
-
     def repeat[A](n: Int)(io: A < IOs): A < IOs =
       if (n <= 1) io
       else io.flatMap(_ => repeat(n - 1)(io))

@@ -2,7 +2,6 @@ package kyo
 
 import kyo._
 
-import kyo.tries._
 import scala.concurrent.duration.Duration
 import com.github.benmanes.caffeine
 import com.github.benmanes.caffeine.cache.Caffeine

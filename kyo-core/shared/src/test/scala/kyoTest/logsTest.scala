@@ -2,8 +2,6 @@ package kyoTest
 
 import kyo._
 
-import kyo.logs._
-
 class logsTest extends KyoTest {
 
   "log" in run {

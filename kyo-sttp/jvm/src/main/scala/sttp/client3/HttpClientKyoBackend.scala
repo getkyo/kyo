@@ -18,7 +18,6 @@ import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.util.zip.{GZIPInputStream, InflaterInputStream}
 import kyo.internal.KyoSttpMonad._
 import kyo.internal.KyoSttpMonad
-import kyo.meters.Meters
 
 class HttpClientKyoBackend private (
     client: HttpClient,

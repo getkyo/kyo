@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.requests.Backend
+import kyo.Requests.Backend
 import sttp.client3._
 import java.net.http.HttpClient
 import kyo.internal.KyoSttpMonad

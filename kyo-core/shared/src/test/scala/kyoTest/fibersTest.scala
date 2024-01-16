@@ -1,12 +1,6 @@
 package kyoTest
 
-import kyo.latches._
 import kyo._
-
-import kyo.locals._
-import kyo.resources
-import kyo.resources._
-import kyo.tries._
 
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicBoolean

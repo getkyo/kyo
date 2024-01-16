@@ -6,7 +6,7 @@ import kyo.stats._
 
 import java.util.ServiceLoader
 import scala.jdk.CollectionConverters._
-import kyo.seqs._
+
 import kyo.stats.Attributes
 
 trait TraceReceiver {

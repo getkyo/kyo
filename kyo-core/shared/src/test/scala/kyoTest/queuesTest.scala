@@ -1,9 +1,7 @@
 package kyoTest
 
-import kyo.queues._
 import kyo._
 
-import kyo.tries._
 import kyo.Access
 
 class queuesTest extends KyoTest {

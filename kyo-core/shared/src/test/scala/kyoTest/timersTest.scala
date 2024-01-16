@@ -1,6 +1,5 @@
 package kyoTest
 
-import kyo.timers._
 import kyo._
 
 import org.scalatest.compatible.Assertion

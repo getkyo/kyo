@@ -2,12 +2,8 @@ package kyoTest
 
 import izumi.reflect._
 
-import kyo.timers._
 import kyo._
 
-import kyo.randoms.Randoms
-import kyo.resources._
-import kyo.tries._
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 

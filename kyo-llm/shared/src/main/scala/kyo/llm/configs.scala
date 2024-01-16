@@ -2,8 +2,6 @@ package kyo.llm
 
 import kyo._
 
-import kyo.locals._
-import kyo.meters._
 import kyo.llm.ais.AIs
 
 object configs {

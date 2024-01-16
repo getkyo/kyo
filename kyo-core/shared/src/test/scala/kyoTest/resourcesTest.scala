@@ -2,9 +2,6 @@ package kyoTest
 
 import kyo._
 
-import kyo.options._
-import kyo.resources._
-
 import java.io.Closeable
 
 class resourcesTest extends KyoTest {

@@ -2,8 +2,6 @@ package kyo.stats.internal
 
 import kyo._
 
-import kyo.seqs._
-import kyo.locals._
 import kyo.stats._
 import kyo.stats.Attributes
 

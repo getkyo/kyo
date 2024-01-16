@@ -2,9 +2,6 @@ package kyo.llm
 
 import kyo._
 
-import kyo.seqs._
-import kyo.tries._
-import kyo.locals._
 import kyo.llm.ais._
 import scala.util._
 import kyo.llm.contexts._

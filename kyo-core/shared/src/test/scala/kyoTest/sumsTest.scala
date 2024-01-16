@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo._
-import kyo.sums._
 
 import scala.util.Success
 import scala.util.Try

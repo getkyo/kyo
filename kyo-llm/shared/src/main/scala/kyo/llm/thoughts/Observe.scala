@@ -5,7 +5,6 @@ import zio.schema.{Schema => ZSchema}
 import kyo._
 
 import kyo.stats._
-import kyo.logs.Logs
 
 object Observe {
 

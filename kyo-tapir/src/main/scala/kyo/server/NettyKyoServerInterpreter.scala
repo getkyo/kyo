@@ -4,7 +4,7 @@ import kyo._
 
 import kyo.routes._
 import kyo.server.internal._
-import kyo.tries._
+
 import sttp.monad.MonadError
 import sttp.monad.syntax._
 import sttp.tapir.server.ServerEndpoint

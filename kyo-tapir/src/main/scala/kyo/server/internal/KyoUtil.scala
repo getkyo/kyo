@@ -5,7 +5,6 @@ import io.netty.channel.ChannelFuture
 import kyo._
 
 import kyo.routes._
-import kyo.tries._
 
 import scala.concurrent.CancellationException
 

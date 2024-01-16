@@ -6,7 +6,7 @@ import io.netty.handler.codec.http.HttpContent
 import kyo._
 
 import kyo.routes._
-import kyo.tries._
+
 import sttp.capabilities.Streams
 import sttp.tapir.FileRange
 import sttp.tapir.InputStreamRange

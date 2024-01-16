@@ -2,10 +2,7 @@ package kyo
 
 import kyo._
 
-import kyo.sums._
-import kyo.tries._
 import kyo.server._
-import timers._
 
 import sttp.tapir._
 import sttp.tapir.server.ServerEndpoint

@@ -6,7 +6,7 @@ import kyo._
 
 import kyo.routes._
 import kyo.server.internal.KyoUtil._
-import kyo.tries._
+
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.model._
 import sttp.tapir.server.netty._

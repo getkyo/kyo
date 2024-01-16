@@ -3,8 +3,6 @@ package kyoTest
 
 import kyo._
 
-import kyo.options._
-
 class FlatTest extends KyoTest {
 
   "ok" - {

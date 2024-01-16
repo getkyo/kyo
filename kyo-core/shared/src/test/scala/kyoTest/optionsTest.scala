@@ -1,13 +1,13 @@
 package kyoTest
 
 import kyo._
-import kyo.options._
+
 import org.scalatest.Args
 import org.scalatest.Status
 
 import scala.util.Failure
 import scala.util.Success
-import kyo.tries.Tries
+
 import scala.util.Try
 
 class optionsTest extends KyoTest {

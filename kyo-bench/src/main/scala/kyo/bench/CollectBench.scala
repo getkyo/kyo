@@ -11,8 +11,6 @@ class CollectBench extends Bench.SyncAndFork[Seq[Int]] {
   def kyoBench() = {
     import kyo._
 
-    import kyo.seqs._
-
     Seqs.collect(kyoTasks)
   }
 

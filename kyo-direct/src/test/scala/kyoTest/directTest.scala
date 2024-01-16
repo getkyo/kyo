@@ -1,8 +1,7 @@
 package kyoTest
 
 import kyo._
-import kyo.tries._
-import kyo.options._
+
 import kyo.direct._
 import kyo.direct
 
@@ -147,7 +146,6 @@ class directTest extends KyoTest {
   }
 
   "lists" in {
-    import kyo.seqs._
 
     val x = Seqs.get(Seq(1, -2, -3))
     val y = Seqs.get(Seq("ab", "cde"))
@@ -166,7 +164,6 @@ class directTest extends KyoTest {
   }
 
   "lists + filter" in {
-    import kyo.seqs._
 
     val x = Seqs.get(Seq(1, -2, -3))
     val y = Seqs.get(Seq("ab", "cde"))

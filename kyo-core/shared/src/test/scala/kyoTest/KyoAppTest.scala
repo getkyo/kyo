@@ -1,10 +1,6 @@
 package kyoTest
 
-import kyo.timers._
 import kyo._
-
-import kyo.randoms._
-import kyo.resources._
 
 import scala.concurrent.duration._
 

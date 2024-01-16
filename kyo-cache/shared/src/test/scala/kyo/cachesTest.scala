@@ -2,7 +2,6 @@ package kyo
 
 import kyo._
 
-import kyo.tries._
 import kyoTest._
 import scala.util._
 import kyo.caches._

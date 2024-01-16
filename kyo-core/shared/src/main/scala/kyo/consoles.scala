@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.locals._
 import java.io.IOException
 import java.io.EOFException
 import pprint.TPrint

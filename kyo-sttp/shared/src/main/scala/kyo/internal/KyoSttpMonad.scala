@@ -8,7 +8,6 @@ import scala.util.Try
 import scala.util.Failure
 import scala.util.Success
 import sttp.monad.Canceler
-import kyo.tries.Tries
 
 object KyoSttpMonad {
   type M[T] = T < Fibers

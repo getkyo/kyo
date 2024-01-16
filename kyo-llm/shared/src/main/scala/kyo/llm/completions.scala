@@ -7,8 +7,6 @@ import kyo.llm.ais._
 import kyo.llm.json._
 import kyo.llm.tools._
 
-import kyo.requests._
-import kyo.tries._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
@@ -16,7 +14,6 @@ import zio.json._
 import scala.concurrent.duration.Duration
 import kyo.llm.contexts.Message.UserMessage
 import zio.json.internal.Write
-import kyo.logs._
 
 object completions {
 
@@ -30,7 +27,7 @@ object completions {
         ctx: Context,
         tools: List[Tool] = List.empty,
         constrain: Option[Tool] = None
-    ): Result < (IOs with Requests) =
+    ): Result < Fibers =
       for {
         config <- Configs.get
         req = Request(ctx, config, tools, constrain)
@@ -40,7 +37,7 @@ object completions {
         (content, calls) <- read(response)
       } yield new Result(content, calls)
 
-    private def read(response: Response): (String, List[Call]) < (IOs with Requests) =
+    private def read(response: Response): (String, List[Call]) < Fibers =
       response.choices.headOption match {
         case None =>
           IOs.fail("no choices")
@@ -53,7 +50,7 @@ object completions {
           )
       }
 
-    private def fetch(config: Config, req: Request): Response < Requests =
+    private def fetch(config: Config, req: Request): Response < Fibers =
       Configs.apiKey.map { key =>
         Configs.get.map { cfg =>
           Requests[Response](

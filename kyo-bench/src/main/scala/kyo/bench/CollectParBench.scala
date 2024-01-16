@@ -11,8 +11,6 @@ class CollectParBench extends Bench.ForkOnly[Seq[Int]] {
   override def kyoBenchFiber() = {
     import kyo._
 
-    import kyo.seqs._
-
     Fibers.parallel(kyoTasks)
   }
 

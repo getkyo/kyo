@@ -8,9 +8,7 @@ import scala.util.Failure
 import scala.util.Success
 
 import kyo._
-import core._
-import tries._
-import layers._
+import kyo.core._
 import scala.util.Try
 
 object Aborts {

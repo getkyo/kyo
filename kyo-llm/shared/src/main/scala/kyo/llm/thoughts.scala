@@ -6,7 +6,6 @@ import kyo.llm.json.Schema
 import kyo.llm.json._
 import kyo.llm.thoughts.Thoughts.Collect
 import kyo.llm.thoughts._
-import kyo.seqs.Seqs
 import kyo.stats.Stats
 import zio.Chunk
 import zio.schema.FieldSet

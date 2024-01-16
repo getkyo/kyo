@@ -6,16 +6,13 @@ import kyo._
 import kyo.core._
 import kyo.core.internal._
 
-import kyo.locals._
-import kyo.resources._
-
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import org.jctools.queues.MpmcArrayQueue
 import java.util.ArrayDeque
 import java.util.IdentityHashMap
 import java.util.Arrays
-import kyo.locals.Locals.State
+import kyo.Locals.State
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T < IOs]

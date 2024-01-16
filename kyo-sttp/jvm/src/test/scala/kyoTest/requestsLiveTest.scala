@@ -2,11 +2,8 @@ package kyoTest
 
 import kyo._
 
-import kyo.requests._
-import kyo.tries._
 import sttp.client3._
 import sttp.model.StatusCode
-import kyo.resources.Resources
 import scala.util._
 
 class requestsLiveTest extends KyoTest {
@@ -14,23 +11,19 @@ class requestsLiveTest extends KyoTest {
   "requests" - {
     "live" - {
       "success" in run {
-        Requests.run {
-          for {
-            port <- startTestServer("/ping", Success("pong"))
-            r    <- Requests(_.get(uri"http://localhost:$port/ping"))
-          } yield {
-            assert(r == "pong")
-          }
+        for {
+          port <- startTestServer("/ping", Success("pong"))
+          r    <- Requests(_.get(uri"http://localhost:$port/ping"))
+        } yield {
+          assert(r == "pong")
         }
       }
       "failure" in run {
-        Requests.run {
-          for {
-            port <- startTestServer("/ping", Failure(new Exception))
-            r    <- Tries.run(Requests(_.get(uri"http://localhost:$port/ping")))
-          } yield {
-            assert(r.isFailure)
-          }
+        for {
+          port <- startTestServer("/ping", Failure(new Exception))
+          r    <- Tries.run(Requests(_.get(uri"http://localhost:$port/ping")))
+        } yield {
+          assert(r.isFailure)
         }
       }
     }

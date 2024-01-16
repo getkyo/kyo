@@ -2,8 +2,6 @@ package kyo.scheduler
 
 import kyo._
 
-import kyo.logs._
-
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.AbstractQueuedSynchronizer
 import scala.annotation.tailrec

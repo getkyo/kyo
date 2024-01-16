@@ -2,64 +2,59 @@ package kyo
 
 import scala.Console
 
-import kyo.locals.Locals
+abstract class Random {
+  def nextInt: Int < IOs
+  def nextInt(n: Int): Int < IOs
+  def nextLong: Long < IOs
+  def nextDouble: Double < IOs
+  def nextBoolean: Boolean < IOs
+  def nextFloat: Float < IOs
+  def nextGaussian: Double < IOs
+}
 
-object randoms {
+object Random {
+  val default: Random =
+    new Random {
 
-  abstract class Random {
-    def nextInt: Int < IOs
-    def nextInt(n: Int): Int < IOs
-    def nextLong: Long < IOs
-    def nextDouble: Double < IOs
-    def nextBoolean: Boolean < IOs
-    def nextFloat: Float < IOs
-    def nextGaussian: Double < IOs
-  }
+      val random          = new java.util.Random
+      val nextInt         = IOs(random.nextInt())
+      def nextInt(n: Int) = IOs(random.nextInt(n))
+      val nextLong        = IOs(random.nextLong())
+      val nextDouble      = IOs(random.nextDouble())
+      val nextBoolean     = IOs(random.nextBoolean())
+      val nextFloat       = IOs(random.nextFloat())
+      val nextGaussian    = IOs(random.nextGaussian())
+    }
+}
 
-  object Random {
-    val default: Random =
-      new Random {
+object Randoms {
 
-        val random          = new java.util.Random
-        val nextInt         = IOs(random.nextInt())
-        def nextInt(n: Int) = IOs(random.nextInt(n))
-        val nextLong        = IOs(random.nextLong())
-        val nextDouble      = IOs(random.nextDouble())
-        val nextBoolean     = IOs(random.nextBoolean())
-        val nextFloat       = IOs(random.nextFloat())
-        val nextGaussian    = IOs(random.nextGaussian())
-      }
-  }
+  private val local = Locals.init(Random.default)
 
-  object Randoms {
+  def let[T, S](r: Random)(v: T < S): T < (S with IOs) =
+    local.let(r)(v)
 
-    private val local = Locals.init(Random.default)
+  val nextInt: Int < IOs =
+    local.get.map(_.nextInt)
 
-    def let[T, S](r: Random)(v: T < S): T < (S with IOs) =
-      local.let(r)(v)
+  def nextInt[S](n: Int < S): Int < (S with IOs) =
+    n.map(n => local.get.map(_.nextInt(n)))
 
-    val nextInt: Int < IOs =
-      local.get.map(_.nextInt)
+  val nextLong: Long < IOs =
+    local.get.map(_.nextLong)
 
-    def nextInt[S](n: Int < S): Int < (S with IOs) =
-      n.map(n => local.get.map(_.nextInt(n)))
+  val nextDouble: Double < IOs =
+    local.get.map(_.nextDouble)
 
-    val nextLong: Long < IOs =
-      local.get.map(_.nextLong)
+  val nextBoolean: Boolean < IOs =
+    local.get.map(_.nextBoolean)
 
-    val nextDouble: Double < IOs =
-      local.get.map(_.nextDouble)
+  val nextFloat: Float < IOs =
+    local.get.map(_.nextFloat)
 
-    val nextBoolean: Boolean < IOs =
-      local.get.map(_.nextBoolean)
+  val nextGaussian: Double < IOs =
+    local.get.map(_.nextGaussian)
 
-    val nextFloat: Float < IOs =
-      local.get.map(_.nextFloat)
-
-    val nextGaussian: Double < IOs =
-      local.get.map(_.nextGaussian)
-
-    def nextValue[T, S](seq: Seq[T] < S): T < (S with IOs) =
-      seq.map(s => nextInt(s.size).map(idx => s(idx)))
-  }
+  def nextValue[T, S](seq: Seq[T] < S): T < (S with IOs) =
+    seq.map(s => nextInt(s.size).map(idx => s(idx)))
 }

@@ -2,8 +2,6 @@ package kyoTest
 
 import kyo._
 
-import kyo.seqs._
-
 class seqsTest extends KyoTest {
 
   "one" in {

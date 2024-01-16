@@ -2,7 +2,7 @@ package kyo.stats
 
 import kyo._
 
-import kyo.locals.Locals
+import kyo.Locals
 import kyo.stats.internal
 import kyo.stats.internal.TraceReceiver
 

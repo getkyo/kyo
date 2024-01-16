@@ -5,11 +5,9 @@ import kyo.llm.ais
 import kyo.llm.ais._
 import kyo.llm.configs._
 
-import kyo.requests._
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
-import kyo.logs._
 
 object embeddings {
 

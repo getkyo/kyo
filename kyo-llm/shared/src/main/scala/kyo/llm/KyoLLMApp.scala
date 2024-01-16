@@ -1,14 +1,12 @@
 package kyo.llm
 
 import kyo._
-import kyo.requests._
+
 import kyo.llm.ais._
 import kyo.llm.configs._
 import kyo.llm.tools._
-import timers._
 import scala.concurrent.duration.Duration
 import scala.util.Try
-import kyo.timers
 
 abstract class KyoLLMApp extends KyoApp.Base[KyoLLMApp.Effects] {
 
@@ -35,7 +33,7 @@ object KyoLLMApp {
   private def handle[T](v: T < Effects)(
       implicit f: Flat[T < Effects]
   ): T < KyoApp.Effects =
-    Requests.run(AIs.run(v))
+    AIs.run(v)
 
   def run[T](timeout: Duration)(v: T < Effects)(
       implicit f: Flat[T < Effects]

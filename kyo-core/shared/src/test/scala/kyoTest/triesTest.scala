@@ -1,8 +1,7 @@
 package kyoTest
 
 import kyo._
-import kyo.options._
-import kyo.tries._
+
 import org.scalatest.Args
 import org.scalatest.Status
 

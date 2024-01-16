@@ -2,9 +2,6 @@ package kyoTest
 
 import kyo._
 
-import kyo.locals._
-import kyo.options._
-
 class localsTest extends KyoTest {
 
   "default" - {

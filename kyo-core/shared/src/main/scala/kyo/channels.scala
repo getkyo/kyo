@@ -7,9 +7,7 @@ import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import java.util.concurrent.Executors
 import scala.annotation.tailrec
 
-import queues._
 import kyo.Access
-import kyo.queues
 
 abstract class Channel[T] { self =>
 

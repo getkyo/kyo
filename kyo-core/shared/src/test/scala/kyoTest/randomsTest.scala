@@ -2,8 +2,6 @@ package kyoTest
 
 import kyo._
 
-import kyo.randoms._
-
 class randomsTest extends KyoTest {
 
   implicit def testRandom: Random = new Random {

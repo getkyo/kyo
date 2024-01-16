@@ -1,6 +1,5 @@
 package kyoTest
 
-import kyo.latches._
 import kyo._
 
 class latchesTest extends KyoTest {

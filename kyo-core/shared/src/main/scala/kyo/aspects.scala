@@ -1,10 +1,6 @@
 package kyo
 
 import kyo._
-import locals._
-import kyo.randoms.Randoms
-import kyo.resources.Resources
-import timers.Timers
 
 object Aspects {
 

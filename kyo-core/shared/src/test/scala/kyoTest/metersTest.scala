@@ -1,7 +1,5 @@
 package kyoTest
 
-import kyo.meters._
-import kyo.timers._
 import kyo._
 
 import scala.concurrent.duration._

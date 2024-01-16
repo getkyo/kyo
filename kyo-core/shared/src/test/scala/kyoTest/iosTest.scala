@@ -3,9 +3,6 @@ package kyo
 import kyoTest.KyoTest
 import kyo._
 
-import kyo.options._
-import kyo.tries._
-
 import java.io.Closeable
 import scala.concurrent.duration._
 import scala.util.Success

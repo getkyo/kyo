@@ -4,8 +4,6 @@ import kyo._
 import kyo.core._
 import kyo.core.internal._
 
-import kyo.locals._
-
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.Future
@@ -15,10 +13,7 @@ import scala.util._
 import scala.util.control.NoStackTrace
 import scala.util.control.NonFatal
 
-import timers._
 import kyo.scheduler.IOPromise
-import kyo.Joins
-import kyo.timers
 
 import fibersInternal._
 

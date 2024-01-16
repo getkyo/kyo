@@ -1,7 +1,7 @@
 package kyo
 
 import sttp.client3._
-import kyo.requests.Backend
+import kyo.Requests.Backend
 
 object PlatformBackend {
   val default =

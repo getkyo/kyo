@@ -1,9 +1,5 @@
 package kyo
 
-import resources._
-import tries._
-import randoms._
-import timers._
 import scala.concurrent.duration.Duration
 import scala.util.Try
 import kyo.KyoApp.Effects
@@ -13,7 +9,6 @@ abstract class KyoApp extends KyoApp.Base[KyoApp.Effects] {
 
   override protected def handle[T](v: T < Effects)(implicit f: Flat[T < Effects]): Unit =
     KyoApp.run(v.map(Consoles.println(_)))
-
 }
 
 object KyoApp {

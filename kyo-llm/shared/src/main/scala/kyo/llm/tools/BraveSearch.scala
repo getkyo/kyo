@@ -2,17 +2,14 @@ package kyo.llm.tools
 
 import kyo._
 import kyo.llm.ais._
-import kyo.locals._
-import kyo.options._
-import kyo.requests._
-import kyo.tries._
+
 import sttp.client3._
 import sttp.client3.ziojson._
 import zio.json._
 
 import scala.util.Failure
 import scala.util.Success
-import kyo.logs._
+
 import kyo.llm.tools.Tool
 
 object BraveSearch extends Tool {

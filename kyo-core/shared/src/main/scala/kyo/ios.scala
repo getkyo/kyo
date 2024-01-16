@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.logs._
-
 import java.io.Closeable
 import java.util.concurrent.ThreadLocalRandom
 import scala.annotation.tailrec
@@ -13,12 +11,9 @@ import scala.util.control.NonFatal
 import kyo._
 import core._
 import core.internal._
-import tries._
-import options._
-import locals._
 import scala.annotation.implicitNotFound
 import java.util.concurrent.atomic.AtomicReference
-import kyo.locals.Locals.State
+import kyo.Locals.State
 
 object iosInternal {
 

@@ -5,7 +5,7 @@ import kyo.llm.tools._
 import kyo.llm.ais._
 import kyo.llm.configs._
 import kyo.llm.contexts._
-import kyo.requests._
+
 import sttp.client3._
 
 import java.awt.image.BufferedImage

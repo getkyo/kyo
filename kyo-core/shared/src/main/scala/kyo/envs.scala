@@ -5,7 +5,6 @@ import izumi.reflect._
 import scala.reflect.ClassTag
 
 import kyo.core._
-import kyo.layers.Layer
 
 object Envs {
   private case object Input
