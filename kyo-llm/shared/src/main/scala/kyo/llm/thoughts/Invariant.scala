@@ -17,7 +17,14 @@ object Invariant {
       thought: Thought,
       field: String,
       analysis: String
-  ) extends RuntimeException
+  ) extends RuntimeException(
+          "\n*********\n" + List(
+              "Thought: " + thought.name,
+              "Field: " + field,
+              "Analysis: " + analysis
+          ).mkString("\n") +
+            "\n*********"
+      )
 
   case class Info(
       `The outer field name is an invariant`: Boolean,

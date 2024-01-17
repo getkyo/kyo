@@ -22,75 +22,81 @@ object Schema {
   def apply(schema: ZSchema[_]): Schema =
     new Schema(convert(schema))
 
-  def desc(c: Chunk[Any]): List[(String, Json)] =
+  def desc(c: Chunk[Any], s: String = ""): List[(String, Json)] =
     c.collect {
       case desc(v) =>
-        "description" -> Json.Str(v)
-    }.distinct.toList
+        "description" -> Json.Str(v + (if (s.isEmpty) "" else "\n" + s))
+    }.distinct.toList match {
+      case Nil if (!s.isEmpty) =>
+        List("description" -> Json.Str(s))
+      case l =>
+        l
+    }
 
   def convert(schema: ZSchema[_]): List[(String, Json)] = {
-    def desc = this.desc(schema.annotations)
+    def desc(s: String = "") = this.desc(schema.annotations, s)
     ZSchema.force(schema) match {
 
       case ZSchema.Primitive(StandardType.StringType, Chunk(Const(v))) =>
-        desc ++ List(
+        desc() ++ List(
             "type" -> Json.Str("string"),
             "enum" -> Json.Arr(Json.Str(v.asInstanceOf[String]))
         )
 
       case ZSchema.Primitive(StandardType.StringType, _) =>
-        desc ++ List("type" -> Json.Str("string"))
+        desc() ++ List("type" -> Json.Str("string"))
 
       case ZSchema.Primitive(StandardType.IntType, Chunk(Const(v))) =>
-        desc ++ List(
+        desc() ++ List(
             "type" -> Json.Str("integer"),
             "enum" -> Json.Arr(Json.Num(v.asInstanceOf[Int]))
         )
 
       case ZSchema.Primitive(StandardType.IntType, _) =>
-        desc ++ List("type" -> Json.Str("integer"), "format" -> Json.Str("int32"))
+        desc() ++ List("type" -> Json.Str("integer"), "format" -> Json.Str("int32"))
 
       case ZSchema.Primitive(StandardType.LongType, Chunk(Const(v))) =>
-        desc ++ List(
+        desc() ++ List(
             "type" -> Json.Str("integer"),
             "enum" -> Json.Arr(Json.Num(v.asInstanceOf[Long]))
         )
 
       case ZSchema.Primitive(StandardType.LongType, _) =>
-        desc ++ List("type" -> Json.Str("integer"), "format" -> Json.Str("int64"))
+        desc() ++ List("type" -> Json.Str("integer"), "format" -> Json.Str("int64"))
 
       case ZSchema.Primitive(StandardType.DoubleType, Chunk(Const(v))) =>
-        desc ++ List(
+        desc() ++ List(
             "type" -> Json.Str("number"),
             "enum" -> Json.Arr(Json.Num(v.asInstanceOf[Double]))
         )
 
       case ZSchema.Primitive(StandardType.DoubleType, _) =>
-        desc ++ List("type" -> Json.Str("number"))
+        desc() ++ List("type" -> Json.Str("number"))
 
       case ZSchema.Primitive(StandardType.FloatType, Chunk(Const(v))) =>
-        desc ++ List(
+        desc() ++ List(
             "type" -> Json.Str("number"),
             "enum" -> Json.Arr(Json.Num(v.asInstanceOf[Float]))
         )
 
       case ZSchema.Primitive(StandardType.FloatType, _) =>
-        desc ++ List("type" -> Json.Str("number"), "format" -> Json.Str("float"))
+        desc() ++ List("type" -> Json.Str("number"), "format" -> Json.Str("float"))
 
       case ZSchema.Primitive(StandardType.BoolType, Chunk(Const(v))) =>
-        desc ++ List(
+        desc() ++ List(
             "type" -> Json.Str("boolean"),
             "enum" -> Json.Arr(Json.Bool(v.asInstanceOf[Boolean]))
         )
 
       case ZSchema.Primitive(StandardType.BoolType, _) =>
-        desc ++ List("type" -> Json.Str("boolean"))
+        desc() ++ List("type" -> Json.Str("boolean"))
 
       case ZSchema.Optional(innerSchema, _) =>
         convert(innerSchema)
 
       case ZSchema.Sequence(innerSchema, _, _, _, _) =>
-        List("type" -> Json.Str("array"), "items" -> Json.Obj(convert(innerSchema): _*))
+        desc("This is a **json array**, do not generate an object.") ++
+          List("type" -> Json.Str("array"), "items" -> Json.Obj(convert(innerSchema): _*))
 
       case schema: ZSchema.Enum[_] =>
         val cases = schema.cases.map { c =>
@@ -113,7 +119,7 @@ object Schema {
           }
           c.id -> caseProperties
         }
-        desc ++ List(
+        desc() ++ List(
             "type"       -> Json.Str("object"),
             "properties" -> Json.Obj(cases: _*)
         )
@@ -127,7 +133,7 @@ object Schema {
         val requiredFields = schema.fields.collect {
           case field if !field.schema.isInstanceOf[ZSchema.Optional[_]] => Json.Str(field.name)
         }
-        desc ++ List(
+        desc() ++ List(
             "type"       -> Json.Str("object"),
             "properties" -> Json.Obj(properties.toSeq: _*),
             "required"   -> Json.Arr(requiredFields: _*)

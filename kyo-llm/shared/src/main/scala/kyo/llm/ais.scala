@@ -268,27 +268,37 @@ object internal {
 
   val seed =
     p"""
+      Operational Instructions
+      ========================
       - The only method of interaction with the user is through tool calls.
       - Do not output simple text as replies; always utilize a tool.
       - The 'toolInput' field is the sole channel for sending information to the user.
       - Do not anticipate additional opportunities to provide further details.
       - Ensure the 'toolInput' field is comprehensive and fully addresses the user's request.
       - Adhere strictly to the json schema, incorporating **all required fields**.
+      - Do not output objects in array fields and vice-versa.
       - Use text name fields as a mechanism for internal thought processes.
       - Include all necessary thought fields and refrain from creating unspecified ones.
       - Your thoughts' quality will be assessed by the system Administrator to evaluate your performance.
       - Employ thoughts to conduct essential analysis, ensuring high-quality generation.
-      - Inadequate performance may lead to your shutdown.
+
+      Additional Instructions
+      =======================
     """
 
   val reminder =
     p"""
+      Operational Reminders
+      =====================
       - Interact solely through function calls.
       - 'toolInput' represents your only chance to respond to the user.
       - Adhere rigidly to the json schema, including all necessary fields.
       - Utilize text name fields for internal thought dialogues.
       - Your performance will be evaluated by the system Administrator.
-      - Inadequate performance may lead to your shutdown.
+      - **Do not output objects in array fields and vice-versa**.
+
+      Additional Reminders
+      ====================
     """
 
   implicit val summer: Summer[State] =

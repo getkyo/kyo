@@ -58,18 +58,32 @@ abstract class Tool {
       implicit def s: ZSchema[In] = info.input.zSchema
       Tries.run(json.decode(call.arguments)).map {
         case Failure(ex) =>
-          ai.toolMessage(call.id, "Invalid tool input: " + ex).andThen(false)
+          ai.toolMessage(call.id, "Invalid 'toolInput': " + ex).andThen(false)
         case Success(res) =>
           ai.toolMessage(call.id, "Tool processing.").andThen {
             res.eval(ai).andThen {
               Listeners.observe(res.shortActionNarrationToBeShownToTheUser) {
-                AIs.ephemeral {
-                  Tries.run(run(ai, res.toolInput).map(info.output.encode)).map {
-                    case Failure(ex) =>
-                      ai.toolMessage(call.id, "Tool failure: " + ex).andThen(false)
-                    case Success(value) =>
-                      ai.toolMessage(call.id, value).andThen(true)
-                  }
+                AIs.ephemeral(
+                    Tries.run(run(ai, res.toolInput).map(info.output.encode))
+                ).map {
+                  case Failure(ex) =>
+                    ai.update(ctx =>
+                      ctx.copy(messages = ctx.messages.map {
+                        case Message.ToolMessage(call.id, "Tool processing.", _) =>
+                          Message.ToolMessage(call.id, "Tool failure: " + ex)
+                        case msg =>
+                          msg
+                      })
+                    ).andThen(false)
+                  case Success(value) =>
+                    ai.update(ctx =>
+                      ctx.copy(messages = ctx.messages.map {
+                        case Message.ToolMessage(call.id, "Tool processing.", _) =>
+                          Message.ToolMessage(call.id, value)
+                        case msg =>
+                          msg
+                      })
+                    ).andThen(true)
                 }
               }
             }
@@ -130,10 +144,26 @@ object Tools {
       }
     }.map { l =>
       if (!l.forall(identity)) {
-        ai.systemMessage(
-            "Analyze the tool execution errors. Please provide repair analysis for self-correction."
-        ).andThen {
-          ai.gen[Repair].unit
+        AIs.ephemeral {
+          ai.systemMessage(
+              "Analyze the tool execution errors. Please provide repair analysis for self-correction."
+          ).andThen {
+            ai.gen[Repair]
+          }
+        }.map { repair =>
+          ai.systemMessage(
+              p"""
+                Self Repair
+                ===========
+                One of more tool calls failed. Carefully consider the following instructions when calling tools again:
+
+                **Failures**
+                ${repair.`List failure messages`.mkString("\n")}
+                
+                **Corrective measures**
+                ${repair.`Detail corrective measures for improvement`}
+              """
+          )
         }
       } else {
         ()

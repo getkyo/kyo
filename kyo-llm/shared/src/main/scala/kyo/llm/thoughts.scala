@@ -135,7 +135,7 @@ object Thoughts {
           `Opening thoughts summary`: String,
           `Only toolInput is visible to the user`: Boolean,
           toolInput: T,
-          `toolInput fully satisfies the user's resquest`: Boolean,
+          `toolInput fully satisfies the user's request`: Boolean,
           shortActionNarrationToBeShownToTheUser: String,
           closingThoughts: Closing,
           allFieldsAdhereToTheJsonSchema: Boolean
@@ -155,7 +155,6 @@ object Thoughts {
       ) extends Result[T]
 
       case class OnlyClosing[T, Closing](
-          @desc("Always use the correct json type from the schema")
           strictlyFollowTheJsonSchema: Boolean,
           `This is a required thought field for inner-dialog`: Boolean,
           `Strictly follow the required fields including thoughts`: Boolean,
@@ -178,6 +177,7 @@ object Thoughts {
     object Short {
 
       case class OpeningAndClosing[Opening, T, Closing](
+          strictlyFollowTheJsonSchema: Boolean,
           openingThoughts: Opening,
           `Opening thoughts summary`: String,
           toolInput: T,
@@ -187,6 +187,7 @@ object Thoughts {
       ) extends Result[T]
 
       case class OnlyOpening[Opening, T](
+          strictlyFollowTheJsonSchema: Boolean,
           openingThoughts: Opening,
           `Opening thoughts summary`: String,
           toolInput: T,
@@ -195,6 +196,7 @@ object Thoughts {
       ) extends Result[T]
 
       case class OnlyClosing[T, Closing](
+          strictlyFollowTheJsonSchema: Boolean,
           toolInput: T,
           shortActionNarrationToBeShownToTheUser: String,
           closingThoughts: Closing,
@@ -202,6 +204,7 @@ object Thoughts {
       ) extends Result[T]
 
       case class NoThoughts[T](
+          strictlyFollowTheJsonSchema: Boolean,
           toolInput: T,
           shortActionNarrationToBeShownToTheUser: String,
           allFieldsAdhereToTheJsonSchema: Boolean

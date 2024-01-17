@@ -144,15 +144,7 @@ private object completionsInternal {
         constrain: Option[Tool]
     ): Request = {
       val reminder =
-        ctx.reminder.map(r =>
-          Message.SystemMessage(
-              p"""
-                  IMPORTANT REMINDER
-                  ==================
-                  $r
-                """
-          )
-        ).toList
+        ctx.reminder.map(r => Message.SystemMessage(r)).toList
       val entries =
         (reminder ++ ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
           .map(toEntry).reverse
