@@ -54,7 +54,7 @@ object Completions {
                       "Authorization" -> s"Bearer $key"
                   ) ++ cfg.apiOrg.map("OpenAI-Organization" -> _)
               )
-              .post(uri"${cfg.apiUrl}/v1/chat/completions")
+              .post(uri"${cfg.apiUrl}/chat/completions")
               .body(req)
               .readTimeout(Duration.Inf)
               .response(asJson[Response])

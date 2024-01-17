@@ -57,7 +57,7 @@ object Image extends Tool {
       resp <- Requests[Response](
           _.contentType("application/json")
             .header("Authorization", s"Bearer $key")
-            .post(uri"${config.apiUrl}/v1/images/generations")
+            .post(uri"${config.apiUrl}/images/generations")
             .body(req)
             .readTimeout(Duration.Inf)
             .response(asJson[Response])
