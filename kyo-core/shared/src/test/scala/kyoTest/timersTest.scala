@@ -16,6 +16,15 @@ class timersTest extends KyoTest {
     } yield assert(hello == "hello")
   }
 
+  "forks execution" in run {
+    for {
+      p <- Fibers.initPromise[Thread]
+      t1 = Thread.currentThread()
+      _  <- Timers.schedule(1.milli)(p.complete(Thread.currentThread()).map(require(_)))
+      t2 <- p.get
+    } yield assert(t1 != t2)
+  }
+
   "cancel" in runJVM {
     for {
       p         <- Fibers.initPromise[String]

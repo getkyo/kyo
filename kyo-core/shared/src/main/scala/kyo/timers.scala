@@ -12,17 +12,17 @@ import scala.concurrent.duration.Duration
 
 abstract class Timer {
 
-  def schedule(delay: Duration)(f: => Unit < IOs): TimerTask < IOs
+  def schedule(delay: Duration)(f: => Unit < Fibers): TimerTask < IOs
 
   def scheduleAtFixedRate(
       initalDelay: Duration,
       period: Duration
-  )(f: => Unit < IOs): TimerTask < IOs
+  )(f: => Unit < Fibers): TimerTask < IOs
 
   def scheduleWithFixedDelay(
       initalDelay: Duration,
       period: Duration
-  )(f: => Unit < IOs): TimerTask < IOs
+  )(f: => Unit < Fibers): TimerTask < IOs
 }
 
 object Timer {
@@ -42,10 +42,13 @@ object Timer {
         def isDone: Boolean < IOs      = IOs(task.isDone())
       }
 
-      def schedule(delay: Duration)(f: => Unit < IOs) =
+      private def eval(f: => Unit < Fibers) =
+        IOs.run(Fibers.run(Fibers.init(f)))
+
+      def schedule(delay: Duration)(f: => Unit < Fibers) =
         if (delay.isFinite) {
           val call = new Callable[Unit] {
-            def call: Unit = IOs.run(f)
+            def call: Unit = eval(f)
           }
           IOs(new Task(exec.schedule(call, delay.toNanos, TimeUnit.NANOSECONDS)))
         } else {
@@ -55,11 +58,11 @@ object Timer {
       def scheduleAtFixedRate(
           initalDelay: Duration,
           period: Duration
-      )(f: => Unit < IOs) =
+      )(f: => Unit < Fibers) =
         if (period.isFinite && initalDelay.isFinite) {
           IOs(new Task(
               exec.scheduleAtFixedRate(
-                  () => IOs.run(f),
+                  () => eval(f),
                   initalDelay.toNanos,
                   period.toNanos,
                   TimeUnit.NANOSECONDS
@@ -72,11 +75,11 @@ object Timer {
       def scheduleWithFixedDelay(
           initalDelay: Duration,
           period: Duration
-      )(f: => Unit < IOs) =
+      )(f: => Unit < Fibers) =
         if (period.isFinite && initalDelay.isFinite) {
           IOs(new Task(
               exec.scheduleWithFixedDelay(
-                  () => IOs.run(f),
+                  () => eval(f),
                   initalDelay.toNanos,
                   period.toNanos,
                   TimeUnit.NANOSECONDS
@@ -89,9 +92,9 @@ object Timer {
 }
 
 abstract class TimerTask {
-  def cancel: Boolean < IOs
-  def isCancelled: Boolean < IOs
-  def isDone: Boolean < IOs
+  def cancel: Boolean < Fibers
+  def isCancelled: Boolean < Fibers
+  def isDone: Boolean < Fibers
 }
 
 object TimerTask {
@@ -106,31 +109,31 @@ object Timers {
 
   private val local = Locals.init(Timer.default)
 
-  def let[T, S](timer: Timer)(v: T < S): T < (IOs with S) =
+  def let[T, S](timer: Timer)(v: T < S): T < (Fibers with S) =
     local.let(timer)(v)
 
-  def schedule(delay: Duration)(f: => Unit < IOs): TimerTask < IOs =
+  def schedule(delay: Duration)(f: => Unit < Fibers): TimerTask < Fibers =
     local.get.map(_.schedule(delay)(f))
 
   def scheduleAtFixedRate(
       period: Duration
-  )(f: => Unit < IOs): TimerTask < IOs =
+  )(f: => Unit < Fibers): TimerTask < IOs =
     scheduleAtFixedRate(Duration.Zero, period)(f)
 
   def scheduleAtFixedRate(
       initialDelay: Duration,
       period: Duration
-  )(f: => Unit < IOs): TimerTask < IOs =
+  )(f: => Unit < Fibers): TimerTask < IOs =
     local.get.map(_.scheduleAtFixedRate(initialDelay, period)(f))
 
   def scheduleWithFixedDelay(
       period: Duration
-  )(f: => Unit < IOs): TimerTask < IOs =
+  )(f: => Unit < Fibers): TimerTask < IOs =
     scheduleWithFixedDelay(Duration.Zero, period)(f)
 
   def scheduleWithFixedDelay(
       initialDelay: Duration,
       period: Duration
-  )(f: => Unit < IOs): TimerTask < IOs =
+  )(f: => Unit < Fibers): TimerTask < IOs =
     local.get.map(_.scheduleWithFixedDelay(initialDelay, period)(f))
 }
