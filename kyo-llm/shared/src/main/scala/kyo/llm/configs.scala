@@ -52,7 +52,7 @@ object Config {
     val apiOrg =
       Option(System.getenv(apiOrgProp))
     Config(
-        "https://api.openai.com",
+        "https://api.openai.com/v1",
         apiKey,
         apiOrg,
         Model.gpt4_turbo,

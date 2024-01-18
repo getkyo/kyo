@@ -54,7 +54,7 @@ object Completions {
                       "Authorization" -> s"Bearer $key"
                   ) ++ cfg.apiOrg.map("OpenAI-Organization" -> _)
               )
-              .post(uri"${cfg.apiUrl}/v1/chat/completions")
+              .post(uri"${cfg.apiUrl}/chat/completions")
               .body(req)
               .readTimeout(Duration.Inf)
               .response(asJson[Response])
@@ -144,15 +144,7 @@ private object completionsInternal {
         constrain: Option[Tool]
     ): Request = {
       val reminder =
-        ctx.reminder.map(r =>
-          Message.SystemMessage(
-              p"""
-                  IMPORTANT REMINDER
-                  ==================
-                  $r
-                """
-          )
-        ).toList
+        ctx.reminder.map(r => Message.SystemMessage(r)).toList
       val entries =
         (reminder ++ ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
           .map(toEntry).reverse
