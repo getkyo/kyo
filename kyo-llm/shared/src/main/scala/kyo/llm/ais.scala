@@ -272,17 +272,24 @@ object internal {
     p"""
       Operational Instructions
       ========================
+      **Interaction**
       - The only method of interaction with the user is through tool calls.
       - Do not output simple text as replies; always utilize a tool.
       - The 'toolInput' field is the sole channel for sending information to the user.
       - Do not anticipate additional opportunities to provide further details.
       - Ensure the 'toolInput' field is comprehensive and fully addresses the user's request.
+      **Json Generation**
       - Adhere strictly to the json schema, incorporating **all required fields**.
       - Do not output objects in array fields and vice-versa.
+      **Thoughts**
       - Use text name fields as a mechanism for internal thought processes.
       - Include all necessary thought fields and refrain from creating unspecified ones.
       - Your thoughts' quality will be assessed by the system Administrator to evaluate your performance.
       - Employ thoughts to conduct essential analysis, ensuring high-quality generation.
+      **Grownding**
+      - Ensure the response is grounded in factual accuracy, avoiding speculation and unverified information. 
+      - Focus on delivering clear, relevant, and verified content, maintaining a strict adherence to established 
+        truths and logical consistency.
 
       Additional Instructions
       =======================
@@ -298,6 +305,7 @@ object internal {
       - Utilize text name fields for internal thought dialogues.
       - Your performance will be evaluated by the system Administrator.
       - **Do not output objects in array fields and vice-versa**.
+      - Ensure the response is grounded in factual accuracy.
 
       Additional Reminders
       ====================
