@@ -221,7 +221,7 @@ lazy val `kyo-sttp` =
     .settings(
         `kyo-settings`,
         `with-cross-scala`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.1"
+        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.2"
     )
     .jsSettings(`js-settings`)
 
@@ -249,7 +249,7 @@ lazy val `kyo-llm-macros` =
         `kyo-settings`,
         scalaVersion       := scala3Version,
         crossScalaVersions := List(scala2Version, scala3Version),
-        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.1",
+        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.2",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.17",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.17",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.17",
