@@ -61,7 +61,7 @@ package object kyo {
 
   type Promise[+T] <: Fiber[T] // = IOPromise[T]
 
-  type Fibers >: Fibers.Effects <: Fibers.Effects
+  type Fibers = fibersInternal.Fibers
 
   implicit def promiseOps[T](p: Promise[T]): PromiseOps[T] =
     new PromiseOps(p)

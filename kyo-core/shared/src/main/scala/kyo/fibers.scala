@@ -153,7 +153,7 @@ class FiberOps[T](private val state: Fiber[T]) extends AnyVal {
     }
 }
 
-object Fibers extends Joins[Fibers] {
+object Fibers extends Joins[fibersInternal.Fibers] {
 
   type Effects = FiberGets with IOs
 
@@ -327,6 +327,9 @@ object Fibers extends Joins[Fibers] {
 }
 
 object fibersInternal {
+
+  type Fibers >: Fibers.Effects <: Fibers.Effects
+
   final class FiberGets private[kyo] () extends Effect[Fiber, FiberGets] {
 
     def apply[T, S](f: Fiber[T] < S): T < (FiberGets with S) =

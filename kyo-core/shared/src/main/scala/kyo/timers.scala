@@ -92,9 +92,9 @@ object Timer {
 }
 
 abstract class TimerTask {
-  def cancel: Boolean < Fibers
-  def isCancelled: Boolean < Fibers
-  def isDone: Boolean < Fibers
+  def cancel: Boolean < IOs
+  def isCancelled: Boolean < IOs
+  def isDone: Boolean < IOs
 }
 
 object TimerTask {
