@@ -42,8 +42,10 @@ object Timer {
         def isDone: Boolean < IOs      = IOs(task.isDone())
       }
 
-      private def eval(f: => Unit < Fibers) =
+      private def eval(f: => Unit < Fibers) = {
+        import Flat.unsafe._
         IOs.run(Fibers.run(Fibers.init(f)))
+      }
 
       def schedule(delay: Duration)(f: => Unit < Fibers) =
         if (delay.isFinite) {
@@ -109,10 +111,10 @@ object Timers {
 
   private val local = Locals.init(Timer.default)
 
-  def let[T, S](timer: Timer)(v: T < S): T < (Fibers with S) =
+  def let[T, S](timer: Timer)(v: T < S): T < (IOs with S) =
     local.let(timer)(v)
 
-  def schedule(delay: Duration)(f: => Unit < Fibers): TimerTask < Fibers =
+  def schedule(delay: Duration)(f: => Unit < Fibers): TimerTask < IOs =
     local.get.map(_.schedule(delay)(f))
 
   def scheduleAtFixedRate(
