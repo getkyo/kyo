@@ -138,10 +138,9 @@ class AI private[llm] (val id: Long) {
             constrain
           }
         Completions(patch, tools, call)
-          .map { r =>
-            assistantMessage(r.content, r.calls).andThen(r)
-          }
       }
+    }.map { r =>
+      assistantMessage(r.content, r.calls).andThen(r)
     }
 }
 

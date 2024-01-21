@@ -33,8 +33,5 @@ case class Enhance(iterations: Int = 1) extends Mode {
       }
     AIs.ephemeral(next(ai))
       .map(c => loop(c :: Nil, iterations))
-      .map { c =>
-        ai.assistantMessage(c.content, c.calls).andThen(c)
-      }
   }
 }
