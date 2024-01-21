@@ -125,21 +125,23 @@ class AI private[llm] (val id: Long) {
   private def fetch(
       tools: List[Tool],
       constrain: Option[Tool] = None
-  ): Completions.Result < AIs =
-    save.map { ctx =>
-      val patch =
-        ctx.seed(internal.seed + "\n\n\n" + ctx.seed.getOrElse(""))
-          .reminder(internal.reminder + "\n\n\n" + ctx.reminder.getOrElse(""))
-      val call =
-        if (constrain.isEmpty && tools.size == 1) {
-          tools.headOption
-        } else {
-          constrain
-        }
-      Completions(patch, tools, call)
-        .map { r =>
-          assistantMessage(r.content, r.calls).andThen(r)
-        }
+  ): Completion < AIs =
+    AIs.completionAspect(this) { ai =>
+      ai.save.map { ctx =>
+        val patch =
+          ctx.seed(internal.seed + "\n\n\n" + ctx.seed.getOrElse(""))
+            .reminder(internal.reminder + "\n\n\n" + ctx.reminder.getOrElse(""))
+        val call =
+          if (constrain.isEmpty && tools.size == 1) {
+            tools.headOption
+          } else {
+            constrain
+          }
+        Completions(patch, tools, call)
+          .map { r =>
+            assistantMessage(r.content, r.calls).andThen(r)
+          }
+      }
     }
 }
 
@@ -149,7 +151,8 @@ object AIs extends Joins[AIs] {
 
   case class AIException(cause: String) extends Exception(cause) with NoStackTrace
 
-  private val nextId = IOs.run(Atomics.initLong(0))
+  private val nextId                = IOs.run(Atomics.initLong(0))
+  private[kyo] val completionAspect = Aspects.init[AI, Completion, AIs]
 
   val configs = Configs
 

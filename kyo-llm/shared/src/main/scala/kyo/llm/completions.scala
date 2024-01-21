@@ -13,15 +13,15 @@ import zio.json.internal.Write
 
 import completionsInternal._
 
-object Completions {
+case class Completion(content: String, calls: List[Call])
 
-  case class Result(content: String, calls: List[Call])
+object Completions {
 
   def apply(
       ctx: Context,
       tools: List[Tool] = List.empty,
       constrain: Option[Tool] = None
-  ): Result < Fibers =
+  ): Completion < Fibers =
     for {
       config <- Configs.get
       req = Request(ctx, config, tools, constrain)
@@ -29,7 +29,7 @@ object Completions {
       response         <- config.completionsMeter.run(fetch(config, req))
       _                <- Logs.debug(response.toJsonPretty)
       (content, calls) <- read(response)
-    } yield new Result(content, calls)
+    } yield new Completion(content, calls)
 
   private def read(response: Response): (String, List[Call]) < Fibers =
     response.choices.headOption match {

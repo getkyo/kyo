@@ -14,6 +14,9 @@ object Aspects {
 
   def init[T, U, S](default: Cut[T, U, S]): Aspect[T, U, S] =
     new Aspect[T, U, S](default)
+
+  def chain[T, U, S](head: Cut[T, U, S], tail: Seq[Cut[T, U, S]]) =
+    tail.foldLeft(head)(_.andThen(_))
 }
 
 import Aspects._
