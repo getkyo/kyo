@@ -12,15 +12,17 @@ case class Enhance(iterations: Int = 1) extends Mode {
         AIs.ephemeral {
           ai.systemMessage(
               p"""
-                  Enhance Loop
+                  Enhance Mode
                   ============
-                  This is part of the ongoing 'Enhance Loop Mechanism'. You have previously generated one or 
-                  more responses, which are now subject to successive refinement and improvement. In this next 
-                  iteration, carefully examine all previous outputs. Identify and rectify any inaccuracies, 
-                  inconsistencies, or potential hallucinations from these responses. Focus on enhancing the 
-                  clarity, coherence, and depth of the information, ensuring each iteration aligns more closely 
-                  with the query's intent and factual accuracy. Use this comprehensive analysis to produce an 
-                  even more polished and accurate completion than the previous iterations.
+                  This is the 'Enhance Mode' in continuous operation. You have generated multiple 
+                  responses in previous iterations, which now serve as a foundation for further refinement. 
+                  In this next iteration, your task is to meticulously analyze all prior outputs, extracting 
+                  and synthesizing as much relevant information as possible. Identify any inaccuracies, 
+                  inconsistencies, or potential hallucinations, and address them. Focus on enhancing the 
+                  clarity, coherence, and informational depth, ensuring each iteration not only aligns more 
+                  closely with the query's intent and factual accuracy but also builds upon the accumulated 
+                  knowledge from previous responses. Use this comprehensive analysis to produce a completion 
+                  that is more polished, accurate, and informative than all previous iterations.
 
                   Previous Completions
                   ====================
