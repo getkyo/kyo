@@ -1,6 +1,7 @@
 package kyo.llm
 
 import kyo._
+import scala.concurrent.duration._
 
 case class Model(name: String, maxTokens: Int)
 
@@ -21,8 +22,10 @@ case class Config(
     temperature: Double,
     maxTokens: Option[Int],
     seed: Option[Int],
-    completionsMeter: Meter,
-    embeddingsMeter: Meter
+    completionMeter: Meter,
+    completionTimeout: Duration,
+    embeddingMeter: Meter,
+    embeddingTimeout: Duration
 ) {
   def apiUrl(url: String): Config =
     copy(apiUrl = url)
@@ -36,10 +39,16 @@ case class Config(
     copy(maxTokens = maxTokens)
   def seed(seed: Option[Int]): Config =
     copy(seed = seed)
-  def completionsMeter(meter: Meter): Config =
-    copy(completionsMeter = meter)
-  def embeddingsMeter(meter: Meter): Config =
-    copy(embeddingsMeter = meter)
+
+  def completionMeter(meter: Meter): Config =
+    copy(completionMeter = meter)
+  def completionTimeout(timeout: Duration): Config =
+    copy(completionTimeout = timeout)
+
+  def embeddingMeter(meter: Meter): Config =
+    copy(embeddingMeter = meter)
+  def embeddingTimeout(timeout: Duration): Config =
+    copy(embeddingTimeout = timeout)
 }
 
 object Config {
@@ -60,7 +69,9 @@ object Config {
         None,
         None,
         Meters.initNoop,
-        Meters.initNoop
+        3.minutes,
+        Meters.initNoop,
+        3.minutes
     )
   }
 }

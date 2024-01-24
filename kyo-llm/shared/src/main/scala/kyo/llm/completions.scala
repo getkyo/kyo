@@ -28,7 +28,7 @@ object completions {
         config <- Configs.get
         req = Request(ctx, config, tools, constrain)
         _                <- Logs.debug(req.toJsonPretty)
-        response         <- config.completionsMeter.run(fetch(config, req))
+        response         <- config.completionMeter.run(fetch(config, req))
         _                <- Logs.debug(response.toJsonPretty)
         (content, calls) <- read(response)
       } yield new Completion(content, calls)
@@ -48,20 +48,18 @@ object completions {
 
     private def fetch(config: Config, req: Request): Response < Fibers =
       Configs.apiKey.map { key =>
-        Configs.get.map { cfg =>
-          Requests[Response](
-              _.contentType("application/json")
-                .headers(
-                    Map(
-                        "Authorization" -> s"Bearer $key"
-                    ) ++ cfg.apiOrg.map("OpenAI-Organization" -> _)
-                )
-                .post(uri"${cfg.apiUrl}/chat/completions")
-                .body(req)
-                .readTimeout(Duration.Inf)
-                .response(asJson[Response])
-          )
-        }
+        Requests[Response](
+            _.contentType("application/json")
+              .headers(
+                  Map(
+                      "Authorization" -> s"Bearer $key"
+                  ) ++ config.apiOrg.map("OpenAI-Organization" -> _)
+              )
+              .post(uri"${config.apiUrl}/chat/completions")
+              .body(req)
+              .readTimeout(config.completionTimeout)
+              .response(asJson[Response])
+        )
       }
   }
 

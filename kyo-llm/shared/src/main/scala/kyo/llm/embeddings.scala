@@ -31,11 +31,12 @@ object Embeddings {
       req = Request(text, model)
       _ <- Logs.debug(req.toJsonPretty)
       res <-
-        config.embeddingsMeter.run {
+        config.embeddingMeter.run {
           Requests[Response](
               _.contentType("application/json")
                 .header("Authorization", s"Bearer $apiKey")
                 .post(uri"${config.apiUrl}/v1/embeddings")
+                .readTimeout(config.embeddingTimeout)
                 .body(req)
                 .response(asJson[Response])
           )
