@@ -15,7 +15,7 @@ abstract class KyoLLMApp extends KyoApp.Base[KyoLLMApp.Effects] {
       implicit f: Flat[T < KyoLLMApp.Effects]
   ) =
     KyoLLMApp.run {
-      AIs.configs.let(config) {
+      Configs.let(config) {
         Tools.enable(tools) {
           v.map(Consoles.println(_))
         }

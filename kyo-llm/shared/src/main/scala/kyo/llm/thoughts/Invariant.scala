@@ -5,6 +5,7 @@ import zio.schema.{Schema => ZSchema}
 import kyo._
 import kyo.Stats
 import kyo.stats.Attributes
+import kyo.llm.contexts._
 
 object Invariant {
 

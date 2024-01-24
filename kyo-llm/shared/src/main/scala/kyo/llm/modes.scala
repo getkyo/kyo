@@ -1,6 +1,7 @@
 package kyo.llm
 
 import kyo._
+import kyo.llm.completions._
 
 trait Mode {
   def apply(ai: AI)(next: AI => Completion < AIs): Completion < AIs

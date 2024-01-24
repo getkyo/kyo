@@ -1,6 +1,7 @@
 package kyo.llm
 
 import kyo._
+import kyo.llm.contexts._
 
 import scala.util._
 import zio.schema.{Schema => ZSchema}

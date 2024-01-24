@@ -2,6 +2,7 @@ package kyo.llm.modes
 
 import kyo._
 import kyo.llm._
+import kyo.llm.completions._
 
 case class Enhance(iterations: Int = 1) extends Mode {
   def apply(ai: AI)(next: AI => Completion < AIs): Completion < AIs = {

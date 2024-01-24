@@ -2,6 +2,7 @@ package kyo.llm.modes
 
 import kyo._
 import kyo.llm._
+import kyo.llm.completions._
 
 case class Cooldown(hot: Double = 1, cold: Double = 0, parallelism: Int = 3) extends Mode {
 

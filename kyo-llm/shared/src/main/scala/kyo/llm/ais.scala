@@ -1,7 +1,8 @@
 package kyo.llm
 
 import kyo._
-import kyo.Joins
+import kyo.llm.completions._
+import kyo.llm.contexts._
 
 import zio.schema.codec.JsonCodec
 import zio.schema.{Schema => ZSchema}
@@ -152,8 +153,6 @@ object AIs extends Joins[AIs] {
 
   private val nextId                = IOs.run(Atomics.initLong(0))
   private[kyo] val completionAspect = Aspects.init[AI, Completion, AIs]
-
-  val configs = Configs
 
   val init: AI < AIs =
     nextId.incrementAndGet.map(new AI(_))
