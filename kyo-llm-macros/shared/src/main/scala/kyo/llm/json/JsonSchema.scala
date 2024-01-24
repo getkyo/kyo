@@ -24,7 +24,7 @@ object Schema {
 
   def desc(c: Chunk[Any], s: String = ""): List[(String, Json)] =
     c.collect {
-      case desc(v) =>
+      case doc(v) =>
         "description" -> Json.Str(v + (if (s.isEmpty) "" else "\n" + s))
     }.distinct.toList match {
       case Nil if (!s.isEmpty) =>

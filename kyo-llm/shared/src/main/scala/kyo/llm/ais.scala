@@ -14,8 +14,8 @@ import scala.reflect.ClassTag
 
 import internal._
 
-type desc = kyo.llm.json.desc
-val desc = kyo.llm.json.desc
+type doc = kyo.llm.json.doc
+val doc = kyo.llm.json.doc
 
 type Json[T] = kyo.llm.json.Json[T]
 val Json = kyo.llm.json.Json

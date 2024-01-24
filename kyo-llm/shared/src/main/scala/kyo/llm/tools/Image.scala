@@ -14,16 +14,16 @@ object Image extends Tool {
   import internal._
 
   case class In(
-      @desc("A text description of the desired image")
+      @doc("A text description of the desired image")
       prompt: String,
-      @desc("""
+      @doc("""
         The quality of the image that will be generated. hd creates 
         images with finer details and greater consistency across the image.
       """)
       hdQuality: Boolean,
-      @desc("Must be one of 1024x1024, 1792x1024, or 1024x1792")
+      @doc("Must be one of 1024x1024, 1792x1024, or 1024x1792")
       size: String,
-      @desc("""
+      @doc("""
         The style of the generated images. Must be one of vivid 
         or natural. Vivid causes the model to lean towards generating
         hyper-real and dramatic images. Natural causes the model to produce

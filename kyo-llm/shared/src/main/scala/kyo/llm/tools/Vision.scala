@@ -14,14 +14,14 @@ import javax.imageio.ImageIO
 object Vision extends Tool {
 
   case class In(
-      @desc("A description of the environment in which the image is displayed. " +
+      @doc("A description of the environment in which the image is displayed. " +
         "This includes the webpage or application interface, nearby visual elements, " +
         "and surrounding textual content, which may provide additional insight or " +
         "relevance to the image in question.")
       environment: String,
-      @desc("The question the AI needs to answer regarding the provided image.")
+      @doc("The question the AI needs to answer regarding the provided image.")
       question: String,
-      @desc("The URL where the image can be found.")
+      @doc("The URL where the image can be found.")
       imageUrl: String
   )
 
