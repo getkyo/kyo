@@ -51,11 +51,11 @@ class AI private[llm] (val id: Long) {
       _  <- State.update(st => st + (ai.ref -> st.getOrElse(ref, Context.empty)))
     } yield ai
 
-  def seed[S](msg: String): Unit < AIs =
-    update(_.seed(msg))
+  def prompt[S](msg: String): Unit < AIs =
+    update(_.prompt(msg))
 
-  def seed[S](msg: String, reminder: String): Unit < AIs =
-    update(_.seed(msg).reminder(reminder))
+  def prompt[S](msg: String, reminder: String): Unit < AIs =
+    update(_.prompt(msg).reminder(reminder))
 
   def reminder[S](msg: String): Unit < AIs =
     update(_.reminder(msg))
@@ -129,7 +129,7 @@ class AI private[llm] (val id: Long) {
     AIs.completionAspect(this) { ai =>
       ai.save.map { ctx =>
         val patch =
-          ctx.seed(internal.seed + "\n\n\n" + ctx.seed.getOrElse(""))
+          ctx.prompt(internal.prompt + "\n\n\n" + ctx.prompt.getOrElse(""))
             .reminder(internal.reminder + "\n\n\n" + ctx.reminder.getOrElse(""))
         val call =
           if (constrain.isEmpty && tools.size == 1) {
@@ -158,13 +158,13 @@ object AIs extends Joins[AIs] {
   val init: AI < AIs =
     nextId.incrementAndGet.map(new AI(_))
 
-  def init(seed: String): AI < AIs =
+  def init(prompt: String): AI < AIs =
     init.map { ai =>
-      ai.seed(seed).andThen(ai)
+      ai.prompt(prompt).andThen(ai)
     }
 
-  def init(seed: String, reminder: String): AI < AIs =
-    init(seed).map { ai =>
+  def init(prompt: String, reminder: String): AI < AIs =
+    init(prompt).map { ai =>
       ai.reminder(reminder).andThen(ai)
     }
 
@@ -180,33 +180,33 @@ object AIs extends Joins[AIs] {
   def gen[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
     init.map(_.gen[T](msg))
 
-  def genNow[T](seed: String, msg: String)(
+  def genNow[T](prompt: String, msg: String)(
       implicit
       t: Json[T],
       f: Flat[T]
   ): T < AIs =
-    init(seed).map(_.genNow[T](msg))
+    init(prompt).map(_.genNow[T](msg))
 
-  def gen[T](seed: String, msg: String)(
+  def gen[T](prompt: String, msg: String)(
       implicit
       t: Json[T],
       f: Flat[T]
   ): T < AIs =
-    init(seed).map(_.gen[T](msg))
+    init(prompt).map(_.gen[T](msg))
 
-  def genNow[T](seed: String, reminder: String, msg: String)(
+  def genNow[T](prompt: String, reminder: String, msg: String)(
       implicit
       t: Json[T],
       f: Flat[T]
   ): T < AIs =
-    init(seed, reminder).map(_.genNow[T](msg))
+    init(prompt, reminder).map(_.genNow[T](msg))
 
-  def gen[T](seed: String, reminder: String, msg: String)(
+  def gen[T](prompt: String, reminder: String, msg: String)(
       implicit
       t: Json[T],
       f: Flat[T]
   ): T < AIs =
-    init(seed, reminder).map(_.gen[T](msg))
+    init(prompt, reminder).map(_.gen[T](msg))
 
   def restore(ctx: Context): AI < AIs =
     init.map { ai =>
@@ -268,7 +268,7 @@ object internal {
       (31 * id.toInt) + 31
   }
 
-  val seed =
+  val prompt =
     p"""
       Operational Instructions
       ========================

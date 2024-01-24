@@ -55,14 +55,14 @@ object Message {
 }
 
 case class Context(
-    seed: Option[String],
+    prompt: Option[String],
     reminder: Option[String],
     messages: List[Message],
     thoughts: List[Thoughts.Info]
 ) {
 
-  def seed(seed: String): Context =
-    copy(seed = Some(seed))
+  def prompt(prompt: String): Context =
+    copy(prompt = Some(prompt))
 
   def reminder(reminder: String): Context =
     copy(reminder = Some(reminder))
@@ -83,7 +83,7 @@ case class Context(
     add(Message.ToolMessage(callId, content))
 
   def isEmpty: Boolean =
-    seed.isEmpty && messages.isEmpty
+    prompt.isEmpty && messages.isEmpty
 
   def add(msg: Message): Context =
     copy(messages = msg :: messages)
@@ -96,7 +96,7 @@ case class Context(
       if (s.contains('\n') || s.contains('"') || s.contains('\\')) s"p\"\"\"$s\"\"\""
       else s""""$s""""
     }
-    val seedStr     = seed.map(s => s"\n  .seed(${stringify(s)})").getOrElse("")
+    val promptStr     = prompt.map(s => s"\n  .prompt(${stringify(s)})").getOrElse("")
     val reminderStr = reminder.map(s => s"\n  .reminder(${stringify(s)})").getOrElse("")
     val messagesStr = messages.reverse.map {
       case Message.SystemMessage(content, _) =>
@@ -114,7 +114,7 @@ case class Context(
       case Message.ToolMessage(callId, content, _) =>
         s"\n  .toolMessage(CallId(\"${callId.id}\"), ${stringify(content)})"
     }.mkString
-    s"Context.empty$seedStr$reminderStr$messagesStr"
+    s"Context.empty$promptStr$reminderStr$messagesStr"
   }
 }
 

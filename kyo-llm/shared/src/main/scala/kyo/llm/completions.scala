@@ -146,7 +146,7 @@ private object completionsInternal {
       val reminder =
         ctx.reminder.map(r => Message.SystemMessage(r)).toList
       val entries =
-        (reminder ++ ctx.messages ++ ctx.seed.map(s => Message.SystemMessage(s)))
+        (reminder ++ ctx.messages ++ ctx.prompt.map(s => Message.SystemMessage(s)))
           .map(toEntry).reverse
       val toolDefs =
         if (tools.isEmpty)
