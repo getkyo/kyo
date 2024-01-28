@@ -35,7 +35,7 @@ object Retries {
   ): T < (Fibers with S) = {
     val b = builder(Policy.default)
     def loop(attempt: Int): T < (Fibers with S) =
-      Tries.run(v).map {
+      Tries.run[T, S](v).map {
         case Failure(ex) =>
           if (attempt < b.limit) {
             Fibers.sleep(b.backoff(attempt)).andThen {
