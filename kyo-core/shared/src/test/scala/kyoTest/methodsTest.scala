@@ -44,7 +44,7 @@ class methodsTest extends KyoTest {
 
   "nested" - {
     val io: Int < IOs < IOs =
-      IOs.value[Int < IOs](IOs(1))
+      IOs[Int, IOs](IOs(1))
     "map + flatten" in {
       val n: Int < IOs = io.map(_.map(_ + 1)).flatten
       assert(IOs.run(n) == 2)

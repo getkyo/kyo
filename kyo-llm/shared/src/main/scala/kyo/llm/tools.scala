@@ -57,7 +57,7 @@ abstract class Tool {
   private[kyo] def handle(ai: AI, call: Call): Boolean < AIs =
     Tools.disable {
       implicit def s: ZSchema[In] = info.input.zSchema
-      Tries.run(json.decode(call.arguments)).map {
+      IOs.attempt(json.decode(call.arguments)).map {
         case Failure(ex) =>
           ai.toolMessage(call.id, "Invalid 'toolInput': " + ex).andThen(false)
         case Success(res) =>
@@ -65,7 +65,7 @@ abstract class Tool {
             res.eval(ai).andThen {
               Listeners.observe(res.shortActionNarrationToBeShownToTheUser) {
                 AIs.ephemeral(
-                    Tries.run(run(ai, res.toolInput).map(info.output.encode))
+                    IOs.attempt(run(ai, res.toolInput).map(info.output.encode))
                 ).map {
                   case Failure(ex) =>
                     ai.update(ctx =>

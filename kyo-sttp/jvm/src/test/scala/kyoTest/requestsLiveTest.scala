@@ -21,7 +21,7 @@ class requestsLiveTest extends KyoTest {
       "failure" in run {
         for {
           port <- startTestServer("/ping", Failure(new Exception))
-          r    <- Tries.run(Requests(_.get(uri"http://localhost:$port/ping")))
+          r    <- IOs.attempt(Requests(_.get(uri"http://localhost:$port/ping")))
         } yield {
           assert(r.isFailure)
         }

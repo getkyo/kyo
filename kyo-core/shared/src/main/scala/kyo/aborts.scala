@@ -48,9 +48,7 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
     }
 
   def catching[T, S](f: => T < S): T < (Aborts[E] with S) =
-    try {
-      f
-    } catch {
+    IOs.handle(f) {
       case ex if (tag.closestClass.isAssignableFrom(ex.getClass)) =>
         fail(ex.asInstanceOf[E])
     }

@@ -13,9 +13,6 @@ import Cache._
 class Cache(private[kyo] val store: Store) {
   def memo[T, U, S](
       f: T => U < S
-  )(implicit
-      ft: Flat[T < Any],
-      fu: Flat[U < Any]
   ): T => U < (Fibers with S) =
     new AbstractFunction1[T, U < (Fibers with S)] {
       def apply(v: T) =
@@ -32,7 +29,7 @@ class Cache(private[kyo] val store: Store) {
                       ()
                   }
                 } {
-                  Tries.run[U, S](f(v)).map {
+                  IOs.attempt[U, S](f(v)).map {
                     case Success(v) =>
                       p.complete(v)
                         .unit.andThen(v)

@@ -83,7 +83,7 @@ class channelsTest extends KyoTest {
       for {
         c <- Channels.init[Int](2)
         r <- c.close
-        t <- Tries.run(c.offer(1))
+        t <- IOs.attempt(c.offer(1))
       } yield assert(r == Some(Seq()) && t.isFailure)
     }
     "non-empty" in runJVM {
@@ -92,7 +92,7 @@ class channelsTest extends KyoTest {
         _ <- c.put(1)
         _ <- c.put(2)
         r <- c.close
-        t <- Tries.run(c.isEmpty)
+        t <- IOs.attempt(c.isEmpty)
       } yield assert(r == Some(Seq(1, 2)) && t.isFailure)
     }
     "pending take" in runJVM {
@@ -101,7 +101,7 @@ class channelsTest extends KyoTest {
         f <- c.takeFiber
         r <- c.close
         d <- f.getTry
-        t <- Tries.run(c.isFull)
+        t <- IOs.attempt(c.isFull)
       } yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
     }
     "pending put" in runJVM {
@@ -112,7 +112,7 @@ class channelsTest extends KyoTest {
         f <- c.putFiber(3)
         r <- c.close
         d <- f.getTry
-        t <- Tries.run(c.offerUnit(1))
+        t <- IOs.attempt(c.offerUnit(1))
       } yield assert(r == Some(Seq(1, 2)) && d.isFailure && t.isFailure)
     }
     "no buffer w/ pending put" in runJVM {
@@ -121,7 +121,7 @@ class channelsTest extends KyoTest {
         f <- c.putFiber(1)
         r <- c.close
         d <- f.getTry
-        t <- Tries.run(c.poll)
+        t <- IOs.attempt(c.poll)
       } yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
     }
     "no buffer w/ pending take" in runJVM {
@@ -130,7 +130,7 @@ class channelsTest extends KyoTest {
         f <- c.takeFiber
         r <- c.close
         d <- f.getTry
-        t <- Tries.run(c.put(1))
+        t <- IOs.attempt(c.put(1))
       } yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
     }
   }

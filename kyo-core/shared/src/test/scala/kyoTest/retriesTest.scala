@@ -10,7 +10,7 @@ import scala.util.Success
 import scala.util.Try
 
 class retriesTest extends KyoTest {
-  
+
   val ex = new Exception
 
   "no retries" - {
@@ -25,7 +25,7 @@ class retriesTest extends KyoTest {
     }
     "nok" in run {
       var calls = 0
-      Tries.run {
+      IOs.attempt {
         Retries(_.limit(0)) {
           calls += 1
           throw ex
@@ -48,7 +48,7 @@ class retriesTest extends KyoTest {
     }
     "nok" in run {
       var calls = 0
-      Tries.run {
+      IOs.attempt {
         Retries(_.limit(3)) {
           calls += 1
           throw ex
@@ -62,7 +62,7 @@ class retriesTest extends KyoTest {
   "backoff" in run {
     var calls = 0
     var start = System.currentTimeMillis()
-    Tries.run {
+    IOs.attempt {
       Retries(_.limit(4).exponential(10.millis)) {
         calls += 1
         throw ex

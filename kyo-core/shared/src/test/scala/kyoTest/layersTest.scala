@@ -67,28 +67,8 @@ class layersTest extends KyoTest {
     assert(Aborts[TestError2].run(layer.run(effect3)) == Left(TestError2("dep2 failure")))
   }
 
-  val triesToAbortsLayer  = Tries.layer(err => Aborts[Throwable].fail(err))
-  val triesToOptionsLayer = Tries.layer(_ => Options.get(None))
-
-  "Tries layer should handle tries as other failures" in {
-    val effect = for {
-      _ <- Tries.fail("fail")
-    } yield ()
-
-    val effectHandledToAborts  = triesToAbortsLayer.run(effect)
-    val effectHandledToOptions = triesToOptionsLayer.run(effect)
-
-    assert {
-      Aborts[Throwable].run(effectHandledToAborts) match {
-        case Left(err: Throwable) => err.getMessage == "fail"
-        case _                    => false
-      }
-    }
-    assert(Options.run(effectHandledToOptions) == None)
-  }
-
   val optionsToAbortsLayer = Options.layer(Aborts[String].fail("missing value"))
-  val optionsToTriesLayer  = Options.layer(Tries.fail("missing value"))
+  val optionsToTriesLayer  = Options.layer(IOs.fail("missing value"))
 
   "Options layer should handle None as other failures" in {
     val effect = for {
@@ -106,7 +86,7 @@ class layersTest extends KyoTest {
     }
 
     assert {
-      Tries.run(effectHandledToTries) match {
+      IOs.run(IOs.attempt(effectHandledToTries)) match {
         case Failure(err: Throwable) => err.getMessage == "missing value"
         case _                       => false
       }

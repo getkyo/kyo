@@ -67,7 +67,5 @@ package object kyo {
 
   implicit def flat[T]: Flat[Fiber[T]] = Flat.unsafe.checked[Fiber[T]]
 
-  type Tries >: Tries.Effects <: Tries.Effects
-
   type Options >: Options.Effects <: Options.Effects
 }

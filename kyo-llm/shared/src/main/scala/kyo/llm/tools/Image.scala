@@ -64,7 +64,7 @@ object Image extends Tool {
       )
       _ <- Logs.debug(resp.toJsonPretty)
       r <- resp.data.headOption.map(r => Out(r.url, r.revised_prompt))
-        .getOrElse(AIs.fail[Out]("Can't find the generated image URL."))
+        .getOrElse(IOs.fail[Out]("Can't find the generated image URL."))
     } yield r
   }
 

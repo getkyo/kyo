@@ -79,7 +79,7 @@ class fibersTest extends KyoTest {
   }
 
   "timeout" in runJVM {
-    Tries.run(Fibers.runAndBlock(
+    IOs.attempt(Fibers.runAndBlock(
         Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
     )).map {
       case Failure(Fibers.Interrupted) => succeed
@@ -127,7 +127,7 @@ class fibersTest extends KyoTest {
 
   "race" - {
     "zero" in runJVM {
-      Tries.run(Fibers.race(Seq())).map { r =>
+      IOs.attempt(Fibers.race(Seq())).map { r =>
         assert(r.isFailure)
       }
     }
@@ -159,7 +159,7 @@ class fibersTest extends KyoTest {
 
   "raceFiber" - {
     "zero" in runJVM {
-      Tries.run(Fibers.raceFiber(Seq()).map(_.get)).map { r =>
+      IOs.attempt(Fibers.raceFiber(Seq()).map(_.get)).map { r =>
         assert(r.isFailure)
       }
     }

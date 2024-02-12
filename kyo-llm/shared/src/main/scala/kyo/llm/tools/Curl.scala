@@ -32,7 +32,7 @@ class Curl(methods: Curl.Methods) extends Tool {
 
   def run(input: In) =
     if (!allow.contains(input.method)) {
-      AIs.fail(s"Method not allowed: ${input.method}. Allowed: ${allow.mkString(", ")}")
+      IOs.fail(s"Method not allowed: ${input.method}. Allowed: ${allow.mkString(", ")}")
     } else {
       implicit val inputDecoder: JsonDecoder[In] = DeriveJsonDecoder.gen[In]
       implicit val inputEncoder: JsonEncoder[In] = DeriveJsonEncoder.gen[In]

@@ -7,10 +7,9 @@ import scala.concurrent.duration.Duration
 import scala.runtime.AbstractFunction0
 import scala.util.Try
 import scala.util.control.NonFatal
-
-import kyo._
 import core._
 import core.internal._
+import scala.util._
 import scala.annotation.implicitNotFound
 import java.util.concurrent.atomic.AtomicReference
 import kyo.Locals.State
@@ -21,14 +20,6 @@ sealed trait IOs extends Effect[IO, IOs] {
 
   val unit: Unit < IOs = ()
 
-  def value[T](v: T): T < IOs = v
-
-  def fail[T](ex: Throwable): T < IOs =
-    IOs(throw ex)
-
-  def fail[T](msg: String): T < IOs =
-    fail(new Exception(msg))
-
   /*inline*/
   def apply[T, S](
       /*inline*/ f: => T < (IOs with S)
@@ -37,6 +28,79 @@ sealed trait IOs extends Effect[IO, IOs] {
       def apply(v: Unit < (IOs with S), s: Safepoint[IO, IOs], l: Locals.State) =
         f
     }
+
+  def fail[T](ex: Throwable): T < IOs =
+    IOs(throw ex)
+
+  def fail[T](msg: String): T < IOs =
+    fail(new Exception(msg))
+
+  def fromTry[T, S](v: Try[T] < S): T < (IOs with S) =
+    v.map {
+      case Success(v) =>
+        v
+      case Failure(ex) =>
+        fail(ex)
+    }
+
+  def attempt[T, S](v: => T < S): Try[T] < S = {
+    def attemptLoop(v: T < S): Try[T] < S =
+      v match {
+        case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>
+          new KyoCont[MX, EX, Any, Try[T], S](kyo) {
+            def apply(v: Any < S, s: Safepoint[MX, EX], l: Locals.State) =
+              try {
+                attemptLoop(kyo(v, s, l))
+              } catch {
+                case ex: Throwable if (NonFatal(ex)) =>
+                  Failure(ex)
+              }
+          }
+        case _ =>
+          Success(v.asInstanceOf[T])
+      }
+    try {
+      val v0 = v
+      if (v0 == null) {
+        throw new NullPointerException
+      }
+      attemptLoop(v0)
+    } catch {
+      case ex: Throwable if (NonFatal(ex)) =>
+        Failure(ex)
+    }
+  }
+
+  /*inline*/
+  def handle[T, S, U >: T, S2](v: => T < S)(
+      /*inline*/ pf: PartialFunction[Throwable, U < S2]
+  ): U < (S with S2) = {
+    def handleLoop(v: U < (S with S2)): U < (S with S2) =
+      v match {
+        case kyo: Kyo[MX, EX, Any, U, S with S2] @unchecked =>
+          new KyoCont[MX, EX, Any, U, S with S2](kyo) {
+            def apply(v: Any < (S with S2), s: Safepoint[MX, EX], l: Locals.State) =
+              try {
+                handleLoop(kyo(v, s, l))
+              } catch {
+                case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
+                  pf(ex)
+              }
+          }
+        case _ =>
+          v.asInstanceOf[T]
+      }
+    try {
+      val v0 = v
+      if (v0 == null) {
+        throw new NullPointerException
+      }
+      handleLoop(v0)
+    } catch {
+      case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
+        pf(ex)
+    }
+  }
 
   /*inline*/
   def run[T](v: T < IOs)(implicit f: Flat[T < IOs]): T = {

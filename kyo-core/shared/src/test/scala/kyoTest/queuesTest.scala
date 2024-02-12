@@ -65,13 +65,13 @@ class queuesTest extends KyoTest {
       q  <- Queues.init[Int](2)
       b  <- q.offer(1)
       c1 <- q.close
-      v1 <- Tries.run(q.size)
-      v2 <- Tries.run(q.isEmpty)
-      v3 <- Tries.run(q.isFull)
-      v4 <- Tries.run(q.offer(2))
-      v5 <- Tries.run(q.poll)
-      v6 <- Tries.run(q.peek)
-      v7 <- Tries.run(q.drain)
+      v1 <- IOs.attempt(q.size)
+      v2 <- IOs.attempt(q.isEmpty)
+      v3 <- IOs.attempt(q.isFull)
+      v4 <- IOs.attempt(q.offer(2))
+      v5 <- IOs.attempt(q.poll)
+      v6 <- IOs.attempt(q.peek)
+      v7 <- IOs.attempt(q.drain)
       c2 <- q.close
     } yield assert(
         b && c1 == Some(Seq(1)) &&

@@ -102,8 +102,8 @@ import kyo._
 // and `flatMap`.
 def example1(
     a: Int < Options, 
-    b: Int < Tries
-  ): Int < (Options with Tries) =
+    b: Int < Aborts[Exception]
+  ): Int < (Options with Aborts[Exception]) =
     a.flatMap(v => b.map(_ + v))
 
 // But using only `map` is recommended 
@@ -111,8 +111,8 @@ def example1(
 // to effect widening.
 def example2(
     a: Int < Options, 
-    b: Int < Tries
-  ): Int < (Options with Tries) =
+    b: Int < Aborts[Exception]
+  ): Int < (Options with Aborts[Exception]) =
     a.map(v => b.map(_ + v))
 ```
 
@@ -150,13 +150,13 @@ val b: Int < Options =
   a
 
 // Further widening the effect set to include 
-// both `Options` and `Tries`
-val c: Int < (Options with Tries) = 
+// both `Options` and `Aborts[Exception]`
+val c: Int < (Options with Aborts[Exception]) = 
   b
 
 // Directly widening a pure value to have 
-// `Options` and `Tries`
-val d: Int < (Options with Tries) = 
+// `Options` and `Aborts[Exception]`
+val d: Int < (Options with Aborts[Exception]) = 
   42
 ```
 
@@ -164,20 +164,20 @@ This characteristic enables a fluent API for effectful code. Methods can accept 
 
 ```scala
 // The function expects a parameter with both 
-// 'Options' and 'Tries' effects pending
-def example1(v: Int < (Options with Tries)) = 
+// 'Options' and 'Aborts' effects pending
+def example1(v: Int < (Options with Aborts[Exception])) = 
   v.map(_ + 1)
 
-// A value with only the 'Tries' effect can be 
+// A value with only the 'Aborts' effect can be 
 // automatically widened to include 'Options'
-def example2(v: Int < Tries) = 
+def example2(v: Int < Aborts[Exception]) = 
   example1(v)
 
 // A pure value can also be automatically widened
 def example3 = example1(42)
 ```
 
-Here, `example1` is designed to accept an `Int < (Options with Tries)`. However, thanks to the contravariant encoding of the type-level set of effects, `example2` and `example3` demonstrate that you can also pass in computations with a smaller set of effects—or even a pure value—and they will be automatically widened to fit the expected type.
+Here, `example1` is designed to accept an `Int < (Options with Aborts[Exception])`. However, thanks to the contravariant encoding of the type-level set of effects, `example2` and `example3` demonstrate that you can also pass in computations with a smaller set of effects—or even a pure value—and they will be automatically widened to fit the expected type.
 
 ### Using effects
 
@@ -214,17 +214,17 @@ The order in which you handle effects in Kyo can significantly influence both th
 import kyo._
 import scala.util._
 
-def optionsFirst(a: Int < (Options with Tries)): Try[Option[Int]] = {
-  val b: Option[Int] < Tries = 
+def optionsFirst(a: Int < (Options with Aborts[Exception])): Either[Exception, Option[Int]] = {
+  val b: Option[Int] < Aborts[Exception] = 
     Options.run(a)
-  val c: Try[Option[Int]] < Any = 
-    Tries.run(b)
+  val c: Either[Exception, Option[Int]] < Any = 
+    Aborts[Exception].run(b)
   c.pure
 }
-def triesFirst(a: Int < (Options with Tries)): Option[Try[Int]] = {
-  val b: Try[Int] < Options =
-    Tries.run(a)
-  val c: Option[Try[Int]] < Any = 
+def abortsFirst(a: Int < (Options with Aborts[Exception])): Option[Either[Exception, Int]] = {
+  val b: Either[Exception, Int] < Options =
+    Aborts[Exception].run(a)
+  val c: Option[Either[Exception, Int]] < Any = 
     Options.run(b)
   c.pure
 }
@@ -240,20 +240,20 @@ val ex = new Exception
 // If the effects don't short-circuit, only the 
 // order of nested types in the result changes
 assert(optionsFirst(Options.get(Some(1))) == Success(Some(1)))
-assert(optionsFirst(Tries.get(Success(1))) == Success(Some(1)))
+assert(optionsFirst(Aborts[Exception].get(Right(1))) == Success(Some(1)))
 
 // Note how the result type changes from 
 // 'Try[Option[T]]' to 'Option[Try[T]]'
-assert(triesFirst(Options.get(Some(1))) == Some(Success(1)))
-assert(triesFirst(Tries.get(Success(1))) == Some(Success(1)))
+assert(abortsFirst(Options.get(Some(1))) == Some(Success(1)))
+assert(abortsFirst(Aborts[Exception].get(Right(1))) == Some(Success(1)))
 
 // If there's short-circuiting, the 
 // resulting value can be different
 assert(optionsFirst(Options.get(None)) == Success(None))
-assert(optionsFirst(Tries.get(Failure(ex))) == Failure(ex))
+assert(optionsFirst(Aborts[Exception].get(Left(ex))) == Failure(ex))
 
-assert(triesFirst(Options.get(None)) == None)
-assert(triesFirst(Tries.get(Failure(ex))) == Some(Failure(ex)))
+assert(abortsFirst(Options.get(None)) == None)
+assert(abortsFirst(Aborts[Exception].get(Left(ex))) == Some(Failure(ex)))
 ```
 
 ### Direct Syntax
@@ -268,19 +268,19 @@ import kyo.direct._
 import scala.util.Try
 
 // Use the direct syntax
-val a: String < (Tries with Options) =
+val a: String < (Aborts[Exception] with Options) =
   defer {
     val b: String = 
       await(Options.get(Some("hello")))
     val c: String = 
-      await(Tries.get(Try("world")))
+      await(Aborts[Exception].get(Right("world")))
     b + " " + c
   }
 
 // Equivalent desugared
-val b: String < (Tries with Options) =
+val b: String < (Aborts[Exception] with Options) =
   Options.get(Some("hello")).map { b =>
-    Tries.get(Try("world")).map { c =>
+    Aborts[Exception].get(Right("world")).map { c =>
       b + " " + c
     }
   }
@@ -427,7 +427,7 @@ val d: Int < Aborts[Exception] =
 
 > Note that the `Aborts` effect has a type parameter and its methods can only be accessed if the type parameter is provided.
 
-### IOs: Side Effects
+### IOs: Side Effects and Exception Handling
 
 Kyo is unlike traditional effect systems since its base type `<` does not assume that the computation can perform side effects. The `IOs` effect is introduced whenever a side effect needs to be performed.
 
@@ -439,16 +439,32 @@ def aSideEffect = 1 // placeholder
 // 'apply' is used to suspend side effects
 val a: Int < IOs = 
   IOs(aSideEffect)
+```
 
-// 'value' is a shorthand to widen 
-// a pure value to IOs
-val b: Int < IOs = 
-  IOs.value(42)
+`IOs` also provides methods to handle unchecked exceptions.
 
-// 'fail' returns a computation that 
-// will fail once IOs is handled
-val c: Int < IOs = 
+```scala
+// 'fail' be used for unchecked exceptions (prefer 'Aborts')
+val b: Int < IOs =
   IOs.fail(new Exception)
+
+// 'fail' can also take an error message instead
+val c: Int < IOs =
+  IOs.fail("exception message")
+
+// 'fromTry' obtains the value of a 'Try'
+val d: Int < IOs
+  IOs.fromTry(Try(1))
+
+// 'attempt' handles any exceptions and returns a 'Try'
+val d: Try[Int] < IOs =
+  IOs.attempt("1".toInt)
+
+// 'handle' takes a partial function to handle exceptions
+val e: Int < IOs =
+  IOs.handle("1".toInt) {
+    case _: NumberFormatException => 0
+  }
 ```
 
 Users shouldn't typically handle the `IOs` effect directly since it triggers the execution of side effects, which breaks referential transparency. Prefer `KyoApp` instead.
@@ -757,32 +773,6 @@ val c: Int < Options =
 // Effectful version of 'Option.orElse
 val d: Int < Options = 
   Options.getOrElse(Some(1), c)
-```
-
-### Tries: Exception Handling
-
-```scala
-import kyo._
-
-// 'get' is used to 'extract' the value of a 'Try'
-val a: Int < Tries = 
-  Tries.get(Try(1))
-
-// 'fail' to short-circuit the computation
-val b: Int < Tries = 
-  Tries.fail(new Exception)
-
-// 'fail' has an overload that takes an error message
-val c: Int < Tries = 
-  Tries.fail("failed")
-
-// 'catching' is the effectful version of 'Try.apply'
-val d: Int < Tries = 
-  Tries.catching(1)
-
-// The 'catching' method automatically catches exceptions
-val e: Int < Tries = 
-  Tries.catching(throw new Exception)
 ```
 
 ### Consoles: Console Interaction
@@ -1606,7 +1596,7 @@ Kyo provides caching through memoization. A single `Cache` instance can be reuse
 import kyo._
 import scala.concurrent.duration._
 
-val a: Int < (Fibers with Tries) =
+val a: Int < (Fibers with IOs) =
   for {
 
     // The initialization takes a 
@@ -1618,7 +1608,7 @@ val a: Int < (Fibers with Tries) =
     fun = cache.memo { (v: String) =>
       // Note how the implementation
       // can use other effects
-      Tries.catching(v.toInt)
+      IOs(v.toInt)
     }
 
     // Use the function

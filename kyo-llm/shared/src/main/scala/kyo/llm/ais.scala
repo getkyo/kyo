@@ -212,12 +212,9 @@ object AIs extends Joins[AIs] {
       ai.restore(ctx).map(_ => ai)
     }
 
-  def fail[T](cause: String): T < AIs =
-    IOs.fail(AIException(cause))
-
-  def ephemeral[T, S](f: => T < S)(implicit flat: Flat[T < S]): T < (AIs with S) =
+  def ephemeral[T, S](f: => T < S): T < (AIs with S) =
     State.get.map { st =>
-      Tries.run[T, S](f).map(r => State.set(st).map(_ => r.get))
+      IOs.attempt[T, S](f).map(r => State.set(st).map(_ => r.get))
     }
 
   def race[T](l: Seq[T < AIs])(implicit f: Flat[T < AIs]): T < AIs =

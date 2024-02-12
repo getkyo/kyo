@@ -35,6 +35,7 @@ package object kyo {
     /*inline*/
     def repeat(i: Int)(implicit ev: T => Unit): Unit < S =
       if (i <= 0) () else andThen(repeat(i - 1))
+
   }
 
   extension [T, S](v: T < Any) {
@@ -71,8 +72,6 @@ package object kyo {
 
   implicit def flat[T]: Flat[Fiber[T]] =
     Flat.unsafe.checked[Fiber[T]]
-
-  type Tries >: Tries.Effects <: Tries.Effects
 
   type Options >: Options.Effects <: Options.Effects
 }

@@ -24,8 +24,7 @@ object KyoApp {
       delayedInit(handle(v))
   }
 
-  type Effects =
-    Fibers with Resources with Tries
+  type Effects = Fibers with Resources
 
   def run[T](timeout: Duration)(v: T < Effects)(
       implicit f: Flat[T < Effects]
@@ -49,12 +48,12 @@ object KyoApp {
     // since scala 2 can't use the macro in the same compilation unit
     implicit def flat[T, S]: Flat[T < S] = Flat.unsafe.checked
 
-    def v1: T < (Fibers with Tries) = Resources.run(v)
-    def v2: Try[T] < Fibers         = Tries.run(v1)
-    def v3: Try[T] < Fibers         = Fibers.timeout(timeout)(v2)
-    def v4: Try[T] < Fibers         = Tries.run(v3).map(_.flatten)
-    def v5: Try[T] < Fibers         = Fibers.init(v4).map(_.get)
-    def v6: Fiber[Try[T]] < IOs     = Fibers.run(v5)
+    def v1: T < Fibers          = Resources.run(v)
+    def v2: Try[T] < Fibers     = IOs.attempt(v1)
+    def v3: Try[T] < Fibers     = Fibers.timeout(timeout)(v2)
+    def v4: Try[T] < Fibers     = IOs.attempt(v3).map(_.flatten)
+    def v5: Try[T] < Fibers     = Fibers.init(v4).map(_.get)
+    def v6: Fiber[Try[T]] < IOs = Fibers.run(v5)
     IOs.run(v6)
   }
 }

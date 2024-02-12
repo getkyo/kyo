@@ -50,11 +50,11 @@ private val listeners = Locals.init(List.empty[Listener])
 private class Listener(
     state: AtomicRef[State]
 ) {
-  def apply[T, S](event: String)(v: T < S)(implicit flat: Flat[T < S]): T < (AIs with S) =
+  def apply[T, S](event: String)(v: T < S): T < (AIs with S) =
     parent.get.map { p =>
       val id = (p, event, v).hashCode
       state.update(_.upsert(p, Task(id, event, Status.Running, Nil))).andThen {
-        parent.let(id)(Tries.run(v)).map {
+        parent.let(id)(IOs.attempt(v)).map {
           case Success(v) =>
             state.update(_.upsert(p, Task(id, event, Status.Done, Nil)))
               .andThen(v)

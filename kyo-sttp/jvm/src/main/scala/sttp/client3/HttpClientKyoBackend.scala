@@ -55,7 +55,7 @@ class HttpClientKyoBackend private (
     }
 
   override protected def createSimpleQueue[T] =
-    Channels.init[T](Int.MaxValue)(Flat.unsafe.unchecked).map(new KyoSimpleQueue[T](_))
+    Channels.init[T](Int.MaxValue).map(new KyoSimpleQueue[T](_))
 
   override protected def createSequencer =
     Meters.initMutex.map(new KyoSequencer(_))

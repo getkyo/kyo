@@ -196,14 +196,14 @@ class optionsTest extends KyoTest {
       )
     }
     "or fail" in {
-      val e              = new Exception()
-      val a: Int < Tries = Options.getOrElse(Option.empty[Int], Tries.fail("fail"))
+      val e            = new Exception()
+      val a: Int < IOs = Options.getOrElse(Option.empty[Int], IOs.fail("fail"))
       assert(
-          Tries.run(Options.getOrElse(Option.empty[Int], Tries.fail(e))) ==
+          IOs.run(IOs.attempt(Options.getOrElse(Option.empty[Int], IOs.fail(e)))) ==
             Failure(e)
       )
       assert(
-          Tries.run(Options.getOrElse(Some(1), Tries.fail(e))) ==
+          IOs.run(IOs.attempt(Options.getOrElse(Some(1), IOs.fail(e)))) ==
             Success(1)
       )
     }

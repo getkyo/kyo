@@ -6,6 +6,7 @@ import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 
 import java.util.concurrent.Executors
 import scala.annotation.tailrec
+import Flat.unsafe._
 
 import kyo.Access
 
@@ -46,7 +47,7 @@ object Channels {
   def init[T](
       capacity: Int,
       access: Access = kyo.Access.Mpmc
-  )(implicit f: Flat[T < Any]): Channel[T] < IOs =
+  ): Channel[T] < IOs =
     Queues.init[T](capacity, access).map { queue =>
       IOs {
         new Channel[T] {

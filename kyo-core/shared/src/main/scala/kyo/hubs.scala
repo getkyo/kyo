@@ -4,7 +4,6 @@ import kyo._
 
 import java.util.concurrent.ConcurrentSkipListSet
 import java.util.concurrent.CopyOnWriteArraySet
-import Flat.unsafe._
 
 object Hubs {
   private[kyo] val closed = IOs.fail("Hub closed!")
@@ -19,13 +18,13 @@ object Hubs {
                 val l =
                   listeners.toArray
                     .toList.asInstanceOf[List[Channel[T]]]
-                    .map(child => Tries.run(child.put(v)))
-                Fibers.parallel(l).map(_ => loop())
+                    .map(child => IOs.attempt(child.put(v)))
+                Fibers.parallel(l)(Flat.unsafe.checked).map(_ => loop())
               }
             }
           loop()
         }.map { fiber =>
-          new Hub(ch, fiber, listeners)(f)
+          new Hub(ch, fiber, listeners)
         }
       }
     }
@@ -83,7 +82,7 @@ class Hub[T] private[kyo] (
         def loop(): Unit < IOs =
           IOs {
             if (it.hasNext()) {
-              Tries.run(it.next().close)
+              IOs.attempt(it.next().close)
                 .map(_ => loop())
             } else {
               ()

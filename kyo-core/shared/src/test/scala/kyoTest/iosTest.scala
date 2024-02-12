@@ -122,7 +122,7 @@ class iosTest extends KyoTest {
     "success" in {
       var called = false
       assert(
-          Tries.run(IOs.run(IOs.ensure[Int, Any] { called = true }(1))) ==
+          IOs.attempt(IOs.run(IOs.ensure[Int, Any] { called = true }(1))) ==
             Try(1)
       )
       assert(called)
@@ -131,12 +131,154 @@ class iosTest extends KyoTest {
       val ex     = new Exception
       var called = false
       assert(
-          Tries.run(IOs.run(IOs.ensure { called = true } {
+          IOs.attempt(IOs.run(IOs.ensure { called = true } {
             IOs[Int, Any](throw ex)
           })) ==
             Failure(ex)
       )
       assert(called)
+    }
+  }
+
+  val e = new Exception
+
+  "attempt" - {
+    "failure" in {
+      assert(
+          IOs.run(IOs.attempt((throw e): Int)) ==
+            Failure(e)
+      )
+    }
+    "success" in {
+      assert(
+          IOs.run(IOs.attempt(1)) ==
+            Success(1)
+      )
+    }
+  }
+
+  "fromTry" - {
+    "failure" in {
+      assert(
+          IOs.run(IOs.attempt(IOs.fromTry(Failure[Int](e)))) ==
+            Failure(e)
+      )
+    }
+    "success" in {
+      assert(
+          IOs.run(IOs.attempt(IOs.fromTry(Success(1)))) ==
+            Success(1)
+      )
+    }
+  }
+
+  "fail" in {
+    assert(
+        IOs.run(IOs.attempt(IOs.fail[Int](e))) ==
+          Failure(e)
+    )
+  }
+
+  "failures" - {
+    "handle" in {
+      assert(
+          IOs.run(IOs.attempt(1: Int < IOs)) ==
+            Try(1)
+      )
+    }
+    "handle + transform" in {
+      assert(
+          IOs.run(IOs.attempt((1: Int < IOs).map(_ + 1))) ==
+            Try(2)
+      )
+    }
+    "handle + effectful transform" in {
+      assert(
+          IOs.run(IOs.attempt((1: Int < IOs).map(i => IOs.fromTry(Try(i + 1))))) ==
+            Try(2)
+      )
+    }
+    "handle + transform + effectful transform" in {
+      assert(
+          IOs.run(IOs.attempt((1: Int < IOs).map(_ + 1).map(i => IOs.fromTry(Try(i + 1))))) ==
+            Try(3)
+      )
+    }
+    "handle + transform + failed effectful transform" in {
+      val e = new Exception
+      assert(
+          IOs.run(
+              IOs.attempt((1: Int < IOs).map(_ + 1).map(i => IOs.fromTry(Try[Int](throw e))))
+          ) ==
+            Failure(e)
+      )
+    }
+  }
+
+  "effectful" - {
+    "handle" in {
+      assert(
+          IOs.run(IOs.attempt(IOs.fromTry(Try(1)))) ==
+            Try(1)
+      )
+    }
+    "handle + transform" in {
+      assert(
+          IOs.run(IOs.attempt(IOs.fromTry(Try(1)).map(_ + 1))) ==
+            Try(2)
+      )
+    }
+    "handle + effectful transform" in {
+      assert(
+          IOs.run(IOs.attempt(IOs.fromTry(Try(1)).map(i => IOs.fromTry(Try(i + 1))))) ==
+            Try(2)
+      )
+    }
+    "handle + transform + effectful transform" in {
+      assert(
+          IOs.run(
+              IOs.attempt((IOs.fromTry(Try(1))).map(_ + 1).map(i => IOs.fromTry(Try(i + 1))))
+          ) ==
+            Try(3)
+      )
+    }
+    "handle + failed transform" in {
+      assert(
+          IOs.run(IOs.attempt((IOs.fromTry(Try(1))).map(_ => (throw e): Int))) ==
+            Failure(e)
+      )
+    }
+    "handle + transform + effectful transform + failed transform" in {
+      assert(
+          IOs.run(IOs.attempt((IOs.fromTry(Try(1))).map(_ + 1).map(i =>
+            IOs.fromTry(Try(i + 1))
+          ).map(_ =>
+            (throw e): Int
+          ))) ==
+            Failure(e)
+      )
+    }
+    "handle + transform + failed effectful transform" in {
+      assert(
+          IOs.run(IOs.attempt((IOs.fromTry(Try(1))).map(_ + 1).map(i =>
+            IOs.fromTry(Try((throw e): Int))
+          ))) ==
+            Failure(e)
+      )
+    }
+    "nested effect + failure" in {
+      assert(
+          IOs.run(
+              Options.run(
+                  IOs.attempt[Int, Options with IOs](
+                      IOs.fromTry(Try(Option(1))).map(opt =>
+                        Options.get(opt: Option[Int] < IOs).map(_ => (throw e): Int)
+                      )
+                  )
+              )
+          ) ==
+            Some(Failure(e))
+      )
     }
   }
 }

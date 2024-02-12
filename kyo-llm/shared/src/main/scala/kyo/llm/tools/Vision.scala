@@ -41,7 +41,7 @@ object Vision extends Tool {
       ).map { bytes =>
         val payload = encodeImage(bytes)
         if (payload.isEmpty) {
-          AIs.fail(s"Failed to encode image at ${input.imageUrl}")
+          IOs.fail(s"Failed to encode image at ${input.imageUrl}")
         } else {
           AIs.init.map { ai =>
             ai.userMessage(
