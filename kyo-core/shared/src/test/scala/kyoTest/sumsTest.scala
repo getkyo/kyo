@@ -33,7 +33,7 @@ class sumsTest extends KyoTest {
     assert(res == (List("1", "12", "123"), "123"))
   }
   "int and string" in {
-    val v: (Int, String) < (Sums[Int] with Sums[String]) =
+    val v: (Int, String) < (Sums[Int] & Sums[String]) =
       for {
         _  <- Sums[Int].add(1)
         _  <- Sums[String].add("1")

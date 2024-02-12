@@ -44,7 +44,7 @@ class resourcesTest extends KyoTest {
     val r2 = Resource(2)
     val r =
       IOs.runLazy {
-        Resources.run[Int, IOs with Envs[Int]](Resources.acquire(r1()).map { _ =>
+        Resources.run[Int, IOs & Envs[Int]](Resources.acquire(r1()).map { _ =>
           assert(r1.closes == 0)
           Envs[Int].get
         })
@@ -98,8 +98,8 @@ class resourcesTest extends KyoTest {
     val r2 = Resource(2)
     val r: Int < Envs[Int] =
       IOs.runLazy {
-        Resources.run[Int, IOs with Envs[Int]] {
-          val io: Int < (Resources with IOs with Envs[Int]) =
+        Resources.run[Int, IOs & Envs[Int]] {
+          val io: Int < (Resources & IOs & Envs[Int]) =
             for {
               r1 <- Resources.acquire(r1())
               i1 <- Envs[Int].get.map(_ * r1.id)

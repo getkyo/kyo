@@ -98,15 +98,15 @@ object Tools {
 
   def get: List[Tool] < AIs = local.get
 
-  def enable[T, S](p: Seq[Tool])(v: => T < S): T < (AIs with S) =
+  def enable[T, S](p: Seq[Tool])(v: => T < S): T < (AIs & S) =
     local.get.map { set =>
       local.let(set ++ p)(v)
     }
 
-  def enable[T, S](first: Tool, rest: Tool*)(v: => T < S): T < (AIs with S) =
+  def enable[T, S](first: Tool, rest: Tool*)(v: => T < S): T < (AIs & S) =
     enable(first +: rest)(v)
 
-  def disable[T, S](f: T < S): T < (AIs with S) =
+  def disable[T, S](f: T < S): T < (AIs & S) =
     local.let(List.empty)(f)
 
   private[kyo] def resultTool[T](_thoughts: List[Thoughts.Info])(

@@ -1,26 +1,26 @@
 package kyo
 
 trait Layer[In, Out] { self =>
-  def run[T, S](effect: T < (In with S))(implicit fl: Flat[T < (In with S)]): T < (S with Out)
+  def run[T, S](effect: T < (In & S))(implicit fl: Flat[T < (In & S)]): T < (S & Out)
 
-  final def andThen[Out1, In1](other: Layer[In1, Out1]): Layer[In with In1, Out with Out1] =
-    new Layer[In with In1, Out with Out1] {
+  final def andThen[Out1, In1](other: Layer[In1, Out1]): Layer[In & In1, Out & Out1] =
+    new Layer[In & In1, Out & Out1] {
       override def run[T, S](
-          effect: T < (In with In1 with S)
+          effect: T < (In & In1 & S)
       )(
-          implicit fl: Flat[T < (In with In1 with S)]
-      ): T < (S with Out with Out1) = {
+          implicit fl: Flat[T < (In & In1 & S)]
+      ): T < (S & Out & Out1) = {
         val selfRun =
-          self.run[T, S with In1](effect)
+          self.run[T, S & In1](effect)
         val otherRun =
-          other.run[T, S with Out](selfRun)(Flat.unsafe.unchecked)
+          other.run[T, S & Out](selfRun)(Flat.unsafe.unchecked)
         otherRun
       }
     }
 
   final def chain[In2, Out2](other: Layer[In2, Out2])(
       implicit ap: ChainLayer[Out, In2]
-  ): Layer[In, Out2 with ap.RemainingOut1] = {
+  ): Layer[In, Out2 & ap.RemainingOut1] = {
     ap.applyLayer[In, Out2](self, other)
   }
 }
@@ -31,24 +31,23 @@ sealed trait ChainLayer[Out1, In2] {
   def applyLayer[In1, Out2](
       layer1: Layer[In1, Out1],
       layer2: Layer[In2, Out2]
-  ): Layer[In1, RemainingOut1 with Out2]
+  ): Layer[In1, RemainingOut1 & Out2]
 }
 
 trait ChainLayers2 {
-  implicit def application[Out1, Shared, In2]
-      : ChainLayer.Aux[Out1 with Shared, In2 with Shared, Out1] =
-    new ChainLayer[Out1 with Shared, In2 with Shared] {
+  implicit def application[Out1, Shared, In2]: ChainLayer.Aux[Out1 & Shared, In2 & Shared, Out1] =
+    new ChainLayer[Out1 & Shared, In2 & Shared] {
       type RemainingOut1 = Out1
       override def applyLayer[In1, Out2](
-          layer1: Layer[In1, Out1 with Shared],
-          layer2: Layer[In2 with Shared, Out2]
-      ): Layer[In1, Out1 with Out2] =
-        new Layer[In1, Out1 with Out2] {
-          override def run[T, S](effect: T < (In1 with S))(implicit
-              fl: Flat[T < (In1 with S)]
-          ): T < (S with Out2 with Out1) = {
+          layer1: Layer[In1, Out1 & Shared],
+          layer2: Layer[In2 & Shared, Out2]
+      ): Layer[In1, Out1 & Out2] =
+        new Layer[In1, Out1 & Out2] {
+          override def run[T, S](effect: T < (In1 & S))(implicit
+              fl: Flat[T < (In1 & S)]
+          ): T < (S & Out2 & Out1) = {
             val handled1 = layer1.run[T, S](effect)
-            val handled2 = layer2.run[T, S with Out1](handled1)(Flat.unsafe.unchecked)
+            val handled2 = layer2.run[T, S & Out1](handled1)(Flat.unsafe.unchecked)
             handled2
           }
         }
@@ -57,18 +56,18 @@ trait ChainLayers2 {
 }
 
 trait ChainLayers1 {
-  implicit def applyAll1[Shared, In2]: ChainLayer.Aux[Shared, In2 with Shared, Any] =
-    new ChainLayer[Shared, In2 with Shared] {
+  implicit def applyAll1[Shared, In2]: ChainLayer.Aux[Shared, In2 & Shared, Any] =
+    new ChainLayer[Shared, In2 & Shared] {
       type RemainingOut1 = Any
 
       override def applyLayer[In1, Out2](
           layer1: Layer[In1, Shared],
-          layer2: Layer[In2 with Shared, Out2]
+          layer2: Layer[In2 & Shared, Out2]
       ): Layer[In1, Out2] =
         new Layer[In1, Out2] {
-          override def run[T, S](effect: T < (In1 with S))(implicit
-              fl: Flat[T < (In1 with S)]
-          ): T < (S with Out2) = {
+          override def run[T, S](effect: T < (In1 & S))(implicit
+              fl: Flat[T < (In1 & S)]
+          ): T < (S & Out2) = {
             val handled1 = layer1.run[T, S](effect)
             val handled2 = layer2.run[T, S](handled1)(Flat.unsafe.unchecked)
             handled2
@@ -77,21 +76,21 @@ trait ChainLayers1 {
 
     }
 
-  implicit def applyAll2[Out1, Shared]: ChainLayer.Aux[Out1 with Shared, Shared, Out1] =
-    new ChainLayer[Out1 with Shared, Shared] {
+  implicit def applyAll2[Out1, Shared]: ChainLayer.Aux[Out1 & Shared, Shared, Out1] =
+    new ChainLayer[Out1 & Shared, Shared] {
       type RemainingOut1 = Out1
 
       override def applyLayer[In1, Out2](
-          layer1: Layer[In1, Out1 with Shared],
+          layer1: Layer[In1, Out1 & Shared],
           layer2: Layer[Shared, Out2]
-      ): Layer[In1, Out1 with Out2] =
-        new Layer[In1, Out1 with Out2] {
-          override def run[T, S](effect: T < (In1 with S))(implicit
-              fl: Flat[T < (In1 with S)]
-          ): T < (S with Out1 with Out2) = {
-            val handled1: T < (S with Out1 with Shared) = layer1.run[T, S](effect)
-            val handled2: T < (S with Out1 with Out2) =
-              layer2.run[T, S with Out1](handled1)(Flat.unsafe.unchecked)
+      ): Layer[In1, Out1 & Out2] =
+        new Layer[In1, Out1 & Out2] {
+          override def run[T, S](effect: T < (In1 & S))(implicit
+              fl: Flat[T < (In1 & S)]
+          ): T < (S & Out1 & Out2) = {
+            val handled1: T < (S & Out1 & Shared) = layer1.run[T, S](effect)
+            val handled2: T < (S & Out1 & Out2) =
+              layer2.run[T, S & Out1](handled1)(Flat.unsafe.unchecked)
             handled2
           }
         }
@@ -109,11 +108,11 @@ object ChainLayer extends ChainLayers1 {
       override def applyLayer[In1, Out2](
           layer1: Layer[In1, Out],
           layer2: Layer[Out, Out2]
-      ): Layer[In1, Any with Out2] =
-        new Layer[In1, Any with Out2] {
-          override def run[T, S](effect: T < (In1 with S))(implicit
-              fl: Flat[T < (In1 with S)]
-          ): T < (S with Out2) = {
+      ): Layer[In1, Any & Out2] =
+        new Layer[In1, Any & Out2] {
+          override def run[T, S](effect: T < (In1 & S))(implicit
+              fl: Flat[T < (In1 & S)]
+          ): T < (S & Out2) = {
             val handled1 = layer1.run[T, S](effect)
             val handled2 = layer2.run[T, S](handled1)(Flat.unsafe.unchecked)
             handled2

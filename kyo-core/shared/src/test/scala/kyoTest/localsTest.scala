@@ -246,7 +246,7 @@ class localsTest extends KyoTest {
     "effect + get" in {
       assert(
           IOs.run[Option[Int]](
-              Options.run(Locals.restore[Int, Options with IOs](state)(Options(1).map(_ => l1.get)))
+              Options.run(Locals.restore[Int, Options & IOs](state)(Options(1).map(_ => l1.get)))
           ) ==
             Some(10)
       )
@@ -254,7 +254,7 @@ class localsTest extends KyoTest {
     "effect + get + effect" in {
       assert(
           IOs.run[Option[Int]](
-              Options.run(Locals.restore[Int, Options with IOs](state)(
+              Options.run(Locals.restore[Int, Options & IOs](state)(
                   Options(1).map(_ => l1.get).map(Options(_))
               ))
           ) ==
@@ -270,7 +270,7 @@ class localsTest extends KyoTest {
     "multiple + effect" in {
       assert(
           IOs.run[Option[(Int, Int)]](
-              Options.run(Locals.restore[(Int, Int), Options with IOs](state)(Options(1).map(_ =>
+              Options.run(Locals.restore[(Int, Int), Options & IOs](state)(Options(1).map(_ =>
                 zip(l1.get, l2.get)
               )))
           ) ==

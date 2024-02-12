@@ -25,7 +25,7 @@ abstract class KyoLLMApp extends KyoApp.Base[KyoLLMApp.Effects] {
 
 object KyoLLMApp {
 
-  type Effects = KyoApp.Effects with AIs
+  type Effects = KyoApp.Effects & AIs
 
   private def handle[T](v: T < Effects)(
       implicit f: Flat[T < Effects]

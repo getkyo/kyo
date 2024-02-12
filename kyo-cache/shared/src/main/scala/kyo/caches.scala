@@ -13,12 +13,12 @@ import Cache._
 class Cache(private[kyo] val store: Store) {
   def memo[T, U, S](
       f: T => U < S
-  ): T => U < (Fibers with S) =
-    new AbstractFunction1[T, U < (Fibers with S)] {
+  ): T => U < (Fibers & S) =
+    new AbstractFunction1[T, U < (Fibers & S)] {
       def apply(v: T) =
         Fibers.initPromise[U].map { p =>
           val key = (this, v)
-          IOs[U, Fibers with S] {
+          IOs[U, Fibers & S] {
             store.get(key, _ => p) match {
               case `p` =>
                 IOs.ensure {
@@ -52,7 +52,7 @@ class Cache(private[kyo] val store: Store) {
       ft1: Flat[T1 < Any],
       ft2: Flat[T2 < Any],
       fu: Flat[U < Any]
-  ): (T1, T2) => U < (Fibers with S) = {
+  ): (T1, T2) => U < (Fibers & S) = {
     val m = memo[(T1, T2), U, S](f.tupled)
     (t1, t2) => m((t1, t2))
   }
@@ -64,7 +64,7 @@ class Cache(private[kyo] val store: Store) {
       ft2: Flat[T2 < Any],
       ft3: Flat[T3 < Any],
       fu: Flat[U < Any]
-  ): (T1, T2, T3) => U < (Fibers with S) = {
+  ): (T1, T2, T3) => U < (Fibers & S) = {
     val m = memo[(T1, T2, T3), U, S](f.tupled)
     (t1, t2, t3) => m((t1, t2, t3))
   }
@@ -77,7 +77,7 @@ class Cache(private[kyo] val store: Store) {
       ft3: Flat[T3 < Any],
       ft4: Flat[T4 < Any],
       fu: Flat[U < Any]
-  ): (T1, T2, T3, T4) => U < (Fibers with S) = {
+  ): (T1, T2, T3, T4) => U < (Fibers & S) = {
     val m = memo[(T1, T2, T3, T4), U, S](f.tupled)
     (t1, t2, t3, t4) => m((t1, t2, t3, t4))
   }

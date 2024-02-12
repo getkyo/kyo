@@ -111,7 +111,7 @@ object Timers {
 
   private val local = Locals.init(Timer.default)
 
-  def let[T, S](timer: Timer)(v: T < S): T < (IOs with S) =
+  def let[T, S](timer: Timer)(v: T < S): T < (IOs & S) =
     local.let(timer)(v)
 
   def schedule(delay: Duration)(f: => Unit < Fibers): TimerTask < IOs =

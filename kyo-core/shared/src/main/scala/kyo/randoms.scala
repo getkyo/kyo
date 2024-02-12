@@ -31,13 +31,13 @@ object Randoms {
 
   private val local = Locals.init(Random.default)
 
-  def let[T, S](r: Random)(v: T < S): T < (S with IOs) =
+  def let[T, S](r: Random)(v: T < S): T < (S & IOs) =
     local.let(r)(v)
 
   val nextInt: Int < IOs =
     local.get.map(_.nextInt)
 
-  def nextInt[S](n: Int < S): Int < (S with IOs) =
+  def nextInt[S](n: Int < S): Int < (S & IOs) =
     n.map(n => local.get.map(_.nextInt(n)))
 
   val nextLong: Long < IOs =
@@ -55,6 +55,6 @@ object Randoms {
   val nextGaussian: Double < IOs =
     local.get.map(_.nextGaussian)
 
-  def nextValue[T, S](seq: Seq[T] < S): T < (S with IOs) =
+  def nextValue[T, S](seq: Seq[T] < S): T < (S & IOs) =
     seq.map(s => nextInt(s.size).map(idx => s(idx)))
 }

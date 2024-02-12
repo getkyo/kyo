@@ -44,7 +44,7 @@ class envsTest extends KyoTest {
         Envs[Service1].get.map(_(1)).map { i =>
           Envs[Service2].get.map(_(i))
         }
-      val v: Int < (Envs[Service1] with Envs[Service2]) = a
+      val v: Int < (Envs[Service1] & Envs[Service2]) = a
       "same handling order" in {
         assert(
             Envs[Service1].run[Int, Any](service1)(Envs[Service2].run(service2)(v)) ==
@@ -101,7 +101,7 @@ class envsTest extends KyoTest {
       "continue" in {
         val a =
           Envs[Service1].get.map(_(1))
-        val b: Int < (Envs[Service1] with Options) = a
+        val b: Int < (Envs[Service1] & Options) = a
         assert(
             Options.run(Envs[Service1].run(service1)(a)) ==
               Some(2)
@@ -110,7 +110,7 @@ class envsTest extends KyoTest {
       "short circuit" in {
         val a =
           Envs[Service1].get.map(_(0))
-        val b: Int < (Envs[Service1] with Options) = a
+        val b: Int < (Envs[Service1] & Options) = a
         assert(
             Options.run(Envs[Service1].run(service1)(a)) ==
               None
@@ -123,7 +123,7 @@ class envsTest extends KyoTest {
           Envs[Service1].get.map(_(1)).map { i =>
             Envs[Service2].get.map(_(i))
           }
-        val v: Int < (Envs[Service1] with Envs[Service2] with Options) = a
+        val v: Int < (Envs[Service1] & Envs[Service2] & Options) = a
         "same handling order" in {
           assert(
               Options.run(Envs[Service1].run(service1)(
@@ -146,8 +146,8 @@ class envsTest extends KyoTest {
               def apply(i: Int) = service2(i * 10)
             }
           )
-          val v1: Service1 < Envs[Service2]           = s1
-          val v2: Int < (Envs[Service2] with Options) = Envs[Service1].run(service1)(v)
+          val v1: Service1 < Envs[Service2]        = s1
+          val v2: Int < (Envs[Service2] & Options) = Envs[Service1].run(service1)(v)
           assert(
               Options.run(Envs[Service2].run(service2)(v2)) ==
                 Some(3)

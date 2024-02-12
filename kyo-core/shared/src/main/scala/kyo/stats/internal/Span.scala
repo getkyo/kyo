@@ -65,7 +65,7 @@ object Span {
       scope: List[String],
       name: String,
       attributes: Attributes = Attributes.empty
-  )(v: => T < S): T < (IOs with S) =
+  )(v: => T < S): T < (IOs & S) =
     currentSpan.get.map { parent =>
       receiver
         .startSpan(scope, name, parent, attributes)

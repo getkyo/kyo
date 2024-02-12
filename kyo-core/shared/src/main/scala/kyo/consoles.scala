@@ -34,7 +34,7 @@ object Consoles {
 
   private val local = Locals.init(Console.default)
 
-  def let[T, S](c: Console)(v: T < S): T < (S with IOs) =
+  def let[T, S](c: Console)(v: T < S): T < (S & IOs) =
     local.let(c)(v)
 
   val readln: String < IOs =

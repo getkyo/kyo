@@ -17,7 +17,7 @@ object Modes {
         }
     }
 
-  def enable[T, S](head: Mode, tail: Mode*)(v: T < S): T < (AIs with S) = {
+  def enable[T, S](head: Mode, tail: Mode*)(v: T < S): T < (AIs & S) = {
     val cut = Aspects.chain(toCut(head), tail.map(toCut))
     AIs.completionAspect.let(cut)(v)
   }

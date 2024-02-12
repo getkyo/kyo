@@ -60,7 +60,7 @@ import kyo._
 Int < Options
 
 // 'String' pending 'Options' and 'IOs'
-String < (Options with IOs)
+String < (Options & IOs)
 ```
 
 > Note: The naming convention for effect types is the plural form of the functionalities they manage.
@@ -92,7 +92,7 @@ import kyo._
 def example1(
     a: Int < Options, 
     b: Int < Aborts[Exception]
-  ): Int < (Options with Aborts[Exception]) =
+  ): Int < (Options & Aborts[Exception]) =
     a.flatMap(v => b.map(_ + v))
 
 // But using only `map` is recommended 
@@ -101,7 +101,7 @@ def example1(
 def example2(
     a: Int < Options, 
     b: Int < Aborts[Exception]
-  ): Int < (Options with Aborts[Exception]) =
+  ): Int < (Options & Aborts[Exception]) =
     a.map(v => b.map(_ + v))
 ```
 
@@ -140,12 +140,12 @@ val b: Int < Options =
 
 // Further widening the effect set to include 
 // both `Options` and `Aborts[Exception]`
-val c: Int < (Options with Aborts[Exception]) = 
+val c: Int < (Options & Aborts[Exception]) = 
   b
 
 // Directly widening a pure value to have 
 // `Options` and `Aborts[Exception]`
-val d: Int < (Options with Aborts[Exception]) = 
+val d: Int < (Options & Aborts[Exception]) = 
   42
 ```
 
@@ -154,7 +154,7 @@ This characteristic enables a fluent API for effectful code. Methods can accept 
 ```scala
 // The function expects a parameter with both 
 // 'Options' and 'Aborts' effects pending
-def example1(v: Int < (Options with Aborts[Exception])) = 
+def example1(v: Int < (Options & Aborts[Exception])) = 
   v.map(_ + 1)
 
 // A value with only the 'Aborts' effect can be 
@@ -166,7 +166,7 @@ def example2(v: Int < Aborts[Exception]) =
 def example3 = example1(42)
 ```
 
-Here, `example1` is designed to accept an `Int < (Options with Aborts[Exception])`. However, thanks to the contravariant encoding of the type-level set of effects, `example2` and `example3` demonstrate that you can also pass in computations with a smaller set of effects—or even a pure value—and they will be automatically widened to fit the expected type.
+Here, `example1` is designed to accept an `Int < (Options & Aborts[Exception])`. However, thanks to the contravariant encoding of the type-level set of effects, `example2` and `example3` demonstrate that you can also pass in computations with a smaller set of effects—or even a pure value—and they will be automatically widened to fit the expected type.
 
 ### Using effects
 
@@ -203,14 +203,14 @@ The order in which you handle effects in Kyo can significantly influence both th
 import kyo._
 import scala.util._
 
-def optionsFirst(a: Int < (Options with Aborts[Exception])): Either[Exception, Option[Int]] = {
+def optionsFirst(a: Int < (Options & Aborts[Exception])): Either[Exception, Option[Int]] = {
   val b: Option[Int] < Aborts[Exception] = 
     Options.run(a)
   val c: Either[Exception, Option[Int]] < Any = 
     Aborts[Exception].run(b)
   c.pure
 }
-def abortsFirst(a: Int < (Options with Aborts[Exception])): Option[Either[Exception, Int]] = {
+def abortsFirst(a: Int < (Options & Aborts[Exception])): Option[Either[Exception, Int]] = {
   val b: Either[Exception, Int] < Options =
     Aborts[Exception].run(a)
   val c: Option[Either[Exception, Int]] < Any = 
@@ -257,7 +257,7 @@ import kyo.direct._
 import scala.util.Try
 
 // Use the direct syntax
-val a: String < (Aborts[Exception] with Options) =
+val a: String < (Aborts[Exception] & Options) =
   defer {
     val b: String = 
       await(Options.get(Some("hello")))
@@ -267,7 +267,7 @@ val a: String < (Aborts[Exception] with Options) =
   }
 
 // Equivalent desugared
-val b: String < (Aborts[Exception] with Options) =
+val b: String < (Aborts[Exception] & Options) =
   Options.get(Some("hello")).map { b =>
     Aborts[Exception].get(Right("world")).map { c =>
       b + " " + c
@@ -283,7 +283,7 @@ For added safety, the direct syntax enforces effectful hygiene. Within a `defer`
 import kyo._
 
 // This code fails to compile
-val a: Int < (IOs with Options) =
+val a: Int < (IOs & Options) =
   defer {
     // Incorrect usage of a '<' value 
     // without 'await' 
@@ -479,7 +479,7 @@ import kyo._
 
 // Computation with 'Options' and then 
 // 'IOs' suspensions
-val a: Int < (Options with IOs) = 
+val a: Int < (Options & IOs) = 
   Options.get(Some(42)).map { v => 
     IOs { 
       println(v)
@@ -521,7 +521,7 @@ val a: Database < Envs[Database] =
   Envs[Database].get
 
 // Use the 'Database' to obtain the count
-val b: Int < (Envs[Database] with IOs) = 
+val b: Int < (Envs[Database] & IOs) = 
   a.map(_.count)
 
 // A 'Database' mock implementation
@@ -543,7 +543,7 @@ trait Cache {
 }
 
 // A computation that requires two values
-val a: Unit < (Envs[Database] with Envs[Cache] with IOs) = 
+val a: Unit < (Envs[Database] & Envs[Cache] & IOs) = 
   Envs[Database].get.map { db =>
     db.count.map {
       case 0 => 
@@ -592,7 +592,7 @@ class Database extends Closeable {
 
 // The `acquire` method accepts any object that 
 // implements Java's `Closeable` interface
-val db: Database < (Resources with IOs) = 
+val db: Database < (Resources & IOs) = 
   Resources.acquire(new Database)
 
 // Use `run` to handle the effect, while also 
@@ -606,7 +606,7 @@ The `ensure` method provides a low-level API to handle the finalization of resou
 
 ```scala
 // Example method to execute a function on a database
-def withDb[T](f: Database => T < IOs): T < (IOs with Resources) =
+def withDb[T](f: Database => T < IOs): T < (IOs & Resources) =
   // Initializes the database ('new Database' is a placeholder)
   IOs(new Database).map { db =>
     // Registers `db.close` to be finalized
@@ -617,7 +617,7 @@ def withDb[T](f: Database => T < IOs): T < (IOs with Resources) =
   }
 
 // Execute a function
-val a: Int < (IOs with Resources) =
+val a: Int < (IOs & Resources) =
   withDb(_.count)
 
 // Close resources
@@ -1585,7 +1585,7 @@ Kyo provides caching through memoization. A single `Cache` instance can be reuse
 import kyo._
 import scala.concurrent.duration._
 
-val a: Int < (Fibers with IOs) =
+val a: Int < Fibers =
   for {
 
     // The initialization takes a 
@@ -1714,7 +1714,7 @@ def unsafeLoop[S](n: Int < S): Unit < S =
 
 // Introduce an effect suspension to
 // ensure stack safety
-def safeLoop[S](n: Int < S): Unit < (S with IOs) =
+def safeLoop[S](n: Int < S): Unit < (S & IOs) =
   IOs {
     n.map {
       case 0 => ()

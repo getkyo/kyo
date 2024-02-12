@@ -24,14 +24,14 @@ final class Envs[E] private[kyo] (implicit private val tag: Tag[_])
   val get: E < Envs[E] =
     suspend(Input.asInstanceOf[Env[E]#Value[E]])
 
-  def run[T, S](e: E)(v: T < (Envs[E] with S))(implicit f: Flat[T < (Envs[E] with S)]): T < S = {
+  def run[T, S](e: E)(v: T < (Envs[E] & S))(implicit f: Flat[T < (Envs[E] & S)]): T < S = {
     implicit val handler: Handler[Env[E]#Value, Envs[E], Any] =
       new Handler[Env[E]#Value, Envs[E], Any] {
         def pure[U](v: U) = v
         def apply[U, V, S2](
             m: Env[E]#Value[U],
-            f: U => V < (Envs[E] with S2)
-        ): V < (S2 with Envs[E]) =
+            f: U => V < (Envs[E] & S2)
+        ): V < (S2 & Envs[E]) =
           m match {
             case Input =>
               f(e.asInstanceOf[U])
@@ -39,7 +39,7 @@ final class Envs[E] private[kyo] (implicit private val tag: Tag[_])
               f(m.asInstanceOf[U])
           }
       }
-    handle[T, Envs[E] with S, Any](v).asInstanceOf[T < S]
+    handle[T, Envs[E] & S, Any](v).asInstanceOf[T < S]
   }
 
   override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
@@ -54,9 +54,9 @@ final class Envs[E] private[kyo] (implicit private val tag: Tag[_])
 
   def layer[Sd](construct: E < Sd): Layer[Envs[E], Sd] =
     new Layer[Envs[E], Sd] {
-      override def run[T, S](effect: T < (Envs[E] with S))(implicit
-          fl: Flat[T < (Envs[E] with S)]
-      ): T < (Sd with S) =
+      override def run[T, S](effect: T < (Envs[E] & S))(implicit
+          fl: Flat[T < (Envs[E] & S)]
+      ): T < (Sd & S) =
         construct.map(e => self.run[T, S](e)(effect))
     }
 }

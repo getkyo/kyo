@@ -25,15 +25,15 @@ sealed class Sums[V] private[kyo] (implicit private val tag: Tag[_])
   def update(f: V => V): V < Sums[V] =
     suspend(UpdateValue(f).asInstanceOf[Sum[V]#Value[V]])
 
-  def run[T, S](v: T < (Sums[V] with S))(implicit
+  def run[T, S](v: T < (Sums[V] & S))(implicit
       g: Summer[V],
-      f: Flat[T < (Sums[V] with S)]
+      f: Flat[T < (Sums[V] & S)]
   ): (T, V) < S =
     run[T, S](g.init)(v)
 
-  def run[T, S](init: V)(v: T < (Sums[V] with S))(implicit
+  def run[T, S](init: V)(v: T < (Sums[V] & S))(implicit
       g: Summer[V],
-      f: Flat[T < (Sums[V] with S)]
+      f: Flat[T < (Sums[V] & S)]
   ): (T, V) < S = {
     var curr = init
     implicit def handler: Handler[Sum[V]#Value, Sums[V], Any] =
@@ -41,8 +41,8 @@ sealed class Sums[V] private[kyo] (implicit private val tag: Tag[_])
         def pure[U](v: U) = v
         def apply[T, U, S2](
             m: Sum[V]#Value[T],
-            f: T => U < (Sums[V] with S2)
-        ): U < (S2 with Sums[V]) =
+            f: T => U < (Sums[V] & S2)
+        ): U < (S2 & Sums[V]) =
           m match {
             case AddValue(v) =>
               curr = g.add(curr, v.asInstanceOf[V])

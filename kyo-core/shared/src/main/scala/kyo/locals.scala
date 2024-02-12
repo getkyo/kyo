@@ -12,11 +12,11 @@ abstract class Local[T] {
 
   val get: T < IOs =
     new KyoIO[T, Any] {
-      def apply(v: Unit < (IOs with Any), s: Safepoint[IO, IOs], l: State) =
+      def apply(v: Unit < (IOs & Any), s: Safepoint[IO, IOs], l: State) =
         get(l)
     }
 
-  def let[U, S](f: T)(v: U < S): U < (S with IOs) = {
+  def let[U, S](f: T)(v: U < S): U < (S & IOs) = {
     def letLoop(f: T, v: U < S): U < S =
       v match {
         case kyo: Kyo[MX, EX, Any, U, S] @unchecked =>
@@ -30,7 +30,7 @@ abstract class Local[T] {
     letLoop(f, v)
   }
 
-  def update[U, S](f: T => T)(v: U < S): U < (S with IOs) = {
+  def update[U, S](f: T => T)(v: U < S): U < (S & IOs) = {
     def updateLoop(f: T => T, v: U < S): U < S =
       v match {
         case kyo: Kyo[MX, EX, Any, U, S] @unchecked =>
@@ -63,11 +63,11 @@ object Locals {
 
   val save: State < IOs =
     new KyoIO[State, Any] {
-      def apply(v: Unit < (IOs with Any), s: Safepoint[IO, IOs], l: Locals.State) =
+      def apply(v: Unit < (IOs & Any), s: Safepoint[IO, IOs], l: Locals.State) =
         l
     }
 
-  def restore[T, S](st: State)(f: T < S): T < (IOs with S) = {
+  def restore[T, S](st: State)(f: T < S): T < (IOs & S) = {
     def loop(f: T < S): T < S =
       f match {
         case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>

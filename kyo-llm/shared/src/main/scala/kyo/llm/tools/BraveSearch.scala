@@ -46,7 +46,7 @@ object BraveSearch extends Tool {
     val get: String < AIs =
       Options.getOrElse(local.get, IOs.fail("No Brave API key found"))
 
-    def let[T, S1, S2](key: String < S1)(f: => T < S2): T < (S1 with S2 with AIs) =
+    def let[T, S1, S2](key: String < S1)(f: => T < S2): T < (S1 & S2 & AIs) =
       key.map { k =>
         local.let(Some(k))(f)
       }

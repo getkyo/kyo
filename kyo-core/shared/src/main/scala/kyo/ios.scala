@@ -22,10 +22,10 @@ sealed trait IOs extends Effect[IO, IOs] {
 
   /*inline*/
   def apply[T, S](
-      /*inline*/ f: => T < (IOs with S)
-  ): T < (IOs with S) =
+      /*inline*/ f: => T < (IOs & S)
+  ): T < (IOs & S) =
     new KyoIO[T, S] {
-      def apply(v: Unit < (IOs with S), s: Safepoint[IO, IOs], l: Locals.State) =
+      def apply(v: Unit < (IOs & S), s: Safepoint[IO, IOs], l: Locals.State) =
         f
     }
 
@@ -35,7 +35,7 @@ sealed trait IOs extends Effect[IO, IOs] {
   def fail[T](msg: String): T < IOs =
     fail(new Exception(msg))
 
-  def fromTry[T, S](v: Try[T] < S): T < (IOs with S) =
+  def fromTry[T, S](v: Try[T] < S): T < (IOs & S) =
     v.map {
       case Success(v) =>
         v
@@ -74,12 +74,12 @@ sealed trait IOs extends Effect[IO, IOs] {
   /*inline*/
   def handle[T, S, U >: T, S2](v: => T < S)(
       /*inline*/ pf: PartialFunction[Throwable, U < S2]
-  ): U < (S with S2) = {
-    def handleLoop(v: U < (S with S2)): U < (S with S2) =
+  ): U < (S & S2) = {
+    def handleLoop(v: U < (S & S2)): U < (S & S2) =
       v match {
-        case kyo: Kyo[MX, EX, Any, U, S with S2] @unchecked =>
-          new KyoCont[MX, EX, Any, U, S with S2](kyo) {
-            def apply(v: Any < (S with S2), s: Safepoint[MX, EX], l: Locals.State) =
+        case kyo: Kyo[MX, EX, Any, U, S & S2] @unchecked =>
+          new KyoCont[MX, EX, Any, U, S & S2](kyo) {
+            def apply(v: Any < (S & S2), s: Safepoint[MX, EX], l: Locals.State) =
               try {
                 handleLoop(kyo(v, s, l))
               } catch {
@@ -117,13 +117,13 @@ sealed trait IOs extends Effect[IO, IOs] {
   }
 
   /*inline*/
-  def runLazy[T, S](v: T < (IOs with S))(implicit f: Flat[T < (IOs with S)]): T < S = {
-    def runLazyLoop(v: T < (IOs with S)): T < S = {
+  def runLazy[T, S](v: T < (IOs & S))(implicit f: Flat[T < (IOs & S)]): T < S = {
+    def runLazyLoop(v: T < (IOs & S)): T < S = {
       val safepoint = Safepoint.noop[IO, IOs]
       v match {
-        case kyo: Kyo[IO, IOs, Unit, T, S with IOs] @unchecked if (kyo.effect eq IOs) =>
+        case kyo: Kyo[IO, IOs, Unit, T, S & IOs] @unchecked if (kyo.effect eq IOs) =>
           runLazyLoop(kyo((), safepoint, Locals.State.empty))
-        case kyo: Kyo[MX, EX, Any, T, S with IOs] @unchecked =>
+        case kyo: Kyo[MX, EX, Any, T, S & IOs] @unchecked =>
           new KyoCont[MX, EX, Any, T, S](kyo) {
             def apply(v: Any < S, s: Safepoint[MX, EX], l: Locals.State) =
               runLazyLoop(kyo(v, s, l))
@@ -136,15 +136,15 @@ sealed trait IOs extends Effect[IO, IOs] {
   }
 
   /*inline*/
-  def ensure[T, S]( /*inline*/ f: => Unit < IOs)(v: T < S): T < (IOs with S) = {
+  def ensure[T, S]( /*inline*/ f: => Unit < IOs)(v: T < S): T < (IOs & S) = {
     val ensure = new Ensure {
       def run = f
     }
-    def ensureLoop(v: T < (IOs with S), p: Preempt): T < (IOs with S) =
+    def ensureLoop(v: T < (IOs & S), p: Preempt): T < (IOs & S) =
       v match {
-        case kyo: Kyo[MX, EX, Any, T, S with IOs] @unchecked =>
-          new KyoCont[MX, EX, Any, T, S with IOs](kyo) {
-            def apply(v: Any < (S with IOs), s: Safepoint[MX, EX], l: State) = {
+        case kyo: Kyo[MX, EX, Any, T, S & IOs] @unchecked =>
+          new KyoCont[MX, EX, Any, T, S & IOs](kyo) {
+            def apply(v: Any < (S & IOs), s: Safepoint[MX, EX], l: State) = {
               val np =
                 (s: Any) match {
                   case s: Preempt =>
@@ -194,7 +194,7 @@ private[kyo] object iosInternal {
   }
 
   private[kyo] abstract class KyoIO[T, S]
-      extends Kyo[IO, IOs, Unit, T, (IOs with S)] {
+      extends Kyo[IO, IOs, Unit, T, (IOs & S)] {
     final def value  = ()
     final def effect = IOs
   }
@@ -202,7 +202,7 @@ private[kyo] object iosInternal {
   trait Preempt extends Safepoint[IO, IOs] {
     def ensure(f: () => Unit): Unit
     def remove(f: () => Unit): Unit
-    def suspend[T, S](v: => T < S): T < (IOs with S) =
+    def suspend[T, S](v: => T < S): T < (IOs & S) =
       IOs[T, S](v)
   }
   object Preempt {

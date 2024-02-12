@@ -11,12 +11,12 @@ import Listener._
 
 object Listeners {
 
-  def silent[T, S](v: T < S): T < (AIs with S) =
+  def silent[T, S](v: T < S): T < (AIs & S) =
     listeners.let(Nil)(v)
 
-  def observe[T, S](event: String)(v: T < S)(implicit f: Flat[T < S]): T < (AIs with S) =
+  def observe[T, S](event: String)(v: T < S)(implicit f: Flat[T < S]): T < (AIs & S) =
     listeners.get.map { l =>
-      def loop(l: List[Listener]): T < (AIs with S) =
+      def loop(l: List[Listener]): T < (AIs & S) =
         l match {
           case Nil => v
           case h :: t =>
@@ -24,7 +24,7 @@ object Listeners {
         }
       loop(l)
     }
-  def listen[T, S](f: State => Unit < IOs, interval: Duration)(v: T < S): T < (AIs with S) =
+  def listen[T, S](f: State => Unit < IOs, interval: Duration)(v: T < S): T < (AIs & S) =
     Atomics.initRef[State](State(Nil)).map { ref =>
       val l = new Listener(ref)
       Fibers.init {
@@ -50,7 +50,7 @@ private val listeners = Locals.init(List.empty[Listener])
 private class Listener(
     state: AtomicRef[State]
 ) {
-  def apply[T, S](event: String)(v: T < S): T < (AIs with S) =
+  def apply[T, S](event: String)(v: T < S): T < (AIs & S) =
     parent.get.map { p =>
       val id = (p, event, v).hashCode
       state.update(_.upsert(p, Task(id, event, Status.Running, Nil))).andThen {

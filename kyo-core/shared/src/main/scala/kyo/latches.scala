@@ -15,7 +15,7 @@ abstract class Latch {
 
 object Latches {
 
-  def init[S](n: Int < S): Latch < (IOs with S) =
+  def init[S](n: Int < S): Latch < (IOs & S) =
     n.map { n =>
       if (n <= 0) {
         new Latch {

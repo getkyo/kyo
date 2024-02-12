@@ -27,14 +27,14 @@ object Retries {
 
   def apply[T, S](policy: Policy)(v: => T < S)(
       implicit f: Flat[T < S]
-  ): T < (Fibers with S) =
+  ): T < (Fibers & S) =
     apply(_ => policy)(v)
 
   def apply[T, S](builder: Policy => Policy)(v: => T < S)(
       implicit f: Flat[T < S]
-  ): T < (Fibers with S) = {
+  ): T < (Fibers & S) = {
     val b = builder(Policy.default)
-    def loop(attempt: Int): T < (Fibers with S) =
+    def loop(attempt: Int): T < (Fibers & S) =
       IOs.attempt[T, S](v).map {
         case Failure(ex) =>
           if (attempt < b.limit) {

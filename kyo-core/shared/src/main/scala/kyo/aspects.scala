@@ -8,7 +8,7 @@ object Aspects {
 
   def init[T, U, S]: Aspect[T, U, S] =
     init(new Cut[T, U, S] {
-      def apply[S2](v: T < S2)(f: T => U < (IOs with S)) =
+      def apply[S2](v: T < S2)(f: T => U < (IOs & S)) =
         v.map(f)
     })
 
@@ -22,18 +22,18 @@ object Aspects {
 import Aspects._
 
 abstract class Cut[T, U, S] {
-  def apply[S2](v: T < S2)(f: T => U < (IOs with S)): U < (IOs with S with S2)
+  def apply[S2](v: T < S2)(f: T => U < (IOs & S)): U < (IOs & S & S2)
 
   def andThen(other: Cut[T, U, S]): Cut[T, U, S] =
     new Cut[T, U, S] {
-      def apply[S2](v: T < S2)(f: T => U < (IOs with S)) =
+      def apply[S2](v: T < S2)(f: T => U < (IOs & S)) =
         Cut.this(v)(other(_)(f))
     }
 }
 
 final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S]) extends Cut[T, U, S] {
 
-  def apply[S2](v: T < S2)(f: T => U < (IOs with S)) =
+  def apply[S2](v: T < S2)(f: T => U < (IOs & S)) =
     local.get.map { map =>
       map.get(this) match {
         case Some(a: Cut[T, U, S] @unchecked) =>
@@ -45,7 +45,7 @@ final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S]) extends Cut[T, 
       }
     }
 
-  def sandbox[S](v: T < S): T < (IOs with S) =
+  def sandbox[S](v: T < S): T < (IOs & S) =
     local.get.map { map =>
       map.get(this) match {
         case Some(a: Cut[T, U, S] @unchecked) =>
@@ -57,7 +57,7 @@ final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S]) extends Cut[T, 
       }
     }
 
-  def let[V, S2](a: Cut[T, U, S])(v: V < (IOs with S2)): V < (IOs with S with S2) =
+  def let[V, S2](a: Cut[T, U, S])(v: V < (IOs & S2)): V < (IOs & S & S2) =
     local.get.map { map =>
       val cut =
         map.get(this) match {

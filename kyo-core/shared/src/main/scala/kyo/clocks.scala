@@ -21,7 +21,7 @@ object Clocks {
 
   private val local = Locals.init(Clock.default)
 
-  def let[T, S](c: Clock)(f: => T < (IOs with S)): T < (IOs with S) =
+  def let[T, S](c: Clock)(f: => T < (IOs & S)): T < (IOs & S) =
     local.let(c)(f)
 
   val now: Instant < IOs =

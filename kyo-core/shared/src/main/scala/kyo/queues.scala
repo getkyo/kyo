@@ -74,7 +74,7 @@ object Queues {
 
   class Unbounded[T] private[kyo] (unsafe: Queues.Unsafe[T]) extends Queue[T](unsafe) {
 
-    def add[S](v: T < S): Unit < (IOs with S) = v.map(offer(_)).unit
+    def add[S](v: T < S): Unit < (IOs & S) = v.map(offer(_)).unit
   }
 
   def init[T](capacity: Int, access: Access = kyo.Access.Mpmc): Queue[T] < IOs =

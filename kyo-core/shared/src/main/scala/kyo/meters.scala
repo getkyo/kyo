@@ -9,9 +9,9 @@ abstract class Meter { self =>
 
   def isAvailable: Boolean < IOs = available.map(_ > 0)
 
-  def run[T, S](v: => T < S): T < (S with Fibers)
+  def run[T, S](v: => T < S): T < (S & Fibers)
 
-  def tryRun[T, S](v: => T < S): Option[T] < (IOs with S)
+  def tryRun[T, S](v: => T < S): Option[T] < (IOs & S)
 }
 
 object Meters {
@@ -72,25 +72,25 @@ object Meters {
       }
     }
 
-  def pipeline[S1, S2](m1: Meter < S1, m2: Meter < S2): Meter < (IOs with S1 with S2) =
-    pipeline[S1 with S2](List(m1, m2))
+  def pipeline[S1, S2](m1: Meter < S1, m2: Meter < S2): Meter < (IOs & S1 & S2) =
+    pipeline[S1 & S2](List(m1, m2))
 
   def pipeline[S1, S2, S3](
       m1: Meter < S1,
       m2: Meter < S2,
       m3: Meter < S3
-  ): Meter < (IOs with S1 with S2 with S3) =
-    pipeline[S1 with S2 with S3](List(m1, m2, m3))
+  ): Meter < (IOs & S1 & S2 & S3) =
+    pipeline[S1 & S2 & S3](List(m1, m2, m3))
 
   def pipeline[S1, S2, S3, S4](
       m1: Meter < S1,
       m2: Meter < S2,
       m3: Meter < S3,
       m4: Meter < S4
-  ): Meter < (IOs with S1 with S2 with S3 with S4) =
-    pipeline[S1 with S2 with S3 with S4](List(m1, m2, m3, m4))
+  ): Meter < (IOs & S1 & S2 & S3 & S4) =
+    pipeline[S1 & S2 & S3 & S4](List(m1, m2, m3, m4))
 
-  def pipeline[S](l: Seq[Meter < (IOs with S)]): Meter < (IOs with S) =
+  def pipeline[S](l: Seq[Meter < (IOs & S)]): Meter < (IOs & S) =
     Seqs.collect(l).map { meters =>
       new Meter {
 
@@ -105,7 +105,7 @@ object Meters {
         }
 
         def run[T, S](v: => T < S) = {
-          def loop(l: Seq[Meter]): T < (S with Fibers) =
+          def loop(l: Seq[Meter]): T < (S & Fibers) =
             l match {
               case Seq() => v
               case h +: t =>
@@ -115,7 +115,7 @@ object Meters {
         }
 
         def tryRun[T, S](v: => T < S) = {
-          def loop(l: Seq[Meter]): Option[T] < (IOs with S) =
+          def loop(l: Seq[Meter]): Option[T] < (IOs & S) =
             l match {
               case Seq() => v.map(Some(_))
               case h +: t =>

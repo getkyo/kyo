@@ -14,25 +14,25 @@ sealed abstract class Resources private[kyo] ()
   private[kyo] val finalizer: Finalizer < Resources =
     suspend(GetFinalizer.asInstanceOf[Resource[Finalizer]])
 
-  def ensure(v: => Unit < IOs): Unit < (IOs with Resources) =
+  def ensure(v: => Unit < IOs): Unit < (IOs & Resources) =
     finalizer.map(_.put(IOs(v)))
 
-  def acquire[T <: Closeable](resource: => T): T < (IOs with Resources) = {
+  def acquire[T <: Closeable](resource: => T): T < (IOs & Resources) = {
     lazy val v = resource
     ensure(v.close()).andThen(v)
   }
 
-  def run[T, S](v: T < (Resources with S))(
-      implicit f: Flat[T < (Resources with S)]
-  ): T < (IOs with S) = {
+  def run[T, S](v: T < (Resources & S))(
+      implicit f: Flat[T < (Resources & S)]
+  ): T < (IOs & S) = {
     val finalizer = new Finalizer
     implicit def handler: Handler[Resource, Resources, Any] =
       new Handler[Resource, Resources, Any] {
         def pure[U](v: U) = v
         def apply[U, V, S2](
             m: Resource[U],
-            f: U => V < (Resources with S2)
-        ): V < (S2 with Resources) =
+            f: U => V < (Resources & S2)
+        ): V < (S2 & Resources) =
           m match {
             case GetFinalizer =>
               f(finalizer.asInstanceOf[U])
@@ -41,7 +41,7 @@ sealed abstract class Resources private[kyo] ()
           }
       }
     IOs.ensure(finalizer.run) {
-      handle[T, Resources with S, Any](v).asInstanceOf[T < S]
+      handle[T, Resources & S, Any](v).asInstanceOf[T < S]
     }
   }
 }

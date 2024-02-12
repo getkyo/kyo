@@ -9,11 +9,11 @@ package object kyo {
   extension [T, S](v: T < S)(using NotGiven[Any => S]) {
 
     /*inline*/
-    def flatMap[U, S2]( /*inline*/ f: T => U < S2): U < (S with S2) =
+    def flatMap[U, S2]( /*inline*/ f: T => U < S2): U < (S & S2) =
       kyo.core.transform(v)(f)
 
     /*inline*/
-    def map[U, S2]( /*inline*/ f: T => U < S2): U < (S with S2) =
+    def map[U, S2]( /*inline*/ f: T => U < S2): U < (S & S2) =
       flatMap(f)
 
     /*inline*/
@@ -25,11 +25,11 @@ package object kyo {
       map(v => if (!p(v)) throw new MatchError(v) else v)
 
     /*inline*/
-    def flatten[U, S2](implicit ev: T => U < S2): U < (S with S2) =
+    def flatten[U, S2](implicit ev: T => U < S2): U < (S & S2) =
       flatMap(ev)
 
     /*inline*/
-    def andThen[U, S2](f: => U < S2)(implicit ev: T => Unit): U < (S with S2) =
+    def andThen[U, S2](f: => U < S2)(implicit ev: T => Unit): U < (S & S2) =
       flatMap(_ => f)
 
     /*inline*/

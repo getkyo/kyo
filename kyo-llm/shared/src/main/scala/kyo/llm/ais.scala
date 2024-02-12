@@ -147,7 +147,7 @@ class AI private[llm] (val id: Long) {
 
 object AIs extends Joins[AIs] {
 
-  type Effects = Sums[State] with Fibers
+  type Effects = Sums[State] & Fibers
 
   case class AIException(cause: String) extends Exception(cause) with NoStackTrace
 
@@ -167,8 +167,8 @@ object AIs extends Joins[AIs] {
       ai.reminder(reminder).andThen(ai)
     }
 
-  def run[T, S](v: T < (AIs with S))(implicit f: Flat[T < AIs with S]): T < (Fibers with S) =
-    State.run[T, Fibers with S](v).map(_._1)
+  def run[T, S](v: T < (AIs & S))(implicit f: Flat[T < (AIs & S)]): T < (Fibers & S) =
+    State.run[T, Fibers & S](v).map(_._1)
 
   def genNow[T](implicit t: Json[T], f: Flat[T]): T < AIs =
     init.map(_.genNow[T])
@@ -212,7 +212,7 @@ object AIs extends Joins[AIs] {
       ai.restore(ctx).map(_ => ai)
     }
 
-  def ephemeral[T, S](f: => T < S): T < (AIs with S) =
+  def ephemeral[T, S](f: => T < S): T < (AIs & S) =
     State.get.map { st =>
       IOs.attempt[T, S](f).map(r => State.set(st).map(_ => r.get))
     }

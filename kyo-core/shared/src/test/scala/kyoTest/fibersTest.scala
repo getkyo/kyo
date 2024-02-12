@@ -296,13 +296,13 @@ class fibersTest extends KyoTest {
     "outer" in run {
       val resource1 = new Resource
       val resource2 = new Resource
-      val io1: (JAtomicInteger with Closeable, Set[Int]) < (Resources with Fibers) =
+      val io1: (JAtomicInteger & Closeable, Set[Int]) < (Resources & Fibers) =
         for {
           r  <- Resources.acquire(resource1)
           v1 <- IOs(r.incrementAndGet())
           v2 <- Fibers.init(r.incrementAndGet()).map(_.get)
         } yield (r, Set(v1, v2))
-      Resources.run[(JAtomicInteger with Closeable, Set[Int]), Fibers](io1).map {
+      Resources.run[(JAtomicInteger & Closeable, Set[Int]), Fibers](io1).map {
         case (r, v) =>
           assert(v == Set(1, 2))
           assert(r.get() == -1)
@@ -332,7 +332,7 @@ class fibersTest extends KyoTest {
     "mixed" in run {
       val resource1 = new Resource
       val resource2 = new Resource
-      val io1: Set[Int] < (Resources with (Fibers)) =
+      val io1: Set[Int] < (Resources & (Fibers)) =
         for {
           r  <- Resources.acquire(resource1)
           v1 <- IOs(r.incrementAndGet())

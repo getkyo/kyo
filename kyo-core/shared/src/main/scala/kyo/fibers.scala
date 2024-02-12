@@ -155,7 +155,7 @@ class FiberOps[T](private val state: Fiber[T]) extends AnyVal {
 
 object Fibers extends Joins[fibersInternal.Fibers] {
 
-  type Effects = FiberGets with IOs
+  type Effects = FiberGets & IOs
 
   case object Interrupted
       extends RuntimeException
@@ -166,15 +166,15 @@ object Fibers extends Joins[fibersInternal.Fibers] {
   def run[T](v: T < Fibers)(implicit f: Flat[T < Fibers]): Fiber[T] < IOs =
     FiberGets.run(v)
 
-  def runAndBlock[T, S](v: T < (Fibers with S))(implicit
-      f: Flat[T < (Fibers with S)]
-  ): T < (IOs with S) =
+  def runAndBlock[T, S](v: T < (Fibers & S))(implicit
+      f: Flat[T < (Fibers & S)]
+  ): T < (IOs & S) =
     FiberGets.runAndBlock[T, S](v)
 
   def value[T](v: T)(implicit f: Flat[T < Any]): Fiber[T] =
     Fiber.done(v)
 
-  def get[T, S](v: Fiber[T] < S): T < (Fibers with S) =
+  def get[T, S](v: Fiber[T] < S): T < (Fibers & S) =
     v.map(_.get)
 
   private val _promise = IOs(unsafeInitPromise[Object])
@@ -263,7 +263,7 @@ object Fibers extends Joins[fibersInternal.Fibers] {
   def never: Fiber[Unit] < IOs =
     IOs(Fiber.promise(new IOPromise[Unit]))
 
-  def delay[T, S](d: Duration)(v: => T < S): T < (S with Fibers) =
+  def delay[T, S](d: Duration)(v: => T < S): T < (S & Fibers) =
     sleep(d).andThen(v)
 
   def sleep(d: Duration): Unit < Fibers =
@@ -332,7 +332,7 @@ object fibersInternal {
 
   final class FiberGets private[kyo] () extends Effect[Fiber, FiberGets] {
 
-    def apply[T, S](f: Fiber[T] < S): T < (FiberGets with S) =
+    def apply[T, S](f: Fiber[T] < S): T < (FiberGets & S) =
       suspend(f)
 
     def run[T](v: T < Fibers)(implicit f: Flat[T < Fibers]): Fiber[T] < IOs = {
@@ -345,15 +345,15 @@ object fibersInternal {
       IOs(deepHandle[Fiber, FiberGets, T](FiberGets)(IOs.runLazy(v)))
     }
 
-    def runAndBlock[T, S](v: T < (Fibers with S))(implicit
-        f: Flat[T < (Fibers with S)]
-    ): T < (IOs with S) = {
+    def runAndBlock[T, S](v: T < (Fibers & S))(implicit
+        f: Flat[T < (Fibers & S)]
+    ): T < (IOs & S) = {
       implicit def handler: Handler[Fiber, FiberGets, Any] =
         new Handler[Fiber, FiberGets, Any] {
           def pure[T](v: T) = Fiber.done(v)
           override def handle[T](ex: Throwable): T < FiberGets =
             FiberGets(Fiber.failed[T](ex))
-          def apply[T, U, S](m: Fiber[T], f: T => U < (FiberGets with S)) =
+          def apply[T, U, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
             try {
               m match {
                 case m: IOPromise[T] @unchecked =>
@@ -368,7 +368,7 @@ object fibersInternal {
                 handle(ex)
             }
         }
-      IOs[T, S](handle[T, IOs with S, Any](v).map(_.block))
+      IOs[T, S](handle[T, IOs & S, Any](v).map(_.block))
     }
   }
   val FiberGets = new FiberGets

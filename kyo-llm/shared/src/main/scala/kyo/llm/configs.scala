@@ -86,10 +86,10 @@ object Configs {
   def apiKey: String < IOs =
     get.map(_.apiKey.getOrElse(IOs.fail[String]("Can't locate the OpenAI API key")))
 
-  def let[T, S](f: Config)(v: T < S): T < (IOs with S) =
+  def let[T, S](f: Config)(v: T < S): T < (IOs & S) =
     let(_ => f)(v)
 
-  def let[T, S](f: Config => Config)(v: T < S): T < (IOs with S) =
+  def let[T, S](f: Config => Config)(v: T < S): T < (IOs & S) =
     local.get.map { c =>
       local.let(f(c))(v)
     }

@@ -33,7 +33,7 @@ abstract class Stats {
   def traceSpan[T, S](
       name: String,
       attributes: Attributes = Attributes.empty
-  )(v: => T < S): T < (IOs with S)
+  )(v: => T < S): T < (IOs & S)
 }
 
 object Stats {
@@ -69,12 +69,12 @@ object Stats {
       def traceSpan[T, S](
           name: String,
           attributes: Attributes = Attributes.empty
-      )(v: => T < S): T < (IOs with S) = v
+      )(v: => T < S): T < (IOs & S) = v
     }
 
   private val traceReceiver = Locals.init[TraceReceiver](TraceReceiver.get)
 
-  def traceListen[T, S](receiver: TraceReceiver)(v: T < S): T < (IOs with S) =
+  def traceListen[T, S](receiver: TraceReceiver)(v: T < S): T < (IOs & S) =
     traceReceiver.get.map { curr =>
       traceReceiver.let(TraceReceiver.all(List(curr, receiver)))(v)
     }
@@ -114,7 +114,7 @@ object Stats {
       def traceSpan[T, S](
           name: String,
           attributes: Attributes = Attributes.empty
-      )(v: => T < S): T < (IOs with S) =
+      )(v: => T < S): T < (IOs & S) =
         traceReceiver.get.map(internal.Span.trace(_, path.reverse, name, attributes)(v))
 
       override def toString = s"Stats(scope = ${path.reverse})"

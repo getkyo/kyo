@@ -24,7 +24,7 @@ object KyoApp {
       delayedInit(handle(v))
   }
 
-  type Effects = Fibers with Resources
+  type Effects = Fibers & Resources
 
   def run[T](timeout: Duration)(v: T < Effects)(
       implicit f: Flat[T < Effects]

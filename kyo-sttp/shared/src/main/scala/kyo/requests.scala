@@ -12,7 +12,7 @@ object Requests {
 
   private val local = Locals.init[Backend](PlatformBackend.default)
 
-  def let[T, S](b: Backend)(v: T < S): T < (IOs with S) =
+  def let[T, S](b: Backend)(v: T < S): T < (IOs & S) =
     local.let(b)(v)
 
   type BasicRequest = sttp.client3.RequestT[Empty, Either[_, String], Any]

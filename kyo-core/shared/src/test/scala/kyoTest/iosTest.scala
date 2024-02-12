@@ -270,7 +270,7 @@ class iosTest extends KyoTest {
       assert(
           IOs.run(
               Options.run(
-                  IOs.attempt[Int, Options with IOs](
+                  IOs.attempt[Int, Options & IOs](
                       IOs.fromTry(Try(Option(1))).map(opt =>
                         Options.get(opt: Option[Int] < IOs).map(_ => (throw e): Int)
                       )

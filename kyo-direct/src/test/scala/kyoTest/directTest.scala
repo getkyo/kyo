@@ -42,7 +42,7 @@ class directTest extends KyoTest {
   }
 
   "two effects" in {
-    val io: String < (IOs with Options) =
+    val io: String < (IOs & Options) =
       defer {
         val a = await(Options.get(Some("hello")))
         val b = await(IOs("world"))

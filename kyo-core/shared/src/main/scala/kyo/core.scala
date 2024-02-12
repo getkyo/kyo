@@ -12,7 +12,7 @@ object core {
   abstract class Handler[M[_], E <: Effect[M, E], S] {
     def pure[T](v: T): M[T]
     def handle[T](ex: Throwable): T < E = throw ex
-    def apply[T, U, S2](m: M[T], f: T => U < (E with S2)): U < (E with S with S2)
+    def apply[T, U, S2](m: M[T], f: T => U < (E & S2)): U < (E & S & S2)
   }
 
   abstract class Effect[M[_], E <: Effect[M, E]] {
@@ -21,16 +21,16 @@ object core {
     def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]): Boolean = this eq other
 
     /*inline*/
-    protected final def suspend[T, S](v: M[T] < S): T < (S with E) = {
-      def suspendLoop(v: M[T] < S): T < (S with E) = {
+    protected final def suspend[T, S](v: M[T] < S): T < (S & E) = {
+      def suspendLoop(v: M[T] < S): T < (S & E) = {
         v match {
           case kyo: Kyo[MX, EX, Any, M[T], S] @unchecked =>
-            new KyoCont[MX, EX, Any, T, S with E](kyo) {
-              def apply(v: Any < (S with E), s: Safepoint[MX, EX], l: Locals.State) =
+            new KyoCont[MX, EX, Any, T, S & E](kyo) {
+              def apply(v: Any < (S & E), s: Safepoint[MX, EX], l: Locals.State) =
                 suspendLoop(kyo(v, s, l))
             }
           case _ =>
-            new KyoRoot[M, E, T, S with E](v.asInstanceOf[M[T]], this) {}
+            new KyoRoot[M, E, T, S & E](v.asInstanceOf[M[T]], this) {}
         }
       }
       if (v == null) {
@@ -40,27 +40,27 @@ object core {
     }
 
     /*inline*/
-    protected final def handle[T, S, S2](v: T < (E with S))(implicit
+    protected final def handle[T, S, S2](v: T < (E & S))(implicit
         h: Handler[M, E, S2],
         s: Safepoint[M, E],
-        f: Flat[T < (E with S)]
-    ): M[T] < (S with S2) = {
+        f: Flat[T < (E & S)]
+    ): M[T] < (S & S2) = {
       def handleLoop(
-          v: T < (S with S2 with E)
-      ): M[T] < (S with S2) =
+          v: T < (S & S2 & E)
+      ): M[T] < (S & S2) =
         v match {
-          case kyo: Kyo[M, E, Any, T, S with E] @unchecked if (accepts(kyo.effect)) =>
+          case kyo: Kyo[M, E, Any, T, S & E] @unchecked if (accepts(kyo.effect)) =>
             if (kyo.isRoot) {
               kyo.value.asInstanceOf[M[T] < S]
             } else {
-              handleLoop(h[Any, T, S with E](
+              handleLoop(h[Any, T, S & E](
                   kyo.value,
                   kyo(_, s, Locals.State.empty)
               ))
             }
-          case kyo: Kyo[MX, EX, Any, T, S with E] @unchecked =>
-            new KyoCont[MX, EX, Any, M[T], S with S2](kyo) {
-              def apply(v: Any < (S with S2), s2: Safepoint[MX, EX], l: Locals.State) =
+          case kyo: Kyo[MX, EX, Any, T, S & E] @unchecked =>
+            new KyoCont[MX, EX, Any, M[T], S & S2](kyo) {
+              def apply(v: Any < (S & S2), s2: Safepoint[MX, EX], l: Locals.State) =
                 handleLoop {
                   try kyo(v, s2, l)
                   catch {
@@ -82,16 +82,16 @@ object core {
   }
 
   /*inline*/
-  def transform[T, S, U, S2](v: T < S)( /*inline*/ f: T => (U < S2)): U < (S with S2) = {
-    def transformLoop(v: T < S): U < (S with S2) =
+  def transform[T, S, U, S2](v: T < S)( /*inline*/ f: T => (U < S2)): U < (S & S2) = {
+    def transformLoop(v: T < S): U < (S & S2) =
       v match {
         case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>
-          new KyoCont[MX, EX, Any, U, S with S2](kyo) {
-            def apply(v: Any < (S with S2), s: Safepoint[MX, EX], l: Locals.State) = {
+          new KyoCont[MX, EX, Any, U, S & S2](kyo) {
+            def apply(v: Any < (S & S2), s: Safepoint[MX, EX], l: Locals.State) = {
               val n = kyo(v, s, l)
               if (s.check()) {
-                s.suspend[U, S with S2](transformLoop(n))
-                  .asInstanceOf[U < (S with S2)]
+                s.suspend[U, S & S2](transformLoop(n))
+                  .asInstanceOf[U < (S & S2)]
               } else {
                 transformLoop(n)
               }
@@ -108,7 +108,7 @@ object core {
 
   trait Safepoint[M[_], E <: Effect[M, _]] {
     def check(): Boolean
-    def suspend[T, S](v: => T < S): T < (S with E)
+    def suspend[T, S](v: => T < S): T < (S & E)
   }
 
   object Safepoint {
