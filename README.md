@@ -17,15 +17,15 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 
 Kyo is available on Maven Central in multiple modules:
 
-| Module           | Scala 2 | Scala 3 | Scala JS | Description                         |
-|------------------|---------|---------|----------|-------------------------------------|
-| kyo-core         | X       | X       | X        | Core and concurrent effects         |
-| kyo-direct       | X       | X       | X        | Direct syntax support               |
-| kyo-cache        | X       | X       |          | Caffeine caching                    |
-| kyo-stats-otel   | X       | X       |          | Stats exporter for OpenTelemetry    |
-| kyo-sttp         | X       | X       | X        | Sttp HTTP Client                    |
+| Module           | Scala 3 | Scala JS | Description                         |
+|------------------|---------|----------|-------------------------------------|
+| kyo-core         | X       | X        | Core and concurrent effects         |
+| kyo-direct       | X       | X        | Direct syntax support               |
+| kyo-cache        | X       |          | Caffeine caching                    |
+| kyo-stats-otel   | X       |          | Stats exporter for OpenTelemetry    |
+| kyo-sttp         | X       | X        | Sttp HTTP Client                    |
 
-For Scala 2 and 3:
+For Scala 3:
 
 ```scala 
 libraryDependencies += "io.getkyo" %% "kyo-core" % "<version>"
@@ -35,7 +35,7 @@ libraryDependencies += "io.getkyo" %% "kyo-stats-otel" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-sttp" % "<version>"
 ```
 
-For Scala.js (applicable only to `kyo-core`, `kyo-direct`, and `kyo-sttp`):
+For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, and `kyo-sttp`):
 
 ```scala 
 libraryDependencies += "io.getkyo" %%% "kyo-core" % "<version>"
@@ -64,17 +64,6 @@ String < (Options with IOs)
 ```
 
 > Note: The naming convention for effect types is the plural form of the functionalities they manage.
-
-When expressing the set of pending effects, this documentation uses `with` for compatibility with both Scala 2 and 3. If you're using Scala 3, the type intersection can also be expressed via `&`.
-
-```scala 
-// Scala 2 only supports `with`
-// for the pending effects
-String < (Options with IOs)
-
-// Scala 3 also supports `&`
-String < (Options & IOs)
-```
 
 Any type `T` is automatically considered to be of type `T < Any`, where `Any` denotes an absence of pending effects. In simpler terms, this means that every value in Kyo is automatically a computation, but one without any effects that you need to handle. 
 
@@ -346,7 +335,7 @@ defer {
 
 The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a constrained yet expressive syntax. In `defer`, features like nested `defer` blocks, `var` declarations, `return` statements, `lazy val`, `lambda` and `def` with `await`, `try`/`catch` blocks, methods and constructors accepting by-name parameters, `throw` expressions, as well as `class`, `for`-comprehension, `trait`, and `object`s are disallowed. This design allows clear virtualization of control flow, eliminating potential ambiguities or unexpected results.
 
-In Scala 2, `kyo-direct` draws its macro implementation inspiration from [Monadless](https://github.com/monadless/monadless). For Scala 3, `kyo-direct` is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
+The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
 
 > Note: `defer` is currently the only macro in Kyo. All other features use regular language constructs.
 

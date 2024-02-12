@@ -1,3 +1,5 @@
+package kyoTest
+
 import kyo._
 
 import kyo.direct._

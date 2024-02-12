@@ -1,5 +1,4 @@
 val scala3Version = "3.3.1"
-val scala2Version = "2.13.12"
 
 val compilerOptions = Seq(
     "-encoding",
@@ -20,7 +19,9 @@ sonatypeProfileName                := "io.getkyo"
 publish / skip                     := true
 
 lazy val `kyo-settings` = Seq(
-    fork := true,
+    fork               := true,
+    scalaVersion       := scala3Version,
+    crossScalaVersions := List(scala3Version),
     scalacOptions ++= compilerOptions,
     scalafmtOnCompile := true,
     organization      := "io.getkyo",
@@ -117,16 +118,6 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     )
 )
 
-lazy val `without-cross-scala` = Seq(
-    scalaVersion       := scala3Version,
-    crossScalaVersions := List(scala3Version)
-)
-
-lazy val `with-cross-scala` = Seq(
-    scalaVersion       := scala3Version,
-    crossScalaVersions := List(scala3Version, scala2Version)
-)
-
 lazy val `kyo-core` =
   crossProject(JSPlatform, JVMPlatform)
     .withoutSuffixFor(JVMPlatform)
@@ -134,7 +125,6 @@ lazy val `kyo-core` =
     .in(file("kyo-core"))
     .settings(
         `kyo-core-settings`,
-        `with-cross-scala`,
         libraryDependencies ++= (CrossVersion.partialVersion(scalaVersion.value) match {
           case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
           case _            => Seq.empty
@@ -149,7 +139,6 @@ lazy val `kyo-core-opt` =
     .in(file(s"kyo-core-opt"))
     .settings(
         `kyo-core-settings`,
-        `without-cross-scala`,
         scalafmtOnCompile := false
     )
 
@@ -161,7 +150,6 @@ lazy val `kyo-direct` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        `with-cross-scala`,
         libraryDependencies ++= Seq(
             "com.github.rssh" %%% "dotty-cps-async" % "0.9.19"
         ).filter(_ => scalaVersion.value.startsWith("3")),
@@ -182,7 +170,6 @@ lazy val `kyo-stats-otel` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        `with-cross-scala`,
         libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.34.1",
         libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk" % "1.34.1",
         libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1" % Test
@@ -196,7 +183,6 @@ lazy val `kyo-cache` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        `with-cross-scala`,
         libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
     )
 
@@ -208,7 +194,6 @@ lazy val `kyo-os-lib` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        `without-cross-scala`,
         libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.9.3"
     )
 
@@ -220,7 +205,6 @@ lazy val `kyo-sttp` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        `with-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.2"
     )
     .jsSettings(`js-settings`)
@@ -234,7 +218,6 @@ lazy val `kyo-tapir` =
     .dependsOn(`kyo-sttp`)
     .settings(
         `kyo-settings`,
-        `with-cross-scala`,
         libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.8.4",
         libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.4"
     )
@@ -247,8 +230,6 @@ lazy val `kyo-llm-macros` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        scalaVersion       := scala3Version,
-        crossScalaVersions := List(scala2Version, scala3Version),
         libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.2",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.17",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.17",
@@ -273,7 +254,6 @@ lazy val `kyo-llm` =
     .dependsOn(`kyo-llm-macros`)
     .settings(
         `kyo-settings`,
-        `without-cross-scala`,
         libraryDependencies += "com.knuddels" % "jtokkit" % "0.6.1"
     )
     .jsSettings(`js-settings`)
@@ -288,7 +268,6 @@ lazy val `kyo-llm-bench` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        `without-cross-scala`,
         libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.4.14"
     )
 
@@ -301,7 +280,6 @@ lazy val `kyo-bench` =
     .dependsOn(`kyo-core-opt`)
     .settings(
         `kyo-settings`,
-        `without-cross-scala`,
         libraryDependencies += "org.typelevel"       %% "cats-effect"        % "3.5.3",
         libraryDependencies += "org.typelevel"       %% "log4cats-core"      % "2.6.0",
         libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"     % "2.6.0",
@@ -325,7 +303,6 @@ lazy val readme =
     .enablePlugins(MdocPlugin)
     .settings(
         `kyo-settings`,
-        `without-cross-scala`,
         mdocIn  := new File("./../../README-in.md"),
         mdocOut := new File("./../../README-out.md"),
         rewriteReadmeFile := {

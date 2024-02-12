@@ -1,5 +1,4 @@
 package kyoTest
-package kyoTest
 
 import kyo._
 
