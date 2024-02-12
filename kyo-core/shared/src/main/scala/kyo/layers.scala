@@ -13,7 +13,7 @@ trait Layer[In, Out] { self =>
         val selfRun =
           self.run[T, S & In1](effect)
         val otherRun =
-          other.run[T, S & Out](selfRun)(Flat.unsafe.unchecked)
+          other.run[T, S & Out](selfRun)
         otherRun
       }
     }
@@ -47,7 +47,7 @@ trait ChainLayers2 {
               fl: Flat[T < (In1 & S)]
           ): T < (S & Out2 & Out1) = {
             val handled1 = layer1.run[T, S](effect)
-            val handled2 = layer2.run[T, S & Out1](handled1)(Flat.unsafe.unchecked)
+            val handled2 = layer2.run[T, S & Out1](handled1)
             handled2
           }
         }
@@ -69,7 +69,7 @@ trait ChainLayers1 {
               fl: Flat[T < (In1 & S)]
           ): T < (S & Out2) = {
             val handled1 = layer1.run[T, S](effect)
-            val handled2 = layer2.run[T, S](handled1)(Flat.unsafe.unchecked)
+            val handled2 = layer2.run[T, S](handled1)
             handled2
           }
         }
@@ -90,7 +90,7 @@ trait ChainLayers1 {
           ): T < (S & Out1 & Out2) = {
             val handled1: T < (S & Out1 & Shared) = layer1.run[T, S](effect)
             val handled2: T < (S & Out1 & Out2) =
-              layer2.run[T, S & Out1](handled1)(Flat.unsafe.unchecked)
+              layer2.run[T, S & Out1](handled1)
             handled2
           }
         }
@@ -114,7 +114,7 @@ object ChainLayer extends ChainLayers1 {
               fl: Flat[T < (In1 & S)]
           ): T < (S & Out2) = {
             val handled1 = layer1.run[T, S](effect)
-            val handled2 = layer2.run[T, S](handled1)(Flat.unsafe.unchecked)
+            val handled2 = layer2.run[T, S](handled1)
             handled2
           }
         }

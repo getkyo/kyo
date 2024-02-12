@@ -19,7 +19,7 @@ object Hubs {
                   listeners.toArray
                     .toList.asInstanceOf[List[Channel[T]]]
                     .map(child => IOs.attempt(child.put(v)))
-                Fibers.parallel(l)(Flat.unsafe.checked).map(_ => loop())
+                Fibers.parallel(l).map(_ => loop())
               }
             }
           loop()

@@ -40,7 +40,7 @@ object Meters {
 
           def tryRun[T, S](v: => T < S) =
             IOs[Option[T], S] {
-              IOs.run(chan.poll)(Flat.unsafe.checked) match {
+              IOs.run(chan.poll) match {
                 case None =>
                   None
                 case _ =>

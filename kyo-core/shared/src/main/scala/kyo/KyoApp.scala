@@ -29,7 +29,7 @@ object KyoApp {
   def run[T](timeout: Duration)(v: T < Effects)(
       implicit f: Flat[T < Effects]
   ): T =
-    IOs.run(runFiber(timeout)(v).block.map(_.get))(Flat.unsafe.checked)
+    IOs.run(runFiber(timeout)(v).block.map(_.get))
 
   def run[T](v: T < Effects)(
       implicit f: Flat[T < Effects]
@@ -44,10 +44,6 @@ object KyoApp {
   def runFiber[T](timeout: Duration)(v: T < Effects)(
       implicit f: Flat[T < Effects]
   ): Fiber[Try[T]] = {
-
-    // since scala 2 can't use the macro in the same compilation unit
-    implicit def flat[T, S]: Flat[T < S] = Flat.unsafe.checked
-
     def v1: T < Fibers          = Resources.run(v)
     def v2: Try[T] < Fibers     = IOs.attempt(v1)
     def v3: Try[T] < Fibers     = Fibers.timeout(timeout)(v2)

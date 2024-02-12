@@ -188,8 +188,7 @@ object Fibers extends Joins[fibersInternal.Fibers] {
   // compiler bug workaround
   private val IOTask = kyo.scheduler.IOTask
 
-  /*inline*/
-  def init[T]( /*inline*/ v: => T < Fibers)(implicit f: Flat[T < Fibers]): Fiber[T] < IOs =
+  def init[T](v: => T < Fibers)(implicit f: Flat[T < Fibers]): Fiber[T] < IOs =
     Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
   def parallel[T](l: Seq[T < Fibers])(implicit f: Flat[T < Fibers]): Seq[T] < Fibers =
@@ -203,7 +202,7 @@ object Fibers extends Joins[fibersInternal.Fibers] {
   def parallelFiber[T](l: Seq[T < Fibers])(implicit f: Flat[T < Fibers]): Fiber[Seq[T]] < IOs =
     l.size match {
       case 0 => Fiber.done(Seq.empty)
-      case 1 => Fibers.run(l(0).map(Seq(_)))(Flat.unsafe.checked)
+      case 1 => Fibers.run(l(0).map(Seq(_)))
       case _ =>
         Locals.save.map { st =>
           IOs {
@@ -218,7 +217,7 @@ object Fibers extends Joins[fibersInternal.Fibers] {
               val j = i
               fiber.onComplete { r =>
                 try {
-                  results(j) = IOs.run(r)(Flat.unsafe.checked)
+                  results(j) = IOs.run(r)
                   if (pending.decrementAndGet() == 0) {
                     p.complete(ArraySeq.unsafeWrapArray(results))
                   }
