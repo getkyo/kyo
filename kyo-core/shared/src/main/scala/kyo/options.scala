@@ -1,8 +1,8 @@
 package kyo
 
-object Options {
+opaque type Options = Aborts[Option[Nothing]]
 
-  type Effects = Aborts[Option[Nothing]]
+object Options {
 
   private val aborts = Aborts[Option[Nothing]]
   private val none   = aborts.fail(None)

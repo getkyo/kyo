@@ -6,7 +6,9 @@ import scala.util.Try
 
 abstract class KyoApp extends KyoApp.Base[KyoApp.Effects] {
 
-  override protected def handle[T](v: T < KyoApp.Effects)(implicit f: Flat[T < KyoApp.Effects]): Unit =
+  override protected def handle[T](v: T < KyoApp.Effects)(implicit
+      f: Flat[T < KyoApp.Effects]
+  ): Unit =
     KyoApp.run(v.map(Consoles.println(_)))
 }
 

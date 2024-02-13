@@ -37,10 +37,8 @@ object Timer {
         def isDone: Boolean < IOs      = IOs(task.isDone())
       }
 
-      private def eval(f: => Unit < Fibers) = {
-        import Flat.unsafe._
+      private def eval(f: => Unit < Fibers) =
         IOs.run(Fibers.run(Fibers.init(f)))
-      }
 
       def schedule(delay: Duration)(f: => Unit < Fibers) =
         if (delay.isFinite) {
