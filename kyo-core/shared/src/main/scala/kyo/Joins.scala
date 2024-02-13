@@ -1,8 +1,5 @@
 package kyo
 
-import kyo._
-import scala.annotation.implicitNotFound
-
 trait Joins[E] {
 
   def race[T](l: Seq[T < E])(implicit f: Flat[T < E]): T < E

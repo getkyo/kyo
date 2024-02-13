@@ -1,9 +1,6 @@
 package kyo
 
 import izumi.reflect._
-
-import scala.reflect.ClassTag
-
 import kyo.core._
 
 object Envs {

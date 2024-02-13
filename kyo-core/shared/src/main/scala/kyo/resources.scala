@@ -1,9 +1,8 @@
 package kyo
 
-import java.io.Closeable
-
 import kyo.core._
 
+import java.io.Closeable
 import java.util.ArrayList
 
 import resourcesInternal._

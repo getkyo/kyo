@@ -1,7 +1,5 @@
 package kyo
 
-import kyo._
-
 import java.util.concurrent.atomic.AtomicInteger
 
 abstract class Latch {

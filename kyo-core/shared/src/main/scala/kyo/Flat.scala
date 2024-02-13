@@ -1,6 +1,5 @@
 package kyo
 
-import scala.reflect.ClassTag
 import internal.FlatImplicits
 
 sealed trait Flat[-T]

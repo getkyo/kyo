@@ -1,8 +1,6 @@
 package kyo
 
-import java.io.IOException
 import java.io.EOFException
-import pprint.TPrint
 
 abstract class Console {
   def readln: String < IOs

@@ -1,19 +1,12 @@
 package kyo
 
-import java.io.Closeable
-import java.util.concurrent.ThreadLocalRandom
+import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
-import scala.concurrent.duration.Duration
-import scala.runtime.AbstractFunction0
-import scala.util.Try
+import scala.util._
 import scala.util.control.NonFatal
+
 import core._
 import core.internal._
-import scala.util._
-import scala.annotation.implicitNotFound
-import java.util.concurrent.atomic.AtomicReference
-import kyo.Locals.State
-
 import iosInternal._
 
 sealed trait IOs extends Effect[IO, IOs] {
@@ -144,7 +137,7 @@ sealed trait IOs extends Effect[IO, IOs] {
       v match {
         case kyo: Kyo[MX, EX, Any, T, S & IOs] @unchecked =>
           new KyoCont[MX, EX, Any, T, S & IOs](kyo) {
-            def apply(v: Any < (S & IOs), s: Safepoint[MX, EX], l: State) = {
+            def apply(v: Any < (S & IOs), s: Safepoint[MX, EX], l: Locals.State) = {
               val np =
                 (s: Any) match {
                   case s: Preempt =>

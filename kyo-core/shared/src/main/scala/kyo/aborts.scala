@@ -1,15 +1,7 @@
 package kyo
 
 import izumi.reflect._
-
-import scala.language.higherKinds
-import scala.reflect.ClassTag
-import scala.util.Failure
-import scala.util.Success
-
-import kyo._
 import kyo.core._
-import scala.util.Try
 
 object Aborts {
 

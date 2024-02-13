@@ -1,14 +1,10 @@
 package kyo
 
-import kyo._
-
 import org.jctools.queues._
 
-import java.util.ArrayDeque
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
-import java.util.concurrent.atomic.AtomicBoolean
-import kyo.Access
 
 class Queue[T] private[kyo] (private[kyo] val unsafe: Queues.Unsafe[T]) {
 

@@ -1,7 +1,5 @@
 package kyo
 
-import kyo._
-
 import java.util.concurrent.atomic.{DoubleAdder => JDoubleAdder}
 import java.util.concurrent.atomic.{LongAdder => JLongAdder}
 

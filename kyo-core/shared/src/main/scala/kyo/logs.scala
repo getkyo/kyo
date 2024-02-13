@@ -2,8 +2,6 @@ package kyo
 
 import org.slf4j.LoggerFactory
 
-import scala.languageFeature.implicitConversions
-
 object Logs {
 
   private val logger = LoggerFactory.getLogger("kyo.logs")

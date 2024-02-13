@@ -1,8 +1,7 @@
 package kyo
 
 import scala.concurrent.duration._
-import scala.util.Failure
-import scala.util.Success
+import scala.util._
 
 object Retries {
 

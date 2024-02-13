@@ -1,5 +1,3 @@
-import scala.language.higherKinds
-
 package object kyo {
 
   type NotGiven[T] = scala.util.NotGiven[T]

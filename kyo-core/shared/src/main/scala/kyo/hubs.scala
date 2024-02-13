@@ -1,8 +1,5 @@
 package kyo
 
-import kyo._
-
-import java.util.concurrent.ConcurrentSkipListSet
 import java.util.concurrent.CopyOnWriteArraySet
 
 object Hubs {

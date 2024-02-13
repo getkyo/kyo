@@ -1,12 +1,9 @@
 package kyo
 
 import izumi.reflect._
-
-import scala.util.Failure
-import scala.util.Success
-import scala.util.Try
-
 import kyo.core._
+
+import scala.util._
 
 import sumsInternal._
 

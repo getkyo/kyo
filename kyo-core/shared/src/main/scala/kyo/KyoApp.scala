@@ -1,13 +1,12 @@
 package kyo
 
+import scala.annotation.nowarn
 import scala.concurrent.duration.Duration
 import scala.util.Try
-import kyo.KyoApp.Effects
-import scala.annotation.nowarn
 
 abstract class KyoApp extends KyoApp.Base[KyoApp.Effects] {
 
-  override protected def handle[T](v: T < Effects)(implicit f: Flat[T < Effects]): Unit =
+  override protected def handle[T](v: T < KyoApp.Effects)(implicit f: Flat[T < KyoApp.Effects]): Unit =
     KyoApp.run(v.map(Consoles.println(_)))
 }
 

@@ -1,14 +1,9 @@
 package kyo
 
-import kyo._
 import kyo.scheduler.Threads
 
-import java.util.concurrent.Callable
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
-import scala.concurrent.duration.Duration
+import java.util.concurrent._
+import scala.concurrent.duration._
 
 abstract class Timer {
 

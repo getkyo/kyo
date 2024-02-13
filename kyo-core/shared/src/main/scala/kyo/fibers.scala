@@ -1,19 +1,17 @@
 package kyo
 
-import kyo._
 import kyo.core._
 import kyo.core.internal._
+import kyo.scheduler.IOPromise
 
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.immutable.ArraySeq
-import scala.concurrent.Future
 import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 import scala.util._
 import scala.util.control.NoStackTrace
 import scala.util.control.NonFatal
-
-import kyo.scheduler.IOPromise
 
 import fibersInternal._
 

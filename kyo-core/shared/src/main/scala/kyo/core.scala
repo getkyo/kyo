@@ -1,9 +1,6 @@
 package kyo
 
-import scala.runtime.AbstractFunction0
-import scala.runtime.AbstractFunction1
 import scala.util.control.NonFatal
-import scala.language.higherKinds
 
 object core {
 

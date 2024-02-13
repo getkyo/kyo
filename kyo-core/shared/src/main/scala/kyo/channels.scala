@@ -1,14 +1,10 @@
 package kyo
 
-import kyo._
-
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 
-import java.util.concurrent.Executors
 import scala.annotation.tailrec
-import Flat.unsafe._
 
-import kyo.Access
+import Flat.unsafe._
 
 abstract class Channel[T] { self =>
 

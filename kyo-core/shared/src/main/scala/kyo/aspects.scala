@@ -1,7 +1,5 @@
 package kyo
 
-import kyo._
-
 object Aspects {
 
   private[kyo] val local = Locals.init(Map.empty[Aspect[_, _, _], Cut[_, _, _]])

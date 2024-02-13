@@ -1,6 +1,5 @@
 package kyo
 
-import scala.annotation.tailrec
 import scala.concurrent.duration.Duration
 
 abstract class Meter { self =>

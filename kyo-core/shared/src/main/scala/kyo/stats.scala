@@ -1,8 +1,6 @@
 package kyo
 
 import kyo.stats._
-import kyo.Locals
-import kyo.stats.internal
 import kyo.stats.internal.TraceReceiver
 
 abstract class Stats {

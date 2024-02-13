@@ -1,10 +1,6 @@
 package kyo
 
-import kyo._
-
 import java.time.Instant
-import java.time.ZoneId
-import java.time.{Clock => JClock}
 
 abstract class Clock {
   def now: Instant < IOs
