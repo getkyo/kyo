@@ -111,7 +111,7 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC22" % Test,
     libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC22" % Test,
     libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.16"     % Test,
-    libraryDependencies += "ch.qos.logback"  % "logback-classic"   % "1.4.14"     % Test,
+    libraryDependencies += "ch.qos.logback"  % "logback-classic"   % "1.5.0"      % Test,
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     Global / concurrentRestrictions := Seq(
         Tags.limit(Tags.CPU, java.lang.Runtime.getRuntime().availableProcessors() - 1)
@@ -268,7 +268,7 @@ lazy val `kyo-llm-bench` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.4.14"
+        libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.0"
     )
 
 lazy val `kyo-bench` =
