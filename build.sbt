@@ -151,7 +151,7 @@ lazy val `kyo-direct` =
     .settings(
         `kyo-settings`,
         libraryDependencies ++= Seq(
-            "com.github.rssh" %%% "dotty-cps-async" % "0.9.19"
+            "com.github.rssh" %%% "dotty-cps-async" % "0.9.20"
         ).filter(_ => scalaVersion.value.startsWith("3")),
         libraryDependencies ++= Seq(
             "org.scala-lang"   % "scala-library"  % scalaVersion.value,
