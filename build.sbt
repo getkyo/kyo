@@ -110,7 +110,7 @@ lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
     libraryDependencies += "dev.zio"       %%% "zio-test-sbt"      % zioVersion   % Test,
     libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC22" % Test,
     libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC22" % Test,
-    libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.16"     % Test,
+    libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.18"     % Test,
     libraryDependencies += "ch.qos.logback"  % "logback-classic"   % "1.4.14"     % Test,
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
     Global / concurrentRestrictions := Seq(
@@ -288,7 +288,7 @@ lazy val `kyo-bench` =
         libraryDependencies += "dev.zio"             %% "zio"                % zioVersion,
         libraryDependencies += "dev.zio"             %% "zio-concurrent"     % zioVersion,
         libraryDependencies += "com.softwaremill.ox" %% "core"               % "0.0.16",
-        libraryDependencies += "org.scalatest"       %% "scalatest"          % "3.2.16" % Test
+        libraryDependencies += "org.scalatest"       %% "scalatest"          % "3.2.18" % Test
     )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
