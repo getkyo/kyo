@@ -152,6 +152,8 @@ val d: Int < (Options & Aborts[Exception]) =
 This characteristic enables a fluent API for effectful code. Methods can accept parameters with a specific set of pending effects while also permitting those with fewer or no effects.
 
 ```scala
+import kyo._
+
 // The function expects a parameter with both 
 // 'Options' and 'Aborts' effects pending
 def example1(v: Int < (Options & Aborts[Exception])) = 
@@ -217,32 +219,29 @@ def abortsFirst(a: Int < (Options & Aborts[Exception])): Option[Either[Exception
     Options.run(b)
   c.pure
 }
-```
 
-In this example, the sequence in which effects are handled has a significant impact on the outcome. This is especially true for effects that can short-circuit the computation.
-
-```scala
-import kyo._
+// The sequence in which effects are handled has a significant impact on the outcome. 
+// This is especially true for effects that can short-circuit the computation.
 
 val ex = new Exception
 
 // If the effects don't short-circuit, only the 
 // order of nested types in the result changes
-assert(optionsFirst(Options.get(Some(1))) == Success(Some(1)))
-assert(optionsFirst(Aborts[Exception].get(Right(1))) == Success(Some(1)))
+assert(optionsFirst(Options.get(Some(1))) == Right(Some(1)))
+assert(optionsFirst(Aborts[Exception].get(Right(1))) == Right(Some(1)))
 
 // Note how the result type changes from 
 // 'Try[Option[T]]' to 'Option[Try[T]]'
-assert(abortsFirst(Options.get(Some(1))) == Some(Success(1)))
-assert(abortsFirst(Aborts[Exception].get(Right(1))) == Some(Success(1)))
+assert(abortsFirst(Options.get(Some(1))) == Some(Right(1)))
+assert(abortsFirst(Aborts[Exception].get(Right(1))) == Some(Right(1)))
 
 // If there's short-circuiting, the 
 // resulting value can be different
-assert(optionsFirst(Options.get(None)) == Success(None))
-assert(optionsFirst(Aborts[Exception].get(Left(ex))) == Failure(ex))
+assert(optionsFirst(Options.get(None)) == Right(None))
+assert(optionsFirst(Aborts[Exception].get(Left(ex))) == Left(ex))
 
 assert(abortsFirst(Options.get(None)) == None)
-assert(abortsFirst(Aborts[Exception].get(Left(ex))) == Some(Failure(ex)))
+assert(abortsFirst(Aborts[Exception].get(Left(ex))) == Some(Left(ex)))
 ```
 
 ### Direct Syntax
@@ -422,17 +421,14 @@ Kyo is unlike traditional effect systems since its base type `<` does not assume
 
 ```scala
 import kyo._
+import scala.util._
 
 def aSideEffect = 1 // placeholder
 
 // 'apply' is used to suspend side effects
 val a: Int < IOs = 
   IOs(aSideEffect)
-```
 
-`IOs` also provides methods to handle unchecked exceptions.
-
-```scala
 // 'fail' be used for unchecked exceptions (prefer 'Aborts')
 val b: Int < IOs =
   IOs.fail(new Exception)
@@ -442,15 +438,15 @@ val c: Int < IOs =
   IOs.fail("exception message")
 
 // 'fromTry' obtains the value of a 'Try'
-val d: Int < IOs
+val d: Int < IOs =
   IOs.fromTry(Try(1))
 
 // 'attempt' handles any exceptions and returns a 'Try'
-val d: Try[Int] < IOs =
+val e: Try[Int] < IOs =
   IOs.attempt("1".toInt)
 
 // 'handle' takes a partial function to handle exceptions
-val e: Int < IOs =
+val f: Int < IOs =
   IOs.handle("1".toInt) {
     case _: NumberFormatException => 0
   }
@@ -532,18 +528,17 @@ val db = new Database {
 // Handle the 'Envs' effect with the mock database
 val c: Int < IOs = 
   Envs[Database].run(db)(b)
-```
 
-Additionally, a computation can require multiple values from its environment.
+// Additionally, a computation can require multiple values 
+// from its environment.
 
-```scala
 // A second interface to be injected
 trait Cache {
   def clear: Unit < IOs
 }
 
 // A computation that requires two values
-val a: Unit < (Envs[Database] & Envs[Cache] & IOs) = 
+val d: Unit < (Envs[Database] & Envs[Cache] & IOs) = 
   Envs[Database].get.map { db =>
     db.count.map {
       case 0 => 
@@ -600,11 +595,10 @@ val db: Database < (Resources & IOs) =
 // computationation
 val b: Int < IOs = 
   Resources.run(db.map(_.count))
-```
 
-The `ensure` method provides a low-level API to handle the finalization of resources directly. The `acquire` method is implemented in terms of `ensure`.
+// The `ensure` method provides a low-level API to handle the finalization of 
+// resources directly. The `acquire` method is implemented in terms of `ensure`.
 
-```scala
 // Example method to execute a function on a database
 def withDb[T](f: Database => T < IOs): T < (IOs & Resources) =
   // Initializes the database ('new Database' is a placeholder)
@@ -617,12 +611,12 @@ def withDb[T](f: Database => T < IOs): T < (IOs & Resources) =
   }
 
 // Execute a function
-val a: Int < (IOs & Resources) =
+val c: Int < (IOs & Resources) =
   withDb(_.count)
 
 // Close resources
-val b: Int < IOs = 
-  Resources.run(a)
+val d: Int < IOs = 
+  Resources.run(c)
 ```
 
 ### Seqs: Exploratory Branching
@@ -674,6 +668,12 @@ To instantiate an aspect, use the `Aspects.init` method. It takes three type par
 
 ```scala
 import kyo._
+import java.io.Closeable
+
+class Database extends Closeable {
+  def count: Int < IOs = 42
+  def close() = {}
+}
 
 // Initialize an aspect that takes a 'Database' and returns
 // an 'Int', potentially performing 'IOs' effects
@@ -700,12 +700,10 @@ def example(db: Database): Int < IOs =
   countAspect.let(countPlusOne) {
     count(db)
   }
-```
 
-If an aspect is bound to multiple `Cut` implementations, the order of their execution is determined by the sequence in which they are scoped within the computation.
-
-```scala
-import kyo._
+// If an aspect is bound to multiple `Cut` implementations, the order of 
+// their execution is determined by the sequence in which they are scoped 
+// within the computation.
 
 // Another 'Cut' implementation
 val countTimesTen =
@@ -1035,6 +1033,8 @@ A `Fiber` instance also provides a few relevant methods.
 
 ```scala
 import kyo._
+import scala.util._
+import scala.concurrent._
 
 // An example fiber
 val a: Fiber[Int] = Fibers.value(42)
@@ -1356,6 +1356,7 @@ The `Meters` effect offers utilities to regulate computational execution, be it 
 
 ```scala
 import kyo._
+import scala.concurrent.duration._
 
 // 'mutex': One computation at a time
 val a: Meter < IOs = 
@@ -1411,6 +1412,7 @@ The `Timers` effect is designed for control over the timing of task execution.
 
 ```scala
 import kyo._
+import scala.concurrent.duration._
 
 // An example computation to
 // be scheduled
@@ -1458,6 +1460,8 @@ val i: TimerTask < IOs =
 
 ```scala
 import kyo._
+import scala.concurrent.duration._
+
 // Example TimerTask
 val a: TimerTask < IOs = 
   Timers.schedule(1.second)(())
@@ -1618,6 +1622,7 @@ To perform a request, use the `apply` method. It takes a builder function based 
 ```scala
 import kyo._
 import sttp.client3._
+import kyo.Requests.Backend
 
 // Perform a request using a builder function
 val a: String < Fibers =
@@ -1627,16 +1632,12 @@ val a: String < Fibers =
 // defined separately
 val b: String < Fibers =
   Requests.request[String](Requests.basicRequest.get(uri"https://httpbin.org/get"))
-```
 
-It's possible to use the default implementation or provide a custom `Backend` via `let`:
-
-```scala
-import kyo._
-import kyo.Requests.Backend
+// It's possible to use the default implementation or provide 
+// a custom `Backend` via `let`
 
 // An example request
-val a: String < Fibers =
+val c: String < Fibers =
   Requests[String](_.get(uri"https://httpbin.org/get"))
 
 // Implementing a custom 

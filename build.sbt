@@ -309,7 +309,7 @@ lazy val readme =
           val readmeFile       = new File("README.md")
           val targetReadmeFile = new File("target/README-in.md")
           val contents         = IO.read(readmeFile)
-          val newContents      = contents.replaceAll("```scala\n", "```scala mdoc:nest\n")
+          val newContents      = contents.replaceAll("```scala\n", "```scala mdoc:reset\n")
           IO.write(targetReadmeFile, newContents)
         }
     )
