@@ -12,7 +12,7 @@ import sttp.monad.Canceler
 object KyoSttpMonad {
   type M[T] = T < Fibers
 
-  implicit val kyoSttpMonad: MonadAsyncError[M] =
+  given instance: MonadAsyncError[M] =
     new MonadAsyncError[M] {
 
       def map[T, T2](fa: T < Fibers)(f: T => T2): T2 < Fibers =

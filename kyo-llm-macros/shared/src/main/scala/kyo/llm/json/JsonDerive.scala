@@ -9,29 +9,29 @@ import zio.Chunk
 
 trait JsonDerive {
 
-  inline implicit def deriveJson[T]: Json[T] = {
+  inline given deriveJson[T]: Json[T] = {
     import JsonDerive._
     Json.fromZio(DeriveSchema.gen)
   }
 }
 
 object JsonDerive {
-  inline implicit def constStringZSchema[T <: String]: ZSchema[T] =
+  inline given constStringZSchema[T <: String]: ZSchema[T] =
     const(StandardType.StringType, compiletime.constValue[T])
 
-  inline implicit def constIntZSchema[T <: Int]: ZSchema[T] =
+  inline given constIntZSchema[T <: Int]: ZSchema[T] =
     const(StandardType.IntType, compiletime.constValue[T])
 
-  inline implicit def constLongZSchema[T <: Long]: ZSchema[T] =
+  inline given constLongZSchema[T <: Long]: ZSchema[T] =
     const(StandardType.LongType, compiletime.constValue[T])
 
-  inline implicit def constDoubleZSchema[T <: Double]: ZSchema[T] =
+  inline given constDoubleZSchema[T <: Double]: ZSchema[T] =
     const(StandardType.DoubleType, compiletime.constValue[T])
 
-  inline implicit def constFloatZSchema[T <: Float]: ZSchema[T] =
+  inline given constFloatZSchema[T <: Float]: ZSchema[T] =
     const(StandardType.FloatType, compiletime.constValue[T])
 
-  inline implicit def constBoolZSchema[T <: Boolean]: ZSchema[T] =
+  inline given constBoolZSchema[T <: Boolean]: ZSchema[T] =
     const(StandardType.BoolType, compiletime.constValue[T])
 
   private def const[T](t: StandardType[_], v: Any): ZSchema[T] =

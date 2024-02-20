@@ -21,7 +21,7 @@ val doc = kyo.llm.json.doc
 type Json[T] = kyo.llm.json.Json[T]
 val Json = kyo.llm.json.Json
 
-implicit class PromptInterpolator(val sc: StringContext) extends AnyVal {
+extension (sc: StringContext) {
   def p(args: Any*): String =
     sc.s(args: _*)
       .replaceAll("\n\\s+", "\n") // remove whitespace at the start of a line
@@ -235,7 +235,7 @@ object AIs extends Joins[AIs] {
             rl.map(_._2)
               .foldLeft(Map.empty: State) {
                 case (acc, st) =>
-                  summer.add(acc, st)
+                  internal.summer.add(acc, st)
               }
           State.set(st).map(_ => r)
         }
@@ -307,7 +307,7 @@ object internal {
       ====================
     """
 
-  implicit val summer: Summer[State] =
+  given summer: Summer[State] =
     new Summer[State] {
       val init = Map.empty
       def add(x: State, y: State) = {

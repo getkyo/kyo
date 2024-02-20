@@ -51,7 +51,7 @@ private[kyo] object IOTask {
       y.state - x.state
   }
 
-  implicit def ord: Ordering[IOTask[_]] = TaskOrdering
+  given ord: Ordering[IOTask[_]] = TaskOrdering
 }
 
 private[kyo] class IOTask[T](

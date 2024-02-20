@@ -27,7 +27,7 @@ object Json extends JsonDerive {
   def decode[T](s: String)(using j: Json[T]): T < IOs =
     j.decode(s)
 
-  implicit def primitive[T](using t: StandardType[T]): Json[T] =
+  given primitive[T](using t: StandardType[T]): Json[T] =
     fromZio(ZSchema.Primitive(t, Chunk.empty))
 
   def fromZio[T](z: ZSchema[T]) =

@@ -86,10 +86,10 @@ object Image extends Tool {
         data: List[Data]
     )
 
-    implicit val requestEncoder: JsonEncoder[Request]   = DeriveJsonEncoder.gen[Request]
-    implicit val dataDecoder: JsonDecoder[Data]         = DeriveJsonDecoder.gen[Data]
-    implicit val dataEncoder: JsonEncoder[Data]         = DeriveJsonEncoder.gen[Data]
-    implicit val responseEncoder: JsonEncoder[Response] = DeriveJsonEncoder.gen[Response]
-    implicit val responseDecoder: JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
+    given requestEncoder: JsonEncoder[Request]   = DeriveJsonEncoder.gen[Request]
+    given dataDecoder: JsonDecoder[Data]         = DeriveJsonDecoder.gen[Data]
+    given dataEncoder: JsonEncoder[Data]         = DeriveJsonEncoder.gen[Data]
+    given responseEncoder: JsonEncoder[Response] = DeriveJsonEncoder.gen[Response]
+    given responseDecoder: JsonDecoder[Response] = DeriveJsonDecoder.gen[Response]
   }
 }

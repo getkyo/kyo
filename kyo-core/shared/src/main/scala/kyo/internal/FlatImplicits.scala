@@ -4,17 +4,17 @@ import kyo._
 import scala.quoted._
 
 trait FlatImplicits0 {
-  inline implicit def infer[T]: Flat[T] =
+  inline given infer[T]: Flat[T] =
     ${ FlatImplicits.inferMacro[T] }
 }
 
 trait FlatImplicits1 extends FlatImplicits0 {
-  implicit def product[T <: Product]: Flat[T] =
+  given product[T <: Product]: Flat[T] =
     Flat.unsafe.checked[T]
 }
 
 trait FlatImplicits extends FlatImplicits1 {
-  implicit def anyVal[T <: AnyVal]: Flat[T] =
+  given anyVal[T <: AnyVal]: Flat[T] =
     Flat.unsafe.checked[T]
 }
 

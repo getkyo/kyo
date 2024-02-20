@@ -62,12 +62,6 @@ package object kyo {
 
   type Fibers = fibersInternal.Fibers
 
-  implicit def promiseOps[T](p: Promise[T]): PromiseOps[T] =
-    new PromiseOps(p)
-
-  implicit def fiberOps[T](p: Fiber[T]): FiberOps[T] =
-    new FiberOps(p)
-
   implicit def flat[T]: Flat[Fiber[T]] =
     Flat.unsafe.checked[Fiber[T]]
 }

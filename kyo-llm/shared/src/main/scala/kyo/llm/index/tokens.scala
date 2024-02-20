@@ -14,7 +14,7 @@ object tokens {
 
   type Tokens // = Unit | Array[Int] | Concat
 
-  implicit class TokensOps(a: Tokens) {
+  extension (a: Tokens) {
 
     def append(s: String): Tokens =
       if (!s.isEmpty()) {

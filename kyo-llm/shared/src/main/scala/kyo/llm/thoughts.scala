@@ -89,9 +89,9 @@ object Thoughts {
     val (opening, closing) = thoughts.partition(_.pos == Position.Opening)
     type Opening
     type Closing
-    implicit val o: ZSchema[Opening] = schema("OpeningThoughts", opening)
-    implicit val c: ZSchema[Closing] = schema("ClosingThoughts", closing)
-    implicit val t: ZSchema[T]       = j.zSchema
+    given o: ZSchema[Opening] = schema("OpeningThoughts", opening)
+    given c: ZSchema[Closing] = schema("ClosingThoughts", closing)
+    given t: ZSchema[T]       = j.zSchema
     (if (full) {
        (opening.nonEmpty, closing.nonEmpty) match {
          case (true, true) =>

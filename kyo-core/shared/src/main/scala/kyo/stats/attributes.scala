@@ -38,25 +38,25 @@ object Attributes {
   case class AsAttribute[T](f: (String, T) => Attribute)
 
   object AsAttribute {
-    implicit val booleanList: AsAttribute[List[Boolean]] =
+    given booleanList: AsAttribute[List[Boolean]] =
       AsAttribute(Attribute.BooleanListAttribute(_, _))
-    implicit val boolean: AsAttribute[Boolean] =
+    given boolean: AsAttribute[Boolean] =
       AsAttribute(Attribute.BooleanAttribute(_, _))
-    implicit val doubleList: AsAttribute[List[Double]] =
+    given doubleList: AsAttribute[List[Double]] =
       AsAttribute(Attribute.DoubleListAttribute(_, _))
-    implicit val int: AsAttribute[Int] =
+    given int: AsAttribute[Int] =
       AsAttribute(Attribute.LongAttribute(_, _))
-    implicit val double: AsAttribute[Double] =
+    given double: AsAttribute[Double] =
       AsAttribute(Attribute.DoubleAttribute(_, _))
-    implicit val intList: AsAttribute[List[Int]] =
+    given intList: AsAttribute[List[Int]] =
       AsAttribute((k, v) => Attribute.LongListAttribute(k, v.map(_.toLong)))
-    implicit val longList: AsAttribute[List[Long]] =
+    given longList: AsAttribute[List[Long]] =
       AsAttribute(Attribute.LongListAttribute(_, _))
-    implicit val long: AsAttribute[Long] =
+    given long: AsAttribute[Long] =
       AsAttribute(Attribute.LongAttribute(_, _))
-    implicit val stringList: AsAttribute[List[String]] =
+    given stringList: AsAttribute[List[String]] =
       AsAttribute(Attribute.StringListAttribute(_, _))
-    implicit val string: AsAttribute[String] =
+    given string: AsAttribute[String] =
       AsAttribute(Attribute.StringAttribute(_, _))
   }
 }

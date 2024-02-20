@@ -26,7 +26,7 @@ object Observe {
   }
 
   object Count {
-    implicit def schema[T](using s: ZSchema[T]): ZSchema[Count[T]] =
+    given schema[T](using s: ZSchema[T]): ZSchema[Count[T]] =
       s.transform(Count(_), _.v)
   }
 
@@ -36,7 +36,7 @@ object Observe {
   }
 
   object Sum {
-    implicit val schema: ZSchema[Sum] =
+    given schema: ZSchema[Sum] =
       ZSchema.primitive[Int].transform(Sum(_), _.v)
   }
 
@@ -50,7 +50,7 @@ object Observe {
   }
 
   object Distribution {
-    implicit val schema: ZSchema[Distribution] =
+    given schema: ZSchema[Distribution] =
       ZSchema.primitive[Double].transform(Distribution(_), _.v)
   }
 
@@ -69,7 +69,7 @@ object Observe {
     }
 
     object Debug {
-      implicit val schema: ZSchema[Debug] =
+      given schema: ZSchema[Debug] =
         ZSchema.primitive[String].transform(Debug(_), _.s)
     }
 
@@ -79,7 +79,7 @@ object Observe {
     }
 
     object Info {
-      implicit val schema: ZSchema[Info] =
+      given schema: ZSchema[Info] =
         ZSchema.primitive[String].transform(Info(_), _.s)
     }
 
@@ -89,7 +89,7 @@ object Observe {
     }
 
     object Warn {
-      implicit val schema: ZSchema[Warn] =
+      given schema: ZSchema[Warn] =
         ZSchema.primitive[String].transform(Warn(_), _.s)
     }
 
@@ -99,7 +99,7 @@ object Observe {
     }
 
     object Error {
-      implicit val schema: ZSchema[Error] =
+      given schema: ZSchema[Error] =
         ZSchema.primitive[String].transform(Error(_), _.s)
     }
   }

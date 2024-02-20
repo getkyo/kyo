@@ -15,7 +15,7 @@ import kyo.scheduler.Scheduler
 private[kyo] class IOPromise[T](state: State[T])
     extends AtomicReference(state) {
 
-  private implicit def flat[S]: Flat[T < S] =
+  private given flat[S]: Flat[T < S] =
     Flat.unsafe.checked
 
   def this() = this(Pending())

@@ -34,8 +34,8 @@ class Curl(methods: Curl.Methods) extends Tool {
     if (!allow.contains(input.method)) {
       IOs.fail(s"Method not allowed: ${input.method}. Allowed: ${allow.mkString(", ")}")
     } else {
-      implicit val inputDecoder: JsonDecoder[In] = DeriveJsonDecoder.gen[In]
-      implicit val inputEncoder: JsonEncoder[In] = DeriveJsonEncoder.gen[In]
+      given inputDecoder: JsonDecoder[In] = DeriveJsonDecoder.gen[In]
+      given inputEncoder: JsonEncoder[In] = DeriveJsonEncoder.gen[In]
       for {
         _ <- Logs.debug(input.toJsonPretty)
         res <- Requests(

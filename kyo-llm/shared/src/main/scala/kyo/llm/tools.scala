@@ -56,7 +56,7 @@ abstract class Tool {
 
   private[kyo] def handle(ai: AI, call: Call): Boolean < AIs =
     Tools.disable {
-      implicit def s: ZSchema[In] = info.input.zSchema
+      given s: ZSchema[In] = info.input.zSchema
       IOs.attempt(json.decode(call.arguments)).map {
         case Failure(ex) =>
           ai.toolMessage(call.id, "Invalid 'toolInput': " + ex).andThen(false)
@@ -110,7 +110,7 @@ object Tools {
     local.let(List.empty)(f)
 
   private[kyo] def resultTool[T](_thoughts: List[Thoughts.Info])(
-      implicit t: Json[T]
+      using t: Json[T]
   ): (Tool, Option[T] < AIs) < AIs =
     Atomics.initRef(Option.empty[T]).map { ref =>
       val tool =

@@ -65,34 +65,34 @@ object BraveSearch extends Tool {
     case class Search(results: Option[List[SearchResult]])
     case class SearchResult(description: Option[String], title: String)
 
-    implicit val qaDecoder: JsonDecoder[QA] =
+    given qaDecoder: JsonDecoder[QA] =
       DeriveJsonDecoder.gen[QA]
-    implicit val faqDecoder: JsonDecoder[FAQ] =
+    given faqDecoder: JsonDecoder[FAQ] =
       DeriveJsonDecoder.gen[FAQ]
-    implicit val newsResultDecoder: JsonDecoder[NewsResult] =
+    given newsResultDecoder: JsonDecoder[NewsResult] =
       DeriveJsonDecoder.gen[NewsResult]
-    implicit val newsDecoder: JsonDecoder[News] =
+    given newsDecoder: JsonDecoder[News] =
       DeriveJsonDecoder.gen[News]
-    implicit val searchResultDecoder: JsonDecoder[SearchResult] =
+    given searchResultDecoder: JsonDecoder[SearchResult] =
       DeriveJsonDecoder.gen[SearchResult]
-    implicit val searchDecoder: JsonDecoder[Search] =
+    given searchDecoder: JsonDecoder[Search] =
       DeriveJsonDecoder.gen[Search]
-    implicit val responseDecoder: JsonDecoder[SearchResponse] =
+    given responseDecoder: JsonDecoder[SearchResponse] =
       DeriveJsonDecoder.gen[SearchResponse]
 
-    implicit val qaEncoder: JsonEncoder[QA] =
+    given qaEncoder: JsonEncoder[QA] =
       DeriveJsonEncoder.gen[QA]
-    implicit val faqEncoder: JsonEncoder[FAQ] =
+    given faqEncoder: JsonEncoder[FAQ] =
       DeriveJsonEncoder.gen[FAQ]
-    implicit val newsResultEncoder: JsonEncoder[NewsResult] =
+    given newsResultEncoder: JsonEncoder[NewsResult] =
       DeriveJsonEncoder.gen[NewsResult]
-    implicit val newsEncoder: JsonEncoder[News] =
+    given newsEncoder: JsonEncoder[News] =
       DeriveJsonEncoder.gen[News]
-    implicit val searchResultEncoder: JsonEncoder[SearchResult] =
+    given searchResultEncoder: JsonEncoder[SearchResult] =
       DeriveJsonEncoder.gen[SearchResult]
-    implicit val searchEncoder: JsonEncoder[Search] =
+    given searchEncoder: JsonEncoder[Search] =
       DeriveJsonEncoder.gen[Search]
-    implicit val responseEncoder: JsonEncoder[SearchResponse] =
+    given responseEncoder: JsonEncoder[SearchResponse] =
       DeriveJsonEncoder.gen[SearchResponse]
   }
 }

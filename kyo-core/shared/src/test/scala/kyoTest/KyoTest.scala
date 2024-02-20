@@ -26,7 +26,7 @@ class KyoTest extends AsyncFreeSpec with Assertions {
     def apply(a: T, b: T): Boolean
   }
   object Eq {
-    implicit def eq[T]: Eq[T] = _ == _
+    given eq[T]: Eq[T] = _ == _
   }
 
   def retry[S](f: => Boolean < S): Boolean < S = {

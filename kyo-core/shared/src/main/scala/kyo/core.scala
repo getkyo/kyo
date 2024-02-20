@@ -167,6 +167,7 @@ object core {
       final val effect: E   = prev.effect
     }
 
+    // still using in Scala implicit because Conversion can't be fully inlined
     /*inline*/
     implicit def fromKyo[M[_], E <: Effect[M, _], T, U, S](v: Kyo[M, E, T, U, S]): U < S =
       v.asInstanceOf[U < S]

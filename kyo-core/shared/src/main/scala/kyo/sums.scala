@@ -33,7 +33,7 @@ sealed class Sums[V] private[kyo] (using private val tag: Tag[_])
       f: Flat[T < (Sums[V] & S)]
   ): (T, V) < S = {
     var curr = init
-    implicit def handler: Handler[Sum[V]#Value, Sums[V], Any] =
+    given handler: Handler[Sum[V]#Value, Sums[V], Any] =
       new Handler[Sum[V]#Value, Sums[V], Any] {
         def pure[U](v: U) = v
         def apply[T, U, S2](
@@ -91,14 +91,14 @@ object Summer {
       def init              = _init
       def add(v1: V, v2: V) = _add(v1, v2)
     }
-  implicit val intSummer: Summer[Int]             = Summer(0)(_ + _)
-  implicit val longSummer: Summer[Long]           = Summer(0L)(_ + _)
-  implicit val doubleSummer: Summer[Double]       = Summer(0d)(_ + _)
-  implicit val floatSummer: Summer[Float]         = Summer(0f)(_ + _)
-  implicit val stringSummer: Summer[String]       = Summer("")(_ + _)
-  implicit def listSummer[T]: Summer[List[T]]     = Summer(List.empty[T])(_ ++ _)
-  implicit def setSummer[T]: Summer[Set[T]]       = Summer(Set.empty[T])(_ ++ _)
-  implicit def mapSummer[T, U]: Summer[Map[T, U]] = Summer(Map.empty[T, U])(_ ++ _)
+  given intSummer: Summer[Int]             = Summer(0)(_ + _)
+  given longSummer: Summer[Long]           = Summer(0L)(_ + _)
+  given doubleSummer: Summer[Double]       = Summer(0d)(_ + _)
+  given floatSummer: Summer[Float]         = Summer(0f)(_ + _)
+  given stringSummer: Summer[String]       = Summer("")(_ + _)
+  given listSummer[T]: Summer[List[T]]     = Summer(List.empty[T])(_ ++ _)
+  given setSummer[T]: Summer[Set[T]]       = Summer(Set.empty[T])(_ ++ _)
+  given mapSummer[T, U]: Summer[Map[T, U]] = Summer(Map.empty[T, U])(_ ++ _)
 }
 
 private[kyo] object sumsInternal {

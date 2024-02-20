@@ -174,21 +174,21 @@ object completions {
     case class Choice(message: MessageEntry)
     case class Response(choices: List[Choice])
 
-    implicit val nameEncoder: JsonEncoder[Name]               = DeriveJsonEncoder.gen[Name]
-    implicit val functionDefEncoder: JsonEncoder[FunctionDef] = DeriveJsonEncoder.gen[FunctionDef]
-    implicit val callEncoder: JsonEncoder[FunctionCall]       = DeriveJsonEncoder.gen[FunctionCall]
-    implicit val toolCallEncoder: JsonEncoder[ToolCall]       = DeriveJsonEncoder.gen[ToolCall]
-    implicit val toolDefEncoder: JsonEncoder[ToolDef]         = DeriveJsonEncoder.gen[ToolDef]
-    implicit val toolChoiceEncoder: JsonEncoder[ToolChoice]   = DeriveJsonEncoder.gen[ToolChoice]
-    implicit val msgEntryEncoder: JsonEncoder[MessageEntry]   = DeriveJsonEncoder.gen[MessageEntry]
+    given nameEncoder: JsonEncoder[Name]               = DeriveJsonEncoder.gen[Name]
+    given functionDefEncoder: JsonEncoder[FunctionDef] = DeriveJsonEncoder.gen[FunctionDef]
+    given callEncoder: JsonEncoder[FunctionCall]       = DeriveJsonEncoder.gen[FunctionCall]
+    given toolCallEncoder: JsonEncoder[ToolCall]       = DeriveJsonEncoder.gen[ToolCall]
+    given toolDefEncoder: JsonEncoder[ToolDef]         = DeriveJsonEncoder.gen[ToolDef]
+    given toolChoiceEncoder: JsonEncoder[ToolChoice]   = DeriveJsonEncoder.gen[ToolChoice]
+    given msgEntryEncoder: JsonEncoder[MessageEntry]   = DeriveJsonEncoder.gen[MessageEntry]
 
-    implicit val visionEntryContentTextEncoder: JsonEncoder[VisionEntry.Content.Text] =
+    given visionEntryContentTextEncoder: JsonEncoder[VisionEntry.Content.Text] =
       DeriveJsonEncoder.gen[VisionEntry.Content.Text]
 
-    implicit val visionEntryContentImageEncoder: JsonEncoder[VisionEntry.Content.Image] =
+    given visionEntryContentImageEncoder: JsonEncoder[VisionEntry.Content.Image] =
       DeriveJsonEncoder.gen[VisionEntry.Content.Image]
 
-    implicit val visionContentEncoder: JsonEncoder[VisionEntry.Content] =
+    given visionContentEncoder: JsonEncoder[VisionEntry.Content] =
       new JsonEncoder[VisionEntry.Content] {
         def unsafeEncode(a: VisionEntry.Content, indent: Option[Int], out: Write): Unit =
           a match {
@@ -199,22 +199,22 @@ object completions {
           }
       }
 
-    implicit val visionEntryEncoder: JsonEncoder[VisionEntry] = DeriveJsonEncoder.gen[VisionEntry]
+    given visionEntryEncoder: JsonEncoder[VisionEntry] = DeriveJsonEncoder.gen[VisionEntry]
 
-    implicit val entryEncoder: JsonEncoder[Entry] = new JsonEncoder[Entry] {
+    given entryEncoder: JsonEncoder[Entry] = new JsonEncoder[Entry] {
       def unsafeEncode(a: Entry, indent: Option[Int], out: Write): Unit = a match {
         case a: MessageEntry => msgEntryEncoder.unsafeEncode(a, indent, out)
         case a: VisionEntry  => visionEntryEncoder.unsafeEncode(a, indent, out)
       }
     }
 
-    implicit val requestEncoder: JsonEncoder[Request]    = DeriveJsonEncoder.gen[Request]
-    implicit val choiceEncoder: JsonEncoder[Choice]      = DeriveJsonEncoder.gen[Choice]
-    implicit val responseEncoder: JsonEncoder[Response]  = DeriveJsonEncoder.gen[Response]
-    implicit val callDecoder: JsonDecoder[FunctionCall]  = DeriveJsonDecoder.gen[FunctionCall]
-    implicit val toolCallDecoder: JsonDecoder[ToolCall]  = DeriveJsonDecoder.gen[ToolCall]
-    implicit val entryDecoder: JsonDecoder[MessageEntry] = DeriveJsonDecoder.gen[MessageEntry]
-    implicit val choiceDecoder: JsonDecoder[Choice]      = DeriveJsonDecoder.gen[Choice]
-    implicit val responseDecoder: JsonDecoder[Response]  = DeriveJsonDecoder.gen[Response]
+    given requestEncoder: JsonEncoder[Request]    = DeriveJsonEncoder.gen[Request]
+    given choiceEncoder: JsonEncoder[Choice]      = DeriveJsonEncoder.gen[Choice]
+    given responseEncoder: JsonEncoder[Response]  = DeriveJsonEncoder.gen[Response]
+    given callDecoder: JsonDecoder[FunctionCall]  = DeriveJsonDecoder.gen[FunctionCall]
+    given toolCallDecoder: JsonDecoder[ToolCall]  = DeriveJsonDecoder.gen[ToolCall]
+    given entryDecoder: JsonDecoder[MessageEntry] = DeriveJsonDecoder.gen[MessageEntry]
+    given choiceDecoder: JsonDecoder[Choice]      = DeriveJsonDecoder.gen[Choice]
+    given responseDecoder: JsonDecoder[Response]  = DeriveJsonDecoder.gen[Response]
   }
 }

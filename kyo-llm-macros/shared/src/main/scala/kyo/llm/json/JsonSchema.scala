@@ -13,7 +13,7 @@ object Schema {
 
   case class Const[T](v: T)
 
-  implicit val jsonSchemaEncoder: JsonEncoder[Schema] = new JsonEncoder[Schema] {
+  given jsonSchemaEncoder: JsonEncoder[Schema] = new JsonEncoder[Schema] {
     override def unsafeEncode(js: Schema, indent: Option[Int], out: Write): Unit = {
       implicitly[JsonEncoder[Json.Obj]].unsafeEncode(Json.Obj(js.data.toSeq: _*), indent, out)
     }

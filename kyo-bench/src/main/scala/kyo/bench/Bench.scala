@@ -6,7 +6,6 @@ import zio.UIO
 import org.openjdk.jmh.annotations._
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import cats.effect.std.Semaphore.impl
 
 @State(Scope.Benchmark)
 @Fork(

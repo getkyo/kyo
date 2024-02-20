@@ -22,7 +22,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.UUID
 import kyo.internal.KyoSttpMonad
-import kyo.internal.KyoSttpMonad._
+import kyo.internal.KyoSttpMonad.instance
 
 case class NettyKyoServer(
     routes: Vector[Route[KyoSttpMonad.M]],

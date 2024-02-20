@@ -22,10 +22,10 @@ sealed abstract class Resources private[kyo] ()
   }
 
   def run[T, S](v: T < (Resources & S))(
-      implicit f: Flat[T < (Resources & S)]
+      using f: Flat[T < (Resources & S)]
   ): T < (IOs & S) = {
     val finalizer = new Finalizer
-    implicit def handler: Handler[Resource, Resources, Any] =
+    given handler: Handler[Resource, Resources, Any] =
       new Handler[Resource, Resources, Any] {
         def pure[U](v: U) = v
         def apply[U, V, S2](

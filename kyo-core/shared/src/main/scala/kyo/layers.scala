@@ -8,7 +8,7 @@ trait Layer[In, Out] { self =>
       override def run[T, S](
           effect: T < (In & In1 & S)
       )(
-          implicit fl: Flat[T < (In & In1 & S)]
+          using fl: Flat[T < (In & In1 & S)]
       ): T < (S & Out & Out1) = {
         val selfRun =
           self.run[T, S & In1](effect)
@@ -19,7 +19,7 @@ trait Layer[In, Out] { self =>
     }
 
   final def chain[In2, Out2](other: Layer[In2, Out2])(
-      implicit ap: ChainLayer[Out, In2]
+      using ap: ChainLayer[Out, In2]
   ): Layer[In, Out2 & ap.RemainingOut1] = {
     ap.applyLayer[In, Out2](self, other)
   }
@@ -35,7 +35,7 @@ sealed trait ChainLayer[Out1, In2] {
 }
 
 trait ChainLayers2 {
-  implicit def application[Out1, Shared, In2]: ChainLayer.Aux[Out1 & Shared, In2 & Shared, Out1] =
+  given application[Out1, Shared, In2]: ChainLayer.Aux[Out1 & Shared, In2 & Shared, Out1] =
     new ChainLayer[Out1 & Shared, In2 & Shared] {
       type RemainingOut1 = Out1
       override def applyLayer[In1, Out2](
@@ -56,7 +56,7 @@ trait ChainLayers2 {
 }
 
 trait ChainLayers1 {
-  implicit def applyAll1[Shared, In2]: ChainLayer.Aux[Shared, In2 & Shared, Any] =
+  given applyAll1[Shared, In2]: ChainLayer.Aux[Shared, In2 & Shared, Any] =
     new ChainLayer[Shared, In2 & Shared] {
       type RemainingOut1 = Any
 
@@ -76,7 +76,7 @@ trait ChainLayers1 {
 
     }
 
-  implicit def applyAll2[Out1, Shared]: ChainLayer.Aux[Out1 & Shared, Shared, Out1] =
+  given applyAll2[Out1, Shared]: ChainLayer.Aux[Out1 & Shared, Shared, Out1] =
     new ChainLayer[Out1 & Shared, Shared] {
       type RemainingOut1 = Out1
 
@@ -101,7 +101,7 @@ trait ChainLayers1 {
 object ChainLayer extends ChainLayers1 {
   type Aux[Out1, In2, R] = ChainLayer[Out1, In2] { type RemainingOut1 = R }
 
-  implicit def simpleChain[Out]: ChainLayer.Aux[Out, Out, Any] =
+  given simpleChain[Out]: ChainLayer.Aux[Out, Out, Any] =
     new ChainLayer[Out, Out] {
       type RemainingOut1 = Any
 

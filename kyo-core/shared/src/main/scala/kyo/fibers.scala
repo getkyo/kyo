@@ -22,9 +22,10 @@ object Fiber {
   private[kyo] def failed[T](reason: Throwable): Fiber[T]  = Failed(reason).asInstanceOf[Fiber[T]]
   private[kyo] def promise[T](p: IOPromise[T]): Promise[T] = p.asInstanceOf[Promise[T]]
 
+  given flat[T]: Flat[Fiber[T]] = Flat.unsafe.checked
 }
 
-class PromiseOps[T](private val p: Promise[T]) extends AnyVal {
+extension [T](p: Promise[T]) {
 
   def complete(v: T < IOs): Boolean < IOs =
     IOs(p.asInstanceOf[IOPromise[T]].complete(v))
@@ -33,9 +34,7 @@ class PromiseOps[T](private val p: Promise[T]) extends AnyVal {
     p.asInstanceOf[IOPromise[T]].complete(v)
 }
 
-class FiberOps[T](private val state: Fiber[T]) extends AnyVal {
-
-  private given flat[S]: Flat[T < S] = Flat.unsafe.checked[T < S]
+extension [T](state: Fiber[T]) {
 
   def isDone: Boolean < IOs =
     state match {
@@ -65,7 +64,7 @@ class FiberOps[T](private val state: Fiber[T]) extends AnyVal {
         f(state.asInstanceOf[T < IOs])
     }
 
-  def getTry: Try[T] < Fibers =
+  def getTry(using f: Flat[T]): Try[T] < Fibers =
     state match {
       case promise: IOPromise[T] @unchecked =>
         IOs {
@@ -100,7 +99,7 @@ class FiberOps[T](private val state: Fiber[T]) extends AnyVal {
         false
     }
 
-  def toFuture: Future[T] < IOs =
+  def toFuture(using f: Flat[T]): Future[T] < IOs =
     state match {
       case promise: IOPromise[T] @unchecked =>
         IOs {
@@ -116,10 +115,10 @@ class FiberOps[T](private val state: Fiber[T]) extends AnyVal {
         Future.successful(state.asInstanceOf[T])
     }
 
-  def transform[U](t: T => Fiber[U]): Fiber[U] < IOs =
+  def transform[U](t: T => Fiber[U])(using f: Flat[T]): Fiber[U] < IOs =
     IOs(unsafeTransform(t))
 
-  private[kyo] def unsafeTransform[U](t: T => Fiber[U]): Fiber[U] =
+  private[kyo] def unsafeTransform[U](t: T => Fiber[U])(using f: Flat[T]): Fiber[U] =
     state match {
       case promise: IOPromise[T] @unchecked =>
         val r = new IOPromise[U]()
@@ -337,7 +336,7 @@ object fibersInternal {
         new DeepHandler[Fiber, FiberGets] {
           def pure[T](v: T) = Fiber.done(v)
           def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
-            m.unsafeTransform(f)
+            m.unsafeTransform(f)(using Flat.unsafe.checked[T])
         }
       IOs(deepHandle[Fiber, FiberGets, T](FiberGets)(IOs.runLazy(v)))
     }

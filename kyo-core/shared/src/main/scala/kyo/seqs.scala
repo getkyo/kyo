@@ -69,7 +69,7 @@ sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs] {
     loop(n, Seq())
   }
 
-  private implicit val handler: Handler[Seq, Seqs, Any] =
+  private given handler: Handler[Seq, Seqs, Any] =
     new Handler[Seq, Seqs, Any] {
       def pure[T](v: T) = Seq(v)
       def apply[T, U, S](v: Seq[T], f: T => U < (Seqs & S)): U < (Seqs & S) = {

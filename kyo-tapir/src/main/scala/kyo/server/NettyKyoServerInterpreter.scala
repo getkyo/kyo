@@ -19,15 +19,15 @@ import sttp.tapir.server.netty.Route
 import sttp.tapir.server.netty.internal.NettyBodyListener
 import sttp.tapir.server.netty.internal.RunAsync
 import sttp.tapir.server.netty.internal._
+import kyo.internal.KyoSttpMonad.instance
 import kyo.internal.KyoSttpMonad
-import kyo.internal.KyoSttpMonad._
 
 trait NettyKyoServerInterpreter {
   def nettyServerOptions: NettyKyoServerOptions
 
   def toRoute(ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]): Route[KyoSttpMonad.M] = {
 
-    implicit val bodyListener: BodyListener[KyoSttpMonad.M, NettyResponse] = {
+    given bodyListener: BodyListener[KyoSttpMonad.M, NettyResponse] = {
       new NettyBodyListener(NettyKyoServer.runAsync)
     }
 
