@@ -9,10 +9,10 @@ object Aborts {
     type Value[T] = Either[E, T]
   }
 
-  def apply[E](implicit tag: Tag[E]): Aborts[E] =
+  def apply[E](using tag: Tag[E]): Aborts[E] =
     new Aborts(tag)
 
-  def apply[T, E](ex: E)(implicit tag: Tag[E]): T < Aborts[E] =
+  def apply[T, E](ex: E)(using tag: Tag[E]): T < Aborts[E] =
     Aborts[E].get(Left(ex))
 }
 
@@ -21,7 +21,7 @@ import Aborts._
 final class Aborts[E] private[Aborts] (private val tag: Tag[E])
     extends Effect[Abort[E]#Value, Aborts[E]] { self =>
 
-  private implicit def _tag: Tag[E] = tag
+  private given Tag[E] = tag
 
   def fail[T, S](e: E < S): T < (Aborts[E] & S) =
     e.map(e => suspend(Left(e)))
@@ -53,7 +53,7 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
         false
     }
 
-  implicit def handler[E](implicit tag: Tag[E]): Handler[Abort[E]#Value, Aborts[E], Any] =
+  given handler[E](using tag: Tag[E]): Handler[Abort[E]#Value, Aborts[E], Any] =
     new Handler[Abort[E]#Value, Aborts[E], Any] {
 
       val aborts = Aborts[E]
@@ -86,7 +86,7 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
       override def run[T, S](
           effect: T < (Aborts[E] & S)
       )(
-          implicit flat: Flat[T < (Aborts[E] & S)]
+          using flat: Flat[T < (Aborts[E] & S)]
       ): T < (S & Se) =
         self.run[T, S](effect)(flat).map {
           case Left(err) => handle(err)

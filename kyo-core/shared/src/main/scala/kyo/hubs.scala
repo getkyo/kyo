@@ -4,7 +4,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 
 object Hubs {
   private[kyo] val closed = IOs.fail("Hub closed!")
-  def init[T](capacity: Int)(implicit f: Flat[T]): Hub[T] < IOs =
+  def init[T](capacity: Int)(using f: Flat[T]): Hub[T] < IOs =
     Channels.init[T](capacity).map { ch =>
       IOs {
         val listeners = new CopyOnWriteArraySet[Channel[T]]
@@ -54,7 +54,7 @@ class Hub[T] private[kyo] (
     ch: Channel[T],
     fiber: Fiber[Unit],
     listeners: CopyOnWriteArraySet[Channel[T]]
-)(implicit f: Flat[T]) {
+)(using f: Flat[T]) {
 
   def size: Int < IOs = ch.size
 

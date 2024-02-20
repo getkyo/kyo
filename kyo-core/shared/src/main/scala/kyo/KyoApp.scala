@@ -16,11 +16,11 @@ object KyoApp {
 
   abstract class Base[S] extends App {
 
-    protected def handle[T](v: T < S)(implicit f: Flat[T < S]): Unit
+    protected def handle[T](v: T < S)(using f: Flat[T < S]): Unit
 
     @nowarn
     protected def run[T](v: => T < S)(
-        implicit f: Flat[T < S]
+        using f: Flat[T < S]
     ): Unit =
       delayedInit(handle(v))
   }
@@ -28,22 +28,22 @@ object KyoApp {
   type Effects = Fibers & Resources
 
   def run[T](timeout: Duration)(v: T < Effects)(
-      implicit f: Flat[T < Effects]
+      using f: Flat[T < Effects]
   ): T =
     IOs.run(runFiber(timeout)(v).block.map(_.get))
 
   def run[T](v: T < Effects)(
-      implicit f: Flat[T < Effects]
+      using f: Flat[T < Effects]
   ): T =
     run(Duration.Inf)(v)
 
   def runFiber[T](v: T < Effects)(
-      implicit f: Flat[T < Effects]
+      using f: Flat[T < Effects]
   ): Fiber[Try[T]] =
     runFiber(Duration.Inf)(v)
 
   def runFiber[T](timeout: Duration)(v: T < Effects)(
-      implicit f: Flat[T < Effects]
+      using f: Flat[T < Effects]
   ): Fiber[Try[T]] = {
     def v1: T < Fibers          = Resources.run(v)
     def v2: Try[T] < Fibers     = IOs.attempt(v1)

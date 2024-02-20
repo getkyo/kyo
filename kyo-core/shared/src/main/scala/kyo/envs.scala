@@ -10,19 +10,19 @@ object Envs {
     type Value[T] >: T // = T | Input.type
   }
 
-  def apply[E](implicit tag: Tag[E]): Envs[E] =
+  def apply[E](using tag: Tag[E]): Envs[E] =
     new Envs[E]
 }
 import Envs._
 
-final class Envs[E] private[kyo] (implicit private val tag: Tag[_])
+final class Envs[E] private[kyo] (using private val tag: Tag[_])
     extends Effect[Env[E]#Value, Envs[E]] { self =>
 
   val get: E < Envs[E] =
     suspend(Input.asInstanceOf[Env[E]#Value[E]])
 
-  def run[T, S](e: E)(v: T < (Envs[E] & S))(implicit f: Flat[T < (Envs[E] & S)]): T < S = {
-    implicit val handler: Handler[Env[E]#Value, Envs[E], Any] =
+  def run[T, S](e: E)(v: T < (Envs[E] & S))(using f: Flat[T < (Envs[E] & S)]): T < S = {
+    given Handler[Env[E]#Value, Envs[E], Any] =
       new Handler[Env[E]#Value, Envs[E], Any] {
         def pure[U](v: U) = v
         def apply[U, V, S2](

@@ -73,22 +73,22 @@ class AI private[llm] (val id: Long) {
   def toolMessage(callId: CallId, msg: String): Unit < AIs =
     update(_.toolMessage(callId, msg))
 
-  def thought[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Unit < AIs =
+  def thought[T <: Thought](using j: Json[T], t: ClassTag[T]): Unit < AIs =
     update(_.thought(Thoughts.opening[T]))
 
-  def closingThought[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Unit < AIs =
+  def closingThought[T <: Thought](using j: Json[T], t: ClassTag[T]): Unit < AIs =
     update(_.thought(Thoughts.closing[T]))
 
-  def genNow[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
+  def genNow[T](msg: String)(using t: Json[T], f: Flat[T]): T < AIs =
     userMessage(msg).andThen(genNow[T])
 
-  def genNow[T](implicit t: Json[T], f: Flat[T]): T < AIs =
+  def genNow[T](using t: Json[T], f: Flat[T]): T < AIs =
     Tools.disable(gen[T](Nil, Nil))
 
-  def gen[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
+  def gen[T](msg: String)(using t: Json[T], f: Flat[T]): T < AIs =
     userMessage(msg).andThen(gen[T])
 
-  def gen[T](implicit t: Json[T], f: Flat[T]): T < AIs =
+  def gen[T](using t: Json[T], f: Flat[T]): T < AIs =
     save.map { ctx =>
       Tools.get.map(t => gen[T](t, ctx.thoughts))
     }
@@ -167,16 +167,16 @@ object AIs extends Joins[AIs] {
       ai.reminder(reminder).andThen(ai)
     }
 
-  def run[T, S](v: T < (AIs & S))(implicit f: Flat[T < (AIs & S)]): T < (Fibers & S) =
+  def run[T, S](v: T < (AIs & S))(using f: Flat[T < (AIs & S)]): T < (Fibers & S) =
     State.run[T, Fibers & S](v).map(_._1)
 
-  def genNow[T](implicit t: Json[T], f: Flat[T]): T < AIs =
+  def genNow[T](using t: Json[T], f: Flat[T]): T < AIs =
     init.map(_.genNow[T])
 
-  def genNow[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
+  def genNow[T](msg: String)(using t: Json[T], f: Flat[T]): T < AIs =
     init.map(_.genNow[T](msg))
 
-  def gen[T](msg: String)(implicit t: Json[T], f: Flat[T]): T < AIs =
+  def gen[T](msg: String)(using t: Json[T], f: Flat[T]): T < AIs =
     init.map(_.gen[T](msg))
 
   def genNow[T](prompt: String, msg: String)(
@@ -217,7 +217,7 @@ object AIs extends Joins[AIs] {
       IOs.attempt[T, S](f).map(r => State.set(st).map(_ => r.get))
     }
 
-  def race[T](l: Seq[T < AIs])(implicit f: Flat[T < AIs]): T < AIs =
+  def race[T](l: Seq[T < AIs])(using f: Flat[T < AIs]): T < AIs =
     State.get.map { st =>
       Fibers.race[(T, State)](l.map(State.run[T, Fibers](st)))
         .map {
@@ -226,7 +226,7 @@ object AIs extends Joins[AIs] {
         }
     }
 
-  def parallel[T](l: Seq[T < AIs])(implicit f: Flat[T < AIs]): Seq[T] < AIs =
+  def parallel[T](l: Seq[T < AIs])(using f: Flat[T < AIs]): Seq[T] < AIs =
     State.get.map { st =>
       Fibers.parallel[(T, State)](l.map(State.run[T, Fibers](st)))
         .map { rl =>

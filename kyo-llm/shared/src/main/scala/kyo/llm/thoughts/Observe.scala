@@ -26,7 +26,7 @@ object Observe {
   }
 
   object Count {
-    implicit def schema[T](implicit s: ZSchema[T]): ZSchema[Count[T]] =
+    implicit def schema[T](using s: ZSchema[T]): ZSchema[Count[T]] =
       s.transform(Count(_), _.v)
   }
 

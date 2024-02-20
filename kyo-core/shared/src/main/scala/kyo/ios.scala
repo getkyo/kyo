@@ -96,7 +96,7 @@ sealed trait IOs extends Effect[IO, IOs] {
   }
 
   /*inline*/
-  def run[T](v: T < IOs)(implicit f: Flat[T < IOs]): T = {
+  def run[T](v: T < IOs)(using f: Flat[T < IOs]): T = {
     val safepoint = Safepoint.noop[IO, IOs]
     @tailrec def runLoop(v: T < IOs): T =
       v match {
@@ -110,7 +110,7 @@ sealed trait IOs extends Effect[IO, IOs] {
   }
 
   /*inline*/
-  def runLazy[T, S](v: T < (IOs & S))(implicit f: Flat[T < (IOs & S)]): T < S = {
+  def runLazy[T, S](v: T < (IOs & S))(using f: Flat[T < (IOs & S)]): T < S = {
     def runLazyLoop(v: T < (IOs & S)): T < S = {
       val safepoint = Safepoint.noop[IO, IOs]
       v match {

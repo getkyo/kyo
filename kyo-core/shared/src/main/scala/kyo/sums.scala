@@ -7,7 +7,7 @@ import scala.util._
 
 import sumsInternal._
 
-sealed class Sums[V] private[kyo] (implicit private val tag: Tag[_])
+sealed class Sums[V] private[kyo] (using private val tag: Tag[_])
     extends Effect[Sum[V]#Value, Sums[V]] {
 
   val get: V < Sums[V] =

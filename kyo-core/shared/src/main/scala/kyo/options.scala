@@ -1,6 +1,6 @@
 package kyo
 
-opaque type Options = Aborts[Option[Nothing]]
+type Options = Aborts[Option[Nothing]]
 
 object Options {
 
@@ -27,7 +27,7 @@ object Options {
       case Some(v) => v
     }
 
-  def run[T, S](v: T < (Options & S))(implicit f: Flat[T < (Options & S)]): Option[T] < S =
+  def run[T, S](v: T < (Options & S))(using f: Flat[T < (Options & S)]): Option[T] < S =
     aborts.run[T, S](v).map {
       case Left(e)  => None
       case Right(v) => Some(v)

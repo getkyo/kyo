@@ -1,7 +1,7 @@
 package kyo
 
 trait Layer[In, Out] { self =>
-  def run[T, S](effect: T < (In & S))(implicit fl: Flat[T < (In & S)]): T < (S & Out)
+  def run[T, S](effect: T < (In & S))(using fl: Flat[T < (In & S)]): T < (S & Out)
 
   final def andThen[Out1, In1](other: Layer[In1, Out1]): Layer[In & In1, Out & Out1] =
     new Layer[In & In1, Out & Out1] {

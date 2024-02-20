@@ -113,7 +113,7 @@ object core {
       def check()                    = false
       def suspend[T, S](v: => T < S) = v
     }
-    implicit def noop[M[_], E <: Effect[M, E]]: Safepoint[M, E] =
+    given noop[M[_], E <: Effect[M, E]]: Safepoint[M, E] =
       _noop.asInstanceOf[Safepoint[M, E]]
   }
 

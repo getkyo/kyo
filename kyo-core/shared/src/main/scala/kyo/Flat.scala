@@ -12,12 +12,12 @@ object Flat extends FlatImplicits {
   private val cachedChecked   = new Checked[Any] {}
   private val cachedUnchecked = new Unchecked[Any] {}
 
-  implicit def unit[S]: Flat[Unit < S] = unsafe.checked[Unit < S]
+  given unit[S]: Flat[Unit < S] = unsafe.checked[Unit < S]
 
   object unsafe {
     def checked[T]: Checked[T] =
       cachedChecked.asInstanceOf[Checked[T]]
-    implicit def unchecked[T]: Unchecked[T] =
+    given unchecked[T]: Unchecked[T] =
       cachedUnchecked.asInstanceOf[Unchecked[T]]
   }
 }

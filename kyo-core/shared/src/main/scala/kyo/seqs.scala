@@ -6,7 +6,7 @@ import scala.collection.mutable.ListBuffer
 
 sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs] {
 
-  def run[T, S](v: T < (Seqs & S))(implicit f: Flat[T < (Seqs & S)]): Seq[T] < S =
+  def run[T, S](v: T < (Seqs & S))(using f: Flat[T < (Seqs & S)]): Seq[T] < S =
     handle[T, S, Any](v)
 
   def repeat(n: Int): Unit < Seqs =
@@ -78,7 +78,7 @@ sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs] {
             case Seq() =>
               Seqs.get(acc.reverse.flatten: Seq[U])
             case t +: ts =>
-              import Flat.unsafe._
+              import Flat.unsafe.unchecked
               Seqs.run[U, S](f(t)).map(l => loop(ts, l +: acc))
           }
         loop(v, Seq.empty)

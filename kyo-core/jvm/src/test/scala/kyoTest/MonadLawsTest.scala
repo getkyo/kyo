@@ -20,7 +20,7 @@ object MonadLawsTest extends ZIOSpecDefault {
 
   val listGenF: GenF[Any, Myo] =
     new GenF[Any, Myo] {
-      def apply[R, A](gen: Gen[R, A])(implicit trace: Trace) =
+      def apply[R, A](gen: Gen[R, A])(using trace: Trace) =
         Gen.oneOf(
             gen.map(v => (v: A < Fibers)),
             gen.map(v => IOs(v)),
@@ -30,7 +30,7 @@ object MonadLawsTest extends ZIOSpecDefault {
         ).map(Myo(_))
     }
 
-  implicit val cdeif: CovariantDeriveEqualIdentityFlatten[Myo] =
+  given CovariantDeriveEqualIdentityFlatten[Myo] =
     new CovariantDeriveEqualIdentityFlatten[Myo] {
       override def flatten[A](ffa: Myo[Myo[A]]): Myo[A] =
         Myo(ffa.v.flatMap(_.v))

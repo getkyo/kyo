@@ -15,19 +15,19 @@ trait Json[T] {
 
 object Json extends JsonDerive {
 
-  def apply[T](implicit j: Json[T]): Json[T] =
+  def apply[T](using j: Json[T]): Json[T] =
     j
 
-  def schema[T](implicit j: Json[T]): Schema =
+  def schema[T](using j: Json[T]): Schema =
     j.schema
 
-  def encode[T](v: T)(implicit j: Json[T]): String < IOs =
+  def encode[T](v: T)(using j: Json[T]): String < IOs =
     j.encode(v)
 
-  def decode[T](s: String)(implicit j: Json[T]): T < IOs =
+  def decode[T](s: String)(using j: Json[T]): T < IOs =
     j.decode(s)
 
-  implicit def primitive[T](implicit t: StandardType[T]): Json[T] =
+  implicit def primitive[T](using t: StandardType[T]): Json[T] =
     fromZio(ZSchema.Primitive(t, Chunk.empty))
 
   def fromZio[T](z: ZSchema[T]) =

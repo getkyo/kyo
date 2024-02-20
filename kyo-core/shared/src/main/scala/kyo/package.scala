@@ -23,22 +23,22 @@ package object kyo {
       map(v => if (!p(v)) throw new MatchError(v) else v)
 
     /*inline*/
-    def flatten[U, S2](implicit ev: T => U < S2): U < (S & S2) =
+    def flatten[U, S2](using ev: T => U < S2): U < (S & S2) =
       flatMap(ev)
 
     /*inline*/
-    def andThen[U, S2](f: => U < S2)(implicit ev: T => Unit): U < (S & S2) =
+    def andThen[U, S2](f: => U < S2)(using ev: T => Unit): U < (S & S2) =
       flatMap(_ => f)
 
     /*inline*/
-    def repeat(i: Int)(implicit ev: T => Unit): Unit < S =
+    def repeat(i: Int)(using ev: T => Unit): Unit < S =
       if (i <= 0) () else andThen(repeat(i - 1))
 
   }
 
   extension [T, S](v: T < Any) {
     /*inline*/
-    def pure(implicit ev: Any => S): T =
+    def pure(using ev: Any => S): T =
       v.asInstanceOf[T]
   }
 

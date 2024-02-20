@@ -35,7 +35,7 @@ class PromiseOps[T](private val p: Promise[T]) extends AnyVal {
 
 class FiberOps[T](private val state: Fiber[T]) extends AnyVal {
 
-  private implicit def flat[S]: Flat[T < S] = Flat.unsafe.checked[T < S]
+  private given flat[S]: Flat[T < S] = Flat.unsafe.checked[T < S]
 
   def isDone: Boolean < IOs =
     state match {
@@ -161,7 +161,7 @@ object Fibers extends Joins[fibersInternal.Fibers] {
 
   private[kyo] val interrupted = IOs.fail(Interrupted)
 
-  def run[T](v: T < Fibers)(implicit f: Flat[T < Fibers]): Fiber[T] < IOs =
+  def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
     FiberGets.run(v)
 
   def runAndBlock[T, S](v: T < (Fibers & S))(implicit
@@ -169,7 +169,7 @@ object Fibers extends Joins[fibersInternal.Fibers] {
   ): T < (IOs & S) =
     FiberGets.runAndBlock[T, S](v)
 
-  def value[T](v: T)(implicit f: Flat[T < Any]): Fiber[T] =
+  def value[T](v: T)(using f: Flat[T < Any]): Fiber[T] =
     Fiber.done(v)
 
   def get[T, S](v: Fiber[T] < S): T < (Fibers & S) =
@@ -186,10 +186,10 @@ object Fibers extends Joins[fibersInternal.Fibers] {
   // compiler bug workaround
   private val IOTask = kyo.scheduler.IOTask
 
-  def init[T](v: => T < Fibers)(implicit f: Flat[T < Fibers]): Fiber[T] < IOs =
+  def init[T](v: => T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
     Locals.save.map(st => Fiber.promise(IOTask(IOs(v), st)))
 
-  def parallel[T](l: Seq[T < Fibers])(implicit f: Flat[T < Fibers]): Seq[T] < Fibers =
+  def parallel[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Seq[T] < Fibers =
     l.size match {
       case 0 => Seq.empty
       case 1 => l(0).map(Seq(_))
@@ -197,7 +197,7 @@ object Fibers extends Joins[fibersInternal.Fibers] {
         Fibers.get(parallelFiber[T](l))
     }
 
-  def parallelFiber[T](l: Seq[T < Fibers])(implicit f: Flat[T < Fibers]): Fiber[Seq[T]] < IOs =
+  def parallelFiber[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Fiber[Seq[T]] < IOs =
     l.size match {
       case 0 => Fiber.done(Seq.empty)
       case 1 => Fibers.run(l(0).map(Seq(_)))
@@ -231,7 +231,7 @@ object Fibers extends Joins[fibersInternal.Fibers] {
         }
     }
 
-  def race[T](l: Seq[T < Fibers])(implicit f: Flat[T < Fibers]): T < Fibers =
+  def race[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): T < Fibers =
     l.size match {
       case 0 => IOs.fail("Can't race an empty list.")
       case 1 => l(0)
@@ -239,7 +239,7 @@ object Fibers extends Joins[fibersInternal.Fibers] {
         Fibers.get(raceFiber[T](l))
     }
 
-  def raceFiber[T](l: Seq[T < Fibers])(implicit f: Flat[T < Fibers]): Fiber[T] < IOs =
+  def raceFiber[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Fiber[T] < IOs =
     l.size match {
       case 0 => IOs.fail("Can't race an empty list.")
       case 1 => Fibers.run(l(0))
@@ -279,7 +279,7 @@ object Fibers extends Joins[fibersInternal.Fibers] {
       }
     }
 
-  def timeout[T](d: Duration)(v: => T < Fibers)(implicit f: Flat[T < Fibers]): T < Fibers =
+  def timeout[T](d: Duration)(v: => T < Fibers)(using f: Flat[T < Fibers]): T < Fibers =
     init(v).map { f =>
       val timeout: Unit < IOs =
         IOs {
@@ -332,8 +332,8 @@ object fibersInternal {
     def apply[T, S](f: Fiber[T] < S): T < (FiberGets & S) =
       suspend(f)
 
-    def run[T](v: T < Fibers)(implicit f: Flat[T < Fibers]): Fiber[T] < IOs = {
-      implicit val handler: DeepHandler[Fiber, FiberGets] =
+    def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs = {
+      given DeepHandler[Fiber, FiberGets] =
         new DeepHandler[Fiber, FiberGets] {
           def pure[T](v: T) = Fiber.done(v)
           def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
@@ -345,7 +345,7 @@ object fibersInternal {
     def runAndBlock[T, S](v: T < (Fibers & S))(implicit
         f: Flat[T < (Fibers & S)]
     ): T < (IOs & S) = {
-      implicit def handler: Handler[Fiber, FiberGets, Any] =
+      given Handler[Fiber, FiberGets, Any] =
         new Handler[Fiber, FiberGets, Any] {
           def pure[T](v: T) = Fiber.done(v)
           override def handle[T](ex: Throwable): T < FiberGets =

@@ -61,10 +61,10 @@ object Thoughts {
       json: Json[_]
   )
 
-  def opening[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Info =
+  def opening[T <: Thought](using j: Json[T], t: ClassTag[T]): Info =
     Info(t.runtimeClass.getSimpleName(), Position.Opening, j)
 
-  def closing[T <: Thought](implicit j: Json[T], t: ClassTag[T]): Info =
+  def closing[T <: Thought](using j: Json[T], t: ClassTag[T]): Info =
     Info(t.runtimeClass.getSimpleName(), Position.Closing, j)
 
   private[kyo] def result[T](thoughts: List[Info], j: Json[T], full: Boolean): Json[Result[T]] = {

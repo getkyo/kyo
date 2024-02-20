@@ -6,6 +6,7 @@ import zio.UIO
 import org.openjdk.jmh.annotations._
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import cats.effect.std.Semaphore.impl
 
 @State(Scope.Benchmark)
 @Fork(
@@ -31,7 +32,7 @@ import cats.effect.unsafe.implicits.global
     // jvm = "/Users/flavio.brasil/Downloads/graalvm-ce-java17-22.3.0/Contents/Home/bin/java"
 )
 @BenchmarkMode(Array(Mode.Throughput))
-sealed abstract class Bench[T](implicit f: Flat[T]) {
+sealed abstract class Bench[T](using f: Flat[T]) {
   def zioBench(): UIO[T]
   def kyoBenchFiber(): T < Fibers = kyoBench()
   def kyoBench(): T < IOs
@@ -40,7 +41,7 @@ sealed abstract class Bench[T](implicit f: Flat[T]) {
 
 object Bench {
 
-  abstract class Fork[T](implicit f: Flat[T]) extends Bench[T] {
+  abstract class Fork[T](using f: Flat[T]) extends Bench[T] {
     @Benchmark
     def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block))
 
@@ -53,11 +54,11 @@ object Bench {
     )
   }
 
-  abstract class ForkOnly[T](implicit f: Flat[T]) extends Fork[T] {
+  abstract class ForkOnly[T](using f: Flat[T]) extends Fork[T] {
     def kyoBench() = ???
   }
 
-  abstract class SyncAndFork[T](implicit f: Flat[T]) extends Fork[T] {
+  abstract class SyncAndFork[T](using f: Flat[T]) extends Fork[T] {
 
     @Benchmark
     def syncKyo(): T = IOs.run(kyoBench())
