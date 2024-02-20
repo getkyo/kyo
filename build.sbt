@@ -205,7 +205,7 @@ lazy val `kyo-sttp` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.2"
+        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.3"
     )
     .jsSettings(`js-settings`)
 
@@ -230,7 +230,7 @@ lazy val `kyo-llm-macros` =
     .dependsOn(`kyo-core` % "test->test;compile->compile")
     .settings(
         `kyo-settings`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.2",
+        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.3",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.17",
         libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.17",
         libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.17",
