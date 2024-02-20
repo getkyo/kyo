@@ -254,7 +254,7 @@ lazy val `kyo-llm` =
     .dependsOn(`kyo-llm-macros`)
     .settings(
         `kyo-settings`,
-        libraryDependencies += "com.knuddels" % "jtokkit" % "0.6.1"
+        libraryDependencies += "com.knuddels" % "jtokkit" % "1.0.0"
     )
     .jsSettings(`js-settings`)
 
