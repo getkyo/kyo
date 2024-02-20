@@ -69,8 +69,7 @@ object tokens {
                 loop(h, t)
             }
           case arr: Array[Int] =>
-            // TODO JTokkit should support arrays
-            val a = new ArrayList[Integer](arr.length)
+            val a = new IntArrayList(arr.length)
             var i = 0
             while (i < arr.length) {
               a.add(arr(i))
