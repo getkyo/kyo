@@ -35,11 +35,11 @@ sealed class Sums[V] private[kyo] (using private val tag: Tag[_])
     var curr = init
     given handler: Handler[Sum[V]#Value, Sums[V], Any] =
       new Handler[Sum[V]#Value, Sums[V], Any] {
-        def pure[U](v: U) = v
-        def apply[T, U, S2](
+        def pure[U: Flat](v: U) = v
+        def apply[T, U: Flat, S2](
             m: Sum[V]#Value[T],
             f: T => U < (Sums[V] & S2)
-        )(using flat: Flat[U]): U < (S2 & Sums[V]) =
+        ): U < (S2 & Sums[V]) =
           m match {
             case AddValue(v) =>
               curr = g.add(curr, v.asInstanceOf[V])

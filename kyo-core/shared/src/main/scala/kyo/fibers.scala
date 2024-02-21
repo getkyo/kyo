@@ -18,21 +18,21 @@ import fibersInternal._
 sealed abstract class Fiber[+T] {
   def isDone: Boolean < IOs
   def get: T < Fibers
-  def getTry(using f: Flat[T]): Try[T] < Fibers
+  def getTry: Try[T] < Fibers
   def onComplete(f: T < IOs => Unit < IOs): Unit < IOs
   def block: T < IOs
   def interrupt: Boolean < IOs
-  def toFuture(using f: Flat[T]): Future[T] < IOs
-  def transform[U](t: T => Fiber[U] < IOs)(using f: Flat[T]): Fiber[U] < IOs
+  def toFuture: Future[T] < IOs
+  def transform[U: Flat](t: T => Fiber[U] < IOs): Fiber[U] < IOs
 }
 
-case class Promise[T](private[kyo] val p: IOPromise[T]) extends Fiber[T] {
+case class Promise[T: Flat](private[kyo] val p: IOPromise[T]) extends Fiber[T] {
 
   def isDone = IOs(p.isDone())
 
   def get = FiberGets(this)
 
-  def getTry(using f: Flat[T]) =
+  def getTry =
     IOs {
       val r = new IOPromise[Try[T]]
       r.interrupts(p)
@@ -51,7 +51,7 @@ case class Promise[T](private[kyo] val p: IOPromise[T]) extends Fiber[T] {
   def interrupt =
     IOs(p.interrupt())
 
-  def toFuture(using f: Flat[T]) =
+  def toFuture =
     IOs {
       val r = scala.concurrent.Promise[T]()
       p.onComplete { v =>
@@ -60,7 +60,7 @@ case class Promise[T](private[kyo] val p: IOPromise[T]) extends Fiber[T] {
       r.future
     }
 
-  def transform[U](t: T => Fiber[U] < IOs)(using f: Flat[T]) =
+  def transform[U: Flat](t: T => Fiber[U] < IOs) =
     IOs {
       val r = new IOPromise[U]()
       r.interrupts(p)
@@ -106,7 +106,7 @@ object Fibers extends Joins[Fibers] {
   ): T < (IOs & S) =
     FiberGets.runAndBlock[T, S](v)
 
-  def value[T](v: T)(using f: Flat[T < Any]): Fiber[T] =
+  def value[T: Flat](v: T): Fiber[T] =
     Done(v)
 
   def get[T, S](v: Fiber[T] < S): T < (Fibers & S) =
@@ -117,7 +117,7 @@ object Fibers extends Joins[Fibers] {
   def initPromise[T]: Promise[T] < IOs =
     _promise.asInstanceOf[Promise[T] < IOs]
 
-  private[kyo] def unsafeInitPromise[T]: Promise[T] =
+  private[kyo] def unsafeInitPromise[T: Flat]: Promise[T] =
     Promise(new IOPromise[T]())
 
   // compiler bug workaround
@@ -228,10 +228,10 @@ object Fibers extends Joins[Fibers] {
       }
     }
 
-  def fromFuture[T, S](f: Future[T]): T < Fibers =
+  def fromFuture[T: Flat, S](f: Future[T]): T < Fibers =
     Fibers.get(fromFutureFiber(f))
 
-  def fromFutureFiber[T](f: Future[T]): Fiber[T] < IOs = {
+  def fromFutureFiber[T: Flat](f: Future[T]): Fiber[T] < IOs = {
     Locals.save.map { st =>
       IOs {
         val p = new IOPromise[T]()
@@ -262,18 +262,17 @@ object Fibers extends Joins[Fibers] {
 
 object fibersInternal {
 
-  case class Done[T](result: T < IOs) extends Fiber[T] {
+  case class Done[T: Flat](result: T < IOs) extends Fiber[T] {
     def isDone                               = true
     def get                                  = result
-    def getTry(using f: Flat[T])             = IOs.attempt(result)
+    def getTry                               = IOs.attempt(result)
     def onComplete(f: T < IOs => Unit < IOs) = f(result)
     def block                                = result
     def interrupt                            = false
 
-    def toFuture(using f: Flat[T]) =
-      Future.fromTry(Try(IOs.run(result)))
+    def toFuture = Future.fromTry(Try(IOs.run(result)))
 
-    def transform[U](t: T => Fiber[U] < IOs)(using f: Flat[T]) =
+    def transform[U: Flat](t: T => Fiber[U] < IOs) =
       result.map(t)
   }
 
@@ -285,8 +284,8 @@ object fibersInternal {
     def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs = {
       given DeepHandler[Fiber, FiberGets, IOs] =
         new DeepHandler[Fiber, FiberGets, IOs] {
-          def pure[T](v: T) = Done(v)
-          def apply[T, U](m: Fiber[T], f: T => Fiber[U] < IOs)(using flat: Flat[T]) =
+          def pure[T: Flat](v: T) = Done(v)
+          def apply[T, U: Flat](m: Fiber[T], f: T => Fiber[U] < IOs) =
             m.transform(f)
         }
       IOs(deepHandle[Fiber, FiberGets, T, IOs](FiberGets)(IOs.runLazy(v)))
@@ -297,10 +296,10 @@ object fibersInternal {
     ): T < (IOs & S) = {
       given Handler[Fiber, FiberGets, IOs] =
         new Handler[Fiber, FiberGets, IOs] {
-          def pure[T](v: T) = Done(v)
-          override def handle[T](ex: Throwable): T < FiberGets =
+          def pure[T: Flat](v: T) = Done(v)
+          override def handle[T: Flat](ex: Throwable): T < FiberGets =
             FiberGets(Done(IOs.fail(ex)))
-          def apply[T, U, S](m: Fiber[T], f: T => U < (FiberGets & S))(using flat: Flat[U]) =
+          def apply[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
             try {
               m match {
                 case m: Promise[T] @unchecked =>

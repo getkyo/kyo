@@ -15,9 +15,6 @@ import kyo.scheduler.Scheduler
 private[kyo] class IOPromise[T](state: State[T])
     extends AtomicReference(state) {
 
-  private given flat[S]: Flat[T < S] =
-    Flat.unsafe.bypass
-
   def this() = this(Pending())
 
   final def isDone(): Boolean = {
@@ -165,7 +162,7 @@ private[kyo] class IOPromise[T](state: State[T])
 
 private[kyo] object IOPromise {
 
-  type State[T] = Any // (T < IOs) | Pending[T] | Linked[T]
+  type State[T] = (T < IOs) | Pending[T] | Linked[T]
 
   case class Linked[T](p: IOPromise[T])
 

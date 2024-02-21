@@ -4,8 +4,6 @@ import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 
 import scala.annotation.tailrec
 
-import Flat.unsafe.bypass
-
 abstract class Channel[T] { self =>
 
   def size: Int < IOs
@@ -40,7 +38,7 @@ object Channels {
   private val placeholder = Fibers.unsafeInitPromise[Unit]
   private val closed      = IOs.fail("Channel closed!")
 
-  def init[T](
+  def init[T: Flat](
       capacity: Int,
       access: Access = kyo.Access.Mpmc
   ): Channel[T] < IOs =

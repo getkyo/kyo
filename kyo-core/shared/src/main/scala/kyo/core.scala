@@ -7,9 +7,9 @@ object core {
   import internal._
 
   abstract class Handler[M[_], E <: Effect[M, E], S] {
-    def pure[T](v: T): M[T]
-    def handle[T](ex: Throwable): T < E = throw ex
-    def apply[T, U, S2](m: M[T], f: T => U < (E & S2))(using flat: Flat[U]): U < (E & S & S2)
+    def pure[T: Flat](v: T): M[T]
+    def handle[T: Flat](ex: Throwable): T < E = throw ex
+    def apply[T, U: Flat, S2](m: M[T], f: T => U < (E & S2)): U < (E & S & S2)
   }
 
   abstract class Effect[M[_], E <: Effect[M, E]] {
@@ -121,14 +121,14 @@ object core {
 
     def deepHandle[M[_], E <: Effect[M, E], T, S](e: E)(v: T < E)(implicit
         h: DeepHandler[M, E, S],
-        s: Safepoint[M, E]
+        s: Safepoint[M, E],
+        f: Flat[T]
     ): M[T] < S = {
       def deepHandleLoop(v: T < E): M[T] < S =
         v match {
           case kyo: Kyo[M, E, Any, T, E] @unchecked =>
             require(kyo.effect == e, "Unhandled effect: " + kyo.effect)
-            h.apply(kyo.value, (v: Any) => deepHandleLoop(kyo(v, s, Locals.State.empty)))(using
-            Flat.unsafe.bypass)
+            h.apply(kyo.value, (v: Any) => deepHandleLoop(kyo(v, s, Locals.State.empty)))
           case _ =>
             h.pure(v.asInstanceOf[T])
         }
@@ -142,8 +142,8 @@ object core {
     type EX    = Effect[MX, _]
 
     abstract class DeepHandler[M[_], E <: Effect[M, E], S] {
-      def pure[T](v: T): M[T]
-      def apply[T, U](m: M[T], f: T => M[U] < S)(using flat: Flat[T]): M[U] < S
+      def pure[T: Flat](v: T): M[T]
+      def apply[T, U: Flat](m: M[T], f: T => M[U] < S): M[U] < S
     }
 
     abstract class Kyo[M[_], E <: Effect[M, _], T, U, S] {

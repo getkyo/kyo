@@ -27,11 +27,11 @@ sealed abstract class Resources private[kyo] ()
     val finalizer = new Finalizer
     given handler: Handler[Resource, Resources, Any] =
       new Handler[Resource, Resources, Any] {
-        def pure[U](v: U) = v
-        def apply[U, V, S2](
+        def pure[U: Flat](v: U) = v
+        def apply[U, V: Flat, S2](
             m: Resource[U],
             f: U => V < (Resources & S2)
-        )(using flat: Flat[V]): V < (S2 & Resources) =
+        ): V < (S2 & Resources) =
           m match {
             case GetFinalizer =>
               f(finalizer.asInstanceOf[U])

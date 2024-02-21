@@ -58,19 +58,19 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
 
       val aborts = Aborts[E]
 
-      def pure[U](v: U) = Right(v)
+      def pure[U: Flat](v: U) = Right(v)
 
-      override def handle[T](ex: Throwable): T < Aborts[E] =
+      override def handle[T: Flat](ex: Throwable): T < Aborts[E] =
         if (tag.closestClass.isAssignableFrom(ex.getClass)) {
           aborts.fail(ex.asInstanceOf[E])
         } else {
           throw ex
         }
 
-      def apply[U, V, S2](
+      def apply[U, V: Flat, S2](
           m: Either[E, U],
           f: U => V < (Aborts[E] & S2)
-      )(using flat: Flat[V]): V < (S2 & Aborts[E]) =
+      ): V < (S2 & Aborts[E]) =
         m match {
           case left: Left[_, _] =>
             aborts.get(left.asInstanceOf[Left[E, V]])

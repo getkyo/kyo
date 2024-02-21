@@ -24,11 +24,11 @@ final class Envs[E] private[kyo] (using private val tag: Tag[_])
   def run[T, S](e: E)(v: T < (Envs[E] & S))(using f: Flat[T < (Envs[E] & S)]): T < S = {
     given Handler[Env[E]#Value, Envs[E], Any] =
       new Handler[Env[E]#Value, Envs[E], Any] {
-        def pure[U](v: U) = v
-        def apply[U, V, S2](
+        def pure[U: Flat](v: U) = v
+        def apply[U, V: Flat, S2](
             m: Env[E]#Value[U],
             f: U => V < (Envs[E] & S2)
-        )(using flat: Flat[V]): V < (S2 & Envs[E]) =
+        ): V < (S2 & Envs[E]) =
           m match {
             case Input =>
               f(e.asInstanceOf[U])
