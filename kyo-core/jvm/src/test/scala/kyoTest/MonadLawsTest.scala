@@ -9,7 +9,7 @@ import zio.prelude.coherent.CovariantDeriveEqualIdentityFlatten
 import zio.prelude.laws._
 import zio.test._
 import zio.test.laws._
-import Flat.unsafe.unchecked
+import Flat.unsafe.bypass
 
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration.Duration

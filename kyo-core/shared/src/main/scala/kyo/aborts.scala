@@ -70,7 +70,7 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
       def apply[U, V, S2](
           m: Either[E, U],
           f: U => V < (Aborts[E] & S2)
-      ): V < (S2 & Aborts[E]) =
+      )(using flat: Flat[V]): V < (S2 & Aborts[E]) =
         m match {
           case left: Left[_, _] =>
             aborts.get(left.asInstanceOf[Left[E, V]])

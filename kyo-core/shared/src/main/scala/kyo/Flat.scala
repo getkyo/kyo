@@ -6,18 +6,13 @@ sealed trait Flat[-T]
 
 object Flat extends FlatImplicits {
 
-  sealed trait Checked[T]   extends Flat[T]
-  sealed trait Unchecked[T] extends Flat[T]
+  private val cached = new Flat[Any] {}
 
-  private val cachedChecked   = new Checked[Any] {}
-  private val cachedUnchecked = new Unchecked[Any] {}
-
-  given unit[S]: Flat[Unit < S] = unsafe.checked[Unit < S]
+  given unit[S]: Flat[Unit < S] = unsafe.bypass[Unit < S]
 
   object unsafe {
-    def checked[T]: Checked[T] =
-      cachedChecked.asInstanceOf[Checked[T]]
-    given unchecked[T]: Unchecked[T] =
-      cachedUnchecked.asInstanceOf[Unchecked[T]]
+    /*inline*/
+    given bypass[T]: Flat[T] =
+      cached.asInstanceOf[Flat[T]]
   }
 }

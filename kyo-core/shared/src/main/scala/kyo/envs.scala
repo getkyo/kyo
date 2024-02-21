@@ -28,7 +28,7 @@ final class Envs[E] private[kyo] (using private val tag: Tag[_])
         def apply[U, V, S2](
             m: Env[E]#Value[U],
             f: U => V < (Envs[E] & S2)
-        ): V < (S2 & Envs[E]) =
+        )(using flat: Flat[V]): V < (S2 & Envs[E]) =
           m match {
             case Input =>
               f(e.asInstanceOf[U])

@@ -72,13 +72,12 @@ sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs] {
   private given handler: Handler[Seq, Seqs, Any] =
     new Handler[Seq, Seqs, Any] {
       def pure[T](v: T) = Seq(v)
-      def apply[T, U, S](v: Seq[T], f: T => U < (Seqs & S)): U < (Seqs & S) = {
+      def apply[T, U, S](v: Seq[T], f: T => U < (Seqs & S))(using flat: Flat[U]): U < (Seqs & S) = {
         def loop(l: Seq[T], acc: Seq[Seq[U]]): U < (Seqs & S) =
           l match {
             case Seq() =>
               Seqs.get(acc.reverse.flatten: Seq[U])
             case t +: ts =>
-              import Flat.unsafe.unchecked
               Seqs.run[U, S](f(t)).map(l => loop(ts, l +: acc))
           }
         loop(v, Seq.empty)

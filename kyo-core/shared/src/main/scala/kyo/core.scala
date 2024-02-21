@@ -9,7 +9,7 @@ object core {
   abstract class Handler[M[_], E <: Effect[M, E], S] {
     def pure[T](v: T): M[T]
     def handle[T](ex: Throwable): T < E = throw ex
-    def apply[T, U, S2](m: M[T], f: T => U < (E & S2)): U < (E & S & S2)
+    def apply[T, U, S2](m: M[T], f: T => U < (E & S2))(using flat: Flat[U]): U < (E & S & S2)
   }
 
   abstract class Effect[M[_], E <: Effect[M, E]] {

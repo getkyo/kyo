@@ -38,7 +38,7 @@ trait Joins[E] {
       f1: Flat[T1 < E],
       f2: Flat[T2 < E]
   ): (T1, T2) < E =
-    parallel(List(v1, v2))(using Flat.unsafe.checked).map(s =>
+    parallel(List(v1, v2))(using Flat.unsafe.bypass).map(s =>
       (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2])
     )
 
@@ -52,7 +52,7 @@ trait Joins[E] {
       f2: Flat[T2 < E],
       f3: Flat[T3 < E]
   ): (T1, T2, T3) < E =
-    parallel(List(v1, v2, v3))(using Flat.unsafe.checked).map(s =>
+    parallel(List(v1, v2, v3))(using Flat.unsafe.bypass).map(s =>
       (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3])
     )
 
@@ -68,7 +68,7 @@ trait Joins[E] {
       f3: Flat[T3 < E],
       f4: Flat[T4 < E]
   ): (T1, T2, T3, T4) < E =
-    parallel(List(v1, v2, v3, v4))(using Flat.unsafe.checked).map(s =>
+    parallel(List(v1, v2, v3, v4))(using Flat.unsafe.bypass).map(s =>
       (s(0).asInstanceOf[T1], s(1).asInstanceOf[T2], s(2).asInstanceOf[T3], s(3).asInstanceOf[T4])
     )
 }

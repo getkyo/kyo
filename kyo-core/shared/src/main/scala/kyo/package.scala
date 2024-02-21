@@ -63,5 +63,5 @@ package object kyo {
   type Fibers = fibersInternal.Fibers
 
   implicit def flat[T]: Flat[Fiber[T]] =
-    Flat.unsafe.checked[Fiber[T]]
+    Flat.unsafe.bypass[Fiber[T]]
 }

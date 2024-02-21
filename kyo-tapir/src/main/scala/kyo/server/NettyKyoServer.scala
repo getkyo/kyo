@@ -132,7 +132,7 @@ object NettyKyoServer {
     override def apply[T](f: => T < Fibers): Unit =
       IOs.run {
         Fibers.init {
-          import Flat.unsafe.unchecked
+          import Flat.unsafe.bypass
           IOs.run(Fibers.run(IOs.runLazy(f)).unit)
         }
       }

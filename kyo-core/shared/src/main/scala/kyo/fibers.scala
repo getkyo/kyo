@@ -22,7 +22,7 @@ object Fiber {
   private[kyo] def failed[T](reason: Throwable): Fiber[T]  = Failed(reason).asInstanceOf[Fiber[T]]
   private[kyo] def promise[T](p: IOPromise[T]): Promise[T] = p.asInstanceOf[Promise[T]]
 
-  given flat[T]: Flat[Fiber[T]] = Flat.unsafe.checked
+  given flat[T]: Flat[Fiber[T]] = Flat.unsafe.bypass
 }
 
 extension [T](p: Promise[T]) {
@@ -336,7 +336,7 @@ object fibersInternal {
         new DeepHandler[Fiber, FiberGets] {
           def pure[T](v: T) = Fiber.done(v)
           def apply[T, U](m: Fiber[T], f: T => Fiber[U]): Fiber[U] =
-            m.unsafeTransform(f)(using Flat.unsafe.checked[T])
+            m.unsafeTransform(f)(using Flat.unsafe.bypass[T])
         }
       IOs(deepHandle[Fiber, FiberGets, T](FiberGets)(IOs.runLazy(v)))
     }
@@ -349,7 +349,7 @@ object fibersInternal {
           def pure[T](v: T) = Fiber.done(v)
           override def handle[T](ex: Throwable): T < FiberGets =
             FiberGets(Fiber.failed[T](ex))
-          def apply[T, U, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
+          def apply[T, U, S](m: Fiber[T], f: T => U < (FiberGets & S))(using flat: Flat[U]) =
             try {
               m match {
                 case m: IOPromise[T] @unchecked =>

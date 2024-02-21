@@ -31,7 +31,7 @@ sealed abstract class Resources private[kyo] ()
         def apply[U, V, S2](
             m: Resource[U],
             f: U => V < (Resources & S2)
-        ): V < (S2 & Resources) =
+        )(using flat: Flat[V]): V < (S2 & Resources) =
           m match {
             case GetFinalizer =>
               f(finalizer.asInstanceOf[U])

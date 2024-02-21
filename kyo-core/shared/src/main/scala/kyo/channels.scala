@@ -4,7 +4,7 @@ import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 
 import scala.annotation.tailrec
 
-import Flat.unsafe.unchecked
+import Flat.unsafe.bypass
 
 abstract class Channel[T] { self =>
 

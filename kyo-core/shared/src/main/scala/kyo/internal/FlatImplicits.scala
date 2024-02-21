@@ -10,12 +10,12 @@ trait FlatImplicits0 {
 
 trait FlatImplicits1 extends FlatImplicits0 {
   given product[T <: Product]: Flat[T] =
-    Flat.unsafe.checked[T]
+    Flat.unsafe.bypass[T]
 }
 
 trait FlatImplicits extends FlatImplicits1 {
   given anyVal[T <: AnyVal]: Flat[T] =
-    Flat.unsafe.checked[T]
+    Flat.unsafe.bypass[T]
 }
 
 object FlatImplicits {
@@ -66,7 +66,7 @@ object FlatImplicits {
             s"Cannot prove ${code(print(t))} isn't nested. Provide an implicit evidence ${code(s"kyo.Flat[${print(t)}]")}."
         )
       } else {
-        '{ Flat.unsafe.checked[T] }
+        '{ Flat.unsafe.bypass[T] }
       }
 
     t match {

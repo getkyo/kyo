@@ -16,7 +16,7 @@ private[kyo] class IOPromise[T](state: State[T])
     extends AtomicReference(state) {
 
   private given flat[S]: Flat[T < S] =
-    Flat.unsafe.checked
+    Flat.unsafe.bypass
 
   def this() = this(Pending())
 

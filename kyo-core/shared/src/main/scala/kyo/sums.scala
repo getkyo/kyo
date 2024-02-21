@@ -39,7 +39,7 @@ sealed class Sums[V] private[kyo] (using private val tag: Tag[_])
         def apply[T, U, S2](
             m: Sum[V]#Value[T],
             f: T => U < (Sums[V] & S2)
-        ): U < (S2 & Sums[V]) =
+        )(using flat: Flat[U]): U < (S2 & Sums[V]) =
           m match {
             case AddValue(v) =>
               curr = g.add(curr, v.asInstanceOf[V])
