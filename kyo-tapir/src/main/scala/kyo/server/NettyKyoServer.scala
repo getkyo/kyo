@@ -129,13 +129,11 @@ case class NettyKyoServer(
 object NettyKyoServer {
 
   private[kyo] val runAsync = new RunAsync[KyoSttpMonad.M] {
-    override def apply[T](f: => T < Fibers): Unit =
-      IOs.run {
-        Fibers.init {
-          import Flat.unsafe.bypass
-          IOs.run(Fibers.run(IOs.runLazy(f)).unit)
-        }
-      }
+    override def apply[T](f: => T < Fibers): Unit = {
+      // TODO remove https://github.com/softwaremill/tapir/pull/3529
+      import Flat.unsafe.bypass
+      IOs.run(Fibers.init(f).unit)
+    }
   }
 
   def apply(): NettyKyoServer =
