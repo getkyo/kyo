@@ -12,7 +12,7 @@ object tokens {
 
   private case class Concat(a: Tokens, b: Tokens)
 
-  type Tokens // = Unit | Array[Int] | Concat
+  opaque type Tokens = Tokens.Empty.type | Array[Int] | Concat
 
   extension (a: Tokens) {
 
@@ -25,11 +25,11 @@ object tokens {
 
     def append(b: Tokens): Tokens =
       a match {
-        case Tokens.empty =>
+        case Tokens.Empty =>
           b
         case a =>
           b match {
-            case Tokens.empty =>
+            case Tokens.Empty =>
               a
             case b =>
               Concat(a, b).asInstanceOf[Tokens]
@@ -39,17 +39,17 @@ object tokens {
     def size: Int = {
       def loop(head: Tokens, tail: List[Tokens], acc: Int): Int =
         head match {
-          case Tokens.empty =>
+          case Tokens.Empty =>
             tail match {
               case Nil => acc
               case h :: t =>
                 loop(h, t, acc)
             }
           case arr: Array[Int] =>
-            loop(Tokens.empty, tail, acc + arr.length)
+            loop(Tokens.Empty, tail, acc + arr.length)
           case Concat(a, b) =>
             b match {
-              case Tokens.empty =>
+              case Tokens.Empty =>
                 loop(a, tail, acc)
               case b =>
                 loop(a, b :: tail, acc)
@@ -62,7 +62,7 @@ object tokens {
       val b = new StringBuilder
       def loop(head: Tokens, tail: List[Tokens]): Unit =
         head match {
-          case Tokens.empty =>
+          case Tokens.Empty =>
             tail match {
               case Nil => ()
               case h :: t =>
@@ -76,10 +76,10 @@ object tokens {
               i += 1
             }
             b.addAll(encoding.decode(a))
-            loop(Tokens.empty, tail)
+            loop(Tokens.Empty, tail)
           case Concat(a, b) =>
             b match {
-              case Tokens.empty =>
+              case Tokens.Empty =>
                 loop(a, tail)
               case b =>
                 loop(a, b :: tail)
@@ -92,15 +92,15 @@ object tokens {
 
   object Tokens {
 
-    val empty: Tokens = ().asInstanceOf[Tokens]
+    object Empty
 
     def apply(s: String): Tokens =
-      empty.append(s)
+      Empty.append(s)
 
     object internal {
       def read(b: ByteBuffer, pos: Int, size: Int): Tokens = {
         if (b.limit() <= pos) {
-          Tokens.empty
+          Tokens.Empty
         } else {
           b.position(pos)
           var arr = new Array[Int](size)
@@ -118,7 +118,7 @@ object tokens {
       def write(t: Tokens, b: ByteBuffer): Unit = {
         def loop(head: Tokens, tail: List[Tokens]): Unit =
           head match {
-            case Tokens.empty =>
+            case Tokens.Empty =>
               tail match {
                 case Nil => ()
                 case h :: t =>
@@ -130,10 +130,10 @@ object tokens {
                 b.putInt(arr(i))
                 i += 1
               }
-              loop(Tokens.empty, tail)
+              loop(Tokens.Empty, tail)
             case Concat(a, b) =>
               b match {
-                case Tokens.empty =>
+                case Tokens.Empty =>
                   loop(a, tail)
                 case b =>
                   loop(a, b :: tail)
