@@ -130,33 +130,35 @@ private[kyo] class IOPromise[T](state: State[T])
     loop()
   }
 
-  final def block(): T = {
-    def loop(promise: IOPromise[T]): T =
+  final def block: T < IOs = {
+    def loop(promise: IOPromise[T]): T < IOs =
       promise.get() match {
         case _: Pending[T] @unchecked =>
-          val b = new (T < IOs => Unit) with (() => T < IOs) {
-            @volatile
-            private var result: T < IOs = null.asInstanceOf[T < IOs]
-            private val waiter          = Thread.currentThread()
-            def apply(v: T < IOs) = {
-              result = v
-              LockSupport.unpark(waiter)
-            }
-            def apply() = {
-              while (result == null) {
-                LockSupport.park()
+          IOs {
+            Scheduler.flush()
+            val b = new (T < IOs => Unit) with (() => T < IOs) {
+              @volatile
+              private var result: T < IOs = null.asInstanceOf[T < IOs]
+              private val waiter          = Thread.currentThread()
+              def apply(v: T < IOs) = {
+                result = v
+                LockSupport.unpark(waiter)
               }
-              result
+              def apply() = {
+                while (result == null) {
+                  LockSupport.park()
+                }
+                result
+              }
             }
+            onComplete(b)
+            b()
           }
-          onComplete(b)
-          IOs.run(b())
         case l: Linked[T] @unchecked =>
           loop(l.p)
         case v =>
-          v.asInstanceOf[T]
+          v.asInstanceOf[T < IOs]
       }
-    Scheduler.flush()
     loop(this)
   }
 }

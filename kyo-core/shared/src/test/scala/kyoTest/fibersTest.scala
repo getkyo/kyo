@@ -280,7 +280,7 @@ class fibersTest extends KyoTest {
 
       for {
         l           <- Latches.init(1)
-        fiber       <- Fibers.run(IOs.runLazy(Fibers.init(task(l))))
+        fiber       <- Fibers.init(task(l))
         _           <- Fibers.sleep(10.millis)
         interrupted <- fiber.interrupt
         _           <- l.await

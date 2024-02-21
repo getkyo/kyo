@@ -19,7 +19,7 @@ class Cache(private[kyo] val store: Store) {
         Fibers.initPromise[U].map { p =>
           val key = (this, v)
           IOs[U, Fibers & S] {
-            store.get(key, _ => p) match {
+            store.get(key, _ => p.asInstanceOf[Promise[Any]]) match {
               case `p` =>
                 IOs.ensure {
                   p.interrupt.map {

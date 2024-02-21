@@ -45,8 +45,8 @@ class channelsTest extends KyoTest {
       b     <- c.offer(1)
       put   <- c.putFiber(2)
       f     <- c.isFull
-      take1 <- Fibers.init(c.takeFiber)
-      take2 <- Fibers.init(c.takeFiber)
+      take1 <- c.takeFiber
+      take2 <- c.takeFiber
       v1    <- take1.get
       _     <- put.get
       v2    <- take1.get

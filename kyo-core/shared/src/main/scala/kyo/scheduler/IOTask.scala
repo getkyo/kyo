@@ -107,19 +107,18 @@ private[kyo] class IOTask[T](
         case kyo: Kyo[Fiber, FiberGets, Any, T, Fibers] @unchecked
             if (kyo.effect eq FiberGets) =>
           kyo.value match {
-            case promise: IOPromise[T] @unchecked =>
-              this.interrupts(promise)
+            case Promise(p) =>
+              this.interrupts(p)
               val runtime = this.runtime() + (Coordinator.tick() - start).asInstanceOf[Int]
-              promise.onComplete { (v: Any < IOs) =>
+              p.onComplete { (v: Any < IOs) =>
                 val io = IOs(kyo(v, this.asInstanceOf[Safepoint[Fiber, FiberGets]], locals))
                 this.become(IOTask(io, locals, ensures, runtime))
+                ()
               }
-            case Failed(ex) =>
-              complete(IOs.fail(ex))
-            case v =>
-              complete(v.asInstanceOf[T < IOs])
+              nullIO
+            case Done(v) =>
+              eval(start, kyo(v, this.asInstanceOf[Safepoint[Fiber, FiberGets]], locals))
           }
-          nullIO
         case _ =>
           complete(curr.asInstanceOf[T < IOs])
           finalize()

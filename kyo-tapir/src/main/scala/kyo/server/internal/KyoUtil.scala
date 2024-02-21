@@ -11,7 +11,7 @@ import scala.concurrent.CancellationException
 object KyoUtil {
   def nettyChannelFutureToScala(nettyFuture: ChannelFuture): Channel < Fibers =
     Fibers.initPromise[Channel].map { p =>
-      p.onComplete(_ => IOs(nettyFuture.cancel(true))).andThen {
+      p.onComplete(_ => IOs(nettyFuture.cancel(true).unit)).andThen {
         nettyFuture.addListener((future: ChannelFuture) =>
           IOs.run {
             if (future.isSuccess) p.complete(future.channel())
@@ -25,7 +25,7 @@ object KyoUtil {
 
   def nettyFutureToScala[T](f: io.netty.util.concurrent.Future[T]): T < Fibers =
     Fibers.initPromise[T].map { p =>
-      p.onComplete(_ => IOs(f.cancel(true))).andThen {
+      p.onComplete(_ => IOs(f.cancel(true)).unit).andThen {
         f.addListener((future: io.netty.util.concurrent.Future[T]) =>
           IOs.run {
             if (future.isSuccess) p.complete(future.getNow)
