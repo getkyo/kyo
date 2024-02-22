@@ -1,8 +1,8 @@
 package kyo.llm.thoughts
 
-import kyo._
+import kyo.*
 
-import kyo.llm._
+import kyo.llm.*
 
 case class Reduce[Expr, Result](
     initialExpression: Expr,

@@ -1,6 +1,6 @@
 package kyo.llm.thoughts
 
-import kyo.llm._
+import kyo.llm.*
 
 case class Ethics(
     `Analyze ethical implications of different scenarios`: String,

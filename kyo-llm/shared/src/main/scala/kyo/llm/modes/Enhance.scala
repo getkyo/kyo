@@ -1,18 +1,18 @@
 package kyo.llm.modes
 
-import kyo._
-import kyo.llm._
-import kyo.llm.completions._
+import kyo.*
+import kyo.llm.*
+import kyo.llm.completions.*
 
-case class Enhance(iterations: Int = 1) extends Mode {
-  def apply(ai: AI)(next: AI => Completion < AIs): Completion < AIs = {
-    def loop(l: List[Completion], iterations: Int): Completion < AIs =
-      if (iterations == 0) {
-        l.last
-      } else {
-        AIs.ephemeral {
-          ai.systemMessage(
-              p"""
+case class Enhance(iterations: Int = 1) extends Mode:
+    def apply(ai: AI)(next: AI => Completion < AIs): Completion < AIs =
+        def loop(l: List[Completion], iterations: Int): Completion < AIs =
+            if iterations == 0 then
+                l.last
+            else
+                AIs.ephemeral {
+                    ai.systemMessage(
+                        p"""
                   Enhance Mode
                   ============
                   This is the 'Enhance Mode' in continuous operation. You have generated multiple 
@@ -29,10 +29,9 @@ case class Enhance(iterations: Int = 1) extends Mode {
                   ====================
                   ${l.mkString("\n\n")}
                 """
-          ).andThen(next(ai))
-        }.map(c => loop(c :: l, iterations - 1))
-      }
-    AIs.ephemeral(next(ai))
-      .map(c => loop(c :: Nil, iterations))
-  }
-}
+                    ).andThen(next(ai))
+                }.map(c => loop(c :: l, iterations - 1))
+        AIs.ephemeral(next(ai))
+            .map(c => loop(c :: Nil, iterations))
+    end apply
+end Enhance

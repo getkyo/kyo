@@ -1,6 +1,5 @@
 package kyo.scheduler
 
-object Coordinator {
+object Coordinator:
 
-  def tick(): Long = 0
-}
+    def tick(): Long = 0

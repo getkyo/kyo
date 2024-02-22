@@ -6,94 +6,92 @@ import cps.async
 import cps.await
 
 import scala.annotation.targetName
-import scala.quoted._
+import scala.quoted.*
 import cps.CpsMonad
 
-object direct {
+object direct:
 
-  import internal._
+    import internal.*
 
-  private inline given kyoCpsMonad[S]: KyoCpsMonad[S] = KyoCpsMonad[S]
+    private inline given kyoCpsMonad[S]: KyoCpsMonad[S] = KyoCpsMonad[S]
 
-  transparent inline def defer[T](inline f: T) = ${ impl[T]('f) }
+    transparent inline def defer[T](inline f: T) = ${ impl[T]('f) }
 
-  inline def await[T, S](v: T < S): T =
-    compiletime.error("`await` must be used within a `defer` block")
+    inline def await[T, S](v: T < S): T =
+        compiletime.error("`await` must be used within a `defer` block")
 
-  private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] = {
-    import quotes.reflect._
-    import quotes.reflect.report._
+    private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
+        import quotes.reflect.*
+        import quotes.reflect.report.*
 
-    Validate(f)
+        Validate(f)
 
-    var effects = List.empty[Type[_]]
+        var effects = List.empty[Type[_]]
 
-    Trees.traverse(f.asTerm) {
-      case Apply(TypeApply(Ident("await"), List(t, s)), List(v)) =>
-        effects ::= s.tpe.asType
-    }
-
-    val s =
-      effects
-        .distinct
-        .flatMap {
-          case '[s] =>
-            TypeRepr.of[s] match {
-              case AndType(a, b) =>
-                List(a.asType, b.asType)
-              case _ =>
-                List(Type.of[s])
-            }
-        }.sortBy {
-          case '[t] => TypeTree.of[t].show
-        } match {
-        case Nil => Type.of[Any]
-        case l =>
-          l.reduce {
-            case ('[t1], '[t2]) =>
-              Type.of[t1 & t2]
-          }
-      }
-
-    s match {
-      case '[s] =>
-        val body =
-          Trees.transform(f.asTerm) {
-            case Apply(TypeApply(Ident("await"), List(t, s2)), List(v)) =>
-              t.tpe.asType match {
-                case '[t] =>
-                  '{
-                    cps.await[[T] =>> T < s, t, [T] =>> T < s](${ v.asExprOf[t < s] })
-                  }.asTerm
-              }
-          }
-
-        '{
-          given KyoCpsMonad[s] = KyoCpsMonad[s]
-          async[[U] =>> U < s] {
-            ${ body.asExprOf[T] }
-          }: T < s
+        Trees.traverse(f.asTerm) {
+            case Apply(TypeApply(Ident("await"), List(t, s)), List(v)) =>
+                effects ::= s.tpe.asType
         }
-    }
-  }
 
-  object internal {
-    class KyoCpsMonad[S]
-        extends CpsMonadContext[[T] =>> T < S]
-        with CpsMonad[[T] =>> T < S] {
+        val s =
+            effects
+                .distinct
+                .flatMap {
+                    case '[s] =>
+                        TypeRepr.of[s] match
+                            case AndType(a, b) =>
+                                List(a.asType, b.asType)
+                            case _ =>
+                                List(Type.of[s])
+                }.sortBy {
+                    case '[t] => TypeTree.of[t].show
+                } match
+                case Nil => Type.of[Any]
+                case l =>
+                    l.reduce {
+                        case ('[t1], '[t2]) =>
+                            Type.of[t1 & t2]
+                    }
 
-      type Context = KyoCpsMonad[S]
+        s match
+            case '[s] =>
+                val body =
+                    Trees.transform(f.asTerm) {
+                        case Apply(TypeApply(Ident("await"), List(t, s2)), List(v)) =>
+                            t.tpe.asType match
+                                case '[t] =>
+                                    '{
+                                        cps.await[[T] =>> T < s, t, [T] =>> T < s](${
+                                            v.asExprOf[t < s]
+                                        })
+                                    }.asTerm
+                    }
 
-      override def monad: CpsMonad[[T] =>> T < S] = this
+                '{
+                    given KyoCpsMonad[s] = KyoCpsMonad[s]
+                    async[[U] =>> U < s] {
+                        ${ body.asExprOf[T] }
+                    }: T < s
+                }
+        end match
+    end impl
 
-      override def apply[T](op: Context => T < S): T < S = op(this)
+    object internal:
+        class KyoCpsMonad[S]
+            extends CpsMonadContext[[T] =>> T < S]
+            with CpsMonad[[T] =>> T < S]:
 
-      override inline def pure[T](t: T): T < S = t
+            type Context = KyoCpsMonad[S]
 
-      override inline def map[A, B](fa: A < S)(f: A => B): B < S = fa.map(f(_))
+            override def monad: CpsMonad[[T] =>> T < S] = this
 
-      override inline def flatMap[A, B](fa: A < S)(f: A => B < S): B < S = fa.flatMap(f)
+            override def apply[T](op: Context => T < S): T < S = op(this)
 
-    }
-  }
-}
+            override inline def pure[T](t: T): T < S = t
+
+            override inline def map[A, B](fa: A < S)(f: A => B): B < S = fa.map(f(_))
+
+            override inline def flatMap[A, B](fa: A < S)(f: A => B < S): B < S = fa.flatMap(f)
+        end KyoCpsMonad
+    end internal
+end direct

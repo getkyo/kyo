@@ -1,57 +1,54 @@
 package kyo.stats.internal
 
-import kyo._
+import kyo.*
 
-import kyo.stats._
+import kyo.stats.*
 
 import java.util.ServiceLoader
-import scala.jdk.CollectionConverters._
+import scala.jdk.CollectionConverters.*
 
 import kyo.stats.Attributes
 
-trait TraceReceiver {
+trait TraceReceiver:
 
-  def startSpan(
-      scope: List[String],
-      name: String,
-      parent: Option[Span] = None,
-      attributes: Attributes = Attributes.empty
-  ): Span < IOs
-}
+    def startSpan(
+        scope: List[String],
+        name: String,
+        parent: Option[Span] = None,
+        attributes: Attributes = Attributes.empty
+    ): Span < IOs
+end TraceReceiver
 
-object TraceReceiver {
+object TraceReceiver:
 
-  val get: TraceReceiver =
-    ServiceLoader.load(classOf[TraceReceiver]).iterator().asScala.toList match {
-      case Nil =>
-        TraceReceiver.noop
-      case head :: Nil =>
-        head
-      case l =>
-        TraceReceiver.all(l)
-    }
+    val get: TraceReceiver =
+        ServiceLoader.load(classOf[TraceReceiver]).iterator().asScala.toList match
+            case Nil =>
+                TraceReceiver.noop
+            case head :: Nil =>
+                head
+            case l =>
+                TraceReceiver.all(l)
 
-  val noop: TraceReceiver =
-    new TraceReceiver {
-      def startSpan(
-          scope: List[String],
-          name: String,
-          parent: Option[Span] = None,
-          attributes: Attributes = Attributes.empty
-      ) =
-        Span.noop
-    }
+    val noop: TraceReceiver =
+        new TraceReceiver:
+            def startSpan(
+                scope: List[String],
+                name: String,
+                parent: Option[Span] = None,
+                attributes: Attributes = Attributes.empty
+            ) =
+                Span.noop
 
-  def all(receivers: List[TraceReceiver]): TraceReceiver =
-    new TraceReceiver {
-      def startSpan(
-          scope: List[String],
-          name: String,
-          parent: Option[Span] = None,
-          a: Attributes = Attributes.empty
-      ) =
-        Seqs
-          .traverse(receivers)(_.startSpan(scope, name, None, a))
-          .map(Span.all)
-    }
-}
+    def all(receivers: List[TraceReceiver]): TraceReceiver =
+        new TraceReceiver:
+            def startSpan(
+                scope: List[String],
+                name: String,
+                parent: Option[Span] = None,
+                a: Attributes = Attributes.empty
+            ) =
+                Seqs
+                    .traverse(receivers)(_.startSpan(scope, name, None, a))
+                    .map(Span.all)
+end TraceReceiver

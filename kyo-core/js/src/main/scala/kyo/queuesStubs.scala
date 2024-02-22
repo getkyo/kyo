@@ -4,11 +4,11 @@ import java.util.ArrayDeque
 import java.util.concurrent.BlockingQueue
 import java.util.concurrent.LinkedBlockingDeque
 
-class StubQueue[T](capacity: Int) extends ArrayDeque[T] {
-  def isFull = size() >= capacity
-  override def offer(e: T): Boolean =
-    !isFull && super.offer(e)
-}
+class StubQueue[T](capacity: Int) extends ArrayDeque[T]:
+    def isFull = size() >= capacity
+    override def offer(e: T): Boolean =
+        !isFull && super.offer(e)
+end StubQueue
 
 case class MpmcArrayQueue[T](capacity: Int) extends StubQueue[T](capacity)
 

@@ -1,6 +1,6 @@
 package kyo.llm.thoughts
 
-import kyo.llm._
+import kyo.llm.*
 
 case class Expert(
     `I am an expert in the task requested by the user`: Boolean,

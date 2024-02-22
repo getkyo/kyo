@@ -1,6 +1,6 @@
 package kyo.llm.thoughts
 
-import kyo.llm._
+import kyo.llm.*
 
 case class Repair(
     `Check for failures from tool and system messages`: Boolean,

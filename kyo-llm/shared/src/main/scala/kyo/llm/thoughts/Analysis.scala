@@ -1,6 +1,6 @@
 package kyo.llm.thoughts
 
-import kyo.llm._
+import kyo.llm.*
 
 case class Analysis(
     `Dissect the input into fundamental elements for a detailed examination`: String,

@@ -1,14 +1,14 @@
 package kyo.llm.modes
 
-import kyo._
-import kyo.llm._
-import kyo.llm.completions._
+import kyo.*
+import kyo.llm.*
+import kyo.llm.completions.*
 
-object Ground extends Mode {
-  def apply(ai: AI)(next: AI => Completion < AIs): Completion < AIs =
-    AIs.ephemeral(next(ai)).map { c =>
-      ai.systemMessage(
-          p"""
+object Ground extends Mode:
+    def apply(ai: AI)(next: AI => Completion < AIs): Completion < AIs =
+        AIs.ephemeral(next(ai)).map { c =>
+            ai.systemMessage(
+                p"""
             Ground Mode
             ===========
             Initiate the 'Ground Mode'. Your task is to critically review the initial completion. 
@@ -22,6 +22,6 @@ object Ground extends Mode {
             ==================
             $c
           """
-      ).andThen(next(ai))
-    }
-}
+            ).andThen(next(ai))
+        }
+end Ground

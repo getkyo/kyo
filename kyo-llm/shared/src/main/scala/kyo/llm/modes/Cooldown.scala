@@ -1,17 +1,17 @@
 package kyo.llm.modes
 
-import kyo._
-import kyo.llm._
-import kyo.llm.completions._
+import kyo.*
+import kyo.llm.*
+import kyo.llm.completions.*
 
-case class Cooldown(hot: Double = 1, cold: Double = 0, parallelism: Int = 3) extends Mode {
+case class Cooldown(hot: Double = 1, cold: Double = 0, parallelism: Int = 3) extends Mode:
 
-  def apply(ai: AI)(next: AI => Completion < AIs): Completion < AIs = {
-    AIs.ephemeral {
-      AIs.parallel(List.fill(parallelism)(Configs.let(_.temperature(hot))(next(ai))))
-    }.map { hot =>
-      ai.systemMessage(
-          p"""
+    def apply(ai: AI)(next: AI => Completion < AIs): Completion < AIs =
+        AIs.ephemeral {
+            AIs.parallel(List.fill(parallelism)(Configs.let(_.temperature(hot))(next(ai))))
+        }.map { hot =>
+            ai.systemMessage(
+                p"""
             Cooldown Mode
             =============
             This prompt initiates the 'Colldown Mode'. The following are potential completions generated 
@@ -24,10 +24,8 @@ case class Cooldown(hot: Double = 1, cold: Double = 0, parallelism: Int = 3) ext
             ============================
             ${hot.mkString("\n\n")}
           """
-      ).andThen {
-        Configs.let(_.temperature(cold))(next(ai))
-      }
-    }
-  }
-
-}
+            ).andThen {
+                Configs.let(_.temperature(cold))(next(ai))
+            }
+        }
+end Cooldown

@@ -1,6 +1,6 @@
 package kyo.internal
 
-import kyo._
+import kyo.*
 
 import sttp.monad.MonadAsyncError
 import KyoSttpMonad.M
@@ -9,54 +9,50 @@ import scala.util.Failure
 import scala.util.Success
 import sttp.monad.Canceler
 
-object KyoSttpMonad {
-  type M[T] = T < Fibers
+object KyoSttpMonad:
+    type M[T] = T < Fibers
 
-  given instance: MonadAsyncError[M] =
-    new MonadAsyncError[M] {
+    given instance: MonadAsyncError[M] =
+        new MonadAsyncError[M]:
 
-      def map[T, T2](fa: T < Fibers)(f: T => T2): T2 < Fibers =
-        fa.map(f)
+            def map[T, T2](fa: T < Fibers)(f: T => T2): T2 < Fibers =
+                fa.map(f)
 
-      def flatMap[T, T2](fa: T < Fibers)(
-          f: T => T2 < Fibers
-      ): T2 < Fibers =
-        fa.flatMap(f)
+            def flatMap[T, T2](fa: T < Fibers)(
+                f: T => T2 < Fibers
+            ): T2 < Fibers =
+                fa.flatMap(f)
 
-      protected def handleWrappedError[T](rt: T < Fibers)(
-          h: PartialFunction[Throwable, T < Fibers]
-      ) =
-        IOs.handle(rt)(h)
+            protected def handleWrappedError[T](rt: T < Fibers)(
+                h: PartialFunction[Throwable, T < Fibers]
+            ) =
+                IOs.handle(rt)(h)
 
-      def ensure[T](f: T < Fibers, e: => Unit < Fibers) =
-        IOs.ensure(Fibers.run(e).unit)(f)
+            def ensure[T](f: T < Fibers, e: => Unit < Fibers) =
+                IOs.ensure(Fibers.run(e).unit)(f)
 
-      def error[T](t: Throwable) =
-        IOs.fail(t)
+            def error[T](t: Throwable) =
+                IOs.fail(t)
 
-      def unit[T](t: T) =
-        t
+            def unit[T](t: T) =
+                t
 
-      override def eval[T](t: => T) =
-        IOs[T, Fibers](t)
+            override def eval[T](t: => T) =
+                IOs[T, Fibers](t)
 
-      override def suspend[T](t: => M[T]) =
-        IOs[T, Fibers](t)
+            override def suspend[T](t: => M[T]) =
+                IOs[T, Fibers](t)
 
-      def async[T](register: (Either[Throwable, T] => Unit) => Canceler): M[T] = {
-        Fibers.initPromise[T].map { p =>
-          val canceller =
-            register {
-              case Left(t)  => p.unsafeComplete(IOs.fail(t))
-              case Right(t) => p.unsafeComplete(t)
-            }
-          p.onComplete { r =>
-            if (r == Fibers.interrupted) {
-              canceller.cancel()
-            }
-          }.andThen(p.get)
-        }
-      }
-    }
-
-}
+            def async[T](register: (Either[Throwable, T] => Unit) => Canceler): M[T] =
+                Fibers.initPromise[T].map { p =>
+                    val canceller =
+                        register {
+                            case Left(t)  => p.unsafeComplete(IOs.fail(t))
+                            case Right(t) => p.unsafeComplete(t)
+                        }
+                    p.onComplete { r =>
+                        if r == Fibers.interrupted then
+                            canceller.cancel()
+                    }.andThen(p.get)
+                }
+end KyoSttpMonad

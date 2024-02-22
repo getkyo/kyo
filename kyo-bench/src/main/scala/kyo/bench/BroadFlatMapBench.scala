@@ -1,56 +1,55 @@
 package kyo.bench
 
-import org.openjdk.jmh.annotations._
+import org.openjdk.jmh.annotations.*
 
-class BroadFlatMapBench extends Bench.SyncAndFork[BigInt] {
+class BroadFlatMapBench extends Bench.SyncAndFork[BigInt]:
 
-  val depth = 15
+    val depth = 15
 
-  def catsBench() = {
-    import cats.effect._
+    def catsBench() =
+        import cats.effect.*
 
-    def catsFib(n: Int): IO[BigInt] =
-      if (n <= 1) IO.pure(BigInt(n))
-      else
-        catsFib(n - 1).flatMap(a => catsFib(n - 2).flatMap(b => IO.pure(a + b)))
+        def catsFib(n: Int): IO[BigInt] =
+            if n <= 1 then IO.pure(BigInt(n))
+            else
+                catsFib(n - 1).flatMap(a => catsFib(n - 2).flatMap(b => IO.pure(a + b)))
 
-    catsFib(depth)
-  }
+        catsFib(depth)
+    end catsBench
 
-  def kyoBench() = {
-    import kyo._
+    def kyoBench() =
+        import kyo.*
 
-    def kyoFib(n: Int): BigInt < IOs =
-      if (n <= 1) BigInt(n)
-      else kyoFib(n - 1).flatMap(a => kyoFib(n - 2).flatMap(b => a + b))
+        def kyoFib(n: Int): BigInt < IOs =
+            if n <= 1 then BigInt(n)
+            else kyoFib(n - 1).flatMap(a => kyoFib(n - 2).flatMap(b => a + b))
 
-    kyoFib(depth)
-  }
+        kyoFib(depth)
+    end kyoBench
 
-  def zioBench() = {
-    import zio._
-    def zioFib(n: Int): UIO[BigInt] =
-      if (n <= 1)
-        ZIO.succeed(BigInt(n))
-      else
-        zioFib(n - 1).flatMap(a => zioFib(n - 2).flatMap(b => ZIO.succeed(a + b)))
-    zioFib(depth)
-  }
+    def zioBench() =
+        import zio.*
+        def zioFib(n: Int): UIO[BigInt] =
+            if n <= 1 then
+                ZIO.succeed(BigInt(n))
+            else
+                zioFib(n - 1).flatMap(a => zioFib(n - 2).flatMap(b => ZIO.succeed(a + b)))
+        zioFib(depth)
+    end zioBench
 
-  def oxFib(n: Int): BigInt =
-    if (n <= 1) n
-    else oxFib(n - 1) + oxFib(n - 2)
+    def oxFib(n: Int): BigInt =
+        if n <= 1 then n
+        else oxFib(n - 1) + oxFib(n - 2)
 
-  @Benchmark
-  def syncOx(): BigInt = {
-    oxFib(depth)
-  }
+    @Benchmark
+    def syncOx(): BigInt =
+        oxFib(depth)
 
-  @Benchmark
-  def forkOx(): BigInt = {
-    import ox._
-    scoped {
-      fork(oxFib(depth)).join()
-    }
-  }
-}
+    @Benchmark
+    def forkOx(): BigInt =
+        import ox.*
+        scoped {
+            fork(oxFib(depth)).join()
+        }
+    end forkOx
+end BroadFlatMapBench

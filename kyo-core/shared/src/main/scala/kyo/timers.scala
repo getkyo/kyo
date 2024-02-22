@@ -2,133 +2,127 @@ package kyo
 
 import kyo.scheduler.Threads
 
-import java.util.concurrent._
-import scala.concurrent.duration._
+import java.util.concurrent.*
+import scala.concurrent.duration.*
 
-abstract class Timer {
+abstract class Timer:
 
-  def schedule(delay: Duration)(f: => Unit < Fibers): TimerTask < IOs
+    def schedule(delay: Duration)(f: => Unit < Fibers): TimerTask < IOs
 
-  def scheduleAtFixedRate(
-      initalDelay: Duration,
-      period: Duration
-  )(f: => Unit < Fibers): TimerTask < IOs
+    def scheduleAtFixedRate(
+        initalDelay: Duration,
+        period: Duration
+    )(f: => Unit < Fibers): TimerTask < IOs
 
-  def scheduleWithFixedDelay(
-      initalDelay: Duration,
-      period: Duration
-  )(f: => Unit < Fibers): TimerTask < IOs
-}
+    def scheduleWithFixedDelay(
+        initalDelay: Duration,
+        period: Duration
+    )(f: => Unit < Fibers): TimerTask < IOs
+end Timer
 
-object Timer {
+object Timer:
 
-  val default: Timer =
-    new Timer {
+    val default: Timer =
+        new Timer:
 
-      private val exec =
-        Executors.newScheduledThreadPool(
-            Runtime.getRuntime.availableProcessors / 2,
-            Threads("kyo-timer-default")
-        )
+            private val exec =
+                Executors.newScheduledThreadPool(
+                    Runtime.getRuntime.availableProcessors / 2,
+                    Threads("kyo-timer-default")
+                )
 
-      private final class Task(task: ScheduledFuture[_]) extends TimerTask {
-        def cancel: Boolean < IOs      = IOs(task.cancel(false))
-        def isCancelled: Boolean < IOs = IOs(task.isCancelled())
-        def isDone: Boolean < IOs      = IOs(task.isDone())
-      }
+            private final class Task(task: ScheduledFuture[?]) extends TimerTask:
+                def cancel: Boolean < IOs      = IOs(task.cancel(false))
+                def isCancelled: Boolean < IOs = IOs(task.isCancelled())
+                def isDone: Boolean < IOs      = IOs(task.isDone())
+            end Task
 
-      private def eval(f: => Unit < Fibers) =
-        IOs.run(Fibers.run(Fibers.init(f)))
+            private def eval(f: => Unit < Fibers) =
+                IOs.run(Fibers.run(Fibers.init(f)))
 
-      def schedule(delay: Duration)(f: => Unit < Fibers) =
-        if (delay.isFinite) {
-          val call = new Callable[Unit] {
-            def call: Unit = eval(f)
-          }
-          IOs(new Task(exec.schedule(call, delay.toNanos, TimeUnit.NANOSECONDS)))
-        } else {
-          TimerTask.noop
-        }
+            def schedule(delay: Duration)(f: => Unit < Fibers) =
+                if delay.isFinite then
+                    val call = new Callable[Unit]:
+                        def call: Unit = eval(f)
+                    IOs(new Task(exec.schedule(call, delay.toNanos, TimeUnit.NANOSECONDS)))
+                else
+                    TimerTask.noop
 
-      def scheduleAtFixedRate(
-          initalDelay: Duration,
-          period: Duration
-      )(f: => Unit < Fibers) =
-        if (period.isFinite && initalDelay.isFinite) {
-          IOs(new Task(
-              exec.scheduleAtFixedRate(
-                  () => eval(f),
-                  initalDelay.toNanos,
-                  period.toNanos,
-                  TimeUnit.NANOSECONDS
-              )
-          ))
-        } else {
-          TimerTask.noop
-        }
+            def scheduleAtFixedRate(
+                initalDelay: Duration,
+                period: Duration
+            )(f: => Unit < Fibers) =
+                if period.isFinite && initalDelay.isFinite then
+                    IOs(new Task(
+                        exec.scheduleAtFixedRate(
+                            () => eval(f),
+                            initalDelay.toNanos,
+                            period.toNanos,
+                            TimeUnit.NANOSECONDS
+                        )
+                    ))
+                else
+                    TimerTask.noop
 
-      def scheduleWithFixedDelay(
-          initalDelay: Duration,
-          period: Duration
-      )(f: => Unit < Fibers) =
-        if (period.isFinite && initalDelay.isFinite) {
-          IOs(new Task(
-              exec.scheduleWithFixedDelay(
-                  () => eval(f),
-                  initalDelay.toNanos,
-                  period.toNanos,
-                  TimeUnit.NANOSECONDS
-              )
-          ))
-        } else {
-          TimerTask.noop
-        }
-    }
-}
+            def scheduleWithFixedDelay(
+                initalDelay: Duration,
+                period: Duration
+            )(f: => Unit < Fibers) =
+                if period.isFinite && initalDelay.isFinite then
+                    IOs(new Task(
+                        exec.scheduleWithFixedDelay(
+                            () => eval(f),
+                            initalDelay.toNanos,
+                            period.toNanos,
+                            TimeUnit.NANOSECONDS
+                        )
+                    ))
+                else
+                    TimerTask.noop
+end Timer
 
-abstract class TimerTask {
-  def cancel: Boolean < IOs
-  def isCancelled: Boolean < IOs
-  def isDone: Boolean < IOs
-}
+abstract class TimerTask:
+    def cancel: Boolean < IOs
+    def isCancelled: Boolean < IOs
+    def isDone: Boolean < IOs
+end TimerTask
 
-object TimerTask {
-  val noop = new TimerTask {
-    def cancel      = false
-    def isCancelled = false
-    def isDone      = true
-  }
-}
+object TimerTask:
+    val noop = new TimerTask:
+        def cancel      = false
+        def isCancelled = false
+        def isDone      = true
+end TimerTask
 
-object Timers {
+object Timers:
 
-  private val local = Locals.init(Timer.default)
+    private val local = Locals.init(Timer.default)
 
-  def let[T, S](timer: Timer)(v: T < S): T < (IOs & S) =
-    local.let(timer)(v)
+    def let[T, S](timer: Timer)(v: T < S): T < (IOs & S) =
+        local.let(timer)(v)
 
-  def schedule(delay: Duration)(f: => Unit < Fibers): TimerTask < IOs =
-    local.get.map(_.schedule(delay)(f))
+    def schedule(delay: Duration)(f: => Unit < Fibers): TimerTask < IOs =
+        local.get.map(_.schedule(delay)(f))
 
-  def scheduleAtFixedRate(
-      period: Duration
-  )(f: => Unit < Fibers): TimerTask < IOs =
-    scheduleAtFixedRate(Duration.Zero, period)(f)
+    def scheduleAtFixedRate(
+        period: Duration
+    )(f: => Unit < Fibers): TimerTask < IOs =
+        scheduleAtFixedRate(Duration.Zero, period)(f)
 
-  def scheduleAtFixedRate(
-      initialDelay: Duration,
-      period: Duration
-  )(f: => Unit < Fibers): TimerTask < IOs =
-    local.get.map(_.scheduleAtFixedRate(initialDelay, period)(f))
+    def scheduleAtFixedRate(
+        initialDelay: Duration,
+        period: Duration
+    )(f: => Unit < Fibers): TimerTask < IOs =
+        local.get.map(_.scheduleAtFixedRate(initialDelay, period)(f))
 
-  def scheduleWithFixedDelay(
-      period: Duration
-  )(f: => Unit < Fibers): TimerTask < IOs =
-    scheduleWithFixedDelay(Duration.Zero, period)(f)
+    def scheduleWithFixedDelay(
+        period: Duration
+    )(f: => Unit < Fibers): TimerTask < IOs =
+        scheduleWithFixedDelay(Duration.Zero, period)(f)
 
-  def scheduleWithFixedDelay(
-      initialDelay: Duration,
-      period: Duration
-  )(f: => Unit < Fibers): TimerTask < IOs =
-    local.get.map(_.scheduleWithFixedDelay(initialDelay, period)(f))
-}
+    def scheduleWithFixedDelay(
+        initialDelay: Duration,
+        period: Duration
+    )(f: => Unit < Fibers): TimerTask < IOs =
+        local.get.map(_.scheduleWithFixedDelay(initialDelay, period)(f))
+end Timers

@@ -7,15 +7,14 @@ import sttp.ws.WebSocketBufferFull
 import sttp.client3.internal.ws.SimpleQueue
 import kyo.internal.KyoSttpMonad
 
-import kyo._
+import kyo.*
 
-class KyoSimpleQueue[T](ch: Channel[T]) extends SimpleQueue[KyoSttpMonad.M, T] {
+class KyoSimpleQueue[T](ch: Channel[T]) extends SimpleQueue[KyoSttpMonad.M, T]:
 
-  def offer(t: T): Unit =
-    if (!IOs.run(ch.offer(t))) {
-      throw WebSocketBufferFull(Int.MaxValue)
-    }
+    def offer(t: T): Unit =
+        if !IOs.run(ch.offer(t)) then
+            throw WebSocketBufferFull(Int.MaxValue)
 
-  def poll =
-    ch.take
-}
+    def poll =
+        ch.take
+end KyoSimpleQueue

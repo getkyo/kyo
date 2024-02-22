@@ -1,74 +1,67 @@
 package kyoTest
 
-import izumi.reflect._
+import izumi.reflect.*
 
-import kyo._
+import kyo.*
 
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.concurrent.Future
 import scala.concurrent.Promise
 import scala.util.Try
 import org.scalatest.compatible.Assertion
-import org.scalatest.concurrent.ScalaFutures._
+import org.scalatest.concurrent.ScalaFutures.*
 import scala.concurrent.ExecutionContext
 import org.scalatest.time.Span
 import org.scalatest.time.Seconds
 
-class KyoTest extends AsyncFreeSpec with Assertions {
+class KyoTest extends AsyncFreeSpec with Assertions:
 
-  implicit override def executionContext: ExecutionContext = Platform.executionContext
+    implicit override def executionContext: ExecutionContext = Platform.executionContext
 
-  trait Eq[T] {
-    def apply(a: T, b: T): Boolean
-  }
-  object Eq {
-    given eq[T]: Eq[T] = _ == _
-  }
+    trait Eq[T]:
+        def apply(a: T, b: T): Boolean
+    object Eq:
+        given eq[T]: Eq[T] = _ == _
 
-  def retry[S](f: => Boolean < S): Boolean < S = {
-    def loop(): Boolean < S =
-      f.map {
-        case true  => true
-        case false => loop()
-      }
-    loop()
-  }
+    def retry[S](f: => Boolean < S): Boolean < S =
+        def loop(): Boolean < S =
+            f.map {
+                case true  => true
+                case false => loop()
+            }
+        loop()
+    end retry
 
-  def timeout =
-    if (Platform.isDebugEnabled) {
-      Duration.Inf
-    } else {
-      5.seconds
-    }
+    def timeout =
+        if Platform.isDebugEnabled then
+            Duration.Inf
+        else
+            5.seconds
 
-  implicit def toFuture(a: Assertion): Future[Assertion] = Future.successful(a)
+    implicit def toFuture(a: Assertion): Future[Assertion] = Future.successful(a)
 
-  def runJVM(
-      v: => Assertion < KyoApp.Effects
-  ): Future[Assertion] =
-    if (Platform.isJVM) {
-      run(v)
-    } else {
-      Future.successful(succeed)
-    }
+    def runJVM(
+        v: => Assertion < KyoApp.Effects
+    ): Future[Assertion] =
+        if Platform.isJVM then
+            run(v)
+        else
+            Future.successful(succeed)
 
-  def runJS(
-      v: => Assertion < KyoApp.Effects
-  ): Future[Assertion] =
-    if (Platform.isJS) {
-      run(v)
-    } else {
-      Future.successful(succeed)
-    }
+    def runJS(
+        v: => Assertion < KyoApp.Effects
+    ): Future[Assertion] =
+        if Platform.isJS then
+            run(v)
+        else
+            Future.successful(succeed)
 
-  def run(
-      v: => Assertion < KyoApp.Effects
-  ): Future[Assertion] = {
-    IOs.run(KyoApp.runFiber(timeout)(v).toFuture).map(_.get)
-  }
-
-}
+    def run(
+        v: => Assertion < KyoApp.Effects
+    ): Future[Assertion] =
+        IOs.run(KyoApp.runFiber(timeout)(v).toFuture).map(_.get)
+end KyoTest

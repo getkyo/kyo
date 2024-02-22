@@ -1,6 +1,6 @@
 package kyo.llm.thoughts
 
-import kyo.llm._
+import kyo.llm.*
 
 case class Role[Desc <: String](
     `The user has defined the following const string as my role`: Desc,

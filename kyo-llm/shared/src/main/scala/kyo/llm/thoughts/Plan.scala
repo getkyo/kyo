@@ -1,6 +1,6 @@
 package kyo.llm.thoughts
 
-import kyo.llm._
+import kyo.llm.*
 
 case class Plan(
     `Develop a strategic plan of action based on analysis`: String,

@@ -1,36 +1,36 @@
 package kyo.bench
 
-class SuspensionBench extends Bench.SyncAndFork[Unit] {
+class SuspensionBench extends Bench.SyncAndFork[Unit]:
 
-  def catsBench() = {
-    import cats.effect._
+    def catsBench() =
+        import cats.effect.*
 
-    IO(())
-      .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
-      .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
-      .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
-      .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
-      .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
-  }
+        IO(())
+            .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
+            .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
+            .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
+            .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
+            .flatMap(_ => IO(())).map(_ => ()).flatMap(_ => IO(())).map(_ => ())
+    end catsBench
 
-  def kyoBench() = {
-    import kyo._
+    def kyoBench() =
+        import kyo.*
 
-    IOs(())
-      .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
-      .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
-      .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
-      .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
-      .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
-  }
+        IOs(())
+            .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
+            .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
+            .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
+            .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
+            .flatMap(_ => IOs(())).map(_ => ()).flatMap(_ => IOs(())).map(_ => ())
+    end kyoBench
 
-  def zioBench() = {
-    import zio._
-    ZIO.succeed(())
-      .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
-      .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
-      .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
-      .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
-      .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
-  }
-}
+    def zioBench() =
+        import zio.*
+        ZIO.succeed(())
+            .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
+            .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
+            .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
+            .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
+            .flatMap(_ => ZIO.succeed(())).map(_ => ()).flatMap(_ => ZIO.succeed(())).map(_ => ())
+    end zioBench
+end SuspensionBench

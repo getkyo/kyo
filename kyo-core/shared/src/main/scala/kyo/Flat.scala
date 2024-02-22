@@ -4,15 +4,15 @@ import internal.FlatImplicits
 
 sealed trait Flat[-T]
 
-object Flat extends FlatImplicits {
+object Flat extends FlatImplicits:
 
-  private val cached = new Flat[Any] {}
+    private val cached = new Flat[Any] {}
 
-  given unit[S]: Flat[Unit < S] = unsafe.bypass[Unit < S]
+    given unit[S]: Flat[Unit < S] = unsafe.bypass[Unit < S]
 
-  object unsafe {
+    object unsafe:
 
-    inline given bypass[T]: Flat[T] =
-      cached.asInstanceOf[Flat[T]]
-  }
-}
+        inline given bypass[T]: Flat[T] =
+            cached.asInstanceOf[Flat[T]]
+    end unsafe
+end Flat
