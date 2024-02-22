@@ -65,7 +65,7 @@ object Observe {
 
     case class Debug(s: String) extends Thought {
       override def eval(parent: Thought, field: String, ai: AI) =
-        log(Logs.debug, parent, field, s)
+        log(Logs.debug(_), parent, field, s)
     }
 
     object Debug {
@@ -75,7 +75,7 @@ object Observe {
 
     case class Info(s: String) extends Thought {
       override def eval(parent: Thought, field: String, ai: AI) =
-        log(Logs.info, parent, field, s)
+        log(Logs.info(_), parent, field, s)
     }
 
     object Info {
@@ -85,7 +85,7 @@ object Observe {
 
     case class Warn(s: String) extends Thought {
       override def eval(parent: Thought, field: String, ai: AI) =
-        log(Logs.warn, parent, field, s)
+        log(Logs.warn(_), parent, field, s)
     }
 
     object Warn {
@@ -95,7 +95,7 @@ object Observe {
 
     case class Error(s: String) extends Thought {
       override def eval(parent: Thought, field: String, ai: AI) =
-        log(Logs.error, parent, field, s)
+        log(Logs.error(_), parent, field, s)
     }
 
     object Error {
