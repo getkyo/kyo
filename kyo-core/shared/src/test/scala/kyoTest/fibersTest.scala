@@ -1,15 +1,14 @@
 package kyoTest
 
-import kyo.*
-
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.{AtomicInteger as JAtomicInteger}
-import java.util.concurrent.atomic.{AtomicReference as JAtomicReference}
+import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
+import java.util.concurrent.atomic.AtomicReference as JAtomicReference
+import kyo.*
+import org.scalatest.compatible.Assertion
 import scala.concurrent.duration.*
 import scala.util.Failure
 import scala.util.Try
-import org.scalatest.compatible.Assertion
 
 class fibersTest extends KyoTest:
 

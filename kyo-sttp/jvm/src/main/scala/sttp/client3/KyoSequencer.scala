@@ -1,9 +1,8 @@
 package sttp.client3
 
-import sttp.client3.internal.httpclient.Sequencer
-import kyo.internal.KyoSttpMonad
-
 import kyo.*
+import kyo.internal.KyoSttpMonad
+import sttp.client3.internal.httpclient.Sequencer
 
 class KyoSequencer(mutex: Meter) extends Sequencer[KyoSttpMonad.M]:
 

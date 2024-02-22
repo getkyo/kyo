@@ -1,7 +1,6 @@
 package kyo.llm.thoughts
 
 import kyo.*
-
 import kyo.llm.*
 
 case class Reduce[Expr, Result](

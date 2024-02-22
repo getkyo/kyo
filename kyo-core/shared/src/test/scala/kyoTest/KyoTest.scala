@@ -1,22 +1,19 @@
 package kyoTest
 
 import izumi.reflect.*
-
 import kyo.*
-
 import org.scalatest.Assertions
-import org.scalatest.freespec.AnyFreeSpec
-
-import scala.concurrent.duration.*
-import org.scalatest.freespec.AsyncFreeSpec
-import scala.concurrent.Future
-import scala.concurrent.Promise
-import scala.util.Try
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.ScalaFutures.*
-import scala.concurrent.ExecutionContext
-import org.scalatest.time.Span
+import org.scalatest.freespec.AnyFreeSpec
+import org.scalatest.freespec.AsyncFreeSpec
 import org.scalatest.time.Seconds
+import org.scalatest.time.Span
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
+import scala.concurrent.Promise
+import scala.concurrent.duration.*
+import scala.util.Try
 
 class KyoTest extends AsyncFreeSpec with Assertions:
 

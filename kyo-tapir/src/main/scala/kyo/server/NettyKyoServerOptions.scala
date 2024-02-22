@@ -2,9 +2,9 @@ package kyo.server
 
 import com.typesafe.scalalogging.Logger
 import kyo.*
-
+import kyo.internal.KyoSttpMonad
+import kyo.internal.KyoSttpMonad.*
 import kyo.routes.*
-
 import sttp.tapir.Defaults
 import sttp.tapir.TapirFile
 import sttp.tapir.model.ServerRequest
@@ -12,8 +12,6 @@ import sttp.tapir.server.interceptor.CustomiseInterceptors
 import sttp.tapir.server.interceptor.Interceptor
 import sttp.tapir.server.interceptor.log.DefaultServerLog
 import sttp.tapir.server.netty.internal.NettyDefaults
-import kyo.internal.KyoSttpMonad
-import kyo.internal.KyoSttpMonad.*
 
 case class NettyKyoServerOptions(
     interceptors: List[Interceptor[KyoSttpMonad.M]],

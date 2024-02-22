@@ -1,15 +1,13 @@
 package kyo.llm
 
 import kyo.*
+import kyo.llm.contexts.*
 import kyo.llm.json.*
 import kyo.llm.tools.*
-import kyo.llm.contexts.*
-
-import sttp.client3.{Response as _, Request as _, *}
+import scala.concurrent.duration.Duration
+import sttp.client3.{Request as _, Response as _, *}
 import sttp.client3.ziojson.*
 import zio.json.*
-
-import scala.concurrent.duration.Duration
 import zio.json.internal.Write
 
 object completions:

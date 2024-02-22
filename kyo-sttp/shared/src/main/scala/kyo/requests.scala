@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.*
-
 import sttp.client3.*
 
 object Requests:

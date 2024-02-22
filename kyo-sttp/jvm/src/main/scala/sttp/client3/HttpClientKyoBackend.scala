@@ -1,23 +1,27 @@
 package sttp.client3
 
+import java.io.InputStream
+import java.io.UnsupportedEncodingException
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpRequest.BodyPublisher
+import java.net.http.HttpResponse
+import java.net.http.HttpResponse.BodyHandlers
+import java.util.zip.GZIPInputStream
+import java.util.zip.InflaterInputStream
 import kyo.*
-
+import kyo.internal.KyoSttpMonad
+import kyo.internal.KyoSttpMonad.*
 import sttp.capabilities.WebSockets
 import sttp.client3.HttpClientBackend.EncodingHandler
 import sttp.client3.HttpClientFutureBackend.InputStreamEncodingHandler
-import sttp.client3.internal.{NoStreams, emptyInputStream}
+import sttp.client3.internal.NoStreams
+import sttp.client3.internal.emptyInputStream
 import sttp.client3.internal.httpclient.*
 import sttp.client3.testing.SttpBackendStub
 import sttp.monad.MonadError
-import sttp.ws.{WebSocket, WebSocketFrame}
-
-import java.io.{InputStream, UnsupportedEncodingException}
-import java.net.http.HttpRequest.BodyPublisher
-import java.net.http.HttpResponse.BodyHandlers
-import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.util.zip.{GZIPInputStream, InflaterInputStream}
-import kyo.internal.KyoSttpMonad.*
-import kyo.internal.KyoSttpMonad
+import sttp.ws.WebSocket
+import sttp.ws.WebSocketFrame
 
 class HttpClientKyoBackend private (
     client: HttpClient,

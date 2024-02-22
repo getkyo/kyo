@@ -1,7 +1,7 @@
 package kyo.stats
 
-import scala.annotation.implicitNotFound
 import kyo.stats.Attributes.AsAttribute
+import scala.annotation.implicitNotFound
 
 case class Attributes(get: List[Attributes.Attribute]) extends AnyVal:
     def add(a: Attributes): Attributes =

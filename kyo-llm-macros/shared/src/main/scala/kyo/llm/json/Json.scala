@@ -1,10 +1,9 @@
 package kyo.llm.json
 
 import kyo.*
-
-import zio.schema.codec.JsonCodec
-import zio.schema.{Schema as ZSchema, *}
 import zio.Chunk
+import zio.schema.{Schema as ZSchema, *}
+import zio.schema.codec.JsonCodec
 
 trait Json[T]:
     def schema: Schema

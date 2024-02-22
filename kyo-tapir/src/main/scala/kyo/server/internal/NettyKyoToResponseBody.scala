@@ -4,6 +4,8 @@ import io.netty.buffer.Unpooled
 import io.netty.channel.ChannelHandlerContext
 import io.netty.handler.codec.http.DefaultHttpContent
 import io.netty.handler.codec.http.HttpContent
+import java.io.InputStream
+import java.nio.charset.Charset
 import org.reactivestreams.Publisher
 import sttp.capabilities.Streams
 import sttp.model.HasHeaders
@@ -14,9 +16,6 @@ import sttp.tapir.server.interpreter.ToResponseBody
 import sttp.tapir.server.netty.NettyResponse
 import sttp.tapir.server.netty.NettyResponseContent.*
 import sttp.tapir.server.netty.internal.NettyToResponseBody
-
-import java.io.InputStream
-import java.nio.charset.Charset
 
 class NettyKyoToResponseBody(delegate: NettyToResponseBody)
     extends ToResponseBody[NettyResponse, Any]:

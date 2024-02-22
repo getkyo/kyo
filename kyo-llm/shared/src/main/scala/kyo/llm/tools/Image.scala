@@ -2,12 +2,10 @@ package kyo.llm.tools
 
 import kyo.*
 import kyo.llm.*
-
+import scala.concurrent.duration.Duration
 import sttp.client3.*
 import sttp.client3.ziojson.*
 import zio.json.*
-
-import scala.concurrent.duration.Duration
 
 object Image extends Tool:
 

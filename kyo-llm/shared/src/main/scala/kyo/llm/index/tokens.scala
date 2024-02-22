@@ -3,8 +3,8 @@ package kyo.llm.index
 import com.knuddels.jtokkit.*
 import com.knuddels.jtokkit.api.*
 import java.nio.ByteBuffer
-import java.util.Arrays
 import java.util.ArrayList
+import java.util.Arrays
 
 object tokens:
 

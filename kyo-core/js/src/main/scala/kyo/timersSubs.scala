@@ -1,8 +1,8 @@
 package java.util.concurrent
 
-import scala.concurrent.duration.*
 import java.util.Timer
 import java.util.TimerTask
+import scala.concurrent.duration.*
 
 class ScheduledFuture[T](r: => T) extends TimerTask:
     private var cancelled = false

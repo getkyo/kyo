@@ -1,13 +1,12 @@
 package kyo
 
+import cps.CpsMonad
 import cps.CpsMonadContext
 import cps.CpsMonadInstanceContext
 import cps.async
 import cps.await
-
 import scala.annotation.targetName
 import scala.quoted.*
-import cps.CpsMonad
 
 object direct:
 

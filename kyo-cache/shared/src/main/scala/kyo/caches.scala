@@ -1,14 +1,13 @@
 package kyo
 
-import scala.concurrent.duration.Duration
+import Cache.*
 import com.github.benmanes.caffeine
 import com.github.benmanes.caffeine.cache.Caffeine
 import java.util.concurrent.TimeUnit
-import scala.util.Success
-import scala.util.Failure
+import scala.concurrent.duration.Duration
 import scala.runtime.AbstractFunction1
-
-import Cache.*
+import scala.util.Failure
+import scala.util.Success
 
 class Cache(private[kyo] val store: Store):
     def memo[T, U, S](

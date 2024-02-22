@@ -1,11 +1,11 @@
 package kyo.llm.thoughts
 
-import kyo.llm.*
-import zio.schema.{Schema as ZSchema}
 import kyo.*
 import kyo.Stats
-import kyo.stats.Attributes
+import kyo.llm.*
 import kyo.llm.contexts.*
+import kyo.stats.Attributes
+import zio.schema.Schema as ZSchema
 
 object Invariant:
 

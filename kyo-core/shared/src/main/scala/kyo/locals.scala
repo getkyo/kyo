@@ -1,9 +1,8 @@
 package kyo
 
-import kyo.iosInternal.*
-
 import core.*
 import core.internal.*
+import kyo.iosInternal.*
 
 abstract class Local[T]:
 

@@ -1,9 +1,12 @@
 package kyoTest.stats.otel
 
-import io.opentelemetry.api.trace.{Span as OSpan}
-import io.opentelemetry.context.Context
 import io.opentelemetry.api.*
 import io.opentelemetry.api.metrics.*
+import io.opentelemetry.api.trace.Span as OSpan
+import io.opentelemetry.context.Context
+import io.opentelemetry.exporters.inmemory.*
+import io.opentelemetry.sdk.OpenTelemetrySdk
+import io.opentelemetry.sdk.OpenTelemetrySdkBuilder
 import io.opentelemetry.sdk.metrics.*
 import io.opentelemetry.sdk.metrics.`export`.*
 import io.opentelemetry.sdk.trace.*
@@ -12,9 +15,6 @@ import kyo.*
 import kyo.stats.*
 import kyo.stats.otel.*
 import kyoTest.*
-import io.opentelemetry.exporters.inmemory.*
-import io.opentelemetry.sdk.OpenTelemetrySdk
-import io.opentelemetry.sdk.OpenTelemetrySdkBuilder
 
 class OTelReceiverTest extends KyoTest:
 

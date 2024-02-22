@@ -1,8 +1,7 @@
 package kyo
 
-import kyo.scheduler.Threads
-
 import java.util.concurrent.*
+import kyo.scheduler.Threads
 import scala.concurrent.duration.*
 
 abstract class Timer:
@@ -31,7 +30,7 @@ object Timer:
                     Threads("kyo-timer-default")
                 )
 
-            private final class Task(task: ScheduledFuture[?]) extends TimerTask:
+            final private class Task(task: ScheduledFuture[?]) extends TimerTask:
                 def cancel: Boolean < IOs      = IOs(task.cancel(false))
                 def isCancelled: Boolean < IOs = IOs(task.isCancelled())
                 def isDone: Boolean < IOs      = IOs(task.isDone())

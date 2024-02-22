@@ -1,11 +1,11 @@
 package kyo.llm.json
 
-import zio.schema.{Schema as ZSchema, *}
+import scala.annotation.StaticAnnotation
+import zio.Chunk
 import zio.json.*
 import zio.json.ast.*
 import zio.json.internal.Write
-import scala.annotation.StaticAnnotation
-import zio.Chunk
+import zio.schema.{Schema as ZSchema, *}
 
 case class Schema(data: List[(String, Json)])
 

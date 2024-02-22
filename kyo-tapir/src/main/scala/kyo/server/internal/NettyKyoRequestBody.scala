@@ -3,10 +3,12 @@ package kyo.server.internal
 import io.netty.buffer.ByteBufUtil
 import io.netty.handler.codec.http.FullHttpRequest
 import io.netty.handler.codec.http.HttpContent
+import java.io.ByteArrayInputStream
+import java.nio.ByteBuffer
 import kyo.*
-
+import kyo.internal.KyoSttpMonad
+import kyo.internal.KyoSttpMonad.*
 import kyo.routes.*
-
 import sttp.capabilities.Streams
 import sttp.tapir.FileRange
 import sttp.tapir.InputStreamRange
@@ -15,11 +17,6 @@ import sttp.tapir.TapirFile
 import sttp.tapir.model.ServerRequest
 import sttp.tapir.server.interpreter.RawValue
 import sttp.tapir.server.interpreter.RequestBody
-
-import java.io.ByteArrayInputStream
-import java.nio.ByteBuffer
-import kyo.internal.KyoSttpMonad
-import kyo.internal.KyoSttpMonad.*
 
 private[kyo] class NettyKyoRequestBody(createFile: ServerRequest => TapirFile < Routes)
     extends RequestBody[KyoSttpMonad.M, Any]:

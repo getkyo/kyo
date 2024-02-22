@@ -1,10 +1,10 @@
 package kyoTest.stats.otel
 
-import kyoTest.*
-import kyo.stats.otel.*
-import kyo.stats.*
-import scala.jdk.CollectionConverters.*
 import io.opentelemetry.api.common.AttributeKey
+import kyo.stats.*
+import kyo.stats.otel.*
+import kyoTest.*
+import scala.jdk.CollectionConverters.*
 
 class OTelAttributesTest extends KyoTest:
 

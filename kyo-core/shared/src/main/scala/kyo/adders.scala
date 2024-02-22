@@ -1,7 +1,7 @@
 package kyo
 
-import java.util.concurrent.atomic.{DoubleAdder as JDoubleAdder}
-import java.util.concurrent.atomic.{LongAdder as JLongAdder}
+import java.util.concurrent.atomic.DoubleAdder as JDoubleAdder
+import java.util.concurrent.atomic.LongAdder as JLongAdder
 
 object Adders:
     val initLong: LongAdder < IOs     = IOs(new LongAdder(new JLongAdder()))

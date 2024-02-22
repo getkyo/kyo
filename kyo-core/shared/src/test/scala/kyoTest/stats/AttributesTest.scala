@@ -1,9 +1,9 @@
 package kyoTest.stats
 
-import kyoTest.KyoTest
-import kyo.stats.Attributes.*
-import kyo.stats.*
 import kyo.*
+import kyo.stats.*
+import kyo.stats.Attributes.*
+import kyoTest.KyoTest
 
 class AttributesTest extends KyoTest:
 

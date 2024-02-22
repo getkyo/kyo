@@ -1,15 +1,13 @@
 package kyo.llm.tools
 
-import kyo.*
-import kyo.llm.*
-
-import sttp.client3.*
-
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.Base64
 import javax.imageio.ImageIO
+import kyo.*
+import kyo.llm.*
+import sttp.client3.*
 
 object Vision extends Tool:
 

@@ -1,16 +1,14 @@
 package kyo.scheduler
 
-import kyo.*
-
+import IOPromise.*
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.AbstractQueuedSynchronizer
+import java.util.concurrent.locks.Lock
+import java.util.concurrent.locks.LockSupport
+import kyo.*
+import kyo.scheduler.Scheduler
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
-
-import IOPromise.*
-import java.util.concurrent.locks.LockSupport
-import java.util.concurrent.locks.Lock
-import kyo.scheduler.Scheduler
 
 private[kyo] class IOPromise[T](state: State[T])
     extends AtomicReference(state):

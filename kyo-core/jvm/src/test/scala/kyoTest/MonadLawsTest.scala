@@ -1,18 +1,16 @@
 package kyoTest
 
 import kyo.*
-
+import kyo.Flat.unsafe.bypass
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration.Duration
 import zio.Trace
-import zio.prelude.{Equal}
+import zio.prelude.Equal
 import zio.prelude.coherent.CovariantDeriveEqual
 import zio.prelude.coherent.CovariantDeriveEqualIdentityFlatten
 import zio.prelude.laws.*
 import zio.test.*
 import zio.test.laws.*
-import Flat.unsafe.bypass
-
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.duration.Duration
 
 object MonadLawsTest extends ZIOSpecDefault:
 

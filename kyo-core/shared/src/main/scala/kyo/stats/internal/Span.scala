@@ -1,7 +1,6 @@
 package kyo.stats.internal
 
 import kyo.*
-
 import kyo.stats.*
 import kyo.stats.Attributes
 

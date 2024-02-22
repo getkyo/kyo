@@ -1,21 +1,19 @@
 package kyo.llm
 
+import Thoughts.*
 import kyo.*
-import kyo.llm.json.Schema
-import kyo.llm.json.*
-import kyo.llm.thoughts.*
 import kyo.Stats
+import kyo.llm.json.*
+import kyo.llm.json.Schema
+import kyo.llm.thoughts.*
+import scala.collection.immutable.ListMap
+import scala.reflect.ClassTag
 import zio.Chunk
 import zio.schema.FieldSet
 import zio.schema.Schema.Field
+import zio.schema.Schema as ZSchema
 import zio.schema.TypeId
 import zio.schema.validation.Validation
-import zio.schema.{Schema as ZSchema}
-
-import scala.collection.immutable.ListMap
-import scala.reflect.ClassTag
-
-import Thoughts.*
 
 abstract class Thought:
     self: Product =>

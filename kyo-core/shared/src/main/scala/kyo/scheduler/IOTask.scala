@@ -1,18 +1,17 @@
 package kyo.scheduler
 
-import kyo.fibersInternal.*
-import kyo.iosInternal.*
+import java.util.ArrayDeque
+import java.util.Arrays
+import java.util.IdentityHashMap
 import kyo.*
+import kyo.Locals.State
 import kyo.core.*
 import kyo.core.internal.*
-
+import kyo.fibersInternal.*
+import kyo.iosInternal.*
+import org.jctools.queues.MpmcArrayQueue
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
-import org.jctools.queues.MpmcArrayQueue
-import java.util.ArrayDeque
-import java.util.IdentityHashMap
-import java.util.Arrays
-import kyo.Locals.State
 
 private[kyo] object IOTask:
     private def nullIO[T] = null.asInstanceOf[T < IOs]
@@ -170,7 +169,7 @@ private[kyo] class IOTask[T](
                     if arr.remove(f) then loop()
                 loop()
 
-    override final def toString =
+    final override def toString =
         val e = ensures match
             case null =>
                 "[]"

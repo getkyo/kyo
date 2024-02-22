@@ -1,9 +1,9 @@
 package kyo
 
-import java.util.concurrent.atomic.{AtomicBoolean as JAtomicBoolean}
-import java.util.concurrent.atomic.{AtomicInteger as JAtomicInteger}
-import java.util.concurrent.atomic.{AtomicLong as JAtomicLong}
-import java.util.concurrent.atomic.{AtomicReference as JAtomicReference}
+import java.util.concurrent.atomic.AtomicBoolean as JAtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
+import java.util.concurrent.atomic.AtomicLong as JAtomicLong
+import java.util.concurrent.atomic.AtomicReference as JAtomicReference
 
 object Atomics:
 

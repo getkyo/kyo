@@ -1,13 +1,12 @@
 package kyo.internal
 
-import kyo.*
-
-import sttp.monad.MonadAsyncError
 import KyoSttpMonad.M
-import scala.util.Try
+import kyo.*
 import scala.util.Failure
 import scala.util.Success
+import scala.util.Try
 import sttp.monad.Canceler
+import sttp.monad.MonadAsyncError
 
 object KyoSttpMonad:
     type M[T] = T < Fibers

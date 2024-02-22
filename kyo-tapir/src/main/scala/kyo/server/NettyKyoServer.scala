@@ -2,11 +2,17 @@ package kyo.server
 
 import io.netty.channel.*
 import io.netty.channel.unix.DomainSocketAddress
+import java.net.InetSocketAddress
+import java.net.SocketAddress
+import java.nio.file.Path
+import java.nio.file.Paths
+import java.util.UUID
 import kyo.*
-
+import kyo.internal.KyoSttpMonad
+import kyo.internal.KyoSttpMonad.instance
 import kyo.routes.*
 import kyo.server.internal.KyoUtil.*
-
+import scala.concurrent.Future
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.model.*
 import sttp.tapir.server.netty.*
@@ -14,15 +20,6 @@ import sttp.tapir.server.netty.Route
 import sttp.tapir.server.netty.internal.NettyBootstrap
 import sttp.tapir.server.netty.internal.NettyServerHandler
 import sttp.tapir.server.netty.internal.RunAsync
-import scala.concurrent.Future
-
-import java.net.InetSocketAddress
-import java.net.SocketAddress
-import java.nio.file.Path
-import java.nio.file.Paths
-import java.util.UUID
-import kyo.internal.KyoSttpMonad
-import kyo.internal.KyoSttpMonad.instance
 
 case class NettyKyoServer(
     routes: Vector[Route[KyoSttpMonad.M]],

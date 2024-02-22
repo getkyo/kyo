@@ -1,19 +1,17 @@
 package kyo
 
+import fibersInternal.*
+import java.util.concurrent.atomic.AtomicInteger
 import kyo.core.*
 import kyo.core.internal.*
 import kyo.scheduler.IOPromise
-
-import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 import scala.util.*
-import scala.util.control.NoStackTrace
 import scala.util.control.NonFatal
-
-import fibersInternal.*
+import scala.util.control.NoStackTrace
 
 sealed abstract class Fiber[+T]:
     def isDone: Boolean < IOs

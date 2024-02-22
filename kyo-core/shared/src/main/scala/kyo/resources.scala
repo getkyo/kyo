@@ -1,10 +1,8 @@
 package kyo
 
-import kyo.core.*
-
 import java.io.Closeable
 import java.util.ArrayList
-
+import kyo.core.*
 import resourcesInternal.*
 
 sealed abstract class Resources private[kyo] ()

@@ -1,17 +1,16 @@
 package kyo.scheduler
 
-import kyo.iosInternal.*
-
 import java.util.Comparator
 import java.util.PriorityQueue
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Semaphore
 import java.util.concurrent.locks.LockSupport
-import java.util.concurrent.CopyOnWriteArrayList
+import kyo.iosInternal.*
 import kyo.scheduler.IOTask
 import kyo.scheduler.Queue
 import kyo.scheduler.Scheduler
 
-private final class Worker(r: Runnable)
+final private class Worker(r: Runnable)
     extends Thread(r):
 
     private val queue = new Queue[IOTask[_]]()

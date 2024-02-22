@@ -1,11 +1,10 @@
 package kyo.bench
 
-import kyo.*
-
-import zio.UIO
-import org.openjdk.jmh.annotations.*
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import kyo.*
+import org.openjdk.jmh.annotations.*
+import zio.UIO
 
 @State(Scope.Benchmark)
 @Fork(

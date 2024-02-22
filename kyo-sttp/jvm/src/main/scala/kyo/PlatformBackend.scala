@@ -1,10 +1,10 @@
 package kyo
 
-import kyo.Requests.Backend
-import sttp.client3.*
 import java.net.http.HttpClient
+import kyo.Requests.Backend
 import kyo.internal.KyoSttpMonad
 import sttp.capabilities.WebSockets
+import sttp.client3.*
 
 object PlatformBackend:
 

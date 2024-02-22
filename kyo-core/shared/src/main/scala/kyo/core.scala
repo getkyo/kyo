@@ -142,7 +142,7 @@ object core:
             final def effect = e
             final def apply(v: T < S, s: Safepoint[M, E], l: Locals.State) =
                 v
-            override final def isRoot = true
+            final override def isRoot = true
         end KyoRoot
 
         abstract class KyoCont[M[_], E <: Effect[M, _], T, U, S](prev: Kyo[M, E, T, ?, ?])

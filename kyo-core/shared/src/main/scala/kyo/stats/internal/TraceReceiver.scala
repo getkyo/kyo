@@ -1,13 +1,10 @@
 package kyo.stats.internal
 
-import kyo.*
-
-import kyo.stats.*
-
 import java.util.ServiceLoader
-import scala.jdk.CollectionConverters.*
-
+import kyo.*
+import kyo.stats.*
 import kyo.stats.Attributes
+import scala.jdk.CollectionConverters.*
 
 trait TraceReceiver:
 

@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo.*
-
 import scala.util.Failure
 
 class layersTest extends KyoTest:

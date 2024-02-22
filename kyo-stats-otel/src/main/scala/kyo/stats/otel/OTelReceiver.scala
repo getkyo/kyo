@@ -1,15 +1,14 @@
 package kyo.stats.otel
 
-import io.opentelemetry.api.trace.{Span as OSpan}
-import io.opentelemetry.context.Context
 import io.opentelemetry.api.*
 import io.opentelemetry.api.metrics.*
+import io.opentelemetry.api.trace.Span as OSpan
+import io.opentelemetry.context.Context
 import kyo.*
-
 import kyo.stats.*
-import kyo.stats.internal.Span
-import kyo.stats.internal.MetricReceiver
 import kyo.stats.Attributes
+import kyo.stats.internal.MetricReceiver
+import kyo.stats.internal.Span
 import kyo.stats.internal.TraceReceiver
 
 class OTelReceiver extends MetricReceiver with TraceReceiver:

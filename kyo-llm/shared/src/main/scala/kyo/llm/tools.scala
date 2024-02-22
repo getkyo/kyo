@@ -2,20 +2,19 @@ package kyo.llm
 
 import kyo.*
 import kyo.llm.contexts.*
-
-import scala.util.*
-import zio.schema.{Schema as ZSchema}
-import zio.schema.codec.JsonCodec
-import scala.annotation.implicitNotFound
-import thoughts.Repair
-import kyo.llm.thoughts.*
 import kyo.llm.json.Schema
-import zio.schema.TypeId
+import kyo.llm.thoughts.*
+import scala.annotation.implicitNotFound
+import scala.collection.immutable.ListMap
+import scala.util.*
+import thoughts.Repair
+import zio.Chunk
 import zio.schema.FieldSet
 import zio.schema.Schema.Field
-import zio.Chunk
+import zio.schema.Schema as ZSchema
+import zio.schema.TypeId
+import zio.schema.codec.JsonCodec
 import zio.schema.validation.Validation
-import scala.collection.immutable.ListMap
 
 abstract class Tool:
 

@@ -1,13 +1,12 @@
 package kyo
 
+import core.*
+import core.internal.*
+import iosInternal.*
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import scala.util.*
 import scala.util.control.NonFatal
-
-import core.*
-import core.internal.*
-import iosInternal.*
 
 sealed trait IOs extends Effect[IO, IOs]:
 
@@ -166,7 +165,7 @@ private[kyo] object iosInternal:
                         Logs.unsafe.error(s"IOs.ensure function failed", ex)
     end Ensure
 
-    private[kyo] abstract class KyoIO[T, S]
+    abstract private[kyo] class KyoIO[T, S]
         extends Kyo[IO, IOs, Unit, T, (IOs & S)]:
         final def value  = ()
         final def effect = IOs

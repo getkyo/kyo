@@ -1,13 +1,11 @@
 package kyo.llm
 
-import kyo.*
-
-import scala.util.Success
-import scala.util.Failure
-import scala.util.hashing.MurmurHash3
-import scala.concurrent.duration.*
-
 import Listener.*
+import kyo.*
+import scala.concurrent.duration.*
+import scala.util.Failure
+import scala.util.Success
+import scala.util.hashing.MurmurHash3
 
 object Listeners:
 
@@ -47,7 +45,7 @@ private val parent    = Locals.init(0)
 private val listeners = Locals.init(List.empty[Listener])
 
 private class Listener(
-    state: AtomicRef[State]
+    state: kyo.AtomicRef[State]
 ):
     def apply[T, S](event: String)(v: T < S): T < (AIs & S) =
         parent.get.map { p =>

@@ -2,9 +2,7 @@ package kyo
 
 import izumi.reflect.*
 import kyo.core.*
-
 import scala.util.*
-
 import sumsInternal.*
 
 sealed class Sums[V] private[kyo] (using private val tag: Tag[?])

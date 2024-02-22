@@ -1,9 +1,8 @@
 package kyo
 
-import org.jctools.queues.*
-
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import org.jctools.queues.*
 import scala.annotation.tailrec
 
 class Queue[T] private[kyo] (private[kyo] val unsafe: Queues.Unsafe[T]):
@@ -32,7 +31,7 @@ object Queues:
 
     private[kyo] val closed = IOs.fail("Queue closed!")
 
-    private[kyo] abstract class Unsafe[T]
+    abstract private[kyo] class Unsafe[T]
         extends AtomicBoolean(false):
 
         def capacity: Int

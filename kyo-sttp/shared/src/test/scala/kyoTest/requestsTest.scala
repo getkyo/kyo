@@ -1,10 +1,9 @@
 package kyoTest
 
 import kyo.*
-
+import scala.util.*
 import sttp.client3.*
 import sttp.model.StatusCode
-import scala.util.*
 
 class requestsTest extends KyoTest:
 

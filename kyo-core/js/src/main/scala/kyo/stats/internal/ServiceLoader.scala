@@ -1,7 +1,7 @@
 package java.util
 
-import java.util.Iterator
 import java.util.ArrayList
+import java.util.Iterator
 
 class ServiceLoader[T]:
     def iterator(): Iterator[T] =

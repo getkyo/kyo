@@ -1,9 +1,9 @@
 package kyoTest.stats.internal
 
-import kyoTest.KyoTest
+import kyo.*
 import kyo.stats.*
 import kyo.stats.internal.*
-import kyo.*
+import kyoTest.KyoTest
 
 class MetricReceiverTest extends KyoTest:
 

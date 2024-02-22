@@ -1,10 +1,9 @@
 package kyo.llm.thoughts
 
-import kyo.llm.*
-import zio.schema.{Schema as ZSchema}
 import kyo.*
-
+import kyo.llm.*
 import kyo.stats.*
+import zio.schema.Schema as ZSchema
 
 object Observe:
 

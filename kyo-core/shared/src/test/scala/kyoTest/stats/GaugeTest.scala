@@ -1,8 +1,8 @@
 package kyoTest.stats
 
-import kyoTest.KyoTest
-import kyo.stats.*
 import kyo.*
+import kyo.stats.*
+import kyoTest.KyoTest
 
 class GaugeTest extends KyoTest:
 

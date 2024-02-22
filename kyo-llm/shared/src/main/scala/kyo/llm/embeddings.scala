@@ -1,7 +1,6 @@
 package kyo.llm
 
 import kyo.*
-
 import sttp.client3.*
 import sttp.client3.ziojson.*
 import zio.json.*

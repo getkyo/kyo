@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.*
-
 import kyoTest.*
 import scala.util.*
 

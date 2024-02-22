@@ -1,9 +1,7 @@
 package kyoTest
 
 import kyo.*
-
 import org.scalatest.compatible.Assertion
-
 import scala.concurrent.duration.*
 
 class timersTest extends KyoTest:

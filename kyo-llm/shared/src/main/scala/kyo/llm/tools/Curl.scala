@@ -2,13 +2,11 @@ package kyo.llm.tools
 
 import kyo.*
 import kyo.llm.*
-
+import scala.concurrent.duration.*
 import sttp.client3.*
 import sttp.client3.ziojson.*
 import sttp.model.*
 import zio.json.*
-
-import scala.concurrent.duration.*
 
 class Curl(methods: Curl.Methods) extends Tool:
     private val allow = methods.s

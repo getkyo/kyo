@@ -1,9 +1,8 @@
 package kyo
 
 import kyo.*
-
-import scala.io.*
 import os.*
+import scala.io.*
 
 class Files(val path: List[String]):
 

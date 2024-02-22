@@ -1,7 +1,6 @@
 package kyo
 
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
-
 import scala.annotation.tailrec
 
 abstract class Channel[T]:

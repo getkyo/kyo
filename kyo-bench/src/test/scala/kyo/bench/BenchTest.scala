@@ -1,7 +1,7 @@
 package kyo.bench
 
-import org.scalatest.freespec.AsyncFreeSpec
 import org.scalatest.Assertions
+import org.scalatest.freespec.AsyncFreeSpec
 
 class BenchTest extends AsyncFreeSpec with Assertions:
 

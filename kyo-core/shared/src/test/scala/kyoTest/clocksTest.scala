@@ -1,9 +1,8 @@
 package kyoTest
 
-import kyo.*
-
 import java.time.Instant
 import java.time.ZoneId
+import kyo.*
 
 class clocksTest extends KyoTest:
 

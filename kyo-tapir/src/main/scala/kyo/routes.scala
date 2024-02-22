@@ -1,11 +1,10 @@
 package kyo
 
-import kyo.server.*
-
-import sttp.tapir.*
-import sttp.tapir.server.ServerEndpoint
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
+import kyo.server.*
+import sttp.tapir.*
+import sttp.tapir.server.ServerEndpoint
 
 object routes:
 

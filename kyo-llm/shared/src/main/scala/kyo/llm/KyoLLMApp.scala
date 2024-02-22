@@ -1,7 +1,6 @@
 package kyo.llm
 
 import kyo.*
-
 import scala.concurrent.duration.Duration
 import scala.util.Try
 
