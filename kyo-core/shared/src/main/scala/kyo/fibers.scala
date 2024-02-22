@@ -35,7 +35,7 @@ case class Promise[T: Flat](private[kyo] val p: IOPromise[T]) extends Fiber[T]:
             val r = new IOPromise[Try[T]]
             r.interrupts(p)
             p.onComplete { t =>
-                r.complete(IOs.attempt(t))
+                discard(r.complete(IOs.attempt(t)))
             }
             Promise(r).get
         }
@@ -64,15 +64,14 @@ case class Promise[T: Flat](private[kyo] val p: IOPromise[T]) extends Fiber[T]:
             r.interrupts(p)
             p.onComplete { v =>
                 try
-                    t(IOs.run(v)).map {
+                    IOs.run(t(IOs.run(v))) match
                         case Promise(v: IOPromise[U]) =>
-                            r.become(v)
+                            discard(r.become(v))
                         case Done(v) =>
-                            r.complete(v)
-                    }
+                            discard(r.complete(v))
                 catch
                     case ex if (NonFatal(ex)) =>
-                        r.complete(IOs.fail(ex))
+                        discard(r.complete(IOs.fail(ex)))
             }
             Promise(r)
         }
@@ -150,10 +149,10 @@ object Fibers extends Joins[Fibers]:
                                 try
                                     results(j) = IOs.run(r)
                                     if pending.decrementAndGet() == 0 then
-                                        p.complete(ArraySeq.unsafeWrapArray(results))
+                                        discard(p.complete(ArraySeq.unsafeWrapArray(results)))
                                 catch
                                     case ex if (NonFatal(ex)) =>
-                                        p.complete(IOs.fail(ex))
+                                        discard(p.complete(IOs.fail(ex)))
                             }
                             i += 1
                         }
@@ -179,7 +178,7 @@ object Fibers extends Joins[Fibers]:
                         foreach(l) { io =>
                             val f = IOTask(IOs(io), st)
                             p.interrupts(f)
-                            f.onComplete(p.complete(_))
+                            f.onComplete(v => discard(p.complete(v)))
                         }
                         Promise(p)
                     }

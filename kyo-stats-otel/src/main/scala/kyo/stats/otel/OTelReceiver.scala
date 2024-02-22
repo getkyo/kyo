@@ -116,6 +116,6 @@ class OTelReceiver extends MetricReceiver with TraceReceiver:
             OSpan.fromContext(c).end()
 
         def event(name: String, a: Attributes) =
-            OSpan.fromContext(c).addEvent(name, OTelAttributes(a))
+            discard(OSpan.fromContext(c).addEvent(name, OTelAttributes(a)))
     end SpanImpl
 end OTelReceiver

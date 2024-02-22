@@ -36,8 +36,8 @@ object Timer:
                 def isDone: Boolean < IOs      = IOs(task.isDone())
             end Task
 
-            private def eval(f: => Unit < Fibers) =
-                IOs.run(Fibers.run(Fibers.init(f)))
+            private def eval(f: => Unit < Fibers): Unit =
+                discard(IOs.run(Fibers.run(Fibers.init(f))))
 
             def schedule(delay: Duration)(f: => Unit < Fibers) =
                 if delay.isFinite then

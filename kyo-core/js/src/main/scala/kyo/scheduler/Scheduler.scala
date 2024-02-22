@@ -1,5 +1,6 @@
 package kyo.scheduler
 
+import kyo.*
 import scala.collection.mutable.PriorityQueue
 import scala.scalajs.js
 
@@ -12,12 +13,14 @@ object Scheduler:
         queue.enqueue(t)
         if !running then
             running = true
-            js.Dynamic.global.setTimeout(
-                () =>
-                    flush()
-                    running = false
-                ,
-                0
+            discard(
+                js.Dynamic.global.setTimeout(
+                    () =>
+                        flush()
+                        running = false
+                    ,
+                    0
+                )
             )
         end if
     end schedule

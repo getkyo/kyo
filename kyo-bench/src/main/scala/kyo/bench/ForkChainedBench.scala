@@ -56,7 +56,7 @@ class ForkChainedBench extends Bench.ForkOnly[Int]:
         import ox.*
         import java.util.concurrent.CompletableFuture
 
-        def iterate(p: CompletableFuture[Unit], n: Int): Unit =
+        def iterate(p: CompletableFuture[Unit], n: Int): Any =
             if n <= 0 then p.complete(())
             else
                 scoped {

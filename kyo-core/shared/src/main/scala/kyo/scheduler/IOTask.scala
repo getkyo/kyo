@@ -157,7 +157,7 @@ private[kyo] class IOTask[T](
                     b.add(f)
                     ensures = b
                 case arr: ArrayDeque[() => Unit] @unchecked =>
-                    arr.add(f)
+                    discard(arr.add(f))
 
     def remove(f: () => Unit): Unit =
         ensures match

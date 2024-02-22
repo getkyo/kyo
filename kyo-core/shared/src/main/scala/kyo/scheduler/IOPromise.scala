@@ -29,7 +29,7 @@ private[kyo] class IOPromise[T](state: State[T])
 
     final def interrupts(p: IOPromise[?]): Unit =
         onComplete { _ =>
-            p.interrupt()
+            discard(p.interrupt())
         }
 
     final def interrupt(): Boolean =

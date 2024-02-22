@@ -46,4 +46,8 @@ package object kyo:
         v4: T4 < S
     ): (T1, T2, T3, T4) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
+
+    inline def discard[T](v: T): Unit =
+        val _ = v
+        ()
 end kyo

@@ -46,8 +46,8 @@ object KyoSttpMonad:
                 Fibers.initPromise[T].map { p =>
                     val canceller =
                         register {
-                            case Left(t)  => p.unsafeComplete(IOs.fail(t))
-                            case Right(t) => p.unsafeComplete(t)
+                            case Left(t)  => discard(p.unsafeComplete(IOs.fail(t)))
+                            case Right(t) => discard(p.unsafeComplete(t))
                         }
                     p.onComplete { r =>
                         if r == Fibers.interrupted then

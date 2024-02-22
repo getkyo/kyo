@@ -1,6 +1,7 @@
 package kyo.scheduler
 
 import java.util.concurrent.atomic.AtomicBoolean
+import kyo.*
 import scala.collection.mutable.PriorityQueue
 
 final private class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
@@ -16,9 +17,11 @@ final private class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
         items
 
     def add(t: T): Unit =
-        modify {
-            items += 1
-            queue.addOne(t)
+        discard {
+            modify {
+                items += 1
+                queue.addOne(t)
+            }
         }
 
     def offer(t: T): Boolean =

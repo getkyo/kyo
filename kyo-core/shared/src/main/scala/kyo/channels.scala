@@ -146,14 +146,14 @@ object Channels:
                                     case None =>
                                         // If the queue has been emptied before the
                                         // transfer, requeue the consumer's promise.
-                                        takes.add(p)
+                                        discard(takes.add(p))
                                     case Some(v) =>
                                         if !p.unsafeComplete(v) && !u.offer(v) then
                                             // If completing the take fails and the queue
                                             // cannot accept the value back, enqueue a
                                             // placeholder put operation to preserve the value.
                                             val placeholder = Fibers.unsafeInitPromise[Unit]
-                                            puts.add((v, placeholder))
+                                            discard(puts.add((v, placeholder)))
                             end if
                             flush()
                         else if queueSize < capacity && !putsEmpty then
@@ -166,11 +166,11 @@ object Channels:
                                     // Complete the put's promise if the value is
                                     // successfully enqueued. If the fiber became
                                     // interrupted, the completion will be ignored.
-                                    p.unsafeComplete(())
+                                    discard(p.unsafeComplete(()))
                                 else
                                     // If the queue becomes full before the transfer,
                                     // requeue the producer's operation.
-                                    puts.add(t)
+                                    discard(puts.add(t))
                                 end if
                             end if
                             flush()
@@ -186,11 +186,11 @@ object Channels:
                                     // the put's promise. If the consumer's fiber
                                     // became interrupted, the completion will be
                                     // ignored.
-                                    p.unsafeComplete(())
+                                    discard(p.unsafeComplete(()))
                                 else
                                     // If the transfer to the consumer fails, requeue
                                     // the producer's operation.
-                                    puts.add(t)
+                                    discard(puts.add(t))
                                 end if
                             end if
                             flush()

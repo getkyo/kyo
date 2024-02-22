@@ -2,6 +2,8 @@ package kyo.llm
 
 import internal.*
 import java.lang.ref.WeakReference
+import json.Json
+import json.doc
 import kyo.*
 import kyo.llm.completions.*
 import kyo.llm.contexts.*

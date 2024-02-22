@@ -11,11 +11,13 @@ object KyoUtil:
         Fibers.initPromise[Channel].map { p =>
             p.onComplete(_ => IOs(nettyFuture.cancel(true).unit)).andThen {
                 nettyFuture.addListener((future: ChannelFuture) =>
-                    IOs.run {
-                        if future.isSuccess then p.complete(future.channel())
-                        else if future.isCancelled then
-                            p.complete(IOs.fail(new CancellationException))
-                        else p.complete(IOs.fail(future.cause()))
+                    discard {
+                        IOs.run {
+                            if future.isSuccess then p.complete(future.channel())
+                            else if future.isCancelled then
+                                p.complete(IOs.fail(new CancellationException))
+                            else p.complete(IOs.fail(future.cause()))
+                        }
                     }
                 )
                 p.get
@@ -26,11 +28,13 @@ object KyoUtil:
         Fibers.initPromise[T].map { p =>
             p.onComplete(_ => IOs(f.cancel(true)).unit).andThen {
                 f.addListener((future: io.netty.util.concurrent.Future[T]) =>
-                    IOs.run {
-                        if future.isSuccess then p.complete(future.getNow)
-                        else if future.isCancelled then
-                            p.complete(IOs.fail(new CancellationException))
-                        else p.complete(IOs.fail(future.cause()))
+                    discard {
+                        IOs.run {
+                            if future.isSuccess then p.complete(future.getNow)
+                            else if future.isCancelled then
+                                p.complete(IOs.fail(new CancellationException))
+                            else p.complete(IOs.fail(future.cause()))
+                        }
                     }
                 )
                 p.get

@@ -87,7 +87,7 @@ class directTest extends KyoTest:
             defer {
                 val c = await(Atomics.initInt(1))
                 while await(c.get) < 100 do
-                    await(c.incrementAndGet)
+                    discard(await(c.incrementAndGet))
                 await(c.get)
             }
         assert(IOs.run(io) == 100)

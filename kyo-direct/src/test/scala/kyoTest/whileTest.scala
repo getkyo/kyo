@@ -13,7 +13,7 @@ class whileTest extends AnyFreeSpec with Assertions:
         runLiftTest(3) {
             val i = await(Atomics.initInt(0))
             while await(i.get) < 3 do
-                await(i.incrementAndGet)
+                discard(await(i.incrementAndGet))
             await(i.get)
         }
     }
@@ -34,7 +34,7 @@ class whileTest extends AnyFreeSpec with Assertions:
         val out =
             defer {
                 while i < 3 do
-                    (await(IOs(incrementA())), await(IOs(incrementB())))
+                    discard(await(IOs(incrementA())), await(IOs(incrementB())))
                 i
             }
         for

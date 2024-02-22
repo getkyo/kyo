@@ -1,9 +1,9 @@
 package kyo.llm
 
 import Thoughts.*
+import json.Json
 import kyo.*
 import kyo.Stats
-import kyo.llm.json.*
 import kyo.llm.json.Schema
 import kyo.llm.thoughts.*
 import scala.collection.immutable.ListMap

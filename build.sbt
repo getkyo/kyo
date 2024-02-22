@@ -6,9 +6,9 @@ val compilerOptions = Seq(
     "-feature",
     "-unchecked",
     "-deprecation",
-    "-language:implicitConversions"
+    "-language:implicitConversions",
+    "-Wvalue-discard"
     // "-explain"
-    // "-Wvalue-discard",
     // "-Vprofile",
 )
 
