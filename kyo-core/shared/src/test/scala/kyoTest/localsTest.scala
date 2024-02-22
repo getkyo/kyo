@@ -119,7 +119,7 @@ class localsTest extends KyoTest:
         "let + effect + save" in {
             val l = Locals.init(10)
             assert(
-                IOs.run[Option[Locals.State]](Options.run(l.let(20)(Options(1).map(_ =>
+                IOs.run(Options.run(l.let(20)(Options(1).map(_ =>
                     Locals.save
                 )))) ==
                     Some(Map(l -> 20))
@@ -128,7 +128,7 @@ class localsTest extends KyoTest:
         "effect + let + save" in {
             val l = Locals.init(10)
             assert(
-                IOs.run[Option[Locals.State]](Options.run(Options(1).map(_ =>
+                IOs.run(Options.run(Options(1).map(_ =>
                     l.let(20)(Locals.save)
                 ))) ==
                     Some(Map(l -> 20))
@@ -137,7 +137,7 @@ class localsTest extends KyoTest:
         "effect + let + save + effect" in {
             val l = Locals.init(10)
             assert(
-                IOs.run[Option[Locals.State]](Options.run(Options(1).map(_ =>
+                IOs.run(Options.run(Options(1).map(_ =>
                     l.let(20)(Locals.save).map(Options(_))
                 ))) ==
                     Some(Map(l -> 20))
@@ -147,7 +147,7 @@ class localsTest extends KyoTest:
             val l1 = Locals.init(10)
             val l2 = Locals.init(20)
             assert(
-                IOs.run[Locals.State](
+                IOs.run(
                     l1.let(30)(
                         l2.let(40)(
                             Locals.save
@@ -161,7 +161,7 @@ class localsTest extends KyoTest:
             val l1 = Locals.init(10)
             val l2 = Locals.init(20)
             assert(
-                IOs.run[Option[Locals.State]](
+                IOs.run(
                     Options.run(
                         l1.let(30)(
                             l2.let(40)(
@@ -177,7 +177,7 @@ class localsTest extends KyoTest:
             val l1 = Locals.init(10)
             val l2 = Locals.init(20)
             assert(
-                IOs.run[Option[Locals.State]](
+                IOs.run(
                     Options.run(
                         l1.let(30)(
                             l2.let(40)(
@@ -210,7 +210,7 @@ class localsTest extends KyoTest:
             val l2 = Locals.init(0)
             val l3 = Locals.init(0)
             assert(
-                IOs.run[Option[(Locals.State, Locals.State)]](
+                IOs.run(
                     Options.run(
                         l3.let(20) {
                             Options(1).map(_ =>
@@ -243,7 +243,7 @@ class localsTest extends KyoTest:
             }
         "get" in {
             assert(
-                IOs.run[Int](Locals.restore(state)(l1.get)) ==
+                IOs.run(Locals.restore(state)(l1.get)) ==
                     10
             )
         }

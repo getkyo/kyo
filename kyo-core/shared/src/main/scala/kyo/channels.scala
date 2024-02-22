@@ -101,7 +101,7 @@ object Channels:
                         }
 
                     inline def op[T](inline v: => T): T < IOs =
-                        IOs[T, Any] {
+                        IOs {
                             if u.isClosed() then
                                 closed
                             else
@@ -111,7 +111,7 @@ object Channels:
                     def isClosed = queue.isClosed
 
                     def close =
-                        IOs[Option[Seq[T]], Any] {
+                        IOs {
                             u.close() match
                                 case None =>
                                     None

@@ -299,7 +299,7 @@ class fibersTest extends KyoTest:
                     v1 <- IOs(r.incrementAndGet())
                     v2 <- Fibers.init(r.incrementAndGet()).map(_.get)
                 yield (r, Set(v1, v2))
-            Resources.run[(JAtomicInteger & Closeable, Set[Int]), Fibers](io1).map {
+            Resources.run(io1).map {
                 case (r, v) =>
                     assert(v == Set(1, 2))
                     assert(r.get() == -1)

@@ -141,7 +141,7 @@ sealed trait IOs extends Effect[IO, IOs]:
                         end apply
                 case _ =>
                     p.remove(ensure)
-                    IOs[T, S] {
+                    IOs {
                         ensure()
                         v
                     }
@@ -176,7 +176,7 @@ private[kyo] object iosInternal:
         def ensure(f: () => Unit): Unit
         def remove(f: () => Unit): Unit
         def suspend[T, S](v: => T < S): T < (IOs & S) =
-            IOs[T, S](v)
+            IOs(v)
     end Preempt
     object Preempt:
         val never: Preempt =

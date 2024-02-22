@@ -229,7 +229,7 @@ object Fibers extends Joins[Fibers]:
                 val p = new IOPromise[T]()
                 f.onComplete { r =>
                     val io =
-                        IOs[Boolean, IOs] {
+                        IOs {
                             r match
                                 case Success(v) =>
                                     p.complete(v)
@@ -297,7 +297,7 @@ object fibersInternal:
                         catch
                             case ex if (NonFatal(ex)) =>
                                 handle(ex)
-            IOs[T, S](handle[T, IOs & S, IOs](v).map(_.block))
+            IOs(handle[T, IOs & S, IOs](v).map(_.block))
         end runAndBlock
     end FiberGets
     val FiberGets = new FiberGets

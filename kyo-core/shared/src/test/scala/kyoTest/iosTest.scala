@@ -122,7 +122,7 @@ class iosTest extends KyoTest:
         "success" in {
             var called = false
             assert(
-                IOs.attempt(IOs.run(IOs.ensure[Int, Any] { called = true }(1))) ==
+                IOs.attempt(IOs.run(IOs.ensure { called = true }(1))) ==
                     Try(1)
             )
             assert(called)

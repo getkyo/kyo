@@ -38,7 +38,7 @@ object Meters:
                         }
 
                     def tryRun[T, S](v: => T < S) =
-                        IOs[Option[T], S] {
+                        IOs {
                             IOs.run(chan.poll) match
                                 case None =>
                                     None
