@@ -11,8 +11,8 @@ object Flat extends FlatImplicits {
   given unit[S]: Flat[Unit < S] = unsafe.bypass[Unit < S]
 
   object unsafe {
-    /*inline*/
-    given bypass[T]: Flat[T] =
+
+    inline given bypass[T]: Flat[T] =
       cached.asInstanceOf[Flat[T]]
   }
 }

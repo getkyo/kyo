@@ -19,8 +19,7 @@ class Queue[T] private[kyo] (private[kyo] val unsafe: Queues.Unsafe[T]) {
   def isClosed: Boolean < IOs     = IOs(unsafe.isClosed())
   def close: Option[Seq[T]] < IOs = IOs(unsafe.close())
 
-  /*inline*/
-  private def op[T]( /*inline*/ v: => T): T < IOs =
+  private inline def op[T](inline v: => T): T < IOs =
     IOs {
       if (unsafe.isClosed()) {
         Queues.closed

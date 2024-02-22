@@ -13,9 +13,8 @@ sealed trait IOs extends Effect[IO, IOs] {
 
   val unit: Unit < IOs = ()
 
-  /*inline*/
   def apply[T, S](
-      /*inline*/ f: => T < (IOs & S)
+      f: => T < (IOs & S)
   ): T < (IOs & S) =
     new KyoIO[T, S] {
       def apply(v: Unit < (IOs & S), s: Safepoint[IO, IOs], l: Locals.State) =
@@ -64,9 +63,8 @@ sealed trait IOs extends Effect[IO, IOs] {
     }
   }
 
-  /*inline*/
   def handle[T, S, U >: T, S2](v: => T < S)(
-      /*inline*/ pf: PartialFunction[Throwable, U < S2]
+      pf: PartialFunction[Throwable, U < S2]
   ): U < (S & S2) = {
     def handleLoop(v: U < (S & S2)): U < (S & S2) =
       v match {
@@ -95,7 +93,6 @@ sealed trait IOs extends Effect[IO, IOs] {
     }
   }
 
-  /*inline*/
   def run[T](v: T < IOs)(using f: Flat[T < IOs]): T = {
     val safepoint = Safepoint.noop[IO, IOs]
     @tailrec def runLoop(v: T < IOs): T =
@@ -109,7 +106,6 @@ sealed trait IOs extends Effect[IO, IOs] {
     runLoop(v)
   }
 
-  /*inline*/
   def runLazy[T, S](v: T < (IOs & S))(using f: Flat[T < (IOs & S)]): T < S = {
     def runLazyLoop(v: T < (IOs & S)): T < S = {
       val safepoint = Safepoint.noop[IO, IOs]
@@ -132,8 +128,7 @@ sealed trait IOs extends Effect[IO, IOs] {
     runLazyLoop(v)
   }
 
-  /*inline*/
-  def ensure[T, S]( /*inline*/ f: => Unit < IOs)(v: T < S): T < (IOs & S) = {
+  def ensure[T, S](f: => Unit < IOs)(v: T < S): T < (IOs & S) = {
     val ensure = new Ensure {
       def run = f
     }

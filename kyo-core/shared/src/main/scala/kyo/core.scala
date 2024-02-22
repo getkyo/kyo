@@ -17,8 +17,7 @@ object core {
 
     def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]): Boolean = this eq other
 
-    /*inline*/
-    protected final def suspend[T, S](v: M[T] < S): T < (S & E) = {
+    protected inline def suspend[T, S](v: M[T] < S): T < (S & E) = {
       def suspendLoop(v: M[T] < S): T < (S & E) = {
         v match {
           case kyo: Kyo[MX, EX, Any, M[T], S] @unchecked =>
@@ -36,8 +35,7 @@ object core {
       suspendLoop(v)
     }
 
-    /*inline*/
-    protected final def handle[T, S, S2](v: T < (E & S))(implicit
+    protected inline def handle[T, S, S2](v: T < (E & S))(implicit
         h: Handler[M, E, S2],
         s: Safepoint[M, E],
         f: Flat[T < (E & S)]
@@ -78,8 +76,7 @@ object core {
     override def toString = getClass.getSimpleName()
   }
 
-  /*inline*/
-  def transform[T, S, U, S2](v: T < S)( /*inline*/ f: T => (U < S2)): U < (S & S2) = {
+  def transform[T, S, U, S2](v: T < S)(f: T => (U < S2)): U < (S & S2) = {
     def transformLoop(v: T < S): U < (S & S2) =
       v match {
         case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>
@@ -169,8 +166,7 @@ object core {
     }
 
     // still using in Scala implicit because Conversion can't be fully inlined
-    /*inline*/
-    implicit def fromKyo[M[_], E <: Effect[M, _], T, U, S](v: Kyo[M, E, T, U, S]): U < S =
+    implicit inline def fromKyo[M[_], E <: Effect[M, _], T, U, S](v: Kyo[M, E, T, U, S]): U < S =
       v.asInstanceOf[U < S]
   }
 }

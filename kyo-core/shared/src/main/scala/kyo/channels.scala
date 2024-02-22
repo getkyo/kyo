@@ -103,8 +103,7 @@ object Channels {
               }
             }
 
-          /*inline*/
-          def op[T]( /*inline*/ v: => T): T < IOs =
+          inline def op[T](inline v: => T): T < IOs =
             IOs[T, Any] {
               if (u.isClosed()) {
                 closed

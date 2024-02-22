@@ -16,7 +16,7 @@ import kyo.Locals.State
 
 private[kyo] object IOTask {
   private def nullIO[T] = null.asInstanceOf[T < IOs]
-  /*inline*/
+
   def apply[T](
       v: T < Fibers,
       st: Locals.State,

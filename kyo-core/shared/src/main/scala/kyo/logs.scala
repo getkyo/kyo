@@ -6,8 +6,7 @@ object Logs {
 
   private val logger = LoggerFactory.getLogger("kyo.logs")
 
-  /*inline*/
-  def trace( /*inline*/ msg: => String)(
+  inline def trace(inline msg: => String)(
       implicit
       file: sourcecode.FileName,
       line: sourcecode.Line
@@ -27,8 +26,7 @@ object Logs {
     IOs(if (logger.isTraceEnabled) logger.trace(s"[$f:$l] $msg"))
   }
 
-  /*inline*/
-  def trace( /*inline*/ msg: => String, /*inline*/ t: => Throwable)(
+  inline def trace(inline msg: => String, inline t: => Throwable)(
       implicit
       file: sourcecode.FileName,
       line: sourcecode.Line
@@ -38,8 +36,7 @@ object Logs {
     IOs(if (logger.isTraceEnabled) logger.trace(s"[$f:$l] $msg", t))
   }
 
-  /*inline*/
-  def debug( /*inline*/ msg: => String)(
+  inline def debug(inline msg: => String)(
       implicit
       file: sourcecode.FileName,
       line: sourcecode.Line
@@ -49,8 +46,7 @@ object Logs {
     IOs(if (logger.isDebugEnabled) logger.debug(s"[$f:$l] $msg"))
   }
 
-  /*inline*/
-  def debug( /*inline*/ msg: => String, /*inline*/ t: => Throwable)(
+  inline def debug(inline msg: => String, inline t: => Throwable)(
       implicit
       file: sourcecode.FileName,
       line: sourcecode.Line
@@ -60,8 +56,7 @@ object Logs {
     IOs(if (logger.isDebugEnabled) logger.debug(s"[$f:$l] $msg", t))
   }
 
-  /*inline*/
-  def info( /*inline*/ msg: => String)(
+  inline def info(inline msg: => String)(
       implicit
       file: sourcecode.FileName,
       line: sourcecode.Line
@@ -71,8 +66,7 @@ object Logs {
     IOs(if (logger.isInfoEnabled) logger.info(s"[$f:$l] $msg"))
   }
 
-  /*inline*/
-  def info( /*inline*/ msg: => String, /*inline*/ t: => Throwable)(
+  inline def info(inline msg: => String, inline t: => Throwable)(
       implicit
       file: sourcecode.FileName,
       line: sourcecode.Line
@@ -82,8 +76,7 @@ object Logs {
     IOs(if (logger.isInfoEnabled) logger.info(s"[$f:$l] $msg", t))
   }
 
-  /*inline*/
-  def warn( /*inline*/ msg: => String)(
+  inline def warn(inline msg: => String)(
       implicit
       file: sourcecode.FileName,
       line: sourcecode.Line
@@ -93,8 +86,7 @@ object Logs {
     IOs(if (logger.isWarnEnabled) logger.warn(s"[$f:$l] $msg"))
   }
 
-  /*inline*/
-  def warn( /*inline*/ msg: => String, /*inline*/ t: => Throwable)(
+  inline def warn(inline msg: => String, inline t: => Throwable)(
       implicit
       file: sourcecode.FileName,
       line: sourcecode.Line
@@ -104,8 +96,7 @@ object Logs {
     IOs(if (logger.isWarnEnabled) logger.warn(s"[$f:$l] $msg", t))
   }
 
-  /*inline*/
-  def error( /*inline*/ msg: => String)(
+  inline def error(inline msg: => String)(
       implicit
       file: sourcecode.FileName,
       line: sourcecode.Line
@@ -115,8 +106,7 @@ object Logs {
     IOs(if (logger.isErrorEnabled) logger.error(s"[$f:$l] $msg"))
   }
 
-  /*inline*/
-  def error( /*inline*/ msg: => String, /*inline*/ t: => Throwable)(
+  inline def error(inline msg: => String, inline t: => Throwable)(
       implicit
       file: sourcecode.FileName,
       line: sourcecode.Line
@@ -127,8 +117,7 @@ object Logs {
   }
 
   object unsafe {
-    /*inline*/
-    def trace( /*inline*/ msg: => String)(
+    inline def trace(inline msg: => String)(
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
@@ -138,8 +127,7 @@ object Logs {
       if (logger.isTraceEnabled) logger.trace(s"[$f:$l] $msg")
     }
 
-    /*inline*/
-    def trace( /*inline*/ msg: => String, /*inline*/ t: => Throwable)(
+    inline def trace(inline msg: => String, inline t: => Throwable)(
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
@@ -149,8 +137,7 @@ object Logs {
       if (logger.isTraceEnabled) logger.trace(s"[$f:$l] $msg", t)
     }
 
-    /*inline*/
-    def debug( /*inline*/ msg: => String)(
+    inline def debug(inline msg: => String)(
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
@@ -160,8 +147,7 @@ object Logs {
       if (logger.isDebugEnabled) logger.debug(s"[$f:$l] $msg")
     }
 
-    /*inline*/
-    def debug( /*inline*/ msg: => String, /*inline*/ t: => Throwable)(
+    inline def debug(inline msg: => String, inline t: => Throwable)(
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
@@ -171,8 +157,7 @@ object Logs {
       if (logger.isDebugEnabled) logger.debug(s"[$f:$l] $msg", t)
     }
 
-    /*inline*/
-    def info( /*inline*/ msg: => String)(
+    inline def info(inline msg: => String)(
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
@@ -182,8 +167,7 @@ object Logs {
       if (logger.isInfoEnabled) logger.info(s"[$f:$l] $msg")
     }
 
-    /*inline*/
-    def info( /*inline*/ msg: => String, /*inline*/ t: => Throwable)(
+    inline def info(inline msg: => String, inline t: => Throwable)(
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
@@ -193,8 +177,7 @@ object Logs {
       if (logger.isInfoEnabled) logger.info(s"[$f:$l] $msg", t)
     }
 
-    /*inline*/
-    def warn( /*inline*/ msg: => String)(
+    inline def warn(inline msg: => String)(
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
@@ -204,8 +187,7 @@ object Logs {
       if (logger.isWarnEnabled) logger.warn(s"[$f:$l] $msg")
     }
 
-    /*inline*/
-    def warn( /*inline*/ msg: => String, /*inline*/ t: => Throwable)(
+    inline def warn(inline msg: => String, inline t: => Throwable)(
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
@@ -215,8 +197,7 @@ object Logs {
       if (logger.isWarnEnabled) logger.warn(s"[$f:$l] $msg", t)
     }
 
-    /*inline*/
-    def error( /*inline*/ msg: => String)(
+    inline def error(inline msg: => String)(
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
@@ -226,8 +207,7 @@ object Logs {
       if (logger.isErrorEnabled) logger.error(s"[$f:$l] $msg")
     }
 
-    /*inline*/
-    def error( /*inline*/ msg: => String, /*inline*/ t: => Throwable)(
+    inline def error(inline msg: => String, inline t: => Throwable)(
         implicit
         file: sourcecode.FileName,
         line: sourcecode.Line
