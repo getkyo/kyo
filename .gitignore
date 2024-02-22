@@ -12,5 +12,4 @@ metals.sbt
 jmh-result.json
 *.jfr
 *.json
-kyo-core-opt
 *.gpg

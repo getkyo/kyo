@@ -38,29 +38,9 @@ lazy val `kyo-settings` = Seq(
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     sonatypeProfileName                := "io.getkyo",
-    gen                                := {},
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme := Some("early-semver")
 )
-
-lazy val gen = TaskKey[Unit]("gen", "")
-
-lazy val genState: State => State = {
-  s: State =>
-    "gen" :: s
-}
-
-Global / onLoad := {
-  val old = (Global / onLoad).value
-  genState compose old
-}
-
-def transformFiles(path: File)(f: String => String): Unit =
-  if (path.isDirectory) path.listFiles.foreach(transformFiles(_)(f))
-  else {
-    var original = IO.read(path)
-    IO.write(path, f(original))
-  }
 
 lazy val kyo =
   crossProject(JVMPlatform)
@@ -74,19 +54,9 @@ lazy val kyo =
         Compile / packageDoc / publishArtifact := false,
         Compile / packageSrc / publishArtifact := false,
         scalaVersion                           := scala3Version,
-        `kyo-settings`,
-        gen := {
-          val origin = new File("kyo-core/")
-          val dest   = new File(s"kyo-core-opt/")
-          IO.delete(dest)
-          IO.copyDirectory(origin, dest)
-          transformFiles(dest) {
-            _.replaceAllLiterally(s"/*inline*/", "inline")
-          }
-        }
+        `kyo-settings`
     ).aggregate(
         `kyo-core`,
-        `kyo-core-opt`,
         `kyo-direct`,
         `kyo-stats-otel`,
         `kyo-cache`,
@@ -131,16 +101,6 @@ lazy val `kyo-core` =
         })
     )
     .jsSettings(`js-settings`)
-
-lazy val `kyo-core-opt` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file(s"kyo-core-opt"))
-    .settings(
-        `kyo-core-settings`,
-        scalafmtOnCompile := false
-    )
 
 lazy val `kyo-direct` =
   crossProject(JSPlatform, JVMPlatform)
@@ -277,7 +237,7 @@ lazy val `kyo-bench` =
     .crossType(CrossType.Pure)
     .in(file("kyo-bench"))
     .enablePlugins(JmhPlugin)
-    .dependsOn(`kyo-core-opt`)
+    .dependsOn(`kyo-core`)
     .settings(
         `kyo-settings`,
         libraryDependencies += "org.typelevel"       %% "cats-effect"        % "3.5.3",
