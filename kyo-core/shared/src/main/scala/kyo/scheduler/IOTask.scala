@@ -102,22 +102,27 @@ private[kyo] class IOTask[T](
       }
     } else {
       curr match {
-        case kyo: Kyo[IO, IOs, Unit, T, Fibers] @unchecked if (kyo.effect eq IOs) =>
-          eval(start, kyo((), this, locals))
-        case kyo: Kyo[Fiber, FiberGets, Any, T, Fibers] @unchecked
-            if (kyo.effect eq FiberGets) =>
-          kyo.value match {
-            case Promise(p) =>
-              this.interrupts(p)
-              val runtime = this.runtime() + (Coordinator.tick() - start).asInstanceOf[Int]
-              p.onComplete { (v: Any < IOs) =>
-                val io = IOs(kyo(v, this.asInstanceOf[Safepoint[Fiber, FiberGets]], locals))
-                this.become(IOTask(io, locals, ensures, runtime))
-                ()
-              }
-              nullIO
-            case Done(v) =>
-              eval(start, kyo(v, this.asInstanceOf[Safepoint[Fiber, FiberGets]], locals))
+        case kyo: Kyo[_, _, _, _, _] =>
+          if (kyo.effect eq IOs) {
+            val k = kyo.asInstanceOf[Kyo[IO, IOs, Unit, T, Fibers]]
+            eval(start, k((), this, locals))
+          } else if (kyo.effect eq FiberGets) {
+            val k = kyo.asInstanceOf[Kyo[Fiber, FiberGets, Any, T, Fibers]]
+            k.value match {
+              case Promise(p) =>
+                this.interrupts(p)
+                val runtime = this.runtime() + (Coordinator.tick() - start).asInstanceOf[Int]
+                p.onComplete { (v: Any < IOs) =>
+                  val io = IOs(k(v, this.asInstanceOf[Safepoint[Fiber, FiberGets]], locals))
+                  this.become(IOTask(io, locals, ensures, runtime))
+                  ()
+                }
+                nullIO
+              case Done(v) =>
+                eval(start, k(v, this.asInstanceOf[Safepoint[Fiber, FiberGets]], locals))
+            }
+          } else {
+            IOs.fail("Unhandled effect: " + kyo.effect)
           }
         case _ =>
           complete(curr.asInstanceOf[T < IOs])
