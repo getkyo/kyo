@@ -43,247 +43,206 @@ lazy val `kyo-settings` = Seq(
 )
 
 lazy val kyo =
-  crossProject(JVMPlatform)
-    .in(file("."))
-    .settings(
-        name                                   := "kyo",
-        organization                           := "io.getkyo",
-        publishArtifact                        := false,
-        publish / skip                         := true,
-        Compile / packageBin / publishArtifact := false,
-        Compile / packageDoc / publishArtifact := false,
-        Compile / packageSrc / publishArtifact := false,
-        scalaVersion                           := scala3Version,
-        `kyo-settings`
-    ).aggregate(
-        `kyo-core`,
-        `kyo-direct`,
-        `kyo-stats-otel`,
-        `kyo-cache`,
-        `kyo-sttp`,
-        `kyo-tapir`,
-        `kyo-llm-macros`,
-        `kyo-llm`,
-        `kyo-bench`
-    )
+    crossProject(JVMPlatform)
+        .in(file("."))
+        .settings(
+            name                                   := "kyo",
+            organization                           := "io.getkyo",
+            publishArtifact                        := false,
+            publish / skip                         := true,
+            Compile / packageBin / publishArtifact := false,
+            Compile / packageDoc / publishArtifact := false,
+            Compile / packageSrc / publishArtifact := false,
+            scalaVersion                           := scala3Version,
+            `kyo-settings`
+        ).aggregate(
+            `kyo-core`,
+            `kyo-direct`,
+            `kyo-stats-otel`,
+            `kyo-cache`,
+            `kyo-sttp`,
+            `kyo-tapir`,
+            `kyo-llm`,
+            `kyo-bench`
+        )
 
 val zioVersion = "2.0.21"
 
-lazy val `kyo-core-settings` = `kyo-settings` ++ Seq(
-    libraryDependencies += "dev.zio"       %%% "izumi-reflect"     % "2.3.8",
-    libraryDependencies += "org.slf4j"       % "slf4j-api"         % "2.0.11",
-    libraryDependencies += "org.jctools"     % "jctools-core"      % "4.0.3",
-    libraryDependencies += "com.lihaoyi"   %%% "sourcecode"        % "0.3.1",
-    libraryDependencies += "com.lihaoyi"   %%% "pprint"            % "0.8.1",
-    libraryDependencies += "dev.zio"       %%% "zio-test"          % zioVersion   % Test,
-    libraryDependencies += "dev.zio"       %%% "zio-test-magnolia" % zioVersion   % Test,
-    libraryDependencies += "dev.zio"       %%% "zio-test-sbt"      % zioVersion   % Test,
-    libraryDependencies += "dev.zio"       %%% "zio-prelude"       % "1.0.0-RC23" % Test,
-    libraryDependencies += "dev.zio"       %%% "zio-laws-laws"     % "1.0.0-RC23" % Test,
-    libraryDependencies += "org.scalatest" %%% "scalatest"         % "3.2.16"     % Test,
-    libraryDependencies += "ch.qos.logback"  % "logback-classic"   % "1.5.0"      % Test,
-    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework"),
-    Global / concurrentRestrictions := Seq(
-        Tags.limit(Tags.CPU, java.lang.Runtime.getRuntime().availableProcessors() - 1)
-    )
-)
-
 lazy val `kyo-core` =
-  crossProject(JSPlatform, JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file("kyo-core"))
-    .settings(
-        `kyo-core-settings`,
-        libraryDependencies ++= (CrossVersion.partialVersion(scalaVersion.value) match {
-          case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
-          case _            => Seq.empty
-        })
-    )
-    .jsSettings(`js-settings`)
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-core"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "dev.zio"       %%% "izumi-reflect"   % "2.3.8",
+            libraryDependencies += "org.slf4j"       % "slf4j-api"       % "2.0.11",
+            libraryDependencies += "org.jctools"     % "jctools-core"    % "4.0.3",
+            libraryDependencies += "com.lihaoyi"   %%% "sourcecode"      % "0.3.1",
+            libraryDependencies += "com.lihaoyi"   %%% "pprint"          % "0.8.1",
+            libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC23" % Test,
+            libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
+            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.0"      % Test,
+            testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
+        )
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-direct` =
-  crossProject(JSPlatform, JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure)
-    .in(file("kyo-direct"))
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .settings(
-        `kyo-settings`,
-        libraryDependencies ++= Seq(
-            "com.github.rssh" %%% "dotty-cps-async" % "0.9.20"
-        ).filter(_ => scalaVersion.value.startsWith("3")),
-        libraryDependencies ++= Seq(
-            "org.scala-lang"   % "scala-library"  % scalaVersion.value,
-            "org.scala-lang"   % "scala-compiler" % scalaVersion.value,
-            "org.scala-lang"   % "scala-reflect"  % scalaVersion.value,
-            "org.scalamacros" %% "resetallattrs"  % "1.0.0"
-        ).filter(_ => scalaVersion.value.startsWith("2"))
-    )
-    .jsSettings(`js-settings`)
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-direct"))
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.20"
+        )
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-otel` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure)
-    .in(file("kyo-stats-otel"))
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .settings(
-        `kyo-settings`,
-        libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.35.0",
-        libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk" % "1.35.0",
-        libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1" % Test
-    )
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-stats-otel"))
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.35.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk" % "1.35.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1" % Test
+        )
 
 lazy val `kyo-cache` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file("kyo-cache"))
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .settings(
-        `kyo-settings`,
-        libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
-    )
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-cache"))
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
+        )
 
 lazy val `kyo-os-lib` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file("kyo-os-lib"))
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .settings(
-        `kyo-settings`,
-        libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.9.3"
-    )
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-os-lib"))
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.9.3"
+        )
 
 lazy val `kyo-sttp` =
-  crossProject(JSPlatform, JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file("kyo-sttp"))
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .settings(
-        `kyo-settings`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.3"
-    )
-    .jsSettings(`js-settings`)
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-sttp"))
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.3"
+        )
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-tapir` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure)
-    .in(file("kyo-tapir"))
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .dependsOn(`kyo-sttp`)
-    .settings(
-        `kyo-settings`,
-        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.8.4",
-        libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.4"
-    )
-
-lazy val `kyo-llm-macros` =
-  crossProject(JSPlatform, JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file("kyo-llm-macros"))
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .settings(
-        `kyo-settings`,
-        libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"            % "3.9.3",
-        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.17",
-        libraryDependencies += "dev.zio"                       %% "zio-schema"          % "0.4.17",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-json"     % "0.4.17",
-        libraryDependencies += "dev.zio"                       %% "zio-schema-protobuf" % "0.4.17",
-        libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.17",
-        libraryDependencies ++= (CrossVersion.partialVersion(scalaVersion.value) match {
-          case Some((2, _)) => Seq("org.scala-lang" % "scala-reflect" % scalaVersion.value)
-          case _            => Seq.empty
-        })
-    )
-    .jsSettings(`js-settings`)
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-tapir"))
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .dependsOn(`kyo-sttp`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.8.4",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.4"
+        )
 
 lazy val `kyo-llm` =
-  crossProject(JSPlatform, JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file("kyo-llm"))
-    .dependsOn(`kyo-sttp`)
-    .dependsOn(`kyo-direct`)
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .dependsOn(`kyo-llm-macros`)
-    .settings(
-        `kyo-settings`,
-        libraryDependencies += "com.knuddels" % "jtokkit" % "1.0.0"
-    )
-    .jsSettings(`js-settings`)
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-llm"))
+        .dependsOn(`kyo-sttp`)
+        .dependsOn(`kyo-direct`)
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.knuddels"                   % "jtokkit"         % "1.0.0",
+            libraryDependencies += "com.softwaremill.sttp.client3" %% "zio-json"        % "3.9.3",
+            libraryDependencies += "dev.zio"                       %% "zio-schema"      % "0.4.17",
+            libraryDependencies += "dev.zio"                       %% "zio-schema-json" % "0.4.17",
+            libraryDependencies += "dev.zio" %% "zio-schema-derivation" % "0.4.17"
+        )
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-llm-bench` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file("kyo-llm-bench"))
-    .dependsOn(`kyo-llm`)
-    .dependsOn(`kyo-os-lib`)
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .settings(
-        `kyo-settings`,
-        libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.0"
-    )
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-llm-bench"))
+        .dependsOn(`kyo-llm`)
+        .dependsOn(`kyo-os-lib`)
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.0"
+        )
 
 lazy val `kyo-bench` =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure)
-    .in(file("kyo-bench"))
-    .enablePlugins(JmhPlugin)
-    .dependsOn(`kyo-core`)
-    .settings(
-        `kyo-settings`,
-        libraryDependencies += "org.typelevel"       %% "cats-effect"        % "3.5.3",
-        libraryDependencies += "org.typelevel"       %% "log4cats-core"      % "2.6.0",
-        libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"     % "2.6.0",
-        libraryDependencies += "dev.zio"             %% "zio-logging"        % "2.2.2",
-        libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2" % "2.2.2",
-        libraryDependencies += "dev.zio"             %% "zio"                % zioVersion,
-        libraryDependencies += "dev.zio"             %% "zio-concurrent"     % zioVersion,
-        libraryDependencies += "com.softwaremill.ox" %% "core"               % "0.0.19",
-        libraryDependencies += "org.scalatest"       %% "scalatest"          % "3.2.16" % Test
-    )
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-bench"))
+        .enablePlugins(JmhPlugin)
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.typelevel"       %% "cats-effect"        % "3.5.3",
+            libraryDependencies += "org.typelevel"       %% "log4cats-core"      % "2.6.0",
+            libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"     % "2.6.0",
+            libraryDependencies += "dev.zio"             %% "zio-logging"        % "2.2.2",
+            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2" % "2.2.2",
+            libraryDependencies += "dev.zio"             %% "zio"                % zioVersion,
+            libraryDependencies += "dev.zio"             %% "zio-concurrent"     % zioVersion,
+            libraryDependencies += "com.softwaremill.ox" %% "core"               % "0.0.19",
+            libraryDependencies += "org.scalatest"       %% "scalatest"          % "3.2.16" % Test
+        )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
 
 addCommandAlias("checkReadme", ";readme/rewriteReadmeFile; readme/mdoc")
 
 lazy val readme =
-  crossProject(JVMPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Pure)
-    .in(file("target/readme"))
-    .enablePlugins(MdocPlugin)
-    .settings(
-        `kyo-settings`,
-        mdocIn  := new File("./../../README-in.md"),
-        mdocOut := new File("./../../README-out.md"),
-        rewriteReadmeFile := {
-          val readmeFile       = new File("README.md")
-          val targetReadmeFile = new File("target/README-in.md")
-          val contents         = IO.read(readmeFile)
-          val newContents      = contents.replaceAll("```scala\n", "```scala mdoc:reset\n")
-          IO.write(targetReadmeFile, newContents)
-        }
-    )
-    .dependsOn(
-        `kyo-core`,
-        `kyo-direct`,
-        `kyo-cache`,
-        `kyo-sttp`,
-        `kyo-tapir`,
-        `kyo-llm`,
-        `kyo-bench`
-    )
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("target/readme"))
+        .enablePlugins(MdocPlugin)
+        .settings(
+            `kyo-settings`,
+            mdocIn  := new File("./../../README-in.md"),
+            mdocOut := new File("./../../README-out.md"),
+            rewriteReadmeFile := {
+                val readmeFile       = new File("README.md")
+                val targetReadmeFile = new File("target/README-in.md")
+                val contents         = IO.read(readmeFile)
+                val newContents      = contents.replaceAll("```scala\n", "```scala mdoc:reset\n")
+                IO.write(targetReadmeFile, newContents)
+            }
+        )
+        .dependsOn(
+            `kyo-core`,
+            `kyo-direct`,
+            `kyo-cache`,
+            `kyo-sttp`,
+            `kyo-tapir`,
+            `kyo-llm`,
+            `kyo-bench`
+        )
 
-import org.scalajs.jsenv.nodejs._
+import org.scalajs.jsenv.nodejs.*
 
 lazy val `js-settings` = Seq(
     Compile / doc / sources := Seq.empty,
