@@ -1,11 +1,6 @@
 package kyoTest
 
 import kyo.*
-import org.scalatest.Args
-import org.scalatest.Status
-import scala.util.Failure
-import scala.util.Success
-import scala.util.Try
 
 class abortsTest extends KyoTest:
 

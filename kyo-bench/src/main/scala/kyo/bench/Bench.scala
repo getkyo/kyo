@@ -30,7 +30,7 @@ import zio.UIO
     // jvm = "/Users/flavio.brasil/Downloads/graalvm-ce-java17-22.3.0/Contents/Home/bin/java"
 )
 @BenchmarkMode(Array(Mode.Throughput))
-sealed abstract class Bench[T](using f: Flat[T]):
+sealed abstract class Bench[T]:
     def zioBench(): UIO[T]
     def kyoBenchFiber(): T < Fibers = kyoBench()
     def kyoBench(): T < IOs

@@ -1,10 +1,8 @@
 package kyo
 
-import java.io.Closeable
 import kyo.*
 import kyoTest.KyoTest
 import org.scalatest.compatible.Assertion
-import scala.concurrent.duration.*
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try

@@ -8,11 +8,7 @@ import kyo.*
 import kyo.llm.completions.*
 import kyo.llm.contexts.*
 import scala.reflect.ClassTag
-import scala.util.Failure
-import scala.util.Success
 import scala.util.control.NoStackTrace
-import zio.schema.Schema as ZSchema
-import zio.schema.codec.JsonCodec
 
 type doc = kyo.llm.json.doc
 val doc = kyo.llm.json.doc

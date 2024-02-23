@@ -4,8 +4,8 @@ final private class MovingStdDev(exp: Int):
 
     private val window = 1 << exp
     private val mask   = window - 1
-    private var values = new Array[Long](window)
-    private var devs   = new Array[Long](window)
+    private val values = new Array[Long](window)
+    private val devs   = new Array[Long](window)
     private var idx    = 0
     private var sum    = 0L
     private var sumDev = 0L

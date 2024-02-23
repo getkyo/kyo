@@ -36,7 +36,6 @@ class LoggingBench extends Bench.SyncAndFork[Unit]:
 
     def zioBench() =
         import zio.*
-        import zio.logging.backend.SLF4J
 
         def loop(i: Int): UIO[Unit] =
             if i > depth then

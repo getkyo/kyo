@@ -62,7 +62,6 @@ class RendezvousBench extends Bench.ForkOnly[Int]:
 
     override def kyoBenchFiber() =
         import kyo.*
-        import kyo.*
 
         def produce(waiting: AtomicRef[Any], n: Int = 0): Unit < Fibers =
             if n <= depth then

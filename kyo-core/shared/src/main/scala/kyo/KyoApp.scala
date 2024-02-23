@@ -1,6 +1,6 @@
 package kyo
 
-import scala.annotation.nowarn
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration.Duration
 import scala.util.Try
 
@@ -14,15 +14,24 @@ end KyoApp
 
 object KyoApp:
 
-    abstract class Base[S] extends App:
+    abstract class Base[S]:
 
         protected def handle[T](v: T < S)(using f: Flat[T < S]): Unit
 
-        @nowarn
+        final protected def args: Array[String] = _args
+
+        private[this] var _args: Array[String] = _
+
+        private[this] val initCode = new ListBuffer[() => Unit]
+
+        final def main(args: Array[String]) =
+            this._args = args
+            for proc <- initCode do proc()
+
         protected def run[T](v: => T < S)(
             using f: Flat[T < S]
         ): Unit =
-            delayedInit(handle(v))
+            initCode += (() => handle(v))
     end Base
 
     type Effects = Fibers & Resources

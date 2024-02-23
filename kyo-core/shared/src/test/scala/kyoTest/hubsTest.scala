@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo.*
-import scala.concurrent.duration.*
 
 class hubsTest extends KyoTest:
 

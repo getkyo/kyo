@@ -4,12 +4,10 @@ import kyo.*
 import scala.compiletime.*
 import zio.Chunk
 import zio.schema.{Schema as ZSchema, *}
-import zio.schema.codec.JsonCodec
 
 trait JsonDerive:
 
     inline given deriveJson[T]: Json[T] =
-        import JsonDerive.*
         Json.fromZio(DeriveSchema.gen)
 end JsonDerive
 

@@ -1,17 +1,12 @@
 package kyoTest
 
-import izumi.reflect.*
 import kyo.*
 import org.scalatest.Assertions
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.ScalaFutures.*
-import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.freespec.AsyncFreeSpec
-import org.scalatest.time.Seconds
-import org.scalatest.time.Span
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.concurrent.Promise
 import scala.concurrent.duration.*
 import scala.util.Try
 

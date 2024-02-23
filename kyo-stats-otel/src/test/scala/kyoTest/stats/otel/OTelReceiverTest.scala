@@ -1,19 +1,7 @@
 package kyoTest.stats.otel
 
-import io.opentelemetry.api.*
-import io.opentelemetry.api.metrics.*
-import io.opentelemetry.api.trace.Span as OSpan
-import io.opentelemetry.context.Context
-import io.opentelemetry.exporters.inmemory.*
-import io.opentelemetry.sdk.OpenTelemetrySdk
-import io.opentelemetry.sdk.OpenTelemetrySdkBuilder
-import io.opentelemetry.sdk.metrics.*
-import io.opentelemetry.sdk.metrics.`export`.*
-import io.opentelemetry.sdk.trace.*
-import io.opentelemetry.sdk.trace.`export`.*
 import kyo.*
 import kyo.stats.*
-import kyo.stats.otel.*
 import kyoTest.*
 
 class OTelReceiverTest extends KyoTest:

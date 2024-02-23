@@ -1,10 +1,6 @@
 package kyo.internal
 
-import KyoSttpMonad.M
 import kyo.*
-import scala.util.Failure
-import scala.util.Success
-import scala.util.Try
 import sttp.monad.Canceler
 import sttp.monad.MonadAsyncError
 

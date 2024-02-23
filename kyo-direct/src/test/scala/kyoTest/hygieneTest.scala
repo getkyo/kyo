@@ -1,12 +1,14 @@
 package kyoTest
 
 import kyo.*
-import kyo.TestSupport.*
-import kyo.direct.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 
 class hygieneTest extends AnyFreeSpec with Assertions:
+
+    "ok" in {
+        assert(IOs.run(IOs(1)) == 1)
+    }
 
     "use of var" in {
         assertDoesNotCompile("""

@@ -69,7 +69,6 @@ class ForkManyBench extends Bench.ForkOnly[Int]:
     @Benchmark
     def forkOx() =
         import ox.*
-        import ox.channels.*
         import java.util.concurrent.CompletableFuture
         import java.util.concurrent.atomic.AtomicInteger
 

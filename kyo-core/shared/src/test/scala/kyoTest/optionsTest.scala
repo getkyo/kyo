@@ -1,8 +1,6 @@
 package kyoTest
 
 import kyo.*
-import org.scalatest.Args
-import org.scalatest.Status
 import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
@@ -199,8 +197,7 @@ class optionsTest extends KyoTest:
             )
         }
         "or fail" in {
-            val e            = new Exception()
-            val a: Int < IOs = Options.getOrElse(Option.empty[Int], IOs.fail("fail"))
+            val e = new Exception()
             assert(
                 IOs.run(IOs.attempt(Options.getOrElse(Option.empty[Int], IOs.fail(e)))) ==
                     Failure(e)

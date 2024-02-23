@@ -1,8 +1,6 @@
 package kyoTest
 
 import kyo.*
-import scala.util.Success
-import scala.util.Try
 
 class sumsTest extends KyoTest:
     "int" in {

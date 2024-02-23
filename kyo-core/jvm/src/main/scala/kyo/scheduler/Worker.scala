@@ -1,14 +1,8 @@
 package kyo.scheduler
 
-import java.util.Comparator
-import java.util.PriorityQueue
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Semaphore
 import java.util.concurrent.locks.LockSupport
 import kyo.iosInternal.*
-import kyo.scheduler.IOTask
-import kyo.scheduler.Queue
-import kyo.scheduler.Scheduler
 
 final private class Worker(r: Runnable)
     extends Thread(r):

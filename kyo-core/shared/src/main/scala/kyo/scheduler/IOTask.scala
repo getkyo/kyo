@@ -2,7 +2,6 @@ package kyo.scheduler
 
 import java.util.ArrayDeque
 import java.util.Arrays
-import java.util.IdentityHashMap
 import kyo.*
 import kyo.Locals.State
 import kyo.core.*
@@ -177,6 +176,6 @@ private[kyo] class IOTask[T](
                 s"[$f]"
             case arr: ArrayDeque[() => Unit] @unchecked =>
                 Arrays.toString(arr.toArray)
-        s"IOTask(id=${hashCode},preempting=${check()},curr=$curr,ensures=$ensures,runtime=${runtime()},state=${get()})"
+        s"IOTask(id=${hashCode},preempting=${check()},curr=$curr,ensures=$e,runtime=${runtime()},state=${get()})"
     end toString
 end IOTask

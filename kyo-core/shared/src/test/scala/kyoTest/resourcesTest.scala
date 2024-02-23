@@ -120,7 +120,6 @@ class resourcesTest extends KyoTest:
 
     "nested" in run {
         val r1 = Resource(1)
-        val r2 = Resource(2)
         val r  = IOs.run(Resources.run(Resources.run(Resources.acquire(r1()))))
         assert(r == r1)
         assert(r1.acquires == 1)

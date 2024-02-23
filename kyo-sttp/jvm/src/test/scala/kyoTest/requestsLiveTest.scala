@@ -3,7 +3,6 @@ package kyoTest
 import kyo.*
 import scala.util.*
 import sttp.client3.*
-import sttp.model.StatusCode
 
 class requestsLiveTest extends KyoTest:
 
@@ -34,7 +33,7 @@ class requestsLiveTest extends KyoTest:
             import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
             import java.io.OutputStream
             import java.net.InetSocketAddress
-            import scala.util.{Try, Success, Failure}
+            import scala.util.{Success, Failure}
 
             val server = HttpServer.create(new InetSocketAddress(port), 0)
             server.createContext(

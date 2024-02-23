@@ -35,8 +35,7 @@ end Channel
 
 object Channels:
 
-    private val placeholder = Fibers.unsafeInitPromise[Unit]
-    private val closed      = IOs.fail("Channel closed!")
+    private val closed = IOs.fail("Channel closed!")
 
     def init[T: Flat](
         capacity: Int,

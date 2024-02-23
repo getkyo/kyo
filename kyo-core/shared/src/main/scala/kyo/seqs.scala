@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.core.*
-import scala.collection.mutable.ListBuffer
 
 sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs]:
 

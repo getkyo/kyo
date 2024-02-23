@@ -22,6 +22,7 @@ class FlatTest extends KyoTest:
                 implicitly[Flat[T < Options]]
                 implicitly[Flat[T < Any]]
             end test1
+            test1[Int]
             succeed
         }
         "derived" in {
@@ -30,6 +31,7 @@ class FlatTest extends KyoTest:
                 implicitly[Flat[T < Options]]
                 implicitly[Flat[T < Any]]
             end test2
+            test2[Int]
             succeed
         }
     }

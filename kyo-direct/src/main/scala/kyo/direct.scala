@@ -2,10 +2,8 @@ package kyo
 
 import cps.CpsMonad
 import cps.CpsMonadContext
-import cps.CpsMonadInstanceContext
 import cps.async
 import cps.await
-import scala.annotation.targetName
 import scala.quoted.*
 
 object direct:
@@ -21,7 +19,6 @@ object direct:
 
     private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
         import quotes.reflect.*
-        import quotes.reflect.report.*
 
         Validate(f)
 

@@ -10,7 +10,6 @@ class ForkSpawnBench extends Bench.ForkOnly[Unit]:
 
     def catsBench() =
         import cats.effect.IO
-        import cats.effect.std.Semaphore
         import cats.effect.std.CountDownLatch
 
         def repeat[A](n: Int)(io: IO[A]): IO[A] =

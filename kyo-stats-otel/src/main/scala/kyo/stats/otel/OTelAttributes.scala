@@ -5,7 +5,6 @@ import io.opentelemetry.api.common.AttributesBuilder
 import kyo.stats.Attributes
 import kyo.stats.Attributes.Attribute
 import kyo.stats.Attributes.Attribute.*
-import scala.jdk.CollectionConverters.*
 
 object OTelAttributes:
 

@@ -4,7 +4,6 @@ import kyo.*
 import kyo.llm.*
 import scala.concurrent.duration.*
 import sttp.client3.*
-import sttp.client3.ziojson.*
 import sttp.model.*
 import zio.json.*
 
@@ -32,7 +31,6 @@ class Curl(methods: Curl.Methods) extends Tool:
         if !allow.contains(input.method) then
             IOs.fail(s"Method not allowed: ${input.method}. Allowed: ${allow.mkString(", ")}")
         else
-            given inputDecoder: JsonDecoder[In] = DeriveJsonDecoder.gen[In]
             given inputEncoder: JsonEncoder[In] = DeriveJsonEncoder.gen[In]
             for
                 _ <- Logs.debug(input.toJsonPretty)

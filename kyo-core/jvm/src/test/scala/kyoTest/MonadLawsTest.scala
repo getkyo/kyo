@@ -2,8 +2,6 @@ package kyoTest
 
 import kyo.*
 import kyo.Flat.unsafe.bypass
-import scala.concurrent.ExecutionContext.Implicits.global
-import scala.concurrent.duration.Duration
 import zio.Trace
 import zio.prelude.Equal
 import zio.prelude.coherent.CovariantDeriveEqual

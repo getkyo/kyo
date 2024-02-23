@@ -29,7 +29,6 @@ class envsTest extends KyoTest:
         "one service" in {
             val a =
                 Envs[Service1].get.map(_(1))
-            val b: Int < Envs[Service1] = a
             assert(
                 Envs[Service1].run(service1)(a) ==
                     2
@@ -54,16 +53,10 @@ class envsTest extends KyoTest:
                 )
             }
             "dependent services" in {
-                val s1 = Envs[Service2].get.map(service2 =>
-                    new Service1:
-                        def apply(i: Int) = service2(i * 10)
-                )
-                val v1: Service1 < Envs[Service2] = s1
-                val v2 =
+                val v1 =
                     Envs[Service1].run[Int, Envs[Service2]](service1)(v)
-                val v3: Int < Envs[Service2] = v2
                 assert(
-                    Envs[Service2].run(service2)(v3) ==
+                    Envs[Service2].run(service2)(v1) ==
                         4
                 )
             }
@@ -90,7 +83,6 @@ class envsTest extends KyoTest:
             "continue" in {
                 val a =
                     Envs[Service1].get.map(_(1))
-                val b: Int < (Envs[Service1] & Options) = a
                 assert(
                     Options.run(Envs[Service1].run(service1)(a)) ==
                         Some(2)
@@ -99,7 +91,6 @@ class envsTest extends KyoTest:
             "short circuit" in {
                 val a =
                     Envs[Service1].get.map(_(0))
-                val b: Int < (Envs[Service1] & Options) = a
                 assert(
                     Options.run(Envs[Service1].run(service1)(a)) ==
                         None
@@ -130,11 +121,6 @@ class envsTest extends KyoTest:
                     )
                 }
                 "dependent services" in {
-                    val s1 = Envs[Service2].get.map(service2 =>
-                        new Service1:
-                            def apply(i: Int) = service2(i * 10)
-                    )
-                    val v1: Service1 < Envs[Service2]        = s1
                     val v2: Int < (Envs[Service2] & Options) = Envs[Service1].run(service1)(v)
                     assert(
                         Options.run(Envs[Service2].run(service2)(v2)) ==

@@ -1,9 +1,7 @@
 package kyoTest
 
 import java.io.Closeable
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
-import java.util.concurrent.atomic.AtomicReference as JAtomicReference
 import kyo.*
 import org.scalatest.compatible.Assertion
 import scala.concurrent.duration.*
@@ -291,7 +289,6 @@ class fibersTest extends KyoTest:
                 set(-1)
         "outer" in run {
             val resource1 = new Resource
-            val resource2 = new Resource
             val io1: (JAtomicInteger & Closeable, Set[Int]) < (Resources & Fibers) =
                 for
                     r  <- Resources.acquire(resource1)
@@ -306,7 +303,6 @@ class fibersTest extends KyoTest:
         }
         "inner" in run {
             val resource1 = new Resource
-            val resource2 = new Resource
             Fibers.init(Resources.run(Resources.acquire(resource1).map(_.incrementAndGet())))
                 .map(_.get).map { r =>
                     assert(r == 1)

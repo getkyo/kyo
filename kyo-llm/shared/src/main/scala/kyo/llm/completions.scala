@@ -3,8 +3,6 @@ package kyo.llm
 import kyo.*
 import kyo.llm.contexts.*
 import kyo.llm.json.Schema
-import kyo.llm.tools.*
-import scala.concurrent.duration.Duration
 import sttp.client3.{Request as _, Response as _, *}
 import sttp.client3.ziojson.*
 import zio.json.*

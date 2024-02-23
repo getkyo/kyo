@@ -1,8 +1,6 @@
 package org.jctools.queues
 
 import java.util.ArrayDeque
-import java.util.concurrent.BlockingQueue
-import java.util.concurrent.LinkedBlockingDeque
 
 class StubQueue[T](capacity: Int) extends ArrayDeque[T]:
     def isFull = size() >= capacity

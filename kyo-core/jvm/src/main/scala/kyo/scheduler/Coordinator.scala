@@ -1,9 +1,8 @@
 package kyo.scheduler
 
 import java.util.concurrent.Executors
-import scala.util.Random
+import jdk.internal.vm.annotation.Contended
 import scala.util.control.NonFatal
-import scala.util.control.NonFatal.apply
 
 private object Coordinator:
 
@@ -15,13 +14,8 @@ private object Coordinator:
     private val cycleTicks = Math.pow(2, cycleExp).intValue()
     private val cycleMask  = cycleTicks - 1
 
-    @volatile private[this] var ticks: Long = 0L
-
-    private val a1, a2, a3, a4, a5, a6, a7 = 0L // paddding
-
-    @volatile private[this] var cycles = 0L
-
-    private val b1, b2, b3, b4, b5, b6, b7 = 0L // paddding
+    @Contended @volatile private[this] var ticks: Long = 0L
+    @Contended @volatile private[this] var cycles      = 0L
 
     private var startNs = 0L
     private val delayNs = new MovingStdDev(cycleExp)

@@ -5,7 +5,6 @@ import kyo.*
 import scala.concurrent.duration.*
 import scala.util.Failure
 import scala.util.Success
-import scala.util.hashing.MurmurHash3
 
 object Listeners:
 

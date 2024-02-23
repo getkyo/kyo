@@ -1,12 +1,7 @@
 package kyoTest
 
 import kyo.*
-import org.scalatest.Args
-import org.scalatest.Status
 import scala.concurrent.duration.*
-import scala.util.Failure
-import scala.util.Success
-import scala.util.Try
 
 class retriesTest extends KyoTest:
 
@@ -60,7 +55,7 @@ class retriesTest extends KyoTest:
 
     "backoff" in run {
         var calls = 0
-        var start = System.currentTimeMillis()
+        val start = System.currentTimeMillis()
         IOs.attempt {
             Retries(_.limit(4).exponential(10.millis)) {
                 calls += 1

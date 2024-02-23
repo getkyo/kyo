@@ -1,7 +1,5 @@
 package kyo
 
-import scala.Console
-
 abstract class Random:
     def nextInt: Int < IOs
     def nextInt(n: Int): Int < IOs

@@ -1,6 +1,5 @@
 package kyo.llm.json
 
-import scala.annotation.StaticAnnotation
 import zio.Chunk
 import zio.json.*
 import zio.json.ast.*

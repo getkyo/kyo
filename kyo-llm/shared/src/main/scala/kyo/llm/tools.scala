@@ -2,18 +2,13 @@ package kyo.llm
 
 import kyo.*
 import kyo.llm.contexts.*
-import kyo.llm.json.Schema
 import kyo.llm.thoughts.*
-import scala.annotation.implicitNotFound
-import scala.collection.immutable.ListMap
 import scala.util.*
 import thoughts.Repair
 import zio.Chunk
-import zio.schema.FieldSet
 import zio.schema.Schema.Field
 import zio.schema.Schema as ZSchema
 import zio.schema.TypeId
-import zio.schema.codec.JsonCodec
 import zio.schema.validation.Validation
 
 abstract class Tool:
@@ -55,7 +50,6 @@ abstract class Tool:
 
     private[kyo] def handle(ai: AI, call: Call): Boolean < AIs =
         Tools.disable {
-            given s: ZSchema[In] = info.input.zSchema
             IOs.attempt(json.decode(call.arguments)).map {
                 case Failure(ex) =>
                     ai.toolMessage(call.id, "Invalid 'toolInput': " + ex).andThen(false)

@@ -2,16 +2,7 @@ package kyo.scheduler
 
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.atomic.LongAdder
-import java.util.concurrent.locks.LockSupport
 import kyo.*
-import kyo.scheduler.Coordinator
-import kyo.scheduler.Flag
-import kyo.scheduler.IOTask
-import kyo.scheduler.Threads
-import kyo.scheduler.Worker
-import kyo.scheduler.XSRandom
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 

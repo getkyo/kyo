@@ -3,10 +3,7 @@ package kyo.server
 import kyo.*
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.instance
-import kyo.routes.*
 import kyo.server.internal.*
-import sttp.monad.MonadError
-import sttp.monad.syntax.*
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.interceptor.RequestResult
 import sttp.tapir.server.interceptor.reject.RejectInterceptor
@@ -18,7 +15,6 @@ import sttp.tapir.server.netty.NettyServerRequest
 import sttp.tapir.server.netty.Route
 import sttp.tapir.server.netty.internal.*
 import sttp.tapir.server.netty.internal.NettyBodyListener
-import sttp.tapir.server.netty.internal.RunAsync
 
 trait NettyKyoServerInterpreter:
     def nettyServerOptions: NettyKyoServerOptions

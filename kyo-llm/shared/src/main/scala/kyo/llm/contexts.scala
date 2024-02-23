@@ -1,7 +1,6 @@
 package kyo.llm
 
 import kyo.*
-import zio.schema.Schema as ZSchema
 
 object contexts:
 
