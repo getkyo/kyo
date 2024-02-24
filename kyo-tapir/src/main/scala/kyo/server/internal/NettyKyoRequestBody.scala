@@ -7,7 +7,6 @@ import java.nio.ByteBuffer
 import kyo.*
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
-import kyo.routes.*
 import scala.annotation.nowarn
 import sttp.capabilities.Streams
 import sttp.tapir.InputStreamRange

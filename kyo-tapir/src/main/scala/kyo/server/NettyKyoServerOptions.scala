@@ -4,7 +4,6 @@ import com.typesafe.scalalogging.Logger
 import kyo.*
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
-import kyo.routes.*
 import sttp.tapir.Defaults
 import sttp.tapir.TapirFile
 import sttp.tapir.model.ServerRequest

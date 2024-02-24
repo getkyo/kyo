@@ -3,7 +3,6 @@ package kyo.server.internal
 import io.netty.channel.Channel
 import io.netty.channel.ChannelFuture
 import kyo.*
-import kyo.routes.*
 import scala.concurrent.CancellationException
 
 object KyoUtil:

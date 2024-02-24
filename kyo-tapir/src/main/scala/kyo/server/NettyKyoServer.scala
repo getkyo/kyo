@@ -10,7 +10,6 @@ import java.util.UUID
 import kyo.*
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.instance
-import kyo.routes.*
 import kyo.server.internal.KyoUtil.*
 import scala.concurrent.Future
 import sttp.tapir.server.ServerEndpoint
@@ -147,7 +146,7 @@ object NettyKyoServer:
         NettyKyoServer(Vector.empty, options, config)
 end NettyKyoServer
 
-case class NettyKyoServerBinding(localSocket: InetSocketAddress, stop: () => Unit < Routes):
+case class NettyKyoServerBinding(localSocket: InetSocketAddress, stop: () => Unit < Fibers):
     def hostName: String = localSocket.getHostName
     def port: Int        = localSocket.getPort
 
