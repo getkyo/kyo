@@ -133,10 +133,10 @@ object NettyKyoServer:
         NettyKyoServer(
             Vector.empty,
             NettyKyoServerOptions.default(),
-            NettyConfig.defaultWithStreaming
+            NettyConfig.defaultNoStreaming
         )
     def apply(options: NettyKyoServerOptions): NettyKyoServer =
-        NettyKyoServer(Vector.empty, options, NettyConfig.defaultWithStreaming)
+        NettyKyoServer(Vector.empty, options, NettyConfig.defaultNoStreaming)
     def apply(config: NettyConfig): NettyKyoServer =
         NettyKyoServer(Vector.empty, NettyKyoServerOptions.default(), config)
     def apply(

@@ -1,5 +1,6 @@
 package kyo
 
+import izumi.reflect.*
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
 import kyo.server.*
@@ -25,17 +26,20 @@ object Routes:
             v.andThen(sums.get.map(server.addEndpoints(_)).map(_.start()))
         }.map(_._1)
 
-    def add[T, U, E, S](e: Endpoint[Unit, T, Unit, U, Unit])(
-        f: T => U < Fibers
+    def add[S, A: Tag, I, E: Tag, O: Flat](e: Endpoint[A, I, E, O, Any])(
+        f: I => O < (Fibers & Envs[A] & Aborts[E])
     ): Unit < Routes =
         sums.add(List(
-            e.serverLogic[KyoSttpMonad.M](f(_).map(Right(_))).asInstanceOf[Route[Any]]
+            e.serverSecurityLogic[A, KyoSttpMonad.M](a => Right(a)).serverLogic(a =>
+                i => Aborts[E].run(Envs[A].run(a)(f(i)))
+            )
         )).unit
+    end add
 
-    def add[T, U, S](
-        e: PublicEndpoint[Unit, Unit, Unit, Any] => Endpoint[Unit, T, Unit, U, Any]
+    def add[S, A: Tag, I, E: Tag, O: Flat](
+        e: PublicEndpoint[Unit, Unit, Unit, Any] => Endpoint[A, I, E, O, Any]
     )(
-        f: T => U < Fibers
+        f: I => O < (Fibers & Envs[A] & Aborts[E])
     ): Unit < Routes =
         add(e(endpoint))(f)
 end Routes
