@@ -7,6 +7,6 @@ addSbtPlugin("org.scala-js"       % "sbt-scalajs"              % "1.15.0")
 
 addSbtPlugin("org.scalameta" % "sbt-mdoc" % "2.5.2")
 
-addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.10")
+addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.11")
 
 // addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
