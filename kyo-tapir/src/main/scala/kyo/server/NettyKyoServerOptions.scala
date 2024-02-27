@@ -15,12 +15,15 @@ import sttp.tapir.server.netty.internal.NettyDefaults
 case class NettyKyoServerOptions(
     interceptors: List[Interceptor[KyoSttpMonad.M]],
     createFile: ServerRequest => TapirFile < Routes,
-    deleteFile: TapirFile => Unit < Fibers
+    deleteFile: TapirFile => Unit < Fibers,
+    forkExecution: Boolean
 ):
     def prependInterceptor(i: Interceptor[KyoSttpMonad.M]): NettyKyoServerOptions =
         copy(interceptors = i :: interceptors)
     def appendInterceptor(i: Interceptor[KyoSttpMonad.M]): NettyKyoServerOptions =
         copy(interceptors = interceptors :+ i)
+    def forkExecution(b: Boolean = true) =
+        copy(forkExecution = b)
 end NettyKyoServerOptions
 
 object NettyKyoServerOptions:
@@ -34,7 +37,8 @@ object NettyKyoServerOptions:
         NettyKyoServerOptions(
             interceptors,
             _ => IOs(Defaults.createTempFile()),
-            file => IOs(Defaults.deleteFile()(file))
+            file => IOs(Defaults.deleteFile()(file)),
+            true
         )
 
     def customiseInterceptors(): CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions] =

@@ -22,7 +22,7 @@ trait NettyKyoServerInterpreter:
     def toRoute(ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]): Route[KyoSttpMonad.M] =
 
         given bodyListener: BodyListener[KyoSttpMonad.M, NettyResponse] =
-            new NettyBodyListener(NettyKyoServer.runAsync)
+            new NettyBodyListener(NettyKyoServer.runAsync(nettyServerOptions.forkExecution))
 
         val interceptors = nettyServerOptions.interceptors
         val createFile   = nettyServerOptions.createFile
