@@ -252,8 +252,6 @@ Essentially, `await` is a syntactic sugar for the `map` function, allowing devel
 
 ```scala
 import kyo._
-import kyo.direct._
-import scala.util.Try
 
 // Use the direct syntax
 val a: String < (Aborts[Exception] & Options) =
@@ -299,7 +297,6 @@ The syntac sugar supports a variety of constructs to handle effectful computatio
 
 ```scala
 import kyo._
-import kyo.direct._
 
 defer {
   // Pure expression
@@ -1078,6 +1075,7 @@ Similarly to `IOs`, users should avoid handling the `Fibers` effect directly and
 
 ```scala
 import kyo._
+import scala.concurrent.duration._
 
 // An example computation with fibers
 val a: Int < Fibers =
@@ -1091,9 +1089,9 @@ val b: Fiber[Int] < IOs =
 
 // The 'runAndBlock' method accepts
 // arbitrary pending effects but relies
-// on thread blocking.
+// on thread blocking and requires a timeout
 val c: Int < IOs =
-  Fibers.runAndBlock(a)
+  Fibers.runAndBlock(5.seconds)(a)
 ```
 
 > Note: Handling the `Fibers` effect doesn't break referential transparency as with `IOs` but its usage is not trivial due to the limitations of the pending effects, especially `IOs`. Prefer `KyoApp` instead.
@@ -1587,7 +1585,6 @@ Kyo provides caching through memoization. A single `Cache` instance can be reuse
 
 ```scala
 import kyo._
-import scala.concurrent.duration._
 
 val a: Int < Fibers =
   for {

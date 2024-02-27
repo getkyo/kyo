@@ -2,7 +2,6 @@ package kyoTest
 
 import kyo.*
 import kyo.TestSupport.*
-import kyo.direct.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 import scala.collection.mutable.ArrayBuffer

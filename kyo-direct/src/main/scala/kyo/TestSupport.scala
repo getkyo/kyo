@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.direct.*
+import kyo.*
 import language.higherKinds
 import scala.language.experimental.macros
 
