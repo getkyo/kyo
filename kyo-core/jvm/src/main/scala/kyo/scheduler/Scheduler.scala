@@ -1,6 +1,7 @@
 package kyo.scheduler
 
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
@@ -8,9 +9,11 @@ import scala.annotation.tailrec
 
 private[kyo] object Scheduler:
 
+    private val printStatus = Flag("printStatus", false)
+
     private val coreWorkers = Flag(
         "coreWorkers",
-        Math.ceil(Runtime.getRuntime().availableProcessors().toDouble / 2).intValue()
+        Math.min(1, Math.ceil(Runtime.getRuntime().availableProcessors().toDouble / 2).intValue())
     )
 
     @volatile
@@ -21,7 +24,17 @@ private[kyo] object Scheduler:
     private val pool = Executors.newCachedThreadPool(Threads("kyo-worker", new Worker(_)))
 
     startWorkers()
+
     Coordinator.load()
+
+    if printStatus then
+        discard(Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(
+            (() => println(status())): Runnable,
+            1,
+            1,
+            TimeUnit.SECONDS
+        ))
+    end if
 
     def removeWorker(): Unit =
         if concurrencyLimit > coreWorkers then
@@ -67,6 +80,8 @@ private[kyo] object Scheduler:
     end schedule
 
     def steal(thief: Worker): IOTask[?] =
+        if Worker.all.size() <= 1 then
+            return null
         // p2c load stealing
         var r: IOTask[?] = null
         var w0: Worker   = randomWorker(thief)
@@ -115,6 +130,28 @@ private[kyo] object Scheduler:
         end while
         w
     end randomWorker
+
+    def status(): String =
+        val sb = new StringBuilder
+
+        sb.append("===== Kyo Scheduler =====\n")
+        sb.append(f"${"Load"}%-8s ${"Workers"}%-8s ${"Limit"}%-8s\n")
+        sb.append(f"${loadAvg()}%-8.2f ${concurrency.get()}%-8d ${concurrencyLimit}%-8d\n")
+        sb.append("\n")
+
+        sb.append(
+            f"${"Thread"}%-20s ${"Load"}%-5s ${"State"}%-15s ${"Frame"}%-30s\n"
+        )
+
+        Worker.all.iterator().forEachRemaining { worker =>
+            sb.append(
+                f"${worker.getName}%-20s ${worker.load()}%-5.2f ${worker.getState}%-15s ${worker.getStackTrace()(0)}%-30s\n"
+            )
+        }
+        sb.append("=========================\n")
+
+        sb.toString()
+    end status
 
     override def toString =
         s"Scheduler(loadAvg=${loadAvg()},concurrency=$concurrency,limit=$concurrencyLimit)"
