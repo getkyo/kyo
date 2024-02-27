@@ -22,20 +22,22 @@ final class Envs[E] private[kyo] (using private val tag: Tag[?])
     val get: E < Envs[E] =
         suspend(Input.asInstanceOf[Env[E]#Value[E]])
 
-    def run[T, S](e: E)(v: T < (Envs[E] & S))(using f: Flat[T < (Envs[E] & S)]): T < S =
-        given Handler[Env[E]#Value, Envs[E], Any] =
-            new Handler[Env[E]#Value, Envs[E], Any]:
-                def pure[U: Flat](v: U) = v
-                def apply[U, V: Flat, S2](
-                    m: Env[E]#Value[U],
-                    f: U => V < (Envs[E] & S2)
-                ): V < (S2 & Envs[E]) =
-                    m match
-                        case Input =>
-                            f(e.asInstanceOf[U])
-                        case _ =>
-                            f(m.asInstanceOf[U])
-        handle[T, Envs[E] & S, Any](v).asInstanceOf[T < S]
+    def run[T, S](e: E < S)(v: T < (Envs[E] & S))(using f: Flat[T < (Envs[E] & S)]): T < S =
+        e.map { e =>
+            given Handler[Env[E]#Value, Envs[E], Any] =
+                new Handler[Env[E]#Value, Envs[E], Any]:
+                    def pure[U: Flat](v: U) = v
+                    def apply[U, V: Flat, S2](
+                        m: Env[E]#Value[U],
+                        f: U => V < (Envs[E] & S2)
+                    ): V < (S2 & Envs[E]) =
+                        m match
+                            case Input =>
+                                f(e.asInstanceOf[U])
+                            case _ =>
+                                f(m.asInstanceOf[U])
+            handle[T, Envs[E] & S, Any](v).asInstanceOf[T < S]
+        }
     end run
 
     override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =

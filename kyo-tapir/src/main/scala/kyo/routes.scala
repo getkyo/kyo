@@ -42,4 +42,8 @@ object Routes:
         f: I => O < (Fibers & Envs[A] & Aborts[E])
     ): Unit < Routes =
         add(e(endpoint))(f)
+
+    def collect(init: (Unit < Routes)*): Unit < Routes =
+        Seqs.collect(init).unit
+
 end Routes
