@@ -18,7 +18,7 @@ class metersTest extends KyoTest:
                 t  <- Meters.initMutex
                 p  <- Fibers.initPromise[Int]
                 b1 <- Fibers.initPromise[Unit]
-                f1 <- Fibers.init(t.run(b1.complete(()).map(_ => p.block)))
+                f1 <- Fibers.init(t.run(b1.complete(()).map(_ => p.block(Duration.Inf))))
                 _  <- b1.get
                 a1 <- t.isAvailable
                 b2 <- Fibers.initPromise[Unit]
@@ -39,7 +39,7 @@ class metersTest extends KyoTest:
                 sem <- Meters.initSemaphore(1)
                 p   <- Fibers.initPromise[Int]
                 b1  <- Fibers.initPromise[Unit]
-                f1  <- Fibers.init(sem.tryRun(b1.complete(()).map(_ => p.block)))
+                f1  <- Fibers.init(sem.tryRun(b1.complete(()).map(_ => p.block(Duration.Inf))))
                 _   <- b1.get
                 a1  <- sem.isAvailable
                 b1  <- sem.tryRun(2)
@@ -64,10 +64,10 @@ class metersTest extends KyoTest:
                 t  <- Meters.initSemaphore(2)
                 p  <- Fibers.initPromise[Int]
                 b1 <- Fibers.initPromise[Unit]
-                f1 <- Fibers.init(t.run(b1.complete(()).map(_ => p.block)))
+                f1 <- Fibers.init(t.run(b1.complete(()).map(_ => p.block(Duration.Inf))))
                 _  <- b1.get
                 b2 <- Fibers.initPromise[Unit]
-                f2 <- Fibers.init(t.run(b2.complete(()).map(_ => p.block)))
+                f2 <- Fibers.init(t.run(b2.complete(()).map(_ => p.block(Duration.Inf))))
                 _  <- b2.get
                 a1 <- t.isAvailable
                 b3 <- Fibers.initPromise[Unit]
@@ -88,10 +88,10 @@ class metersTest extends KyoTest:
                 sem <- Meters.initSemaphore(2)
                 p   <- Fibers.initPromise[Int]
                 b1  <- Fibers.initPromise[Unit]
-                f1  <- Fibers.init(sem.tryRun(b1.complete(()).map(_ => p.block)))
+                f1  <- Fibers.init(sem.tryRun(b1.complete(()).map(_ => p.block(Duration.Inf))))
                 _   <- b1.get
                 b2  <- Fibers.initPromise[Unit]
-                f2  <- Fibers.init(sem.tryRun(b2.complete(()).map(_ => p.block)))
+                f2  <- Fibers.init(sem.tryRun(b2.complete(()).map(_ => p.block(Duration.Inf))))
                 _   <- b2.get
                 a1  <- sem.isAvailable
                 b3  <- sem.tryRun(2)

@@ -77,8 +77,17 @@ class fibersTest extends KyoTest:
     }
 
     "timeout" in runJVM {
-        IOs.attempt(Fibers.runAndBlock(
+        IOs.attempt(Fibers.runAndBlock(Duration.Inf)(
             Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
+        )).map {
+            case Failure(Fibers.Interrupted) => succeed
+            case v                           => fail(v.toString())
+        }
+    }
+
+    "block timeout" in runJVM {
+        IOs.attempt(Fibers.runAndBlock(10.millis)(
+            Fibers.sleep(1.day).andThen(1)
         )).map {
             case Failure(Fibers.Interrupted) => succeed
             case v                           => fail(v.toString())

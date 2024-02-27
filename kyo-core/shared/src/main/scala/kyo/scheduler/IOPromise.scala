@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kyo.*
 import scala.annotation.tailrec
+import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
 private[kyo] class IOPromise[T](state: State[T])
@@ -113,12 +114,15 @@ private[kyo] class IOPromise[T](state: State[T])
         loop()
     end complete
 
-    final def block: T < IOs =
+    final def block(timeout: Duration): T < IOs =
         def loop(promise: IOPromise[T]): T < IOs =
             promise.get() match
                 case _: Pending[T] @unchecked =>
                     IOs {
                         Scheduler.flush()
+                        def now = System.currentTimeMillis()
+                        val deadline =
+                            if timeout.isFinite then now + timeout.toMillis else Long.MaxValue
                         val b = new (T < IOs => Unit) with (() => T < IOs):
                             @volatile
                             private var result: T < IOs = null.asInstanceOf[T < IOs]
@@ -127,9 +131,13 @@ private[kyo] class IOPromise[T](state: State[T])
                                 result = v
                                 LockSupport.unpark(waiter)
                             def apply() =
-                                while result == null do
-                                    LockSupport.park()
-                                result
+                                while result == null && now <= deadline do
+                                    LockSupport.parkNanos(this, (deadline - now) * 1000000)
+                                if result == null && now > deadline then
+                                    IOs.fail(Fibers.Interrupted)
+                                else
+                                    result
+                                end if
                             end apply
                         onComplete(b)
                         b()

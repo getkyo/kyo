@@ -2,6 +2,7 @@ package kyoTest
 
 import kyo.*
 import kyo.Flat.unsafe.bypass
+import scala.concurrent.duration.Duration
 import zio.Trace
 import zio.prelude.Equal
 import zio.prelude.coherent.CovariantDeriveEqual
@@ -36,7 +37,7 @@ object MonadLawsTest extends ZIOSpecDefault:
             override def derive[A: Equal]: Equal[Myo[A]] =
                 new Equal[Myo[A]]:
                     protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean =
-                        def run(m: Myo[A]): A = IOs.run(Fibers.runAndBlock(m.v))
+                        def run(m: Myo[A]): A = IOs.run(Fibers.runAndBlock(Duration.Inf)(m.v))
                         run(l) == run(r)
 
     def spec = suite("MonadLawsTest")(

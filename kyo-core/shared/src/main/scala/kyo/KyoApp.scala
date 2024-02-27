@@ -39,7 +39,7 @@ object KyoApp:
     def run[T](timeout: Duration)(v: T < Effects)(
         using f: Flat[T < Effects]
     ): T =
-        IOs.run(runFiber(timeout)(v).block.map(_.get))
+        IOs.run(runFiber(timeout)(v).block(timeout).map(_.get))
 
     def run[T](v: T < Effects)(
         using f: Flat[T < Effects]

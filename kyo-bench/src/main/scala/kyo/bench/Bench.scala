@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import kyo.*
 import org.openjdk.jmh.annotations.*
+import scala.concurrent.duration.Duration
 import zio.UIO
 
 @State(Scope.Benchmark)
@@ -41,7 +42,7 @@ object Bench:
 
     abstract class Fork[T](using f: Flat[T]) extends Bench[T]:
         @Benchmark
-        def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block))
+        def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block(Duration.Inf)))
 
         @Benchmark
         def forkCats(): T = IO.cede.flatMap(_ => catsBench()).unsafeRunSync()

@@ -18,7 +18,7 @@ sealed abstract class Fiber[+T]:
     def get: T < Fibers
     def getTry: Try[T] < Fibers
     def onComplete(f: T < IOs => Unit < IOs): Unit < IOs
-    def block: T < IOs
+    def block(timeout: Duration): T < IOs
     def interrupt: Boolean < IOs
     def toFuture: Future[T] < IOs
     def transform[U: Flat](t: T => Fiber[U] < IOs): Fiber[U] < IOs
@@ -43,8 +43,8 @@ case class Promise[T: Flat](private[kyo] val p: IOPromise[T]) extends Fiber[T]:
     def onComplete(f: T < IOs => Unit < IOs) =
         IOs(p.onComplete(r => IOs.run(f(r))))
 
-    def block =
-        p.block
+    def block(timeout: Duration) =
+        p.block(timeout)
 
     def interrupt =
         IOs(p.interrupt())
@@ -97,13 +97,16 @@ object Fibers extends Joins[Fibers]:
     def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
         FiberGets.run(v)
 
-    def runAndBlock[T, S](v: T < (Fibers & S))(implicit
+    def runAndBlock[T, S](timeout: Duration)(v: T < (Fibers & S))(implicit
         f: Flat[T < (Fibers & S)]
     ): T < (IOs & S) =
-        FiberGets.runAndBlock[T, S](v)
+        FiberGets.runAndBlock(timeout)(v)
 
     def value[T: Flat](v: T): Fiber[T] =
         Done(v)
+
+    def fail[T: Flat](ex: Throwable): Fiber[T] =
+        Done(IOs.fail(ex))
 
     def get[T, S](v: Fiber[T] < S): T < (Fibers & S) =
         v.map(_.get)
@@ -253,7 +256,7 @@ object fibersInternal:
         def get                                  = result
         def getTry                               = IOs.attempt(result)
         def onComplete(f: T < IOs => Unit < IOs) = f(result)
-        def block                                = result
+        def block(timeout: Duration)             = result
         def interrupt                            = false
 
         def toFuture = Future.fromTry(Try(IOs.run(result)))
@@ -276,7 +279,7 @@ object fibersInternal:
             IOs(deepHandle[Fiber, FiberGets, T, IOs](FiberGets)(IOs.runLazy(v)))
         end run
 
-        def runAndBlock[T, S](v: T < (Fibers & S))(implicit
+        def runAndBlock[T, S](timeout: Duration)(v: T < (Fibers & S))(implicit
             f: Flat[T < (Fibers & S)]
         ): T < (IOs & S) =
             given Handler[Fiber, FiberGets, IOs] =
@@ -288,13 +291,13 @@ object fibersInternal:
                         try
                             m match
                                 case m: Promise[T] @unchecked =>
-                                    m.block.map(f)
+                                    m.block(timeout).map(f)
                                 case Done(v) =>
                                     v.map(f)
                         catch
                             case ex if (NonFatal(ex)) =>
                                 handle(ex)
-            IOs(handle[T, IOs & S, IOs](v).map(_.block))
+            IOs(handle[T, IOs & S, IOs](v).map(_.block(timeout)))
         end runAndBlock
     end FiberGets
     val FiberGets = new FiberGets
