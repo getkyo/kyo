@@ -22,6 +22,9 @@ final class Envs[E] private[kyo] (using private val tag: Tag[?])
     val get: E < Envs[E] =
         suspend(Input.asInstanceOf[Env[E]#Value[E]])
 
+    def use[T, S](f: E => T < S): T < (Envs[E] & S) =
+        get.map(f)
+
     def run[T, S](e: E < S)(v: T < (Envs[E] & S))(using f: Flat[T < (Envs[E] & S)]): T < S =
         e.map { e =>
             given Handler[Env[E]#Value, Envs[E], Any] =

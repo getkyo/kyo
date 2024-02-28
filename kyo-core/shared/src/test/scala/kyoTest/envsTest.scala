@@ -14,6 +14,16 @@ class envsTest extends KyoTest:
         )
     }
 
+    "use" in {
+        val v1 =
+            Envs[Int].use(_ + 1)
+        val v2: Int < Envs[Int] = v1
+        assert(
+            Envs[Int].run(1)(v2) ==
+                2
+        )
+    }
+
     "pure services" - {
 
         trait Service1:
