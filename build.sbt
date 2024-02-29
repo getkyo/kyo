@@ -1,4 +1,4 @@
-val scala3Version = "3.3.1"
+val scala3Version = "3.3.3"
 
 val compilerOptions = Seq(
     "-encoding",
