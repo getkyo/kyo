@@ -22,14 +22,14 @@ case class NettyKyoServerOptions(
         copy(interceptors = i :: interceptors)
     def appendInterceptor(i: Interceptor[KyoSttpMonad.M]): NettyKyoServerOptions =
         copy(interceptors = interceptors :+ i)
-    def forkExecution(b: Boolean = true) =
+    def forkExecution(b: Boolean = true): NettyKyoServerOptions =
         copy(forkExecution = b)
 end NettyKyoServerOptions
 
 object NettyKyoServerOptions:
 
-    def default(): NettyKyoServerOptions =
-        customiseInterceptors().options
+    def default(enableLogging: Boolean = true): NettyKyoServerOptions =
+        customiseInterceptors(enableLogging).options
 
     private def default(
         interceptors: List[Interceptor[KyoSttpMonad.M]]
@@ -41,11 +41,18 @@ object NettyKyoServerOptions:
             true
         )
 
-    def customiseInterceptors(): CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions] =
-        CustomiseInterceptors(
-            createOptions = (ci: CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions]) =>
-                default(ci.interceptors)
-        ).serverLog(defaultServerLog)
+    def customiseInterceptors(
+        enableLogging: Boolean = true
+    ): CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions] =
+        val ci =
+            CustomiseInterceptors(
+                createOptions =
+                    (ci: CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions]) =>
+                        default(ci.interceptors)
+            )
+        if !enableLogging then ci
+        else ci.serverLog(defaultServerLog)
+    end customiseInterceptors
 
     private val log = Logger[NettyKyoServerInterpreter]
 
