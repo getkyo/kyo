@@ -1,11 +1,13 @@
 package kyo.scheduler
 
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import jdk.internal.vm.annotation.Contended
 import scala.util.control.NonFatal
 
 private object Coordinator:
 
+    private val enable        = Flag("coordinator.enable", true)
     private val cycleExp      = Flag("coordinator.cycleExp", 8)
     private val loadAvgTarget = Flag("coordinator.loadAvgTarget", 0.8)
     private val jitterMax     = Flag("coordinator.jitterMax", 0.1)
@@ -20,13 +22,15 @@ private object Coordinator:
     private var startNs = 0L
     private val delayNs = new MovingStdDev(cycleExp)
 
-    private val exec = Executors.newCachedThreadPool(Threads("kyo-coordinator"))
+    if enable then
+        val exec = Executors.newCachedThreadPool(Threads("kyo-coordinator"))
 
-    exec.execute { () =>
-        startNs = System.nanoTime()
-        while true do
-            update()
-    }
+        exec.execute { () =>
+            startNs = System.nanoTime()
+            while true do
+                update(exec)
+        }
+    end if
 
     def load(): Unit  = {}
     def tick(): Long  = ticks
@@ -35,7 +39,7 @@ private object Coordinator:
     private def jitter() =
         delayNs.dev().doubleValue() / 1000000
 
-    private def update() =
+    private def update(exec: Executor) =
         try
             Thread.sleep(1)
             ticks += 1
