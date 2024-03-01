@@ -120,9 +120,10 @@ private[kyo] class IOPromise[T](state: State[T])
                 case _: Pending[T] @unchecked =>
                     IOs {
                         Scheduler.flush()
-                        def now = System.currentTimeMillis()
+                        def now() =
+                            System.currentTimeMillis()
                         val deadline =
-                            if timeout.isFinite then now + timeout.toMillis else Long.MaxValue
+                            if timeout.isFinite then now() + timeout.toMillis else Long.MaxValue
                         val b = new (T < IOs => Unit) with (() => T < IOs):
                             @volatile
                             private var result: T < IOs = null.asInstanceOf[T < IOs]
@@ -131,13 +132,19 @@ private[kyo] class IOPromise[T](state: State[T])
                                 result = v
                                 LockSupport.unpark(waiter)
                             def apply() =
-                                while result == null && now <= deadline do
-                                    LockSupport.parkNanos(this, (deadline - now) * 1000000)
-                                if result == null && now > deadline then
-                                    IOs.fail(Fibers.Interrupted)
-                                else
-                                    result
-                                end if
+                                while result == null do
+                                    val remainingNanos =
+                                        if timeout.isFinite then (deadline - now()) * 1000000
+                                        else Long.MaxValue
+                                    if remainingNanos <= 0 then
+                                        return IOs.fail(Fibers.Interrupted)
+                                    else if remainingNanos == Long.MaxValue then
+                                        LockSupport.park(this)
+                                    else
+                                        LockSupport.parkNanos(this, remainingNanos)
+                                    end if
+                                end while
+                                result
                             end apply
                         onComplete(b)
                         b()
