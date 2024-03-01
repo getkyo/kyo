@@ -21,7 +21,7 @@ private[kyo] object Scheduler:
     private val concurrency      = new AtomicInteger(0)
 
     private val idle = new MpmcUnboundedXaddArrayQueue[Worker](8)
-    private val pool = Executors.newCachedThreadPool(Threads("kyo-worker", new Worker(_)))
+    private val pool = Executors.newVirtualThreadPerTaskExecutor()
 
     startWorkers()
 
@@ -47,7 +47,7 @@ private[kyo] object Scheduler:
     private def startWorkers(): Unit =
         var c = concurrency.get()
         while c < concurrencyLimit && concurrency.compareAndSet(c, c + 1) do
-            pool.execute(() => Worker().runWorker(null))
+            pool.execute(() => Worker.run())
             c = concurrency.get()
     end startWorkers
 
@@ -145,7 +145,7 @@ private[kyo] object Scheduler:
 
         Worker.all.iterator().forEachRemaining { worker =>
             sb.append(
-                f"${worker.getName}%-20s ${worker.load()}%-5.2f ${worker.getState}%-15s ${worker.getStackTrace()(0)}%-30s\n"
+                f"${worker.thread.getName}%-20s ${worker.load()}%-5.2f ${worker.thread.getState}%-15s ${worker.thread.getStackTrace()(0)}%-30s\n"
             )
         }
         sb.append("=========================\n")

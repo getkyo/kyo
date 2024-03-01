@@ -4,9 +4,9 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.locks.LockSupport
 import kyo.iosInternal.*
 
-final private class Worker(r: Runnable)
-    extends Thread(r):
+final private class Worker:
 
+    val thread        = Thread.currentThread()
     private val queue = new Queue[IOTask[_]]()
 
     @volatile private var running                = false
@@ -16,10 +16,13 @@ final private class Worker(r: Runnable)
     private val schedule = (t: IOTask[?]) => Scheduler.schedule(t, this)
 
     def park() =
-        parkedThread = this
-        LockSupport.parkNanos(this, 1000000L)
+        parkedThread = thread
+        LockSupport.parkNanos(this, 1000000L) // 1ms
         parkedThread = null
     end park
+
+    def unpark() =
+        LockSupport.unpark(parkedThread)
 
     def steal(thief: Worker): IOTask[?] =
         queue.steal(thief.queue)
@@ -29,7 +32,7 @@ final private class Worker(r: Runnable)
 
     def enqueue(t: IOTask[?]): Boolean =
         running && queue.offer(t) && {
-            LockSupport.unpark(parkedThread)
+            unpark()
             true
         }
 
@@ -49,8 +52,8 @@ final private class Worker(r: Runnable)
         s
     end load
 
-    def runWorker(init: IOTask[?]) =
-        var task = init
+    private def runWorker() =
+        var task: IOTask[?] = null
         def stop() =
             !running || {
                 val stop = Scheduler.stopWorker()
@@ -86,14 +89,24 @@ final private class Worker(r: Runnable)
     end runWorker
 
     override def toString =
-        s"Worker(thread=${getName},load=${load()},task=$currentTask,queue.size=${queue.size()},frame=${this.getStackTrace()(0)})"
+        s"Worker(thread=${thread.getName},load=${load()},task=$currentTask,queue.size=${queue.size()},frame=${thread.getStackTrace()(0)})"
 end Worker
 
 private object Worker:
     private[kyo] val all = new CopyOnWriteArrayList[Worker]
+    private val local    = ThreadLocal.withInitial(() => new Worker)
 
-    def apply(): Worker =
-        Thread.currentThread() match
-            case w: Worker => w
-            case _         => null
+    def run(): Unit =
+        val t        = Thread.currentThread()
+        val prevName = t.getName()
+        try
+            t.setName("kyo-worker")
+            local.get().runWorker()
+        finally
+            t.setName(prevName)
+        end try
+    end run
+
+    def current(): Worker =
+        local.get()
 end Worker
