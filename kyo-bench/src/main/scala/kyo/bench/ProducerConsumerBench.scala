@@ -66,11 +66,11 @@ class ProducerConsumerBench extends Bench.ForkOnly[Unit]:
         import ox.*
         import ox.channels.*
 
-        val q = Channel[Unit](depth / 2)
+        val q = Channel.buffered[Unit](depth / 2)
         scoped {
             val f1 =
                 fork {
-                    for _ <- 0 until depth do q.send(()).orThrow
+                    for _ <- 0 until depth do q.send(())
                 }
             val f2 =
                 fork {

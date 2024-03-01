@@ -1,3 +1,5 @@
+import sys.process.*
+
 val scala3Version = "3.3.3"
 
 val compilerOptions = Seq(
@@ -41,7 +43,9 @@ lazy val `kyo-settings` = Seq(
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     sonatypeProfileName                := "io.getkyo",
     Test / testOptions += Tests.Argument("-oDG"),
-    ThisBuild / versionScheme := Some("early-semver")
+    ThisBuild / versionScheme := Some("early-semver"),
+    javacOptions ++= Seq("--release", "21"),
+    scalacOptions ++= Seq("-release:21")
 )
 
 lazy val kyo =
@@ -251,3 +255,12 @@ lazy val `js-settings` = Seq(
     fork                    := false,
     jsEnv := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120")))
 )
+
+Global / onLoad := {
+  val old = (Global / onLoad).value
+  val javaVersion = System.getProperty("java.version")
+  if (!javaVersion.startsWith("21")) {
+    throw new Exception("This project requires Java 21")
+  }
+  old
+}
