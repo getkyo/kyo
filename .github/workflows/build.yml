@@ -13,7 +13,7 @@ jobs:
         fetch-depth: 0
     - uses: olafurpg/setup-scala@v13
       with:
-          java-version: openjdk@1.17.0
+          java-version: openjdk@21.0.1=tgz+https://download.java.net/java/GA/jdk21.0.1/415e3f918a1f4062a0074a2794853d0d/12/GPL/openjdk-21.0.1_linux-x64_bin.tar.gz
 
     - name: Build JVM
       run: |
