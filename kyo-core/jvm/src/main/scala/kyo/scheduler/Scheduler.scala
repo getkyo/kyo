@@ -36,7 +36,7 @@ private[kyo] object Scheduler:
                         "Enhance performance by adding '--add-opens=java.base/java.lang=ALL-UNNAMED' to JVM args for a dedicated thread pool."
                 )
         end try
-        Executors.newCachedThreadPool(v.name("kyo-worker").factory())
+        Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
     end pool
 
     startWorkers()
