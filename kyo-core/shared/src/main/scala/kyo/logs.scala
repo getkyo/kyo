@@ -4,7 +4,7 @@ import org.slf4j.LoggerFactory
 
 object Logs:
 
-    private val logger = LoggerFactory.getLogger("kyo.logs")
+    private[kyo] val logger = LoggerFactory.getLogger("kyo.logs")
 
     inline def trace(inline msg: => String)(
         implicit

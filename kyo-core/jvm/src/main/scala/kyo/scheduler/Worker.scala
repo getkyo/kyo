@@ -97,15 +97,7 @@ private object Worker:
     private val local    = ThreadLocal.withInitial(() => new Worker)
 
     def run(): Unit =
-        val t        = Thread.currentThread()
-        val prevName = t.getName()
-        try
-            t.setName("kyo-worker")
-            local.get().runWorker()
-        finally
-            t.setName(prevName)
-        end try
-    end run
+        local.get().runWorker()
 
     def current(): Worker =
         local.get()
