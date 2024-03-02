@@ -1,7 +1,6 @@
 package kyo.scheduler
 
 import java.util.concurrent.Executors
-import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
@@ -60,6 +59,7 @@ private[kyo] object Scheduler:
     def addWorker(): Unit =
         concurrencyLimit = Math.max(concurrencyLimit, concurrency.get()) + 1
         startWorkers()
+    end addWorker
 
     private def startWorkers(): Unit =
         var c = concurrency.get()

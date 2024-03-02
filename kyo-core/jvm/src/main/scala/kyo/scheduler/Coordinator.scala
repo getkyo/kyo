@@ -3,6 +3,7 @@ package kyo.scheduler
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import jdk.internal.vm.annotation.Contended
+import scala.concurrent.duration.*
 import scala.util.control.NonFatal
 
 private object Coordinator:
@@ -12,6 +13,7 @@ private object Coordinator:
     private val loadAvgTarget = Flag("coordinator.loadAvgTarget", 0.8)
     private val jitterMax     = Flag("coordinator.jitterMax", 0.1)
     private val jitterSoftMax = Flag("coordinator.jitterSoftMax", 0.8)
+    private val delayCycles   = Flag("coordinator.delayCycles", 2)
 
     private val cycleTicks = Math.pow(2, cycleExp).intValue()
     private val cycleMask  = cycleTicks - 1
@@ -55,19 +57,21 @@ private object Coordinator:
 
     private val adapt: Runnable =
         () =>
-            // if (cycles % 7 == 0) {
-            //   println(this)
-            //   println(Scheduler)
-            // }
-            Scheduler.cycle()
-            val j = jitter()
-            val l = Scheduler.loadAvg()
-            if j >= jitterMax then
-                Scheduler.removeWorker()
-            else if j <= jitterSoftMax && l > loadAvgTarget then
-                Scheduler.addWorker()
-            else if l < loadAvgTarget then
-                Scheduler.removeWorker()
+            if cycles > delayCycles then
+                // if (cycles % 7 == 0) {
+                //   println(this)
+                //   println(Scheduler)
+                // }
+                Scheduler.cycle()
+                val j = jitter()
+                val l = Scheduler.loadAvg()
+                if j >= jitterMax then
+                    Scheduler.removeWorker()
+                else if j <= jitterSoftMax && l > loadAvgTarget then
+                    Scheduler.addWorker()
+                else if l < loadAvgTarget then
+                    Scheduler.removeWorker()
+                end if
             end if
 
     override def toString =
