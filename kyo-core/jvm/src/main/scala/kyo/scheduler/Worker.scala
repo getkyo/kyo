@@ -1,10 +1,12 @@
 package kyo.scheduler
 
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.Executor
 import java.util.concurrent.locks.LockSupport
 import kyo.iosInternal.*
 
-final private class Worker:
+final private class Worker(r: Runnable)
+    extends Thread(r) with Executor:
 
     val thread        = Thread.currentThread()
     private val queue = new Queue[IOTask[_]]()
@@ -14,6 +16,8 @@ final private class Worker:
     @volatile private var parkedThread: Thread   = null
 
     private val schedule = (t: IOTask[?]) => Scheduler.schedule(t, this)
+
+    def execute(r: Runnable) = r.run()
 
     def park() =
         parkedThread = thread
@@ -52,7 +56,7 @@ final private class Worker:
         s
     end load
 
-    private def runWorker() =
+    def runWorker() =
         var task: IOTask[?] = null
         def stop() =
             !running || {
@@ -94,11 +98,9 @@ end Worker
 
 private object Worker:
     private[kyo] val all = new CopyOnWriteArrayList[Worker]
-    private val local    = ThreadLocal.withInitial(() => new Worker)
 
-    def run(): Unit =
-        local.get().runWorker()
-
-    def current(): Worker =
-        local.get()
+    def apply(): Worker =
+        Thread.currentThread() match
+            case w: Worker => w
+            case _         => null
 end Worker

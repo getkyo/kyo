@@ -22,22 +22,21 @@ private[kyo] object Scheduler:
     private val concurrency      = new AtomicInteger(0)
 
     private val idle = new MpmcUnboundedXaddArrayQueue[Worker](8)
-
-    private val pool =
-        val v = Thread.ofVirtual()
-        try
-            val field = v.getClass().getDeclaredField("scheduler")
-            field.setAccessible(true)
-            field.set(v, Executors.newCachedThreadPool(Threads("kyo-scheduler")))
-        catch
-            case ex if (NonFatal(ex)) =>
-                Logs.logger.warn(
-                    "Notice: Kyo's scheduler falling back to Loom's global ForkJoinPool, which might not be optimal. " +
-                        "Enhance performance by adding '--add-opens=java.base/java.lang=ALL-UNNAMED' to JVM args for a dedicated thread pool."
-                )
-        end try
-        Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
-    end pool
+    private val pool = Executors.newCachedThreadPool(Threads("kyo-worker", new Worker(_)))
+    //     val v = Thread.ofVirtual()
+    //     try
+    //         val field = v.getClass().getDeclaredField("scheduler")
+    //         field.setAccessible(true)
+    //         field.set(v, Executors.newCachedThreadPool(Threads("kyo-scheduler")))
+    //     catch
+    //         case ex if (NonFatal(ex)) =>
+    //             Logs.logger.warn(
+    //                 "Notice: Kyo's scheduler falling back to Loom's global ForkJoinPool, which might not be optimal. " +
+    //                     "Enhance performance by adding '--add-opens=java.base/java.lang=ALL-UNNAMED' to JVM args for a dedicated thread pool."
+    //             )
+    //     end try
+    //     Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
+    // end pool
 
     startWorkers()
 
@@ -64,7 +63,7 @@ private[kyo] object Scheduler:
     private def startWorkers(): Unit =
         var c = concurrency.get()
         while c < concurrencyLimit && concurrency.compareAndSet(c, c + 1) do
-            pool.execute(() => Worker.run())
+            pool.execute(() => Worker().runWorker())
             c = concurrency.get()
     end startWorkers
 
