@@ -1,6 +1,7 @@
 package kyo.scheduler
 
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
@@ -28,7 +29,7 @@ private[kyo] object Scheduler:
         try
             val field = v.getClass().getDeclaredField("scheduler")
             field.setAccessible(true)
-            field.set(v, Executors.newCachedThreadPool())
+            field.set(v, Executors.newCachedThreadPool(Threads("kyo-scheduler")))
         catch
             case ex if (NonFatal(ex)) =>
                 Logs.logger.warn(
