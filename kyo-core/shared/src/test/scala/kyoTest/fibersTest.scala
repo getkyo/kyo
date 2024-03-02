@@ -53,7 +53,7 @@ class fibersTest extends KyoTest:
             yield assert(t1 != t2)
         }
         "uses a virtual thread" in runJVM {
-            Fibers.init(Thread.currentThread() != classOf[Thread])
+            Fibers.init(Thread.currentThread().isVirtual())
                 .map(_.get).map(assert(_))
         }
         "multiple" in run {
