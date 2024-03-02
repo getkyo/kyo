@@ -6,7 +6,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.*
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
-import scala.util.control.NonFatal
 
 private[kyo] object Scheduler:
 
@@ -58,7 +57,6 @@ private[kyo] object Scheduler:
     def addWorker(): Unit =
         concurrencyLimit = Math.max(concurrencyLimit, concurrency.get()) + 1
         startWorkers()
-    end addWorker
 
     private def startWorkers(): Unit =
         var c = concurrency.get()
@@ -161,7 +159,7 @@ private[kyo] object Scheduler:
 
         Worker.all.iterator().forEachRemaining { worker =>
             sb.append(
-                f"${worker.thread.getName}%-20s ${worker.load()}%-5.2f ${worker.thread.getState}%-15s ${worker.thread.getStackTrace()(0)}%-30s\n"
+                f"${worker.getName}%-20s ${worker.load()}%-5.2f ${worker.getState}%-15s ${worker.getStackTrace()(0)}%-30s\n"
             )
         }
         sb.append("=========================\n")

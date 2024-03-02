@@ -1,14 +1,12 @@
 package kyo.scheduler
 
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Executor
 import java.util.concurrent.locks.LockSupport
 import kyo.iosInternal.*
 
 final private class Worker(r: Runnable)
-    extends Thread(r) with Executor:
+    extends Thread(r):
 
-    val thread        = Thread.currentThread()
     private val queue = new Queue[IOTask[_]]()
 
     @volatile private var running                = false
@@ -17,16 +15,11 @@ final private class Worker(r: Runnable)
 
     private val schedule = (t: IOTask[?]) => Scheduler.schedule(t, this)
 
-    def execute(r: Runnable) = r.run()
-
     def park() =
-        parkedThread = thread
-        LockSupport.parkNanos(this, 1000000L) // 1ms
+        parkedThread = this
+        LockSupport.parkNanos(this, 1000000L)
         parkedThread = null
     end park
-
-    def unpark() =
-        LockSupport.unpark(parkedThread)
 
     def steal(thief: Worker): IOTask[?] =
         queue.steal(thief.queue)
@@ -36,7 +29,7 @@ final private class Worker(r: Runnable)
 
     def enqueue(t: IOTask[?]): Boolean =
         running && queue.offer(t) && {
-            unpark()
+            LockSupport.unpark(parkedThread)
             true
         }
 
@@ -93,7 +86,7 @@ final private class Worker(r: Runnable)
     end runWorker
 
     override def toString =
-        s"Worker(thread=${thread.getName},load=${load()},task=$currentTask,queue.size=${queue.size()},frame=${thread.getStackTrace()(0)})"
+        s"Worker(thread=${getName},load=${load()},task=$currentTask,queue.size=${queue.size()},frame=${this.getStackTrace()(0)})"
 end Worker
 
 private object Worker:
