@@ -64,10 +64,12 @@ private[kyo] object Scheduler:
             var minLoad = Int.MaxValue
             while tries > 0 && minLoad != 0 do
                 val w = workers(i)
-                val l = w.load()
-                if l < minLoad && w != submitter && !w.handleBlocking() then
-                    minLoad = l
-                    worker = w
+                if !w.handleBlocking() then
+                    val l = w.load()
+                    if l < minLoad && w != submitter then
+                        minLoad = l
+                        worker = w
+                end if
                 i += 1
                 if i == m then
                     i = 0
