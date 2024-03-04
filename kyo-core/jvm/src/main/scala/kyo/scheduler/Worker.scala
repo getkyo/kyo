@@ -19,11 +19,14 @@ final private case class Worker(id: Int, exec: Executor) extends Runnable:
         val blocked = handleBlocking()
         if !blocked then
             queue.add(t)
-            if !running.get() && running.compareAndSet(false, true) then
-                exec.execute(this)
+            wakeup()
         end if
         !blocked
     end enqueue
+
+    def wakeup() =
+        if !running.get() && running.compareAndSet(false, true) then
+            exec.execute(this)
 
     def load() =
         var l = queue.size()

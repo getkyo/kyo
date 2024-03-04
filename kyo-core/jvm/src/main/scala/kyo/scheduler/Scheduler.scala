@@ -122,5 +122,6 @@ private[kyo] object Scheduler:
         while i < maxConcurrency do
             workers(i).cycle(curr)
             i += 1
+        workers(XSRandom.nextInt(maxConcurrency)).wakeup()
     end cycle
 end Scheduler
