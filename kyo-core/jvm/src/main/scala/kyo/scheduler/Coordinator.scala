@@ -14,7 +14,6 @@ private object Coordinator:
     private val jitterMax     = Flag("coordinator.jitterMax", 0.1)
     private val jitterSoftMax = Flag("coordinator.jitterSoftMax", 0.8)
     private val delayCycles   = Flag("coordinator.delayCycles", 2)
-    private val printStatus   = Flag("coordinator.printStatus", false)
 
     private val cycleTicks = Math.pow(2, cycleExp).intValue()
     private val cycleMask  = cycleTicks - 1
@@ -61,8 +60,6 @@ private object Coordinator:
 
     private def adapt() =
         if cycles > delayCycles then
-            if printStatus && cycles % 7 == 0 then
-                println(Scheduler.status())
             val j = jitterMs()
             val l = Scheduler.loadAvg()
             if j >= jitterMax then

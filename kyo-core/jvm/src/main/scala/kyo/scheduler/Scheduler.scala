@@ -2,6 +2,7 @@ package kyo.scheduler
 
 import java.util.concurrent.Executors
 import kyo.Logs
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 private[kyo] object Scheduler:
@@ -51,6 +52,7 @@ private[kyo] object Scheduler:
     def schedule(t: Task): Unit =
         schedule(t, null)
 
+    @tailrec
     def schedule(t: Task, submitter: Worker): Unit =
         var worker: Worker = null
         if submitter == null then
@@ -63,7 +65,7 @@ private[kyo] object Scheduler:
             while tries > 0 && minLoad != 0 do
                 val w = workers(i)
                 val l = w.load()
-                if l < minLoad && w != submitter then
+                if l < minLoad && w != submitter && !w.handleBlocking() then
                     minLoad = l
                     worker = w
                 i += 1
@@ -72,7 +74,8 @@ private[kyo] object Scheduler:
                 tries -= 1
             end while
         end if
-        worker.enqueue(t)
+        if !worker.enqueue(t) then
+            schedule(t, submitter)
     end schedule
 
     def steal(thief: Worker): Task =
@@ -81,10 +84,12 @@ private[kyo] object Scheduler:
         var maxLoad        = Int.MaxValue
         while i < maxConcurrency do
             val w = workers(i)
-            val l = w.load()
-            if l > maxLoad && w != thief then
-                maxLoad = l
-                worker = w
+            if !w.handleBlocking() then
+                val l = w.load()
+                if l > maxLoad && w != thief then
+                    maxLoad = l
+                    worker = w
+            end if
             i += 1
         end while
         if worker != null then
@@ -116,18 +121,4 @@ private[kyo] object Scheduler:
             workers(i).cycle(curr)
             i += 1
     end cycle
-
-    def status(): String =
-        val sb = new StringBuilder
-        sb.append("===== Kyo Scheduler =====\n")
-        sb.append(f"${"Load"}%-8s ${"Workers"}%-8s\n")
-        sb.append(f"${loadAvg()}%-8.2f ${maxConcurrency}%-8d\n")
-        sb.append("\n")
-        sb.append(
-            f"${"Id"}%-3s ${"Thread"}%-20s ${"Load"}%-5s ${"State"}%-15s ${"Frame"}%-30s\n"
-        )
-        for i <- 0 until maxConcurrency do
-            sb.append(workers(i).status())
-        sb.toString()
-    end status
 end Scheduler

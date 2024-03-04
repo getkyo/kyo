@@ -3,7 +3,7 @@ package kyo.scheduler
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 
-final class Worker(id: Int, exec: Executor) extends Runnable:
+final private case class Worker(id: Int, exec: Executor) extends Runnable:
 
     private val running = new AtomicBoolean
 
@@ -15,10 +15,14 @@ final class Worker(id: Int, exec: Executor) extends Runnable:
 
     private val schedule = Scheduler.schedule(_, this)
 
-    def enqueue(t: Task): Unit =
-        queue.add(t)
-        if !running.get() && running.compareAndSet(false, true) then
-            exec.execute(this)
+    def enqueue(t: Task): Boolean =
+        val blocked = handleBlocking()
+        if !blocked then
+            queue.add(t)
+            if !running.get() && running.compareAndSet(false, true) then
+                exec.execute(this)
+        end if
+        !blocked
     end enqueue
 
     def load() =
@@ -38,7 +42,17 @@ final class Worker(id: Int, exec: Executor) extends Runnable:
         val c = currentTask
         if c != null && currentCycle < curr - 1 then
             c.preempt()
+        handleBlocking()
+        ()
     end cycle
+
+    def handleBlocking() =
+        val m = mount
+        val r = m != null && m.getState() == Thread.State.BLOCKED
+        if r then
+            drain()
+        r
+    end handleBlocking
 
     def run(): Unit =
         mount = Thread.currentThread()
@@ -69,16 +83,6 @@ final class Worker(id: Int, exec: Executor) extends Runnable:
             end if
         end while
     end run
-
-    def status() =
-        val m = mount
-        val (name, state, frame) =
-            if m != null then
-                (m.getName(), m.getState(), m.getStackTrace()(0))
-            else
-                ("detatched", "", "")
-        f"${id}%-3s ${name}%-20s ${load()}%-5.2f ${state}%-15s ${frame}%-30s\n"
-    end status
 end Worker
 
 object Worker:
