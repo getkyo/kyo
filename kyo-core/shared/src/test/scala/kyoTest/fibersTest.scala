@@ -120,20 +120,20 @@ class fibersTest extends KyoTest:
                 _           <- done.await
             yield assert(interrupted)
         }
-        // "multiple fibers" in runJVM {
-        //     for
-        //         started      <- Latches.init(3)
-        //         done         <- Latches.init(3)
-        //         fiber1       <- Fibers.init(runLoop(started, done))
-        //         fiber2       <- Fibers.init(runLoop(started, done))
-        //         fiber3       <- Fibers.init(runLoop(started, done))
-        //         _            <- started.await
-        //         interrupted1 <- fiber1.interrupt
-        //         interrupted2 <- fiber2.interrupt
-        //         interrupted3 <- fiber3.interrupt
-        //         _            <- done.await
-        //     yield assert(interrupted1 && interrupted2 && interrupted3)
-        // }
+        "multiple fibers" in runJVM {
+            for
+                started      <- Latches.init(3)
+                done         <- Latches.init(3)
+                fiber1       <- Fibers.init(runLoop(started, done))
+                fiber2       <- Fibers.init(runLoop(started, done))
+                fiber3       <- Fibers.init(runLoop(started, done))
+                _            <- started.await
+                interrupted1 <- fiber1.interrupt
+                interrupted2 <- fiber2.interrupt
+                interrupted3 <- fiber3.interrupt
+                _            <- done.await
+            yield assert(interrupted1 && interrupted2 && interrupted3)
+        }
     }
 
     "race" - {
