@@ -2,8 +2,9 @@ package kyo.scheduler
 
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
+import kyo.scheduler.util.Queue
 
-final private case class Worker(id: Int, exec: Executor) extends Runnable:
+final private class Worker(exec: Executor) extends Runnable:
 
     private val running = new AtomicBoolean
 

@@ -2,6 +2,9 @@ package kyo.scheduler
 
 import java.util.concurrent.Executors
 import kyo.Logs
+import kyo.scheduler.util.Flag
+import kyo.scheduler.util.Threads
+import kyo.scheduler.util.XSRandom
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
@@ -34,14 +37,14 @@ private[kyo] object Scheduler:
     end exec
 
     for idx <- 0 until max do
-        workers(idx) = new Worker(idx, exec)
+        workers(idx) = new Worker(exec)
 
     Coordinator.load()
 
     def addWorker() =
         val m = Math.min(maxConcurrency + 1, max)
         if m > allocatedWorkers && maxConcurrency < max then
-            workers(m) = new Worker(m, exec)
+            workers(m) = new Worker(exec)
             allocatedWorkers += 1
         maxConcurrency = m
     end addWorker

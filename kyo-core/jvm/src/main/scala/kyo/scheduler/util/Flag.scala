@@ -1,6 +1,6 @@
-package kyo.scheduler
+package kyo.scheduler.util
 
-private object Flag:
+private[kyo] object Flag:
     abstract class Reader[T]:
         def apply(s: String): T
     object Reader:

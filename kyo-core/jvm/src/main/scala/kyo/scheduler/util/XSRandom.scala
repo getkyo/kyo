@@ -1,8 +1,8 @@
-package kyo.scheduler
+package kyo.scheduler.util
 
 import java.util.Random
 
-private object XSRandom extends Random:
+private[kyo] object XSRandom extends Random:
     private[this] val seeds = List.fill(32)(31L).toArray
     override def next(nbits: Int): Int =
         val idx = (Thread.currentThread().hashCode() & 31).toInt

@@ -1,10 +1,10 @@
-package kyo.scheduler
+package kyo.scheduler.util
 
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
 import scala.collection.mutable.PriorityQueue
 
-final private class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
+final private[kyo] class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
 
     private val queue = PriorityQueue[T]()
 

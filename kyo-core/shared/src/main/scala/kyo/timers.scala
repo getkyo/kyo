@@ -1,7 +1,7 @@
 package kyo
 
 import java.util.concurrent.*
-import kyo.scheduler.Threads
+import kyo.scheduler.util.Threads
 import scala.concurrent.duration.*
 
 abstract class Timer:

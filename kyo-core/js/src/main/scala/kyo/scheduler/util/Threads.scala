@@ -1,9 +1,9 @@
-package kyo.scheduler
+package kyo.scheduler.util
 
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadFactoryStub
 
-object Threads:
+private[kyo] object Threads:
 
     def apply(name: String): ThreadFactory =
         ThreadFactoryStub.get

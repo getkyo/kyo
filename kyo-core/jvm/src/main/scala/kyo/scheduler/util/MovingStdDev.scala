@@ -1,6 +1,6 @@
-package kyo.scheduler
+package kyo.scheduler.util
 
-final private class MovingStdDev(exp: Int):
+final private[kyo] class MovingStdDev(exp: Int):
 
     private val window = 1 << exp
     private val mask   = window - 1
