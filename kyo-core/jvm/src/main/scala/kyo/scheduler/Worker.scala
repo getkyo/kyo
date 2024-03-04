@@ -3,12 +3,13 @@ package kyo.scheduler
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 
-final class Worker(exec: Executor) extends Runnable:
+final class Worker(id: Int, exec: Executor) extends Runnable:
 
     private val running = new AtomicBoolean
 
-    @volatile private var cycle         = 0L
-    @volatile private var current: Task = null
+    @volatile private var mount: Thread     = null
+    @volatile private var currentCycle      = 0L
+    @volatile private var currentTask: Task = null
 
     private val queue = Queue[Task]()
 
@@ -22,7 +23,7 @@ final class Worker(exec: Executor) extends Runnable:
 
     def load() =
         var l = queue.size()
-        if current != null then
+        if currentTask != null then
             l += 1
         l
     end load
@@ -34,24 +35,25 @@ final class Worker(exec: Executor) extends Runnable:
         queue.drain(schedule)
 
     def cycle(curr: Long): Unit =
-        val c = current
-        if c != null && cycle < curr - 1 then
+        val c = currentTask
+        if c != null && currentCycle < curr - 1 then
             c.preempt()
     end cycle
 
     def run(): Unit =
+        mount = Thread.currentThread()
         Worker.local.set(this)
         var task: Task = null
         while true do
-            cycle = Coordinator.cycle()
+            currentCycle = Coordinator.cycle()
             if task == null then
                 task = queue.poll()
             if task == null then
                 task = steal(this)
             if task != null then
-                current = task
+                currentTask = task
                 val r = task.run()
-                current = null
+                currentTask = null
                 if r == Task.Preempted then
                     task = queue.addAndPoll(task)
                 else
@@ -61,14 +63,25 @@ final class Worker(exec: Executor) extends Runnable:
                 running.set(false)
                 if queue.isEmpty() || !running.compareAndSet(false, true) then
                     Worker.local.set(null)
+                    mount = null
                     return
+                end if
             end if
         end while
     end run
+
+    def status() =
+        val m = mount
+        val (name, state, frame) =
+            if m != null then
+                (m.getName(), m.getState(), m.getStackTrace()(0))
+            else
+                ("detatched", "", "")
+        f"${id}%-3s ${name}%-20s ${load()}%-5.2f ${state}%-15s ${frame}%-30s\n"
+    end status
 end Worker
 
 object Worker:
-    private val local = new ThreadLocal[Worker]
-    def current(): Worker =
-        local.get()
+    private val local     = new ThreadLocal[Worker]
+    def current(): Worker = local.get()
 end Worker

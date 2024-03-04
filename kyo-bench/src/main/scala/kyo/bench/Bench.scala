@@ -13,6 +13,7 @@ import zio.UIO
     jvmArgs = Array(
         "-Dcats.effect.tracing.mode=DISABLED",
         "-XX:+UnlockExperimentalVMOptions",
+        // "-Dkyo.scheduler.coordinator.printStatus=true",
         "-XX:-DoJVMTIVirtualThreadTransitions"
     ),
     jvmArgsPrepend = Array(

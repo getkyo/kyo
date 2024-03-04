@@ -4,19 +4,12 @@ import java.util.concurrent.Executors
 
 private[kyo] object Scheduler:
 
-    private val min = Flag(
-        "minWorkers",
-        Math.min(1, Math.ceil(Runtime.getRuntime().availableProcessors().toDouble / 2).intValue())
-    )
-
-    private val max = Flag(
-        "maxWorkers",
-        Runtime.getRuntime().availableProcessors() * 100
-    )
-
+    private val cores = Runtime.getRuntime().availableProcessors()
+    private val min   = Flag("minWorkers", Math.min(1, cores.toDouble / 2).intValue())
+    private val max   = Flag("maxWorkers", cores * 100)
     private val tries = Flag("tries", 16)
 
-    @volatile private var maxConcurrency   = max
+    @volatile private var maxConcurrency   = cores
     @volatile private var allocatedWorkers = maxConcurrency
 
     private val workers = new Array[Worker](max)
@@ -24,14 +17,14 @@ private[kyo] object Scheduler:
     private val exec = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
 
     for idx <- 0 until max do
-        workers(idx) = new Worker(exec)
+        workers(idx) = new Worker(idx, exec)
 
     Coordinator.load()
 
     def addWorker() =
         val m = Math.min(maxConcurrency + 1, max)
         if m > allocatedWorkers && maxConcurrency < max then
-            workers(m) = new Worker(exec)
+            workers(m) = new Worker(m, exec)
             allocatedWorkers += 1
         maxConcurrency = m
     end addWorker
@@ -108,4 +101,17 @@ private[kyo] object Scheduler:
             i += 1
     end cycle
 
+    def status(): String =
+        val sb = new StringBuilder
+        sb.append("===== Kyo Scheduler =====\n")
+        sb.append(f"${"Load"}%-8s ${"Workers"}%-8s\n")
+        sb.append(f"${loadAvg()}%-8.2f ${maxConcurrency}%-8d\n")
+        sb.append("\n")
+        sb.append(
+            f"${"Id"}%-3s ${"Thread"}%-20s ${"Load"}%-5s ${"State"}%-15s ${"Frame"}%-30s\n"
+        )
+        for i <- 0 until maxConcurrency do
+            sb.append(workers(i).status())
+        sb.toString()
+    end status
 end Scheduler
