@@ -53,7 +53,7 @@ private[kyo] class IOTask[T](
     private var curr: T < Fibers,
     private var ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
     @volatile private var state: Int // Math.abs(state) => runtime; state < 0 => preempting
-) extends IOPromise[T]
+) extends IOPromise[T] with Task
     with Preempt:
     import IOTask.*
 
@@ -66,7 +66,7 @@ private[kyo] class IOTask[T](
         if state > 0 then
             state = -state;
 
-    private def runtime(): Int =
+    def runtime(): Int =
         Math.abs(state)
 
     override protected def onComplete(): Unit =
@@ -130,7 +130,7 @@ private[kyo] class IOTask[T](
         end if
     end eval
 
-    def run(): Unit =
+    def run() =
         val start = Coordinator.tick()
         try
             curr = eval(start, curr)
@@ -140,10 +140,12 @@ private[kyo] class IOTask[T](
                 curr = nullIO
         end try
         state = runtime() + (Coordinator.tick() - start).asInstanceOf[Int]
+        if curr != nullIO then
+            Task.Preempted
+        else
+            Task.Done
+        end if
     end run
-
-    def reenqueue(): Boolean =
-        curr != nullIO
 
     def ensure(f: () => Unit): Unit =
         if curr != nullIO then

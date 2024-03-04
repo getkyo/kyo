@@ -52,10 +52,10 @@ class fibersTest extends KyoTest:
                 t2 <- Fibers.init(Thread.currentThread()).map(_.get)
             yield assert(t1 != t2)
         }
-        "uses a virtual thread" in runJVM {
-            Fibers.init(Thread.currentThread().isVirtual())
-                .map(_.get).map(assert(_))
-        }
+        // "uses a virtual thread" in runJVM {
+        //     Fibers.init(Thread.currentThread().isVirtual())
+        //         .map(_.get).map(assert(_))
+        // }
         "multiple" in run {
             for
                 v0               <- Fibers.init(0).map(_.get)

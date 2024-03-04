@@ -1,172 +1,111 @@
 package kyo.scheduler
 
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
-import kyo.*
-import org.jctools.queues.MpmcUnboundedXaddArrayQueue
-import scala.annotation.tailrec
 
 private[kyo] object Scheduler:
 
-    private val printStatus = Flag("printStatus", false)
-
-    private val coreWorkers = Flag(
-        "coreWorkers",
+    private val min = Flag(
+        "minWorkers",
         Math.min(1, Math.ceil(Runtime.getRuntime().availableProcessors().toDouble / 2).intValue())
     )
 
-    @volatile
-    private var concurrencyLimit = coreWorkers
-    private val concurrency      = new AtomicInteger(0)
+    private val max = Flag(
+        "maxWorkers",
+        Runtime.getRuntime().availableProcessors() * 100
+    )
 
-    private val idle = new MpmcUnboundedXaddArrayQueue[Worker](8)
-    private val pool = Executors.newCachedThreadPool(Threads("kyo-worker", new Worker(_)))
-    //     val v = Thread.ofVirtual()
-    //     try
-    //         val field = v.getClass().getDeclaredField("scheduler")
-    //         field.setAccessible(true)
-    //         field.set(v, Executors.newCachedThreadPool(Threads("kyo-scheduler")))
-    //     catch
-    //         case ex if (NonFatal(ex)) =>
-    //             Logs.logger.warn(
-    //                 "Notice: Kyo's scheduler falling back to Loom's global ForkJoinPool, which might not be optimal. " +
-    //                     "Enhance performance by adding '--add-opens=java.base/java.lang=ALL-UNNAMED' to JVM args for a dedicated thread pool."
-    //             )
-    //     end try
-    //     Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
-    // end pool
+    private val tries = Flag("tries", 16)
 
-    startWorkers()
+    @volatile private var maxConcurrency   = max
+    @volatile private var allocatedWorkers = maxConcurrency
+
+    private val workers = new Array[Worker](max)
+
+    private val exec = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
+
+    for idx <- 0 until max do
+        workers(idx) = new Worker(exec)
 
     Coordinator.load()
 
-    if printStatus then
-        discard(Executors.newSingleThreadScheduledExecutor().scheduleAtFixedRate(
-            (() => println(status())): Runnable,
-            1,
-            1,
-            TimeUnit.SECONDS
-        ))
-    end if
+    def addWorker() =
+        val m = Math.min(maxConcurrency + 1, max)
+        if m > allocatedWorkers && maxConcurrency < max then
+            workers(m) = new Worker(exec)
+            allocatedWorkers += 1
+        maxConcurrency = m
+    end addWorker
 
-    def removeWorker(): Unit =
-        if concurrencyLimit > coreWorkers then
-            concurrencyLimit = Math.max(1, concurrency.get() - 1)
+    def removeWorker() =
+        maxConcurrency = Math.max(maxConcurrency - 1, min)
 
-    def addWorker(): Unit =
-        concurrencyLimit = Math.max(concurrencyLimit, concurrency.get()) + 1
-        startWorkers()
+    def schedule(t: Task): Unit =
+        schedule(t, null)
 
-    private def startWorkers(): Unit =
-        var c = concurrency.get()
-        while c < concurrencyLimit && concurrency.compareAndSet(c, c + 1) do
-            pool.execute(() => Worker().runWorker())
-            c = concurrency.get()
-    end startWorkers
-
-    def flush(): Unit =
-        val w = Worker()
-        if w != null then
-            w.flush()
-    end flush
-
-    def schedule(t: IOTask[?]): Unit =
-        val local = Worker()
-        if local != null && local.enqueueLocal(t) then
-            return
-        schedule(t, local)
+    def schedule(t: Task, submitter: Worker): Unit =
+        var worker: Worker = null
+        if submitter == null then
+            worker = Worker.current();
+        if worker == null then
+            val m       = this.maxConcurrency
+            var i       = XSRandom.nextInt(m)
+            var tries   = Math.min(m, this.tries)
+            var minLoad = Int.MaxValue
+            while tries > 0 && minLoad != 0 do
+                val w = workers(i)
+                val l = w.load()
+                if l < minLoad && w != submitter then
+                    minLoad = l
+                    worker = w
+                i += 1
+                if i == m then
+                    i = 0
+                tries -= 1
+            end while
+        end if
+        worker.enqueue(t)
     end schedule
 
-    @tailrec private[kyo] def schedule(t: IOTask[?], submitter: Worker): Unit =
-        val w = idle.poll()
-        if w != null && w != submitter && w.enqueue(t) then
-            return
-        var w0: Worker = randomWorker(submitter)
-        var w1: Worker = randomWorker(submitter)
-        if w0.load() > w1.load() then
-            val w = w0
-            w0 = w1
-            w1 = w
+    def steal(thief: Worker): Task =
+        var worker: Worker = null
+        var i              = 0
+        var maxLoad        = Int.MaxValue
+        while i < maxConcurrency do
+            val w = workers(i)
+            val l = w.load()
+            if l > maxLoad && w != thief then
+                maxLoad = l
+                worker = w
+            i += 1
+        end while
+        if worker != null then
+            worker.steal(thief)
+        else
+            null
         end if
-        if !w0.enqueue(t) && !w1.enqueue(t) then
-            schedule(t, submitter)
-    end schedule
-
-    def steal(thief: Worker): IOTask[?] =
-        if Worker.all.size() <= 1 then
-            return null
-        // p2c load stealing
-        var r: IOTask[?] = null
-        var w0: Worker   = randomWorker(thief)
-        var w1: Worker   = randomWorker(thief)
-        if w0.load() < w1.load() then
-            val w = w0
-            w0 = w1
-            w1 = w
-        end if
-        r = w0.steal(thief)
-        if r == null then
-            r = w1.steal(thief)
-        r
     end steal
 
+    def flush() =
+        val w = Worker.current()
+        if w != null then
+            w.drain()
+    end flush
+
     def loadAvg(): Double =
-        var sum = 0L
-        val it  = Worker.all.iterator()
-        var c   = 0
-        while it.hasNext() do
-            sum += it.next().load()
-            c += 1
-        sum.doubleValue() / c
+        val m = this.maxConcurrency
+        var i = 0
+        var r = 0
+        while i < m do
+            r += workers(i).load()
+            i += 1
+        r.toDouble / m
     end loadAvg
 
-    def cycle(): Unit =
-        Worker.all.forEach(_.cycle())
+    def cycle(curr: Long): Unit =
+        var i = 0
+        while i < maxConcurrency do
+            workers(i).cycle(curr)
+            i += 1
+    end cycle
 
-    def idle(w: Worker): Unit =
-        if w.load() == 0 then
-            idle.add(w)
-            w.park()
-
-    def stopWorker(): Boolean =
-        val c = concurrency.get()
-        c > concurrencyLimit && concurrency.compareAndSet(c, c - 1)
-
-    private def randomWorker(besides: Worker): Worker =
-        var w: Worker = null
-        while w == null || w == besides do
-            try
-                val a = Worker.all
-                w = a.get(XSRandom.nextInt(a.size()))
-            catch
-                case _: ArrayIndexOutOfBoundsException | _: IllegalArgumentException =>
-        end while
-        w
-    end randomWorker
-
-    def status(): String =
-        val sb = new StringBuilder
-
-        sb.append("===== Kyo Scheduler =====\n")
-        sb.append(f"${"Load"}%-8s ${"Workers"}%-8s ${"Limit"}%-8s\n")
-        sb.append(f"${loadAvg()}%-8.2f ${concurrency.get()}%-8d ${concurrencyLimit}%-8d\n")
-        sb.append("\n")
-
-        sb.append(
-            f"${"Thread"}%-20s ${"Load"}%-5s ${"State"}%-15s ${"Frame"}%-30s\n"
-        )
-
-        Worker.all.iterator().forEachRemaining { worker =>
-            sb.append(
-                f"${worker.getName}%-20s ${worker.load()}%-5.2f ${worker.getState}%-15s ${worker.getStackTrace()(0)}%-30s\n"
-            )
-        }
-        sb.append("=========================\n")
-
-        sb.toString()
-    end status
-
-    override def toString =
-        s"Scheduler(loadAvg=${loadAvg()},concurrency=$concurrency,limit=$concurrencyLimit)"
 end Scheduler

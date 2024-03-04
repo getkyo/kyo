@@ -28,7 +28,6 @@ object Scheduler:
     def flush(): Unit =
         while queue.nonEmpty do
             val task = queue.dequeue()
-            task.run()
-            if task.reenqueue() then
+            if task.run() == Task.Preempted then
                 queue.enqueue(task)
 end Scheduler
