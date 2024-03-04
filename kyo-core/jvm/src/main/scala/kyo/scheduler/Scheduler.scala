@@ -1,6 +1,8 @@
 package kyo.scheduler
 
 import java.util.concurrent.Executors
+import kyo.Logs
+import scala.util.control.NonFatal
 
 private[kyo] object Scheduler:
 
@@ -14,7 +16,21 @@ private[kyo] object Scheduler:
 
     private val workers = new Array[Worker](max)
 
-    private val exec = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
+    private val exec =
+        val v = Thread.ofVirtual()
+        try
+            val field = v.getClass().getDeclaredField("scheduler")
+            field.setAccessible(true)
+            field.set(v, Executors.newCachedThreadPool(Threads("kyo-scheduler")))
+        catch
+            case ex if (NonFatal(ex)) =>
+                Logs.logger.warn(
+                    "Notice: Kyo's scheduler is falling back to Loom's global ForkJoinPool, which might not be optimal. " +
+                        "Enhance performance by adding '--add-opens=java.base/java.lang=ALL-UNNAMED' to JVM args for a dedicated thread pool."
+                )
+        end try
+        Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
+    end exec
 
     for idx <- 0 until max do
         workers(idx) = new Worker(idx, exec)
