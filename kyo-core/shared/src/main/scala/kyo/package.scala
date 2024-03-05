@@ -50,4 +50,7 @@ package object kyo:
     inline def discard[T](v: T): Unit =
         val _ = v
         ()
+
+    private[kyo] inline def bug(msg: String): Nothing =
+        throw new IllegalStateException("Kyo bug, please file a ticket: " + msg)
 end kyo

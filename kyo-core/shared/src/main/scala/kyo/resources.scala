@@ -9,7 +9,7 @@ sealed abstract class Resources private[kyo] ()
     extends Effect[Resource, Resources]:
 
     private[kyo] val finalizer: Finalizer < Resources =
-        suspend(GetFinalizer.asInstanceOf[Resource[Finalizer]])
+        this.suspend(GetFinalizer.asInstanceOf[Resource[Finalizer]])
 
     def ensure(v: => Unit < IOs): Unit < (IOs & Resources) =
         finalizer.map(_.put(IOs(v)))
@@ -35,7 +35,7 @@ sealed abstract class Resources private[kyo] ()
                         case _ =>
                             f(m.asInstanceOf[U])
         IOs.ensure(finalizer.run) {
-            handle[T, Resources & S, Any](v).asInstanceOf[T < S]
+            this.handle[T, Resources & S, Any](v).asInstanceOf[T < S]
         }
     end run
 end Resources

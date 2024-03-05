@@ -9,16 +9,16 @@ sealed class Sums[V] private[kyo] (using private val tag: Tag[?])
     extends Effect[Sum[V]#Value, Sums[V]]:
 
     val get: V < Sums[V] =
-        suspend(Get.asInstanceOf[Sum[V]#Value[V]])
+        this.suspend(Get.asInstanceOf[Sum[V]#Value[V]])
 
     def add(v: V): V < Sums[V] =
-        suspend(AddValue(v).asInstanceOf[Sum[V]#Value[V]])
+        this.suspend(AddValue(v).asInstanceOf[Sum[V]#Value[V]])
 
     def set(v: V): V < Sums[V] =
-        update(_ => v)
+        this.update(_ => v)
 
     def update(f: V => V): V < Sums[V] =
-        suspend(UpdateValue(f).asInstanceOf[Sum[V]#Value[V]])
+        this.suspend(UpdateValue(f).asInstanceOf[Sum[V]#Value[V]])
 
     def run[T, S](v: T < (Sums[V] & S))(implicit
         g: Summer[V],
@@ -49,7 +49,7 @@ sealed class Sums[V] private[kyo] (using private val tag: Tag[?])
                             f(curr.asInstanceOf[T])
                         case _ =>
                             f(m.asInstanceOf[T])
-        handle[T, S, Any](v).map {
+        this.handle[T, S, Any](v).map {
             case AddValue(v) =>
                 curr = g.add(curr, v.asInstanceOf[V])
                 curr.asInstanceOf[T]

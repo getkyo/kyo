@@ -268,7 +268,7 @@ object fibersInternal:
     final class FiberGets private[kyo] () extends Effect[Fiber, FiberGets]:
 
         def apply[T, S](f: Fiber[T] < S): T < (FiberGets & S) =
-            suspend(f)
+            this.suspend(f)
 
         def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
             given DeepHandler[Fiber, FiberGets, IOs] =
@@ -297,7 +297,7 @@ object fibersInternal:
                         catch
                             case ex if (NonFatal(ex)) =>
                                 handle(ex)
-            IOs(handle[T, IOs & S, IOs](v).map(_.block(timeout)))
+            IOs(this.handle[T, IOs & S, IOs](v).map(_.block(timeout)))
         end runAndBlock
     end FiberGets
     val FiberGets = new FiberGets

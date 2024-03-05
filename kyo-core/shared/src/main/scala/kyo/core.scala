@@ -12,12 +12,8 @@ object core:
         def apply[T, U: Flat, S2](m: M[T], f: T => U < (E & S2)): U < (E & S & S2)
     end Handler
 
-    abstract class Effect[M[_], E <: Effect[M, E]]:
-        self: E =>
-
-        def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]): Boolean = this eq other
-
-        protected inline def suspend[T, S](v: M[T] < S): T < (S & E) =
+    extension [M[_], E <: Effect[M, E]](e: E)
+        inline def suspend[T, S](v: M[T] < S): T < (S & E) =
             def suspendLoop(v: M[T] < S): T < (S & E) =
                 v match
                     case kyo: Kyo[MX, EX, Any, M[T], S] @unchecked =>
@@ -25,13 +21,14 @@ object core:
                             def apply(v: Any < (S & E), s: Safepoint[MX, EX], l: Locals.State) =
                                 suspendLoop(kyo(v, s, l))
                     case _ =>
-                        new KyoRoot[M, E, T, S & E](v.asInstanceOf[M[T]], this) {}
+                        new KyoRoot[M, E, T, S & E](v.asInstanceOf[M[T]], e) {}
             if v == null then
                 throw new NullPointerException
             suspendLoop(v)
         end suspend
 
-        protected inline def handle[T, S, S2](v: T < (E & S))(implicit
+        inline def handle[T, S, S2](v: T < (E & S))(
+            using
             h: Handler[M, E, S2],
             s: Safepoint[M, E],
             f: Flat[T < (E & S)]
@@ -40,7 +37,7 @@ object core:
                 v: T < (S & S2 & E)
             ): M[T] < (S & S2) =
                 v match
-                    case kyo: Kyo[M, E, Any, T, S & E] @unchecked if (accepts(kyo.effect)) =>
+                    case kyo: Kyo[M, E, Any, T, S & E] @unchecked if (e.accepts(kyo.effect)) =>
                         if kyo.isRoot then
                             kyo.value.asInstanceOf[M[T] < S]
                         else
@@ -63,6 +60,12 @@ object core:
                 throw new NullPointerException
             handleLoop(v)
         end handle
+    end extension
+
+    abstract class Effect[+M[_], +E <: Effect[M, E]]:
+        self: E =>
+
+        def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]): Boolean = this eq other
 
         override def toString = getClass.getSimpleName()
     end Effect
@@ -102,7 +105,8 @@ object core:
 
     private[kyo] object internal:
 
-        def deepHandle[M[_], E <: Effect[M, E], T, S](e: E)(v: T < E)(implicit
+        def deepHandle[M[_], E <: Effect[M, E], T, S](e: E)(v: T < E)(
+            using
             h: DeepHandler[M, E, S],
             s: Safepoint[M, E],
             f: Flat[T]

@@ -25,19 +25,19 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
     private given Tag[E] = tag
 
     def fail[T, S](e: E < S): T < (Aborts[E] & S) =
-        e.map(e => suspend(Left(e)))
+        e.map(e => this.suspend(Left(e)))
 
     def run[T, S](
         v: => T < (Aborts[E] & S)
     )(implicit
         flat: Flat[T < (Aborts[E] & S)]
     ): Either[E, T] < S =
-        handle[T, S, Any](catching(v))
+        this.handle[T, S, Any](catching(v))
 
     def get[T, S](v: => Either[E, T] < S): T < (Aborts[E] & S) =
         catching(v).map {
             case Right(value) => value
-            case e            => suspend(e)
+            case e            => this.suspend(e)
         }
 
     def catching[T, S](f: => T < S): T < (Aborts[E] & S) =

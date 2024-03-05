@@ -20,7 +20,7 @@ final class Envs[E] private[kyo] (using private val tag: Tag[?])
     self =>
 
     val get: E < Envs[E] =
-        suspend(Input.asInstanceOf[Env[E]#Value[E]])
+        this.suspend(Input.asInstanceOf[Env[E]#Value[E]])
 
     def use[T, S](f: E => T < S): T < (Envs[E] & S) =
         get.map(f)
@@ -39,7 +39,7 @@ final class Envs[E] private[kyo] (using private val tag: Tag[?])
                                 f(e.asInstanceOf[U])
                             case _ =>
                                 f(m.asInstanceOf[U])
-            handle[T, Envs[E] & S, Any](v).asInstanceOf[T < S]
+            this.handle[T, Envs[E] & S, Any](v).asInstanceOf[T < S]
         }
     end run
 

@@ -5,7 +5,7 @@ import kyo.core.*
 sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs]:
 
     def run[T, S](v: T < (Seqs & S))(using f: Flat[T < (Seqs & S)]): Seq[T] < S =
-        handle[T, S, Any](v)
+        this.handle[T, S, Any](v)
 
     def repeat(n: Int): Unit < Seqs =
         get(Seq.fill(n)(()))
@@ -13,7 +13,7 @@ sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs]:
     def get[T, S](v: Seq[T] < S): T < (Seqs & S) =
         v.map {
             case Seq(head) => head
-            case _         => suspend(v)
+            case _         => this.suspend(v)
         }
 
     def filter[S](v: Boolean < S): Unit < (Seqs & S) =
@@ -25,7 +25,7 @@ sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs]:
         }
 
     val drop: Nothing < Seqs =
-        suspend(Seq.empty[Nothing])
+        this.suspend(Seq.empty[Nothing])
 
     def traverse[T, U, S, S2](v: Seq[T] < S)(f: T => U < S2): Seq[U] < (S & S2) =
         v.map { v =>
