@@ -139,27 +139,29 @@ object Fibers extends Joins[Fibers]:
             case _ =>
                 Locals.save.map { st =>
                     IOs {
-                        val p       = new IOPromise[Seq[T]]
-                        val size    = l.size
-                        val results = (new Array[Any](size)).asInstanceOf[Array[T]]
-                        val pending = new AtomicInteger(size)
-                        var i       = 0
-                        foreach(l) { io =>
+                        class State:
+                            val p       = new IOPromise[Seq[T]]
+                            val size    = l.size
+                            val results = (new Array[Any](size)).asInstanceOf[Array[T]]
+                            val pending = new AtomicInteger(size)
+                            val flat    = f
+                        end State
+                        val state = new State
+                        foreach(l) { (i, io) =>
+                            import state.*
                             val fiber = IOTask(IOs(io), st)
                             p.interrupts(fiber)
-                            val j = i
                             fiber.onComplete { r =>
                                 try
-                                    results(j) = IOs.run(r)
+                                    results(i) = IOs.run(r)(using flat)
                                     if pending.decrementAndGet() == 0 then
                                         discard(p.complete(ArraySeq.unsafeWrapArray(results)))
                                 catch
                                     case ex if (NonFatal(ex)) =>
                                         discard(p.complete(IOs.fail(ex)))
                             }
-                            i += 1
                         }
-                        Promise(p)
+                        Promise(state.p)
                     }
                 }
 
@@ -178,7 +180,7 @@ object Fibers extends Joins[Fibers]:
                 Locals.save.map { st =>
                     IOs {
                         val p = new IOPromise[T]
-                        foreach(l) { io =>
+                        foreach(l) { (i, io) =>
                             val f = IOTask(IOs(io), st)
                             p.interrupts(f)
                             f.onComplete(v => discard(p.complete(v)))
@@ -242,11 +244,20 @@ object Fibers extends Joins[Fibers]:
             }
         }
 
-    private def foreach[T, U](l: Seq[T])(f: T => Unit): Unit =
-        val it = l.iterator
-        while it.hasNext do
-            f(it.next())
-    end foreach
+    private inline def foreach[T, U](l: Seq[T])(inline f: (Int, T) => Unit): Unit =
+        l match
+            case l: IndexedSeq[?] =>
+                var i = 0
+                val s = l.size
+                while i < s do
+                    f(i, l(i))
+                    i += 1
+            case _ =>
+                val it = l.iterator
+                var i  = 0
+                while it.hasNext do
+                    f(i, it.next())
+                    i += 1
 end Fibers
 
 object fibersInternal:
