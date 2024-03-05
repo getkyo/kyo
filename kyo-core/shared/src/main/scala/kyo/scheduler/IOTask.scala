@@ -154,6 +154,7 @@ private[kyo] class IOTask[T](
             ensures match
                 case null =>
                     ensures = f
+                case `f` =>
                 case f0: (() => Unit) @unchecked =>
                     val b = buffer()
                     b.add(f0)
