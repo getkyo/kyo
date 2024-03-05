@@ -3,6 +3,7 @@ package kyo.scheduler
 import java.util.concurrent.Executors
 import jdk.internal.vm.annotation.Contended
 import kyo.Logs
+import kyo.Stats
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.MovingStdDev
 import kyo.scheduler.util.Threads
@@ -10,13 +11,13 @@ import scala.util.control.NonFatal
 
 private object Coordinator:
 
-    private val enable        = Flag("coordinator.enable", true)
-    private val cycleExp      = Flag("coordinator.cycleExp", 2)
-    private val adaptExp      = Flag("coordinator.adaptExp", 8)
-    private val loadAvgTarget = Flag("coordinator.loadAvgTarget", 0.8)
-    private val jitterMax     = Flag("coordinator.jitterMax", 0.1)
-    private val jitterSoftMax = Flag("coordinator.jitterSoftMax", 0.8)
-    private val delayCycles   = Flag("coordinator.delayCycles", 2)
+    private val enable          = Flag("coordinator.enable", true)
+    private val cycleExp        = Flag("coordinator.cycleExp", 2)
+    private val adaptExp        = Flag("coordinator.adaptExp", 8)
+    private val loadAvgTarget   = Flag("coordinator.loadAvgTarget", 0.8)
+    private val jitterMaxMs     = Flag("coordinator.jitterMax", 0.1)
+    private val jitterSoftMaxMs = Flag("coordinator.jitterSoftMax", 0.8)
+    private val delayCycles     = Flag("coordinator.delayCycles", 2)
 
     private val cycleTicks = Math.pow(2, cycleExp).intValue()
     private val cycleMask  = cycleTicks - 1
@@ -65,13 +66,24 @@ private object Coordinator:
         if cycles > delayCycles then
             val j = jitterMs()
             val l = Scheduler.loadAvg()
-            if j >= jitterMax then
+            if j >= jitterMaxMs then
                 Scheduler.removeWorker()
-            else if j <= jitterSoftMax && l > loadAvgTarget then
+            else if j <= jitterSoftMaxMs && l > loadAvgTarget then
                 Scheduler.addWorker()
             end if
         end if
     end adapt
+
+    object stats:
+        val s = Scheduler.stats.scope.scope("coordinator")
+        s.initGauge("delay_avg_ns")(delayNs.avg().toDouble)
+        s.initGauge("delay_dev_ns")(delayNs.dev().toDouble)
+        s.initGauge("jitter_current_ms")(jitterMs())
+        s.initGauge("jitter_max_ms")(jitterMaxMs)
+        s.initGauge("jitter_soft_max_ms")(jitterSoftMaxMs)
+        s.initGauge("current_tick")(currentTick().toDouble)
+        s.initGauge("current_cycle")(currentCycle().toDouble)
+    end stats
 
     override def toString =
         s"Coordinator(ticks=$ticks,cycles=$cycles,delay.dev=${delayNs.dev()},delay.avg=${delayNs.avg()},jitter=${jitterMs()})"

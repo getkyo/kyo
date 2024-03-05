@@ -5,7 +5,7 @@ import kyo.stats.internal.TraceReceiver
 
 abstract class Stats:
 
-    def scope(name: String): Stats
+    def scope(path: String*): Stats
 
     def initCounter(
         name: String,
@@ -38,7 +38,7 @@ object Stats:
     val noop: Stats =
         new Stats:
 
-            def scope(name: String) = this
+            def scope(path: String*) = this
 
             def initCounter(
                 name: String,
@@ -76,13 +76,15 @@ object Stats:
             traceReceiver.let(TraceReceiver.all(List(curr, receiver)))(v)
         }
 
+    private[kyo] val kyoScope = initScope("kyo")
+
     def initScope(first: String, rest: String*): Stats =
         scope(first :: rest.toList)
 
     private def scope(path: List[String]): Stats =
         new Stats:
-            def scope(name: String) =
-                Stats.scope(name :: path)
+            def scope(path2: String*) =
+                Stats.scope(path2.toList ::: path)
 
             def initCounter(
                 name: String,

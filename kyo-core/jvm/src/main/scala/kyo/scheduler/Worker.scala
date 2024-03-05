@@ -2,9 +2,10 @@ package kyo.scheduler
 
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
+import kyo.Stats
 import kyo.scheduler.util.Queue
 
-final private class Worker(exec: Executor) extends Runnable:
+final private class Worker(id: Int, scope: Stats, exec: Executor) extends Runnable:
 
     private val running = new AtomicBoolean
 
@@ -19,6 +20,7 @@ final private class Worker(exec: Executor) extends Runnable:
     def enqueue(t: Task): Boolean =
         val blocked = handleBlocking()
         if !blocked then
+            stats.submissions.inc()
             queue.add(t)
             wakeup()
         end if
@@ -27,6 +29,7 @@ final private class Worker(exec: Executor) extends Runnable:
 
     def wakeup() =
         if !running.get() && running.compareAndSet(false, true) then
+            stats.mounts.inc()
             exec.execute(this)
 
     def load() =
@@ -70,11 +73,14 @@ final private class Worker(exec: Executor) extends Runnable:
                 task = steal(this)
             if task != null then
                 currentTask = task
+                stats.executions.inc()
                 val r = task.run()
                 currentTask = null
                 if r == Task.Preempted then
+                    stats.preemptions.inc()
                     task = queue.addAndPoll(task)
                 else
+                    stats.completions.inc()
                     task = null
                 end if
             else
@@ -87,6 +93,17 @@ final private class Worker(exec: Executor) extends Runnable:
             end if
         end while
     end run
+
+    private object stats:
+        val s           = scope.scope("workers", id.toString())
+        val mounts      = s.initCounter("mounts").unsafe
+        val submissions = s.initCounter("submissions").unsafe
+        val executions  = s.initCounter("executions").unsafe
+        val preemptions = s.initCounter("preemptions").unsafe
+        val completions = s.initCounter("completions").unsafe
+        s.initGauge("current_cycle")(currentCycle.toDouble)
+    end stats
+
 end Worker
 
 object Worker:

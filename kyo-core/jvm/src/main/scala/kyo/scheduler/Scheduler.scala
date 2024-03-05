@@ -2,6 +2,7 @@ package kyo.scheduler
 
 import java.util.concurrent.Executors
 import kyo.Logs
+import kyo.Stats
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
@@ -39,19 +40,21 @@ private[kyo] object Scheduler:
     end exec
 
     for i <- 0 until maxConcurrency do
-        workers(i) = new Worker(exec)
+        workers(i) = new Worker(i, stats.scope, exec)
 
     Coordinator.load()
 
     def addWorker() =
+        stats.addWorker.inc()
         val m = maxConcurrency
         if m > allocatedWorkers && maxConcurrency < max then
-            workers(m) = new Worker(exec)
+            workers(m) = new Worker(m, stats.scope, exec)
             allocatedWorkers += 1
         maxConcurrency = m + 1
     end addWorker
 
     def removeWorker() =
+        stats.removeWorker.inc()
         maxConcurrency = Math.max(maxConcurrency - 1, min)
 
     def schedule(t: Task): Unit =
@@ -109,6 +112,7 @@ private[kyo] object Scheduler:
     end steal
 
     def flush() =
+        stats.flushes.inc()
         val w = Worker.current()
         if w != null then
             w.drain()
@@ -128,6 +132,7 @@ private[kyo] object Scheduler:
     end loadAvg
 
     def cycle(curr: Long): Unit =
+        stats.cycles.inc()
         var i = 0
         while i < maxConcurrency do
             val w = workers(i)
@@ -139,4 +144,15 @@ private[kyo] object Scheduler:
         if w != null then
             w.wakeup()
     end cycle
+
+    private[scheduler] object stats:
+        val scope = Stats.kyoScope.scope("scheduler")
+        scope.initGauge("max_concurrency")(maxConcurrency)
+        scope.initGauge("allocated_workers")(allocatedWorkers)
+        scope.initGauge("load_avg")(loadAvg())
+        val flushes      = scope.initCounter("flushes").unsafe
+        val cycles       = scope.initCounter("cycles").unsafe
+        val addWorker    = scope.initCounter("worker_add").unsafe
+        val removeWorker = scope.initCounter("worker_remove").unsafe
+    end stats
 end Scheduler
