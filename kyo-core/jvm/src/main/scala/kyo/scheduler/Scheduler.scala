@@ -127,8 +127,11 @@ private[kyo] object Scheduler:
     def cycle(curr: Long): Unit =
         var i = 0
         while i < maxConcurrency do
-            workers(i).cycle(curr)
+            val w = workers(i)
+            if w != null then
+                w.cycle(curr)
             i += 1
+        end while
         workers(XSRandom.nextInt(maxConcurrency)).wakeup()
     end cycle
 end Scheduler
