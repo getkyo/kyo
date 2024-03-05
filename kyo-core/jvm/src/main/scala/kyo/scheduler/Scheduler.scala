@@ -29,8 +29,10 @@ private[kyo] object Scheduler:
         catch
             case ex if (NonFatal(ex)) =>
                 Logs.logger.warn(
-                    "Notice: Kyo's scheduler is falling back to Loom's global ForkJoinPool, which might not be optimal. " +
-                        "Enhance performance by adding '--add-opens=java.base/java.lang=ALL-UNNAMED' to JVM args for a dedicated thread pool."
+                    "Warning: Kyo's scheduler is using a less efficient system-wide thread pool. " +
+                        "For better performance, add '--add-opens=java.base/java.lang=ALL-UNNAMED' to " +
+                        "your JVM arguments to use a dedicated thread pool. This step is needed due to " +
+                        "limitations in Loom with customizing thread executors."
                 )
         end try
         Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
