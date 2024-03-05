@@ -1,11 +1,13 @@
 package kyoTest
 
 import kyo.*
+import scala.util.control.NoStackTrace
 
 class logsTest extends KyoTest:
 
+    case object ex extends NoStackTrace
+
     "log" in run {
-        val ex = new Exception
         for
             _ <- Logs.trace("trace")
             _ <- Logs.debug("debug")
@@ -22,7 +24,6 @@ class logsTest extends KyoTest:
     }
 
     "unsafe" in {
-        val ex = new Exception
         Logs.unsafe.trace("trace")
         Logs.unsafe.debug("debug")
         Logs.unsafe.info("info")

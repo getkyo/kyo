@@ -81,7 +81,7 @@ private[kyo] object Scheduler:
                 tries -= 1
             end while
         end if
-        if worker == null then
+        while worker == null do
             worker = workers(XSRandom.nextInt(maxConcurrency))
         if !worker.enqueue(t) then
             schedule(t, submitter)
@@ -119,8 +119,11 @@ private[kyo] object Scheduler:
         var i = 0
         var r = 0
         while i < m do
-            r += workers(i).load()
+            val w = workers(i)
+            if w != null then
+                r += w.load()
             i += 1
+        end while
         r.toDouble / m
     end loadAvg
 
@@ -132,6 +135,8 @@ private[kyo] object Scheduler:
                 w.cycle(curr)
             i += 1
         end while
-        workers(XSRandom.nextInt(maxConcurrency)).wakeup()
+        val w = workers(XSRandom.nextInt(maxConcurrency))
+        if w != null then
+            w.wakeup()
     end cycle
 end Scheduler
