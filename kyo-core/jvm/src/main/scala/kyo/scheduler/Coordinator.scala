@@ -38,9 +38,9 @@ private object Coordinator:
             }
     end if
 
-    def load(): Unit  = {}
-    def tick(): Long  = ticks
-    def cycle(): Long = cycles
+    def load(): Unit         = {}
+    def currentTick(): Long  = ticks
+    def currentCycle(): Long = cycles
 
     private def jitterMs() =
         delayNs.dev().doubleValue() / 1000000

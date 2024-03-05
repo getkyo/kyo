@@ -63,7 +63,7 @@ final private class Worker(exec: Executor) extends Runnable:
         Worker.local.set(this)
         var task: Task = null
         while true do
-            currentCycle = Coordinator.cycle()
+            currentCycle = Coordinator.currentCycle()
             if task == null then
                 task = queue.poll()
             if task == null then

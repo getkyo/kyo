@@ -11,9 +11,9 @@ import scala.util.control.NonFatal
 private[kyo] object Scheduler:
 
     private val cores = Runtime.getRuntime().availableProcessors()
-    private val min   = Flag("minWorkers", Math.min(1, cores.toDouble / 2).intValue())
-    private val max   = Flag("maxWorkers", cores * 100)
-    private val tries = Flag("tries", 16)
+    private val min   = Math.max(1, Flag("minWorkers", cores.toDouble / 2).intValue())
+    private val max   = Math.max(min, Flag("maxWorkers", cores * 100))
+    private val tries = Math.max(1, Flag("tries", 16))
 
     @volatile private var maxConcurrency   = cores
     @volatile private var allocatedWorkers = maxConcurrency
@@ -38,17 +38,17 @@ private[kyo] object Scheduler:
         Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
     end exec
 
-    for idx <- 0 until max do
-        workers(idx) = new Worker(exec)
+    for i <- 0 until maxConcurrency do
+        workers(i) = new Worker(exec)
 
     Coordinator.load()
 
     def addWorker() =
-        val m = Math.min(maxConcurrency + 1, max)
+        val m = maxConcurrency
         if m > allocatedWorkers && maxConcurrency < max then
             workers(m) = new Worker(exec)
             allocatedWorkers += 1
-        maxConcurrency = m
+        maxConcurrency = m + 1
     end addWorker
 
     def removeWorker() =
@@ -69,7 +69,7 @@ private[kyo] object Scheduler:
             var minLoad = Int.MaxValue
             while tries > 0 && minLoad != 0 do
                 val w = workers(i)
-                if !w.handleBlocking() then
+                if w != null && !w.handleBlocking() then
                     val l = w.load()
                     if l < minLoad && w != submitter then
                         minLoad = l
@@ -81,6 +81,8 @@ private[kyo] object Scheduler:
                 tries -= 1
             end while
         end if
+        if worker == null then
+            worker = workers(XSRandom.nextInt(maxConcurrency))
         if !worker.enqueue(t) then
             schedule(t, submitter)
     end schedule
@@ -91,7 +93,7 @@ private[kyo] object Scheduler:
         var maxLoad        = Int.MaxValue
         while i < maxConcurrency do
             val w = workers(i)
-            if !w.handleBlocking() then
+            if w != null && !w.handleBlocking() then
                 val l = w.load()
                 if l > maxLoad && w != thief then
                     maxLoad = l
