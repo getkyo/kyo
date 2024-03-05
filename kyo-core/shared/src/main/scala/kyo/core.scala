@@ -13,19 +13,9 @@ object core:
     end Handler
 
     extension [M[_], E <: Effect[M, E]](e: E)
-        inline def suspend[T, S](v: M[T] < S): T < (S & E) =
-            def suspendLoop(v: M[T] < S): T < (S & E) =
-                v match
-                    case kyo: Kyo[MX, EX, Any, M[T], S] @unchecked =>
-                        new KyoCont[MX, EX, Any, T, S & E](kyo):
-                            def apply(v: Any < (S & E), s: Safepoint[MX, EX], l: Locals.State) =
-                                suspendLoop(kyo(v, s, l))
-                    case _ =>
-                        new KyoRoot[M, E, T, S & E](v.asInstanceOf[M[T]], e) {}
-            if v == null then
-                throw new NullPointerException
-            suspendLoop(v)
-        end suspend
+
+        def suspend[T, S](v: M[T]): T < (S & E) =
+            KyoRoot[M, E, T, S & E](v, e)
 
         inline def handle[T, S, S2](v: T < (E & S))(
             using
@@ -56,18 +46,13 @@ object core:
                                 }
                     case _ =>
                         h.pure(v.asInstanceOf[T])
-            if v == null then
-                throw new NullPointerException
             handleLoop(v)
         end handle
     end extension
 
     abstract class Effect[+M[_], +E <: Effect[M, E]]:
         self: E =>
-
         def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]): Boolean = this eq other
-
-        override def toString = getClass.getSimpleName()
     end Effect
 
     def transform[T, S, U, S2](v: T < S)(f: T => (U < S2)): U < (S & S2) =
@@ -86,8 +71,6 @@ object core:
                         end apply
                 case _ =>
                     f(v.asInstanceOf[T])
-        if v == null then
-            throw new NullPointerException
         transformLoop(v)
     end transform
 
@@ -140,7 +123,7 @@ object core:
             def isRoot: Boolean = false
         end Kyo
 
-        abstract class KyoRoot[M[_], E <: Effect[M, _], T, S](v: M[T], e: E)
+        case class KyoRoot[M[_], E <: Effect[M, _], T, S](v: M[T], e: E)
             extends Kyo[M, E, T, T, S]:
             final def value  = v
             final def effect = e
@@ -155,9 +138,9 @@ object core:
             final val effect: E   = prev.effect
         end KyoCont
 
-        // still using in Scala implicit because Conversion can't be fully inlined
-        implicit inline def fromKyo[M[_], E <: Effect[M, _], T, U, S](v: Kyo[M, E, T, U, S])
-            : U < S =
+        implicit inline def fromKyo[M[_], E <: Effect[M, _], T, U, S](
+            v: Kyo[M, E, T, U, S]
+        ): U < S =
             v.asInstanceOf[U < S]
     end internal
 end core

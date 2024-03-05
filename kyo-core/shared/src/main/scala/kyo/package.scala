@@ -7,7 +7,10 @@ package object kyo:
     extension [T, S](v: T < S)(using NotGiven[Any => S])
 
         def flatMap[U, S2](f: T => U < S2): U < (S & S2) =
+            if v == null then
+                throw new NullPointerException
             kyo.core.transform(v)(f)
+        end flatMap
 
         def map[U, S2](f: T => U < S2): U < (S & S2) =
             flatMap(f)
