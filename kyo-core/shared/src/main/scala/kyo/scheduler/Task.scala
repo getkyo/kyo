@@ -5,7 +5,7 @@ import scala.util.control.NonFatal
 
 trait Task extends Ordered[Task]:
     def compare(that: Task) =
-        (that.runtime() - runtime()).asInstanceOf[Int]
+        (runtime() - that.runtime()).asInstanceOf[Int]
     def run(): Task.Result
     def runtime(): Int
     def preempt(): Unit
