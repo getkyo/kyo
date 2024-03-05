@@ -101,6 +101,7 @@ final private class Worker(id: Int, scope: Stats, exec: Executor) extends Runnab
         val executions  = s.initCounter("executions").unsafe
         val preemptions = s.initCounter("preemptions").unsafe
         val completions = s.initCounter("completions").unsafe
+        s.initGauge("queue_size")(queue.size())
         s.initGauge("current_cycle")(currentCycle.toDouble)
     end stats
 
