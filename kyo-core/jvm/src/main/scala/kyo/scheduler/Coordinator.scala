@@ -3,7 +3,6 @@ package kyo.scheduler
 import java.util.concurrent.Executors
 import jdk.internal.vm.annotation.Contended
 import kyo.Logs
-import kyo.Stats
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.MovingStdDev
 import kyo.scheduler.util.Threads
