@@ -11,10 +11,11 @@ import scala.util.control.NonFatal
 
 private[kyo] object Scheduler:
 
-    private val cores = Runtime.getRuntime().availableProcessors()
-    private val min   = Math.max(1, Flag("minWorkers", cores.toDouble / 2).intValue())
-    private val max   = Math.max(min, Flag("maxWorkers", cores * 100))
-    private val tries = Math.max(1, Flag("tries", 8))
+    private val cores      = Runtime.getRuntime().availableProcessors()
+    private val min        = Math.max(1, Flag("minWorkers", cores.toDouble / 2).intValue())
+    private val max        = Math.max(min, Flag("maxWorkers", cores * 100))
+    private val tries      = Math.max(1, Flag("tries", 8))
+    private val virtualize = Flag("virtualize", false)
 
     @volatile private var maxConcurrency   = cores
     @volatile private var allocatedWorkers = maxConcurrency
@@ -22,21 +23,25 @@ private[kyo] object Scheduler:
     private val workers = new Array[Worker](max)
 
     private val exec =
-        val v = Thread.ofVirtual()
-        try
-            val field = v.getClass().getDeclaredField("scheduler")
-            field.setAccessible(true)
-            field.set(v, Executors.newCachedThreadPool(Threads("kyo-scheduler")))
-        catch
-            case ex if (NonFatal(ex)) =>
-                Logs.logger.warn(
-                    "Warning: Kyo's scheduler is using a less efficient system-wide thread pool. " +
-                        "For better performance, add '--add-opens=java.base/java.lang=ALL-UNNAMED' to " +
-                        "your JVM arguments to use a dedicated thread pool. This step is needed due to " +
-                        "limitations in Loom with customizing thread executors."
-                )
-        end try
-        Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
+        var pool = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
+        if virtualize then
+            val v = Thread.ofVirtual()
+            try
+                val field = v.getClass().getDeclaredField("scheduler")
+                field.setAccessible(true)
+                field.set(v, pool)
+                pool = Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
+            catch
+                case ex if (NonFatal(ex)) =>
+                    Logs.logger.warn(
+                        "Warning: Kyo's scheduler is using a less efficient system-wide thread pool. " +
+                            "For better performance, add '--add-opens=java.base/java.lang=ALL-UNNAMED' to " +
+                            "your JVM arguments to use a dedicated thread pool. This step is needed due to " +
+                            "limitations in Loom with customizing thread executors."
+                    )
+            end try
+        end if
+        pool
     end exec
 
     for i <- 0 until maxConcurrency do
