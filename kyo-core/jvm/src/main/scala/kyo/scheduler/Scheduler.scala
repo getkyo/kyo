@@ -14,7 +14,7 @@ private[kyo] object Scheduler:
     private val cores = Runtime.getRuntime().availableProcessors()
     private val min   = Math.max(1, Flag("minWorkers", cores.toDouble / 2).intValue())
     private val max   = Math.max(min, Flag("maxWorkers", cores * 100))
-    private val tries = Math.max(1, Flag("tries", 16))
+    private val tries = Math.max(1, Flag("tries", 8))
 
     @volatile private var maxConcurrency   = cores
     @volatile private var allocatedWorkers = maxConcurrency
@@ -155,4 +155,5 @@ private[kyo] object Scheduler:
         val addWorker    = scope.initCounter("worker_add").unsafe
         val removeWorker = scope.initCounter("worker_remove").unsafe
     end stats
+
 end Scheduler

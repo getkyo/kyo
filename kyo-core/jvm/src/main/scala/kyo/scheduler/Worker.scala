@@ -49,8 +49,6 @@ final private class Worker(id: Int, scope: Stats, exec: Executor) extends Runnab
         val c = currentTask
         if c != null && currentCycle < curr - 1 then
             c.preempt()
-        handleBlocking()
-        ()
     end cycle
 
     def handleBlocking() =
