@@ -1,60 +1,51 @@
-package kyo.server
+package sttp.tapir.server.netty
 
-import kyo.*
+import kyo.{Route as _, *}
 import kyo.internal.KyoSttpMonad
-import kyo.internal.KyoSttpMonad.instance
-import kyo.server.internal.*
 import sttp.tapir.server.ServerEndpoint
-import sttp.tapir.server.interceptor.RequestResult
-import sttp.tapir.server.interceptor.reject.RejectInterceptor
-import sttp.tapir.server.interpreter.BodyListener
-import sttp.tapir.server.interpreter.FilterServerEndpoints
-import sttp.tapir.server.interpreter.ServerInterpreter
-import sttp.tapir.server.netty.NettyResponse
-import sttp.tapir.server.netty.NettyServerRequest
-import sttp.tapir.server.netty.Route
-import sttp.tapir.server.netty.internal.*
-import sttp.tapir.server.netty.internal.NettyBodyListener
+import sttp.tapir.server.netty.*
+import sttp.tapir.server.netty.NettyKyoServerInterpreter.KyoRunAsync
+import sttp.tapir.server.netty.internal.NettyKyoRequestBody
+import sttp.tapir.server.netty.internal.NettyServerInterpreter
+import sttp.tapir.server.netty.internal.NettyToResponseBody
+import sttp.tapir.server.netty.internal.RunAsync
 
 trait NettyKyoServerInterpreter:
+
     def nettyServerOptions: NettyKyoServerOptions
 
-    def toRoute(ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]): Route[KyoSttpMonad.M] =
+    def toRoute(se: ServerEndpoint[Any, KyoSttpMonad.M]): Route[KyoSttpMonad.M] =
+        toRoute(List(se))
 
-        given bodyListener: BodyListener[KyoSttpMonad.M, NettyResponse] =
-            new NettyBodyListener(NettyKyoServer.runAsync(nettyServerOptions.forkExecution))
-
-        val interceptors = nettyServerOptions.interceptors
-        val createFile   = nettyServerOptions.createFile
-        val deleteFile   = nettyServerOptions.deleteFile
-
-        val serverInterpreter = new ServerInterpreter[Any, KyoSttpMonad.M, NettyResponse, Any](
-            FilterServerEndpoints(ses),
-            new NettyKyoRequestBody(createFile),
-            new NettyKyoToResponseBody(
-                delegate = new NettyToResponseBody
-            ),
-            RejectInterceptor.disableWhenSingleEndpoint(interceptors, ses),
-            deleteFile
+    def toRoute(
+        ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]
+    ): Route[KyoSttpMonad.M] =
+        implicit val monad = KyoSttpMonad.instance
+        NettyServerInterpreter.toRoute(
+            ses,
+            nettyServerOptions.interceptors,
+            new NettyKyoRequestBody(nettyServerOptions.createFile),
+            new NettyToResponseBody[KyoSttpMonad.M](),
+            nettyServerOptions.deleteFile,
+            KyoRunAsync(nettyServerOptions.forkExecution)
         )
-
-        val handler: Route[KyoSttpMonad.M] = (request: NettyServerRequest) =>
-            serverInterpreter(request)
-                .map {
-                    case RequestResult.Response(response) => Some(response)
-                    case RequestResult.Failure(_)         => None
-                }
-
-        handler
     end toRoute
 end NettyKyoServerInterpreter
 
 object NettyKyoServerInterpreter:
-    def apply(): NettyKyoServerInterpreter =
+    def apply(serverOptions: NettyKyoServerOptions = NettyKyoServerOptions.default())
+        : NettyKyoServerInterpreter =
         new NettyKyoServerInterpreter:
-            override def nettyServerOptions: NettyKyoServerOptions =
-                NettyKyoServerOptions.default()
-    def apply(options: NettyKyoServerOptions): NettyKyoServerInterpreter =
-        new NettyKyoServerInterpreter:
-            override def nettyServerOptions: NettyKyoServerOptions = options
+            override def nettyServerOptions: NettyKyoServerOptions = serverOptions
+
+    private class KyoRunAsync(forkExecution: Boolean) extends RunAsync[KyoSttpMonad.M]:
+        override def apply(f: => KyoSttpMonad.M[Unit]): Unit =
+            val exec =
+                if forkExecution then
+                    Fibers.init(f).map(_.get)
+                else
+                    f
+            IOs.run(Fibers.run(exec).unit)
+        end apply
+    end KyoRunAsync
 end NettyKyoServerInterpreter

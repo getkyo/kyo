@@ -3,9 +3,10 @@ package kyo
 import izumi.reflect.*
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
-import kyo.server.*
 import sttp.tapir.*
 import sttp.tapir.server.ServerEndpoint
+import sttp.tapir.server.netty.NettyKyoServer
+import sttp.tapir.server.netty.NettyKyoServerBinding
 
 type Route[+T] = ServerEndpoint[Any, KyoSttpMonad.M]
 

@@ -1,24 +1,28 @@
-package kyo.server
+package sttp.tapir.server.netty
 
 import io.netty.channel.*
+import io.netty.channel.group.ChannelGroup
+import io.netty.channel.group.DefaultChannelGroup
 import io.netty.channel.unix.DomainSocketAddress
+import io.netty.util.concurrent.DefaultEventExecutor
 import java.net.InetSocketAddress
 import java.net.SocketAddress
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.UUID
-import kyo.*
+import java.util.concurrent.atomic.AtomicBoolean
+import kyo.{Channel as _, *}
 import kyo.internal.KyoSttpMonad
-import kyo.internal.KyoSttpMonad.instance
 import kyo.server.internal.KyoUtil.*
 import scala.concurrent.Future
+import scala.concurrent.duration.*
+import scala.concurrent.duration.FiniteDuration
+import sttp.monad.MonadError
 import sttp.tapir.server.ServerEndpoint
-import sttp.tapir.server.model.*
-import sttp.tapir.server.netty.*
+import sttp.tapir.server.model.ServerResponse
 import sttp.tapir.server.netty.Route
 import sttp.tapir.server.netty.internal.NettyBootstrap
 import sttp.tapir.server.netty.internal.NettyServerHandler
-import sttp.tapir.server.netty.internal.RunAsync
 
 case class NettyKyoServer(
     routes: Vector[Route[KyoSttpMonad.M]],
@@ -32,20 +36,17 @@ case class NettyKyoServer(
         overrideOptions: NettyKyoServerOptions
     ): NettyKyoServer =
         addEndpoints(List(se), overrideOptions)
-    def addEndpoints(ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]): NettyKyoServer =
-        addRoute(
-            NettyKyoServerInterpreter(options).toRoute(ses)
-        )
+    def addEndpoints(ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]): NettyKyoServer = addRoute(
+        NettyKyoServerInterpreter(options).toRoute(ses)
+    )
     def addEndpoints(
         ses: List[ServerEndpoint[Any, KyoSttpMonad.M]],
         overrideOptions: NettyKyoServerOptions
-    ): NettyKyoServer = addRoute(
-        NettyKyoServerInterpreter(overrideOptions).toRoute(ses)
-    )
+    ): NettyKyoServer =
+        addRoute(NettyKyoServerInterpreter(overrideOptions).toRoute(ses))
 
-    def addRoute(r: Route[KyoSttpMonad.M]): NettyKyoServer = copy(routes = routes :+ r)
-    def addRoutes(r: Iterable[Route[KyoSttpMonad.M]]): NettyKyoServer =
-        copy(routes = routes ++ r)
+    def addRoute(r: Route[KyoSttpMonad.M]): NettyKyoServer            = copy(routes = routes :+ r)
+    def addRoutes(r: Iterable[Route[KyoSttpMonad.M]]): NettyKyoServer = copy(routes = routes ++ r)
 
     def options(o: NettyKyoServerOptions): NettyKyoServer = copy(options = o)
 
@@ -56,111 +57,142 @@ case class NettyKyoServer(
 
     def port(p: Int): NettyKyoServer = modifyConfig(_.port(p))
 
-    def start(): NettyKyoServerBinding < Routes =
+    def start(): KyoSttpMonad.M[NettyKyoServerBinding] =
         startUsingSocketOverride[InetSocketAddress](None).map { case (socket, stop) =>
             NettyKyoServerBinding(socket, stop)
         }
 
-    def startUsingDomainSocket(path: Option[Path] = None): NettyKyoDomainSocketBinding < Routes =
+    def startUsingDomainSocket(path: Option[Path] = None)
+        : KyoSttpMonad.M[NettyKyoDomainSocketBinding] =
         startUsingDomainSocket(path.getOrElse(Paths.get(
             System.getProperty("java.io.tmpdir"),
             UUID.randomUUID().toString
         )))
 
-    def startUsingDomainSocket(path: Path): NettyKyoDomainSocketBinding < Routes =
+    def startUsingDomainSocket(path: Path): KyoSttpMonad.M[NettyKyoDomainSocketBinding] =
         startUsingSocketOverride(Some(new DomainSocketAddress(path.toFile))).map {
             case (socket, stop) =>
                 NettyKyoDomainSocketBinding(socket, stop)
         }
 
+    private def unsafeRunAsync(
+        forkExecution: Boolean,
+        block: () => KyoSttpMonad.M[ServerResponse[NettyResponse]]
+    ): (Future[ServerResponse[NettyResponse]], () => Future[Unit]) =
+        val fiber =
+            if forkExecution then
+                IOs.run(Fibers.init(block()))
+            else
+                IOs.run(Fibers.run(block()))
+        val future = IOs.run(fiber.toFuture)
+        val cancel = () =>
+            IOs.run(fiber.interrupt)
+            Future.unit
+        (future, cancel)
+    end unsafeRunAsync
+
     private def startUsingSocketOverride[SA <: SocketAddress](socketOverride: Option[SA])
-        : (SA, () => Unit < Fibers) < Fibers =
-        val eventLoopGroup               = config.eventLoopConfig.initEventLoopGroup()
-        val route: Route[KyoSttpMonad.M] = Route.combine(routes)
-        val handler: (() => KyoSttpMonad.M[ServerResponse[NettyResponse]]) => (
-            Future[ServerResponse[NettyResponse]],
-            () => Future[Unit]
-        ) =
-            f =>
-                val exec =
-                    if options.forkExecution then
-                        Fibers.init(f()).map(_.get)
-                    else
-                        f()
-                val fiber = IOs.run(Fibers.run(exec))
-                (
-                    IOs.run(fiber.toFuture),
-                    () =>
-                        IOs.run(fiber.interrupt)
-                        Future.unit
-                )
+        : KyoSttpMonad.M[(SA, () => KyoSttpMonad.M[Unit])] =
+        val eventLoopGroup = config.eventLoopConfig.initEventLoopGroup()
+        implicit val monadError: MonadError[KyoSttpMonad.M] = KyoSttpMonad.instance
+        val route                                           = Route.combine(routes)
+        val eventExecutor                                   = new DefaultEventExecutor()
+        val channelGroup                  = new DefaultChannelGroup(eventExecutor) // thread safe
+        val isShuttingDown: AtomicBoolean = new AtomicBoolean(false)
+
         val channelFuture =
             NettyBootstrap(
                 config,
                 new NettyServerHandler[KyoSttpMonad.M](
                     route,
-                    handler,
-                    config.maxContentLength
+                    unsafeRunAsync(options.forkExecution, _),
+                    channelGroup,
+                    isShuttingDown
                 ),
                 eventLoopGroup,
                 socketOverride
             )
 
         nettyChannelFutureToScala(channelFuture).map(ch =>
-            (ch.localAddress().asInstanceOf[SA], () => stop(ch, eventLoopGroup))
+            (
+                ch.localAddress().asInstanceOf[SA],
+                () =>
+                    stop(
+                        ch,
+                        eventLoopGroup,
+                        channelGroup,
+                        eventExecutor,
+                        isShuttingDown,
+                        config.gracefulShutdownTimeout
+                    )
+            )
         )
     end startUsingSocketOverride
 
-    private def stop(ch: io.netty.channel.Channel, eventLoopGroup: EventLoopGroup): Unit < Fibers =
-        IOs {
+    private def waitForClosedChannels(
+        channelGroup: ChannelGroup,
+        startNanos: Long,
+        gracefulShutdownTimeoutNanos: Option[Long]
+    ): KyoSttpMonad.M[Unit] =
+        if !channelGroup.isEmpty && gracefulShutdownTimeoutNanos.exists(
+                _ >= System.nanoTime() - startNanos
+            )
+        then
+            Fibers.sleep(100.millis).andThen(waitForClosedChannels(
+                channelGroup,
+                startNanos,
+                gracefulShutdownTimeoutNanos
+            ))
+        else
+            nettyFutureToScala(channelGroup.close()).map(_ => ())
+
+    private def stop(
+        ch: Channel,
+        eventLoopGroup: EventLoopGroup,
+        channelGroup: ChannelGroup,
+        eventExecutor: DefaultEventExecutor,
+        isShuttingDown: AtomicBoolean,
+        gracefulShutdownTimeout: Option[FiniteDuration]
+    ): KyoSttpMonad.M[Unit] =
+        isShuttingDown.set(true)
+        waitForClosedChannels(
+            channelGroup,
+            startNanos = System.nanoTime(),
+            gracefulShutdownTimeoutNanos = gracefulShutdownTimeout.map(_.toNanos)
+        ).flatMap { _ =>
             nettyFutureToScala(ch.close()).flatMap { _ =>
                 if config.shutdownEventLoopGroupOnClose then
-                    nettyFutureToScala(eventLoopGroup.shutdownGracefully()).unit
-                else
-                    (
-                )
+                    nettyFutureToScala(eventLoopGroup.shutdownGracefully())
+                        .flatMap(_ =>
+                            nettyFutureToScala(eventExecutor.shutdownGracefully()).map(_ => ())
+                        )
+                else ()
             }
         }
+    end stop
 end NettyKyoServer
 
 object NettyKyoServer:
-
-    private[kyo] def runAsync(forkExecution: Boolean) = new RunAsync[KyoSttpMonad.M]:
-        override def apply[T](f: => T < Fibers): Unit =
-            // TODO remove https://github.com/softwaremill/tapir/pull/3529
-            import Flat.unsafe.bypass
-            val exec =
-                if forkExecution then
-                    Fibers.init(f).map(_.get)
-                else
-                    f
-            IOs.run(Fibers.run(exec).unit)
-        end apply
-
     def apply(): NettyKyoServer =
-        NettyKyoServer(
-            Vector.empty,
-            NettyKyoServerOptions.default(),
-            NettyConfig.defaultNoStreaming
-        )
-    def apply(options: NettyKyoServerOptions): NettyKyoServer =
-        NettyKyoServer(Vector.empty, options, NettyConfig.defaultNoStreaming)
+        NettyKyoServer(Vector.empty, NettyKyoServerOptions.default(), NettyConfig.default)
+
+    def apply(serverOptions: NettyKyoServerOptions): NettyKyoServer =
+        NettyKyoServer(Vector.empty, serverOptions, NettyConfig.default)
+
     def apply(config: NettyConfig): NettyKyoServer =
         NettyKyoServer(Vector.empty, NettyKyoServerOptions.default(), config)
-    def apply(
-        options: NettyKyoServerOptions,
-        config: NettyConfig
-    ): NettyKyoServer =
-        NettyKyoServer(Vector.empty, options, config)
+
+    def apply(serverOptions: NettyKyoServerOptions, config: NettyConfig): NettyKyoServer =
+        NettyKyoServer(Vector.empty, serverOptions, config)
 end NettyKyoServer
 
-case class NettyKyoServerBinding(localSocket: InetSocketAddress, stop: () => Unit < Fibers):
+case class NettyKyoServerBinding(localSocket: InetSocketAddress, stop: () => KyoSttpMonad.M[Unit]):
     def hostName: String = localSocket.getHostName
     def port: Int        = localSocket.getPort
 
 case class NettyKyoDomainSocketBinding(
     localSocket: DomainSocketAddress,
-    stop: () => Unit < Fibers
+    stop: () => KyoSttpMonad.M[Unit]
 ):
     def path: String = localSocket.path()
 end NettyKyoDomainSocketBinding

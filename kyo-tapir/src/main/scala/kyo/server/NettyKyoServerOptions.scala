@@ -1,9 +1,7 @@
-package kyo.server
+package sttp.tapir.server.netty
 
-import com.typesafe.scalalogging.Logger
-import kyo.*
 import kyo.internal.KyoSttpMonad
-import kyo.internal.KyoSttpMonad.*
+import org.slf4j.LoggerFactory
 import sttp.tapir.Defaults
 import sttp.tapir.TapirFile
 import sttp.tapir.model.ServerRequest
@@ -14,8 +12,8 @@ import sttp.tapir.server.netty.internal.NettyDefaults
 
 case class NettyKyoServerOptions(
     interceptors: List[Interceptor[KyoSttpMonad.M]],
-    createFile: ServerRequest => TapirFile < Routes,
-    deleteFile: TapirFile => Unit < Fibers,
+    createFile: ServerRequest => KyoSttpMonad.M[TapirFile],
+    deleteFile: TapirFile => KyoSttpMonad.M[Unit],
     forkExecution: Boolean
 ):
     def prependInterceptor(i: Interceptor[KyoSttpMonad.M]): NettyKyoServerOptions =
@@ -31,19 +29,18 @@ object NettyKyoServerOptions:
     def default(enableLogging: Boolean = true): NettyKyoServerOptions =
         customiseInterceptors(enableLogging).options
 
-    private def default(
-        interceptors: List[Interceptor[KyoSttpMonad.M]]
-    ): NettyKyoServerOptions =
+    private def default(interceptors: List[Interceptor[KyoSttpMonad.M]]): NettyKyoServerOptions =
         NettyKyoServerOptions(
             interceptors,
-            _ => IOs(Defaults.createTempFile()),
-            file => IOs(Defaults.deleteFile()(file)),
+            _ =>
+                Defaults.createTempFile(),
+            file =>
+                Defaults.deleteFile()(file),
             true
         )
 
-    def customiseInterceptors(
-        enableLogging: Boolean = true
-    ): CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions] =
+    def customiseInterceptors(enableLogging: Boolean = true)
+        : CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions] =
         val ci =
             CustomiseInterceptors(
                 createOptions =
@@ -54,20 +51,17 @@ object NettyKyoServerOptions:
         else ci.serverLog(defaultServerLog)
     end customiseInterceptors
 
-    private val log = Logger[NettyKyoServerInterpreter]
+    private val log = LoggerFactory.getLogger(getClass.getName)
 
-    def defaultServerLog: DefaultServerLog[KyoSttpMonad.M] =
-        DefaultServerLog[KyoSttpMonad.M](
+    lazy val defaultServerLog: DefaultServerLog[KyoSttpMonad.M] =
+        DefaultServerLog(
             doLogWhenReceived = debugLog(_, None),
             doLogWhenHandled = debugLog,
             doLogAllDecodeFailures = debugLog,
-            doLogExceptions = errorLog,
+            doLogExceptions = (msg: String, ex: Throwable) => log.error(msg, ex),
             noLog = ()
         )
 
-    private def debugLog(msg: String, exOpt: Option[Throwable]) =
+    private def debugLog(msg: String, exOpt: Option[Throwable]): KyoSttpMonad.M[Unit] =
         NettyDefaults.debugLog(log, msg, exOpt)
-
-    private def errorLog(msg: String, ex: Throwable): Unit < IOs =
-        log.error(msg, ex)
 end NettyKyoServerOptions

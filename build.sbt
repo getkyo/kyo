@@ -161,8 +161,8 @@ lazy val `kyo-tapir` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.8.4",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.8.4"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.9.10",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.9.10"
         )
 
 lazy val `kyo-llm` =

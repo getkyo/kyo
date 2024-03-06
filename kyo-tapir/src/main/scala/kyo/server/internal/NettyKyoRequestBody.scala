@@ -1,57 +1,41 @@
-package kyo.server.internal
+package sttp.tapir.server.netty.internal
 
-import io.netty.buffer.ByteBufUtil
-import io.netty.handler.codec.http.FullHttpRequest
-import java.io.ByteArrayInputStream
-import java.nio.ByteBuffer
-import kyo.*
+import io.netty.handler.codec.http.HttpContent
 import kyo.internal.KyoSttpMonad
-import kyo.internal.KyoSttpMonad.*
-import scala.annotation.nowarn
-import sttp.capabilities.Streams
-import sttp.tapir.InputStreamRange
-import sttp.tapir.RawBodyType
+import org.reactivestreams.Publisher
+import sttp.capabilities
+import sttp.monad.MonadError
 import sttp.tapir.TapirFile
+import sttp.tapir.capabilities.NoStreams
 import sttp.tapir.model.ServerRequest
-import sttp.tapir.server.interpreter.RawValue
-import sttp.tapir.server.interpreter.RequestBody
 
-@nowarn
-private[kyo] class NettyKyoRequestBody(createFile: ServerRequest => TapirFile < Routes)
-    extends RequestBody[KyoSttpMonad.M, Any]:
+private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoSttpMonad.M[TapirFile])
+    extends NettyRequestBody[KyoSttpMonad.M, NoStreams]:
 
-    val streams = new Streams[Any]:
-        override type BinaryStream = Nothing
-        override type Pipe[A, B]   = Nothing
-    def toStream(serverRequest: sttp.tapir.model.ServerRequest) =
-        throw new UnsupportedOperationException
+    override val streams: capabilities.Streams[NoStreams]   = NoStreams
+    implicit override val monad: MonadError[KyoSttpMonad.M] = KyoSttpMonad.instance
 
-    override def toRaw[R](
+    override def publisherToBytes(
+        publisher: Publisher[HttpContent],
+        maxBytes: Option[Long]
+    ): KyoSttpMonad.M[Array[Byte]] =
+        // SimpleSubscriber.processAllBlocking(publisher, maxBytes)
+        throw new UnsupportedOperationException()
+
+    override def writeToFile(
         serverRequest: ServerRequest,
-        bodyType: RawBodyType[R]
-    ): RawValue[R] < Fibers =
-        bodyType match
-            case RawBodyType.StringBody(charset) =>
-                nettyRequestBytes(serverRequest).map(bs => RawValue(new String(bs, charset)))
-            case RawBodyType.ByteArrayBody =>
-                nettyRequestBytes(serverRequest).map(RawValue(_))
-            case RawBodyType.ByteBufferBody =>
-                nettyRequestBytes(serverRequest).map(bs => RawValue(ByteBuffer.wrap(bs)))
-            case RawBodyType.InputStreamBody =>
-                nettyRequestBytes(serverRequest).map(bs => RawValue(new ByteArrayInputStream(bs)))
-            case RawBodyType.InputStreamRangeBody =>
-                nettyRequestBytes(serverRequest).map(bs =>
-                    RawValue(InputStreamRange(() => new ByteArrayInputStream(bs)))
-                )
-            case RawBodyType.FileBody =>
-                throw new UnsupportedOperationException
-            case _: RawBodyType.MultipartBody =>
-                throw new UnsupportedOperationException
+        file: TapirFile,
+        maxBytes: Option[Long]
+    ): KyoSttpMonad.M[Unit] =
+        // serverRequest.underlying match {
+        //   case r: StreamedHttpRequest => FileWriterSubscriber.processAll(r, file.toPath, maxBytes)
+        //   case _                      => monad.unit(()) // Empty request
+        // }
+        throw new UnsupportedOperationException()
 
-    private def nettyRequestBytes(serverRequest: ServerRequest): Array[Byte] < Fibers =
-        serverRequest.underlying match
-            case req: FullHttpRequest => IOs(ByteBufUtil.getBytes(req.content()))
-            case other => IOs.fail(new UnsupportedOperationException(
-                    s"Unexpected Netty request of type ${other.getClass().getName()}"
-                ))
+    override def toStream(
+        serverRequest: ServerRequest,
+        maxBytes: Option[Long]
+    ): streams.BinaryStream =
+        throw new UnsupportedOperationException()
 end NettyKyoRequestBody
