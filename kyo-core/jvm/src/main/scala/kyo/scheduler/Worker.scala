@@ -2,6 +2,7 @@ package kyo.scheduler
 
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.LongAdder
 import kyo.Stats
 import kyo.scheduler.util.Queue
 
@@ -20,7 +21,7 @@ final private class Worker(id: Int, scope: Stats, exec: Executor) extends Runnab
     def enqueue(t: Task): Boolean =
         val blocked = handleBlocking()
         if !blocked then
-            stats.submissions.inc()
+            stats.submissions.increment()
             queue.add(t)
             wakeup()
         end if
@@ -29,7 +30,7 @@ final private class Worker(id: Int, scope: Stats, exec: Executor) extends Runnab
 
     def wakeup() =
         if !running.get() && running.compareAndSet(false, true) then
-            stats.mounts.inc()
+            stats.mounts.increment()
             exec.execute(this)
 
     def load() =
@@ -71,14 +72,14 @@ final private class Worker(id: Int, scope: Stats, exec: Executor) extends Runnab
                 task = steal(this)
             if task != null then
                 currentTask = task
-                stats.executions.inc()
+                stats.executions += 1
                 val r = task.run()
                 currentTask = null
                 if r == Task.Preempted then
-                    stats.preemptions.inc()
+                    stats.preemptions += 1
                     task = queue.addAndPoll(task)
                 else
-                    stats.completions.inc()
+                    stats.completions += 1
                     task = null
                 end if
             else
@@ -93,14 +94,20 @@ final private class Worker(id: Int, scope: Stats, exec: Executor) extends Runnab
     end run
 
     private object stats:
-        val s           = scope.scope("workers", id.toString())
-        val mounts      = s.initCounter("mounts").unsafe
-        val submissions = s.initCounter("submissions").unsafe
-        val executions  = s.initCounter("executions").unsafe
-        val preemptions = s.initCounter("preemptions").unsafe
-        val completions = s.initCounter("completions").unsafe
+        var executions  = 0L
+        var preemptions = 0L
+        var completions = 0L
+        val submissions = new LongAdder
+        val mounts      = new LongAdder
+
+        val s = scope.scope("workers", id.toString())
+        s.initGauge("executions")(executions.toDouble)
+        s.initGauge("preemptions")(preemptions.toDouble)
+        s.initGauge("completions")(completions.toDouble)
         s.initGauge("queue_size")(queue.size())
         s.initGauge("current_cycle")(currentCycle.toDouble)
+        s.initGauge("submissions")(submissions.sum().toDouble)
+        s.initGauge("mounts")(mounts.sum().toDouble)
     end stats
 
 end Worker
