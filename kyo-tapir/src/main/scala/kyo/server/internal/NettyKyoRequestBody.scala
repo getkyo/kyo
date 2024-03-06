@@ -1,6 +1,7 @@
 package sttp.tapir.server.netty.internal
 
 import io.netty.handler.codec.http.HttpContent
+import kyo.Fibers
 import kyo.internal.KyoSttpMonad
 import org.reactivestreams.Publisher
 import sttp.capabilities
@@ -8,6 +9,7 @@ import sttp.monad.MonadError
 import sttp.tapir.TapirFile
 import sttp.tapir.capabilities.NoStreams
 import sttp.tapir.model.ServerRequest
+import sttp.tapir.server.netty.internal.reactivestreams.SimpleSubscriber
 
 private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoSttpMonad.M[TapirFile])
     extends NettyRequestBody[KyoSttpMonad.M, NoStreams]:
@@ -19,18 +21,13 @@ private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoStt
         publisher: Publisher[HttpContent],
         maxBytes: Option[Long]
     ): KyoSttpMonad.M[Array[Byte]] =
-        // SimpleSubscriber.processAllBlocking(publisher, maxBytes)
-        throw new UnsupportedOperationException()
+        Fibers.fromFuture(SimpleSubscriber.processAll(publisher, maxBytes))
 
     override def writeToFile(
         serverRequest: ServerRequest,
         file: TapirFile,
         maxBytes: Option[Long]
     ): KyoSttpMonad.M[Unit] =
-        // serverRequest.underlying match {
-        //   case r: StreamedHttpRequest => FileWriterSubscriber.processAll(r, file.toPath, maxBytes)
-        //   case _                      => monad.unit(()) // Empty request
-        // }
         throw new UnsupportedOperationException()
 
     override def toStream(
