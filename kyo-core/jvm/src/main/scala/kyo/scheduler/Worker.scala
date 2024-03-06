@@ -112,7 +112,7 @@ final private class Worker(id: Int, scope: Stats, exec: Executor) extends Runnab
 
 end Worker
 
-object Worker:
+private object Worker:
     private val local     = new ThreadLocal[Worker]
     def current(): Worker = local.get()
 end Worker

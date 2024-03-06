@@ -24,14 +24,14 @@ private[kyo] object Scheduler:
     private val workers = new Array[Worker](max)
 
     private val exec =
-        var pool = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
+        def newPool = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
         if virtualize then
-            val v = Thread.ofVirtual()
             try
+                val v     = Thread.ofVirtual()
                 val field = v.getClass().getDeclaredField("scheduler")
                 field.setAccessible(true)
-                field.set(v, pool)
-                pool = Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
+                field.set(v, newPool)
+                Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
             catch
                 case ex if (NonFatal(ex)) =>
                     Logs.logger.warn(
@@ -40,9 +40,10 @@ private[kyo] object Scheduler:
                             "your JVM arguments to use a dedicated thread pool. This step is needed due to " +
                             "limitations in Loom with customizing thread executors."
                     )
-            end try
+                    newPool
+        else
+            newPool
         end if
-        pool
     end exec
 
     for i <- 0 until maxConcurrency do
