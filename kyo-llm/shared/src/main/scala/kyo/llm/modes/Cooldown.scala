@@ -14,7 +14,7 @@ case class Cooldown(hot: Double = 1, cold: Double = 0, parallelism: Int = 3) ext
                 p"""
             Cooldown Mode
             =============
-            This prompt initiates the 'Colldown Mode'. The following are potential completions generated 
+            This prompt initiates the 'Cooldown Mode'. The following are potential completions generated 
             at a higher temperature setting. Analyze these responses for their common themes and elements. Your task, at 
             zero temperature, is to synthesize these varied inputs, focusing on their shared aspects to minimize the 
             likelihood of inaccuracies or hallucinations. Use this analysis to construct a refined, coherent, and 
