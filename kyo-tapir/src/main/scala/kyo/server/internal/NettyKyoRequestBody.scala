@@ -1,9 +1,11 @@
 package sttp.tapir.server.netty.internal
 
 import io.netty.handler.codec.http.HttpContent
+import kyo.*
 import kyo.Fibers
 import kyo.internal.KyoSttpMonad
 import org.reactivestreams.Publisher
+import scala.concurrent.ExecutionContext
 import sttp.capabilities
 import sttp.monad.MonadError
 import sttp.tapir.TapirFile
@@ -21,7 +23,11 @@ private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoStt
         publisher: Publisher[HttpContent],
         maxBytes: Option[Long]
     ): KyoSttpMonad.M[Array[Byte]] =
-        Fibers.fromFuture(SimpleSubscriber.processAll(publisher, maxBytes))
+        Fibers.initPromise[Array[Byte]].map { p =>
+            val fut = SimpleSubscriber.processAll(publisher, maxBytes)
+            fut.onComplete(r => p.complete(IOs(r.get)))(ExecutionContext.parasitic)
+            p.get
+        }
 
     override def writeToFile(
         serverRequest: ServerRequest,
