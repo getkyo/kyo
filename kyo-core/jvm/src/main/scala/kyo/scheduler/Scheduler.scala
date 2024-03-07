@@ -11,8 +11,9 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 private[kyo] object Scheduler:
-
-    private val coreWorkers   = Math.max(1, Runtime.getRuntime().availableProcessors())
+    
+    private val cores         = Runtime.getRuntime().availableProcessors()
+    private val coreWorkers   = Math.max(1, Flag("coreWorkers", cores))
     private val minWorkers    = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
     private val maxWorkers    = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
     private val scheduleTries = Math.max(1, Flag("scheduleTries", 8))
