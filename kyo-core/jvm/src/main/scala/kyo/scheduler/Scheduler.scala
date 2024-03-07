@@ -12,20 +12,20 @@ import scala.util.control.NonFatal
 
 private[kyo] object Scheduler:
 
-    private val cores      = Runtime.getRuntime().availableProcessors()
-    private val min        = Math.max(1, Flag("minWorkers", cores.toDouble / 2).intValue())
-    private val max        = Math.max(min, Flag("maxWorkers", cores * 100))
-    private val tries      = Math.max(1, Flag("tries", 8))
-    private val virtualize = Flag("virtualize", false)
+    private val coreWorkers   = Math.max(1, Runtime.getRuntime().availableProcessors())
+    private val minWorkers    = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
+    private val maxWorkers    = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
+    private val scheduleTries = Math.max(1, Flag("scheduleTries", 8))
+    private val virtualizeWorkers = Flag("virtualizeWorkers", false)
 
-    @volatile private var maxConcurrency   = cores
+    @volatile private var maxConcurrency   = coreWorkers
     @volatile private var allocatedWorkers = maxConcurrency
 
-    private val workers = new Array[Worker](max)
+    private val workers = new Array[Worker](maxWorkers)
 
     private val exec =
         def newPool = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
-        if virtualize then
+        if virtualizeWorkers then
             try
                 val v     = Thread.ofVirtual()
                 val field = v.getClass().getDeclaredField("scheduler")
@@ -53,14 +53,14 @@ private[kyo] object Scheduler:
 
     def addWorker() =
         val m = maxConcurrency
-        if m > allocatedWorkers && maxConcurrency < max then
+        if m > allocatedWorkers && maxConcurrency < maxWorkers then
             workers(m) = new Worker(m, stats.scope, exec)
             allocatedWorkers += 1
         maxConcurrency = m + 1
     end addWorker
 
     def removeWorker() =
-        maxConcurrency = Math.max(maxConcurrency - 1, min)
+        maxConcurrency = Math.max(maxConcurrency - 1, minWorkers)
 
     def schedule(t: Task): Unit =
         schedule(t, null)
@@ -73,7 +73,7 @@ private[kyo] object Scheduler:
         if worker == null then
             val m       = this.maxConcurrency
             var i       = XSRandom.nextInt(m)
-            var tries   = Math.min(m, this.tries)
+            var tries   = Math.min(m, this.scheduleTries)
             var minLoad = Int.MaxValue
             while tries > 0 && minLoad != 0 do
                 val w = workers(i)
