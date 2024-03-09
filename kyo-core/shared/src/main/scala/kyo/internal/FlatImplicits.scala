@@ -37,7 +37,7 @@ object FlatImplicits:
         def print(t: TypeRepr): String =
             t match
                 case Kyo(t, s) =>
-                    s"${print(t)} > ${print(s)}"
+                    s"${print(t)} < ${print(s)}"
                 case _ => t.show
 
         def fail(msg: String) =
