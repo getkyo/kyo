@@ -57,5 +57,8 @@ class ScheduledExecutorService():
 end ScheduledExecutorService
 
 object Executors:
+    def newSingleThreadScheduledExecutor(): ScheduledExecutorService =
+        new ScheduledExecutorService()
     def newScheduledThreadPool(ign: Int, ign2: ThreadFactory): ScheduledExecutorService =
         new ScheduledExecutorService()
+end Executors

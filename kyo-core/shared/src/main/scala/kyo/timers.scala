@@ -17,18 +17,16 @@ abstract class Timer:
         initalDelay: Duration,
         period: Duration
     )(f: => Unit < Fibers): TimerTask < IOs
+
 end Timer
 
 object Timer:
 
     val default: Timer =
-        new Timer:
+        Timer(Executors.newScheduledThreadPool(2, Threads("kyo-timer-default")))
 
-            private val exec =
-                Executors.newScheduledThreadPool(
-                    Runtime.getRuntime.availableProcessors / 2,
-                    Threads("kyo-timer-default")
-                )
+    def apply(exec: ScheduledExecutorService): Timer =
+        new Timer:
 
             final private class Task(task: ScheduledFuture[?]) extends TimerTask:
                 def cancel: Boolean < IOs      = IOs(task.cancel(false))

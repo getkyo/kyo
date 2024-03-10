@@ -1,5 +1,6 @@
 package kyoTest
 
+import java.util.concurrent.Executors
 import kyo.*
 import org.scalatest.compatible.Assertion
 import scala.concurrent.duration.*
@@ -12,6 +13,17 @@ class timersTest extends KyoTest:
             _     <- Timers.schedule(1.milli)(p.complete("hello").map(require(_)))
             hello <- p.get
         yield assert(hello == "hello")
+    }
+
+    "custom executor" in runJVM {
+        val exec = Executors.newSingleThreadScheduledExecutor()
+        Timers.let(Timer(exec)) {
+            for
+                p     <- Fibers.initPromise[String]
+                _     <- Timers.schedule(1.milli)(p.complete("hello").map(require(_)))
+                hello <- p.get
+            yield assert(hello == "hello")
+        }
     }
 
     "cancel" in runJVM {
