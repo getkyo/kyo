@@ -24,6 +24,10 @@ class envsTest extends KyoTest:
         )
     }
 
+    "no transformations" in {
+        assert(Envs[Int].run(1)(Envs[Int].get) == 1)
+    }
+
     "pure services" - {
 
         trait Service1:

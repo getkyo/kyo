@@ -39,7 +39,10 @@ final class Envs[E] private[kyo] (using private val tag: Tag[?])
                                 f(e.asInstanceOf[U])
                             case _ =>
                                 f(m.asInstanceOf[U])
-            this.handle[T, Envs[E] & S, Any](v).asInstanceOf[T < S]
+            this.handle[T, Envs[E] & S, Any](v).map {
+                case Input => e.asInstanceOf[T]
+                case r     => r
+            }.asInstanceOf[T < S]
         }
     end run
 
