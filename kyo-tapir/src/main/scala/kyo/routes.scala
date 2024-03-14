@@ -8,15 +8,15 @@ import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.netty.NettyKyoServer
 import sttp.tapir.server.netty.NettyKyoServerBinding
 
-type Route[+T] = ServerEndpoint[Any, KyoSttpMonad.M]
+type Route = ServerEndpoint[Any, KyoSttpMonad.M]
 
 type Routes >: Routes.Effects <: Routes.Effects
 
 object Routes:
 
-    type Effects = Sums[List[Route[Any]]] & Fibers
+    type Effects = Sums[List[Route]] & Fibers
 
-    private val sums = Sums[List[Route[Any]]]
+    private val sums = Sums[List[Route]]
 
     def run[T, S](v: Unit < (Routes & S)): NettyKyoServerBinding < (Fibers & S) =
         run[T, S](NettyKyoServer())(v)
