@@ -6,25 +6,25 @@ package object kyo:
 
     extension [T, S](v: T < S)(using NotGiven[Any => S])
 
-        def flatMap[U, S2](f: T => U < S2): U < (S & S2) =
+        inline def flatMap[U, S2](inline f: T => U < S2): U < (S & S2) =
             if v == null then
                 throw new NullPointerException
             kyo.core.transform(v)(f)
         end flatMap
 
-        def map[U, S2](f: T => U < S2): U < (S & S2) =
+        inline def map[U, S2](inline f: T => U < S2): U < (S & S2) =
             flatMap(f)
 
         def unit: Unit < S =
             map(_ => ())
 
-        def withFilter(p: T => Boolean): T < S =
+        inline def withFilter(inline p: T => Boolean): T < S =
             map(v => if !p(v) then throw new MatchError(v) else v)
 
         def flatten[U, S2](using ev: T => U < S2): U < (S & S2) =
             flatMap(ev)
 
-        def andThen[U, S2](f: => U < S2)(using ev: T => Unit): U < (S & S2) =
+        inline def andThen[U, S2](inline f: => U < S2)(using ev: T => Unit): U < (S & S2) =
             flatMap(_ => f)
 
         def repeat(i: Int)(using ev: T => Unit): Unit < S =
@@ -32,7 +32,7 @@ package object kyo:
     end extension
 
     extension [T, S](v: T < Any)
-        def pure(using ev: Any => S): T =
+        inline def pure(using ev: Any => S): T =
             v.asInstanceOf[T]
     end extension
 

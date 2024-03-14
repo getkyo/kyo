@@ -21,16 +21,18 @@ import zio.UIO
     )
 )
 @BenchmarkMode(Array(Mode.Throughput))
-sealed abstract class Bench[T]:
-    def zioBench(): UIO[T]
-    def kyoBenchFiber(): T < Fibers = kyoBench()
-    def kyoBench(): T < IOs
-    def catsBench(): IO[T]
-end Bench
+abstract class Bench[T]
 
 object Bench:
 
-    abstract class Fork[T](using f: Flat[T]) extends Bench[T]:
+    abstract class Base[T] extends Bench[T]:
+        def zioBench(): UIO[T]
+        def kyoBenchFiber(): T < Fibers = kyoBench()
+        def kyoBench(): T < IOs
+        def catsBench(): IO[T]
+    end Base
+
+    abstract class Fork[T](using f: Flat[T]) extends Base[T]:
         @Benchmark
         def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block(Duration.Inf)))
 

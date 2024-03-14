@@ -1,5 +1,6 @@
 package kyo.bench
 
+import kyo.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AsyncFreeSpec
 
@@ -124,5 +125,9 @@ class BenchTest extends AsyncFreeSpec with Assertions:
 
     "ForkSpawnBench" - {
         test(ForkSpawnBench(), ())
+    }
+
+    "MtlBench" in {
+        assert(MtlBench().syncKyo().isRight)
     }
 end BenchTest

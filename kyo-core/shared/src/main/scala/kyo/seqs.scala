@@ -32,15 +32,12 @@ sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs]:
             collect(v.map(f))
         }
 
-    def traverseUnit[T, U, S, S2](v: Seq[T] < S)(f: T => Unit < S2): Unit < (S & S2) =
-        v.map { v =>
-            def loop(l: Seq[T]): Unit < (S & S2) =
-                l match
-                    case Seq() => ()
-                    case h +: t =>
-                        f(h).andThen(loop(t))
-            loop(v)
-        }
+    def traverseUnit[T, U, S](v: Seq[T])(f: T => Unit < S): Unit < S =
+        def loop(l: Seq[T]): Unit < S =
+            if l.isEmpty then ()
+            else f(l.head).andThen(loop(l.tail))
+        loop(v)
+    end traverseUnit
 
     def collect[T, S](v: Seq[T < S]): Seq[T] < S =
         val b = Seq.newBuilder[T]

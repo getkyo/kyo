@@ -28,11 +28,11 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
         e.map(e => this.suspend(Left(e)))
 
     def run[T, S](
-        v: => T < (Aborts[E] & S)
+        v: T < (Aborts[E] & S)
     )(implicit
         flat: Flat[T < (Aborts[E] & S)]
     ): Either[E, T] < S =
-        this.handle[T, S, Any](catching(v))
+        this.handle[T, S, Any](v)
 
     def get[T, S](v: => Either[E, T] < S): T < (Aborts[E] & S) =
         catching(v).map {
@@ -60,7 +60,7 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
 
             def pure[U: Flat](v: U) = Right(v)
 
-            override def handle[T: Flat](ex: Throwable): T < Aborts[E] =
+            override def handle(ex: Throwable): Nothing < Aborts[E] =
                 if tag.closestClass.isAssignableFrom(ex.getClass) then
                     aborts.fail(ex.asInstanceOf[E])
                 else

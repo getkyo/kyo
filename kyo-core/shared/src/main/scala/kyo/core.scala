@@ -8,7 +8,7 @@ object core:
 
     abstract class Handler[M[_], E <: Effect[M, E], S]:
         def pure[T: Flat](v: T): M[T]
-        def handle[T: Flat](ex: Throwable): T < E = throw ex
+        def handle(ex: Throwable): Nothing < E = throw ex
         def apply[T, U: Flat, S2](m: M[T], f: T => U < (E & S2)): U < (E & S & S2)
     end Handler
 
@@ -20,20 +20,21 @@ object core:
         inline def handle[T, S, S2](v: T < (E & S))(
             using
             h: Handler[M, E, S2],
-            s: Safepoint[M, E],
             f: Flat[T < (E & S)]
         ): M[T] < (S & S2) =
             def handleLoop(
                 v: T < (S & S2 & E)
             ): M[T] < (S & S2) =
+                // Flat.unsafe.bypass[T] is used to avoid capturing.
+                // It should ideally use erased terms but it's not available
+                // in the current production compiler
                 v match
                     case kyo: Kyo[M, E, Any, T, S & E] @unchecked if (e.accepts(kyo.effect)) =>
                         if kyo.isRoot then
                             kyo.value.asInstanceOf[M[T] < S]
                         else
-                            handleLoop(h[Any, T, S & E](
-                                kyo.value,
-                                kyo(_, s, Locals.State.empty)
+                            handleLoop(h[Any, T, S & E](kyo.value, kyo)(
+                                using Flat.unsafe.bypass[T]
                             ))
                     case kyo: Kyo[MX, EX, Any, T, S & E] @unchecked =>
                         new KyoCont[MX, EX, Any, M[T], S & S2](kyo):
@@ -45,7 +46,9 @@ object core:
                                             h.handle(ex)
                                 }
                     case _ =>
-                        h.pure(v.asInstanceOf[T])
+                        h.pure(v.asInstanceOf[T])(
+                            using Flat.unsafe.bypass[T]
+                        )
             handleLoop(v)
         end handle
     end extension
@@ -55,7 +58,7 @@ object core:
         def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]): Boolean = this eq other
     end Effect
 
-    def transform[T, S, U, S2](v: T < S)(f: T => (U < S2)): U < (S & S2) =
+    inline def transform[T, S, U, S2](v: T < S)(inline f: T => (U < S2)): U < (S & S2) =
         def transformLoop(v: T < S): U < (S & S2) =
             v match
                 case kyo: Kyo[MX, EX, Any, T, S] @unchecked =>
@@ -116,14 +119,16 @@ object core:
             def pure[T: Flat](v: T): M[T]
             def apply[T, U: Flat](m: M[T], f: T => M[U] < S): M[U] < S
 
-        abstract class Kyo[M[_], E <: Effect[M, _], T, U, S]:
+        abstract class Kyo[M[_], E <: Effect[M, E], T, U, S] extends Function1[T < S, U < S]:
             def value: M[T]
             def effect: E
+            def apply(v: T < S): U < S =
+                apply(v, Safepoint.noop[M, E], Locals.State.empty)
             def apply(v: T < S, s: Safepoint[M, E], l: Locals.State): U < S
             def isRoot: Boolean = false
         end Kyo
 
-        case class KyoRoot[M[_], E <: Effect[M, _], T, S](v: M[T], e: E)
+        case class KyoRoot[M[_], E <: Effect[M, E], T, S](v: M[T], e: E)
             extends Kyo[M, E, T, T, S]:
             final def value  = v
             final def effect = e
@@ -132,13 +137,13 @@ object core:
             final override def isRoot = true
         end KyoRoot
 
-        abstract class KyoCont[M[_], E <: Effect[M, _], T, U, S](prev: Kyo[M, E, T, ?, ?])
+        abstract class KyoCont[M[_], E <: Effect[M, E], T, U, S](prev: Kyo[M, E, T, ?, ?])
             extends Kyo[M, E, T, U, S]:
             final val value: M[T] = prev.value
             final val effect: E   = prev.effect
         end KyoCont
 
-        implicit inline def fromKyo[M[_], E <: Effect[M, _], T, U, S](
+        implicit inline def fromKyo[M[_], E <: Effect[M, E], T, U, S](
             v: Kyo[M, E, T, U, S]
         ): U < S =
             v.asInstanceOf[U < S]

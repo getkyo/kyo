@@ -296,7 +296,7 @@ object fibersInternal:
             given Handler[Fiber, FiberGets, IOs] =
                 new Handler[Fiber, FiberGets, IOs]:
                     def pure[T: Flat](v: T) = Done(v)
-                    override def handle[T: Flat](ex: Throwable): T < FiberGets =
+                    override def handle(ex: Throwable): Nothing < FiberGets =
                         FiberGets(Done(IOs.fail(ex)))
                     def apply[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
                         try
