@@ -29,7 +29,7 @@ object core:
                 // It should ideally use erased terms but it's not available
                 // in the current production compiler
                 v match
-                    case kyo: Kyo[M, E, Any, T, S & E] @unchecked if (e.accepts(kyo.effect)) =>
+                    case kyo: Kyo[M, E, Any, T, S & E] @unchecked if (e == kyo.effect) =>
                         if kyo.isRoot then
                             kyo.value.asInstanceOf[M[T] < S]
                         else
@@ -53,10 +53,7 @@ object core:
         end handle
     end extension
 
-    abstract class Effect[+M[_], +E <: Effect[M, E]]:
-        self: E =>
-        def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]): Boolean = this eq other
-    end Effect
+    abstract class Effect[+M[_], +E <: Effect[M, E]]
 
     inline def transform[T, S, U, S2](v: T < S)(inline f: T => (U < S2)): U < (S & S2) =
         def transformLoop(v: T < S): U < (S & S2) =

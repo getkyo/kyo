@@ -18,7 +18,7 @@ end Aborts
 
 import Aborts.*
 
-final class Aborts[E] private[Aborts] (private val tag: Tag[E])
+final case class Aborts[E] private[Aborts] (private val tag: Tag[E])
     extends Effect[Abort[E]#Value, Aborts[E]]:
     self =>
 
@@ -46,13 +46,6 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
             case ex: E =>
                 fail(ex.asInstanceOf[E])
         }
-
-    override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
-        other match
-            case other: Aborts[?] =>
-                other.tag == tag
-            case _ =>
-                false
 
     given handler[E](using tag: Tag[E], ct: ClassTag[E]): Handler[Abort[E]#Value, Aborts[E], Any] =
         new Handler[Abort[E]#Value, Aborts[E], Any]:

@@ -3,14 +3,7 @@ package kyo
 import Vars.*
 import kyo.core.*
 
-class Vars[-V](private val tag: Tag[Any]) extends Effect[[T] =>> State[V, T], Vars[V]]:
-    override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
-        other match
-            case other: Vars[?] =>
-                other.tag == tag
-            case _ =>
-                false
-end Vars
+case class Vars[-V](private val tag: Tag[Any]) extends Effect[[T] =>> State[V, T], Vars[V]]
 
 object Vars:
 

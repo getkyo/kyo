@@ -10,11 +10,11 @@ object Envs:
     }
 
     def apply[E](using tag: Tag[E]): Envs[E] =
-        new Envs[E]
+        new Envs[E](tag)
 end Envs
 import Envs.*
 
-final class Envs[E] private[kyo] (using private val tag: Tag[E])
+case class Envs[E] private[kyo] (private val tag: Tag[E])
     extends Effect[Env[E]#Value, Envs[E]]:
     self =>
 
@@ -42,13 +42,6 @@ final class Envs[E] private[kyo] (using private val tag: Tag[E])
             case r     => r
         }.asInstanceOf[T < S]
     end run
-
-    override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
-        other match
-            case other: Envs[?] =>
-                other.tag == tag
-            case _ =>
-                false
 
     def layer[Sd](construct: E < Sd): Layer[Envs[E], Sd] =
         new Layer[Envs[E], Sd]:

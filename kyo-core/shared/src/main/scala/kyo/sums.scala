@@ -4,7 +4,7 @@ import kyo.core.*
 import scala.util.*
 import sumsInternal.*
 
-sealed class Sums[V] private[kyo] (using private val tag: Tag[V])
+case class Sums[V] private[kyo] (private val tag: Tag[V])
     extends Effect[Sum[V]#Value, Sums[V]]:
 
     val get: V < Sums[V] =
@@ -61,18 +61,11 @@ sealed class Sums[V] private[kyo] (using private val tag: Tag[V])
                 m.asInstanceOf[T]
         }.map((_, curr))
     end run
-
-    override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
-        other match
-            case other: Sums[?] =>
-                other.tag == tag
-            case _ =>
-                false
 end Sums
 
 object Sums:
-    def apply[V: Tag]: Sums[V] =
-        new Sums[V]
+    def apply[V](using t: Tag[V]): Sums[V] =
+        new Sums[V](t)
 
 abstract class Summer[V]:
     def init: V
