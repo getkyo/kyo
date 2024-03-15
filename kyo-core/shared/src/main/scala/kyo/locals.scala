@@ -45,7 +45,7 @@ end Local
 
 object Locals:
 
-    type State = Map[Local[_], Any]
+    type State = Map[Local[?], Any]
 
     object State:
         val empty: State = Map.empty

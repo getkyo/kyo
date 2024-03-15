@@ -24,8 +24,8 @@ private object Coordinator:
     private val adaptTicks = Math.pow(2, adaptExp).intValue()
     private val adaptMask  = adaptTicks - 1
 
-    @Contended @volatile private[this] var ticks: Long = 0L
-    @Contended @volatile private[this] var cycles      = 0L
+    @Contended @volatile private var ticks: Long = 0L
+    @Contended @volatile private var cycles      = 0L
 
     private val delayNs = new MovingStdDev(cycleExp)
 

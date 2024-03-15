@@ -21,7 +21,7 @@ class MtlBench extends Bench:
         Aborts[Throwable].run(
             Vars.run(
                 Vars.let(State(2))(
-                    Vars.let(Chain.empty)(
+                    Vars.let(Chain.empty[Event])(
                         Envs[Env].run(Env("config"))(
                             for
                                 _      <- testKyo

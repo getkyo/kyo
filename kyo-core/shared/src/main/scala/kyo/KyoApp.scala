@@ -20,9 +20,9 @@ object KyoApp:
 
         final protected def args: Array[String] = _args
 
-        private[this] var _args: Array[String] = _
+        private var _args: Array[String] = null
 
-        private[this] val initCode = new ListBuffer[() => Unit]
+        private val initCode = new ListBuffer[() => Unit]
 
         final def main(args: Array[String]) =
             this._args = args

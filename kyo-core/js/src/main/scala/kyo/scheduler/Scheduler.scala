@@ -6,7 +6,7 @@ import scala.scalajs.js
 
 object Scheduler:
 
-    private val queue   = PriorityQueue[IOTask[_]]()
+    private val queue   = PriorityQueue[IOTask[?]]()
     private var running = false
 
     def schedule(t: IOTask[?]): Unit =

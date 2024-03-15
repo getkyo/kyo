@@ -52,7 +52,7 @@ class HttpClientKyoBackend private (
             override given monad: MonadError[KyoSttpMonad.M] = KyoSttpMonad.instance
             override def compileWebSocketPipe(
                 ws: WebSocket[KyoSttpMonad.M],
-                pipe: streams.Pipe[WebSocketFrame.Data[_], WebSocketFrame]
+                pipe: streams.Pipe[WebSocketFrame.Data[?], WebSocketFrame]
             ) = pipe
 
     override protected def createSimpleQueue[T] =

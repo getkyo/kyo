@@ -19,7 +19,7 @@ private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
 
     Validate(f)
 
-    var effects = List.empty[Type[_]]
+    var effects = List.empty[Type[?]]
 
     Trees.traverse(f.asTerm) {
         case Apply(TypeApply(Ident("await"), List(t, s)), List(v)) =>

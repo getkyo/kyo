@@ -38,7 +38,7 @@ private[kyo] object IOTask:
         else b
     end buffer
 
-    object TaskOrdering extends Ordering[IOTask[_]]:
+    object TaskOrdering extends Ordering[IOTask[?]]:
         override def lt(x: IOTask[?], y: IOTask[?]): Boolean =
             val r = x.runtime()
             r == 0 || r < y.runtime()
@@ -46,7 +46,7 @@ private[kyo] object IOTask:
             y.state - x.state
     end TaskOrdering
 
-    given ord: Ordering[IOTask[_]] = TaskOrdering
+    given ord: Ordering[IOTask[?]] = TaskOrdering
 end IOTask
 
 private[kyo] class IOTask[T](

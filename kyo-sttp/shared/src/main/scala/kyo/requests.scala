@@ -13,7 +13,7 @@ object Requests:
     def let[T, S](b: Backend)(v: T < S): T < (IOs & S) =
         local.let(b)(v)
 
-    type BasicRequest = sttp.client3.RequestT[Empty, Either[_, String], Any]
+    type BasicRequest = sttp.client3.RequestT[Empty, Either[?, String], Any]
 
     val basicRequest: BasicRequest =
         sttp.client3.basicRequest.mapResponse {
@@ -23,10 +23,10 @@ object Requests:
                 Right(v)
         }
 
-    def apply[T](f: BasicRequest => Request[Either[_, T], Any]): T < Fibers =
+    def apply[T](f: BasicRequest => Request[Either[?, T], Any]): T < Fibers =
         request(f(basicRequest))
 
-    def request[T](req: Request[Either[_, T], Any]): T < Fibers =
+    def request[T](req: Request[Either[?, T], Any]): T < Fibers =
         local.get.map(_.send(req)).map {
             _.body match
                 case Left(ex: Throwable) =>

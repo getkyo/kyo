@@ -2,7 +2,7 @@ package kyo
 
 object Aspects:
 
-    private[kyo] val local = Locals.init(Map.empty[Aspect[_, _, _], Cut[_, _, _]])
+    private[kyo] val local = Locals.init(Map.empty[Aspect[?, ?, ?], Cut[?, ?, ?]])
 
     def init[T, U, S]: Aspect[T, U, S] =
         init(new Cut[T, U, S]:

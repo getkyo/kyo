@@ -102,7 +102,7 @@ object Schema:
                                 field.name -> Json.Obj(convert(field.schema)*)
                             }
                             val requiredFields = record.fields.collect {
-                                case field if !field.schema.isInstanceOf[ZSchema.Optional[_]] =>
+                                case field if !field.schema.isInstanceOf[ZSchema.Optional[?]] =>
                                     Json.Str(field.name)
                             }
                             Json.Obj(
@@ -129,7 +129,7 @@ object Schema:
                         ))
                     }
                 val requiredFields = schema.fields.collect {
-                    case field if !field.schema.isInstanceOf[ZSchema.Optional[_]] =>
+                    case field if !field.schema.isInstanceOf[ZSchema.Optional[?]] =>
                         Json.Str(field.name)
                 }
                 desc() ++ List(
