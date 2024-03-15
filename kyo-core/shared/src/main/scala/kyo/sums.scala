@@ -1,11 +1,10 @@
 package kyo
 
-import izumi.reflect.*
 import kyo.core.*
 import scala.util.*
 import sumsInternal.*
 
-sealed class Sums[V] private[kyo] (using private val tag: Tag[?])
+sealed class Sums[V] private[kyo] (using private val tag: Tag[V])
     extends Effect[Sum[V]#Value, Sums[V]]:
 
     val get: V < Sums[V] =
@@ -66,7 +65,7 @@ sealed class Sums[V] private[kyo] (using private val tag: Tag[?])
     override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
         other match
             case other: Sums[?] =>
-                other.tag.tag == tag.tag
+                other.tag == tag
             case _ =>
                 false
 end Sums

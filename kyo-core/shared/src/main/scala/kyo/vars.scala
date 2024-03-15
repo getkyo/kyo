@@ -1,14 +1,13 @@
 package kyo
 
 import Vars.*
-import izumi.reflect.Tag
 import kyo.core.*
 
-class Vars[-V](private val tag: Tag[?]) extends Effect[[T] =>> State[V, T], Vars[V]]:
+class Vars[-V](private val tag: Tag[Any]) extends Effect[[T] =>> State[V, T], Vars[V]]:
     override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
         other match
             case other: Vars[?] =>
-                other.tag.tag == tag.tag
+                other.tag == tag
             case _ =>
                 false
 end Vars
@@ -21,7 +20,8 @@ object Vars:
     private case object Get         extends Op[Any, Any]
     private case class Set[V](v: V) extends Op[V, Unit]
 
-    private def vars[T](using t: Tag[T]): Vars[T] = Vars(t)
+    private def vars[T](using t: Tag[T]): Vars[T] =
+        Vars(t.asInstanceOf[Tag[Any]])
 
     def get[V: Tag]: V < Vars[V] =
         vars[V].suspend(Get.asInstanceOf[Op[V, V]])

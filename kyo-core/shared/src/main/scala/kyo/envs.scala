@@ -1,6 +1,5 @@
 package kyo
 
-import izumi.reflect.*
 import kyo.core.*
 
 object Envs:
@@ -15,7 +14,7 @@ object Envs:
 end Envs
 import Envs.*
 
-final class Envs[E] private[kyo] (using private val tag: Tag[?])
+final class Envs[E] private[kyo] (using private val tag: Tag[E])
     extends Effect[Env[E]#Value, Envs[E]]:
     self =>
 
@@ -49,11 +48,9 @@ final class Envs[E] private[kyo] (using private val tag: Tag[?])
     override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
         other match
             case other: Envs[?] =>
-                other.tag.tag == tag.tag
+                other.tag == tag
             case _ =>
                 false
-
-    override def toString = s"Envs[${tag.tag.longNameWithPrefix}]"
 
     def layer[Sd](construct: E < Sd): Layer[Envs[E], Sd] =
         new Layer[Envs[E], Sd]:

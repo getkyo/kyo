@@ -3,6 +3,7 @@ package kyo
 import izumi.reflect.*
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
+import scala.reflect.ClassTag
 import sttp.tapir.*
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.netty.NettyKyoServer
@@ -27,7 +28,7 @@ object Routes:
             v.andThen(sums.get.map(server.addEndpoints(_)).map(_.start()))
         }.map(_._1)
 
-    def add[S, A: Tag, I, E: Tag, O: Flat](e: Endpoint[A, I, E, O, Any])(
+    def add[S, A: Tag, I, E: Tag: ClassTag, O: Flat](e: Endpoint[A, I, E, O, Any])(
         f: I => O < (Fibers & Envs[A] & Aborts[E])
     ): Unit < Routes =
         sums.add(List(
@@ -37,7 +38,7 @@ object Routes:
         )).unit
     end add
 
-    def add[S, A: Tag, I, E: Tag, O: Flat](
+    def add[S, A: Tag, I, E: Tag: ClassTag, O: Flat](
         e: PublicEndpoint[Unit, Unit, Unit, Any] => Endpoint[A, I, E, O, Any]
     )(
         f: I => O < (Fibers & Envs[A] & Aborts[E])

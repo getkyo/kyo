@@ -1,7 +1,7 @@
 package kyo
 
-import izumi.reflect.*
 import kyo.core.*
+import scala.reflect.ClassTag
 
 object Aborts:
 
@@ -29,31 +29,32 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
 
     def run[T, S](
         v: T < (Aborts[E] & S)
-    )(implicit
-        flat: Flat[T < (Aborts[E] & S)]
+    )(using
+        flat: Flat[T < (Aborts[E] & S)],
+        ct: ClassTag[E]
     ): Either[E, T] < S =
-        this.handle[T, S, Any](v)
+        this.handle(v)
 
-    def get[T, S](v: => Either[E, T] < S): T < (Aborts[E] & S) =
-        catching(v).map {
+    def get[T, S](v: Either[E, T] < S): T < (Aborts[E] & S) =
+        v.map {
             case Right(value) => value
             case e            => this.suspend(e)
         }
 
-    def catching[T, S](f: => T < S): T < (Aborts[E] & S) =
+    def catching[T, S](f: => T < S)(using ClassTag[E]): T < (Aborts[E] & S) =
         IOs.handle(f) {
-            case ex if (tag.closestClass.isAssignableFrom(ex.getClass)) =>
+            case ex: E =>
                 fail(ex.asInstanceOf[E])
         }
 
     override def accepts[M2[_], E2 <: Effect[M2, E2]](other: Effect[M2, E2]) =
         other match
             case other: Aborts[?] =>
-                other.tag.tag == tag.tag
+                other.tag == tag
             case _ =>
                 false
 
-    given handler[E](using tag: Tag[E]): Handler[Abort[E]#Value, Aborts[E], Any] =
+    given handler[E](using tag: Tag[E], ct: ClassTag[E]): Handler[Abort[E]#Value, Aborts[E], Any] =
         new Handler[Abort[E]#Value, Aborts[E], Any]:
 
             val aborts = Aborts[E]
@@ -61,10 +62,11 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
             def pure[U: Flat](v: U) = Right(v)
 
             override def handle(ex: Throwable): Nothing < Aborts[E] =
-                if tag.closestClass.isAssignableFrom(ex.getClass) then
-                    aborts.fail(ex.asInstanceOf[E])
-                else
-                    throw ex
+                ex match
+                    case ex: E =>
+                        aborts.fail(ex.asInstanceOf[E])
+                    case _ =>
+                        throw ex
 
             def apply[U, V: Flat, S2](
                 m: Either[E, U],
@@ -76,16 +78,14 @@ final class Aborts[E] private[Aborts] (private val tag: Tag[E])
                     case Right(v) =>
                         f(v)
 
-    override def toString = s"Aborts[${tag.tag.longNameWithPrefix}]"
-
-    def layer[Se](handle: E => Nothing < Se): Layer[Aborts[E], Se] =
+    def layer[Se](handle: E => Nothing < Se)(using ClassTag[E]): Layer[Aborts[E], Se] =
         new Layer[Aborts[E], Se]:
             override def run[T, S](
                 effect: T < (Aborts[E] & S)
             )(
                 using flat: Flat[T < (Aborts[E] & S)]
             ): T < (S & Se) =
-                self.run[T, S](effect)(flat).map {
+                self.run[T, S](effect).map {
                     case Left(err) => handle(err)
                     case Right(t)  => t
                 }
