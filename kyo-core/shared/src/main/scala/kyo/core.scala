@@ -112,15 +112,12 @@ object core:
         type MX[_] = Any
         type EX    = Effect[MX, ?]
 
-        sealed trait Pending[+T, -S]
-
         abstract class DeepHandler[M[_], E <: Effect[M, E], S]:
             def pure[T: Flat](v: T): M[T]
             def apply[T, U: Flat](m: M[T], f: T => M[U] < S): M[U] < S
 
         abstract class Kyo[M[_], E <: Effect[M, E], T, U, S]
-            extends Function1[T < S, U < S]
-            with Pending:
+            extends Function1[T < S, U < S]:
             def value: M[T]
             def effect: E
             def apply(v: T < S): U < S =
