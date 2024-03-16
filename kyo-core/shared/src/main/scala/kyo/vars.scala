@@ -3,13 +3,13 @@ package kyo
 import Vars.*
 import kyo.core.*
 
-case class Vars[-V](private val tag: Tag[Any]) extends Effect[[T] =>> State[V, T], Vars[V]]
+case class Vars[V](private val tag: Tag[Any]) extends Effect[[T] =>> State[V, T], Vars[V]]
 
 object Vars:
 
-    opaque type State[-V, +T] = T | Op[V, T]
+    opaque type State[V, +T] = T | Op[V, T]
 
-    sealed private trait Op[-V, +T]
+    sealed private trait Op[V, +T]
     private case object Get         extends Op[Any, Any]
     private case class Set[V](v: V) extends Op[V, Unit]
 
@@ -25,12 +25,7 @@ object Vars:
     def update[V: Tag](f: V => V): Unit < Vars[V] =
         get[V].map(f).map(set[V])
 
-    def run[T, S](v: T < (Vars[Nothing] & S))(using Flat[T < (Vars[Nothing] & S)]): T < S =
-        v.asInstanceOf[T < S]
-
-    def let[V: Tag, T: Flat, S, V1, V2](init: V)(v: T < (Vars[V1] & S))(
-        using V1 => V | V2
-    ): T < (Vars[V2] & S) =
+    def run[V: Tag, T: Flat, S](init: V)(v: T < (Vars[V] & S)): T < S =
         var curr = init
         given Handler[[T] =>> State[V, T], Vars[V], Any] with
             def pure[T: Flat](v: T) = v
@@ -48,11 +43,11 @@ object Vars:
         end given
 
         vars[V]
-            .handle[T, Vars[V2] & S, Any](v.asInstanceOf[T < (Vars[V] & Vars[V2] & S)])
+            .handle[T, S, Any](v)
             .map {
                 case Get    => curr.asInstanceOf[T]
                 case Set(v) => ().asInstanceOf[T]
                 case v      => v.asInstanceOf[T]
             }
-    end let
+    end run
 end Vars

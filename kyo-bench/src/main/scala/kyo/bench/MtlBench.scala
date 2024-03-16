@@ -19,16 +19,14 @@ class MtlBench extends Bench:
     @Benchmark
     def syncKyo(): Either[Throwable, (Chain[Event], State)] =
         Aborts[Throwable].run(
-            Vars.run(
-                Vars.let(State(2))(
-                    Vars.let(Chain.empty[Event])(
-                        Envs[Env].run(Env("config"))(
-                            for
-                                _      <- testKyo
-                                state  <- Vars.get[State]
-                                events <- Vars.get[Chain[Event]]
-                            yield (events, state)
-                        )
+            Vars.run(State(2))(
+                Vars.run(Chain.empty[Event])(
+                    Envs[Env].run(Env("config"))(
+                        for
+                            _      <- testKyo
+                            state  <- Vars.get[State]
+                            events <- Vars.get[Chain[Event]]
+                        yield (events, state)
                     )
                 )
             )
