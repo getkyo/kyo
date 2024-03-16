@@ -3,7 +3,8 @@ package kyo
 import Vars.*
 import kyo.core.*
 
-case class Vars[V](private val tag: Tag[Any]) extends Effect[[T] =>> State[V, T], Vars[V]]
+case class Vars[V](private val tag: Tag[Any])
+    extends Effect[[T] =>> State[V, T], Vars[V]]
 
 object Vars:
 

@@ -25,7 +25,7 @@ object core:
             def handleLoop(
                 v: T < (S & S2 & E)
             ): M[T] < (S & S2) =
-                // Flat.unsafe.bypass[T] is used to avoid capturing.
+                // Flat.unsafe.bypass[T] is used to avoid capturing `f`.
                 // It should ideally use erased terms but it's not available
                 // in the current production compiler
                 v match
