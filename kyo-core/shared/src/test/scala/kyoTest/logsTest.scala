@@ -7,7 +7,7 @@ class logsTest extends KyoTest:
 
     case object ex extends NoStackTrace
 
-    "log" in run {
+    "log" in IOs.run {
         for
             _ <- Logs.trace("trace")
             _ <- Logs.debug("debug")

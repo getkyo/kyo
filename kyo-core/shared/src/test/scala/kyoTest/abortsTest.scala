@@ -124,7 +124,7 @@ class abortsTest extends KyoTest:
     "Aborts" - {
         def test(v: Int): Int < Aborts[Ex1] =
             v match
-                case 0 => Aborts(ex1)
+                case 0 => Aborts[Ex1].fail(ex1)
                 case i => 10 / i
         "run" - {
             "success" in {

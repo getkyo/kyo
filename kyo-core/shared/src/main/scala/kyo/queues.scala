@@ -18,7 +18,7 @@ class Queue[T] private[kyo] (private[kyo] val unsafe: Queues.Unsafe[T]):
     def isClosed: Boolean < IOs     = IOs(unsafe.isClosed())
     def close: Option[Seq[T]] < IOs = IOs(unsafe.close())
 
-    private inline def op[T](inline v: => T): T < IOs =
+    protected inline def op[T, S](inline v: => T < IOs): T < IOs =
         IOs {
             if unsafe.isClosed() then
                 Queues.closed
@@ -64,8 +64,8 @@ object Queues:
     end Unsafe
 
     class Unbounded[T] private[kyo] (unsafe: Queues.Unsafe[T]) extends Queue[T](unsafe):
-
-        def add[S](v: T < S): Unit < (IOs & S) = v.map(offer(_)).unit
+        def add[S](v: T < S): Unit < (IOs & S) =
+            op(v.map(offer).unit)
 
     def init[T](capacity: Int, access: Access = kyo.Access.Mpmc): Queue[T] < IOs =
         IOs {
@@ -130,13 +130,15 @@ object Queues:
             val c = capacity
             new Unbounded(
                 new Unsafe[T]:
-                    def capacity    = c
-                    def size()      = u.size()
-                    def isEmpty()   = u.isEmpty()
-                    def isFull()    = false
-                    def offer(v: T) = u.offer(v)
-                    def poll()      = u.poll()
-                    def peek()      = u.peek()
+                    def capacity  = c
+                    def size()    = u.size()
+                    def isEmpty() = u.isEmpty()
+                    def isFull()  = false
+                    def offer(v: T) =
+                        u.offer(v)
+                        true
+                    def poll() = u.poll()
+                    def peek() = u.peek()
             )
         }
 

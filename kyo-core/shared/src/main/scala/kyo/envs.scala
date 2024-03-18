@@ -3,50 +3,39 @@ package kyo
 import kyo.core.*
 
 object Envs:
-    private case object Input
+    case object envs extends Envs[Any]
+    def apply[E]: Envs[E] = envs.asInstanceOf[Envs[E]]
 
-    type Env[E] = {
-        type Value[T] >: T // = T | Input.type
-    }
-
-    def apply[E](using tag: Tag[E]): Envs[E] =
-        new Envs[E](tag)
-end Envs
-import Envs.*
-
-case class Envs[E] private[kyo] (private val tag: Tag[E])
-    extends Effect[Env[E]#Value, Envs[E]]:
+class Envs[V] extends Effect[Envs[V]]:
     self =>
 
-    val get: E < Envs[E] =
-        this.suspend(Input.asInstanceOf[Env[E]#Value[E]])
+    object Input
+    type Input[T]   = Input.type
+    type Command[T] = Input[T]
 
-    def use[T, S](f: E => T < S): T < (Envs[E] & S) =
+    def get(using Tag[Envs[V]]): V < Envs[V] =
+        suspend(this)(Input)
+
+    def use[T, S](f: V => T < S)(using Tag[Envs[V]]): T < (Envs[V] & S) =
         get.map(f)
 
-    def run[T, S](e: E)(v: T < (Envs[E] & S))(using f: Flat[T < (Envs[E] & S)]): T < S =
-        given Handler[Env[E]#Value, Envs[E], Any] =
-            new Handler[Env[E]#Value, Envs[E], Any]:
-                def pure[U: Flat](v: U) = v
-                def apply[U, V: Flat, S2](
-                    m: Env[E]#Value[U],
-                    f: U => V < (Envs[E] & S2)
-                ): V < (S2 & Envs[E]) =
-                    m match
-                        case Input =>
-                            f(e.asInstanceOf[U])
-                        case _ =>
-                            f(m.asInstanceOf[U])
-        this.handle[T, Envs[E] & S, Any](v).map {
-            case Input => e.asInstanceOf[T]
-            case r     => r
-        }.asInstanceOf[T < S]
+    def run[T, S](env: V)(value: T < (Envs[V] & S))(using
+        Tag[Envs[V]],
+        Flat[T < (Envs[V] & S)]
+    ): T < S =
+        val handler = new Handler[Input, Envs[V], Any]:
+            def resume[T2, U: Flat, S](
+                command: Input[T2],
+                k: T2 => U < (Envs[V] & S)
+            ) = handle(k(env.asInstanceOf[T2]))
+
+        handle(handler, value)
     end run
 
-    def layer[Sd](construct: E < Sd): Layer[Envs[E], Sd] =
-        new Layer[Envs[E], Sd]:
-            override def run[T, S](effect: T < (Envs[E] & S))(implicit
-                fl: Flat[T < (Envs[E] & S)]
+    def layer[Sd](construct: V < Sd)(using Tag[Envs[V]]): Layer[Envs[V], Sd] =
+        new Layer[Envs[V], Sd]:
+            override def run[T, S](effect: T < (Envs[V] & S))(implicit
+                fl: Flat[T < (Envs[V] & S)]
             ): T < (Sd & S) =
                 construct.map(e => self.run[T, S](e)(effect))
 end Envs

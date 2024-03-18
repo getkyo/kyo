@@ -17,7 +17,7 @@ class clocksTest extends KyoTest:
             }
     end testClock
 
-    "now" in run {
+    "now" in {
         val instant = Instant.now()
         testClock.nows = List(instant)
         val io = Clocks.let(testClock)(Clocks.now)

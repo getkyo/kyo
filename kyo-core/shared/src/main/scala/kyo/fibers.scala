@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kyo.core.*
 import kyo.core.internal.*
 import kyo.scheduler.IOPromise
+import kyo.scheduler.IOTask
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -118,9 +119,6 @@ object Fibers extends Joins[Fibers]:
 
     private[kyo] def unsafeInitPromise[T: Flat]: Promise[T] =
         Promise(new IOPromise[T]())
-
-    // compiler bug workaround
-    private val IOTask = kyo.scheduler.IOTask
 
     def init[T](v: => T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
         Locals.save.map(st => Promise(IOTask(IOs(v), st)))
@@ -276,40 +274,37 @@ object fibersInternal:
             result.map(t)
     end Done
 
-    final class FiberGets private[kyo] () extends Effect[Fiber, FiberGets]:
+    final class FiberGets private[kyo] () extends Effect[FiberGets]:
+        type Command[T] = Fiber[T]
 
-        def apply[T, S](f: Fiber[T] < S): T < (FiberGets & S) =
-            this.suspend(f)
+        def apply[T, S](f: Fiber[T]): T < (FiberGets & S) =
+            suspend(this)(f)
+
+        private val deepHandler =
+            new DeepHandler[Fiber, FiberGets, IOs]:
+                def pure[T: Flat](v: T) = Done(v)
+                def resume[T, U: Flat](m: Fiber[T], f: T => Fiber[U] < IOs) =
+                    m.transform(f)
 
         def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
-            given DeepHandler[Fiber, FiberGets, IOs] =
-                new DeepHandler[Fiber, FiberGets, IOs]:
-                    def pure[T: Flat](v: T) = Done(v)
-                    def apply[T, U: Flat](m: Fiber[T], f: T => Fiber[U] < IOs) =
-                        m.transform(f)
-            IOs(deepHandle[Fiber, FiberGets, T, IOs](FiberGets)(IOs.runLazy(v)))
-        end run
+            IOs(deepHandle(deepHandler, IOs.runLazy(v)))
 
-        def runAndBlock[T, S](timeout: Duration)(v: T < (Fibers & S))(implicit
-            f: Flat[T < (Fibers & S)]
+        // TODO fix timeout
+        def runAndBlock[T, S](timeout: Duration)(v: T < (IOs & FiberGets & S))(
+            using f: Flat[T < (IOs & FiberGets & S)]
         ): T < (IOs & S) =
-            given Handler[Fiber, FiberGets, IOs] =
+            val handler =
                 new Handler[Fiber, FiberGets, IOs]:
                     def pure[T: Flat](v: T) = Done(v)
-                    override def handle(ex: Throwable): Nothing < FiberGets =
-                        FiberGets(Done(IOs.fail(ex)))
-                    def apply[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
-                        try
-                            m match
-                                case m: Promise[T] @unchecked =>
-                                    m.block(timeout).map(f)
-                                case Done(v) =>
-                                    v.map(f)
-                        catch
-                            case ex if (NonFatal(ex)) =>
-                                handle(ex)
-            IOs(this.handle[T, IOs & S, IOs](v).map(_.block(timeout)))
+                    def resume[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
+                        m match
+                            case m: Promise[T] @unchecked =>
+                                handle(m.block(timeout).map(f))
+                            case Done(v) =>
+                                handle(v.map(f))
+            handle(handler, v)
         end runAndBlock
+
     end FiberGets
     val FiberGets = new FiberGets
 end fibersInternal

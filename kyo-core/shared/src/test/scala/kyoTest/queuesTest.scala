@@ -10,27 +10,27 @@ class queuesTest extends KyoTest:
     "bounded" - {
         access.foreach { access =>
             access.toString() - {
-                "isEmpty" in run {
+                "isEmpty" in IOs.run {
                     for
                         q <- Queues.init[Int](2, access)
                         b <- q.isEmpty
                     yield assert(b && q.capacity == 2)
                 }
-                "offer and poll" in run {
+                "offer and poll" in IOs.run {
                     for
                         q <- Queues.init[Int](2, access)
                         b <- q.offer(1)
                         v <- q.poll
                     yield assert(b && v == Some(1))
                 }
-                "peek" in run {
+                "peek" in IOs.run {
                     for
                         q <- Queues.init[Int](2, access)
                         _ <- q.offer(1)
                         v <- q.peek
                     yield assert(v == Some(1))
                 }
-                "full" in run {
+                "full" in IOs.run {
                     for
                         q <- Queues.init[Int](2, access)
                         _ <- q.offer(1)
@@ -38,7 +38,7 @@ class queuesTest extends KyoTest:
                         b <- q.offer(3)
                     yield assert(!b)
                 }
-                "full 4" in run {
+                "full 4" in IOs.run {
                     for
                         q <- Queues.init[Int](4, access)
                         _ <- q.offer(1)
@@ -48,7 +48,7 @@ class queuesTest extends KyoTest:
                         b <- q.offer(5)
                     yield assert(!b)
                 }
-                "zero capacity" in run {
+                "zero capacity" in IOs.run {
                     for
                         q <- Queues.init[Int](0, access)
                         b <- q.offer(1)
@@ -59,7 +59,7 @@ class queuesTest extends KyoTest:
         }
     }
 
-    "close" in run {
+    "close" in IOs.run {
         for
             q  <- Queues.init[Int](2)
             b  <- q.offer(1)
@@ -85,7 +85,7 @@ class queuesTest extends KyoTest:
         )
     }
 
-    "drain" in run {
+    "drain" in IOs.run {
         for
             q <- Queues.init[Int](2)
             _ <- q.offer(1)
@@ -97,27 +97,27 @@ class queuesTest extends KyoTest:
     "unbounded" - {
         access.foreach { access =>
             access.toString() - {
-                "isEmpty" in run {
+                "isEmpty" in IOs.run {
                     for
                         q <- Queues.initUnbounded[Int](access)
                         b <- q.isEmpty
                     yield assert(b)
                 }
-                "offer and poll" in run {
+                "offer and poll" in IOs.run {
                     for
                         q <- Queues.initUnbounded[Int](access)
                         b <- q.offer(1)
                         v <- q.poll
                     yield assert(b && v == Some(1))
                 }
-                "peek" in run {
+                "peek" in IOs.run {
                     for
                         q <- Queues.initUnbounded[Int](access)
                         _ <- q.offer(1)
                         v <- q.peek
                     yield assert(v == Some(1))
                 }
-                "add and poll" in run {
+                "add and poll" in IOs.run {
                     for
                         q <- Queues.initUnbounded[Int](access)
                         _ <- q.add(1)
@@ -130,7 +130,7 @@ class queuesTest extends KyoTest:
 
     "dropping" - {
         access.foreach { access =>
-            access.toString() in run {
+            access.toString() in IOs.run {
                 for
                     q <- Queues.initDropping[Int](2)
                     _ <- q.add(1)
@@ -146,7 +146,7 @@ class queuesTest extends KyoTest:
 
     "sliding" - {
         access.foreach { access =>
-            access.toString() in run {
+            access.toString() in IOs.run {
                 for
                     q <- Queues.initSliding[Int](2)
                     _ <- q.add(1)

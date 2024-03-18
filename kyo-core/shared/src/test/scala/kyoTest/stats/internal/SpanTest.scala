@@ -7,7 +7,7 @@ import kyoTest.KyoTest
 
 class SpanTest extends KyoTest:
 
-    "end" in run {
+    "end" in IOs.run {
         val unsafe = new TestSpan
         val span   = Span(unsafe)
         for
@@ -15,7 +15,7 @@ class SpanTest extends KyoTest:
         yield assert(unsafe.isEnded)
     }
 
-    "event" in run {
+    "event" in IOs.run {
         val unsafe = new TestSpan
         val span   = Span(unsafe)
         for
@@ -23,7 +23,7 @@ class SpanTest extends KyoTest:
         yield assert(unsafe.lastEvent == "testEvent")
     }
 
-    "noop" in run {
+    "noop" in IOs.run {
         val noopSpan = Span.noop
         noopSpan.end
         noopSpan.event("noopEvent", Attributes.empty)
@@ -31,14 +31,14 @@ class SpanTest extends KyoTest:
     }
 
     "all" - {
-        "empty" in run {
+        "empty" in IOs.run {
             assert(Span.all(Nil) == Span.noop)
         }
-        "one" in run {
+        "one" in IOs.run {
             val span = Span(new TestSpan)
             assert(Span.all(List(span)) == span)
         }
-        "multiple" in run {
+        "multiple" in IOs.run {
             val unsafe1       = new TestSpan
             val unsafe2       = new TestSpan
             val compositeSpan = Span.all(List(Span(unsafe1), Span(unsafe2)))

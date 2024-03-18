@@ -1,54 +1,42 @@
 package kyo
 
-import Vars.*
 import kyo.core.*
 
-case class Vars[V](private val tag: Tag[Any])
-    extends Effect[[T] =>> State[V, T], Vars[V]]
-
 object Vars:
+    private case object vars extends Vars[Any]
+    def apply[V]: Vars[V] = vars.asInstanceOf[Vars[V]]
 
-    opaque type State[V, +T] = T | Op[V, T]
+class Vars[V] extends Effect[Vars[V]]:
+    enum Command[T]:
+        case Get               extends Command[V]
+        case Set(value: V)     extends Command[Unit]
+        case Update(f: V => V) extends Command[Unit]
+    end Command
 
-    sealed private trait Op[V, +T]
-    private case object Get         extends Op[Any, Any]
-    private case class Set[V](v: V) extends Op[V, Unit]
+    def get(using Tag[Vars[V]]): V < Vars[V] =
+        suspend(this)(Command.Get)
 
-    private def vars[T](using t: Tag[T]): Vars[T] =
-        Vars(t.asInstanceOf[Tag[Any]])
+    def set(value: V)(using Tag[Vars[V]]): Unit < Vars[V] =
+        suspend(this)(Command.Set(value))
 
-    def get[V: Tag]: V < Vars[V] =
-        vars[V].suspend(Get.asInstanceOf[Op[V, V]])
+    def update(f: V => V)(using Tag[Vars[V]]): Unit < Vars[V] =
+        suspend(this)(Command.Update(f))
 
-    def set[V: Tag](v: V): Unit < Vars[V] =
-        vars[V].suspend(Set[V](v))
+    def run[T, S2](state: V)(value: T < (Vars[V] & S2))(
+        using
+        Flat[T < (Vars[V] & S2)],
+        Tag[Vars[V]]
+    ): T < S2 =
+        handle(handler(state), value)
 
-    def update[V: Tag](f: V => V): Unit < Vars[V] =
-        get[V].map(f).map(set[V])
-
-    def run[V: Tag, T: Flat, S](init: V)(v: T < (Vars[V] & S)): T < S =
-        var curr = init
-        given Handler[[T] =>> State[V, T], Vars[V], Any] with
-            def pure[T: Flat](v: T) = v
-            def apply[T, U: Flat, S2](m: State[V, T], f: T => U < (Vars[V] & S2)) =
-                m match
-                    case Get =>
-                        f(curr.asInstanceOf[T])
-                    case Set(v) =>
-                        curr = v.asInstanceOf[V]
-                        f(().asInstanceOf[T])
-                    case v =>
-                        f(v.asInstanceOf[T])
-                end match
-            end apply
-        end given
-
-        vars[V]
-            .handle[T, S, Any](v)
-            .map {
-                case Get    => curr.asInstanceOf[T]
-                case Set(v) => ().asInstanceOf[T]
-                case v      => v.asInstanceOf[T]
-            }
-    end run
+    private def handler(state: V): Handler[Command, Vars[V], Any] =
+        new Handler[Command, Vars[V], Any]:
+            def resume[T, U: Flat, S2](command: Command[T], k: T => U < (Vars[V] & S2)) =
+                command match
+                    case Command.Set(v) =>
+                        handle(handler(v), k(()))
+                    case Command.Get =>
+                        handle(k(state.asInstanceOf[T]))
+                    case Command.Update(f) =>
+                        handle(handler(f(state)), k(().asInstanceOf[T]))
 end Vars

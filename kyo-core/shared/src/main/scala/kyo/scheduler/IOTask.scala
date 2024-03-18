@@ -94,13 +94,13 @@ private[kyo] class IOTask[T](
                 curr
         else
             curr match
-                case kyo: Kyo[?, ?, ?, ?, ?] =>
-                    if kyo.effect eq IOs then
-                        val k = kyo.asInstanceOf[Kyo[IO, IOs, Unit, T, Fibers]]
+                case kyo: Suspend[?, ?, ?, ?] =>
+                    if kyo.tag == Tag[IOs] then
+                        val k = kyo.asInstanceOf[Suspend[IO, Unit, T, Fibers]]
                         eval(start, k((), this, locals))
-                    else if kyo.effect eq FiberGets then
-                        val k = kyo.asInstanceOf[Kyo[Fiber, FiberGets, Any, T, Fibers]]
-                        k.value match
+                    else if kyo.tag == Tag[FiberGets] then
+                        val k = kyo.asInstanceOf[Suspend[Fiber, Any, T, Fibers]]
+                        k.command match
                             case Promise(p) =>
                                 this.interrupts(p)
                                 val runtime =
@@ -110,7 +110,7 @@ private[kyo] class IOTask[T](
                                 p.onComplete { (v: Any < IOs) =>
                                     val io = IOs(k(
                                         v,
-                                        this.asInstanceOf[Safepoint[Fiber, FiberGets]],
+                                        this.asInstanceOf[Safepoint[FiberGets]],
                                         locals
                                     ))
                                     this.become(IOTask(io, locals, ensures, runtime))
@@ -120,11 +120,11 @@ private[kyo] class IOTask[T](
                             case Done(v) =>
                                 eval(
                                     start,
-                                    k(v, this.asInstanceOf[Safepoint[Fiber, FiberGets]], locals)
+                                    k(v, this.asInstanceOf[Safepoint[FiberGets]], locals)
                                 )
                         end match
                     else
-                        IOs.fail("Unhandled effect: " + kyo.effect)
+                        IOs.fail("Unhandled effect: " + kyo.tag)
                 case _ =>
                     complete(curr.asInstanceOf[T < IOs])
                     finalize()

@@ -5,20 +5,20 @@ import kyo.*
 class addersTest extends KyoTest:
 
     "LongAdder" - {
-        "should initialize to 0" in run {
+        "should initialize to 0" in IOs.run {
             for
                 ref <- Adders.initLong
                 v   <- ref.get
             yield assert(v == 0)
         }
-        "should add value" in run {
+        "should add value" in IOs.run {
             for
                 ref <- Adders.initLong
                 _   <- ref.add(5)
                 v   <- ref.get
             yield assert(v == 5)
         }
-        "should increment the value" in run {
+        "should increment the value" in IOs.run {
             for
                 ref <- Adders.initLong
                 _   <- ref.add(5)
@@ -26,7 +26,7 @@ class addersTest extends KyoTest:
                 v   <- ref.get
             yield assert(v == 6)
         }
-        "should decrement the value" in run {
+        "should decrement the value" in IOs.run {
             for
                 ref <- Adders.initLong
                 _   <- ref.add(5)
@@ -34,7 +34,7 @@ class addersTest extends KyoTest:
                 v   <- ref.get
             yield assert(v == 4)
         }
-        "should reset the value" in run {
+        "should reset the value" in IOs.run {
             for
                 ref <- Adders.initLong
                 _   <- ref.add(5)
@@ -45,20 +45,20 @@ class addersTest extends KyoTest:
     }
 
     "DoubleAdder" - {
-        "should initialize to 0" in run {
+        "should initialize to 0" in IOs.run {
             for
                 ref <- Adders.initDouble
                 v   <- ref.get
             yield assert(v == 0.0)
         }
-        "should add value" in run {
+        "should add value" in IOs.run {
             for
                 ref <- Adders.initDouble
                 _   <- ref.add(5.0)
                 v   <- ref.get
             yield assert(v == 5.0)
         }
-        "should reset the value" in run {
+        "should reset the value" in IOs.run {
             for
                 ref <- Adders.initDouble
                 _   <- ref.add(5.0)

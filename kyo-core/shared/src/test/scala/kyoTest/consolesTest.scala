@@ -8,28 +8,28 @@ class consolesTest extends KyoTest:
     val obj       = Obj("a")
     val pprintObj = pprint.apply(obj).toString
 
-    "readln" in run {
+    "readln" in IOs.run {
         val testConsole = new TestConsole
         testConsole.readlns = List("readln")
         val io: String < IOs = Consoles.let(testConsole)(Consoles.readln)
         assert(IOs.run(io) == "readln")
     }
-    "print" in run {
+    "print" in IOs.run {
         val testConsole = new TestConsole
         IOs.run(Consoles.let(testConsole)(Consoles.print("print")))
         assert(testConsole.prints == List("print"))
     }
-    "printErr" in run {
+    "printErr" in IOs.run {
         val testConsole = new TestConsole
         IOs.run(Consoles.let(testConsole)(Consoles.printErr("printErr")))
         assert(testConsole.printErrs == List("printErr"))
     }
-    "println" in run {
+    "println" in IOs.run {
         val testConsole = new TestConsole
         IOs.run(Consoles.let(testConsole)(Consoles.println("println")))
         assert(testConsole.printlns == List("println"))
     }
-    "printlnErr" in run {
+    "printlnErr" in IOs.run {
         val testConsole = new TestConsole
         IOs.run(Consoles.let(testConsole)(Consoles.printlnErr("printlnErr")))
         assert(testConsole.printlnErrs == List("printlnErr"))

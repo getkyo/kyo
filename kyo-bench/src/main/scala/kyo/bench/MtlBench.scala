@@ -19,13 +19,13 @@ class MtlBench extends Bench:
     @Benchmark
     def syncKyo(): Either[Throwable, (Chain[Event], State)] =
         Aborts[Throwable].run(
-            Vars.run(State(2))(
-                Vars.run(Chain.empty[Event])(
+            Vars[State].run(State(2))(
+                Vars[Chain[Event]].run(Chain.empty)(
                     Envs[Env].run(Env("config"))(
                         for
                             _      <- testKyo
-                            state  <- Vars.get[State]
-                            events <- Vars.get[Chain[Event]]
+                            state  <- Vars[State].get
+                            events <- Vars[Chain[Event]].get
                         yield (events, state)
                     )
                 )
@@ -36,8 +36,8 @@ class MtlBench extends Bench:
         Seqs.traverseUnit(loops)(_ =>
             for
                 conf <- Envs[Env].use(_.config)
-                _    <- Vars.update[Chain[Event]](_ :+ Event(s"Env = $conf"))
-                _    <- Vars.update[State](state => state.copy(value = state.value + 1))
+                _    <- Vars[Chain[Event]].update(_ :+ Event(s"Env = $conf"))
+                _    <- Vars[State].update(state => state.copy(value = state.value + 1))
             yield ()
         )
 

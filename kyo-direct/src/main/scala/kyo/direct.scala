@@ -80,10 +80,10 @@ object directInternal:
 
         override def apply[T](op: Context => T < S): T < S = op(this)
 
-        override inline def pure[T](t: T): T < S = t
+        override def pure[T](t: T): T < S = t
 
-        override inline def map[A, B](fa: A < S)(f: A => B): B < S = fa.map(f(_))
+        override def map[A, B](fa: A < S)(f: A => B): B < S = flatMap(fa)(f)
 
-        override inline def flatMap[A, B](fa: A < S)(f: A => B < S): B < S = fa.flatMap(f)
+        override def flatMap[A, B](fa: A < S)(f: A => B < S): B < S = fa.flatMap(f)
     end KyoCpsMonad
 end directInternal

@@ -17,21 +17,20 @@ object Routes:
 
     type Effects = Sums[List[Route]] & Fibers
 
-    private val sums = Sums[List[Route]]
-
     def run[T, S](v: Unit < (Routes & S)): NettyKyoServerBinding < (Fibers & S) =
         run[T, S](NettyKyoServer())(v)
 
     def run[T, S](server: NettyKyoServer)(v: Unit < (Routes & S))
         : NettyKyoServerBinding < (Fibers & S) =
-        sums.run[NettyKyoServerBinding, Fibers & S] {
-            v.andThen(sums.get.map(server.addEndpoints(_)).map(_.start()))
-        }.map(_._1)
+        Sums[List[Route]].run[Unit, Fibers & S](v).map { (routes, _) =>
+            server.addEndpoints(routes).start(): NettyKyoServerBinding < (Fibers & S)
+        }
+    end run
 
     def add[S, A: Tag, I, E: Tag: ClassTag, O: Flat](e: Endpoint[A, I, E, O, Any])(
         f: I => O < (Fibers & Envs[A] & Aborts[E])
     ): Unit < Routes =
-        sums.add(List(
+        Sums[List[Route]].add(List(
             e.serverSecurityLogic[A, KyoSttpMonad.M](a => Right(a)).serverLogic(a =>
                 i => Aborts[E].run(Envs[A].run(a)(f(i)))
             )

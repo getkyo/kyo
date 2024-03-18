@@ -6,6 +6,7 @@ import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 
 class blockTest extends AnyFreeSpec with Assertions:
+
     "assigned run" - {
         "only" in {
             val i = IOs(1)
