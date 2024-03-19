@@ -140,7 +140,7 @@ end AI
 
 object AIs extends Joins[AIs]:
 
-    type Effects = Sums[State] & Fibers
+    type Effects = Vars[State] & Fibers
 
     case class AIException(cause: String) extends Exception(cause) with NoStackTrace
 
@@ -161,7 +161,7 @@ object AIs extends Joins[AIs]:
         }
 
     def run[T, S](v: T < (AIs & S))(using f: Flat[T < (AIs & S)]): T < (Fibers & S) =
-        State.run[T, Fibers & S](v).map(_._1)
+        State.run(Map.empty)(v)
 
     def genNow[T](using t: Json[T], f: Flat[T]): T < AIs =
         init.map(_.genNow[T])
@@ -212,20 +212,19 @@ object AIs extends Joins[AIs]:
 
     def race[T](l: Seq[T < AIs])(using f: Flat[T < AIs]): T < AIs =
         State.get.map { st =>
-            Fibers.race[(T, State)](l.map(State.run[T, Fibers](st)))
-                .map {
-                    case (v, st) =>
-                        State.set(st).map(_ => v)
+            Fibers.race(l.map(v => State.run(st)(zip(State.get, v))))
+                .map { (st, v) =>
+                    State.set(st).andThen(v)
                 }
         }
 
     def parallel[T](l: Seq[T < AIs])(using f: Flat[T < AIs]): Seq[T] < AIs =
         State.get.map { st =>
-            Fibers.parallel[(T, State)](l.map(State.run[T, Fibers](st)))
+            Fibers.parallel(l.map(v => State.run(st)(zip(State.get, v))))
                 .map { rl =>
-                    val r = rl.map(_._1)
+                    val r = Seqs.collect(rl.map(_._2))
                     val st =
-                        rl.map(_._2)
+                        rl.map(_._1)
                             .foldLeft(Map.empty: State) {
                                 case (acc, st) =>
                                     internal.summer.add(acc, st)
@@ -239,7 +238,7 @@ object internal:
 
     type State = Map[AIRef, Context]
 
-    val State = Sums[State]
+    val State = Vars[State]
 
     class AIRef(ai: AI) extends WeakReference[AI](ai):
 

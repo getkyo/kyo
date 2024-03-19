@@ -43,11 +43,16 @@ class methodsTest extends KyoTest:
     }
 
     "nested" - {
+        def lift[T](v: T): T < IOs                          = IOs(v)
+        def add(v: Int < IOs)                               = v.map(_ + 1)
+        def transform[T, U](v: T < IOs, f: T => U): U < IOs = v.map(f)
         val io: Int < IOs < IOs =
-            IOs(IOs(1))
+            lift(lift(1))
         "map + flatten" in {
-            val n: Int < IOs = io.map(_.map(_ + 1)).flatten
-            assert(IOs.run(n) == 2)
+            val a: Int < IOs < IOs =
+                transform[Int < IOs, Int < IOs](io, add(_))
+            val b: Int < IOs = a.flatten
+            assert(IOs.run(b) == 2)
         }
         "run doesn't compile" in {
             assertDoesNotCompile("IOs.run(io)")

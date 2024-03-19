@@ -2,7 +2,7 @@ package object kyo:
 
     type NotGiven[T] = scala.util.NotGiven[T]
 
-    type <[+T, -S] >: T // = T | Kyo[_, _, _, T, S]
+    export core.<
 
     extension [T, S](v: T < S)(using NotGiven[Any => S])
 
@@ -18,7 +18,7 @@ package object kyo:
         def unit: Unit < S =
             map(_ => ())
 
-        inline def withFilter(inline p: T => Boolean): T < S =
+        def withFilter(p: T => Boolean): T < S =
             map(v => if !p(v) then throw new MatchError(v) else v)
 
         def flatten[U, S2](using ev: T => U < S2): U < (S & S2) =
@@ -54,6 +54,6 @@ package object kyo:
         val _ = v
         ()
 
-    private[kyo] inline def bug(msg: String): Nothing =
+    private[kyo] def bug(msg: String): Nothing =
         throw new IllegalStateException("Kyo bug, please file a ticket: " + msg)
 end kyo

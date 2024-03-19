@@ -6,14 +6,14 @@ import kyoTest.KyoTest
 
 class HistogramTest extends KyoTest:
 
-    "noop" in run {
+    "noop" in IOs.run {
         for
             _ <- Histogram.noop.observe(1.0)
             _ <- Histogram.noop.observe(1.0, Attributes.add("test", 1))
         yield succeed
     }
 
-    "unsafe" in run {
+    "unsafe" in IOs.run {
         val unsafe    = new TestHistogram
         val histogram = Histogram(unsafe)
         for
@@ -24,14 +24,14 @@ class HistogramTest extends KyoTest:
     }
 
     "all" - {
-        "empty" in run {
+        "empty" in IOs.run {
             assert(Histogram.all(Nil) == Histogram.noop)
         }
-        "one" in run {
+        "one" in IOs.run {
             val histogram = Histogram(new TestHistogram)
             assert(Histogram.all(List(histogram)) == histogram)
         }
-        "multiple" in run {
+        "multiple" in IOs.run {
             val unsafe1   = new TestHistogram
             val unsafe2   = new TestHistogram
             val histogram = Histogram.all(List(Histogram(unsafe1), Histogram(unsafe2)))

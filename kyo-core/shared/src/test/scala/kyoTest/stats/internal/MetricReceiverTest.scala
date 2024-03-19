@@ -7,7 +7,7 @@ import kyoTest.KyoTest
 
 class MetricReceiverTest extends KyoTest:
 
-    "MetricReceiver.noop" in run {
+    "MetricReceiver.noop" in IOs.run {
         val noop = MetricReceiver.noop
         assert(noop.counter(
             Nil,
@@ -43,12 +43,12 @@ class MetricReceiverTest extends KyoTest:
         val mockReceiver2    = new TestMetricReceiver
         val combinedReceiver = MetricReceiver.all(List(mockReceiver1, mockReceiver2))
 
-        "counter" in run {
+        "counter" in IOs.run {
             combinedReceiver.counter(Nil, "testCounter", "Test Counter", "unit", Attributes.empty)
             assert(mockReceiver1.counterCreated && mockReceiver2.counterCreated)
         }
 
-        "histogram" in run {
+        "histogram" in IOs.run {
             combinedReceiver.histogram(
                 Nil,
                 "testHistogram",
@@ -59,12 +59,12 @@ class MetricReceiverTest extends KyoTest:
             assert(mockReceiver1.histogramCreated && mockReceiver2.histogramCreated)
         }
 
-        "gauge" in run {
+        "gauge" in IOs.run {
             combinedReceiver.gauge(Nil, "testGauge", "Test Gauge", "unit", Attributes.empty)(42.0)
             assert(mockReceiver1.gaugeCreated && mockReceiver2.gaugeCreated)
         }
 
-        "startSpan" in run {
+        "startSpan" in IOs.run {
             combinedReceiver.startSpan(Nil, "testSpan", None, Attributes.empty)
             assert(mockReceiver1.spanStarted && mockReceiver2.spanStarted)
         }

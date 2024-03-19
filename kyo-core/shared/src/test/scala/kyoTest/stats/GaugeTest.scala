@@ -6,13 +6,13 @@ import kyoTest.KyoTest
 
 class GaugeTest extends KyoTest:
 
-    "noop" in run {
+    "noop" in IOs.run {
         for
             _ <- Gauge.noop.close
         yield succeed
     }
 
-    "unsafe" in run {
+    "unsafe" in IOs.run {
         val unsafe = new TestGauge
         val gauge  = Gauge(unsafe)
         for
@@ -21,14 +21,14 @@ class GaugeTest extends KyoTest:
     }
 
     "all" - {
-        "empty" in run {
+        "empty" in IOs.run {
             assert(Gauge.all(Nil) == Gauge.noop)
         }
-        "one" in run {
+        "one" in IOs.run {
             val gauge = Gauge(new TestGauge)
             assert(Gauge.all(List(gauge)) == gauge)
         }
-        "multiple" in run {
+        "multiple" in IOs.run {
             val unsafe1        = new TestGauge
             val unsafe2        = new TestGauge
             val compositeGauge = Gauge.all(List(Gauge(unsafe1), Gauge(unsafe2)))

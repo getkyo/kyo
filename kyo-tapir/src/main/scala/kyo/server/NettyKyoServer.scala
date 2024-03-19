@@ -142,7 +142,7 @@ case class NettyKyoServer(
                 channelGroup,
                 startNanos,
                 gracefulShutdownTimeoutNanos
-            ))
+            ): Unit < Fibers)
         else
             nettyFutureToScala(channelGroup.close()).map(_ => ())
 

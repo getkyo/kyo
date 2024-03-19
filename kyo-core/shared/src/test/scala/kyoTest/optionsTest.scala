@@ -9,7 +9,7 @@ class optionsTest extends KyoTest:
 
     "apply" - {
         "null" in {
-            assert((Options.run(Options(null: String))).pure == None)
+            assert(Options.run(Options(null: String)).pure == None)
             assert(
                 Options.run(Options(null: String)) ==
                     None

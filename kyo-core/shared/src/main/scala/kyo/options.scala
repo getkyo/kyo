@@ -1,13 +1,13 @@
 package kyo
 
-type Options = Aborts[Option[Nothing]]
+type Options = Aborts[None.type]
 
 object Options:
 
-    private val aborts = Aborts[Option[Nothing]]
-    private val none   = aborts.fail(None)
+    private val options = Aborts[None.type]
 
-    val empty: Nothing < Options = none
+    val empty: Nothing < Options =
+        options.fail(None)
 
     def apply[T](v: T): T < Options =
         if v == null then
@@ -28,7 +28,7 @@ object Options:
         }
 
     def run[T, S](v: T < (Options & S))(using f: Flat[T < (Options & S)]): Option[T] < S =
-        aborts.run[T, S](v).map {
+        options.run(v).map {
             case Left(e)  => None
             case Right(v) => Some(v)
         }

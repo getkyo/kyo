@@ -123,20 +123,20 @@ class directTest extends KyoTest:
     "kyo computations must be within a run block" in {
         assertDoesNotCompile("defer(IOs(1))")
         assertDoesNotCompile("""
-       defer {
-         val a = IOs(1)
-         10
-       }
-     """)
+            defer {
+                val a = IOs(1)
+                10
+            }
+        """)
         assertDoesNotCompile("""
-       defer {
-         val a = {
-           val b = IOs(1)
-           10
-         }
-         10
-       }
-     """)
+            defer {
+                val a = {
+                val b = IOs(1)
+                10
+                }
+                10
+            }
+        """)
     }
 
     "lists" in {

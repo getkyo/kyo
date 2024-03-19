@@ -4,82 +4,68 @@ import kyo.core.*
 import scala.reflect.ClassTag
 
 object Aborts:
+    case object aborts extends Aborts[Any]
+    def apply[V]: Aborts[V] = aborts.asInstanceOf[Aborts[V]]
 
-    type Abort[E] = {
-        type Value[T] = Either[E, T]
-    }
-
-    def apply[E](using tag: Tag[E]): Aborts[E] =
-        new Aborts(tag)
-
-    def apply[T, E](ex: E)(using tag: Tag[E]): T < Aborts[E] =
-        Aborts[E].get(Left(ex))
-end Aborts
-
-import Aborts.*
-
-final case class Aborts[E] private[Aborts] (private val tag: Tag[E])
-    extends Effect[Abort[E]#Value, Aborts[E]]:
+class Aborts[V] extends Effect[Aborts[V]]:
     self =>
+    override type Command[T] = Left[V, Nothing]
 
-    private given Tag[E] = tag
+    def fail(value: V)(using Tag[Aborts[V]]): Nothing < Aborts[V] =
+        suspend(Aborts[V])(Left(value))
 
-    def fail[T, S](e: E < S): T < (Aborts[E] & S) =
-        e.map(e => this.suspend(Left(e)))
+    def when(b: Boolean)(value: V)(using Tag[Aborts[V]]): Unit < Aborts[V] =
+        if b then fail(value)
+        else ()
 
-    def run[T, S](
-        v: T < (Aborts[E] & S)
-    )(using
-        flat: Flat[T < (Aborts[E] & S)],
-        ct: ClassTag[E]
-    ): Either[E, T] < S =
-        this.handle(v)
-
-    def get[T, S](v: Either[E, T] < S): T < (Aborts[E] & S) =
-        v.map {
+    def get[T](e: Either[V, T])(using Tag[Aborts[V]]): T < Aborts[V] =
+        e match
             case Right(value) => value
-            case e            => this.suspend(e)
+            case Left(e)      => fail(e)
+
+    def catching[T, S](v: => T < S)(using ClassTag[V], Tag[Aborts[V]]): T < (Aborts[V] & S) =
+        IOs.handle(v) {
+            case ex: V =>
+                fail(ex.asInstanceOf[V])
         }
 
-    def catching[T, S](f: => T < S)(using ClassTag[E]): T < (Aborts[E] & S) =
-        IOs.handle(f) {
-            case ex: E =>
-                fail(ex.asInstanceOf[E])
-        }
+    def run[T, S](v: T < (Aborts[V] & S))(
+        using
+        Tag[Aborts[V]],
+        ClassTag[V],
+        Flat[T < (Aborts[V] & S)]
+    ): Either[V, T] < S =
+        handle(handler, v)
 
-    given handler[E](using tag: Tag[E], ct: ClassTag[E]): Handler[Abort[E]#Value, Aborts[E], Any] =
-        new Handler[Abort[E]#Value, Aborts[E], Any]:
-
-            val aborts = Aborts[E]
-
-            def pure[U: Flat](v: U) = Right(v)
-
-            override def handle(ex: Throwable): Nothing < Aborts[E] =
-                ex match
-                    case ex: E =>
-                        aborts.fail(ex.asInstanceOf[E])
-                    case _ =>
-                        throw ex
-
-            def apply[U, V: Flat, S2](
-                m: Either[E, U],
-                f: U => V < (Aborts[E] & S2)
-            ): V < (S2 & Aborts[E]) =
-                m match
-                    case left: Left[?, ?] =>
-                        aborts.get(left.asInstanceOf[Left[E, V]])
-                    case Right(v) =>
-                        f(v)
-
-    def layer[Se](handle: E => Nothing < Se)(using ClassTag[E]): Layer[Aborts[E], Se] =
-        new Layer[Aborts[E], Se]:
+    def layer[Se](handle: V => Nothing < Se)(
+        using
+        ClassTag[V],
+        Tag[Aborts[V]]
+    ): Layer[Aborts[V], Se] =
+        new Layer[Aborts[V], Se]:
             override def run[T, S](
-                effect: T < (Aborts[E] & S)
+                effect: T < (Aborts[V] & S)
             )(
-                using flat: Flat[T < (Aborts[E] & S)]
+                using flat: Flat[T < (Aborts[V] & S)]
             ): T < (S & Se) =
                 self.run[T, S](effect).map {
                     case Left(err) => handle(err)
                     case Right(t)  => t
                 }
+
+    private def handler(using ClassTag[V]) =
+        new ResultHandler[Const[Left[V, Nothing]], [T] =>> Either[V, T], Aborts[V], Any]:
+            def pure[T](v: T) = Right(v)
+
+            override def fail(ex: Throwable): Nothing < Aborts[V] =
+                ex match
+                    case ex: V =>
+                        self.fail(ex)
+                    case _ =>
+                        throw ex
+
+            def resume[T, U: Flat, S](
+                command: Left[V, Nothing],
+                k: T => U < (Aborts[V] & S)
+            ) = command
 end Aborts

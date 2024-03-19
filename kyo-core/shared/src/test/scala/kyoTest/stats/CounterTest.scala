@@ -6,7 +6,7 @@ import kyoTest.KyoTest
 
 class CounterTest extends KyoTest:
 
-    "noop" in run {
+    "noop" in IOs.run {
         for
             _ <- Counter.noop.inc
             _ <- Counter.noop.add(1)
@@ -14,7 +14,7 @@ class CounterTest extends KyoTest:
         yield succeed
     }
 
-    "unsafe" in run {
+    "unsafe" in IOs.run {
         val unsafe  = new TestCounter
         val counter = Counter(unsafe)
         for
@@ -26,14 +26,14 @@ class CounterTest extends KyoTest:
     }
 
     "all" - {
-        "empty" in run {
+        "empty" in IOs.run {
             assert(Counter.all(Nil) == Counter.noop)
         }
-        "one" in run {
+        "one" in IOs.run {
             val counter = Counter(new TestCounter)
             assert(Counter.all(List(counter)) == counter)
         }
-        "multiple" in run {
+        "multiple" in IOs.run {
             val unsafe1 = new TestCounter
             val unsafe2 = new TestCounter
             val counter = Counter.all(List(Counter(unsafe1), Counter(unsafe2)))

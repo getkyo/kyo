@@ -1,71 +1,41 @@
 package kyo
 
 import kyo.core.*
-import scala.util.*
-import sumsInternal.*
-
-case class Sums[V] private[kyo] (private val tag: Tag[V])
-    extends Effect[Sum[V]#Value, Sums[V]]:
-
-    val get: V < Sums[V] =
-        this.suspend(Get.asInstanceOf[Sum[V]#Value[V]])
-
-    def add(v: V): V < Sums[V] =
-        this.suspend(AddValue(v).asInstanceOf[Sum[V]#Value[V]])
-
-    def set(v: V): V < Sums[V] =
-        this.update(_ => v)
-
-    def update(f: V => V): V < Sums[V] =
-        this.suspend(UpdateValue(f).asInstanceOf[Sum[V]#Value[V]])
-
-    def run[T, S](v: T < (Sums[V] & S))(implicit
-        g: Summer[V],
-        f: Flat[T < (Sums[V] & S)]
-    ): (T, V) < S =
-        run[T, S](g.init)(v)
-
-    def run[T, S](init: V)(v: T < (Sums[V] & S))(implicit
-        g: Summer[V],
-        f: Flat[T < (Sums[V] & S)]
-    ): (T, V) < S =
-        var curr = init
-        given handler: Handler[Sum[V]#Value, Sums[V], Any] =
-            new Handler[Sum[V]#Value, Sums[V], Any]:
-                def pure[U: Flat](v: U) = v
-                def apply[T, U: Flat, S2](
-                    m: Sum[V]#Value[T],
-                    f: T => U < (Sums[V] & S2)
-                ): U < (S2 & Sums[V]) =
-                    m match
-                        case AddValue(v) =>
-                            curr = g.add(curr, v.asInstanceOf[V])
-                            f(curr.asInstanceOf[T])
-                        case UpdateValue(u) =>
-                            curr = u.asInstanceOf[V => V](curr)
-                            f(curr.asInstanceOf[T])
-                        case Get =>
-                            f(curr.asInstanceOf[T])
-                        case _ =>
-                            f(m.asInstanceOf[T])
-        this.handle[T, S, Any](v).map {
-            case AddValue(v) =>
-                curr = g.add(curr, v.asInstanceOf[V])
-                curr.asInstanceOf[T]
-            case UpdateValue(u) =>
-                curr = u.asInstanceOf[V => V](curr)
-                curr.asInstanceOf[T]
-            case Get =>
-                curr.asInstanceOf[T]
-            case m =>
-                m.asInstanceOf[T]
-        }.map((_, curr))
-    end run
-end Sums
 
 object Sums:
-    def apply[V](using t: Tag[V]): Sums[V] =
-        new Sums[V](t)
+    private object sums extends Sums[Any]
+    def apply[V]: Sums[V] = sums.asInstanceOf[Sums[V]]
+
+class Sums[V] extends Effect[Sums[V]]:
+    type Command[T] = V
+
+    def add(v: V)(using Tag[Sums[V]]): Unit < Sums[V] =
+        suspend(Sums[V])(v)
+
+    def run[T, S](v: T < (Sums[V] & S))(
+        using
+        g: Summer[V],
+        f: Flat[T < (Sums[V] & S)],
+        t: Tag[Sums[V]]
+    ): (V, T) < S =
+        run(g.init)(v)
+
+    def run[T, S](init: V)(v: T < (Sums[V] & S))(
+        using
+        g: Summer[V],
+        f: Flat[T < (Sums[V] & S)],
+        t: Tag[Sums[V]]
+    ): (V, T) < S =
+        handle[Const[V], [T] =>> (V, T), Sums[V], T, Any, S](handler(init), v)
+
+    private def handler(state: V)(
+        using summer: Summer[V]
+    ): ResultHandler[Const[V], [T] =>> (V, T), Sums[V], Any] =
+        new ResultHandler[Const[V], [T] =>> (V, T), Sums[V], Any]:
+            def pure[T](v: T) = (state, v)
+            def resume[T, U: Flat, S](command: V, k: T => U < (Sums[V] & S)) =
+                handle(handler(summer.add(state, command)), k(().asInstanceOf[T]))
+end Sums
 
 abstract class Summer[V]:
     def init: V
@@ -84,14 +54,3 @@ object Summer:
     given setSummer[T]: Summer[Set[T]]       = Summer(Set.empty[T])(_ ++ _)
     given mapSummer[T, U]: Summer[Map[T, U]] = Summer(Map.empty[T, U])(_ ++ _)
 end Summer
-
-private[kyo] object sumsInternal:
-
-    private[kyo] case class AddValue[V](v: V)
-    private[kyo] case class UpdateValue[V](f: V => V)
-    private[kyo] case object Get
-
-    type Sum[V] = {
-        type Value[T] >: T // = T | AddValue[V] | UpdateValue[V] | Get.type
-    }
-end sumsInternal

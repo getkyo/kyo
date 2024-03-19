@@ -2,10 +2,13 @@ package kyo
 
 import kyo.core.*
 
-sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs]:
+class Seqs extends Effect[Seqs]:
+    type Command[T] = Seq[T]
+
+object Seqs extends Seqs:
 
     def run[T, S](v: T < (Seqs & S))(using f: Flat[T < (Seqs & S)]): Seq[T] < S =
-        this.handle[T, S, Any](v)
+        handle(handler, v)
 
     def repeat(n: Int): Unit < Seqs =
         get(Seq.fill(n)(()))
@@ -13,7 +16,7 @@ sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs]:
     def get[T, S](v: Seq[T] < S): T < (Seqs & S) =
         v.map {
             case Seq(head) => head
-            case _         => this.suspend(v)
+            case v         => suspend(this)(v)
         }
 
     def filter[S](v: Boolean < S): Unit < (Seqs & S) =
@@ -25,7 +28,7 @@ sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs]:
         }
 
     val drop: Nothing < Seqs =
-        this.suspend(Seq.empty[Nothing])
+        suspend(this)(Seq.empty)
 
     def traverse[T, U, S, S2](v: Seq[T] < S)(f: T => U < S2): Seq[U] < (S & S2) =
         v.map { v =>
@@ -61,17 +64,9 @@ sealed abstract class Seqs private[kyo] () extends Effect[Seq, Seqs]:
         loop(n, Seq())
     end fill
 
-    private given handler: Handler[Seq, Seqs, Any] =
-        new Handler[Seq, Seqs, Any]:
-            def pure[T: Flat](v: T) = Seq(v)
-            def apply[T, U: Flat, S](v: Seq[T], f: T => U < (Seqs & S)): U < (Seqs & S) =
-                def loop(l: Seq[T], acc: Seq[Seq[U]]): U < (Seqs & S) =
-                    l match
-                        case Seq() =>
-                            Seqs.get(acc.reverse.flatten: Seq[U])
-                        case t +: ts =>
-                            Seqs.run[U, S](f(t)).map(l => loop(ts, l +: acc))
-                loop(v, Seq.empty)
-            end apply
+    private val handler: ResultHandler[Seq, Seq, Seqs, Any] =
+        new ResultHandler[Seq, Seq, Seqs, Any]:
+            def pure[T](v: T) = Seq(v)
+            def resume[T, U: Flat, S](v: Seq[T], f: T => U < (Seqs & S)) =
+                Seqs.collect(v.map(e => Seqs.run(f(e)))).map(_.flatten)
 end Seqs
-object Seqs extends Seqs
