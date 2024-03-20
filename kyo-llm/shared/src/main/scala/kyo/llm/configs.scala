@@ -55,11 +55,8 @@ object Config:
     val default =
         val apiKeyProp = "OPENAI_API_KEY"
         val apiOrgProp = "OPENAI_API_ORG"
-        val apiKey =
-            Option(System.getenv(apiKeyProp))
-                .orElse(Option(System.getProperty(apiKeyProp)))
-        val apiOrg =
-            Option(System.getenv(apiOrgProp))
+        val apiKey     = sys.env.get(apiKeyProp).orElse(sys.props.get(apiKeyProp))
+        val apiOrg     = sys.env.get(apiOrgProp)
         Config(
             "https://api.openai.com/v1",
             apiKey,

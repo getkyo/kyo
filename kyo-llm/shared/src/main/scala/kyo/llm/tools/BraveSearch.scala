@@ -35,8 +35,7 @@ object BraveSearch extends Tool:
     object apiKey:
         private val local = Locals.init[Option[String]] {
             val apiKeyProp = "BRAVE_SEARCH_API_KEY"
-            Option(System.getenv(apiKeyProp))
-                .orElse(Option(System.getProperty(apiKeyProp)))
+            sys.env.get(apiKeyProp).orElse(sys.props.get(apiKeyProp))
         }
 
         val get: String < AIs =
