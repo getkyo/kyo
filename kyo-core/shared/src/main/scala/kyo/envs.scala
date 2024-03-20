@@ -8,13 +8,11 @@ object Envs:
 
 class Envs[V] extends Effect[Envs[V]]:
     self =>
-
-    object Input
-    type Input[T]   = Input.type
-    type Command[T] = Input[T]
+    enum Command[+T]:
+        case Get
 
     def get(using Tag[Envs[V]]): V < Envs[V] =
-        suspend(this)(Input)
+        suspend(this)(Command.Get)
 
     def use[T, S](f: V => T < S)(using Tag[Envs[V]]): T < (Envs[V] & S) =
         get.map(f)
@@ -23,9 +21,9 @@ class Envs[V] extends Effect[Envs[V]]:
         Tag[Envs[V]],
         Flat[T < (Envs[V] & S)]
     ): T < S =
-        val handler = new Handler[Input, Envs[V], Any]:
+        val handler = new Handler[Command, Envs[V], Any]:
             def resume[T2, U: Flat, S](
-                command: Input[T2],
+                command: Command[T2],
                 k: T2 => U < (Envs[V] & S)
             ) = handle(k(env.asInstanceOf[T2]))
 

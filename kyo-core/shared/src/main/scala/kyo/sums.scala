@@ -40,17 +40,22 @@ end Sums
 abstract class Summer[V]:
     def init: V
     def add(v1: V, v2: V): V
+    def result(v: V): V
+end Summer
+
 object Summer:
-    def apply[V](_init: V)(_add: (V, V) => V): Summer[V] =
+    def apply[V](_init: V)(_add: (V, V) => V, _result: V => V): Summer[V] =
         new Summer[V]:
             def init              = _init
             def add(v1: V, v2: V) = _add(v1, v2)
-    given intSummer: Summer[Int]             = Summer(0)(_ + _)
-    given longSummer: Summer[Long]           = Summer(0L)(_ + _)
-    given doubleSummer: Summer[Double]       = Summer(0d)(_ + _)
-    given floatSummer: Summer[Float]         = Summer(0f)(_ + _)
-    given stringSummer: Summer[String]       = Summer("")(_ + _)
-    given listSummer[T]: Summer[List[T]]     = Summer(List.empty[T])(_ ++ _)
-    given setSummer[T]: Summer[Set[T]]       = Summer(Set.empty[T])(_ ++ _)
-    given mapSummer[T, U]: Summer[Map[T, U]] = Summer(Map.empty[T, U])(_ ++ _)
+            def result(v: V): V   = _result(v)
+
+    given intSummer: Summer[Int]             = Summer(0)(_ + _, identity)
+    given longSummer: Summer[Long]           = Summer(0L)(_ + _, identity)
+    given doubleSummer: Summer[Double]       = Summer(0d)(_ + _, identity)
+    given floatSummer: Summer[Float]         = Summer(0f)(_ + _, identity)
+    given stringSummer: Summer[String]       = Summer("")(_ + _, identity)
+    given listSummer[T]: Summer[List[T]]     = Summer(List.empty[T])((a, b) => b ++ a, _.reverse)
+    given setSummer[T]: Summer[Set[T]]       = Summer(Set.empty[T])(_ ++ _, identity)
+    given mapSummer[T, U]: Summer[Map[T, U]] = Summer(Map.empty[T, U])(_ ++ _, identity)
 end Summer

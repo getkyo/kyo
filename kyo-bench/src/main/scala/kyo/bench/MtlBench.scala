@@ -17,26 +17,22 @@ class MtlBench extends Bench:
     val loops = (1 to 1000).toList
 
     @Benchmark
-    def syncKyo(): Either[Throwable, (Chain[Event], State)] =
+    def syncKyo(): Either[Throwable, (List[Event], State)] =
         Aborts[Throwable].run(
             Vars[State].run(State(2))(
-                Vars[Chain[Event]].run(Chain.empty)(
+                Sums[List[Event]].run(
                     Envs[Env].run(Env("config"))(
-                        for
-                            _      <- testKyo
-                            state  <- Vars[State].get
-                            events <- Vars[Chain[Event]].get
-                        yield (events, state)
+                        testKyo.andThen(Vars[State].get)
                     )
                 )
             )
         ).pure
 
-    def testKyo: Unit < (Aborts[Throwable] & Envs[Env] & Vars[State] & Vars[Chain[Event]]) =
+    def testKyo: Unit < (Aborts[Throwable] & Envs[Env] & Vars[State] & Sums[List[Event]]) =
         Seqs.traverseUnit(loops)(_ =>
             for
                 conf <- Envs[Env].use(_.config)
-                _    <- Vars[Chain[Event]].update(_ :+ Event(s"Env = $conf"))
+                _    <- Sums[List[Event]].add(List(Event(s"Env = $conf")))
                 _    <- Vars[State].update(state => state.copy(value = state.value + 1))
             yield ()
         )
