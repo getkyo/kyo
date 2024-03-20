@@ -307,4 +307,5 @@ object internal:
                 }
                 merged.filter { case (k, v) => k.isValid() && !v.isEmpty }
             end add
+            def result(v: State): State = v
 end internal

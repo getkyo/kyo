@@ -32,7 +32,7 @@ class Sums[V] extends Effect[Sums[V]]:
         using summer: Summer[V]
     ): ResultHandler[Const[V], [T] =>> (V, T), Sums[V], Any] =
         new ResultHandler[Const[V], [T] =>> (V, T), Sums[V], Any]:
-            def pure[T](v: T) = (state, v)
+            def pure[T](v: T) = (summer.result(state), v)
             def resume[T, U: Flat, S](command: V, k: T => U < (Sums[V] & S)) =
                 handle(handler(summer.add(state, command)), k(().asInstanceOf[T]))
 end Sums
