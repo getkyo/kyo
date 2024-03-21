@@ -9,7 +9,7 @@ object core:
 
     opaque type <[+T, -S] >: T = T | internal.Kyo[T, S]
 
-    abstract class Effect[E]:
+    abstract class Effect[+E]:
         type Command[_]
 
     inline def suspend[E <: Effect[E], T](e: E)(v: e.Command[T])(
@@ -17,7 +17,7 @@ object core:
     ): T < E =
         new Root[e.Command, T, E]:
             def command = v
-            def tag     = _tag
+            def tag     = _tag.asInstanceOf[Tag[Any]]
 
     inline def transform[T, S, U, S2](v: T < S)(inline k: T => (U < S2)): U < (S & S2) =
         def transformLoop(v: T < S): U < (S & S2) =

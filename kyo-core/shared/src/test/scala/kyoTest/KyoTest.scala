@@ -1,7 +1,7 @@
 package kyoTest
 
 import kyo.*
-import org.scalatest.Assertions
+import org.scalatest.NonImplicitAssertions
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.ScalaFutures.*
 import org.scalatest.freespec.AsyncFreeSpec
@@ -10,7 +10,7 @@ import scala.concurrent.Future
 import scala.concurrent.duration.*
 import scala.util.Try
 
-class KyoTest extends AsyncFreeSpec with Assertions:
+class KyoTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     implicit override def executionContext: ExecutionContext = Platform.executionContext
 

@@ -174,7 +174,7 @@ private[kyo] object iosInternal:
     abstract private[kyo] class KyoIO[T, S]
         extends Suspend[IO, Unit, T, (IOs & S)]:
         final def command = ()
-        final def tag     = Tag[IOs]
+        final def tag     = Tag[IOs].asInstanceOf[Tag[Any]]
     end KyoIO
 
     trait Preempt extends Safepoint[IOs]:

@@ -2,70 +2,88 @@ package kyo
 
 import kyo.core.*
 import scala.reflect.ClassTag
+import scala.util.control.NonFatal
+
+class Aborts[-V] extends Effect[Aborts[V]]:
+    opaque type Command[T] = Left[V, Nothing]
+
+    private[Aborts] inline def _suspend[B <: V, T](v: V)(
+        using tag: Tag[Aborts[B]]
+    ): T < Aborts[B] =
+        suspend(this)(Left(v))
+end Aborts
 
 object Aborts:
     case object aborts extends Aborts[Any]
     def apply[V]: Aborts[V] = aborts.asInstanceOf[Aborts[V]]
 
-class Aborts[V] extends Effect[Aborts[V]]:
-    self =>
-    override type Command[T] = Left[V, Nothing]
+    type Elide[V] =
+        V match
+            case Nothing => Any
+            case V       => Aborts[V]
 
-    def fail(value: V)(using Tag[Aborts[V]]): Nothing < Aborts[V] =
-        suspend(Aborts[V])(Left(value))
+    extension [V](self: Aborts[V])
 
-    def when(b: Boolean)(value: V)(using Tag[Aborts[V]]): Unit < Aborts[V] =
-        if b then fail(value)
-        else ()
+        def fail[T](value: T)(using ev: T => V, t: Tag[Aborts[V]]): Nothing < Aborts[V] =
+            self._suspend(ev(value))
 
-    def get[T](e: Either[V, T])(using Tag[Aborts[V]]): T < Aborts[V] =
-        e match
-            case Right(value) => value
-            case Left(e)      => fail(e)
+        def when(b: Boolean)(value: V)(using Tag[Aborts[V]]): Unit < Aborts[V] =
+            if b then fail(value)
+            else ()
 
-    def catching[T, S](v: => T < S)(using ClassTag[V], Tag[Aborts[V]]): T < (Aborts[V] & S) =
-        IOs.handle(v) {
-            case ex: V =>
-                fail(ex.asInstanceOf[V])
-        }
+        def get[T](e: Either[V, T])(using Tag[Aborts[V]]): T < Aborts[V] =
+            e match
+                case Right(value) => value
+                case Left(e)      => fail(e)
 
-    def run[T, S](v: T < (Aborts[V] & S))(
-        using
-        Tag[Aborts[V]],
-        ClassTag[V],
-        Flat[T < (Aborts[V] & S)]
-    ): Either[V, T] < S =
-        handle(handler, v)
+        def catching[T, S](v: => T < S)(
+            using
+            ClassTag[V],
+            Tag[Aborts[V]]
+        ): T < (Aborts[V] & S) =
+            IOs.handle(v) {
+                case ex: V =>
+                    fail(ex.asInstanceOf[V])
+            }
 
-    def layer[Se](handle: V => Nothing < Se)(
-        using
-        ClassTag[V],
-        Tag[Aborts[V]]
-    ): Layer[Aborts[V], Se] =
-        new Layer[Aborts[V], Se]:
-            override def run[T, S](
-                effect: T < (Aborts[V] & S)
-            )(
-                using flat: Flat[T < (Aborts[V] & S)]
-            ): T < (S & Se) =
-                self.run[T, S](effect).map {
-                    case Left(err) => handle(err)
-                    case Right(t)  => t
-                }
+        def run[T, S, V2](v: T < (Aborts[V | V2] & S))(
+            using
+            Tag[Aborts[V]],
+            ClassTag[V],
+            Flat[T < (Aborts[V] & S)]
+        ): Either[V, T] < (S & Elide[V2]) =
+            handle(handler, v).asInstanceOf[Either[V, T] < (S & Elide[V2])]
 
-    private def handler(using ClassTag[V]) =
-        new ResultHandler[Const[Left[V, Nothing]], [T] =>> Either[V, T], Aborts[V], Any]:
-            def pure[T](v: T) = Right(v)
+        def layer[Se](handle: V => Nothing < Se)(
+            using
+            ClassTag[V],
+            Tag[Aborts[V]]
+        ): Layer[Aborts[V], Se] =
+            new Layer[Aborts[V], Se]:
+                override def run[T, S](
+                    effect: T < (Aborts[V] & S)
+                )(
+                    using flat: Flat[T < (Aborts[V] & S)]
+                ): T < (S & Se) =
+                    self.run(effect).map {
+                        case Left(err) => handle(err)
+                        case Right(t)  => t
+                    }
 
-            override def fail(ex: Throwable): Nothing < Aborts[V] =
-                ex match
-                    case ex: V =>
-                        self.fail(ex)
-                    case _ =>
-                        throw ex
+        private def handler(using ClassTag[V], Tag[Aborts[V]]) =
+            new ResultHandler[Const[Left[V, Nothing]], [T] =>> Either[V, T], Aborts[V], Any]:
+                def pure[T](v: T) = Right(v)
 
-            def resume[T, U: Flat, S](
-                command: Left[V, Nothing],
-                k: T => U < (Aborts[V] & S)
-            ) = command
+                override def fail(ex: Throwable): Nothing < Aborts[V] =
+                    ex match
+                        case ex: V =>
+                            self.fail(ex)
+                        case _ =>
+                            throw ex
+
+                def resume[T, U: Flat, S](
+                    command: Left[V, Nothing],
+                    k: T => U < (Aborts[V] & S)
+                ) = command
+    end extension
 end Aborts

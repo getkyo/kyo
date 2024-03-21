@@ -20,7 +20,7 @@ class seqsTest extends KyoTest:
         assert(
             Seqs.run(Seqs.get(Seq(1, 2, 3)).map(i =>
                 Seqs.get(Seq(i * 10, i * 100))
-            )) ===
+            )) ==
                 Seq(10, 100, 20, 200, 30, 300)
         )
     }

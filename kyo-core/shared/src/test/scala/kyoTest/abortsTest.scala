@@ -139,6 +139,22 @@ class abortsTest extends KyoTest:
                         Left(ex1)
                 )
             }
+            "inference" in {
+                def t1(v: Int < Aborts[Int | String]) =
+                    Aborts[Int].run(v)
+                val _: Either[Int, Int] < Aborts[String] =
+                    t1(42)
+                def t2(v: Int < (Aborts[Int] & Aborts[String])) =
+                    Aborts[String].run(v)
+                val _: Either[String, Int] < Aborts[Int] =
+                    t2(42)
+                succeed
+            }
+        }
+        "fail" in {
+            val ex = new Exception("throwable failure")
+            val a  = Aborts[Throwable].fail(ex)
+            assert(Aborts[Throwable].run(a) == Left(ex))
         }
         "catching" - {
             "only effect" - {
