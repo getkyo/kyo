@@ -89,6 +89,7 @@ lazy val `kyo-core` =
             libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC23" % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.1"      % Test,
+            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test,
             testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
         )
         .jsSettings(`js-settings`)
