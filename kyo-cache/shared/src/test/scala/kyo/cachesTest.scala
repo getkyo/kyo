@@ -25,7 +25,7 @@ class cachesTest extends KyoTest:
         for
             c <- Caches.init(_.maxSize(4))
             m = c.memo { (v: Int) =>
-                Fibers.init[Int] {
+                Fibers.init {
                     calls += 1
                     v + 1
                 }.map(_.get)
@@ -42,7 +42,7 @@ class cachesTest extends KyoTest:
         for
             c <- Caches.init(_.maxSize(4))
             m = c.memo { (v: Int) =>
-                Fibers.init[Int] {
+                Fibers.init {
                     calls += 1
                     if calls == 1 then
                         IOs.fail(ex)

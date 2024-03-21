@@ -6,6 +6,7 @@ import kyo.core.*
 import kyo.core.internal.*
 import kyo.scheduler.IOPromise
 import kyo.scheduler.IOTask
+import scala.annotation.implicitNotFound
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -120,8 +121,14 @@ object Fibers extends Joins[Fibers]:
     private[kyo] def unsafeInitPromise[T: Flat]: Promise[T] =
         Promise(new IOPromise[T]())
 
-    def init[T](v: => T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
-        Locals.save.map(st => Promise(IOTask(IOs(v), st)))
+    def init[T, S](v: => T < (Fibers & S))(
+        using
+        @implicitNotFound(
+            "Fibers.init only accepts Fibers and IOs-based effects. Found: ${S}"
+        ) ev: S => IOs,
+        f: Flat[T < (Fibers & S)]
+    ): Fiber[T] < (IOs & S) =
+        Locals.save.map(st => Promise(IOTask(IOs(v.asInstanceOf[T < Fibers]), st)))
 
     def parallel[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Seq[T] < Fibers =
         l.size match

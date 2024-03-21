@@ -70,6 +70,18 @@ class fibersTest extends KyoTest:
                 t2 <- Fibers.init(IOs(Fibers.init(Thread.currentThread()).map(_.get))).map(_.get)
             yield assert(t1 != t2)
         }
+
+        "with IOs-based effects" - {
+            "Resources" in run {
+                var closes                    = 0
+                val a: Int < Resources        = Resources.ensure(closes += 1).andThen(42)
+                val b: Fiber[Int] < Resources = Fibers.init(a)
+                b.map(_.get.map(v => assert(v == 42)))
+            }
+        }
+        "non IOs-based effect" in run {
+            assertDoesNotCompile("Fibers.init(Vars[Int].get)")
+        }
     }
 
     "sleep" in run {
