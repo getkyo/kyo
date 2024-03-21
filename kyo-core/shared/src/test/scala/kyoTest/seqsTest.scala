@@ -47,6 +47,12 @@ class seqsTest extends KyoTest:
                 Seq(1, 2)
         )
     }
+    "collectUnit" in {
+        var count = 0
+        val io    = IOs(count += 1)
+        IOs.run(Seqs.collectUnit(List.fill(42)(io)))
+        assert(count == 42)
+    }
     "repeat" in {
         assert(
             Seqs.run(Seqs.repeat(3).andThen(42)) ==

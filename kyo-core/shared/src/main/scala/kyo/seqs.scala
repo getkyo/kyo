@@ -56,6 +56,13 @@ object Seqs extends Seqs:
         loop(v)
     end collect
 
+    def collectUnit[T, S](v: Seq[Unit < S]): Unit < S =
+        def loop(l: Seq[Unit < S]): Unit < S =
+            if l.isEmpty then ()
+            else l.head.andThen(loop(l.tail))
+        loop(v)
+    end collectUnit
+
     def fill[T, S](n: Int)(v: => T < S): Seq[T] < S =
         def loop(n: Int, acc: Seq[T]): Seq[T] < S =
             n match
