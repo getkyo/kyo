@@ -24,7 +24,7 @@ trait Layer[In, Out]:
         ap.applyLayer[In, Out2](self, other)
 end Layer
 
-sealed trait ChainLayer[Out1, In2]:
+sealed private trait ChainLayer[Out1, In2]:
     type RemainingOut1
 
     def applyLayer[In1, Out2](
@@ -33,7 +33,7 @@ sealed trait ChainLayer[Out1, In2]:
     ): Layer[In1, RemainingOut1 & Out2]
 end ChainLayer
 
-trait ChainLayers2:
+private trait ChainLayers2:
     given application[Out1, Shared, In2]: ChainLayer.Aux[Out1 & Shared, In2 & Shared, Out1] =
         new ChainLayer[Out1 & Shared, In2 & Shared]:
             type RemainingOut1 = Out1
@@ -51,7 +51,7 @@ trait ChainLayers2:
                     end run
 end ChainLayers2
 
-trait ChainLayers1:
+private trait ChainLayers1:
     given applyAll1[Shared, In2]: ChainLayer.Aux[Shared, In2 & Shared, Any] =
         new ChainLayer[Shared, In2 & Shared]:
             type RemainingOut1 = Any
@@ -88,7 +88,7 @@ trait ChainLayers1:
                     end run
 end ChainLayers1
 
-object ChainLayer extends ChainLayers1:
+private object ChainLayer extends ChainLayers1:
     type Aux[Out1, In2, R] = ChainLayer[Out1, In2] { type RemainingOut1 = R }
 
     given simpleChain[Out]: ChainLayer.Aux[Out, Out, Any] =

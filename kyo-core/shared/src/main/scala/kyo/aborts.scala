@@ -14,7 +14,7 @@ class Aborts[-V] extends Effect[Aborts[V]]:
 end Aborts
 
 object Aborts:
-    case object aborts extends Aborts[Any]
+    private case object aborts extends Aborts[Any]
     def apply[V]: Aborts[V] = aborts.asInstanceOf[Aborts[V]]
 
     type Elide[V] =

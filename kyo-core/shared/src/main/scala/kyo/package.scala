@@ -1,6 +1,6 @@
-package object kyo:
+import scala.util.NotGiven
 
-    type NotGiven[T] = scala.util.NotGiven[T]
+package object kyo:
 
     export core.<
 

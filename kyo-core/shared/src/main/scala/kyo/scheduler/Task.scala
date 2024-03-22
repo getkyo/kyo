@@ -3,7 +3,7 @@ package kyo.scheduler
 import kyo.Logs
 import scala.util.control.NonFatal
 
-trait Task extends Ordered[Task]:
+private[kyo] trait Task extends Ordered[Task]:
     def compare(that: Task) =
         (that.runtime() - runtime()).asInstanceOf[Int]
     def run(): Task.Result
@@ -11,7 +11,7 @@ trait Task extends Ordered[Task]:
     def preempt(): Unit
 end Task
 
-object Task:
+private[kyo] object Task:
     opaque type Result = Boolean
     val Preempted: Result = true
     val Done: Result      = false

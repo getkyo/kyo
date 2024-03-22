@@ -6,8 +6,8 @@ class Envs[+V] extends Effect[Envs[V]]:
     type Command[T] = Unit
 
 object Envs:
-    case object Envs extends Envs[Any]
-    def apply[V]: Envs[V] = Envs.asInstanceOf[Envs[V]]
+    private case object envs extends Envs[Any]
+    def apply[V]: Envs[V] = envs.asInstanceOf[Envs[V]]
 
     type Elide[V] =
         V match
