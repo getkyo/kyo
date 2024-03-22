@@ -14,7 +14,7 @@ sealed trait IOs extends Effect[IOs]:
 
     val unit: Unit < IOs = ()
 
-    def apply[T, S](
+    inline def apply[T, S](
         f: => T < (IOs & S)
     ): T < (IOs & S) =
         new KyoIO[T, S]:
