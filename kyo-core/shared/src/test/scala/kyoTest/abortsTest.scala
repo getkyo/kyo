@@ -148,6 +148,10 @@ class abortsTest extends KyoTest:
                     Aborts[String].run(v)
                 val _: Either[String, Int] < Aborts[Int] =
                     t2(42)
+                def t3(v: Int < Aborts[Int]) =
+                    Aborts[Int].run(v)
+                val _: Either[Int, Int] < Any =
+                    t3(42)
                 succeed
             }
         }

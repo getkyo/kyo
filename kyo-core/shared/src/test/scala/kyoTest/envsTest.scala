@@ -33,6 +33,10 @@ class envsTest extends KyoTest:
             Envs[String].run("s")(v)
         val _: Int < Envs[Int] =
             t2(42)
+        def t3(v: Int < Envs[String]) =
+            Envs[String].run("a")(v)
+        val _: Int < Any =
+            t3(42)
         succeed
     }
 
