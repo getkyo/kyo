@@ -103,10 +103,8 @@ private[kyo] class IOTask[T](
                         k.command match
                             case Promise(p) =>
                                 this.interrupts(p)
-                                val runtime =
-                                    this.runtime() + (Coordinator.currentTick() - start).asInstanceOf[
-                                        Int
-                                    ]
+                                val runtime = this.runtime() +
+                                    (Coordinator.currentTick() - start).asInstanceOf[Int]
                                 p.onComplete { (v: Any < IOs) =>
                                     val io = IOs(k(
                                         v,
