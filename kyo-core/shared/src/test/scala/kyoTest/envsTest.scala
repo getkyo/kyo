@@ -24,6 +24,18 @@ class envsTest extends KyoTest:
         )
     }
 
+    "inference" in {
+        def t1(v: Int < Envs[Int & String]) =
+            Envs[Int].run(1)(v)
+        val _: Int < Envs[String] =
+            t1(42)
+        def t2(v: Int < (Envs[Int] & Envs[String])) =
+            Envs[String].run("s")(v)
+        val _: Int < Envs[Int] =
+            t2(42)
+        succeed
+    }
+
     "no transformations" in {
         assert(Envs[Int].run(1)(Envs[Int].get) == 1)
     }
@@ -56,19 +68,19 @@ class envsTest extends KyoTest:
             val v: Int < (Envs[Service1] & Envs[Service2]) = a
             "same handling order" in {
                 assert(
-                    Envs[Service1].run[Int, Any](service1)(Envs[Service2].run(service2)(v)) ==
+                    Envs[Service1].run(service1)(Envs[Service2].run(service2)(v)) ==
                         4
                 )
             }
             "reverse handling order" in {
                 assert(
-                    Envs[Service2].run[Int, Any](service2)(Envs[Service1].run(service1)(v)) ==
+                    Envs[Service2].run(service2)(Envs[Service1].run(service1)(v)) ==
                         4
                 )
             }
             "dependent services" in {
                 val v1 =
-                    Envs[Service1].run[Int, Envs[Service2]](service1)(v)
+                    Envs[Service1].run(service1)(v)
                 assert(
                     Envs[Service2].run(service2)(v1) ==
                         4
@@ -119,19 +131,17 @@ class envsTest extends KyoTest:
                     }
                 val v: Int < (Envs[Service1] & Envs[Service2] & Options) = a
                 "same handling order" in {
+                    val b = Envs[Service2].run(service2)(v)
+                    val c = Envs[Service1].run(service1)(b)
                     assert(
-                        Options.run(Envs[Service1].run(service1)(
-                            Envs[Service2].run(service2)(v)
-                        ): Int < Options) ==
-                            Option(3)
+                        Options.run(c) == Option(3)
                     )
                 }
                 "reverse handling order" in {
+                    val b = Envs[Service1].run(service1)(v)
+                    val c = Envs[Service2].run(service2)(b)
                     assert(
-                        Options.run(Envs[Service2].run(service2)(
-                            Envs[Service1].run(service1)(v)
-                        ): Int < Options) ==
-                            Option(3)
+                        Options.run(c) == Option(3)
                     )
                 }
                 "dependent services" in {
