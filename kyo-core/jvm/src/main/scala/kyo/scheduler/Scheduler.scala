@@ -1,9 +1,6 @@
 package kyo.scheduler
 
-import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
-import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
 import kyo.Logs
 import kyo.Stats
@@ -28,15 +25,7 @@ private[kyo] object Scheduler:
     private val workers = new Array[Worker](maxWorkers)
 
     private val exec =
-        def newPool =
-            new ThreadPoolExecutor(
-                0,
-                Integer.MAX_VALUE,
-                60L,
-                TimeUnit.SECONDS,
-                new ArrayBlockingQueue(maxWorkers),
-                Threads("kyo-scheduler")
-            )
+        def newPool = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
         if virtualizeWorkers then
             try
                 val v     = Thread.ofVirtual()
