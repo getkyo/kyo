@@ -1,6 +1,9 @@
 package kyo.scheduler
 
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
 import kyo.Logs
 import kyo.Stats
@@ -17,7 +20,7 @@ private[kyo] object Scheduler:
     private val minWorkers    = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
     private val maxWorkers    = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
     private val scheduleTries = Math.max(1, Flag("scheduleTries", 8))
-    private val virtualizeWorkers = Flag("virtualizeWorkers", true)
+    private val virtualizeWorkers = Flag("virtualizeWorkers", false)
 
     @volatile private var maxConcurrency   = coreWorkers
     @volatile private var allocatedWorkers = maxConcurrency
@@ -25,7 +28,15 @@ private[kyo] object Scheduler:
     private val workers = new Array[Worker](maxWorkers)
 
     private val exec =
-        def newPool = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
+        def newPool =
+            new ThreadPoolExecutor(
+                0,
+                Integer.MAX_VALUE,
+                60L,
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue(maxWorkers),
+                Threads("kyo-scheduler")
+            )
         if virtualizeWorkers then
             try
                 val v     = Thread.ofVirtual()
