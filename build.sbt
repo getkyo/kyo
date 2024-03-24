@@ -197,6 +197,20 @@ lazy val `kyo-llm-bench` =
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.1"
         )
 
+lazy val `kyo-examples` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-examples"))
+        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-direct`)
+        .dependsOn(`kyo-os-lib`)
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.9.11"
+        )
+
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)

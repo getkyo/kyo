@@ -1,0 +1,1 @@
+This example is from a performance benchmark challenge designed to process financial transactions with relaxed durability. Requests are handled directly in memory using shared mapped files between the API instances, and the transaction log is written asynchronously.
