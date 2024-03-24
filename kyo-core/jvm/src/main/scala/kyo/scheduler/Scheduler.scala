@@ -2,13 +2,12 @@ package kyo.scheduler
 
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.LongAdder
-import kyo.Logs
 import kyo.Stats
 import kyo.scheduler.util.Flag
+import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import scala.annotation.tailrec
-import scala.util.control.NonFatal
 
 private[kyo] object Scheduler:
 
@@ -25,25 +24,11 @@ private[kyo] object Scheduler:
     private val workers = new Array[Worker](maxWorkers)
 
     private val exec =
-        def newPool = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
+        def pool = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
         if virtualizeWorkers then
-            try
-                val v     = Thread.ofVirtual()
-                val field = v.getClass().getDeclaredField("scheduler")
-                field.setAccessible(true)
-                field.set(v, newPool)
-                Executors.newThreadPerTaskExecutor(v.name("kyo-worker").factory())
-            catch
-                case ex if (NonFatal(ex)) =>
-                    Logs.logger.warn(
-                        "Warning: Kyo's scheduler is using a less efficient system-wide thread pool. " +
-                            "For better performance, add '--add-opens=java.base/java.lang=ALL-UNNAMED' to " +
-                            "your JVM arguments to use a dedicated thread pool. This step is needed due to " +
-                            "limitations in Loom with customizing thread executors."
-                    )
-                    newPool
+            LoomSupport.tryVirtualize(pool)
         else
-            newPool
+            pool
         end if
     end exec
 

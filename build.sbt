@@ -44,7 +44,6 @@ lazy val `kyo-settings` = Seq(
     sonatypeProfileName                := "io.getkyo",
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
-    scalacOptions ++= Seq("-release:21"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
 )
 
@@ -271,12 +270,3 @@ lazy val `js-settings` = Seq(
     fork                    := false,
     jsEnv := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120")))
 )
-
-Global / onLoad := {
-  val old = (Global / onLoad).value
-  val javaVersion = System.getProperty("java.version")
-  if (!javaVersion.startsWith("21")) {
-    throw new Exception("This project requires Java 21")
-  }
-  old
-}
