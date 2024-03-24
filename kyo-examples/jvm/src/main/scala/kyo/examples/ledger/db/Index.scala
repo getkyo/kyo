@@ -1,7 +1,6 @@
 package kyo.examples.ledger.db
 
 import Index.*
-import java.lang.foreign.Arena.global
 import java.lang.reflect.Field
 import java.nio.channels.FileChannel
 import java.nio.channels.FileChannel.MapMode.READ_WRITE
@@ -42,8 +41,11 @@ object Index:
         private val paddedEntrySize    = 1024
         private val fileSize           = paddedEntrySize * limits.size
 
-        private val address =
-            file.map(READ_WRITE, 0, fileSize, global()).address();
+        private val address: Long =
+            val buffer       = file.map(READ_WRITE, 0, fileSize)
+            val addressField = buffer.getClass().getDeclaredMethod("address");
+            addressField.invoke(buffer).asInstanceOf[Long];
+        end address
 
         private case class Buffers(
             descChars: Array[Char] = new Array[Char](10),
