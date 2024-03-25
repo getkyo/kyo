@@ -9,7 +9,7 @@ class envsTest extends KyoTest:
             Envs[Int].get.map(_ + 1)
         val v2: Int < Envs[Int] = v1
         assert(
-            Envs[Int].run(1)(v2) ==
+            IOs.run(Envs[Int].run(1)(v2)) ==
                 2
         )
     }
@@ -19,7 +19,7 @@ class envsTest extends KyoTest:
             Envs[Int].use(_ + 1)
         val v2: Int < Envs[Int] = v1
         assert(
-            Envs[Int].run(1)(v2) ==
+            IOs.run(Envs[Int].run(1)(v2)) ==
                 2
         )
     }
@@ -35,7 +35,7 @@ class envsTest extends KyoTest:
             t2(42)
         def t3(v: Int < Envs[String]) =
             Envs[String].run("a")(v)
-        val _: Int < Any =
+        val _: Int < IOs =
             t3(42)
         succeed
     }
@@ -44,12 +44,12 @@ class envsTest extends KyoTest:
         assertDoesNotCompile("""
             def t1(v: Int < Envs[Int & String]) =
                 Envs[Int].run[Int, Any, Nothing](1)(v)
-            val _: Int < Any = t1(42)
+            val _: Int < IOs = t1(42)
         """)
     }
 
     "no transformations" in {
-        assert(Envs[Int].run(1)(Envs[Int].get) == 1)
+        assert(IOs.run(Envs[Int].run(1)(Envs[Int].get)) == 1)
     }
 
     "pure services" - {
@@ -68,7 +68,7 @@ class envsTest extends KyoTest:
             val a =
                 Envs[Service1].get.map(_(1))
             assert(
-                Envs[Service1].run(service1)(a) ==
+                IOs.run(Envs[Service1].run(service1)(a)) ==
                     2
             )
         }
@@ -94,7 +94,7 @@ class envsTest extends KyoTest:
                 val v1 =
                     Envs[Service1].run(service1)(v)
                 assert(
-                    Envs[Service2].run(service2)(v1) ==
+                    IOs.run(Envs[Service2].run(service2)(v1)) ==
                         4
                 )
             }
@@ -122,7 +122,7 @@ class envsTest extends KyoTest:
                 val a =
                     Envs[Service1].get.map(_(1))
                 assert(
-                    Options.run(Envs[Service1].run(service1)(a)) ==
+                    IOs.run(Options.run(Envs[Service1].run(service1)(a))) ==
                         Some(2)
                 )
             }
