@@ -19,11 +19,12 @@ Kyo is available on Maven Central in multiple modules:
 
 | Module           | Scala 3 | Scala JS | Description                         |
 |------------------|---------|----------|-------------------------------------|
-| kyo-core         | X       | X        | Core and concurrent effects         |
-| kyo-direct       | X       | X        | Direct syntax support               |
-| kyo-cache        | X       |          | Caffeine caching                    |
-| kyo-stats-otel   | X       |          | Stats exporter for OpenTelemetry    |
-| kyo-sttp         | X       | X        | Sttp HTTP Client                    |
+| kyo-core         | √       | √        | Core and concurrent effects         |
+| kyo-direct       | √       | √        | Direct syntax support               |
+| kyo-cache        | √       |          | Caffeine caching                    |
+| kyo-stats-otel   | √       |          | Stats exporter for OpenTelemetry    |
+| kyo-sttp         | √       | √        | Sttp HTTP Client                    |
+| kyo-tapir        | √       | √        | Tapir HTTP Server                   |
 
 For Scala 3:
 
@@ -33,6 +34,7 @@ libraryDependencies += "io.getkyo" %% "kyo-direct" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-cache" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-stats-otel" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-sttp" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-tapir" % "<version>"
 ```
 
 For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, and `kyo-sttp`):
@@ -1657,7 +1659,66 @@ Users are free to use any JSON libraries supported by Sttp; however, [zio-json](
 
 ### Routes: HTTP Server via Tapir
 
-Coming soon..
+`Routes` integrates with the Tapir library to help set up HTTP servers. The method `Routes.add` is used for adding routes. This method requires the definition of a route, which can be an Tapir Endpoint instance or a builder function. Additionally, the method requires the implementation of the endpoint, which is provided as the second parameter group. To start the server, the `Routes` effect is handled, which initializes the HTTP server with the specified routes.
+
+```scala
+import kyo.*
+import sttp.tapir.*
+import sttp.tapir.server.netty.*
+
+// A simple health route using an endpoint builder
+val a: Unit < Routes =
+  Routes.add(
+      _.get.in("health")
+          .out(stringBody)
+  ) { _ => 
+    "ok" 
+  }
+
+// The endpoint can also be defined separately
+val health2 = endpoint.get.in("health2").out(stringBody)
+
+val b: Unit < Routes =
+  Routes.add(health2)(_ => "ok")
+
+// Starting the server by handling the effect
+val c: NettyKyoServerBinding < Fibers =
+  Routes.run(a.andThen(b))
+
+// Alternatively, a customized server configuration can be used
+val d: NettyKyoServerBinding < Fibers =
+  Routes.run(NettyKyoServer().port(9999))(a.andThen(b))
+```
+
+The parameters for Tapir's endpoint type are aligned with Kyo effects as follows:
+
+`Endpoint[SECURITY_INPUT, INPUT, ERROR_OUTPUT, OUTPUT, CAPABILITIES]`
+
+This translates to the endpoint function format:
+
+`INPUT => OUTPUT < (Envs[SECURITY_INPUT] & Aborts[ERROR_OUTPUT])`
+
+Currently, the `CAPABILITIES` parameter is not supported in Kyo since streaming functionality is not available. An example of using these parameters is shown below:
+
+```scala
+import kyo.*
+import sttp.tapir.*
+import sttp.model.*
+
+// An endpoint with an 'Int' path input and 'StatusCode' error output
+val a: Unit < Routes =
+  Routes.add(
+    _.get.in("test" / path[Int]("id"))
+      .errorOut(statusCode)
+      .out(stringBody)
+  ) { (id: Int) =>
+    if(id == 42) "ok"
+    else Aborts[StatusCode].fail(StatusCode.NotFound)
+    // returns a 'String < Aborts[StatusCode]'
+  }
+```
+
+For further examples, Kyo's [example ledger service](https://github.com/getkyo/kyo/tree/main/kyo-examples/jvm/src/main/scala/kyo/examples/ledger) provides practical applications of these concepts.
 
 ### AIs: LLM Abstractions via OpenAI
 
