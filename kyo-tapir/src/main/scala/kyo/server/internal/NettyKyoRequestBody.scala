@@ -21,10 +21,11 @@ private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoStt
 
     override def publisherToBytes(
         publisher: Publisher[HttpContent],
+        contentLength: Option[Int],
         maxBytes: Option[Long]
     ): KyoSttpMonad.M[Array[Byte]] =
         Fibers.initPromise[Array[Byte]].map { p =>
-            val fut = SimpleSubscriber.processAll(publisher, maxBytes)
+            val fut = SimpleSubscriber.processAll(publisher, contentLength, maxBytes)
             fut.onComplete(r => IOs.run(p.complete(IOs(r.get))))(ExecutionContext.parasitic)
             p.get
         }
