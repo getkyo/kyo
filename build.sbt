@@ -219,7 +219,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.typelevel"       %% "cats-effect"        % "3.5.3",
+            libraryDependencies += "org.typelevel"       %% "cats-effect"        % "3.5.4",
             libraryDependencies += "org.typelevel"       %% "log4cats-core"      % "2.6.0",
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"     % "2.6.0",
             libraryDependencies += "dev.zio"             %% "zio-logging"        % "2.2.2",
