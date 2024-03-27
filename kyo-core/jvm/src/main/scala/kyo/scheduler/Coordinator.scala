@@ -1,7 +1,6 @@
 package kyo.scheduler
 
 import java.util.concurrent.Executors
-import jdk.internal.vm.annotation.Contended
 import kyo.Logs
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.MovingStdDev
@@ -24,8 +23,15 @@ private object Coordinator:
     private val adaptTicks = Math.pow(2, adaptExp).intValue()
     private val adaptMask  = adaptTicks - 1
 
-    @Contended @volatile private var ticks: Long = 0L
-    @Contended @volatile private var cycles      = 0L
+    val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
+    
+    @volatile private var ticks: Long = 0L
+    
+    val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
+    
+    @volatile private var cycles      = 0L
+
+    val c1, c2, c3, c4, c5, c6, c7 = 0L // padding
 
     private val delayNs = new MovingStdDev(cycleExp)
 
