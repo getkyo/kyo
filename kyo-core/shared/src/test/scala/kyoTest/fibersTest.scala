@@ -159,7 +159,7 @@ class fibersTest extends KyoTest:
                 assert(r == 1)
             }
         }
-        "n" in runJVM {
+        "multiple" in runJVM {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
             def loop(i: Int, s: String): String < IOs =
@@ -175,6 +175,28 @@ class fibersTest extends KyoTest:
                 assert(r == "a")
                 assert(ac.get() == 10)
                 assert(bc.get() <= Int.MaxValue)
+            }
+        }
+        "waits for the first success" in runJVM {
+            val ex = new Exception
+            Fibers.race(
+                Fibers.sleep(1.millis).andThen(42),
+                IOs.fail[Int](ex)
+            ).map { r =>
+                assert(r == 42)
+            }
+        }
+        "returns the last failure if all fibers fail" in runJVM {
+            val ex1 = new Exception
+            val ex2 = new Exception
+            IOs.attempt(
+                Fibers.race(
+                    Fibers.sleep(1.millis).andThen(IOs.fail[Int](ex1)),
+                    IOs.fail[Int](ex2)
+                )
+            ).map {
+                r =>
+                    assert(r == Failure(ex1))
             }
         }
     }
