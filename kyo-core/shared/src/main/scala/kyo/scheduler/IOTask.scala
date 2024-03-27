@@ -1,57 +1,17 @@
 package kyo.scheduler
 
-import java.util.ArrayDeque
-import java.util.Arrays
 import kyo.*
 import kyo.Locals.State
 import kyo.core.*
 import kyo.core.internal.*
 import kyo.fibersInternal.*
 import kyo.iosInternal.*
-import org.jctools.queues.MpmcArrayQueue
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-private[kyo] object IOTask:
-    private def nullIO[T] = null.asInstanceOf[T < IOs]
-
-    def apply[T](
-        v: T < Fibers,
-        st: Locals.State,
-        ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
-        runtime: Int = 1
-    ): IOTask[T] =
-        val f =
-            if st eq Locals.State.empty then
-                new IOTask[T](v, ensures, runtime)
-            else
-                new IOTask[T](v, ensures, runtime):
-                    override def locals: State = st
-        Scheduler.schedule(f)
-        f
-    end apply
-
-    private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1000)
-    private def buffer(): ArrayDeque[() => Unit] =
-        val b = bufferCache.poll()
-        if b == null then new ArrayDeque()
-        else b
-    end buffer
-
-    object TaskOrdering extends Ordering[IOTask[?]]:
-        override def lt(x: IOTask[?], y: IOTask[?]): Boolean =
-            val r = x.runtime()
-            r == 0 || r < y.runtime()
-        def compare(x: IOTask[?], y: IOTask[?]): Int =
-            y.state - x.state
-    end TaskOrdering
-
-    given ord: Ordering[IOTask[?]] = TaskOrdering
-end IOTask
-
 private[kyo] class IOTask[T](
     private var curr: T < Fibers,
-    private var ensures: Any /*(() => Unit) | ArrayDeque[() => Unit]*/ = null,
+    private var ensures: Ensures,
     @volatile private var state: Int // Math.abs(state) => runtime; state < 0 => preempting
 ) extends IOPromise[T] with Task
     with Preempt:
@@ -73,22 +33,10 @@ private[kyo] class IOTask[T](
         preempt()
 
     @tailrec private def eval(start: Long, curr: T < Fibers): T < Fibers =
-        def finalize() =
-            ensures match
-                case null =>
-                case f: (() => Unit) @unchecked =>
-                    f()
-                case arr: ArrayDeque[() => Unit] @unchecked =>
-                    while !arr.isEmpty() do
-                        val f = arr.poll()
-                        f()
-                    bufferCache.offer(arr)
-            end match
-            ensures = null
-        end finalize
         if check() then
             if isDone() then
-                finalize()
+                ensures.finalize()
+                ensures = Ensures.empty
                 nullIO
             else
                 curr
@@ -149,36 +97,42 @@ private[kyo] class IOTask[T](
 
     def ensure(f: () => Unit): Unit =
         if curr != nullIO then
-            ensures match
-                case null =>
-                    ensures = f
-                case `f` =>
-                case f0: (() => Unit) @unchecked =>
-                    val b = buffer()
-                    b.add(f0)
-                    b.add(f)
-                    ensures = b
-                case arr: ArrayDeque[() => Unit] @unchecked =>
-                    discard(arr.add(f))
+            ensures = ensures.add(f)
 
     def remove(f: () => Unit): Unit =
-        ensures match
-            case null =>
-            case f0: (() => Unit) @unchecked =>
-                if f0 eq f then ensures = null
-            case arr: ArrayDeque[() => Unit] @unchecked =>
-                def loop(): Unit =
-                    if arr.remove(f) then loop()
-                loop()
+        ensures = ensures.remove(f)
 
     final override def toString =
-        val e = ensures match
-            case null =>
-                "[]"
-            case f: (() => Unit) @unchecked =>
-                s"[$f]"
-            case arr: ArrayDeque[() => Unit] @unchecked =>
-                Arrays.toString(arr.toArray)
-        s"IOTask(id=${hashCode},preempting=${check()},curr=$curr,ensures=$e,runtime=${runtime()},state=${get()})"
+        s"IOTask(id=${hashCode},preempting=${check()},curr=$curr,ensures=${ensures.size()},runtime=${runtime()},state=${get()})"
     end toString
+end IOTask
+
+private[kyo] object IOTask:
+    private def nullIO[T] = null.asInstanceOf[T < IOs]
+
+    def apply[T](
+        v: T < Fibers,
+        st: Locals.State,
+        ensures: Ensures = Ensures.empty,
+        runtime: Int = 1
+    ): IOTask[T] =
+        val f =
+            if st eq Locals.State.empty then
+                new IOTask[T](v, ensures, runtime)
+            else
+                new IOTask[T](v, ensures, runtime):
+                    override def locals: State = st
+        Scheduler.schedule(f)
+        f
+    end apply
+
+    object TaskOrdering extends Ordering[IOTask[?]]:
+        override def lt(x: IOTask[?], y: IOTask[?]): Boolean =
+            val r = x.runtime()
+            r == 0 || r < y.runtime()
+        def compare(x: IOTask[?], y: IOTask[?]): Int =
+            y.state - x.state
+    end TaskOrdering
+
+    given ord: Ordering[IOTask[?]] = TaskOrdering
 end IOTask
