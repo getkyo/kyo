@@ -11,6 +11,7 @@ import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
+import scala.runtime.AbstractFunction1
 import scala.util.*
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
@@ -171,24 +172,33 @@ object Fibers extends Joins[Fibers]:
                 }
 
     def race[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): T < Fibers =
-        l.size match
-            case 0 => IOs.fail("Can't race an empty list.")
-            case 1 => l(0)
-            case _ =>
-                Fibers.get(raceFiber[T](l))
+        Fibers.get(raceFiber[T](l))
 
     def raceFiber[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Fiber[T] < IOs =
         l.size match
             case 0 => IOs.fail("Can't race an empty list.")
             case 1 => Fibers.run(l(0))
-            case _ =>
+            case size =>
                 Locals.save.map { st =>
                     IOs {
-                        val p = new IOPromise[T]
+                        class State extends AbstractFunction1[T < IOs, Unit]:
+                            val p       = new IOPromise[T]
+                            val pending = new AtomicInteger(size)
+                            def apply(v: T < IOs): Unit =
+                                val last = pending.decrementAndGet() == 0
+                                try discard(p.complete(IOs.run(v)))
+                                catch
+                                    case ex if (NonFatal(ex)) =>
+                                        if last then discard(p.complete(IOs.fail(ex)))
+                                end try
+                            end apply
+                        end State
+                        val state = new State
+                        import state.*
                         foreach(l) { (i, io) =>
                             val f = IOTask(IOs(io), st)
                             p.interrupts(f)
-                            f.onComplete(v => discard(p.complete(v)))
+                            f.onComplete(state)
                         }
                         Promise(p)
                     }
