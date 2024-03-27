@@ -44,6 +44,7 @@ lazy val `kyo-settings` = Seq(
     sonatypeProfileName                := "io.getkyo",
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme := Some("early-semver"),
+    scalacOptions ++= Seq("-release:11"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
 )
 
