@@ -17,9 +17,9 @@ object Latches:
         n.map { n =>
             if n <= 0 then
                 new Latch:
-                    val await   = ()
-                    val release = ()
-                    val pending = 0
+                    def await   = ()
+                    def release = ()
+                    def pending = 0
 
                     override def toString = "Latches(0)"
             else
@@ -28,7 +28,7 @@ object Latches:
                         val promise = Fibers.unsafeInitPromise[Unit]
                         val count   = new AtomicInteger(n)
 
-                        val await = promise.get
+                        def await = promise.get
 
                         val release =
                             IOs {
@@ -40,7 +40,7 @@ object Latches:
                                     ()
                             }
 
-                        val pending = IOs(count.get())
+                        def pending = IOs(count.get())
 
                         override def toString = s"Latches($count)"
                 }
