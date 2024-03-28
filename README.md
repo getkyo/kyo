@@ -1036,7 +1036,7 @@ import scala.util._
 import scala.concurrent._
 
 // An example fiber
-val a: Fiber[Int] = Fibers.value(42)
+val a: Fiber[Int] = Fiber.value(42)
 
 // Check if the fiber is done
 val b: Boolean < IOs =
@@ -1064,10 +1064,10 @@ val f: Boolean < IOs =
 val h: Future[Int] < IOs =
   a.toFuture
 
-// The 'transform' method is similar to `flatMap`
+// The 'transform' method is equivalent to `flatMap`
 // in Scala's 'Future'
 val i: Fiber[Int] < IOs =
-  a.transform(v => Fibers.value(v + 1))
+  a.transform(v => Fiber.value(v + 1))
 ```
 
 Similarly to `IOs`, users should avoid handling the `Fibers` effect directly and rely on `KyoApp` instead. If strictly necessary, there are two methods to handle the `Fibers` effect:
