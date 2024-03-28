@@ -67,7 +67,10 @@ object Channels:
                         }
                     val poll =
                         op {
-                            try u.poll()
+                            try
+                                u.poll() match
+                                    case null => None
+                                    case v    => Some(v)
                             finally flush()
                         }
 
@@ -75,7 +78,7 @@ object Channels:
                         op {
                             try
                                 if u.offer(v) then
-                                    Fibers.value(())
+                                    Fiber.unit
                                 else
                                     val p = Fibers.unsafeInitPromise[Unit]
                                     puts.add((v, p))
@@ -88,12 +91,12 @@ object Channels:
                         op {
                             try
                                 u.poll() match
-                                    case Some(v) =>
-                                        Fibers.value(v)
-                                    case None =>
+                                    case null =>
                                         val p = Fibers.unsafeInitPromise[T]
                                         takes.add(p)
                                         p
+                                    case v =>
+                                        Fiber.value(v)
                             finally
                                 flush()
                         }
@@ -142,11 +145,11 @@ object Channels:
                             val p = takes.poll()
                             if p != null.asInstanceOf[Promise[T]] then
                                 u.poll() match
-                                    case None =>
+                                    case null =>
                                         // If the queue has been emptied before the
                                         // transfer, requeue the consumer's promise.
                                         discard(takes.add(p))
-                                    case Some(v) =>
+                                    case v =>
                                         if !p.unsafeComplete(v) && !u.offer(v) then
                                             // If completing the take fails and the queue
                                             // cannot accept the value back, enqueue a

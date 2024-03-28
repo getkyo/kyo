@@ -12,8 +12,8 @@ class Queue[T] private[kyo] (private[kyo] val unsafe: Queues.Unsafe[T]):
     def isEmpty: Boolean < IOs      = op(unsafe.isEmpty())
     def isFull: Boolean < IOs       = op(unsafe.isFull())
     def offer(v: T): Boolean < IOs  = op(unsafe.offer(v))
-    def poll: Option[T] < IOs       = op(unsafe.poll())
-    def peek: Option[T] < IOs       = op(unsafe.peek())
+    def poll: Option[T] < IOs       = op(Option(unsafe.poll()))
+    def peek: Option[T] < IOs       = op(Option(unsafe.peek()))
     def drain: Seq[T] < IOs         = op(unsafe.drain())
     def isClosed: Boolean < IOs     = IOs(unsafe.isClosed())
     def close: Option[Seq[T]] < IOs = IOs(unsafe.close())
@@ -39,15 +39,15 @@ object Queues:
         def isEmpty(): Boolean
         def isFull(): Boolean
         def offer(v: T): Boolean
-        def poll(): Option[T]
-        def peek(): Option[T]
+        def poll(): T 
+        def peek(): T 
 
         def drain(): Seq[T] =
             def loop(acc: List[T]): List[T] =
                 poll() match
-                    case None =>
+                    case null =>
                         acc.reverse
-                    case Some(v) =>
+                    case v =>
                         loop(v :: acc)
             loop(Nil)
         end drain
@@ -78,8 +78,8 @@ object Queues:
                             def isEmpty()   = true
                             def isFull()    = true
                             def offer(v: T) = false
-                            def poll()      = None
-                            def peek()      = None
+                            def poll()      = null.asInstanceOf[T]
+                            def peek()      = null.asInstanceOf[T]
                     )
                 case 1 =>
                     new Queue(
@@ -90,8 +90,8 @@ object Queues:
                             def isEmpty()   = state.get() == null
                             def isFull()    = state.get() != null
                             def offer(v: T) = state.compareAndSet(null.asInstanceOf[T], v)
-                            def poll()      = Option(state.getAndSet(null.asInstanceOf[T]))
-                            def peek()      = Option(state.get())
+                            def poll()      = state.getAndSet(null.asInstanceOf[T])
+                            def peek()      = state.get()
                     )
                 case Int.MaxValue =>
                     initUnbounded(access)
@@ -177,8 +177,8 @@ object Queues:
                 def isEmpty()   = q.isEmpty()
                 def isFull()    = false
                 def offer(v: T) = q.offer(v)
-                def poll()      = Option(q.poll)
-                def peek()      = Option(q.peek)
+                def poll()      = q.poll
+                def peek()      = q.peek
         )
 
     private def fromJava[T](q: java.util.Queue[T], _capacity: Int): Queue[T] =
@@ -189,7 +189,7 @@ object Queues:
                 def isEmpty()   = q.isEmpty()
                 def isFull()    = q.size >= _capacity
                 def offer(v: T) = q.offer(v)
-                def poll()      = Option(q.poll)
-                def peek()      = Option(q.peek)
+                def poll()      = q.poll
+                def peek()      = q.peek
         )
 end Queues

@@ -27,7 +27,19 @@ sealed abstract class Fiber[+T]:
     def transform[U: Flat](t: T => Fiber[U] < IOs): Fiber[U] < IOs
 end Fiber
 
-case class Promise[T: Flat](private[kyo] val p: IOPromise[T]) extends Fiber[T]:
+object Fiber:
+
+    val unit: Fiber[Unit] = value(())
+
+    def value[T: Flat](v: T): Fiber[T] =
+        Done(v)
+
+    def fail[T: Flat](ex: Throwable): Fiber[T] =
+        Done(IOs.fail(ex))
+
+end Fiber
+
+case class Promise[T: Flat] private[kyo] (private[kyo] val p: IOPromise[T]) extends Fiber[T]:
 
     def isDone = IOs(p.isDone())
 
@@ -105,12 +117,6 @@ object Fibers extends Joins[Fibers]:
     ): T < (IOs & S) =
         FiberGets.runAndBlock(timeout)(v)
 
-    def value[T: Flat](v: T): Fiber[T] =
-        Done(v)
-
-    def fail[T: Flat](ex: Throwable): Fiber[T] =
-        Done(IOs.fail(ex))
-
     def get[T, S](v: Fiber[T] < S): T < (Fibers & S) =
         v.map(_.get)
 
@@ -140,7 +146,7 @@ object Fibers extends Joins[Fibers]:
 
     def parallelFiber[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Fiber[Seq[T]] < IOs =
         l.size match
-            case 0 => Done(Seq.empty)
+            case 0 => Fiber.value(Seq.empty)
             case 1 => Fibers.run(l(0).map(Seq(_)))
             case _ =>
                 Locals.save.map { st =>
@@ -299,7 +305,7 @@ object fibersInternal:
 
         private val deepHandler =
             new DeepHandler[Fiber, FiberGets, IOs]:
-                def pure[T: Flat](v: T) = Done(v)
+                def pure[T: Flat](v: T) = Fiber.value(v)
                 def resume[T, U: Flat](m: Fiber[T], f: T => Fiber[U] < IOs) =
                     m.transform(f)
 
@@ -312,7 +318,7 @@ object fibersInternal:
         ): T < (IOs & S) =
             val handler =
                 new Handler[Fiber, FiberGets, IOs]:
-                    def pure[T: Flat](v: T) = Done(v)
+                    def pure[T: Flat](v: T) = Fiber.value(v)
                     def resume[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
                         m match
                             case m: Promise[T] @unchecked =>
