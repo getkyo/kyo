@@ -25,10 +25,21 @@ private[kyo] class IOPromise[T](state: State[T])
         loop(this)
     end isDone
 
-    final def interrupts(p: IOPromise[?]): Unit =
-        onComplete { _ =>
-            discard(p.interrupt())
-        }
+    final def interrupts(i: IOPromise[?]): Unit =
+        @tailrec def loop(promise: IOPromise[T]): Unit =
+            promise.get() match
+                case p: Pending[T] @unchecked =>
+                    if !promise.compareAndSet(p, p.interrupt(i)) then
+                        loop(promise)
+                case l: Linked[T] @unchecked =>
+                    loop(l.p)
+                case v =>
+                    try discard(i.interrupt())
+                    catch
+                        case ex if NonFatal(ex) =>
+                            Logs.unsafe.error("uncaught exception", ex)
+        loop(this)
+    end interrupts
 
     final def interrupt(): Boolean =
         @tailrec def loop(promise: IOPromise[T]): Boolean =
@@ -176,6 +187,13 @@ private[kyo] object IOPromise:
                         case ex if NonFatal(ex) =>
                             Logs.unsafe.error("uncaught exception", ex)
                     end try
+                    self
+                end run
+
+        final def interrupt(p: IOPromise[?]): Pending[T] =
+            new Pending[T]:
+                def run(v: T < IOs) =
+                    p.interrupt()
                     self
                 end run
 
