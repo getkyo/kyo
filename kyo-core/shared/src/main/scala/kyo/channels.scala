@@ -45,7 +45,7 @@ object Channels:
             IOs {
                 new Channel[T]:
 
-                    val u     = queue.unsafe
+                    def u     = queue.unsafe
                     val takes = new MpmcUnboundedXaddArrayQueue[Promise[T]](8)
                     val puts  = new MpmcUnboundedXaddArrayQueue[(T, Promise[Unit])](8)
 
@@ -60,9 +60,7 @@ object Channels:
                         }
                     def offerUnit(v: T) =
                         op {
-                            try
-                                u.offer(v)
-                                ()
+                            try discard(u.offer(v))
                             finally flush()
                         }
                     val poll =

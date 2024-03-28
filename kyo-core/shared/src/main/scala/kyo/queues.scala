@@ -39,8 +39,8 @@ object Queues:
         def isEmpty(): Boolean
         def isFull(): Boolean
         def offer(v: T): Boolean
-        def poll(): T 
-        def peek(): T 
+        def poll(): T
+        def peek(): T
 
         def drain(): Seq[T] =
             def loop(acc: List[T]): List[T] =
