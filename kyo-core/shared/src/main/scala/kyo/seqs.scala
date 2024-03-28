@@ -43,17 +43,32 @@ object Seqs extends Seqs:
     end traverseUnit
 
     def collect[T, S](v: Seq[T < S]): Seq[T] < S =
-        val b = Seq.newBuilder[T]
-        def loop(v: Seq[T < S]): Seq[T] < S =
-            v match
-                case Seq() =>
-                    b.result()
-                case h +: t =>
-                    h.map { t1 =>
-                        b += t1
-                        loop(t)
-                    }
-        loop(v)
+        v match
+            case v: IndexedSeq[T < S] =>
+                val r = new Array[Any](v.size).asInstanceOf[Array[T]]
+                def loop(i: Int): Seq[T] < S =
+                    if i == v.size then
+                        r.toIndexedSeq
+                    else
+                        v(i).map { t =>
+                            r(i) = t
+                            loop(i + 1)
+                        }
+                loop(0)
+            case _ =>
+                val b = Seq.newBuilder[T]
+                def loop(v: Seq[T < S]): Seq[T] < S =
+                    if v.isEmpty then
+                        b.result()
+                    else
+                        v.head.map { t1 =>
+                            b += t1
+                            loop(v.tail)
+                        }
+                    end if
+                end loop
+                loop(v)
+        end match
     end collect
 
     def collectUnit[T, S](v: Seq[Unit < S]): Unit < S =
@@ -64,11 +79,16 @@ object Seqs extends Seqs:
     end collectUnit
 
     def fill[T, S](n: Int)(v: => T < S): Seq[T] < S =
-        def loop(n: Int, acc: Seq[T]): Seq[T] < S =
-            n match
-                case 0 => acc.reverse
-                case n => v.map(v => loop(n - 1, v +: acc))
-        loop(n, Seq())
+        val r = new Array[Any](n).asInstanceOf[Array[T]]
+        def loop(i: Int): Seq[T] < S =
+            if i == n then
+                r.toIndexedSeq
+            else
+                v.map { e =>
+                    r(i) = e
+                    loop(i + 1)
+                }
+        loop(0)
     end fill
 
     private val handler: ResultHandler[Seq, Seq, Seqs, Any] =
