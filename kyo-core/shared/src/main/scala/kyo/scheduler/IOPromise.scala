@@ -164,7 +164,7 @@ private[kyo] class IOPromise[T](state: State[T])
                     loop(l.p)
                 case v =>
                     v.asInstanceOf[T < IOs]
-        loop(this)
+        IOs(loop(this))
     end block
 end IOPromise
 
