@@ -38,7 +38,13 @@ object Fiber:
 
 end Fiber
 
-case class Promise[T: Flat] private[kyo] (private[kyo] val p: IOPromise[T]) extends Fiber[T]:
+object Promise:
+    def apply[T: Flat](p: IOPromise[T]): Promise[T] =
+        new Promise(p)
+
+case class Promise[T] private (private val p: IOPromise[T]) extends Fiber[T]:
+
+    import Flat.unsafe.bypass // avoid capturing
 
     def isDone = IOs(p.isDone())
 
@@ -51,7 +57,7 @@ case class Promise[T: Flat] private[kyo] (private[kyo] val p: IOPromise[T]) exte
             p.onComplete { t =>
                 discard(r.complete(IOs.attempt(t)))
             }
-            Promise(r).get
+            new Promise(r).get
         }
 
     def onComplete(f: T < IOs => Unit < IOs) =
@@ -87,7 +93,7 @@ case class Promise[T: Flat] private[kyo] (private[kyo] val p: IOPromise[T]) exte
                     case ex if (NonFatal(ex)) =>
                         discard(r.complete(IOs.fail(ex)))
             }
-            Promise(r)
+            new Promise(r)
         }
 
     def complete(v: T < IOs): Boolean < IOs = IOs(p.complete(v))
@@ -134,7 +140,11 @@ object Fibers extends Joins[Fibers]:
         ) ev: S => IOs,
         f: Flat[T < (Fibers & S)]
     ): Fiber[T] < (IOs & S) =
-        Locals.save.map(st => Promise(IOTask(IOs(v.asInstanceOf[T < Fibers]), st)))
+        Locals.save.map(st =>
+            Promise(IOTask(IOs(v.asInstanceOf[T < Fibers]), st))(
+                using Flat.unsafe.bypass // avoid capturing
+            )
+        )
 
     def parallel[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Seq[T] < Fibers =
         l.size match
