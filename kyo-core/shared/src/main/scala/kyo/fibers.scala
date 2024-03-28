@@ -11,7 +11,6 @@ import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
-import scala.runtime.AbstractFunction1
 import scala.util.*
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
@@ -151,29 +150,29 @@ object Fibers extends Joins[Fibers]:
             case _ =>
                 Locals.save.map { st =>
                     IOs {
-                        class State:
-                            val p       = new IOPromise[Seq[T]]
-                            val size    = l.size
-                            val results = (new Array[Any](size)).asInstanceOf[Array[T]]
-                            val pending = new AtomicInteger(size)
-                            val flat    = f
+                        class State extends IOPromise[Seq[T]]:
+                            val results = (new Array[Any](l.size)).asInstanceOf[Array[T]]
+                            val pending = new AtomicInteger(l.size)
                         end State
                         val state = new State
+                        import state.*
                         foreach(l) { (i, io) =>
-                            import state.*
                             val fiber = IOTask(IOs(io), st)
-                            p.interrupts(fiber)
+                            state.interrupts(fiber)
                             fiber.onComplete { r =>
                                 try
-                                    results(i) = IOs.run(r)(using flat)
+                                    results(i) =
+                                        IOs.run(r)(
+                                            using Flat.unsafe.bypass // bypass to avoid capturing
+                                        )
                                     if pending.decrementAndGet() == 0 then
-                                        discard(p.complete(ArraySeq.unsafeWrapArray(results)))
+                                        discard(state.complete(ArraySeq.unsafeWrapArray(results)))
                                 catch
                                     case ex if (NonFatal(ex)) =>
-                                        discard(p.complete(IOs.fail(ex)))
+                                        discard(state.complete(IOs.fail(ex)))
                             }
                         }
-                        Promise(state.p)
+                        Promise(state)
                     }
                 }
 
@@ -187,15 +186,14 @@ object Fibers extends Joins[Fibers]:
             case size =>
                 Locals.save.map { st =>
                     IOs {
-                        class State extends AbstractFunction1[T < IOs, Unit]:
-                            val p       = new IOPromise[T]
+                        class State extends IOPromise[T] with Function1[T < IOs, Unit]:
                             val pending = new AtomicInteger(size)
                             def apply(v: T < IOs): Unit =
                                 val last = pending.decrementAndGet() == 0
-                                try discard(p.complete(IOs.run(v)))
+                                try discard(complete(IOs.run(v)))
                                 catch
                                     case ex if (NonFatal(ex)) =>
-                                        if last then discard(p.complete(IOs.fail(ex)))
+                                        if last then discard(complete(IOs.fail(ex)))
                                 end try
                             end apply
                         end State
@@ -203,10 +201,10 @@ object Fibers extends Joins[Fibers]:
                         import state.*
                         foreach(l) { (i, io) =>
                             val f = IOTask(IOs(io), st)
-                            p.interrupts(f)
+                            state.interrupts(f)
                             f.onComplete(state)
                         }
-                        Promise(p)
+                        Promise(state)
                     }
                 }
 
@@ -220,10 +218,7 @@ object Fibers extends Joins[Fibers]:
         initPromise[Unit].map { p =>
             if d.isFinite then
                 val run: Unit < IOs =
-                    IOs {
-                        IOTask(IOs(p.complete(())), Locals.State.empty)
-                        ()
-                    }
+                    IOs(discard(IOTask(IOs(p.complete(())), Locals.State.empty)))
                 Timers.schedule(d)(run).map { t =>
                     IOs.ensure(t.cancel.unit)(p.get)
                 }
@@ -234,10 +229,7 @@ object Fibers extends Joins[Fibers]:
     def timeout[T](d: Duration)(v: => T < Fibers)(using f: Flat[T < Fibers]): T < Fibers =
         init(v).map { f =>
             val timeout: Unit < IOs =
-                IOs {
-                    IOTask(IOs(f.interrupt), Locals.State.empty)
-                    ()
-                }
+                IOs(discard(IOTask(IOs(f.interrupt), Locals.State.empty)))
             Timers.schedule(d)(timeout).map { t =>
                 IOs.ensure(t.cancel.unit)(f.get)
             }

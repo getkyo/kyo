@@ -18,7 +18,7 @@ private[kyo] object Task:
 
     inline def apply(inline r: => Unit): Task =
         new Task:
-            def runtime() = 0
+            def runtime() = 1
             def preempt() = {}
             def run() =
                 try r
