@@ -81,7 +81,7 @@ private object Coordinator:
         end if
     end adapt
 
-    object stats:
+    private object stats:
         var addWorker    = 0L
         var removeWorker = 0L
         val s            = Scheduler.stats.scope.scope("coordinator")

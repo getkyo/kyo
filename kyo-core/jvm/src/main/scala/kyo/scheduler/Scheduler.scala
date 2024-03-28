@@ -39,10 +39,12 @@ private[kyo] object Scheduler:
 
     def addWorker() =
         val m = maxConcurrency
-        if m > allocatedWorkers && maxConcurrency < maxWorkers then
-            workers(m) = new Worker(m, stats.scope, exec)
-            allocatedWorkers += 1
-        maxConcurrency = m + 1
+        if m < maxWorkers then
+            if m > allocatedWorkers then
+                workers(m) = new Worker(m, stats.scope, exec)
+                allocatedWorkers += 1
+            maxConcurrency = m + 1
+        end if
     end addWorker
 
     def removeWorker() =
