@@ -86,7 +86,7 @@ object core:
         ): Handle[T, S2] =
             Recurse(h, v)
 
-        def pure[T](v: T): Result[T]
+        def pure[T](v: T): Result[T] < S
 
         def fail(ex: Throwable): Nothing < E = throw ex
 
@@ -99,7 +99,7 @@ object core:
 
     abstract class Handler[Command[_], E <: Effect[E], S]
         extends ResultHandler[Command, Id, E, S]:
-        def pure[T](v: T): Id[T] = v
+        def pure[T](v: T): Id[T] < S = v
     end Handler
 
     trait Safepoint[-E]:
