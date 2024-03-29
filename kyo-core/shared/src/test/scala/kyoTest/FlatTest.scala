@@ -27,6 +27,7 @@ class FlatTest extends KyoTest:
         }
         "derived" in {
             def test2[T](using f: Flat[T < IOs]) =
+                val _: Flat[T < Options] = f.derive[Options]
                 implicitly[Flat[T]]
                 implicitly[Flat[T < Options]]
                 implicitly[Flat[T < Any]]

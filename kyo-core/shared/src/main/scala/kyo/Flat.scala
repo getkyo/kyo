@@ -2,7 +2,9 @@ package kyo
 
 import internal.FlatImplicits
 
-sealed trait Flat[-T]
+sealed trait Flat[-T]:
+    def derive[S]: Flat[T < S] =
+        this.asInstanceOf[Flat[T < S]]
 
 object Flat extends FlatImplicits:
 
