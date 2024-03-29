@@ -4,9 +4,9 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import kyo.*
 import org.openjdk.jmh.annotations.*
+import scala.annotation.nowarn
 import scala.concurrent.duration.Duration
 import zio.UIO
-import scala.annotation.nowarn
 
 @State(Scope.Benchmark)
 @Fork(
@@ -33,7 +33,7 @@ object Bench:
     end Base
 
     @nowarn
-    abstract class Fork[T]( using f: Flat[T]) extends Base[T]:
+    abstract class Fork[T](using f: Flat[T]) extends Base[T]:
         @Benchmark
         def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block(Duration.Inf)))
 
