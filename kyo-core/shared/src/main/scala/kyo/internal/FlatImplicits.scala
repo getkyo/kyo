@@ -43,10 +43,15 @@ object FlatImplicits:
         def fail(msg: String) =
             report.errorAndAbort(s"Method doesn't accept nested Kyo computations.\n$msg")
 
-        def derive(t: TypeRepr) =
-            t.asType match
-                case '[nt] =>
-                    Expr.summon[Flat[nt]]
+        def canDerive(t: TypeRepr): Boolean =
+            t.dealias match
+                case OrType(left, right) =>
+                    canDerive(left) && canDerive(right)
+                case tpe =>
+                    tpe.asType match
+                        case '[nt] => Expr.summon[Flat[nt]] match
+                                case Some(_) => true
+                                case None    => false
 
         def isAny(t: TypeRepr) =
             t.typeSymbol == TypeRepr.of[Any].typeSymbol
@@ -56,10 +61,10 @@ object FlatImplicits:
 
         def check(t: TypeRepr): Expr[Flat[T]] =
             if isAny(t) || !isConcrete(t.dealias) then
-                derive(t) match
-                    case Some(d) =>
-                        '{ $d.asInstanceOf[Flat[T]] }
-                    case None =>
+                canDerive(t) match
+                    case true =>
+                        '{ Flat.unsafe.bypass[T] }
+                    case false =>
                         fail(
                             s"Cannot prove ${code(print(t))} isn't nested. Provide an implicit evidence ${code(s"kyo.Flat[${print(t)}]")}."
                         )

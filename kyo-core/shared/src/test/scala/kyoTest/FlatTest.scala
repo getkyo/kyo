@@ -30,6 +30,7 @@ class FlatTest extends KyoTest:
                 implicitly[Flat[T]]
                 implicitly[Flat[T < Options]]
                 implicitly[Flat[T < Any]]
+                implicitly[Flat[T | Int]]
             end test2
             test2[Int]
             succeed
@@ -51,6 +52,7 @@ class FlatTest extends KyoTest:
         "generic" in {
             def test1[T] =
                 assertDoesNotCompile("implicitly[Flat[T]]")
+                assertDoesNotCompile("implicitly[Flat[T | Int]]")
                 assertDoesNotCompile("implicitly[Flat[T < Options]]")
                 assertDoesNotCompile("implicitly[Flat[T < Any]]")
             end test1
