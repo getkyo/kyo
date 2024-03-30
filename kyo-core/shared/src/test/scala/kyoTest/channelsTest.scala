@@ -77,6 +77,22 @@ class channelsTest extends KyoTest:
             v  <- f.get
         yield assert(!d1 && d2 && v == 1)
     }
+    "drain" - {
+        "empty" in run {
+            for
+                c <- Channels.init[Int](2)
+                r <- c.drain
+            yield assert(r == Seq())
+        }
+        "non-empty" in run {
+            for
+                c <- Channels.init[Int](2)
+                _ <- c.put(1)
+                _ <- c.put(2)
+                r <- c.drain
+            yield assert(r == Seq(1, 2))
+        }
+    }
     "close" - {
         "empty" in runJVM {
             for

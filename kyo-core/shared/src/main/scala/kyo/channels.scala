@@ -30,6 +30,8 @@ abstract class Channel[T]:
 
     def isClosed: Boolean < IOs
 
+    def drain: Seq[T] < IOs
+
     def close: Option[Seq[T]] < IOs
 end Channel
 
@@ -108,6 +110,8 @@ object Channels:
                         }
 
                     def isClosed = queue.isClosed
+
+                    def drain = queue.drain
 
                     def close =
                         IOs {
