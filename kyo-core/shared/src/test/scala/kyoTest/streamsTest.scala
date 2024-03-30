@@ -5,20 +5,54 @@ import kyo.*
 class streamsTest extends KyoTest:
 
     "emit" - {
-        "non-empty" in {
-            assert(
-                Streams[Int].runSeq(Streams[Int].emit(1).andThen(Streams[Int].emit(2))) == (Seq(
-                    1,
-                    2
-                ), ())
-            )
-        }
 
         "empty" in {
             assert(
                 Streams[Int].runSeq(()) == (Seq.empty, ())
             )
         }
+
+        "value" in {
+            assert(
+                Streams[Int].runSeq(Streams[Int].emit(1).andThen(Streams[Int].emit(2))) ==
+                    (Seq(1, 2), ())
+            )
+        }
+
+        "varargs" in {
+            assert(
+                Streams[Int].runSeq(Streams[Int].emit(1, 2)) ==
+                    (Seq(1, 2), ())
+            )
+        }
+
+        "seq" in {
+            assert(
+                Streams[Int].runSeq(Streams[Int].emit(Seq(1, 2))) ==
+                    (Seq(1, 2), ())
+            )
+        }
+
+        "channel" in run {
+            Channels.init[Int | Streams.Done](3).map { ch =>
+                ch.put(1).andThen(ch.put(2)).andThen(ch.put(Streams.Done)).map { _ =>
+                    Streams[Int].runSeq(Streams[Int].emit(ch)).map { result =>
+                        assert(result == (Seq(1, 2), ()))
+                    }
+                }
+            }
+        }
+
+        "empty channel" in run {
+            Channels.init[Int | Streams.Done](2).map { ch =>
+                ch.put(Streams.Done).andThen {
+                    Streams[Int].runSeq(Streams[Int].emit(ch)).map { result =>
+                        assert(result == (Seq.empty, ()))
+                    }
+                }
+            }
+        }
+
     }
 
     "buffer" - {
@@ -152,6 +186,37 @@ class streamsTest extends KyoTest:
                     Streams[Int].transform(Streams[Int].emit(1, 2, 3))(_.toString)
                 ) == (Seq("1", "2", "3"), ())
             )
+        }
+    }
+
+    "runChannel" - {
+        "non-empty stream" in runJVM {
+            Channels.init[Int | Streams.Done](3).map { ch =>
+                Streams[Int].runChannel(ch)(Streams[Int].emit(1, 2, 3)).map { _ =>
+                    ch.take.map { v1 =>
+                        assert(v1 == 1)
+                        ch.take.map { v2 =>
+                            assert(v2 == 2)
+                            ch.take.map { v3 =>
+                                assert(v3 == 3)
+                                ch.take.map { done =>
+                                    assert(done == Streams.Done)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        "empty stream" in run {
+            Channels.init[Int | Streams.Done](2).map { ch =>
+                Streams[Int].runChannel(ch)(()).map { _ =>
+                    ch.take.map { done =>
+                        assert(done == Streams.Done)
+                    }
+                }
+            }
         }
     }
 
