@@ -27,7 +27,7 @@ object Requests:
         request(f(basicRequest))
 
     def request[T](req: Request[Either[?, T], Any]): T < Fibers =
-        local.get.map(_.send(req)).map {
+        local.use(_.send(req)).map {
             _.body match
                 case Left(ex: Throwable) =>
                     IOs.fail[T](ex)

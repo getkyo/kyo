@@ -36,7 +36,7 @@ object Consoles:
         local.let(c)(v)
 
     val readln: String < IOs =
-        local.get.map(_.readln)
+        local.use(_.readln)
 
     private def toString(v: Any): String =
         v match
@@ -46,14 +46,14 @@ object Consoles:
                 pprint.apply(v).plainText
 
     def print[T](v: T): Unit < IOs =
-        local.get.map(_.print(toString(v)))
+        local.use(_.print(toString(v)))
 
     def printErr[T](v: T): Unit < IOs =
-        local.get.map(_.printErr(toString(v)))
+        local.use(_.printErr(toString(v)))
 
     def println[T](v: T): Unit < IOs =
-        local.get.map(_.println(toString(v)))
+        local.use(_.println(toString(v)))
 
     def printlnErr[T](v: T): Unit < IOs =
-        local.get.map(_.printlnErr(toString(v)))
+        local.use(_.printlnErr(toString(v)))
 end Consoles

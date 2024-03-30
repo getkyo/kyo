@@ -19,5 +19,5 @@ object Clocks:
         local.let(c)(f)
 
     val now: Instant < IOs =
-        local.get.map(_.now)
+        local.use(_.now)
 end Clocks

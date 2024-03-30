@@ -72,7 +72,7 @@ object Stats:
     private val traceReceiver = Locals.init[TraceReceiver](TraceReceiver.get)
 
     def traceListen[T, S](receiver: TraceReceiver)(v: T < S): T < (IOs & S) =
-        traceReceiver.get.map { curr =>
+        traceReceiver.use { curr =>
             traceReceiver.let(TraceReceiver.all(List(curr, receiver)))(v)
         }
 
@@ -114,7 +114,7 @@ object Stats:
                 name: String,
                 attributes: Attributes = Attributes.empty
             )(v: => T < S): T < (IOs & S) =
-                traceReceiver.get.map(internal.Span.trace(_, path.reverse, name, attributes)(v))
+                traceReceiver.use(internal.Span.trace(_, path.reverse, name, attributes)(v))
 
             override def toString = s"Stats(scope = ${path.reverse})"
 end Stats

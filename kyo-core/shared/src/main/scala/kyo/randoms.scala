@@ -32,25 +32,25 @@ object Randoms:
         local.let(r)(v)
 
     val nextInt: Int < IOs =
-        local.get.map(_.nextInt)
+        local.use(_.nextInt)
 
     def nextInt[S](n: Int < S): Int < (S & IOs) =
-        n.map(n => local.get.map(_.nextInt(n)))
+        n.map(n => local.use(_.nextInt(n)))
 
     val nextLong: Long < IOs =
-        local.get.map(_.nextLong)
+        local.use(_.nextLong)
 
     val nextDouble: Double < IOs =
-        local.get.map(_.nextDouble)
+        local.use(_.nextDouble)
 
     val nextBoolean: Boolean < IOs =
-        local.get.map(_.nextBoolean)
+        local.use(_.nextBoolean)
 
     val nextFloat: Float < IOs =
-        local.get.map(_.nextFloat)
+        local.use(_.nextFloat)
 
     val nextGaussian: Double < IOs =
-        local.get.map(_.nextGaussian)
+        local.use(_.nextGaussian)
 
     def nextValue[T, S](seq: Seq[T] < S): T < (S & IOs) =
         seq.map(s => nextInt(s.size).map(idx => s(idx)))

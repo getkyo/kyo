@@ -59,7 +59,7 @@ object Span:
         name: String,
         attributes: Attributes = Attributes.empty
     )(v: => T < S): T < (IOs & S) =
-        currentSpan.get.map { parent =>
+        currentSpan.use { parent =>
             receiver
                 .startSpan(scope, name, parent, attributes)
                 .map { child =>

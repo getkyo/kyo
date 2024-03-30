@@ -31,7 +31,7 @@ end Cut
 final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S]) extends Cut[T, U, S]:
 
     def apply[S2](v: T < S2)(f: T => U < (IOs & S)) =
-        local.get.map { map =>
+        local.use { map =>
             map.get(this) match
                 case Some(a: Cut[T, U, S] @unchecked) =>
                     local.let(map - this) {
@@ -42,7 +42,7 @@ final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S]) extends Cut[T, 
         }
 
     def sandbox[S](v: T < S): T < (IOs & S) =
-        local.get.map { map =>
+        local.use { map =>
             map.get(this) match
                 case Some(a: Cut[T, U, S] @unchecked) =>
                     local.let(map - this) {
@@ -53,7 +53,7 @@ final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S]) extends Cut[T, 
         }
 
     def let[V, S2](a: Cut[T, U, S])(v: V < (IOs & S2)): V < (IOs & S & S2) =
-        local.get.map { map =>
+        local.use { map =>
             val cut =
                 map.get(this) match
                     case Some(b: Cut[T, U, S] @unchecked) =>

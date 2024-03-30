@@ -27,8 +27,10 @@ abstract class Local[T]:
         letLoop(f, v)
     end let
 
-    def use[U, S](f: T => U < S): U < (S & IOs) =
-        get.map(f)
+    inline def use[U, S](inline f: T => U < S): U < (S & IOs) =
+        new KyoIO[U, S]:
+            def apply(v: Unit, s: Safepoint[S & IOs], l: State) =
+                f(get(l))
 
     def update[U, S](f: T => T)(v: U < S): U < (S & IOs) =
         def updateLoop(f: T => T, v: U < S): U < S =
@@ -61,6 +63,11 @@ object Locals:
         new KyoIO[State, Any]:
             def apply(v: Unit, s: Safepoint[IOs], l: Locals.State) =
                 l
+
+    inline def save[U, S](inline f: State => U < S): U < (IOs & S) =
+        new KyoIO[U, S]:
+            def apply(v: Unit, s: Safepoint[IOs & S], l: Locals.State) =
+                f(l)
 
     def restore[T, S](st: State)(f: T < S): T < (IOs & S) =
         def loop(f: T < S): T < S =

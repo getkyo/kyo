@@ -99,7 +99,7 @@ object Timers:
         local.let(timer)(v)
 
     def schedule(delay: Duration)(f: => Unit < Fibers): TimerTask < IOs =
-        local.get.map(_.schedule(delay)(f))
+        local.use(_.schedule(delay)(f))
 
     def scheduleAtFixedRate(
         period: Duration
@@ -110,7 +110,7 @@ object Timers:
         initialDelay: Duration,
         period: Duration
     )(f: => Unit < Fibers): TimerTask < IOs =
-        local.get.map(_.scheduleAtFixedRate(initialDelay, period)(f))
+        local.use(_.scheduleAtFixedRate(initialDelay, period)(f))
 
     def scheduleWithFixedDelay(
         period: Duration
@@ -121,5 +121,5 @@ object Timers:
         initialDelay: Duration,
         period: Duration
     )(f: => Unit < Fibers): TimerTask < IOs =
-        local.get.map(_.scheduleWithFixedDelay(initialDelay, period)(f))
+        local.use(_.scheduleWithFixedDelay(initialDelay, period)(f))
 end Timers

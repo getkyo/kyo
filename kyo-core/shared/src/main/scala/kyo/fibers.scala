@@ -140,11 +140,11 @@ object Fibers extends Joins[Fibers]:
         ) ev: S => IOs,
         f: Flat[T < (Fibers & S)]
     ): Fiber[T] < (IOs & S) =
-        Locals.save.map(st =>
+        Locals.save { st =>
             Promise(IOTask(IOs(v.asInstanceOf[T < Fibers]), st))(
                 using Flat.unsafe.bypass // avoid capturing
             )
-        )
+        }
 
     def parallel[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Seq[T] < Fibers =
         l.size match
@@ -158,7 +158,7 @@ object Fibers extends Joins[Fibers]:
             case 0 => Fiber.value(Seq.empty)
             case 1 => Fibers.run(l(0).map(Seq(_)))
             case _ =>
-                Locals.save.map { st =>
+                Locals.save { st =>
                     IOs {
                         class State extends IOPromise[Seq[T]]:
                             val results = (new Array[Any](l.size)).asInstanceOf[Array[T]]
@@ -194,7 +194,7 @@ object Fibers extends Joins[Fibers]:
             case 0 => IOs.fail("Can't race an empty list.")
             case 1 => Fibers.run(l(0))
             case size =>
-                Locals.save.map { st =>
+                Locals.save { st =>
                     IOs {
                         class State extends IOPromise[T] with Function1[T < IOs, Unit]:
                             val pending = new AtomicInteger(size)
@@ -249,7 +249,7 @@ object Fibers extends Joins[Fibers]:
         Fibers.get(fromFutureFiber(f))
 
     def fromFutureFiber[T: Flat](f: Future[T]): Fiber[T] < IOs =
-        Locals.save.map { st =>
+        Locals.save { st =>
             IOs {
                 val p = new IOPromise[T]()
                 f.onComplete { r =>
