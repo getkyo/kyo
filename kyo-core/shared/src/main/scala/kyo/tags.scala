@@ -4,7 +4,7 @@ import izumi.reflect.dottyreflection.TypeInspections
 import izumi.reflect.macrortti.LightTypeTag
 import scala.quoted.*
 
-opaque type Tag[+T] = String
+opaque type Tag[T] = String
 
 object Tag:
 

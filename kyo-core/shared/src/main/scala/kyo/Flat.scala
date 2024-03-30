@@ -2,11 +2,11 @@ package kyo
 
 import internal.FlatImplicits
 
-sealed trait Flat[-T]:
-    inline def derive[S]: Flat[T < S] =
-        this.asInstanceOf[Flat[T < S]]
+sealed trait Flat[-T]
 
 object Flat extends FlatImplicits:
+
+    inline def derive[T: Flat, S]: Flat[T < S] = Flat.unsafe.bypass
 
     private val cached = new Flat[Any] {}
 
