@@ -1,33 +1,17 @@
 package kyo.scheduler
 
 import kyo.*
-import scala.collection.mutable.PriorityQueue
-import scala.scalajs.js
+import scala.collection.mutable
+import scala.scalajs.concurrent.JSExecutionContext
 
 object Scheduler:
 
-    private val queue   = PriorityQueue[IOTask[?]]()
-    private var running = false
-
-    def schedule(t: IOTask[?]): Unit =
-        queue.enqueue(t)
-        if !running then
-            running = true
-            discard(
-                js.Dynamic.global.setTimeout(
-                    () =>
-                        flush()
-                        running = false
-                    ,
-                    0
-                )
-            )
-        end if
+    def schedule(t: Task): Unit =
+        JSExecutionContext.queue.execute { () =>
+            if t.run() == Task.Preempted then
+                schedule(t)
+        }
     end schedule
 
-    def flush(): Unit =
-        while queue.nonEmpty do
-            val task = queue.dequeue()
-            if task.run() == Task.Preempted then
-                queue.enqueue(task)
+    def flush(): Unit = {}
 end Scheduler
