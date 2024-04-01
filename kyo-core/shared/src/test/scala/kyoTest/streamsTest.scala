@@ -1,6 +1,7 @@
 package kyoTest
 
 import kyo.*
+import scala.concurrent.duration.*
 
 class streamsTest extends KyoTest:
 
@@ -92,6 +93,26 @@ class streamsTest extends KyoTest:
         "empty" in run {
             Streams.initSeq(Seq.empty[Int]).buffer(2).runSeq.map { r =>
                 assert(r == (Seq.empty, ()))
+            }
+        }
+
+        "other effects" - {
+            "ok" - {
+                "IOs" in run {
+                    Streams.initSource[Int](IOs(Streams.emitValue(1))).buffer(10).runSeq.map { r =>
+                        assert(r == (Seq(1), ()))
+                    }
+                }
+                "Fibers" in run {
+                    Streams.initSource[Int](
+                        Fibers.delay(1.nanos)(Streams.emitValue(1))
+                    ).buffer(10).runSeq.map { r =>
+                        assert(r == (Seq(1), ()))
+                    }
+                }
+            }
+            "nok" in run {
+                assertDoesNotCompile("Streams.initSource[Int](Vars[Int].get).buffer(10)")
             }
         }
     }

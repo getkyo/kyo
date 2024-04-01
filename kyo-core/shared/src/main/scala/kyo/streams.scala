@@ -3,6 +3,7 @@ package kyo
 import kyo.*
 import kyo.core.*
 import kyo.core.internal.*
+import scala.annotation.implicitNotFound
 
 opaque type Stream[+T, V, -S] = T < (Streams[V] & S)
 
@@ -78,11 +79,16 @@ object Stream:
             loop[T, S](s)
         end reemit
 
-        def buffer(size: Int)(using S => Fibers): Stream[T, V, Fibers & S] =
+        def buffer(size: Int)(using
+            @implicitNotFound(
+                "Can't buffer a stream with pending effects other than 'Fibers' and 'IOs'. Found: ${S}"
+            ) ev: S => Fibers | IOs
+        ): Stream[T, V, Fibers & S] =
             Channels.init[V | Stream.Done](size).map { ch =>
                 val s2 = s.asInstanceOf[Stream[T, V, Fibers & S]]
-                val a  = Fibers.init(s2.runChannel(ch))
-                a.map(f => Streams.emitChannel[V](ch).andThen(f.get))
+                Fibers.init(s2.runChannel(ch)).map { f =>
+                    Streams.emitChannel[V](ch).andThen(f.get)
+                }
             }
 
         def runFold[A](acc: A)(f: (A, V) => A): (A, T) < S =
@@ -142,18 +148,18 @@ object Streams:
     def initSource[V]: InitSourceDsl[V] = new InitSourceDsl[V]
 
     def initValue[V](v: V)(using Tag[Streams[V]]): Stream[Unit, V, Any] =
-        Stream.source(emitValue(v))
+        initSource(emitValue(v))
 
     def initValue[V](v: V, tail: V*)(using Tag[Streams[V]]): Stream[Unit, V, Any] =
         initSeq(v +: tail)
 
     def initSeq[V](v: Seq[V])(using Tag[Streams[V]]): Stream[Unit, V, Any] =
-        Stream.source(emitSeq(v))
+        initSource(emitSeq(v))
 
     def initChannel[V](ch: Channel[V | Stream.Done])(
         using Tag[Streams[V]]
     ): Stream[Unit, V, Fibers] =
-        Stream.source(emitChannel(ch))
+        initSource(emitChannel(ch))
 
     def emitValue[V](v: V)(using Tag[Streams[V]]): Unit < Streams[V] =
         suspend(Streams[V])(v)
