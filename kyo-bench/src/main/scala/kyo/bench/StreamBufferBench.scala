@@ -1,6 +1,6 @@
 package kyo.bench
 
-class StreamBench extends Bench.SyncAndFork[Int]:
+class StreamBufferBench extends Bench.ForkOnly[Int]:
 
     val seq = (0 until 10000).toList
 
@@ -9,28 +9,31 @@ class StreamBench extends Bench.SyncAndFork[Int]:
         import fs2.*
         Stream.emits(seq)
             .filter(_ % 2 == 0)
+            .buffer(10)
             .map(_ + 1)
             .covary[IO]
             .compile
             .fold(0)(_ + _)
     end catsBench
 
-    def kyoBench() =
+    override def kyoBenchFiber() =
         import kyo.*
         Streams.initSeq(seq)
             .filter(_ % 2 == 0)
+            .buffer(10)
             .transform(_ + 1)
             .runFold(0)(_ + _)
-            .pure._1
-    end kyoBench
+            .map(_._1)
+    end kyoBenchFiber
 
     def zioBench() =
         import zio.*
         import zio.stream.*
         ZStream.fromIterable(seq)
             .filter(_ % 2 == 0)
+            .buffer(10)
             .map(_ + 1)
             .runSum
     end zioBench
 
-end StreamBench
+end StreamBufferBench

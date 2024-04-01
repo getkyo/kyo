@@ -130,4 +130,12 @@ class BenchTest extends AsyncFreeSpec with Assertions:
     "MtlBench" in {
         assert(MtlBench().syncKyo().isRight)
     }
+
+    "StreamBench" - {
+        test(StreamBench(), 25000000)
+    }
+
+    "StreamBufferBench" - {
+        test(StreamBufferBench(), 25000000)
+    }
 end BenchTest
