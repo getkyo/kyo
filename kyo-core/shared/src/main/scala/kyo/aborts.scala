@@ -2,6 +2,7 @@ package kyo
 
 import kyo.core.*
 import scala.reflect.ClassTag
+import scala.util.Try
 import scala.util.control.NonFatal
 
 class Aborts[-V] extends Effect[Aborts[V]]:
@@ -45,6 +46,15 @@ object Aborts:
                 case ex: V =>
                     fail(ex.asInstanceOf[V])
             }
+
+        def trying[T, S](v: T < (Aborts[V] & S))(
+            using
+            Tag[Aborts[V]],
+            ClassTag[V],
+            Flat[T < (Aborts[Throwable] & S)],
+            V <:< Throwable
+        ): Try[T] < S =
+            run(v).map(_.toTry)
 
         def run[T, S, V2](v: T < (Aborts[V | V2] & S))(
             using
