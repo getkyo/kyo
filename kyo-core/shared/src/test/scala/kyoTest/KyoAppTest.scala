@@ -1,11 +1,12 @@
 package kyoTest
 
+import Tagged.*
 import kyo.*
 import scala.concurrent.duration.*
 
-class KyoAppTest extends KyoTest with Tagged.jvmOnly:
+class KyoAppTest extends KyoTest:
 
-    "main" in {
+    "main" taggedAs jvmOnly in {
         val app = new KyoApp:
             run {
                 for
@@ -16,7 +17,7 @@ class KyoAppTest extends KyoTest with Tagged.jvmOnly:
         app.main(Array("arg1", "arg2"))
         succeed
     }
-    "multiple runs" in run {
+    "multiple runs" taggedAs jvmOnly in run {
         for
             ref <- Atomics.initInt(0)
             app = new KyoApp:
@@ -28,7 +29,7 @@ class KyoAppTest extends KyoTest with Tagged.jvmOnly:
             runs <- ref.get
         yield assert(runs == 3)
     }
-    "effects" in {
+    "effects" taggedAs jvmOnly in {
         def run: Int < KyoApp.Effects =
             for
                 _ <- Timers.scheduleAtFixedRate(1.second, 1.second)(())
@@ -41,7 +42,7 @@ class KyoAppTest extends KyoTest with Tagged.jvmOnly:
 
         assert(KyoApp.run(Duration.Inf)(run) == 1)
     }
-    "failing effects" in {
+    "failing effects" taggedAs jvmOnly in {
         def run: Unit < KyoApp.Effects =
             for
                 _ <- Clocks.now
