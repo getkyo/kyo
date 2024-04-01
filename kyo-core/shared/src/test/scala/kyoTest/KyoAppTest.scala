@@ -3,7 +3,7 @@ package kyoTest
 import kyo.*
 import scala.concurrent.duration.*
 
-class KyoAppTest extends KyoTest:
+class KyoAppTest extends KyoTest with Tagged.jvmOnly:
 
     "main" in {
         val app = new KyoApp:
@@ -49,7 +49,7 @@ class KyoAppTest extends KyoTest:
                 _ <- Aborts[Throwable].fail(new RuntimeException("Aborts!"))
             yield ()
 
-        KyoApp.trying(Duration.Inf)(run) match
+        KyoApp.attempt(Duration.Inf)(run) match
             case scala.util.Failure(exception) => assert(exception.getMessage == "Aborts!")
             case _                             => fail("Unexpected Success...")
     }
