@@ -16,7 +16,18 @@ class KyoAppTest extends KyoTest:
         app.main(Array("arg1", "arg2"))
         succeed
     }
+    "multiple runs" in run {
+        for
+            ref <- Atomics.initInt(0)
+            app = new KyoApp:
+                run { ref.getAndIncrement }
+                run { ref.getAndIncrement }
+                run { ref.getAndIncrement }
 
+            _    <- IOs(app.main(Array.empty))
+            runs <- ref.get
+        yield assert(runs == 3)
+    }
     "effects" in {
         def run: Int < KyoApp.Effects =
             for
@@ -27,15 +38,20 @@ class KyoAppTest extends KyoTest:
                 _ <- Resources.ensure(())
                 _ <- Fibers.init(())
             yield 1
-        assert(KyoApp.trying(Duration.Inf)(run) == scala.util.Success(1))
+
+        assert(KyoApp.run(Duration.Inf)(run) == 1)
     }
     "failing effects" in {
         def run: Unit < KyoApp.Effects =
             for
                 _ <- Clocks.now
                 _ <- Randoms.nextInt
-                _ <- Aborts[Throwable].fail(new RuntimeException("FAILED!"))
+                _ <- Aborts[Throwable].fail(new RuntimeException("Aborts!"))
             yield ()
-        assert(KyoApp.trying(Duration.Inf)(run).isFailure)
+
+        KyoApp.trying(Duration.Inf)(run) match
+            case scala.util.Failure(exception) => assert(exception.getMessage == "Aborts!")
+            case _                             => fail("Unexpected Success...")
     }
+
 end KyoAppTest
