@@ -4,6 +4,11 @@ import kyo.*
 
 class methodsTest extends KyoTest:
 
+    "pure" in {
+        assert(IOs.run(IOs(1)).pure == 1)
+        assertDoesNotCompile("IOs(1).pure")
+    }
+
     "map" in {
         assert(IOs.run(IOs(1).map(_ + 1)) == 2)
         assert(IOs.run(IOs(1).map(v => IOs(v + 1))) == 2)
