@@ -141,9 +141,7 @@ end Streams
 
 object Streams:
 
-    class InitSourceDsl[V]:
-        def apply[T, S](v: T < (Streams[V] & S)): Stream[T, V, S] =
-            Stream.source(v)
+    import internal.*
 
     def initSource[V]: InitSourceDsl[V] = new InitSourceDsl[V]
 
@@ -180,4 +178,10 @@ object Streams:
             case v: V =>
                 emitValue(v).andThen(emitChannel(ch))
         }
+
+    object internal:
+        class InitSourceDsl[V]:
+            def apply[T, S](v: T < (Streams[V] & S)): Stream[T, V, S] =
+                Stream.source(v)
+    end internal
 end Streams
