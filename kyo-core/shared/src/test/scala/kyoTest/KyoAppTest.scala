@@ -5,6 +5,18 @@ import scala.concurrent.duration.*
 
 class KyoAppTest extends KyoTest:
 
+    "main" in {
+        val app = new KyoApp:
+            run {
+                for
+                    _ <- Consoles.println(s"Starting with args [${args.mkString(", ")}]")
+                yield "Exit!"
+            }
+
+        app.main(Array("arg1", "arg2"))
+        succeed
+    }
+
     "effects" in {
         def run: Int < KyoApp.Effects =
             for
