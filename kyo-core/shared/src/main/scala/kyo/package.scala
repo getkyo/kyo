@@ -33,7 +33,11 @@ package object kyo:
 
     extension [T, S](v: T < Any)
         inline def pure(using ev: Any => S): T =
-            v.asInstanceOf[T]
+            v match
+                case v: kyo.core.internal.Suspend[?, ?, ?, ?] =>
+                    throw new IllegalStateException("Unhandled effect: " + v.tag)
+                case v =>
+                    v.asInstanceOf[T]
     end extension
 
     def zip[T1, T2, S](v1: T1 < S, v2: T2 < S): (T1, T2) < S =
