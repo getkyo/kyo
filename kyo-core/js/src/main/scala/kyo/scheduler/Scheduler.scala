@@ -1,7 +1,5 @@
 package kyo.scheduler
 
-import kyo.*
-import scala.collection.mutable
 import scala.scalajs.concurrent.JSExecutionContext
 
 object Scheduler:

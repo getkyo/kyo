@@ -32,7 +32,7 @@ package object kyo:
     end extension
 
     extension [T, S](v: T < Any)
-        inline def pure(using ev: Any => S): T =
+        def pure(using ev: Any => S): T =
             v match
                 case v: kyo.core.internal.Suspend[?, ?, ?, ?] =>
                     throw new IllegalStateException("Unhandled effect: " + v.tag)
