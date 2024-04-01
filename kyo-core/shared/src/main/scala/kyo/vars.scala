@@ -18,6 +18,9 @@ class Vars[V] extends Effect[Vars[V]]:
     def get(using Tag[Vars[V]]): V < Vars[V] =
         suspend(this)(Op.Get)
 
+    def use[T, S](f: V => T < S)(using Tag[Vars[V]]): T < (Vars[V] & S) =
+        get.map(f)
+
     def set(value: V)(using Tag[Vars[V]]): Unit < Vars[V] =
         suspend(this)(Op.Set(value))
 

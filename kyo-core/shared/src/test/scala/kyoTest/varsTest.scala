@@ -9,6 +9,11 @@ class varsTest extends KyoTest:
         assert(r == 2)
     }
 
+    "use" in {
+        val r = Vars[Int].run(1)(Vars[Int].use(_ + 1)).pure
+        assert(r == 2)
+    }
+
     "set, get" in {
         val r = Vars[Int].run(1)(Vars[Int].set(2).andThen(Vars[Int].get)).pure
         assert(r == 2)
