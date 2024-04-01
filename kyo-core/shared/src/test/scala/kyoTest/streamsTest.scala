@@ -5,6 +5,8 @@ import scala.concurrent.duration.*
 
 class streamsTest extends KyoTest:
 
+    val n = 100000
+
     "initValue" - {
         "single value" in {
             assert(
@@ -165,7 +167,7 @@ class streamsTest extends KyoTest:
 
         "stack safety" in {
             assert(
-                Streams.initSeq(Seq.fill(100000)(1)).drop(5).runSeq.pure._1.size == 100000 - 5
+                Streams.initSeq(Seq.fill(n)(1)).drop(5).runSeq.pure._1.size == n - 5
             )
         }
     }
@@ -191,7 +193,7 @@ class streamsTest extends KyoTest:
 
         "stack safety" in {
             assert(
-                Streams.initSeq(1 to 100000).filter(_ % 2 == 0).runSeq.pure._1.size == 100000 / 2
+                Streams.initSeq(1 to n).filter(_ % 2 == 0).runSeq.pure._1.size == n / 2
             )
         }
     }
@@ -215,9 +217,9 @@ class streamsTest extends KyoTest:
 
         "stack safety" in {
             assert(
-                Streams.initSeq(1 to 100000).collect {
+                Streams.initSeq(1 to n).collect {
                     case v if v % 2 == 0 => Streams.emitValue(v)
-                }.runSeq.pure._1.size == 100000 / 2
+                }.runSeq.pure._1.size == n / 2
             )
         }
     }
@@ -238,8 +240,8 @@ class streamsTest extends KyoTest:
 
         "stack safety" in {
             assert(
-                Streams.initSeq(Seq.fill(100000)(1)).transform(_ + 1).runSeq.pure ==
-                    (Seq.fill(100000)(2), ())
+                Streams.initSeq(Seq.fill(n)(1)).transform(_ + 1).runSeq.pure ==
+                    (Seq.fill(n)(2), ())
             )
         }
     }
@@ -275,10 +277,10 @@ class streamsTest extends KyoTest:
         }
 
         "stack safety" in run {
-            Channels.init[Int | Stream.Done](100001).map { ch =>
-                Streams.initSeq(Seq.fill(100000)(1)).runChannel(ch).andThen {
+            Channels.init[Int | Stream.Done](n + 1).map { ch =>
+                Streams.initSeq(Seq.fill(n)(1)).runChannel(ch).andThen {
                     ch.drain.map { seq =>
-                        assert(seq.size == 100001)
+                        assert(seq.size == n + 1)
                     }
                 }
             }
@@ -300,7 +302,50 @@ class streamsTest extends KyoTest:
 
         "stack safety" in {
             assert(
-                Streams.initSeq(Seq.fill(100000)(1)).runFold(0)(_ + _).pure == (100000, ())
+                Streams.initSeq(Seq.fill(n)(1)).runFold(0)(_ + _).pure == (n, ())
+            )
+        }
+    }
+
+    "reemit" - {
+        "double" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).reemit(v => Streams.emitValue(v * 2)).runSeq.pure ==
+                    (Seq(2, 4, 6), ())
+            )
+        }
+
+        "to string" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).reemit(v =>
+                    Streams.emitValue(v.toString)
+                ).runSeq.pure ==
+                    (Seq("1", "2", "3"), ())
+            )
+        }
+
+        "filter" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3, 4, 5)).reemit { v =>
+                    if v % 2 == 0 then Streams.emitValue(v)
+                    else ()
+                }.runSeq.pure == (Seq(2, 4), ())
+            )
+        }
+
+        "flatMap" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).reemit(v =>
+                    Streams.emitSeq(Seq.fill(v)(v))
+                ).runSeq.pure ==
+                    (Seq(1, 2, 2, 3, 3, 3), ())
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Streams.initSeq(1 to n).reemit(v => Streams.emitValue(v + 1)).runSeq.pure._1 ==
+                    (2 to n + 1)
             )
         }
     }
