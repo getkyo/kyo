@@ -300,28 +300,28 @@ class streamsTest extends KyoTest:
     "distinct" - {
         "no duplicates" in {
             assert(
-                Streams.initSeq(Seq(1, 2, 3)).distinct.runSeq.pure ==
+                Streams.initSeq(Seq(1, 2, 3)).changes.runSeq.pure ==
                     (Seq(1, 2, 3), ())
             )
         }
 
         "with duplicates" in {
             assert(
-                Streams.initSeq(Seq(1, 2, 2, 3, 2, 3, 3)).distinct.runSeq.pure ==
+                Streams.initSeq(Seq(1, 2, 2, 3, 2, 3, 3)).changes.runSeq.pure ==
                     (Seq(1, 2, 3, 2, 3), ())
             )
         }
 
         "empty stream" in {
             assert(
-                Streams.initSeq(Seq.empty[Int]).distinct.runSeq.pure ==
+                Streams.initSeq(Seq.empty[Int]).changes.runSeq.pure ==
                     (Seq.empty, ())
             )
         }
 
         "stack safety" in {
             assert(
-                Streams.initSeq(Seq.fill(n)(1)).distinct.runSeq.pure ==
+                Streams.initSeq(Seq.fill(n)(1)).changes.runSeq.pure ==
                     (Seq(1), ())
             )
         }
@@ -375,6 +375,98 @@ class streamsTest extends KyoTest:
         }
     }
 
+    "concat" - {
+        "non-empty streams" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3))
+                    .concat(Streams.initSeq(Seq(4, 5, 6)))
+                    .runSeq.pure == (Seq(1, 2, 3, 4, 5, 6), ((), ()))
+            )
+        }
+
+        "empty left stream" in {
+            assert(
+                Streams.initSeq(Seq.empty[Int])
+                    .concat(Streams.initSeq(Seq(1, 2, 3)))
+                    .runSeq.pure == (Seq(1, 2, 3), ((), ()))
+            )
+        }
+
+        "empty right stream" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3))
+                    .concat(Streams.initSeq(Seq.empty[Int]))
+                    .runSeq.pure == (Seq(1, 2, 3), ((), ()))
+            )
+        }
+
+        "both streams empty" in {
+            assert(
+                Streams.initSeq(Seq.empty[Int])
+                    .concat(Streams.initSeq(Seq.empty[Int]))
+                    .runSeq.pure == (Seq.empty, ((), ()))
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Streams.initSeq(1 to n)
+                    .concat(Streams.initSeq(n + 1 to 2 * n))
+                    .runSeq.pure == ((1 to (2 * n)).toSeq, ((), ()))
+            )
+        }
+    }
+
+    "accumulate" - {
+        "sum" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).accumulate(0)(_ + _).runSeq.pure ==
+                    (Seq(0, 1, 3, 6), ())
+            )
+        }
+
+        "concat" in {
+            assert(
+                Streams.initSeq(Seq("a", "b", "c")).accumulate("")(_ + _).runSeq.pure ==
+                    (Seq("", "a", "ab", "abc"), ())
+            )
+        }
+
+        "running max" in {
+            assert(
+                Streams.initSeq(Seq(3, 1, 4, 2, 5)).accumulate(Int.MinValue)(
+                    math.max
+                ).runSeq.pure ==
+                    (Seq(Int.MinValue, 3, 3, 4, 4, 5), ())
+            )
+        }
+
+        "state machine" in {
+            sealed trait State
+            case object Initial extends State
+            case object Active  extends State
+            case object Done    extends State
+
+            val events = Seq("start", "process", "process", "end")
+            assert(
+                Streams.initSeq(events).accumulate(Initial: State) {
+                    case (Initial, "start")  => Active
+                    case (Active, "process") => Active
+                    case (Active, "end")     => Done
+                    case (state, _)          => state
+                }.runSeq.pure ==
+                    (Seq(Initial, Active, Active, Active, Done), ())
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Streams.initSeq(Seq.empty[Int]).accumulate(0)(_ + _).runSeq.pure ==
+                    (Seq(0), ())
+            )
+        }
+    }
+
     "runChannel" - {
         "non-empty stream" in runJVM {
             Channels.init[Int | Stream.Done](3).map { ch =>
@@ -413,6 +505,20 @@ class streamsTest extends KyoTest:
                     }
                 }
             }
+        }
+    }
+
+    "runDiscard" - {
+        "non-empty stream" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).runDiscard.pure == ()
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Streams.initSeq(Seq.empty[Int]).runDiscard.pure == ()
+            )
         }
     }
 

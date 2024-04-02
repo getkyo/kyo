@@ -82,13 +82,13 @@ object Stream:
                 }
             }
 
-        def distinct: Stream[T, V, S] =
-            Vars[Distinct[V]].run(()) {
+        def changes: Stream[T, V, S] =
+            Vars[Changes[V]].run(()) {
                 reemit { v =>
-                    Vars[Distinct[V]].use {
+                    Vars[Changes[V]].use {
                         case `v` =>
                         case _ =>
-                            Vars[Distinct[V]].set(v).andThen(Streams.emitValue(v))
+                            Vars[Changes[V]].set(v).andThen(Streams.emitValue(v))
                     }
                 }
             }
@@ -106,6 +106,27 @@ object Stream:
         ): Stream[T, V2, S & S2] =
             reemit { v =>
                 f(v).map(Streams.emitValue(_)(using tag2))
+            }
+
+        def concat[T2: Flat, S2](
+            s2: Stream[T2, V, S2]
+        ): Stream[(T, T2), V, S & S2] =
+            s.map(t => s2.map((t, _)))
+
+        def accumulate[S2, V2: Flat](init: V2)(f: (V2, V) => V2 < S2)(
+            using tag2: Tag[Streams[V2]]
+        ): Stream[T, V2, S & S2] =
+            Streams.emitValue(init)(using tag2).andThen {
+                Vars[Accumulate[V2]].run(init) {
+                    reemit { v =>
+                        Vars[Accumulate[V2]].use { acc =>
+                            f(acc, v).map { newAcc =>
+                                Vars[Accumulate[V2]].set(newAcc)
+                                    .andThen(Streams.emitValue(newAcc)(using tag2))
+                            }
+                        }
+                    }
+                }
             }
 
         inline def reemit[S2, V2: Flat](
@@ -147,6 +168,9 @@ object Stream:
             a
         end runFold
 
+        def runDiscard: T < S =
+            handle(discardHandler[V], s)
+
         def runSeq: (Seq[V], T) < S =
             def handler(acc: List[V])
                 : ResultHandler[Const[V], [T] =>> (Seq[V], T), Streams[V], Any] =
@@ -174,11 +198,20 @@ object Stream:
 
     private object internal:
         // used to isolate Vars usage via a separate tag
-        opaque type TakeN >: Int <: Int                     = Int
-        opaque type DropN >: Int <: Int                     = Int
-        opaque type Taking >: Boolean <: Boolean            = Boolean
-        opaque type Dropping >: Boolean <: Boolean          = Boolean
-        opaque type Distinct[V] >: (V | Unit) <: (V | Unit) = (V | Unit)
+        opaque type TakeN >: Int <: Int                    = Int
+        opaque type DropN >: Int <: Int                    = Int
+        opaque type Taking >: Boolean <: Boolean           = Boolean
+        opaque type Dropping >: Boolean <: Boolean         = Boolean
+        opaque type Changes[V] >: (V | Unit) <: (V | Unit) = (V | Unit)
+        opaque type Accumulate[V] >: V <: V                = V
+        opaque type ZipWith[T] >: T <: T                   = T
+
+        private val discard = new Handler[Const[Any], Streams[Any], Any]:
+            def resume[T, U: Flat, S](command: Any, k: T => U < (Streams[Any] & S)) =
+                handle(k(().asInstanceOf[T]))
+
+        def discardHandler[V]: Handler[Const[V], Streams[V], Any] =
+            discard.asInstanceOf[Handler[Const[V], Streams[V], Any]]
     end internal
 
 end Stream
