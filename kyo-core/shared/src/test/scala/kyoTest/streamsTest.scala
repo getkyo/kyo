@@ -119,6 +119,25 @@ class streamsTest extends KyoTest:
         }
     }
 
+    "throttle" - {
+
+        "semaphore" in run {
+            Meters.initSemaphore(2).map { meter =>
+                Streams.initSeq(Seq(1, 2, 3, 4, 5)).throttle(meter).runSeq.map { r =>
+                    assert(r == (Seq(1, 2, 3, 4, 5), ()))
+                }
+            }
+        }
+
+        "rate" in run {
+            Meters.initRateLimiter(1, 1.nano).map { meter =>
+                Streams.initSeq(Seq(1, 2, 3, 4, 5)).throttle(meter).runSeq.map { r =>
+                    assert(r == (Seq(1, 2, 3, 4, 5), ()))
+                }
+            }
+        }
+    }
+
     "take" - {
         "zero" in {
             assert(

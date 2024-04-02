@@ -132,6 +132,11 @@ object Stream:
                 }
             }
 
+        def throttle(meter: Meter): Stream[T, V, S & Fibers] =
+            reemit { v =>
+                meter.run(Streams.emitValue(v))
+            }
+
         def runFold[A](acc: A)(f: (A, V) => A): (A, T) < S =
             def handler(acc: A): ResultHandler[Const[V], [T] =>> (A, T), Streams[V], S] =
                 new ResultHandler[Const[V], [T] =>> (A, T), Streams[V], S]:
