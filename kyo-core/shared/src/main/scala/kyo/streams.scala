@@ -204,7 +204,6 @@ object Stream:
         opaque type Dropping >: Boolean <: Boolean         = Boolean
         opaque type Changes[V] >: (V | Unit) <: (V | Unit) = (V | Unit)
         opaque type Accumulate[V] >: V <: V                = V
-        opaque type ZipWith[T] >: T <: T                   = T
 
         private val discard = new Handler[Const[Any], Streams[Any], Any]:
             def resume[T, U: Flat, S](command: Any, k: T => U < (Streams[Any] & S)) =
