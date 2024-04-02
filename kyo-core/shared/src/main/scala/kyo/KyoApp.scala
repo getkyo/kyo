@@ -34,12 +34,17 @@ object KyoApp:
             initCode += (() => handle(v))
     end Base
 
-    type Effects = Fibers & Resources
+    type Effects = Fibers & Resources & Aborts[Throwable]
+
+    def attempt[T](timeout: Duration)(v: T < Effects)(
+        using f: Flat[T < Effects]
+    ): Try[T] =
+        IOs.run(runFiber(timeout)(v).block(timeout))
 
     def run[T](timeout: Duration)(v: T < Effects)(
         using f: Flat[T < Effects]
     ): T =
-        IOs.run(runFiber(timeout)(v).block(timeout).map(_.get))
+        attempt(timeout)(v).get
 
     def run[T](v: T < Effects)(
         using f: Flat[T < Effects]
@@ -54,12 +59,13 @@ object KyoApp:
     def runFiber[T](timeout: Duration)(v: T < Effects)(
         using f: Flat[T < Effects]
     ): Fiber[Try[T]] =
-        def v1: T < Fibers          = Resources.run(v)
-        def v2: Try[T] < Fibers     = IOs.attempt(v1)
-        def v3: Try[T] < Fibers     = Fibers.timeout(timeout)(v2)
-        def v4: Try[T] < Fibers     = IOs.attempt(v3).map(_.flatten)
-        def v5: Try[T] < Fibers     = Fibers.init(v4).map(_.get)
-        def v6: Fiber[Try[T]] < IOs = Fibers.run(v5)
+        def v0: Try[T] < (Fibers & Resources) = Aborts[Throwable].run(v).map(_.toTry)
+        def v1: Try[T] < Fibers               = Resources.run(v0)
+        def v2: Try[T] < Fibers               = IOs.attempt(v1).map(_.flatten)
+        def v3: Try[T] < Fibers               = Fibers.timeout(timeout)(v2)
+        def v4: Try[T] < Fibers               = IOs.attempt(v3).map(_.flatten)
+        def v5: Try[T] < Fibers               = Fibers.init(v4).map(_.get)
+        def v6: Fiber[Try[T]] < IOs           = Fibers.run(v5)
         IOs.run(v6)
     end runFiber
 end KyoApp
