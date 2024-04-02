@@ -129,7 +129,7 @@ class streamsTest extends KyoTest:
             }
         }
 
-        "rate" in run {
+        "rate" in runJVM {
             Meters.initRateLimiter(1, 1.nano).map { meter =>
                 Streams.initSeq(Seq(1, 2, 3, 4, 5)).throttle(meter).runSeq.map { r =>
                     assert(r == (Seq(1, 2, 3, 4, 5), ()))
