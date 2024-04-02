@@ -60,11 +60,11 @@ object core:
                                 try suspend(v, s.asInstanceOf[Safepoint[S]], l)
                                 catch
                                     case ex if NonFatal(ex) =>
-                                        handler.fail(ex)
+                                        handler.failed(ex)
                             handleLoop(handler, k)
                         end apply
                 case v: T @unchecked =>
-                    handler.pure(v)
+                    handler.done(v)
         handleLoop(handler, value)
     end handle
 
@@ -86,9 +86,9 @@ object core:
         ): Handle[T, S2] =
             Recurse(h, v)
 
-        def pure[T](v: T): Result[T] < S
+        def done[T](v: T): Result[T] < S
 
-        def fail(ex: Throwable): Nothing < E = throw ex
+        def failed(ex: Throwable): Nothing < E = throw ex
 
         def resume[T, U: Flat, S](
             command: Command[T],
@@ -99,7 +99,7 @@ object core:
 
     abstract class Handler[Command[_], E <: Effect[E], S]
         extends ResultHandler[Command, Id, E, S]:
-        def pure[T](v: T): Id[T] < S = v
+        def done[T](v: T): Id[T] < S = v
     end Handler
 
     trait Safepoint[-E]:

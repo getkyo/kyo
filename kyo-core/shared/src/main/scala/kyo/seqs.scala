@@ -93,7 +93,7 @@ object Seqs extends Seqs:
 
     private val handler: ResultHandler[Seq, Seq, Seqs, Any] =
         new ResultHandler[Seq, Seq, Seqs, Any]:
-            def pure[T](v: T) = Seq(v)
+            def done[T](v: T) = Seq(v)
             def resume[T, U: Flat, S](v: Seq[T], f: T => U < (Seqs & S)) =
                 Seqs.collect(v.map(e => Seqs.run(f(e)))).map(_.flatten)
 end Seqs

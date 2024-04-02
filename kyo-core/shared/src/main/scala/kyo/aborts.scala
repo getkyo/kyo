@@ -72,9 +72,9 @@ object Aborts:
 
         private def handler(using ClassTag[V], Tag[Aborts[V]]) =
             new ResultHandler[Const[Left[V, Nothing]], [T] =>> Either[V, T], Aborts[V], Any]:
-                def pure[T](v: T) = Right(v)
+                def done[T](v: T) = Right(v)
 
-                override def fail(ex: Throwable): Nothing < Aborts[V] =
+                override def failed(ex: Throwable): Nothing < Aborts[V] =
                     ex match
                         case ex: V =>
                             self.fail(ex)
