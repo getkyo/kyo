@@ -172,28 +172,108 @@ class streamsTest extends KyoTest:
         }
     }
 
-    "filter" - {
-        "non-empty" in {
+    "takeWhile" - {
+        "take none" in {
             assert(
-                Streams.initSeq(Seq(1, 2, 3)).filter(_ % 2 == 0).runSeq.pure == (Seq(2), ())
+                Streams.initSeq(Seq(1, 2, 3)).takeWhile(_ < 0).runSeq.pure == (Seq.empty, ())
             )
         }
 
-        "all in" in {
+        "take some" in {
             assert(
-                Streams.initSeq(Seq(1, 2, 3)).filter(_ => true).runSeq.pure == (Seq(1, 2, 3), ())
+                Streams.initSeq(Seq(1, 2, 3, 4, 5)).takeWhile(_ < 4).runSeq.pure == (Seq(
+                    1,
+                    2,
+                    3
+                ), ())
             )
         }
 
-        "all out" in {
+        "take all" in {
             assert(
-                Streams.initSeq(Seq(1, 2, 3)).filter(_ => false).runSeq.pure == (Seq.empty, ())
+                Streams.initSeq(Seq(1, 2, 3)).takeWhile(_ < 10).runSeq.pure ==
+                    (Seq(1, 2, 3), ())
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Streams.initSeq(Seq.empty[Int]).takeWhile(_ => true).runSeq.pure ==
+                    (Seq.empty, ())
             )
         }
 
         "stack safety" in {
             assert(
-                Streams.initSeq(1 to n).filter(_ % 2 == 0).runSeq.pure._1.size == n / 2
+                Streams.initSeq(Seq.fill(n)(1)).takeWhile(_ == 1).runSeq.pure ==
+                    (Seq.fill(n)(1), ())
+            )
+        }
+    }
+
+    "dropWhile" - {
+        "drop none" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).dropWhile(_ < 0).runSeq.pure ==
+                    (Seq(1, 2, 3), ())
+            )
+        }
+
+        "drop some" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3, 4, 5)).dropWhile(_ < 4).runSeq.pure ==
+                    (Seq(4, 5), ())
+            )
+        }
+
+        "drop all" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).dropWhile(_ < 10).runSeq.pure ==
+                    (Seq.empty, ())
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Streams.initSeq(Seq.empty[Int]).dropWhile(_ => false).runSeq.pure ==
+                    (Seq.empty, ())
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Streams.initSeq(Seq.fill(n)(1) ++ Seq(2)).dropWhile(_ == 1).runSeq.pure ==
+                    (Seq(2), ())
+            )
+        }
+    }
+
+    "filter" - {
+        "non-empty" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).filter(_ % 2 == 0).runSeq.pure ==
+                    (Seq(2), ())
+            )
+        }
+
+        "all in" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).filter(_ => true).runSeq.pure ==
+                    (Seq(1, 2, 3), ())
+            )
+        }
+
+        "all out" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).filter(_ => false).runSeq.pure ==
+                    (Seq.empty, ())
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Streams.initSeq(1 to n).filter(_ % 2 == 0).runSeq.pure._1.size ==
+                    n / 2
             )
         }
     }

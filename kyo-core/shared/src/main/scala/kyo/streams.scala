@@ -22,7 +22,7 @@ object Stream:
         def take(n: Int): Stream[T, V, S] =
             Vars[TakeN].run(n) {
                 reemit { v =>
-                    Vars[TakeN].get.map {
+                    Vars[TakeN].use {
                         case 0 =>
                             ()
                         case n =>
@@ -32,14 +32,44 @@ object Stream:
                 }
             }
 
+        def takeWhile[S2](f: V => Boolean < S2): Stream[T, V, S & S2] =
+            Vars[Taking].run(true) {
+                reemit { v =>
+                    Vars[Taking].use {
+                        case false =>
+                        case true =>
+                            f(v).map {
+                                case true  => Streams.emitValue(v)
+                                case false => Vars[Taking].set(false)
+                            }
+                    }
+                }
+            }
+
         def drop(n: Int): Stream[T, V, S] =
             Vars[DropN].run(n) {
                 reemit { v =>
-                    Vars[DropN].get.map {
+                    Vars[DropN].use {
                         case 0 =>
                             Streams.emitValue(v)
                         case n =>
                             Vars[DropN].set(n - 1)
+                    }
+                }
+            }
+
+        def dropWhile[S2](f: V => Boolean < S2): Stream[T, V, S & S2] =
+            Vars[Dropping].run(true) {
+                reemit { v =>
+                    Vars[Dropping].use {
+                        case false => Streams.emitValue(v)
+                        case true =>
+                            f(v).map {
+                                case false =>
+                                    Vars[Dropping].set(false)
+                                        .andThen(Streams.emitValue(v))
+                                case true => ()
+                            }
                     }
                 }
             }
@@ -128,8 +158,10 @@ object Stream:
 
     private object internal:
         // used to isolate Vars usage via a separate tag
-        opaque type TakeN >: Int <: Int = Int
-        opaque type DropN >: Int <: Int = Int
+        opaque type TakeN >: Int <: Int            = Int
+        opaque type DropN >: Int <: Int            = Int
+        opaque type Taking >: Boolean <: Boolean   = Boolean
+        opaque type Dropping >: Boolean <: Boolean = Boolean
     end internal
 
 end Stream
