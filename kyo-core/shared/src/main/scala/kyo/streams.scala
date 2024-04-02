@@ -256,7 +256,7 @@ object Streams:
         ch.take.map {
             case Stream.Done =>
                 ()
-            case v: V =>
+            case v: V @unchecked =>
                 emitValue(v).andThen(emitChannel(ch))
         }
 
