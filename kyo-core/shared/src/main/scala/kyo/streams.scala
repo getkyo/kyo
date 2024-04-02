@@ -161,7 +161,7 @@ object Stream:
         def runFold[A](acc: A)(f: (A, V) => A): (A, T) < S =
             def handler(acc: A): ResultHandler[Const[V], [T] =>> (A, T), Streams[V], S] =
                 new ResultHandler[Const[V], [T] =>> (A, T), Streams[V], S]:
-                    def pure[T](v: T) = (acc, v)
+                    def done[T](v: T) = (acc, v)
                     def resume[T, U: Flat, S3](command: V, k: T => U < (Streams[V] & S3)) =
                         handle(handler(f(acc, command)), k(().asInstanceOf[T]))
             val a = handle(handler(acc), s)
@@ -175,7 +175,7 @@ object Stream:
             def handler(acc: List[V])
                 : ResultHandler[Const[V], [T] =>> (Seq[V], T), Streams[V], Any] =
                 new ResultHandler[Const[V], [T] =>> (Seq[V], T), Streams[V], Any]:
-                    def pure[T](v: T) = (acc.reverse, v)
+                    def done[T](v: T) = (acc.reverse, v)
                     def resume[T, U: Flat, S](command: V, k: T => U < (Streams[V] & S)) =
                         handle(handler(command :: acc), k(().asInstanceOf[T]))
             val a = handle(handler(Nil), s)
@@ -185,7 +185,7 @@ object Stream:
         def runChannel(ch: Channel[V | Done]): T < (Fibers & S) =
             val handler: Handler[Const[V], Streams[V], Fibers] =
                 new Handler[Const[V], Streams[V], Fibers]:
-                    override def pure[T](v: T) = ch.put(Done).andThen(v)
+                    override def done[T](v: T) = ch.put(Done).andThen(v)
                     def resume[T, U: Flat, S](command: V, k: T => U < (Streams[V] & S)) =
                         handle(ch.put(command).map(_ => k(().asInstanceOf[T])))
             handle(handler, s)
