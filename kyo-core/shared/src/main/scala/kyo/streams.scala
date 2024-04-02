@@ -32,6 +32,18 @@ object Stream:
                 }
             }
 
+        def drop(n: Int): Stream[T, V, S] =
+            Vars[DropN].run(n) {
+                reemit { v =>
+                    Vars[DropN].use {
+                        case 0 =>
+                            Streams.emitValue(v)
+                        case n =>
+                            Vars[DropN].set(n - 1)
+                    }
+                }
+            }
+
         def takeWhile[S2](f: V => Boolean < S2): Stream[T, V, S & S2] =
             Vars[Taking].run(true) {
                 reemit { v =>
@@ -42,18 +54,6 @@ object Stream:
                                 case true  => Streams.emitValue(v)
                                 case false => Vars[Taking].set(false)
                             }
-                    }
-                }
-            }
-
-        def drop(n: Int): Stream[T, V, S] =
-            Vars[DropN].run(n) {
-                reemit { v =>
-                    Vars[DropN].use {
-                        case 0 =>
-                            Streams.emitValue(v)
-                        case n =>
-                            Vars[DropN].set(n - 1)
                     }
                 }
             }
@@ -79,6 +79,17 @@ object Stream:
                 f(v).map {
                     case false => ()
                     case true  => Streams.emitValue(v)
+                }
+            }
+
+        def distinct: Stream[T, V, S] =
+            Vars[Distinct[V]].run(()) {
+                reemit { v =>
+                    Vars[Distinct[V]].use {
+                        case `v` =>
+                        case _ =>
+                            Vars[Distinct[V]].set(v).andThen(Streams.emitValue(v))
+                    }
                 }
             }
 
@@ -158,10 +169,11 @@ object Stream:
 
     private object internal:
         // used to isolate Vars usage via a separate tag
-        opaque type TakeN >: Int <: Int            = Int
-        opaque type DropN >: Int <: Int            = Int
-        opaque type Taking >: Boolean <: Boolean   = Boolean
-        opaque type Dropping >: Boolean <: Boolean = Boolean
+        opaque type TakeN >: Int <: Int                     = Int
+        opaque type DropN >: Int <: Int                     = Int
+        opaque type Taking >: Boolean <: Boolean            = Boolean
+        opaque type Dropping >: Boolean <: Boolean          = Boolean
+        opaque type Distinct[V] >: (V | Unit) <: (V | Unit) = (V | Unit)
     end internal
 
 end Stream

@@ -278,6 +278,36 @@ class streamsTest extends KyoTest:
         }
     }
 
+    "distinct" - {
+        "no duplicates" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).distinct.runSeq.pure ==
+                    (Seq(1, 2, 3), ())
+            )
+        }
+
+        "with duplicates" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 2, 3, 2, 3, 3)).distinct.runSeq.pure ==
+                    (Seq(1, 2, 3, 2, 3), ())
+            )
+        }
+
+        "empty stream" in {
+            assert(
+                Streams.initSeq(Seq.empty[Int]).distinct.runSeq.pure ==
+                    (Seq.empty, ())
+            )
+        }
+
+        "stack safety" in {
+            assert(
+                Streams.initSeq(Seq.fill(n)(1)).distinct.runSeq.pure ==
+                    (Seq(1), ())
+            )
+        }
+    }
+
     "collect" - {
         "to string" in {
             assert(
