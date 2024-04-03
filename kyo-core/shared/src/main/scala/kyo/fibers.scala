@@ -64,7 +64,14 @@ case class Promise[T] private (private val p: IOPromise[T]) extends Fiber[T]:
         IOs(p.onComplete(r => IOs.run(f(r))))
 
     def block(timeout: Duration) =
-        p.block(timeout)
+        IOs {
+            val deadline =
+                if timeout.isFinite then
+                    System.currentTimeMillis() + timeout.toMillis
+                else
+                    Long.MaxValue
+            p.block(deadline)
+        }
 
     def interrupt =
         IOs(p.interrupt())
@@ -325,21 +332,25 @@ object fibersInternal:
         def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
             IOs(deepHandle(deepHandler, IOs.runLazy(v)))
 
-        // TODO fix timeout
         def runAndBlock[T, S](timeout: Duration)(v: T < (IOs & FiberGets & S))(
             using f: Flat[T < (IOs & FiberGets & S)]
         ): T < (IOs & S) =
-            val handler =
-                new Handler[Fiber, FiberGets, IOs]:
-                    def pure[T: Flat](v: T) = Fiber.value(v)
-                    def resume[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
-                        m match
-                            case m: Promise[T] @unchecked =>
-                                handle(m.block(timeout).map(f))
-                            case Done(v) =>
-                                handle(v.map(f))
-            handle(handler, v)
-        end runAndBlock
+            IOs {
+                val deadline =
+                    if timeout.isFinite then
+                        System.currentTimeMillis() + timeout.toMillis
+                    else
+                        Long.MaxValue
+                val handler =
+                    new Handler[Fiber, FiberGets, IOs]:
+                        def resume[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
+                            m match
+                                case Promise(p) =>
+                                    handle(p.block(deadline).map(f))
+                                case Done(v) =>
+                                    handle(v.map(f))
+                handle(handler, v)
+            }
 
     end FiberGets
 end fibersInternal

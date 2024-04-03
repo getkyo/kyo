@@ -138,21 +138,33 @@ class fibersTest extends KyoTest:
         yield assert(end - start >= 10)
     }
 
-    "timeout" in runJVM {
-        IOs.attempt(Fibers.runAndBlock(Duration.Inf)(
-            Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
-        )).map {
-            case Failure(Fibers.Interrupted) => succeed
-            case v                           => fail(v.toString())
-        }
-    }
+    "runAndBlock" - {
 
-    "block timeout" in runJVM {
-        IOs.attempt(Fibers.runAndBlock(10.millis)(
-            Fibers.sleep(1.day).andThen(1)
-        )).map {
-            case Failure(Fibers.Interrupted) => succeed
-            case v                           => fail(v.toString())
+        "timeout" in runJVM {
+            IOs.attempt(Fibers.runAndBlock(Duration.Inf)(
+                Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
+            )).map {
+                case Failure(Fibers.Interrupted) => succeed
+                case v                           => fail(v.toString())
+            }
+        }
+
+        "block timeout" in runJVM {
+            IOs.attempt(Fibers.runAndBlock(10.millis)(
+                Fibers.sleep(1.day).andThen(1)
+            )).map {
+                case Failure(Fibers.Interrupted) => succeed
+                case v                           => fail(v.toString())
+            }
+        }
+
+        "multiple fibers timeout" in runJVM {
+            IOs.attempt(Fibers.runAndBlock(10.millis)(
+                Seqs.fill(100)(Fibers.sleep(1.milli)).unit.andThen(1)
+            )).map {
+                case Failure(Fibers.Interrupted) => succeed
+                case v                           => fail(v.toString())
+            }
         }
     }
 
