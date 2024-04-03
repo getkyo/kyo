@@ -767,28 +767,32 @@ val d: Int < Options =
 import kyo._
 
 // Read a line from the console
-val a: String < IOs = 
+val a: String < Consoles = 
   Consoles.readln
 
 // Print to stdout
-val b: Unit < IOs = 
+val b: Unit < Consoles = 
   Consoles.print("ok")
 
 // Print to stdout with a new line
-val c: Unit < IOs = 
+val c: Unit < Consoles = 
   Consoles.println("ok")
 
 // Print to stderr
-val d: Unit < IOs = 
+val d: Unit < Consoles = 
   Consoles.printErr("fail")
 
 // Print to stderr with a new line
-val e: Unit < IOs = 
+val e: Unit < Consoles = 
   Consoles.printlnErr("fail")
+
+// Handling the effect
+val f: Unit < IOs =
+  Consoles.run(e)
 
 // Explicitly specifying the 'Console' implementation
 val g: Unit < IOs = 
-  Consoles.let(Console.default)(e)
+  Consoles.run(Console.default)(e)
 ```
 
 ### Clocks: Time Management
@@ -1624,23 +1628,26 @@ import sttp.client3._
 import kyo.Requests.Backend
 
 // Perform a request using a builder function
-val a: String < Fibers =
+val a: String < Requests =
   Requests[String](_.get(uri"https://httpbin.org/get"))
 
 // Alternatively, requests can be 
 // defined separately
-val b: String < Fibers =
+val b: String < Requests =
   Requests.request[String](Requests.basicRequest.get(uri"https://httpbin.org/get"))
 
 // It's possible to use the default implementation or provide 
 // a custom `Backend` via `let`
 
 // An example request
-val c: String < Fibers =
+val c: String < Requests =
   Requests[String](_.get(uri"https://httpbin.org/get"))
 
-// Implementing a custom 
-// mock backend
+// Handle the effect using the default backend
+val d: String < Fibers =
+  Requests.run(c)
+
+// Implementing a custom mock backend
 val backend: Backend =
   new Backend {
     def send[T](r: Request[T, Any]) = {
@@ -1649,8 +1656,8 @@ val backend: Backend =
   }
 
 // Use the custom backend
-val d: String < Fibers =
-  Requests.let(backend)(a)
+val e: String < Fibers =
+  Requests.run(backend)(a)
 ```
 
 Please refer to Sttp's documentation for details on how to build requests. Streaming is currently unsupported.
