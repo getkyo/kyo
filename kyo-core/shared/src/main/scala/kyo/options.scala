@@ -44,13 +44,4 @@ object Options:
                     case v    => get(v)
                 }
 
-    def layer[Se](onEmpty: => Nothing < Se): Layer[Options, Se] =
-        new Layer[Options, Se]:
-            override def run[T, S](effect: T < (Options & S))(implicit
-                fl: Flat[T < (Options & S)]
-            ): T < (S & Se) =
-                Options.run[T, S](effect).map {
-                    case None    => onEmpty
-                    case Some(t) => t
-                }
 end Options
