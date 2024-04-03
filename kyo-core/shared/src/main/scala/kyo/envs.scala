@@ -17,19 +17,19 @@ object Envs:
         def use[T, S](f: V => T < S)(using Tag[Envs[V]]): T < (Envs[V] & S) =
             get.map(f)
 
-        def run[T, S, VS](env: V)(value: T < (Envs[VS] & S))(
+        def run[T, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
             using
-            he: HasEnvs[V, VS],
-            t: Tag[Envs[V]],
-            f: Flat[T < (Envs[VS] & S)]
-        ): T < (S & he.Out) =
+            HasEnvs[V, VS] { type Remainder = VR },
+            Tag[Envs[V]],
+            Flat[T < (Envs[VS] & S)]
+        ): T < (S & VR) =
             val handler = new Handler[Const[Unit], Envs[V], Any]:
                 def resume[T2, U: Flat, S1](
                     command: Unit,
                     k: T2 => U < (Envs[V] & S1)
                 ) = handle(k(env.asInstanceOf[T2]))
 
-            handle(handler, value).asInstanceOf[T < (S & he.Out)]
+            handle(handler, value).asInstanceOf[T < (S & VR)]
         end run
     end extension
 
@@ -42,16 +42,16 @@ object Envs:
       *   all of the `Envs` dependencies represented by type intersection
       */
     sealed trait HasEnvs[V, VS]:
-        /** Remaining effect type, once the `V` dependency has been handled
+        /** Remaining effect type, once the `V` dependency has been provided
           */
-        type Out
+        type Remainder
     end HasEnvs
 
     trait LowPriorityHasEnvs:
         given hasEnvs[V, VR]: HasEnvs[V, V & VR] with
-            type Out = Envs[VR]
+            type Remainder = Envs[VR]
 
     object HasEnvs extends LowPriorityHasEnvs:
         given isEnvs[V]: HasEnvs[V, V] with
-            type Out = Any
+            type Remainder = Any
 end Envs

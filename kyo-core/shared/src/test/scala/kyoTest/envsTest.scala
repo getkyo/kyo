@@ -40,7 +40,7 @@ class envsTest extends KyoTest:
         succeed
     }
 
-    "reduce large intersection" in {
+    "reduce large intersection incrementally" in {
         val t1: Int < Envs[Int & String & Boolean & Float & Char & Double] = 18
         val t2                                                             = Envs[Int].run(42)(t1)
         val t3 = Envs[String].run("a")(t2)
@@ -49,6 +49,24 @@ class envsTest extends KyoTest:
         val t6 = Envs[Char].run('a')(t5)
         val t7 = Envs[Double].run(0.23d)(t6)
         assert(t7.pure == 18)
+    }
+
+    "reduce large intersection in single expression" in {
+        val t: Int < Envs[Int & String & Boolean & Float & Char & Double] = 18
+        // NB: Adding a type annotation here leads to compilation error!
+        val res =
+            Envs[Double].run(0.23d)(
+                Envs[Char].run('a')(
+                    Envs[Float].run(0.23f)(
+                        Envs[Boolean].run(false)(
+                            Envs[String].run("a")(
+                                Envs[Int].run(42)(t)
+                            )
+                        )
+                    )
+                )
+            )
+        assert(res.pure == 18)
     }
 
     "invalid inference" in {

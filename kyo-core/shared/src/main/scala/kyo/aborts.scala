@@ -41,14 +41,14 @@ object Aborts:
                     fail(ex.asInstanceOf[V])
             }
 
-        def run[T, S, VS](v: T < (Aborts[VS] & S))(
+        def run[T, S, VS, VR](v: T < (Aborts[VS] & S))(
             using
-            ha: HasAborts[V, VS],
-            t: Tag[Aborts[V]],
-            ct: ClassTag[V],
-            f: Flat[T < (Aborts[V] & S)]
-        ): Either[V, T] < (S & ha.Out) =
-            handle(handler, v).asInstanceOf[Either[V, T] < (S & ha.Out)]
+            HasAborts[V, VS] { type Remainder = VR },
+            Tag[Aborts[V]],
+            ClassTag[V],
+            Flat[T < (Aborts[V] & S)]
+        ): Either[V, T] < (S & VR) =
+            handle(handler, v).asInstanceOf[Either[V, T] < (S & VR)]
 
         private def handler(using ClassTag[V], Tag[Aborts[V]]) =
             new ResultHandler[Const[Left[V, Nothing]], [T] =>> Either[V, T], Aborts[V], Any]:
@@ -78,14 +78,14 @@ object Aborts:
     sealed trait HasAborts[V, VS]:
         /** Remaining effect type, once failures of type `V` have been handled
           */
-        type Out
+        type Remainder
     end HasAborts
 
     trait LowPriorityHasAborts:
         given hasAborts[V, VR]: HasAborts[V, V | VR] with
-            type Out = Aborts[VR]
+            type Remainder = Aborts[VR]
 
     object HasAborts extends LowPriorityHasAborts:
         given isAborts[V]: HasAborts[V, V] with
-            type Out = Any
+            type Remainder = Any
 end Aborts
