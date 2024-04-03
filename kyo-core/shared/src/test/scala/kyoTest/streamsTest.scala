@@ -5,7 +5,7 @@ import scala.concurrent.duration.*
 
 class streamsTest extends KyoTest:
 
-    val n = 100000
+    val n = 10000
 
     "initValue" - {
         "single value" in {

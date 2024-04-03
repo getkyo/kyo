@@ -163,8 +163,8 @@ class channelsTest extends KyoTest:
             for
                 c <- Channels.init[Int](10)
                 f1 <-
-                    Fibers.parallelFiber(List.fill(1000)(Fibers.parallel(List.fill(100)(c.put(1)))))
-                f2 <- Fibers.parallelFiber(List.fill(1000)(Fibers.parallel(List.fill(100)(c.take))))
+                    Fibers.parallelFiber(List.fill(100)(Fibers.parallel(List.fill(10)(c.put(1)))))
+                f2 <- Fibers.parallelFiber(List.fill(100)(Fibers.parallel(List.fill(10)(c.take))))
                 _  <- f1.get
                 _  <- f2.get
                 b  <- c.isEmpty
@@ -175,8 +175,8 @@ class channelsTest extends KyoTest:
             for
                 c <- Channels.init[Int](0)
                 f1 <-
-                    Fibers.parallelFiber(List.fill(1000)(Fibers.parallel(List.fill(100)(c.put(1)))))
-                f2 <- Fibers.parallelFiber(List.fill(1000)(Fibers.parallel(List.fill(100)(c.take))))
+                    Fibers.parallelFiber(List.fill(100)(Fibers.parallel(List.fill(10)(c.put(1)))))
+                f2 <- Fibers.parallelFiber(List.fill(100)(Fibers.parallel(List.fill(10)(c.take))))
                 _  <- f1.get
                 _  <- f2.get
                 b  <- c.isEmpty

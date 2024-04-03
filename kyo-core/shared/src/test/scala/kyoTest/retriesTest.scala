@@ -57,12 +57,12 @@ class retriesTest extends KyoTest:
         var calls = 0
         val start = System.currentTimeMillis()
         IOs.attempt {
-            Retries(_.limit(4).exponential(10.millis)) {
+            Retries(_.limit(4).exponential(1.millis)) {
                 calls += 1
                 throw ex
             }
         }.map { v =>
-            assert(v.isFailure && calls == 5 && (System.currentTimeMillis() - start) >= 150)
+            assert(v.isFailure && calls == 5 && (System.currentTimeMillis() - start) >= 15)
         }
     }
 end retriesTest
