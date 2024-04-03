@@ -17,11 +17,6 @@ object Aborts:
     private case object aborts extends Aborts[Any]
     def apply[V]: Aborts[V] = aborts.asInstanceOf[Aborts[V]]
 
-    type Elide[V] =
-        V match
-            case Nothing => Any
-            case V       => Aborts[V]
-
     extension [V](self: Aborts[V])
 
         def fail[T](value: T)(using ev: T => V, t: Tag[Aborts[V]]): Nothing < Aborts[V] =
@@ -46,29 +41,14 @@ object Aborts:
                     fail(ex.asInstanceOf[V])
             }
 
-        def run[T, S, V2](v: T < (Aborts[V | V2] & S))(
+        def run[T, S, VS](v: T < (Aborts[VS] & S))(
             using
-            Tag[Aborts[V]],
-            ClassTag[V],
-            Flat[T < (Aborts[V] & S)]
-        ): Either[V, T] < (S & Elide[V2]) =
-            handle(handler, v).asInstanceOf[Either[V, T] < (S & Elide[V2])]
-
-        def layer[Se](handle: V => Nothing < Se)(
-            using
-            ClassTag[V],
-            Tag[Aborts[V]]
-        ): Layer[Aborts[V], Se] =
-            new Layer[Aborts[V], Se]:
-                override def run[T, S](
-                    effect: T < (Aborts[V] & S)
-                )(
-                    using flat: Flat[T < (Aborts[V] & S)]
-                ): T < (S & Se) =
-                    self.run(effect).map {
-                        case Left(err) => handle(err)
-                        case Right(t)  => t
-                    }
+            ha: HasAborts[V, VS],
+            t: Tag[Aborts[V]],
+            ct: ClassTag[V],
+            f: Flat[T < (Aborts[V] & S)]
+        ): Either[V, T] < (S & ha.Out) =
+            handle(handler, v).asInstanceOf[Either[V, T] < (S & ha.Out)]
 
         private def handler(using ClassTag[V], Tag[Aborts[V]]) =
             new ResultHandler[Const[Left[V, Nothing]], [T] =>> Either[V, T], Aborts[V], Any]:
@@ -86,4 +66,26 @@ object Aborts:
                     k: T => U < (Aborts[V] & S)
                 ) = command
     end extension
+
+    /** An effect `Aborts[VS]` includes a failure type `V`, and once `V` has been handled,
+      * `Aborts[VS]` should be replaced by `Out`
+      *
+      * @tparam V
+      *   the failure type included in `VS`
+      * @tparam VS
+      *   all of the `Aborts` failure types represented by type union
+      */
+    sealed trait HasAborts[V, VS]:
+        /** Remaining effect type, once failures of type `V` have been handled
+          */
+        type Out
+    end HasAborts
+
+    trait LowPriorityHasAborts:
+        given hasAborts[V, VR]: HasAborts[V, V | VR] with
+            type Out = Aborts[VR]
+
+    object HasAborts extends LowPriorityHasAborts:
+        given isAborts[V]: HasAborts[V, V] with
+            type Out = Any
 end Aborts

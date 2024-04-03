@@ -9,11 +9,6 @@ object Envs:
     private case object envs extends Envs[Any]
     def apply[V]: Envs[V] = envs.asInstanceOf[Envs[V]]
 
-    type Elide[V] =
-        V match
-            case Nothing => Any
-            case V       => Envs[V]
-
     extension [V](self: Envs[V])
 
         def get(using Tag[Envs[V]]): V < Envs[V] =
@@ -22,25 +17,41 @@ object Envs:
         def use[T, S](f: V => T < S)(using Tag[Envs[V]]): T < (Envs[V] & S) =
             get.map(f)
 
-        def run[T, S, V2](env: V)(value: T < (Envs[V & V2] & S))(
+        def run[T, S, VS](env: V)(value: T < (Envs[VS] & S))(
             using
-            Tag[Envs[V]],
-            Flat[T < (Envs[V & V2] & S)]
-        ): T < (S & Elide[V2]) =
+            he: HasEnvs[V, VS],
+            t: Tag[Envs[V]],
+            f: Flat[T < (Envs[VS] & S)]
+        ): T < (S & he.Out) =
             val handler = new Handler[Const[Unit], Envs[V], Any]:
-                def resume[T2, U: Flat, S](
+                def resume[T2, U: Flat, S1](
                     command: Unit,
-                    k: T2 => U < (Envs[V] & S)
+                    k: T2 => U < (Envs[V] & S1)
                 ) = handle(k(env.asInstanceOf[T2]))
 
-            handle(handler, value).asInstanceOf[T < (S & Elide[V2])]
+            handle(handler, value).asInstanceOf[T < (S & he.Out)]
         end run
-
-        def layer[Sd](construct: V < Sd)(using Tag[Envs[V]]): Layer[Envs[V], Sd] =
-            new Layer[Envs[V], Sd]:
-                override def run[T, S](effect: T < (Envs[V] & S))(implicit
-                    fl: Flat[T < (Envs[V] & S)]
-                ): T < (Sd & S) =
-                    construct.map(e => self.run[T, S, Nothing](e)(effect))
     end extension
+
+    /** An effect `Envs[VS]` includes a dependency on `V`, and once `V` has been handled, `Envs[VS]`
+      * should be replaced by `Out`
+      *
+      * @tparam V
+      *   the dependency included in `VS`
+      * @tparam VS
+      *   all of the `Envs` dependencies represented by type intersection
+      */
+    sealed trait HasEnvs[V, VS]:
+        /** Remaining effect type, once the `V` dependency has been handled
+          */
+        type Out
+    end HasEnvs
+
+    trait LowPriorityHasEnvs:
+        given hasEnvs[V, VR]: HasEnvs[V, V & VR] with
+            type Out = Envs[VR]
+
+    object HasEnvs extends LowPriorityHasEnvs:
+        given isEnvs[V]: HasEnvs[V, V] with
+            type Out = Any
 end Envs

@@ -40,7 +40,7 @@ class envsTest extends KyoTest:
         succeed
     }
 
-    "invalid inference" in pendingUntilFixed {
+    "invalid inference" in {
         assertDoesNotCompile("""
             def t1(v: Int < Envs[Int & String]) =
                 Envs[Int].run[Int, Any, Nothing](1)(v)
