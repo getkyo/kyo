@@ -154,6 +154,16 @@ class abortsTest extends KyoTest:
                     t3(42)
                 succeed
             }
+            "reduce large union" in {
+                val t1: Int < Aborts[Int | String | Boolean | Float | Char | Double] = 18
+                val t2 = Aborts[Int].run(t1)
+                val t3 = Aborts[String].run(t2)
+                val t4 = Aborts[Boolean].run(t3)
+                val t5 = Aborts[Float].run(t4)
+                val t6 = Aborts[Char].run(t5)
+                val t7 = Aborts[Double].run(t6)
+                assert(t7.pure == Right(Right(Right(Right(Right(Right(18)))))))
+            }
         }
         "fail" in {
             val ex = new Exception("throwable failure")

@@ -40,6 +40,17 @@ class envsTest extends KyoTest:
         succeed
     }
 
+    "reduce large intersection" in {
+        val t1: Int < Envs[Int & String & Boolean & Float & Char & Double] = 18
+        val t2 = Envs[Int].run(42)(t1)
+        val t3 = Envs[String].run("a")(t2)
+        val t4 = Envs[Boolean].run(false)(t3)
+        val t5 = Envs[Float].run(0.23f)(t4)
+        val t6 = Envs[Char].run('a')(t5)
+        val t7 = Envs[Double].run(0.23d)(t6)
+        assert(t7.pure == 18)
+    }
+
     "invalid inference" in {
         assertDoesNotCompile("""
             def t1(v: Int < Envs[Int & String]) =
