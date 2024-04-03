@@ -1,5 +1,11 @@
 name: scalafmt
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 jobs:
   publish:
     runs-on: ubuntu-20.04
