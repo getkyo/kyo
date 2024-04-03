@@ -299,7 +299,10 @@ object fibersInternal:
             result.map(t)
     end Done
 
-    final class FiberGets private[kyo] () extends Effect[FiberGets]:
+    class FiberGets extends Effect[FiberGets]:
+        type Command[T] = Fiber[T]
+
+    object FiberGets extends FiberGets:
         type Command[T] = Fiber[T]
 
         def apply[T, S](f: Fiber[T]): T < (FiberGets & S) =
@@ -331,5 +334,4 @@ object fibersInternal:
         end runAndBlock
 
     end FiberGets
-    val FiberGets = new FiberGets
 end fibersInternal

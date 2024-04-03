@@ -218,8 +218,6 @@ end Stream
 class Streams[V] extends Effect[Streams[V]]:
     type Command[T] = V
 
-end Streams
-
 object Streams:
 
     import internal.*
