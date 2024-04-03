@@ -42,7 +42,7 @@ class envsTest extends KyoTest:
 
     "reduce large intersection" in {
         val t1: Int < Envs[Int & String & Boolean & Float & Char & Double] = 18
-        val t2 = Envs[Int].run(42)(t1)
+        val t2                                                             = Envs[Int].run(42)(t1)
         val t3 = Envs[String].run("a")(t2)
         val t4 = Envs[Boolean].run(false)(t3)
         val t5 = Envs[Float].run(0.23f)(t4)
