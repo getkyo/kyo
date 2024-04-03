@@ -15,7 +15,7 @@ class randomsTest extends KyoTest:
             def nextGaussian                              = 50d
             def nextValue[T](seq: Seq[T])                 = seq.last
             def nextValues[T](length: Int, seq: Seq[T])   = Seq.fill(length)(seq.last)
-            def nextString(length: Int)                   = "a" * length
+            def nextStringAlphanumeric(length: Int)       = "a" * length
             def nextString(length: Int, chars: Seq[Char]) = chars.last.toString * length
             def nextBytes(length: Int)                    = Seq.fill(length)(1.toByte)
             def shuffle[T](seq: Seq[T])                   = seq.reverse
@@ -67,7 +67,7 @@ class randomsTest extends KyoTest:
         }
 
         "nextString" in {
-            val v = IOs.run(Randoms.let(testRandom)(Randoms.nextString(5)))
+            val v = IOs.run(Randoms.let(testRandom)(Randoms.nextStringAlphanumeric(5)))
             assert(v == "aaaaa")
         }
 
@@ -140,7 +140,7 @@ class randomsTest extends KyoTest:
 
         "nextString" in {
             val length = 5
-            val v      = IOs.run(Randoms.nextString(length))
+            val v      = IOs.run(Randoms.nextStringAlphanumeric(length))
             assert(v.length == length)
             assert(v.forall(c =>
                 c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
