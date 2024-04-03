@@ -166,6 +166,7 @@ class abortsTest extends KyoTest:
             }
             "reduce large union in a single expression" in {
                 val t: Int < Aborts[Int | String | Boolean | Float | Char | Double] = 18
+                // NB: Adding type annotation leads to compilation error
                 val res =
                     Aborts[Double].run(
                         Aborts[Char].run(
