@@ -19,12 +19,12 @@ Kyo is available on Maven Central in multiple modules:
 
 | Module           | Scala 3 | Scala JS | Description                         |
 |------------------|---------|----------|-------------------------------------|
-| kyo-core         | √       | √        | Core and concurrent effects         |
-| kyo-direct       | √       | √        | Direct syntax support               |
-| kyo-cache        | √       |          | Caffeine caching                    |
-| kyo-stats-otel   | √       |          | Stats exporter for OpenTelemetry    |
-| kyo-sttp         | √       | √        | Sttp HTTP Client                    |
-| kyo-tapir        | √       | √        | Tapir HTTP Server                   |
+| kyo-core         | ✅      | ✅       | Core and concurrent effects         |
+| kyo-direct       | ✅      | ✅       | Direct syntax support               |
+| kyo-sttp         | ✅      | ✅       | Sttp HTTP Client                    |
+| kyo-tapir        | ✅      | ✅       | Tapir HTTP Server                   |
+| kyo-cache        | ✅      |          | Caffeine caching                    |
+| kyo-stats-otel   | ✅      |          | Stats exporter for OpenTelemetry    |
 
 For Scala 3:
 
