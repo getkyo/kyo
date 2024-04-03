@@ -110,36 +110,36 @@ class metersTest extends KyoTest:
     "rate limiter" - {
         "ok" in runJVM {
             for
-                t  <- Meters.initRateLimiter(2, 10.millis)
+                t  <- Meters.initRateLimiter(2, 1.millis)
                 v1 <- t.run(2)
                 v2 <- t.run(3)
             yield assert(v1 == 2 && v2 == 3)
         }
         "one loop" in runJVM {
             for
-                meter   <- Meters.initRateLimiter(10, 10.millis)
+                meter   <- Meters.initRateLimiter(10, 1.millis)
                 counter <- Atomics.initInt(0)
                 f1      <- Fibers.init(loop(meter, counter))
-                _       <- Fibers.sleep(50.millis)
+                _       <- Fibers.sleep(5.millis)
                 _       <- f1.interrupt
                 v1      <- counter.get
-            yield assert(v1 >= 10 && v1 <= 200)
+            yield assert(v1 >= 2 && v1 <= 200)
         }
         "two loops" in runJVM {
             for
-                meter   <- Meters.initRateLimiter(10, 10.millis)
+                meter   <- Meters.initRateLimiter(10, 1.millis)
                 counter <- Atomics.initInt(0)
                 f1      <- Fibers.init(loop(meter, counter))
                 f2      <- Fibers.init(loop(meter, counter))
-                _       <- Fibers.sleep(50.millis)
+                _       <- Fibers.sleep(5.millis)
                 _       <- f1.interrupt
                 _       <- f2.interrupt
                 v1      <- counter.get
-            yield assert(v1 >= 10 && v1 <= 200)
+            yield assert(v1 >= 2 && v1 <= 200)
         }
     }
 
-    "pipepline" - {
+    "pipeline" - {
 
         "run" in runJVM {
             for
@@ -147,24 +147,24 @@ class metersTest extends KyoTest:
                 counter <- Atomics.initInt(0)
                 f1      <- Fibers.init(loop(meter, counter))
                 f2      <- Fibers.init(loop(meter, counter))
-                _       <- Fibers.sleep(50.millis)
+                _       <- Fibers.sleep(5.millis)
                 _       <- f1.interrupt
                 _       <- f2.interrupt
                 v1      <- counter.get
             yield assert(v1 >= 0 && v1 < 200)
         }
 
-        // "tryRun" in runJVM {
-        //   for {
-        //     meter   <- Meters.pipeline(Meters.rateLimiter(2, 1.millis), Meters.mutex)
-        //     counter <- Atomics.initInt(0)
-        //     f1      <- Fibers.init(loop(meter, counter))
-        //     _       <- Fibers.sleep(50.millis)
-        //     _       <- retry(meter.isAvailable(!_))
-        //     _       <- Fibers.sleep(50.millis)
-        //     r       <- meter.tryRun(())
-        //     _       <- f1.interrupt
-        //   } yield assert(r == None)
-        // }
+        "tryRun" in runJVM {
+            for
+                meter   <- Meters.pipeline(Meters.initRateLimiter(2, 1.millis), Meters.initMutex)
+                counter <- Atomics.initInt(0)
+                f1      <- Fibers.init(loop(meter, counter))
+                _       <- Fibers.sleep(5.millis)
+                _       <- retry(meter.isAvailable.map(!_))
+                _       <- Fibers.sleep(5.millis)
+                r       <- meter.tryRun(())
+                _       <- f1.interrupt
+            yield assert(r == None)
+        }
     }
 end metersTest

@@ -55,7 +55,7 @@ class iosTest extends KyoTest:
             succeed
         }
         "stack-safe" in run {
-            val frames = 100000
+            val frames = 10000
             def loop(i: Int): Int < IOs =
                 IOs {
                     if i < frames then

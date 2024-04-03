@@ -42,10 +42,10 @@ class timersTest extends KyoTest:
         for
             ref <- Atomics.initInt(0)
             task <- Timers.scheduleAtFixedRate(
-                10.millis,
-                10.millis
+                1.millis,
+                1.millis
             )(ref.incrementAndGet.unit)
-            _         <- Fibers.sleep(50.millis)
+            _         <- Fibers.sleep(5.millis)
             n         <- ref.get
             cancelled <- task.cancel
         yield assert(n > 0 && cancelled)
@@ -55,10 +55,10 @@ class timersTest extends KyoTest:
         for
             ref <- Atomics.initInt(0)
             task <- Timers.scheduleWithFixedDelay(
-                10.millis,
-                10.millis
+                1.millis,
+                1.millis
             )(ref.incrementAndGet.unit)
-            _         <- Fibers.sleep(50.millis)
+            _         <- Fibers.sleep(5.millis)
             n         <- ref.get
             cancelled <- task.cancel
         yield assert(n > 0 && cancelled)
@@ -68,9 +68,9 @@ class timersTest extends KyoTest:
         for
             ref <- Atomics.initInt(0)
             task <- Timers.scheduleWithFixedDelay(
-                10.millis
+                1.millis
             )(ref.incrementAndGet.unit)
-            _         <- Fibers.sleep(50.millis)
+            _         <- Fibers.sleep(5.millis)
             n         <- ref.get
             cancelled <- task.cancel
         yield assert(n > 0 && cancelled)
