@@ -96,7 +96,15 @@ case class Promise[T] private (private val p: IOPromise[T]) extends Fiber[T]:
             new Promise(r)
         }
 
-    def complete(v: T < IOs): Boolean < IOs = IOs(p.complete(v))
+    def complete(v: T < IOs): Boolean < IOs =
+        IOs(p.complete(v))
+
+    def become(other: Fiber[T]): Boolean < IOs =
+        other match
+            case Done(v) =>
+                complete(v)
+            case Promise(p2: IOPromise[T]) =>
+                IOs(p.become(p2))
 
     private[kyo] def unsafeComplete(v: T < IOs): Boolean =
         p.complete(v)

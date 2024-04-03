@@ -1114,9 +1114,14 @@ val a: Promise[Int] < IOs =
 // Try to fulfill a promise
 val b: Boolean < IOs =
   a.map(_.complete(42))
+
+// Fullfil the promise with 
+// another fiber
+val c: Boolean < IOs =
+  a.map(fiber => Fibers.init(1).map(fiber.become(_)))
 ```
 
-> A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` method to manually fulfill the promise.
+> A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` and `become` methods to manually fulfill the promise.
 
 ### Queues: Concurrent Queuing
 

@@ -38,6 +38,52 @@ class fibersTest extends KyoTest:
             yield assert(a && b && c == Failure(ex))
             end for
         }
+
+        "become" - {
+            "succeed" in run {
+                for
+                    p1 <- Fibers.initPromise[Int]
+                    p2 <- Fibers.initPromise[Int]
+                    a  <- p2.complete(42)
+                    b  <- p1.become(p2)
+                    c  <- p1.isDone
+                    d  <- p1.get
+                yield assert(a && b && c && d == 42)
+            }
+
+            "fail" in run {
+                val ex = new Exception("fail")
+                for
+                    p1 <- Fibers.initPromise[Int]
+                    p2 <- Fibers.initPromise[Int]
+                    a  <- p2.complete(IOs.fail(ex))
+                    b  <- p1.become(p2)
+                    c  <- p1.isDone
+                    d  <- p1.getTry
+                yield assert(a && b && c && d == Failure(ex))
+                end for
+            }
+
+            "already completed" in run {
+                for
+                    p1 <- Fibers.initPromise[Int]
+                    p2 <- Fibers.initPromise[Int]
+                    a  <- p1.complete(42)
+                    b  <- p2.complete(99)
+                    c  <- p1.become(p2)
+                    d  <- p1.get
+                yield assert(a && b && !c && d == 42)
+            }
+
+            "done fiber" in run {
+                for
+                    p <- Fibers.initPromise[Int]
+                    a <- p.become(Fiber.value(42))
+                    b <- p.isDone
+                    c <- p.get
+                yield assert(a && b && c == 42)
+            }
+        }
     }
 
     "init" - {
