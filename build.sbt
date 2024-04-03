@@ -68,7 +68,8 @@ lazy val kyo =
             `kyo-cache`,
             `kyo-sttp`,
             `kyo-tapir`,
-            `kyo-bench`
+            `kyo-bench`,
+            `kyo-examples`
         )
 
 val zioVersion = "2.0.21"
