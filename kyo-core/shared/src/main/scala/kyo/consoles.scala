@@ -28,11 +28,16 @@ object Console:
             def printlnErr(s: String) = IOs(scala.Console.err.println(s))
 end Console
 
+opaque type Consoles <: IOs = IOs
+
 object Consoles:
 
     private val local = Locals.init(Console.default)
 
-    def let[T, S](c: Console)(v: T < S): T < (S & IOs) =
+    def run[T, S](v: T < (Consoles & S)): T < (S & IOs) =
+        v
+
+    def run[T, S](c: Console)(v: T < (Consoles & S)): T < (S & IOs) =
         local.let(c)(v)
 
     val readln: String < IOs =
@@ -45,15 +50,15 @@ object Consoles:
             case v =>
                 pprint.apply(v).plainText
 
-    def print[T](v: T): Unit < IOs =
+    def print[T](v: T): Unit < Consoles =
         local.use(_.print(toString(v)))
 
-    def printErr[T](v: T): Unit < IOs =
+    def printErr[T](v: T): Unit < Consoles =
         local.use(_.printErr(toString(v)))
 
-    def println[T](v: T): Unit < IOs =
+    def println[T](v: T): Unit < Consoles =
         local.use(_.println(toString(v)))
 
-    def printlnErr[T](v: T): Unit < IOs =
+    def printlnErr[T](v: T): Unit < Consoles =
         local.use(_.printlnErr(toString(v)))
 end Consoles
