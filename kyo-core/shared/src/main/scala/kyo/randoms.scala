@@ -1,6 +1,6 @@
 package kyo
 
-abstract class Random:
+trait Random:
     def nextInt: Int < IOs
     def nextInt(n: Int): Int < IOs
     def nextLong: Long < IOs
@@ -8,20 +8,101 @@ abstract class Random:
     def nextBoolean: Boolean < IOs
     def nextFloat: Float < IOs
     def nextGaussian: Double < IOs
+    def nextValue[T](seq: Seq[T]): T < IOs
+    def nextValues[T](length: Int, seq: Seq[T]): Seq[T] < IOs
+    def nextString(length: Int): String < IOs
+    def nextString(length: Int, chars: Seq[Char]): String < IOs
+    def nextBytes(length: Int): Seq[Byte] < IOs
+    def shuffle[T](seq: Seq[T]): Seq[T] < IOs
+    def unsafe: Random.Unsafe
 end Random
 
 object Random:
-    val default: Random =
-        new Random:
 
-            val random          = new java.util.Random
-            val nextInt         = IOs(random.nextInt())
-            def nextInt(n: Int) = IOs(random.nextInt(n))
-            val nextLong        = IOs(random.nextLong())
-            val nextDouble      = IOs(random.nextDouble())
-            val nextBoolean     = IOs(random.nextBoolean())
-            val nextFloat       = IOs(random.nextFloat())
-            val nextGaussian    = IOs(random.nextGaussian())
+    trait Unsafe:
+        def nextInt: Int
+        def nextInt(n: Int): Int
+        def nextLong: Long
+        def nextDouble: Double
+        def nextBoolean: Boolean
+        def nextFloat: Float
+        def nextGaussian: Double
+        def nextValue[T](seq: Seq[T]): T
+        def nextValues[T](length: Int, seq: Seq[T]): Seq[T]
+        def nextString(length: Int): String
+        def nextString(length: Int, seq: Seq[Char]): String
+        def nextBytes(length: Int): Seq[Byte]
+        def shuffle[T](seq: Seq[T]): Seq[T]
+    end Unsafe
+
+    object Unsafe:
+        def apply(random: java.util.Random): Unsafe =
+            new Unsafe:
+                def nextInt: Int                 = random.nextInt()
+                def nextInt(n: Int): Int         = random.nextInt(n)
+                def nextLong: Long               = random.nextLong()
+                def nextDouble: Double           = random.nextDouble()
+                def nextBoolean: Boolean         = random.nextBoolean()
+                def nextFloat: Float             = random.nextFloat()
+                def nextGaussian: Double         = random.nextGaussian()
+                def nextValue[T](seq: Seq[T]): T = seq(random.nextInt(seq.size))
+                def nextValues[T](length: Int, seq: Seq[T]): Seq[T] =
+                    Seq.fill(length)(nextValue(seq))
+
+                val alphanumeric = (('a' to 'z') ++ ('A' to 'Z') ++ ('0' to '9')).toIndexedSeq
+                def nextString(length: Int): String =
+                    nextString(length, alphanumeric)
+
+                def nextString(length: Int, seq: Seq[Char]): String =
+                    val b = new StringBuilder
+                    var i = 0
+                    while i < length do
+                        b.addOne(nextValue(seq))
+                        i += 1
+                    b.result()
+                end nextString
+
+                val bytes = Seq(0.toByte, 1.toByte).toIndexedSeq
+                def nextBytes(length: Int): Seq[Byte] =
+                    nextValues(length, bytes)
+
+                def shuffle[T](seq: Seq[T]): Seq[T] =
+                    val buffer = scala.collection.mutable.ArrayBuffer.from(seq)
+                    var i      = buffer.size - 1
+                    while i > 0 do
+                        val j    = nextInt(i + 1)
+                        val temp = buffer(i)
+                        buffer(i) = buffer(j)
+                        buffer(j) = temp
+                        i -= 1
+                    end while
+                    buffer.toSeq
+                end shuffle
+    end Unsafe
+
+    val default = apply(Unsafe(new java.util.Random))
+
+    def apply(u: Unsafe): Random =
+        new Random:
+            val nextInt: Int < IOs                 = IOs(u.nextInt)
+            def nextInt(n: Int): Int < IOs         = IOs(u.nextInt(n))
+            val nextLong: Long < IOs               = IOs(u.nextLong)
+            val nextDouble: Double < IOs           = IOs(u.nextDouble)
+            val nextBoolean: Boolean < IOs         = IOs(u.nextBoolean)
+            val nextFloat: Float < IOs             = IOs(u.nextFloat)
+            val nextGaussian: Double < IOs         = IOs(u.nextGaussian)
+            def nextValue[T](seq: Seq[T]): T < IOs = IOs(u.nextValue(seq))
+            def nextValues[T](length: Int, seq: Seq[T]): Seq[T] < IOs =
+                IOs(u.nextValues(length, seq))
+            def nextString(length: Int): String < IOs =
+                IOs(u.nextString(length))
+            def nextString(length: Int, chars: Seq[Char]): String < IOs =
+                IOs(u.nextString(length, chars))
+            def nextBytes(length: Int): Seq[Byte] < IOs =
+                IOs(u.nextBytes(length))
+            def shuffle[T](seq: Seq[T]): Seq[T] < IOs =
+                IOs(u.shuffle(seq))
+            def unsafe: Unsafe = u
 end Random
 
 object Randoms:
@@ -34,8 +115,8 @@ object Randoms:
     val nextInt: Int < IOs =
         local.use(_.nextInt)
 
-    def nextInt[S](n: Int < S): Int < (S & IOs) =
-        n.map(n => local.use(_.nextInt(n)))
+    def nextInt(n: Int): Int < IOs =
+        local.use(_.nextInt(n))
 
     val nextLong: Long < IOs =
         local.use(_.nextLong)
@@ -52,6 +133,21 @@ object Randoms:
     val nextGaussian: Double < IOs =
         local.use(_.nextGaussian)
 
-    def nextValue[T, S](seq: Seq[T] < S): T < (S & IOs) =
-        seq.map(s => nextInt(s.size).map(idx => s(idx)))
+    def nextValue[T](seq: Seq[T]): T < IOs =
+        local.use(_.nextValue(seq))
+
+    def nextValues[T](length: Int, seq: Seq[T]): Seq[T] < IOs =
+        local.use(_.nextValues(length, seq))
+
+    def nextString(length: Int): String < IOs =
+        local.use(_.nextString(length))
+
+    def nextString(length: Int, chars: Seq[Char]): String < IOs =
+        local.use(_.nextString(length, chars))
+
+    def nextBytes(length: Int): Seq[Byte] < IOs =
+        local.use(_.nextBytes(length))
+
+    def shuffle[T](seq: Seq[T]): Seq[T] < IOs =
+        local.use(_.shuffle(seq))
 end Randoms
