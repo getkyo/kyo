@@ -3,6 +3,8 @@ package kyo
 import kyo.*
 import sttp.client3.*
 
+opaque type Requests <: Fibers = Fibers
+
 object Requests:
 
     abstract class Backend:
@@ -10,7 +12,10 @@ object Requests:
 
     private val local = Locals.init[Backend](PlatformBackend.default)
 
-    def let[T, S](b: Backend)(v: T < S): T < (IOs & S) =
+    def run[T, S](v: T < (Requests & S)): T < (Fibers & S) =
+        v
+
+    def run[T, S](b: Backend)(v: T < (Requests & S)): T < (Fibers & S) =
         local.let(b)(v)
 
     type BasicRequest = sttp.client3.RequestT[Empty, Either[?, String], Any]
@@ -23,10 +28,10 @@ object Requests:
                 Right(v)
         }
 
-    def apply[T](f: BasicRequest => Request[Either[?, T], Any]): T < Fibers =
+    def apply[T](f: BasicRequest => Request[Either[?, T], Any]): T < Requests =
         request(f(basicRequest))
 
-    def request[T](req: Request[Either[?, T], Any]): T < Fibers =
+    def request[T](req: Request[Either[?, T], Any]): T < Requests =
         local.use(_.send(req)).map {
             _.body match
                 case Left(ex: Throwable) =>

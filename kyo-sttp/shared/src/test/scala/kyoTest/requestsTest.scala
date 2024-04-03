@@ -15,7 +15,7 @@ class requestsTest extends KyoTest:
 
     "apply" in run {
         val backend = new TestBackend
-        Requests.let(backend) {
+        Requests.run(backend) {
             for
                 r <- Requests[String](_.get(uri"https://httpbin.org/get"))
             yield
@@ -25,7 +25,7 @@ class requestsTest extends KyoTest:
     }
     "request" in run {
         val backend = new TestBackend
-        Requests.let(backend) {
+        Requests.run(backend) {
             for
                 r <- Requests.request[String](
                     Requests.basicRequest.get(uri"https://httpbin.org/get")
@@ -33,6 +33,18 @@ class requestsTest extends KyoTest:
             yield
                 assert(r == "mocked")
                 assert(backend.calls == 1)
+        }
+    }
+    "with fiber" in run {
+        val backend = new TestBackend
+        Requests.run(backend) {
+            Fibers.init {
+                for
+                    r <- Requests[String](_.get(uri"https://httpbin.org/get"))
+                yield
+                    assert(r == "mocked")
+                    assert(backend.calls == 1)
+            }.map(_.get)
         }
     }
 end requestsTest

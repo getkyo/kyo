@@ -9,16 +9,20 @@ class requestsLiveTest extends KyoTest:
     "requests" - {
         "live" - {
             "success" in run {
-                for
-                    port <- startTestServer("/ping", Success("pong"))
-                    r    <- Requests(_.get(uri"http://localhost:$port/ping"))
-                yield assert(r == "pong")
+                Requests.run {
+                    for
+                        port <- startTestServer("/ping", Success("pong"))
+                        r    <- Requests(_.get(uri"http://localhost:$port/ping"))
+                    yield assert(r == "pong")
+                }
             }
             "failure" in run {
-                for
-                    port <- startTestServer("/ping", Failure(new Exception))
-                    r    <- IOs.attempt(Requests(_.get(uri"http://localhost:$port/ping")))
-                yield assert(r.isFailure)
+                Requests.run {
+                    for
+                        port <- startTestServer("/ping", Failure(new Exception))
+                        r    <- IOs.attempt(Requests(_.get(uri"http://localhost:$port/ping")))
+                    yield assert(r.isFailure)
+                }
             }
         }
     }
