@@ -48,6 +48,6 @@ object Server extends App:
         val binding = await(Routes.run(server)(Timers.let(timer)(init)))
         await(Consoles.println(s"Server started: ${binding.localSocket}"))
     }
-    IOs.run(Fibers.run(io))
+    IOs.run(Fibers.run(Consoles.run(io)))
 
 end Server

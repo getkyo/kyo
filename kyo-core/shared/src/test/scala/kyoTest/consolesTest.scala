@@ -11,27 +11,27 @@ class consolesTest extends KyoTest:
     "readln" in IOs.run {
         val testConsole = new TestConsole
         testConsole.readlns = List("readln")
-        val io: String < IOs = Consoles.let(testConsole)(Consoles.readln)
+        val io: String < IOs = Consoles.run(testConsole)(Consoles.readln)
         assert(IOs.run(io) == "readln")
     }
     "print" in IOs.run {
         val testConsole = new TestConsole
-        IOs.run(Consoles.let(testConsole)(Consoles.print("print")))
+        IOs.run(Consoles.run(testConsole)(Consoles.print("print")))
         assert(testConsole.prints == List("print"))
     }
     "printErr" in IOs.run {
         val testConsole = new TestConsole
-        IOs.run(Consoles.let(testConsole)(Consoles.printErr("printErr")))
+        IOs.run(Consoles.run(testConsole)(Consoles.printErr("printErr")))
         assert(testConsole.printErrs == List("printErr"))
     }
     "println" in IOs.run {
         val testConsole = new TestConsole
-        IOs.run(Consoles.let(testConsole)(Consoles.println("println")))
+        IOs.run(Consoles.run(testConsole)(Consoles.println("println")))
         assert(testConsole.printlns == List("println"))
     }
     "printlnErr" in IOs.run {
         val testConsole = new TestConsole
-        IOs.run(Consoles.let(testConsole)(Consoles.printlnErr("printlnErr")))
+        IOs.run(Consoles.run(testConsole)(Consoles.printlnErr("printlnErr")))
         assert(testConsole.printlnErrs == List("printlnErr"))
     }
 

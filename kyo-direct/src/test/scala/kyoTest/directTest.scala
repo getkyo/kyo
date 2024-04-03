@@ -116,7 +116,7 @@ class directTest extends KyoTest:
 
             def printlnErr(s: String): Unit < IOs = ???
         end console
-        val io: String < IOs = Consoles.let(console)(defer(await(Consoles.readln)))
+        val io: String < IOs = Consoles.run(console)(defer(await(Consoles.readln)))
         assert(IOs.run(io) == "hello")
     }
 
