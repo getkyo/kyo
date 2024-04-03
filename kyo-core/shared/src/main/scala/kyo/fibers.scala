@@ -132,9 +132,7 @@ object Fibers extends Joins[Fibers]:
     def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
         FiberGets.run(v)
 
-    def runAndBlock[T, S](timeout: Duration)(v: T < (Fibers & S))(implicit
-        f: Flat[T < (Fibers & S)]
-    ): T < (IOs & S) =
+    def runAndBlock[T: Flat, S](timeout: Duration)(v: T < (Fibers & S)): T < (IOs & S) =
         FiberGets.runAndBlock(timeout)(v)
 
     def get[T, S](v: Fiber[T] < S): T < (Fibers & S) =
@@ -148,12 +146,11 @@ object Fibers extends Joins[Fibers]:
     private[kyo] def unsafeInitPromise[T: Flat]: Promise[T] =
         Promise(new IOPromise[T]())
 
-    def init[T, S](v: => T < (Fibers & S))(
+    def init[T: Flat, S](v: => T < (Fibers & S))(
         using
         @implicitNotFound(
             "Fibers.init only accepts Fibers and IOs-based effects. Found: ${S}"
-        ) ev: S => IOs,
-        f: Flat[T < (Fibers & S)]
+        ) ev: S => IOs
     ): Fiber[T] < (IOs & S) =
         Locals.save { st =>
             Promise(IOTask(IOs(v.asInstanceOf[T < Fibers]), st))(
@@ -332,8 +329,8 @@ object fibersInternal:
         def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
             IOs(deepHandle(deepHandler, IOs.runLazy(v)))
 
-        def runAndBlock[T, S](timeout: Duration)(v: T < (IOs & FiberGets & S))(
-            using f: Flat[T < (IOs & FiberGets & S)]
+        def runAndBlock[T: Flat, S](timeout: Duration)(
+            v: T < (IOs & FiberGets & S)
         ): T < (IOs & S) =
             IOs {
                 val deadline =

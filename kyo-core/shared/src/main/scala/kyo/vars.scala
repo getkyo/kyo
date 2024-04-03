@@ -27,10 +27,8 @@ class Vars[V] extends Effect[Vars[V]]:
     def update(f: V => V)(using Tag[Vars[V]]): Unit < Vars[V] =
         suspend(this)(Op.Update(f))
 
-    def run[T, S2](state: V)(value: T < (Vars[V] & S2))(
-        using
-        Flat[T < (Vars[V] & S2)],
-        Tag[Vars[V]]
+    def run[T: Flat, S2](state: V)(value: T < (Vars[V] & S2))(
+        using Tag[Vars[V]]
     ): T < S2 =
         handle(handler(state), value)
 

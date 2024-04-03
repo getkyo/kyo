@@ -41,12 +41,11 @@ object Aborts:
                     fail(ex.asInstanceOf[V])
             }
 
-        def run[T, S, VS, VR](v: T < (Aborts[VS] & S))(
+        def run[T: Flat, S, VS, VR](v: T < (Aborts[VS] & S))(
             using
             HasAborts[V, VS] { type Remainder = VR },
             Tag[Aborts[V]],
-            ClassTag[V],
-            Flat[T < (Aborts[V] & S)]
+            ClassTag[V]
         ): Either[V, T] < (S & VR) =
             handle(handler, v).asInstanceOf[Either[V, T] < (S & VR)]
 

@@ -17,11 +17,10 @@ object Envs:
         def use[T, S](f: V => T < S)(using Tag[Envs[V]]): T < (Envs[V] & S) =
             get.map(f)
 
-        def run[T, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
+        def run[T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
             using
             HasEnvs[V, VS] { type Remainder = VR },
-            Tag[Envs[V]],
-            Flat[T < (Envs[VS] & S)]
+            Tag[Envs[V]]
         ): T < (S & VR) =
             val handler = new Handler[Const[Unit], Envs[V], Any]:
                 def resume[T2, U: Flat, S1](

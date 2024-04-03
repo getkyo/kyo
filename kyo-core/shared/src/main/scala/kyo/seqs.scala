@@ -7,7 +7,7 @@ class Seqs extends Effect[Seqs]:
 
 object Seqs extends Seqs:
 
-    def run[T, S](v: T < (Seqs & S))(using f: Flat[T < (Seqs & S)]): Seq[T] < S =
+    def run[T: Flat, S](v: T < (Seqs & S)): Seq[T] < S =
         handle(handler, v)
 
     def repeat(n: Int): Unit < Seqs =

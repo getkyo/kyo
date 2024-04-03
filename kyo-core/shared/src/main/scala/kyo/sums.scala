@@ -12,18 +12,16 @@ class Sums[V] extends Effect[Sums[V]]:
     def add(v: V)(using Tag[Sums[V]]): Unit < Sums[V] =
         suspend(Sums[V])(v)
 
-    def run[T, S](v: T < (Sums[V] & S))(
+    def run[T: Flat, S](v: T < (Sums[V] & S))(
         using
         g: Summer[V],
-        f: Flat[T < (Sums[V] & S)],
         t: Tag[Sums[V]]
     ): (V, T) < S =
         run(g.init)(v)
 
-    def run[T, S](init: V)(v: T < (Sums[V] & S))(
+    def run[T: Flat, S](init: V)(v: T < (Sums[V] & S))(
         using
         g: Summer[V],
-        f: Flat[T < (Sums[V] & S)],
         t: Tag[Sums[V]]
     ): (V, T) < S =
         handle[Const[V], [T] =>> (V, T), Sums[V], T, Any, S](handler(init), v)

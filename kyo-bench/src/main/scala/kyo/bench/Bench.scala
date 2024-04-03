@@ -33,7 +33,7 @@ object Bench:
     end Base
 
     @nowarn
-    abstract class Fork[T](using f: Flat[T]) extends Base[T]:
+    abstract class Fork[T: Flat] extends Base[T]:
         @Benchmark
         def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block(Duration.Inf)))
 
@@ -46,10 +46,10 @@ object Bench:
         )
     end Fork
 
-    abstract class ForkOnly[T](using f: Flat[T]) extends Fork[T]:
+    abstract class ForkOnly[T: Flat] extends Fork[T]:
         def kyoBench() = ???
 
-    abstract class SyncAndFork[T](using f: Flat[T]) extends Fork[T]:
+    abstract class SyncAndFork[T: Flat] extends Fork[T]:
 
         @Benchmark
         def syncKyo(): T = IOs.run(kyoBench())
