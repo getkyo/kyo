@@ -2,6 +2,7 @@ package sttp.tapir.server.netty
 
 import kyo.{Route as _, *}
 import kyo.internal.KyoSttpMonad
+import sttp.monad.MonadAsyncError
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.netty.*
 import sttp.tapir.server.netty.NettyKyoServerInterpreter.KyoRunAsync
@@ -20,7 +21,7 @@ trait NettyKyoServerInterpreter:
     def toRoute(
         ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]
     ): Route[KyoSttpMonad.M] =
-        given monad = KyoSttpMonad.instance
+        given monad: MonadAsyncError[KyoSttpMonad.M] = KyoSttpMonad.instance
         NettyServerInterpreter.toRoute(
             ses,
             nettyServerOptions.interceptors,
