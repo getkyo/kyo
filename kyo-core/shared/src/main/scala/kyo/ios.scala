@@ -97,7 +97,7 @@ sealed trait IOs extends Effect[IOs]:
         runLoop(v)
     end run
 
-    def runLazy[T, S](v: T < (IOs & S))(using f: Flat[T < (IOs & S)]): T < S =
+    def runLazy[T: Flat, S](v: T < (IOs & S)): T < S =
         def runLazyLoop(v: T < (IOs & S)): T < S =
             val safepoint = Safepoint.noop[IOs]
             v match

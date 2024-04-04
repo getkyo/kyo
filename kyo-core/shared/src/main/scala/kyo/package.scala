@@ -31,7 +31,7 @@ package object kyo:
             if i <= 0 then () else andThen(repeat(i - 1))
     end extension
 
-    extension [T, S](v: T < Any)(using Any => S, Flat[T < Any])
+    extension [T](v: T < Any)(using Flat[T < Any])
         def pure: T =
             v match
                 case v: kyo.core.internal.Suspend[?, ?, ?, ?] =>
