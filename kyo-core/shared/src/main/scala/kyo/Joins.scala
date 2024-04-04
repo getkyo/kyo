@@ -30,11 +30,11 @@ trait Joins[E]:
     )(using f: Flat[T < E]): T < E =
         race(List(v1, v2, v3, v4))
 
-    def parallel[T1, T2](
+    def parallel[T1: Flat, T2: Flat](
         v1: => T1 < E,
         v2: => T2 < E
     )(
-        implicit
+        using
         f1: Flat[T1 < E],
         f2: Flat[T2 < E]
     ): (T1, T2) < E =
@@ -47,7 +47,7 @@ trait Joins[E]:
         v2: => T2 < E,
         v3: => T3 < E
     )(
-        implicit
+        using
         f1: Flat[T1 < E],
         f2: Flat[T2 < E],
         f3: Flat[T3 < E]
@@ -62,7 +62,7 @@ trait Joins[E]:
         v3: => T3 < E,
         v4: => T4 < E
     )(
-        implicit
+        using
         f1: Flat[T1 < E],
         f2: Flat[T2 < E],
         f3: Flat[T3 < E],

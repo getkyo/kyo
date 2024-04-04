@@ -20,7 +20,7 @@ trait NettyKyoServerInterpreter:
     def toRoute(
         ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]
     ): Route[KyoSttpMonad.M] =
-        implicit val monad = KyoSttpMonad.instance
+        given monad = KyoSttpMonad.instance
         NettyServerInterpreter.toRoute(
             ses,
             nettyServerOptions.interceptors,

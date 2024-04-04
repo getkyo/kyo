@@ -43,37 +43,22 @@ class Cache(private[kyo] val store: Store):
                     }
                 }
 
-    def memo2[T1, T2, S, U](
+    def memo2[T1: Flat, T2: Flat, S, U: Flat](
         f: (T1, T2) => U < S
-    )(implicit
-        ft1: Flat[T1 < Any],
-        ft2: Flat[T2 < Any],
-        fu: Flat[U < Any]
     ): (T1, T2) => U < (Fibers & S) =
         val m = memo[(T1, T2), U, S](f.tupled)
         (t1, t2) => m((t1, t2))
     end memo2
 
-    def memo3[T1, T2, T3, S, U](
+    def memo3[T1: Flat, T2: Flat, T3: Flat, S, U: Flat](
         f: (T1, T2, T3) => U < S
-    )(implicit
-        ft1: Flat[T1 < Any],
-        ft2: Flat[T2 < Any],
-        ft3: Flat[T3 < Any],
-        fu: Flat[U < Any]
     ): (T1, T2, T3) => U < (Fibers & S) =
         val m = memo[(T1, T2, T3), U, S](f.tupled)
         (t1, t2, t3) => m((t1, t2, t3))
     end memo3
 
-    def memo4[T1, T2, T3, T4, S, U](
+    def memo4[T1: Flat, T2: Flat, T3: Flat, T4: Flat, S, U: Flat](
         f: (T1, T2, T3, T4) => U < S
-    )(implicit
-        ft1: Flat[T1 < Any],
-        ft2: Flat[T2 < Any],
-        ft3: Flat[T3 < Any],
-        ft4: Flat[T4 < Any],
-        fu: Flat[U < Any]
     ): (T1, T2, T3, T4) => U < (Fibers & S) =
         val m = memo[(T1, T2, T3, T4), U, S](f.tupled)
         (t1, t2, t3, t4) => m((t1, t2, t3, t4))

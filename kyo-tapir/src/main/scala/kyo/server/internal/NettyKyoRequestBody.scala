@@ -16,8 +16,8 @@ import sttp.tapir.server.netty.internal.reactivestreams.SimpleSubscriber
 private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoSttpMonad.M[TapirFile])
     extends NettyRequestBody[KyoSttpMonad.M, NoStreams]:
 
-    override val streams: capabilities.Streams[NoStreams]   = NoStreams
-    implicit override val monad: MonadError[KyoSttpMonad.M] = KyoSttpMonad.instance
+    override val streams: capabilities.Streams[NoStreams] = NoStreams
+    override given monad: MonadError[KyoSttpMonad.M]      = KyoSttpMonad.instance
 
     override def publisherToBytes(
         publisher: Publisher[HttpContent],

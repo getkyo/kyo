@@ -12,7 +12,7 @@ import scala.util.Try
 
 class KyoTest extends AsyncFreeSpec with NonImplicitAssertions:
 
-    implicit override def executionContext: ExecutionContext = Platform.executionContext
+    override given executionContext: ExecutionContext = Platform.executionContext
 
     trait Eq[T]:
         def apply(a: T, b: T): Boolean

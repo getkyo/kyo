@@ -7,7 +7,7 @@ object Logs:
     private[kyo] val logger = LoggerFactory.getLogger("kyo.logs")
 
     inline def trace(inline msg: => String)(
-        implicit
+        using
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -27,7 +27,7 @@ object Logs:
     end trace
 
     inline def trace(inline msg: => String, inline t: => Throwable)(
-        implicit
+        using
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -37,7 +37,7 @@ object Logs:
     end trace
 
     inline def debug(inline msg: => String)(
-        implicit
+        using
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -47,7 +47,7 @@ object Logs:
     end debug
 
     inline def debug(inline msg: => String, inline t: => Throwable)(
-        implicit
+        using
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -57,7 +57,7 @@ object Logs:
     end debug
 
     inline def info(inline msg: => String)(
-        implicit
+        using
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -67,7 +67,7 @@ object Logs:
     end info
 
     inline def info(inline msg: => String, inline t: => Throwable)(
-        implicit
+        using
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -77,7 +77,7 @@ object Logs:
     end info
 
     inline def warn(inline msg: => String)(
-        implicit
+        using
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -87,7 +87,7 @@ object Logs:
     end warn
 
     inline def warn(inline msg: => String, inline t: => Throwable)(
-        implicit
+        using
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -97,7 +97,7 @@ object Logs:
     end warn
 
     inline def error(inline msg: => String)(
-        implicit
+        using
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -107,7 +107,7 @@ object Logs:
     end error
 
     inline def error(inline msg: => String, inline t: => Throwable)(
-        implicit
+        using
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -118,7 +118,7 @@ object Logs:
 
     object unsafe:
         inline def trace(inline msg: => String)(
-            implicit
+            using
             file: sourcecode.FileName,
             line: sourcecode.Line
         ): Unit =
@@ -128,7 +128,7 @@ object Logs:
         end trace
 
         inline def trace(inline msg: => String, inline t: => Throwable)(
-            implicit
+            using
             file: sourcecode.FileName,
             line: sourcecode.Line
         ): Unit =
@@ -138,7 +138,7 @@ object Logs:
         end trace
 
         inline def debug(inline msg: => String)(
-            implicit
+            using
             file: sourcecode.FileName,
             line: sourcecode.Line
         ): Unit =
@@ -148,7 +148,7 @@ object Logs:
         end debug
 
         inline def debug(inline msg: => String, inline t: => Throwable)(
-            implicit
+            using
             file: sourcecode.FileName,
             line: sourcecode.Line
         ): Unit < IOs =
@@ -158,7 +158,7 @@ object Logs:
         end debug
 
         inline def info(inline msg: => String)(
-            implicit
+            using
             file: sourcecode.FileName,
             line: sourcecode.Line
         ): Unit =
@@ -168,7 +168,7 @@ object Logs:
         end info
 
         inline def info(inline msg: => String, inline t: => Throwable)(
-            implicit
+            using
             file: sourcecode.FileName,
             line: sourcecode.Line
         ): Unit =
@@ -178,7 +178,7 @@ object Logs:
         end info
 
         inline def warn(inline msg: => String)(
-            implicit
+            using
             file: sourcecode.FileName,
             line: sourcecode.Line
         ): Unit =
@@ -188,7 +188,7 @@ object Logs:
         end warn
 
         inline def warn(inline msg: => String, inline t: => Throwable)(
-            implicit
+            using
             file: sourcecode.FileName,
             line: sourcecode.Line
         ): Unit < IOs =
@@ -198,7 +198,7 @@ object Logs:
         end warn
 
         inline def error(inline msg: => String)(
-            implicit
+            using
             file: sourcecode.FileName,
             line: sourcecode.Line
         ): Unit =
@@ -208,7 +208,7 @@ object Logs:
         end error
 
         inline def error(inline msg: => String, inline t: => Throwable)(
-            implicit
+            using
             file: sourcecode.FileName,
             line: sourcecode.Line
         ): Unit =
