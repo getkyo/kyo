@@ -172,7 +172,7 @@ object core:
             def apply(v: T, s: Safepoint[E], l: Locals.State) = v
         end Root
 
-        implicit def fromKyo[T, S](v: Kyo[T, S]): T < S =
+        implicit inline def fromKyo[T, S](v: Kyo[T, S]): T < S =
             v.asInstanceOf[T < S]
     end internal
 end core

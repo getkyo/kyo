@@ -4,7 +4,6 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import kyo.*
 import org.openjdk.jmh.annotations.*
-import scala.annotation.nowarn
 import scala.concurrent.duration.Duration
 import zio.UIO
 
