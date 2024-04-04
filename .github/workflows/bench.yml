@@ -140,8 +140,8 @@ jobs:
         id: check-cache
         uses: actions/cache@v2
         with:
-          path: jmh-github-action-${IX}.txt
-          key: index-url
+          path: jmh-github-action-${{ env.IX }}.txt
+          key: index-url-${{ env.IX }}
 
       - name: Get commit message
         id: get-commit-message
@@ -155,7 +155,7 @@ jobs:
         with:
           github-token: ${{ secrets.GIST_PAT }}
           script: |
-            const indexFileName = 'jmh-github-action-${IX}.csv';
+            const indexFileName = `jmh-github-action-${{ env.IX }}.csv`;
             const runUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
             const commitUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/commit/${context.sha}`;
             const commitMessage = process.env.COMMIT_MESSAGE.replace(/,/g, '\\,');
