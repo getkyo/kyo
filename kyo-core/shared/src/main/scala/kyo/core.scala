@@ -12,14 +12,14 @@ object core:
     abstract class Effect[+E]:
         type Command[_]
 
-    inline def suspend[E <: Effect[E], T](e: E)(v: e.Command[T])(
-        using inline _tag: Tag[E]
+    def suspend[E <: Effect[E], T](e: E)(v: e.Command[T])(
+        using _tag: Tag[E]
     ): T < E =
         new Root[e.Command, T, E]:
             def command = v
             def tag     = _tag.asInstanceOf[Tag[Any]]
 
-    inline def transform[T, S, U, S2](v: T < S)(inline k: T => (U < S2)): U < (S & S2) =
+    def transform[T, S, U, S2](v: T < S)(k: T => (U < S2)): U < (S & S2) =
         def transformLoop(v: T < S): U < (S & S2) =
             v match
                 case kyo: Suspend[MX, Any, T, S] @unchecked =>
@@ -37,7 +37,7 @@ object core:
         transformLoop(v)
     end transform
 
-    inline def handle[Command[_], Result[_], E <: Effect[E], T, S, S2](
+    def handle[Command[_], Result[_], E <: Effect[E], T, S, S2](
         handler: ResultHandler[Command, Result, E, S],
         value: T < (E & S2)
     )(using tag: Tag[E], flat: Flat[T < (E & S)]): Result[T] < (S & S2) =
@@ -78,9 +78,9 @@ object core:
         opaque type Handle[T, S2] >: (Result[T] < (S & S2)) =
             Result[T] < (S & S2) | Recurse[Command, Result, E, T, S, S2]
 
-        protected inline def handle[T, S2](v: T < (E & S & S2)): Handle[T, S2] =
+        protected def handle[T, S2](v: T < (E & S & S2)): Handle[T, S2] =
             handle(this, v)
-        protected inline def handle[T, S2](
+        protected def handle[T, S2](
             h: ResultHandler[Command, Result, E, S],
             v: T < (E & S & S2)
         ): Handle[T, S2] =
@@ -110,7 +110,7 @@ object core:
         private val _noop = new Safepoint[?]:
             def check()                    = false
             def suspend[T, S](v: => T < S) = v
-        inline def noop[S]: Safepoint[S] =
+        def noop[S]: Safepoint[S] =
             _noop.asInstanceOf[Safepoint[S]]
     end Safepoint
 
@@ -154,7 +154,7 @@ object core:
             with Function1[T, U < S]:
             def command: Command[T]
             def tag: Tag[Any]
-            inline def apply(v: T) = apply(v, Safepoint.noop, Locals.State.empty)
+            def apply(v: T) = apply(v, Safepoint.noop, Locals.State.empty)
             def apply(v: T, s: Safepoint[S], l: Locals.State): U < S
         end Suspend
 
@@ -171,7 +171,7 @@ object core:
             def apply(v: T, s: Safepoint[E], l: Locals.State) = v
         end Root
 
-        implicit inline def fromKyo[T, S](v: Kyo[T, S]): T < S =
+        implicit def fromKyo[T, S](v: Kyo[T, S]): T < S =
             v.asInstanceOf[T < S]
     end internal
 end core
