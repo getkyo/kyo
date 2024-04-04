@@ -1,0 +1,46 @@
+name: Benchmark PR
+on:
+  issue_comment:
+    types: [created]
+jobs:
+  trigger-on-comment:
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '/benchmark')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract PR Number
+        id: get-pr-number
+        run: echo "::set-output name=number::${{ github.event.issue.number }}"
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - name: Get Base SHA
+        id: get-base-sha
+        run: echo "::set-output name=sha::$(git rev-parse ${{ github.base_ref }})"
+      - name: Trigger Benchmark for Base Revision
+        uses: ./.github/workflows/bench.yml
+        with:
+          ref: ${{ steps.get-base-sha.outputs.sha }}
+          inputs: |
+            index: ${{ steps.get-pr-number.outputs.number }}
+            selector: "MtlBench"
+      - name: Trigger Benchmark for New Revision
+        uses: ./.github/workflows/bench.yml
+        with:
+          ref: ${{ github.sha }}
+          inputs: |
+            index: ${{ steps.get-pr-number.outputs.number }}
+            selector: "MtlBench"
+      - name: Comment PR with Benchmark Index Link
+        uses: actions/github-script@v5
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issueNumber = ${{ steps.get-pr-number.outputs.number }};
+            const commentBody = `Benchmark is complete. View the results [here](https://example.com/benchmark/${issueNumber})`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+              body: commentBody
+            });
