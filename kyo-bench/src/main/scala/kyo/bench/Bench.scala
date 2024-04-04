@@ -32,7 +32,6 @@ object Bench:
         def catsBench(): IO[T]
     end Base
 
-    @nowarn
     abstract class Fork[T: Flat] extends Base[T]:
         @Benchmark
         def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block(Duration.Inf)))
