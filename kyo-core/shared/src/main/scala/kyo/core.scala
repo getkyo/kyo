@@ -110,7 +110,7 @@ object core:
         private val _noop = new Safepoint[?]:
             def check()                    = false
             def suspend[T, S](v: => T < S) = v
-        given noop[S]: Safepoint[S] =
+        inline def noop[S]: Safepoint[S] =
             _noop.asInstanceOf[Safepoint[S]]
     end Safepoint
 
@@ -130,7 +130,6 @@ object core:
             handler: DeepHandler[Command, E, S],
             v: T < E
         )(using
-            s: Safepoint[E],
             tag: Tag[E],
             flat: Flat[T < E]
         ): Command[T] < S =
@@ -140,7 +139,7 @@ object core:
                         require(kyo.tag == tag, "Unhandled effect: " + kyo.tag)
                         handler.resume(
                             kyo.command,
-                            (v: Any) => deepHandleLoop(kyo(v, s, Locals.State.empty))
+                            (v: Any) => deepHandleLoop(kyo(v))
                         )
                     case _ =>
                         handler.pure(v.asInstanceOf[T])
@@ -155,7 +154,7 @@ object core:
             with Function1[T, U < S]:
             def command: Command[T]
             def tag: Tag[Any]
-            def apply(v: T) = apply(v, Safepoint.noop, Locals.State.empty)
+            inline def apply(v: T) = apply(v, Safepoint.noop, Locals.State.empty)
             def apply(v: T, s: Safepoint[S], l: Locals.State): U < S
         end Suspend
 

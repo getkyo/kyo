@@ -86,12 +86,11 @@ sealed trait IOs extends Effect[IOs]:
     end handle
 
     def run[T](v: T < IOs)(using f: Flat[T < IOs]): T =
-        val safepoint = Safepoint.noop[IOs]
         @tailrec def runLoop(v: T < IOs): T =
             v match
                 case kyo: Suspend[IO, Unit, T, IOs] @unchecked =>
                     require(kyo.tag == tag, "Unhandled effect: " + kyo.tag)
-                    runLoop(kyo((), safepoint, Locals.State.empty))
+                    runLoop(kyo(()))
                 case _ =>
                     v.asInstanceOf[T]
         runLoop(v)
@@ -99,16 +98,11 @@ sealed trait IOs extends Effect[IOs]:
 
     def runLazy[T: Flat, S](v: T < (IOs & S)): T < S =
         def runLazyLoop(v: T < (IOs & S)): T < S =
-            val safepoint = Safepoint.noop[IOs]
             v match
                 case kyo: Suspend[?, ?, ?, ?] =>
                     if kyo.tag == tag then
                         val k = kyo.asInstanceOf[Suspend[IO, Unit, T, S & IOs]]
-                        runLazyLoop(k(
-                            (),
-                            safepoint.asInstanceOf[Safepoint[S & IOs]],
-                            Locals.State.empty
-                        ))
+                        runLazyLoop(k(()))
                     else
                         val k = kyo.asInstanceOf[Suspend[MX, Any, T, S & IOs]]
                         new Continue[MX, Any, T, S](k):

@@ -53,7 +53,7 @@ object Locals:
     type State = Map[Local[?], Any]
 
     object State:
-        val empty: State = Map.empty
+        inline def empty: State = Map.empty
 
     def init[T](defaultValue: => T): Local[T] =
         new Local[T]:
