@@ -13,11 +13,10 @@ object Seqs extends Seqs:
     def repeat(n: Int): Unit < Seqs =
         get(Seq.fill(n)(()))
 
-    def get[T, S](v: Seq[T] < S): T < (Seqs & S) =
-        v.map {
+    def get[T](v: Seq[T]): T < Seqs =
+        v match
             case Seq(head) => head
             case v         => suspend(this)(v)
-        }
 
     def filter[S](v: Boolean < S): Unit < (Seqs & S) =
         v.map {
@@ -30,10 +29,8 @@ object Seqs extends Seqs:
     val drop: Nothing < Seqs =
         suspend(this)(Seq.empty)
 
-    def traverse[T, U, S, S2](v: Seq[T] < S)(f: T => U < S2): Seq[U] < (S & S2) =
-        v.map { v =>
-            collect(v.map(f))
-        }
+    def traverse[T, U, S, S2](v: Seq[T])(f: T => U < S2): Seq[U] < (S & S2) =
+        collect(v.map(f))
 
     def traverseUnit[T, U, S](v: Seq[T])(f: T => Unit < S): Unit < S =
         def loop(l: Seq[T]): Unit < S =
@@ -41,6 +38,14 @@ object Seqs extends Seqs:
             else f(l.head).andThen(loop(l.tail))
         loop(v)
     end traverseUnit
+
+    def fold[T, U, S](v: Seq[T])(acc: U)(f: (U, T) => U < S): U < S =
+        val it = v.iterator
+        def loop(acc: U): U < S =
+            if !it.hasNext then acc
+            else f(acc, it.next()).map(loop(_))
+        loop(acc)
+    end fold
 
     def collect[T, S](v: Seq[T < S]): Seq[T] < S =
         v match

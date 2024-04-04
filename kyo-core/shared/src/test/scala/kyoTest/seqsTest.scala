@@ -70,6 +70,9 @@ class seqsTest extends KyoTest:
         Seqs.traverseUnit(Seq(1, 2))(acc :+= _).pure
         assert(acc == Seq(1, 2))
     }
+    "fold" in {
+        assert(Seqs.fold(Seq(1, 2, 3))(0)(_ + _).pure == 6)
+    }
     "fill" in {
         assert(
             IOs.run(Seqs.fill(100)(IOs(1))) ==
