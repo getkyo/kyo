@@ -292,7 +292,8 @@
     async function loadFlamegraph(benchmarkName, gistId) {
       const type = document.querySelector(`input[name="flamegraphType"]:checked`).value;
       const run = pastRuns.find(run => run.gistId === gistId);
-      const flamegraphUrl = (await run.gistFiles).find(url => url.includes(`${benchmarkName}-${type}`));
+      const flamegraphFile = (await run.gistFiles).find(file => file.includes(`${benchmarkName}-${type}`));
+      const flamegraphUrl = gistUrlToRawFileUrl(run.gistUrl, flamegraphFile);
       document.getElementById('jmh-iframe').src = `https://htmlpreview.github.io/?${encodeURIComponent(flamegraphUrl)}`;
       document.getElementById('flamegraph-dialog').close();
     }
