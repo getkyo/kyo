@@ -35,7 +35,7 @@ package object kyo:
         def pure: T =
             v match
                 case kyo: kyo.core.internal.Suspend[?, ?, ?, ?] =>
-                    bug("Unhandled effect: " + kyo.tag.parse)
+                    bug.failTag(kyo.tag, Tag[Any])
                 case v =>
                     v.asInstanceOf[T]
     end extension
@@ -58,10 +58,27 @@ package object kyo:
         val _ = v
         ()
 
-    case class KyoBugException(msg: String) extends Exception(msg)
+    private[kyo] object bug:
 
-    private[kyo] def bug(cond: Boolean, msg: String): Unit =
-        if cond then bug(msg)
-    private[kyo] def bug(msg: String): Nothing =
-        throw KyoBugException(msg + ". Please file a ticket.")
+        case class KyoBugException(msg: String) extends Exception(msg)
+
+        inline def failTag[T, U](
+            inline actual: Tag[U],
+            inline expected: Tag[T]
+        ): Nothing =
+            bug(s"Unexpected effect '${actual.parse}' found while handling '${expected.parse}'.")
+
+        inline def checkTag[T, U](
+            inline actual: Tag[U],
+            inline expected: Tag[T]
+        ): Unit =
+            if actual != expected then
+                failTag(actual, expected)
+
+        def when(cond: Boolean)(msg: String): Unit =
+            if cond then bug(msg)
+
+        def apply(msg: String): Nothing =
+            throw KyoBugException(msg + ". Please file a ticket.")
+    end bug
 end kyo

@@ -70,7 +70,7 @@ private[kyo] class IOTask[T](
                                 )
                         end match
                     else
-                        IOs(bug("Unhandled effect: " + kyo.tag.parse))
+                        IOs(bug.failTag(kyo.tag, Tag[FiberGets & IOs]))
                 case _ =>
                     complete(curr.asInstanceOf[T < IOs])
                     finalize()

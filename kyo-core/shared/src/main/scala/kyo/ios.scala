@@ -89,7 +89,7 @@ sealed trait IOs extends Effect[IOs]:
         @tailrec def runLoop(v: T < IOs): T =
             v match
                 case kyo: Suspend[IO, Unit, T, IOs] @unchecked =>
-                    bug(kyo.tag != tag, "Unhandled effect: " + kyo.tag.parse)
+                    bug.checkTag(kyo.tag, tag)
                     runLoop(kyo(()))
                 case _ =>
                     v.asInstanceOf[T]
