@@ -34,8 +34,8 @@ package object kyo:
     extension [T](v: T < Any)(using Flat[T < Any])
         def pure: T =
             v match
-                case v: kyo.core.internal.Suspend[?, ?, ?, ?] =>
-                    throw new IllegalStateException("Unhandled effect: " + v.tag)
+                case kyo: kyo.core.internal.Suspend[?, ?, ?, ?] =>
+                    bug("Unhandled effect: " + kyo.tag.parse)
                 case v =>
                     v.asInstanceOf[T]
     end extension
@@ -58,6 +58,10 @@ package object kyo:
         val _ = v
         ()
 
+    case class KyoBugException(msg: String) extends Exception(msg)
+
+    private[kyo] def bug(cond: Boolean, msg: String): Unit =
+        if cond then bug(msg)
     private[kyo] def bug(msg: String): Nothing =
-        throw new IllegalStateException("Kyo bug, please file a ticket: " + msg)
+        throw KyoBugException(msg + ". Please file a ticket.")
 end kyo

@@ -10,7 +10,7 @@ object Tag:
 
     extension [T](t: Tag[T])
         def parse: LightTypeTag =
-            val arr = t.split("|")
+            val arr = t.split('|')
             LightTypeTag.parse(arr(0).toInt, arr(1), arr(2), arr(3).toInt)
     end extension
 
