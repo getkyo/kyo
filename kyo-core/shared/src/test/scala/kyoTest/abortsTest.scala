@@ -55,8 +55,7 @@ class abortsTest extends KyoTest:
                 Aborts[String].run(effect1)
             val handled2: Either[Boolean, Either[String, Int]] < Any =
                 Aborts[Boolean].run(handled1)
-            handled2.pure
-            succeed
+            discard(handled2.pure)
         }
     }
 

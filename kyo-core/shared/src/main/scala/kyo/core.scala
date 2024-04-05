@@ -136,7 +136,7 @@ object core:
             def deepHandleLoop(v: T < (E & S)): Command[T] < S =
                 v match
                     case kyo: Suspend[Command, Any, T, E] @unchecked =>
-                        bug(kyo.tag != tag, "Unhandled effect: " + kyo.tag.parse)
+                        bug.checkTag(kyo.tag, tag)
                         handler.resume(
                             kyo.command,
                             (v: Any) => deepHandleLoop(kyo(v))
