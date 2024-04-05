@@ -48,6 +48,16 @@ class abortsTest extends KyoTest:
                     fail
             )
         }
+        "union tags" in pendingUntilFixed {
+            val effect1: Int < Aborts[String | Boolean] =
+                Aborts[String | Boolean].fail("failure")
+            val handled1: Either[String, Int] < Aborts[Boolean] =
+                Aborts[String].run(effect1)
+            val handled2: Either[Boolean, Either[String, Int]] < Any =
+                Aborts[Boolean].run(handled1)
+            handled2.pure
+            succeed
+        }
     }
 
     "effectful" - {
