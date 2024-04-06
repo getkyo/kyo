@@ -79,6 +79,6 @@ package object kyo:
             if cond then bug(msg)
 
         def apply(msg: String): Nothing =
-            throw KyoBugException(msg + ". Please file a ticket.")
+            throw KyoBugException(msg + " Please file a ticket.")
     end bug
 end kyo

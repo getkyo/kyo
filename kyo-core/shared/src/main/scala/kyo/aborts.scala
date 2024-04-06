@@ -5,13 +5,7 @@ import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 
 class Aborts[-V] extends Effect[Aborts[V]]:
-    opaque type Command[T] = Left[V, Nothing]
-
-    private[Aborts] inline def _suspend[B <: V, T](v: V)(
-        using tag: Tag[Aborts[B]]
-    ): T < Aborts[B] =
-        suspend(this)(Left(v))
-end Aborts
+    opaque type Command[T] >: Left[V, Nothing] = Left[V, Nothing]
 
 object Aborts:
     private case object aborts extends Aborts[Any]
@@ -20,7 +14,7 @@ object Aborts:
     extension [V](self: Aborts[V])
 
         def fail[T](value: T)(using ev: T => V, t: Tag[Aborts[V]]): Nothing < Aborts[V] =
-            self._suspend(ev(value))
+            self.suspend[Nothing](Left(ev(value)))
 
         def when(b: Boolean)(value: V)(using Tag[Aborts[V]]): Unit < Aborts[V] =
             if b then fail(value)
@@ -47,13 +41,13 @@ object Aborts:
             Tag[Aborts[V]],
             ClassTag[V]
         ): Either[V, T] < (S & VR) =
-            handle(handler, v).asInstanceOf[Either[V, T] < (S & VR)]
+            self.handle(handler)((), v).asInstanceOf[Either[V, T] < (S & VR)]
 
         private def handler(using ClassTag[V], Tag[Aborts[V]]) =
-            new ResultHandler[Const[Left[V, Nothing]], [T] =>> Either[V, T], Aborts[V], Any]:
-                def done[T](v: T) = Right(v)
+            new ResultHandler[Unit, self.Command, Aborts[V], [T] =>> Either[V, T], Any]:
+                def done[T](st: Unit, v: T) = Right(v)
 
-                override def failed(ex: Throwable): Nothing < Aborts[V] =
+                override def failed(st: Unit, ex: Throwable) =
                     ex match
                         case ex: V =>
                             self.fail(ex)
@@ -61,9 +55,11 @@ object Aborts:
                             throw ex
 
                 def resume[T, U: Flat, S](
-                    command: Left[V, Nothing],
+                    st: Unit,
+                    command: self.Command[T],
                     k: T => U < (Aborts[V] & S)
-                ) = command
+                ) =
+                    command.asInstanceOf[Either[V, U]]
     end extension
 
     /** An effect `Aborts[VS]` includes a failure type `V`, and once `V` has been handled,

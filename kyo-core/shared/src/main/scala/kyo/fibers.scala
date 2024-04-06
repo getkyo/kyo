@@ -343,10 +343,10 @@ object fibersInternal:
                         def resume[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
                             m match
                                 case Promise(p) =>
-                                    handle(p.block(deadline).map(f))
+                                    Resume(p.block(deadline).map(f))
                                 case Done(v) =>
-                                    handle(v.map(f))
-                handle(handler, v)
+                                    Resume(v.map(f))
+                FiberGets.handle(handler)((), v)
             }
 
     end FiberGets

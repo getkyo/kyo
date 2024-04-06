@@ -8,7 +8,7 @@ class Seqs extends Effect[Seqs]:
 object Seqs extends Seqs:
 
     def run[T: Flat, S](v: T < (Seqs & S)): Seq[T] < S =
-        handle(handler, v)
+        this.handle(handler)((), v)
 
     def repeat(n: Int): Unit < Seqs =
         get(Seq.fill(n)(()))
@@ -96,9 +96,9 @@ object Seqs extends Seqs:
         loop(0)
     end fill
 
-    private val handler: ResultHandler[Seq, Seq, Seqs, Any] =
-        new ResultHandler[Seq, Seq, Seqs, Any]:
-            def done[T](v: T) = Seq(v)
-            def resume[T, U: Flat, S](v: Seq[T], f: T => U < (Seqs & S)) =
+    private val handler =
+        new ResultHandler[Unit, Seq, Seqs, Seq, Any]:
+            def done[T](st: Unit, v: T) = Seq(v)
+            def resume[T, U: Flat, S](st: Unit, v: Seq[T], f: T => U < (Seqs & S)) =
                 Seqs.collect(v.map(e => Seqs.run(f(e)))).map(_.flatten)
 end Seqs
