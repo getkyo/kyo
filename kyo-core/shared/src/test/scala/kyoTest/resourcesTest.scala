@@ -13,6 +13,18 @@ class resourcesTest extends KyoTest:
         def close() = closes += 1
     end Resource
 
+    case class EffectfulResource(id: Int, closes: AtomicInt):
+        def close: Unit < IOs =
+            closes.incrementAndGet.unit
+
+    end EffectfulResource
+    object EffectfulResource:
+        def apply(id: Int): EffectfulResource < IOs =
+            for
+                cl <- Atomics.initInt(0)
+            yield EffectfulResource(id, cl)
+    end EffectfulResource
+
     "acquire + close" in run {
         val r1 = Resource(1)
         val r2 = Resource(2)
@@ -124,5 +136,19 @@ class resourcesTest extends KyoTest:
         assert(r == r1)
         assert(r1.acquires == 1)
         assert(r1.closes == 1)
+    }
+
+    "effectful acquireRelease" in run {
+        val finalizedResource = IOs.run {
+            Resources.run {
+                for
+                    r          <- Resources.acquireRelease(EffectfulResource(1))(_.close)
+                    closeCount <- r.closes.get
+                yield
+                    assert(closeCount == 0)
+                    r
+            }
+        }
+        finalizedResource.closes.get.map(i => assert(i == 1))
     }
 end resourcesTest

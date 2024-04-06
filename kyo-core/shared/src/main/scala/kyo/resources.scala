@@ -20,9 +20,15 @@ object Resources:
                 }
         }
 
-    def acquire[T <: Closeable](resource: => T): T < Resources =
-        lazy val v = resource
-        ensure(v.close()).andThen(v)
+    def acquireRelease[T](acquire: => T < IOs)(release: T => Unit < IOs): T < Resources =
+        IOs {
+            acquire.map { resource =>
+                ensure(release(resource)).andThen(resource)
+            }
+        }
+
+    def acquire[T <: Closeable](resource: => T < IOs): T < Resources =
+        acquireRelease(resource)(r => IOs(r.close()))
 
     def run[T, S](v: T < (Resources & S)): T < (IOs & S) =
         Queues.initUnbounded[Unit < IOs](Access.Mpsc).map { q =>
