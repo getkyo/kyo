@@ -11,8 +11,18 @@ class DeepBindMapBench extends Bench.SyncAndFork[Int]:
             IOs {
                 if i > depth then i
                 else
-                    IOs(i + 11).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
-                        .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(loop)
+                    IOs(i + 11)
+                        .map(_ - 1)
+                        .map(_ - 1)
+                        .map(_ - 1)
+                        .map(_ - 1)
+                        .map(_ - 1)
+                        .map(_ - 1)
+                        .map(_ - 1)
+                        .map(_ - 1)
+                        .map(_ - 1)
+                        .map(_ - 1)
+                        .map(loop)
             }
         loop(0)
     end kyoBench
