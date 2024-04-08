@@ -102,7 +102,7 @@ lazy val `kyo-direct` =
         .dependsOn(`kyo-core` % "test->test;compile->compile")
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.20"
+            libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.21"
         )
         .jsSettings(`js-settings`)
 
