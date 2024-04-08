@@ -13,8 +13,8 @@ object Aborts:
 
     extension [V](self: Aborts[V])
 
-        def fail[T](value: T)(using ev: T => V, t: Tag[Aborts[V]]): Nothing < Aborts[V] =
-            self.suspend[Nothing](Left(ev(value)))
+        def fail[T <: V](value: T)(using t: Tag[Aborts[T]]): Nothing < Aborts[T] =
+            self.suspend[Nothing](Left(value))
 
         def when(b: Boolean)(value: V)(using Tag[Aborts[V]]): Unit < Aborts[V] =
             if b then fail(value)
@@ -46,6 +46,9 @@ object Aborts:
         private def handler(using ClassTag[V], Tag[Aborts[V]]) =
             new ResultHandler[Unit, self.Command, Aborts[V], [T] =>> Either[V, T], Any]:
                 def done[T](st: Unit, v: T) = Right(v)
+
+                override inline def accepts[T, U](self: Tag[T], other: Tag[U]): Boolean =
+                    self == other || self.parse <:< other.parse
 
                 override def failed(st: Unit, ex: Throwable) =
                     ex match
