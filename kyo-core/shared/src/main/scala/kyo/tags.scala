@@ -20,6 +20,10 @@ object Tag:
         import quotes.reflect.*
         if TypeRepr.of[T] =:= TypeRepr.of[Nothing] then
             report.errorAndAbort("Can't infer a Tag[Nothing]")
+        if TypeRepr.of[T] =:= TypeRepr.of[Any] then
+            report.errorAndAbort("Can't infer a Tag[Any]")
+        if TypeRepr.of[T] =:= TypeRepr.of[Object] then
+            report.errorAndAbort("Can't infer a Tag[Object]")
         val ref         = TypeInspections.apply[T]
         val fullDb      = TypeInspections.fullDb[T]
         val nameDb      = TypeInspections.unappliedDb[T]

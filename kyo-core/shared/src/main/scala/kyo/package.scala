@@ -29,13 +29,17 @@ package object kyo:
 
         def repeat(i: Int)(using ev: T => Unit): Unit < S =
             if i <= 0 then () else andThen(repeat(i - 1))
+
+        private[kyo] def isPure: Boolean =
+            !v.isInstanceOf[core.internal.Kyo[?, ?]]
+
     end extension
 
     extension [T](v: T < Any)(using Flat[T < Any])
         def pure: T =
             v match
                 case kyo: kyo.core.internal.Suspend[?, ?, ?, ?] =>
-                    bug.failTag(kyo.tag, Tag[Any])
+                    bug.failTag(kyo.tag)
                 case v =>
                     v.asInstanceOf[T]
     end extension
@@ -61,6 +65,11 @@ package object kyo:
     private[kyo] object bug:
 
         case class KyoBugException(msg: String) extends Exception(msg)
+
+        inline def failTag[T, U](
+            inline actual: Tag[U]
+        ): Nothing =
+            bug(s"Unexpected effect '${actual.parse}' found in 'pure'.")
 
         inline def failTag[T, U](
             inline actual: Tag[U],
