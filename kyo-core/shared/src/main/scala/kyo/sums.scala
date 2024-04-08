@@ -10,7 +10,7 @@ class Sums[V] extends Effect[Sums[V]]:
     type Command[T] = V
 
     def add(v: V)(using Tag[Sums[V]]): Unit < Sums[V] =
-        suspend(Sums[V])(v)
+        Sums[V].suspend[Unit](v)
 
     def run[T: Flat, S](v: T < (Sums[V] & S))(
         using
@@ -24,21 +24,18 @@ class Sums[V] extends Effect[Sums[V]]:
         g: Summer[V],
         t: Tag[Sums[V]]
     ): (V, T) < S =
-        handle[Const[V], [T] =>> (V, T), Sums[V], T, Any, S](handler(init), v)
-
-    private def handler(state: V)(
-        using summer: Summer[V]
-    ): ResultHandler[Const[V], [T] =>> (V, T), Sums[V], Any] =
-        new ResultHandler[Const[V], [T] =>> (V, T), Sums[V], Any]:
-            def done[T](v: T) = (summer.result(state), v)
-            def resume[T, U: Flat, S](command: V, k: T => U < (Sums[V] & S)) =
-                handle(handler(summer.add(state, command)), k(().asInstanceOf[T]))
+        Sums[V].handle(g.handler)(init, v)
 end Sums
 
 abstract class Summer[V]:
     def init: V
     def add(v1: V, v2: V): V
     def result(v: V): V
+    val handler =
+        new ResultHandler[V, Const[V], Sums[V], [T] =>> (V, T), Any]:
+            def done[T](st: V, v: T) = (result(st), v)
+            def resume[T, U: Flat, S](st: V, command: V, k: T => U < (Sums[V] & S)) =
+                Resume(add(st, command), k(().asInstanceOf[T]))
 end Summer
 
 object Summer:

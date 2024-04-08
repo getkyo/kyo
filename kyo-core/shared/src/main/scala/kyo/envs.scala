@@ -12,25 +12,30 @@ object Envs:
     extension [V](self: Envs[V])
 
         def get(using Tag[Envs[V]]): V < Envs[V] =
-            suspend(self)(())
+            self.suspend[V](())
 
-        def use[T, S](f: V => T < S)(using Tag[Envs[V]]): T < (Envs[V] & S) =
-            get.map(f)
+        inline def use[T, S](inline f: V => T < S)(
+            using inline tag: Tag[Envs[V]]
+        ): T < (Envs[V] & S) =
+            self.suspend[V, T, S]((), f)
 
         def run[T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
             using
             HasEnvs[V, VS] { type Remainder = VR },
             Tag[Envs[V]]
         ): T < (S & VR) =
-            val handler = new Handler[Const[Unit], Envs[V], Any]:
-                def resume[T2, U: Flat, S1](
-                    command: Unit,
-                    k: T2 => U < (Envs[V] & S1)
-                ) = handle(k(env.asInstanceOf[T2]))
+            Envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
 
-            handle(handler, value).asInstanceOf[T < (S & VR)]
-        end run
     end extension
+
+    private def handler[V]: ResultHandler[V, Const[Unit], Envs[V], Id, Any] =
+        cachedHandler.asInstanceOf[ResultHandler[V, Const[Unit], Envs[V], Id, Any]]
+
+    private val cachedHandler =
+        new ResultHandler[Any, Const[Unit], Envs[Any], Id, Any]:
+            def done[T](st: Any, v: T) = v
+            def resume[T, U: Flat, S2](st: Any, command: Unit, k: T => U < (Envs[Any] & S2)) =
+                Resume(st, k(st.asInstanceOf[T]))
 
     /** An effect `Envs[VS]` includes a dependency on `V`, and once `V` has been handled, `Envs[VS]`
       * should be replaced by `Out`

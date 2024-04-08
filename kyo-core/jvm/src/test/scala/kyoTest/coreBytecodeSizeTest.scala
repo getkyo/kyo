@@ -12,7 +12,7 @@ class coreBytecodeSizeTest extends KyoTest:
 
     object TestHandler extends Handler[Id, TestEffect.type, Any]:
         def resume[T, U: Flat, S](command: T, k: T => U < (TestEffect.type & S)) =
-            handle(k(command))
+            Resume(k(command))
 
     class TestSuspend:
         def test(e: TestEffect.type) = suspend(e)(42)
@@ -21,7 +21,7 @@ class coreBytecodeSizeTest extends KyoTest:
         def test(v: Int < TestEffect.type) = transform(v)(_ + 1)
 
     class TestHandle:
-        def test(h: TestHandler.type, v: Int < TestEffect.type) = handle(h, v)
+        def test(h: TestHandler.type, v: Int < TestEffect.type) = TestEffect.handle(h)((), v)
 
     "suspend" in runJVM {
         val map = methodBytecodeSize[TestSuspend]
@@ -35,7 +35,12 @@ class coreBytecodeSizeTest extends KyoTest:
 
     "handle" in runJVM {
         val map = methodBytecodeSize[TestHandle]
-        assert(map == Map("test" -> 43, "handleLoop" -> 172))
+        assert(map == Map(
+            "test"        -> 28,
+            "resultLoop"  -> 112,
+            "handleLoop"  -> 280,
+            "_handleLoop" -> 12
+        ))
     }
 
     def methodBytecodeSize[T](using ct: ClassTag[T]): Map[String, Int] =

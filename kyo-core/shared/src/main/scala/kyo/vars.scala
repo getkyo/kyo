@@ -5,41 +5,45 @@ import kyo.core.*
 object Vars:
     private case object vars extends Vars[Any]
     def apply[V]: Vars[V] = vars.asInstanceOf[Vars[V]]
+    object internal:
+        case object Get
+        case class Set[V](v: V)
+        case class Update[V](f: V => V)
+        type Op[V] = Get.type | Set[V] | Update[V]
+    end internal
+end Vars
+
+import Vars.internal.*
 
 class Vars[V] extends Effect[Vars[V]]:
-    opaque type Command[T] = Op[T]
-
-    private enum Op[T]:
-        case Get               extends Op[V]
-        case Set(value: V)     extends Op[Unit]
-        case Update(f: V => V) extends Op[Unit]
-    end Op
+    type Command[T] = Op[V]
 
     def get(using Tag[Vars[V]]): V < Vars[V] =
-        suspend(this)(Op.Get)
+        this.suspend[V](Get)
 
-    def use[T, S](f: V => T < S)(using Tag[Vars[V]]): T < (Vars[V] & S) =
-        get.map(f)
+    inline def use[T, S](inline f: V => T < S)(using inline tag: Tag[Vars[V]]): T < (Vars[V] & S) =
+        this.suspend[V, T, S](Get, f)
 
     def set(value: V)(using Tag[Vars[V]]): Unit < Vars[V] =
-        suspend(this)(Op.Set(value))
+        this.suspend[Unit](Set(value))
 
     def update(f: V => V)(using Tag[Vars[V]]): Unit < Vars[V] =
-        suspend(this)(Op.Update(f))
+        this.suspend[Unit](Update(f))
 
     def run[T: Flat, S2](state: V)(value: T < (Vars[V] & S2))(
         using Tag[Vars[V]]
     ): T < S2 =
-        handle(handler(state), value)
+        this.handle(handler)(state, value)
 
-    private def handler(state: V): Handler[Op, Vars[V], Any] =
-        new Handler[Op, Vars[V], Any]:
-            def resume[T, U: Flat, S2](op: Op[T], k: T => U < (Vars[V] & S2)) =
+    private val handler =
+        new ResultHandler[V, Const[Op[V]], Vars[V], Id, Any]:
+            def done[T](st: V, v: T) = v
+            def resume[T, U: Flat, S2](st: V, op: Op[V], k: T => U < (Vars[V] & S2)) =
                 op match
-                    case Op.Set(v) =>
-                        handle(handler(v), k(()))
-                    case Op.Get =>
-                        handle(k(state.asInstanceOf[T]))
-                    case Op.Update(f) =>
-                        handle(handler(f(state)), k(().asInstanceOf[T]))
+                    case Get =>
+                        Resume(st, k(st.asInstanceOf[T]))
+                    case Set(v) =>
+                        Resume(v, k(().asInstanceOf[T]))
+                    case Update(f) =>
+                        Resume(f(st), k(().asInstanceOf[T]))
 end Vars
