@@ -229,21 +229,21 @@ val ex = new Exception
 
 // If the effects don't short-circuit, only the 
 // order of nested types in the result changes
-assert(optionsFirst(Options.get(Some(1))) == Right(Some(1)))
-assert(optionsFirst(Aborts[Exception].get(Right(1))) == Right(Some(1)))
+optionsFirst(Options.get(Some(1)))            // Right(Some(1))
+optionsFirst(Aborts[Exception].get(Right(1))) // Right(Some(1))
 
 // Note how the result type changes from 
 // 'Try[Option[T]]' to 'Option[Try[T]]'
-assert(abortsFirst(Options.get(Some(1))) == Some(Right(1)))
-assert(abortsFirst(Aborts[Exception].get(Right(1))) == Some(Right(1)))
+abortsFirst(Options.get(Some(1)))             // Some(Right(1))
+abortsFirst(Aborts[Exception].get(Right(1)))  // Some(Right(1))
 
 // If there's short-circuiting, the 
 // resulting value can be different
-assert(optionsFirst(Options.get(None)) == Right(None))
-assert(optionsFirst(Aborts[Exception].get(Left(ex))) == Left(ex))
+optionsFirst(Options.get(None))               // Right(None)
+optionsFirst(Aborts[Exception].get(Left(ex))) // Left(ex)
 
-assert(abortsFirst(Options.get(None)) == None)
-assert(abortsFirst(Aborts[Exception].get(Left(ex))) == Some(Left(ex)))
+abortsFirst(Options.get(None))                // None
+abortsFirst(Aborts[Exception].get(Left(ex)))  // Some(Left(ex))
 ```
 
 ### Direct Syntax
@@ -750,7 +750,7 @@ val b: Int < Options =
   Options(1)
 
 // If 'apply' receives a 'null', it becomes equivalent to 'Options.get(None)'
-assert(Options.run(Options(null)) == Options.run(Options.get(None)))
+assert(Options.run(Options(null)).pure == Options.run(Options.get(None)).pure)
 
 // Effectful version of `Option.getOrElse`
 val c: Int < Options = 
