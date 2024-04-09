@@ -31,7 +31,7 @@ object Stream:
                         if st == 0 then
                             Resume(0, k(().asInstanceOf[T]))
                         else
-                            Streams.emitValue(command).andThen(
+                            Streams.emitValueAndThen(command)(
                                 Resume(st - 1, k(().asInstanceOf[T]))
                             )
             Streams[V].handle(handler)(n, s)
@@ -47,7 +47,7 @@ object Stream:
                         k: T => U < (Streams[V] & S2)
                     ) =
                         if st == 0 then
-                            Streams.emitValue(command).andThen(
+                            Streams.emitValueAndThen(command)(
                                 k(().asInstanceOf[T])
                             )
                         else if st == 1 then
@@ -69,7 +69,7 @@ object Stream:
                         if st then
                             f(command).map {
                                 case true =>
-                                    Streams.emitValue(command).andThen(
+                                    Streams.emitValueAndThen(command)(
                                         Resume(true, k(().asInstanceOf[T]))
                                     )
                                 case false =>
@@ -94,12 +94,12 @@ object Stream:
                                 case true =>
                                     Resume(true, k(().asInstanceOf[T]))
                                 case false =>
-                                    Streams.emitValue(command).andThen(
+                                    Streams.emitValueAndThen(command)(
                                         k(().asInstanceOf[T])
                                     )
                             }
                         else
-                            Streams.emitValue(command).andThen(
+                            Streams.emitValueAndThen(command)(
                                 k(().asInstanceOf[T])
                             )
             Streams[V].handle(handler)(true, s)
@@ -113,7 +113,7 @@ object Stream:
                 ) =
                     f(command).map {
                         case true =>
-                            Streams.emitValue(command).andThen(Resume(k(().asInstanceOf[T])))
+                            Streams.emitValueAndThen(command)(Resume(k(().asInstanceOf[T])))
                         case false =>
                             Resume(k(().asInstanceOf[T]))
                     }
@@ -130,7 +130,7 @@ object Stream:
                         k: T => U < (Streams[V] & S3)
                     ) =
                         if !command.equals(st) then
-                            Streams.emitValue(command).andThen(
+                            Streams.emitValueAndThen(command)(
                                 Resume(command, k(().asInstanceOf[T]))
                             )
                         else
@@ -168,9 +168,9 @@ object Stream:
                         k: T => U < (Streams[V] & S3)
                     ) =
                         f(command).map(v =>
-                            Streams.emitValue(v)(using tag2).andThen(
+                            Streams.emitValueAndThen(v)(
                                 Resume(k(().asInstanceOf[T]))
-                            )
+                            )(using tag2)
                         )
             Streams[V].handle(handler)((), s)
         end transform
@@ -192,13 +192,13 @@ object Stream:
                         k: T => U < (Streams[V] & S3)
                     ) =
                         f(st, command).map { newAcc =>
-                            Streams.emitValue(newAcc)(using tag2).andThen(
+                            Streams.emitValueAndThen(newAcc)(
                                 Resume(newAcc, k(().asInstanceOf[T]))
-                            )
+                            )(using tag2)
                         }
-            Streams.emitValue(init)(using tag2).andThen(
+            Streams.emitValueAndThen(init)(
                 Streams[V].handle(handler)(init, s)
-            )
+            )(using tag2)
         end accumulate
 
         def reemit[S2, V2: Flat](
@@ -307,6 +307,9 @@ object Streams:
     inline def emitValue[V](v: V)(using inline tag: Tag[Streams[V]]): Unit < Streams[V] =
         Streams[V].suspend[Unit](v)
 
+    inline def emitValueAndThen[V, U, S](v: V)(inline f: U < S)(using inline tag: Tag[Streams[V]]): U < (S & Streams[V]) =
+        Streams[V].suspend[V, U, S](v, _ => f)
+
     def emitValue[V](v: V, tail: V*)(using Tag[Streams[V]]): Unit < Streams[V] =
         emitSeq(v +: tail)
 
@@ -321,7 +324,7 @@ object Streams:
             case e if e.equals(Stream.Done) =>
                 ()
             case v: V @unchecked =>
-                emitValue(v).andThen(emitChannel(ch))
+                emitValueAndThen(v)(emitChannel(ch))
         }
 
     object internal:
