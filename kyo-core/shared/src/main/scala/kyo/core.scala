@@ -110,10 +110,6 @@ object core:
 
         case class Resume[U, S2](st: State, v: U < (E & S & S2))
 
-        object Resume:
-            def apply[U, S2](v: U < (E & S & S2))(using ev: Unit => State) =
-                new Resume(ev(()), v)
-
         def done[T](st: State, v: T): Result[T] < S
 
         def failed(st: State, ex: Throwable): Nothing < (E & S) = throw ex

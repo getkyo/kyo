@@ -113,9 +113,11 @@ object Stream:
                 ) =
                     f(command).map {
                         case true =>
-                            Streams.emitValueAndThen(command)(Resume(k(().asInstanceOf[T])))
+                            Streams.emitValueAndThen(command)(
+                                Resume((), k(().asInstanceOf[T]))
+                            )
                         case false =>
-                            Resume(k(().asInstanceOf[T]))
+                            Resume((), k(().asInstanceOf[T]))
                     }
             Streams[V].handle(handler)((), s)
         end filter
@@ -151,10 +153,10 @@ object Stream:
                     ) =
                         if f.isDefinedAt(command) then
                             f(command).andThen(
-                                Resume(k(().asInstanceOf[T]))
+                                Resume((), k(().asInstanceOf[T]))
                             )
                         else
-                            Resume(k(().asInstanceOf[T]))
+                            Resume((), k(().asInstanceOf[T]))
             Streams[V].handle(handler)((), s)
         end collect
 
@@ -169,7 +171,7 @@ object Stream:
                     ) =
                         f(command).map(v =>
                             Streams.emitValueAndThen(v)(
-                                Resume(k(().asInstanceOf[T]))
+                                Resume((), k(().asInstanceOf[T]))
                             )(using tag2)
                         )
             Streams[V].handle(handler)((), s)
@@ -206,7 +208,7 @@ object Stream:
         ): Stream[T, V2, S & S2] =
             val handler = new Handler[Const[V], Streams[V], Streams[V2] & S2]:
                 def resume[T3, U: Flat, S3](command: V, k: T3 => U < (Streams[V] & S3)) =
-                    f(command).andThen(Resume(k(().asInstanceOf[T3])))
+                    f(command).andThen(Resume((), k(().asInstanceOf[T3])))
             Streams[V].handle(handler)((), s)(using tag, Flat.derive)
         end reemit
 
@@ -261,7 +263,7 @@ object Stream:
                 new Handler[Const[V], Streams[V], Fibers]:
                     override def done[T](v: T) = ch.put(Done).andThen(v)
                     def resume[T, U: Flat, S](command: V, k: T => U < (Streams[V] & S)) =
-                        ch.put(command).map(_ => Resume(k(().asInstanceOf[T])))
+                        ch.put(command).map(_ => Resume((), k(().asInstanceOf[T])))
             Streams[V].handle(handler)((), s)
         end runChannel
 
@@ -273,7 +275,7 @@ object Stream:
     private object internal:
         private val discard = new Handler[Const[Any], Streams[Any], Any]:
             def resume[T, U: Flat, S](command: Any, k: T => U < (Streams[Any] & S)) =
-                Resume(k(().asInstanceOf[T]))
+                Resume((), k(().asInstanceOf[T]))
 
         def discardHandler[V]: Handler[Const[V], Streams[V], Any] =
             discard.asInstanceOf[Handler[Const[V], Streams[V], Any]]
@@ -307,7 +309,7 @@ object Streams:
     inline def emitValue[V](v: V)(using inline tag: Tag[Streams[V]]): Unit < Streams[V] =
         Streams[V].suspend[Unit](v)
 
-    inline def emitValueAndThen[V, U, S](v: V)(inline f: U < S)(using inline tag: Tag[Streams[V]]): U < (S & Streams[V]) =
+    inline def emitValueAndThen[V, U, S](v: V)(inline f: => U < S)(using inline tag: Tag[Streams[V]]): U < (S & Streams[V]) =
         Streams[V].suspend[V, U, S](v, _ => f)
 
     def emitValue[V](v: V, tail: V*)(using Tag[Streams[V]]): Unit < Streams[V] =
@@ -315,7 +317,7 @@ object Streams:
 
     def emitSeq[V](v: Seq[V])(using Tag[Streams[V]]): Unit < Streams[V] =
         if v.isEmpty then ()
-        else emitValue(v.head).andThen(emitSeq(v.tail))
+        else emitValueAndThen(v.head)(emitSeq(v.tail))
 
     def emitChannel[V](ch: Channel[V | Stream.Done])(using
         Tag[Streams[V]]

@@ -12,7 +12,7 @@ class coreBytecodeSizeTest extends KyoTest:
 
     object TestHandler extends Handler[Id, TestEffect.type, Any]:
         def resume[T, U: Flat, S](command: T, k: T => U < (TestEffect.type & S)) =
-            Resume(k(command))
+            Resume((), k(command))
 
     class TestSuspend:
         def test(e: TestEffect.type) = suspend(e)(42)
