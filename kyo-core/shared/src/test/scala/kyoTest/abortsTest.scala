@@ -48,15 +48,32 @@ class abortsTest extends KyoTest:
                     fail
             )
         }
-        "union tags" in pendingUntilFixed {
-            val effect1: Int < Aborts[String | Boolean] =
-                Aborts[String | Boolean].fail("failure")
-            val handled1: Either[String, Int] < Aborts[Boolean] =
-                Aborts[String].run(effect1)
-            val handled2: Either[Boolean, Either[String, Int]] < Any =
-                Aborts[Boolean].run(handled1)
-            handled2.pure
-            ()
+        "union tags" - {
+            "in suspend 1" in {
+                val effect1: Int < Aborts[String | Boolean] =
+                    Aborts[String | Boolean].fail("failure")
+                val handled1: Either[String, Int] < Aborts[Boolean] =
+                    Aborts[String].run(effect1)
+                val handled2: Either[Boolean, Either[String, Int]] < Any =
+                    Aborts[Boolean].run(handled1)
+                assert(handled2.pure == Right(Left("failure")))
+            }
+            "in suspend 2" in {
+                val effect1: Int < Aborts[String | Boolean] =
+                    Aborts[String | Boolean].fail("failure")
+                val handled1: Either[Boolean, Int] < Aborts[String] =
+                    Aborts[Boolean].run(effect1)
+                val handled2: Either[String, Either[Boolean, Int]] < Any =
+                    Aborts[String].run(handled1)
+                assert(handled2.pure == Left("failure"))
+            }
+            "in handle" in {
+                val effect: Int < Aborts[String | Boolean] =
+                    Aborts[String].fail("failure")
+                val handled: Either[String | Boolean, Int] < Any =
+                    Aborts[String | Boolean].run(effect)
+                assert(handled.pure == Left("failure"))
+            }
         }
     }
 
@@ -163,6 +180,14 @@ class abortsTest extends KyoTest:
                 val _: Either[Int, Int] < Any =
                     t3(42)
                 succeed
+            }
+            "super" in pendingUntilFixed {
+                assertCompiles("""
+                    val ex                              = new Exception
+                    val a: Int < Aborts[Exception]      = Aborts[Exception].fail(ex)
+                    val b: Either[Throwable, Int] < Any = Aborts[Throwable].run(a)
+                    assert(b.pure == Left(ex))
+                """)
             }
             "reduce large union incrementally" in {
                 val t1: Int < Aborts[Int | String | Boolean | Float | Char | Double] = 18

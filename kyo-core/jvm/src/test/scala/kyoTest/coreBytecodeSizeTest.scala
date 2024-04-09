@@ -38,7 +38,7 @@ class coreBytecodeSizeTest extends KyoTest:
         assert(map == Map(
             "test"        -> 28,
             "resultLoop"  -> 112,
-            "handleLoop"  -> 280,
+            "handleLoop"  -> 264,
             "_handleLoop" -> 12
         ))
     }
