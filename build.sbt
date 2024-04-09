@@ -115,9 +115,9 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core` % "test->test;compile->compile")
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.36.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk" % "1.36.0" % Test,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1" % Test
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.37.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.37.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
 
 lazy val `kyo-cache` =
@@ -240,5 +240,5 @@ import org.scalajs.jsenv.nodejs.*
 lazy val `js-settings` = Seq(
     Compile / doc / sources := Seq.empty,
     fork                    := false,
-    jsEnv := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120")))
+    jsEnv                   := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120")))
 )
