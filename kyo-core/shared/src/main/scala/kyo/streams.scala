@@ -48,8 +48,10 @@ object Stream:
                     ) =
                         if st == 0 then
                             Streams.emitValue(command).andThen(
-                                Resume(0, k(().asInstanceOf[T]))
+                                k(().asInstanceOf[T])
                             )
+                        else if st == 1 then
+                            k(().asInstanceOf[T])
                         else
                             Resume(st - 1, k(().asInstanceOf[T]))
             Streams[V].handle(handler)(n, s)
@@ -93,12 +95,12 @@ object Stream:
                                     Resume(true, k(().asInstanceOf[T]))
                                 case false =>
                                     Streams.emitValue(command).andThen(
-                                        Resume(false, k(().asInstanceOf[T]))
+                                        k(().asInstanceOf[T])
                                     )
                             }
                         else
                             Streams.emitValue(command).andThen(
-                                Resume(false, k(().asInstanceOf[T]))
+                                k(().asInstanceOf[T])
                             )
             Streams[V].handle(handler)(true, s)
         end dropWhile
