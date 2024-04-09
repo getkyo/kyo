@@ -10,7 +10,7 @@ case class Transaction(
     timestamp: Option[Instant]
 ) derives JsonCodec
 
-sealed trait Result
+sealed trait Result derives CanEqual
 
 case object Denied
     extends Result

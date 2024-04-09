@@ -10,7 +10,7 @@ class TraceReceiverTest extends KyoTest:
     "TraceReceiver.noop" in {
         val noopReceiver = TraceReceiver.noop
         val span         = noopReceiver.startSpan(Nil, "noopSpan", None, Attributes.empty)
-        assert(span == Span.noop)
+        assert(IOs.run(span).unsafe eq Span.noop.unsafe)
     }
 
     "TraceReceiver.all" in {

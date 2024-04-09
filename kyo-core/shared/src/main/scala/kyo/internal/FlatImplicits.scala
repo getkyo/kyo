@@ -26,7 +26,7 @@ object FlatImplicits:
             def unapply(tpe: TypeRepr): Option[(TypeRepr, TypeRepr)] =
                 tpe match
                     case AppliedType(_, List(t, u))
-                        if (tpe.typeSymbol == TypeRepr.of[<].typeSymbol) =>
+                        if (tpe.typeSymbol eq TypeRepr.of[<].typeSymbol) =>
                         Some((t.dealias, u.dealias))
                     case _ => None
         end Kyo
@@ -54,7 +54,7 @@ object FlatImplicits:
                                 case None    => false
 
         def isAny(t: TypeRepr) =
-            t.typeSymbol == TypeRepr.of[Any].typeSymbol
+            t.typeSymbol eq TypeRepr.of[Any].typeSymbol
 
         def isConcrete(t: TypeRepr) =
             t.typeSymbol.isClassDef

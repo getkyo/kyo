@@ -35,7 +35,7 @@ class fibersTest extends KyoTest:
                 a <- p.complete(IOs.fail(ex))
                 b <- p.isDone
                 c <- p.getTry
-            yield assert(a && b && c == Failure(ex))
+            yield assert(a && b && c == Failure[Int](ex))
             end for
         }
 
@@ -96,7 +96,7 @@ class fibersTest extends KyoTest:
             val t1 = Thread.currentThread()
             for
                 t2 <- Fibers.init(Thread.currentThread()).map(_.get)
-            yield assert(t1 != t2)
+            yield assert(t1 ne t2)
         }
         // "uses a virtual thread" in runJVM {
         //     Fibers.init(Thread.currentThread().isVirtual())
@@ -114,7 +114,7 @@ class fibersTest extends KyoTest:
             val t1 = Thread.currentThread()
             for
                 t2 <- Fibers.init(IOs(Fibers.init(Thread.currentThread()).map(_.get))).map(_.get)
-            yield assert(t1 != t2)
+            yield assert(t1 ne t2)
         }
 
         "with IOs-based effects" - {

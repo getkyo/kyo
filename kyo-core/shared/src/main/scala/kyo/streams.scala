@@ -127,7 +127,7 @@ object Stream:
                         command: V,
                         k: T => U < (Streams[V] & S3)
                     ) =
-                        if st != command then
+                        if !command.equals(st) then
                             Streams.emitValue(command).andThen(
                                 Resume(command, k(().asInstanceOf[T]))
                             )
@@ -323,7 +323,7 @@ object Streams:
         Tag[Streams[V]]
     ): Unit < (Streams[V] & Fibers) =
         ch.take.map {
-            case Stream.Done =>
+            case e if e.equals(Stream.Done) =>
                 ()
             case v: V @unchecked =>
                 emitValue(v).andThen(emitChannel(ch))

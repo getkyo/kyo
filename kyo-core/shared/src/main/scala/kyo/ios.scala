@@ -50,7 +50,7 @@ sealed trait IOs extends Effect[IOs]:
                     Success(v.asInstanceOf[T])
         try
             val v0 = v
-            if v0 == null then
+            if isNull(v0) then
                 throw new NullPointerException
             attemptLoop(v0)
         catch
@@ -76,7 +76,7 @@ sealed trait IOs extends Effect[IOs]:
                     v.asInstanceOf[T]
         try
             val v0 = v
-            if v0 == null then
+            if isNull(v0) then
                 throw new NullPointerException
             handleLoop(v0)
         catch

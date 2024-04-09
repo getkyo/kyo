@@ -32,11 +32,11 @@ class SpanTest extends KyoTest:
 
     "all" - {
         "empty" in IOs.run {
-            assert(Span.all(Nil) == Span.noop)
+            assert(Span.all(Nil).unsafe eq Span.noop.unsafe)
         }
         "one" in IOs.run {
             val span = Span(new TestSpan)
-            assert(Span.all(List(span)) == span)
+            assert(Span.all(List(span)).unsafe eq span.unsafe)
         }
         "multiple" in IOs.run {
             val unsafe1       = new TestSpan

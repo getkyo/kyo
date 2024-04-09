@@ -442,7 +442,7 @@ class streamsTest extends KyoTest:
         }
 
         "state machine" in {
-            sealed trait State
+            sealed trait State derives CanEqual
             case object Initial extends State
             case object Active  extends State
             case object Done    extends State
@@ -472,13 +472,13 @@ class streamsTest extends KyoTest:
             Channels.init[Int | Stream.Done](3).map { ch =>
                 Streams.initSeq(Seq(1, 2, 3)).runChannel(ch).map { _ =>
                     ch.take.map { v1 =>
-                        assert(v1 == 1)
+                        assert(v1.asInstanceOf[Int] == 1)
                         ch.take.map { v2 =>
-                            assert(v2 == 2)
+                            assert(v2.asInstanceOf[Int] == 2)
                             ch.take.map { v3 =>
-                                assert(v3 == 3)
+                                assert(v3.asInstanceOf[Int] == 3)
                                 ch.take.map { done =>
-                                    assert(done == Stream.Done)
+                                    assert(done.asInstanceOf[Stream.Done] eq Stream.Done)
                                 }
                             }
                         }
@@ -491,7 +491,7 @@ class streamsTest extends KyoTest:
             Channels.init[Int | Stream.Done](2).map { ch =>
                 Streams.initSeq(Seq()).runChannel(ch).map { _ =>
                     ch.take.map { done =>
-                        assert(done == Stream.Done)
+                        assert(done.asInstanceOf[Stream.Done] eq Stream.Done)
                     }
                 }
             }

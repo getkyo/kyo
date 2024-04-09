@@ -15,27 +15,27 @@ class MetricReceiverTest extends KyoTest:
             "Test Counter",
             "unit",
             Attributes.empty
-        ) == Counter.noop)
+        ).unsafe eq Counter.noop.unsafe)
         assert(noop.histogram(
             Nil,
             "testHistogram",
             "Test Histogram",
             "unit",
             Attributes.empty
-        ) == Histogram.noop)
+        ).unsafe eq Histogram.noop.unsafe)
         assert(noop.gauge(
             Nil,
             "testGauge",
             "Test Gauge",
             "unit",
             Attributes.empty
-        )(42.0) == Gauge.noop)
-        assert(noop.startSpan(
+        )(42.0).unsafe eq Gauge.noop.unsafe)
+        assert(IOs.run(noop.startSpan(
             Nil,
             "testSpan",
             None,
             Attributes.empty
-        ) == Span.noop)
+        )) eq Span.noop)
     }
 
     "MetricReceiver.all" - {

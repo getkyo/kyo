@@ -162,7 +162,7 @@ class hubsTest extends KyoTest:
                 t  <- Seqs.traverse(l)(l => Fibers.init(l.take).map(_.get))
                 e1 <- h.isEmpty
                 e2 <- Seqs.traverse(l)(_.isEmpty)
-            yield assert(t == List.fill(100)(1) && e1 && e2 == Seqs.fill(100)(true))
+            yield assert(t == List.fill(100)(1) && e1 && e2 == Seq.fill(100)(true))
         }
     }
 end hubsTest

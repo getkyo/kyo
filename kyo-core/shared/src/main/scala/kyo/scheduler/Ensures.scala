@@ -8,7 +8,7 @@ import scala.annotation.tailrec
 private[kyo] opaque type Ensures = Ensures.Empty.type | (() => Unit) | ArrayDeque[() => Unit]
 
 private[kyo] object Ensures:
-    case object Empty
+    case object Empty derives CanEqual
 
     val empty: Ensures = Empty
 
@@ -21,9 +21,8 @@ private[kyo] object Ensures:
 
     extension (e: Ensures)
         def add(f: () => Unit): Ensures =
-            e match
-                case Empty => f
-                case `f`   => f
+            (e: @unchecked) match
+                case e if e.equals(Empty) || e.equals(f) => f
                 case f0: (() => Unit) @unchecked =>
                     val b = buffer()
                     b.add(f0)
@@ -34,9 +33,9 @@ private[kyo] object Ensures:
                     arr
 
         def remove(f: () => Unit): Ensures =
-            e match
-                case Empty => e
-                case `f`   => Empty
+            (e: @unchecked) match
+                case e if e.equals(Empty) => e
+                case e if e.equals(f)     => Empty
                 case f: (() => Unit) @unchecked =>
                     f
                 case arr: ArrayDeque[() => Unit] @unchecked =>
@@ -46,8 +45,8 @@ private[kyo] object Ensures:
                     arr
 
         def finalize(): Unit =
-            e match
-                case Empty =>
+            (e: @unchecked) match
+                case e if e.equals(Empty) =>
                 case f: (() => Unit) @unchecked =>
                     f()
                 case arr: ArrayDeque[() => Unit] @unchecked =>
@@ -57,8 +56,8 @@ private[kyo] object Ensures:
                     discard(bufferCache.offer(arr))
 
         def size(): Int =
-            e match
-                case Empty => 0
+            (e: @unchecked) match
+                case e if e.equals(Empty) => 0
                 case f: (() => Unit) @unchecked =>
                     1
                 case arr: ArrayDeque[() => Unit] @unchecked =>

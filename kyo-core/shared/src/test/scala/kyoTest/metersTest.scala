@@ -156,7 +156,7 @@ class metersTest extends KyoTest:
 
         "tryRun" in runJVM {
             for
-                meter   <- Meters.pipeline(Meters.initRateLimiter(2, 1.millis), Meters.initMutex)
+                meter   <- Meters.pipeline(Meters.initRateLimiter(2, 10.millis), Meters.initMutex)
                 counter <- Atomics.initInt(0)
                 f1      <- Fibers.init(loop(meter, counter))
                 _       <- Fibers.sleep(5.millis)

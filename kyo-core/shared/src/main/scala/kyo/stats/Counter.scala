@@ -32,7 +32,7 @@ object Counter:
         )
 
     def all(l: List[Counter]): Counter =
-        l.filter(_ != noop) match
+        l.filter(_.unsafe ne noop.unsafe) match
             case Nil =>
                 noop
             case h :: Nil =>

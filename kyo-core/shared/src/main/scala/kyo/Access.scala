@@ -1,6 +1,6 @@
 package kyo
 
-sealed abstract class Access
+sealed abstract class Access derives CanEqual
 
 object Access:
     case object Mpmc extends Access

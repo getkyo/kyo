@@ -54,7 +54,7 @@ final private class Worker(id: Int, scope: Stats, exec: Executor) extends Runnab
 
     def handleBlocking() =
         val m = mount
-        val r = m != null && m.getState() == Thread.State.BLOCKED
+        val r = m != null && m.getState().ordinal() == Thread.State.BLOCKED.ordinal()
         if r then
             drain()
         r

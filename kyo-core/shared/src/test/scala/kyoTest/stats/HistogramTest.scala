@@ -25,11 +25,11 @@ class HistogramTest extends KyoTest:
 
     "all" - {
         "empty" in IOs.run {
-            assert(Histogram.all(Nil) == Histogram.noop)
+            assert(Histogram.all(Nil).unsafe eq Histogram.noop.unsafe)
         }
         "one" in IOs.run {
             val histogram = Histogram(new TestHistogram)
-            assert(Histogram.all(List(histogram)) == histogram)
+            assert(Histogram.all(List(histogram)).unsafe eq histogram.unsafe)
         }
         "multiple" in IOs.run {
             val unsafe1   = new TestHistogram

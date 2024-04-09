@@ -189,7 +189,7 @@ object core:
                         )
                     case _ =>
                         handler.pure(v.asInstanceOf[T])
-            if v == null then
+            if isNull(v) then
                 throw new NullPointerException
             deepHandleLoop(v)
         end deepHandle

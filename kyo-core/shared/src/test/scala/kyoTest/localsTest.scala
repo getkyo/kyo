@@ -108,6 +108,8 @@ class localsTest extends KyoTest:
         }
     }
 
+    given CanEqual[Locals.State, Map[Local[Int], Int]] = CanEqual.derived
+
     "save" - {
         "let + save" in {
             val l = Locals.init(10)

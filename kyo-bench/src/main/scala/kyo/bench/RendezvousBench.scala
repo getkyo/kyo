@@ -4,6 +4,8 @@ import org.openjdk.jmh.annotations.*
 
 class RendezvousBench extends Bench.ForkOnly[Int]:
 
+    given canEqualNull[T]: CanEqual[T, T | Null] = CanEqual.derived
+
     val depth = 10000
 
     def catsBench() =

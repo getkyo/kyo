@@ -123,7 +123,7 @@ object Files:
     def apply(path: List[Part]): Files =
         def loop(path: List[Part], acc: List[String]): List[String] =
             path match
-                case Nil =>
+                case _: Nil.type =>
                     acc.reverse
                 case h :: t =>
                     h match

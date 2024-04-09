@@ -27,11 +27,11 @@ class CounterTest extends KyoTest:
 
     "all" - {
         "empty" in IOs.run {
-            assert(Counter.all(Nil) == Counter.noop)
+            assert(Counter.all(Nil).unsafe eq Counter.noop.unsafe)
         }
         "one" in IOs.run {
             val counter = Counter(new TestCounter)
-            assert(Counter.all(List(counter)) == counter)
+            assert(Counter.all(List(counter)).unsafe eq counter.unsafe)
         }
         "multiple" in IOs.run {
             val unsafe1 = new TestCounter

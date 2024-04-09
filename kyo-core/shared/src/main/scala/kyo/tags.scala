@@ -8,6 +8,8 @@ opaque type Tag[T] = String
 
 object Tag:
 
+    given canEqual[T, U]: CanEqual[Tag[T], Tag[U]] = CanEqual.derived
+
     extension [T](t: Tag[T])
         def parse: LightTypeTag =
             val arr = t.split('|')

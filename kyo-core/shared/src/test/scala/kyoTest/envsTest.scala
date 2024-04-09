@@ -9,7 +9,7 @@ class envsTest extends KyoTest:
             Envs[Int].get.map(_ + 1)
         val v2: Int < Envs[Int] = v1
         assert(
-            Envs[Int].run(1)(v2) ==
+            Envs[Int].run(1)(v2).pure ==
                 2
         )
     }
@@ -19,7 +19,7 @@ class envsTest extends KyoTest:
             Envs[Int].use(_ + 1)
         val v2: Int < Envs[Int] = v1
         assert(
-            Envs[Int].run(1)(v2) ==
+            Envs[Int].run(1)(v2).pure ==
                 2
         )
     }
@@ -78,7 +78,7 @@ class envsTest extends KyoTest:
     }
 
     "no transformations" in {
-        assert(Envs[Int].run(1)(Envs[Int].get) == 1)
+        assert(Envs[Int].run(1)(Envs[Int].get).pure == 1)
     }
 
     "pure services" - {
@@ -97,7 +97,7 @@ class envsTest extends KyoTest:
             val a =
                 Envs[Service1].get.map(_(1))
             assert(
-                Envs[Service1].run(service1)(a) ==
+                Envs[Service1].run(service1)(a).pure ==
                     2
             )
         }
@@ -109,13 +109,13 @@ class envsTest extends KyoTest:
             val v: Int < (Envs[Service1] & Envs[Service2]) = a
             "same handling order" in {
                 assert(
-                    Envs[Service1].run(service1)(Envs[Service2].run(service2)(v)) ==
+                    Envs[Service1].run(service1)(Envs[Service2].run(service2)(v)).pure ==
                         4
                 )
             }
             "reverse handling order" in {
                 assert(
-                    Envs[Service2].run(service2)(Envs[Service1].run(service1)(v)) ==
+                    Envs[Service2].run(service2)(Envs[Service1].run(service1)(v)).pure ==
                         4
                 )
             }
@@ -123,7 +123,7 @@ class envsTest extends KyoTest:
                 val v1 =
                     Envs[Service1].run(service1)(v)
                 assert(
-                    Envs[Service2].run(service2)(v1) ==
+                    Envs[Service2].run(service2)(v1).pure ==
                         4
                 )
             }
@@ -151,7 +151,7 @@ class envsTest extends KyoTest:
                 val a =
                     Envs[Service1].get.map(_(1))
                 assert(
-                    Options.run(Envs[Service1].run(service1)(a)) ==
+                    Options.run(Envs[Service1].run(service1)(a)).pure ==
                         Some(2)
                 )
             }
@@ -159,7 +159,7 @@ class envsTest extends KyoTest:
                 val a =
                     Envs[Service1].get.map(_(0))
                 assert(
-                    Options.run(Envs[Service1].run(service1)(a)) ==
+                    Options.run(Envs[Service1].run(service1)(a)).pure ==
                         None
                 )
             }
@@ -175,20 +175,20 @@ class envsTest extends KyoTest:
                     val b = Envs[Service2].run(service2)(v)
                     val c = Envs[Service1].run(service1)(b)
                     assert(
-                        Options.run(c) == Option(3)
+                        Options.run(c).pure == Option(3)
                     )
                 }
                 "reverse handling order" in {
                     val b = Envs[Service1].run(service1)(v)
                     val c = Envs[Service2].run(service2)(b)
                     assert(
-                        Options.run(c) == Option(3)
+                        Options.run(c).pure == Option(3)
                     )
                 }
                 "dependent services" in {
                     val v2: Int < (Envs[Service2] & Options) = Envs[Service1].run(service1)(v)
                     assert(
-                        Options.run(Envs[Service2].run(service2)(v2)) ==
+                        Options.run(Envs[Service2].run(service2)(v2)).pure ==
                             Some(3)
                     )
                 }

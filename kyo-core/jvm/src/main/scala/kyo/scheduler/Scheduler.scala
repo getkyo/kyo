@@ -67,7 +67,7 @@ private[kyo] object Scheduler:
                 val w = workers(i)
                 if w != null && !w.handleBlocking() then
                     val l = w.load()
-                    if l < minLoad && w != submitter then
+                    if l < minLoad && (w ne submitter) then
                         minLoad = l
                         worker = w
                 end if
@@ -91,7 +91,7 @@ private[kyo] object Scheduler:
             val w = workers(i)
             if w != null && !w.handleBlocking() then
                 val l = w.load()
-                if l > maxLoad && w != thief then
+                if l > maxLoad && (w ne thief) then
                     maxLoad = l
                     worker = w
             end if

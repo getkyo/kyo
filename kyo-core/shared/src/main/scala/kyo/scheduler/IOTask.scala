@@ -88,7 +88,7 @@ private[kyo] class IOTask[T](
                 curr = nullIO
         end try
         state = runtime() + (Coordinator.currentTick() - start).asInstanceOf[Int]
-        if curr != nullIO then
+        if !isNull(curr) then
             Task.Preempted
         else
             Task.Done
@@ -96,7 +96,7 @@ private[kyo] class IOTask[T](
     end run
 
     def ensure(f: () => Unit): Unit =
-        if curr != nullIO then
+        if !isNull(curr) then
             ensures = ensures.add(f)
 
     def remove(f: () => Unit): Unit =

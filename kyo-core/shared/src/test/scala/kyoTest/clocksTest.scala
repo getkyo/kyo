@@ -21,6 +21,6 @@ class clocksTest extends KyoTest:
         val instant = Instant.now()
         testClock.nows = List(instant)
         val io = Clocks.let(testClock)(Clocks.now)
-        assert(IOs.run(io) == instant)
+        assert(IOs.run(io) eq instant)
     }
 end clocksTest

@@ -6,13 +6,13 @@ class seqsTest extends KyoTest:
 
     "one" in {
         assert(
-            Seqs.run(Seqs.get(Seq(1)).map(_ + 1)) ==
+            Seqs.run(Seqs.get(Seq(1)).map(_ + 1)).pure ==
                 Seq(2)
         )
     }
     "multiple" in {
         assert(
-            Seqs.run(Seqs.get(Seq(1, 2, 3)).map(_ + 1)) ==
+            Seqs.run(Seqs.get(Seq(1, 2, 3)).map(_ + 1)).pure ==
                 Seq(2, 3, 4)
         )
     }
@@ -20,7 +20,7 @@ class seqsTest extends KyoTest:
         assert(
             Seqs.run(Seqs.get(Seq(1, 2, 3)).map(i =>
                 Seqs.get(Seq(i * 10, i * 100))
-            )) ==
+            )).pure ==
                 Seq(10, 100, 20, 200, 30, 300)
         )
     }
@@ -29,7 +29,7 @@ class seqsTest extends KyoTest:
             Seqs.run(Seqs.get(Seq(1, 2, 3)).map(i =>
                 if i < 2 then Seqs.drop
                 else Seqs.get(Seq(i * 10, i * 100))
-            )) ==
+            )).pure ==
                 Seq(20, 200, 30, 300)
         )
     }
@@ -37,7 +37,7 @@ class seqsTest extends KyoTest:
         assert(
             Seqs.run(Seqs.get(Seq(1, 2, 3)).map(i =>
                 Seqs.filter(i >= 2).map(_ => Seqs.get(Seq(i * 10, i * 100)))
-            )) ==
+            )).pure ==
                 Seq(20, 200, 30, 300)
         )
     }
@@ -55,7 +55,7 @@ class seqsTest extends KyoTest:
     }
     "repeat" in {
         assert(
-            Seqs.run(Seqs.repeat(3).andThen(42)) ==
+            Seqs.run(Seqs.repeat(3).andThen(42)).pure ==
                 Seq(42, 42, 42)
         )
     }

@@ -15,6 +15,8 @@ private[kyo] object Task:
     opaque type Result = Boolean
     val Preempted: Result = true
     val Done: Result      = false
+    object Result:
+        given CanEqual[Result, Result] = CanEqual.derived
 
     inline def apply(inline r: => Unit): Task =
         new Task:

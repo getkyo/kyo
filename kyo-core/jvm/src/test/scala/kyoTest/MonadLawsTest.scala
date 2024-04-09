@@ -38,7 +38,7 @@ object MonadLawsTest extends ZIOSpecDefault:
                 new Equal[Myo[A]]:
                     protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean =
                         def run(m: Myo[A]): A = IOs.run(Fibers.runAndBlock(Duration.Inf)(m.v))
-                        run(l) == run(r)
+                        summon[Equal[A]].equal(run(l), run(r))
 
     def spec = suite("MonadLawsTest")(
         test("covariant")(checkAllLaws(CovariantLaws)(listGenF, Gen.int)),

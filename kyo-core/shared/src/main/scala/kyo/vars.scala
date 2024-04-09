@@ -40,7 +40,7 @@ class Vars[V] extends Effect[Vars[V]]:
             def done[T](st: V, v: T) = v
             def resume[T, U: Flat, S2](st: V, op: Op[V], k: T => U < (Vars[V] & S2)) =
                 op match
-                    case Get =>
+                    case _: Get.type =>
                         Resume(st, k(st.asInstanceOf[T]))
                     case Set(v) =>
                         Resume(v, k(().asInstanceOf[T]))

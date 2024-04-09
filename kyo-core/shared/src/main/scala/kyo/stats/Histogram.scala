@@ -31,7 +31,7 @@ object Histogram:
         )
 
     def all(l: List[Histogram]): Histogram =
-        l.filter(_ != noop) match
+        l.filter(_.unsafe ne noop.unsafe) match
             case Nil =>
                 noop
             case h :: Nil =>

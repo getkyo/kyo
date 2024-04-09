@@ -8,20 +8,20 @@ class StatsTest extends KyoTest:
 
     "noop" in {
         val stats = Stats.noop
-        assert(stats.scope("test") == stats)
-        assert(stats.initCounter("a") == Counter.noop)
-        assert(stats.initHistogram("a") == Histogram.noop)
-        assert(stats.initGauge("a")(1) == Gauge.noop)
+        assert(stats.scope("test") eq stats)
+        assert(stats.initCounter("a").unsafe eq Counter.noop.unsafe)
+        assert(stats.initHistogram("a").unsafe eq Histogram.noop.unsafe)
+        assert(stats.initGauge("a")(1).unsafe eq Gauge.noop.unsafe)
         val v = new Object
-        assert(stats.traceSpan("a")(v) == v)
+        assert(IOs.run(stats.traceSpan("a")(v)) eq v)
     }
 
     "scope" in {
         val stats = Stats.initScope("test")
-        assert(stats.initCounter("a") == Counter.noop)
-        assert(stats.initHistogram("a") == Histogram.noop)
-        assert(stats.initGauge("a")(1) == Gauge.noop)
+        assert(stats.initCounter("a").unsafe eq Counter.noop.unsafe)
+        assert(stats.initHistogram("a").unsafe eq Histogram.noop.unsafe)
+        assert(stats.initGauge("a")(1).unsafe eq Gauge.noop.unsafe)
         val v = new Object
-        assert(stats.traceSpan("a")(v) != v)
+        assert(IOs.run(stats.traceSpan("a")(v)) eq v)
     }
 end StatsTest

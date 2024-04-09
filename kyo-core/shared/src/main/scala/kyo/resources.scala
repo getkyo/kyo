@@ -10,7 +10,7 @@ object Resources:
 
     def ensure(v: => Unit < IOs): Unit < Resources =
         local.use {
-            case None =>
+            case _: None.type =>
                 bug("Can't locate Resources finalizer queue.")
             case q: Queues.Unbounded[Unit < IOs] =>
                 q.offer(IOs(v)).map {

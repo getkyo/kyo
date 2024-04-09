@@ -12,7 +12,7 @@ class sumsTest extends KyoTest:
                 _ <- Sums[Int].add(1)
             yield "a"
 
-        assert(Sums[Int].run(v) == (3, "a"))
+        assert(Sums[Int].run(v).pure == (3, "a"))
     }
     "string" in {
         val v: String < Sums[String] =
@@ -22,7 +22,7 @@ class sumsTest extends KyoTest:
                 _ <- Sums[String].add("3")
             yield "a"
         val res = Sums[String].run(v)
-        assert(res == ("123", "a"))
+        assert(res.pure == ("123", "a"))
     }
     "int and string" in {
         val v: String < (Sums[Int] & Sums[String]) =
@@ -57,7 +57,7 @@ class sumsTest extends KyoTest:
                 _ <- Sums[List[Int]].add(List(3))
             yield "a"
         val res = Sums[List[Int]].run(v)
-        assert(res == (List(1, 2, 3), "a"))
+        assert(res.pure == (List(1, 2, 3), "a"))
     }
 
     "Set" in {
@@ -68,6 +68,6 @@ class sumsTest extends KyoTest:
                 _ <- Sums[Set[Int]].add(Set(3))
             yield "a"
         val res = Sums[Set[Int]].run(v)
-        assert(res == (Set(1, 2, 3), "a"))
+        assert(res.pure == (Set(1, 2, 3), "a"))
     }
 end sumsTest

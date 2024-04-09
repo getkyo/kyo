@@ -5,7 +5,7 @@ import kyo.*
 
 class resourcesTest extends KyoTest:
 
-    case class Resource(id: Int, var closes: Int = 0) extends Closeable:
+    case class Resource(id: Int, var closes: Int = 0) extends Closeable derives CanEqual:
         var acquires = 0
         def apply() =
             acquires += 1

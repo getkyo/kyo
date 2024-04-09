@@ -14,10 +14,9 @@ class KyoTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     override given executionContext: ExecutionContext = Platform.executionContext
 
-    trait Eq[T]:
-        def apply(a: T, b: T): Boolean
-    object Eq:
-        given eq[T]: Eq[T] = _ == _
+    given tryCanEqual[T]: CanEqual[Try[T], Try[T]]                   = CanEqual.derived
+    given eitherCanEqual[T, U]: CanEqual[Either[T, U], Either[T, U]] = CanEqual.derived
+    given throwableCanEqual: CanEqual[Throwable, Throwable]          = CanEqual.derived
 
     def retry[S](f: => Boolean < S): Boolean < S =
         def loop(): Boolean < S =

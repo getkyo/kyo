@@ -7,7 +7,7 @@ package object kyo:
     extension [T, S](v: T < S)(using NotGiven[Any => S])
 
         inline def flatMap[U, S2](inline f: T => U < S2): U < (S & S2) =
-            if v == null then
+            if isNull(v) then
                 throw new NullPointerException
             kyo.core.transform(v)(f)
         end flatMap
@@ -61,6 +61,9 @@ package object kyo:
     inline def discard[T](v: T): Unit =
         val _ = v
         ()
+
+    private[kyo] inline def isNull[T](v: T): Boolean =
+        v.asInstanceOf[AnyRef] == null
 
     private[kyo] object bug:
 

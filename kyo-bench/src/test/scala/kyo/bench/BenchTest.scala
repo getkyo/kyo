@@ -6,7 +6,7 @@ import org.scalatest.freespec.AsyncFreeSpec
 
 class BenchTest extends AsyncFreeSpec with Assertions:
 
-    def test[T](b: Bench.SyncAndFork[T], expected: T): Unit =
+    def test[T](b: Bench.SyncAndFork[T], expected: T)(using CanEqual[T, T]): Unit =
         "cats" - {
             "sync" in {
                 assert(b.syncCats() == expected)
@@ -33,7 +33,7 @@ class BenchTest extends AsyncFreeSpec with Assertions:
         }
     end test
 
-    def test[T](b: Bench.ForkOnly[T], expected: T): Unit =
+    def test[T](b: Bench.ForkOnly[T], expected: T)(using CanEqual[T, T]): Unit =
         "cats" - {
             "fork" in {
                 assert(b.forkCats() == expected)

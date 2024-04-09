@@ -44,11 +44,13 @@ object Queues:
 
         def drain(): Seq[T] =
             def loop(acc: List[T]): List[T] =
-                poll() match
-                    case null =>
-                        acc.reverse
-                    case v =>
-                        loop(v :: acc)
+                val v = poll()
+                if isNull(v) then
+                    acc.reverse
+                else
+                    loop(v :: acc)
+                end if
+            end loop
             loop(Nil)
         end drain
 
@@ -86,9 +88,9 @@ object Queues:
                         new Unsafe[T]:
                             val state       = new AtomicReference[T]
                             def capacity    = 1
-                            def size()      = if state.get() == null then 0 else 1
-                            def isEmpty()   = state.get() == null
-                            def isFull()    = state.get() != null
+                            def size()      = if isNull(state.get()) then 0 else 1
+                            def isEmpty()   = isNull(state.get())
+                            def isFull()    = !isNull(state.get())
                             def offer(v: T) = state.compareAndSet(null.asInstanceOf[T], v)
                             def poll()      = state.getAndSet(null.asInstanceOf[T])
                             def peek()      = state.get()

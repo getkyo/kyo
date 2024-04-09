@@ -2,7 +2,6 @@ package java.util.concurrent
 
 import java.util.Timer
 import java.util.TimerTask
-import kyo.*
 import scala.concurrent.duration.*
 
 class ScheduledFuture[T](r: => T) extends TimerTask:
@@ -14,7 +13,9 @@ class ScheduledFuture[T](r: => T) extends TimerTask:
     def isCancelled(): Boolean = cancelled
     def run(): Unit =
         done = true
-        try discard(r)
+        try
+            r
+            ()
         catch
             case e: Throwable =>
                 e.printStackTrace()

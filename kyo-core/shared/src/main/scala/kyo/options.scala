@@ -10,7 +10,7 @@ object Options:
         options.fail(None)
 
     def apply[T](v: T): T < Options =
-        if v == null then
+        if isNull(v) then
             empty
         else
             v

@@ -18,28 +18,29 @@ class Cache(private[kyo] val store: Store):
                 Fibers.initPromise[U].map { p =>
                     val key = (this, v)
                     IOs[U, Fibers & S] {
-                        store.get(key, _ => p.asInstanceOf[Promise[Any]]) match
-                            case `p` =>
-                                IOs.ensure {
-                                    p.interrupt.map {
-                                        case true =>
-                                            IOs(store.invalidate(key))
-                                        case false =>
-                                            ()
-                                    }
-                                } {
-                                    IOs.attempt[U, S](f(v)).map {
-                                        case Success(v) =>
-                                            p.complete(v)
-                                                .unit.andThen(v)
-                                        case Failure(ex) =>
-                                            IOs(store.invalidate(key))
-                                                .andThen(p.complete(IOs.fail(ex)))
-                                                .unit.andThen(IOs.fail(ex))
-                                    }
+                        val p2 = store.get(key, _ => p.asInstanceOf[Promise[Any]])
+                        if p.equals(p2) then
+                            IOs.ensure {
+                                p.interrupt.map {
+                                    case true =>
+                                        IOs(store.invalidate(key))
+                                    case false =>
+                                        ()
                                 }
-                            case p2 =>
-                                p2.asInstanceOf[Promise[U]].get
+                            } {
+                                IOs.attempt[U, S](f(v)).map {
+                                    case Success(v) =>
+                                        p.complete(v)
+                                            .unit.andThen(v)
+                                    case Failure(ex) =>
+                                        IOs(store.invalidate(key))
+                                            .andThen(p.complete(IOs.fail(ex)))
+                                            .unit.andThen(IOs.fail(ex))
+                                }
+                            }
+                        else
+                            p2.asInstanceOf[Promise[U]].get
+                        end if
                     }
                 }
 

@@ -67,10 +67,7 @@ object Channels:
                         }
                     val poll =
                         op {
-                            try
-                                u.poll() match
-                                    case null => None
-                                    case v    => Some(v)
+                            try Option(u.poll())
                             finally flush()
                         }
 
@@ -90,13 +87,14 @@ object Channels:
                     val takeFiber =
                         op {
                             try
-                                u.poll() match
-                                    case null =>
-                                        val p = Fibers.unsafeInitPromise[T]
-                                        takes.add(p)
-                                        p
-                                    case v =>
-                                        Fiber.value(v)
+                                val v = u.poll()
+                                if isNull(v) then
+                                    val p = Fibers.unsafeInitPromise[T]
+                                    takes.add(p)
+                                    p
+                                else
+                                    Fiber.value(v)
+                                end if
                             finally
                                 flush()
                         }
@@ -145,19 +143,19 @@ object Channels:
                             // Attempt to transfer a value from the queue to
                             // a waiting consumer (take).
                             val p = takes.poll()
-                            if p != null.asInstanceOf[Promise[T]] then
-                                u.poll() match
-                                    case null =>
-                                        // If the queue has been emptied before the
-                                        // transfer, requeue the consumer's promise.
-                                        discard(takes.add(p))
-                                    case v =>
-                                        if !p.unsafeComplete(v) && !u.offer(v) then
-                                            // If completing the take fails and the queue
-                                            // cannot accept the value back, enqueue a
-                                            // placeholder put operation to preserve the value.
-                                            val placeholder = Fibers.unsafeInitPromise[Unit]
-                                            discard(puts.add((v, placeholder)))
+                            if !isNull(p) then
+                                val v = u.poll()
+                                if isNull(v) then
+                                    // If the queue has been emptied before the
+                                    // transfer, requeue the consumer's promise.
+                                    discard(takes.add(p))
+                                else if !p.unsafeComplete(v) && !u.offer(v) then
+                                    // If completing the take fails and the queue
+                                    // cannot accept the value back, enqueue a
+                                    // placeholder put operation to preserve the value.
+                                    val placeholder = Fibers.unsafeInitPromise[Unit]
+                                    discard(puts.add((v, placeholder)))
+                                end if
                             end if
                             flush()
                         else if queueSize < capacity && !putsEmpty then

@@ -17,7 +17,7 @@ object Gauge:
         )
 
     def all(l: List[Gauge]): Gauge =
-        l.filter(_ != noop) match
+        l.filter(_.unsafe ne noop.unsafe) match
             case Nil =>
                 noop
             case h :: Nil =>

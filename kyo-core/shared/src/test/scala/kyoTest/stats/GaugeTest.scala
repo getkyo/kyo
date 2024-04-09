@@ -22,11 +22,11 @@ class GaugeTest extends KyoTest:
 
     "all" - {
         "empty" in IOs.run {
-            assert(Gauge.all(Nil) == Gauge.noop)
+            assert(Gauge.all(Nil).unsafe eq Gauge.noop.unsafe)
         }
         "one" in IOs.run {
             val gauge = Gauge(new TestGauge)
-            assert(Gauge.all(List(gauge)) == gauge)
+            assert(Gauge.all(List(gauge)).unsafe eq gauge.unsafe)
         }
         "multiple" in IOs.run {
             val unsafe1        = new TestGauge

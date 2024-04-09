@@ -18,7 +18,7 @@ end TraceReceiver
 
 object TraceReceiver:
 
-    val get: TraceReceiver =
+    lazy val get: TraceReceiver =
         ServiceLoader.load(classOf[TraceReceiver]).iterator().asScala.toList match
             case Nil =>
                 TraceReceiver.noop

@@ -4,8 +4,8 @@ import kyo.*
 
 class abortsTest extends KyoTest:
 
-    class Ex1 extends RuntimeException
-    class Ex2
+    case class Ex1() extends RuntimeException derives CanEqual
+    case class Ex2() derives CanEqual
 
     val ex1 = new Ex1
     val ex2 = new Ex2
@@ -13,13 +13,13 @@ class abortsTest extends KyoTest:
     "pure" - {
         "handle" in {
             assert(
-                Aborts[Ex1].run(Aborts[Ex1].get(Right(1))) ==
+                Aborts[Ex1].run(Aborts[Ex1].get(Right(1))).pure ==
                     Right(1)
             )
         }
         "handle + transform" in {
             assert(
-                Aborts[Ex1].run(Aborts[Ex1].get(Right(1)).map(_ + 1)) ==
+                Aborts[Ex1].run(Aborts[Ex1].get(Right(1)).map(_ + 1)).pure ==
                     Right(2)
             )
         }
@@ -27,7 +27,7 @@ class abortsTest extends KyoTest:
             assert(
                 Aborts[Ex1].run(Aborts[Ex1].get(Right(1)).map(i =>
                     Aborts[Ex1].get(Right(i + 1))
-                )) ==
+                )).pure ==
                     Right(2)
             )
         }
@@ -35,7 +35,7 @@ class abortsTest extends KyoTest:
             assert(
                 Aborts[Ex1].run(Aborts[Ex1].get(Right(1)).map(_ + 1).map(i =>
                     Aborts[Ex1].get(Right(i + 1))
-                )) ==
+                )).pure ==
                     Right(3)
             )
         }
@@ -44,7 +44,7 @@ class abortsTest extends KyoTest:
             assert(
                 Aborts[Ex1].run(Aborts[Ex1].get(Right(1)).map(_ + 1).map(_ =>
                     Aborts[Ex1].get(fail)
-                )) ==
+                )).pure ==
                     fail
             )
         }
@@ -55,7 +55,8 @@ class abortsTest extends KyoTest:
                 Aborts[String].run(effect1)
             val handled2: Either[Boolean, Either[String, Int]] < Any =
                 Aborts[Boolean].run(handled1)
-            discard(handled2.pure)
+            handled2.pure
+            ()
         }
     }
 
@@ -64,32 +65,32 @@ class abortsTest extends KyoTest:
             val v = Aborts[Ex1].get(Right(1))
             "handle" in {
                 assert(
-                    Aborts[Ex1].run(v) ==
+                    Aborts[Ex1].run(v).pure ==
                         Right(1)
                 )
             }
             "handle + transform" in {
                 assert(
-                    Aborts[Ex1].run(v.map(_ + 1)) ==
+                    Aborts[Ex1].run(v.map(_ + 1)).pure ==
                         Right(2)
                 )
             }
             "handle + effectful transform" in {
                 assert(
-                    Aborts[Ex1].run(v.map(i => Aborts[Ex1].get(Right(i + 1)))) ==
+                    Aborts[Ex1].run(v.map(i => Aborts[Ex1].get(Right(i + 1)))).pure ==
                         Right(2)
                 )
             }
             "handle + transform + effectful transform" in {
                 assert(
-                    Aborts[Ex1].run(v.map(_ + 1).map(i => Aborts[Ex1].get(Right(i + 1)))) ==
+                    Aborts[Ex1].run(v.map(_ + 1).map(i => Aborts[Ex1].get(Right(i + 1)))).pure ==
                         Right(3)
                 )
             }
             "handle + transform + failed effectful transform" in {
                 val fail = Left[Ex1, Int](ex1)
                 assert(
-                    Aborts[Ex1].run(v.map(_ + 1).map(_ => Aborts[Ex1].get(fail))) ==
+                    Aborts[Ex1].run(v.map(_ + 1).map(_ => Aborts[Ex1].get(fail))).pure ==
                         fail
                 )
             }
@@ -98,32 +99,32 @@ class abortsTest extends KyoTest:
             val v: Int < Aborts[Ex1] = Aborts[Ex1].get(Left(ex1))
             "handle" in {
                 assert(
-                    Aborts[Ex1].run(v) ==
+                    Aborts[Ex1].run(v).pure ==
                         Left(ex1)
                 )
             }
             "handle + transform" in {
                 assert(
-                    Aborts[Ex1].run(v.map(_ + 1)) ==
+                    Aborts[Ex1].run(v.map(_ + 1)).pure ==
                         Left(ex1)
                 )
             }
             "handle + effectful transform" in {
                 assert(
-                    Aborts[Ex1].run(v.map(i => Aborts[Ex1].get(Right(i + 1)))) ==
+                    Aborts[Ex1].run(v.map(i => Aborts[Ex1].get(Right(i + 1)))).pure ==
                         Left(ex1)
                 )
             }
             "handle + transform + effectful transform" in {
                 assert(
-                    Aborts[Ex1].run(v.map(_ + 1).map(i => Aborts[Ex1].get(Right(i + 1)))) ==
+                    Aborts[Ex1].run(v.map(_ + 1).map(i => Aborts[Ex1].get(Right(i + 1)))).pure ==
                         Left(ex1)
                 )
             }
             "handle + transform + failed effectful transform" in {
                 val fail = Left[Ex1, Int](ex1)
                 assert(
-                    Aborts[Ex1].run(v.map(_ + 1).map(_ => Aborts[Ex1].get(fail))) ==
+                    Aborts[Ex1].run(v.map(_ + 1).map(_ => Aborts[Ex1].get(fail))).pure ==
                         fail
                 )
             }
@@ -138,13 +139,13 @@ class abortsTest extends KyoTest:
         "run" - {
             "success" in {
                 assert(
-                    Aborts[Ex1].run(test(2)) ==
+                    Aborts[Ex1].run(test(2)).pure ==
                         Right(5)
                 )
             }
             "failure" in {
                 assert(
-                    Aborts[Ex1].run(test(0)) ==
+                    Aborts[Ex1].run(test(0)).pure ==
                         Left(ex1)
                 )
             }
@@ -192,9 +193,9 @@ class abortsTest extends KyoTest:
             }
         }
         "fail" in {
-            val ex = new Exception("throwable failure")
-            val a  = Aborts[Throwable].fail(ex)
-            assert(Aborts[Throwable].run(a) == Left(ex))
+            val ex: Throwable = new Exception("throwable failure")
+            val a             = Aborts[Throwable].fail(ex)
+            assert(Aborts[Throwable].run(a).pure == Left(ex))
         }
         "catching" - {
             "only effect" - {
@@ -204,19 +205,21 @@ class abortsTest extends KyoTest:
                         case i => 10 / i
                 "success" in {
                     assert(
-                        Aborts[Ex1].run(Aborts[Ex1].catching(test(2))) ==
+                        Aborts[Ex1].run(Aborts[Ex1].catching(test(2))).pure ==
                             Right(5)
                     )
                 }
                 "failure" in {
                     assert(
-                        Aborts[Ex1].run(Aborts[Ex1].catching(test(0))) ==
+                        Aborts[Ex1].run(Aborts[Ex1].catching(test(0))).pure ==
                             Left(ex1)
                     )
                 }
                 "subclass" in {
                     assert(
-                        Aborts[RuntimeException].run(Aborts[RuntimeException].catching(test(0))) ==
+                        Aborts[RuntimeException].run(
+                            Aborts[RuntimeException].catching(test(0))
+                        ).pure ==
                             Left(ex1)
                     )
                 }
@@ -231,7 +234,7 @@ class abortsTest extends KyoTest:
                     assert(
                         Envs[Int].run(2)(
                             Aborts[Ex1].run(Aborts[Ex1].catching(test(Envs[Int].get)))
-                        ) ==
+                        ).pure ==
                             Right(5)
                     )
                 }
@@ -239,7 +242,7 @@ class abortsTest extends KyoTest:
                     assert(
                         Envs[Int].run(0)(
                             Aborts[Ex1].run(Aborts[Ex1].catching(test(Envs[Int].get)))
-                        ) ==
+                        ).pure ==
                             Left(ex1)
                     )
                 }

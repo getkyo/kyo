@@ -11,13 +11,13 @@ class optionsTest extends KyoTest:
         "null" in {
             assert(Options.run(Options(null: String)).pure == None)
             assert(
-                Options.run(Options(null: String)) ==
+                Options.run(Options(null: String)).pure ==
                     None
             )
         }
         "value" in {
             assert(
-                Options.run(Options("hi")) ==
+                Options.run(Options("hi")).pure ==
                     Option("hi")
             )
         }
@@ -26,25 +26,27 @@ class optionsTest extends KyoTest:
     "pure" - {
         "handle" in {
             assert(
-                Options.run(1: Int < Options) ==
+                Options.run(1: Int < Options).pure ==
                     Option(1)
             )
         }
         "handle + transform" in {
             assert(
-                Options.run((1: Int < Options).map(_ + 1)) ==
+                Options.run((1: Int < Options).map(_ + 1)).pure ==
                     Option(2)
             )
         }
         "handle + effectful transform" in {
             assert(
-                Options.run((1: Int < Options).map(i => Options.get(Option(i + 1)))) ==
+                Options.run((1: Int < Options).map(i => Options.get(Option(i + 1)))).pure ==
                     Option(2)
             )
         }
         "handle + transform + effectful transform" in {
             assert(
-                Options.run((1: Int < Options).map(_ + 1).map(i => Options.get(Option(i + 1)))) ==
+                Options.run(
+                    (1: Int < Options).map(_ + 1).map(i => Options.get(Option(i + 1)))
+                ).pure ==
                     Option(3)
             )
         }
@@ -53,19 +55,19 @@ class optionsTest extends KyoTest:
     "effectful" - {
         "handle" in {
             assert(
-                Options.run(Options.get(Option(1))) ==
+                Options.run(Options.get(Option(1))).pure ==
                     Option(1)
             )
         }
         "handle + transform" in {
             assert(
-                Options.run(Options.get(Option(1)).map(_ + 1)) ==
+                Options.run(Options.get(Option(1)).map(_ + 1)).pure ==
                     Option(2)
             )
         }
         "handle + effectful transform" in {
             assert(
-                Options.run(Options.get(Option(1)).map(i => Options.get(Option(i + 1)))) ==
+                Options.run(Options.get(Option(1)).map(i => Options.get(Option(i + 1)))).pure ==
                     Option(2)
             )
         }
@@ -73,7 +75,7 @@ class optionsTest extends KyoTest:
             assert(
                 Options.run(
                     Options.get(Option(1)).map(_ + 1).map(i => Options.get(Option(i + 1)))
-                ) ==
+                ).pure ==
                     Option(3)
             )
         }
@@ -82,19 +84,19 @@ class optionsTest extends KyoTest:
     "Options.run" - {
         "pure" in {
             assert(
-                Options.run(1: Int < Options) ==
+                Options.run(1: Int < Options).pure ==
                     Option(1)
             )
         }
         "not empty" in {
             assert(
-                Options.run(Options.get(Option(1))) ==
+                Options.run(Options.get(Option(1))).pure ==
                     Option(1)
             )
         }
         "empty" in {
             assert(
-                Options.run(Options.get(Option.empty[Int])) ==
+                Options.run(Options.get(Option.empty[Int])).pure ==
                     None
             )
         }
@@ -103,13 +105,13 @@ class optionsTest extends KyoTest:
     "orElse" - {
         "empty" in {
             assert(
-                Options.run(Options.orElse[Int, Any]()) ==
+                Options.run(Options.orElse[Int, Any]()).pure ==
                     None
             )
         }
         "not empty" in {
             assert(
-                Options.run(Options.orElse(Options.get(Option(1)))) ==
+                Options.run(Options.orElse(Options.get(Option(1)))).pure ==
                     Option(1)
             )
         }
@@ -117,7 +119,7 @@ class optionsTest extends KyoTest:
             assert(
                 Options.run(
                     Options.orElse(Options.get(Option(1)), Options.get(Option.empty[Int]))
-                ) ==
+                ).pure ==
                     Option(1)
             )
         }
@@ -125,7 +127,7 @@ class optionsTest extends KyoTest:
             assert(
                 Options.run(
                     Options.orElse(Options.get(Option.empty[Int]), Options.get(Option(1)))
-                ) ==
+                ).pure ==
                     Option(1)
             )
         }
@@ -134,13 +136,13 @@ class optionsTest extends KyoTest:
                 Options.run(Options.orElse(
                     Options.get(Option.empty[Int]),
                     Options.get(Option.empty[Int])
-                )) ==
+                )).pure ==
                     None
             )
         }
         "not empty + not empty" in {
             assert(
-                Options.run(Options.orElse(Options.get(Option(1)), Options.get(Option(2)))) ==
+                Options.run(Options.orElse(Options.get(Option(1)), Options.get(Option(2)))).pure ==
                     Option(1)
             )
         }
@@ -150,7 +152,7 @@ class optionsTest extends KyoTest:
                     Options.get(Option(1)),
                     Options.get(Option(2)),
                     Options.get(Option(3))
-                )) ==
+                )).pure ==
                     Option(1)
             )
         }
@@ -163,7 +165,7 @@ class optionsTest extends KyoTest:
                         Options.get(Option(3)),
                         Options.get(Option(4))
                     )
-                ) ==
+                ).pure ==
                     Option(1)
             )
         }
@@ -177,7 +179,7 @@ class optionsTest extends KyoTest:
                         Options.get(Option(4)),
                         Options.get(Option(5))
                     )
-                ) ==
+                ).pure ==
                     Option(1)
             )
         }
@@ -186,24 +188,24 @@ class optionsTest extends KyoTest:
     "getOrElse" - {
         "empty" in {
             assert(
-                Options.getOrElse(Option.empty[Int], 1) ==
+                Options.getOrElse(Option.empty[Int], 1).pure ==
                     1
             )
         }
         "not empty" in {
             assert(
-                Options.getOrElse(Some(2), 1) ==
+                Options.getOrElse(Some(2), 1).pure ==
                     2
             )
         }
         "or fail" in {
-            val e = new Exception()
+            case object e extends Exception derives CanEqual
             assert(
-                IOs.run(IOs.attempt(Options.getOrElse(Option.empty[Int], IOs.fail(e)))) ==
+                IOs.run(IOs.attempt(Options.getOrElse(Option.empty[Int], IOs.fail(e)))).pure ==
                     Failure(e)
             )
             assert(
-                IOs.run(IOs.attempt(Options.getOrElse(Some(1), IOs.fail(e)))) ==
+                IOs.run(IOs.attempt(Options.getOrElse(Some(1), IOs.fail(e)))).pure ==
                     Success(1)
             )
         }
