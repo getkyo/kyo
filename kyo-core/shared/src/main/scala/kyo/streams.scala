@@ -269,13 +269,6 @@ object Stream:
         s
 
     private object internal:
-        class Handlers[V]:
-            val discard = new Handler[Const[V], Streams[V], Any]:
-                def resume[T, U: Flat, S2](command: Const[V][T], k: T => U < (Streams[V] & S2)) =
-                    Resume(k(().asInstanceOf[T]))
-
-        end Handlers
-
         private val discard = new Handler[Const[Any], Streams[Any], Any]:
             def resume[T, U: Flat, S](command: Any, k: T => U < (Streams[Any] & S)) =
                 Resume(k(().asInstanceOf[T]))
