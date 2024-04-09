@@ -39,8 +39,7 @@ object NettyKyoServerOptions:
             true
         )
 
-    def customiseInterceptors(enableLogging: Boolean = true)
-        : CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions] =
+    def customiseInterceptors(enableLogging: Boolean = true): CustomiseInterceptors[KyoSttpMonad.M, NettyKyoServerOptions] =
         val ci =
             CustomiseInterceptors(
                 createOptions =

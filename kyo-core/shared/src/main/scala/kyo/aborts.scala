@@ -62,8 +62,7 @@ object Aborts:
                     command.asInstanceOf[Either[V, U]]
     end extension
 
-    /** An effect `Aborts[VS]` includes a failure type `V`, and once `V` has been handled,
-      * `Aborts[VS]` should be replaced by `Out`
+    /** An effect `Aborts[VS]` includes a failure type `V`, and once `V` has been handled, `Aborts[VS]` should be replaced by `Out`
       *
       * @tparam V
       *   the failure type included in `VS`

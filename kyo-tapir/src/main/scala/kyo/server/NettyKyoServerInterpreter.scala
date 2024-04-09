@@ -34,8 +34,7 @@ trait NettyKyoServerInterpreter:
 end NettyKyoServerInterpreter
 
 object NettyKyoServerInterpreter:
-    def apply(serverOptions: NettyKyoServerOptions = NettyKyoServerOptions.default())
-        : NettyKyoServerInterpreter =
+    def apply(serverOptions: NettyKyoServerOptions = NettyKyoServerOptions.default()): NettyKyoServerInterpreter =
         new NettyKyoServerInterpreter:
             override def nettyServerOptions: NettyKyoServerOptions = serverOptions
 

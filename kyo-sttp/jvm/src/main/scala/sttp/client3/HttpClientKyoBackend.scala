@@ -64,7 +64,7 @@ class HttpClientKyoBackend private (
     override protected def standardEncoding: (InputStream, String) => InputStream = {
         case (body, "gzip")    => new GZIPInputStream(body)
         case (body, "deflate") => new InflaterInputStream(body)
-        case (_, ce) => throw new UnsupportedEncodingException(s"Unsupported encoding: $ce")
+        case (_, ce)           => throw new UnsupportedEncodingException(s"Unsupported encoding: $ce")
     }
 
     override protected def createBodyHandler: HttpResponse.BodyHandler[InputStream] =

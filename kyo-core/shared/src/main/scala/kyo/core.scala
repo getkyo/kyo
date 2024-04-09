@@ -72,26 +72,6 @@ object core:
                             case r: handler.Resume[T, S & S2] @unchecked =>
                                 handleLoop(r.st, r.v)
                             case kyo: Kyo[Result[T] | handler.Resume[T, S2], S & S2] @unchecked =>
-                                def resultLoop(v: (Result[T] | handler.Resume[T, S2]) < (S & S2))
-                                    : Result[T] < (S & S2) =
-                                    v match
-                                        case r: handler.Resume[T, S & S2] @unchecked =>
-                                            _handleLoop(r.st, r.v)
-                                        case kyo: Suspend[
-                                                MX,
-                                                Any,
-                                                Result[T] | handler.Resume[T, S2],
-                                                S & S2
-                                            ] @unchecked =>
-                                            new Continue[MX, Any, Result[T], S & S2](kyo):
-                                                def apply(
-                                                    v: Any,
-                                                    s: Safepoint[S & S2],
-                                                    l: Locals.State
-                                                ) =
-                                                    resultLoop(kyo(v, s, l))
-                                        case r: Result[T] @unchecked =>
-                                            r
                                 resultLoop(kyo)
                             case r =>
                                 r.asInstanceOf[Result[T]]
@@ -108,6 +88,20 @@ object core:
                             end apply
                     case v: T @unchecked =>
                         handler.done(st, v)
+            def resultLoop(v: (Result[T] | handler.Resume[T, S2]) < (S & S2)): Result[T] < (S & S2) =
+                v match
+                    case r: handler.Resume[T, S & S2] @unchecked =>
+                        _handleLoop(r.st, r.v)
+                    case kyo: Suspend[MX, Any, Result[T] | handler.Resume[T, S2], S & S2] @unchecked =>
+                        new Continue[MX, Any, Result[T], S & S2](kyo):
+                            def apply(
+                                v: Any,
+                                s: Safepoint[S & S2],
+                                l: Locals.State
+                            ) =
+                                resultLoop(kyo(v, s, l))
+                    case r: Result[T] @unchecked =>
+                        r
             handleLoop(state, value)
         end handle
     end extension

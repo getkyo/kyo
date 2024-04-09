@@ -15,8 +15,7 @@ object Trees:
 
     def transform(using
         Quotes
-    )(tree: quotes.reflect.Tree)(pf: PartialFunction[quotes.reflect.Tree, quotes.reflect.Term])
-        : quotes.reflect.Tree =
+    )(tree: quotes.reflect.Tree)(pf: PartialFunction[quotes.reflect.Tree, quotes.reflect.Term]): quotes.reflect.Tree =
         import quotes.reflect.*
         (new TreeMap:
             override def transformTerm(tree: Term)(owner: Symbol): Term =

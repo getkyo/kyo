@@ -37,8 +37,7 @@ object Envs:
             def resume[T, U: Flat, S2](st: Any, command: Unit, k: T => U < (Envs[Any] & S2)) =
                 Resume(st, k(st.asInstanceOf[T]))
 
-    /** An effect `Envs[VS]` includes a dependency on `V`, and once `V` has been handled, `Envs[VS]`
-      * should be replaced by `Out`
+    /** An effect `Envs[VS]` includes a dependency on `V`, and once `V` has been handled, `Envs[VS]` should be replaced by `Out`
       *
       * @tparam V
       *   the dependency included in `VS`

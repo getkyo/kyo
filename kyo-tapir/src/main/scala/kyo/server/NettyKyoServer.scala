@@ -62,8 +62,7 @@ case class NettyKyoServer(
             NettyKyoServerBinding(socket, stop)
         }
 
-    def startUsingDomainSocket(path: Option[Path] = None)
-        : KyoSttpMonad.M[NettyKyoDomainSocketBinding] =
+    def startUsingDomainSocket(path: Option[Path] = None): KyoSttpMonad.M[NettyKyoDomainSocketBinding] =
         startUsingDomainSocket(path.getOrElse(Paths.get(
             System.getProperty("java.io.tmpdir"),
             UUID.randomUUID().toString
@@ -97,8 +96,8 @@ case class NettyKyoServer(
         given monadError: MonadError[KyoSttpMonad.M] = KyoSttpMonad.instance
         val route                                    = Route.combine(routes)
         val eventExecutor                            = new DefaultEventExecutor()
-        val channelGroup                  = new DefaultChannelGroup(eventExecutor) // thread safe
-        val isShuttingDown: AtomicBoolean = new AtomicBoolean(false)
+        val channelGroup                             = new DefaultChannelGroup(eventExecutor) // thread safe
+        val isShuttingDown: AtomicBoolean            = new AtomicBoolean(false)
 
         val channelFuture =
             NettyBootstrap(

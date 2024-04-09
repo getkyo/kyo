@@ -10,7 +10,7 @@ object Atomics:
     def initInt(v: Int): AtomicInt < IOs             = IOs(new AtomicInt(new JAtomicInteger(v)))
     def initLong(v: Long): AtomicLong < IOs          = IOs(new AtomicLong(new JAtomicLong(v)))
     def initBoolean(v: Boolean): AtomicBoolean < IOs = IOs(new AtomicBoolean(new JAtomicBoolean(v)))
-    def initRef[T](v: T): AtomicRef[T] < IOs = IOs(new AtomicRef(new JAtomicReference[T](v)))
+    def initRef[T](v: T): AtomicRef[T] < IOs         = IOs(new AtomicRef(new JAtomicReference[T](v)))
 end Atomics
 
 class AtomicInt private[kyo] (private val ref: JAtomicInteger) extends AnyVal:
