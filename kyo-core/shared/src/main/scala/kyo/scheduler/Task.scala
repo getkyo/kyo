@@ -26,7 +26,7 @@ private[kyo] object Task:
                 try r
                 catch
                     case ex if NonFatal(ex) =>
-                        Logs.logger.error("Failed task.")
+                        Logs.unsafe.error("Failed task.")
                 end try
                 Task.Done
             end run

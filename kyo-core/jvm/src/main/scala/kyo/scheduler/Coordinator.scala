@@ -65,7 +65,7 @@ private object Coordinator:
                 adapt()
         catch
             case ex if NonFatal(ex) =>
-                Logs.logger.error("Kyo coordinator failure", ex)
+                Logs.unsafe.error("Kyo coordinator failure", ex)
 
     private def adapt() =
         if cycles > delayCycles then
