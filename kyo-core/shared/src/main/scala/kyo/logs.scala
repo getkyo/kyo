@@ -3,12 +3,19 @@ package kyo
 import org.slf4j.LoggerFactory
 
 object Logs:
-    // TODO: cannot make `private[kyo]` as it's used in KyoTest package, should it be private?
-    // TODO: Perhaps this should be defined a version specific file to avoid the need to make LoggerFactory interop for JS?
     val unsafe: Unsafe = Unsafe(LoggerFactory.getLogger("kyo.logs"))
-    given Unsafe       = unsafe
+    private val local  = Locals.init(unsafe)
+
+    def let[T, S](u: Unsafe)(f: => T < (IOs & S)): T < (IOs & S) =
+        local.let(u)(f)
 
     trait Unsafe:
+        def traceEnabled: Boolean
+        def debugEnabled: Boolean
+        def infoEnabled: Boolean
+        def warnEnabled: Boolean
+        def errorEnabled: Boolean
+
         def trace(msg: => String)(
             using
             file: sourcecode.FileName,
@@ -31,7 +38,8 @@ object Logs:
             using
             file: sourcecode.FileName,
             line: sourcecode.Line
-        ): Unit < IOs
+        ): Unit
+
         def info(msg: => String)(
             using
             file: sourcecode.FileName,
@@ -71,7 +79,13 @@ object Logs:
 
     object Unsafe:
         def apply(logger: org.slf4j.Logger): Unsafe = new Unsafe:
-            def trace(msg: => String)(
+            inline def traceEnabled: Boolean = logger.isTraceEnabled
+            inline def debugEnabled: Boolean = logger.isDebugEnabled
+            inline def infoEnabled: Boolean  = logger.isInfoEnabled
+            inline def warnEnabled: Boolean  = logger.isWarnEnabled
+            inline def errorEnabled: Boolean = logger.isErrorEnabled
+
+            inline def trace(msg: => String)(
                 using
                 file: sourcecode.FileName,
                 line: sourcecode.Line
@@ -84,103 +98,110 @@ object Logs:
                 // values were `AnyVal`s.
                 val f = file.value
                 val l = line.value
-                if logger.isTraceEnabled then logger.trace(s"[$f:$l] $msg")
+                if traceEnabled then logger.trace(s"[$f:$l] $msg")
             end trace
 
-            def trace(msg: => String, t: => Throwable)(
+            inline def trace(msg: => String, t: => Throwable)(
                 using
                 file: sourcecode.FileName,
                 line: sourcecode.Line
             ): Unit =
                 val f = file.value
                 val l = line.value
-                if logger.isTraceEnabled then logger.trace(s"[$f:$l] $msg", t)
+                if traceEnabled then logger.trace(s"[$f:$l] $msg", t)
             end trace
 
-            def debug(msg: => String)(
+            inline def debug(msg: => String)(
                 using
                 file: sourcecode.FileName,
                 line: sourcecode.Line
             ): Unit =
                 val f = file.value
                 val l = line.value
-                if logger.isDebugEnabled then logger.debug(s"[$f:$l] $msg")
+                if debugEnabled then logger.debug(s"[$f:$l] $msg")
             end debug
 
-            def debug(msg: => String, t: => Throwable)(
+            inline def debug(msg: => String, t: => Throwable)(
                 using
                 file: sourcecode.FileName,
                 line: sourcecode.Line
-            ): Unit < IOs =
+            ): Unit =
                 val f = file.value
                 val l = line.value
-                if logger.isDebugEnabled then logger.debug(s"[$f:$l] $msg", t)
+                if debugEnabled then logger.debug(s"[$f:$l] $msg", t)
             end debug
 
-            def info(msg: => String)(
+            inline def info(msg: => String)(
                 using
                 file: sourcecode.FileName,
                 line: sourcecode.Line
             ): Unit =
                 val f = file.value
                 val l = line.value
-                if logger.isInfoEnabled then logger.info(s"[$f:$l] $msg")
+                if infoEnabled then logger.info(s"[$f:$l] $msg")
             end info
 
-            def info(msg: => String, t: => Throwable)(
+            inline def info(msg: => String, t: => Throwable)(
                 using
                 file: sourcecode.FileName,
                 line: sourcecode.Line
             ): Unit =
                 val f = file.value
                 val l = line.value
-                if logger.isInfoEnabled then logger.info(s"[$f:$l] $msg", t)
+                if infoEnabled then logger.info(s"[$f:$l] $msg", t)
             end info
 
-            def warn(msg: => String)(
+            inline def warn(msg: => String)(
                 using
                 file: sourcecode.FileName,
                 line: sourcecode.Line
             ): Unit =
                 val f = file.value
                 val l = line.value
-                if logger.isWarnEnabled then logger.warn(s"[$f:$l] $msg")
+                if warnEnabled then logger.warn(s"[$f:$l] $msg")
             end warn
 
-            def warn(msg: => String, t: => Throwable)(
+            inline def warn(msg: => String, t: => Throwable)(
                 using
                 file: sourcecode.FileName,
                 line: sourcecode.Line
             ): Unit =
                 val f = file.value
                 val l = line.value
-                if logger.isWarnEnabled then logger.warn(s"[$f:$l] $msg", t)
+                if warnEnabled then logger.warn(s"[$f:$l] $msg", t)
             end warn
 
-            def error(msg: => String)(
+            inline def error(msg: => String)(
                 using
                 file: sourcecode.FileName,
                 line: sourcecode.Line
             ): Unit =
                 val f = file.value
                 val l = line.value
-                if logger.isErrorEnabled then logger.error(s"[$f:$l] $msg")
+                if errorEnabled then logger.error(s"[$f:$l] $msg")
             end error
 
-            def error(msg: => String, t: => Throwable)(
+            inline def error(msg: => String, t: => Throwable)(
                 using
                 file: sourcecode.FileName,
                 line: sourcecode.Line
             ): Unit =
                 val f = file.value
                 val l = line.value
-                if logger.isErrorEnabled then logger.error(s"[$f:$l] $msg", t)
+                if errorEnabled then logger.error(s"[$f:$l] $msg", t)
             end error
     end Unsafe
 
+    private inline def logWhen(inline enabled: Unsafe => Boolean)(inline log: Unsafe => Unit): Unit < IOs =
+        local.use { unsafe =>
+            if enabled(unsafe) then
+                IOs(log(unsafe))
+            else
+                IOs.unit
+        }
+
     inline def trace(inline msg: => String)(
         using
-        unsafe: Unsafe,
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
@@ -188,77 +209,70 @@ object Logs:
         // pointers for `file` and `line`. It could be a
         // single pointer if sourcecode had an
         // implicit for `fileName:line`.
-        IOs(unsafe.trace(msg))
+        logWhen(_.traceEnabled)(_.trace(msg))
     end trace
 
     inline def trace(inline msg: => String, inline t: => Throwable)(
         using
-        unsafe: Unsafe,
         file: sourcecode.FileName,
         line: sourcecode.Line
-    ): Unit < IOs = IOs(unsafe.trace(msg, t))
+    ): Unit < IOs =
+        logWhen(_.traceEnabled)(_.trace(msg, t))
 
     inline def debug(inline msg: => String)(
         using
-        unsafe: Unsafe,
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
-        IOs(unsafe.debug(msg))
+        logWhen(_.debugEnabled)(_.debug(msg))
 
     inline def debug(inline msg: => String, inline t: => Throwable)(
         using
-        unsafe: Unsafe,
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
-        IOs(unsafe.debug(msg, t))
+        logWhen(_.debugEnabled)(_.debug(msg, t))
 
     inline def info(inline msg: => String)(
         using
-        unsafe: Unsafe,
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
-        IOs(unsafe.info(msg))
+        logWhen(_.infoEnabled)(_.info(msg))
 
     inline def info(inline msg: => String, inline t: => Throwable)(
         using
-        unsafe: Unsafe,
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
-        IOs(unsafe.info(msg, t))
+        logWhen(_.infoEnabled)(_.info(msg, t))
 
     inline def warn(inline msg: => String)(
         using
-        unsafe: Unsafe,
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
-        IOs(unsafe.warn(msg))
+        logWhen(_.warnEnabled)(_.warn(msg))
 
     inline def warn(inline msg: => String, inline t: => Throwable)(
         using
-        unsafe: Unsafe,
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
-        IOs(unsafe.warn(msg, t))
+        logWhen(_.warnEnabled)(_.warn(msg, t))
 
     inline def error(inline msg: => String)(
         using
-        unsafe: Unsafe,
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
-        IOs(unsafe.error(msg))
+        logWhen(_.errorEnabled)(_.error(msg))
 
     inline def error(inline msg: => String, inline t: => Throwable)(
         using
-        unsafe: Unsafe,
         file: sourcecode.FileName,
         line: sourcecode.Line
     ): Unit < IOs =
-        IOs(unsafe.error(msg, t))
+        logWhen(_.errorEnabled)(_.error(msg, t))
+
 end Logs
