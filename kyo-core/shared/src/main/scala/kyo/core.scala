@@ -162,7 +162,7 @@ object core:
         type EX <: Effect[EX]
 
         abstract class DeepHandler[Command[_], E, S]:
-            def pure[T: Flat](v: T): Command[T]
+            def done[T: Flat](v: T): Command[T]
             def resume[T, U: Flat](command: Command[T], k: T => Command[U] < S): Command[U] < S
 
         def deepHandle[Command[_], E <: Effect[E], S, T](
@@ -181,7 +181,7 @@ object core:
                             (v: Any) => deepHandleLoop(kyo(v))
                         )
                     case _ =>
-                        handler.pure(v.asInstanceOf[T])
+                        handler.done(v.asInstanceOf[T])
             if isNull(v) then
                 throw new NullPointerException
             deepHandleLoop(v)

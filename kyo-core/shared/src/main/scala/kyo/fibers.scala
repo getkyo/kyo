@@ -322,7 +322,7 @@ object fibersInternal:
 
         private val deepHandler =
             new DeepHandler[Fiber, FiberGets, IOs]:
-                def pure[T: Flat](v: T) = Fiber.value(v)
+                def done[T: Flat](v: T) = Fiber.value(v)
                 def resume[T, U: Flat](m: Fiber[T], f: T => Fiber[U] < IOs) =
                     m.transform(f)
 
