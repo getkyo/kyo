@@ -655,6 +655,79 @@ val d: Seq[Int] < Any =
 
 The `Choices` effect becomes exceptionally powerful when combined with other effects. This allows you not just to make decisions or explore options in isolation but also to do so in contexts that may involve factors such as asynchronicity, resource management, or even user interaction.
 
+
+### Loops: Stack-Safe Recursion
+
+`Loops` provides a solution for general stack-safe recursion in Kyo. It offers a set of methods to transform input values through repeated applications of a function until a termination condition is met, allowing for safe and efficient recursive computations without the need for explicit effect suspensions.
+
+```scala
+import kyo._
+
+// Iteratively increment an 'Int' value
+// until it reaches 5
+val a: Int < Any = 
+  Loops.transform(1)(i => 
+    if i < 5 then Loops.continue(i + 1) 
+    else Loops.done(i)
+  )
+
+// Transform with multiple input values
+val b: Int < Any =
+  Loops.transform2(1, 1)((i, j) => 
+    if i + j < 5 then Loops.continue(i + 1, j + 1) 
+    else Loops.done(i + j)
+  )
+
+// Transform with three input values
+val c: Int < Any = 
+  Loops.transform3(1, 1, 1)((i, j, k) => 
+    if i + j + k < 5 then Loops.continue(i + 1, j + 1, k + 1)
+    else Loops.done(i + j + k)
+  )
+
+// Mixing 'IOs' with 'Loops'
+val d: Int < IOs = 
+  Loops.transform(1)(i => 
+    if i < 5 then 
+      IOs(println(s"Iteration: $i")).map(_ => Loops.continue(i + 1))
+    else
+      Loops.done(i)
+  )
+```
+
+The `transform` method takes an initial input value and a function that accepts this value. The function should return either `Loops.continue` with the next input value or `Loops.done` with the final result. The computation continues until `Loops.done` is returned. Similarly, `transform2` and `transform3` allow transformations with multiple input values. These methods also ensure stack safety even for a large number of iterations, without the need for explicit effect suspensions.
+
+Here's an example showing three versions of the same computation:
+
+```scala
+import kyo._
+
+// Version 1: Regular while loop
+def whileLoop: Int =
+  var i = 0
+  var sum = 0
+  while i < 10 do
+    sum += i
+    i += 1
+  sum
+
+// Version 2: Recursive method loop
+def recursiveLoop(i: Int = 0, sum: Int = 0): Int =
+  if i < 10 then 
+    recursiveLoop(i + 1, sum + i)
+  else
+    sum
+
+// Version 3: Using Loops
+def loopsVersion: Int < Any =
+  Loops.transform2(0, 0)((i, sum) => 
+    if i < 10 then 
+      Loops.continue(i + 1, sum + i)
+    else 
+      Loops.done(sum)
+  )
+```
+
 ### Aspects: Aspect-Oriented Programming
 
 The `Aspects` effect in Kyo allows for high-level customization of behavior across your application. This is similar to how some frameworks use aspects for centralized control over diverse functionalities like database timeouts, authentication, authorization, and transaction management. You can modify these core operations without altering their individual codebases, streamlining how centralized logic is applied across different parts of an application. This makes `Aspects` ideal for implementing cross-cutting concerns in a clean and efficient manner.
@@ -1771,30 +1844,41 @@ println(test(IOs(a)))
 // prints kyo.ios$IOs$$anon$2@6cd8737
 ```
 
-Given this characteristic, recursive computations need to introduce an effect suspension, like `IOs`, to ensure the evaluation is stack safe.
+Given this characteristic, recursive computations need to either use `Loops` or introduce an effect suspension, like `IOs`, to ensure the evaluation is stack safe.
 
 ```scala
 import kyo._
 
 // AVOID! An unsafe recursive computation
-def unsafeLoop[S](n: Int < S): Unit < S =
+def unsafeLoop[S](n: Int < S): Int < S =
   n.map {
-    case 0 => ()
+    case 0 => 0
     case n => unsafeLoop(n - 1)
   }
 
-// Introduce an effect suspension to
-// ensure stack safety
-def safeLoop[S](n: Int < S): Unit < (S & IOs) =
+// Using the `Loops` effect for stack safety
+def safeLoopWithLoops[S](n: Int < S): Int < S =
+  n.map { n =>
+    Loops.transform(n)(i => 
+      if i == 0 then Loops.done(0) 
+      else Loops.continue(i - 1)
+    )
+  }
+
+// Alternatively, introduce an effect suspension 
+// like `IOs` to ensure stack safety
+def safeLoopWithIOs[S](n: Int < S): Int < (S & IOs) =
   IOs {
     n.map {
-      case 0 => ()
-      case n => safeLoop(n - 1)
+      case 0 => 0
+      case n => safeLoopWithIOs(n - 1)
     }
   }
 ```
 
-In the `safeLoop` function, the use of `IOs` suspends each recursive call, preventing the stack from overflowing. This technique is essential for safely handling recursive computations in Kyo.
+In the `safeLoopWithLoops` function, `Loops` is used to convert the recursive computation into a stack-safe iterative process. The `Loops.transform` method takes the initial input value `n` and a function that either continues the loop with a new value using `Loops.continue` or terminates the loop with a final result using `Loops.done`. Alternatively, in the `safeLoopWithIOs` function, the use of `IOs` suspends each recursive call, preventing the stack from overflowing.
+
+Both techniques are essential for safely handling recursive computations in Kyo. The Loops effect provides a more idiomatic and efficient approach, while the effect suspension method offers flexibility when other effects need to be integrated into the recursive computation.
 
 ### Nested Effects
 
