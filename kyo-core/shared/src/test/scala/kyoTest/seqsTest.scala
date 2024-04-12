@@ -4,43 +4,6 @@ import kyo.*
 
 class seqsTest extends KyoTest:
 
-    "one" in {
-        assert(
-            Seqs.run(Seqs.get(Seq(1)).map(_ + 1)).pure ==
-                Seq(2)
-        )
-    }
-    "multiple" in {
-        assert(
-            Seqs.run(Seqs.get(Seq(1, 2, 3)).map(_ + 1)).pure ==
-                Seq(2, 3, 4)
-        )
-    }
-    "nested" in {
-        assert(
-            Seqs.run(Seqs.get(Seq(1, 2, 3)).map(i =>
-                Seqs.get(Seq(i * 10, i * 100))
-            )).pure ==
-                Seq(10, 100, 20, 200, 30, 300)
-        )
-    }
-    "drop" in {
-        assert(
-            Seqs.run(Seqs.get(Seq(1, 2, 3)).map(i =>
-                if i < 2 then Seqs.drop
-                else Seqs.get(Seq(i * 10, i * 100))
-            )).pure ==
-                Seq(20, 200, 30, 300)
-        )
-    }
-    "filter" in {
-        assert(
-            Seqs.run(Seqs.get(Seq(1, 2, 3)).map(i =>
-                Seqs.filter(i >= 2).map(_ => Seqs.get(Seq(i * 10, i * 100)))
-            )).pure ==
-                Seq(20, 200, 30, 300)
-        )
-    }
     "collect" in {
         assert(
             Seqs.collect(Seq(1, 2)).pure ==
@@ -52,12 +15,6 @@ class seqsTest extends KyoTest:
         val io    = IOs(count += 1)
         IOs.run(Seqs.collectUnit(List.fill(42)(io)))
         assert(count == 42)
-    }
-    "repeat" in {
-        assert(
-            Seqs.run(Seqs.repeat(3).andThen(42)).pure ==
-                Seq(42, 42, 42)
-        )
     }
     "traverse" in {
         assert(

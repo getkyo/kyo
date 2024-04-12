@@ -2,32 +2,7 @@ package kyo
 
 import kyo.core.*
 
-class Seqs extends Effect[Seqs]:
-    type Command[T] = Seq[T]
-
-object Seqs extends Seqs:
-
-    def run[T: Flat, S](v: T < (Seqs & S)): Seq[T] < S =
-        this.handle(handler)((), v)
-
-    def repeat(n: Int): Unit < Seqs =
-        get(Seq.fill(n)(()))
-
-    def get[T](v: Seq[T]): T < Seqs =
-        v match
-            case Seq(head) => head
-            case v         => suspend(this)(v)
-
-    def filter[S](v: Boolean < S): Unit < (Seqs & S) =
-        v.map {
-            case true =>
-                ()
-            case false =>
-                drop
-        }
-
-    val drop: Nothing < Seqs =
-        suspend(this)(Seq.empty)
+object Seqs:
 
     def traverse[T, U, S, S2](v: Seq[T])(f: T => U < S2): Seq[U] < (S & S2) =
         collect(v.map(f))
@@ -95,10 +70,4 @@ object Seqs extends Seqs:
                 }
         loop(0)
     end fill
-
-    private val handler =
-        new ResultHandler[Unit, Seq, Seqs, Seq, Any]:
-            def done[T](st: Unit, v: T) = Seq(v)
-            def resume[T, U: Flat, S](st: Unit, v: Seq[T], f: T => U < (Seqs & S)) =
-                Seqs.collect(v.map(e => Seqs.run(f(e)))).map(_.flatten)
 end Seqs

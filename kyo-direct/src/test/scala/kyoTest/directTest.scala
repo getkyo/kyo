@@ -142,10 +142,10 @@ class directTest extends KyoTest:
 
     "lists" in {
 
-        val x = Seqs.get(Seq(1, -2, -3))
-        val y = Seqs.get(Seq("ab", "cde"))
+        val x = Choices.get(Seq(1, -2, -3))
+        val y = Choices.get(Seq("ab", "cde"))
 
-        val v: Int < Seqs =
+        val v: Int < Choices =
             defer {
                 val xx = await(x)
                 xx + (
@@ -154,16 +154,16 @@ class directTest extends KyoTest:
                 )
             }
 
-        val a: Seq[Int] = Seqs.run(v).pure
+        val a: Seq[Int] = Choices.run(v).pure
         assert(a == Seq(3, -3, -5, 4, -5, -8, 0, 1, -1, 0))
     }
 
     "lists + filter" in {
 
-        val x = Seqs.get(Seq(1, -2, -3))
-        val y = Seqs.get(Seq("ab", "cde"))
+        val x = Choices.get(Seq(1, -2, -3))
+        val y = Choices.get(Seq("ab", "cde"))
 
-        val v: Int < Seqs =
+        val v: Int < Choices =
             defer {
                 val xx = await(x)
                 val r =
@@ -171,10 +171,10 @@ class directTest extends KyoTest:
                         if xx > 0 then await(y).length * await(x)
                         else await(y).length
                     )
-                await(Seqs.filter(r > 0))
+                await(Choices.filter(r > 0))
                 r
             }
 
-        assert(Seqs.run(v).pure == Seq(3, 4, 1))
+        assert(Choices.run(v).pure == Seq(3, 4, 1))
     }
 end directTest
