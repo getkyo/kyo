@@ -140,7 +140,7 @@ class directTest extends KyoTest:
         """)
     }
 
-    "lists" in {
+    "choices" in {
 
         val x = Choices.get(Seq(1, -2, -3))
         val y = Choices.get(Seq("ab", "cde"))
@@ -158,7 +158,7 @@ class directTest extends KyoTest:
         assert(a == Seq(3, -3, -5, 4, -5, -8, 0, 1, -1, 0))
     }
 
-    "lists + filter" in {
+    "choices + filter" in {
 
         val x = Choices.get(Seq(1, -2, -3))
         val y = Choices.get(Seq("ab", "cde"))
