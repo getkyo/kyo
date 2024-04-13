@@ -1,6 +1,7 @@
 package kyo.stats
 
 import kyo.*
+import scala.annotation.tailrec
 
 case class Histogram(unsafe: Histogram.Unsafe) extends AnyVal:
 
@@ -40,16 +41,18 @@ object Histogram:
                 Histogram(
                     new Unsafe:
                         def observe(v: Double) =
-                            var c = l
-                            while c ne Nil do
-                                c.head.unsafe.observe(v)
-                                c = c.tail
+                            @tailrec def loop(c: List[Histogram]): Unit =
+                                if c ne Nil then
+                                    c.head.unsafe.observe(v)
+                                    loop(c.tail)
+                            loop(l)
                         end observe
                         def observe(v: Double, b: Attributes) =
-                            var c = l
-                            while c ne Nil do
-                                c.head.unsafe.observe(v, b)
-                                c = c.tail
+                            @tailrec def loop(c: List[Histogram]): Unit =
+                                if c ne Nil then
+                                    c.head.unsafe.observe(v, b)
+                                    loop(c.tail)
+                            loop(l)
                         end observe
                         def attributes(b: Attributes) =
                             all(l.map(_.attributes(b))).unsafe

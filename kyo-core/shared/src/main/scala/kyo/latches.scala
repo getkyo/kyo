@@ -1,6 +1,7 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger
+import scala.annotation.tailrec
 
 abstract class Latch:
 
@@ -32,12 +33,12 @@ object Latches:
 
                         val release =
                             IOs {
-                                var c = count.get()
-                                while c > 0 && !count.compareAndSet(c, c - 1) do
-                                    c = count.get()
-                                if c == 1 then
-                                    promise.unsafeComplete(())
-                                    ()
+                                @tailrec def loop(c: Int): Unit =
+                                    if c > 0 && !count.compareAndSet(c, c - 1) then
+                                        loop(count.get)
+                                    else if c == 1 then
+                                        discard(promise.unsafeComplete(()))
+                                loop(count.get())
                             }
 
                         def pending = IOs(count.get())

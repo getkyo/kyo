@@ -3,6 +3,7 @@ package kyo.stats.internal
 import kyo.*
 import kyo.stats.*
 import kyo.stats.Attributes
+import scala.annotation.tailrec
 
 case class Span(unsafe: Span.Unsafe):
 
@@ -38,16 +39,18 @@ object Span:
                 Span(
                     new Span.Unsafe:
                         def end() =
-                            var c = l
-                            while c ne Nil do
-                                c.head.unsafe.end()
-                                c = c.tail
+                            @tailrec def loop(c: Seq[Span]): Unit =
+                                if c ne Nil then
+                                    c.head.unsafe.end()
+                                    loop(c.tail)
+                            loop(l)
                         end end
                         def event(name: String, a: Attributes) =
-                            var c = l
-                            while c ne Nil do
-                                c.head.unsafe.event(name, a)
-                                c = c.tail
+                            @tailrec def loop(c: Seq[Span]): Unit =
+                                if c ne Nil then
+                                    c.head.unsafe.event(name, a)
+                                    loop(c.tail)
+                            loop(l)
                         end event
                 )
 

@@ -1,6 +1,7 @@
 package kyo.stats
 
 import kyo.*
+import scala.annotation.tailrec
 
 case class Gauge(unsafe: Gauge.Unsafe) extends AnyVal:
     def close: Unit < IOs = IOs(unsafe.close())
@@ -26,10 +27,11 @@ object Gauge:
                 Gauge(
                     new Unsafe:
                         def close() =
-                            var c = l
-                            while c ne Nil do
-                                c.head.unsafe.close()
-                                c = c.tail
+                            @tailrec def loop(c: List[Gauge]): Unit =
+                                if c ne Nil then
+                                    c.head.unsafe.close()
+                                    loop(c.tail)
+                            loop(l)
                         end close
                 )
 end Gauge

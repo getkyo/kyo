@@ -7,6 +7,7 @@ import kyo.core.internal.*
 import kyo.scheduler.IOPromise
 import kyo.scheduler.IOTask
 import scala.annotation.implicitNotFound
+import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -282,17 +283,19 @@ object Fibers extends Joins[Fibers]:
     private inline def foreach[T, U](l: Seq[T])(inline f: (Int, T) => Unit): Unit =
         l match
             case l: IndexedSeq[?] =>
-                var i = 0
                 val s = l.size
-                while i < s do
-                    f(i, l(i))
-                    i += 1
+                @tailrec def loop(i: Int): Unit =
+                    if i < s then
+                        f(i, l(i))
+                        loop(i + 1)
+                loop(0)
             case _ =>
                 val it = l.iterator
-                var i  = 0
-                while it.hasNext do
-                    f(i, it.next())
-                    i += 1
+                @tailrec def loop(i: Int): Unit =
+                    if it.hasNext then
+                        f(i, it.next())
+                        loop(i + 1)
+                loop(0)
 end Fibers
 
 object fibersInternal:

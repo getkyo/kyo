@@ -1,5 +1,7 @@
 package kyo
 
+import scala.annotation.tailrec
+
 trait Random:
     def nextInt: Int < IOs
     def nextInt(exclusiveBound: Int): Int < IOs
@@ -55,10 +57,11 @@ object Random:
 
                 def nextString(length: Int, seq: Seq[Char]): String =
                     val b = new StringBuilder
-                    var i = 0
-                    while i < length do
-                        b.addOne(nextValue(seq))
-                        i += 1
+                    @tailrec def loop(i: Int): Unit =
+                        if i < length then
+                            b.addOne(nextValue(seq))
+                            loop(i + 1)
+                    loop(0)
                     b.result()
                 end nextString
 
@@ -68,14 +71,14 @@ object Random:
 
                 def shuffle[T](seq: Seq[T]): Seq[T] =
                     val buffer = scala.collection.mutable.ArrayBuffer.from(seq)
-                    var i      = buffer.size - 1
-                    while i > 0 do
-                        val j    = nextInt(i + 1)
-                        val temp = buffer(i)
-                        buffer(i) = buffer(j)
-                        buffer(j) = temp
-                        i -= 1
-                    end while
+                    @tailrec def shuffleLoop(i: Int): Unit =
+                        if i > 0 then
+                            val j    = nextInt(i + 1)
+                            val temp = buffer(i)
+                            buffer(i) = buffer(j)
+                            buffer(j) = temp
+                            shuffleLoop(i - 1)
+                    shuffleLoop(buffer.size - 1)
                     buffer.toSeq
                 end shuffle
     end Unsafe

@@ -1,6 +1,7 @@
 package kyo.stats
 
 import kyo.*
+import scala.annotation.tailrec
 
 case class Counter(unsafe: Counter.Unsafe) extends AnyVal:
     def inc: Unit < IOs =
@@ -42,16 +43,18 @@ object Counter:
                     new Unsafe:
                         def inc() = add(1)
                         def add(v: Long) =
-                            var c = l
-                            while c ne Nil do
-                                c.head.unsafe.add(v)
-                                c = c.tail
+                            @tailrec def loop(c: List[Counter]): Unit =
+                                if c ne Nil then
+                                    c.head.unsafe.add(v)
+                                    loop(c.tail)
+                            loop(l)
                         end add
                         def add(v: Long, b: Attributes) =
-                            var c = l
-                            while c ne Nil do
-                                c.head.unsafe.add(v, b)
-                                c = c.tail
+                            @tailrec def loop(c: List[Counter]): Unit =
+                                if c ne Nil then
+                                    c.head.unsafe.add(v, b)
+                                    loop(c.tail)
+                            loop(l)
                         end add
                         def attributes(b: Attributes) =
                             all(l.map(c => c.attributes(b))).unsafe
