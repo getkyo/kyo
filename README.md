@@ -693,6 +693,15 @@ val d: Int < IOs =
     else
       Loops.done(i)
   )
+
+// Mixing 'Consoles' with 'Loops'
+val d: Int < Consoles = 
+  Loops.transform(1)(i => 
+    if i < 5 then 
+      Consoles.println(s"Iteration: $i").map(_ => Loops.continue(i + 1))
+    else
+      Loops.done(i)
+  )
 ```
 
 The `transform` method takes an initial input value and a function that accepts this value. The function should return either `Loops.continue` with the next input value or `Loops.done` with the final result. The computation continues until `Loops.done` is returned. Similarly, `transform2` and `transform3` allow transformations with multiple input values. These methods also ensure stack safety even for a large number of iterations, without the need for explicit effect suspensions.
