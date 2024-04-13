@@ -688,7 +688,7 @@ val d: Int < IOs =
   )
 
 // Mixing 'Consoles' with 'Loops'
-val d: Int < Consoles = 
+val e: Int < Consoles = 
   Loops.transform(1)(i => 
     if i < 5 then 
       Consoles.println(s"Iteration: $i").map(_ => Loops.continue(i + 1))
