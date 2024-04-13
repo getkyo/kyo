@@ -475,7 +475,7 @@ class fibersTest extends KyoTest:
     "stack safety" in run {
         def loop(i: Int): Assertion < Fibers =
             if i > 0 then
-                Fibers.init(List.fill(100)(())).map(_ => loop(i - 1))
+                Fibers.init(()).map(_ => loop(i - 1))
             else
                 succeed
         loop(1000)
