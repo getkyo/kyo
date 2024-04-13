@@ -673,16 +673,9 @@ val a: Int < Any =
 
 // Transform with multiple input values
 val b: Int < Any =
-  Loops.transform2(1, 1)((i, j) => 
+  Loops.transform(1, 1)((i, j) => 
     if i + j < 5 then Loops.continue(i + 1, j + 1) 
     else Loops.done(i + j)
-  )
-
-// Transform with three input values
-val c: Int < Any = 
-  Loops.transform3(1, 1, 1)((i, j, k) => 
-    if i + j + k < 5 then Loops.continue(i + 1, j + 1, k + 1)
-    else Loops.done(i + j + k)
   )
 
 // Mixing 'IOs' with 'Loops'
@@ -729,11 +722,43 @@ def recursiveLoop(i: Int = 0, sum: Int = 0): Int =
 
 // Version 3: Using Loops
 def loopsVersion: Int < Any =
-  Loops.transform2(0, 0)((i, sum) => 
+  Loops.transform(0, 0)((i, sum) => 
     if i < 10 then 
       Loops.continue(i + 1, sum + i)
     else 
       Loops.done(sum)
+  )
+```
+
+In addition to the transform methods, Loops also provides indexed variants that pass the current iteration index to the transformation function. This can be useful when the logic of the loop depends on the iteration count, such as performing an action every nth iteration or terminating the loop after a certain number of iterations. The indexed methods are available with one, two, or three input values.
+
+```scala
+import kyo._
+
+// Print a message every 3 iterations
+val a: Int < Consoles = 
+  Loops.indexed(1)((idx, i) => 
+    if idx < 10 then
+      if idx % 3 == 0 then
+        Consoles.println(s"Iteration $idx").map(_ => Loops.continue(i + 1))
+      else
+        Loops.continue(i + 1)
+    else 
+      Loops.done(i)
+  )
+
+// Terminate the loop after 5 iterations
+val b: Int < Any =
+  Loops.indexed(1, 1)((idx, i, j) => 
+    if idx < 5 then Loops.continue(i + 1, j + 1) 
+    else Loops.done(i + j)
+  )
+
+// Use the index to calculate the next value
+val c: Int < Any =
+  Loops.indexed(1, 1, 1)((idx, i, j, k) => 
+    if idx < 5 then Loops.continue(i + idx, j + idx, k + idx)
+    else Loops.done(i + j + k)
   )
 ```
 
