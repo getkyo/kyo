@@ -1,14 +1,14 @@
 package kyoTest.internal
 
-import kyo.internal.FileNameWithLine
+import kyo.internal.Position
 import kyoTest.KyoTest
 
 class FileImplicitsTest extends KyoTest:
-    def makeErrorMessage(msg: => String)(using f: FileNameWithLine): String =
+    def makeErrorMessage(msg: => String)(using f: Position): String =
         s"$f - $msg"
 
     "implicitly" in {
-        val f = implicitly[FileNameWithLine]
+        val f = implicitly[Position]
         assert(f == "FileImplicitsTest.scala:11")
     }
 
@@ -18,8 +18,7 @@ class FileImplicitsTest extends KyoTest:
     }
 
     "given" in {
-        val file               = FileNameWithLine.derive
-        given FileNameWithLine = file
+        given file: Position = Position.derive
 
         val e = makeErrorMessage("")
         assert(e == "FileImplicitsTest.scala:21 - ")
