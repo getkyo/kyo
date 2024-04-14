@@ -116,52 +116,52 @@ object Logs:
         }
 
     inline def trace(inline msg: => String)(
-        using file: internal.Position
+        using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.traceEnabled)(_.trace(msg))
 
     inline def trace(inline msg: => String, inline t: => Throwable)(
-        using file: internal.Position
+        using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.traceEnabled)(_.trace(msg, t))
 
     inline def debug(inline msg: => String)(
-        using file: internal.Position
+        using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.debugEnabled)(_.debug(msg))
 
     inline def debug(inline msg: => String, inline t: => Throwable)(
-        using file: internal.Position
+        using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.debugEnabled)(_.debug(msg, t))
 
     inline def info(inline msg: => String)(
-        using file: internal.Position
+        using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.infoEnabled)(_.info(msg))
 
     inline def info(inline msg: => String, inline t: => Throwable)(
-        using file: internal.Position
+        using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.infoEnabled)(_.info(msg, t))
 
     inline def warn(inline msg: => String)(
-        using file: internal.Position
+        using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.warnEnabled)(_.warn(msg))
 
     inline def warn(inline msg: => String, inline t: => Throwable)(
-        using file: internal.Position
+        using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.warnEnabled)(_.warn(msg, t))
 
     inline def error(inline msg: => String)(
-        using file: internal.Position
+        using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.errorEnabled)(_.error(msg))
 
     inline def error(inline msg: => String, inline t: => Throwable)(
-        using file: internal.Position
+        using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.errorEnabled)(_.error(msg, t))
 
