@@ -73,7 +73,7 @@ lazy val kyo =
             `kyo-examples`
         )
 
-val zioVersion = "2.0.21"
+val zioVersion = "2.0.22"
 
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform)
