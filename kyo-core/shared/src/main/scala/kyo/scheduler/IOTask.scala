@@ -1,5 +1,6 @@
 package kyo.scheduler
 
+import java.lang.invoke.MethodHandles
 import kyo.*
 import kyo.Locals.State
 import kyo.core.*
@@ -22,9 +23,11 @@ private[kyo] class IOTask[T](
     def check(): Boolean =
         state < 0
 
-    def preempt() =
-        if state > 0 then
-            state = -state;
+    @tailrec final def preempt(): Unit =
+        val s = state
+        if s > 0 && !stateHandle.compareAndSet(this, s, -s) then
+            preempt()
+    end preempt
 
     def runtime(): Int =
         Math.abs(state)
@@ -34,12 +37,7 @@ private[kyo] class IOTask[T](
 
     @tailrec private def eval(start: Long, curr: T < Fibers): T < Fibers =
         if check() then
-            if isDone() then
-                ensures.finalize()
-                ensures = Ensures.empty
-                nullIO
-            else
-                curr
+            curr
         else
             curr match
                 case kyo: Suspend[?, ?, ?, ?] =>
@@ -51,18 +49,26 @@ private[kyo] class IOTask[T](
                         k.command match
                             case Promise(p) =>
                                 this.interrupts(p)
-                                val runtime = this.runtime() +
-                                    (Coordinator.currentTick() - start).asInstanceOf[Int]
-                                p.onComplete { (v: Any < IOs) =>
-                                    val io = IOs(k(
-                                        v,
-                                        this.asInstanceOf[Safepoint[FiberGets]],
-                                        locals
-                                    ))
-                                    this.become(IOTask(io, locals, ensures, runtime))
-                                    ()
-                                }
-                                nullIO
+                                // handle the case where the fiber is interrupted
+                                // while this code is executing
+                                if check() then
+                                    curr
+                                else
+                                    // no need to worry about the interrupt signal at this point
+                                    // since `this.interrupts(p)` will forward interruptions to the promise
+                                    val runtime = this.runtime() +
+                                        (Coordinator.currentTick() - start).asInstanceOf[Int]
+                                    p.onComplete { (v: Any < IOs) =>
+                                        val io = IOs(k(
+                                            v,
+                                            this.asInstanceOf[Safepoint[FiberGets]],
+                                            locals
+                                        ))
+                                        this.become(IOTask(io, locals, ensures, runtime))
+                                        ()
+                                    }
+                                    nullIO
+                                end if
                             case Done(v) =>
                                 eval(
                                     start,
@@ -73,7 +79,6 @@ private[kyo] class IOTask[T](
                         IOs(bug.failTag(kyo.tag, Tag[FiberGets & IOs]))
                 case _ =>
                     complete(curr.asInstanceOf[T < IOs])
-                    finalize()
                     nullIO
         end if
     end eval
@@ -82,22 +87,29 @@ private[kyo] class IOTask[T](
         val start = Coordinator.currentTick()
         try
             curr = eval(start, curr)
+            if isDone() then
+                ensures.finalize()
+                ensures = Ensures.empty
+                curr = nullIO
+            end if
         catch
             case ex if (NonFatal(ex)) =>
                 complete(IOs.fail(ex))
                 curr = nullIO
         end try
-        state = runtime() + (Coordinator.currentTick() - start).asInstanceOf[Int]
+        var s = state
+        while !stateHandle.compareAndSet(this, s, s.sign * runtime() + (Coordinator.currentTick() - start).asInstanceOf[Int]) do
+            s = state
         if !isNull(curr) then
             Task.Preempted
         else
+            state = -1
             Task.Done
         end if
     end run
 
     def ensure(f: () => Unit): Unit =
-        if !isNull(curr) then
-            ensures = ensures.add(f)
+        ensures = ensures.add(f)
 
     def remove(f: () => Unit): Unit =
         ensures = ensures.remove(f)
@@ -108,6 +120,11 @@ private[kyo] class IOTask[T](
 end IOTask
 
 private[kyo] object IOTask:
+
+    private[IOTask] val stateHandle =
+        MethodHandles.privateLookupIn(classOf[IOTask[?]], MethodHandles.lookup())
+            .findVarHandle(classOf[IOTask[?]], "state", classOf[Int]);
+
     private def nullIO[T] = null.asInstanceOf[T < IOs]
 
     def apply[T](

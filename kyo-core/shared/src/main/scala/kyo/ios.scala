@@ -139,9 +139,9 @@ sealed trait IOs extends Effect[IOs]:
                             ensureLoop(v2, np)
                         end apply
                 case _ =>
-                    p.remove(ensure)
                     IOs {
                         ensure()
+                        p.remove(ensure)
                         v
                     }
         ensureLoop(v, Preempt.never)
