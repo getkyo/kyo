@@ -88,7 +88,7 @@ lazy val `kyo-core` =
             libraryDependencies += "com.lihaoyi"   %%% "pprint"          % "0.8.1",
             libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC23" % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
-            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.4"      % Test,
+            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.5"      % Test,
             libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test,
             testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
         )
