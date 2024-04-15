@@ -859,7 +859,8 @@ val j: Chunk[String] < Any = a.map(_.toString)
 val k: Chunk[Int] < Any = a.filter(_ % 2 == 0)
 
 // Effectful side effects
-val l: Unit < IOs = a.foreach(v => IOs(println(v)))
+val l: Unit < Consoles = 
+  a.foreach(v => Consoles.println(v))
 
 // Effectful fold
 val m: Int < Any = a.foldLeft(0)(_ + _)
