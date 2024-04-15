@@ -136,7 +136,7 @@ sealed abstract class Chunk[T] derives CanEqual:
                 if idx < size then
                     val v = indexed(idx)
                     f(v).map {
-                        case true  => Loops.continue(())
+                        case true  => Loops.continueUnit
                         case false => Loops.done(indexed.dropLeft(idx))
                     }
                 else
@@ -193,13 +193,13 @@ sealed abstract class Chunk[T] derives CanEqual:
                     val v = indexed(idx)
                     if pf.isDefinedAt(v) then
                         pf(v).andThen {
-                            Loops.continue(())
+                            Loops.continueUnit
                         }
                     else
-                        Loops.continue(())
+                        Loops.continueUnit
                     end if
                 else
-                    Loops.done(())
+                    Loops.doneUnit
             }
 
     final def foreach[S](f: T => Unit < S): Unit < S =
@@ -210,9 +210,9 @@ sealed abstract class Chunk[T] derives CanEqual:
             Loops.indexed(()) { (idx, _) =>
                 if idx < size then
                     val v = indexed(idx)
-                    f(v).andThen(Loops.continue(()))
+                    f(v).andThen(Loops.continueUnit)
                 else
-                    Loops.done(())
+                    Loops.doneUnit
             }
     end foreach
 
@@ -349,6 +349,9 @@ sealed abstract class Chunk[T] derives CanEqual:
             loop()
 end Chunk
 
+object Chunk:
+    def empty[T]: Chunk[T] = Chunks.init[T]
+
 object Chunks:
 
     import internal.*
@@ -390,7 +393,7 @@ object Chunks:
                 case seq: IndexedSeq[T] => FromSeq(seq)
                 case _                  => Compact(values.toArray(using ClassTag(classOf[Any])))
 
-    def fill[T, S](n: Int)(v: T): Chunk[T] =
+    def fill[T](n: Int)(v: T): Chunk[T] =
         if n <= 0 then Chunks.init
         else
             val array = (new Array[Any](n)).asInstanceOf[Array[T]]

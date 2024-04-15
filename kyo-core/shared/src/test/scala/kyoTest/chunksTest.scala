@@ -802,6 +802,10 @@ class chunksTest extends KyoTest:
         }
     }
 
+    "Chunk.empty" in {
+        assert(Chunk.empty[Int].toSeq.isEmpty)
+    }
+
     "Chunks.collect" - {
         "collects elements from a chunk of effectful computations" in {
             val chunk  = Chunks.init(IOs(1), IOs(2), IOs(3))

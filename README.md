@@ -867,12 +867,14 @@ val m: Int < Any = a.foldLeft(0)(_ + _)
 // Copying to arrays
 val n: Array[Int] = a.toArray
 
-// Other operations
-val o: Chunk[Int] = Chunks.init(a, b)
-  .flatten
-val p: Chunk[Int] = Chunks.init(1, 1, 2, 3, 3)
-  .changes
-val q: Chunks.Indexed[Int] = a.toIndexed
+// Flatten a nested chunk
+val o: Chunk[Int] = 
+  Chunks.init(a, b).flatten
+
+// Obtain sequentially distict elements.
+// Outputs: Chunk(1, 2, 3, 1)
+val p: Chunk[Int] = 
+  Chunks.init(1, 1, 2, 3, 3, 1, 1).changes
 ```
 
 ### Aspects: Aspect-Oriented Programming
