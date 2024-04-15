@@ -13,17 +13,17 @@ class MtlBench extends Bench:
     @Benchmark
     def syncKyo() =
         import kyo.*
-        def testKyo: Unit < (Aborts[Throwable] & Envs[Env] & Vars[State] & Sums[List[Event]]) =
+        def testKyo: Unit < (Aborts[Throwable] & Envs[Env] & Vars[State] & Sums[Event]) =
             Seqs.traverseUnit(loops)(_ =>
                 for
                     conf <- Envs[Env].use(_.config)
-                    _    <- Sums[List[Event]].add(List(Event(s"Env = $conf")))
+                    _    <- Sums[Event].add(Event(s"Env = $conf"))
                     _    <- Vars[State].update(state => state.copy(value = state.value + 1))
                 yield ()
             )
         Aborts[Throwable].run(
             Vars[State].run(State(2))(
-                Sums[List[Event]].run(
+                Sums[Event].run(
                     Envs[Env].run(Env("config"))(
                         testKyo.andThen(Vars[State].get)
                     )

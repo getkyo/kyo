@@ -14,6 +14,11 @@ object Loops:
     opaque type Result2[Input1, Input2, Output]         = Output | Continue2[Input1, Input2]
     opaque type Result3[Input1, Input2, Input3, Output] = Output | Continue3[Input1, Input2, Input3]
 
+    private val _continueUnit = Continue[Unit](())
+
+    inline def continueUnit[T]: Result[Unit, T] = _continueUnit
+    inline def doneUnit[T]: Result[T, Unit]     = ()
+
     inline def done[Input, Output](v: Output): Result[Input, Output]       = v
     inline def continue[Input, Output, S](v: Input): Result[Input, Output] = Continue(v)
 

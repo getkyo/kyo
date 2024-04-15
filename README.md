@@ -762,6 +762,122 @@ val c: Int < Any =
   )
 ```
 
+## Chunks: Efficient Sequences
+
+`Chunks` is an efficient mechanism for processing sequences of data in a purely functional manner. It offers a wide range of operations optimized for different scenarios, ensuring high performance without compromising functional programming principles.
+
+`Chunk` is designed as a lightweight wrapper around arrays, allowing for efficient random access and transformation operations. Its internal representation is carefully crafted to minimize memory allocation and ensure stack safety. Many of its operations have an algorithmic complexity of `O(1)`, making them highly performant for a variety of use cases.
+
+```scala
+import kyo._
+
+// Construct chunks
+val a: Chunk[Int] = Chunks.init(1, 2, 3)
+val b: Chunk[Int] = Chunks.initSeq(Seq(4, 5, 6))
+
+// Perform O(1) operations
+val c: Chunk[Int] = a.append(4)
+val d: Chunk[Int] = b.take(2)
+val e: Chunk[Int] = c.dropLeft(1)
+
+// Perform O(n) operations
+val f: Chunk[String] = d.map(_.toString).pure
+val g: Chunk[Int] = e.filter(_ % 2 == 0).pure
+```
+
+`Chunks` provides two main subtypes: `Chunk` for regular chunks and `Chunks.Indexed` for indexed chunks. The table below summarizes the time complexity of various operations for each type:
+
+| Description                | Operations                                           | Regular Chunk | Indexed Chunk |
+|----------------------------|------------------------------------------------------|---------------|---------------|
+| Creation                   | `Chunks.init`, `Chunks.initSeq`                      | O(n)          | O(n)          |
+| Size and emptiness         | `size`, `isEmpty`                                    | O(1)          | O(1)          |
+| Take and drop              | `take`, `dropLeft`, `dropRight`, `slice`             | O(1)          | O(1)          |
+| Append and last            | `append`, `last`                                     | O(1)          | O(1)          |
+| Element access             | `apply`, `head`, `tail`                              | N/A           | O(1)          |
+| Concatenation              | `concat`                                             | O(n)          | O(n)          |
+| Effectful map and filter   | `map`, `filter`, `collect`, `takeWhile`, `dropWhile` | O(n)          | O(n)          |
+| Effectful side effects     | `foreach`, `collectUnit`                             | O(n)          | O(n)          |
+| Effectful fold             | `foldLeft`                                           | O(n)          | O(n)          |
+| Copying to arrays          | `toArray`, `copyTo`                                  | O(n)          | O(n)          |
+| Other operations           | `flatten`, `changes`, `toSeq`, `toIndexed`           | O(n)          | O(n)          |
+
+When deciding between `Chunk` and `Chunks.Indexed`, consider the primary operations you'll be performing on the data. If you mainly need to `append` elements, `take` slices, or `drop` elements from the beginning or end of the sequence, `Chunk` is a good choice. Its `O(1)` complexity for these operations makes it efficient for such tasks.
+
+```scala
+import kyo._
+
+val a: Chunk[Int] = Chunks.init(1, 2, 3, 4, 5)
+
+// Efficient O(1) operations with Chunk
+val b: Chunk[Int] = a.append(6)
+val c: Chunk[Int] = a.take(3)
+val d: Chunk[Int] = a.dropLeft(2)
+```
+
+On the other hand, if you frequently need to access elements by index, `Chunks.Indexed` is the better option. It provides `O(1)` element access and supports `head` and `tail` operations, which are not available in `Chunk`.
+
+```scala
+import kyo._
+
+val a: Chunks.Indexed[Int] = 
+  Chunks.init(1, 2, 3, 4, 5).toIndexed
+
+// Efficient O(1) operations with Chunks.Indexed
+val b: Int = a(2)
+val c: Int = a.head
+val d: Chunks.Indexed[Int] = a.tail
+```
+
+Keep in mind that converting between `Chunk` and `Chunks.Indexed` is an `O(n)` operation, so it's best to choose the appropriate type upfront based on your usage patterns. However, calling `toIndexed` on a chunk that is already internally indexed is a no-op and does not incur any additional overhead.
+
+Here's an overview of the main APIs available in Chunk:
+
+```scala
+import kyo._
+
+// Creation
+val a: Chunk[Int] = Chunks.init(1, 2, 3)
+val b: Chunk[Int] = Chunks.initSeq(Seq(4, 5, 6))
+
+// Size and emptiness
+val c: Int = a.size
+val d: Boolean = a.isEmpty
+
+// Take and drop
+val e: Chunk[Int] = a.take(2)
+val f: Chunk[Int] = a.dropLeft(1)
+
+// Append and last
+val g: Chunk[Int] = a.append(4)
+val h: Int = a.last
+
+// Concatenation
+val i: Chunk[Int] = a.concat(b)
+
+// Effectful map and filter
+val j: Chunk[String] < Any = a.map(_.toString)
+val k: Chunk[Int] < Any = a.filter(_ % 2 == 0)
+
+// Effectful side effects
+val l: Unit < Consoles = 
+  a.foreach(v => Consoles.println(v))
+
+// Effectful fold
+val m: Int < Any = a.foldLeft(0)(_ + _)
+
+// Copying to arrays
+val n: Array[Int] = a.toArray
+
+// Flatten a nested chunk
+val o: Chunk[Int] = 
+  Chunks.init(a, b).flatten
+
+// Obtain sequentially distict elements.
+// Outputs: Chunk(1, 2, 3, 1)
+val p: Chunk[Int] = 
+  Chunks.init(1, 1, 2, 3, 3, 1, 1).changes
+```
+
 ### Aspects: Aspect-Oriented Programming
 
 The `Aspects` effect in Kyo allows for high-level customization of behavior across your application. This is similar to how some frameworks use aspects for centralized control over diverse functionalities like database timeouts, authentication, authorization, and transaction management. You can modify these core operations without altering their individual codebases, streamlining how centralized logic is applied across different parts of an application. This makes `Aspects` ideal for implementing cross-cutting concerns in a clean and efficient manner.

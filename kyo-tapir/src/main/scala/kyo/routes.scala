@@ -15,14 +15,14 @@ type Routes >: Routes.Effects <: Routes.Effects
 
 object Routes:
 
-    type Effects = Sums[List[Route]] & Fibers
+    type Effects = Sums[Route] & Fibers
 
     def run[T, S](v: Unit < (Routes & S)): NettyKyoServerBinding < (Fibers & S) =
         run[T, S](NettyKyoServer())(v)
 
     def run[T, S](server: NettyKyoServer)(v: Unit < (Routes & S)): NettyKyoServerBinding < (Fibers & S) =
-        Sums[List[Route]].run[Unit, Fibers & S](v).map { (routes, _) =>
-            IOs(server.addEndpoints(routes).start()): NettyKyoServerBinding < (Fibers & S)
+        Sums[Route].run[Unit, Fibers & S](v).map { (routes, _) =>
+            IOs(server.addEndpoints(routes.toSeq.toList).start()): NettyKyoServerBinding < (Fibers & S)
         }
     end run
 
