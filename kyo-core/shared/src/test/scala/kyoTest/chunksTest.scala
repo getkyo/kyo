@@ -563,6 +563,10 @@ class chunksTest extends KyoTest:
             val chunk = Chunks.init(1, 2, 3, 4, 5).dropLeft(1).dropRight(2)
             assert(chunk.last == 3)
         }
+        "one element" in {
+            val chunk = Chunks.init(1)
+            assert(chunk.last == 1)
+        }
     }
 
     "concat" - {

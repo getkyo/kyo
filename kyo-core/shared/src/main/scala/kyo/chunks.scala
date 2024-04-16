@@ -51,7 +51,7 @@ sealed abstract class Chunk[T] derives CanEqual:
     final def last: T =
         @tailrec def loop(c: Chunk[T], index: Int): T =
             c match
-                case c if index >= c.size || index <= 0 =>
+                case c if index >= c.size || index < 0 =>
                     throw new NoSuchElementException
                 case c: Append[T] =>
                     if index == c.size - 1 then
