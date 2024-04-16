@@ -63,6 +63,7 @@ lazy val kyo =
             scalaVersion                           := scala3Version,
             `kyo-settings`
         ).aggregate(
+            `kyo-scheduler`,
             `kyo-core`,
             `kyo-direct`,
             `kyo-stats-otel`,
@@ -73,12 +74,24 @@ lazy val kyo =
             `kyo-examples`
         )
 
-val zioVersion = "2.0.22"
+lazy val `kyo-scheduler` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-scheduler"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.36.0",
+            libraryDependencies += "org.scalatest"  %%% "scalatest"         % "3.2.16" % Test,
+            libraryDependencies += "ch.qos.logback"   % "logback-classic"   % "1.5.5"  % Test
+        )
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
+        .dependsOn(`kyo-scheduler`)
         .in(file("kyo-core"))
         .settings(
             `kyo-settings`,
@@ -195,8 +208,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"     % "2.6.0",
             libraryDependencies += "dev.zio"             %% "zio-logging"        % "2.2.3",
             libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2" % "2.2.3",
-            libraryDependencies += "dev.zio"             %% "zio"                % zioVersion,
-            libraryDependencies += "dev.zio"             %% "zio-concurrent"     % zioVersion,
+            libraryDependencies += "dev.zio"             %% "zio"                % "2.0.22",
+            libraryDependencies += "dev.zio"             %% "zio-concurrent"     % "2.0.22",
             libraryDependencies += "dev.zio"             %% "zio-prelude"        % "1.0.0-RC23",
             libraryDependencies += "com.softwaremill.ox" %% "core"               % "0.0.25",
             libraryDependencies += "co.fs2"              %% "fs2-core"           % "3.10.2",

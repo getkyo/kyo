@@ -17,12 +17,12 @@ final private[kyo] class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
         items
 
     def add(t: T): Unit =
-        discard {
-            modify {
-                items += 1
-                queue.addOne(t)
-            }
+        modify {
+            items += 1
+            queue.addOne(t)
         }
+        ()
+    end add
 
     def offer(t: T): Boolean =
         tryModify {

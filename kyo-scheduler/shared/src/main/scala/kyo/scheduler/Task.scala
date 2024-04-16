@@ -1,6 +1,5 @@
 package kyo.scheduler
 
-import kyo.Logs
 import scala.util.control.NonFatal
 
 private[kyo] trait Task extends Ordered[Task]:
@@ -26,7 +25,8 @@ private[kyo] object Task:
                 try r
                 catch
                     case ex if NonFatal(ex) =>
-                        Logs.unsafe.error("Failed task.")
+                        // Logs.unsafe.error("Failed task.")
+                        ???
                 end try
                 Task.Done
             end run

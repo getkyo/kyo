@@ -2,7 +2,6 @@ package kyo.scheduler
 
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.LongAdder
-import kyo.Stats
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
@@ -33,7 +32,7 @@ private[kyo] object Scheduler:
     end exec
 
     for i <- 0 until maxConcurrency do
-        workers(i) = new Worker(i, stats.scope, exec)
+        workers(i) = new Worker(i, exec)
 
     Coordinator.load()
 
@@ -41,7 +40,7 @@ private[kyo] object Scheduler:
         val m = maxConcurrency
         if m < maxWorkers then
             if m > allocatedWorkers then
-                workers(m) = new Worker(m, stats.scope, exec)
+                workers(m) = new Worker(m, exec)
                 allocatedWorkers += 1
             maxConcurrency = m + 1
         end if
@@ -105,7 +104,7 @@ private[kyo] object Scheduler:
     end steal
 
     def flush() =
-        stats.flushes.increment()
+        // stats.flushes.increment()
         val w = Worker.current()
         if w != null then
             w.drain()
@@ -137,14 +136,14 @@ private[kyo] object Scheduler:
             w.wakeup()
     end cycle
 
-    private[scheduler] object stats:
-        val flushes = new LongAdder
+    // private[scheduler] object stats:
+    //     val flushes = new LongAdder
 
-        val scope = Stats.kyoScope.scope("scheduler")
-        scope.initGauge("max_concurrency")(maxConcurrency)
-        scope.initGauge("allocated_workers")(allocatedWorkers)
-        scope.initGauge("load_avg")(loadAvg())
-        scope.initGauge("flushes")(flushes.sum().toDouble)
-    end stats
+    //     val scope = Stats.kyoScope.scope("scheduler")
+    //     scope.initGauge("max_concurrency")(maxConcurrency)
+    //     scope.initGauge("allocated_workers")(allocatedWorkers)
+    //     scope.initGauge("load_avg")(loadAvg())
+    //     scope.initGauge("flushes")(flushes.sum().toDouble)
+    // end stats
 
 end Scheduler
