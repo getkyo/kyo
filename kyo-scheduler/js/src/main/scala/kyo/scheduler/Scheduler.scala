@@ -12,4 +12,6 @@ object Scheduler:
     end schedule
 
     def flush(): Unit = {}
+
+    def currentTick(): Long = 0L
 end Scheduler

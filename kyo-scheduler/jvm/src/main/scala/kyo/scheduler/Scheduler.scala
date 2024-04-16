@@ -36,6 +36,9 @@ private[kyo] object Scheduler:
 
     Coordinator.load()
 
+    def currentTick(): Long =
+        Coordinator.currentTick()
+
     def addWorker() =
         val m = maxConcurrency
         if m < maxWorkers then
