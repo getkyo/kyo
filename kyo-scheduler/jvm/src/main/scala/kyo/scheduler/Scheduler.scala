@@ -1,5 +1,7 @@
 package kyo.scheduler
 
+import Scheduler.*
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.util.Flag
@@ -9,14 +11,37 @@ import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
 import scala.annotation.tailrec
 
-private[kyo] object Scheduler:
+object Scheduler:
 
-    private val cores             = Runtime.getRuntime().availableProcessors()
-    private val coreWorkers       = Math.max(1, Flag("coreWorkers", cores))
-    private val minWorkers        = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
-    private val maxWorkers        = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
-    private val scheduleTries     = Math.max(1, Flag("scheduleTries", 8))
-    private val virtualizeWorkers = Flag("virtualizeWorkers", false)
+    lazy val get = Scheduler()
+
+    case class Config(
+        cores: Int,
+        coreWorkers: Int,
+        minWorkers: Int,
+        maxWorkers: Int,
+        scheduleTries: Int,
+        virtualizeWorkers: Boolean
+    )
+    object Config:
+        def apply(): Config =
+            val cores: Int                 = Runtime.getRuntime().availableProcessors()
+            val coreWorkers: Int           = Math.max(1, Flag("coreWorkers", cores))
+            val minWorkers: Int            = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
+            val maxWorkers: Int            = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
+            val scheduleTries: Int         = Math.max(1, Flag("scheduleTries", 8))
+            val virtualizeWorkers: Boolean = Flag("virtualizeWorkers", false)
+            Config(cores, coreWorkers, minWorkers, maxWorkers, scheduleTries, virtualizeWorkers)
+        end apply
+    end Config
+end Scheduler
+
+final class Scheduler(
+    executor: Executor = Executors.newCachedThreadPool(Threads("kyo-scheduler")),
+    config: Config = Config()
+):
+
+    import config.*
 
     @volatile private var maxConcurrency   = coreWorkers
     @volatile private var allocatedWorkers = maxConcurrency
@@ -24,11 +49,10 @@ private[kyo] object Scheduler:
     private val workers = new Array[Worker](maxWorkers)
 
     private val exec =
-        def pool = Executors.newCachedThreadPool(Threads("kyo-scheduler"))
         if virtualizeWorkers then
-            LoomSupport.tryVirtualize(pool)
+            LoomSupport.tryVirtualize(executor)
         else
-            pool
+            executor
         end if
     end exec
 
@@ -42,14 +66,14 @@ private[kyo] object Scheduler:
         schedule(t, null)
 
     @tailrec
-    def schedule(t: Task, submitter: Worker): Unit =
+    private def schedule(t: Task, submitter: Worker): Unit =
         var worker: Worker = null
         if submitter == null then
             worker = Worker.current();
         if worker == null then
             val m       = this.maxConcurrency
             var i       = XSRandom.nextInt(m)
-            var tries   = Math.min(m, this.scheduleTries)
+            var tries   = Math.min(m, scheduleTries)
             var minLoad = Int.MaxValue
             while tries > 0 && minLoad != 0 do
                 val w = workers(i)
@@ -71,7 +95,7 @@ private[kyo] object Scheduler:
             schedule(t, submitter)
     end schedule
 
-    def steal(thief: Worker): Task =
+    private def steal(thief: Worker): Task =
         var worker: Worker = null
         var i              = 0
         var maxLoad        = Int.MaxValue

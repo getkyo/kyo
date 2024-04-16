@@ -32,7 +32,7 @@ private[kyo] class IOTask[T](
     override protected def onComplete(): Unit =
         preempt()
 
-    @tailrec private def eval(start: Long, curr: T < Fibers): T < Fibers =
+    @tailrec private def eval(start: Long, curr: T < Fibers, scheduler: Scheduler): T < Fibers =
         if check() then
             if isDone() then
                 ensures.finalize()
@@ -45,14 +45,14 @@ private[kyo] class IOTask[T](
                 case kyo: Suspend[?, ?, ?, ?] =>
                     if kyo.tag == Tag[IOs] then
                         val k = kyo.asInstanceOf[Suspend[IO, Unit, T, Fibers]]
-                        eval(start, k((), this, locals))
+                        eval(start, k((), this, locals), scheduler)
                     else if kyo.tag == Tag[FiberGets] then
                         val k = kyo.asInstanceOf[Suspend[Fiber, Any, T, Fibers]]
                         k.command match
                             case Promise(p) =>
                                 this.interrupts(p)
                                 val runtime = this.runtime() +
-                                    (Scheduler.currentTick() - start).asInstanceOf[Int]
+                                    (scheduler.currentTick() - start).asInstanceOf[Int]
                                 p.onComplete { (v: Any < IOs) =>
                                     val io = IOs(k(
                                         v,
@@ -66,7 +66,8 @@ private[kyo] class IOTask[T](
                             case Done(v) =>
                                 eval(
                                     start,
-                                    k(v, this.asInstanceOf[Safepoint[FiberGets]], locals)
+                                    k(v, this.asInstanceOf[Safepoint[FiberGets]], locals),
+                                    scheduler
                                 )
                         end match
                     else
@@ -79,15 +80,16 @@ private[kyo] class IOTask[T](
     end eval
 
     def run() =
-        val start = Scheduler.currentTick()
+        val scheduler = Scheduler.get
+        val start     = scheduler.currentTick()
         try
-            curr = eval(start, curr)
+            curr = eval(start, curr, scheduler)
         catch
             case ex if (NonFatal(ex)) =>
                 complete(IOs.fail(ex))
                 curr = nullIO
         end try
-        state = runtime() + (Scheduler.currentTick() - start).asInstanceOf[Int]
+        state = runtime() + (scheduler.currentTick() - start).asInstanceOf[Int]
         if !isNull(curr) then
             Task.Preempted
         else
@@ -122,7 +124,7 @@ private[kyo] object IOTask:
             else
                 new IOTask[T](v, ensures, runtime):
                     override def locals: State = st
-        Scheduler.schedule(f)
+        Scheduler.get.schedule(f)
         f
     end apply
 

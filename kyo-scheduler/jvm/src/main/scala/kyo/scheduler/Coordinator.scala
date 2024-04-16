@@ -21,8 +21,7 @@ private object Coordinator:
         loadAvgTarget: Double = Flag("coordinator.loadAvgTarget", 0.8),
         jitterMaxMs: Double = Flag("coordinator.jitterMax", 0.1),
         jitterSoftMaxMs: Double = Flag("coordinator.jitterSoftMax", 0.8),
-        delayCycles: Int = Flag("coordinator.delayCycles", 2),
-        executor: Executor = Executors.newSingleThreadExecutor(Threads("kyo-coordinator"))
+        delayCycles: Int = Flag("coordinator.delayCycles", 2)
     )
 
     def load(
@@ -31,11 +30,12 @@ private object Coordinator:
         removeWorker: () => Unit,
         cycleWorkers: Long => Unit,
         loadAvg: () => Double,
+        executor: Executor = Executors.newSingleThreadExecutor(Threads("kyo-coordinator")),
         config: Config = Config()
     ): Coordinator =
         val c = Coordinator(sleepMs, addWorker, removeWorker, cycleWorkers, loadAvg, config)
         if config.enable then
-            config.executor.execute { () =>
+            executor.execute { () =>
                 while true do
                     c.update()
             }
@@ -116,7 +116,7 @@ private class Coordinator(
     private object stats:
         var addWorker    = 0L
         var removeWorker = 0L
-        val scope        = Scheduler.stats.scope :+ "coordinator"
+        val scope        = List("kyo", "scheduler", "coordinator")
         val receiver     = MetricReceiver.get
         receiver.gauge(scope, "delay_avg_ns")(delayNs.avg().toDouble)
         receiver.gauge(scope, "delay_dev_ns")(delayNs.dev().toDouble)

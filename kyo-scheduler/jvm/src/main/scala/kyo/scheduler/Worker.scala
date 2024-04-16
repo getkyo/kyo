@@ -106,7 +106,7 @@ final private class Worker(
         val submissions = new LongAdder
         val mounts      = new LongAdder
 
-        val scope    = Scheduler.stats.scope :+ "worker" :+ id.toString
+        val scope    = List("kyo", "scheduler", "worker", id.toString)
         val receiver = MetricReceiver.get
         receiver.gauge(scope, "executions")(executions.toDouble)
         receiver.gauge(scope, "preemptions")(preemptions.toDouble)
