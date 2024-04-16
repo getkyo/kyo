@@ -4,9 +4,12 @@ import java.util.concurrent.Executors
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.MovingStdDev
 import kyo.scheduler.util.Threads
+import org.slf4j.LoggerFactory
 import scala.util.control.NonFatal
 
 private object Coordinator:
+
+    private val log = LoggerFactory.getLogger(getClass)
 
     private val enable          = Flag("coordinator.enable", true)
     private val cycleExp        = Flag("coordinator.cycleExp", 2)
@@ -64,8 +67,7 @@ private object Coordinator:
                 adapt()
         catch
             case ex if NonFatal(ex) =>
-                // Logs.unsafe.error("Kyo coordinator failure", ex)
-                ???
+                log.error("Kyo coordinator failure", ex)
 
     private def adapt() =
         if cycles > delayCycles then
