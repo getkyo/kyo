@@ -1,5 +1,7 @@
 package kyo.scheduler
 
+import Coordinator.*
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.MovingStdDev
@@ -10,15 +12,51 @@ import scala.util.control.NonFatal
 
 private object Coordinator:
 
-    private val log = LoggerFactory.getLogger(getClass)
+    private[Coordinator] val log = LoggerFactory.getLogger(getClass)
 
-    private val enable          = Flag("coordinator.enable", true)
-    private val cycleExp        = Flag("coordinator.cycleExp", 2)
-    private val adaptExp        = Flag("coordinator.adaptExp", 8)
-    private val loadAvgTarget   = Flag("coordinator.loadAvgTarget", 0.8)
-    private val jitterMaxMs     = Flag("coordinator.jitterMax", 0.1)
-    private val jitterSoftMaxMs = Flag("coordinator.jitterSoftMax", 0.8)
-    private val delayCycles     = Flag("coordinator.delayCycles", 2)
+    case class Config(
+        enable: Boolean = Flag("coordinator.enable", true),
+        cycleExp: Int = Flag("coordinator.cycleExp", 2),
+        adaptExp: Int = Flag("coordinator.adaptExp", 8),
+        loadAvgTarget: Double = Flag("coordinator.loadAvgTarget", 0.8),
+        jitterMaxMs: Double = Flag("coordinator.jitterMax", 0.1),
+        jitterSoftMaxMs: Double = Flag("coordinator.jitterSoftMax", 0.8),
+        delayCycles: Int = Flag("coordinator.delayCycles", 2),
+        executor: Executor = Executors.newSingleThreadExecutor(Threads("kyo-coordinator"))
+    )
+
+    def load(
+        sleepMs: Long => Unit,
+        addWorker: () => Unit,
+        removeWorker: () => Unit,
+        cycleWorkers: Long => Unit,
+        loadAvg: () => Double,
+        config: Config = Config()
+    ): Coordinator =
+        val c = Coordinator(sleepMs, addWorker, removeWorker, cycleWorkers, loadAvg, config)
+        if config.enable then
+            config.executor.execute { () =>
+                while true do
+                    c.update()
+            }
+        end if
+        c
+    end load
+
+end Coordinator
+
+private class Coordinator(
+    sleepMs: Long => Unit,
+    addWorker: () => Unit,
+    removeWorker: () => Unit,
+    cycleWorkers: Long => Unit,
+    loadAvg: () => Double,
+    config: Config
+):
+
+    import config.*
+
+    private val log = LoggerFactory.getLogger(getClass)
 
     private val cycleTicks = Math.pow(2, cycleExp).intValue()
     private val cycleMask  = cycleTicks - 1
@@ -38,15 +76,6 @@ private object Coordinator:
 
     private val delayNs = new MovingStdDev(cycleExp)
 
-    if enable then
-        Executors
-            .newSingleThreadExecutor(Threads("kyo-coordinator"))
-            .execute { () =>
-                while true do
-                    update()
-            }
-    end if
-
     def load(): Unit         = {}
     def currentTick(): Long  = ticks
     def currentCycle(): Long = cycles
@@ -57,13 +86,13 @@ private object Coordinator:
     private def update() =
         try
             val startNs = System.nanoTime()
-            Thread.sleep(1)
+            sleepMs(1)
             val endNs = System.nanoTime()
             ticks += 1
             delayNs.observe(endNs - startNs - 1000000)
             if (ticks & cycleMask) == 0 then
                 cycles += 1
-                Scheduler.cycle(cycles)
+                cycleWorkers(cycles)
             if (ticks & adaptMask) == 0 then
                 adapt()
         catch
@@ -73,13 +102,13 @@ private object Coordinator:
     private def adapt() =
         if cycles > delayCycles then
             val j = jitterMs()
-            val l = Scheduler.loadAvg()
+            val l = loadAvg()
             if j >= jitterMaxMs then
                 stats.removeWorker += 1
-                Scheduler.removeWorker()
+                removeWorker()
             else if j <= jitterSoftMaxMs && l > loadAvgTarget then
                 stats.addWorker += 1
-                Scheduler.addWorker()
+                addWorker()
             end if
         end if
     end adapt

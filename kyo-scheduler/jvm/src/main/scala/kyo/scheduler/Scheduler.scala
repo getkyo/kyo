@@ -33,25 +33,10 @@ private[kyo] object Scheduler:
     end exec
 
     for i <- 0 until maxConcurrency do
-        workers(i) = new Worker(i, exec)
+        workers(i) = new Worker(i, exec, schedule, steal, coordinator.currentCycle)
 
-    Coordinator.load()
-
-    def currentTick(): Long =
-        Coordinator.currentTick()
-
-    def addWorker() =
-        val m = maxConcurrency
-        if m < maxWorkers then
-            if m > allocatedWorkers then
-                workers(m) = new Worker(m, exec)
-                allocatedWorkers += 1
-            maxConcurrency = m + 1
-        end if
-    end addWorker
-
-    def removeWorker() =
-        maxConcurrency = Math.max(maxConcurrency - 1, minWorkers)
+    val coordinator: Coordinator =
+        Coordinator.load(Thread.sleep, addWorker, removeWorker, cycleWorkers, loadAvg)
 
     def schedule(t: Task): Unit =
         schedule(t, null)
@@ -127,7 +112,23 @@ private[kyo] object Scheduler:
         r.toDouble / m
     end loadAvg
 
-    def cycle(curr: Long): Unit =
+    def currentTick(): Long =
+        coordinator.currentTick()
+
+    private def addWorker() =
+        val m = maxConcurrency
+        if m < maxWorkers then
+            if m > allocatedWorkers then
+                workers(m) = new Worker(m, exec, schedule, steal, coordinator.currentCycle)
+                allocatedWorkers += 1
+            maxConcurrency = m + 1
+        end if
+    end addWorker
+
+    private def removeWorker() =
+        maxConcurrency = Math.max(maxConcurrency - 1, minWorkers)
+
+    private def cycleWorkers(curr: Long): Unit =
         var i = 0
         while i < allocatedWorkers do
             val w = workers(i)
@@ -138,7 +139,7 @@ private[kyo] object Scheduler:
         val w = workers(XSRandom.nextInt(maxConcurrency))
         if w != null then
             w.wakeup()
-    end cycle
+    end cycleWorkers
 
     private[scheduler] object stats:
         val flushes  = new LongAdder

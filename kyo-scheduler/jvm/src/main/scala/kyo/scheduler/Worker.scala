@@ -6,7 +6,13 @@ import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.util.Queue
 import kyo.stats.internal.MetricReceiver
 
-final private class Worker(id: Int, exec: Executor) extends Runnable:
+final private class Worker(
+    id: Int,
+    exec: Executor,
+    scheduleTask: (Task, Worker) => Unit,
+    stealTask: Worker => Task,
+    getCurrentCycle: () => Long
+) extends Runnable:
 
     private val running = new AtomicBoolean
 
@@ -16,7 +22,7 @@ final private class Worker(id: Int, exec: Executor) extends Runnable:
 
     private val queue = Queue[Task]()
 
-    private val schedule = Scheduler.schedule(_, this)
+    private val schedule = scheduleTask(_, this)
 
     def enqueue(t: Task): Boolean =
         val blocked = handleBlocking()
@@ -65,11 +71,11 @@ final private class Worker(id: Int, exec: Executor) extends Runnable:
         Worker.local.set(this)
         var task: Task = null
         while true do
-            currentCycle = Coordinator.currentCycle()
+            currentCycle = getCurrentCycle()
             if task == null then
                 task = queue.poll()
             if task == null then
-                task = steal(this)
+                task = stealTask(this)
             if task != null then
                 currentTask = task
                 stats.executions += 1
