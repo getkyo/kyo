@@ -30,12 +30,6 @@ class MetricReceiverTest extends KyoTest:
             "unit",
             Attributes.empty
         )(42.0).unsafe eq Gauge.noop.unsafe)
-        assert(IOs.run(noop.startSpan(
-            Nil,
-            "testSpan",
-            None,
-            Attributes.empty
-        )) eq Span.noop)
     }
 
     "MetricReceiver.all" - {
@@ -62,11 +56,6 @@ class MetricReceiverTest extends KyoTest:
         "gauge" in IOs.run {
             combinedReceiver.gauge(Nil, "testGauge", "Test Gauge", "unit", Attributes.empty)(42.0)
             assert(mockReceiver1.gaugeCreated && mockReceiver2.gaugeCreated)
-        }
-
-        "startSpan" in IOs.run {
-            combinedReceiver.startSpan(Nil, "testSpan", None, Attributes.empty)
-            assert(mockReceiver1.spanStarted && mockReceiver2.spanStarted)
         }
     }
 

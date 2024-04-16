@@ -1,7 +1,6 @@
 package kyo.stats.internal
 
 import java.util.ServiceLoader
-import kyo.*
 import kyo.stats.*
 import kyo.stats.Attributes
 import scala.jdk.CollectionConverters.*
@@ -32,12 +31,6 @@ trait MetricReceiver:
         a: Attributes
     )(f: => Double): Gauge
 
-    def startSpan(
-        scope: List[String],
-        name: String,
-        parent: Option[Span] = None,
-        attributes: Attributes = Attributes.empty
-    ): Span < IOs
 end MetricReceiver
 
 object MetricReceiver:
@@ -107,16 +100,6 @@ object MetricReceiver:
                 a: Attributes
             )(f: => Double) =
                 Gauge.all(receivers.map(_.gauge(scope, name, description, unit, a)(f)))
-
-            def startSpan(
-                scope: List[String],
-                name: String,
-                parent: Option[Span] = None,
-                a: Attributes = Attributes.empty
-            ) =
-                Seqs
-                    .traverse(receivers)(_.startSpan(scope, name, None, a))
-                    .map(Span.all)
 
     val get: MetricReceiver =
         ServiceLoader.load(classOf[MetricReceiver]).iterator().asScala.toList match
