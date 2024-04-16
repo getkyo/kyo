@@ -126,7 +126,7 @@ private[kyo] object Scheduler:
 
     def cycle(curr: Long): Unit =
         var i = 0
-        while i < maxConcurrency do
+        while i < allocatedWorkers do
             val w = workers(i)
             if w != null then
                 w.cycle(curr)
