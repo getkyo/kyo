@@ -2,7 +2,7 @@ package kyo.bench
 
 class StreamBench extends Bench.SyncAndFork[Int]:
 
-    val seq = (0 until 10000).toList
+    val seq = (0 until 10000).toVector
 
     def catsBench() =
         import cats.effect.*
