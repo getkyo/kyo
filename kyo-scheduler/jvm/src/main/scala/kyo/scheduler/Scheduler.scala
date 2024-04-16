@@ -10,6 +10,7 @@ import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
 import scala.annotation.tailrec
+import scala.concurrent.ExecutionContext
 
 object Scheduler:
 
@@ -24,7 +25,7 @@ object Scheduler:
         virtualizeWorkers: Boolean
     )
     object Config:
-        def apply(): Config =
+        val default: Config =
             val cores: Int                 = Runtime.getRuntime().availableProcessors()
             val coreWorkers: Int           = Math.max(1, Flag("coreWorkers", cores))
             val minWorkers: Int            = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
@@ -32,13 +33,13 @@ object Scheduler:
             val scheduleTries: Int         = Math.max(1, Flag("scheduleTries", 8))
             val virtualizeWorkers: Boolean = Flag("virtualizeWorkers", false)
             Config(cores, coreWorkers, minWorkers, maxWorkers, scheduleTries, virtualizeWorkers)
-        end apply
+        end default
     end Config
 end Scheduler
 
 final class Scheduler(
     executor: Executor = Executors.newCachedThreadPool(Threads("kyo-scheduler")),
-    config: Config = Config()
+    config: Config = Config.default
 ):
 
     import config.*
@@ -164,6 +165,12 @@ final class Scheduler(
         if w != null then
             w.wakeup()
     end cycleWorkers
+
+    def asExecutor: Executor =
+        (r: Runnable) => schedule(Task(r.run()))
+
+    def asExecutionContext: ExecutionContext =
+        ExecutionContext.fromExecutor(asExecutor)
 
     private[scheduler] object stats:
         val flushes  = new LongAdder

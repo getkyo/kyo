@@ -14,16 +14,6 @@ private object Coordinator:
 
     private[Coordinator] val log = LoggerFactory.getLogger(getClass)
 
-    case class Config(
-        enable: Boolean = Flag("coordinator.enable", true),
-        cycleExp: Int = Flag("coordinator.cycleExp", 2),
-        adaptExp: Int = Flag("coordinator.adaptExp", 8),
-        loadAvgTarget: Double = Flag("coordinator.loadAvgTarget", 0.8),
-        jitterMaxMs: Double = Flag("coordinator.jitterMax", 0.1),
-        jitterSoftMaxMs: Double = Flag("coordinator.jitterSoftMax", 0.8),
-        delayCycles: Int = Flag("coordinator.delayCycles", 2)
-    )
-
     def load(
         sleepMs: Long => Unit,
         addWorker: () => Unit,
@@ -31,7 +21,7 @@ private object Coordinator:
         cycleWorkers: Long => Unit,
         loadAvg: () => Double,
         executor: Executor = Executors.newSingleThreadExecutor(Threads("kyo-coordinator")),
-        config: Config = Config()
+        config: Config = Config.default
     ): Coordinator =
         val c = Coordinator(sleepMs, addWorker, removeWorker, cycleWorkers, loadAvg, config)
         if config.enable then
@@ -43,9 +33,31 @@ private object Coordinator:
         c
     end load
 
+    case class Config(
+        enable: Boolean,
+        cycleExp: Int,
+        adaptExp: Int,
+        loadAvgTarget: Double,
+        jitterMaxMs: Double,
+        jitterSoftMaxMs: Double,
+        delayCycles: Int
+    )
+
+    object Config:
+        val default: Config =
+            Config(
+                enable = Flag("coordinator.enable", true),
+                cycleExp = Flag("coordinator.cycleExp", 2),
+                adaptExp = Flag("coordinator.adaptExp", 8),
+                loadAvgTarget = Flag("coordinator.loadAvgTarget", 0.8),
+                jitterMaxMs = Flag("coordinator.jitterMax", 0.1),
+                jitterSoftMaxMs = Flag("coordinator.jitterSoftMax", 0.8),
+                delayCycles = Flag("coordinator.delayCycles", 2)
+            )
+    end Config
 end Coordinator
 
-private class Coordinator(
+final private class Coordinator(
     sleepMs: Long => Unit,
     addWorker: () => Unit,
     removeWorker: () => Unit,
