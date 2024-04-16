@@ -2,6 +2,7 @@ package kyoTest.stats
 
 import kyo.*
 import kyo.stats.*
+import kyo.stats.internal.UnsafeGauge
 import kyoTest.KyoTest
 
 class GaugeTest extends KyoTest:
@@ -38,7 +39,7 @@ class GaugeTest extends KyoTest:
         }
     }
 
-    class TestGauge extends Gauge.Unsafe:
+    class TestGauge extends UnsafeGauge:
         var isClosed = false
         def close()  = isClosed = true
 end GaugeTest

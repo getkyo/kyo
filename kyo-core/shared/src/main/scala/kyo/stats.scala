@@ -92,7 +92,7 @@ object Stats:
                 unit: String,
                 a: Attributes
             ) =
-                internal.MetricReceiver.get.counter(path.reverse, name, description, unit, a)
+                Counter(internal.MetricReceiver.get.counter(path.reverse, name, description, unit, a))
 
             def initHistogram(
                 name: String,
@@ -100,7 +100,7 @@ object Stats:
                 unit: String,
                 a: Attributes
             ) =
-                internal.MetricReceiver.get.histogram(path.reverse, name, description, unit, a)
+                Histogram(internal.MetricReceiver.get.histogram(path.reverse, name, description, unit, a))
 
             def initGauge(
                 name: String,
@@ -108,7 +108,7 @@ object Stats:
                 unit: String = "",
                 a: Attributes = Attributes.empty
             )(f: => Double) =
-                internal.MetricReceiver.get.gauge(path.reverse, name, description, unit, a)(f)
+                Gauge(internal.MetricReceiver.get.gauge(path.reverse, name, description, unit, a)(f))
 
             def traceSpan[T, S](
                 name: String,

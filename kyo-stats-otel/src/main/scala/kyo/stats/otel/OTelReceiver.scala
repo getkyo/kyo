@@ -10,6 +10,9 @@ import kyo.stats.Attributes
 import kyo.stats.internal.MetricReceiver
 import kyo.stats.internal.Span
 import kyo.stats.internal.TraceReceiver
+import kyo.stats.internal.UnsafeCounter
+import kyo.stats.internal.UnsafeGauge
+import kyo.stats.internal.UnsafeHistogram
 
 class OTelReceiver extends MetricReceiver with TraceReceiver:
 
@@ -22,27 +25,25 @@ class OTelReceiver extends MetricReceiver with TraceReceiver:
         unit: String,
         a: Attributes
     ) =
-        Counter(
-            new Counter.Unsafe:
+        new UnsafeCounter:
 
-                val impl =
-                    otel.getMeter(scope.mkString("_"))
-                        .counterBuilder(name)
-                        .setDescription(description)
-                        .setUnit(unit)
-                        .build()
+            val impl =
+                otel.getMeter(scope.mkString("_"))
+                    .counterBuilder(name)
+                    .setDescription(description)
+                    .setUnit(unit)
+                    .build()
 
-                def inc() = add(1)
+            def inc() = add(1)
 
-                def add(v: Long, a: Attributes) =
-                    impl.add(v, OTelAttributes(a))
+            def add(v: Long, a: Attributes) =
+                impl.add(v, OTelAttributes(a))
 
-                def add(v: Long) =
-                    impl.add(v)
+            def add(v: Long) =
+                impl.add(v)
 
-                def attributes(b: Attributes) =
-                    counter(scope, name, description, unit, a.add(b)).unsafe
-        )
+            def attributes(b: Attributes) =
+                counter(scope, name, description, unit, a.add(b))
 
     def histogram(
         scope: List[String],
@@ -51,25 +52,23 @@ class OTelReceiver extends MetricReceiver with TraceReceiver:
         unit: String,
         a: Attributes
     ) =
-        Histogram(
-            new Histogram.Unsafe:
+        new UnsafeHistogram:
 
-                val impl =
-                    otel.getMeter(scope.mkString("_"))
-                        .histogramBuilder(name)
-                        .setDescription(description)
-                        .setUnit(unit)
-                        .build()
+            val impl =
+                otel.getMeter(scope.mkString("_"))
+                    .histogramBuilder(name)
+                    .setDescription(description)
+                    .setUnit(unit)
+                    .build()
 
-                def observe(v: Double, b: Attributes) =
-                    impl.record(v, OTelAttributes(b))
+            def observe(v: Double, b: Attributes) =
+                impl.record(v, OTelAttributes(b))
 
-                def observe(v: Double) =
-                    impl.record(v)
+            def observe(v: Double) =
+                impl.record(v)
 
-                def attributes(b: Attributes) =
-                    histogram(scope, name, description, unit, a.add(b)).unsafe
-        )
+            def attributes(b: Attributes) =
+                histogram(scope, name, description, unit, a.add(b))
 
     def gauge(
         scope: List[String],
@@ -78,19 +77,17 @@ class OTelReceiver extends MetricReceiver with TraceReceiver:
         unit: String,
         a: Attributes
     )(f: => Double) =
-        Gauge(
-            new Gauge.Unsafe:
+        new UnsafeGauge:
 
-                val impl =
-                    otel.getMeter(scope.mkString("_"))
-                        .gaugeBuilder(name)
-                        .setDescription(description)
-                        .setUnit(unit)
-                        .buildWithCallback(m => m.record(f))
+            val impl =
+                otel.getMeter(scope.mkString("_"))
+                    .gaugeBuilder(name)
+                    .setDescription(description)
+                    .setUnit(unit)
+                    .buildWithCallback(m => m.record(f))
 
-                def close() =
-                    impl.close()
-        )
+            def close() =
+                impl.close()
 
     def startSpan(
         scope: List[String],

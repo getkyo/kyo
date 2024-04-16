@@ -1,9 +1,9 @@
 package kyo.stats
 
 import kyo.*
-import scala.annotation.tailrec
+import kyo.stats.internal.UnsafeHistogram
 
-case class Histogram(unsafe: Histogram.Unsafe) extends AnyVal:
+case class Histogram(unsafe: UnsafeHistogram) extends AnyVal:
 
     def observe(v: Double): Unit < IOs =
         IOs(unsafe.observe(v))
@@ -17,44 +17,10 @@ end Histogram
 
 object Histogram:
 
-    abstract class Unsafe:
-        def observe(v: Double): Unit
-        def observe(v: Double, b: Attributes): Unit
-        def attributes(b: Attributes): Unsafe
-    end Unsafe
-
     val noop: Histogram =
-        Histogram(
-            new Unsafe:
-                def observe(v: Double)                = ()
-                def observe(v: Double, b: Attributes) = ()
-                def attributes(b: Attributes)         = this
-        )
+        Histogram(UnsafeHistogram.noop)
 
     def all(l: List[Histogram]): Histogram =
-        l.filter(_.unsafe ne noop.unsafe) match
-            case Nil =>
-                noop
-            case h :: Nil =>
-                h
-            case l =>
-                Histogram(
-                    new Unsafe:
-                        def observe(v: Double) =
-                            @tailrec def loop(c: List[Histogram]): Unit =
-                                if c ne Nil then
-                                    c.head.unsafe.observe(v)
-                                    loop(c.tail)
-                            loop(l)
-                        end observe
-                        def observe(v: Double, b: Attributes) =
-                            @tailrec def loop(c: List[Histogram]): Unit =
-                                if c ne Nil then
-                                    c.head.unsafe.observe(v, b)
-                                    loop(c.tail)
-                            loop(l)
-                        end observe
-                        def attributes(b: Attributes) =
-                            all(l.map(_.attributes(b))).unsafe
-                )
+        Histogram(UnsafeHistogram.all(l.map(_.unsafe)))
+
 end Histogram

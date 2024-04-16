@@ -1,7 +1,6 @@
 package kyo.stats.internal
 
 import java.util.ServiceLoader
-import kyo.stats.*
 import kyo.stats.Attributes
 import scala.jdk.CollectionConverters.*
 
@@ -13,7 +12,7 @@ trait MetricReceiver:
         description: String,
         unit: String,
         a: Attributes
-    ): Counter
+    ): UnsafeCounter
 
     def histogram(
         scope: List[String],
@@ -21,7 +20,7 @@ trait MetricReceiver:
         description: String,
         unit: String,
         a: Attributes
-    ): Histogram
+    ): UnsafeHistogram
 
     def gauge(
         scope: List[String],
@@ -29,7 +28,7 @@ trait MetricReceiver:
         description: String,
         unit: String,
         a: Attributes
-    )(f: => Double): Gauge
+    )(f: => Double): UnsafeGauge
 
 end MetricReceiver
 
@@ -44,7 +43,7 @@ object MetricReceiver:
                 unit: String,
                 a: Attributes
             ) =
-                Counter.noop
+                UnsafeCounter.noop
             def histogram(
                 scope: List[String],
                 name: String,
@@ -52,7 +51,7 @@ object MetricReceiver:
                 unit: String,
                 a: Attributes
             ) =
-                Histogram.noop
+                UnsafeHistogram.noop
 
             def gauge(
                 scope: List[String],
@@ -61,7 +60,7 @@ object MetricReceiver:
                 unit: String,
                 a: Attributes
             )(f: => Double) =
-                Gauge.noop
+                UnsafeGauge.noop
 
             def startSpan(
                 scope: List[String],
@@ -81,7 +80,7 @@ object MetricReceiver:
                 unit: String,
                 a: Attributes
             ) =
-                Counter.all(receivers.map(_.counter(scope, name, description, unit, a)))
+                UnsafeCounter.all(receivers.map(_.counter(scope, name, description, unit, a)))
 
             def histogram(
                 scope: List[String],
@@ -90,7 +89,7 @@ object MetricReceiver:
                 unit: String,
                 a: Attributes
             ) =
-                Histogram.all(receivers.map(_.histogram(scope, name, description, unit, a)))
+                UnsafeHistogram.all(receivers.map(_.histogram(scope, name, description, unit, a)))
 
             def gauge(
                 scope: List[String],
@@ -99,7 +98,7 @@ object MetricReceiver:
                 unit: String,
                 a: Attributes
             )(f: => Double) =
-                Gauge.all(receivers.map(_.gauge(scope, name, description, unit, a)(f)))
+                UnsafeGauge.all(receivers.map(_.gauge(scope, name, description, unit, a)(f)))
 
     val get: MetricReceiver =
         ServiceLoader.load(classOf[MetricReceiver]).iterator().asScala.toList match

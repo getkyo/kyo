@@ -2,6 +2,7 @@ package kyoTest.stats
 
 import kyo.*
 import kyo.stats.*
+import kyo.stats.internal.UnsafeHistogram
 import kyoTest.KyoTest
 
 class HistogramTest extends KyoTest:
@@ -43,7 +44,7 @@ class HistogramTest extends KyoTest:
         }
     }
 
-    class TestHistogram extends Histogram.Unsafe:
+    class TestHistogram extends UnsafeHistogram:
         var observations = 0
         def observe(v: Double, b: Attributes) =
             observations += 1

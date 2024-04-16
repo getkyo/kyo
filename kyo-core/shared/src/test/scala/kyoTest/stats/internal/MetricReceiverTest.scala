@@ -15,21 +15,21 @@ class MetricReceiverTest extends KyoTest:
             "Test Counter",
             "unit",
             Attributes.empty
-        ).unsafe eq Counter.noop.unsafe)
+        ) eq UnsafeCounter.noop)
         assert(noop.histogram(
             Nil,
             "testHistogram",
             "Test Histogram",
             "unit",
             Attributes.empty
-        ).unsafe eq Histogram.noop.unsafe)
+        ) eq UnsafeHistogram.noop)
         assert(noop.gauge(
             Nil,
             "testGauge",
             "Test Gauge",
             "unit",
             Attributes.empty
-        )(42.0).unsafe eq Gauge.noop.unsafe)
+        )(42.0) eq UnsafeGauge.noop)
     }
 
     "MetricReceiver.all" - {
@@ -85,7 +85,7 @@ class MetricReceiverTest extends KyoTest:
             a: Attributes
         ) =
             counterCreated = true
-            Counter.noop
+            UnsafeCounter.noop
         end counter
 
         def histogram(
@@ -96,7 +96,7 @@ class MetricReceiverTest extends KyoTest:
             a: Attributes
         ) =
             histogramCreated = true
-            Histogram.noop
+            UnsafeHistogram.noop
         end histogram
 
         def gauge(
@@ -107,7 +107,7 @@ class MetricReceiverTest extends KyoTest:
             a: Attributes
         )(f: => Double) =
             gaugeCreated = true
-            Gauge.noop
+            UnsafeGauge.noop
         end gauge
     end TestMetricReceiver
 end MetricReceiverTest

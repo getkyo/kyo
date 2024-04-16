@@ -2,6 +2,7 @@ package kyoTest.stats
 
 import kyo.*
 import kyo.stats.*
+import kyo.stats.internal.UnsafeCounter
 import kyoTest.KyoTest
 
 class CounterTest extends KyoTest:
@@ -46,7 +47,7 @@ class CounterTest extends KyoTest:
         }
     }
 
-    class TestCounter extends Counter.Unsafe:
+    class TestCounter extends UnsafeCounter:
         var curr = 0L
         def inc() =
             curr += 1
