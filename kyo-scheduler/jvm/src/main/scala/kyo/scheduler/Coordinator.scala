@@ -4,6 +4,7 @@ import java.util.concurrent.Executors
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.MovingStdDev
 import kyo.scheduler.util.Threads
+import kyo.stats.internal.MetricReceiver
 import org.slf4j.LoggerFactory
 import scala.util.control.NonFatal
 
@@ -74,29 +75,30 @@ private object Coordinator:
             val j = jitterMs()
             val l = Scheduler.loadAvg()
             if j >= jitterMaxMs then
-                // stats.removeWorker += 1
+                stats.removeWorker += 1
                 Scheduler.removeWorker()
             else if j <= jitterSoftMaxMs && l > loadAvgTarget then
-                // stats.addWorker += 1
+                stats.addWorker += 1
                 Scheduler.addWorker()
             end if
         end if
     end adapt
 
-    // private object stats:
-    //     var addWorker    = 0L
-    //     var removeWorker = 0L
-    //     val s            = Scheduler.stats.scope.scope("coordinator")
-    //     s.initGauge("delay_avg_ns")(delayNs.avg().toDouble)
-    //     s.initGauge("delay_dev_ns")(delayNs.dev().toDouble)
-    //     s.initGauge("jitter_current_ms")(jitterMs())
-    //     s.initGauge("jitter_max_ms")(jitterMaxMs)
-    //     s.initGauge("jitter_soft_max_ms")(jitterSoftMaxMs)
-    //     s.initGauge("current_tick")(currentTick().toDouble)
-    //     s.initGauge("current_cycle")(currentCycle().toDouble)
-    //     s.initGauge("worker_add")(addWorker.toDouble)
-    //     s.initGauge("worker_remove")(removeWorker.toDouble)
-    // end stats
+    private object stats:
+        var addWorker    = 0L
+        var removeWorker = 0L
+        val scope        = Scheduler.stats.scope :+ "coordinator"
+        val receiver     = MetricReceiver.get
+        receiver.gauge(scope, "delay_avg_ns")(delayNs.avg().toDouble)
+        receiver.gauge(scope, "delay_dev_ns")(delayNs.dev().toDouble)
+        receiver.gauge(scope, "jitter_current_ms")(jitterMs())
+        receiver.gauge(scope, "jitter_max_ms")(jitterMaxMs)
+        receiver.gauge(scope, "jitter_soft_max_ms")(jitterSoftMaxMs)
+        receiver.gauge(scope, "current_tick")(currentTick().toDouble)
+        receiver.gauge(scope, "current_cycle")(currentCycle().toDouble)
+        receiver.gauge(scope, "worker_add")(addWorker.toDouble)
+        receiver.gauge(scope, "worker_remove")(removeWorker.toDouble)
+    end stats
 
     override def toString =
         s"Coordinator(ticks=$ticks,cycles=$cycles,delay.dev=${delayNs.dev()},delay.avg=${delayNs.avg()},jitter=${jitterMs()})"

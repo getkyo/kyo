@@ -6,6 +6,7 @@ import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
+import kyo.stats.internal.MetricReceiver
 import scala.annotation.tailrec
 
 private[kyo] object Scheduler:
@@ -107,7 +108,7 @@ private[kyo] object Scheduler:
     end steal
 
     def flush() =
-        // stats.flushes.increment()
+        stats.flushes.increment()
         val w = Worker.current()
         if w != null then
             w.drain()
@@ -139,14 +140,15 @@ private[kyo] object Scheduler:
             w.wakeup()
     end cycle
 
-    // private[scheduler] object stats:
-    //     val flushes = new LongAdder
+    private[scheduler] object stats:
+        val flushes  = new LongAdder
+        val scope    = List("kyo", "scheduler")
+        val receiver = MetricReceiver.get
 
-    //     val scope = Stats.kyoScope.scope("scheduler")
-    //     scope.initGauge("max_concurrency")(maxConcurrency)
-    //     scope.initGauge("allocated_workers")(allocatedWorkers)
-    //     scope.initGauge("load_avg")(loadAvg())
-    //     scope.initGauge("flushes")(flushes.sum().toDouble)
-    // end stats
+        receiver.gauge(scope, "max_concurrency")(maxConcurrency)
+        receiver.gauge(scope, "allocated_workers")(allocatedWorkers)
+        receiver.gauge(scope, "load_avg")(loadAvg())
+        receiver.gauge(scope, "flushes")(flushes.sum().toDouble)
+    end stats
 
 end Scheduler

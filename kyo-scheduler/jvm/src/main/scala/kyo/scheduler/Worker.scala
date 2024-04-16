@@ -4,6 +4,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.util.Queue
+import kyo.stats.internal.MetricReceiver
 
 final private class Worker(id: Int, exec: Executor) extends Runnable:
 
@@ -20,7 +21,7 @@ final private class Worker(id: Int, exec: Executor) extends Runnable:
     def enqueue(t: Task): Boolean =
         val blocked = handleBlocking()
         if !blocked then
-            // stats.submissions.increment()
+            stats.submissions.increment()
             queue.add(t)
             wakeup()
         end if
@@ -29,7 +30,7 @@ final private class Worker(id: Int, exec: Executor) extends Runnable:
 
     def wakeup() =
         if !running.get() && running.compareAndSet(false, true) then
-            // stats.mounts.increment()
+            stats.mounts.increment()
             exec.execute(this)
 
     def load() =
@@ -71,14 +72,14 @@ final private class Worker(id: Int, exec: Executor) extends Runnable:
                 task = steal(this)
             if task != null then
                 currentTask = task
-                // stats.executions += 1
+                stats.executions += 1
                 val r = task.run()
                 currentTask = null
                 if r == Task.Preempted then
-                    // stats.preemptions += 1
+                    stats.preemptions += 1
                     task = queue.addAndPoll(task)
                 else
-                    // stats.completions += 1
+                    stats.completions += 1
                     task = null
                 end if
             else
@@ -92,22 +93,23 @@ final private class Worker(id: Int, exec: Executor) extends Runnable:
         end while
     end run
 
-    // private object stats:
-    //     var executions  = 0L
-    //     var preemptions = 0L
-    //     var completions = 0L
-    //     val submissions = new LongAdder
-    //     val mounts      = new LongAdder
+    private object stats:
+        var executions  = 0L
+        var preemptions = 0L
+        var completions = 0L
+        val submissions = new LongAdder
+        val mounts      = new LongAdder
 
-    //     val s = scope.scope("workers", id.toString())
-    //     s.initGauge("executions")(executions.toDouble)
-    //     s.initGauge("preemptions")(preemptions.toDouble)
-    //     s.initGauge("completions")(completions.toDouble)
-    //     s.initGauge("queue_size")(queue.size())
-    //     s.initGauge("current_cycle")(currentCycle.toDouble)
-    //     s.initGauge("submissions")(submissions.sum().toDouble)
-    //     s.initGauge("mounts")(mounts.sum().toDouble)
-    // end stats
+        val scope    = Scheduler.stats.scope :+ "worker" :+ id.toString
+        val receiver = MetricReceiver.get
+        receiver.gauge(scope, "executions")(executions.toDouble)
+        receiver.gauge(scope, "preemptions")(preemptions.toDouble)
+        receiver.gauge(scope, "completions")(completions.toDouble)
+        receiver.gauge(scope, "queue_size")(queue.size())
+        receiver.gauge(scope, "current_cycle")(currentCycle.toDouble)
+        receiver.gauge(scope, "submissions")(submissions.sum().toDouble)
+        receiver.gauge(scope, "mounts")(mounts.sum().toDouble)
+    end stats
 
 end Worker
 
