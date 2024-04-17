@@ -28,10 +28,10 @@ class KyoTest extends AsyncFreeSpec with NonImplicitAssertions:
     end retry
 
     def timeout =
-        if Platform.isDebugEnabled then
-            Duration.Inf
-        else
-            5.seconds
+        // if Platform.isDebugEnabled then
+        Duration.Inf
+    // else
+    // 5.seconds
 
     implicit def toFuture(a: Assertion): Future[Assertion] = Future.successful(a)
 

@@ -52,7 +52,7 @@ private[kyo] class IOTask[T](
                             case Promise(p) =>
                                 this.interrupts(p)
                                 val runtime = this.runtime() +
-                                    (scheduler.currentTick() - start).asInstanceOf[Int]
+                                    (System.currentTimeMillis() - start).asInstanceOf[Int]
                                 p.onComplete { (v: Any < IOs) =>
                                     val io = IOs(k(
                                         v,
@@ -81,7 +81,7 @@ private[kyo] class IOTask[T](
 
     def run() =
         val scheduler = Scheduler.get
-        val start     = scheduler.currentTick()
+        val start     = System.currentTimeMillis()
         try
             curr = eval(start, curr, scheduler)
         catch
@@ -89,7 +89,7 @@ private[kyo] class IOTask[T](
                 complete(IOs.fail(ex))
                 curr = nullIO
         end try
-        state = runtime() + (scheduler.currentTick() - start).asInstanceOf[Int]
+        state = runtime() + (System.currentTimeMillis() - start).asInstanceOf[Int]
         if !isNull(curr) then
             Task.Preempted
         else

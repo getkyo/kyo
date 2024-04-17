@@ -3,6 +3,8 @@ package kyo.scheduler
 import Scheduler.*
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
@@ -11,34 +13,11 @@ import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
-
-object Scheduler:
-
-    lazy val get = Scheduler()
-
-    case class Config(
-        cores: Int,
-        coreWorkers: Int,
-        minWorkers: Int,
-        maxWorkers: Int,
-        scheduleTries: Int,
-        virtualizeWorkers: Boolean
-    )
-    object Config:
-        val default: Config =
-            val cores: Int                 = Runtime.getRuntime().availableProcessors()
-            val coreWorkers: Int           = Math.max(1, Flag("coreWorkers", cores))
-            val minWorkers: Int            = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
-            val maxWorkers: Int            = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
-            val scheduleTries: Int         = Math.max(1, Flag("scheduleTries", 8))
-            val virtualizeWorkers: Boolean = Flag("virtualizeWorkers", false)
-            Config(cores, coreWorkers, minWorkers, maxWorkers, scheduleTries, virtualizeWorkers)
-        end default
-    end Config
-end Scheduler
+import scala.util.hashing.MurmurHash3
 
 final class Scheduler(
-    executor: Executor = Executors.newCachedThreadPool(Threads("kyo-scheduler")),
+    executor: Executor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker")),
+    scheduledExecutor: ScheduledExecutorService = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer")),
     config: Config = Config.default
 ):
 
@@ -46,6 +25,9 @@ final class Scheduler(
 
     @volatile private var maxConcurrency   = coreWorkers
     @volatile private var allocatedWorkers = maxConcurrency
+
+    @volatile private var admissionPercent = 100
+    @volatile private var cycles           = 0L
 
     private val workers = new Array[Worker](maxWorkers)
 
@@ -58,10 +40,51 @@ final class Scheduler(
     end exec
 
     for i <- 0 until maxConcurrency do
-        workers(i) = new Worker(i, exec, schedule, steal, coordinator.currentCycle)
+        workers(i) = new Worker(i, exec, schedule, steal, () => cycles)
 
-    val coordinator: Coordinator =
-        Coordinator.load(Thread.sleep, addWorker, removeWorker, cycleWorkers, loadAvg)
+    val threadSchedulingDelayRegulator =
+        Regulator.threadSchedulingDelay(
+            loadAvg,
+            update = v =>
+                val m = Math.max(minWorkers, Math.min(maxWorkers, maxConcurrency + v))
+                if m > allocatedWorkers then
+                    workers(m) = new Worker(m, exec, schedule, steal, () => cycles)
+                    allocatedWorkers += 1
+                maxConcurrency = m
+                println(("maxConcurrency", maxConcurrency))
+            ,
+            scheduledExecutor
+        )
+
+    val admissionRegulator =
+        Regulator.admission(
+            loadAvg,
+            schedule,
+            v =>
+                admissionPercent = Math.max(0, Math.min(100, admissionPercent + v))
+                println(("admissionPercent", v, admissionPercent))
+            ,
+            scheduledExecutor
+        )
+
+    scheduledExecutor.scheduleAtFixedRate(() => cycleWorkers(), timeSliceMs, timeSliceMs, TimeUnit.MILLISECONDS)
+
+    def backpressure(keyPath: Seq[String]): Boolean =
+        val threshold = admissionPercent / keyPath.length
+        @tailrec
+        def loop(keys: Seq[String], index: Int): Boolean =
+            keys match
+                case Seq() => false
+                case key +: rest =>
+                    val hash           = MurmurHash3.stringHash(key)
+                    val layerThreshold = threshold * (index + 1)
+                    if (hash.abs % 100) >= (layerThreshold * 100) then
+                        loop(rest, index + 1)
+                    else
+                        true
+                    end if
+        loop(keyPath, 0)
+    end backpressure
 
     def schedule(t: Task): Unit =
         schedule(t, null)
@@ -137,28 +160,17 @@ final class Scheduler(
         r.toDouble / m
     end loadAvg
 
-    def currentTick(): Long =
-        coordinator.currentTick()
-
-    private def addWorker() =
-        val m = maxConcurrency
-        if m < maxWorkers then
-            if m > allocatedWorkers then
-                workers(m) = new Worker(m, exec, schedule, steal, coordinator.currentCycle)
-                allocatedWorkers += 1
-            maxConcurrency = m + 1
-        end if
-    end addWorker
-
-    private def removeWorker() =
-        maxConcurrency = Math.max(maxConcurrency - 1, minWorkers)
-
-    private def cycleWorkers(curr: Long): Unit =
-        var i = 0
+    private def cycleWorkers(): Unit =
+        cycles += 1
+        var i    = 0
+        val curr = cycles
         while i < allocatedWorkers do
             val w = workers(i)
             if w != null then
                 w.cycle(curr)
+                if i >= maxWorkers then
+                    w.drain()
+            end if
             i += 1
         end while
         val w = workers(XSRandom.nextInt(maxConcurrency))
@@ -183,4 +195,31 @@ final class Scheduler(
         receiver.gauge(scope, "flushes")(flushes.sum().toDouble)
     end stats
 
+end Scheduler
+
+object Scheduler:
+
+    lazy val get = Scheduler()
+
+    case class Config(
+        cores: Int,
+        coreWorkers: Int,
+        minWorkers: Int,
+        maxWorkers: Int,
+        scheduleTries: Int,
+        virtualizeWorkers: Boolean,
+        timeSliceMs: Int
+    )
+    object Config:
+        val default: Config =
+            val cores             = Runtime.getRuntime().availableProcessors()
+            val coreWorkers       = Math.max(1, Flag("coreWorkers", cores))
+            val minWorkers        = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
+            val maxWorkers        = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
+            val scheduleTries     = Math.max(1, Flag("scheduleTries", 8))
+            val virtualizeWorkers = Flag("virtualizeWorkers", false)
+            val timeSliceMs       = Flag("timeSliceMs", 5)
+            Config(cores, coreWorkers, minWorkers, maxWorkers, scheduleTries, virtualizeWorkers, timeSliceMs)
+        end default
+    end Config
 end Scheduler
