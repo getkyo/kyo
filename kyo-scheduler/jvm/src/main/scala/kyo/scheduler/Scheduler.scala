@@ -6,6 +6,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
+import kyo.scheduler.regulator.Admission
+import kyo.scheduler.regulator.Concurrency
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
@@ -13,7 +15,6 @@ import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
-import scala.util.hashing.MurmurHash3
 
 final class Scheduler(
     executor: Executor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker")),
@@ -26,65 +27,46 @@ final class Scheduler(
     @volatile private var maxConcurrency   = coreWorkers
     @volatile private var allocatedWorkers = maxConcurrency
 
-    @volatile private var admissionPercent = 100
-    @volatile private var cycles           = 0L
+    @volatile private var cycles = 0L
 
     private val workers = new Array[Worker](maxWorkers)
 
-    private val exec =
+    private val pool =
         if virtualizeWorkers then
             LoomSupport.tryVirtualize(executor)
         else
             executor
         end if
-    end exec
+    end pool
 
     for i <- 0 until maxConcurrency do
-        workers(i) = new Worker(i, exec, schedule, steal, () => cycles)
+        workers(i) = new Worker(i, pool, schedule, steal, () => cycles)
 
-    val threadSchedulingDelayRegulator =
-        Regulator.threadSchedulingDelay(
-            loadAvg,
-            update = v =>
-                val m = Math.max(minWorkers, Math.min(maxWorkers, maxConcurrency + v))
-                if m > allocatedWorkers then
-                    workers(m) = new Worker(m, exec, schedule, steal, () => cycles)
-                    allocatedWorkers += 1
-                maxConcurrency = m
-                println(("maxConcurrency", maxConcurrency))
-            ,
-            scheduledExecutor
-        )
+    private val admissionRegulator = Admission(loadAvg, scheduledExecutor)
 
-    val admissionRegulator =
-        Regulator.admission(
-            loadAvg,
-            schedule,
-            v =>
-                admissionPercent = Math.max(0, Math.min(100, admissionPercent + v))
-                println(("admissionPercent", v, admissionPercent))
-            ,
-            scheduledExecutor
-        )
+    private val concurrencyRegulator = Concurrency(
+        loadAvg,
+        schedule,
+        delta =>
+            val m = Math.max(minWorkers, Math.min(maxWorkers, maxConcurrency + delta))
+            if m > allocatedWorkers then
+                workers(m) = new Worker(m, pool, schedule, steal, () => cycles)
+                allocatedWorkers += 1
+            maxConcurrency = m
+            println(("maxConcurrency", maxConcurrency))
+        ,
+        scheduledExecutor
+    )
 
-    scheduledExecutor.scheduleAtFixedRate(() => cycleWorkers(), timeSliceMs, timeSliceMs, TimeUnit.MILLISECONDS)
+    scheduledExecutor.scheduleAtFixedRate(
+        () => cycleWorkers(),
+        timeSliceMs,
+        timeSliceMs,
+        TimeUnit.MILLISECONDS
+    )
 
-    def backpressure(keyPath: Seq[String]): Boolean =
-        val threshold = admissionPercent / keyPath.length
-        @tailrec
-        def loop(keys: Seq[String], index: Int): Boolean =
-            keys match
-                case Seq() => false
-                case key +: rest =>
-                    val hash           = MurmurHash3.stringHash(key)
-                    val layerThreshold = threshold * (index + 1)
-                    if (hash.abs % 100) >= (layerThreshold * 100) then
-                        loop(rest, index + 1)
-                    else
-                        true
-                    end if
-        loop(keyPath, 0)
-    end backpressure
+    def reject(keyPath: Seq[String]): Boolean =
+        admissionRegulator.reject(keyPath)
 
     def schedule(t: Task): Unit =
         schedule(t, null)
