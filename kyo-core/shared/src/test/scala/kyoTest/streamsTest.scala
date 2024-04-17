@@ -7,20 +7,6 @@ class streamsTest extends KyoTest:
 
     val n = 10000
 
-    "initValue" - {
-        "single value" in {
-            assert(
-                Streams.initValue(1).runSeq.pure == (Seq(1), ())
-            )
-        }
-
-        "multiple values" in {
-            assert(
-                Streams.initValue(1, 2, 3).runSeq.pure == (Seq(1, 2, 3), ())
-            )
-        }
-    }
-
     "initSeq" - {
         "empty" in {
             assert(
@@ -37,8 +23,8 @@ class streamsTest extends KyoTest:
 
     "initChannel" - {
         "non-empty channel" in run {
-            Channels.init[Int | Stream.Done](3).map { ch =>
-                ch.put(1).andThen(ch.put(2)).andThen(ch.put(Stream.Done)).map { _ =>
+            Channels.init[Chunk[Int] | Stream.Done](3).map { ch =>
+                ch.put(Chunks.init(1, 2)).andThen(ch.put(Stream.Done)).map { _ =>
                     Streams.initChannel(ch).runSeq.map { result =>
                         assert(result == (Seq(1, 2), ()))
                     }
@@ -47,7 +33,7 @@ class streamsTest extends KyoTest:
         }
 
         "empty channel" in run {
-            Channels.init[Int | Stream.Done](2).map { ch =>
+            Channels.init[Chunk[Int] | Stream.Done](2).map { ch =>
                 ch.put(Stream.Done).andThen {
                     Streams.initChannel(ch).runSeq.map { result =>
                         assert(result == (Seq.empty, ()))
@@ -57,24 +43,10 @@ class streamsTest extends KyoTest:
         }
     }
 
-    "emitValue" - {
-        "single value" in {
-            assert(
-                Streams.initSource(Streams.emitValue(1)).runSeq.pure == (Seq(1), ())
-            )
-        }
-
-        "multiple values" in {
-            assert(
-                Streams.initSource(Streams.emitValue(1, 2, 3)).runSeq.pure == (Seq(1, 2, 3), ())
-            )
-        }
-    }
-
     "emitSeq" - {
         "empty" in {
             assert(
-                Streams.initSource(Streams.emitSeq(Seq())).runSeq.pure == (Seq.empty, ())
+                Streams.initSource(Streams.emitSeq(Seq.empty[Int])).runSeq.pure == (Seq.empty, ())
             )
         }
 
@@ -101,13 +73,13 @@ class streamsTest extends KyoTest:
         "other effects" - {
             "ok" - {
                 "IOs" in run {
-                    Streams.initSource[Int](IOs(Streams.emitValue(1))).buffer(10).runSeq.map { r =>
+                    Streams.initSource[Int](IOs(Streams.emitSeq(Seq(1)))).buffer(10).runSeq.map { r =>
                         assert(r == (Seq(1), ()))
                     }
                 }
                 "Fibers" in run {
                     Streams.initSource[Int](
-                        Fibers.delay(1.nanos)(Streams.emitValue(1))
+                        Fibers.delay(1.nanos)(Streams.emitSeq(Seq(1)))
                     ).buffer(10).runSeq.map { r =>
                         assert(r == (Seq(1), ()))
                     }
@@ -119,29 +91,16 @@ class streamsTest extends KyoTest:
         }
     }
 
-    "throttle" - {
-
-        "semaphore" in run {
-            Meters.initSemaphore(2).map { meter =>
-                Streams.initSeq(Seq(1, 2, 3, 4, 5)).throttle(meter).runSeq.map { r =>
-                    assert(r == (Seq(1, 2, 3, 4, 5), ()))
-                }
-            }
-        }
-
-        "rate" in runJVM {
-            Meters.initRateLimiter(1, 1.nano).map { meter =>
-                Streams.initSeq(Seq(1, 2, 3, 4, 5)).throttle(meter).runSeq.map { r =>
-                    assert(r == (Seq(1, 2, 3, 4, 5), ()))
-                }
-            }
-        }
-    }
-
     "take" - {
         "zero" in {
             assert(
                 Streams.initSeq(Seq(1, 2, 3)).take(0).runSeq.pure == (Seq.empty, ())
+            )
+        }
+
+        "negative" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).take(-1).runSeq.pure == (Seq.empty, ())
             )
         }
 
@@ -169,6 +128,12 @@ class streamsTest extends KyoTest:
         "zero" in {
             assert(
                 Streams.initSeq(Seq(1, 2, 3)).drop(0).runSeq.pure == (Seq(1, 2, 3), ())
+            )
+        }
+
+        "negative" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).drop(-1).runSeq.pure == (Seq(1, 2, 3), ())
             )
         }
 
@@ -222,6 +187,15 @@ class streamsTest extends KyoTest:
             )
         }
 
+        "with effects" in {
+            var count  = 0
+            val stream = Streams.initSeq(Seq(1, 2, 3, 4, 5))
+            val taken = stream.takeWhile { v =>
+                IOs { count += 1; count < 4 }
+            }.runSeq
+            assert(IOs.run(taken).pure == (Seq(1, 2, 3), ()))
+        }
+
         "stack safety" in {
             assert(
                 Streams.initSeq(Seq.fill(n)(1)).takeWhile(_ == 1).runSeq.pure ==
@@ -257,6 +231,15 @@ class streamsTest extends KyoTest:
                 Streams.initSeq(Seq.empty[Int]).dropWhile(_ => false).runSeq.pure ==
                     (Seq.empty, ())
             )
+        }
+
+        "with effects" in {
+            var count  = 0
+            val stream = Streams.initSeq(Seq(1, 2, 3, 4, 5))
+            val dropped = stream.dropWhile { v =>
+                IOs { count += 1; count < 3 }
+            }.runSeq
+            assert(IOs.run(dropped).pure == (Seq(3, 4, 5), ()))
         }
 
         "stack safety" in {
@@ -297,7 +280,7 @@ class streamsTest extends KyoTest:
         }
     }
 
-    "distinct" - {
+    "changes" - {
         "no duplicates" in {
             assert(
                 Streams.initSeq(Seq(1, 2, 3)).changes.runSeq.pure ==
@@ -331,7 +314,7 @@ class streamsTest extends KyoTest:
         "to string" in {
             assert(
                 Streams.initSeq(Seq(1, 2, 3)).collect {
-                    case v if v % 2 == 0 => Streams.emitValue(s"even: $v")
+                    case v if v % 2 == 0 => Streams.emitSeq(Seq(s"even: $v"))
                 }.runSeq.pure == (Seq("even: 2"), ())
             )
         }
@@ -344,10 +327,19 @@ class streamsTest extends KyoTest:
             )
         }
 
+        "with effects" in {
+            val stream = Streams.initSeq(Seq(1, 2, 3, 4, 5))
+            val collected = stream.collect {
+                case v if v % 2 == 0 =>
+                    IOs(println(s"Even: $v")).andThen(Streams.emitSeq(Seq(v)))
+            }.runSeq
+            assert(IOs.run(collected).pure == (Seq(2, 4), ()))
+        }
+
         "stack safety" in {
             assert(
                 Streams.initSeq(1 to n).collect {
-                    case v if v % 2 == 0 => Streams.emitValue(v)
+                    case v if v % 2 == 0 => Streams.emitSeq(Seq(v))
                 }.runSeq.pure._1.size == n / 2
             )
         }
@@ -365,6 +357,18 @@ class streamsTest extends KyoTest:
                 Streams.initSeq(Seq(1, 2, 3)).transform(_.toString).runSeq.pure ==
                     (Seq("1", "2", "3"), ())
             )
+        }
+
+        "with effects" in {
+            val stream      = Streams.initSeq(Seq(1, 2, 3))
+            val transformed = stream.transform(v => IOs(v * 2)).runSeq
+            assert(IOs.run(transformed).pure == (Seq(2, 4, 6), ()))
+        }
+
+        "with failures" in {
+            val stream      = Streams.initSeq(Seq("1", "2", "abc", "3"))
+            val transformed = stream.transform(v => Aborts[NumberFormatException].catching(v.toInt)).runSeq
+            assert(Aborts[NumberFormatException].run(transformed).pure.isLeft)
         }
 
         "stack safety" in {
@@ -417,70 +421,14 @@ class streamsTest extends KyoTest:
         }
     }
 
-    "accumulate" - {
-        "sum" in {
-            assert(
-                Streams.initSeq(Seq(1, 2, 3)).accumulate(0)(_ + _).runSeq.pure ==
-                    (Seq(0, 1, 3, 6), ())
-            )
-        }
-
-        "concat" in {
-            assert(
-                Streams.initSeq(Seq("a", "b", "c")).accumulate("")(_ + _).runSeq.pure ==
-                    (Seq("", "a", "ab", "abc"), ())
-            )
-        }
-
-        "running max" in {
-            assert(
-                Streams.initSeq(Seq(3, 1, 4, 2, 5)).accumulate(Int.MinValue)(
-                    math.max
-                ).runSeq.pure ==
-                    (Seq(Int.MinValue, 3, 3, 4, 4, 5), ())
-            )
-        }
-
-        "state machine" in {
-            sealed trait State derives CanEqual
-            case object Initial extends State
-            case object Active  extends State
-            case object Done    extends State
-
-            val events = Seq("start", "process", "process", "end")
-            assert(
-                Streams.initSeq(events).accumulate(Initial: State) {
-                    case (Initial, "start")  => Active
-                    case (Active, "process") => Active
-                    case (Active, "end")     => Done
-                    case (state, _)          => state
-                }.runSeq.pure ==
-                    (Seq(Initial, Active, Active, Active, Done), ())
-            )
-        }
-
-        "empty stream" in {
-            assert(
-                Streams.initSeq(Seq.empty[Int]).accumulate(0)(_ + _).runSeq.pure ==
-                    (Seq(0), ())
-            )
-        }
-    }
-
     "runChannel" - {
         "non-empty stream" in runJVM {
-            Channels.init[Int | Stream.Done](3).map { ch =>
+            Channels.init[Chunk[Int] | Stream.Done](3).map { ch =>
                 Streams.initSeq(Seq(1, 2, 3)).runChannel(ch).map { _ =>
                     ch.take.map { v1 =>
-                        assert(v1.asInstanceOf[Int] == 1)
-                        ch.take.map { v2 =>
-                            assert(v2.asInstanceOf[Int] == 2)
-                            ch.take.map { v3 =>
-                                assert(v3.asInstanceOf[Int] == 3)
-                                ch.take.map { done =>
-                                    assert(done.asInstanceOf[Stream.Done] eq Stream.Done)
-                                }
-                            }
+                        assert(v1.asInstanceOf[Chunk[Int]].toSeq == Seq(1, 2, 3))
+                        ch.take.map { done =>
+                            assert(done.asInstanceOf[Stream.Done] eq Stream.Done)
                         }
                     }
                 }
@@ -488,7 +436,7 @@ class streamsTest extends KyoTest:
         }
 
         "empty stream" in run {
-            Channels.init[Int | Stream.Done](2).map { ch =>
+            Channels.init[Chunk[Int] | Stream.Done](2).map { ch =>
                 Streams.initSeq(Seq()).runChannel(ch).map { _ =>
                     ch.take.map { done =>
                         assert(done.asInstanceOf[Stream.Done] eq Stream.Done)
@@ -498,10 +446,12 @@ class streamsTest extends KyoTest:
         }
 
         "stack safety" in run {
-            Channels.init[Int | Stream.Done](n + 1).map { ch =>
+            Channels.init[Chunk[Int] | Stream.Done](n + 1).map { ch =>
                 Streams.initSeq(Seq.fill(n)(1)).runChannel(ch).andThen {
                     ch.drain.map { seq =>
-                        assert(seq.size == n + 1)
+                        assert(seq.size == 2)
+                        assert(seq.head.asInstanceOf[Chunk[Int]].size == n)
+                        assert(seq.tail.head.isInstanceOf[Stream.Done])
                     }
                 }
             }
@@ -535,52 +485,17 @@ class streamsTest extends KyoTest:
             )
         }
 
+        "early termination" in {
+            val stream = Streams.initSeq(Seq(1, 2, 3, 4, 5))
+            val folded = stream.runFold(0) { (acc, v) =>
+                if acc < 6 then acc + v else Aborts[Unit].fail(())
+            }
+            assert(Aborts[Unit].run(folded).pure.fold(_ => true, _ => false))
+        }
+
         "stack safety" in {
             assert(
                 Streams.initSeq(Seq.fill(n)(1)).runFold(0)(_ + _).pure == (n, ())
-            )
-        }
-    }
-
-    "reemit" - {
-        "double" in {
-            assert(
-                Streams.initSeq(Seq(1, 2, 3)).reemit(v => Streams.emitValue(v * 2)).runSeq.pure ==
-                    (Seq(2, 4, 6), ())
-            )
-        }
-
-        "to string" in {
-            assert(
-                Streams.initSeq(Seq(1, 2, 3)).reemit(v =>
-                    Streams.emitValue(v.toString)
-                ).runSeq.pure ==
-                    (Seq("1", "2", "3"), ())
-            )
-        }
-
-        "filter" in {
-            assert(
-                Streams.initSeq(Seq(1, 2, 3, 4, 5)).reemit { v =>
-                    if v % 2 == 0 then Streams.emitValue(v)
-                    else ()
-                }.runSeq.pure == (Seq(2, 4), ())
-            )
-        }
-
-        "flatMap" in {
-            assert(
-                Streams.initSeq(Seq(1, 2, 3)).reemit(v =>
-                    Streams.emitSeq(Seq.fill(v)(v))
-                ).runSeq.pure ==
-                    (Seq(1, 2, 2, 3, 3, 3), ())
-            )
-        }
-
-        "stack safety" in {
-            assert(
-                Streams.initSeq(1 to n).reemit(v => Streams.emitValue(v + 1)).runSeq.pure._1 ==
-                    (2 to n + 1)
             )
         }
     }
