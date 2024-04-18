@@ -15,7 +15,6 @@ import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
-import scala.util.control.NonFatal
 
 final class Scheduler(
     executor: Executor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker")),

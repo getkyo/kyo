@@ -44,7 +44,7 @@ object core:
                     new Continue[MX, Any, U, S & S2](kyo):
                         def apply(v: Any, s: Safepoint[S & S2], l: Locals.State) =
                             val r = kyo(v, s.asInstanceOf[Safepoint[S]], l)
-                            if s.check() then
+                            if s.preempt() then
                                 s.suspend(transformLoop(r))
                             else
                                 transformLoop(r)
@@ -145,12 +145,12 @@ object core:
     end Handler
 
     trait Safepoint[-E]:
-        def check(): Boolean
+        def preempt(): Boolean
         def suspend[T, S](v: => T < S): T < (E & S)
 
     object Safepoint:
         private val _noop = new Safepoint[?]:
-            def check()                    = false
+            def preempt()                  = false
             def suspend[T, S](v: => T < S) = v
         inline def noop[S]: Safepoint[S] =
             _noop.asInstanceOf[Safepoint[S]]

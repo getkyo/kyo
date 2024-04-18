@@ -76,11 +76,12 @@ final private[kyo] class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
 
     def drain(f: T => Unit): Unit =
         if !isEmpty() then
-            modify {
-                items = 0
-                queue.foreach(f)
-                queue.clear()
-            }
+            val tasks =
+                modify {
+                    items = 0
+                    queue.dequeueAll
+                }
+            tasks.foreach(f)
 
     private inline def modify[T](inline f: => T): T =
         while !compareAndSet(false, true) do {}

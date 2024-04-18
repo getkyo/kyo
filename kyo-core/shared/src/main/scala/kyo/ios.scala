@@ -182,7 +182,7 @@ private[kyo] object iosInternal:
             new Preempt:
                 def ensure(f: () => Unit) = ()
                 def remove(f: () => Unit) = ()
-                def check()               = false
+                def preempt()             = false
     end Preempt
     type IO[+T] = T
 end iosInternal

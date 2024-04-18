@@ -12,28 +12,23 @@ import scala.util.control.NonFatal
 private[kyo] class IOTask[T](
     private var curr: T < Fibers,
     private var ensures: Ensures,
-    @volatile private var state: Int // Math.abs(state) => runtime; state < 0 => preempting
-) extends IOPromise[T] with Task
+    initialRuntime: Int
+) extends IOPromise[T] with Task(initialRuntime)
     with Preempt:
     import IOTask.*
 
     def locals: Locals.State = Locals.State.empty
 
-    def check(): Boolean =
-        state < 0
-
-    def preempt() =
-        if state > 0 then
-            state = -state;
-
-    def runtime(): Int =
-        Math.abs(state)
-
     override protected def onComplete(): Unit =
-        preempt()
+        doPreempt()
 
-    @tailrec private def eval(start: Long, curr: T < Fibers, scheduler: Scheduler): T < Fibers =
-        if check() then
+    @tailrec private def eval(
+        curr: T < Fibers,
+        scheduler: Scheduler,
+        startNanos: Long
+    ): T < Fibers =
+
+        if preempt() then
             if isDone() then
                 ensures.finalize()
                 ensures = Ensures.empty
@@ -45,14 +40,13 @@ private[kyo] class IOTask[T](
                 case kyo: Suspend[?, ?, ?, ?] =>
                     if kyo.tag == Tag[IOs] then
                         val k = kyo.asInstanceOf[Suspend[IO, Unit, T, Fibers]]
-                        eval(start, k((), this, locals), scheduler)
+                        eval(k((), this, locals), scheduler, startNanos)
                     else if kyo.tag == Tag[FiberGets] then
                         val k = kyo.asInstanceOf[Suspend[Fiber, Any, T, Fibers]]
                         k.command match
                             case Promise(p) =>
                                 this.interrupts(p)
-                                val runtime = this.runtime() +
-                                    (System.currentTimeMillis() - start).asInstanceOf[Int]
+                                val runtime = (System.nanoTime() - startNanos).toInt
                                 p.onComplete { (v: Any < IOs) =>
                                     val io = IOs(k(
                                         v,
@@ -65,9 +59,9 @@ private[kyo] class IOTask[T](
                                 nullIO
                             case Done(v) =>
                                 eval(
-                                    start,
                                     k(v, this.asInstanceOf[Safepoint[FiberGets]], locals),
-                                    scheduler
+                                    scheduler,
+                                    startNanos
                                 )
                         end match
                     else
@@ -79,17 +73,15 @@ private[kyo] class IOTask[T](
         end if
     end eval
 
-    def run() =
+    def run(startNanos: Long) =
         val scheduler = Scheduler.get
-        val start     = System.currentTimeMillis()
         try
-            curr = eval(start, curr, scheduler)
+            curr = eval(curr, scheduler, startNanos)
         catch
             case ex if (NonFatal(ex)) =>
                 complete(IOs.fail(ex))
                 curr = nullIO
         end try
-        state = runtime() + (System.currentTimeMillis() - start).asInstanceOf[Int]
         if !isNull(curr) then
             Task.Preempted
         else
@@ -105,7 +97,7 @@ private[kyo] class IOTask[T](
         ensures = ensures.remove(f)
 
     final override def toString =
-        s"IOTask(id=${hashCode},preempting=${check()},curr=$curr,ensures=${ensures.size()},runtime=${runtime()},state=${get()})"
+        s"IOTask(id=${hashCode},preempting=${preempt()},curr=$curr,ensures=${ensures.size()},runtime=${runtime()},state=${get()})"
     end toString
 end IOTask
 
@@ -127,14 +119,4 @@ private[kyo] object IOTask:
         Scheduler.get.schedule(f)
         f
     end apply
-
-    object TaskOrdering extends Ordering[IOTask[?]]:
-        override def lt(x: IOTask[?], y: IOTask[?]): Boolean =
-            val r = x.runtime()
-            r == 0 || r < y.runtime()
-        def compare(x: IOTask[?], y: IOTask[?]): Int =
-            y.state - x.state
-    end TaskOrdering
-
-    given ord: Ordering[IOTask[?]] = TaskOrdering
 end IOTask

@@ -59,12 +59,12 @@ final private class Worker(
     def cycle(curr: Long): Unit =
         val c = currentTask
         if c != null && currentCycle < curr - 1 then
-            c.preempt()
+            c.doPreempt()
     end cycle
 
     def handleBlocking() =
         val m = mount
-        val r = m != null && {
+        val r = m != null && running.get() && {
             val state = m.getState().ordinal()
             state == Thread.State.BLOCKED.ordinal() ||
             state == Thread.State.WAITING.ordinal() ||
@@ -89,7 +89,7 @@ final private class Worker(
                 currentTask = task
                 executions += 1
                 val r =
-                    try task.run()
+                    try task.doRun()
                     catch
                         case ex if NonFatal(ex) =>
                             val thread = Thread.currentThread()
