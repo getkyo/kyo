@@ -10,7 +10,6 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.Task.Done
 import kyo.scheduler.Task.Preempted
-import kyo.scheduler.Task.Result
 import kyo.scheduler.util.Threads
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually.*
@@ -26,24 +25,6 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
     ): Worker =
         new Worker(0, executor, scheduleTask, stealTask, getCurrentCycle)
     end createWorker
-
-    class TestTask(
-        _preempt: () => Unit = () => {},
-        _run: () => Result = () => Task.Done
-    ) extends Task:
-        var executions  = 0
-        var preemptions = 0
-        def preempt(): Unit =
-            _preempt()
-        def runtime(): Int = 0
-        def run() =
-            executions += 1
-            val r = _run()
-            if r == Preempted then
-                preemptions += 1
-            r
-        end run
-    end TestTask
 
     "enqueue" - {
         "adding tasks to the queue" in {

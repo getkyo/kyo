@@ -1,26 +1,7 @@
 package kyoTest
 
-import java.io.Closeable
-import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 import kyo.*
 import org.scalatest.compatible.Assertion
-import scala.concurrent.duration.*
-import scala.util.Failure
-import scala.util.Try
-
-object cccc extends KyoApp:
-    run {
-        for
-            b <- Fibers.parallelFiber(Seq.fill(100)(loop(1)))
-            c <- b.get
-        yield 1
-        end for
-    }
-end cccc
-
-object loop:
-    def apply(r: Double): Unit < IOs =
-        IOs(loop(r + Math.pow(Math.random(), Math.random())))
 
 class fibersTest extends KyoTest:
 

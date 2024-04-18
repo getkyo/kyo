@@ -5,10 +5,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.LongAdder
-import java.util.concurrent.locks.LockSupport
-import kyo.scheduler.Task.Result
 import kyo.scheduler.regulator.Admission
 import kyo.scheduler.regulator.Concurrency
 import kyo.scheduler.util.Flag
@@ -19,29 +16,6 @@ import kyo.stats.internal.MetricReceiver
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
-
-object tttt:
-    class TestTask extends Task:
-        val preempted       = new AtomicBoolean
-        def preempt(): Unit = preempted.set(true)
-        def runtime(): Int  = 0
-        def run(): Result =
-            var r = 0d
-            while !preempted.get() do
-                r += Math.pow(Math.random(), Math.random())
-            if preempted.compareAndSet(true, false) then
-                Task.Preempted
-            else
-                Task.Done
-            end if
-        end run
-    end TestTask
-    @main def m() =
-        for _ <- 0 until 10 do
-            Scheduler.get.schedule(new TestTask)
-        LockSupport.park()
-    end m
-end tttt
 
 final class Scheduler(
     executor: Executor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker")),
@@ -91,18 +65,25 @@ final class Scheduler(
         scheduledExecutor
     )
 
-    scheduledExecutor.scheduleAtFixedRate(
-        () => cycleWorkers(),
-        timeSliceMs,
-        timeSliceMs,
-        TimeUnit.MILLISECONDS
-    )
+    val cycleTask =
+        scheduledExecutor.scheduleAtFixedRate(
+            () => cycleWorkers(),
+            timeSliceMs,
+            timeSliceMs,
+            TimeUnit.MILLISECONDS
+        )
 
     def reject(keyPath: Seq[String]): Boolean =
         admissionRegulator.reject(keyPath)
 
     def schedule(t: Task): Unit =
         schedule(t, null)
+
+    def shutdown(): Unit =
+        cycleTask.cancel(true)
+        admissionRegulator.stop()
+        concurrencyRegulator.stop()
+    end shutdown
 
     @tailrec
     private def schedule(t: Task, submitter: Worker): Unit =
@@ -156,9 +137,9 @@ final class Scheduler(
     end steal
 
     def flush() =
-        flushes.increment()
         val w = Worker.current()
         if w != null then
+            flushes.increment()
             w.drain()
     end flush
 
@@ -212,6 +193,9 @@ final class Scheduler(
 end Scheduler
 
 object Scheduler:
+
+    private[Scheduler] lazy val defaultExecutor          = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker"))
+    private[Scheduler] lazy val defaultScheduledExecutor = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))
 
     val get = Scheduler()
 

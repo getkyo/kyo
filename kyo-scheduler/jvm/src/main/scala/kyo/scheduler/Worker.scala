@@ -4,6 +4,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.LongAdder
 import kyo.stats.internal.MetricReceiver
+import scala.util.control.NonFatal
 
 final private class Worker(
     id: Int,
@@ -87,7 +88,13 @@ final private class Worker(
             if task != null then
                 currentTask = task
                 executions += 1
-                val r = task.run()
+                val r =
+                    try task.run()
+                    catch
+                        case ex if NonFatal(ex) =>
+                            val thread = Thread.currentThread()
+                            thread.getUncaughtExceptionHandler().uncaughtException(thread, ex)
+                            Task.Done
                 currentTask = null
                 if r == Task.Preempted then
                     preemptions += 1
