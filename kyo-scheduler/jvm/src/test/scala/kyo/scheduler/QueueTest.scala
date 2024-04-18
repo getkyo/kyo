@@ -1,4 +1,4 @@
-package kyo.scheduler.util
+package kyo.scheduler
 
 import java.util.concurrent.Executors
 import java.util.concurrent.ExecutorService

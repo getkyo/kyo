@@ -3,7 +3,6 @@ package kyo.scheduler
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.LongAdder
-import kyo.scheduler.util.Queue
 import kyo.stats.internal.MetricReceiver
 
 final private class Worker(

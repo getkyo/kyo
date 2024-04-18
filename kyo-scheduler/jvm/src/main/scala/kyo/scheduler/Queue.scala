@@ -1,4 +1,4 @@
-package kyo.scheduler.util
+package kyo.scheduler
 
 import java.lang.invoke.VarHandle
 import java.util.concurrent.atomic.AtomicBoolean
