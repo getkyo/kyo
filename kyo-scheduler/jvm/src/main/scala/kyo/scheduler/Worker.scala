@@ -64,7 +64,12 @@ final private class Worker(
 
     def handleBlocking() =
         val m = mount
-        val r = m != null && m.getState().ordinal() == Thread.State.BLOCKED.ordinal()
+        val r = m != null && {
+            val state = m.getState().ordinal()
+            state == Thread.State.BLOCKED.ordinal() ||
+            state == Thread.State.WAITING.ordinal() ||
+            state == Thread.State.TIMED_WAITING.ordinal()
+        }
         if r then
             drain()
         r
