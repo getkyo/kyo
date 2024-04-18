@@ -1,7 +1,5 @@
 package kyo.scheduler
 
-import scala.util.control.NonFatal
-
 private[kyo] trait Task extends Ordered[Task]:
     def compare(that: Task) =
         (that.runtime() - runtime()).asInstanceOf[Int]
@@ -22,12 +20,7 @@ private[kyo] object Task:
             def runtime() = 1
             def preempt() = {}
             def run() =
-                try r
-                catch
-                    case ex if NonFatal(ex) =>
-                        // Logs.unsafe.error("Failed task.")
-                        ???
-                end try
+                r
                 Task.Done
             end run
 end Task
