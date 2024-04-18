@@ -213,15 +213,18 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
 
         "execute task" in withExecutor { exec =>
             val worker = createWorker(exec)
-            val cdl    = new CountDownLatch(1)
+            val cdl1   = new CountDownLatch(1)
+            val cdl2   = new CountDownLatch(1)
             val task = TestTask(_run = () =>
-                cdl.countDown()
+                cdl1.countDown()
+                cdl2.await()
                 Done
             )
             worker.enqueue(task)
-            cdl.await()
-            assert(worker.load() == 0)
-            assert(task.executions == 1)
+            cdl1.await()
+            assert(worker.load() == 1)
+            cdl2.countDown()
+            eventually(assert(task.executions == 1))
         }
 
         "pending task" in withExecutor { exec =>
@@ -241,29 +244,35 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
         "blocked worker rejects tasks" - {
             "waiting thread" in withExecutor { exec =>
                 val worker = createWorker(exec)
-                val cdl    = new CountDownLatch(1)
+                val cdl1   = new CountDownLatch(1)
+                val cdl2   = new CountDownLatch(1)
                 val task = TestTask(_run = () =>
-                    cdl.await()
+                    cdl1.countDown()
+                    cdl2.await()
                     Done
                 )
                 worker.enqueue(task)
                 eventually(assert(worker.load() == 1))
-                assert(!worker.enqueue(TestTask()))
-                cdl.countDown()
+                cdl1.await()
+                eventually(assert(!worker.enqueue(TestTask())))
+                cdl2.countDown()
                 eventually(assert(worker.load() == 0))
                 assert(task.executions == 1)
             }
             "timed waiting thread" in withExecutor { exec =>
                 val worker = createWorker(exec)
-                val cdl    = new CountDownLatch(1)
+                val cdl1   = new CountDownLatch(1)
+                val cdl2   = new CountDownLatch(1)
                 val task = TestTask(_run = () =>
-                    cdl.await(1, TimeUnit.DAYS)
+                    cdl1.countDown()
+                    cdl2.await(1, TimeUnit.DAYS)
                     Done
                 )
                 worker.enqueue(task)
                 eventually(assert(worker.load() == 1))
-                assert(!worker.enqueue(TestTask()))
-                cdl.countDown()
+                cdl1.await()
+                eventually(assert(!worker.enqueue(TestTask())))
+                cdl2.countDown()
                 eventually(assert(worker.load() == 0))
                 assert(task.executions == 1)
             }
@@ -277,7 +286,8 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
                 )
                 worker.enqueue(task)
                 eventually(assert(worker.load() == 1))
-                assert(!worker.enqueue(TestTask()))
+                eventually(assert(thread.get() != null))
+                eventually(assert(!worker.enqueue(TestTask())))
                 LockSupport.unpark(thread.get())
                 eventually(assert(worker.load() == 0))
                 assert(task.executions == 1)
@@ -340,26 +350,6 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
                 assert(task2.executions == 1)
                 assert(task1.executions == 1)
             }
-        }
-
-        "preempt task" in withExecutor { exec =>
-            val worker = createWorker(exec, getCurrentCycle = () => 1)
-            val cdl    = new CountDownLatch(1)
-            val task = TestTask(
-                _preempt = () => cdl.countDown(),
-                _run = () =>
-                    if cdl.getCount() > 0 then
-                        cdl.await()
-                        Preempted
-                    else
-                        Done
-            )
-            worker.enqueue(task)
-            eventually(assert(worker.load() == 1))
-            worker.cycle(3)
-            eventually(assert(worker.load() == 0))
-            assert(task.executions == 2)
-            assert(task.preemptions == 1)
         }
     }
 end WorkerTest

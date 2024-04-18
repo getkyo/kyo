@@ -60,7 +60,6 @@ final class Scheduler(
                 workers(m) = new Worker(m, pool, schedule, steal, () => cycles)
                 allocatedWorkers += 1
             maxConcurrency = m
-            println(("maxConcurrency", maxConcurrency))
         ,
         scheduledExecutor
     )

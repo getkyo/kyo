@@ -66,7 +66,6 @@ abstract class Regulator(
                 step = 0
             end if
             val delta = Math.pow(step, stepExp).toInt
-            println((this, load, jitter, delta))
             if step > 0 then
                 update(delta)
         catch

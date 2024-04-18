@@ -16,5 +16,4 @@ class Scheduler:
 
     def flush(): Unit = {}
 
-    def currentTick(): Long = 0L
 end Scheduler

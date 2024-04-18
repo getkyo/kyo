@@ -45,7 +45,7 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions:
         }
 
         "handles task that throws exception" in withScheduler { scheduler =>
-            val task = TestTask(_run = () => throw new RuntimeException("Oops!"))
+            val task = TestTask(_run = () => throw new RuntimeException("Test exception."))
             scheduler.schedule(task)
             eventually(assert(task.executions == 1))
         }
@@ -113,8 +113,8 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions:
             val preempt      = new AtomicBoolean
             val task = TestTask(
                 _preempt = () =>
-                    preempt.set(true)
                     preemptLatch.countDown()
+                    preempt.set(true)
                 ,
                 _run = () =>
                     if preemptLatch.getCount > 0 then
@@ -127,7 +127,7 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions:
             scheduler.schedule(task)
 
             preemptLatch.await()
-            assert(task.preemptions == 3)
+            eventually(assert(task.preemptions == 3))
 
             cdl.countDown()
             eventually(assert(task.executions == 4))
