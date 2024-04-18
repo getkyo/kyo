@@ -55,17 +55,20 @@ abstract class Regulator(
     final private def regulate() =
         try
             val jitter = synchronized(measurements.dev())
-            println((this, "jitter", jitter))
+            val load   = loadAvg()
             if jitter > jitterUpperThreshold then
                 if step < 0 then step -= 1
                 else step = -1
-            else if jitter < jitterLowerThreshold && loadAvg() >= loadAvgTarget then
+            else if jitter < jitterLowerThreshold && load >= loadAvgTarget then
                 if step > 0 then step += 1
                 else step = 1
             else
                 step = 0
             end if
-            update(Math.pow(step, stepExp).toInt)
+            val delta = Math.pow(step, stepExp).toInt
+            println((this, load, jitter, delta))
+            if step > 0 then
+                update(delta)
         catch
             case ex if NonFatal(ex) =>
                 ex.printStackTrace()

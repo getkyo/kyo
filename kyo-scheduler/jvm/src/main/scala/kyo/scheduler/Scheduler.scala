@@ -5,7 +5,10 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.LongAdder
+import java.util.concurrent.locks.LockSupport
+import kyo.scheduler.Task.Result
 import kyo.scheduler.regulator.Admission
 import kyo.scheduler.regulator.Concurrency
 import kyo.scheduler.util.Flag
@@ -15,6 +18,30 @@ import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
+import scala.util.control.NonFatal
+
+object tttt:
+    class TestTask extends Task:
+        val preempted       = new AtomicBoolean
+        def preempt(): Unit = preempted.set(true)
+        def runtime(): Int  = 0
+        def run(): Result =
+            var r = 0d
+            while !preempted.get() do
+                r += Math.pow(Math.random(), Math.random())
+            if preempted.compareAndSet(true, false) then
+                Task.Preempted
+            else
+                Task.Done
+            end if
+        end run
+    end TestTask
+    @main def m() =
+        for _ <- 0 until 10 do
+            Scheduler.get.schedule(new TestTask)
+        LockSupport.park()
+    end m
+end tttt
 
 final class Scheduler(
     executor: Executor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker")),
@@ -27,9 +54,15 @@ final class Scheduler(
     @volatile private var maxConcurrency   = coreWorkers
     @volatile private var allocatedWorkers = maxConcurrency
 
+    val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
+
     @volatile private var cycles = 0L
 
+    val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
+
     private val workers = new Array[Worker](maxWorkers)
+
+    private val flushes = new LongAdder
 
     private val pool =
         if virtualizeWorkers then
@@ -123,7 +156,7 @@ final class Scheduler(
     end steal
 
     def flush() =
-        stats.flushes.increment()
+        flushes.increment()
         val w = Worker.current()
         if w != null then
             w.drain()
@@ -166,22 +199,21 @@ final class Scheduler(
     def asExecutionContext: ExecutionContext =
         ExecutionContext.fromExecutor(asExecutor)
 
-    private[scheduler] object stats:
-        val flushes  = new LongAdder
+    private def registerStats() =
         val scope    = List("kyo", "scheduler")
         val receiver = MetricReceiver.get
-
         receiver.gauge(scope, "max_concurrency")(maxConcurrency)
         receiver.gauge(scope, "allocated_workers")(allocatedWorkers)
         receiver.gauge(scope, "load_avg")(loadAvg())
         receiver.gauge(scope, "flushes")(flushes.sum().toDouble)
-    end stats
+    end registerStats
+    registerStats()
 
 end Scheduler
 
 object Scheduler:
 
-    lazy val get = Scheduler()
+    val get = Scheduler()
 
     case class Config(
         cores: Int,

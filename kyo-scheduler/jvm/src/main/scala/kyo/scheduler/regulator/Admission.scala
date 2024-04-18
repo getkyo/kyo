@@ -48,4 +48,6 @@ final class Admission(
         loop(keyPath, 0)
     end reject
 
+    override def toString = s"Admission($admissionPercent)"
+
 end Admission

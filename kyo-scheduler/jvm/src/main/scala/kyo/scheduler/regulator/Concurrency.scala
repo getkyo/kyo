@@ -29,4 +29,6 @@ final class Concurrency(
     protected def update(diff: Int): Unit =
         updateConcurrency(diff)
 
+    override def toString(): String = "Concurrency()"
+
 end Concurrency

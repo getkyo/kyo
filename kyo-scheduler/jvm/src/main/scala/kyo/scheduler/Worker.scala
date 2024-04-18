@@ -20,6 +20,11 @@ final private class Worker(
     @volatile private var currentCycle      = 0L
     @volatile private var currentTask: Task = null
 
+    private var executions  = 0L
+    private var preemptions = 0L
+    private var completions = 0L
+    private val mounts      = new LongAdder
+
     private val queue = Queue[Task]()
 
     private val schedule = scheduleTask(_, this)
@@ -27,7 +32,6 @@ final private class Worker(
     def enqueue(t: Task): Boolean =
         val blocked = handleBlocking()
         if !blocked then
-            stats.submissions.increment()
             queue.add(t)
             wakeup()
         end if
@@ -36,7 +40,7 @@ final private class Worker(
 
     def wakeup() =
         if !running.get() && running.compareAndSet(false, true) then
-            stats.mounts.increment()
+            mounts.increment()
             exec.execute(this)
 
     def load() =
@@ -78,14 +82,14 @@ final private class Worker(
                 task = stealTask(this)
             if task != null then
                 currentTask = task
-                stats.executions += 1
+                executions += 1
                 val r = task.run()
                 currentTask = null
                 if r == Task.Preempted then
-                    stats.preemptions += 1
+                    preemptions += 1
                     task = queue.addAndPoll(task)
                 else
-                    stats.completions += 1
+                    completions += 1
                     task = null
                 end if
             else
@@ -99,13 +103,7 @@ final private class Worker(
         end while
     end run
 
-    private object stats:
-        var executions  = 0L
-        var preemptions = 0L
-        var completions = 0L
-        val submissions = new LongAdder
-        val mounts      = new LongAdder
-
+    private def registerStats() =
         val scope    = List("kyo", "scheduler", "worker", id.toString)
         val receiver = MetricReceiver.get
         receiver.gauge(scope, "executions")(executions.toDouble)
@@ -113,9 +111,9 @@ final private class Worker(
         receiver.gauge(scope, "completions")(completions.toDouble)
         receiver.gauge(scope, "queue_size")(queue.size())
         receiver.gauge(scope, "current_cycle")(currentCycle.toDouble)
-        receiver.gauge(scope, "submissions")(submissions.sum().toDouble)
         receiver.gauge(scope, "mounts")(mounts.sum().toDouble)
-    end stats
+    end registerStats
+    registerStats()
 
 end Worker
 
