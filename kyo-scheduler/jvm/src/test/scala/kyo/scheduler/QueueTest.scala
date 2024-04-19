@@ -8,6 +8,7 @@ import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpec
 
 class QueueTest extends AnyFreeSpec with NonImplicitAssertions:
+
     given Ordering[Integer] = Ordering.by[Integer, Int](_.intValue()).reverse
 
     "isEmpty" - {

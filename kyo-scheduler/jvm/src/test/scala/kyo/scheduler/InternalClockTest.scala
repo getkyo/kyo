@@ -7,16 +7,6 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions:
 
-    private def withClock[T](testCode: InternalClock => T): T =
-        val executor = Executors.newSingleThreadExecutor(Threads("test-clock"))
-        val clock    = new InternalClock(executor)
-        try testCode(clock)
-        finally
-            clock.stop()
-            executor.shutdown()
-        end try
-    end withClock
-
     "stop" in withClock { clock =>
         val initialMillis = clock.currentMillis()
         clock.stop()
@@ -33,4 +23,14 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions:
         assert(elapsedMillis >= 8)
         assert(elapsedMillis <= 12)
     }
+
+    private def withClock[T](testCode: InternalClock => T): T =
+        val executor = Executors.newSingleThreadExecutor(Threads("test-clock"))
+        val clock    = new InternalClock(executor)
+        try testCode(clock)
+        finally
+            clock.stop()
+            executor.shutdown()
+        end try
+    end withClock
 end InternalClockTest

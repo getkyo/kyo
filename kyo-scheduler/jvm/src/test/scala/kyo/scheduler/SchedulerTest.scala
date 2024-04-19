@@ -13,17 +13,6 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions:
 
-    private def withScheduler[T](testCode: Scheduler => T): T =
-        val executor          = Executors.newCachedThreadPool(Threads("test-scheduler-worker"))
-        val scheduledExecutor = Executors.newSingleThreadScheduledExecutor(Threads("test-scheduler-timer"))
-        val scheduler         = new Scheduler(executor, scheduledExecutor)
-        try testCode(scheduler)
-        finally
-            scheduler.shutdown()
-            scheduledExecutor.shutdown()
-        end try
-    end withScheduler
-
     "schedule" - {
         "enqueues tasks to workers" in withScheduler { scheduler =>
             val cdl = new CountDownLatch(1)
@@ -158,4 +147,15 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions:
             assert(!scheduler.asExecutor.isInstanceOf[Scheduler])
         }
     }
+
+    private def withScheduler[T](testCode: Scheduler => T): T =
+        val executor          = Executors.newCachedThreadPool(Threads("test-scheduler-worker"))
+        val scheduledExecutor = Executors.newSingleThreadScheduledExecutor(Threads("test-scheduler-timer"))
+        val scheduler         = new Scheduler(executor, scheduledExecutor)
+        try testCode(scheduler)
+        finally
+            scheduler.shutdown()
+            scheduledExecutor.shutdown()
+        end try
+    end withScheduler
 end SchedulerTest
