@@ -12,7 +12,7 @@ final private class Worker(
     scheduleTask: (Task, Worker) => Unit,
     stealTask: Worker => Task,
     getCurrentCycle: () => Long,
-    clock: Clock
+    clock: InternalClock
 ) extends Runnable:
 
     private val running = new AtomicBoolean

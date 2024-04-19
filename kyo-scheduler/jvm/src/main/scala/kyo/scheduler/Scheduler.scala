@@ -45,7 +45,7 @@ final class Scheduler(
         end if
     end pool
 
-    private val clock = Clock()
+    private val clock = InternalClock()
 
     for i <- 0 until maxConcurrency do
         workers(i) = new Worker(i, pool, schedule, steal, () => cycles, clock)

@@ -5,7 +5,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.util.Threads
 
-final class Clock(executor: Executor = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))):
+final class InternalClock(executor: Executor = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))):
     @volatile private var _stop  = false
     @volatile private var nanos  = System.nanoTime()
     @volatile private var millis = System.currentTimeMillis()
@@ -27,4 +27,4 @@ final class Clock(executor: Executor = Executors.newSingleThreadExecutor(Threads
     def currentMillis(): Long = millis
 
     def stop(): Unit = _stop = true
-end Clock
+end InternalClock

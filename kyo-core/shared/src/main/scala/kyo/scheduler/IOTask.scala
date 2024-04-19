@@ -26,7 +26,7 @@ private[kyo] class IOTask[T](
         curr: T < Fibers,
         scheduler: Scheduler,
         startMillis: Long,
-        clock: Clock
+        clock: InternalClock
     ): T < Fibers =
 
         if preempt() then
@@ -75,7 +75,7 @@ private[kyo] class IOTask[T](
         end if
     end eval
 
-    def run(startMillis: Long, clock: Clock) =
+    def run(startMillis: Long, clock: InternalClock) =
         val scheduler = Scheduler.get
         try
             curr = eval(curr, scheduler, startMillis, clock)

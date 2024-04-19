@@ -25,7 +25,7 @@ final class Concurrency(
 
     final private class ProbeTask extends Task(0):
         var start = 0L
-        def run(startMillis: Long, clock: Clock): Result =
+        def run(startMillis: Long, clock: InternalClock): Result =
             measure(System.currentTimeMillis() - start)
             start = 0
             probeTasks.add(this)

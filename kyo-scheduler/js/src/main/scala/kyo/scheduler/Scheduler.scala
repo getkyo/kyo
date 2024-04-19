@@ -7,7 +7,7 @@ object Scheduler:
 
 class Scheduler:
 
-    private val clock = Clock()
+    private val clock = InternalClock()
 
     def schedule(t: Task): Unit =
         JSExecutionContext.queue.execute { () =>
