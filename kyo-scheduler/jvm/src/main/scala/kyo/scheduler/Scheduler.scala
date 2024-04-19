@@ -21,8 +21,8 @@ import scala.util.control.NonFatal
 
 final class Scheduler(
     workerExecutor: Executor = Scheduler.defaultExecutor,
-    clockExecutor: Executor = InternalClock.defaultExecutor,
-    scheduledExecutor: ScheduledExecutorService = Scheduler.defaultScheduledExecutor,
+    clockExecutor: Executor = Scheduler.defaultClockExecutor,
+    timerExecutor: ScheduledExecutorService = Scheduler.defaultScheduledExecutor,
     config: Config = Config.default
 ):
 
@@ -44,11 +44,13 @@ final class Scheduler(
 
     ensureWorkers()
 
+    private val timer = InternalTimer(timerExecutor)
+
     private val admissionRegulator =
-        Admission(loadAvg, scheduledExecutor)
+        Admission(loadAvg, timer)
 
     private val concurrencyRegulator =
-        Concurrency(loadAvg, schedule, updateWorkers, scheduledExecutor)
+        Concurrency(loadAvg, schedule, updateWorkers, timer)
 
     def schedule(t: Task): Unit =
         schedule(t, null)
@@ -150,7 +152,7 @@ final class Scheduler(
             allocatedWorkers += 1
 
     private val cycleTask =
-        scheduledExecutor.scheduleAtFixedRate(
+        timerExecutor.scheduleAtFixedRate(
             () => cycleWorkers(),
             timeSliceMs,
             timeSliceMs,
@@ -193,6 +195,7 @@ object Scheduler:
 
     private val log                           = LoggerFactory.getLogger(getClass)
     private lazy val defaultExecutor          = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker"))
+    private lazy val defaultClockExecutor     = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
     private lazy val defaultScheduledExecutor = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))
 
     val get = Scheduler()

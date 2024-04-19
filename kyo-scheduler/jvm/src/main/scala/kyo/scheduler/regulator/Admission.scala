@@ -1,24 +1,25 @@
 package kyo.scheduler.regulator
 
-import java.util.concurrent.ScheduledExecutorService
+import scala.concurrent.duration.*
 import scala.annotation.tailrec
 import scala.util.hashing.MurmurHash3
+import kyo.scheduler.InternalTimer
 
 final class Admission(
     loadAvg: () => Double,
-    executor: ScheduledExecutorService,
+    timer: InternalTimer,
     config: Config =
         Config(
             collectWindowExp = 9, // 2^9=512 ~5 regulate intervals
-            collectIntervalMs = 1000,
+            collectInterval = 1000.millis,
             collectSamples = 10,
-            regulateIntervalMs = 5000,
+            regulateInterval = 5000.millis,
             jitterUpperThreshold = 100,
             jitterLowerThreshold = 80,
             loadAvgTarget = 0.8,
             stepExp = 1.5
         )
-) extends Regulator(loadAvg, executor, config):
+) extends Regulator(loadAvg, timer, config):
 
     @volatile private var admissionPercent = 100
 

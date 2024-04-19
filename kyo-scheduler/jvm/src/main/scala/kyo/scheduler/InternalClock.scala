@@ -1,11 +1,10 @@
 package kyo.scheduler
 
 import java.util.concurrent.Executor
-import java.util.concurrent.Executors
 import java.util.concurrent.locks.LockSupport
-import kyo.scheduler.util.Threads
 
 final private[kyo] class InternalClock(executor: Executor):
+
     @volatile private var _stop  = false
     @volatile private var nanos  = System.nanoTime()
     @volatile private var millis = System.currentTimeMillis()
@@ -29,6 +28,3 @@ final private[kyo] class InternalClock(executor: Executor):
     def stop(): Unit = _stop = true
 
 end InternalClock
-
-private[kyo] object InternalClock:
-    lazy val defaultExecutor = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))

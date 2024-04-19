@@ -1,27 +1,27 @@
 package kyo.scheduler.regulator
 
-import java.util.concurrent.ScheduledExecutorService
 import kyo.scheduler.*
 import kyo.scheduler.Task.Result
 import org.jctools.queues.MpscUnboundedArrayQueue
+import scala.concurrent.duration.*
 
 final class Concurrency(
     loadAvg: () => Double,
     schedule: Task => Unit,
     updateConcurrency: Int => Unit,
-    executor: ScheduledExecutorService,
+    timer: InternalTimer,
     config: Config =
         Config(
             collectWindowExp = 11, // 2^11=2048 ~2 regulate intervals
-            collectIntervalMs = 100,
+            collectInterval = 100.millis,
             collectSamples = 1,
-            regulateIntervalMs = 1000,
+            regulateInterval = 1000.millis,
             jitterUpperThreshold = 1000000,
             jitterLowerThreshold = 800000,
             loadAvgTarget = 0.8,
             stepExp = 1.3
         )
-) extends Regulator(loadAvg, executor, config):
+) extends Regulator(loadAvg, timer, config):
 
     final private class ProbeTask extends Task(0):
         var start = 0L

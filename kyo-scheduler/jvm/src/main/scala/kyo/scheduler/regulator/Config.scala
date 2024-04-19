@@ -1,10 +1,12 @@
 package kyo.scheduler.regulator
 
+import scala.concurrent.duration.Duration
+
 case class Config(
     collectWindowExp: Int,
-    collectIntervalMs: Int,
+    collectInterval: Duration,
     collectSamples: Int,
-    regulateIntervalMs: Int,
+    regulateInterval: Duration,
     jitterUpperThreshold: Double,
     jitterLowerThreshold: Double,
     loadAvgTarget: Double,

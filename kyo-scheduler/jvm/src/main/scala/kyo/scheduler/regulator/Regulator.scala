@@ -1,16 +1,15 @@
 package kyo.scheduler.regulator
 
 import Regulator.*
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kyo.scheduler.InternalTimer
 import kyo.scheduler.util.*
 import org.slf4j.LoggerFactory
 import scala.util.control.NonFatal
 
 abstract class Regulator(
     loadAvg: () => Double,
-    executor: ScheduledExecutorService,
+    timer: InternalTimer,
     config: Config
 ):
     import config.*
@@ -27,10 +26,10 @@ abstract class Regulator(
         synchronized(measurements.observe(v))
 
     private val collectTask =
-        executor.scheduleWithFixedDelay(() => collect(), collectIntervalMs, collectIntervalMs, TimeUnit.MILLISECONDS)
+        timer.schedule(collectInterval)(collect())
 
     private val regulateTask =
-        executor.scheduleWithFixedDelay(() => adjust(), regulateIntervalMs, regulateIntervalMs, TimeUnit.MILLISECONDS)
+        timer.schedule(regulateInterval)(adjust())
 
     final private def collect(): Unit =
         try
@@ -78,8 +77,8 @@ abstract class Regulator(
     end adjust
 
     final def stop(): Unit =
-        collectTask.cancel(true)
-        regulateTask.cancel(true)
+        collectTask.cancel()
+        regulateTask.cancel()
         ()
     end stop
 
