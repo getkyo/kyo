@@ -10,6 +10,9 @@ object UnsafeGauge:
         new UnsafeGauge:
             def close() = ()
 
+    def all(l: UnsafeGauge*): UnsafeGauge =
+        all(l.toList)
+
     def all(l: List[UnsafeGauge]): UnsafeGauge =
         l.filter(_ ne noop) match
             case Nil =>

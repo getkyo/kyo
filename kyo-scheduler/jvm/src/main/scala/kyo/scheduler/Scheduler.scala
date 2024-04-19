@@ -13,6 +13,7 @@ import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
+import kyo.stats.internal.UnsafeGauge
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 
@@ -65,7 +66,7 @@ final class Scheduler(
         scheduledExecutor
     )
 
-    val cycleTask =
+    private val cycleTask =
         scheduledExecutor.scheduleAtFixedRate(
             () => cycleWorkers(),
             timeSliceMs,
@@ -83,6 +84,7 @@ final class Scheduler(
         cycleTask.cancel(true)
         admissionRegulator.stop()
         concurrencyRegulator.stop()
+        gauges.close()
     end shutdown
 
     @tailrec
@@ -177,15 +179,16 @@ final class Scheduler(
     def asExecutionContext: ExecutionContext =
         ExecutionContext.fromExecutor(asExecutor)
 
-    private def registerStats() =
+    private val gauges =
         val scope    = List("kyo", "scheduler")
         val receiver = MetricReceiver.get
-        receiver.gauge(scope, "max_concurrency")(maxConcurrency)
-        receiver.gauge(scope, "allocated_workers")(allocatedWorkers)
-        receiver.gauge(scope, "load_avg")(loadAvg())
-        receiver.gauge(scope, "flushes")(flushes.sum().toDouble)
-    end registerStats
-    registerStats()
+        UnsafeGauge.all(
+            receiver.gauge(scope, "max_concurrency")(maxConcurrency),
+            receiver.gauge(scope, "allocated_workers")(allocatedWorkers),
+            receiver.gauge(scope, "load_avg")(loadAvg()),
+            receiver.gauge(scope, "flushes")(flushes.sum().toDouble)
+        )
+    end gauges
 
 end Scheduler
 

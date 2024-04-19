@@ -1,7 +1,9 @@
 package kyo.scheduler
 
+import Worker.*
+import java.lang.invoke.MethodHandles
+import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.LongAdder
 import kyo.stats.internal.MetricReceiver
 import scala.util.control.NonFatal
@@ -15,9 +17,13 @@ final private class Worker(
     clock: InternalClock
 ) extends Runnable:
 
-    private val running = new AtomicBoolean
+    val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
 
-    @volatile private var mount: Thread     = null
+    @volatile private var running       = false
+    @volatile private var mount: Thread = null
+
+    val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
+
     @volatile private var currentCycle      = 0L
     @volatile private var currentTask: Task = null
 
@@ -40,7 +46,7 @@ final private class Worker(
     end enqueue
 
     def wakeup() =
-        if !running.get() && running.compareAndSet(false, true) then
+        if !running && runningHandle.compareAndSet(this, false, true) then
             mounts.increment()
             exec.execute(this)
 
@@ -65,7 +71,7 @@ final private class Worker(
 
     def handleBlocking() =
         val m = mount
-        val r = m != null && running.get() && {
+        val r = m != null && running && {
             val state = m.getState().ordinal()
             state == Thread.State.BLOCKED.ordinal() ||
             state == Thread.State.WAITING.ordinal() ||
@@ -105,8 +111,8 @@ final private class Worker(
                     task = null
                 end if
             else
-                running.set(false)
-                if queue.isEmpty() || !running.compareAndSet(false, true) then
+                running = false
+                if queue.isEmpty() || !runningHandle.compareAndSet(this, false, true) then
                     Worker.local.set(null)
                     mount = null
                     return
@@ -130,6 +136,10 @@ final private class Worker(
 end Worker
 
 private object Worker:
+    private val runningHandle: VarHandle =
+        MethodHandles.privateLookupIn(classOf[Worker], MethodHandles.lookup())
+            .findVarHandle(classOf[Worker], "running", classOf[Boolean])
+
     private val local     = new ThreadLocal[Worker]
     def current(): Worker = local.get()
 end Worker
