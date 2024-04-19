@@ -1,6 +1,6 @@
 package kyo.scheduler
 
-import kyo.*
+import kyo.{Clock as _, *}
 import kyo.Locals.State
 import kyo.core.*
 import kyo.core.internal.*
@@ -25,7 +25,8 @@ private[kyo] class IOTask[T](
     @tailrec private def eval(
         curr: T < Fibers,
         scheduler: Scheduler,
-        startNanos: Long
+        startMillis: Long,
+        clock: Clock
     ): T < Fibers =
 
         if preempt() then
@@ -40,13 +41,13 @@ private[kyo] class IOTask[T](
                 case kyo: Suspend[?, ?, ?, ?] =>
                     if kyo.tag == Tag[IOs] then
                         val k = kyo.asInstanceOf[Suspend[IO, Unit, T, Fibers]]
-                        eval(k((), this, locals), scheduler, startNanos)
+                        eval(k((), this, locals), scheduler, startMillis, clock)
                     else if kyo.tag == Tag[FiberGets] then
                         val k = kyo.asInstanceOf[Suspend[Fiber, Any, T, Fibers]]
                         k.command match
                             case Promise(p) =>
                                 this.interrupts(p)
-                                val runtime = (System.nanoTime() - startNanos).toInt
+                                val runtime = (clock.currentMillis() - startMillis).toInt
                                 p.onComplete { (v: Any < IOs) =>
                                     val io = IOs(k(
                                         v,
@@ -61,7 +62,8 @@ private[kyo] class IOTask[T](
                                 eval(
                                     k(v, this.asInstanceOf[Safepoint[FiberGets]], locals),
                                     scheduler,
-                                    startNanos
+                                    startMillis,
+                                    clock
                                 )
                         end match
                     else
@@ -73,10 +75,10 @@ private[kyo] class IOTask[T](
         end if
     end eval
 
-    def run(startNanos: Long) =
+    def run(startMillis: Long, clock: Clock) =
         val scheduler = Scheduler.get
         try
-            curr = eval(curr, scheduler, startNanos)
+            curr = eval(curr, scheduler, startMillis, clock)
         catch
             case ex if (NonFatal(ex)) =>
                 complete(IOs.fail(ex))

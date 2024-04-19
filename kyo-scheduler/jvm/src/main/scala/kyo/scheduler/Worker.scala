@@ -11,7 +11,8 @@ final private class Worker(
     exec: Executor,
     scheduleTask: (Task, Worker) => Unit,
     stealTask: Worker => Task,
-    getCurrentCycle: () => Long
+    getCurrentCycle: () => Long,
+    clock: Clock
 ) extends Runnable:
 
     private val running = new AtomicBoolean
@@ -89,7 +90,7 @@ final private class Worker(
                 currentTask = task
                 executions += 1
                 val r =
-                    try task.doRun()
+                    try task.doRun(clock)
                     catch
                         case ex if NonFatal(ex) =>
                             val thread = Thread.currentThread()

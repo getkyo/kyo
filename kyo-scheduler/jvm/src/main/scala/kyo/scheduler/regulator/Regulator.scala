@@ -17,8 +17,12 @@ abstract class Regulator(
     private val pending      = new AtomicInteger
     private val measurements = MovingStdDev(collectWindowExp)
 
-    protected def probe(callback: Long => Unit): Unit
+    protected def probe(): Unit
     protected def update(diff: Int): Unit
+
+    protected def measure(v: Long): Unit =
+        pending.decrementAndGet()
+        synchronized(measurements.observe(v))
 
     private val collectTask =
         executor.scheduleWithFixedDelay(() => collect(), collectIntervalMs, collectIntervalMs, TimeUnit.MILLISECONDS)
@@ -28,7 +32,7 @@ abstract class Regulator(
 
     final private def collect(): Unit =
         try
-            val samples = collectSamples - pending.get()
+            val samples = Math.max(0, collectSamples - pending.get())
             if loadAvg() < loadAvgTarget then
                 synchronized {
                     var i = 0
@@ -39,18 +43,15 @@ abstract class Regulator(
             else
                 var i = 0
                 while i < samples do
-                    probe(callback)
+                    pending.incrementAndGet()
+                    probe()
                     i += 1
+                end while
             end if
         catch
             case ex if NonFatal(ex) =>
                 ex.printStackTrace()
     end collect
-
-    private val callback =
-        (v: Long) =>
-            pending.decrementAndGet()
-            synchronized(measurements.observe(v))
 
     final private def regulate() =
         try
@@ -71,6 +72,7 @@ abstract class Regulator(
         catch
             case ex if NonFatal(ex) =>
                 ex.printStackTrace()
+        end try
     end regulate
 
     final def stop(): Unit =

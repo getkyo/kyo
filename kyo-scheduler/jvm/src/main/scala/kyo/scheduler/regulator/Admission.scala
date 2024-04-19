@@ -22,10 +22,10 @@ final class Admission(
 
     @volatile private var admissionPercent = 100
 
-    protected def probe(callback: Long => Unit) =
+    protected def probe() =
         val start = System.nanoTime()
         Thread.sleep(1)
-        callback(System.nanoTime() - start - 1000000)
+        measure(System.nanoTime() - start - 1000000)
     end probe
 
     protected def update(diff: Int): Unit =

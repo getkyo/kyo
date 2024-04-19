@@ -45,8 +45,10 @@ final class Scheduler(
         end if
     end pool
 
+    private val clock = Clock()
+
     for i <- 0 until maxConcurrency do
-        workers(i) = new Worker(i, pool, schedule, steal, () => cycles)
+        workers(i) = new Worker(i, pool, schedule, steal, () => cycles, clock)
 
     private val admissionRegulator = Admission(loadAvg, scheduledExecutor)
 
@@ -56,7 +58,7 @@ final class Scheduler(
         delta =>
             val m = Math.max(minWorkers, Math.min(maxWorkers, maxConcurrency + delta))
             if m > allocatedWorkers then
-                workers(m) = new Worker(m, pool, schedule, steal, () => cycles)
+                workers(m) = new Worker(m, pool, schedule, steal, () => cycles, clock)
                 allocatedWorkers += 1
             maxConcurrency = m
         ,
@@ -167,9 +169,6 @@ final class Scheduler(
             end if
             i += 1
         end while
-        val w = workers(XSRandom.nextInt(maxConcurrency))
-        if w != null then
-            w.wakeup()
     end cycleWorkers
 
     def asExecutor: Executor =

@@ -3,14 +3,12 @@ package kyo.scheduler
 class TestTask(
     _preempt: () => Unit = () => {},
     _run: () => Task.Result = () => Task.Done
-) extends Task:
+) extends Task(0):
     @volatile var executions  = 0
     @volatile var preemptions = 0
-
-    def preempt(): Unit =
+    override def doPreempt(): Unit =
         _preempt()
-    def runtime(): Int = 0
-    def run() =
+    def run(startMillis: Long, clock: Clock) =
         try
             val r = _run()
             if r == Task.Preempted then
