@@ -133,6 +133,10 @@ final private class Worker(
     end registerStats
     registerStats()
 
+    override def toString =
+        s"Worker(id=$id, blocked=${handleBlocking()}, mount=${mount}, executions=${executions}, " +
+            s"preemptions=${preemptions}, completions=${completions})"
+
 end Worker
 
 private object Worker:

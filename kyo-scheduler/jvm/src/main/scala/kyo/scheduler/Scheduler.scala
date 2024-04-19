@@ -156,15 +156,15 @@ final class Scheduler(
         )
 
     private def cycleWorkers(): Unit =
-        cycles += 1
-        var i    = 0
-        val curr = cycles
+        val curr = cycles + 1
+        cycles = curr
+        var i = 0
         while i < allocatedWorkers do
             val w = workers(i)
             if w != null then
-                w.cycle(curr)
-                if i >= maxWorkers then
+                if i >= maxConcurrency then
                     w.drain()
+                w.cycle(curr)
             end if
             i += 1
         end while

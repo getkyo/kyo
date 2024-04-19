@@ -26,10 +26,10 @@ private[kyo] object Task:
 
     private val ordering = new Ordering[Task]:
         override def lt(x: Task, y: Task): Boolean =
-            val r = x.runtime()
-            r == 0 || r < y.runtime()
+            val r = y.runtime()
+            r == 0 || r < x.runtime()
         def compare(x: Task, y: Task): Int =
-            y.state - x.state
+            x.state - y.state
 
     inline given Ordering[Task] = ordering
 
