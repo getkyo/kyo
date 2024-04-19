@@ -27,6 +27,7 @@ final private[kyo] class InternalClock(executor: Executor):
     def currentMillis(): Long = millis
 
     def stop(): Unit = _stop = true
+
 end InternalClock
 
 private[kyo] object InternalClock:

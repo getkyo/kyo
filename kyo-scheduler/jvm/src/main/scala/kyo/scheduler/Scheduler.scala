@@ -14,8 +14,10 @@ import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
 import kyo.stats.internal.UnsafeGauge
+import org.slf4j.LoggerFactory
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
+import scala.util.control.NonFatal
 
 final class Scheduler(
     workerExecutor: Executor = Scheduler.defaultExecutor,
@@ -156,18 +158,22 @@ final class Scheduler(
         )
 
     private def cycleWorkers(): Unit =
-        val curr = cycles + 1
-        cycles = curr
-        var i = 0
-        while i < allocatedWorkers do
-            val w = workers(i)
-            if w != null then
-                if i >= maxConcurrency then
-                    w.drain()
-                w.cycle(curr)
-            end if
-            i += 1
-        end while
+        try
+            val curr = cycles + 1
+            cycles = curr
+            var i = 0
+            while i < allocatedWorkers do
+                val w = workers(i)
+                if w != null then
+                    if i >= maxConcurrency then
+                        w.drain()
+                    w.cycle(curr)
+                end if
+                i += 1
+            end while
+        catch
+            case ex if NonFatal(ex) =>
+                log.error(s"🙈 !!Kyo Scheduler Bug!! Worker cyclying has failed.", ex)
     end cycleWorkers
 
     private val gauges =
@@ -185,8 +191,9 @@ end Scheduler
 
 object Scheduler:
 
-    private[Scheduler] lazy val defaultExecutor          = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker"))
-    private[Scheduler] lazy val defaultScheduledExecutor = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))
+    private val log                           = LoggerFactory.getLogger(getClass)
+    private lazy val defaultExecutor          = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker"))
+    private lazy val defaultScheduledExecutor = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))
 
     val get = Scheduler()
 

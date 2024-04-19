@@ -1,9 +1,11 @@
 package kyo.scheduler.regulator
 
+import Regulator.*
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kyo.scheduler.util.*
+import org.slf4j.LoggerFactory
 import scala.util.control.NonFatal
 
 abstract class Regulator(
@@ -28,7 +30,7 @@ abstract class Regulator(
         executor.scheduleWithFixedDelay(() => collect(), collectIntervalMs, collectIntervalMs, TimeUnit.MILLISECONDS)
 
     private val regulateTask =
-        executor.scheduleWithFixedDelay(() => regulate(), regulateIntervalMs, regulateIntervalMs, TimeUnit.MILLISECONDS)
+        executor.scheduleWithFixedDelay(() => adjust(), regulateIntervalMs, regulateIntervalMs, TimeUnit.MILLISECONDS)
 
     final private def collect(): Unit =
         try
@@ -50,10 +52,10 @@ abstract class Regulator(
             end if
         catch
             case ex if NonFatal(ex) =>
-                ex.printStackTrace()
+                log.error(s"🙈 !!Kyo Scheduler Bug!! ${getClass.getSimpleName()} regulator's probe collection has failed.", ex)
     end collect
 
-    final private def regulate() =
+    final private def adjust() =
         try
             val jitter = synchronized(measurements.dev())
             val load   = loadAvg()
@@ -66,14 +68,14 @@ abstract class Regulator(
             else
                 step = 0
             end if
-            val delta = Math.pow(step, stepExp).toInt
             if step > 0 then
+                val delta = Math.pow(step, stepExp).toInt
                 update(delta)
         catch
             case ex if NonFatal(ex) =>
-                ex.printStackTrace()
+                log.error(s"🙈 !!Kyo Scheduler Bug!! ${getClass.getSimpleName()} regulator's adjustment has failed.", ex)
         end try
-    end regulate
+    end adjust
 
     final def stop(): Unit =
         collectTask.cancel(true)
@@ -82,3 +84,6 @@ abstract class Regulator(
     end stop
 
 end Regulator
+
+object Regulator:
+    private[Regulator] val log = LoggerFactory.getLogger(getClass)
