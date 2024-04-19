@@ -1,10 +1,7 @@
 package kyo
 
-import org.slf4j.LoggerFactory
-
-object Logs:
-    val unsafe: Unsafe = Unsafe(LoggerFactory.getLogger("kyo.logs"))
-    private val local  = Locals.init(unsafe)
+object Logs extends logsPlatformSpecific:
+    private val local = Locals.init(unsafe)
 
     def let[T, S](u: Unsafe)(f: => T < (IOs & S)): T < (IOs & S) =
         local.let(u)(f)
@@ -58,53 +55,57 @@ object Logs:
     end Unsafe
 
     object Unsafe:
-        def apply(logger: org.slf4j.Logger): Unsafe = new Unsafe:
-            inline def traceEnabled: Boolean = logger.isTraceEnabled
-            inline def debugEnabled: Boolean = logger.isDebugEnabled
-            inline def infoEnabled: Boolean  = logger.isInfoEnabled
-            inline def warnEnabled: Boolean  = logger.isWarnEnabled
-            inline def errorEnabled: Boolean = logger.isErrorEnabled
+        class ConsoleLogger(name: String) extends Logs.Unsafe:
+            inline def traceEnabled: Boolean = true
+
+            inline def debugEnabled: Boolean = true
+
+            inline def infoEnabled: Boolean = true
+
+            inline def warnEnabled: Boolean = true
+
+            inline def errorEnabled: Boolean = true
 
             inline def trace(msg: => String)(
                 using file: internal.Position
-            ): Unit = if traceEnabled then logger.trace(s"[$file] $msg")
+            ): Unit = if traceEnabled then println(s"TRACE $name -- [$file] $msg")
 
             inline def trace(msg: => String, t: => Throwable)(
                 using file: internal.Position
-            ): Unit = if traceEnabled then logger.trace(s"[$file] $msg", t)
+            ): Unit = if traceEnabled then println(s"TRACE $name -- [$file] $msg $t")
 
             inline def debug(msg: => String)(
                 using file: internal.Position
-            ): Unit = if debugEnabled then logger.debug(s"[$file] $msg")
+            ): Unit = if debugEnabled then println(s"DEBUG $name -- [$file] $msg")
 
             inline def debug(msg: => String, t: => Throwable)(
                 using file: internal.Position
-            ): Unit = if debugEnabled then logger.debug(s"[$file] $msg", t)
+            ): Unit = if debugEnabled then println(s"DEBUG $name -- [$file] $msg $t")
 
             inline def info(msg: => String)(
                 using file: internal.Position
-            ): Unit = if infoEnabled then logger.info(s"[$file] $msg")
+            ): Unit = if infoEnabled then println(s"INFO $name -- [$file] $msg")
 
             inline def info(msg: => String, t: => Throwable)(
                 using file: internal.Position
-            ): Unit = if infoEnabled then logger.info(s"[$file] $msg", t)
+            ): Unit = if infoEnabled then println(s"INFO $name -- [$file] $msg $t")
 
             inline def warn(msg: => String)(
                 using file: internal.Position
-            ): Unit = if warnEnabled then logger.warn(s"[$file] $msg")
+            ): Unit = if warnEnabled then println(s"WARN $name -- [$file] $msg")
 
             inline def warn(msg: => String, t: => Throwable)(
                 using file: internal.Position
-            ): Unit = if warnEnabled then logger.warn(s"[$file] $msg", t)
+            ): Unit = if warnEnabled then println(s"WARN $name -- [$file] $msg $t")
 
             inline def error(msg: => String)(
                 using file: internal.Position
-            ): Unit = if errorEnabled then logger.error(s"[$file] $msg")
+            ): Unit = if errorEnabled then println(s"ERROR $name -- [$file] $msg")
 
             inline def error(msg: => String, t: => Throwable)(
                 using file: internal.Position
-            ): Unit = if errorEnabled then logger.error(s"[$file] $msg", t)
-
+            ): Unit = if errorEnabled then println(s"ERROR $name -- [$file] $msg $t")
+        end ConsoleLogger
     end Unsafe
 
     private inline def logWhen(inline enabled: Unsafe => Boolean)(inline log: Unsafe => Unit): Unit < IOs =
