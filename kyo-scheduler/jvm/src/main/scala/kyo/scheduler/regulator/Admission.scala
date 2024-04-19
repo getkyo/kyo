@@ -1,9 +1,9 @@
 package kyo.scheduler.regulator
 
-import scala.concurrent.duration.*
-import scala.annotation.tailrec
-import scala.util.hashing.MurmurHash3
 import kyo.scheduler.InternalTimer
+import scala.annotation.tailrec
+import scala.concurrent.duration.*
+import scala.util.hashing.MurmurHash3
 
 final class Admission(
     loadAvg: () => Double,
