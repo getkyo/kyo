@@ -27,4 +27,4 @@ jobs:
 
     - name: Build JS
       run: |
-        sbt 'kyo-schedulerJS/test' kyo-coreJS/test' 'kyo-directJS/test' 'kyo-sttpJS/test' 
+        sbt 'kyo-schedulerJS/test' 'kyo-coreJS/test' 'kyo-directJS/test' 'kyo-sttpJS/test' 
