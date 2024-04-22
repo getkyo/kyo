@@ -3,9 +3,8 @@ package kyo.scheduler.regulator
 import scala.concurrent.duration.Duration
 
 case class Config(
-    collectWindowExp: Int,
+    collectWindow: Int,
     collectInterval: Duration,
-    collectSamples: Int,
     regulateInterval: Duration,
     jitterUpperThreshold: Double,
     jitterLowerThreshold: Double,

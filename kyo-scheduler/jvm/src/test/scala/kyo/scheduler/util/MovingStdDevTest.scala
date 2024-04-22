@@ -46,8 +46,8 @@ class MovingStdDevTest extends AnyFreeSpec with NonImplicitAssertions:
     "zeros and negative numbers" in {
         val movingStdDev = new MovingStdDev(3)
         Seq(0L, -1L, -5L).foreach(movingStdDev.observe)
-        assert((movingStdDev.avg() * 100).toInt == -233)
-        assert((movingStdDev.dev() * 100).toInt == 230)
+        assert((movingStdDev.avg() * 100).toInt == -200)
+        assert((movingStdDev.dev() * 100).toInt == 264)
     }
 
 end MovingStdDevTest

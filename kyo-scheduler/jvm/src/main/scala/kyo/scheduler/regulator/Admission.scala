@@ -10,10 +10,9 @@ final class Admission(
     timer: InternalTimer,
     config: Config =
         Config(
-            collectWindowExp = 9, // 2^9=512 ~5 regulate intervals
-            collectInterval = 1000.millis,
-            collectSamples = 10,
-            regulateInterval = 5000.millis,
+            collectWindow = 40, // 4 regulate intervals
+            collectInterval = 100.millis,
+            regulateInterval = 1000.millis,
             jitterUpperThreshold = 100,
             jitterLowerThreshold = 80,
             loadAvgTarget = 0.8,

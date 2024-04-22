@@ -1,11 +1,12 @@
 package kyo.scheduler
 
 import kyo.scheduler.InternalTimer.TimerTask
+import scala.collection.mutable.PriorityQueue
 import scala.concurrent.duration.*
 
 class TestTimer extends InternalTimer:
     private var currentTime = 0L
-    private var tasks       = List.empty[(Long, () => Unit)]
+    private val tasks       = new PriorityQueue[TestTimerTask]
 
     override def schedule(interval: Duration)(f: => Unit) =
         val task = () =>
@@ -14,24 +15,29 @@ class TestTimer extends InternalTimer:
                 schedule(interval)(f)
                 ()
         val scheduledTime = currentTime + interval.toMillis
-        tasks = tasks :+ (scheduledTime, task)
-        new TestTimerTask(this, task)
+        val t             = new TestTimerTask(this, scheduledTime, task)
+        tasks.addOne(t)
+        t
     end schedule
 
     def advance(duration: Duration): Unit =
         val endTime = currentTime + duration.toMillis
-        while tasks.headOption.exists(_._1 <= endTime) do
-            val (time, task) = tasks.head
-            currentTime = time
-            task()
-            tasks = tasks.tail
+        while !tasks.isEmpty do
+            val task = tasks.head
+            if task.time <= endTime then
+                currentTime = task.time
+                task.run()
+                tasks.dequeue()
+                ()
+            else
+                return
+            end if
         end while
-        currentTime = endTime
     end advance
 
-    private class TestTimerTask(timer: TestTimer, task: () => Unit) extends TimerTask:
-        override def cancel(): Boolean =
-            timer.tasks = timer.tasks.filter(_._2 ne task)
-            true
+    case class TestTimerTask(timer: TestTimer, time: Long, run: () => Unit) extends TimerTask with Ordered[TestTimerTask]:
+        def compare(that: TestTimerTask): Int =
+            (that.time - time).toInt
+        def cancel(): Boolean = ???
     end TestTimerTask
 end TestTimer

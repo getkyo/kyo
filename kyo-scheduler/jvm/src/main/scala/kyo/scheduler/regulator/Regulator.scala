@@ -1,7 +1,7 @@
 package kyo.scheduler.regulator
 
 import Regulator.*
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.util.*
 import org.slf4j.LoggerFactory
@@ -15,14 +15,12 @@ abstract class Regulator(
     import config.*
 
     private var step         = 0
-    private val pending      = new AtomicInteger
-    private val measurements = MovingStdDev(collectWindowExp)
+    private val measurements = MovingStdDev(collectWindow)
 
     protected def probe(): Unit
     protected def update(diff: Int): Unit
 
     protected def measure(v: Long): Unit =
-        pending.decrementAndGet()
         synchronized(measurements.observe(v))
 
     private val collectTask =
@@ -33,21 +31,10 @@ abstract class Regulator(
 
     final private def collect(): Unit =
         try
-            val samples = Math.max(0, collectSamples - pending.get())
             if loadAvg() < loadAvgTarget then
-                synchronized {
-                    var i = 0
-                    while i < samples do
-                        measurements.observe(0)
-                        i += 1
-                }
+                synchronized(measurements.observe(0))
             else
-                var i = 0
-                while i < samples do
-                    pending.incrementAndGet()
-                    probe()
-                    i += 1
-                end while
+                probe()
             end if
         catch
             case ex if NonFatal(ex) =>
@@ -67,8 +54,8 @@ abstract class Regulator(
             else
                 step = 0
             end if
-            if step > 0 then
-                val delta = Math.pow(step, stepExp).toInt
+            if step != 0 then
+                val delta = (step.sign * Math.pow(step.abs, stepExp)).toInt
                 update(delta)
         catch
             case ex if NonFatal(ex) =>

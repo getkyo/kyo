@@ -1,7 +1,6 @@
 package kyo.scheduler.util
 
 final private[kyo] class MovingStdDev(window: Int):
-    private val mask   = window - 1
     private val values = new Array[Long](window)
     private var idx    = 0L
 
@@ -12,7 +11,7 @@ final private[kyo] class MovingStdDev(window: Int):
         var sumSq = 0L
         var i     = 0
         while i < n do
-            val value = values(i & mask)
+            val value = values(i % window)
             sum += value
             sumSq += value * value
             i += 1
@@ -27,13 +26,13 @@ final private[kyo] class MovingStdDev(window: Int):
         var sum = 0d
         var i   = 0
         while i < n do
-            sum += values(i & mask)
+            sum += values(i % window)
             i += 1
         sum / n
     end avg
 
     def observe(v: Long): Unit =
-        values((idx & mask).toInt) = v
+        values((idx % window).toInt) = v
         idx += 1
 
     override def toString = s"MovingStdDev(avg=${avg()},dev=${dev()})"
