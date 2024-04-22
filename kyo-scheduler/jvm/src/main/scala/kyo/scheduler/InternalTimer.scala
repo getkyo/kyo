@@ -7,6 +7,7 @@ import scala.concurrent.duration.Duration
 
 trait InternalTimer:
     def schedule(interval: Duration)(f: => Unit): TimerTask
+    def scheduleOnce(delay: Duration)(f: => Unit): TimerTask
 
 object InternalTimer:
 
@@ -20,5 +21,11 @@ object InternalTimer:
                 new TimerTask:
                     def cancel() = future.cancel(true)
             end schedule
+
+            def scheduleOnce(delay: Duration)(f: => Unit): TimerTask =
+                val future = executor.schedule((() => f): Runnable, delay.toNanos, TimeUnit.NANOSECONDS)
+                new TimerTask:
+                    def cancel() = future.cancel(true)
+            end scheduleOnce
 
 end InternalTimer

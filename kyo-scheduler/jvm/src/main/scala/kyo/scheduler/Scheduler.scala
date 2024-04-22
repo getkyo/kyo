@@ -47,16 +47,22 @@ final class Scheduler(
     private val timer = InternalTimer(timerExecutor)
 
     private val admissionRegulator =
-        Admission(loadAvg, timer)
+        Admission(loadAvg, schedule, System.currentTimeMillis, timer)
 
     private val concurrencyRegulator =
-        Concurrency(loadAvg, schedule, updateWorkers, timer)
+        Concurrency(loadAvg, updateWorkers, timer)
 
     def schedule(t: Task): Unit =
         schedule(t, null)
 
-    def reject(keyPath: Seq[String]): Boolean =
-        admissionRegulator.reject(keyPath)
+    def reject(): Boolean =
+        admissionRegulator.reject()
+
+    def reject(key: String): Boolean =
+        admissionRegulator.reject(key)
+
+    def reject(key: Int): Boolean =
+        admissionRegulator.reject(key)
 
     def asExecutor: Executor =
         (r: Runnable) => schedule(Task(r.run()))

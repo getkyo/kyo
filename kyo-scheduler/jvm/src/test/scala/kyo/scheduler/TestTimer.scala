@@ -5,8 +5,8 @@ import scala.collection.mutable.PriorityQueue
 import scala.concurrent.duration.*
 
 class TestTimer extends InternalTimer:
-    private var currentTime = 0L
-    private val tasks       = new PriorityQueue[TestTimerTask]
+    var currentTime   = 0L
+    private val tasks = new PriorityQueue[TestTimerTask]
 
     override def schedule(interval: Duration)(f: => Unit) =
         val task = () =>
@@ -19,6 +19,14 @@ class TestTimer extends InternalTimer:
         tasks.addOne(t)
         t
     end schedule
+
+    override def scheduleOnce(delay: Duration)(f: => Unit) =
+        val task          = () => f
+        val scheduledTime = currentTime + delay.toMillis
+        val t             = new TestTimerTask(this, scheduledTime, task)
+        tasks.addOne(t)
+        t
+    end scheduleOnce
 
     def advance(duration: Duration): Unit =
         val endTime = currentTime + duration.toMillis

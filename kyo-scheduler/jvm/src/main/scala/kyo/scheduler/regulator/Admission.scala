@@ -1,12 +1,16 @@
 package kyo.scheduler.regulator
 
+import java.util.concurrent.ThreadLocalRandom
+import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
-import scala.annotation.tailrec
+import org.jctools.queues.MpscUnboundedArrayQueue
 import scala.concurrent.duration.*
 import scala.util.hashing.MurmurHash3
 
 final class Admission(
     loadAvg: () => Double,
+    schedule: Task => Unit,
+    nowMillis: () => Long,
     timer: InternalTimer,
     config: Config =
         Config(
@@ -22,31 +26,39 @@ final class Admission(
 
     @volatile private var admissionPercent = 100
 
+    final private class ProbeTask extends Task(0):
+        var start = 0L
+        def run(startMillis: Long, clock: InternalClock) =
+            measure(nowMillis() - start)
+            start = 0
+            probeTasks.add(this)
+            Task.Done
+        end run
+    end ProbeTask
+
+    private val probeTasks = new MpscUnboundedArrayQueue[ProbeTask](3)
+
+    def percent(): Int = admissionPercent
+
     protected def probe() =
-        val start = System.nanoTime()
-        Thread.sleep(1)
-        measure(System.nanoTime() - start - 1000000)
+        var task = probeTasks.poll()
+        if task == null then
+            task = new ProbeTask
+        task.start = nowMillis()
+        schedule(task)
     end probe
 
     protected def update(diff: Int): Unit =
-        admissionPercent = Math.max(0, Math.min(100, admissionPercent + diff))
+        admissionPercent = Math.max(0, Math.min(100, admissionPercent - diff))
 
-    def reject(keyPath: Seq[String]): Boolean =
-        val threshold = admissionPercent / keyPath.length
-        @tailrec
-        def loop(keys: Seq[String], index: Int): Boolean =
-            keys match
-                case Seq() => false
-                case key +: rest =>
-                    val hash           = MurmurHash3.stringHash(key)
-                    val layerThreshold = threshold * (index + 1)
-                    if (hash.abs % 100) <= (layerThreshold * 100) then
-                        loop(rest, index + 1)
-                    else
-                        true
-                    end if
-        loop(keyPath, 0)
-    end reject
+    def reject(key: String): Boolean =
+        reject(MurmurHash3.stringHash(key))
+
+    def reject(): Boolean =
+        reject(ThreadLocalRandom.current().nextInt())
+
+    def reject(key: Int): Boolean =
+        (key.abs % 100) <= admissionPercent
 
     override def toString = s"Admission($admissionPercent)"
 
