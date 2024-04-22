@@ -1,10 +1,10 @@
 package kyo.bench
 
-class Ex1  extends Exception
+class Ex1  extends Exception derives CanEqual
 object Ex1 extends Ex1
-class Ex2  extends Exception
+class Ex2  extends Exception derives CanEqual
 object Ex2 extends Ex2
-class Ex3  extends Exception
+class Ex3  extends Exception derives CanEqual
 object Ex3 extends Ex3
 
 class FailureBench extends Bench.SyncAndFork[Either[Ex1 | Ex2, Int]]:
@@ -17,17 +17,19 @@ class FailureBench extends Bench.SyncAndFork[Either[Ex1 | Ex2, Int]]:
         def loop(i: Int): IO[Either[Ex1, Either[Ex2, Int]]] =
             if i > depth then IO.pure(Right(Right(i)))
             else
-                (i % 4) match
-                    case 0 => loop(i + 1).map(_ => Left(Ex1))
-                    case 1 => loop(i + 1).map(_ => Right(Left(Ex2)))
+                (i % 5) match
+                    case 0 =>
+                        loop(i + 1).map(_ => Right(Left(Ex2)))
+                    case 1 =>
+                        loop(i + 1).map(_ => Left(Ex1))
                     case 2 =>
                         loop(i + 1).map {
-                            case Left(ex1) => Right(Left(Ex2))
+                            case Left(Ex1) => Right(Left(Ex2))
                             case r         => r
                         }
                     case 3 =>
                         loop(i + 1).map {
-                            case Right(Left(ex2)) => Left(Ex1)
+                            case Right(Left(Ex2)) => Left(Ex1)
                             case r                => r
                         }
                     case 4 => loop(i + 1)
@@ -43,25 +45,25 @@ class FailureBench extends Bench.SyncAndFork[Either[Ex1 | Ex2, Int]]:
     def kyoBench() =
         import kyo.*
 
-        def loop(i: Int): Int < (IOs & Aborts[Ex1 | Ex2]) =
+        def loop(i: Int): Int < Aborts[Ex1 | Ex2] =
             if i > depth then i
             else
-                (i % 4) match
+                (i % 5) match
                     case 0 => loop(i + 1).map(_ => Aborts[Ex1].fail(Ex1))
                     case 1 => loop(i + 1).map(_ => Aborts[Ex2].fail(Ex2))
                     case 2 =>
                         Aborts[Ex1].run(loop(i + 1)).map {
-                            case Left(ex) => Aborts[Ex2].fail(Ex2)
-                            case Right(v) => v
+                            case Left(Ex1) => Aborts[Ex2].fail(Ex2)
+                            case Right(v)  => v
                         }
                     case 3 =>
                         Aborts[Ex2].run(loop(i + 1)).map {
-                            case Left(ex) => Aborts[Ex1].fail(Ex1)
-                            case Right(v) => v
+                            case Left(Ex2) => Aborts[Ex1].fail(Ex1)
+                            case Right(v)  => v
                         }
                     case 4 => loop(i + 1)
                 end match
-
+        end loop
         Aborts[Ex1 | Ex2].run(loop(0))
     end kyoBench
 
@@ -71,7 +73,7 @@ class FailureBench extends Bench.SyncAndFork[Either[Ex1 | Ex2, Int]]:
         def loop(i: Int): ZIO[Any, Ex1 | Ex2, Int] =
             if i > depth then ZIO.succeed(i)
             else
-                (i % 4) match
+                (i % 5) match
                     case 0 => loop(i + 1).flatMap(_ => ZIO.fail(Ex1))
                     case 1 => loop(i + 1).flatMap(_ => ZIO.fail(Ex2))
                     case 2 =>

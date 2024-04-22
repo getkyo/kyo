@@ -141,6 +141,6 @@ class BenchTest extends AsyncFreeSpec with Assertions:
 
     "FailureBench" - {
         given [T]: CanEqual[T, T] = CanEqual.derived
-        test(FailureBench(), Left(Ex1))
+        test(FailureBench(), Left(Ex2))
     }
 end BenchTest
