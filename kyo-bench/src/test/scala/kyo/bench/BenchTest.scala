@@ -138,4 +138,9 @@ class BenchTest extends AsyncFreeSpec with Assertions:
     "StreamBufferBench" - {
         test(StreamBufferBench(), 25000000)
     }
+
+    "FailureBench" - {
+        given [T]: CanEqual[T, T] = CanEqual.derived
+        test(FailureBench(), Left(Ex2))
+    }
 end BenchTest
