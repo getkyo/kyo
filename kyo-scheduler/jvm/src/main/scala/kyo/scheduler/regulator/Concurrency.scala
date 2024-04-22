@@ -6,6 +6,8 @@ import scala.concurrent.duration.*
 final class Concurrency(
     loadAvg: () => Double,
     updateConcurrency: Int => Unit,
+    sleep: Int => Unit,
+    nowNanos: () => Long,
     timer: InternalTimer,
     config: Config =
         Config(
@@ -20,14 +22,12 @@ final class Concurrency(
 ) extends Regulator(loadAvg, timer, config):
 
     protected def probe() =
-        val start = System.nanoTime()
-        Thread.sleep(1)
-        measure(System.nanoTime() - start - 1000000)
+        val start = nowNanos()
+        sleep(1)
+        measure(nowNanos() - start - 1000000)
     end probe
 
     protected def update(diff: Int): Unit =
         updateConcurrency(diff)
-
-    override def toString(): String = "Concurrency()"
 
 end Concurrency

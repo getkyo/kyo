@@ -14,10 +14,10 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 loadAvg = 0
                 jitter = 0
 
-                timer.advance(regulateInterval * 2)
+                timer.advanceAndRun(regulateInterval * 2)
                 assert(updates.isEmpty)
 
-                timer.advance(regulateInterval * 2)
+                timer.advanceAndRun(regulateInterval * 2)
                 assert(probes == 0)
                 assert(updates.isEmpty)
 
@@ -26,7 +26,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 loadAvg = 0
                 jitter = jitterLowerThreshold - 1
 
-                timer.advance(regulateInterval * 2)
+                timer.advanceAndRun(regulateInterval * 2)
                 assert(probes == 0)
                 assert(updates.isEmpty)
 
@@ -35,7 +35,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 loadAvg = 0
                 jitter = (jitterLowerThreshold + jitterUpperThreshold) / 2
 
-                timer.advance(regulateInterval * 2)
+                timer.advanceAndRun(regulateInterval * 2)
                 assert(probes == 0)
                 assert(updates.isEmpty)
 
@@ -44,7 +44,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 loadAvg = 0
                 jitter = jitterUpperThreshold + 1
 
-                timer.advance(regulateInterval * 2)
+                timer.advanceAndRun(regulateInterval * 2)
                 assert(probes == 0)
                 assert(updates.isEmpty)
         }
@@ -54,7 +54,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 loadAvg = 0.9
                 jitter = 0
 
-                timer.advance(regulateInterval * 2)
+                timer.advanceAndRun(regulateInterval * 2)
                 assert(probes == 20)
                 assert(updates == List(1, 2))
 
@@ -63,7 +63,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 loadAvg = 0.9
                 jitter = jitterLowerThreshold - 1
 
-                timer.advance(regulateInterval * 2)
+                timer.advanceAndRun(regulateInterval * 2)
                 assert(probes == 20)
                 assert(updates == List(1, 2))
 
@@ -72,7 +72,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 loadAvg = 0.9
                 jitter = jitterUpperThreshold
 
-                timer.advance(regulateInterval * 2)
+                timer.advanceAndRun(regulateInterval * 2)
                 assert(probes == 20)
                 assert(updates.isEmpty)
 
@@ -81,7 +81,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 loadAvg = 0.9
                 jitter = jitterUpperThreshold * 10
 
-                timer.advance(regulateInterval * 2)
+                timer.advanceAndRun(regulateInterval * 2)
                 assert(probes == 20)
                 assert(updates == List(-1, -2))
         }
@@ -93,7 +93,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
             loadAvg = 0.9
             jitter = jitterLowerThreshold - 1
 
-            timer.advance(regulateInterval * 10)
+            timer.advanceAndRun(regulateInterval * 10)
             assert(probes == 100)
             assert(updates == (1 to 10).map(Math.pow(_, stepExp).intValue()))
         "down" in new Context:
@@ -101,7 +101,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
             loadAvg = 0.9
             jitter = jitterUpperThreshold * 10
 
-            timer.advance(regulateInterval * 10)
+            timer.advanceAndRun(regulateInterval * 10)
             assert(probes == 100)
             assert(updates == (1 to 10).map(-Math.pow(_, stepExp).intValue()))
         "reset" in new Context:
@@ -109,9 +109,9 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
             loadAvg = 0.9
 
             jitter = jitterLowerThreshold - 1
-            timer.advance(regulateInterval * 10)
+            timer.advanceAndRun(regulateInterval * 10)
             jitter = jitterUpperThreshold * 10
-            timer.advance(regulateInterval * 10)
+            timer.advanceAndRun(regulateInterval * 10)
 
             assert(probes == 200)
             val expected = (1 to 10).map(Math.pow(_, stepExp).intValue()).toList

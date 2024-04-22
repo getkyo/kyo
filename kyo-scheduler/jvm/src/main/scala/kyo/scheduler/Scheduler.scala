@@ -50,7 +50,7 @@ final class Scheduler(
         Admission(loadAvg, schedule, System.currentTimeMillis, timer)
 
     private val concurrencyRegulator =
-        Concurrency(loadAvg, updateWorkers, timer)
+        Concurrency(loadAvg, updateWorkers, Thread.sleep, System.nanoTime, timer)
 
     def schedule(t: Task): Unit =
         schedule(t, null)

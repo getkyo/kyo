@@ -60,6 +60,4 @@ final class Admission(
     def reject(key: Int): Boolean =
         (key.abs % 100) <= admissionPercent
 
-    override def toString = s"Admission($admissionPercent)"
-
 end Admission
