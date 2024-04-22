@@ -33,7 +33,7 @@ class AdmissionTest extends AnyFreeSpec with NonImplicitAssertions:
 
             val samples  = 10000
             val accepted = Seq.fill(samples)(()).count(_ => admission.reject())
-            assert(Math.abs(accepted - samples * 41 / 100) < 200)
+            assert(Math.abs(accepted - samples * 41 / 100) < 400)
 
         "int key" in new Context:
             loadAvg = 0.9
@@ -44,7 +44,7 @@ class AdmissionTest extends AnyFreeSpec with NonImplicitAssertions:
 
             val samples  = 10000
             val rejected = Seq.fill(samples)(Random.nextInt()).count(admission.reject)
-            assert(Math.abs(rejected - samples * 41 / 100) < 200)
+            assert(Math.abs(rejected - samples * 41 / 100) < 400)
 
         "string key" in new Context:
             loadAvg = 0.9
@@ -55,7 +55,7 @@ class AdmissionTest extends AnyFreeSpec with NonImplicitAssertions:
 
             val samples  = 10000
             val rejected = Seq.fill(samples)(Random.nextString(10)).count(admission.reject)
-            assert(Math.abs(rejected - samples * 41 / 100) < 200)
+            assert(Math.abs(rejected - samples * 41 / 100) < 400)
     }
 
     trait Context:

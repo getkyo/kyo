@@ -5,13 +5,13 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.Duration
 
-trait InternalTimer:
+abstract private class InternalTimer:
     def schedule(interval: Duration)(f: => Unit): TimerTask
     def scheduleOnce(delay: Duration)(f: => Unit): TimerTask
 
-object InternalTimer:
+private[kyo] object InternalTimer:
 
-    trait TimerTask:
+    abstract class TimerTask:
         def cancel(): Boolean
 
     def apply(executor: ScheduledExecutorService): InternalTimer =

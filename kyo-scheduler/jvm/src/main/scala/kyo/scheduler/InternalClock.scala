@@ -3,7 +3,7 @@ package kyo.scheduler
 import java.util.concurrent.Executor
 import java.util.concurrent.locks.LockSupport
 
-final private[kyo] class InternalClock(executor: Executor):
+final private class InternalClock(executor: Executor):
 
     @volatile private var _stop = false
 
