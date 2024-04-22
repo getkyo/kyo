@@ -5,9 +5,13 @@ import java.util.concurrent.locks.LockSupport
 
 final private[kyo] class InternalClock(executor: Executor):
 
-    @volatile private var _stop  = false
-    @volatile private var nanos  = System.nanoTime()
+    @volatile private var _stop = false
+
     @volatile private var millis = System.currentTimeMillis()
+
+    val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
+
+    private var start = System.nanoTime()
 
     executor.execute(() =>
         while !_stop do
@@ -15,11 +19,10 @@ final private[kyo] class InternalClock(executor: Executor):
     )
 
     private def update(): Unit =
-        val prevNanos = nanos
-        val nowNanos  = System.nanoTime()
-        nanos = nowNanos
         millis = System.currentTimeMillis()
-        val elapsed = Math.max(0, nowNanos - prevNanos)
+        val end     = System.nanoTime()
+        val elapsed = Math.max(0, end - start)
+        start = end
         LockSupport.parkNanos(1000000L - elapsed)
     end update
 

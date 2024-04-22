@@ -1,7 +1,6 @@
 package kyo.scheduler.regulator
 
 import Regulator.*
-import java.util.concurrent.atomic.AtomicBoolean
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.util.*
 import org.slf4j.LoggerFactory
