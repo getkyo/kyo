@@ -198,7 +198,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"             %% "zio"                % zioVersion,
             libraryDependencies += "dev.zio"             %% "zio-concurrent"     % zioVersion,
             libraryDependencies += "dev.zio"             %% "zio-prelude"        % "1.0.0-RC23",
-            libraryDependencies += "com.softwaremill.ox" %% "core"               % "0.0.25",
+            libraryDependencies += "com.softwaremill.ox" %% "core"               % "0.0.27",
             libraryDependencies += "co.fs2"              %% "fs2-core"           % "3.10.2",
             libraryDependencies += "org.scalatest"       %% "scalatest"          % "3.2.16" % Test
         )
