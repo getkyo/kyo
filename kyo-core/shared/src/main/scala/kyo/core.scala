@@ -50,8 +50,8 @@ object core:
                                 transformLoop(r)
                             end if
                         end apply
-                case v: T @unchecked =>
-                    k(v)
+                case v =>
+                    k(v.asInstanceOf[T])
         transformLoop(v)
     end transform
 
