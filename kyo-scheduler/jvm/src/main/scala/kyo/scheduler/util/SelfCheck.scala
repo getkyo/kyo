@@ -43,8 +43,8 @@ final class SelfCheck(
                 loop()
             else
                 val cores = Runtime.getRuntime().availableProcessors()
-                val high  = cores * 1.5
-                val low   = cores * 0.7
+                val high  = cores * 1.5 + 2
+                val low   = cores * 0.8
                 if clients > high || clients < low then
                     println(s"Failure: Expected between $low and $high clients for $cores cores but found $clients.")
                 else
@@ -86,5 +86,5 @@ final class SelfCheck(
 
 end SelfCheck
 
-@main def selfCheckMain(): Unit =
+@main def SelfCheckMain(): Unit =
     SelfCheck().run()
