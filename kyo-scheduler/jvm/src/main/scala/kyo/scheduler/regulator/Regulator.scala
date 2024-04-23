@@ -4,7 +4,6 @@ import Regulator.*
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.util.*
 import kyo.stats.internal.MetricReceiver
-import kyo.stats.internal.UnsafeGauge
 import org.slf4j.LoggerFactory
 import scala.util.control.NonFatal
 
@@ -78,7 +77,7 @@ abstract class Regulator(
         ()
     end stop
 
-    protected val statsScope: List[String] = List("kyo", "scheduler", "regulator", getClass.getSimpleName())
+    protected val statsScope = kyo.scheduler.statsScope("regulator", getClass.getSimpleName())
 
     private object stats:
         val receiver     = MetricReceiver.get

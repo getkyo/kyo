@@ -185,7 +185,7 @@ final class Scheduler(
     end cycleWorkers
 
     private val gauges =
-        val scope    = List("kyo", "scheduler")
+        val scope    = statsScope()
         val receiver = MetricReceiver.get
         UnsafeGauge.all(
             receiver.gauge(scope, "max_concurrency")(maxConcurrency),

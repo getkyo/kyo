@@ -122,7 +122,7 @@ final private class Worker(
     end run
 
     private def registerStats() =
-        val scope    = List("kyo", "scheduler", "worker", id.toString)
+        val scope    = statsScope("worker", id.toString)
         val receiver = MetricReceiver.get
         receiver.gauge(scope, "executions")(executions.toDouble)
         receiver.gauge(scope, "preemptions")(preemptions.toDouble)
