@@ -351,8 +351,8 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
             val worker1 = createWorker(exec)
             val worker2 = createWorker(exec, stealTask = w => worker1.steal(w))
 
-            worker1.enqueue(task1)
-            worker1.enqueue(task2)
+            worker1.enqueue(task1, force = true)
+            worker1.enqueue(task2, force = true)
             eventually(assert(worker1.load() == 2))
             assert(worker2.load() == 0)
 
