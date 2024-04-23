@@ -4,7 +4,6 @@ import java.util.concurrent.ThreadLocalRandom
 import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
 import kyo.stats.internal.MetricReceiver
-import org.jctools.queues.MpscUnboundedArrayQueue
 import scala.concurrent.duration.*
 import scala.util.hashing.MurmurHash3
 
@@ -28,16 +27,12 @@ final class Admission(
     @volatile private var admissionPercent = 100
 
     final private class ProbeTask extends Task(0):
-        var start = 0L
+        val start = nowMillis()
         def run(startMillis: Long, clock: InternalClock) =
             measure(nowMillis() - start)
-            start = 0
-            probeTasks.add(this)
             Task.Done
         end run
     end ProbeTask
-
-    private val probeTasks = new MpscUnboundedArrayQueue[ProbeTask](3)
 
     def percent(): Int = admissionPercent
 
@@ -56,12 +51,7 @@ final class Admission(
     end reject
 
     protected def probe() =
-        var task = probeTasks.poll()
-        if task == null then
-            task = new ProbeTask
-        task.start = nowMillis()
-        schedule(task)
-    end probe
+        schedule(new ProbeTask)
 
     protected def update(diff: Int): Unit =
         admissionPercent = Math.max(0, Math.min(100, admissionPercent + diff))
