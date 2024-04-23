@@ -1,4 +1,4 @@
-package kyoTest
+package kyoTest.stats
 
 import kyo.stats.*
 import kyo.stats.Attributes.*
