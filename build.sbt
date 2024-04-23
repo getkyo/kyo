@@ -81,7 +81,6 @@ lazy val `kyo-scheduler` =
         .in(file("kyo-scheduler"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api" % "1.36.0",
             libraryDependencies += "org.slf4j"        % "slf4j-api"         % "2.0.13",
             libraryDependencies += "org.jctools"      % "jctools-core"      % "4.0.3",
             libraryDependencies += "org.scalatest"  %%% "scalatest"         % "3.2.16" % Test,
