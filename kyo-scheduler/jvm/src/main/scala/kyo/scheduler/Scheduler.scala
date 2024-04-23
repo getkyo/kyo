@@ -19,9 +19,9 @@ import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 
 final class Scheduler(
-    workerExecutor: Executor = Scheduler.defaultExecutor,
+    workerExecutor: Executor = Scheduler.defaultWorkerExecutor,
     clockExecutor: Executor = Scheduler.defaultClockExecutor,
-    timerExecutor: ScheduledExecutorService = Scheduler.defaultScheduledExecutor,
+    timerExecutor: ScheduledExecutorService = Scheduler.defaultTimerExecutor,
     config: Config = Config.default
 ):
 
@@ -200,9 +200,9 @@ end Scheduler
 
 object Scheduler:
 
-    private lazy val defaultExecutor          = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker"))
-    private lazy val defaultClockExecutor     = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
-    private lazy val defaultScheduledExecutor = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))
+    private lazy val defaultWorkerExecutor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)))
+    private lazy val defaultClockExecutor  = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
+    private lazy val defaultTimerExecutor  = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))
 
     val get = Scheduler()
 

@@ -1,6 +1,5 @@
 package kyo.scheduler
 
-import Worker.*
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
@@ -91,7 +90,7 @@ final private class Worker(
     def run(): Unit =
         mounts += 1
         mount = Thread.currentThread()
-        local.set(this)
+        setCurrent(this)
         var task: Task = null
         while true do
             state = Active
@@ -124,7 +123,7 @@ final private class Worker(
                     (!stateHandle.compareAndSet(this, Inactive, Active) &&
                         !stateHandle.compareAndSet(this, Blocked, Active))
                 then
-                    local.set(null)
+                    clearCurrent()
                     mount = null
                     return
                 end if
@@ -152,6 +151,9 @@ end Worker
 
 private object Worker:
 
+    final class WorkerThread(init: Runnable) extends Thread(init):
+        var current: Worker = null
+
     private[Worker] object internal:
         type State = Int
         val Inactive = 0
@@ -163,7 +165,20 @@ private object Worker:
                 .findVarHandle(classOf[Worker], "state", classOf[Int])
 
         val local = new ThreadLocal[Worker]
+
+        def setCurrent(w: Worker): Unit =
+            Thread.currentThread() match
+                case t: WorkerThread => t.current = w
+                case _               => local.set(w)
+
+        def clearCurrent(): Unit =
+            Thread.currentThread() match
+                case t: WorkerThread => t.current = null
+                case _               => local.set(null)
     end internal
 
-    def current(): Worker = internal.local.get()
+    def current(): Worker =
+        Thread.currentThread() match
+            case t: WorkerThread => t.current
+            case _               => internal.local.get()
 end Worker
