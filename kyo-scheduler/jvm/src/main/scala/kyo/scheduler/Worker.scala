@@ -121,8 +121,8 @@ final private class Worker(
             else
                 state = Inactive
                 if queue.isEmpty() ||
-                    !stateHandle.compareAndSet(this, Inactive, Active) ||
-                    !stateHandle.compareAndSet(this, Blocked, Active)
+                    (!stateHandle.compareAndSet(this, Inactive, Active) &&
+                        !stateHandle.compareAndSet(this, Blocked, Active))
                 then
                     local.set(null)
                     mount = null
