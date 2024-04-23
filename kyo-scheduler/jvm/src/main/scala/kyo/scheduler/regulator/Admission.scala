@@ -26,7 +26,7 @@ final class Admission(
 
     @volatile private var admissionPercent = 100
 
-    final private class ProbeTask extends Task(0):
+    final private class ProbeTask extends Task:
         val start = nowMillis()
         def run(startMillis: Long, clock: InternalClock) =
             measure(nowMillis() - start)

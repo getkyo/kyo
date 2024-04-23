@@ -11,9 +11,8 @@ import scala.util.control.NonFatal
 
 private[kyo] class IOTask[T](
     private var curr: T < Fibers,
-    private var ensures: Ensures,
-    initialRuntime: Int
-) extends IOPromise[T] with Task(initialRuntime)
+    private var ensures: Ensures
+) extends IOPromise[T] with Task
     with Preempt:
     import IOTask.*
 
@@ -104,20 +103,28 @@ private[kyo] class IOTask[T](
 end IOTask
 
 private[kyo] object IOTask:
+
     private def nullIO[T] = null.asInstanceOf[T < IOs]
 
     def apply[T](
         v: T < Fibers,
+        st: Locals.State
+    ): IOTask[T] =
+        apply(v, st, Ensures.empty, 1)
+
+    def apply[T](
+        v: T < Fibers,
         st: Locals.State,
-        ensures: Ensures = Ensures.empty,
-        runtime: Int = 1
+        ensures: Ensures,
+        runtime: Int
     ): IOTask[T] =
         val f =
             if st eq Locals.State.empty then
-                new IOTask[T](v, ensures, runtime)
+                new IOTask[T](v, ensures)
             else
-                new IOTask[T](v, ensures, runtime):
+                new IOTask[T](v, ensures):
                     override def locals: State = st
+        f.setRuntime(runtime)
         Scheduler.get.schedule(f)
         f
     end apply

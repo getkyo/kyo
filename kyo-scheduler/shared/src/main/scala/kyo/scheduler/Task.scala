@@ -1,8 +1,8 @@
 package kyo.scheduler
 
-trait Task(initialRuntime: Int):
+trait Task:
 
-    @volatile private var state = Math.max(1, initialRuntime) // Math.abs(state) => runtime; state < 0 => preempting
+    @volatile private var state = 1 // Math.abs(state) => runtime; state < 0 => preempting
 
     private[kyo] def doRun(clock: InternalClock): Task.Result =
         val start = clock.currentMillis()
@@ -20,6 +20,9 @@ trait Task(initialRuntime: Int):
     def run(startMillis: Long, clock: InternalClock): Task.Result
 
     def runtime(): Int = Math.abs(state)
+
+    private[kyo] def setRuntime(v: Int) =
+        state = Math.max(state, v)
 end Task
 
 private[kyo] object Task:
@@ -40,7 +43,7 @@ private[kyo] object Task:
         given CanEqual[Result, Result] = CanEqual.derived
 
     inline def apply(inline r: => Unit): Task =
-        new Task(0):
+        new Task:
             def run(startMillis: Long, clock: InternalClock) =
                 r
                 Task.Done
