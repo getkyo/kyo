@@ -3,7 +3,7 @@ package kyo.scheduler
 import scala.scalajs.concurrent.JSExecutionContext
 
 object Scheduler:
-    lazy val get = new Scheduler
+    val get = new Scheduler
 
 class Scheduler:
 
