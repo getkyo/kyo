@@ -3,7 +3,7 @@ package kyo.scheduler
 class TestTask(
     _preempt: () => Unit = () => {},
     _run: () => Task.Result = () => Task.Done
-) extends Task(0):
+) extends Task:
     @volatile var executions  = 0
     @volatile var preemptions = 0
     override def doPreempt(): Unit =
