@@ -3,6 +3,7 @@ package kyo.scheduler.regulator
 import java.util.concurrent.ThreadLocalRandom
 import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
+import kyo.stats.internal.MetricReceiver
 import org.jctools.queues.MpscUnboundedArrayQueue
 import scala.concurrent.duration.*
 import scala.util.hashing.MurmurHash3
@@ -40,6 +41,20 @@ final class Admission(
 
     def percent(): Int = admissionPercent
 
+    def reject(key: String): Boolean =
+        reject(MurmurHash3.stringHash(key))
+
+    def reject(): Boolean =
+        reject(ThreadLocalRandom.current().nextInt())
+
+    def reject(key: Int): Boolean =
+        val r =
+            (key.abs % 100) <= admissionPercent
+        if r then stats.rejected.inc()
+        else stats.allowed.inc()
+        r
+    end reject
+
     protected def probe() =
         var task = probeTasks.poll()
         if task == null then
@@ -51,13 +66,14 @@ final class Admission(
     protected def update(diff: Int): Unit =
         admissionPercent = Math.max(0, Math.min(100, admissionPercent - diff))
 
-    def reject(key: String): Boolean =
-        reject(MurmurHash3.stringHash(key))
+    override def stop(): Unit =
+        stats.percent.close()
+        super.stop()
 
-    def reject(): Boolean =
-        reject(ThreadLocalRandom.current().nextInt())
-
-    def reject(key: Int): Boolean =
-        (key.abs % 100) <= admissionPercent
-
+    private object stats:
+        val receiver = MetricReceiver.get
+        val percent  = receiver.gauge(statsScope, "percent")(admissionPercent)
+        val allowed  = receiver.counter(statsScope, "allowed")
+        val rejected = receiver.counter(statsScope, "rejected")
+    end stats
 end Admission

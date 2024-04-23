@@ -3,6 +3,8 @@ package kyo.scheduler.regulator
 import Regulator.*
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.util.*
+import kyo.stats.internal.MetricReceiver
+import kyo.stats.internal.UnsafeGauge
 import org.slf4j.LoggerFactory
 import scala.util.control.NonFatal
 
@@ -20,6 +22,7 @@ abstract class Regulator(
     protected def update(diff: Int): Unit
 
     protected def measure(v: Long): Unit =
+        stats.measurements.observe(v.toDouble)
         synchronized(measurements.observe(v))
 
     private val collectTask =
@@ -31,8 +34,9 @@ abstract class Regulator(
     final private def collect(): Unit =
         try
             if loadAvg() < loadAvgTarget then
-                synchronized(measurements.observe(0))
+                measure(0)
             else
+                stats.probes.inc()
                 probe()
             end if
         catch
@@ -55,18 +59,37 @@ abstract class Regulator(
             end if
             if step != 0 then
                 val delta = (step.sign * Math.pow(step.abs, stepExp)).toInt
+                stats.updates.observe(delta)
                 update(delta)
+            else
+                stats.updates.observe(0)
+            end if
+            stats.jitter.observe(jitter)
+            stats.loadavg.observe(load)
         catch
             case ex if NonFatal(ex) =>
                 log.error(s"🙈 !!Kyo Scheduler Bug!! ${getClass.getSimpleName()} regulator's adjustment has failed.", ex)
         end try
     end adjust
 
-    final def stop(): Unit =
+    def stop(): Unit =
         collectTask.cancel()
         regulateTask.cancel()
         ()
     end stop
+
+    protected val statsScope: List[String] = List("kyo", "scheduler", "regulator", getClass.getSimpleName())
+
+    private object stats:
+        val receiver     = MetricReceiver.get
+        val collects     = receiver.counter(statsScope, "collects")
+        val adjusts      = receiver.counter(statsScope, "adjusts")
+        val probes       = receiver.counter(statsScope, "probes")
+        val loadavg      = receiver.histogram(statsScope, "loadavg")
+        val measurements = receiver.histogram(statsScope, "measurements")
+        val updates      = receiver.histogram(statsScope, "updates")
+        val jitter       = receiver.histogram(statsScope, "jitter")
+    end stats
 
 end Regulator
 
