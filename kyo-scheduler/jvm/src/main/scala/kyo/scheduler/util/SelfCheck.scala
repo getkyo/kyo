@@ -86,6 +86,5 @@ final class SelfCheck(
 
 end SelfCheck
 
-object SelfCheck:
-    @main def main(): Unit =
-        SelfCheck().run()
+@main def selfCheckMain(): Unit =
+    SelfCheck().run()
