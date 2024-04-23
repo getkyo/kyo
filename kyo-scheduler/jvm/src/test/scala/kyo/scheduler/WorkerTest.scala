@@ -293,6 +293,22 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
                 eventually(assert(worker.load() == 0))
                 assert(task.executions == 1)
             }
+            "only if not forced" in withExecutor { exec =>
+                val worker = createWorker(exec)
+                val thread = new AtomicReference[Thread]
+                val task = TestTask(_run = () =>
+                    thread.set(Thread.currentThread())
+                    LockSupport.park()
+                    Done
+                )
+                worker.enqueue(task)
+                eventually(assert(worker.load() == 1))
+                eventually(assert(thread.get() != null))
+                assert(worker.enqueue(TestTask(), true))
+                LockSupport.unpark(thread.get())
+                eventually(assert(worker.load() == 0))
+                assert(task.executions == 1)
+            }
         }
 
         "blocked worker is drained" in withExecutor { exec =>

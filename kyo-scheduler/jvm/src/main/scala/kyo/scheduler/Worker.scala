@@ -4,7 +4,6 @@ import Worker.*
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
-import java.util.concurrent.atomic.LongAdder
 import kyo.stats.internal.MetricReceiver
 import scala.util.control.NonFatal
 
@@ -17,9 +16,11 @@ final private class Worker(
     clock: InternalClock
 ) extends Runnable:
 
+    import Worker.internal.*
+
     val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
 
-    @volatile private var running       = false
+    @volatile private var state: State  = Inactive
     @volatile private var mount: Thread = null
 
     val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
@@ -30,24 +31,23 @@ final private class Worker(
     private var executions  = 0L
     private var preemptions = 0L
     private var completions = 0L
-    private val mounts      = new LongAdder
+    private var mounts      = 0L
 
     private val queue = Queue[Task]()
 
     private val schedule = scheduleTask(_, this)
 
-    def enqueue(t: Task): Boolean =
-        val blocked = handleBlocking()
-        if !blocked then
+    def enqueue(t: Task, force: Boolean = false): Boolean =
+        val proceed = force || !handleBlocking()
+        if proceed then
             queue.add(t)
             wakeup()
         end if
-        !blocked
+        proceed
     end enqueue
 
     def wakeup() =
-        if !running && runningHandle.compareAndSet(this, false, true) then
-            mounts.increment()
+        if state == Inactive && stateHandle.compareAndSet(this, Inactive, Active) then
             exec.execute(this)
 
     def load() =
@@ -69,24 +69,32 @@ final private class Worker(
             c.doPreempt()
     end cycle
 
-    def handleBlocking() =
-        val m = mount
-        val r = m != null && running && {
-            val state = m.getState().ordinal()
-            state == Thread.State.BLOCKED.ordinal() ||
-            state == Thread.State.WAITING.ordinal() ||
-            state == Thread.State.TIMED_WAITING.ordinal()
-        }
-        if r then
-            drain()
-        r
+    def handleBlocking(): Boolean =
+        state match
+            case Inactive => false
+            case Blocked  => true
+            case Active =>
+                val mount = this.mount
+                mount != null && {
+                    val state = mount.getState().ordinal()
+                    val blocked =
+                        state == Thread.State.BLOCKED.ordinal() ||
+                            state == Thread.State.WAITING.ordinal() ||
+                            state == Thread.State.TIMED_WAITING.ordinal()
+                    if blocked && stateHandle.compareAndSet(this, Active, Blocked) then
+                        drain()
+                    blocked
+                }
+        end match
     end handleBlocking
 
     def run(): Unit =
+        mounts += 1
         mount = Thread.currentThread()
-        Worker.local.set(this)
+        local.set(this)
         var task: Task = null
         while true do
+            state = Active
             currentCycle = getCurrentCycle()
             if task == null then
                 task = queue.poll()
@@ -111,9 +119,12 @@ final private class Worker(
                     task = null
                 end if
             else
-                running = false
-                if queue.isEmpty() || !runningHandle.compareAndSet(this, false, true) then
-                    Worker.local.set(null)
+                state = Inactive
+                if queue.isEmpty() ||
+                    !stateHandle.compareAndSet(this, Inactive, Active) ||
+                    !stateHandle.compareAndSet(this, Blocked, Active)
+                then
+                    local.set(null)
                     mount = null
                     return
                 end if
@@ -129,7 +140,7 @@ final private class Worker(
         receiver.gauge(scope, "completions")(completions.toDouble)
         receiver.gauge(scope, "queue_size")(queue.size())
         receiver.gauge(scope, "current_cycle")(currentCycle.toDouble)
-        receiver.gauge(scope, "mounts")(mounts.sum().toDouble)
+        receiver.gauge(scope, "mounts")(mounts.toDouble)
     end registerStats
     registerStats()
 
@@ -140,10 +151,19 @@ final private class Worker(
 end Worker
 
 private object Worker:
-    private val runningHandle: VarHandle =
-        MethodHandles.privateLookupIn(classOf[Worker], MethodHandles.lookup())
-            .findVarHandle(classOf[Worker], "running", classOf[Boolean])
 
-    private val local     = new ThreadLocal[Worker]
-    def current(): Worker = local.get()
+    private[Worker] object internal:
+        type State = Int
+        val Inactive = 0
+        val Active   = 1
+        val Blocked  = 2
+
+        val stateHandle: VarHandle =
+            MethodHandles.privateLookupIn(classOf[Worker], MethodHandles.lookup())
+                .findVarHandle(classOf[Worker], "state", classOf[Int])
+
+        val local = new ThreadLocal[Worker]
+    end internal
+
+    def current(): Worker = internal.local.get()
 end Worker

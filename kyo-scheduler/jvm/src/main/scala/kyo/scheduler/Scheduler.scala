@@ -70,34 +70,36 @@ final class Scheduler(
     def asExecutionContext: ExecutionContext =
         ExecutionContext.fromExecutor(asExecutor)
 
-    @tailrec
     private def schedule(t: Task, submitter: Worker): Unit =
-        var worker: Worker = null
-        if submitter == null then
-            worker = Worker.current();
-        if worker == null then
-            val m       = this.maxConcurrency
-            var i       = XSRandom.nextInt(m)
-            var tries   = Math.min(m, scheduleTries)
-            var minLoad = Int.MaxValue
-            while tries > 0 && minLoad != 0 do
-                val w = workers(i)
-                if w != null && !w.handleBlocking() then
-                    val l = w.load()
-                    if l < minLoad && (w ne submitter) then
-                        minLoad = l
-                        worker = w
-                end if
-                i += 1
-                if i == m then
-                    i = 0
-                tries -= 1
-            end while
-        end if
-        while worker == null do
-            worker = workers(XSRandom.nextInt(maxConcurrency))
-        if !worker.enqueue(t) then
-            schedule(t, submitter)
+        @tailrec def loop(tries: Int = 0): Unit =
+            var worker: Worker = null
+            if submitter == null && tries == 0 then
+                worker = Worker.current()
+            if worker == null then
+                val m       = this.maxConcurrency
+                var i       = XSRandom.nextInt(m)
+                var stride  = Math.min(m, scheduleStride)
+                var minLoad = Int.MaxValue
+                while stride > 0 && minLoad != 0 do
+                    val w = workers(i)
+                    if w != null && !w.handleBlocking() then
+                        val l = w.load()
+                        if l < minLoad && (w ne submitter) then
+                            minLoad = l
+                            worker = w
+                    end if
+                    i += 1
+                    if i == m then
+                        i = 0
+                    stride -= 1
+                end while
+            end if
+            while worker == null do
+                worker = workers(XSRandom.nextInt(maxConcurrency))
+            if !worker.enqueue(t, force = tries >= scheduleTries) then
+                loop(tries + 1)
+        end loop
+        loop()
     end schedule
 
     private def steal(thief: Worker): Task =
@@ -212,6 +214,7 @@ object Scheduler:
         minWorkers: Int,
         maxWorkers: Int,
         scheduleTries: Int,
+        scheduleStride: Int,
         virtualizeWorkers: Boolean,
         timeSliceMs: Int
     )
@@ -221,10 +224,11 @@ object Scheduler:
             val coreWorkers       = Math.max(1, Flag("coreWorkers", cores))
             val minWorkers        = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
             val maxWorkers        = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
-            val scheduleTries     = Math.max(1, Flag("scheduleTries", 8))
+            val scheduleTries     = Math.max(1, Flag("scheduleTries", 32))
+            val scheduleStride    = Math.max(1, Flag("scheduleStride", 8))
             val virtualizeWorkers = Flag("virtualizeWorkers", false)
             val timeSliceMs       = Flag("timeSliceMs", 5)
-            Config(cores, coreWorkers, minWorkers, maxWorkers, scheduleTries, virtualizeWorkers, timeSliceMs)
+            Config(cores, coreWorkers, minWorkers, maxWorkers, scheduleTries, scheduleStride, virtualizeWorkers, timeSliceMs)
         end default
     end Config
 end Scheduler
