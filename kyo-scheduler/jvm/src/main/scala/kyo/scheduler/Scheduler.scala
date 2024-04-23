@@ -14,7 +14,6 @@ import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
 import kyo.stats.internal.UnsafeGauge
-import org.slf4j.LoggerFactory
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
@@ -183,7 +182,7 @@ final class Scheduler(
             end while
         catch
             case ex if NonFatal(ex) =>
-                log.error(s"🙈 !!Kyo Scheduler Bug!! Worker cyclying has failed.", ex)
+                bug(s"Worker cyclying has failed.", ex)
     end cycleWorkers
 
     private val gauges =
@@ -201,7 +200,6 @@ end Scheduler
 
 object Scheduler:
 
-    private val log                           = LoggerFactory.getLogger(getClass)
     private lazy val defaultExecutor          = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker"))
     private lazy val defaultClockExecutor     = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
     private lazy val defaultScheduledExecutor = Executors.newScheduledThreadPool(2, Threads("kyo-scheduler-timer"))

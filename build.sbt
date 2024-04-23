@@ -81,7 +81,6 @@ lazy val `kyo-scheduler` =
         .in(file("kyo-scheduler"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.slf4j"       % "slf4j-api"       % "2.0.13",
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16" % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.5"  % Test
         )
@@ -97,6 +96,8 @@ lazy val `kyo-core` =
             `kyo-settings`,
             libraryDependencies += "dev.zio"       %%% "izumi-reflect"   % "2.3.8",
             libraryDependencies += "com.lihaoyi"   %%% "pprint"          % "0.9.0",
+            libraryDependencies += "org.jctools"     % "jctools-core"    % "4.0.3",
+            libraryDependencies += "org.slf4j"       % "slf4j-api"       % "2.0.13",
             libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC23" % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"      % Test,

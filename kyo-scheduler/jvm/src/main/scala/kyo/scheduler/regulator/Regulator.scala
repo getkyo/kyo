@@ -1,10 +1,8 @@
 package kyo.scheduler.regulator
 
-import Regulator.*
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.util.*
 import kyo.stats.internal.MetricReceiver
-import org.slf4j.LoggerFactory
 import scala.util.control.NonFatal
 
 abstract class Regulator(
@@ -36,7 +34,7 @@ abstract class Regulator(
             probe()
         catch
             case ex if NonFatal(ex) =>
-                log.error(s"🙈 !!Kyo Scheduler Bug!! ${getClass.getSimpleName()} regulator's probe collection has failed.", ex)
+                kyo.scheduler.bug(s"${getClass.getSimpleName()} regulator's probe collection has failed.", ex)
     end collect
 
     final private def adjust() =
@@ -63,7 +61,7 @@ abstract class Regulator(
             stats.loadavg.observe(load)
         catch
             case ex if NonFatal(ex) =>
-                log.error(s"🙈 !!Kyo Scheduler Bug!! ${getClass.getSimpleName()} regulator's adjustment has failed.", ex)
+                kyo.scheduler.bug(s"${getClass.getSimpleName()} regulator's adjustment has failed.", ex)
         end try
     end adjust
 
@@ -87,6 +85,3 @@ abstract class Regulator(
     end stats
 
 end Regulator
-
-object Regulator:
-    private[Regulator] val log = LoggerFactory.getLogger(getClass)
