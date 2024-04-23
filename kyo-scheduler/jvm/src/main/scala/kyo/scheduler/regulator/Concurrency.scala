@@ -11,7 +11,7 @@ final class Concurrency(
     timer: InternalTimer,
     config: Config =
         Config(
-            collectWindow = 200, // 2 regulate intervals
+            collectWindow = 200,
             collectInterval = 10.millis,
             regulateInterval = 1500.millis,
             jitterUpperThreshold = 800000,

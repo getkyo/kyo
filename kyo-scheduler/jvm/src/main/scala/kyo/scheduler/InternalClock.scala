@@ -8,9 +8,11 @@ final private class InternalClock(executor: Executor):
 
     @volatile private var _stop = false
 
+    val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
+
     @volatile private var millis = System.currentTimeMillis()
 
-    val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
+    val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
 
     private var start = System.nanoTime()
 
