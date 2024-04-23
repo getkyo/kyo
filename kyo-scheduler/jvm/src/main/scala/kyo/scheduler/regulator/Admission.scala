@@ -49,7 +49,7 @@ final class Admission(
 
     def reject(key: Int): Boolean =
         val r =
-            (key.abs % 100) <= admissionPercent
+            (key.abs % 100) > admissionPercent
         if r then stats.rejected.inc()
         else stats.allowed.inc()
         r
@@ -64,7 +64,7 @@ final class Admission(
     end probe
 
     protected def update(diff: Int): Unit =
-        admissionPercent = Math.max(0, Math.min(100, admissionPercent - diff))
+        admissionPercent = Math.max(0, Math.min(100, admissionPercent + diff))
 
     override def stop(): Unit =
         stats.percent.close()

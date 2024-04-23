@@ -31,9 +31,9 @@ class AdmissionTest extends AnyFreeSpec with NonImplicitAssertions:
             timer.advanceAndRun(regulateInterval * 7)
             assert(admission.percent() == 41)
 
-            val samples  = 10000
-            val accepted = Seq.fill(samples)(()).count(_ => admission.reject())
-            assert(Math.abs(accepted - samples * 41 / 100) < 400)
+            val samples  = 100000
+            val rejected = Seq.fill(samples)(()).count(_ => admission.reject())
+            assert(Math.abs(100 - 41 - rejected * 100 / samples) <= 5)
 
         "int key" in new Context:
             loadAvg = 0.9
@@ -44,7 +44,7 @@ class AdmissionTest extends AnyFreeSpec with NonImplicitAssertions:
 
             val samples  = 10000
             val rejected = Seq.fill(samples)(Random.nextInt()).count(admission.reject)
-            assert(Math.abs(rejected - samples * 41 / 100) < 400)
+            assert(Math.abs(100 - 41 - rejected * 100 / samples) <= 5)
 
         "string key" in new Context:
             loadAvg = 0.9
@@ -55,7 +55,7 @@ class AdmissionTest extends AnyFreeSpec with NonImplicitAssertions:
 
             val samples  = 10000
             val rejected = Seq.fill(samples)(Random.nextString(10)).count(admission.reject)
-            assert(Math.abs(rejected - samples * 41 / 100) < 400)
+            assert(Math.abs(100 - 41 - rejected * 100 / samples) <= 5)
     }
 
     trait Context:
@@ -70,14 +70,15 @@ class AdmissionTest extends AnyFreeSpec with NonImplicitAssertions:
         val jitterLowerThreshold = 80
         val loadAvgTarget        = 0.8
         val stepExp              = 1.5
+        var probes               = 0
 
         val admission = new Admission(
             () => loadAvg,
             task =>
-                timer.scheduleOnce(jitter.millis) {
-                    task.run(0, null)
-                    ()
-                }
+                probes += 1
+                if probes % 2 == 0 then
+                    timer.currentNanos += jitter * 1000000
+                task.run(0, null)
                 ()
             ,
             () => timer.currentNanos / 1000000,

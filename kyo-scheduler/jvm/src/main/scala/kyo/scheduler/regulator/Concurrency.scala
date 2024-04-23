@@ -13,11 +13,11 @@ final class Concurrency(
         Config(
             collectWindow = 200, // 2 regulate intervals
             collectInterval = 10.millis,
-            regulateInterval = 1000.millis,
-            jitterUpperThreshold = 1000000,
-            jitterLowerThreshold = 800000,
+            regulateInterval = 1500.millis,
+            jitterUpperThreshold = 800000,
+            jitterLowerThreshold = 500000,
             loadAvgTarget = 0.8,
-            stepExp = 1.3
+            stepExp = 1.2
         )
 ) extends Regulator(loadAvg, timer, config):
 

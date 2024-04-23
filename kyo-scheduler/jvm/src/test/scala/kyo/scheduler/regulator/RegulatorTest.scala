@@ -18,7 +18,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 assert(updates.isEmpty)
 
                 timer.advanceAndRun(regulateInterval * 2)
-                assert(probes == 0)
+                assert(probes == 40)
                 assert(updates.isEmpty)
 
             "with jitter below low threshold" in new Context:
@@ -27,7 +27,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 jitter = jitterLowerThreshold - 1
 
                 timer.advanceAndRun(regulateInterval * 2)
-                assert(probes == 0)
+                assert(probes == 20)
                 assert(updates.isEmpty)
 
             "with jitter between low and high thresholds" in new Context:
@@ -36,7 +36,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 jitter = (jitterLowerThreshold + jitterUpperThreshold) / 2
 
                 timer.advanceAndRun(regulateInterval * 2)
-                assert(probes == 0)
+                assert(probes == 20)
                 assert(updates.isEmpty)
 
             "with jitter above high threshold" in new Context:
@@ -45,7 +45,7 @@ class RegulatorTest extends AnyFreeSpec with NonImplicitAssertions:
                 jitter = jitterUpperThreshold + 1
 
                 timer.advanceAndRun(regulateInterval * 2)
-                assert(probes == 0)
+                assert(probes == 20)
                 assert(updates.isEmpty)
         }
         "above target" - {

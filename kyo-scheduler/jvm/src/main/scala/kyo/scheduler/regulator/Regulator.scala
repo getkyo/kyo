@@ -32,12 +32,8 @@ abstract class Regulator(
 
     final private def collect(): Unit =
         try
-            if loadAvg() < loadAvgTarget then
-                measure(0)
-            else
-                stats.probes.inc()
-                probe()
-            end if
+            stats.probes.inc()
+            probe()
         catch
             case ex if NonFatal(ex) =>
                 log.error(s"🙈 !!Kyo Scheduler Bug!! ${getClass.getSimpleName()} regulator's probe collection has failed.", ex)
