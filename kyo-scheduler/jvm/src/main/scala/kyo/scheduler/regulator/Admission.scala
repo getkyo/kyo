@@ -3,6 +3,7 @@ package kyo.scheduler.regulator
 import java.util.concurrent.ThreadLocalRandom
 import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
+import kyo.scheduler.util.Flag
 import kyo.stats.internal.MetricReceiver
 import scala.concurrent.duration.*
 import scala.util.hashing.MurmurHash3
@@ -12,16 +13,7 @@ final class Admission(
     schedule: Task => Unit,
     nowMillis: () => Long,
     timer: InternalTimer,
-    config: Config =
-        Config(
-            collectWindow = 40,
-            collectInterval = 100.millis,
-            regulateInterval = 1000.millis,
-            jitterUpperThreshold = 100,
-            jitterLowerThreshold = 80,
-            loadAvgTarget = 0.8,
-            stepExp = 1.5
-        )
+    config: Config = Admission.defaultConfig
 ) extends Regulator(loadAvg, timer, config):
 
     @volatile private var admissionPercent = 100
@@ -66,4 +58,17 @@ final class Admission(
         val allowed  = receiver.counter(statsScope, "allowed")
         val rejected = receiver.counter(statsScope, "rejected")
     end stats
+end Admission
+
+object Admission:
+    val defaultConfig: Config =
+        Config(
+            collectWindow = Flag("admission.collectWindow", 40),
+            collectInterval = Flag("admission.collectIntervalMs", 100).millis,
+            regulateInterval = Flag("admission.regulateIntervalMs", 1000).millis,
+            jitterUpperThreshold = Flag("admission.jitterUpperThreshold", 100),
+            jitterLowerThreshold = Flag("admission.jitterLowerThreshold", 80),
+            loadAvgTarget = Flag("admission.loadAvgTarget", 0.8),
+            stepExp = Flag("admission.stepExp", 1.5)
+        )
 end Admission
