@@ -12,7 +12,7 @@ trait Task:
 
     def doPreempt(): Unit =
         if state > 0 then
-            state = -state
+            state = -Math.abs(state)
 
     final def preempt(): Boolean =
         state < 0
