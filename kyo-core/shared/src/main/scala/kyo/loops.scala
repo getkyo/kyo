@@ -120,7 +120,7 @@ object Loops:
                     loop(idx + 1, next.input)
                 case kyo: Kyo[Output | Continue[Input], S] @unchecked =>
                     kyo.map {
-                        case next: Continue[Input] =>
+                        case next: Continue[Input] @unchecked =>
                             _loop(idx + 1, next.input)
                         case res =>
                             res.asInstanceOf[Output]
