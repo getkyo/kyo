@@ -4,6 +4,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kyo.scheduler.Task.Done
 import kyo.scheduler.Task.Preempted
 import kyo.scheduler.util.Threads
@@ -97,16 +98,14 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions:
             eventually(assert(task.executions == 1))
         }
         "repeatedly cycles and preempts tasks" in withScheduler { scheduler =>
-            val cdl          = new CountDownLatch(1)
-            val preemptLatch = new CountDownLatch(3)
-            val preempt      = new AtomicBoolean
+            val cdl         = new CountDownLatch(1)
+            val preemptions = new AtomicInteger(3)
+            val preempt     = new AtomicBoolean
             val task = TestTask(
                 _preempt = () =>
-                    preemptLatch.countDown()
-                    preempt.set(true)
-                ,
+                    preempt.set(true),
                 _run = () =>
-                    if preemptLatch.getCount > 0 then
+                    if preemptions.getAndDecrement() > 0 then
                         while !preempt.compareAndSet(true, false) do {}
                         Task.Preempted
                     else
@@ -115,9 +114,7 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions:
             )
             scheduler.schedule(task)
 
-            preemptLatch.await()
             eventually(assert(task.preemptions == 3))
-
             cdl.countDown()
             eventually(assert(task.executions == 4))
         }
