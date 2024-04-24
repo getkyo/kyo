@@ -18,17 +18,17 @@ final private class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
         VarHandle.acquireFence()
         items
 
-    def add(t: T): Unit =
+    def add(value: T): Unit =
         modify {
             items += 1
-            queue.addOne(t)
+            queue.addOne(value)
             ()
         }
 
-    def offer(t: T): Boolean =
+    def offer(value: T): Boolean =
         tryModify {
             items += 1
-            queue.addOne(t)
+            queue.addOne(value)
             true
         }
 
@@ -44,19 +44,19 @@ final private class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
                     queue.dequeue()
             }
 
-    def addAndPoll(t: T): T =
+    def addAndPoll(value: T): T =
         if isEmpty() then
-            t
+            value
         else
             modify {
-                if isEmpty() then t
+                if isEmpty() then value
                 else
                     val r = queue.dequeue()
-                    queue.addOne(t)
+                    queue.addOne(value)
                     r
             }
 
-    def steal(to: Queue[T]): T =
+    def stealingBy(to: Queue[T]): T =
         var t: T = null.asInstanceOf[T]
         !isEmpty() && tryModify {
             !isEmpty() && to.isEmpty() && to.tryModify {
@@ -72,7 +72,7 @@ final private class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
             }
         }
         t
-    end steal
+    end stealingBy
 
     def drain(f: T => Unit): Unit =
         if !isEmpty() then

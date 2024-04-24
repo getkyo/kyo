@@ -33,7 +33,7 @@ final class Scheduler(
     private val flushes = new LongAdder
 
     @volatile private var allocatedWorkers = 0
-    @volatile private var maxConcurrency   = coreWorkers
+    @volatile private var currentWorkers   = coreWorkers
 
     val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
 
@@ -51,8 +51,8 @@ final class Scheduler(
     private val concurrencyRegulator =
         Concurrency(loadAvg, updateWorkers, Thread.sleep, System.nanoTime, timer)
 
-    def schedule(t: Task): Unit =
-        schedule(t, null)
+    def schedule(task: Task): Unit =
+        schedule(task, null)
 
     def reject(): Boolean =
         admissionRegulator.reject()
@@ -69,77 +69,79 @@ final class Scheduler(
     def asExecutionContext: ExecutionContext =
         ExecutionContext.fromExecutor(asExecutor)
 
-    private def schedule(t: Task, submitter: Worker): Unit =
+    private def schedule(task: Task, submitter: Worker): Unit =
         @tailrec def loop(tries: Int = 0): Unit =
             var worker: Worker = null
             if submitter == null && tries == 0 then
                 worker = Worker.current()
             if worker == null then
-                val m       = this.maxConcurrency
-                var i       = XSRandom.nextInt(m)
-                var stride  = Math.min(m, scheduleStride)
-                var minLoad = Int.MaxValue
+                val currentWorkers = this.currentWorkers
+                var position       = XSRandom.nextInt(currentWorkers)
+                var stride         = Math.min(currentWorkers, scheduleStride)
+                var minLoad        = Int.MaxValue
                 while stride > 0 && minLoad != 0 do
-                    val w = workers(i)
-                    if w != null && !w.handleBlocking() then
-                        val l = w.load()
-                        if l < minLoad && (w ne submitter) then
+                    val candidate = workers(position)
+                    if candidate != null && !candidate.handleBlocking() then
+                        val l = candidate.load()
+                        if l < minLoad && (candidate ne submitter) then
                             minLoad = l
-                            worker = w
+                            worker = candidate
                     end if
-                    i += 1
-                    if i == m then
-                        i = 0
+                    position += 1
+                    if position == currentWorkers then
+                        position = 0
                     stride -= 1
                 end while
             end if
             while worker == null do
-                worker = workers(XSRandom.nextInt(maxConcurrency))
-            if !worker.enqueue(t, force = tries >= scheduleTries) then
+                worker = workers(XSRandom.nextInt(currentWorkers))
+            if !worker.enqueue(task, force = tries >= scheduleTries) then
                 loop(tries + 1)
         end loop
         loop()
     end schedule
 
     private def steal(thief: Worker): Task =
+        val currentWorkers = this.currentWorkers
         var worker: Worker = null
-        var i              = 0
         var maxLoad        = Int.MaxValue
-        while i < maxConcurrency do
-            val w = workers(i)
-            if w != null && !w.handleBlocking() then
-                val l = w.load()
-                if l > maxLoad && (w ne thief) then
+        var position       = 0
+        while position < currentWorkers do
+            val candidate = workers(position)
+            if candidate != null && !candidate.handleBlocking() then
+                val l = candidate.load()
+                if l > maxLoad && (candidate ne thief) then
                     maxLoad = l
-                    worker = w
+                    worker = candidate
             end if
-            i += 1
+            position += 1
         end while
         if worker != null then
-            worker.steal(thief)
+            worker.stealingBy(thief)
         else
             null
         end if
     end steal
 
     def flush() =
-        val w = Worker.current()
-        if w != null then
+        val worker = Worker.current()
+        if worker != null then
             flushes.increment()
-            w.drain()
+            worker.drain()
     end flush
 
     def loadAvg(): Double =
-        val m = this.maxConcurrency
-        var i = 0
-        var r = 0
-        while i < m do
-            val w = workers(i)
+        val currentWorkers =
+            this.currentWorkers
+        var position = 0
+        var sum      = 0
+        while position < currentWorkers do
+            val w = workers(position)
             if w != null then
-                r += w.load()
-            i += 1
+                sum += w.load()
+            position += 1
         end while
-        r.toDouble / m
+        sum.toDouble / currentWorkers
     end loadAvg
 
     def shutdown(): Unit =
@@ -150,11 +152,11 @@ final class Scheduler(
     end shutdown
 
     private def updateWorkers(delta: Int) =
-        maxConcurrency = Math.max(minWorkers, Math.min(maxWorkers, maxConcurrency + delta))
+        currentWorkers = Math.max(minWorkers, Math.min(maxWorkers, currentWorkers + delta))
         ensureWorkers()
 
     private def ensureWorkers() =
-        for idx <- allocatedWorkers until maxConcurrency do
+        for idx <- allocatedWorkers until currentWorkers do
             workers(idx) = new Worker(idx, pool, schedule, steal, () => cycles, clock)
             allocatedWorkers += 1
 
@@ -170,15 +172,15 @@ final class Scheduler(
         try
             val curr = cycles + 1
             cycles = curr
-            var i = 0
-            while i < allocatedWorkers do
-                val w = workers(i)
-                if w != null then
-                    if i >= maxConcurrency then
-                        w.drain()
-                    w.cycle(curr)
+            var position = 0
+            while position < allocatedWorkers do
+                val worker = workers(position)
+                if worker != null then
+                    if position >= currentWorkers then
+                        worker.drain()
+                    worker.cycle(curr)
                 end if
-                i += 1
+                position += 1
             end while
         catch
             case ex if NonFatal(ex) =>
@@ -189,7 +191,7 @@ final class Scheduler(
         val scope    = statsScope()
         val receiver = MetricReceiver.get
         UnsafeGauge.all(
-            receiver.gauge(scope, "max_concurrency")(maxConcurrency),
+            receiver.gauge(scope, "current_workers")(currentWorkers),
             receiver.gauge(scope, "allocated_workers")(allocatedWorkers),
             receiver.gauge(scope, "load_avg")(loadAvg()),
             receiver.gauge(scope, "flushes")(flushes.sum().toDouble)
