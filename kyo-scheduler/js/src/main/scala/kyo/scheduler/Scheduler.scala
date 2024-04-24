@@ -9,6 +9,9 @@ class Scheduler:
 
     private val clock = InternalClock()
 
+    def doPreempt(): Unit  = {}
+    def preempt(): Boolean = false
+
     def schedule(t: Task): Unit =
         JSExecutionContext.queue.execute { () =>
             if t.run(0, clock) == Task.Preempted then

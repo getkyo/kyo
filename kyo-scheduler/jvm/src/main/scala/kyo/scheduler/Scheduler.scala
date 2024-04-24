@@ -54,6 +54,16 @@ final class Scheduler(
     def schedule(t: Task): Unit =
         schedule(t, null)
 
+    def preempt(): Boolean =
+        val w = Worker.current()
+        w != null && w.preempt()
+
+    def doPreempt(): Unit =
+        val w = Worker.current()
+        if w != null then
+            w.doPreempt()
+    end doPreempt
+
     def reject(): Boolean =
         admissionRegulator.reject()
 

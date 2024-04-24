@@ -16,6 +16,7 @@ final private class Worker(
 ) extends Runnable:
 
     import Worker.internal.*
+    import Worker.internal.State.*
 
     val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
 
@@ -24,8 +25,8 @@ final private class Worker(
 
     val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
 
-    @volatile private var currentCycle      = 0L
-    @volatile private var currentTask: Task = null
+    @volatile private var currentCycle = 0L
+    @volatile private var runningTask  = false
 
     private var executions  = 0L
     private var preemptions = 0L
@@ -46,12 +47,12 @@ final private class Worker(
     end enqueue
 
     def wakeup() =
-        if state == Inactive && stateHandle.compareAndSet(this, Inactive, Active) then
+        if state.isInactive && stateHandle.compareAndSet(this, state, Active) then
             exec.execute(this)
 
     def load() =
         var l = queue.size()
-        if currentTask != null then
+        if runningTask then
             l += 1
         l
     end load
@@ -62,29 +63,37 @@ final private class Worker(
     def drain(): Unit =
         queue.drain(schedule)
 
+    def preempt(): Boolean =
+        state.isPreempt
+
+    def doPreempt(): Unit =
+        val state = this.state
+        if !state.isPreempt && !state.isInactive then
+            stateHandle.compareAndSet(this, state, state.toPreempt)
+            ()
+    end doPreempt
+
     def cycle(curr: Long): Unit =
-        val c = currentTask
-        if c != null && currentCycle < curr - 1 then
-            c.doPreempt()
-    end cycle
+        if currentCycle < curr - 1 then
+            doPreempt()
 
     def handleBlocking(): Boolean =
-        state match
-            case Inactive => false
-            case Blocked  => true
-            case Active =>
+        val state = this.state
+        state.isBlocked || {
+            !state.isInactive && {
                 val mount = this.mount
                 mount != null && {
-                    val state = mount.getState().ordinal()
+                    val threadState = mount.getState().ordinal()
                     val blocked =
-                        state == Thread.State.BLOCKED.ordinal() ||
-                            state == Thread.State.WAITING.ordinal() ||
-                            state == Thread.State.TIMED_WAITING.ordinal()
-                    if blocked && stateHandle.compareAndSet(this, Active, Blocked) then
+                        threadState == Thread.State.BLOCKED.ordinal() ||
+                            threadState == Thread.State.WAITING.ordinal() ||
+                            threadState == Thread.State.TIMED_WAITING.ordinal()
+                    if blocked && stateHandle.compareAndSet(this, state, Blocked) then
                         drain()
                     blocked
                 }
-        end match
+            }
+        }
     end handleBlocking
 
     def run(): Unit =
@@ -100,8 +109,8 @@ final private class Worker(
             if task == null then
                 task = stealTask(this)
             if task != null then
-                currentTask = task
                 executions += 1
+                runningTask = true
                 val r =
                     try task.doRun(clock)
                     catch
@@ -109,7 +118,7 @@ final private class Worker(
                             val thread = Thread.currentThread()
                             thread.getUncaughtExceptionHandler().uncaughtException(thread, ex)
                             Task.Done
-                currentTask = null
+                runningTask = false
                 if r == Task.Preempted then
                     preemptions += 1
                     task = queue.addAndPoll(task)
@@ -119,9 +128,10 @@ final private class Worker(
                 end if
             else
                 state = Inactive
-                if queue.isEmpty() ||
-                    (!stateHandle.compareAndSet(this, Inactive, Active) &&
-                        !stateHandle.compareAndSet(this, Blocked, Active))
+                if queue.isEmpty() || {
+                        val state = this.state
+                        state.isInactive && !stateHandle.compareAndSet(this, state, Active)
+                    }
                 then
                     clearCurrent()
                     mount = null
@@ -142,11 +152,6 @@ final private class Worker(
         receiver.gauge(scope, "mounts")(mounts.toDouble)
     end registerStats
     registerStats()
-
-    override def toString =
-        s"Worker(id=$id, blocked=${handleBlocking()}, mount=${mount}, executions=${executions}, " +
-            s"preemptions=${preemptions}, completions=${completions})"
-
 end Worker
 
 private object Worker:
@@ -155,10 +160,23 @@ private object Worker:
         var current: Worker = null
 
     private[Worker] object internal:
-        type State = Int
-        val Inactive = 0
-        val Active   = 1
-        val Blocked  = 2
+
+        opaque type State = Int
+        object State:
+            extension (s: State)
+                inline def toPreempt: State   = -Math.abs(s)
+                inline def isPreempt: Boolean = s < 0
+                inline def isInactive: Boolean =
+                    Math.abs(s) == Inactive
+                inline def isActive: Boolean =
+                    Math.abs(s) == Active
+                inline def isBlocked: Boolean =
+                    Math.abs(s) == Blocked
+            end extension
+        end State
+        inline def Inactive: State = 0
+        inline def Active: State   = 1
+        inline def Blocked: State  = 2
 
         val stateHandle: VarHandle =
             MethodHandles.privateLookupIn(classOf[Worker], MethodHandles.lookup())

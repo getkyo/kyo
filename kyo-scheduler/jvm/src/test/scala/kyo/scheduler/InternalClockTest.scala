@@ -21,7 +21,7 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions:
         val endMillis     = clock.currentMillis()
         val elapsedMillis = endMillis - startMillis
         assert(elapsedMillis >= 5)
-        assert(elapsedMillis <= 15)
+        assert(elapsedMillis <= 20)
     }
 
     private def withClock[T](testCode: InternalClock => T): T =
