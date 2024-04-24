@@ -1,6 +1,7 @@
 package kyoTest
 
 import Tagged.*
+import java.time.Instant
 import kyo.*
 import scala.concurrent.duration.*
 
@@ -55,4 +56,57 @@ class KyoAppTest extends KyoTest:
             case _                             => fail("Unexpected Success...")
     }
 
+    "custom services" taggedAs jvmOnly in run {
+        for
+            instantRef <- Atomics.initRef(Instant.MAX)
+            randomRef  <- Atomics.initRef("")
+            testClock = new Clock:
+                override def now: Instant < IOs = Instant.EPOCH
+            testRandom = new Random:
+                override def nextInt: Int < IOs = ???
+
+                override def nextInt(exclusiveBound: Int): Int < IOs = ???
+
+                override def nextLong: Long < IOs = ???
+
+                override def nextDouble: Double < IOs = ???
+
+                override def nextBoolean: Boolean < IOs = ???
+
+                override def nextFloat: Float < IOs = ???
+
+                override def nextGaussian: Double < IOs = ???
+
+                override def nextValue[T](seq: Seq[T]): T < IOs = ???
+
+                override def nextValues[T](length: Int, seq: Seq[T]): Seq[T] < IOs = ???
+
+                override def nextStringAlphanumeric(length: Int): String < IOs = "FooBar"
+
+                override def nextString(length: Int, chars: Seq[Char]): String < IOs = ???
+                override def nextBytes(length: Int): Seq[Byte] < IOs                 = ???
+
+                override def shuffle[T](seq: Seq[T]): Seq[T] < IOs = ???
+
+                override def unsafe: Random.Unsafe = ???
+
+            app = new KyoApp:
+                override val log: Logs.Unsafe = Logs.Unsafe.ConsoleLogger("ConsoleLogger")
+                override val clock: Clock     = testClock
+                override val random: Random   = testRandom
+                run {
+                    for
+                        _ <- Clocks.now.map(i => instantRef.update(_ => i))
+                        _ <- Randoms.nextStringAlphanumeric(0).map(s => randomRef.update(_ => s))
+                        _ <- Logs.info("info")
+                    yield ()
+                }
+            _    <- IOs(app.main(Array.empty))
+            time <- instantRef.get
+            rand <- randomRef.get
+        yield
+            assert(time eq Instant.EPOCH)
+            assert(rand == "FooBar")
+        end for
+    }
 end KyoAppTest

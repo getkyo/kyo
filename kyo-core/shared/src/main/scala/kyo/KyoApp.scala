@@ -5,11 +5,22 @@ import scala.concurrent.duration.Duration
 import scala.util.Try
 
 abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
+    def log: Logs.Unsafe = Logs.unsafe
+    def random: Random   = Random.default
+    def clock: Clock     = Clock.default
 
     override protected def handle[T](v: T < KyoApp.Effects)(implicit
         f: Flat[T < KyoApp.Effects]
     ): Unit =
-        KyoApp.run(v.map(Consoles.println(_)))
+        KyoApp.run {
+            Logs.let(log) {
+                Randoms.let(random) {
+                    Clocks.let(clock) {
+                        v.map(Consoles.println)
+                    }
+                }
+            }
+        }
 end KyoApp
 
 object KyoApp:
