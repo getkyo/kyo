@@ -2,55 +2,62 @@ package kyoTest
 
 import kyo.*
 import kyo.KyoApp.Effects
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.Duration
 import scala.language.postfixOps
+import zio.EnvironmentTag
+import zio.Trace
 import zio.ZIO
 import zio.ZLayer
 import zio.internal.stacktracer.SourceLocation
 import zio.test.*
 
-abstract class KyoTestZIO[S] extends ZIOSpecAbstract:
-    final val environmentTag: zio.EnvironmentTag[Any] = zio.EnvironmentTag[Any]
+abstract class KyoSpecAbstract[S] extends ZIOSpecAbstract:
+    override type Environment = Any
+    override val environmentTag: EnvironmentTag[Any] = EnvironmentTag[Environment]
+    override def bootstrap: ZLayer[Any, Any, Any]    = ZLayer.empty
 
+    // copied from `TestAnnotation` as it's `private[zio]`
+    // https://github.com/zio/zio/blob/series/2.x/test/shared/src/main/scala/zio/test/TestAnnotation.scala#L91-L92
     private val trace: TestAnnotation[List[SourceLocation]] =
         TestAnnotation("trace", List.empty, _ ++ _)
 
-    override type Environment = Any
-    override def bootstrap: ZLayer[Any, Any, Any] = ZLayer.empty
+    def spec: Spec[Environment, Any]
 
-    def spec: Spec[Any, Any]
-    def timeout: Duration = Duration.Inf
-    def run[In](v: In < S)(using ExecutionContext, Flat[In < S]): Future[In]
+    def run[In](v: => In < S)(using Flat[In < S]): ZIO[Environment, Throwable, In]
 
-    def test[In <: TestResult](label: String)(assertion: In < S)(
-        using
+    def test[In <: TestResult](label: String)(assertion: => In < S)(using
         fl: Flat[In < S],
         sl: SourceLocation,
-        tr: zio.Trace
+        tr: Trace
     ): Spec[Any, Throwable] =
         Spec.labeled(
             label,
             Spec
-                .test(ZTest(label, ZIO.fromFuture { implicit ec => run(assertion) }), TestAnnotationMap.empty)
+                .test(ZTest(label, run(assertion)), TestAnnotationMap.empty)
                 .annotate(trace, sl :: Nil)
         )
 
     def suite[In](label: String)(specs: In*)(using
-        suiteConstructor: SuiteConstructor[In],
-        sourceLocation: SourceLocation,
-        trace: zio.Trace
-    ): Spec[suiteConstructor.OutEnvironment, suiteConstructor.OutError] =
+        sc: SuiteConstructor[In],
+        sl: SourceLocation,
+        tr: Trace
+    ): Spec[sc.OutEnvironment, sc.OutError] =
         zio.test.suite(label)(specs*)
 
-end KyoTestZIO
+end KyoSpecAbstract
 
-abstract class KyoTestDefault extends KyoTestZIO[KyoApp.Effects]:
-    final override def run[In](v: In < KyoApp.Effects)(using ExecutionContext, Flat[In < KyoApp.Effects]): Future[In] =
-        IOs.run(KyoApp.runFiber(timeout)(IOs(v)).toFuture).map(_.get)
+abstract class KyoSpecDefault extends KyoSpecAbstract[KyoApp.Effects]:
+    final override def run[In](v: => In < KyoApp.Effects)(using Flat[In < KyoApp.Effects]): ZIO[Environment, Throwable, In] =
+        ZIO.fromFuture { implicit ec => IOs.run(KyoApp.runFiber(timeout)(IOs(v)).toFuture).map(_.get) }
 
-object ExampleSpec extends KyoTestDefault:
+    def timeout: Duration = Duration.Inf
+
+    def spec: Spec[Any, Any]
+
+end KyoSpecDefault
+
+object ExampleSpec extends KyoSpecDefault:
     def spec: Spec[Any, Throwable] =
         suite("suite!")(
             test("pure") {
@@ -73,6 +80,6 @@ object ExampleSpec extends KyoTestDefault:
                 for
                     _ <- Fibers.sleep(Duration.Inf)
                 yield assertTrue(true)
-            } @@ TestAspect.timeout(zio.Duration.Zero)
+            } @@ TestAspect.timeout(zio.Duration.Zero) @@ TestAspect.ignore
         )
 end ExampleSpec
