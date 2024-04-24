@@ -25,14 +25,11 @@ trait Task:
         state = Math.max(state, v)
 end Task
 
-private[kyo] object Task:
+object Task:
 
     private val ordering = new Ordering[Task]:
-        override def lt(x: Task, y: Task): Boolean =
-            val r = y.runtime()
-            r == 0 || r < x.runtime()
-        def compare(x: Task, y: Task): Int =
-            x.state - y.state
+        def compare(x: Task, y: Task) =
+            y.runtime() - x.runtime()
 
     inline given Ordering[Task] = ordering
 
@@ -43,9 +40,16 @@ private[kyo] object Task:
         given CanEqual[Result, Result] = CanEqual.derived
 
     inline def apply(inline r: => Unit): Task =
-        new Task:
-            def run(startMillis: Long, clock: InternalClock) =
-                r
-                Task.Done
-            end run
+        apply(r, 0)
+
+    inline def apply(inline r: => Unit, inline runtime: Int): Task =
+        val t =
+            new Task:
+                def run(startMillis: Long, clock: InternalClock) =
+                    r
+                    Task.Done
+                end run
+        t.setRuntime(runtime)
+        t
+    end apply
 end Task
