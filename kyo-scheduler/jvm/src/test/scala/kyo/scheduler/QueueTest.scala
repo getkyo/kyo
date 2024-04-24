@@ -133,7 +133,7 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions:
             queue1.add(2)
             queue1.add(3)
             queue1.add(4)
-            assert(queue1.steal(queue2) == 1)
+            assert(queue1.stealingBy(queue2) == 1)
             assert(queue1.poll() == 3)
             assert(queue1.poll() == 4)
             assert(queue1.poll() == null)
@@ -145,7 +145,7 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions:
             val queue1 = Queue[Integer]()
             val queue2 = Queue[Integer]()
             queue1.add(1)
-            assert(queue1.steal(queue2) == 1)
+            assert(queue1.stealingBy(queue2) == 1)
             assert(queue1.isEmpty())
             assert(queue2.isEmpty())
         }
@@ -158,7 +158,7 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions:
             queue1.add(3)
             queue1.add(4)
             queue1.add(5)
-            assert(queue1.steal(queue2) == 1)
+            assert(queue1.stealingBy(queue2) == 1)
             assert(queue1.size() == 2)
             assert(queue2.size() == 2)
             assert(queue1.poll() == 4)
@@ -223,7 +223,7 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions:
 
         "stealing from an empty queue" in {
             val queue = Queue[Integer]()
-            assert(queue.steal(Queue[Integer]()) == null)
+            assert(queue.stealingBy(Queue[Integer]()) == null)
         }
     }
 
@@ -235,7 +235,7 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions:
             queue1.add(2)
             queue1.add(3)
             assert(queue1.poll() == 1)
-            assert(queue1.steal(queue2) == 2)
+            assert(queue1.stealingBy(queue2) == 2)
             assert(queue1.poll() == 3)
             assert(queue2.poll() == null)
         }
@@ -259,8 +259,8 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions:
             queue1.add(2)
             queue2.add(3)
             queue2.add(4)
-            assert(queue1.steal(queue3) == 1)
-            assert(queue2.steal(queue3) == 3)
+            assert(queue1.stealingBy(queue3) == 1)
+            assert(queue2.stealingBy(queue3) == 3)
             assert(queue3.poll() == null)
             assert(queue1.poll() == 2)
             assert(queue2.poll() == 4)
@@ -335,7 +335,7 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions:
             (1 to 1000).foreach(queue1.add(_))
             val futures = (1 to 500).map { _ =>
                 executor {
-                    val v = queue1.steal(queue2)
+                    val v = queue1.stealingBy(queue2)
                     if v != null then stolen.add(v)
                 }
             }
@@ -367,7 +367,7 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions:
             val futures = (1 to 1000).map { i =>
                 executor {
                     queue1.add(i)
-                    val v = queue1.steal(queue2)
+                    val v = queue1.stealingBy(queue2)
                     if v != null then
                         stolen.add(v)
                 }

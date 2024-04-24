@@ -79,7 +79,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
         "when the victim worker has no tasks" in {
             val worker1    = createWorker()
             val worker2    = createWorker()
-            val stolenTask = worker1.steal(worker2)
+            val stolenTask = worker1.stealingBy(worker2)
             assert(stolenTask == null)
             assert(worker1.load() == 0)
             assert(worker2.load() == 0)
@@ -91,7 +91,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
             val task2   = TestTask()
             worker1.enqueue(task1)
             worker1.enqueue(task2)
-            val stolenTask = worker1.steal(worker2)
+            val stolenTask = worker1.stealingBy(worker2)
             assert(stolenTask eq task1)
             assert(worker1.load() == 1)
             assert(worker2.load() == 0)
@@ -101,7 +101,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
         "when the stolen task is null" in {
             val worker1    = createWorker()
             val worker2    = createWorker()
-            val stolenTask = worker1.steal(worker2)
+            val stolenTask = worker1.stealingBy(worker2)
             assert(stolenTask == null)
         }
         "when the stolen task is added to the thief's queue" in {
@@ -113,7 +113,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
             worker1.enqueue(task1)
             worker1.enqueue(task2)
             worker1.enqueue(task3)
-            val stolenTask = worker1.steal(worker2)
+            val stolenTask = worker1.stealingBy(worker2)
             assert(stolenTask eq task1)
             assert(worker1.load() == 1)
             assert(worker2.load() == 1)
@@ -349,7 +349,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
                 Done
             )
             val worker1 = createWorker(exec)
-            val worker2 = createWorker(exec, stealTask = w => worker1.steal(w))
+            val worker2 = createWorker(exec, stealTask = w => worker1.stealingBy(w))
 
             worker1.enqueue(task1, force = true)
             worker1.enqueue(task2, force = true)

@@ -36,10 +36,10 @@ final private class Worker(
 
     private val schedule = scheduleTask(_, this)
 
-    def enqueue(t: Task, force: Boolean = false): Boolean =
+    def enqueue(task: Task, force: Boolean = false): Boolean =
         val proceed = force || !handleBlocking()
         if proceed then
-            queue.add(t)
+            queue.add(task)
             wakeup()
         end if
         proceed
@@ -50,22 +50,22 @@ final private class Worker(
             exec.execute(this)
 
     def load() =
-        var l = queue.size()
+        var load = queue.size()
         if currentTask != null then
-            l += 1
-        l
+            load += 1
+        load
     end load
 
-    def steal(thief: Worker): Task =
-        queue.steal(thief.queue)
+    def stealingBy(thief: Worker): Task =
+        queue.stealingBy(thief.queue)
 
     def drain(): Unit =
         queue.drain(schedule)
 
     def cycle(curr: Long): Unit =
-        val c = currentTask
-        if c != null && currentCycle < curr - 1 then
-            c.doPreempt()
+        val task = currentTask
+        if task != null && currentCycle < curr - 1 then
+            task.doPreempt()
     end cycle
 
     def handleBlocking(): Boolean =
@@ -102,7 +102,7 @@ final private class Worker(
             if task != null then
                 currentTask = task
                 executions += 1
-                val r =
+                val result =
                     try task.doRun(clock)
                     catch
                         case ex if NonFatal(ex) =>
@@ -110,7 +110,7 @@ final private class Worker(
                             thread.getUncaughtExceptionHandler().uncaughtException(thread, ex)
                             Task.Done
                 currentTask = null
-                if r == Task.Preempted then
+                if result == Task.Preempted then
                     preemptions += 1
                     task = queue.addAndPoll(task)
                 else
@@ -152,7 +152,7 @@ end Worker
 private object Worker:
 
     final class WorkerThread(init: Runnable) extends Thread(init):
-        var current: Worker = null
+        var currentWorker: Worker = null
 
     private[Worker] object internal:
         type State = Int
@@ -166,19 +166,19 @@ private object Worker:
 
         val local = new ThreadLocal[Worker]
 
-        def setCurrent(w: Worker): Unit =
+        def setCurrent(worker: Worker): Unit =
             Thread.currentThread() match
-                case t: WorkerThread => t.current = w
-                case _               => local.set(w)
+                case t: WorkerThread => t.currentWorker = worker
+                case _               => local.set(worker)
 
         def clearCurrent(): Unit =
             Thread.currentThread() match
-                case t: WorkerThread => t.current = null
+                case t: WorkerThread => t.currentWorker = null
                 case _               => local.set(null)
     end internal
 
     def current(): Worker =
         Thread.currentThread() match
-            case t: WorkerThread => t.current
+            case t: WorkerThread => t.currentWorker
             case _               => internal.local.get()
 end Worker
