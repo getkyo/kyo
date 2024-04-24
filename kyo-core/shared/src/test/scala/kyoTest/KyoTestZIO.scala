@@ -68,6 +68,11 @@ object ExampleSpec extends KyoTestDefault:
                 for
                     _ <- Aborts[Throwable].fail(new RuntimeException("Aborts!"))
                 yield assertTrue(true)
-            } @@ TestAspect.failing
+            } @@ TestAspect.failing,
+            test("Fibers.sleep") {
+                for
+                    _ <- Fibers.sleep(Duration.Inf)
+                yield assertTrue(true)
+            } @@ TestAspect.timeout(zio.Duration.Zero)
         )
 end ExampleSpec
