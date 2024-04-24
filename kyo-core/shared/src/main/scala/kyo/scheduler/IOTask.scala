@@ -19,9 +19,7 @@ private[kyo] class IOTask[T](
     def locals: Locals.State = Locals.State.empty
 
     override protected def onComplete(): Unit =
-        Scheduler.get.doPreempt()
-
-    def preempt() = Scheduler.get.preempt()
+        doPreempt()
 
     @tailrec private def eval(
         curr: T < Fibers,
@@ -30,7 +28,7 @@ private[kyo] class IOTask[T](
         clock: InternalClock
     ): T < Fibers =
 
-        if scheduler.preempt() then
+        if preempt() then
             if isDone() then
                 ensures.finalize()
                 ensures = Ensures.empty
@@ -100,7 +98,8 @@ private[kyo] class IOTask[T](
         ensures = ensures.remove(f)
 
     final override def toString =
-        s"IOTask(id=${hashCode},preempting=${preempt()},curr=$curr,ensures=${ensures.size()},runtime=${runtime},state=${get()})"
+        s"IOTask(id=${hashCode},preempting=${preempt()},curr=$curr,ensures=${ensures.size()},runtime=${runtime()},state=${get()})"
+    end toString
 end IOTask
 
 private[kyo] object IOTask:
