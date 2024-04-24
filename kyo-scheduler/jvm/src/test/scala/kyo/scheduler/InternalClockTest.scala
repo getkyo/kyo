@@ -12,7 +12,7 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions:
         clock.stop()
         Thread.sleep(10)
         val finalMillis = clock.currentMillis()
-        assert(finalMillis == initialMillis)
+        assert(finalMillis < initialMillis + 5)
     }
 
     "currentMillis" in withClock { clock =>

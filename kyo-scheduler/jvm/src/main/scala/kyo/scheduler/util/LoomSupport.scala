@@ -3,9 +3,12 @@ package kyo.scheduler.util
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
+import java.util.logging.Logger
 import scala.util.control.NonFatal
 
 object LoomSupport:
+
+    private val log = Logger.getLogger(getClass.getName())
 
     def tryVirtualize(enabled: Boolean, exec: Executor): Executor =
         if !enabled then exec
@@ -26,7 +29,7 @@ object LoomSupport:
                     .invoke(null, factory).asInstanceOf[Executor]
             catch
                 case ex if (NonFatal(ex)) =>
-                    println(
+                    log.warning(
                         s"WARNING: Kyo's Loom integration is unavailable: ${ex.getMessage()} " +
                             "For better performance, add '--add-opens=java.base/java.lang=ALL-UNNAMED' to " +
                             "your JVM arguments to use a dedicated thread pool. This step is needed due to " +
