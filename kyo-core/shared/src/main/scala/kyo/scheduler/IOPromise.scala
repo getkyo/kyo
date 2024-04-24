@@ -129,7 +129,7 @@ private[kyo] class IOPromise[T](state: State[T])
             promise.get() match
                 case _: Pending[T] @unchecked =>
                     IOs {
-                        Scheduler.flush()
+                        Scheduler.get.flush()
                         val b = new (T < IOs => Unit) with (() => T < IOs):
                             @volatile
                             private var result: T < IOs = null.asInstanceOf[T < IOs]

@@ -1,27 +1,28 @@
-package kyo.scheduler.util
+package kyo.scheduler
 
+import java.lang.invoke.VarHandle
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
 import scala.collection.mutable.PriorityQueue
 
-final private[kyo] class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
+final private class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
 
     private val queue = PriorityQueue[T]()
 
-    @volatile private var items = 0
+    private var items = 0
 
     def isEmpty() =
-        items == 0
+        size() == 0
 
     def size(): Int =
+        VarHandle.acquireFence()
         items
 
     def add(t: T): Unit =
-        discard {
-            modify {
-                items += 1
-                queue.addOne(t)
-            }
+        modify {
+            items += 1
+            queue.addOne(t)
+            ()
         }
 
     def offer(t: T): Boolean =
@@ -61,7 +62,7 @@ final private[kyo] class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
             !isEmpty() && to.isEmpty() && to.tryModify {
                 t = queue.dequeue()
                 val s = size() - 1
-                var i = s - (s / 2)
+                var i = s - Math.ceil(s.toDouble / 2).intValue()
                 items -= i + 1
                 to.items += i
                 while i > 0 do
@@ -75,11 +76,12 @@ final private[kyo] class Queue[T](using ord: Ordering[T]) extends AtomicBoolean:
 
     def drain(f: T => Unit): Unit =
         if !isEmpty() then
-            modify {
-                items = 0
-                queue.foreach(f)
-                queue.clear()
-            }
+            val tasks =
+                modify {
+                    items = 0
+                    queue.dequeueAll
+                }
+            tasks.foreach(f)
 
     private inline def modify[T](inline f: => T): T =
         while !compareAndSet(false, true) do {}

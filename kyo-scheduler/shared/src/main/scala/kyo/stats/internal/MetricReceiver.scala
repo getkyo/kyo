@@ -9,25 +9,25 @@ trait MetricReceiver:
     def counter(
         scope: List[String],
         name: String,
-        description: String,
-        unit: String,
-        a: Attributes
+        description: String = "",
+        unit: String = "",
+        a: Attributes = Attributes.empty
     ): UnsafeCounter
 
     def histogram(
         scope: List[String],
         name: String,
-        description: String,
-        unit: String,
-        a: Attributes
+        description: String = "",
+        unit: String = "",
+        a: Attributes = Attributes.empty
     ): UnsafeHistogram
 
     def gauge(
         scope: List[String],
         name: String,
-        description: String,
-        unit: String,
-        a: Attributes
+        description: String = "",
+        unit: String = "",
+        a: Attributes = Attributes.empty
     )(f: => Double): UnsafeGauge
 
 end MetricReceiver
@@ -61,14 +61,6 @@ object MetricReceiver:
                 a: Attributes
             )(f: => Double) =
                 UnsafeGauge.noop
-
-            def startSpan(
-                scope: List[String],
-                name: String,
-                parent: Option[Span] = None,
-                attributes: Attributes = Attributes.empty
-            ) =
-                Span.noop
 
     def all(receivers: List[MetricReceiver]): MetricReceiver =
         new MetricReceiver:
