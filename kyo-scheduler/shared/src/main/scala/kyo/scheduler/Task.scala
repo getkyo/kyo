@@ -19,7 +19,11 @@ trait Task:
 
     def run(startMillis: Long, clock: InternalClock): Task.Result
 
-    def runtime(): Int = Math.abs(state)
+    def runtime(): Int =
+        val state = this.state
+        if state < 0 then -state
+        else state
+    end runtime
 
     private[kyo] def setRuntime(v: Int) =
         state = Math.max(state, v)

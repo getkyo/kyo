@@ -70,6 +70,7 @@ final class Scheduler(
         ExecutionContext.fromExecutor(asExecutor)
 
     private def schedule(task: Task, submitter: Worker): Unit =
+        val cycles = this.cycles
         @tailrec def loop(tries: Int = 0): Unit =
             var worker: Worker = null
             if submitter == null && tries == 0 then
@@ -81,7 +82,7 @@ final class Scheduler(
                 var minLoad        = Int.MaxValue
                 while stride > 0 && minLoad != 0 do
                     val candidate = workers(position)
-                    if candidate != null && !candidate.handleBlocking() then
+                    if candidate != null && candidate.checkAvailability(cycles) then
                         val l = candidate.load()
                         if l < minLoad && (candidate ne submitter) then
                             minLoad = l
@@ -95,23 +96,27 @@ final class Scheduler(
             end if
             while worker == null do
                 worker = workers(XSRandom.nextInt(currentWorkers))
-            if !worker.enqueue(task, force = tries >= scheduleTries) then
+            if !worker.enqueue(cycles, task, force = tries >= scheduleTries) then
                 loop(tries + 1)
         end loop
         loop()
     end schedule
 
     private def steal(thief: Worker): Task =
+        val cycles         = this.cycles
         val currentWorkers = this.currentWorkers
         var worker: Worker = null
-        var maxLoad        = Int.MaxValue
+        var maxLoad        = 1
         var position       = 0
         while position < currentWorkers do
             val candidate = workers(position)
-            if candidate != null && !candidate.handleBlocking() then
-                val l = candidate.load()
-                if l > maxLoad && (candidate ne thief) then
-                    maxLoad = l
+            if candidate != null &&
+                (candidate ne thief) &&
+                candidate.checkAvailability(cycles)
+            then
+                val load = candidate.load()
+                if load > maxLoad then
+                    maxLoad = load
                     worker = candidate
             end if
             position += 1
@@ -170,15 +175,15 @@ final class Scheduler(
 
     private def cycleWorkers(): Unit =
         try
-            val curr = cycles + 1
-            cycles = curr
+            val cycles = this.cycles + 1
+            this.cycles = cycles
             var position = 0
             while position < allocatedWorkers do
                 val worker = workers(position)
                 if worker != null then
                     if position >= currentWorkers then
                         worker.drain()
-                    worker.cycle(curr)
+                    worker.cycle(cycles)
                 end if
                 position += 1
             end while
