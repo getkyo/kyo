@@ -18,6 +18,9 @@ private[kyo] class IOTask[T](
 
     def locals: Locals.State = Locals.State.empty
 
+    override def preempt(): Boolean =
+        shouldPreempt()
+
     override protected def onComplete(): Unit =
         doPreempt()
 
@@ -97,9 +100,6 @@ private[kyo] class IOTask[T](
     def remove(f: () => Unit): Unit =
         ensures = ensures.remove(f)
 
-    final override def toString =
-        s"IOTask(id=${hashCode},preempting=${preempt()},curr=$curr,ensures=${ensures.size()},runtime=${runtime()},state=${get()})"
-    end toString
 end IOTask
 
 private[kyo] object IOTask:

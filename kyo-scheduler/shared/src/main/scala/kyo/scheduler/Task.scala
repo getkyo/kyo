@@ -10,18 +10,18 @@ trait Task:
             this.state = -state
     end doPreempt
 
-    final def preempt(): Boolean =
+    protected inline def shouldPreempt(): Boolean =
         state < 0
 
     def run(startMillis: Long, clock: InternalClock): Task.Result
 
-    def runtime(): Int =
+    private inline def runtime(): Int =
         val state = this.state
         if state < 0 then -state
         else state
     end runtime
 
-    private[kyo] def addRuntime(v: Int) =
+    private[kyo] inline def addRuntime(v: Int) =
         val state = this.state
         this.state =
             if state < 0 then -state + v
