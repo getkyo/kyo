@@ -2,20 +2,21 @@ package kyo.scheduler
 
 import scala.scalajs.concurrent.JSExecutionContext
 
-object Scheduler:
+object Scheduler {
     val get = new Scheduler
+}
 
-class Scheduler:
+class Scheduler {
 
-    private val clock = InternalClock()
+    private val clock = new InternalClock()
 
-    def schedule(t: Task): Unit =
+    def schedule(t: Task): Unit = {
         JSExecutionContext.queue.execute { () =>
-            if t.run(0, clock) == Task.Preempted then
+            if (t.run(0, clock) == Task.Preempted)
                 schedule(t)
         }
-    end schedule
+    }
 
     def flush(): Unit = {}
 
-end Scheduler
+}

@@ -13,7 +13,7 @@ final private class Worker(
     stealTask: Worker => Task,
     getCurrentCycle: () => Long,
     clock: InternalClock
-) extends Runnable:
+) extends Runnable {
 
     import Worker.internal.*
 
@@ -35,55 +35,56 @@ final private class Worker(
     private var completions = 0L
     private var mounts      = 0L
 
-    private val queue = Queue[Task]()
+    private val queue = new Queue[Task]()
 
     private val schedule = scheduleTask(_, this)
 
-    def enqueue(cycle: Long, task: Task, force: Boolean = false): Boolean =
+    def enqueue(cycle: Long, task: Task, force: Boolean = false): Boolean = {
         val proceed = force || checkAvailability(cycle)
-        if proceed then
+        if (proceed) {
             queue.add(task)
             wakeup()
-        end if
+        }
         proceed
-    end enqueue
+    }
 
     def wakeup() =
-        if !running && runningHandle.compareAndSet(this, false, true) then
+        if (!running && runningHandle.compareAndSet(this, false, true))
             exec.execute(this)
 
-    def load() =
+    def load() = {
         var load = queue.size()
-        if currentTask != null then
+        if (currentTask != null)
             load += 1
         load
-    end load
+    }
 
     def stealingBy(thief: Worker): Task =
         queue.stealingBy(thief.queue)
 
     def drain(): Unit =
-        queue.drain(schedule)
+        if (!queue.isEmpty())
+            queue.drain(schedule)
 
-    def cycle(cycles: Long): Unit =
+    def cycle(cycles: Long): Unit = {
         val task = currentTask
-        if task != null && currentCycle < cycles - 1 then
+        if (task != null && currentCycle < cycles - 1)
             task.doPreempt()
         checkAvailability(cycles)
         ()
-    end cycle
+    }
 
-    def checkAvailability(cycles: Long): Boolean =
+    def checkAvailability(cycles: Long): Boolean = {
         val available = !isStalled(cycles) && !isBlocked()
-        if !available && !queue.isEmpty() then
+        if (!available)
             drain()
         available
-    end checkAvailability
+    }
 
     def isStalled(cycles: Long): Boolean =
         running && currentCycle < cycles - 2
 
-    def isBlocked(): Boolean =
+    def isBlocked(): Boolean = {
         val mount = this.mount
         mount != null && {
             val state = mount.getState().ordinal()
@@ -91,58 +92,58 @@ final private class Worker(
             state == Thread.State.WAITING.ordinal() ||
             state == Thread.State.TIMED_WAITING.ordinal()
         }
-    end isBlocked
+    }
 
-    def run(): Unit =
+    def run(): Unit = {
         mounts += 1
         mount = Thread.currentThread()
         setCurrent(this)
         var task: Task = null
-        while true do
+        while (true) {
             val cycle = getCurrentCycle()
-            if currentCycle != cycle then
+            if (currentCycle != cycle)
                 currentCycle = cycle
-            if task == null then
+            if (task == null)
                 task = queue.poll()
-            if task == null then
+            if (task == null)
                 task = stealTask(this)
-            if task != null then
+            if (task != null) {
                 executions += 1
-                if runTask(task) == Task.Preempted then
+                if (runTask(task) == Task.Preempted) {
                     preemptions += 1
                     task = queue.addAndPoll(task)
-                else
+                } else {
                     completions += 1
                     task = null
-                end if
-            else
+                }
+            } else {
                 running = false
-                if queue.isEmpty() || !runningHandle.compareAndSet(this, false, true) then
+                if (queue.isEmpty() || !runningHandle.compareAndSet(this, false, true)) {
                     mount = null
                     clearCurrent()
                     return
-                end if
-            end if
-        end while
-    end run
+                }
+            }
+        }
+    }
 
-    private def runTask(task: Task): Task.Result =
+    private def runTask(task: Task): Task.Result = {
         currentTask = task
         val start = clock.currentMillis()
         try
             task.run(start, clock)
-        catch
+        catch {
             case ex if NonFatal(ex) =>
                 val thread = Thread.currentThread()
                 thread.getUncaughtExceptionHandler().uncaughtException(thread, ex)
                 Task.Done
-        finally
+        } finally {
             currentTask = null
             task.addRuntime((clock.currentMillis() - start).asInstanceOf[Int])
-        end try
-    end runTask
+        }
+    }
 
-    private def registerStats() =
+    private def registerStats() = {
         val scope    = statsScope("worker", id.toString)
         val receiver = MetricReceiver.get
         receiver.gauge(scope, "executions")(executions.toDouble)
@@ -151,17 +152,18 @@ final private class Worker(
         receiver.gauge(scope, "queue_size")(queue.size())
         receiver.gauge(scope, "current_cycle")(currentCycle.toDouble)
         receiver.gauge(scope, "mounts")(mounts.toDouble)
-    end registerStats
+    }
     registerStats()
 
-end Worker
+}
 
-private object Worker:
+private object Worker {
 
-    final class WorkerThread(init: Runnable) extends Thread(init):
+    final class WorkerThread(init: Runnable) extends Thread(init) {
         var currentWorker: Worker = null
+    }
 
-    private[Worker] object internal:
+    private[Worker] object internal {
 
         val runningHandle: VarHandle =
             MethodHandles.privateLookupIn(classOf[Worker], MethodHandles.lookup())
@@ -170,18 +172,21 @@ private object Worker:
         val local = new ThreadLocal[Worker]
 
         def setCurrent(worker: Worker): Unit =
-            Thread.currentThread() match
+            Thread.currentThread() match {
                 case t: WorkerThread => t.currentWorker = worker
                 case _               => local.set(worker)
+            }
 
         def clearCurrent(): Unit =
-            Thread.currentThread() match
+            Thread.currentThread() match {
                 case t: WorkerThread => t.currentWorker = null
                 case _               => local.set(null)
-    end internal
+            }
+    }
 
     def current(): Worker =
-        Thread.currentThread() match
+        Thread.currentThread() match {
             case t: WorkerThread => t.currentWorker
             case _               => internal.local.get()
-end Worker
+        }
+}

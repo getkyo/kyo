@@ -14,17 +14,17 @@ import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually.*
 import org.scalatest.freespec.AnyFreeSpec
 
-class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
+class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
 
     private def createWorker(
         executor: Executor = _ => (),
         scheduleTask: (Task, Worker) => Unit = (_, _) => ???,
         stealTask: Worker => Task = _ => null,
         getCurrentCycle: () => Long = () => 0
-    ): Worker =
+    ): Worker = {
         val clock = InternalClock(executor)
         new Worker(0, executor, scheduleTask, stealTask, getCurrentCycle, clock)
-    end createWorker
+    }
 
     "enqueue" - {
         "adding tasks to the queue" in {
@@ -172,10 +172,10 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
             var preemptions = 0
             val task = TestTask(
                 _run = () =>
-                    if preemptions < 10 then
+                    if (preemptions < 10) {
                         preemptions += 1
                         Preempted
-                    else
+                    } else
                         Done
             )
             worker.enqueue(0, task)
@@ -188,10 +188,10 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
         "sets worker local" in {
             val worker    = createWorker()
             var w: Worker = null
-            val task = TestTask(_run = () =>
+            val task = TestTask(_run = () => {
                 w = Worker.current()
                 Task.Done
-            )
+            })
             worker.enqueue(0, task)
             worker.run()
             assert(w eq worker)
@@ -202,24 +202,24 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
     }
 
     "live" - {
-        def withExecutor[T](f: Executor => T): T =
+        def withExecutor[T](f: Executor => T): T = {
             val exec = Executors.newCachedThreadPool(Threads("test"))
             try f(exec)
-            finally
+            finally {
                 exec.shutdown()
                 ()
-            end try
-        end withExecutor
+            }
+        }
 
         "execute task" in withExecutor { exec =>
             val worker = createWorker(exec)
             val cdl1   = new CountDownLatch(1)
             val cdl2   = new CountDownLatch(1)
-            val task = TestTask(_run = () =>
+            val task = TestTask(_run = () => {
                 cdl1.countDown()
                 cdl2.await()
                 Done
-            )
+            })
             worker.enqueue(0, task)
             cdl1.await()
             assert(worker.load() == 1)
@@ -230,10 +230,10 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
         "pending task" in withExecutor { exec =>
             val worker = createWorker(exec)
             val cdl    = new CountDownLatch(1)
-            val task = TestTask(_run = () =>
+            val task = TestTask(_run = () => {
                 cdl.await()
                 Done
-            )
+            })
             worker.enqueue(0, task)
             eventually(assert(worker.load() == 1))
             cdl.countDown()
@@ -246,11 +246,11 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
                 val worker = createWorker(exec)
                 val cdl1   = new CountDownLatch(1)
                 val cdl2   = new CountDownLatch(1)
-                val task = TestTask(_run = () =>
+                val task = TestTask(_run = () => {
                     cdl1.countDown()
                     cdl2.await()
                     Done
-                )
+                })
                 worker.enqueue(0, task)
                 eventually(assert(worker.load() == 1))
                 cdl1.await()
@@ -263,11 +263,11 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
                 val worker = createWorker(exec)
                 val cdl1   = new CountDownLatch(1)
                 val cdl2   = new CountDownLatch(1)
-                val task = TestTask(_run = () =>
+                val task = TestTask(_run = () => {
                     cdl1.countDown()
                     cdl2.await(1, TimeUnit.DAYS)
                     Done
-                )
+                })
                 worker.enqueue(0, task)
                 eventually(assert(worker.load() == 1))
                 cdl1.await()
@@ -279,11 +279,11 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
             "blocked thread" in withExecutor { exec =>
                 val worker = createWorker(exec)
                 val thread = new AtomicReference[Thread]
-                val task = TestTask(_run = () =>
+                val task = TestTask(_run = () => {
                     thread.set(Thread.currentThread())
                     LockSupport.park()
                     Done
-                )
+                })
                 worker.enqueue(0, task)
                 eventually(assert(worker.load() == 1))
                 eventually(assert(thread.get() != null))
@@ -295,11 +295,11 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
             "only if not forced" in withExecutor { exec =>
                 val worker = createWorker(exec)
                 val thread = new AtomicReference[Thread]
-                val task = TestTask(_run = () =>
+                val task = TestTask(_run = () => {
                     thread.set(Thread.currentThread())
                     LockSupport.park()
                     Done
-                )
+                })
                 worker.enqueue(0, task)
                 eventually(assert(worker.load() == 1))
                 eventually(assert(thread.get() != null))
@@ -314,19 +314,19 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
             val drained = new ConcurrentLinkedQueue[Task]
             val worker = createWorker(
                 exec,
-                (t, w) =>
+                (t, w) => {
                     drained.add(t)
                     ()
+                }
             )
             val cdl1 = new CountDownLatch(1)
             val cdl2 = new CountDownLatch(1)
-            val task = TestTask(_run = () =>
+            val task = TestTask(_run = () => {
                 cdl2.await()
                 cdl1.await()
                 Done
-            )
-            for _ <- 0 until 10 do
-                worker.enqueue(0, task)
+            })
+            for (_ <- 0 until 10) assert(worker.enqueue(0, task, true))
             eventually(assert(worker.load() == 10))
             cdl2.countDown()
             eventually(assert(!worker.checkAvailability(0)))
@@ -339,14 +339,14 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
         "steal a task from another worker" in withExecutor { exec =>
             val cdl1 = new CountDownLatch(1)
             val cdl2 = new CountDownLatch(1)
-            val task1 = TestTask(_run = () =>
+            val task1 = TestTask(_run = () => {
                 cdl1.await()
                 Done
-            )
-            val task2 = TestTask(_run = () =>
+            })
+            val task2 = TestTask(_run = () => {
                 cdl2.await()
                 Done
-            )
+            })
             val worker1 = createWorker(exec)
             val worker2 = createWorker(exec, stealTask = w => worker1.stealingBy(w))
 
@@ -368,4 +368,4 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions:
             }
         }
     }
-end WorkerTest
+}

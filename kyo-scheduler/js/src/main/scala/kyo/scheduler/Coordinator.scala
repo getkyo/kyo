@@ -1,5 +1,6 @@
 package kyo.scheduler
 
-object Coordinator:
+object Coordinator {
 
     def currentTick(): Long = 0
+}

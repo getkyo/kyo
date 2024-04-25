@@ -5,9 +5,7 @@ import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpec
 import scala.collection.mutable.PriorityQueue
 
-class TaskTest extends AnyFreeSpec with NonImplicitAssertions:
-
-    given CanEqual[Task, Task] = CanEqual.derived
+class TaskTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "ordering" - {
         "no repetition" in {
@@ -37,4 +35,4 @@ class TaskTest extends AnyFreeSpec with NonImplicitAssertions:
             assert(q.dequeueAll == Seq(t1, t2, t3, t4))
         }
     }
-end TaskTest
+}

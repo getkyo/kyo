@@ -6,14 +6,14 @@ import java.util.concurrent.ThreadFactory
 import java.util.logging.Logger
 import scala.util.control.NonFatal
 
-object LoomSupport:
+object LoomSupport {
 
     private val log = Logger.getLogger(getClass.getName())
 
     def tryVirtualize(enabled: Boolean, exec: Executor): Executor =
-        if !enabled then exec
+        if (!enabled) exec
         else
-            try
+            try {
                 val ofVirtual = classOf[java.lang.Thread].getMethod("ofVirtual").invoke(null)
 
                 val schedulerField = ofVirtual.getClass.getDeclaredField("scheduler")
@@ -27,7 +27,7 @@ object LoomSupport:
                 classOf[Executors]
                     .getMethod("newThreadPerTaskExecutor", classOf[ThreadFactory])
                     .invoke(null, factory).asInstanceOf[Executor]
-            catch
+            } catch {
                 case ex if (NonFatal(ex)) =>
                     log.warning(
                         s"WARNING: Kyo's Loom integration is unavailable: ${ex.getMessage()} " +
@@ -36,5 +36,6 @@ object LoomSupport:
                             "limitations in Loom with customizing thread executors."
                     )
                     exec
+            }
 
-end LoomSupport
+}

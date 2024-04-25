@@ -3,7 +3,7 @@ package kyo.scheduler.util
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpec
 
-class MovingStdDevTest extends AnyFreeSpec with NonImplicitAssertions:
+class MovingStdDevTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "incomplete window" in {
         val movingStdDev = new MovingStdDev(4)
@@ -50,4 +50,4 @@ class MovingStdDevTest extends AnyFreeSpec with NonImplicitAssertions:
         assert((movingStdDev.dev() * 100).toInt == 264)
     }
 
-end MovingStdDevTest
+}

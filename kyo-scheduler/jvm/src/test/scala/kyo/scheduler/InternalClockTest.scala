@@ -5,7 +5,7 @@ import kyo.scheduler.util.Threads
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpec
 
-class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions:
+class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "stop" in withClock { clock =>
         val initialMillis = clock.currentMillis()
@@ -24,13 +24,13 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions:
         assert(elapsedMillis <= 150)
     }
 
-    private def withClock[T](testCode: InternalClock => T): T =
+    private def withClock[T](testCode: InternalClock => T): T = {
         val executor = Executors.newSingleThreadExecutor(Threads("test-clock"))
         val clock    = new InternalClock(executor)
         try testCode(clock)
-        finally
+        finally {
             clock.stop()
             executor.shutdown()
-        end try
-    end withClock
-end InternalClockTest
+        }
+    }
+}

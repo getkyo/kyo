@@ -1,6 +1,8 @@
 import sys.process.*
 
-val scala3Version = "3.4.1"
+val scala3Version   = "3.4.1"
+val scala212Version = "2.12.19"
+val scala213Version = "2.13.13"
 
 val compilerOptions = Seq(
     "-encoding",
@@ -12,9 +14,6 @@ val compilerOptions = Seq(
     "-Wvalue-discard",
     "-Wunused:all",
     "-language:strictEquality"
-    // "-Xfatal-warnings"
-    // "-explain"
-    // "-Vprofile",
 )
 
 scalaVersion                       := scala3Version
@@ -81,6 +80,13 @@ lazy val `kyo-scheduler` =
         .in(file("kyo-scheduler"))
         .settings(
             `kyo-settings`,
+            scalacOptions --= Seq(
+                "-Wvalue-discard",
+                "-Wunused:all",
+                "-language:strictEquality"
+            ),
+            scalacOptions += "-Xsource:3",
+            crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16" % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.5"  % Test
         )

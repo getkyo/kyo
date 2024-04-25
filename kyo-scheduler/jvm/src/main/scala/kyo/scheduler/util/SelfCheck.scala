@@ -14,7 +14,7 @@ final class SelfCheck(
     taskDurationMs: Int = 1000,
     monitorIntervalMs: Int = 100,
     stepMs: Int = 5000
-):
+) {
 
     private var clients    = 0
     private val admissions = new AtomicLong
@@ -22,69 +22,69 @@ final class SelfCheck(
 
     @volatile private var stop = false
 
-    def run(): Unit =
-        @tailrec def loop(): Unit =
-            val rejectionPercent =
+    def run(): Unit = {
+        @tailrec def loop(): Unit = {
+            val rejectionPercent = {
                 val a = admissions.getAndSet(0)
                 val b = rejections.getAndSet(0)
-                if a > 0 then b.toDouble / a
-                else if b > 0 then 1d
+                if (a > 0) b.toDouble / a
+                else if (b > 0) 1d
                 else 0d
-            end rejectionPercent
+            }
             println(Map(
                 "clients"            -> clients,
                 "rejectionPercent"   -> rejectionPercent,
                 "rejectionThreshold" -> rejectionThreshold
             ))
-            if rejectionPercent <= rejectionThreshold then
+            if (rejectionPercent <= rejectionThreshold) {
                 clients += 1
                 startClient()
                 Thread.sleep(stepMs)
                 loop()
-            else
+            } else {
                 val cores = Runtime.getRuntime().availableProcessors()
                 val high  = cores * 1.5 + 2
                 val low   = cores * 0.8
-                if clients > high || clients < low then
+                if (clients > high || clients < low)
                     println(s"Failure: Expected between $low and $high clients for $cores cores but found $clients.")
                 else
                     println("Success")
-                end if
-            end if
-        end loop
+            }
+        }
         startMonitor()
         loop()
         stop = true
-    end run
+    }
 
     def startMonitor(): Unit =
         executor.execute(() =>
-            while !stop do
-                if scheduler.reject() then rejections.incrementAndGet()
+            while (!stop) {
+                if (scheduler.reject()) rejections.incrementAndGet()
                 else admissions.incrementAndGet()
                 Thread.sleep(monitorIntervalMs)
+            }
         )
 
     def startClient(): Unit =
         executor.execute(() =>
-            while !stop do
+            while (!stop)
                 runClient()
         )
 
-    def runClient(): Unit =
+    def runClient(): Unit = {
         val cdl = new CountDownLatch(1)
         val task = Task {
             var acc       = 0d
             val startTime = System.currentTimeMillis()
-            while System.currentTimeMillis() - startTime < taskDurationMs do
+            while (System.currentTimeMillis() - startTime < taskDurationMs)
                 acc += BigInt(2).pow(1000000).toDouble
             cdl.countDown()
         }
         scheduler.schedule(task)
         cdl.await()
-    end runClient
+    }
+}
 
-end SelfCheck
-
-@main def SelfCheckMain(): Unit =
-    SelfCheck().run()
+object SelfCheck extends App {
+    new SelfCheck().run()
+}
