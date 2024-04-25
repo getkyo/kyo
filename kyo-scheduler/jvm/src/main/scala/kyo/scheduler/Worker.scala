@@ -107,17 +107,8 @@ final private class Worker(
             if task == null then
                 task = stealTask(this)
             if task != null then
-                currentTask = task
                 executions += 1
-                val result =
-                    try task.doRun(clock)
-                    catch
-                        case ex if NonFatal(ex) =>
-                            val thread = Thread.currentThread()
-                            thread.getUncaughtExceptionHandler().uncaughtException(thread, ex)
-                            Task.Done
-                currentTask = null
-                if result == Task.Preempted then
+                if runTask(task) == Task.Preempted then
                     preemptions += 1
                     task = queue.addAndPoll(task)
                 else
@@ -134,6 +125,22 @@ final private class Worker(
             end if
         end while
     end run
+
+    private def runTask(task: Task): Task.Result =
+        currentTask = task
+        val start = clock.currentMillis()
+        try
+            task.run(start, clock)
+        catch
+            case ex if NonFatal(ex) =>
+                val thread = Thread.currentThread()
+                thread.getUncaughtExceptionHandler().uncaughtException(thread, ex)
+                Task.Done
+        finally
+            currentTask = null
+            task.addRuntime((clock.currentMillis() - start).asInstanceOf[Int])
+        end try
+    end runTask
 
     private def registerStats() =
         val scope    = statsScope("worker", id.toString)

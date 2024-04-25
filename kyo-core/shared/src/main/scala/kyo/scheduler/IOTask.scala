@@ -124,7 +124,7 @@ private[kyo] object IOTask:
             else
                 new IOTask[T](v, ensures):
                     override def locals: State = st
-        f.setRuntime(runtime)
+        f.addRuntime(runtime)
         Scheduler.get.schedule(f)
         f
     end apply

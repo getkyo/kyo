@@ -4,15 +4,11 @@ trait Task:
 
     @volatile private var state = 1 // Math.abs(state) => runtime; state < 0 => preempting
 
-    private[kyo] def doRun(clock: InternalClock): Task.Result =
-        val start = clock.currentMillis()
-        try run(start, clock)
-        finally state = (Math.abs(state) + clock.currentMillis() - start).toInt
-    end doRun
-
     def doPreempt(): Unit =
+        val state = this.state
         if state > 0 then
-            state = -Math.abs(state)
+            this.state = -state
+    end doPreempt
 
     final def preempt(): Boolean =
         state < 0
@@ -25,8 +21,12 @@ trait Task:
         else state
     end runtime
 
-    private[kyo] def setRuntime(v: Int) =
-        state = Math.max(state, v)
+    private[kyo] def addRuntime(v: Int) =
+        val state = this.state
+        this.state =
+            if state < 0 then -state + v
+            else state + v
+    end addRuntime
 end Task
 
 object Task:
@@ -53,7 +53,7 @@ object Task:
                     r
                     Task.Done
                 end run
-        t.setRuntime(runtime)
+        t.addRuntime(runtime)
         t
     end apply
 end Task
