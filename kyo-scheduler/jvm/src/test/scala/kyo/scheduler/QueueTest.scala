@@ -302,7 +302,7 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions:
             val futures = (1 to 1000).map { i =>
                 executor(queue.add(i))
             } ++ (1 to 1000).map { _ =>
-                executor(queue.poll())
+                executor(while queue.poll() == null do {})
             }
             futures.foreach(_.get())
             assert(queue.isEmpty())
