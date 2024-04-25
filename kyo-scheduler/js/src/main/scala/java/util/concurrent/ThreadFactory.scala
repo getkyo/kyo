@@ -2,5 +2,6 @@ package java.util.concurrent
 
 class ThreadFactory
 
-object ThreadFactoryStub:
+object ThreadFactoryStub {
     val get = new ThreadFactory
+}

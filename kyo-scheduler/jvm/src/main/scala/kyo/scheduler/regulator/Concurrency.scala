@@ -11,20 +11,20 @@ final class Concurrency(
     nowNanos: () => Long,
     timer: InternalTimer,
     config: Config = Concurrency.defaultConfig
-) extends Regulator(loadAvg, timer, config):
+) extends Regulator(loadAvg, timer, config) {
 
-    protected def probe() =
+    protected def probe() = {
         val start = nowNanos()
         sleep(1)
         measure(nowNanos() - start - 1000000)
-    end probe
+    }
 
     protected def update(diff: Int): Unit =
         updateConcurrency(diff)
 
-end Concurrency
+}
 
-object Concurrency:
+object Concurrency {
     val defaultConfig: Config = Config(
         collectWindow = Flag("concurrency.collectWindow", 200),
         collectInterval = Flag("concurrency.collectIntervalMs", 10).millis,
@@ -34,4 +34,4 @@ object Concurrency:
         loadAvgTarget = Flag("concurrency.loadAvgTarget", 0.8),
         stepExp = Flag("concurrency.stepExp", 1.2)
     )
-end Concurrency
+}

@@ -5,7 +5,7 @@ import kyo.stats.Attributes.*
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpec
 
-class attributesTest extends AnyFreeSpec with NonImplicitAssertions:
+class attributesTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "empty" in {
         val attrs = Attributes.empty
@@ -97,4 +97,4 @@ class attributesTest extends AnyFreeSpec with NonImplicitAssertions:
         }
 
     }
-end attributesTest
+}

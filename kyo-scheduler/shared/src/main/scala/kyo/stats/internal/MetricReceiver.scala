@@ -2,9 +2,8 @@ package kyo.stats.internal
 
 import java.util.ServiceLoader
 import kyo.stats.Attributes
-import scala.jdk.CollectionConverters.*
 
-trait MetricReceiver:
+trait MetricReceiver {
 
     def counter(
         scope: List[String],
@@ -30,12 +29,12 @@ trait MetricReceiver:
         a: Attributes = Attributes.empty
     )(f: => Double): UnsafeGauge
 
-end MetricReceiver
+}
 
-object MetricReceiver:
+object MetricReceiver {
 
     val noop: MetricReceiver =
-        new MetricReceiver:
+        new MetricReceiver {
             def counter(
                 scope: List[String],
                 name: String,
@@ -61,9 +60,10 @@ object MetricReceiver:
                 a: Attributes
             )(f: => Double) =
                 UnsafeGauge.noop
+        }
 
     def all(receivers: List[MetricReceiver]): MetricReceiver =
-        new MetricReceiver:
+        new MetricReceiver {
 
             def counter(
                 scope: List[String],
@@ -91,13 +91,20 @@ object MetricReceiver:
                 a: Attributes
             )(f: => Double) =
                 UnsafeGauge.all(receivers.map(_.gauge(scope, name, description, unit, a)(f)))
+        }
 
-    val get: MetricReceiver =
-        ServiceLoader.load(classOf[MetricReceiver]).iterator().asScala.toList match
+    val get: MetricReceiver = {
+        val it = ServiceLoader.load(classOf[MetricReceiver]).iterator()
+        val b  = List.newBuilder[MetricReceiver]
+        while (it.hasNext())
+            b += it.next()
+        b.result() match {
             case Nil =>
                 MetricReceiver.noop
             case head :: Nil =>
                 head
             case l =>
                 MetricReceiver.all(l)
-end MetricReceiver
+        }
+    }
+}

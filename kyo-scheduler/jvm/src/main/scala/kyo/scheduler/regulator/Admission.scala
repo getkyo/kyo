@@ -14,17 +14,17 @@ final class Admission(
     nowMillis: () => Long,
     timer: InternalTimer,
     config: Config = Admission.defaultConfig
-) extends Regulator(loadAvg, timer, config):
+) extends Regulator(loadAvg, timer, config) {
 
     @volatile private var admissionPercent = 100
 
-    final private class ProbeTask extends Task:
+    final private class ProbeTask extends Task {
         val start = nowMillis()
-        def run(startMillis: Long, clock: InternalClock) =
+        def run(startMillis: Long, clock: InternalClock) = {
             measure(nowMillis() - start)
             Task.Done
-        end run
-    end ProbeTask
+        }
+    }
 
     def percent(): Int = admissionPercent
 
@@ -34,13 +34,13 @@ final class Admission(
     def reject(): Boolean =
         reject(ThreadLocalRandom.current().nextInt())
 
-    def reject(key: Int): Boolean =
+    def reject(key: Int): Boolean = {
         val r =
             (key.abs % 100) > admissionPercent
-        if r then stats.rejected.inc()
+        if (r) stats.rejected.inc()
         else stats.allowed.inc()
         r
-    end reject
+    }
 
     protected def probe() =
         schedule(new ProbeTask)
@@ -48,19 +48,20 @@ final class Admission(
     protected def update(diff: Int): Unit =
         admissionPercent = Math.max(0, Math.min(100, admissionPercent + diff))
 
-    override def stop(): Unit =
+    override def stop(): Unit = {
         stats.percent.close()
         super.stop()
+    }
 
-    private object stats:
+    private object stats {
         val receiver = MetricReceiver.get
         val percent  = receiver.gauge(statsScope, "percent")(admissionPercent)
         val allowed  = receiver.counter(statsScope, "allowed")
         val rejected = receiver.counter(statsScope, "rejected")
-    end stats
-end Admission
+    }
+}
 
-object Admission:
+object Admission {
     val defaultConfig: Config =
         Config(
             collectWindow = Flag("admission.collectWindow", 40),
@@ -71,4 +72,4 @@ object Admission:
             loadAvgTarget = Flag("admission.loadAvgTarget", 0.8),
             stepExp = Flag("admission.stepExp", 1.5)
         )
-end Admission
+}

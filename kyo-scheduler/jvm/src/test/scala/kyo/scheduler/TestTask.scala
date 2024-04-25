@@ -1,20 +1,19 @@
 package kyo.scheduler
 
-class TestTask(
+case class TestTask(
     _preempt: () => Unit = () => {},
     _run: () => Task.Result = () => Task.Done
-) extends Task:
+) extends Task {
     @volatile var executions  = 0
     @volatile var preemptions = 0
     override def doPreempt(): Unit =
         _preempt()
     def run(startMillis: Long, clock: InternalClock) =
-        try
+        try {
             val r = _run()
-            if r == Task.Preempted then
+            if (r == Task.Preempted)
                 preemptions += 1
             r
-        finally
+        } finally
             executions += 1
-    end run
-end TestTask
+}

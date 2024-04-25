@@ -7,7 +7,7 @@ import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AnyFreeSpec
 import scala.concurrent.duration.*
 
-class InternalTimerTest extends AnyFreeSpec with NonImplicitAssertions:
+class InternalTimerTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "schedule" in withExecutor { exec =>
         val timer = InternalTimer(exec)
@@ -25,10 +25,10 @@ class InternalTimerTest extends AnyFreeSpec with NonImplicitAssertions:
         task.cancel()
     }
 
-    private def withExecutor[T](f: ScheduledExecutorService => T): T =
+    private def withExecutor[T](f: ScheduledExecutorService => T): T = {
         val exec = Executors.newSingleThreadScheduledExecutor()
         try f(exec)
         finally exec.shutdown()
-    end withExecutor
+    }
 
-end InternalTimerTest
+}

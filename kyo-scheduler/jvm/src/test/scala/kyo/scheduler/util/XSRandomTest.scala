@@ -5,7 +5,7 @@ import java.util.concurrent.Executors
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
 
-class XSRandomTest extends AnyFreeSpec with Matchers:
+class XSRandomTest extends AnyFreeSpec with Matchers {
 
     "distribution" in {
         val numThreads = 8
@@ -18,7 +18,7 @@ class XSRandomTest extends AnyFreeSpec with Matchers:
         val buckets = Array.fill(numBuckets)(0)
 
         (1 to numThreads).foreach { _ =>
-            executor.execute(() =>
+            executor.execute(() => {
                 val localBuckets = new Array[Int](numBuckets)
                 (1 to numSamples).foreach { _ =>
                     val randomInt = XSRandom.nextInt(numBuckets)
@@ -30,7 +30,7 @@ class XSRandomTest extends AnyFreeSpec with Matchers:
                     }
                 }
                 latch.countDown()
-            )
+            })
         }
 
         latch.await()
@@ -44,4 +44,4 @@ class XSRandomTest extends AnyFreeSpec with Matchers:
             assert(count <= (expectedCount + tolerance))
         }
     }
-end XSRandomTest
+}
