@@ -2,7 +2,7 @@ package kyo
 
 import java.io.PrintWriter
 import java.io.StringWriter
-import java.util.logging._
+import java.util.logging.*
 
 package object scheduler {
 
