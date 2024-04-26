@@ -70,12 +70,25 @@ class choicesTest extends KyoTest:
         )
     }
 
-    "large number of choices" in pendingUntilFixed {
-        // https://github.com/getkyo/kyo/issues/208
+    "large number of choices" in {
         val largeChoices = Seq.range(0, 100000)
         try
             assert(
                 Choices.run(Choices.get(largeChoices)).pure == largeChoices
+            )
+        catch
+            case ex: StackOverflowError => fail()
+        end try
+    }
+
+    "large number of suspensions" in pendingUntilFixed {
+        // https://github.com/getkyo/kyo/issues/208
+        var v = Choices.get(Seq(1))
+        for _ <- 0 until 100000 do
+            v = v.map(_ => Choices.get(Seq(1)))
+        try
+            assert(
+                Choices.run(v).pure == Seq(1)
             )
         catch
             case ex: StackOverflowError => fail()

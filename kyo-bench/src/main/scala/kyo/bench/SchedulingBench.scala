@@ -41,10 +41,10 @@ class SchedulingBench extends Bench.ForkOnly[Int]:
                 }
             }
 
-        Seqs.traverse(range) { i =>
+        Seqs.map(range) { i =>
             Fibers.init(fiber(i))
         }.map { fibers =>
-            Seqs.traverse(fibers)(_.get)
+            Seqs.map(fibers)(_.get)
         }.map(_.sum)
     end kyoBenchFiber
 

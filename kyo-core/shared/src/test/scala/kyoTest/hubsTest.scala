@@ -159,9 +159,9 @@ class hubsTest extends KyoTest:
                 h  <- Hubs.init[Int](2)
                 l  <- Seqs.fill(100)(Fibers.init(h.listen).map(_.get))
                 _  <- Fibers.init(h.put(1))
-                t  <- Seqs.traverse(l)(l => Fibers.init(l.take).map(_.get))
+                t  <- Seqs.map(l)(l => Fibers.init(l.take).map(_.get))
                 e1 <- h.isEmpty
-                e2 <- Seqs.traverse(l)(_.isEmpty)
+                e2 <- Seqs.map(l)(_.isEmpty)
             yield assert(t == List.fill(100)(1) && e1 && e2 == Seq.fill(100)(true))
         }
     }
