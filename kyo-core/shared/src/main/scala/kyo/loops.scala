@@ -16,8 +16,8 @@ object Loops:
 
     private val _continueUnit = Continue[Unit](())
 
-    inline def continueUnit[T]: Result[Unit, T] = _continueUnit
-    inline def doneUnit[T]: Result[T, Unit]     = ()
+    inline def continue[T]: Result[Unit, T] = _continueUnit
+    inline def done[T]: Result[T, Unit]     = ()
 
     inline def done[Input, Output](v: Output): Result[Input, Output]       = v
     inline def continue[Input, Output, S](v: Input): Result[Input, Output] = Continue(v)

@@ -33,7 +33,7 @@ object Retries:
                 case Failure(ex) =>
                     if attempt < b.limit then
                         Fibers.sleep(b.backoff(attempt)).andThen {
-                            Loops.continueUnit
+                            Loops.continue
                         }
                     else
                         IOs.fail(ex)

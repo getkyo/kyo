@@ -120,14 +120,14 @@ object Channels:
                                     def dropTakes(): Unit < IOs =
                                         Loops.foreach {
                                             takes.poll() match
-                                                case null => Loops.doneUnit
-                                                case p    => p.interrupt.map(_ => Loops.continueUnit)
+                                                case null => Loops.done
+                                                case p    => p.interrupt.map(_ => Loops.continue)
                                         }
                                     def dropPuts(): Unit < IOs =
                                         Loops.foreach {
                                             puts.poll() match
-                                                case null   => Loops.doneUnit
-                                                case (_, p) => p.interrupt.map(_ => Loops.continueUnit)
+                                                case null   => Loops.done
+                                                case (_, p) => p.interrupt.map(_ => Loops.continue)
                                         }
                                     dropTakes()
                                         .andThen(dropPuts())

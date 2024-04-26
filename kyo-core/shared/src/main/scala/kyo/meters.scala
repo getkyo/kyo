@@ -120,11 +120,11 @@ object Meters:
 
     private def offer[T](n: Int, chan: Channel[T], v: T): Unit < IOs =
         Loops.indexed { idx =>
-            if idx == n then Loops.doneUnit
+            if idx == n then Loops.done
             else
                 chan.offer(v).map {
-                    case true  => Loops.continueUnit
-                    case false => Loops.doneUnit
+                    case true  => Loops.continue
+                    case false => Loops.done
                 }
         }
 end Meters

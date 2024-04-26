@@ -136,7 +136,7 @@ sealed abstract class Chunk[T] derives CanEqual:
                 if idx < size then
                     val v = indexed(idx)
                     f(v).map {
-                        case true  => Loops.continueUnit
+                        case true  => Loops.continue
                         case false => Loops.done(indexed.dropLeft(idx))
                     }
                 else
@@ -193,13 +193,13 @@ sealed abstract class Chunk[T] derives CanEqual:
                     val v = indexed(idx)
                     if pf.isDefinedAt(v) then
                         pf(v).andThen {
-                            Loops.continueUnit
+                            Loops.continue
                         }
                     else
-                        Loops.continueUnit
+                        Loops.continue
                     end if
                 else
-                    Loops.doneUnit
+                    Loops.done
             }
 
     final def foreach[S](f: T => Unit < S): Unit < S =
@@ -210,9 +210,9 @@ sealed abstract class Chunk[T] derives CanEqual:
             Loops.indexed(()) { (idx, _) =>
                 if idx < size then
                     val v = indexed(idx)
-                    f(v).andThen(Loops.continueUnit)
+                    f(v).andThen(Loops.continue)
                 else
-                    Loops.doneUnit
+                    Loops.done
             }
     end foreach
 

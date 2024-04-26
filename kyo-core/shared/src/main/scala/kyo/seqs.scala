@@ -33,12 +33,12 @@ object Seqs:
                 seq match
                     case seq: IndexedSeq[T] =>
                         Loops.indexed { idx =>
-                            if idx == size then Loops.doneUnit
-                            else f(seq(idx)).andThen(Loops.continueUnit)
+                            if idx == size then Loops.done
+                            else f(seq(idx)).andThen(Loops.continue)
                         }
                     case seq: List[T] =>
                         Loops.transform(seq) {
-                            case Nil          => Loops.doneUnit
+                            case Nil          => Loops.done
                             case head :: tail => f(head).andThen(Loops.continue(tail))
                         }
                     case seq =>
@@ -99,13 +99,13 @@ object Seqs:
                 seq match
                     case seq: IndexedSeq[Unit < S] =>
                         Loops.indexed { idx =>
-                            if idx == size then Loops.doneUnit
-                            else seq(idx).map(u => Loops.continueUnit)
+                            if idx == size then Loops.done
+                            else seq(idx).map(u => Loops.continue)
                         }
                     case seq: List[Unit < S] =>
                         Loops.transform(seq) { seq =>
                             seq match
-                                case Nil          => Loops.doneUnit
+                                case Nil          => Loops.done
                                 case head :: tail => head.andThen(Loops.continue(tail))
                         }
                     case seq =>
@@ -121,8 +121,8 @@ object Seqs:
 
     def repeat[S](n: Int)(v: => Unit < S): Unit < S =
         Loops.indexed {
-            case `n` => Loops.doneUnit
+            case `n` => Loops.done
             case _ =>
-                v.andThen(Loops.continueUnit)
+                v.andThen(Loops.continue)
         }
 end Seqs
