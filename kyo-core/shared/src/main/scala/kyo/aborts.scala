@@ -11,12 +11,22 @@ object Aborts:
     private case object aborts extends Aborts[Any]
     def apply[V]: Aborts[V] = aborts.asInstanceOf[Aborts[V]]
 
+    def fail[V](value: V)(using t: Tag[Aborts[V]]): Nothing < Aborts[V] =
+        Aborts[V].fail(value)
+
+    def when[V](b: Boolean)(value: => V)(using Tag[Aborts[V]]): Unit < Aborts[V] =
+        if b then fail(value)
+        else ()
+
+    def get[V, T](e: Either[V, T])(using Tag[Aborts[V]]): T < Aborts[V] =
+        Aborts[V].get(e)
+
     extension [V](self: Aborts[V])
 
         def fail[T <: V](value: T)(using t: Tag[Aborts[T]]): Nothing < Aborts[T] =
             self.suspend[Nothing](Left(value))
 
-        def when(b: Boolean)(value: V)(using Tag[Aborts[V]]): Unit < Aborts[V] =
+        def when(b: Boolean)(value: => V)(using Tag[Aborts[V]]): Unit < Aborts[V] =
             if b then fail(value)
             else ()
 

@@ -219,8 +219,14 @@ class abortsTest extends KyoTest:
         }
         "fail" in {
             val ex: Throwable = new Exception("throwable failure")
-            val a             = Aborts[Throwable].fail(ex)
+            val a             = Aborts.fail(ex)
             assert(Aborts[Throwable].run(a).pure == Left(ex))
+        }
+        "when" in {
+            def abort(b: Boolean) = Aborts[String].run(Aborts.when(b)("FAIL!")).pure
+
+            assert(abort(true) == Left("FAIL!"))
+            assert(abort(false) == Right(()))
         }
         "catching" - {
             "only effect" - {
