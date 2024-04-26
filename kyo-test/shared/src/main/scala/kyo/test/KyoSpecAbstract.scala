@@ -1,9 +1,6 @@
-package kyoTest
+package kyo.test
 
 import kyo.*
-import kyo.KyoApp.Effects
-import scala.concurrent.Future
-import scala.concurrent.duration.*
 import scala.language.postfixOps
 import zio.EnvironmentTag
 import zio.Trace
@@ -46,40 +43,3 @@ abstract class KyoSpecAbstract[S] extends ZIOSpecAbstract:
         zio.test.suite(label)(specs*)
 
 end KyoSpecAbstract
-
-abstract class KyoSpecDefault extends KyoSpecAbstract[KyoApp.Effects]:
-    final override def run[In](v: => In < KyoApp.Effects)(using Flat[In < KyoApp.Effects]): ZIO[Environment, Throwable, In] =
-        ZIO.fromFuture { implicit ec => IOs.run(KyoApp.runFiber(timeout)(v).toFuture).map(_.get) }
-
-    def timeout: Duration = if Platform.isDebugEnabled then Duration.Inf else 5.seconds
-
-    def spec: Spec[Any, Any]
-
-end KyoSpecDefault
-
-object ExampleSpec extends KyoSpecDefault:
-    def spec: Spec[Any, Throwable] =
-        suite("suite!")(
-            test("pure") {
-                assertCompletes
-            },
-            test("IOs Succeed") {
-                IOs(assertCompletes)
-            },
-            test("IOs Fail") {
-                for
-                    _ <- IOs.fail("ERROR!")
-                yield assertCompletes
-            } @@ TestAspect.failing,
-            test("Aborts!") {
-                for
-                    _ <- Aborts[Throwable].fail(new RuntimeException("Aborts!"))
-                yield assertCompletes
-            } @@ TestAspect.failing,
-            test("Fibers.sleep") {
-                for
-                    _ <- Fibers.sleep(Duration.Inf)
-                yield assertCompletes
-            } @@ TestAspect.timeout(zio.Duration.Zero) @@ TestAspect.ignore
-        )
-end ExampleSpec
