@@ -105,10 +105,10 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"     % "jctools-core"    % "4.0.3",
             libraryDependencies += "org.slf4j"       % "slf4j-api"       % "2.0.13",
             libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC23" % Test,
+            libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.0-RC3"  % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"      % Test,
             libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test,
-            testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
         )
         .jsSettings(`js-settings`)
 
@@ -183,6 +183,20 @@ lazy val `kyo-tapir` =
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.10.0",
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.10.0"
         )
+
+lazy val `kyo-test` =
+  crossProject(JVMPlatform, JSPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Full)
+    .in(file("kyo-test"))
+    .dependsOn(`kyo-core` % "test->test;compile->compile")
+    .settings(
+      `kyo-settings`,
+      libraryDependencies += "dev.zio" %% "zio"          % "2.1.0-RC3",
+      libraryDependencies += "dev.zio" %% "zio-test"     % "2.1.0-RC3",
+      libraryDependencies += "dev.zio" %% "zio-test-sbt" % "2.1.0-RC3"  % Test,
+
+    )
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)
