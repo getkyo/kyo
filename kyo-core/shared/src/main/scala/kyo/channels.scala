@@ -118,15 +118,17 @@ object Channels:
                                     None
                                 case r: Some[Seq[T]] =>
                                     def dropTakes(): Unit < IOs =
-                                        takes.poll() match
-                                            case null => ()
-                                            case p =>
-                                                p.interrupt.map(_ => dropTakes())
+                                        Loops.foreach {
+                                            takes.poll() match
+                                                case null => Loops.doneUnit
+                                                case p    => p.interrupt.map(_ => Loops.continueUnit)
+                                        }
                                     def dropPuts(): Unit < IOs =
-                                        puts.poll() match
-                                            case null => ()
-                                            case (_, p) =>
-                                                p.interrupt.map(_ => dropPuts())
+                                        Loops.foreach {
+                                            puts.poll() match
+                                                case null   => Loops.doneUnit
+                                                case (_, p) => p.interrupt.map(_ => Loops.continueUnit)
+                                        }
                                     dropTakes()
                                         .andThen(dropPuts())
                                         .andThen(r)

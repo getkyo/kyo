@@ -43,15 +43,15 @@ object Queues:
         def peek(): T
 
         def drain(): Seq[T] =
-            def loop(acc: List[T]): List[T] =
+            val b = Seq.newBuilder[T]
+            @tailrec def loop(): Unit =
                 val v = poll()
-                if isNull(v) then
-                    acc.reverse
-                else
-                    loop(v :: acc)
-                end if
+                if !isNull(v) then
+                    b += v
+                    loop()
             end loop
-            loop(Nil)
+            loop()
+            b.result()
         end drain
 
         def isClosed(): Boolean =

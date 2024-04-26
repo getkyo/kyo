@@ -86,47 +86,45 @@ object Meters:
     ): Meter < (IOs & S1 & S2 & S3 & S4) =
         pipeline[S1 & S2 & S3 & S4](List(m1, m2, m3, m4))
 
-    def pipeline[S](l: Seq[Meter < (IOs & S)]): Meter < (IOs & S) =
-        Seqs.collect(l).map { meters =>
+    def pipeline[S](meters: Seq[Meter < (IOs & S)]): Meter < (IOs & S) =
+        Seqs.collect(meters).map { seq =>
+            val meters = seq.toIndexedSeq
             new Meter:
 
                 val available =
-                    def loop(l: Seq[Meter], acc: Int): Int < IOs =
-                        l match
-                            case Seq() => acc
-                            case h +: t =>
-                                h.available.map(v => loop(t, acc + v))
-                    loop(meters, 0)
-                end available
+                    Loops.indexed(0) { (idx, acc) =>
+                        if idx == meters.length then Loops.done(acc)
+                        else meters(idx).available.map(v => Loops.continue(acc + v))
+                    }
 
                 def run[T, S](v: => T < S) =
-                    def loop(l: Seq[Meter]): T < (S & Fibers) =
-                        l match
-                            case Seq() => v
-                            case h +: t =>
-                                h.run(loop(t))
-                    loop(meters)
+                    def loop(idx: Int = 0): T < (S & Fibers) =
+                        if idx == meters.length then v
+                        else meters(idx).run(loop(idx + 1))
+                    loop()
                 end run
 
                 def tryRun[T, S](v: => T < S) =
-                    def loop(l: Seq[Meter]): Option[T] < (IOs & S) =
-                        l match
-                            case Seq() => v.map(Some(_))
-                            case h +: t =>
-                                h.tryRun(loop(t)).map {
-                                    case None => None
-                                    case r    => r.flatten: Option[T]
-                                }
-                    loop(meters)
+                    def loop(idx: Int = 0): Option[T] < (S & IOs) =
+                        if idx == meters.length then v.map(Some(_))
+                        else
+                            meters(idx).tryRun(loop(idx + 1)).map {
+                                case None => None
+                                case r    => r.flatten
+                            }
+                    loop()
                 end tryRun
+
+            end new
         }
 
     private def offer[T](n: Int, chan: Channel[T], v: T): Unit < IOs =
-        if n > 0 then
-            chan.offer(v).map {
-                case true => offer(n - 1, chan, v)
-                case _    => ()
-            }
-        else
-            IOs.unit
+        Loops.indexed { idx =>
+            if idx == n then Loops.doneUnit
+            else
+                chan.offer(v).map {
+                    case true  => Loops.continueUnit
+                    case false => Loops.doneUnit
+                }
+        }
 end Meters

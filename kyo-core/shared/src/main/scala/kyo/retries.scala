@@ -28,18 +28,18 @@ object Retries:
 
     def apply[T: Flat, S](builder: Policy => Policy)(v: => T < S): T < (Fibers & S) =
         val b = builder(Policy.default)
-        def loop(attempt: Int): T < (Fibers & S) =
-            IOs.attempt[T, S](v).map {
+        Loops.indexed { attempt =>
+            IOs.attempt(v).map {
                 case Failure(ex) =>
                     if attempt < b.limit then
                         Fibers.sleep(b.backoff(attempt)).andThen {
-                            loop(attempt + 1)
+                            Loops.continueUnit
                         }
                     else
                         IOs.fail(ex)
-                case Success(value) =>
-                    value
+                case Success(value: T) =>
+                    Loops.done(value)
             }
-        loop(0)
+        }
     end apply
 end Retries

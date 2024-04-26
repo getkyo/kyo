@@ -3,23 +3,25 @@ package kyo
 import java.util.concurrent.CopyOnWriteArraySet
 
 object Hubs:
+
     private[kyo] val closed = IOs.fail("Hub closed!")
+
     def init[T: Flat](capacity: Int): Hub[T] < IOs =
         Channels.init[T](capacity).map { ch =>
             IOs {
                 val listeners = new CopyOnWriteArraySet[Channel[T]]
                 Fibers.init {
-                    def loop(): Unit < Fibers =
+                    Loops.foreach {
                         ch.take.map { v =>
                             IOs {
-                                val l =
+                                val puts =
                                     listeners.toArray
                                         .toList.asInstanceOf[List[Channel[T]]]
                                         .map(child => IOs.attempt(child.put(v)))
-                                Fibers.parallel(l).map(_ => loop())
+                                Fibers.parallel(puts).map(_ => Loops.continueUnit)
                             }
                         }
-                    loop()
+                    }
                 }.map { fiber =>
                     new Hub(ch, fiber, listeners)
                 }
@@ -44,6 +46,7 @@ object Hubs:
 
         def close: Option[Seq[T]] < IOs =
             hub.remove(child).andThen(child.close)
+
     end Listener
 end Hubs
 
@@ -74,17 +77,16 @@ class Hub[T: Flat] private[kyo] (
     def close: Option[Seq[T]] < IOs =
         fiber.interrupt.map { _ =>
             ch.close.map { r =>
-                val it = listeners.iterator()
-                def loop(): Unit < IOs =
-                    IOs {
-                        if it.hasNext() then
-                            IOs.attempt(it.next().close)
-                                .map(_ => loop())
+                IOs {
+                    val array = listeners.toArray()
+                    listeners.removeIf(_ => true)
+                    Loops.indexed { idx =>
+                        if idx == array.length then Loops.doneUnit
                         else
-                            (
-                        )
-                    }
-                loop().andThen(r)
+                            IOs.attempt(array(idx).asInstanceOf[Channel[T]].close)
+                                .map(_ => Loops.continueUnit)
+                    }.andThen(r)
+                }
             }
         }
 

@@ -97,7 +97,7 @@ sealed trait IOs extends Effect[IOs]:
     end run
 
     def runLazy[T: Flat, S](v: T < (IOs & S)): T < S =
-        def runLazyLoop(v: T < (IOs & S)): T < S =
+        @tailrec def runLazyLoop(v: T < (IOs & S)): T < S =
             v match
                 case kyo: Suspend[?, ?, ?, ?] =>
                     if kyo.tag == tag then
