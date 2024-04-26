@@ -2,7 +2,7 @@ package kyo
 
 import java.io.PrintWriter
 import java.io.StringWriter
-import java.util.logging.Logger
+import java.util.logging.*
 
 package object scheduler {
 
@@ -12,13 +12,6 @@ package object scheduler {
         "kyo" :: "scheduler" :: path.toList
 
     private[scheduler] def bug(msg: String, ex: Throwable) =
-        log.severe(s"🙈 !!Kyo Scheduler Bug!! $msg \n Caused by: ${stackTrace(ex)}")
+        log.log(Level.SEVERE, s"🙈 !!Kyo Scheduler Bug!!", new Exception(msg, ex))
 
-    private def stackTrace(ex: Throwable) = {
-        val stackTrace = new StringWriter()
-        val writer     = new PrintWriter(stackTrace)
-        ex.printStackTrace(writer)
-        writer.flush()
-        s"${ex.getMessage()}\n$stackTrace"
-    }
 }
