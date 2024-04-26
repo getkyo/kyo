@@ -72,7 +72,7 @@ object Loops:
                     loop(next.input1, next.input2)
                 case kyo: Kyo[Output | Continue2[Input1, Input2], S] @unchecked =>
                     kyo.map {
-                        case next: Continue2[Input1, Input2] =>
+                        case next: Continue2[Input1, Input2] @unchecked =>
                             _loop(next.input1, next.input2)
                         case res =>
                             res.asInstanceOf[Output]
@@ -106,6 +106,27 @@ object Loops:
                     res.asInstanceOf[Output]
         loop(input1, input2, input3)
     end transform
+
+    inline def indexed[Output: Flat, S](
+        inline run: Int => Result[Unit, Output] < S
+    ): Output < S =
+        def _loop(idx: Int): Output < S =
+            loop(idx)
+        @tailrec def loop(idx: Int): Output < S =
+            run(idx) match
+                case next: Continue[Unit] @unchecked =>
+                    loop(idx + 1)
+                case kyo: Kyo[Output | Continue[Unit], S] @unchecked =>
+                    kyo.map {
+                        case next: Continue[Unit] @unchecked =>
+                            _loop(idx + 1)
+                        case res =>
+                            res.asInstanceOf[Output]
+                    }
+                case res =>
+                    res.asInstanceOf[Output]
+        loop(0)
+    end indexed
 
     inline def indexed[Input, Output: Flat, S](
         input: Input

@@ -45,7 +45,6 @@ object TraceReceiver:
                 parent: Option[Span] = None,
                 a: Attributes = Attributes.empty
             ) =
-                Seqs
-                    .traverse(receivers)(_.startSpan(scope, name, None, a))
+                Seqs.map(receivers)(_.startSpan(scope, name, None, a))
                     .map(Span.all)
 end TraceReceiver

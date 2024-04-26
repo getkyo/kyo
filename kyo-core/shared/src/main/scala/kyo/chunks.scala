@@ -81,7 +81,7 @@ sealed abstract class Chunk[T] derives CanEqual:
         end if
     end concat
 
-    final def map[U: Flat, S](f: T => U < S): Chunk[U] < S =
+    final def map[U, S](f: T => U < S): Chunk[U] < S =
         if isEmpty then Chunks.init
         else
             val size    = this.size

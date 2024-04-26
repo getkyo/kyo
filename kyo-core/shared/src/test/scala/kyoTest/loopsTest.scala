@@ -301,6 +301,49 @@ class loopsTest extends KyoTest:
         }
     }
 
+    "indexed without input" - {
+        "with a single iteration" in {
+            assert(
+                Loops.indexed(idx => if idx < 1 then Loops.continue(()) else Loops.done(idx)).pure == 1
+            )
+        }
+
+        "with multiple iterations" in {
+            assert(
+                Loops.indexed(idx => if idx < 5 then Loops.continue(()) else Loops.done(idx)).pure == 5
+            )
+        }
+
+        "with no iterations" in {
+            assert(
+                Loops.indexed(idx => if idx < 0 then Loops.continue(()) else Loops.done(idx)).pure == 0
+            )
+        }
+
+        "output must be flat" in {
+            assertDoesNotCompile("""
+            def test[T](v: T) = Loops.indexed(idx => Loops.done(v))
+            """)
+        }
+
+        "stack safety" in {
+            val largeNumber = 100000
+            assert(
+                Loops.indexed(idx => if idx < largeNumber then Loops.continue(()) else Loops.done(idx)).pure == largeNumber
+            )
+        }
+
+        "suspend with IOs" in {
+            val result = Loops.indexed(idx =>
+                if idx < 5 then
+                    IOs(Loops.continue(()))
+                else
+                    IOs(Loops.done(idx))
+            )
+            assert(IOs.run(result).pure == 5)
+        }
+    }
+
     "indexed" - {
         "with a single iteration" in {
             assert(

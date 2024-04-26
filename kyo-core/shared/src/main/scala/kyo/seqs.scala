@@ -4,70 +4,125 @@ import kyo.core.*
 
 object Seqs:
 
-    def traverse[T, U, S, S2](v: Seq[T])(f: T => U < S2): Seq[U] < (S & S2) =
-        collect(v.map(f))
-
-    def traverseUnit[T, U, S](v: Seq[T])(f: T => Unit < S): Unit < S =
-        def loop(l: Seq[T]): Unit < S =
-            if l.isEmpty then ()
-            else f(l.head).andThen(loop(l.tail))
-        loop(v)
-    end traverseUnit
-
-    def fold[T, U, S](v: Seq[T])(acc: U)(f: (U, T) => U < S): U < S =
-        val it = v.iterator
-        def loop(acc: U): U < S =
-            if !it.hasNext then acc
-            else f(acc, it.next()).map(loop(_))
-        loop(acc)
-    end fold
-
-    def collect[T, S](v: Seq[T < S]): Seq[T] < S =
-        v match
-            case v: IndexedSeq[T < S] =>
-                val r = new Array[Any](v.size).asInstanceOf[Array[T]]
-                def loop(i: Int): Seq[T] < S =
-                    if i == v.size then
-                        r.toIndexedSeq
-                    else
-                        v(i).map { t =>
-                            r(i) = t
-                            loop(i + 1)
+    def map[T, U, S, S2](seq: Seq[T])(f: T => U < S2): Seq[U] < (S & S2) =
+        seq.size match
+            case 0 => Seq.empty
+            case 1 => f(seq(0)).map(Seq(_))
+            case size =>
+                seq match
+                    case seq: IndexedSeq[T] =>
+                        Loops.indexed(Chunks.init[U]) { (idx, acc) =>
+                            if idx == size then Loops.done(acc.toSeq)
+                            else f(seq(idx)).map(u => Loops.continue(acc.append(u)))
                         }
-                loop(0)
-            case _ =>
-                val b = Seq.newBuilder[T]
-                def loop(v: Seq[T < S]): Seq[T] < S =
-                    if v.isEmpty then
-                        b.result()
-                    else
-                        v.head.map { t1 =>
-                            b += t1
-                            loop(v.tail)
+                    case seq: List[T] =>
+                        Loops.transform(seq, Chunks.init[U]) { (seq, acc) =>
+                            seq match
+                                case Nil          => Loops.done(acc.toSeq)
+                                case head :: tail => f(head).map(u => Loops.continue(tail, acc.append(u)))
                         }
-                    end if
-                end loop
-                loop(v)
+                    case seq =>
+                        Chunks.initSeq(seq).map(f).map(_.toSeq)
+                end match
+
+    def foreach[T, U, S](seq: Seq[T])(f: T => Unit < S): Unit < S =
+        seq.size match
+            case 0 =>
+            case 1 => f(seq(0))
+            case size =>
+                seq match
+                    case seq: IndexedSeq[T] =>
+                        Loops.indexed { idx =>
+                            if idx == size then Loops.doneUnit
+                            else f(seq(idx)).andThen(Loops.continueUnit)
+                        }
+                    case seq: List[T] =>
+                        Loops.transform(seq) {
+                            case Nil          => Loops.doneUnit
+                            case head :: tail => f(head).andThen(Loops.continue(tail))
+                        }
+                    case seq =>
+                        Chunks.initSeq(seq).foreach(f)
+                end match
         end match
-    end collect
+    end foreach
 
-    def collectUnit[T, S](v: Seq[Unit < S]): Unit < S =
-        def loop(l: Seq[Unit < S]): Unit < S =
-            if l.isEmpty then ()
-            else l.head.andThen(loop(l.tail))
-        loop(v)
+    def foldLeft[T, U: Flat, S](seq: Seq[T])(acc: U)(f: (U, T) => U < S): U < S =
+        seq.size match
+            case 0 => acc
+            case 1 => f(acc, seq(0))
+            case size =>
+                seq match
+                    case seq: IndexedSeq[T] =>
+                        Loops.indexed(acc) { (idx, acc) =>
+                            if idx == size then Loops.done(acc)
+                            else f(acc, seq(idx)).map(Loops.continue)
+                        }
+                    case seq: List[T] =>
+                        Loops.transform(seq, acc) { (seq, acc) =>
+                            seq match
+                                case Nil          => Loops.done(acc)
+                                case head :: tail => f(acc, head).map(Loops.continue(tail, _))
+                        }
+                    case seq =>
+                        Chunks.initSeq(seq).foldLeft(acc)(f)
+                end match
+        end match
+    end foldLeft
+
+    def collect[T, S](seq: Seq[T < S]): Seq[T] < S =
+        seq.size match
+            case 0 => Seq.empty
+            case 1 => seq(0).map(Seq(_))
+            case size =>
+                seq match
+                    case seq: IndexedSeq[T < S] =>
+                        Loops.indexed(Chunks.init[T]) { (idx, acc) =>
+                            if idx == size then Loops.done(acc.toSeq)
+                            else seq(idx).map(u => Loops.continue(acc.append(u)))
+                        }
+                    case seq: List[T < S] =>
+                        Loops.transform(seq, Chunks.init[T]) { (seq, acc) =>
+                            seq match
+                                case Nil          => Loops.done(acc.toSeq)
+                                case head :: tail => head.map(u => Loops.continue(tail, acc.append(u)))
+                        }
+                    case seq =>
+                        Chunks.initSeq(seq).map(identity).map(_.toSeq)
+                end match
+
+    def collectUnit[T, S](seq: Seq[Unit < S]): Unit < S =
+        seq.size match
+            case 0 =>
+            case 1 => seq(0)
+            case size =>
+                seq match
+                    case seq: IndexedSeq[Unit < S] =>
+                        Loops.indexed { idx =>
+                            if idx == size then Loops.doneUnit
+                            else seq(idx).map(u => Loops.continueUnit)
+                        }
+                    case seq: List[Unit < S] =>
+                        Loops.transform(seq) { seq =>
+                            seq match
+                                case Nil          => Loops.doneUnit
+                                case head :: tail => head.andThen(Loops.continue(tail))
+                        }
+                    case seq =>
+                        Chunks.initSeq(seq).foreach(identity)
+                end match
     end collectUnit
 
     def fill[T, S](n: Int)(v: => T < S): Seq[T] < S =
-        val r = new Array[Any](n).asInstanceOf[Array[T]]
-        def loop(i: Int): Seq[T] < S =
-            if i == n then
-                r.toIndexedSeq
-            else
-                v.map { e =>
-                    r(i) = e
-                    loop(i + 1)
-                }
-        loop(0)
-    end fill
+        Loops.indexed(Chunks.init[T]) { (idx, acc) =>
+            if idx == n then Loops.done(acc.toSeq)
+            else v.map(t => Loops.continue(acc.append(t)))
+        }
+
+    def repeat[S](n: Int)(v: => Unit < S): Unit < S =
+        Loops.indexed {
+            case `n` => Loops.doneUnit
+            case _ =>
+                v.andThen(Loops.continueUnit)
+        }
 end Seqs
