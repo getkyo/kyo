@@ -92,18 +92,18 @@ import kyo._
 // Kyo still supports both `map` 
 // and `flatMap`.
 def example1(
-    a: Int < Options, 
+    a: Int < IOs, 
     b: Int < Aborts[Exception]
-  ): Int < (Options & Aborts[Exception]) =
+  ): Int < (IOs & Aborts[Exception]) =
     a.flatMap(v => b.map(_ + v))
 
 // But using only `map` is recommended 
 // since it funcions like `flatMap` due 
 // to effect widening.
 def example2(
-    a: Int < Options, 
+    a: Int < IOs, 
     b: Int < Aborts[Exception]
-  ): Int < (Options & Aborts[Exception]) =
+  ): Int < (IOs & Aborts[Exception]) =
     a.map(v => b.map(_ + v))
 ```
 
@@ -211,12 +211,12 @@ def optionsFirst(a: Int < (Options & Aborts[Exception])): Either[Exception, Opti
   val b: Option[Int] < Aborts[Exception] = 
     Options.run(a)
   val c: Either[Exception, Option[Int]] < Any = 
-    Aborts[Exception].run(b)
+    Aborts.run[Exception](b)
   c.pure
 }
 def abortsFirst(a: Int < (Options & Aborts[Exception])): Option[Either[Exception, Int]] = {
   val b: Either[Exception, Int] < Options =
-    Aborts[Exception].run(a)
+    Aborts.run[Exception](a)
   val c: Option[Either[Exception, Int]] < Any = 
     Options.run(b)
   c.pure
@@ -230,20 +230,20 @@ val ex = new Exception
 // If the effects don't short-circuit, only the 
 // order of nested types in the result changes
 optionsFirst(Options.get(Some(1)))            // Right(Some(1))
-optionsFirst(Aborts[Exception].get(Right(1))) // Right(Some(1))
+optionsFirst(Aborts.get(Right(1))) // Right(Some(1))
 
 // Note how the result type changes from 
 // 'Try[Option[T]]' to 'Option[Try[T]]'
 abortsFirst(Options.get(Some(1)))             // Some(Right(1))
-abortsFirst(Aborts[Exception].get(Right(1)))  // Some(Right(1))
+abortsFirst(Aborts.get(Right(1)))  // Some(Right(1))
 
 // If there's short-circuiting, the 
 // resulting value can be different
 optionsFirst(Options.get(None))               // Right(None)
-optionsFirst(Aborts[Exception].get(Left(ex))) // Left(ex)
+optionsFirst(Aborts.get(Left(ex))) // Left(ex)
 
 abortsFirst(Options.get(None))                // None
-abortsFirst(Aborts[Exception].get(Left(ex)))  // Some(Left(ex))
+abortsFirst(Aborts.get(Left(ex)))  // Some(Left(ex))
 ```
 
 ### Direct Syntax
@@ -261,14 +261,14 @@ val a: String < (Aborts[Exception] & Options) =
     val b: String = 
       await(Options.get(Some("hello")))
     val c: String = 
-      await(Aborts[Exception].get(Right("world")))
+      await(Aborts.get(Right("world")))
     b + " " + c
   }
 
 // Equivalent desugared
 val b: String < (Aborts[Exception] & Options) =
   Options.get(Some("hello")).map { b =>
-    Aborts[Exception].get(Right("world")).map { c =>
+    Aborts.get(Right("world")).map { c =>
       b + " " + c
     }
   }
@@ -397,19 +397,19 @@ import kyo._
 // The 'get' method "extracts" the value
 // from an 'Either' (right projection)
 val a: Int < Aborts[String] = 
-  Aborts[String].get(Right(1))
+  Aborts.get(Right(1))
 
 // short-circuiting via 'Left'
 val b: Int < Aborts[String] = 
-  Aborts[String].get(Left("failed!"))
+  Aborts.get(Left("failed!"))
 
 // short-circuiting via 'Fail'
 val c: Int < Aborts[String] = 
-  Aborts[String].fail("failed!")
+  Aborts.fail("failed!")
 
 // 'catching' automatically catches exceptions
 val d: Int < Aborts[Exception] = 
-  Aborts[Exception].catching(throw new Exception)
+  Aborts.catching(throw new Exception)
 ```
 
 > Note that the `Aborts` effect has a type parameter and its methods can only be accessed if the type parameter is provided.
@@ -444,9 +444,9 @@ val d: Int < IOs =
 val e: Try[Int] < IOs =
   IOs.attempt("1".toInt)
 
-// 'handle' takes a partial function to handle exceptions
+// 'catching' takes a partial function to handle exceptions
 val f: Int < IOs =
-  IOs.handle("1".toInt) {
+  IOs.catching("1".toInt) {
     case _: NumberFormatException => 0
   }
 ```
@@ -1948,7 +1948,7 @@ val a: Unit < Routes =
       .out(stringBody)
   ) { (id: Int) =>
     if(id == 42) "ok"
-    else Aborts[StatusCode].fail(StatusCode.NotFound)
+    else Aborts.fail(StatusCode.NotFound)
     // returns a 'String < Aborts[StatusCode]'
   }
 ```

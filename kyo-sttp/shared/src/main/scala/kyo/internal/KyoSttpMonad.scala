@@ -21,7 +21,7 @@ object KyoSttpMonad:
             protected def handleWrappedError[T](rt: T < Fibers)(
                 h: PartialFunction[Throwable, T < Fibers]
             ) =
-                IOs.handle(rt)(h)
+                IOs.catching(rt)(h)
 
             def ensure[T](f: T < Fibers, e: => Unit < Fibers) =
                 IOs.ensure(Fibers.run(e).unit)(f)

@@ -26,8 +26,8 @@ object Handler:
 
     final class Live(db: DB) extends Handler:
 
-        private val notFound            = Aborts[StatusCode].fail(StatusCode.NotFound)
-        private val unprocessableEntity = Aborts[StatusCode].fail(StatusCode.UnprocessableEntity)
+        private val notFound            = Aborts.fail[StatusCode](StatusCode.NotFound)
+        private val unprocessableEntity = Aborts.fail[StatusCode](StatusCode.UnprocessableEntity)
 
         def transaction(account: Int, request: Transaction) = defer {
             import request.*

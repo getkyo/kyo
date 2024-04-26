@@ -4,10 +4,8 @@ type Options = Aborts[None.type]
 
 object Options:
 
-    private val options = Aborts[None.type]
-
     val empty: Nothing < Options =
-        options.fail(None)
+        Aborts.fail(None)
 
     def apply[T](v: T): T < Options =
         if isNull(v) then
@@ -28,7 +26,7 @@ object Options:
         }
 
     def run[T: Flat, S](v: T < (Options & S)): Option[T] < S =
-        options.run(v).map {
+        Aborts.run(v).map {
             case Left(e)  => None
             case Right(v) => Some(v)
         }
