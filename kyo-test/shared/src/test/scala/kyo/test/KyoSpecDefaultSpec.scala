@@ -26,6 +26,6 @@ object KyoSpecDefaultSpec extends KyoSpecDefault:
                     Fibers.delay(Duration.Infinity.asScala)(assertCompletes)
                 } @@ TestAspect.timeout(Duration.Zero)
             ) @@ TestAspect.failing
-        )
+        ) @@ TestAspect.timed
 
 end KyoSpecDefaultSpec
