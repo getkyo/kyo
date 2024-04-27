@@ -482,4 +482,57 @@ class loopsTest extends KyoTest:
             assert(IOs.run(result).pure == 18)
         }
     }
+
+    "foreach" - {
+        "with a single iteration" in {
+            var counter = 0
+            Loops.foreach {
+                counter += 1
+                if counter < 1 then Loops.continue(()) else Loops.done(())
+            }.pure
+            assert(counter == 1)
+        }
+
+        "with multiple iterations" in {
+            var sum = 0
+            Loops.foreach {
+                sum += 1
+                if sum < 10 then Loops.continue(()) else Loops.done(())
+            }.pure
+            assert(sum == 10)
+        }
+
+        "with no iterations" in {
+            var entered = false
+            Loops.foreach {
+                entered = true
+                Loops.done(())
+            }.pure
+            assert(entered)
+        }
+
+        "stack safety" in {
+            var counter     = 0
+            val largeNumber = 100000
+            Loops.foreach {
+                counter += 1
+                if counter < largeNumber then Loops.continue(()) else Loops.done(())
+            }.pure
+            assert(counter == largeNumber)
+        }
+
+        "suspend with IOs" in {
+            var effect = ""
+            val result = Loops.foreach {
+                effect += "A"
+                if effect.length < 3 then
+                    IOs(Loops.continue(()))
+                else
+                    IOs(Loops.done(()))
+                end if
+            }
+            IOs.run(result).pure
+            assert(effect == "AAA")
+        }
+    }
 end loopsTest

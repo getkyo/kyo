@@ -16,8 +16,8 @@ object Loops:
 
     private val _continueUnit = Continue[Unit](())
 
-    inline def continueUnit[T]: Result[Unit, T] = _continueUnit
-    inline def doneUnit[T]: Result[T, Unit]     = ()
+    inline def continue[T]: Result[Unit, T] = _continueUnit
+    inline def done[T]: Result[T, Unit]     = ()
 
     inline def done[Input, Output](v: Output): Result[Input, Output]       = v
     inline def continue[Input, Output, S](v: Input): Result[Input, Output] = Continue(v)
@@ -199,4 +199,25 @@ object Loops:
                     res.asInstanceOf[Output]
         loop(0, input1, input2, input3)
     end indexed
+
+    inline def foreach[S](
+        inline run: => Result[Unit, Unit] < S
+    ): Unit < S =
+        def _loop(): Unit < S =
+            loop()
+        @tailrec def loop(): Unit < S =
+            run match
+                case next: Continue[Unit] @unchecked =>
+                    loop()
+                case kyo: Kyo[Unit | Continue[Unit], S] @unchecked =>
+                    kyo.map {
+                        case next: Continue[Unit] =>
+                            _loop()
+                        case res =>
+                            ()
+                    }
+                case res =>
+                    ()
+        loop()
+    end foreach
 end Loops
