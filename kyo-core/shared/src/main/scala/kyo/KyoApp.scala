@@ -70,7 +70,7 @@ object KyoApp:
     def runFiber[T](timeout: Duration)(v: T < Effects)(
         using f: Flat[T < Effects]
     ): Fiber[Try[T]] =
-        def v0: Try[T] < (Fibers & Resources & Consoles) = Aborts[Throwable].run(v).map(_.toTry)
+        def v0: Try[T] < (Fibers & Resources & Consoles) = Aborts.run[Throwable](v).map(_.toTry)
         def v1: Try[T] < (Fibers & Resources)            = Consoles.run(v0)
         def v2: Try[T] < Fibers                          = Resources.run(v1)
         def v3: Try[T] < Fibers                          = IOs.attempt(v2).map(_.flatten)

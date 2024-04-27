@@ -48,7 +48,7 @@ class KyoAppTest extends KyoTest:
             for
                 _ <- Clocks.now
                 _ <- Randoms.nextInt
-                _ <- Aborts[Throwable].fail(new RuntimeException("Aborts!"))
+                _ <- Aborts.fail(new RuntimeException("Aborts!"))
             yield ()
 
         KyoApp.attempt(Duration.Inf)(run) match

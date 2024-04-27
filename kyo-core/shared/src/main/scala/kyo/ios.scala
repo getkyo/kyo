@@ -59,7 +59,7 @@ sealed trait IOs extends Effect[IOs]:
         end try
     end attempt
 
-    def handle[T, S, U >: T, S2](v: => T < S)(
+    def catching[T, S, U >: T, S2](v: => T < S)(
         pf: PartialFunction[Throwable, U < S2]
     ): U < (S & S2) =
         def handleLoop(v: U < (S & S2)): U < (S & S2) =
@@ -83,7 +83,7 @@ sealed trait IOs extends Effect[IOs]:
             case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
                 pf(ex)
         end try
-    end handle
+    end catching
 
     def run[T](v: T < IOs)(using f: Flat[T < IOs]): T =
         @tailrec def runLoop(v: T < IOs): T =

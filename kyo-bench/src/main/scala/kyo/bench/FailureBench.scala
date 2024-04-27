@@ -49,22 +49,22 @@ class FailureBench extends Bench.SyncAndFork[Either[Ex1 | Ex2, Int]]:
             if i > depth then i
             else
                 (i % 5) match
-                    case 0 => loop(i + 1).map(_ => Aborts[Ex1].fail(Ex1))
-                    case 1 => loop(i + 1).map(_ => Aborts[Ex2].fail(Ex2))
+                    case 0 => loop(i + 1).map(_ => Aborts.fail(Ex1))
+                    case 1 => loop(i + 1).map(_ => Aborts.fail(Ex2))
                     case 2 =>
-                        Aborts[Ex1].run(loop(i + 1)).map {
-                            case Left(Ex1) => Aborts[Ex2].fail(Ex2)
+                        Aborts.run[Ex1](loop(i + 1)).map {
+                            case Left(Ex1) => Aborts.fail(Ex2)
                             case Right(v)  => v
                         }
                     case 3 =>
-                        Aborts[Ex2].run(loop(i + 1)).map {
-                            case Left(Ex2) => Aborts[Ex1].fail(Ex1)
+                        Aborts.run[Ex2](loop(i + 1)).map {
+                            case Left(Ex2) => Aborts.fail(Ex1)
                             case Right(v)  => v
                         }
                     case 4 => loop(i + 1)
                 end match
         end loop
-        Aborts[Ex1 | Ex2].run(loop(0))
+        Aborts.run[Ex1 | Ex2](loop(0))
     end kyoBench
 
     def zioBench() =

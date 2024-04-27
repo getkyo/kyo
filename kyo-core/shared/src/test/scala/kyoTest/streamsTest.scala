@@ -367,8 +367,8 @@ class streamsTest extends KyoTest:
 
         "with failures" in {
             val stream      = Streams.initSeq(Seq("1", "2", "abc", "3"))
-            val transformed = stream.transform(v => Aborts[NumberFormatException].catching(v.toInt)).runSeq
-            assert(Aborts[NumberFormatException].run(transformed).pure.isLeft)
+            val transformed = stream.transform(v => Aborts.catching[NumberFormatException](v.toInt)).runSeq
+            assert(Aborts.run(transformed).pure.isLeft)
         }
 
         "stack safety" in {
@@ -488,9 +488,9 @@ class streamsTest extends KyoTest:
         "early termination" in {
             val stream = Streams.initSeq(Seq(1, 2, 3, 4, 5))
             val folded = stream.runFold(0) { (acc, v) =>
-                if acc < 6 then acc + v else Aborts[Unit].fail(())
+                if acc < 6 then acc + v else Aborts.fail(())
             }
-            assert(Aborts[Unit].run(folded).pure.fold(_ => true, _ => false))
+            assert(Aborts.run[Unit](folded).pure.fold(_ => true, _ => false))
         }
 
         "stack safety" in {

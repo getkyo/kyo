@@ -21,7 +21,7 @@ class MtlBench extends Bench:
                     _    <- Vars[State].update(state => state.copy(value = state.value + 1))
                 yield ()
             )
-        Aborts[Throwable].run(
+        Aborts.run[Throwable](
             Vars[State].run(State(2))(
                 Sums[Event].run(
                     Envs[Env].run(Env("config"))(

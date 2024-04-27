@@ -31,7 +31,7 @@ object Routes:
     ): Unit < Routes =
         Sums[List[Route]].add(List(
             e.serverSecurityLogic[A, KyoSttpMonad.M](a => Right(a)).serverLogic(a =>
-                i => Aborts[E].run(Envs[A].run(a)(f(i)))
+                i => Aborts.run(Envs[A].run(a)(f(i)))
             )
         )).unit
     end add
