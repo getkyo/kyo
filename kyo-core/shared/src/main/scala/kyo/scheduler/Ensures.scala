@@ -50,9 +50,13 @@ private[kyo] object Ensures:
                 case f: (() => Unit) @unchecked =>
                     f()
                 case arr: ArrayDeque[() => Unit] @unchecked =>
-                    while !arr.isEmpty() do
-                        val f = arr.poll()
-                        f()
+                    @tailrec def loop(): Unit =
+                        arr.poll() match
+                            case null =>
+                            case f =>
+                                f()
+                                loop()
+                    loop()
                     discard(bufferCache.offer(arr))
 
         def size(): Int =

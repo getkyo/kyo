@@ -137,8 +137,8 @@ private[kyo] class IOPromise[T](state: State[T])
                             def apply(v: T < IOs) =
                                 result = v
                                 LockSupport.unpark(waiter)
-                            def apply() =
-                                while isNull(result) do
+                            @tailrec def apply() =
+                                if isNull(result) then
                                     val remainingNanos = deadline - System.currentTimeMillis()
                                     if remainingNanos <= 0 then
                                         return IOs.fail(Fibers.Interrupted)
@@ -147,8 +147,9 @@ private[kyo] class IOPromise[T](state: State[T])
                                     else
                                         LockSupport.parkNanos(this, remainingNanos)
                                     end if
-                                end while
-                                result
+                                    apply()
+                                else
+                                    result
                             end apply
                         onComplete(b)
                         b()
