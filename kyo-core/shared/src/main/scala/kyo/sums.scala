@@ -7,8 +7,8 @@ class Sums[V] extends Effect[Sums[V]]:
 
     private val handler =
         new ResultHandler[Chunk[V], Const[V], Sums[V], [T] =>> (Chunk[V], T), Any]:
-            def done[T](st: Chunk[V], v: T) = (st, v)
-            def resume[T, U: Flat, S](st: Chunk[V], command: V, k: T => U < (Sums[V] & S)) =
+            def done[T](st: Chunk[V], v: T)(using Tag[Sums[V]]) = (st, v)
+            def resume[T, U: Flat, S](st: Chunk[V], command: V, k: T => U < (Sums[V] & S))(using Tag[Sums[V]]) =
                 Resume(st.append(command), k(().asInstanceOf[T]))
 end Sums
 

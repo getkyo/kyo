@@ -8,8 +8,8 @@ class Vars[V] extends Effect[Vars[V]]:
 
     private val handler =
         new ResultHandler[V, Const[Op[V]], Vars[V], Id, Any]:
-            def done[T](st: V, v: T) = v
-            def resume[T, U: Flat, S2](st: V, op: Op[V], k: T => U < (Vars[V] & S2)) =
+            def done[T](st: V, v: T)(using Tag[Vars[V]]) = v
+            def resume[T, U: Flat, S2](st: V, op: Op[V], k: T => U < (Vars[V] & S2))(using Tag[Vars[V]]) =
                 op match
                     case _: Get.type =>
                         Resume(st, k(st.asInstanceOf[T]))

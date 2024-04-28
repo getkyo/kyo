@@ -20,6 +20,6 @@ object Defers extends Defers:
         this.handle(handler)((), v)
 
     private val handler = new Handler[Const[Unit], Defers, Any]:
-        def resume[T, U: Flat, S2](command: Command[T], k: T => U < (Defers & S2)) =
+        def resume[T, U: Flat, S2](command: Command[T], k: T => U < (Defers & S2))(using Tag[Defers]) =
             Resume((), k(().asInstanceOf[T]))
 end Defers

@@ -31,7 +31,7 @@ object Choices extends Choices:
 
     private val handler =
         new ResultHandler[Unit, Seq, Choices, Seq, Any]:
-            def done[T](st: Unit, v: T) = Seq(v)
-            def resume[T, U: Flat, S](st: Unit, v: Seq[T], f: T => U < (Choices & S)): (Seq[U] | Resume[U, S]) < (Any & S) =
+            def done[T](st: Unit, v: T)(using Tag[Choices]) = Seq(v)
+            def resume[T, U: Flat, S](st: Unit, v: Seq[T], f: T => U < (Choices & S))(using Tag[Choices]) =
                 Seqs.collect(v.map(e => Choices.run(f(e)))).map(_.flatten)
 end Choices

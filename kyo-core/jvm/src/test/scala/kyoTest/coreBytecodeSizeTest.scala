@@ -11,7 +11,7 @@ class coreBytecodeSizeTest extends KyoTest:
         type Command[T] = T
 
     object TestHandler extends Handler[Id, TestEffect.type, Any]:
-        def resume[T, U: Flat, S](command: T, k: T => U < (TestEffect.type & S)) =
+        def resume[T, U: Flat, S](command: T, k: T => U < (TestEffect.type & S))(using Tag[TestEffect.type]) =
             Resume((), k(command))
 
     class TestSuspend:
@@ -38,7 +38,7 @@ class coreBytecodeSizeTest extends KyoTest:
         assert(map == Map(
             "test"        -> 27,
             "resultLoop"  -> 91,
-            "handleLoop"  -> 253,
+            "handleLoop"  -> 265,
             "_handleLoop" -> 10
         ))
     }
