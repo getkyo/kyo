@@ -181,13 +181,16 @@ class abortsTest extends KyoTest:
                     t3(42)
                 succeed
             }
-            "super" in pendingUntilFixed {
-                assertCompiles("""
-                    val ex                          = new Exception
-                    val a: Int < Aborts[Exception]  = Aborts.fail(ex)
-                    val b: Either[Throwable, Int]   = Aborts.run[Throwable](a).pure
-                    assert(b == Left(ex))
-                """)
+            "super" in {
+                val ex                         = new Exception
+                val a: Int < Aborts[Exception] = Aborts.fail(ex)
+                val b: Either[Throwable, Int]  = Aborts.run[Throwable](a).pure
+                assert(b == Left(ex))
+            }
+            "super success" in {
+                val a: Int < Aborts[Exception] = 24
+                val b: Either[Throwable, Int]  = Aborts.run[Throwable](a).pure
+                assert(b == Right(24))
             }
             "reduce large union incrementally" in {
                 val t1: Int < Aborts[Int | String | Boolean | Float | Char | Double] =
@@ -224,6 +227,11 @@ class abortsTest extends KyoTest:
             val ex: Throwable = new Exception("throwable failure")
             val a             = Aborts.fail(ex)
             assert(Aborts.run[Throwable](a).pure == Left(ex))
+        }
+        "fail inferred" in {
+            val e = "test"
+            val f = Aborts.fail(e)
+            assert(Aborts.run(f).pure == Left(e))
         }
         "when" in {
             def abort(b: Boolean) = Aborts.run[String](Aborts.when(b)("FAIL!")).pure

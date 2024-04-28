@@ -25,10 +25,10 @@ object Aborts:
             case Left(v)  => fail(v)
 
     class RunDsl[V]:
-        def apply[T: Flat, S, VS, VR](v: T < (Aborts[VS] & S))(
+        def apply[V0 <: V, T: Flat, S, VS, VR](v: T < (Aborts[VS] & S))(
             using
-            h: HasAborts[V, VS] { type Remainder = VR },
-            ct: ClassTag[V]
+            h: HasAborts[V0, VS] { type Remainder = VR },
+            ct: ClassTag[V0]
         ): Either[V, T] < (VR & S) =
             DoAbort.handle(handler)(ct, v).asInstanceOf[Either[V, T] < (VR & S)]
     end RunDsl
