@@ -1,6 +1,5 @@
 package kyo
 
-import scala.concurrent.duration.*
 import scala.util.*
 
 object Retries:
@@ -9,7 +8,7 @@ object Retries:
         def exponential(
             startBackoff: Duration,
             factor: Int = 2,
-            maxBackoff: Duration = Duration.Inf
+            maxBackoff: Duration = Duration.Infinity
         ): Policy =
             backoff { i =>
                 (startBackoff * factor * (i + 1)).min(maxBackoff)

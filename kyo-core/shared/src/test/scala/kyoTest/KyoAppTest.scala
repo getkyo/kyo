@@ -3,7 +3,6 @@ package kyoTest
 import Tagged.*
 import java.time.Instant
 import kyo.*
-import scala.concurrent.duration.*
 
 class KyoAppTest extends KyoTest:
 
@@ -33,7 +32,7 @@ class KyoAppTest extends KyoTest:
     "effects" taggedAs jvmOnly in {
         def run: Int < KyoApp.Effects =
             for
-                _ <- Timers.scheduleAtFixedRate(1.second, 1.second)(())
+                _ <- Timers.scheduleAtFixedRate(1.seconds, 1.seconds)(())
                 i <- Randoms.nextInt
                 _ <- Consoles.println(s"$i")
                 _ <- Clocks.now
@@ -41,7 +40,7 @@ class KyoAppTest extends KyoTest:
                 _ <- Fibers.init(())
             yield 1
 
-        assert(KyoApp.run(Duration.Inf)(run) == 1)
+        assert(KyoApp.run(Duration.Infinity)(run) == 1)
     }
     "failing effects" taggedAs jvmOnly in {
         def run: Unit < KyoApp.Effects =
@@ -51,7 +50,7 @@ class KyoAppTest extends KyoTest:
                 _ <- Aborts.fail(new RuntimeException("Aborts!"))
             yield ()
 
-        KyoApp.attempt(Duration.Inf)(run) match
+        KyoApp.attempt(Duration.Infinity)(run) match
             case scala.util.Failure(exception) => assert(exception.getMessage == "Aborts!")
             case _                             => fail("Unexpected Success...")
     }

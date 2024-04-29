@@ -1,7 +1,6 @@
 package kyo.test.interop
 
 import kyo.*
-import scala.concurrent.duration.Duration
 import scala.language.postfixOps
 import zio.ZIO
 import zio.duration2DurationOps
@@ -13,7 +12,7 @@ object zioSpec extends ZIOSpecDefault:
     case object TestFail extends Throwable("Fail!")
     def spec = suite("ZIO.fromKyoFiber")(
         test("ZIO.timeout") {
-            val kyoNever = ZIO.fromKyoFiber { IOs.run(Fibers.run(Fibers.sleep(Duration.Inf))) }
+            val kyoNever = ZIO.fromKyoFiber { IOs.run(Fibers.run(Fibers.sleep(Duration.Infinity))) }
             val message  = "Successful interrupt!"
 
             for

@@ -16,6 +16,7 @@ import kyo.internal.KyoSttpMonad
 import kyo.server.internal.KyoUtil.*
 import scala.concurrent.Future
 import scala.concurrent.duration.*
+import scala.concurrent.duration.Duration
 import scala.concurrent.duration.FiniteDuration
 import sttp.monad.MonadError
 import sttp.tapir.server.ServerEndpoint

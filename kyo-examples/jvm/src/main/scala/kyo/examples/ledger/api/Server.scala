@@ -3,7 +3,6 @@ package kyo.examples.ledger.api
 import java.util.concurrent.Executors
 import kyo.*
 import kyo.examples.ledger.db.DB
-import scala.concurrent.duration.*
 import sttp.tapir.server.netty.*
 
 object Server extends KyoApp:

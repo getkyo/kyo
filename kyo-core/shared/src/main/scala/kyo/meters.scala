@@ -1,7 +1,5 @@
 package kyo
 
-import scala.concurrent.duration.Duration
-
 abstract class Meter:
     self =>
 

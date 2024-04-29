@@ -4,7 +4,6 @@ import java.io.Closeable
 import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 import kyo.*
 import org.scalatest.compatible.Assertion
-import scala.concurrent.duration.*
 import scala.util.Failure
 import scala.util.Try
 
@@ -141,8 +140,8 @@ class fibersTest extends KyoTest:
     "runAndBlock" - {
 
         "timeout" in runJVM {
-            IOs.attempt(Fibers.runAndBlock(Duration.Inf)(
-                Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
+            IOs.attempt(Fibers.runAndBlock(Duration.Infinity)(
+                Fibers.timeout(10.millis)(Fibers.sleep(1.days).andThen(1))
             )).map {
                 case Failure(Fibers.Interrupted) => succeed
                 case v                           => fail(v.toString())
@@ -151,7 +150,7 @@ class fibersTest extends KyoTest:
 
         "block timeout" in runJVM {
             IOs.attempt(Fibers.runAndBlock(10.millis)(
-                Fibers.sleep(1.day).andThen(1)
+                Fibers.sleep(1.days).andThen(1)
             )).map {
                 case Failure(Fibers.Interrupted) => succeed
                 case v                           => fail(v.toString())
@@ -160,7 +159,7 @@ class fibersTest extends KyoTest:
 
         "multiple fibers timeout" in runJVM {
             IOs.attempt(Fibers.runAndBlock(10.millis)(
-                Seqs.fill(100)(Fibers.sleep(1.milli)).unit.andThen(1)
+                Seqs.fill(100)(Fibers.sleep(1.millis)).unit.andThen(1)
             )).map {
                 case Failure(Fibers.Interrupted) => succeed
                 case v                           => fail(v.toString())

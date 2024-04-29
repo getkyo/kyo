@@ -7,7 +7,6 @@ import org.scalatest.concurrent.ScalaFutures.*
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.concurrent.duration.*
 import scala.util.Try
 
 class KyoTest extends AsyncFreeSpec with NonImplicitAssertions:
@@ -29,7 +28,7 @@ class KyoTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     def timeout =
         if Platform.isDebugEnabled then
-            Duration.Inf
+            Duration.Infinity
         else
             5.seconds
 

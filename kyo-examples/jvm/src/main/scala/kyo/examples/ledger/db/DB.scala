@@ -2,7 +2,6 @@ package kyo.examples.ledger.db
 
 import kyo.*
 import kyo.examples.ledger.*
-import scala.concurrent.duration.*
 
 trait DB:
 
