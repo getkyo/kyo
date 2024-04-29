@@ -177,17 +177,20 @@ class abortsTest extends KyoTest:
                     t2(42)
                 def t3(v: Int < Aborts[Int]) =
                     Aborts.run[Int](v).pure
-                val _: Either[Int, Int] < Any =
+                val _: Either[Int, Int] =
                     t3(42)
                 succeed
             }
-            "super" in pendingUntilFixed {
-                assertCompiles("""
-                    val ex                              = new Exception
-                    val a: Int < Aborts[Exception]      = Aborts.fail(ex)
-                    val b: Either[Throwable, Int] < Any = Aborts.run[Throwable](a).pure  
-                    assert(b == Left(ex))
-                """)
+            "super" in {
+                val ex                         = new Exception
+                val a: Int < Aborts[Exception] = Aborts.fail(ex)
+                val b: Either[Throwable, Int]  = Aborts.run[Throwable](a).pure
+                assert(b == Left(ex))
+            }
+            "super success" in {
+                val a: Int < Aborts[Exception] = 24
+                val b: Either[Throwable, Int]  = Aborts.run[Throwable](a).pure
+                assert(b == Right(24))
             }
             "reduce large union incrementally" in {
                 val t1: Int < Aborts[Int | String | Boolean | Float | Char | Double] =
@@ -225,6 +228,11 @@ class abortsTest extends KyoTest:
             val a             = Aborts.fail(ex)
             assert(Aborts.run[Throwable](a).pure == Left(ex))
         }
+        "fail inferred" in {
+            val e = "test"
+            val f = Aborts.fail(e)
+            assert(Aborts.run(f).pure == Left(e))
+        }
         "when" in {
             def abort(b: Boolean) = Aborts.run[String](Aborts.when(b)("FAIL!")).pure
 
@@ -254,6 +262,32 @@ class abortsTest extends KyoTest:
                         Aborts.run[RuntimeException](Aborts.catching[RuntimeException](test(0))).pure ==
                             Left(ex1)
                     )
+                }
+                "distinct" in {
+                    class Distinct1 extends Throwable derives CanEqual
+                    val d1 = new Distinct1
+                    class Distinct2 extends Throwable derives CanEqual
+                    val d2 = new Distinct2
+
+                    val distinct: Boolean < Aborts[Distinct1 | Distinct2] =
+                        for
+                            _ <- Aborts.catching[Distinct1](throw d1)
+                            _ <- Aborts.catching[Distinct2](throw d2)
+                        yield true
+
+                    val a = Aborts.run[Distinct1](distinct)
+                    val b = Aborts.run[Distinct2](a).pure
+                    assert(b == Right(Left(d1)))
+
+                    val c = Aborts.run(distinct).pure
+                    assert(c == Left(d1))
+                }
+                "ClassTag inference" in pendingUntilFixed {
+                    assertCompiles("""
+                        val r = Aborts.run(Aborts.catching(throw new RuntimeException)).pure
+                        assert(r.isLeft)
+                    """)
+
                 }
             }
             "with other effect" - {

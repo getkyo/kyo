@@ -22,20 +22,20 @@ object Aborts:
     def get[V, T](e: Either[V, T]): T < Aborts[V] =
         e match
             case Right(v) => v
-            case Left(v)  => DoAbort.suspend(v).asInstanceOf[Nothing < Aborts[V]]
+            case Left(v)  => fail(v)
 
-    class RunDsl[V]():
-        def apply[T: Flat, S, VS, VR](v: T < (Aborts[VS] & S))(
+    class RunDsl[V]:
+        def apply[V0 <: V, T: Flat, S, VS, VR](v: T < (Aborts[VS] & S))(
             using
-            h: HasAborts[V, VS] { type Remainder = VR },
-            ct: ClassTag[V]
+            h: HasAborts[V0, VS] { type Remainder = VR },
+            ct: ClassTag[V0]
         ): Either[V, T] < (VR & S) =
             DoAbort.handle(handler)(ct, v).asInstanceOf[Either[V, T] < (VR & S)]
     end RunDsl
 
-    def run[V]: RunDsl[V] = RunDsl()
+    def run[V]: RunDsl[V] = RunDsl[V]
 
-    class CatchingDsl[V]():
+    class CatchingDsl[V <: Throwable]:
         def apply[T: Flat, S](v: => T < S)(
             using ct: ClassTag[V]
         ): T < (Aborts[V] & S) =
@@ -44,7 +44,7 @@ object Aborts:
             }
     end CatchingDsl
 
-    def catching[V]: CatchingDsl[V] = CatchingDsl()
+    def catching[V <: Throwable]: CatchingDsl[V] = CatchingDsl[V]
 
     private object internal:
 
