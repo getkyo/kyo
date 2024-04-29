@@ -21,7 +21,7 @@ object Routes:
         run[T, S](NettyKyoServer())(v)
 
     def run[T, S](server: NettyKyoServer)(v: Unit < (Routes & S)): NettyKyoServerBinding < (Fibers & S) =
-        Sums[Route].run[Unit, Fibers & S](v).map { (routes, _) =>
+        Sums.run[Route].apply[Unit, Fibers & S](v).map { (routes, _) =>
             IOs(server.addEndpoints(routes.toSeq.toList).start()): NettyKyoServerBinding < (Fibers & S)
         }
     end run
@@ -29,7 +29,7 @@ object Routes:
     def add[A: Tag, I, E: Tag: ClassTag, O: Flat](e: Endpoint[A, I, E, O, Any])(
         f: I => O < (Fibers & Envs[A] & Aborts[E])
     ): Unit < Routes =
-        Sums[List[Route]].add(List(
+        Sums.add(List(
             e.serverSecurityLogic[A, KyoSttpMonad.M](a => Right(a)).serverLogic(a =>
                 i => Aborts.run(Envs[A].run(a)(f(i)))
             )
