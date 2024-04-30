@@ -1,8 +1,6 @@
 package kyo.test
 
 import kyo.*
-import zio.Duration
-import zio.duration2DurationOps
 import zio.test.*
 
 object KyoSpecDefaultSpec extends KyoSpecDefault:
@@ -24,8 +22,8 @@ object KyoSpecDefaultSpec extends KyoSpecDefault:
                     Aborts.fail[Throwable](new RuntimeException("Abort!")).map(_ => assertCompletes)
                 },
                 test("Fibers.delay") {
-                    Fibers.delay(Duration.Infinity.asScala)(assertCompletes)
-                } @@ TestAspect.timeout(Duration.Zero)
+                    Fibers.delay(Duration.Infinity)(assertCompletes)
+                } @@ TestAspect.timeout(Duration.Zero.toJava)
             ) @@ TestAspect.failing
         ) @@ TestAspect.timed
 

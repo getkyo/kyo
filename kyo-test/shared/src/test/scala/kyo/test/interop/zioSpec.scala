@@ -3,8 +3,6 @@ package kyo.test.interop
 import kyo.*
 import scala.language.postfixOps
 import zio.ZIO
-import zio.duration2DurationOps
-import zio.durationInt
 import zio.test.*
 
 object zioSpec extends ZIOSpecDefault:
@@ -16,13 +14,13 @@ object zioSpec extends ZIOSpecDefault:
             val message  = "Successful interrupt!"
 
             for
-                result <- kyoNever.timeoutFail(TestTimeoutException(message))(10.millis).either
+                result <- kyoNever.timeoutFail(TestTimeoutException(message))(10.millis.toJava).either
             yield assertTrue(result.is(_.left).getMessage == message)
         },
         test("completes") {
             for
                 result <- ZIO.fromKyoFiber {
-                    KyoApp.runFiber(Fibers.delay(10.millis.asScala)(Fibers.init(IOs(21 * 2)).map(_.get)))
+                    KyoApp.runFiber(Fibers.delay(10.millis)(Fibers.init(IOs(21 * 2)).map(_.get)))
                 }.flatMap(ZIO.fromTry)
             yield assertTrue(result == 42)
         },
