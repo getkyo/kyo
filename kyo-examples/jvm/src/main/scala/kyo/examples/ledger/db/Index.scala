@@ -28,7 +28,7 @@ end Index
 object Index:
 
     val init: Index < (Envs[DB.Config] & IOs) = defer {
-        val cfg  = await(Envs[DB.Config].get)
+        val cfg  = await(Envs.get[DB.Config])
         val file = await(open(cfg.workingDir + "/index.dat"))
         await(IOs(Live(file)))
     }

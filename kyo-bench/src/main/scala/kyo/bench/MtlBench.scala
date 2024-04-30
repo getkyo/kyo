@@ -16,15 +16,15 @@ class MtlBench extends Bench:
         def testKyo: Unit < (Aborts[Throwable] & Envs[Env] & Vars[State] & Sums[Event]) =
             Seqs.foreach(loops)(_ =>
                 for
-                    conf <- Envs[Env].use(_.config)
+                    conf <- Envs.use[Env](_.config)
                     _    <- Sums.add(Event(s"Env = $conf"))
                     _    <- Vars[State].update(state => state.copy(value = state.value + 1))
                 yield ()
             )
         Aborts.run[Throwable](
             Vars[State].run(State(2))(
-                Sums.run[Event](
-                    Envs[Env].run(Env("config"))(
+                Sums.run(
+                    Envs.run(Env("config"))(
                         testKyo.andThen(Vars[State].get)
                     )
                 )

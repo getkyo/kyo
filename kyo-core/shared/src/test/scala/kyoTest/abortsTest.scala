@@ -298,16 +298,16 @@ class abortsTest extends KyoTest:
                     }
                 "success" in {
                     assert(
-                        Envs[Int].run(2)(
-                            Aborts.run[Ex1](Aborts.catching[Ex1](test(Envs[Int].get)))
+                        Envs.run(2)(
+                            Aborts.run[Ex1](Aborts.catching[Ex1](test(Envs.get)))
                         ).pure ==
                             Right(5)
                     )
                 }
                 "failure" in {
                     assert(
-                        Envs[Int].run(0)(
-                            Aborts.run[Ex1](Aborts.catching[Ex1](test(Envs[Int].get)))
+                        Envs.run(0)(
+                            Aborts.run[Ex1](Aborts.catching[Ex1](test(Envs.get)))
                         ).pure ==
                             Left(ex1)
                     )

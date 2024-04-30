@@ -7,26 +7,32 @@ class Envs[+V] extends Effect[Envs[V]]:
 
 object Envs:
     private case object envs extends Envs[Any]
-    def apply[V]: Envs[V] = envs.asInstanceOf[Envs[V]]
+    private def envs[V]: Envs[V] = envs.asInstanceOf[Envs[V]]
 
-    extension [V](self: Envs[V])
+    def get[V](using Tag[Envs[V]]): V < Envs[V] =
+        envs[V].suspend[V](())
 
-        def get(using Tag[Envs[V]]): V < Envs[V] =
-            self.suspend[V](())
-
-        inline def use[T, S](inline f: V => T < S)(
+    class UseDsl[V]:
+        inline def apply[T, S](inline f: V => T < S)(
             using inline tag: Tag[Envs[V]]
         ): T < (Envs[V] & S) =
-            self.suspend[V, T, S]((), f)
+            envs[V].suspend[V, T, S]((), f)
+    end UseDsl
 
-        def run[T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
+    def use[V >: Nothing]: UseDsl[V] =
+        new UseDsl[V]
+
+    class RunDsl[V]:
+        def apply[T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
             using
             HasEnvs[V, VS] { type Remainder = VR },
             Tag[Envs[V]]
         ): T < (S & VR) =
-            Envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
+            envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
+    end RunDsl
 
-    end extension
+    def run[V >: Nothing]: RunDsl[V] =
+        new RunDsl[V]
 
     private def handler[V]: ResultHandler[V, Const[Unit], Envs[V], Id, Any] =
         cachedHandler.asInstanceOf[ResultHandler[V, Const[Unit], Envs[V], Id, Any]]

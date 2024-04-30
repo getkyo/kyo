@@ -21,7 +21,7 @@ object Log:
     case class Entry(balance: Int, account: Int, amount: Int, desc: String)
 
     val init: Log < (Envs[DB.Config] & IOs) = defer {
-        val cfg = await(Envs[DB.Config].get)
+        val cfg = await(Envs.get[DB.Config])
         val q   = await(Queues.initUnbounded[Entry](Access.Mpsc))
         val log = await(IOs(Live(cfg.workingDir + "/log.dat", q)))
         await(Fibers.init(log.flushLoop(cfg.flushInterval)))

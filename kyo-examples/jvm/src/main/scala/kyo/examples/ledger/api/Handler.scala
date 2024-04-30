@@ -21,7 +21,7 @@ end Handler
 object Handler:
 
     val init: Handler < Envs[DB] = defer {
-        Live(await(Envs[DB].get))
+        Live(await(Envs.get[DB]))
     }
 
     final class Live(db: DB) extends Handler:

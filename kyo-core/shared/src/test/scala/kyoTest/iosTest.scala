@@ -24,7 +24,7 @@ class iosTest extends KyoTest:
         "next handled effects can execute" in run {
             var called = false
             val v =
-                Envs[Int].get.map { i =>
+                Envs.get[Int].map { i =>
                     IOs {
                         called = true
                         i
@@ -34,7 +34,7 @@ class iosTest extends KyoTest:
             val v2 = IOs.runLazy(v)
             assert(!called)
             assert(
-                Envs[Int].run(1)(v2).pure ==
+                Envs.run(1)(v2).pure ==
                     1
             )
             assert(called)
