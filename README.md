@@ -762,7 +762,7 @@ val c: Int < Any =
   )
 ```
 
-## Chunks: Efficient Sequences
+### Chunks: Efficient Sequences
 
 `Chunks` is an efficient mechanism for processing sequences of data in a purely functional manner. It offers a wide range of operations optimized for different scenarios, ensuring high performance without compromising functional programming principles.
 
@@ -877,6 +877,54 @@ val o: Chunk[Int] =
 val p: Chunk[Int] = 
   Chunks.init(1, 1, 2, 3, 3, 1, 1).changes
 ```
+
+### Sums: Accumulating Values
+
+The `Sums` effect is designed to accumulate values throughout a computation, similar to the `Writer` monad. It collects a `Chunk` of values alongside the main result of a computation.
+
+```scala
+import kyo._
+
+// Add a value
+val a: Unit < Sums[Int] = 
+  Sums.add(42)
+
+// Add multiple values
+val b: String < Sums[Int] =
+  for
+    _ <- Sums.add(1)
+    _ <- Sums.add(2)
+    _ <- Sums.add(3)
+  yield "r"
+
+// Handle the effect to obtain the 
+// accumulated log and the result.
+// Evaluates to `(Chunk(1, 2, 3), "r")`
+val c: (Chunk[Int], String) < Any =
+  Sums.run(b)
+
+```
+
+When running `Sums`, the accumulated values are returned in a `Chunk`. The collected values and the result are returned as a tuple by `Sums.run`, with the `Chunk` as the first element. A computation can also use multiple `Sums` of different types.
+
+```scala
+import kyo._
+
+val a: String < (Sums[Int] & Sums[String]) =
+  for
+    _ <- Sums.add(1)
+    _ <- Sums.add("log")
+    _ <- Sums.add(2)
+  yield "result"
+
+// Note how `run` requires an explicit type
+// parameter when a computation has multiple
+// pending `Sum`s.
+val b: (Chunk[Int], (Chunk[String], String)) < Any =
+  Sums.run[Int](Sums.run[String](a))
+```
+
+The `Sums` effect is useful for collecting diagnostic information, accumulating intermediate results, or building up data structures during a computation.
 
 ### Aspects: Aspect-Oriented Programming
 
