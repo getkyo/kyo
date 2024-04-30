@@ -10,9 +10,10 @@ opaque type Duration = Long
 given CanEqual[Duration, Duration] = Duration.canEqual
 
 object Duration:
-    val Zero: Duration                   = 0
-    val Infinity: Duration               = Long.MaxValue
-    def fromNanos(value: Long): Duration = value
+    val Zero: Duration     = 0
+    val Infinity: Duration = Long.MaxValue
+
+    inline def fromNanos(value: Long): Duration = value
     def fromJava(value: JavaDuration): Duration =
         (value.toNanos: @annotation.switch) match
             case 0                  => Zero
@@ -43,20 +44,20 @@ extension (value: Long)
     private inline def as(unit: Units): Duration =
         if value <= 0 then Duration.Zero else Math.min(value.multiply(unit.factor), Duration.Infinity)
 
-    def nanos: Duration   = value
-    def micros: Duration  = as(Micros)
-    def millis: Duration  = as(Millis)
-    def seconds: Duration = as(Seconds)
-    def minutes: Duration = as(Minutes)
-    def hours: Duration   = as(Hours)
-    def days: Duration    = as(Days)
-    def weeks: Duration   = as(Weeks)
-    def months: Duration  = as(Months)
-    def years: Duration   = as(Years)
+    inline def nanos: Duration   = value
+    inline def micros: Duration  = as(Micros)
+    inline def millis: Duration  = as(Millis)
+    inline def seconds: Duration = as(Seconds)
+    inline def minutes: Duration = as(Minutes)
+    inline def hours: Duration   = as(Hours)
+    inline def days: Duration    = as(Days)
+    inline def weeks: Duration   = as(Weeks)
+    inline def months: Duration  = as(Months)
+    inline def years: Duration   = as(Years)
 end extension
 
 extension (self: Duration)
-    private def to(unit: Units): Long = Math.max(Math.round(self / unit.factor), Duration.Zero)
+    private inline def to(unit: Units): Long = Math.max(Math.round(self / unit.factor), Duration.Zero)
 
     def +(that: Duration): Duration =
         val sum: Long = self + that
@@ -81,16 +82,16 @@ extension (self: Duration)
     def max(that: Duration): Duration = Math.max(self, that)
     def min(that: Duration): Duration = Math.min(self, that)
 
-    def toNanos: Long   = self
-    def toMicros: Long  = to(Micros)
-    def toMillis: Long  = to(Millis)
-    def toSeconds: Long = to(Seconds)
-    def toMinutes: Long = to(Minutes)
-    def toHours: Long   = to(Hours)
-    def toDays: Long    = to(Days)
-    def toWeeks: Long   = to(Weeks)
-    def toMonths: Long  = to(Months)
-    def toYears: Long   = to(Years)
+    inline def toNanos: Long   = self
+    inline def toMicros: Long  = to(Micros)
+    inline def toMillis: Long  = to(Millis)
+    inline def toSeconds: Long = to(Seconds)
+    inline def toMinutes: Long = to(Minutes)
+    inline def toHours: Long   = to(Hours)
+    inline def toDays: Long    = to(Days)
+    inline def toWeeks: Long   = to(Weeks)
+    inline def toMonths: Long  = to(Months)
+    inline def toYears: Long   = to(Years)
 
     def toScala: ScalaDuration =
         (self: @annotation.switch) match
@@ -104,5 +105,5 @@ extension (self: Duration)
             case n             => JavaDuration.of(n, NANOS)
 
     // Is this Robust enough?
-    private[kyo] def isFinite: Boolean = self < Duration.Infinity
+    private[kyo] inline def isFinite: Boolean = self < Duration.Infinity
 end extension
