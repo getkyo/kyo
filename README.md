@@ -880,7 +880,7 @@ val p: Chunk[Int] =
 
 ### Sums: Accumulating Values
 
-The `Sums` effect is designed to accumulate values throughout a computation, similar to the `Writer` monad in Haskell or ZIO. It collects a `Chunk` of values alongside the main result of a computation.
+The `Sums` effect is designed to accumulate values throughout a computation, similar to the `Writer` monad. It collects a `Chunk` of values alongside the main result of a computation.
 
 ```scala
 import kyo._
@@ -895,15 +895,17 @@ val b: String < Sums[Int] =
     _ <- Sums.add(1)
     _ <- Sums.add(2)
     _ <- Sums.add(3)
-  yield "result"
+  yield "r"
 
 // Handle the effect to obtain the 
-// accumulated log and the result
+// accumulated log and the result.
+// Evaluates to `(Chunk(1, 2, 3), "r")`
 val c: (Chunk[Int], String) < Any =
   Sums.run(b)
+
 ```
 
-When handling `Sums`, the accumulated values are returned in a `Chunk`. The collected values and the result are returned as a tuple, with the `Chunk` as the first element. A computation can also use multiple `Sums` of different types.
+When running `Sums`, the accumulated values are returned in a `Chunk`. The collected values and the result are returned as a tuple by `Sums.run`, with the `Chunk` as the first element. A computation can also use multiple `Sums` of different types.
 
 ```scala
 import kyo._
