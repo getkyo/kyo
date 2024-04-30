@@ -878,6 +878,56 @@ val p: Chunk[Int] =
   Chunks.init(1, 1, 2, 3, 3, 1, 1).changes
 ```
 
+### Vars: Stateful Computations
+
+The `Vars` effect allows for stateful computations, similar to the `State` monad. It enables the management of state within a computation in a purely functional manner.
+
+```scala
+import kyo._
+
+// Get the current value
+val a: Int < Vars[Int] =  
+  Vars.get[Int]
+
+// Set a new value
+val b: Unit < Vars[Int] =
+  Vars.set(10) 
+
+// Update the state based on its current value
+val c: Unit < Vars[Int] =
+  Vars.update[Int](v => v + 1)
+
+// Use in a computation
+val d: String < Vars[Int] =
+  Vars.use[Int](v => v.toString)
+
+// Handle the effect and discard state
+val e: String < Any =
+  Vars.run(10)(d)
+```
+
+`Vars` is particularly useful when you need to maintain and manipulate state across multiple steps of a computation.
+
+```scala
+import kyo._
+
+// A computation that uses `Vars` to maintain a counter
+def counter[S](n: Int): Int < (Vars[Int] & S) =
+  if n <= 0 then 
+    Vars.get[Int]
+  else
+    for
+      _ <- Vars.update[Int](_ + 1)
+      result <- counter(n - 1)
+    yield result
+
+// Initialize the counter with an initial state
+val a: Int < Any =
+  Vars.run(0)(counter(10))
+```
+
+By combining Vars with other effects like Fibers, you can create stateful computations that can be safely executed concurrently.
+
 ### Sums: Accumulating Values
 
 The `Sums` effect is designed to accumulate values throughout a computation, similar to the `Writer` monad. It collects a `Chunk` of values alongside the main result of a computation.
