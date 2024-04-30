@@ -25,9 +25,8 @@ class envsTest extends KyoTest:
     }
 
     "passing subclass" in {
-        trait Super {
+        trait Super:
             def i = 42
-        }
         case class Sub() extends Super
         assert(Envs.run[Super](Sub())(Envs.use[Super](_.i)).pure == 42)
     }
