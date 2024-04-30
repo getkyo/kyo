@@ -1,8 +1,6 @@
 package kyo
 
 import kyo.core.*
-import scala.annotation.implicitNotFound
-import scala.util.NotGiven
 
 class Sums[V] extends Effect[Sums[V]]:
     type Command[T] = V
