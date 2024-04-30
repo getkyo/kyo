@@ -13,7 +13,7 @@ object Endpoints:
 
     val init: Unit < (Envs[Handler] & Routes) = defer {
 
-        val handler = await(Envs[Handler].get)
+        val handler = await(Envs.get[Handler])
 
         await {
             Routes.add(

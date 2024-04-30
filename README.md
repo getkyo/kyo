@@ -513,7 +513,7 @@ trait Database {
 // Note how the computation produces a 'Database' but at the
 // same time requires a 'Database' from its environment
 val a: Database < Envs[Database] = 
-  Envs[Database].get
+  Envs.get[Database]
 
 // Use the 'Database' to obtain the count
 val b: Int < (Envs[Database] & IOs) = 
@@ -526,7 +526,7 @@ val db = new Database {
 
 // Handle the 'Envs' effect with the mock database
 val c: Int < IOs = 
-  Envs[Database].run(db)(b)
+  Envs.run(db)(b)
 
 // Additionally, a computation can require multiple values 
 // from its environment.
@@ -538,10 +538,10 @@ trait Cache {
 
 // A computation that requires two values
 val d: Unit < (Envs[Database] & Envs[Cache] & IOs) = 
-  Envs[Database].get.map { db =>
+  Envs.get[Database].map { db =>
     db.count.map {
       case 0 => 
-        Envs[Cache].get.map(_.clear)
+        Envs.get[Cache].map(_.clear)
       case _ => 
         ()
     }

@@ -40,9 +40,9 @@ object Server extends KyoApp:
         val timer = Timer(Executors.newSingleThreadScheduledExecutor())
 
         val init = defer {
-            val db      = await(Envs[DB.Config].run(dbConfig)(DB.init))
-            val handler = await(Envs[DB].run(db)(Handler.init))
-            await(Envs[Handler].run(handler)(Endpoints.init))
+            val db      = await(Envs.run(dbConfig)(DB.init))
+            val handler = await(Envs.run(db: DB)(Handler.init))
+            await(Envs.run(handler)(Endpoints.init))
         }
 
         defer {

@@ -25,7 +25,7 @@ object DB:
         flushInterval: Duration
     )
 
-    val init: Live < (Envs[Config] & IOs) = defer {
+    val init: DB < (Envs[Config] & IOs) = defer {
         val index = await(Index.init)
         val log   = await(Log.init)
         Live(index, log)
