@@ -43,7 +43,7 @@ extension (value: Long)
     private inline def as(unit: Units): Duration =
         if value <= 0 then Duration.Zero else Math.min(value.multiply(unit.factor), Duration.Infinity)
 
-    def nanos: Duration   = as(Nanos)
+    def nanos: Duration   = value
     def micros: Duration  = as(Micros)
     def millis: Duration  = as(Millis)
     def seconds: Duration = as(Seconds)
