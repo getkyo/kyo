@@ -70,6 +70,7 @@ lazy val kyo =
             `kyo-sttp`,
             `kyo-tapir`,
             `kyo-bench`,
+            `kyo-test`,
             `kyo-examples`
         )
 
@@ -185,18 +186,19 @@ lazy val `kyo-tapir` =
         )
 
 lazy val `kyo-test` =
-  crossProject(JVMPlatform, JSPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .crossType(CrossType.Full)
-    .in(file("kyo-test"))
-    .dependsOn(`kyo-core` % "test->test;compile->compile")
-    .settings(
-      `kyo-settings`,
-      libraryDependencies += "dev.zio" %% "zio"          % "2.1.0-RC3",
-      libraryDependencies += "dev.zio" %% "zio-test"     % "2.1.0-RC3",
-      libraryDependencies += "dev.zio" %% "zio-test-sbt" % "2.1.0-RC3"  % Test,
-
-    )
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-test"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "dev.zio" %% "zio"          % "2.1.0-RC3",
+            libraryDependencies += "dev.zio" %% "zio-test"     % "2.1.0-RC3",
+            libraryDependencies += "dev.zio" %% "zio-test-sbt" % "2.1.0-RC3" % Test
+        ).jsSettings(
+            `js-settings`
+        )
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)
