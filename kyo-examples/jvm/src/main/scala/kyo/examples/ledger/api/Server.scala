@@ -41,7 +41,7 @@ object Server extends KyoApp:
 
         val init = defer {
             val db      = await(Envs.run(dbConfig)(DB.init))
-            val handler = await(Envs.run(db: DB)(Handler.init))
+            val handler = await(Envs.run(db)(Handler.init))
             await(Envs.run(handler)(Endpoints.init))
         }
 

@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.core.*
-import scala.util.NotGiven
 
 class Envs[+V] extends Effect[Envs[V]]:
     type Command[T] = Unit
@@ -20,17 +19,20 @@ object Envs:
             envs[V].suspend[V, T, S]((), f)
     end UseDsl
 
-    def use[V](
-        using ng: NotGiven[V => Nothing]
-    ): UseDsl[V] =
+    def use[V >: Nothing]: UseDsl[V] =
         new UseDsl[V]
 
-    def run[V, T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
-        using
-        HasEnvs[V, VS] { type Remainder = VR },
-        Tag[Envs[V]]
-    ): T < (S & VR) =
-        Envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
+    class RunDsl[V]:
+        def apply[T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
+            using
+            HasEnvs[V, VS] { type Remainder = VR },
+            Tag[Envs[V]]
+        ): T < (S & VR) =
+            envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
+    end RunDsl
+
+    def run[V >: Nothing]: RunDsl[V] =
+        new RunDsl[V]
 
     private def handler[V]: ResultHandler[V, Const[Unit], Envs[V], Id, Any] =
         cachedHandler.asInstanceOf[ResultHandler[V, Const[Unit], Envs[V], Id, Any]]
