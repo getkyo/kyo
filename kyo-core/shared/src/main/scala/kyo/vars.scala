@@ -1,39 +1,10 @@
 package kyo
 
-import kyo.core.*
-
-object Vars:
-    private case object vars extends Vars[Any]
-    def apply[V]: Vars[V] = vars.asInstanceOf[Vars[V]]
-    object internal:
-        case object Get
-        case class Set[V](v: V)
-        case class Update[V](f: V => V)
-        type Op[V] = Get.type | Set[V] | Update[V]
-    end internal
-end Vars
-
 import Vars.internal.*
+import kyo.core.*
 
 class Vars[V] extends Effect[Vars[V]]:
     type Command[T] = Op[V]
-
-    def get(using Tag[Vars[V]]): V < Vars[V] =
-        this.suspend[V](Get)
-
-    inline def use[T, S](inline f: V => T < S)(using inline tag: Tag[Vars[V]]): T < (Vars[V] & S) =
-        this.suspend[V, T, S](Get, f)
-
-    def set(value: V)(using Tag[Vars[V]]): Unit < Vars[V] =
-        this.suspend[Unit](Set(value))
-
-    def update(f: V => V)(using Tag[Vars[V]]): Unit < Vars[V] =
-        this.suspend[Unit](Update(f))
-
-    def run[T: Flat, S2](state: V)(value: T < (Vars[V] & S2))(
-        using Tag[Vars[V]]
-    ): T < S2 =
-        this.handle(handler)(state, value)
 
     private val handler =
         new ResultHandler[V, Const[Op[V]], Vars[V], Id, Any]:
@@ -46,4 +17,40 @@ class Vars[V] extends Effect[Vars[V]]:
                         Resume(v, k(().asInstanceOf[T]))
                     case Update(f) =>
                         Resume(f(st), k(().asInstanceOf[T]))
+end Vars
+
+object Vars:
+    private case object vars extends Vars[Any]
+    private def vars[V]: Vars[V] = vars.asInstanceOf[Vars[V]]
+    object internal:
+        case object Get
+        case class Set[V](v: V)
+        case class Update[V](f: V => V)
+        type Op[V] = Get.type | Set[V] | Update[V]
+    end internal
+
+    def get[V](using Tag[Vars[V]]): V < Vars[V] =
+        vars[V].suspend[V](Get)
+
+    class UseDsl[V]:
+        inline def apply[T, S](inline f: V => T < S)(using inline tag: Tag[Vars[V]]): T < (Vars[V] & S) =
+            vars[V].suspend[V, T, S](Get, f)
+
+    def use[V >: Nothing]: UseDsl[V] = new UseDsl[V]
+
+    def set[V](value: V)(using Tag[Vars[V]]): Unit < Vars[V] =
+        vars[V].suspend[Unit](Set(value))
+
+    def update[V](f: V => V)(using Tag[Vars[V]]): Unit < Vars[V] =
+        vars[V].suspend[Unit](Update(f))
+
+    class RunDsl[V]:
+        def apply[T: Flat, S2](state: V)(value: T < (Vars[V] & S2))(
+            using Tag[Vars[V]]
+        ): T < S2 =
+            vars[V].handle(vars[V].handler)(state, value)
+    end RunDsl
+
+    def run[V >: Nothing]: RunDsl[V] = new RunDsl[V]
+
 end Vars

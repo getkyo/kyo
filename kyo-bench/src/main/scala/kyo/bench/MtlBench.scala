@@ -18,14 +18,14 @@ class MtlBench extends Bench:
                 for
                     conf <- Envs.use[Env](_.config)
                     _    <- Sums.add(Event(s"Env = $conf"))
-                    _    <- Vars[State].update(state => state.copy(value = state.value + 1))
+                    _    <- Vars.update((state: State) => state.copy(value = state.value + 1))
                 yield ()
             )
         Aborts.run[Throwable](
-            Vars[State].run(State(2))(
+            Vars.run(State(2))(
                 Sums.run(
                     Envs.run(Env("config"))(
-                        testKyo.andThen(Vars[State].get)
+                        testKyo.andThen(Vars.get[State])
                     )
                 )
             )
