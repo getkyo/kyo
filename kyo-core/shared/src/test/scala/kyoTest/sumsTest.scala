@@ -12,7 +12,7 @@ class sumsTest extends KyoTest:
                 _ <- Sums.add(1)
             yield "a"
 
-        assert(Sums.run[Int](v).pure == (Chunks.init(1, 1, 1), "a"))
+        assert(Sums.run(v).pure == (Chunks.init(1, 1, 1), "a"))
     }
     "string" in {
         val v: String < Sums[String] =
@@ -21,7 +21,7 @@ class sumsTest extends KyoTest:
                 _ <- Sums.add("2")
                 _ <- Sums.add("3")
             yield "a"
-        val res = Sums.run[String](v)
+        val res = Sums.run(v)
         assert(res.pure == (Chunks.init("1", "2", "3"), "a"))
     }
     "int and string" in {
@@ -35,7 +35,7 @@ class sumsTest extends KyoTest:
                 _ <- Sums.add("3")
             yield "a"
         val res: (Chunk[String], (Chunk[Int], String)) =
-            Sums.run[String](Sums.run[Int](v)).pure
+            Sums.run(Sums.run[Int](v)).pure
         assert(res == (Chunks.init("1", "2", "3"), (Chunks.init(3, 2, 1), "a")))
     }
 
@@ -54,7 +54,7 @@ class sumsTest extends KyoTest:
                 _ <- Sums.add(List(2))
                 _ <- Sums.add(List(3))
             yield "a"
-        val res = Sums.run[List[Int]](v)
+        val res = Sums.run(v)
         assert(res.pure == (Chunks.init(List(1), List(2), List(3)), "a"))
     }
 
@@ -65,13 +65,8 @@ class sumsTest extends KyoTest:
                 _ <- Sums.add(Set(2))
                 _ <- Sums.add(Set(3))
             yield "a"
-        val res = Sums.run[Set[Int]](v)
+        val res = Sums.run(v)
         assert(res.pure == (Chunks.init(Set(1), Set(2), Set(3)), "a"))
     }
 
-    "run requires type param" in {
-        assertDoesNotCompile("""
-        Sums.run(Sums.add(1))
-        """)
-    }
 end sumsTest

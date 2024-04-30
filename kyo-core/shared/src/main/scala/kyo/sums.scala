@@ -28,8 +28,6 @@ object Sums:
             sums[V].handle(sums[V].handler)(Chunks.init, v)
     end RunDsl
 
-    def run[V](using
-        @implicitNotFound("Please specify the type to be handled. Example: 'Sums.run[Int](...)'") ng: NotGiven[V => Nothing]
-    ): RunDsl[V] = new RunDsl[V]
+    def run[V >: Nothing]: RunDsl[V] = new RunDsl[V]
 
 end Sums
