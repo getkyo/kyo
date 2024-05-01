@@ -30,7 +30,7 @@ class ForkJoinBench extends Bench.ForkOnly[Unit]:
         import zio.*
 
         val forkFiber     = ZIO.unit.forkDaemon
-        val forkAllFibers = ZIO.yieldNow *> ZIO.foreach(range)(_ => forkFiber)
+        val forkAllFibers = ZIO.foreach(range)(_ => forkFiber)
         forkAllFibers.flatMap(fibers => ZIO.foreach(fibers)(_.await).unit)
     end zioBench
 
