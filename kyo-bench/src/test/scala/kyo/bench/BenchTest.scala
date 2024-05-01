@@ -147,4 +147,8 @@ class BenchTest extends AsyncFreeSpec with Assertions:
     "RandomBench" - {
         test(RandomBench(), ())
     }
+
+    "ForkJoinBench" - {
+        test(ForkJoinBench(), ())
+    }
 end BenchTest
