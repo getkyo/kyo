@@ -6,6 +6,7 @@ import kyo.*
 import org.openjdk.jmh.annotations.*
 import scala.concurrent.duration.Duration
 import zio.UIO
+import zio.internal.ExecutionMetrics
 
 @State(Scope.Benchmark)
 @Fork(
@@ -20,7 +21,29 @@ import zio.UIO
     )
 )
 @BenchmarkMode(Array(Mode.Throughput))
-abstract class Bench[T]
+abstract class Bench[T]:
+
+    @Param(Array("false"))
+    var replaceZioExecutor = false
+
+    lazy val zioRuntime =
+        import zio.*
+        if !replaceZioExecutor then
+            zio.Runtime.default.unsafe
+        else
+            given Unsafe = Unsafe.unsafe(identity)
+            val exec =
+                new Executor:
+                    val scheduler                     = kyo.scheduler.Scheduler.get
+                    def metrics(using unsafe: Unsafe) = None
+                    def submit(runnable: Runnable)(implicit unsafe: Unsafe): Boolean =
+                        scheduler.schedule(kyo.scheduler.Task(runnable.run()))
+                        true
+            val kExecutorLayer = Runtime.setExecutor(exec) ++ Runtime.setBlockingExecutor(exec)
+            Runtime.unsafe.fromLayer(kExecutorLayer).unsafe
+        end if
+    end zioRuntime
+end Bench
 
 object Bench:
 
@@ -32,6 +55,7 @@ object Bench:
     end Base
 
     abstract class Fork[T: Flat] extends Base[T]:
+
         @Benchmark
         def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block(Duration.Inf)))
 
@@ -40,7 +64,7 @@ object Bench:
 
         @Benchmark
         def forkZio(): T = zio.Unsafe.unsafe(implicit u =>
-            zio.Runtime.default.unsafe.run(zio.ZIO.yieldNow.flatMap(_ => zioBench())).getOrThrow()
+            zioRuntime.run(zio.ZIO.yieldNow.flatMap(_ => zioBench())).getOrThrow()
         )
     end Fork
 
@@ -57,7 +81,7 @@ object Bench:
 
         @Benchmark
         def syncZio(): T = zio.Unsafe.unsafe(implicit u =>
-            zio.Runtime.default.unsafe.run(zioBench()).getOrThrow()
+            zioRuntime.run(zioBench()).getOrThrow()
         )
     end SyncAndFork
 end Bench
