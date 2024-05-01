@@ -40,7 +40,7 @@ object Duration:
 end Duration
 
 extension (value: Long)
-    inline def nanos: Duration   = _fromNanos(value)
+    inline def nanos: Duration   = value.asNanos
     inline def micros: Duration  = value.as(Micros)
     inline def millis: Duration  = value.as(Millis)
     inline def seconds: Duration = value.as(Seconds)
@@ -54,17 +54,20 @@ end extension
 
 extension (self: Duration)
 
-//    infix def >=(that: Duration): Boolean = self.>=(that)
-//    infix def <=(that: Duration): Boolean = self.<=(that)
-//    infix def >(that: Duration): Boolean  = self.>(that)
-//    infix def <(that: Duration): Boolean  = self.<(that)
-//    infix def ==(that: Duration): Boolean = self.==(that)
-//    infix def !=(that: Duration): Boolean = self.==(that)
+    infix def >=(that: Duration): Boolean = self.gtEq(that)
+    infix def <=(that: Duration): Boolean = self.ltEq(that)
+    infix def >(that: Duration): Boolean  = self.gt(that)
+    infix def <(that: Duration): Boolean  = self.lt(that)
+    infix def ==(that: Duration): Boolean = self.eqEq(that)
+    infix def !=(that: Duration): Boolean = self.neEq(that)
+
+    inline def +(that: Duration): Duration = self.add(that)
+    inline def *(factor: Double): Duration = self.multiply(factor)
 
     infix def max(that: Duration): Duration = self._max(that)
     infix def min(that: Duration): Duration = self._min(that)
 
-    inline def toNanos: Long   = _toNanos(self)
+    inline def toNanos: Long   = self._toNanos
     inline def toMicros: Long  = self.to(Micros)
     inline def toMillis: Long  = self.to(Millis)
     inline def toSeconds: Long = self.to(Seconds)
@@ -97,36 +100,36 @@ private[kyo] object duration:
     val _Zero: Duration     = 0
     val _Infinity: Duration = Long.MaxValue
 
-    def _toNanos(value: Duration): Long   = value
     def _fromNanos(value: Long): Duration = value
 
     extension (value: Long)
         inline def as(unit: Units): Duration =
             if value <= 0 then Duration.Zero else Math.min(value.multiply(unit.factor), Duration.Infinity)
 
+        inline def asNanos: Duration = value
+    end extension
     extension (self: Duration)
 
         inline def to(unit: Units): Long = Math.max(Math.round(self / unit.factor), Duration.Zero)
+        inline def _toNanos: Long        = self
 
-        def +(that: Duration): Duration =
+        inline def add(that: Duration): Duration =
             val sum: Long = self + that
             if sum >= 0 then sum else Duration.Infinity
-        end +
+        end add
 
-        def *(factor: Double): Duration = multiply(factor)
-
-        private inline def multiply(factor: Double): Duration = // fix type inference in `as`
+        inline def multiply(factor: Double): Duration = // fix type inference in `as`
             if factor <= 0 || self <= 0 then Duration.Zero
             else if factor <= Long.MaxValue / self.toDouble then Math.round(self.toDouble * factor)
             else Duration.Infinity
         end multiply
 
-        def >=(that: Duration): Boolean = self >= that
-        def <=(that: Duration): Boolean = self <= that
-        def >(that: Duration): Boolean  = self > that
-        def <(that: Duration): Boolean  = self < that
-        def ==(that: Duration): Boolean = self == that
-        def !=(that: Duration): Boolean = self == that
+        def gtEq(that: Duration): Boolean = self >= that
+        def ltEq(that: Duration): Boolean = self <= that
+        def gt(that: Duration): Boolean   = self > that
+        def lt(that: Duration): Boolean   = self < that
+        def eqEq(that: Duration): Boolean = self == that
+        def neEq(that: Duration): Boolean = self == that
 
         def _max(that: Duration): Duration = Math.max(self, that)
         def _min(that: Duration): Duration = Math.min(self, that)
