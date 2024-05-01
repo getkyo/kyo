@@ -6,6 +6,7 @@ import zio.test.*
 
 object DurationSpec extends ZIOSpecDefault:
     given CanEqual[ZDuration, ZDuration] = CanEqual.derived
+    given CanEqual[Duration, Duration]   = CanEqual.derived
 
     val maxNanos = 1_000_000L // TODO: is this enough??
 
@@ -41,7 +42,21 @@ object DurationSpec extends ZIOSpecDefault:
                     assertTrue(added.toJava == zadded)
                     assertTrue(mult.toJava == zmult)
                 }
-            )
+            ),
+            test("overflow") {
+                val multiplied = Duration.Infinity * 1.1
+                val added      = Duration.Infinity + 1.nanos
+                val hours      = Long.MaxValue.nanos
+
+                assertTrue(multiplied == Duration.Infinity)
+                assertTrue(added == Duration.Infinity)
+                assertTrue(hours == Duration.Infinity)
+            },
+            test("Long.to*") {
+                for
+                    result <- typeCheck("Long.MaxValue.toNanos")
+                yield assertTrue(result.is(_.left).contains("Required: kyo.Duration"))
+            }
         )
     )
 end DurationSpec
