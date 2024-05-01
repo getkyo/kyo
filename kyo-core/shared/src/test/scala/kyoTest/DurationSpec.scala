@@ -1,4 +1,4 @@
-package kyo.test
+package kyoTest
 
 import kyo.*
 import scala.concurrent.duration.Duration as ScalaDuration
