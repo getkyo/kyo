@@ -1,0 +1,57 @@
+package kyo.bench
+
+import org.openjdk.jmh.annotations.*
+
+class ForkJoinContentionBench extends Bench.ForkOnly[Unit]:
+
+    val depth     = 1000
+    val parallism = Runtime.getRuntime().availableProcessors()
+    val range     = (0 until depth).toList
+
+    def catsBench() =
+        import cats.*
+        import cats.effect.*
+        import cats.implicits.*
+
+        val forkFiber         = IO.unit.start
+        val forkAllFibers     = Traverse[List].traverse(range)(_ => forkFiber)
+        val forkJoinAllFibers = forkAllFibers.flatMap(fibers => Traverse[List].traverse(fibers)(_.join).void)
+
+        Seq.fill(parallism)(forkJoinAllFibers).parSequence.void
+    end catsBench
+
+    override def kyoBenchFiber() =
+        import kyo.*
+
+        val forkFiber         = Fibers.init(())
+        val forkAllFibers     = Seqs.map(range)(_ => forkFiber)
+        val forkJoinAllFibers = forkAllFibers.flatMap(fibers => Seqs.map(fibers)(_.get).unit)
+
+        Fibers.parallel(Seq.fill(parallism)(forkJoinAllFibers)).unit
+    end kyoBenchFiber
+
+    def zioBench() =
+        import zio.*
+
+        val forkFiber         = ZIO.unit.forkDaemon
+        val forkAllFibers     = ZIO.foreach(range)(_ => forkFiber)
+        val forkJoinAllFibers = forkAllFibers.flatMap(fibers => ZIO.foreach(fibers)(_.await).unit)
+
+        ZIO.collectAllPar(Seq.fill(parallism)(forkJoinAllFibers)).unit
+    end zioBench
+
+    @Benchmark
+    def forkOx() =
+        import ox.*
+        scoped {
+            val fibers =
+                for (_ <- 0 until parallism) yield fork {
+                    val forkAllFibers =
+                        for (_ <- range) yield fork(())
+                    for fiber <- forkAllFibers do
+                        fiber.join()
+                }
+            fibers.foreach(_.join())
+        }
+    end forkOx
+end ForkJoinContentionBench
