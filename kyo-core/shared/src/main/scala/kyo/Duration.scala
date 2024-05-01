@@ -11,10 +11,9 @@ type Duration = duration.Duration
 given CanEqual[Duration, Duration] = canEqual
 
 object Duration:
-    val Zero: Duration     = _Zero
-    val Infinity: Duration = _Infinity
-
-    inline def fromNanos(value: Long): Duration = _fromNanos(value)
+    val Zero: Duration                          = _Zero
+    val Infinity: Duration                      = _Infinity
+    inline def fromNanos(value: Long): Duration = value.nanos
     def fromJava(value: JavaDuration): Duration =
         (value.toNanos: @annotation.switch) match
             case 0                       => Zero
@@ -22,7 +21,7 @@ object Duration:
             case n                       => n.nanos
 
     def fromScala(value: ScalaDuration): Duration =
-        if value.isFinite then value.toNanos.nanos.max(Zero) else Infinity
+        if value.isFinite then value.toNanos.nanos max Zero else Infinity
 
     enum Units(val factor: Double):
         case Nanos   extends Units(NANOS.getDuration.toNanos.toDouble)
@@ -89,6 +88,8 @@ extension (self: Duration)
             case Duration.Zero => JavaDuration.ZERO
             case n             => JavaDuration.of(n.toNanos, NANOS)
 
+    inline def render: String = s"Duration($self ns)"
+
     // Is this Robust enough?
     private[kyo] inline def isFinite: Boolean = self < Duration.Infinity
 end extension
@@ -99,8 +100,6 @@ private[kyo] object duration:
 
     val _Zero: Duration     = 0
     val _Infinity: Duration = Long.MaxValue
-
-    def _fromNanos(value: Long): Duration = value
 
     extension (value: Long)
         inline def as(unit: Units): Duration =
@@ -124,14 +123,14 @@ private[kyo] object duration:
             else Duration.Infinity
         end multiply
 
-        def gtEq(that: Duration): Boolean = self >= that
-        def ltEq(that: Duration): Boolean = self <= that
-        def gt(that: Duration): Boolean   = self > that
-        def lt(that: Duration): Boolean   = self < that
-        def eqEq(that: Duration): Boolean = self == that
-        def neEq(that: Duration): Boolean = self == that
+        inline def gtEq(that: Duration): Boolean = self >= that
+        inline def ltEq(that: Duration): Boolean = self <= that
+        inline def gt(that: Duration): Boolean   = self > that
+        inline def lt(that: Duration): Boolean   = self < that
+        inline def eqEq(that: Duration): Boolean = self == that
+        inline def neEq(that: Duration): Boolean = self == that
 
-        def _max(that: Duration): Duration = Math.max(self, that)
-        def _min(that: Duration): Duration = Math.min(self, that)
+        inline def _max(that: Duration): Duration = Math.max(self, that)
+        inline def _min(that: Duration): Duration = Math.min(self, that)
     end extension
 end duration

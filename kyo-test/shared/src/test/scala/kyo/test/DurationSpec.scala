@@ -1,12 +1,14 @@
 package kyo.test
 
 import kyo.*
+import scala.concurrent.duration.Duration as ScalaDuration
 import zio.Duration as ZDuration
 import zio.test.*
 
 object DurationSpec extends ZIOSpecDefault:
-    given CanEqual[ZDuration, ZDuration] = CanEqual.derived
-    given CanEqual[Duration, Duration]   = CanEqual.derived
+    given CanEqual[ZDuration, ZDuration]         = CanEqual.derived
+    given CanEqual[ScalaDuration, ScalaDuration] = CanEqual.derived
+    given CanEqual[Duration, Duration]           = CanEqual.derived
 
     val maxNanos = 1_000_000L // TODO: is this enough??
 
@@ -27,9 +29,24 @@ object DurationSpec extends ZIOSpecDefault:
                     )
                 }
             ),
+            test("equality") {
+                val zero = 0.nanos
+                TestResult.allSuccesses(
+                    assertTrue(Duration.Zero == zero),
+                    assertTrue(Duration.Zero >= zero),
+                    assertTrue(Duration.Zero <= zero),
+                    assertTrue(Duration.Zero != Duration.Infinity),
+                    assertTrue(Duration.Zero != Duration.Infinity)
+                )
+            },
             test("toJava")(
                 check(Gen.long(0, maxNanos)) { i =>
                     assertTrue(i.nanos.toJava == ZDuration.fromNanos(i))
+                }
+            ),
+            test("toScala")(
+                check(Gen.long(0, maxNanos)) { i =>
+                    assertTrue(i.nanos.toScala == ZDurations.fromNanosScala(i))
                 }
             ),
             test("math")(
@@ -56,7 +73,11 @@ object DurationSpec extends ZIOSpecDefault:
                 for
                     result <- typeCheck("Long.MaxValue.toNanos")
                 yield assertTrue(result.is(_.left).contains("Required: kyo.Duration"))
-            }
+            },
+            test("toString") {
+                val d = 10.nanos.toString
+                assertTrue(d != "10") // opaque type inherits toString method from Long
+            } @@ TestAspect.failing
         )
     )
 end DurationSpec
@@ -65,4 +86,7 @@ object ZDurations:
     import zio.*
     def multiplied(duration: ZDuration, factor: Double): ZDuration =
         duration * factor
+
+    def fromNanosScala(value: Long): ScalaDuration =
+        ZDuration.fromNanos(value).asScala
 end ZDurations
