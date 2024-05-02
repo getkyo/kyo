@@ -86,8 +86,8 @@ object core:
                                             handler.failed(st, ex)
                                 _handleLoop(st, r)
                             end apply
-                    case v: T @unchecked =>
-                        handler.done(st, v)
+                    case v =>
+                        handler.done(st, v.asInstanceOf[T])
             def resultLoop(v: (Result[T] | handler.Resume[T, S2]) < (S & S2)): Result[T] < (S & S2) =
                 v match
                     case r: handler.Resume[T, S & S2] @unchecked =>
@@ -100,8 +100,8 @@ object core:
                                 l: Locals.State
                             ) =
                                 resultLoop(kyo(v, s, l))
-                    case r: Result[T] @unchecked =>
-                        r
+                    case r =>
+                        r.asInstanceOf[Result[T]]
             handleLoop(state, value)
         end handle
     end extension
