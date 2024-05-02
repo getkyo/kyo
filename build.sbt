@@ -93,6 +93,21 @@ lazy val `kyo-scheduler` =
         )
         .jsSettings(`js-settings`)
 
+lazy val `kyo-pure` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-pure"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "dev.zio"       %%% "izumi-reflect"   % "2.3.8",
+            libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC23" % Test,
+            libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.0-RC3"  % Test,
+            libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
+            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test,
+        )
+        .jsSettings(`js-settings`)
+
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
