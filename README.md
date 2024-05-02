@@ -1009,23 +1009,18 @@ val a: Int < Defers =
     21
   }
 
-val b: Int < Defers = 
-  Defers {
-    21
-  }
-
 // Transforming deferred computations
-val c: Int < Defers = 
+val b: Int < Defers = 
   a.map(_ + 1)
 
 // Combining deferred computations
-val d: Int < Defers = 
+val c: Int < Defers = 
   a.map(x => b.map(_ + x))
 
 // Handling the 'Defers' effect
 // Returns 43
-val e: Int < Any = 
-  Defers.run(d)
+val d: Int < Any = 
+  Defers.run(c)
 ```
 
 `Defers` is similar to the `IOs` effect in that it allows you to suspend the execution of a computation. However, while `IOs` is designed to handle side effects and ensure referential transparency, `Defers` is purely focused on effect suspension without any side effects.
