@@ -37,7 +37,7 @@ class ForkJoinContentionBench extends Bench.ForkOnly[Unit]:
         val forkAllFibers     = ZIO.foreach(range)(_ => forkFiber)
         val forkJoinAllFibers = forkAllFibers.flatMap(fibers => ZIO.foreach(fibers)(_.await).unit)
 
-        ZIO.collectAllPar(Seq.fill(parallism)(forkJoinAllFibers)).unit
+        ZIO.collectAll(Seq.fill(parallism)(forkJoinAllFibers.forkDaemon)).flatMap(ZIO.foreach(_)(_.join)).unit
     end zioBench
 
     @Benchmark
