@@ -976,6 +976,60 @@ val b: (Chunk[Int], (Chunk[String], String)) < Any =
 
 The `Sums` effect is useful for collecting diagnostic information, accumulating intermediate results, or building up data structures during a computation.
 
+### Defers: Deferred Computations
+
+The `Defers` effect provides a mechanism for lazy evaluation of computations. It allows you to wrap a computation in a `Defers` block, which defers the execution of the enclosed code until the effect is explicitly handled.
+
+```scala
+import kyo._
+
+// Wrap a computation in a 'Defers' block
+val a: Int < Defers = 
+  Defers {
+    val result = 21 + 21
+    result
+  }
+
+// The deferred computation is not executed 
+// until the effect is handled
+val b: Int < Any = 
+  Defers.run(a)
+
+// Returns 42
+```
+
+Deferred computations can be composed and transformed like any other Kyo computation. The deferred block can also contain other effects, which will be handled when the `Defers` effect is handled.
+
+```scala
+import kyo._
+
+// Composing deferred computations
+val a: Int < Defers = 
+  Defers {
+    21
+  }
+
+val b: Int < Defers = 
+  Defers {
+    21
+  }
+
+// Transforming deferred computations
+val c: Int < Defers = 
+  a.map(_ + 1)
+
+// Combining deferred computations
+val d: Int < Defers = 
+  a.map(x => b.map(_ + x))
+
+// Handling the 'Defers' effect
+// Returns 43
+val e: Int < Any = 
+  Defers.run(d)
+```
+
+`Defers` is similar to the `IOs` effect in that it allows you to suspend the execution of a computation. However, while `IOs` is designed to handle side effects and ensure referential transparency, `Defers` is purely focused on effect suspension without any side effects.
+
 ### Aspects: Aspect-Oriented Programming
 
 The `Aspects` effect in Kyo allows for high-level customization of behavior across your application. This is similar to how some frameworks use aspects for centralized control over diverse functionalities like database timeouts, authentication, authorization, and transaction management. You can modify these core operations without altering their individual codebases, streamlining how centralized logic is applied across different parts of an application. This makes `Aspects` ideal for implementing cross-cutting concerns in a clean and efficient manner.
@@ -2092,7 +2146,7 @@ println(test(IOs(a)))
 // prints kyo.ios$IOs$$anon$2@6cd8737
 ```
 
-Given this characteristic, recursive computations need to either use `Loops` or introduce an effect suspension, like `IOs`, to ensure the evaluation is stack safe.
+Given this characteristic, recursive computations need to either use `Loops`, introduce an effect suspension like `IOs`, or leverage `Defers` in pure code to ensure the evaluation is stack safe.
 
 ```scala
 import kyo._
@@ -2113,7 +2167,7 @@ def safeLoopWithLoops[S](n: Int < S): Int < S =
     )
   }
 
-// Alternatively, introduce an effect suspension 
+// Introducing an effect suspension 
 // like `IOs` to ensure stack safety
 def safeLoopWithIOs[S](n: Int < S): Int < (S & IOs) =
   IOs {
@@ -2122,11 +2176,20 @@ def safeLoopWithIOs[S](n: Int < S): Int < (S & IOs) =
       case n => safeLoopWithIOs(n - 1)
     }
   }
+
+// Using `Defers` for stack safety
+def safeLoopWithDefers[S](n: Int < S): Int < (S & Defers) =
+  Defers {
+    n.map {
+      case 0 => 0
+      case n => safeLoopWithDefers(n - 1)
+    }
+  }
 ```
 
-In the `safeLoopWithLoops` function, `Loops` is used to convert the recursive computation into a stack-safe iterative process. The `Loops.transform` method takes the initial input value `n` and a function that either continues the loop with a new value using `Loops.continue` or terminates the loop with a final result using `Loops.done`. Alternatively, in the `safeLoopWithIOs` function, the use of `IOs` suspends each recursive call, preventing the stack from overflowing.
+In the `safeLoopWithLoops` function, `Loops` is used to convert the recursive computation into a stack-safe iterative process. The `Loops.transform` method takes the initial input value n and a function that either continues the loop with a new value using `Loops.continue` or terminates the loop with a final result using `Loops.done`. Alternatively, in the `safeLoopWithIOs` function, the use of `IOs` suspends each recursive call, preventing the stack from overflowing and the `safeLoopWithDefers` function uses `Defers` to defer the evaluation of each recursive call, effectively transforming the recursive computation into a lazily-evaluated one, which avoids stack overflow.
 
-Both techniques are essential for safely handling recursive computations in Kyo. The Loops effect provides a more idiomatic and efficient approach, while the effect suspension method offers flexibility when other effects need to be integrated into the recursive computation.
+All three techniques are essential for safely handling recursive computations in Kyo. The `Loops` effect provides a more idiomatic and efficient approach, while the effect suspension method with `IOs` or `Defers` offers flexibility when these effects can be integrated into the recursive computation.
 
 ### Nested Effects
 
