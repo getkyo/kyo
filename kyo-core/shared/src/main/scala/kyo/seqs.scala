@@ -118,11 +118,4 @@ object Seqs:
             if idx == n then Loops.done(acc.toSeq)
             else v.map(t => Loops.continue(acc.append(t)))
         }
-
-    def repeat[S](n: Int)(v: => Unit < S): Unit < S =
-        Loops.indexed {
-            case `n` => Loops.done
-            case _ =>
-                v.andThen(Loops.continue)
-        }
 end Seqs

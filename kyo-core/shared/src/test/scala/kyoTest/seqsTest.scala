@@ -71,26 +71,6 @@ class seqsTest extends KyoTest:
         assert(IOs.run(Seqs.fill(100)(IOs(1))) == Seq.fill(100)(1))
     }
 
-    "repeat" in {
-        var count = 0
-        val io    = IOs(count += 1)
-
-        IOs.run(Seqs.repeat(0)(io))
-        assert(count == 0)
-
-        count = 0
-        IOs.run(Seqs.repeat(1)(io))
-        assert(count == 1)
-
-        count = 0
-        IOs.run(Seqs.repeat(100)(io))
-        assert(count == 100)
-
-        count = 0
-        IOs.run(Seqs.repeat(10000)(io))
-        assert(count == 10000)
-    }
-
     "stack safety" - {
         val n = 10000
 
