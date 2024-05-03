@@ -23,45 +23,14 @@ object Stream:
             if n <= 0 then
                 runDiscard
             else
-                val handler =
-                    new ResultHandler[Int, Const[Chunk[V]], Streams[V], Id, Streams[V]]:
-                        def done[T](st: Int, v: T) = v
-                        def resume[T, U: Flat, S2](
-                            st: Int,
-                            command: Chunk[V],
-                            k: T => U < (Streams[V] & S2)
-                        ) =
-                            if st == 0 then
-                                Resume(0, k(().asInstanceOf[T]))
-                            else
-                                val t: Chunk[V] = command.take(st)
-                                Streams.emitChunkAndThen(t) {
-                                    Resume(st - t.size, k(().asInstanceOf[T]))
-                                }
-                Streams[V].handle(handler)(n, s)
+                Streams[V].handle(handlers[V].take)(n, s)
         end take
 
         def drop(n: Int): Stream[T, V, S] =
             if n <= 0 then
                 s
             else
-                val handler =
-                    new ResultHandler[Int, Const[Chunk[V]], Streams[V], Id, Streams[V]]:
-                        def done[T](st: Int, v: T) = v
-                        def resume[T, U: Flat, S2](
-                            st: Int,
-                            command: Chunk[V],
-                            k: T => U < (Streams[V] & S2)
-                        ) =
-                            if st == 0 then
-                                Streams.emitChunkAndThen(command) {
-                                    k(().asInstanceOf[T])
-                                }
-                            else
-                                Streams.emitChunkAndThen(command.dropLeft(st)) {
-                                    Resume(st - Math.min(command.size, st), k(().asInstanceOf[T]))
-                                }
-                Streams[V].handle(handler)(n, s)
+                Streams[V].handle(handlers[V].drop)(n, s)
         end drop
 
         def takeWhile[S2](f: V => Boolean < S2): Stream[T, V, S & S2] =
@@ -118,22 +87,7 @@ object Stream:
         end filter
 
         def changes: Stream[T, V, S] =
-            val handler =
-                new ResultHandler[V | Null, Const[Chunk[V]], Streams[V], Id, Streams[V] & S]:
-                    def done[T](st: V | Null, v: T) = v
-                    def resume[T, U: Flat, S3](
-                        st: V | Null,
-                        command: Chunk[V],
-                        k: T => U < (Streams[V] & S3)
-                    ): (U | Resume[U, S3]) < (Streams[V] & S & S3) =
-                        val c = command.changes(st)
-                        Streams.emitChunkAndThen(c) {
-                            val nst = if c.isEmpty then st else c.last
-                            Resume(nst, k(().asInstanceOf[T]))
-                        }
-                    end resume
-            Streams[V].handle(handler)(null, s)
-        end changes
+            Streams[V].handle(handlers[V].changes)(null, s)
 
         def collect[S2, V2: Flat](
             pf: PartialFunction[V, Unit < (Streams[V2] & S2)]
@@ -205,32 +159,16 @@ object Stream:
         end runFold
 
         def runDiscard: T < S =
-            Streams[V].handle(discardHandler[V])((), s)
+            Streams[V].handle(handlers[V].discard)((), s)
 
         def runChunk: (Chunk[V], T) < S =
-            val handler =
-                new ResultHandler[Chunk[Chunk[V]], Const[Chunk[V]], Streams[V], [T] =>> (Chunk[V], T), S]:
-                    def done[T](st: Chunk[Chunk[V]], v: T) = (st.flatten, v)
-                    def resume[T, U: Flat, S2](
-                        st: Chunk[Chunk[V]],
-                        command: Chunk[V],
-                        k: T => U < (Streams[V] & S2)
-                    ) =
-                        Resume(st.append(command), k(().asInstanceOf[T]))
-            Streams[V].handle(handler)(Chunks.init, s)
-        end runChunk
+            Streams[V].handle(handlers[V].runChunk)(Chunks.init, s)
 
         def runSeq: (IndexedSeq[V], T) < S =
             runChunk.map((c, v) => (c.toSeq, v))
 
         def runChannel(ch: Channel[Chunk[V] | Done]): T < (Fibers & S) =
-            val handler =
-                new Handler[Const[Chunk[V]], Streams[V], Fibers]:
-                    override def done[T](v: T) = ch.put(Done).andThen(v)
-                    def resume[T, U: Flat, S](command: Chunk[V], k: T => U < (Streams[V] & S)) =
-                        ch.put(command).andThen(Resume((), k(().asInstanceOf[T])))
-            Streams[V].handle(handler)((), s)
-        end runChannel
+            Streams[V].handle(handlers[V].runChannel)(ch, s)
 
     end extension
 
@@ -238,12 +176,81 @@ object Stream:
         s
 
     private object internal:
-        private val discard = new Handler[Const[Chunk[Any]], Streams[Any], Any]:
-            def resume[T, U: Flat, S](command: Chunk[Any], k: T => U < (Streams[Any] & S)) =
-                Resume((), k(().asInstanceOf[T]))
 
-        def discardHandler[V]: Handler[Const[Chunk[V]], Streams[V], Any] =
-            discard.asInstanceOf[Handler[Const[Chunk[V]], Streams[V], Any]]
+        private val _handlers        = new Handlers[Any]
+        def handlers[V]: Handlers[V] = _handlers.asInstanceOf[Handlers[V]]
+
+        final class Handlers[V]:
+
+            val discard = new Handler[Const[Chunk[V]], Streams[V], Any]:
+                def resume[T, U: Flat, S](command: Chunk[V], k: T => U < (Streams[V] & S)) =
+                    Resume((), k(().asInstanceOf[T]))
+
+            val take =
+                new ResultHandler[Int, Const[Chunk[V]], Streams[V], Id, Streams[V]]:
+                    def done[T](st: Int, v: T) = v
+                    def resume[T, U: Flat, S2](
+                        st: Int,
+                        command: Chunk[V],
+                        k: T => U < (Streams[V] & S2)
+                    ) =
+                        if st == 0 then
+                            Resume(0, k(().asInstanceOf[T]))
+                        else
+                            val t: Chunk[V] = command.take(st)
+                            Streams.emitChunkAndThen(t) {
+                                Resume(st - t.size, k(().asInstanceOf[T]))
+                            }
+
+            val drop =
+                new ResultHandler[Int, Const[Chunk[V]], Streams[V], Id, Streams[V]]:
+                    def done[T](st: Int, v: T) = v
+                    def resume[T, U: Flat, S2](
+                        st: Int,
+                        command: Chunk[V],
+                        k: T => U < (Streams[V] & S2)
+                    ) =
+                        if st == 0 then
+                            Streams.emitChunkAndThen(command) {
+                                k(().asInstanceOf[T])
+                            }
+                        else
+                            Streams.emitChunkAndThen(command.dropLeft(st)) {
+                                Resume(st - Math.min(command.size, st), k(().asInstanceOf[T]))
+                            }
+
+            val changes =
+                new ResultHandler[V | Null, Const[Chunk[V]], Streams[V], Id, Streams[V]]:
+                    def done[T](st: V | Null, v: T) = v
+                    def resume[T, U: Flat, S3](
+                        st: V | Null,
+                        command: Chunk[V],
+                        k: T => U < (Streams[V] & S3)
+                    ): (U | Resume[U, S3]) < (Streams[V] & S3) =
+                        val c = command.changes(st)
+                        Streams.emitChunkAndThen(c) {
+                            val nst = if c.isEmpty then st else c.last
+                            Resume(nst, k(().asInstanceOf[T]))
+                        }
+                    end resume
+
+            val runChunk =
+                new ResultHandler[Chunk[Chunk[V]], Const[Chunk[V]], Streams[V], [T] =>> (Chunk[V], T), Any]:
+                    def done[T](st: Chunk[Chunk[V]], v: T) = (st.flatten, v)
+                    def resume[T, U: Flat, S2](
+                        st: Chunk[Chunk[V]],
+                        command: Chunk[V],
+                        k: T => U < (Streams[V] & S2)
+                    ) =
+                        Resume(st.append(command), k(().asInstanceOf[T]))
+
+            val runChannel =
+                new ResultHandler[Channel[Chunk[V] | Done], Const[Chunk[V]], Streams[V], Id, Fibers]:
+                    def done[T](ch: Channel[Chunk[V] | Done], v: T) = ch.put(Done).andThen(v)
+                    def resume[T, U: Flat, S](ch: Channel[Chunk[V] | Done], command: Chunk[V], k: T => U < (Streams[V] & S)) =
+                        ch.put(command).andThen(Resume(ch, k(().asInstanceOf[T])))
+        end Handlers
+
     end internal
 
 end Stream
