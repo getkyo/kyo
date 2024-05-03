@@ -220,4 +220,30 @@ object Loops:
                     ()
         loop()
     end foreach
+
+    inline def repeat[S](n: Int)(inline run: => Unit < S): Unit < S =
+        def _loop(i: Int): Unit < S =
+            loop(i)
+        @tailrec def loop(i: Int = 0): Unit < S =
+            if i == n then ()
+            else
+                run match
+                    case kyo: Kyo[Unit, S] @unchecked =>
+                        kyo.andThen(_loop(i + 1))
+                    case _ =>
+                        loop(i + 1)
+        loop()
+    end repeat
+
+    inline def forever[S](inline run: Unit < S): Unit < S =
+        def _loop(): Unit < S =
+            loop()
+        @tailrec def loop(): Unit < S =
+            run match
+                case kyo: Kyo[Unit, S] @unchecked =>
+                    kyo.andThen(_loop())
+                case _ =>
+                    loop()
+        loop()
+    end forever
 end Loops

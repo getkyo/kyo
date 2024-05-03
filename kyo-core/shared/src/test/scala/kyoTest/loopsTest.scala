@@ -535,4 +535,33 @@ class loopsTest extends KyoTest:
             assert(effect == "AAA")
         }
     }
+
+    "repeat" in {
+        var count = 0
+        val io    = IOs(count += 1)
+
+        IOs.run(Loops.repeat(0)(io))
+        assert(count == 0)
+
+        count = 0
+        IOs.run(Loops.repeat(1)(io))
+        assert(count == 1)
+
+        count = 0
+        IOs.run(Loops.repeat(100)(io))
+        assert(count == 100)
+
+        count = 0
+        IOs.run(Loops.repeat(10000)(io))
+        assert(count == 10000)
+    }
+
+    "forever" in runJVM {
+        for
+            p <- Fibers.initPromise[Unit]
+            f <- Fibers.init(Loops.forever(p.complete(()).unit))
+            _ <- p.get
+            _ <- f.interrupt
+        yield succeed
+    }
 end loopsTest
