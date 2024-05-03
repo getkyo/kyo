@@ -27,13 +27,13 @@ object core:
                 def apply(v: T, s: Safepoint[E], l: State) =
                     v
 
-        inline def suspend[T, U, S](inline cmd: e.Command[T], inline f: T => U < S)(
+        inline def suspend[T, U, S](inline cmd: e.Command[T], inline f: T => U < (E & S))(
             using inline _tag: Tag[E]
         ): U < (E & S) =
-            new Suspend[e.Command, T, U, S]:
+            new Suspend[e.Command, T, U, E & S]:
                 def command = cmd
                 def tag     = _tag.asInstanceOf[Tag[Any]]
-                def apply(v: T, s: Safepoint[S], l: State) =
+                def apply(v: T, s: Safepoint[E & S], l: State) =
                     f(v)
     end extension
 

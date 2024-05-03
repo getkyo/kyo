@@ -1,11 +1,12 @@
 package kyo.scheduler
 
 import kyo.{Clock as _, *}
+import kyo.IOs.internal.*
 import kyo.Locals.State
 import kyo.core.*
+import kyo.core.Safepoint
 import kyo.core.internal.*
 import kyo.fibersInternal.*
-import kyo.iosInternal.*
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
@@ -41,9 +42,9 @@ private[kyo] class IOTask[T](
         else
             curr match
                 case kyo: Suspend[?, ?, ?, ?] =>
-                    if kyo.tag =:= Tag[IOs] then
-                        val k = kyo.asInstanceOf[Suspend[IO, Unit, T, Fibers]]
-                        eval(k((), this, locals), scheduler, startMillis, clock)
+                    if kyo.tag =:= Tag[SideEffects] || kyo.tag =:= Tag[Defers] then
+                        val k = kyo.asInstanceOf[Suspend[?, Unit, T, Fibers]]
+                        eval(k((), this.asInstanceOf[Safepoint[Fibers]], locals), scheduler, startMillis, clock)
                     else if kyo.tag =:= Tag[FiberGets] then
                         val k = kyo.asInstanceOf[Suspend[Fiber, Any, T, Fibers]]
                         k.command match
@@ -69,7 +70,7 @@ private[kyo] class IOTask[T](
                                 )
                         end match
                     else
-                        IOs(bug.failTag(kyo.tag, Tag[FiberGets], Tag[IOs]))
+                        IOs(bug.failTag(kyo.tag, Tag[FiberGets], Tag[SideEffects]))
                 case _ =>
                     complete(curr.asInstanceOf[T < IOs])
                     finalize()

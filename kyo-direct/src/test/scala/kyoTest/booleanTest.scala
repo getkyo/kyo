@@ -20,51 +20,51 @@ class booleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    True && await(IOs(True))
+                    True && await(Defers(True))
                 }
             }
             "True/False" - {
                 runLiftTest(False) {
-                    True && await(IOs(False))
+                    True && await(Defers(False))
                 }
             }
             "False/NotExpected" - {
                 runLiftTest(False) {
-                    False && await(IOs(NotExpected))
+                    False && await(Defers(NotExpected))
                 }
             }
         }
         "impure/pure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    await(IOs(True)) && True
+                    await(Defers(True)) && True
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    await(IOs(True)) && False
+                    await(Defers(True)) && False
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    await(IOs(False)) && NotExpected
+                    await(Defers(False)) && NotExpected
                 }
             }
         }
         "impure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    await(IOs(True)) && await(IOs(True))
+                    await(Defers(True)) && await(Defers(True))
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    await(IOs(True)) && await(IOs(False))
+                    await(Defers(True)) && await(Defers(False))
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    await(IOs(False)) && await(IOs(NotExpected))
+                    await(Defers(False)) && await(Defers(NotExpected))
                 }
             }
         }
@@ -78,51 +78,51 @@ class booleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    False || await(IOs(False))
+                    False || await(Defers(False))
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    False || await(IOs(True))
+                    False || await(Defers(True))
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    True || await(IOs(NotExpected))
+                    True || await(Defers(NotExpected))
                 }
             }
         }
         "impure/pure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    await(IOs(False)) || False
+                    await(Defers(False)) || False
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    await(IOs(False)) || True
+                    await(Defers(False)) || True
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    await(IOs(True)) || NotExpected
+                    await(Defers(True)) || NotExpected
                 }
             }
         }
         "impure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    await(IOs(False)) || await(IOs(False))
+                    await(Defers(False)) || await(Defers(False))
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    await(IOs(False)) || await(IOs(True))
+                    await(Defers(False)) || await(Defers(True))
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    await(IOs(True)) || await(IOs(NotExpected))
+                    await(Defers(True)) || await(Defers(NotExpected))
                 }
             }
         }

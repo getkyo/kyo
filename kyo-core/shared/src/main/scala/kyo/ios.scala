@@ -1,25 +1,29 @@
 package kyo
 
+import IOs.internal.*
 import core.*
 import core.internal.*
-import iosInternal.*
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import scala.util.*
 import scala.util.control.NonFatal
 
-sealed trait IOs extends Effect[IOs]:
+type IOs = Defers & SideEffects
 
-    private val tag = Tag[IOs]
-
-    val unit: Unit < IOs = ()
+object IOs:
 
     inline def apply[T, S](
         inline f: => T < (IOs & S)
     ): T < (IOs & S) =
-        new KyoIO[T, S]:
-            def apply(v: Unit, s: Safepoint[IOs & S], l: Locals.State) =
-                f
+        SideEffects.suspend[Unit, T, Defers & S]((), _ => f: T < (Defers & SideEffects & S))
+
+    inline def unit: Unit < IOs = ()
+
+    def run[T: Flat](v: T < IOs): T =
+        runLazy(v).pure
+
+    def runLazy[T: Flat, S](v: T < (IOs & S)): T < S =
+        Defers.run(SideEffects.handle(handler)((), v))
 
     def fail[T](ex: Throwable): T < IOs =
         IOs(throw ex)
@@ -53,36 +57,6 @@ sealed trait IOs extends Effect[IOs]:
                     pf(ex)
         )
 
-    def run[T: Flat](v: T < IOs): T =
-        @tailrec def runLoop(v: T < IOs): T =
-            v match
-                case kyo: Suspend[IO, Unit, T, IOs] @unchecked =>
-                    bug.checkTag(kyo.tag, tag)
-                    runLoop(kyo(()))
-                case _ =>
-                    v.asInstanceOf[T]
-        runLoop(v)
-    end run
-
-    def runLazy[T: Flat, S](v: T < (IOs & S)): T < S =
-        @tailrec def runLazyLoop(v: T < (IOs & S)): T < S =
-            v match
-                case kyo: Suspend[?, ?, ?, ?] =>
-                    if kyo.tag =:= tag then
-                        val k = kyo.asInstanceOf[Suspend[IO, Unit, T, S & IOs]]
-                        runLazyLoop(k(()))
-                    else
-                        val k = kyo.asInstanceOf[Suspend[MX, Any, T, S & IOs]]
-                        new Continue[MX, Any, T, S](k):
-                            def apply(v: Any, s: Safepoint[S], l: Locals.State) =
-                                runLazyLoop(k(v, s, l))
-                case _ =>
-                    v.asInstanceOf[T]
-            end match
-        end runLazyLoop
-        runLazyLoop(v)
-    end runLazy
-
     def ensure[T, S](f: => Unit < IOs)(v: T < S): T < (IOs & S) =
         val ensure = new Ensure:
             def run = f
@@ -105,52 +79,53 @@ sealed trait IOs extends Effect[IOs]:
         )
     end ensure
 
+    private[kyo] object internal:
+
+        val handler = new Handler[Const[Unit], SideEffects, Any]:
+            def resume[T, U: Flat, S2](command: Unit, k: T => U < (SideEffects & S2)) =
+                Resume((), k(().asInstanceOf[T]))
+
+        class SideEffects extends Effect[SideEffects]:
+            type Command[T] = Unit
+        object SideEffects extends SideEffects
+
+        abstract class Ensure
+            extends AtomicReference[Any]
+            with Function0[Unit]:
+
+            protected def run: Unit < IOs
+
+            def apply(): Unit =
+                if compareAndSet(null, ()) then
+                    try IOs.run(run)
+                    catch
+                        case ex if NonFatal(ex) =>
+                            Logs.unsafe.error(s"IOs.ensure function failed", ex)
+        end Ensure
+
+        trait Preempt extends Safepoint[SideEffects]:
+            def ensure(f: () => Unit): Unit
+            def remove(f: () => Unit): Unit
+            def suspend[T, S](v: => T < S) =
+                SideEffects.suspend((), _ => v)
+        end Preempt
+
+        object Preempt:
+            def ensure(s: Safepoint[?], e: Ensure): Unit =
+                s match
+                    case p: Preempt => p.ensure(e)
+                    case _          =>
+
+            def remove(s: Safepoint[?], e: Ensure): Unit =
+                s match
+                    case p: Preempt => p.remove(e)
+                    case _          =>
+
+            val never: Preempt =
+                new Preempt:
+                    def ensure(f: () => Unit) = ()
+                    def remove(f: () => Unit) = ()
+                    def preempt()             = false
+        end Preempt
+    end internal
 end IOs
-object IOs extends IOs
-
-private[kyo] object iosInternal:
-
-    abstract class Ensure
-        extends AtomicReference[Any]
-        with Function0[Unit]:
-
-        protected def run: Unit < IOs
-
-        def apply(): Unit =
-            if compareAndSet(null, ()) then
-                try IOs.run(run)
-                catch
-                    case ex if NonFatal(ex) =>
-                        Logs.unsafe.error(s"IOs.ensure function failed", ex)
-    end Ensure
-
-    abstract private[kyo] class KyoIO[T, S]
-        extends Suspend[IO, Unit, T, (IOs & S)]:
-        final def command = ()
-        final def tag     = Tag[IOs].asInstanceOf[Tag[Any]]
-    end KyoIO
-
-    trait Preempt extends Safepoint[IOs]:
-        def ensure(f: () => Unit): Unit
-        def remove(f: () => Unit): Unit
-        def suspend[T, S](v: => T < S): T < (IOs & S) =
-            IOs(v)
-    end Preempt
-    object Preempt:
-        def ensure(s: Safepoint[?], e: Ensure): Unit =
-            s match
-                case p: Preempt => p.ensure(e)
-                case _          =>
-
-        def remove(s: Safepoint[?], e: Ensure): Unit =
-            s match
-                case p: Preempt => p.remove(e)
-                case _          =>
-        val never: Preempt =
-            new Preempt:
-                def ensure(f: () => Unit) = ()
-                def remove(f: () => Unit) = ()
-                def preempt()             = false
-    end Preempt
-    type IO[+T] = T
-end iosInternal

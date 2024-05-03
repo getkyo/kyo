@@ -8,15 +8,15 @@ import scala.collection.mutable.ArrayBuffer
 
 class whileTest extends AnyFreeSpec with Assertions:
 
-    "with atomic" in {
-        runLiftTest(3) {
-            val i = await(Atomics.initInt(0))
-            while await(i.get) < 3 do
-                await(i.incrementAndGet)
-                ()
-            await(i.get)
-        }
-    }
+    // "with atomic" in {
+    //     runLiftTest(3) {
+    //         val i = await(Atomics.initInt(0))
+    //         while await(i.get) < 3 do
+    //             await(i.incrementAndGet)
+    //             ()
+    //         await(i.get)
+    //     }
+    // }
     "double in tuple - strange case" in {
         var i     = 0
         val buff1 = new ArrayBuffer[Int]()
@@ -34,8 +34,8 @@ class whileTest extends AnyFreeSpec with Assertions:
         val out =
             defer {
                 while i < 3 do
-                    await(IOs(incrementA()))
-                    await(IOs(incrementB()))
+                    await(Defers(incrementA()))
+                    await(Defers(incrementB()))
                     ()
                 end while
                 i

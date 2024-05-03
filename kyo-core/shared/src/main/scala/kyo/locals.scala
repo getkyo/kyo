@@ -2,7 +2,6 @@ package kyo
 
 import core.*
 import core.internal.*
-import kyo.iosInternal.*
 
 abstract class Local[T]:
 
@@ -10,12 +9,12 @@ abstract class Local[T]:
 
     def default: T
 
-    val get: T < IOs =
-        new KyoIO[T, Any]:
-            def apply(v: Unit, s: Safepoint[IOs], l: State) =
+    val get: T < Defers =
+        new Defer[T, Any]:
+            def apply(v: Unit, s: Safepoint[Defers], l: State) =
                 get(l)
 
-    def let[U, S](f: T)(v: U < S): U < (S & IOs) =
+    def let[U, S](f: T)(v: U < S): U < (S & Defers) =
         def letLoop(f: T, v: U < S): U < S =
             v match
                 case kyo: Suspend[MX, Any, U, S] @unchecked =>
@@ -27,12 +26,12 @@ abstract class Local[T]:
         letLoop(f, v)
     end let
 
-    inline def use[U, S](inline f: T => U < S): U < (S & IOs) =
-        new KyoIO[U, S]:
-            def apply(v: Unit, s: Safepoint[S & IOs], l: State) =
+    inline def use[U, S](inline f: T => U < S): U < (S & Defers) =
+        new Defer[U, S]:
+            def apply(v: Unit, s: Safepoint[S & Defers], l: State) =
                 f(get(l))
 
-    def update[U, S](f: T => T)(v: U < S): U < (S & IOs) =
+    def update[U, S](f: T => T)(v: U < S): U < (S & Defers) =
         def updateLoop(f: T => T, v: U < S): U < S =
             v match
                 case kyo: Suspend[MX, Any, U, S] @unchecked =>
@@ -59,17 +58,17 @@ object Locals:
         new Local[T]:
             def default = defaultValue
 
-    val save: State < IOs =
-        new KyoIO[State, Any]:
-            def apply(v: Unit, s: Safepoint[IOs], l: Locals.State) =
+    val save: State < Defers =
+        new Defer[State, Any]:
+            def apply(v: Unit, s: Safepoint[Defers], l: Locals.State) =
                 l
 
-    inline def save[U, S](inline f: State => U < S): U < (IOs & S) =
-        new KyoIO[U, S]:
-            def apply(v: Unit, s: Safepoint[IOs & S], l: Locals.State) =
+    inline def save[U, S](inline f: State => U < S): U < (Defers & S) =
+        new Defer[U, S]:
+            def apply(v: Unit, s: Safepoint[Defers & S], l: Locals.State) =
                 f(l)
 
-    def restore[T, S](st: State)(f: T < S): T < (IOs & S) =
+    def restore[T, S](st: State)(f: T < S): T < (Defers & S) =
         def loop(f: T < S): T < S =
             f match
                 case kyo: Suspend[MX, Any, T, S] @unchecked =>

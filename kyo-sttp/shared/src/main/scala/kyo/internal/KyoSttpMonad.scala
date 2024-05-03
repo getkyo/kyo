@@ -35,7 +35,7 @@ object KyoSttpMonad:
             override def eval[T](t: => T) =
                 IOs[T, Fibers](t)
 
-            override def suspend[T](t: => M[T]) =
+            override def suspend[T](t: => M[T]): M[T] =
                 IOs[T, Fibers](t)
 
             def async[T](register: (Either[Throwable, T] => Unit) => Canceler): M[T] =

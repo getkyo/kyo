@@ -3,6 +3,7 @@ package kyo
 import ZIOs.internal.*
 import core.*
 import core.internal.*
+import kyo.IOs.internal.*
 import kyo.fibersInternal.*
 import scala.util.control.NonFatal
 import zio.Task
@@ -27,7 +28,7 @@ object ZIOs:
             v match
                 case kyo: Suspend[?, ?, ?, ?] =>
                     try
-                        if kyo.tag =:= Tag[IOs] then
+                        if kyo.tag =:= Tag[SideEffects] || kyo.tag =:= Tag[Defers] then
                             val k = kyo.asInstanceOf[Suspend[?, Unit, U, Fibers]]
                             ZIO.suspend(loop(k(())))
                         else if kyo.tag =:= Tag[FiberGets] then

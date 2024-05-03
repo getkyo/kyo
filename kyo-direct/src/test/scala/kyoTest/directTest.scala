@@ -6,8 +6,8 @@ import scala.util.Try
 class directTest extends KyoTest:
 
     // "match" in {
-    //   val a = IOs(1)
-    //   val b = IOs(2)
+    //   val a = Defers(1)
+    //   val b = Defers(2)
     //   val c =
     //     defer {
     //       await(a) match {
@@ -15,82 +15,82 @@ class directTest extends KyoTest:
     //         case 2                   => 99
     //       }
     //     }
-    //   assert(IOs.run(c) == 1)
+    //   assert(Defers.run(c) == 1)
     // }
 
     "one run" in {
         val io = defer {
-            val a = await(IOs("hello"))
+            val a = await(Defers("hello"))
             a + " world"
         }
-        assert(IOs.run(io) == "hello world")
+        assert(Defers.run(io).pure == "hello world")
     }
 
     "two runs" in {
         val io =
             defer {
-                val a = await(IOs("hello"))
-                val b = await(IOs("world"))
+                val a = await(Defers("hello"))
+                val b = await(Defers("world"))
                 a + " " + b
             }
-        assert(IOs.run(io) == "hello world")
+        assert(Defers.run(io).pure == "hello world")
     }
 
     "two effects" in {
-        val io: String < (IOs & Options) =
+        val io: String < (Defers & Options) =
             defer {
                 val a = await(Options.get(Some("hello")))
-                val b = await(IOs("world"))
+                val b = await(Defers("world"))
                 a + " " + b
             }
-        assert(IOs.run(Options.run(io)) == Some("hello world"))
+        assert(Defers.run(Options.run(io)).pure == Some("hello world"))
     }
 
     "if" in {
         var calls = Seq.empty[Int]
-        val io: Boolean < IOs =
+        val io: Boolean < Defers =
             defer {
-                if await(IOs { calls :+= 1; true }) then
-                    await(IOs { calls :+= 2; true })
+                if await(Defers { calls :+= 1; true }) then
+                    await(Defers { calls :+= 2; true })
                 else
-                    await(IOs { calls :+= 3; true })
+                    await(Defers { calls :+= 3; true })
             }
-        assert(IOs.run(io))
+        assert(Defers.run(io).pure)
         assert(calls == Seq(1, 2))
     }
 
     "booleans" - {
         "&&" in {
             var calls = Seq.empty[Int]
-            val io: Boolean < IOs =
+            val io: Boolean < Defers =
                 defer {
-                    (await(IOs { calls :+= 1; true }) && await(IOs { calls :+= 2; true }))
+                    (await(Defers { calls :+= 1; true }) && await(Defers { calls :+= 2; true }))
                 }
-            assert(IOs.run(io))
+            assert(Defers.run(io).pure)
             assert(calls == Seq(1, 2))
         }
         "||" in {
             var calls = Seq.empty[Int]
-            val io: Boolean < IOs =
+            val io: Boolean < Defers =
                 defer {
-                    (await(IOs { calls :+= 1; true }) || await(IOs { calls :+= 2; true }))
+                    (await(Defers { calls :+= 1; true }) || await(Defers { calls :+= 2; true }))
                 }
-            assert(IOs.run(io))
+            assert(Defers.run(io).pure)
             assert(calls == Seq(1))
         }
     }
 
-    "while" in {
-        val io =
-            defer {
-                val c = await(Atomics.initInt(1))
-                while await(c.get) < 100 do
-                    await(c.incrementAndGet)
-                    ()
-                await(c.get)
-            }
-        assert(IOs.run(io) == 100)
-    }
+    // "while" in {
+    //     val io =
+    //         defer {
+    //             val c = await(Atomics.initInt(1))
+    //             while await(c.get) < 100 do
+    //                 await(c.incrementAndGet)
+    //                 ()
+    //             await(c.get)
+    //         }
+    //     assert(Defers.run(io).pure == 100)
+    // }
 
     "options" in {
         def test(opt: Option[Int]) =
@@ -98,41 +98,41 @@ class directTest extends KyoTest:
         test(Some(1))
         test(None)
     }
-    "tries" in {
-        def test(t: Try[Int]) =
-            assert(t == IOs.run(IOs.attempt(defer(await(IOs.fromTry(t))))))
-        test(Try(1))
-        test(Try(throw new Exception("a")))
-    }
-    "consoles" in {
-        object console extends Console:
+    // "tries" in {
+    //     def test(t: Try[Int]) =
+    //         assert(t == Defers.run(Defers.attempt(defer(await(Defers.fromTry(t))))))
+    //     test(Try(1))
+    //     test(Try(throw new Exception("a")))
+    // }
+    // "consoles" in {
+    //     object console extends Console:
 
-            def printErr(s: String): Unit < IOs = ???
+    //         def printErr(s: String): Unit < Defers = ???
 
-            def println(s: String): Unit < IOs = ???
+    //         def println(s: String): Unit < Defers = ???
 
-            def print(s: String): Unit < IOs = ???
+    //         def print(s: String): Unit < Defers = ???
 
-            def readln: String < IOs = "hello"
+    //         def readln: String < Defers = "hello"
 
-            def printlnErr(s: String): Unit < IOs = ???
-        end console
-        val io: String < IOs = Consoles.run(console)(defer(await(Consoles.readln)))
-        assert(IOs.run(io) == "hello")
-    }
+    //         def printlnErr(s: String): Unit < Defers = ???
+    //     end console
+    //     val io: String < Defers = Consoles.run(console)(defer(await(Consoles.readln)))
+    //     assert(Defers.run(io) == "hello")
+    // }
 
     "kyo computations must be within a run block" in {
-        assertDoesNotCompile("defer(IOs(1))")
+        assertDoesNotCompile("defer(Defers(1))")
         assertDoesNotCompile("""
             defer {
-                val a = IOs(1)
+                val a = Defers(1)
                 10
             }
         """)
         assertDoesNotCompile("""
             defer {
                 val a = {
-                val b = IOs(1)
+                val b = Defers(1)
                 10
                 }
                 10

@@ -10,7 +10,7 @@ import scala.util.Try
 class iosTest extends KyoTest:
 
     "lazyRun" - {
-        "execution" in run {
+        "execution" in {
             var called = false
             val v =
                 IOs {
@@ -21,7 +21,7 @@ class iosTest extends KyoTest:
             assert(IOs.runLazy(v).pure == 1)
             assert(called)
         }
-        "next handled effects can execute" in run {
+        "next handled effects can execute" in {
             var called = false
             val v =
                 Envs.get[Int].map { i =>
@@ -39,7 +39,7 @@ class iosTest extends KyoTest:
             )
             assert(called)
         }
-        "failure" in run {
+        "failure" in {
             val ex        = new Exception
             def fail: Int = throw ex
 
@@ -54,7 +54,7 @@ class iosTest extends KyoTest:
             }
             succeed
         }
-        "stack-safe" in run {
+        "stack-safe" in {
             val frames = 10000
             def loop(i: Int): Int < IOs =
                 IOs {
@@ -70,7 +70,7 @@ class iosTest extends KyoTest:
         }
     }
     "run" - {
-        "execution" in run {
+        "execution" in {
             var called = false
             val v: Int < IOs =
                 IOs {
@@ -84,7 +84,7 @@ class iosTest extends KyoTest:
             )
             assert(called)
         }
-        "stack-safe" in run {
+        "stack-safe" in {
             val frames = 100000
             def loop(i: Int): Assertion < IOs =
                 IOs {
@@ -93,9 +93,10 @@ class iosTest extends KyoTest:
                     else
                         succeed
                 }
-            loop(0)
+            val r = IOs.run(loop(0))
+            r
         }
-        "failure" in run {
+        "failure" in {
             val ex        = new Exception
             def fail: Int = throw ex
 

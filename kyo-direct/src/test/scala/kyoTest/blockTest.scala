@@ -9,29 +9,29 @@ class blockTest extends AnyFreeSpec with Assertions:
 
     "assigned run" - {
         "only" in {
-            val i = IOs(1)
+            val i = Defers(1)
             runLiftTest(1) {
                 val v = await(i)
                 v
             }
         }
         "followed by pure expression" in {
-            val i = IOs(1)
+            val i = Defers(1)
             runLiftTest(2) {
                 val v = await(i)
                 v + 1
             }
         }
         "followed by impure expression" in {
-            val i = IOs(1)
-            val j = IOs(2)
+            val i = Defers(1)
+            val j = Defers(2)
             runLiftTest(3) {
                 val v = await(i)
                 v + await(j)
             }
         }
         "nested" in {
-            val i = IOs(1)
+            val i = Defers(1)
             runLiftTest(3) {
                 val v =
                     val r = await(i)
@@ -42,21 +42,21 @@ class blockTest extends AnyFreeSpec with Assertions:
     }
     "unassigned run" - {
         "only" in {
-            val i = IOs(1)
+            val i = Defers(1)
             runLiftTest(1) {
                 await(i)
             }
         }
         "followed by pure expression" in {
-            val i = IOs(1)
+            val i = Defers(1)
             runLiftTest(2) {
                 await(i)
                 2
             }
         }
         "followed by impure expression" in {
-            val i = IOs(1)
-            val j = IOs(2)
+            val i = Defers(1)
+            val j = Defers(2)
             runLiftTest(2) {
                 await(i)
                 await(j)
@@ -77,7 +77,7 @@ class blockTest extends AnyFreeSpec with Assertions:
             }
         }
         "followed by impure expression" in {
-            val i = IOs(1)
+            val i = Defers(1)
             def a = 2
             runLiftTest(1) {
                 a
@@ -85,8 +85,8 @@ class blockTest extends AnyFreeSpec with Assertions:
             }
         }
         "using previous defers" in {
-            val i = IOs(1)
-            val j = IOs(2)
+            val i = Defers(1)
+            val j = Defers(2)
             runLiftTest(3) {
                 val v = await(i)
                 v + await(j)
@@ -95,14 +95,14 @@ class blockTest extends AnyFreeSpec with Assertions:
         "using external function" in {
             def a(i: Int, s: String) = i + s.toInt
             runLiftTest(4) {
-                await(IOs(a(1, "2"))) + a(0, "1")
+                await(Defers(a(1, "2"))) + a(0, "1")
             }
         }
     }
     "complex" - {
         "tuple val pattern" in {
             runLiftTest(3) {
-                val (a, b) = (await(IOs(1)), await(IOs(2)))
+                val (a, b) = (await(Defers(1)), await(Defers(2)))
                 a + b
             }
         }
@@ -110,11 +110,11 @@ class blockTest extends AnyFreeSpec with Assertions:
             runLiftTest((1, 2, 3)) {
                 val x = 1
                 (
-                    await(IOs(x)), {
-                        val a = await(IOs(2))
+                    await(Defers(x)), {
+                        val a = await(Defers(2))
                         a
                     },
-                    await(IOs(3))
+                    await(Defers(3))
                 )
             }
         }

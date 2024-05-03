@@ -113,7 +113,7 @@ class patMatchTest extends AnyFreeSpec with Assertions:
     "misc" - {
         "val patmatch" in {
             runLiftTest(1) {
-                val Some(a) = await(IOs(Some(1)))
+                val Some(a) = await(Defers(Some(1)))
                 a
             }
         }
