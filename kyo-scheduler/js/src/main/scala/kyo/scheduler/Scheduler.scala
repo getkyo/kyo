@@ -12,7 +12,7 @@ class Scheduler {
 
     def schedule(t: Task): Unit = {
         JSExecutionContext.queue.execute { () =>
-            if (t.run(0, clock) == Task.Preempted)
+            if (t.run(clock.currentMillis(), clock) == Task.Preempted)
                 schedule(t)
         }
     }
