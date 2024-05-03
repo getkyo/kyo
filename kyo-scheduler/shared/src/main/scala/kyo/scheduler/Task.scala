@@ -15,7 +15,7 @@ trait Task {
 
     def run(startMillis: Long, clock: InternalClock): Task.Result
 
-    private def runtime(): Int = {
+    protected def runtime(): Int = {
         val state = this.state
         if (state < 0) -state
         else state
