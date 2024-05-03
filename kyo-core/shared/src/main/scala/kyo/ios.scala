@@ -36,54 +36,22 @@ sealed trait IOs extends Effect[IOs]:
         }
 
     def attempt[T, S](v: => T < S): Try[T] < S =
-        def attemptLoop(v: T < S): Try[T] < S =
-            v match
-                case kyo: Suspend[MX, Any, T, S] @unchecked =>
-                    new Continue[MX, Any, Try[T], S](kyo):
-                        def apply(v: Any < S, s: Safepoint[S], l: Locals.State) =
-                            try
-                                attemptLoop(kyo(v, s, l))
-                            catch
-                                case ex: Throwable if (NonFatal(ex)) =>
-                                    Failure(ex)
-                case _ =>
-                    Success(v.asInstanceOf[T])
-        try
-            val v0 = v
-            if isNull(v0) then
-                throw new NullPointerException
-            attemptLoop(v0)
-        catch
-            case ex: Throwable if (NonFatal(ex)) =>
-                Failure(ex)
-        end try
-    end attempt
+        eval(v.map(Success(_): Try[T]))((s, k) =>
+            try k()
+            catch
+                case ex if NonFatal(ex) =>
+                    Failure(ex)
+        )
 
     def catching[T, S, U >: T, S2](v: => T < S)(
         pf: PartialFunction[Throwable, U < S2]
     ): U < (S & S2) =
-        def handleLoop(v: U < (S & S2)): U < (S & S2) =
-            v match
-                case kyo: Suspend[MX, Any, U, S & S2] @unchecked =>
-                    new Continue[MX, Any, U, S & S2](kyo):
-                        def apply(v: Any < (S & S2), s: Safepoint[S & S2], l: Locals.State) =
-                            try
-                                handleLoop(kyo(v, s, l))
-                            catch
-                                case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
-                                    pf(ex)
-                case _ =>
-                    v.asInstanceOf[T]
-        try
-            val v0 = v
-            if isNull(v0) then
-                throw new NullPointerException
-            handleLoop(v0)
-        catch
-            case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
-                pf(ex)
-        end try
-    end catching
+        eval(v: U < (S & S2))((s, k) =>
+            try k()
+            catch
+                case ex if NonFatal(ex) && pf.isDefinedAt(ex) =>
+                    pf(ex)
+        )
 
     def run[T](v: T < IOs)(using f: Flat[T < IOs]): T =
         @tailrec def runLoop(v: T < IOs): T =
@@ -118,34 +86,25 @@ sealed trait IOs extends Effect[IOs]:
     def ensure[T, S](f: => Unit < IOs)(v: T < S): T < (IOs & S) =
         val ensure = new Ensure:
             def run = f
-        def ensureLoop(v: T < (IOs & S), p: Preempt): T < (IOs & S) =
-            v match
-                case kyo: Suspend[MX, Any, T, S & IOs] @unchecked =>
-                    new Continue[MX, Any, T, S & IOs](kyo):
-                        def apply(v: Any < (S & IOs), s: Safepoint[S & IOs], l: Locals.State) =
-                            val np =
-                                (s: Any) match
-                                    case s: Preempt =>
-                                        s.ensure(ensure)
-                                        s
-                                    case _ =>
-                                        Preempt.never
-                            val v2 =
-                                try kyo(v, s, l)
-                                catch
-                                    case ex if (NonFatal(ex)) =>
-                                        ensure()
-                                        throw ex
-                            ensureLoop(v2, np)
-                        end apply
-                case _ =>
-                    p.remove(ensure)
-                    IOs {
+        eval(v: T < (IOs & S))(
+            suspend = IOs(_),
+            done = (s, v) =>
+                Preempt.remove(s, ensure)
+                ensure()
+                v
+            ,
+            resume = (s, k) =>
+                Preempt.ensure(s, ensure)
+                try k()
+                catch
+                    case ex if NonFatal(ex) =>
+                        Preempt.remove(s, ensure)
                         ensure()
-                        v
-                    }
-        ensureLoop(v, Preempt.never)
+                        throw ex
+                end try
+        )
     end ensure
+
 end IOs
 object IOs extends IOs
 
@@ -178,6 +137,15 @@ private[kyo] object iosInternal:
             IOs(v)
     end Preempt
     object Preempt:
+        def ensure(s: Safepoint[?], e: Ensure): Unit =
+            s match
+                case p: Preempt => p.ensure(e)
+                case _          =>
+
+        def remove(s: Safepoint[?], e: Ensure): Unit =
+            s match
+                case p: Preempt => p.remove(e)
+                case _          =>
         val never: Preempt =
             new Preempt:
                 def ensure(f: () => Unit) = ()

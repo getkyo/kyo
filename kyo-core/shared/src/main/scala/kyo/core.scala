@@ -106,6 +106,23 @@ object core:
         end handle
     end extension
 
+    inline def eval[T, S, S2](v: => T < S)(
+        inline resume: (Safepoint[S & S2], () => T < (S & S2)) => T < (S & S2),
+        inline done: (Safepoint[S & S2], T) => T < (S & S2) = (s: Safepoint[S & S2], v: T) => v,
+        inline suspend: T < (S & S2) => T < (S & S2) = (v: T < (S & S2)) => v
+    ): T < (S & S2) =
+        def evalLoop(s: Safepoint[S & S2], v: T < (S & S2)): T < (S & S2) =
+            v match
+                case kyo: Suspend[MX, Any, T, S & S2] @unchecked =>
+                    new Continue[MX, Any, T, S & S2](kyo):
+                        def apply(v: Any, s: Safepoint[S & S2], l: Locals.State) =
+                            suspend(evalLoop(s, resume(s, () => kyo(v, s, l))))
+                case v =>
+                    suspend(done(s, v.asInstanceOf[T]))
+        val s = Safepoint.noop
+        evalLoop(s, suspend(resume(s, () => v)))
+    end eval
+
     abstract class ResultHandler[State, Command[_], E <: Effect[E], Result[_], S]:
 
         case class Resume[U, S2](st: State, v: U < (E & S & S2))
