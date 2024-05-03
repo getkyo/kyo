@@ -6,7 +6,6 @@ import kyo.*
 import org.openjdk.jmh.annotations.*
 import scala.concurrent.duration.Duration
 import zio.UIO
-import zio.internal.ExecutionMetrics
 
 @State(Scope.Benchmark)
 @Fork(
