@@ -11,9 +11,11 @@ type Duration = duration.Duration
 given CanEqual[Duration, Duration] = canEqual
 
 object Duration:
-    val Zero: Duration                          = _Zero
-    val Infinity: Duration                      = _Infinity
+    val Zero: Duration     = _Zero
+    val Infinity: Duration = _Infinity
+
     inline def fromNanos(value: Long): Duration = value.nanos
+
     def fromJava(value: JavaDuration): Duration =
         (value.toNanos: @annotation.switch) match
             case 0                       => Zero
@@ -128,7 +130,7 @@ private[kyo] object duration:
         inline def gt(that: Duration): Boolean   = self > that
         inline def lt(that: Duration): Boolean   = self < that
         inline def eqEq(that: Duration): Boolean = self == that
-        inline def neEq(that: Duration): Boolean = self == that
+        inline def neEq(that: Duration): Boolean = self != that
 
         inline def _max(that: Duration): Duration = Math.max(self, that)
         inline def _min(that: Duration): Duration = Math.min(self, that)
