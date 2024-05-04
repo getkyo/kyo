@@ -1,7 +1,6 @@
 package kyo
 
 import scala.collection.mutable.ListBuffer
-import scala.concurrent.duration.Duration
 import scala.util.Try
 
 abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
@@ -60,12 +59,12 @@ object KyoApp:
     def run[T](v: T < Effects)(
         using f: Flat[T < Effects]
     ): T =
-        run(Duration.Inf)(v)
+        run(Duration.Infinity)(v)
 
     def runFiber[T](v: T < Effects)(
         using f: Flat[T < Effects]
     ): Fiber[Try[T]] =
-        runFiber(Duration.Inf)(v)
+        runFiber(Duration.Infinity)(v)
 
     def runFiber[T](timeout: Duration)(v: T < Effects)(
         using f: Flat[T < Effects]

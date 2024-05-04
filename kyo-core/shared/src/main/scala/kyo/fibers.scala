@@ -11,7 +11,6 @@ import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.concurrent.duration.Duration
 import scala.util.*
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace

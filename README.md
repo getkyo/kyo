@@ -368,7 +368,6 @@ While the companion object of `KyoApp` provides utility methods to run isolated 
 
 ```scala
 import kyo._
-import scala.concurrent.duration._
 
 // An example computation
 val a: Int < IOs =
@@ -1368,17 +1367,16 @@ The `sleep` and `timeout` methods pause a computation or time it out after a dur
 
 ```scala
 import kyo._
-import scala.concurrent.duration._
 
 // A computation that sleeps for 1s
 val a: Unit < Fibers =
-  Fibers.sleep(1.second)
+  Fibers.sleep(1.seconds)
 
 // Times out and interrupts the provided 
 // computation in case it doesn't produce 
 // a result within 1s
 val b: Int < Fibers =
-  Fibers.timeout(1.second)(Math.cos(42).toInt)
+  Fibers.timeout(1.seconds)(Math.cos(42).toInt)
 ```
 
 The `fromFuture` methods provide interoperability with Scala's `Future`.
@@ -1451,7 +1449,6 @@ Similarly to `IOs`, users should avoid handling the `Fibers` effect directly and
 
 ```scala
 import kyo._
-import scala.concurrent.duration._
 
 // An example computation with fibers
 val a: Int < Fibers =
@@ -1735,7 +1732,6 @@ The `Meters` effect offers utilities to regulate computational execution, be it 
 
 ```scala
 import kyo._
-import scala.concurrent.duration._
 
 // 'mutex': One computation at a time
 val a: Meter < IOs = 
@@ -1749,7 +1745,7 @@ val b: Meter < IOs =
 val c: Meter < IOs =
   Meters.initRateLimiter(
     rate = 10, 
-    period = 1.second
+    period = 1.seconds
   )
 
 // 'pipeline': Combine multiple 'Meter's
@@ -1791,7 +1787,6 @@ The `Timers` effect is designed for control over the timing of task execution.
 
 ```scala
 import kyo._
-import scala.concurrent.duration._
 
 // An example computation to
 // be scheduled
@@ -1800,34 +1795,34 @@ val a: Unit < IOs =
 
 // Schedule a delayed task
 val b: TimerTask < IOs =
-  Timers.schedule(delay = 1.second)(a)
+  Timers.schedule(delay = 1.seconds)(a)
 
 // Recurring task with
 // intial delay
 val c: TimerTask < IOs =
   Timers.scheduleAtFixedRate(
-    initialDelay = 1.minute,
-    period = 1.minute
+    initialDelay = 1.minutes,
+    period = 1.minutes
   )(a)
 
 // Recurring task without
 // initial delay
 val d: TimerTask < IOs =
   Timers.scheduleAtFixedRate(
-    period = 1.minute
+    period = 1.minutes
   )(a)
 
 // Schedule with fixed delay between tasks
 val e: TimerTask < IOs =
   Timers.scheduleWithFixedDelay(
-    initialDelay = 1.minute,
-    period = 1.minute
+    initialDelay = 1.minutes,
+    period = 1.minutes
   )(a)
 
 // without initial delay
 val f: TimerTask < IOs =
   Timers.scheduleWithFixedDelay(
-    period = 1.minute
+    period = 1.minutes
   )(a)
 
 // Specify the 'Timer' explictly
@@ -1839,11 +1834,10 @@ val i: TimerTask < IOs =
 
 ```scala
 import kyo._
-import scala.concurrent.duration._
 
 // Example TimerTask
 val a: TimerTask < IOs = 
-  Timers.schedule(1.second)(())
+  Timers.schedule(1.seconds)(())
 
 // Try to cancel the task
 val b: Boolean < IOs =

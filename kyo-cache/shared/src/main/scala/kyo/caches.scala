@@ -4,7 +4,6 @@ import Cache.*
 import com.github.benmanes.caffeine
 import com.github.benmanes.caffeine.cache.Caffeine
 import java.util.concurrent.TimeUnit
-import scala.concurrent.duration.Duration
 import scala.runtime.AbstractFunction1
 import scala.util.Failure
 import scala.util.Success
