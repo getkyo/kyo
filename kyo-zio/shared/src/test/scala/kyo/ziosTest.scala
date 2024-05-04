@@ -24,7 +24,7 @@ class ziosTest extends KyoTest:
         Aborts.run(a).map(e => assert(e.isLeft))
     }
     "Aborts[Throwable]" in runKyo {
-        val a: Boolean < (Aborts[Throwable] & ZIOs) = ZIOs.get(ZIO.fail(new java.lang.RuntimeException).when(false).as(true))
+        val a: Boolean < (Aborts[Throwable] & ZIOs) = ZIOs.get(ZIO.fail(new RuntimeException).when(false).as(true))
         Aborts.run(a).map(e => assert(e.isRight))
     }
 
@@ -39,6 +39,18 @@ class ziosTest extends KyoTest:
         assertCompiles("""
             val a = ZIOs.get(ZIO.service[Int] *> ZIO.service[Double])
         """)
+    }
+
+    "A < ZIOs" in runKyo {
+        val a: Int < ZIOs = ZIOs.get(ZIO.succeed(10))
+        val b             = a.map(_ * 2)
+        b.map(i => assert(i == 20))
+    }
+
+    "nested" in runKyo {
+        val a: (String < ZIOs) < ZIOs = ZIOs.get(ZIO.succeed(ZIOs.get(ZIO.succeed("Nested"))))
+        val b: String < ZIOs          = a.flatten
+        b.map(s => assert(s == "Nested"))
     }
 
     "fibers" in runKyo {
