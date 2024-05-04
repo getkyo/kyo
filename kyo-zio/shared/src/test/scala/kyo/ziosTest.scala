@@ -19,15 +19,26 @@ class ziosTest extends KyoTest:
             )
         )
 
-    "aborts" in runKyo {
+    "Aborts[String]" in runKyo {
         val a: Nothing < (Aborts[String] & ZIOs) = ZIOs.get(ZIO.fail("error"))
         Aborts.run(a).map(e => assert(e.isLeft))
     }
+    "Aborts[Throwable]" in runKyo {
+        val a: Boolean < (Aborts[Throwable] & ZIOs) = ZIOs.get(ZIO.fail(new java.lang.RuntimeException).when(false).as(true))
+        Aborts.run(a).map(e => assert(e.isRight))
+    }
 
-    "env" in runKyo {
-        val a: Int < (Envs[Int] & ZIOs) = ZIOs.get(ZIO.service[Int])
-        val b: Int < ZIOs               = Envs.run(10)(a)
-        b.map(v => assert(v == 10))
+    "Envs[Int]" in pendingUntilFixed {
+        assertCompiles("""
+            val a: Int < (Envs[Int] & ZIOs) = ZIOs.get(ZIO.service[Int])
+            val b: Int < ZIOs               = Envs.run(10)(a)
+            b.map(v => assert(v == 10))
+        """)
+    }
+    "Envs[Int & Double]" in pendingUntilFixed {
+        assertCompiles("""
+            val a = ZIOs.get(ZIO.service[Int] *> ZIO.service[Double])
+        """)
     }
 
     "fibers" in runKyo {

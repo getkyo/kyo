@@ -3,12 +3,8 @@ package kyo
 import core.*
 import core.internal.*
 import kyo.fibersInternal.*
-import scala.annotation.targetName
 import scala.util.control.NonFatal
-import zio.IO
 import zio.Task
-import zio.UIO
-import zio.URIO
 import zio.ZEnvironment
 import zio.ZIO
 
@@ -52,20 +48,14 @@ object ZIOs extends ZIOs:
         loop(v)
     end run
 
-    def get[R: zio.Tag, E: Tag, A](v: ZIO[R, E, A])(using tag: Tag[Envs[R]]): A < (Envs[R] & Aborts[E] & ZIOs) =
+    // TODO: fix Envs with type intersections
+    private[kyo] def get[R: zio.Tag, E: Tag, A](v: ZIO[R, E, A])(using tag: Tag[Envs[R]]): A < (Envs[R] & Aborts[E] & ZIOs) =
         Envs.get[R](using tag).map(r => get(v.provideEnvironment(ZEnvironment(r))))
 
-    def get[R: zio.Tag, A](v: URIO[R, A])(using tag: Tag[Envs[R]]): A < (Envs[R] & ZIOs) =
-        Envs.get[R](using tag).map(r => get(v.provideEnvironment(ZEnvironment(r))))
-
-    def get[E: Tag, T](v: IO[E, T]): T < (Aborts[E] & ZIOs) =
-        val task = v.fold[T < Aborts[E]](Aborts.fail(_), v => v)
+    def get[E >: Nothing: Tag, A](v: ZIO[Any, E, A]): A < (Aborts[E] & ZIOs) =
+        val task = v.fold[A < Aborts[E]](e => Aborts.fail(e), a => a)
         this.suspend(task, identity)
 
-    def get[T](v: UIO[T]): T < ZIOs =
+    def get[A](v: ZIO[Any, Nothing, A]): A < ZIOs =
         this.suspend(v)
-
-    @targetName("getTask")
-    def get[T](v: Task[T]): T < ZIOs =
-        this.suspend[T](v)
 end ZIOs
