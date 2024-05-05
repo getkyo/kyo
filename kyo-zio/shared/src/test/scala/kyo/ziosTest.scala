@@ -2,6 +2,7 @@ package kyoTest
 
 import kyo.*
 import org.scalatest.compatible.Assertion
+import org.scalatest.concurrent.Eventually.*
 import scala.concurrent.Future
 import zio.*
 
@@ -63,55 +64,76 @@ class ziosTest extends KyoTest:
 
     "interrupts" - {
 
-        def kyoLoop(a: AtomicInt): Unit < IOs =
-            a.incrementAndGet.map(_ => kyoLoop(a))
+        import java.util.concurrent.atomic.LongAdder
 
-        def zioLoop(a: Ref[Int]): Task[Unit] =
-            a.update(_ + 1).flatMap(_ => zioLoop(a))
+        def kyoLoop(a: LongAdder): Unit < IOs =
+            IOs(a.increment()).map(_ => kyoLoop(a))
+
+        def zioLoop(a: LongAdder): Task[Unit] =
+            ZIO.attempt(a.increment()).flatMap(_ => zioLoop(a))
 
         if Platform.isJVM then
 
             "zio to kyo" in runZIO {
-                val v =
-                    for
-                        a <- Atomics.initInt(0)
-                        _ <- Fibers.init(kyoLoop(a)).map(_.get)
-                    yield ()
+                val a = new LongAdder
                 for
-                    f <- ZIOs.run(v).fork
+                    f <- ZIOs.run(kyoLoop(a)).fork
+                    _ = eventually(a.sum() > 0)
                     _ <- f.interrupt
                     r <- f.await
-                yield assert(r.isFailure)
+                yield
+                    eventually {
+                        for _ <- 0 until 5 do
+                            Thread.sleep(1)
+                            assert(a.sumThenReset() == 0)
+                    }
+                    assert(r.isFailure)
                 end for
             }
             "kyo to zio" in runKyo {
-                val v =
-                    for
-                        a <- Ref.make(0)
-                        _ <- zioLoop(a)
-                    yield ()
+                val a = new LongAdder
                 for
-                    f <- Fibers.init(ZIOs.get(ZIO.suspend(v)))
+                    f <- Fibers.init(ZIOs.get(zioLoop(a)))
+                    _ = eventually(a.sum() > 0)
                     _ <- f.interrupt
                     r <- f.getTry
-                yield assert(r.isFailure)
+                yield
+                    eventually {
+                        for _ <- 0 until 5 do
+                            Thread.sleep(1)
+                            assert(a.sumThenReset() == 0)
+                    }
+                    assert(r.isFailure)
                 end for
             }
-            // "both" in run {
-            //     val v =
-            //         for
-            //             a  <- ZIOs.get(Ref.make(0))
-            //             _  <- ZIOs.get(zioLoop(a))
-            //             a2 <- Atomics.initInt(0)
-            //             _  <- Fibers.fork(kyoLoop(a2))
-            //         yield ()
-            //     for
-            //         f <- ZiosApp.runTask(v).fork
-            //         _ <- f.interrupt
-            //         r <- f.await
-            //     yield assert(r.isFailure)
-            //     end for
-            // }
+            "both" in runZIO {
+                val a  = new LongAdder
+                val a2 = new LongAdder
+                val v =
+                    for
+                        _ <- ZIOs.get(zioLoop(a))
+                        _ <- Fibers.init(kyoLoop(a2))
+                    yield ()
+                for
+                    f <- ZIOs.run(v).fork
+                    _ = eventually(a.sum() > 0)
+                    _ = eventually(a2.sum() > 0)
+                    _ <- f.interrupt
+                    r <- f.await
+                yield
+                    eventually {
+                        for _ <- 0 until 5 do
+                            Thread.sleep(1)
+                            assert(a.sumThenReset() == 0)
+                    }
+                    eventually {
+                        for _ <- 0 until 5 do
+                            Thread.sleep(1)
+                            assert(a2.sumThenReset() == 0)
+                    }
+                    assert(r.isFailure)
+                end for
+            }
         end if
     }
 end ziosTest
