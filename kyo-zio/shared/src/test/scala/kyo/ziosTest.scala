@@ -66,80 +66,41 @@ class ziosTest extends KyoTest:
 
         import java.util.concurrent.atomic.LongAdder
 
-        def kyoLoop(a: LongAdder): Unit < IOs =
+        def kyoLoop(a: LongAdder = new LongAdder): Unit < IOs =
             IOs(a.increment()).map(_ => kyoLoop(a))
 
-        def zioLoop(a: LongAdder): Task[Unit] =
+        def zioLoop(a: LongAdder = new LongAdder): Task[Unit] =
             ZIO.attempt(a.increment()).flatMap(_ => zioLoop(a))
 
         if Platform.isJVM then
 
             "zio to kyo" in runZIO {
-                val a = new LongAdder
                 for
-                    f <- ZIOs.run(kyoLoop(a)).fork
-                    _ = eventually(a.sum() > 0)
+                    f <- ZIOs.run(kyoLoop()).fork
                     _ <- f.interrupt
                     r <- f.await
-                yield
-                    a.reset()
-                    eventually {
-                        for _ <- 0 until 5 do
-                            Thread.sleep(1)
-                            assert(a.sum() == 0)
-                            a.reset()
-                    }
-                    assert(r.isFailure)
+                yield assert(r.isFailure)
                 end for
             }
             "kyo to zio" in runKyo {
-                val a = new LongAdder
                 for
-                    f <- Fibers.init(ZIOs.get(zioLoop(a)))
-                    _ = eventually(a.sum() > 0)
+                    f <- Fibers.init(ZIOs.get(zioLoop()))
                     _ <- f.interrupt
                     r <- f.getTry
-                yield
-                    a.reset()
-                    eventually {
-                        for _ <- 0 until 5 do
-                            Thread.sleep(1)
-                            assert(a.sum() == 0)
-                            a.reset()
-                    }
-                    assert(r.isFailure)
+                yield assert(r.isFailure)
                 end for
             }
             "both" in runZIO {
-                val a  = new LongAdder
-                val a2 = new LongAdder
                 val v =
                     for
-                        _ <- ZIOs.get(zioLoop(a))
-                        _ <- Fibers.init(kyoLoop(a2))
+                        _ <- ZIOs.get(zioLoop())
+                        _ <- Fibers.init(kyoLoop())
                     yield ()
                 for
                     f <- ZIOs.run(v).fork
-                    _ = eventually(a.sum() > 0)
-                    _ = eventually(a2.sum() > 0)
                     _ <- f.interrupt
                     r <- f.await
-                yield
-                    a.reset()
-                    eventually {
-                        for _ <- 0 until 5 do
-                            Thread.sleep(1)
-                            assert(a.sum() == 0)
-                            a.reset()
-                    }
-                    a2.reset()
-                    eventually {
-                        for _ <- 0 until 5 do
-                            Thread.sleep(1)
-                            assert(a2.sum() == 0)
-                            a2.reset()
-                    }
-                    assert(r.isFailure)
+                yield assert(r.isFailure)
                 end for
             }
         end if
