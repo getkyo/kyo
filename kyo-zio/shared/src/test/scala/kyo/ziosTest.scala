@@ -82,10 +82,12 @@ class ziosTest extends KyoTest:
                     _ <- f.interrupt
                     r <- f.await
                 yield
+                    a.reset()
                     eventually {
                         for _ <- 0 until 5 do
                             Thread.sleep(1)
-                            assert(a.sumThenReset() == 0)
+                            assert(a.sum() == 0)
+                            a.reset()
                     }
                     assert(r.isFailure)
                 end for
@@ -98,10 +100,12 @@ class ziosTest extends KyoTest:
                     _ <- f.interrupt
                     r <- f.getTry
                 yield
+                    a.reset()
                     eventually {
                         for _ <- 0 until 5 do
                             Thread.sleep(1)
-                            assert(a.sumThenReset() == 0)
+                            assert(a.sum() == 0)
+                            a.reset()
                     }
                     assert(r.isFailure)
                 end for
@@ -121,15 +125,19 @@ class ziosTest extends KyoTest:
                     _ <- f.interrupt
                     r <- f.await
                 yield
+                    a.reset()
                     eventually {
                         for _ <- 0 until 5 do
                             Thread.sleep(1)
-                            assert(a.sumThenReset() == 0)
+                            assert(a.sum() == 0)
+                            a.reset()
                     }
+                    a2.reset()
                     eventually {
                         for _ <- 0 until 5 do
                             Thread.sleep(1)
-                            assert(a2.sumThenReset() == 0)
+                            assert(a2.sum() == 0)
+                            a2.reset()
                     }
                     assert(r.isFailure)
                 end for
