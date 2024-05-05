@@ -109,7 +109,7 @@ lazy val `kyo-core` =
             libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.0-RC3"  % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"      % Test,
-            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test,
+            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test
         )
         .jsSettings(`js-settings`)
 
@@ -181,8 +181,8 @@ lazy val `kyo-tapir` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.10.0",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.10.0"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.10.6",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.10.6"
         )
 
 lazy val `kyo-test` =
@@ -212,7 +212,7 @@ lazy val `kyo-examples` =
         .settings(
             `kyo-settings`,
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.0"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.6"
         )
 
 lazy val `kyo-bench` =
