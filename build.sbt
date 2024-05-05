@@ -109,7 +109,7 @@ lazy val `kyo-core` =
             libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.0-RC3"  % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"      % Test,
-            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test,
+            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test
         )
         .jsSettings(`js-settings`)
 
@@ -225,8 +225,8 @@ lazy val `kyo-bench` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.typelevel"       %% "cats-effect"        % "3.5.4",
-            libraryDependencies += "org.typelevel"       %% "log4cats-core"      % "2.6.0",
-            libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"     % "2.6.0",
+            libraryDependencies += "org.typelevel"       %% "log4cats-core"      % "2.7.0",
+            libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"     % "2.7.0",
             libraryDependencies += "dev.zio"             %% "zio-logging"        % "2.2.3",
             libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2" % "2.2.3",
             libraryDependencies += "dev.zio"             %% "zio"                % "2.1.0-RC3",
