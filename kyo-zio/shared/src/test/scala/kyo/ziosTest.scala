@@ -12,7 +12,7 @@ class ziosTest extends KyoTest:
             zio.Runtime.default.unsafe.run(v).getOrThrow()
         )
 
-    def runKyo(v: => Assertion < (Fibers & ZIOs)): Future[Assertion] =
+    def runKyo(v: => Assertion < (Aborts[Throwable] & ZIOs)): Future[Assertion] =
         zio.Unsafe.unsafe(implicit u =>
             zio.Runtime.default.unsafe.runToFuture(
                 ZIOs.run(v)
@@ -84,19 +84,19 @@ class ziosTest extends KyoTest:
                 yield assert(r.isFailure)
                 end for
             }
-            // "kyo to zio" in run {
-            //     val v =
-            //         for
-            //             a <- Ref.make(0)
-            //             _ <- zioLoop(a)
-            //         yield ()
-            //     for
-            //         f <-
-            //         _ <- f.interrupt
-            //         r <- f.await
-            //     yield assert(r.isFailure)
-            //     end for
-            // }
+            "kyo to zio" in runKyo {
+                val v =
+                    for
+                        a <- Ref.make(0)
+                        _ <- zioLoop(a)
+                    yield ()
+                for
+                    f <- Fibers.init(ZIOs.get(ZIO.suspend(v)))
+                    _ <- f.interrupt
+                    r <- f.getTry
+                yield assert(r.isFailure)
+                end for
+            }
             // "both" in run {
             //     val v =
             //         for
