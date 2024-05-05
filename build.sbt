@@ -2,7 +2,7 @@ import sys.process.*
 
 val scala3Version   = "3.4.1"
 val scala212Version = "2.12.19"
-val scala213Version = "2.13.13"
+val scala213Version = "2.13.14"
 
 val compilerOptions = Seq(
     "-encoding",
@@ -109,7 +109,7 @@ lazy val `kyo-core` =
             libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.0-RC3"  % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"      % Test,
-            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test,
+            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test
         )
         .jsSettings(`js-settings`)
 
