@@ -125,7 +125,9 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
 
     case object Interrupted
         extends RuntimeException("Fiber Interrupted")
-        with NoStackTrace
+        with NoStackTrace:
+        override def getCause() = null
+    end Interrupted
 
     private[kyo] val interrupted = IOs.fail(Interrupted)
 
