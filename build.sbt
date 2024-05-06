@@ -238,19 +238,24 @@ lazy val `kyo-bench` =
         .in(file("kyo-bench"))
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.typelevel"       %% "cats-effect"        % "3.5.4",
-            libraryDependencies += "org.typelevel"       %% "log4cats-core"      % "2.7.0",
-            libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"     % "2.7.0",
-            libraryDependencies += "dev.zio"             %% "zio-logging"        % "2.2.3",
-            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2" % "2.2.3",
-            libraryDependencies += "dev.zio"             %% "zio"                % "2.1.0-RC5",
-            libraryDependencies += "dev.zio"             %% "zio-concurrent"     % "2.1.0-RC5",
-            libraryDependencies += "dev.zio"             %% "zio-prelude"        % "1.0.0-RC23",
-            libraryDependencies += "com.softwaremill.ox" %% "core"               % "0.0.25",
-            libraryDependencies += "co.fs2"              %% "fs2-core"           % "3.10.2",
-            libraryDependencies += "org.scalatest"       %% "scalatest"          % "3.2.16" % Test
+            Test / parallelExecution := false,
+            libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
+            libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
+            libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
+            libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.2.3",
+            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.2.3",
+            libraryDependencies += "dev.zio"             %% "zio"                 % "2.1.0-RC5",
+            libraryDependencies += "dev.zio"             %% "zio-concurrent"      % "2.1.0-RC5",
+            libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC23",
+            libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
+            libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.10.2",
+            libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.26",
+            libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.26",
+            libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0-RC6",
+            libraryDependencies += "org.scalatest"       %% "scalatest"           % "3.2.16" % Test
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")

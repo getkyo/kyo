@@ -155,4 +155,12 @@ class BenchTest extends AsyncFreeSpec with Assertions:
     "ForkJoinContentionBench" - {
         test(ForkJoinContentionBench(), ())
     }
+
+    "HttpClientBench" - {
+        test(HttpClientBench(), "pong")
+    }
+
+    "HttpClientContentionBench" - {
+        test(HttpClientContentionBench(), Seq.fill(Runtime.getRuntime().availableProcessors())("pong"))
+    }
 end BenchTest
