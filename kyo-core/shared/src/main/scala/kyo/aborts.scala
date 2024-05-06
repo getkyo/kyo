@@ -75,26 +75,26 @@ object Aborts:
         class DoAbort extends Effect[DoAbort]:
             type Command[T] = Any
         object DoAbort extends DoAbort
-
-        /** An effect `Aborts[VS]` includes a failure type `V`, and once `V` has been handled, `Aborts[VS]` should be replaced by `Out`
-          *
-          * @tparam V
-          *   the failure type included in `VS`
-          * @tparam VS
-          *   all of the `Aborts` failure types represented by type union
-          */
-        sealed trait HasAborts[V, VS]:
-            /** Remaining effect type, once failures of type `V` have been handled
-              */
-            type Remainder
-        end HasAborts
-
-        trait LowPriorityHasAborts:
-            given hasAborts[V, VR]: HasAborts[V, V | VR] with
-                type Remainder = Aborts[VR]
-
-        object HasAborts extends LowPriorityHasAborts:
-            given isAborts[V]: HasAborts[V, V] with
-                type Remainder = Any
     end internal
+
+    /** An effect `Aborts[VS]` includes a failure type `V`, and once `V` has been handled, `Aborts[VS]` should be replaced by `Out`
+      *
+      * @tparam V
+      *   the failure type included in `VS`
+      * @tparam VS
+      *   all of the `Aborts` failure types represented by type union
+      */
+    sealed trait HasAborts[V, VS]:
+        /** Remaining effect type, once failures of type `V` have been handled
+          */
+        type Remainder
+    end HasAborts
+
+    trait LowPriorityHasAborts:
+        given hasAborts[V, VR]: HasAborts[V, V | VR] with
+            type Remainder = Aborts[VR]
+
+    object HasAborts extends LowPriorityHasAborts:
+        given isAborts[V]: HasAborts[V, V] with
+            type Remainder = Any
 end Aborts
