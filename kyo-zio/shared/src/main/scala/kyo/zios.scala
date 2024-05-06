@@ -19,7 +19,7 @@ object ZIOs:
     def get[A](v: ZIO[Any, Nothing, A]): A < ZIOs =
         Tasks.suspend[A](v)
 
-    inline def get[R: zio.Tag, A](v: ZIO[R, ?, A])(using tag: Tag[Envs[R]]): A < (Envs[R] & ZIOs) =
+    inline def get[R: zio.Tag, E, A](v: ZIO[R, E, A])(using tag: Tag[Envs[R]]): A < (Envs[R] & ZIOs) =
         compiletime.error("ZIO environments are not supported yet. Please handle them before calling this method.")
 
     def run[T: Flat](v: T < (Aborts[Throwable] & ZIOs)): Task[T] =

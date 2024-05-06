@@ -4,6 +4,7 @@ import kyo.*
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.Eventually.*
 import scala.concurrent.Future
+import scala.util.Failure
 import zio.*
 
 class ziosTest extends KyoTest:
@@ -27,6 +28,33 @@ class ziosTest extends KyoTest:
     "Aborts[Throwable]" in runKyo {
         val a: Boolean < (Aborts[Throwable] & ZIOs) = ZIOs.get(ZIO.fail(new RuntimeException).when(false).as(true))
         Aborts.run(a).map(e => assert(e.isRight))
+    }
+
+    "Aborts ordering" - {
+        "kyo then zio" in runKyo {
+            object zioFailure extends RuntimeException
+            object kyoFailure extends RuntimeException
+            val a = Aborts.fail(kyoFailure)
+            val b = ZIOs.get(ZIO.fail(zioFailure))
+            Aborts.run(a.map(_ => b)).map {
+                case Left(ex) =>
+                    assert(ex == kyoFailure)
+                case _ =>
+                    fail()
+            }
+        }
+        "zio then kyo" in runKyo {
+            object zioFailure extends RuntimeException
+            object kyoFailure extends RuntimeException
+            val a = ZIOs.get(ZIO.fail(zioFailure))
+            val b = Aborts.fail(kyoFailure)
+            Aborts.run(a.map(_ => b)).map {
+                case Left(ex) =>
+                    assert(ex == zioFailure)
+                case _ =>
+                    fail()
+            }
+        }
     }
 
     "Envs[Int]" in pendingUntilFixed {
