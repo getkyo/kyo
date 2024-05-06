@@ -119,7 +119,7 @@ end Promise
 
 type Fibers >: Fibers.Effects <: Fibers.Effects
 
-object Fibers extends Joins[Fibers]:
+object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
 
     type Effects = FiberGets & IOs
 
