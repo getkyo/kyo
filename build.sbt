@@ -109,7 +109,7 @@ lazy val `kyo-core` =
             libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.0-RC3"  % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"      % Test,
-            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test,
+            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test
         )
         .jsSettings(`js-settings`)
 
@@ -168,7 +168,7 @@ lazy val `kyo-sttp` =
         .dependsOn(`kyo-core` % "test->test;compile->compile")
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.5"
+            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.6"
         )
         .jsSettings(`js-settings`)
 
