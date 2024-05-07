@@ -55,6 +55,20 @@ class KyoAppTest extends KyoTest:
             case _                             => fail("Unexpected Success...")
     }
 
+    "effect mismatch" taggedAs jvmOnly in {
+        assertDoesNotCompile("""
+            new KyoApp:
+                run(1: Int < Options)
+        """)
+    }
+
+    "indirect effect mismatch" taggedAs jvmOnly in pendingUntilFixed {
+        assertDoesNotCompile("""
+            new KyoApp:
+                run(Choices.run(1: Int < Options))
+        """)
+    }
+
     "custom services" taggedAs jvmOnly in run {
         for
             instantRef <- Atomics.initRef(Instant.MAX)
