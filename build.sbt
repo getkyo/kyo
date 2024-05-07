@@ -241,7 +241,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            Test / parallelExecution := false,
+            Test / parallelExecution                     := false,
             libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
             libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
@@ -252,8 +252,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC23",
             libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.10.2",
-            libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.26",
-            libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.26",
+            libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.27",
+            libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.27",
             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0-RC6",
             libraryDependencies += "org.scalatest"       %% "scalatest"           % "3.2.16" % Test
         )
