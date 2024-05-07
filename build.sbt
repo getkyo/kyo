@@ -106,7 +106,7 @@ lazy val `kyo-core` =
             libraryDependencies += "com.lihaoyi"   %%% "pprint"          % "0.9.0",
             libraryDependencies += "org.jctools"     % "jctools-core"    % "4.0.3",
             libraryDependencies += "org.slf4j"       % "slf4j-api"       % "2.0.13",
-            libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC23" % Test,
+            libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC25" % Test,
             libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.0-RC5"  % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"      % Test,
@@ -241,7 +241,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            Test / parallelExecution := false,
+            Test / parallelExecution                     := false,
             libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
             libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
@@ -249,7 +249,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.2.3",
             libraryDependencies += "dev.zio"             %% "zio"                 % "2.1.0-RC5",
             libraryDependencies += "dev.zio"             %% "zio-concurrent"      % "2.1.0-RC5",
-            libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC23",
+            libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC25",
             libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.10.2",
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.26",
