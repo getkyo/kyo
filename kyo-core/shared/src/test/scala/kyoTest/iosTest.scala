@@ -114,6 +114,11 @@ class iosTest extends KyoTest:
         "doesn't accept other pending effects" in {
             assertDoesNotCompile("IOs.run[Int < Options](Options.get(Some(1)))")
         }
+        "Defers.run doesn't handle IOs" in {
+            val c            = Defers.run(IOs(42))
+            val _: Int < IOs = c
+            assertDoesNotCompile("Defers.run(IOs(42)).pure")
+        }
     }
 
     "ensure" - {
