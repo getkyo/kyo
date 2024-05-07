@@ -61,6 +61,20 @@ class FlatTest extends KyoTest:
             succeed
         }
 
+        "effect mismatch" in {
+            def test[T](v: T < Fibers)(using Flat[T < Fibers]): T < Fibers = v
+            test(1)
+            test(1: Int < Fibers)
+            assertDoesNotCompile("test(1: Int < Options)")
+        }
+
+        "flat flat" in pendingUntilFixed {
+            def test[T](v: T < Fibers)(using Flat[T]): T < Fibers = v
+            test(1)
+            test(1: Int < Fibers)
+            assertDoesNotCompile("test(1: Int < Options)")
+        }
+
         "any" in {
             assertDoesNotCompile("implicitly[Flat[Any]]")
             assertDoesNotCompile("implicitly[Flat[Any < IOs]]")
