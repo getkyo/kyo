@@ -82,9 +82,13 @@ final class Scheduler(
                 var minLoad        = Int.MaxValue
                 while (stride > 0 && minLoad != 0) {
                     val candidate = workers(position)
-                    if (candidate != null && candidate.checkAvailability(cycles)) {
+                    if (
+                        candidate != null &&
+                        (candidate ne submitter) &&
+                        candidate.checkAvailability(cycles)
+                    ) {
                         val l = candidate.load()
-                        if (l < minLoad && (candidate ne submitter)) {
+                        if (l < minLoad) {
                             minLoad = l
                             worker = candidate
                         }
