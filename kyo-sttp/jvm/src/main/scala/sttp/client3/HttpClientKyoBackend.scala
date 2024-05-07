@@ -6,11 +6,13 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.net.http.HttpResponse.BodyHandlers
+import java.util.concurrent.Executor
 import java.util.zip.GZIPInputStream
 import java.util.zip.InflaterInputStream
 import kyo.*
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
+import kyo.scheduler.Scheduler
 import sttp.capabilities.WebSockets
 import sttp.client3.HttpClientBackend.EncodingHandler
 import sttp.client3.HttpClientFutureBackend.InputStreamEncodingHandler
@@ -97,10 +99,11 @@ object HttpClientKyoBackend:
     def apply(
         options: SttpBackendOptions = SttpBackendOptions.Default,
         customizeRequest: HttpRequest => HttpRequest = identity,
-        customEncodingHandler: InputStreamEncodingHandler = PartialFunction.empty
+        customEncodingHandler: InputStreamEncodingHandler = PartialFunction.empty,
+        executor: Option[Executor] = Some(r => r.run())
     ): SttpBackend[KyoSttpMonad.M, WebSockets] =
         HttpClientKyoBackend(
-            HttpClientBackend.defaultClient(options),
+            HttpClientBackend.defaultClient(options, executor),
             closeClient = false,
             customizeRequest,
             customEncodingHandler
