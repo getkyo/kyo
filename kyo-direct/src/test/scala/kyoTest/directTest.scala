@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo.*
-import scala.util.Try
 
 class directTest extends KyoTest:
 

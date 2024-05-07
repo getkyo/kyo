@@ -2,7 +2,6 @@ package kyo
 
 import IOs.internal.*
 import core.*
-import core.internal.*
 import java.util.concurrent.atomic.AtomicReference
 import scala.annotation.tailrec
 import scala.util.*
