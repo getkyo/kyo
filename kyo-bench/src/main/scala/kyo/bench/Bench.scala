@@ -4,7 +4,6 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import kyo.*
 import org.openjdk.jmh.annotations.*
-import org.openjdk.jmh.infra.BenchmarkParams
 import zio.UIO
 
 @State(Scope.Benchmark)
