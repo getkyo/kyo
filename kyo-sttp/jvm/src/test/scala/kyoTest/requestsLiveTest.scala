@@ -24,6 +24,14 @@ class requestsLiveTest extends KyoTest:
                     yield assert(r.isFailure)
                 }
             }
+            "race" in run {
+                val n = 10000
+                for
+                    port <- startTestServer("/ping", Success("pong"))
+                    r    <- Fibers.race(Seq.fill(n)(Requests.run(Requests(_.get(uri"http://localhost:$port/ping")))))
+                yield assert(r == "pong")
+                end for
+            }
         }
     }
 
