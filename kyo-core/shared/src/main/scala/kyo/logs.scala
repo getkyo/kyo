@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.internal.Param
+
 object Logs extends logsPlatformSpecific:
     private val local = Locals.init(unsafe)
 
@@ -13,6 +15,11 @@ object Logs extends logsPlatformSpecific:
         def warnEnabled: Boolean
         def errorEnabled: Boolean
 
+        inline def trace(inline params: Param[?]*)(
+            using inline file: internal.Position
+        ): Unit =
+            trace(Param.show(params*))
+
         def trace(msg: => String)(
             using file: internal.Position
         ): Unit
@@ -20,6 +27,11 @@ object Logs extends logsPlatformSpecific:
         def trace(msg: => String, t: => Throwable)(
             using file: internal.Position
         ): Unit
+
+        inline def debug(inline params: Param[?]*)(
+            using inline file: internal.Position
+        ): Unit =
+            debug(Param.show(params*))
 
         def debug(msg: => String)(
             using file: internal.Position
@@ -29,6 +41,11 @@ object Logs extends logsPlatformSpecific:
             using file: internal.Position
         ): Unit
 
+        inline def info(inline params: Param[?]*)(
+            using inline file: internal.Position
+        ): Unit =
+            info(Param.show(params*))
+
         def info(msg: => String)(
             using file: internal.Position
         ): Unit
@@ -36,6 +53,11 @@ object Logs extends logsPlatformSpecific:
         def info(msg: => String, t: => Throwable)(
             using file: internal.Position
         ): Unit
+
+        inline def warn(inline params: Param[?]*)(
+            using inline file: internal.Position
+        ): Unit =
+            warn(Param.show(params*))
 
         def warn(msg: => String)(
             using file: internal.Position
@@ -48,6 +70,11 @@ object Logs extends logsPlatformSpecific:
         def error(msg: => String)(
             using file: internal.Position
         ): Unit
+
+        inline def error(inline params: Param[?]*)(
+            using inline file: internal.Position
+        ): Unit =
+            error(Param.show(params*))
 
         def error(msg: => String, t: => Throwable)(
             using file: internal.Position
@@ -116,6 +143,11 @@ object Logs extends logsPlatformSpecific:
                 IOs.unit
         }
 
+    inline def trace(inline params: Param[?]*)(
+        using inline file: internal.Position
+    ): Unit < IOs =
+        trace(Param.show(params*))
+
     inline def trace(inline msg: => String)(
         using inline file: internal.Position
     ): Unit < IOs =
@@ -125,6 +157,11 @@ object Logs extends logsPlatformSpecific:
         using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.traceEnabled)(_.trace(msg, t))
+
+    inline def debug(inline params: Param[?]*)(
+        using inline file: internal.Position
+    ): Unit < IOs =
+        debug(Param.show(params*))
 
     inline def debug(inline msg: => String)(
         using inline file: internal.Position
@@ -136,6 +173,11 @@ object Logs extends logsPlatformSpecific:
     ): Unit < IOs =
         logWhen(_.debugEnabled)(_.debug(msg, t))
 
+    inline def info(inline params: Param[?]*)(
+        using inline file: internal.Position
+    ): Unit < IOs =
+        info(Param.show(params*))
+
     inline def info(inline msg: => String)(
         using inline file: internal.Position
     ): Unit < IOs =
@@ -146,6 +188,11 @@ object Logs extends logsPlatformSpecific:
     ): Unit < IOs =
         logWhen(_.infoEnabled)(_.info(msg, t))
 
+    inline def warn(inline params: Param[?]*)(
+        using inline file: internal.Position
+    ): Unit < IOs =
+        warn(Param.show(params*))
+
     inline def warn(inline msg: => String)(
         using inline file: internal.Position
     ): Unit < IOs =
@@ -155,6 +202,11 @@ object Logs extends logsPlatformSpecific:
         using inline file: internal.Position
     ): Unit < IOs =
         logWhen(_.warnEnabled)(_.warn(msg, t))
+
+    inline def error(inline params: Param[?]*)(
+        using inline file: internal.Position
+    ): Unit < IOs =
+        error(Param.show(params*))
 
     inline def error(inline msg: => String)(
         using inline file: internal.Position
