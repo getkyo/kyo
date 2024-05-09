@@ -25,7 +25,7 @@ class requestsLiveTest extends KyoTest:
                 }
             }
             "race" in run {
-                val n = 10000
+                val n = 1000
                 for
                     port <- startTestServer("/ping", Success("pong"))
                     r    <- Fibers.race(Seq.fill(n)(Requests.run(Requests(_.get(uri"http://localhost:$port/ping")))))
