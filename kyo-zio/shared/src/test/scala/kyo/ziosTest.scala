@@ -4,7 +4,6 @@ import kyo.*
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.Eventually.*
 import scala.concurrent.Future
-import scala.util.Failure
 import zio.*
 
 class ziosTest extends KyoTest:

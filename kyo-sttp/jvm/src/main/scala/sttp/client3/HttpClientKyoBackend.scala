@@ -12,7 +12,6 @@ import java.util.zip.InflaterInputStream
 import kyo.*
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
-import kyo.scheduler.Scheduler
 import sttp.capabilities.WebSockets
 import sttp.client3.HttpClientBackend.EncodingHandler
 import sttp.client3.HttpClientFutureBackend.InputStreamEncodingHandler
