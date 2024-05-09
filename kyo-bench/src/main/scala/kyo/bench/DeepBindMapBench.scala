@@ -1,9 +1,8 @@
 package kyo.bench
 
-class DeepBindMapBench extends Bench.SyncAndFork[Int]:
+class DeepBindMapBench extends Bench.SyncAndFork(10001):
 
-    val depth          = 10000
-    val expectedResult = 10001
+    val depth = 10000
 
     def kyoBench() =
         import kyo.*

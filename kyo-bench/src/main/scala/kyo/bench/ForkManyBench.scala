@@ -2,10 +2,9 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.*
 
-class ForkManyBench extends Bench.ForkOnly[Int]:
+class ForkManyBench extends Bench.ForkOnly(0):
 
-    val depth          = 10000
-    val expectedResult = 0
+    val depth = 10000
 
     def catsBench() =
         import cats.effect.IO

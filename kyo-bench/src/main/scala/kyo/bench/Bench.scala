@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import kyo.*
 import org.openjdk.jmh.annotations.*
+import org.openjdk.jmh.infra.BenchmarkParams
 import zio.UIO
 
 @State(Scope.Benchmark)
@@ -19,9 +20,7 @@ import zio.UIO
     )
 )
 @BenchmarkMode(Array(Mode.Throughput))
-abstract class Bench[T]:
-
-    val expectedResult: T
+abstract class Bench[T](val expectedResult: T):
 
     @Param(Array("false"))
     var replaceZioExecutor = false
@@ -47,14 +46,14 @@ end Bench
 
 object Bench:
 
-    abstract class Base[T] extends Bench[T]:
+    abstract class Base[T](expectedResult: T) extends Bench[T](expectedResult):
         def zioBench(): UIO[T]
         def kyoBenchFiber(): T < Fibers = kyoBench()
         def kyoBench(): T < IOs
         def catsBench(): IO[T]
     end Base
 
-    abstract class Fork[T: Flat] extends Base[T]:
+    abstract class Fork[T: Flat](expectedResult: T) extends Base[T](expectedResult):
 
         @Benchmark
         def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block(Duration.Infinity)))
@@ -68,10 +67,10 @@ object Bench:
         )
     end Fork
 
-    abstract class ForkOnly[T: Flat] extends Fork[T]:
+    abstract class ForkOnly[T: Flat](expectedResult: T) extends Fork[T](expectedResult):
         def kyoBench() = ???
 
-    abstract class SyncAndFork[T: Flat] extends Fork[T]:
+    abstract class SyncAndFork[T: Flat](expectedResult: T) extends Fork[T](expectedResult):
 
         @Benchmark
         def syncKyo(): T = IOs.run(kyoBench())

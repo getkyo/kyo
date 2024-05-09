@@ -2,10 +2,9 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.*
 
-class BroadFlatMapBench extends Bench.SyncAndFork[BigInt]:
+class BroadFlatMapBench extends Bench.SyncAndFork(BigInt(610)):
 
-    val depth          = 15
-    val expectedResult = BigInt(610)
+    val depth = 15
 
     def catsBench() =
         import cats.effect.*

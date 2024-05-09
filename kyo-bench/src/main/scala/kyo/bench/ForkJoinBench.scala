@@ -2,11 +2,10 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.*
 
-class ForkJoinBench extends Bench.ForkOnly[Unit]:
+class ForkJoinBench extends Bench.ForkOnly(()):
 
-    val depth          = 10000
-    val range          = (0 until depth).toList
-    val expectedResult = ()
+    val depth = 10000
+    val range = (0 until depth).toList
 
     def catsBench() =
         import cats.*

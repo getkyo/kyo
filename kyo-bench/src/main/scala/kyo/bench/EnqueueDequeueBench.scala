@@ -1,9 +1,8 @@
 package kyo.bench
 
-class EnqueueDequeueBench extends Bench.ForkOnly[Unit]:
+class EnqueueDequeueBench extends Bench.ForkOnly(()):
 
-    val depth          = 10000
-    val expectedResult = ()
+    val depth = 10000
 
     def catsBench() =
         import cats.effect.*

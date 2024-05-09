@@ -2,12 +2,11 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.*
 
-class ForkJoinContentionBench extends Bench.ForkOnly[Unit]:
+class ForkJoinContentionBench extends Bench.ForkOnly(()):
 
-    val depth          = 1000
-    val expectedResult = ()
-    val parallism      = Runtime.getRuntime().availableProcessors()
-    val range          = (0 until depth).toList
+    val depth     = 1000
+    val parallism = Runtime.getRuntime().availableProcessors()
+    val range     = (0 until depth).toList
 
     def catsBench() =
         import cats.*

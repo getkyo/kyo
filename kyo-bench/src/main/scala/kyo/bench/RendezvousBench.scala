@@ -2,12 +2,11 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.*
 
-class RendezvousBench extends Bench.ForkOnly[Int]:
+class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
 
     given canEqualNull[T]: CanEqual[T, T | Null] = CanEqual.derived
 
-    val depth          = 10000
-    val expectedResult = depth * (depth + 1) / 2
+    val depth = 10000
 
     def catsBench() =
         import cats.effect.*

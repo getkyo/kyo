@@ -2,12 +2,12 @@ package kyo.bench
 
 import org.http4s.ember.client.EmberClientBuilder
 
-class HttpClientContentionBench extends Bench.ForkOnly[Seq[String]]:
+class HttpClientContentionBench
+    extends Bench.ForkOnly(Seq.fill(Runtime.getRuntime().availableProcessors())("pong")):
 
-    val port           = 9999
-    val concurrency    = Runtime.getRuntime().availableProcessors()
-    val url            = TestHttpServer.start(port)
-    val expectedResult = Seq.fill(concurrency)("pong")
+    val port        = 9999
+    val concurrency = Runtime.getRuntime().availableProcessors()
+    val url         = TestHttpServer.start(port)
 
     lazy val catsClient =
         import cats.effect.*

@@ -2,10 +2,9 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.Benchmark
 
-class SemaphoreBench extends Bench.ForkOnly[Unit]:
+class SemaphoreBench extends Bench.ForkOnly(()):
 
-    val depth          = 10000
-    val expectedResult = ()
+    val depth = 10000
 
     def catsBench() =
         import cats.effect.*

@@ -6,10 +6,9 @@ case class Env(config: String)
 case class Event(name: String)
 case class State(value: Int)
 
-class MtlBench extends Bench[Unit]:
+class MtlBench extends Bench(()):
 
-    val loops          = (1 to 1000).toList
-    val expectedResult = ()
+    val loops = (1 to 1000).toList
 
     @Benchmark
     def syncKyo() =
