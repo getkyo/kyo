@@ -102,7 +102,7 @@ lazy val `kyo-core` =
         .in(file("kyo-core"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio"       %%% "izumi-reflect"   % "2.3.8",
+            libraryDependencies += "dev.zio"       %%% "izumi-reflect"   % "2.3.9",
             libraryDependencies += "com.lihaoyi"   %%% "pprint"          % "0.9.0",
             libraryDependencies += "org.jctools"     % "jctools-core"    % "4.0.3",
             libraryDependencies += "org.slf4j"       % "slf4j-api"       % "2.0.13",
