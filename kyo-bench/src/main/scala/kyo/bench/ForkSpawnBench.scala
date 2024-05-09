@@ -4,9 +4,10 @@ import org.openjdk.jmh.annotations.*
 
 class ForkSpawnBench extends Bench.ForkOnly[Unit]:
 
-    val depth = 5
-    val width = 10
-    val total = ((Math.pow(width, depth) - 1) / (width - 1)).toInt
+    val depth          = 5
+    val width          = 10
+    val total          = ((Math.pow(width, depth) - 1) / (width - 1)).toInt
+    val expectedResult = ()
 
     def catsBench() =
         import cats.effect.IO

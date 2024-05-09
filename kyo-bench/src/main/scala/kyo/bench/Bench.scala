@@ -21,6 +21,8 @@ import zio.UIO
 @BenchmarkMode(Array(Mode.Throughput))
 abstract class Bench[T]:
 
+    val expectedResult: T
+
     @Param(Array("false"))
     var replaceZioExecutor = false
 

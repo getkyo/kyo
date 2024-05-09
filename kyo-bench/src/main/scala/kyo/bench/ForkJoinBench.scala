@@ -4,8 +4,9 @@ import org.openjdk.jmh.annotations.*
 
 class ForkJoinBench extends Bench.ForkOnly[Unit]:
 
-    val depth = 10000
-    val range = (0 until depth).toList
+    val depth          = 10000
+    val range          = (0 until depth).toList
+    val expectedResult = ()
 
     def catsBench() =
         import cats.*

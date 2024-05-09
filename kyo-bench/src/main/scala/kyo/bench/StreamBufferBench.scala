@@ -2,7 +2,8 @@ package kyo.bench
 
 class StreamBufferBench extends Bench.ForkOnly[Int]:
 
-    val seq = (0 until 10000).toVector
+    val seq            = (0 until 10000).toVector
+    val expectedResult = 25000000
 
     def catsBench() =
         import cats.effect.*

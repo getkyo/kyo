@@ -4,7 +4,8 @@ import org.openjdk.jmh.annotations.*
 
 class BroadFlatMapBench extends Bench.SyncAndFork[BigInt]:
 
-    val depth = 15
+    val depth          = 15
+    val expectedResult = BigInt(610)
 
     def catsBench() =
         import cats.effect.*

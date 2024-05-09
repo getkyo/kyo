@@ -4,7 +4,8 @@ import org.openjdk.jmh.annotations.Benchmark
 
 class ProducerConsumerBench extends Bench.ForkOnly[Unit]:
 
-    val depth = 10000
+    val depth          = 10000
+    val expectedResult = ()
 
     def catsBench() =
         import cats.effect.*

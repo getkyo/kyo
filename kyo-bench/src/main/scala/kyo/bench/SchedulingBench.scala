@@ -2,8 +2,9 @@ package kyo.bench
 
 class SchedulingBench extends Bench.ForkOnly[Int]:
 
-    val depth = 1000
-    val range = List.range(0, depth)
+    val depth          = 1000
+    val range          = List.range(0, depth)
+    val expectedResult = 1001000
 
     def catsBench() =
         import cats.effect.*

@@ -4,7 +4,8 @@ import org.openjdk.jmh.annotations.*
 
 class ForkChainedBench extends Bench.ForkOnly[Int]:
 
-    val depth = 10000
+    val depth          = 10000
+    val expectedResult = 0
 
     def catsBench() =
         import cats.effect.*

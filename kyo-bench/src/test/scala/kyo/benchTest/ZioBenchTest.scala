@@ -1,4 +1,6 @@
-package kyo.bench
+package kyo.benchTest
+
+import kyo.bench.*
 
 class ZioBenchTest extends BenchTest:
 

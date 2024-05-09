@@ -4,9 +4,10 @@ import org.openjdk.jmh.annotations.*
 
 class SemaphoreContentionBench extends Bench.ForkOnly[Unit]:
 
-    val permits   = 10
-    val parallism = 100
-    val depth     = 1000
+    val permits        = 10
+    val parallism      = 100
+    val depth          = 1000
+    val expectedResult = ()
 
     def catsBench() =
         import cats.effect.IO

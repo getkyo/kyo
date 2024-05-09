@@ -2,6 +2,8 @@ package kyo.bench
 
 class SuspensionBench extends Bench.SyncAndFork[Unit]:
 
+    val expectedResult = ()
+
     def catsBench() =
         import cats.effect.*
 

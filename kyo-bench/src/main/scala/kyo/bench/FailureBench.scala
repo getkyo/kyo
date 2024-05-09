@@ -9,7 +9,8 @@ object Ex3 extends Ex3
 
 class FailureBench extends Bench.SyncAndFork[Either[Ex1 | Ex2, Int]]:
 
-    val depth = 100
+    val depth          = 100
+    val expectedResult = Left(Ex2)
 
     def catsBench() =
         import cats.effect.*

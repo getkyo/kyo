@@ -4,9 +4,10 @@ import org.http4s.ember.client.EmberClientBuilder
 
 class HttpClientContentionBench extends Bench.ForkOnly[Seq[String]]:
 
-    val port        = 9999
-    val concurrency = Runtime.getRuntime().availableProcessors()
-    val url         = TestHttpServer.start(port)
+    val port           = 9999
+    val concurrency    = Runtime.getRuntime().availableProcessors()
+    val url            = TestHttpServer.start(port)
+    val expectedResult = Seq.fill(concurrency)("pong")
 
     lazy val catsClient =
         import cats.effect.*

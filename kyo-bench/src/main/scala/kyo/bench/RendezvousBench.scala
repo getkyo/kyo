@@ -6,7 +6,8 @@ class RendezvousBench extends Bench.ForkOnly[Int]:
 
     given canEqualNull[T]: CanEqual[T, T | Null] = CanEqual.derived
 
-    val depth = 10000
+    val depth          = 10000
+    val expectedResult = depth * (depth + 1) / 2
 
     def catsBench() =
         import cats.effect.*

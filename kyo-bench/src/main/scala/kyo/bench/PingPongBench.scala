@@ -2,7 +2,8 @@ package kyo.bench
 
 class PingPongBench extends Bench.ForkOnly[Unit]:
 
-    val depth = 1000
+    val depth          = 1000
+    val expectedResult = ()
 
     def catsBench() =
         import cats.effect.*
