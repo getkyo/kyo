@@ -35,9 +35,9 @@ object Requests:
         local.use(_.send(req)).map {
             _.body match
                 case Left(ex: Throwable) =>
-                    IOs.fail[T](ex)
+                    IOs.fail(ex)
                 case Left(ex) =>
-                    IOs.fail[T](new Exception("" + ex))
+                    IOs.fail(new Exception("" + ex))
                 case Right(value) =>
                     value
         }

@@ -177,7 +177,7 @@ class iosTest extends KyoTest:
 
     "fail" in {
         assert(
-            IOs.run(IOs.attempt(IOs.fail[Int](e))) ==
+            IOs.run(IOs.attempt(IOs.fail(e))) ==
                 Failure(e)
         )
     }

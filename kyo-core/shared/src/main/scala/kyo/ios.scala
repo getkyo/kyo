@@ -24,10 +24,10 @@ object IOs:
     def runLazy[T: Flat, S](v: T < (IOs & S)): T < S =
         Defers.run(SideEffects.handle(handler)((), v))
 
-    def fail[T](ex: Throwable): T < IOs =
+    def fail(ex: Throwable): Nothing < IOs =
         IOs(throw ex)
 
-    def fail[T](msg: String): T < IOs =
+    def fail(msg: String): Nothing < IOs =
         fail(new Exception(msg))
 
     def fromTry[T, S](v: Try[T] < S): T < (IOs & S) =

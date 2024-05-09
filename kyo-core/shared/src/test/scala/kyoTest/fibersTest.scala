@@ -238,7 +238,7 @@ class fibersTest extends KyoTest:
             val ex = new Exception
             Fibers.race(
                 Fibers.sleep(1.millis).andThen(42),
-                IOs.fail[Int](ex)
+                IOs.fail(ex)
             ).map { r =>
                 assert(r == 42)
             }
@@ -248,8 +248,8 @@ class fibersTest extends KyoTest:
             val ex2 = new Exception
             IOs.attempt(
                 Fibers.race(
-                    Fibers.sleep(1.millis).andThen(IOs.fail[Int](ex1)),
-                    IOs.fail[Int](ex2)
+                    Fibers.sleep(1.millis).andThen(IOs.fail(ex1)),
+                    IOs.fail(ex2)
                 )
             ).map {
                 r =>
