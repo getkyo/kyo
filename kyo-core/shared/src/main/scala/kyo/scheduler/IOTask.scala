@@ -41,10 +41,10 @@ private[kyo] class IOTask[T](
         else
             curr match
                 case kyo: Suspend[?, ?, ?, ?] =>
-                    if kyo.tag == Tag[IOs] then
+                    if kyo.tag =:= Tag[IOs] then
                         val k = kyo.asInstanceOf[Suspend[IO, Unit, T, Fibers]]
                         eval(k((), this, locals), scheduler, startMillis, clock)
-                    else if kyo.tag == Tag[FiberGets] then
+                    else if kyo.tag =:= Tag[FiberGets] then
                         val k = kyo.asInstanceOf[Suspend[Fiber, Any, T, Fibers]]
                         k.command match
                             case Promise(p) =>
@@ -69,7 +69,7 @@ private[kyo] class IOTask[T](
                                 )
                         end match
                     else
-                        IOs(bug.failTag(kyo.tag, Tag[FiberGets & IOs]))
+                        IOs(bug.failTag(kyo.tag, Tag[FiberGets], Tag[IOs]))
                 case _ =>
                     complete(curr.asInstanceOf[T < IOs])
                     finalize()

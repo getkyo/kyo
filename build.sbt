@@ -102,7 +102,6 @@ lazy val `kyo-core` =
         .in(file("kyo-core"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio"       %%% "izumi-reflect"   % "2.3.9",
             libraryDependencies += "com.lihaoyi"   %%% "pprint"          % "0.9.0",
             libraryDependencies += "org.jctools"     % "jctools-core"    % "4.0.3",
             libraryDependencies += "org.slf4j"       % "slf4j-api"       % "2.0.13",
@@ -264,6 +263,7 @@ lazy val `kyo-bench` =
                     )
                 }
             },
+            libraryDependencies += "dev.zio"             %% "izumi-reflect"       % "2.3.9",
             libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
             libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",

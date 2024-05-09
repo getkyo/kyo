@@ -67,7 +67,7 @@ object core:
             @tailrec def handleLoop(st: State, value: T < (E & S & S2)): Result[T] < (S & S2) =
                 value match
                     case kyo: Suspend[e.Command, Any, T, S2] @unchecked
-                        if tag == kyo.tag && handler.accepts(st, kyo.command) =>
+                        if tag =:= kyo.tag && handler.accepts(st, kyo.command) =>
                         handler.resume(st, kyo.command, kyo) match
                             case r: handler.Resume[T, S & S2] @unchecked =>
                                 handleLoop(r.st, r.v)
