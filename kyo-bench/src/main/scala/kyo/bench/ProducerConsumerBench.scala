@@ -2,7 +2,7 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.Benchmark
 
-class ProducerConsumerBench extends Bench.ForkOnly[Unit]:
+class ProducerConsumerBench extends Bench.ForkOnly(()):
 
     val depth = 10000
 

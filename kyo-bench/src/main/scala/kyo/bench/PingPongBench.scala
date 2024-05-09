@@ -1,6 +1,6 @@
 package kyo.bench
 
-class PingPongBench extends Bench.ForkOnly[Unit]:
+class PingPongBench extends Bench.ForkOnly(()):
 
     val depth = 1000
 

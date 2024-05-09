@@ -1,6 +1,6 @@
 package kyo.bench
 
-class CollectBench extends Bench.SyncAndFork[Seq[Int]]:
+class CollectBench extends Bench.SyncAndFork(Seq.fill(1000)(1)):
 
     val count = 1000
 

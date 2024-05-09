@@ -1,6 +1,6 @@
 package kyo.bench
 
-class LoggingBench extends Bench.SyncAndFork[Unit]:
+class LoggingBench extends Bench.SyncAndFork(()):
 
     val depth = 10000
 

@@ -1,6 +1,6 @@
 package kyo.bench
 
-class CountdownLatchBench extends Bench.ForkOnly[Int]:
+class CountdownLatchBench extends Bench.ForkOnly(0):
 
     val depth = 10000
 

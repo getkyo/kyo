@@ -2,7 +2,7 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.*
 
-class ForkSpawnBench extends Bench.ForkOnly[Unit]:
+class ForkSpawnBench extends Bench.ForkOnly(()):
 
     val depth = 5
     val width = 10

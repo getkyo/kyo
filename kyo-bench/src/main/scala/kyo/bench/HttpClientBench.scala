@@ -2,7 +2,7 @@ package kyo.bench
 
 import org.http4s.ember.client.EmberClientBuilder
 
-class HttpClientBench extends Bench.ForkOnly[String]:
+class HttpClientBench extends Bench.ForkOnly("pong"):
 
     val port = 9999
     val url  = TestHttpServer.start(port)

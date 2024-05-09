@@ -2,7 +2,7 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.*
 
-class BroadFlatMapBench extends Bench.SyncAndFork[BigInt]:
+class BroadFlatMapBench extends Bench.SyncAndFork(BigInt(610)):
 
     val depth = 15
 

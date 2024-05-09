@@ -1,6 +1,6 @@
 package kyo.bench
 
-class RandomBench extends Bench.SyncAndFork[Unit]:
+class RandomBench extends Bench.SyncAndFork(()):
 
     val depth = 10000
 

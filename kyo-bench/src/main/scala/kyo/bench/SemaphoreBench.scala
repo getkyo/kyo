@@ -2,7 +2,7 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.Benchmark
 
-class SemaphoreBench extends Bench.ForkOnly[Unit]:
+class SemaphoreBench extends Bench.ForkOnly(()):
 
     val depth = 10000
 

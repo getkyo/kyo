@@ -2,7 +2,7 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.*
 
-class SemaphoreContentionBench extends Bench.ForkOnly[Unit]:
+class SemaphoreContentionBench extends Bench.ForkOnly(()):
 
     val permits   = 10
     val parallism = 100

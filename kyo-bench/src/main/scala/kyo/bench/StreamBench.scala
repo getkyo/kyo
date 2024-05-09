@@ -1,6 +1,6 @@
 package kyo.bench
 
-class StreamBench extends Bench.SyncAndFork[Int]:
+class StreamBench extends Bench.SyncAndFork(25000000):
 
     val seq = (0 until 10000).toVector
 

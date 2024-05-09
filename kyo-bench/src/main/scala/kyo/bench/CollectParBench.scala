@@ -1,9 +1,8 @@
 package kyo.bench
 
-class CollectParBench extends Bench.ForkOnly[Seq[Int]]:
+class CollectParBench extends Bench.ForkOnly(Seq.fill(1000)(1)):
 
-    val count = 1000
-
+    val count     = 1000
     val kyoTasks  = List.fill(count)(kyo.IOs(1))
     val catsTasks = List.fill(count)(cats.effect.IO(1))
     val zioTasks  = List.fill(count)(zio.ZIO.succeed(1))

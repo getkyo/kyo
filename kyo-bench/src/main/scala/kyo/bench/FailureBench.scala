@@ -7,7 +7,7 @@ object Ex2 extends Ex2
 class Ex3  extends Exception derives CanEqual
 object Ex3 extends Ex3
 
-class FailureBench extends Bench.SyncAndFork[Either[Ex1 | Ex2, Int]]:
+class FailureBench extends Bench.SyncAndFork[Either[Ex1 | Ex2, Int]](Left(Ex2)):
 
     val depth = 100
 
