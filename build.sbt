@@ -241,7 +241,29 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            Test / parallelExecution                     := false,
+            // Forks each test suite individually
+            Test / testGrouping := {
+                val javaOptionsValue = javaOptions.value.toVector
+                val envsVarsValue = envVars.value
+                (Test / definedTests).value map { test =>
+                    import sbt.dsl.LinterLevel.Ignore
+                    Tests.Group(
+                        name = test.name,
+                        tests = Seq(test),
+                        runPolicy = Tests.SubProcess(
+                            ForkOptions(
+                                javaHome = javaHome.value,
+                                outputStrategy = outputStrategy.value,
+                                bootJars = Vector.empty,
+                                workingDirectory = Some(baseDirectory.value),
+                                runJVMOptions = javaOptionsValue,
+                                connectInput = connectInput.value,
+                                envVars = envsVarsValue
+                            )
+                        )
+                    )
+                }
+            },
             libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
             libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",

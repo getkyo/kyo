@@ -4,50 +4,44 @@ import kyo.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AsyncFreeSpec
 
-class BenchTest extends AsyncFreeSpec with Assertions:
+abstract class BenchTest extends AsyncFreeSpec with Assertions:
+
+    enum Target:
+        case Cats
+        case Kyo
+        case Zio
+    end Target
+
+    def target: Target
+    def runSync[T](b: Bench.SyncAndFork[T]): T
+    def runFork[T](b: Bench.Fork[T]): T
+
+    val targets = Seq("cats", "kyo", "zio")
+
+    def detectRuntimeLeak() =
+        Thread.getAllStackTraces().forEach { (thread, stack) =>
+            for deny <- targets.filter(_ != target.toString().toLowerCase()) do
+                if stack.filter(!_.toString.contains("kyo.bench")).mkString.toLowerCase.contains(deny) then
+                    fail(s"Detected $deny threads in a $target benchmark: $thread")
+        }
+        succeed
+    end detectRuntimeLeak
 
     def test[T](b: Bench.SyncAndFork[T], expected: T)(using CanEqual[T, T]): Unit =
-        "cats" - {
-            "sync" in {
-                assert(b.syncCats() == expected)
-            }
-            "fork" in {
-                assert(b.forkCats() == expected)
-            }
+        "sync" in {
+            assert(runSync(b) == expected)
+            detectRuntimeLeak()
         }
-        "kyo" - {
-            "sync" in {
-                assert(b.syncKyo() == expected)
-            }
-            "fork" in {
-                assert(b.forkKyo() == expected)
-            }
-        }
-        "zio" - {
-            "sync" in {
-                assert(b.syncZio() == expected)
-            }
-            "fork" in {
-                assert(b.forkZio() == expected)
-            }
+        "fork" in {
+            assert(runFork(b) == expected)
+            detectRuntimeLeak()
         }
     end test
 
     def test[T](b: Bench.ForkOnly[T], expected: T)(using CanEqual[T, T]): Unit =
-        "cats" - {
-            "fork" in {
-                assert(b.forkCats() == expected)
-            }
-        }
-        "kyo" - {
-            "fork" in {
-                assert(b.forkKyo() == expected)
-            }
-        }
-        "zio" - {
-            "fork" in {
-                assert(b.forkZio() == expected)
-            }
+        "fork" in {
+            assert(runFork(b) == expected)
+            detectRuntimeLeak()
         }
     end test
 
