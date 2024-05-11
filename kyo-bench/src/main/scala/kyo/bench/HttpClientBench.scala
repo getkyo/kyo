@@ -3,6 +3,7 @@ package kyo.bench
 import org.http4s.ember.client.EmberClientBuilder
 
 class HttpClientBench extends Bench.ForkOnly("pong"):
+    // override val runtimeLayer: zio.ZLayer[Any, Any, zio.http.Client] = zio.http.Client.default
 
     val port = 9999
     val url  = TestHttpServer.start(port)
@@ -46,7 +47,7 @@ class HttpClientBench extends Bench.ForkOnly("pong"):
         import zio.*
         // import zio.http.*
 
-        // ZIO.service[Client].flatMap(_.url(zioUrl).get("")).flatMap(_.body.asString).provide(Client.default, Scope.default).orDie
+        // ZIO.scoped[Client](ZIO.service[Client].flatMap(_.url(zioUrl).get("")).flatMap(_.body.asString)).orDie.asInstanceOf[UIO[String]]
         ZIO.succeed("pong")
     end zioBench
 
