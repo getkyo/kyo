@@ -107,7 +107,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"     % "jctools-core"    % "4.0.3",
             libraryDependencies += "org.slf4j"       % "slf4j-api"       % "2.0.13",
             libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC25" % Test,
-            libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.0"      % Test,
+            libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.1"      % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"      % Test,
             libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test
@@ -194,9 +194,9 @@ lazy val `kyo-test` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %% "zio"          % "2.1.0",
-            libraryDependencies += "dev.zio" %% "zio-test"     % "2.1.0",
-            libraryDependencies += "dev.zio" %% "zio-test-sbt" % "2.1.0" % Test
+            libraryDependencies += "dev.zio" %% "zio"          % "2.1.1",
+            libraryDependencies += "dev.zio" %% "zio-test"     % "2.1.1",
+            libraryDependencies += "dev.zio" %% "zio-test-sbt" % "2.1.1" % Test
         ).jsSettings(
             `js-settings`
         )
@@ -244,7 +244,7 @@ lazy val `kyo-bench` =
             // Forks each test suite individually
             Test / testGrouping := {
                 val javaOptionsValue = javaOptions.value.toVector
-                val envsVarsValue = envVars.value
+                val envsVarsValue    = envVars.value
                 (Test / definedTests).value map { test =>
                     import sbt.dsl.LinterLevel.Ignore
                     Tests.Group(
@@ -269,8 +269,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
             libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.2.3",
             libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.2.3",
-            libraryDependencies += "dev.zio"             %% "zio"                 % "2.1.0",
-            libraryDependencies += "dev.zio"             %% "zio-concurrent"      % "2.1.0",
+            libraryDependencies += "dev.zio"             %% "zio"                 % "2.1.1",
+            libraryDependencies += "dev.zio"             %% "zio-concurrent"      % "2.1.1",
             libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC25",
             libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.10.2",
