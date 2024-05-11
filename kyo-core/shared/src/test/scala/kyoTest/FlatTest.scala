@@ -7,38 +7,23 @@ class FlatTest extends KyoTest:
     "ok" - {
         "concrete" in {
             implicitly[Flat[Int]]
-            implicitly[Flat[Int < Any]]
-            implicitly[Flat[Int < Options]]
-            implicitly[Flat[Int < Nothing]]
+            implicitly[Flat[String]]
+            implicitly[Flat[Thread]]
             succeed
         }
         "fiber" in {
-            implicitly[Flat[Fiber[Int] < Options]]
-            succeed
-        }
-        "by evidence" in {
-            def test1[T: Flat] =
-                implicitly[Flat[T < IOs]]
-                implicitly[Flat[T < Options]]
-                implicitly[Flat[T < Any]]
-            end test1
-            test1[Int]
-            succeed
-        }
-        "derived" in {
-            def test2[T](using f: Flat[T < IOs]) =
-                val _: Flat[T < Options] = Flat.derive[T, Options]
-                implicitly[Flat[T]]
-                implicitly[Flat[T < Options]]
-                implicitly[Flat[T < Any]]
-                implicitly[Flat[T | Int]]
-            end test2
-            test2[Int]
+            implicitly[Flat[Fiber[Int]]]
             succeed
         }
     }
 
     "nok" - {
+
+        "pending type" in {
+            assertDoesNotCompile("implicitly[Flat[Int < Any]]")
+            assertDoesNotCompile("implicitly[Flat[Int < Options]]")
+            assertDoesNotCompile("implicitly[Flat[Int < Nothing]]")
+        }
 
         "nested" in {
             assertDoesNotCompile("implicitly[Flat[Int < IOs < IOs]]")
@@ -62,13 +47,13 @@ class FlatTest extends KyoTest:
         }
 
         "effect mismatch" in {
-            def test[T](v: T < Fibers)(using Flat[T < Fibers]): T < Fibers = v
+            def test[T: Flat](v: T < Fibers): T < Fibers = v
             test(1)
             test(1: Int < Fibers)
             assertDoesNotCompile("test(1: Int < Options)")
         }
 
-        "flat flat" in pendingUntilFixed {
+        "flat flat" in {
             def test[T](v: T < Fibers)(using Flat[T]): T < Fibers = v
             test(1)
             test(1: Int < Fibers)

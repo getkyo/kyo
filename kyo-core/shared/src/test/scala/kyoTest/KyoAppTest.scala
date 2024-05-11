@@ -62,7 +62,7 @@ class KyoAppTest extends KyoTest:
         """)
     }
 
-    "indirect effect mismatch" taggedAs jvmOnly in pendingUntilFixed {
+    "indirect effect mismatch" taggedAs jvmOnly in {
         assertDoesNotCompile("""
             new KyoApp:
                 run(Choices.run(1: Int < Options))

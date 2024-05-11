@@ -3,17 +3,9 @@ package kyo.internal
 import kyo.*
 import scala.quoted.*
 
-trait FlatImplicits0:
+trait FlatImplicits:
     inline given infer[T]: Flat[T] =
         ${ FlatImplicits.inferMacro[T] }
-
-trait FlatImplicits1 extends FlatImplicits0:
-    given product[T <: Product]: Flat[T] =
-        Flat.unsafe.bypass[T]
-
-trait FlatImplicits extends FlatImplicits1:
-    given anyVal[T <: AnyVal]: Flat[T] =
-        Flat.unsafe.bypass[T]
 
 object FlatImplicits:
 
@@ -43,33 +35,27 @@ object FlatImplicits:
         def fail(msg: String) =
             report.errorAndAbort(s"Method doesn't accept nested Kyo computations.\n$msg")
 
-        def canDerive(t: TypeRepr): Boolean =
-            t.dealias match
-                case OrType(left, right) =>
-                    canDerive(left) && canDerive(right)
-                case tpe =>
-                    tpe.asType match
-                        case '[nt] => Expr.summon[Flat[nt]] match
-                                case Some(_) => true
-                                case None    => false
-
         def isAny(t: TypeRepr) =
             t.typeSymbol eq TypeRepr.of[Any].typeSymbol
 
         def isConcrete(t: TypeRepr) =
             t.typeSymbol.isClassDef
 
-        def check(t: TypeRepr): Expr[Flat[T]] =
-            if isAny(t) || !isConcrete(t.dealias) then
-                canDerive(t) match
-                    case true =>
-                        '{ Flat.unsafe.bypass[T] }
-                    case false =>
+        def check(t: TypeRepr): Unit =
+            t match
+                case OrType(a, b) =>
+                    check(a)
+                    check(b)
+                case AndType(a, b) =>
+                    check(a)
+                    check(b)
+                case _ =>
+                    if isAny(t) || !isConcrete(t.dealias) then
                         fail(
-                            s"Cannot prove ${code(print(t))} isn't nested. Provide an implicit evidence ${code(s"kyo.Flat[${print(t)}]")}."
+                            s"Cannot prove ${code(print(t))} isn't nested. " +
+                                s"This error can be reported an unsupported pending effect is passed to a method. " +
+                                s"If that's not the case, provide an implicit evidence ${code(s"kyo.Flat[${print(t)}]")}."
                         )
-            else
-                '{ Flat.unsafe.bypass[T] }
 
         t match
             case Kyo(Kyo(nt, s1), s2) =>
@@ -81,10 +67,9 @@ object FlatImplicits:
                 fail(
                     s"Detected: ${code(print(t))}. Consider using ${code("flatten")} to resolve. " + mismatch
                 )
-            case Kyo(nt, s) =>
-                check(nt)
             case t =>
                 check(t)
         end match
+        '{ Flat.unsafe.bypass[T] }
     end inferMacro
 end FlatImplicits
