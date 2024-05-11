@@ -134,8 +134,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core` % "test->test;compile->compile")
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.36.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.36.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.38.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.38.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
 
@@ -244,7 +244,7 @@ lazy val `kyo-bench` =
             // Forks each test suite individually
             Test / testGrouping := {
                 val javaOptionsValue = javaOptions.value.toVector
-                val envsVarsValue = envVars.value
+                val envsVarsValue    = envVars.value
                 (Test / definedTests).value map { test =>
                     import sbt.dsl.LinterLevel.Ignore
                     Tests.Group(
