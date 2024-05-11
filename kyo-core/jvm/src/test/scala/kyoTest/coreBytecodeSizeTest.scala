@@ -36,17 +36,10 @@ class coreBytecodeSizeTest extends KyoTest:
     "handle" in runJVM {
         val map = methodBytecodeSize[TestHandle]
         assert(map == Map(
-<<<<<<< HEAD
             "test"        -> 27,
             "resultLoop"  -> 91,
-            "handleLoop"  -> 276,
+            "handleLoop"  -> 253,
             "_handleLoop" -> 10
-=======
-            "test"        -> 28,
-            "resultLoop"  -> 94,
-            "handleLoop"  -> 257,
-            "_handleLoop" -> 12
->>>>>>> d5847e0a ((almost) allocationless tags)
         ))
     }
 
