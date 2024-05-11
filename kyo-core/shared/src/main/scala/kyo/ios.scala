@@ -53,7 +53,7 @@ sealed trait IOs extends Effect[IOs]:
                     pf(ex)
         )
 
-    def run[T](v: T < IOs)(using f: Flat[T < IOs]): T =
+    def run[T: Flat](v: T < IOs): T =
         @tailrec def runLoop(v: T < IOs): T =
             v match
                 case kyo: Suspend[IO, Unit, T, IOs] @unchecked =>

@@ -61,7 +61,7 @@ object core:
         )(
             state: State,
             value: T < (E & S2)
-        )(using inline tag: Tag[E], inline flat: Flat[T < (E & S)]): Result[T] < (S & S2) =
+        )(using inline tag: Tag[E], inline flat: Flat[T]): Result[T] < (S & S2) =
             def _handleLoop(st: State, value: T < (E & S & S2)): Result[T] < (S & S2) =
                 handleLoop(st, value)
             @tailrec def handleLoop(st: State, value: T < (E & S & S2)): Result[T] < (S & S2) =
@@ -182,13 +182,10 @@ object core:
             def done[T: Flat](v: T): Command[T]
             def resume[T, U: Flat](command: Command[T], k: T => Command[U] < S): Command[U] < S
 
-        def deepHandle[Command[_], E <: Effect[E], S, T](
+        def deepHandle[Command[_], E <: Effect[E], S, T: Flat](
             handler: DeepHandler[Command, E, S],
             v: T < E
-        )(using
-            tag: Tag[E],
-            flat: Flat[T < E]
-        ): Command[T] < S =
+        )(using tag: Tag[E]): Command[T] < S =
             def deepHandleLoop(v: T < (E & S)): Command[T] < S =
                 v match
                     case kyo: Suspend[Command, Any, T, E] @unchecked =>

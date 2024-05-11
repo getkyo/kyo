@@ -131,7 +131,7 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
 
     private[kyo] val interrupted = IOs.fail(Interrupted)
 
-    def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
+    def run[T: Flat](v: T < Fibers): Fiber[T] < IOs =
         FiberGets.run(v)
 
     def runAndBlock[T: Flat, S](timeout: Duration)(v: T < (Fibers & S)): T < (IOs & S) =
@@ -160,14 +160,14 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
             )
         }
 
-    def parallel[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Seq[T] < Fibers =
+    def parallel[T: Flat](l: Seq[T < Fibers]): Seq[T] < Fibers =
         l.size match
             case 0 => Seq.empty
             case 1 => l(0).map(Seq(_))
             case _ =>
                 Fibers.get(parallelFiber[T](l))
 
-    def parallelFiber[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Fiber[Seq[T]] < IOs =
+    def parallelFiber[T: Flat](l: Seq[T < Fibers]): Fiber[Seq[T]] < IOs =
         l.size match
             case 0 => Fiber.value(Seq.empty)
             case 1 => Fibers.run(l(0).map(Seq(_)))
@@ -200,10 +200,10 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
                     }
                 }
 
-    def race[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): T < Fibers =
+    def race[T: Flat](l: Seq[T < Fibers]): T < Fibers =
         Fibers.get(raceFiber[T](l))
 
-    def raceFiber[T](l: Seq[T < Fibers])(using f: Flat[T < Fibers]): Fiber[T] < IOs =
+    def raceFiber[T: Flat](l: Seq[T < Fibers]): Fiber[T] < IOs =
         l.size match
             case 0 => IOs.fail("Can't race an empty list.")
             case 1 => Fibers.run(l(0))
@@ -250,7 +250,7 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
                 p.get
         }
 
-    def timeout[T](d: Duration)(v: => T < Fibers)(using f: Flat[T < Fibers]): T < Fibers =
+    def timeout[T: Flat](d: Duration)(v: => T < Fibers): T < Fibers =
         init(v).map { f =>
             val timeout: Unit < IOs =
                 IOs(discard(IOTask(IOs(f.interrupt), Locals.State.empty)))
@@ -330,7 +330,7 @@ object fibersInternal:
                 def resume[T, U: Flat](m: Fiber[T], f: T => Fiber[U] < IOs) =
                     m.transform(f)
 
-        def run[T](v: T < Fibers)(using f: Flat[T < Fibers]): Fiber[T] < IOs =
+        def run[T: Flat](v: T < Fibers): Fiber[T] < IOs =
             IOs(deepHandle(deepHandler, IOs.runLazy(v)))
 
         def runAndBlock[T: Flat, S](timeout: Duration)(
