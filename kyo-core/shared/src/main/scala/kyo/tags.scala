@@ -1,5 +1,6 @@
 package kyo
 
+import scala.annotation.switch
 import scala.annotation.tailrec
 import scala.quoted.*
 
@@ -74,7 +75,7 @@ object Tag:
             @tailrec def loop(idx: Int): Int =
                 if idx >= tag.length() then -1
                 else
-                    tag.charAt(idx) match
+                    (tag.charAt(idx): @switch) match
                         case ';'             => idx + 1
                         case '[' | ',' | ']' => -1
                         case _               => loop(idx + 1)
@@ -99,7 +100,7 @@ object Tag:
                 @tailrec def loop(subIdx: Int, superIdx: Int): Boolean =
                     val variance = subTag.charAt(subIdx)
                     variance == superTag.charAt(superIdx) && {
-                        variance match
+                        (variance: @switch) match
                             case '=' =>
                                 sameType(subTag, superTag, subIdx + 1, superIdx + 1)
                             case '+' =>
@@ -123,13 +124,18 @@ object Tag:
 
         def nextParam(tag: String, idx: Int): Int =
             @tailrec def loop(opens: Int, idx: Int): Int =
-                tag.charAt(idx) match
-                    case ',' if opens == 0 =>
-                        idx + 1
-                    case ']' if opens == 0 =>
-                        -1
+                (tag.charAt(idx): @switch) match
+                    case ',' =>
+                        if opens == 0 then
+                            idx + 1
+                        else
+                            loop(opens, idx + 1)
+                    case ']' =>
+                        if opens == 0 then
+                            -1
+                        else
+                            loop(opens - 1, idx + 1)
                     case '[' => loop(opens + 1, idx + 1)
-                    case ']' => loop(opens - 1, idx + 1)
                     case _   => loop(opens, idx + 1)
             loop(0, idx)
         end nextParam
