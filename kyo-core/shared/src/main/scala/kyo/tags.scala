@@ -16,16 +16,16 @@ object Tag:
         def show = t1.tpe.takeWhile(_ != ';')
 
         def <:<[U](t2: Tag[U]): Boolean =
-            t1.tpe == t2.tpe || isSubtype(t1, t2)
+            t1 =:= t2 || isSubtype(t1, t2)
 
         def =:=[U](t2: Tag[U]): Boolean =
-            t1.tpe == t2.tpe
+            (t1.tpe eq t2.tpe) || t1.tpe == t2.tpe
 
         def =!=[U](t2: Tag[U]): Boolean =
-            t1.tpe != t2.tpe
+            (t1.tpe ne t2.tpe) || t1.tpe != t2.tpe
 
         def >:>[U](t2: Tag[U]): Boolean =
-            t1.tpe == t2.tpe || isSubtype(t2, t1)
+            t1 =:= t2 || isSubtype(t2, t1)
 
     end extension
 
