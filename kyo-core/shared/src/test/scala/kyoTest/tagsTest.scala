@@ -2,14 +2,17 @@ package kyoTest
 
 import izumi.reflect.Tag as ITag
 import kyo.*
+import scala.reflect.ClassTag
 
 class TagsTest extends KyoTest:
 
     def test[T1: Tag: ITag, T2: Tag: ITag]: Unit =
         "T1 <:< T2" in {
+            val kresult = Tag[T1] <:< Tag[T2]
+            val iresult = ITag[T1] <:< ITag[T2]
             assert(
-                Tag[T1] <:< Tag[T2] == ITag[T1] <:< ITag[T2],
-                s"Tag[T1] <:< Tag[T2] is ${Tag[T1] <:< Tag[T2]} but ITag[T1] <:< ITag[T2] is ${ITag[T1] <:< ITag[T2]}"
+                kresult == iresult,
+                s"Tag[T1] <:< Tag[T2] is $kresult but ITag[T1] <:< ITag[T2] is $iresult"
             )
         }
         "T2 <:< T1" in {
@@ -197,6 +200,20 @@ class TagsTest extends KyoTest:
         assertDoesNotCompile("Tag[UnsupportedTest.T]")
         assertDoesNotCompile("Tag[String & Int]")
         assertDoesNotCompile("Tag[String | Int]")
+    }
+
+    "show" - {
+
+        "no type params" in {
+            assert(Tag[Int].show == "scala.Int")
+            assert(Tag[Thread].show == "java.lang.Thread")
+        }
+
+        "type params" in pendingUntilFixed {
+            class Test[T]
+            assert(Tag[Test[Int]].show == s"${classOf[Test[?]].getName}[scala.Int]")
+            ()
+        }
     }
 
 end TagsTest
