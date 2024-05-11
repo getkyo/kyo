@@ -2,7 +2,6 @@ package kyoTest
 
 import izumi.reflect.Tag as ITag
 import kyo.*
-import scala.reflect.ClassTag
 
 class TagsTest extends KyoTest:
 
