@@ -9,7 +9,7 @@ object Tag:
 
     import internal.*
 
-    inline given apply[T >: Nothing]: Tag[T] = ${ tagImpl[T] }
+    inline given apply[T]: Tag[T] = ${ tagImpl[T] }
 
     extension [T](t1: Tag[T])
 
@@ -147,6 +147,10 @@ object Tag:
             import quotes.reflect.*
 
             tpe.dealias match
+                case AndType(_, _) | OrType(_, _) =>
+                    report.errorAndAbort(s"Unsupported Tag type ${tpe.show}")
+                case tpe if tpe.typeSymbol.fullName == "scala.Nothing" =>
+                    report.errorAndAbort(s"Unsupported Tag type ${tpe.show}")
                 case tpe if tpe.typeSymbol.isClassDef =>
                     val sym  = tpe.typeSymbol
                     val path = tpe.dealias.baseClasses.map(_.fullName).mkString(";") + ";"
@@ -168,8 +172,6 @@ object Tag:
                                     ) :+ Expr("]"))
                         )
                     end if
-                case AndType(_, _) | OrType(_, _) =>
-                    report.errorAndAbort(s"Unsupported Tag type ${tpe.show}")
                 case _ =>
                     tpe.asType match
                         case '[tpe] =>

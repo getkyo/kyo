@@ -192,6 +192,7 @@ class TagsTest extends KyoTest:
     val test = new UnsupportedTest {}
 
     "unsupported types" in {
+        assertDoesNotCompile("Tag[Nothing]")
         assertDoesNotCompile("Tag[UnsupportedTest#T]")
         assertDoesNotCompile("Tag[UnsupportedTest.T]")
         assertDoesNotCompile("Tag[String & Int]")

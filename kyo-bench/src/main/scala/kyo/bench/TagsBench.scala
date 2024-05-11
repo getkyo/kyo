@@ -33,7 +33,7 @@ class TagsBench extends Bench(()):
     end syncKyo
 
     @Benchmark
-    def syncZio() =
+    def syncIzumi() =
         import izumi.reflect.*
         Tag[String] =:= Tag[String]
         Tag[Int] <:< Tag[Any]
@@ -48,6 +48,6 @@ class TagsBench extends Bench(()):
         Tag[Test3[Test1[Sub1], Test2[Super]]] <:< Tag[Test3[Test1[Super], Test2[Sub1]]]
         Tag[Test6[Test4[Super, Super], Test5[Sub1, String], Int, String, Boolean]] =:=
             Tag[Test6[Test4[Super, Super], Test5[Sub1, String], Int, String, Boolean]]
-    end syncZio
+    end syncIzumi
 
 end TagsBench
