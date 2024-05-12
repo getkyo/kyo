@@ -585,20 +585,20 @@ class Database extends Closeable {
 
 // The `acquire` method accepts any object that 
 // implements Java's `Closeable` interface
-val db: Database < (Resources & IOs) = 
+val db: Database < Resources = 
   Resources.acquire(new Database)
 
 // Use `run` to handle the effect, while also 
 // closing the resources utilized by the 
 // computationation
-val b: Int < IOs = 
+val b: Int < Fibers = 
   Resources.run(db.map(_.count))
 
 // The `ensure` method provides a low-level API to handle the finalization of 
 // resources directly. The `acquire` method is implemented in terms of `ensure`.
 
 // Example method to execute a function on a database
-def withDb[T](f: Database => T < IOs): T < (IOs & Resources) =
+def withDb[T](f: Database => T < Fibers): T < Resources =
   // Initializes the database ('new Database' is a placeholder)
   IOs(new Database).map { db =>
     // Registers `db.close` to be finalized
@@ -609,11 +609,11 @@ def withDb[T](f: Database => T < IOs): T < (IOs & Resources) =
   }
 
 // Execute a function
-val c: Int < (IOs & Resources) =
+val c: Int < Resources =
   withDb(_.count)
 
 // Close resources
-val d: Int < IOs = 
+val d: Int < Fibers = 
   Resources.run(c)
 ```
 

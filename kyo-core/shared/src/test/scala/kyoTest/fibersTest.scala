@@ -369,7 +369,7 @@ class fibersTest extends KyoTest:
             def loop(ref: AtomicInt): Unit < IOs =
                 ref.incrementAndGet.map(_ => loop(ref))
 
-            def task(l: Latch): Unit < IOs =
+            def task(l: Latch): Unit < Fibers =
                 Resources.run[Unit, IOs] {
                     Resources.ensure(l.release).map { _ =>
                         Atomics.initInt(0).map(loop)
