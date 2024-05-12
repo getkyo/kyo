@@ -9,7 +9,7 @@ class streamsTest extends KyoTest:
     "initSeq" - {
         "empty" in {
             assert(
-                Streams.initSeq(Seq()).runSeq.pure == (Seq.empty, ())
+                Streams.initSeq(Seq[Int]()).runSeq.pure == (Seq.empty, ())
             )
         }
 
@@ -321,7 +321,7 @@ class streamsTest extends KyoTest:
         "none" in {
             assert(
                 Streams.initSeq(Seq(1, 2, 3)).collect {
-                    case v if false => ???
+                    case v if false => (): Unit < Streams[Int]
                 }.runSeq.pure == (Seq.empty, ())
             )
         }

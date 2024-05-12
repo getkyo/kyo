@@ -47,22 +47,8 @@ class envsTest extends KyoTest:
         succeed
     }
 
-    "intersection type env" - {
-        "explicit" in pendingUntilFixed {
-            val a = Envs.run(1)(Envs.get[Int & Double])
-            val b = Envs.run(1.2d)(a)
-            assert(b.pure == 1)
-            ()
-        }
-        "method inference" in pendingUntilFixed {
-            def test[T](v: T < (Envs[Int] & Envs[Double])) =
-                v
-            val a                                = test(Envs.get)
-            val b: (Int & Double) < Envs[Double] = Envs.run(1)(a)
-            val c: (Int & Double) < Any          = Envs.run(1.2d)(b)
-            assert(c.pure == 1)
-            ()
-        }
+    "intersection type env" in {
+        assertDoesNotCompile("Envs.get[Int & Double]")
     }
 
     "reduce large intersection incrementally" in {

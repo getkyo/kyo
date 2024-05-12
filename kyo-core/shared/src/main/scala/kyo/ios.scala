@@ -68,7 +68,7 @@ sealed trait IOs extends Effect[IOs]:
         @tailrec def runLazyLoop(v: T < (IOs & S)): T < S =
             v match
                 case kyo: Suspend[?, ?, ?, ?] =>
-                    if kyo.tag == tag then
+                    if kyo.tag =:= tag then
                         val k = kyo.asInstanceOf[Suspend[IO, Unit, T, S & IOs]]
                         runLazyLoop(k(()))
                     else

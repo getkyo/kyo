@@ -72,19 +72,19 @@ package object kyo:
         inline def failTag[T, U](
             inline actual: Tag[U]
         ): Nothing =
-            bug(s"Unexpected effect '${actual.parse}' found in 'pure'.")
+            bug(s"Unexpected effect '${actual.show}' found in 'pure'.")
 
-        inline def failTag[T, U](
-            inline actual: Tag[U],
-            inline expected: Tag[T]
+        inline def failTag(
+            inline actual: Tag[?],
+            inline expected: Tag[?]*
         ): Nothing =
-            bug(s"Unexpected effect '${actual.parse}' found while handling '${expected.parse}'.")
+            bug(s"Unexpected effect '${actual.show}' found while handling '${expected.map(_.show).mkString(" & ")}'.")
 
         inline def checkTag[T, U](
             inline actual: Tag[U],
             inline expected: Tag[T]
         ): Unit =
-            if actual != expected then
+            if actual =!= expected then
                 failTag(actual, expected)
 
         def when(cond: Boolean)(msg: String): Unit =

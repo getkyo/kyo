@@ -27,10 +27,10 @@ object ZIOs:
             v match
                 case kyo: Suspend[?, ?, ?, ?] =>
                     try
-                        if kyo.tag == Tag[IOs] then
+                        if kyo.tag =:= Tag[IOs] then
                             val k = kyo.asInstanceOf[Suspend[?, Unit, U, Fibers]]
                             ZIO.suspend(loop(k(())))
-                        else if kyo.tag == Tag[FiberGets] then
+                        else if kyo.tag =:= Tag[FiberGets] then
                             val k = kyo.asInstanceOf[Suspend[Fiber, Any, U, FiberGets]]
                             k.command match
                                 case Done(v) =>
@@ -41,11 +41,11 @@ object ZIOs:
                                         Left(ZIO.succeed(p.interrupt()))
                                     }
                             end match
-                        else if kyo.tag == Tag[Tasks] then
+                        else if kyo.tag =:= Tag[Tasks] then
                             val k = kyo.asInstanceOf[Suspend[Task, Any, U, ZIOs]]
                             k.command.flatMap(v => loop(k(v)))
                         else
-                            bug.failTag(kyo.tag, Tag[Fibers & ZIOs])
+                            bug.failTag(kyo.tag, Tag[FiberGets], Tag[Tasks])
                     catch
                         case ex if NonFatal(ex) =>
                             ZIO.fail(ex)
