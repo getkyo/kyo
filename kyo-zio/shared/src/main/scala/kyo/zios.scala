@@ -61,8 +61,7 @@ object ZIOs:
     end run
 
     private[kyo] object internal:
-        class Tasks extends Effect[Tasks]:
-            type Command[T] = Task[T]
+        class Tasks  extends Effect[Task, Tasks]
         object Tasks extends Tasks
     end internal
 end ZIOs

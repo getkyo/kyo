@@ -10,6 +10,7 @@ val compilerOptions = Seq(
     "-feature",
     "-unchecked",
     "-deprecation",
+    "-Ykind-projector",
     "-language:implicitConversions",
     "-Wvalue-discard",
     "-Wunused:all",
@@ -85,7 +86,8 @@ lazy val `kyo-scheduler` =
             scalacOptions --= Seq(
                 "-Wvalue-discard",
                 "-Wunused:all",
-                "-language:strictEquality"
+                "-language:strictEquality",
+                "-Ykind-projector"
             ),
             scalacOptions += "-Xsource:3",
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
