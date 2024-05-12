@@ -2,8 +2,7 @@ package kyo
 
 import kyo.core.*
 
-class Envs[+V] extends Effect[Envs[V]]:
-    type Command[T] = Unit
+class Envs[+V] extends Effect[Const[Unit], Envs[V]]
 
 object Envs:
     private case object envs extends Envs[Any]

@@ -7,8 +7,7 @@ abstract private[kyo] class Defer[T, S] extends Suspend[Const[Unit], Unit, T, S 
     final def command = ()
     final def tag     = Tag[Defers].asInstanceOf[Tag[Any]]
 
-class Defers extends Effect[Defers]:
-    type Command[T] = Unit
+class Defers extends Effect[Const[Unit], Defers]
 
 object Defers extends Defers:
 
@@ -20,6 +19,6 @@ object Defers extends Defers:
         this.handle(handler)((), v)
 
     private val handler = new Handler[Const[Unit], Defers, Any]:
-        def resume[T, U: Flat, S2](command: Command[T], k: T => U < (Defers & S2)) =
+        def resume[T, U: Flat, S2](command: Unit, k: T => U < (Defers & S2)) =
             Resume((), k(().asInstanceOf[T]))
 end Defers
