@@ -154,9 +154,13 @@ object Tag:
 
             tpe.dealias match
                 case AndType(_, _) | OrType(_, _) =>
-                    report.errorAndAbort(s"Unsupported Tag type ${tpe.show}")
+                    report.errorAndAbort(
+                        s"Unsupported intersection or union type in Tag: ${tpe.show}. Only class types and type parameters are allowed."
+                    )
                 case tpe if tpe.typeSymbol.fullName == "scala.Nothing" =>
-                    report.errorAndAbort(s"Unsupported Tag type ${tpe.show}")
+                    report.errorAndAbort(
+                        s"Tag cannot be created for Nothing as it has no values. Use a different type or add explicit type parameters if needed."
+                    )
                 case tpe if tpe.typeSymbol.isClassDef =>
                     val sym  = tpe.typeSymbol
                     val path = tpe.dealias.baseClasses.map(_.fullName).mkString(";") + ";"
@@ -184,12 +188,12 @@ object Tag:
                             Expr.summon[Tag[tpe]] match
                                 case None =>
                                     report.errorAndAbort(
-                                        s"Please provide an implicit ${TypeRepr.of[Tag[tpe]].show}"
+                                        report.errorAndAbort(s"Please provide an implicit kyo.Flat[${TypeRepr.of[tpe].show}] parameter.")
                                     )
                                 case Some(value) =>
                                     '{ $value.tpe }
                         case _ =>
-                            report.errorAndAbort(s"Unsupported Tag type ${tpe.show}")
+                            report.errorAndAbort(s"Tag only supports class types and type parameters, but got: ${tpe.show}")
             end match
         end encodeType
 
