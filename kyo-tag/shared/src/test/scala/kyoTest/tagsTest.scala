@@ -2,8 +2,10 @@ package kyoTest
 
 import izumi.reflect.Tag as ITag
 import kyo.*
+import org.scalatest.NonImplicitAssertions
+import org.scalatest.freespec.AsyncFreeSpec
 
-class TagsTest extends KyoTest:
+class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     def test[T1: Tag: ITag, T2: Tag: ITag]: Unit =
         "T1 <:< T2" in {
@@ -215,4 +217,4 @@ class TagsTest extends KyoTest:
         }
     }
 
-end TagsTest
+end tagsTest

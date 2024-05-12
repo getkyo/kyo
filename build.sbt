@@ -63,6 +63,7 @@ lazy val kyo =
             `kyo-settings`
         ).aggregate(
             `kyo-scheduler`,
+            `kyo-tag`,
             `kyo-core`,
             `kyo-direct`,
             `kyo-stats-otel`,
@@ -94,11 +95,24 @@ lazy val `kyo-scheduler` =
         )
         .jsSettings(`js-settings`)
 
+lazy val `kyo-tag` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-tag"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.scalatest" %%% "scalatest"     % "3.2.16" % Test,
+            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.9"  % Test
+        )
+        .jsSettings(`js-settings`)
+
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-scheduler`)
+        .dependsOn(`kyo-tag`)
         .in(file("kyo-core"))
         .settings(
             `kyo-settings`,
