@@ -188,7 +188,7 @@ object Tag:
                             Expr.summon[Tag[tpe]] match
                                 case None =>
                                     report.errorAndAbort(
-                                        report.errorAndAbort(s"Please provide an implicit kyo.Flat[${TypeRepr.of[tpe].show}] parameter.")
+                                        report.errorAndAbort(s"Please provide an implicit kyo.Tag[${TypeRepr.of[tpe].show}] parameter.")
                                     )
                                 case Some(value) =>
                                     '{ $value.tpe }
