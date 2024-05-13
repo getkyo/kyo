@@ -4,13 +4,13 @@ import kyo.core.*
 import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 
-// Can't use an opaque type because
-// kyo-direct tests crash the compiler.
-type Aborts[-V] //= DoAbort
+type Aborts[-V] >: Aborts.Effects[V] <: Aborts.Effects[V]
 
 object Aborts:
 
     import internal.*
+
+    opaque type Effects[-V] = DoAbort
 
     def fail[V](v: V): Nothing < Aborts[V] =
         DoAbort.suspend(v).asInstanceOf[Nothing < Aborts[V]]
