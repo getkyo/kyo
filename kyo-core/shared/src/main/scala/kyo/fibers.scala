@@ -315,7 +315,8 @@ object fibersInternal:
             result.map(t)
     end Done
 
-    class FiberGets extends Effect[Fiber, FiberGets]
+    class FiberGets extends Effect[FiberGets]:
+        type Command[T] = Fiber[T]
 
     object FiberGets extends FiberGets:
         type Command[T] = Fiber[T]

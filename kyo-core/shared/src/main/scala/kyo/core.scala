@@ -13,23 +13,24 @@ object core:
 
     opaque type <[+T, -S] >: T = T | internal.Kyo[T, S]
 
-    trait Effect[Command[_], +E]
+    trait Effect[+E]:
+        type Command[_]
 
-    extension [Command[_], E <: Effect[Command, E]](e: E)
+    extension [E <: Effect[E]](e: E)
 
-        inline def suspend[T](inline cmd: Command[T])(
+        inline def suspend[T](inline cmd: e.Command[T])(
             using inline _tag: Tag[E]
         ): T < E =
-            new Suspend[Command, T, T, E]:
+            new Suspend[e.Command, T, T, E]:
                 def command = cmd
                 def tag     = _tag.asInstanceOf[Tag[Any]]
                 def apply(v: T, s: Safepoint[E], l: State) =
                     v
 
-        inline def suspend[T, U, S](inline cmd: Command[T], inline f: T => U < S)(
+        inline def suspend[T, U, S](inline cmd: e.Command[T], inline f: T => U < S)(
             using inline _tag: Tag[E]
         ): U < (E & S) =
-            new Suspend[Command, T, U, S]:
+            new Suspend[e.Command, T, U, S]:
                 def command = cmd
                 def tag     = _tag.asInstanceOf[Tag[Any]]
                 def apply(v: T, s: Safepoint[S], l: State) =
@@ -54,9 +55,9 @@ object core:
         transformLoop(v)
     end transform
 
-    extension [Command[_], E <: Effect[Command, E]](e: E)
+    extension [E <: Effect[E]](e: E)
         inline def handle[State, Result[_], T, S, S2](
-            handler: ResultHandler[State, Command, E, Result, S]
+            handler: ResultHandler[State, e.Command, E, Result, S]
         )(
             state: State,
             value: T < (E & S2)
@@ -65,7 +66,7 @@ object core:
                 handleLoop(st, value)
             @tailrec def handleLoop(st: State, value: T < (E & S & S2)): Result[T] < (S & S2) =
                 value match
-                    case kyo: Suspend[Command, Any, T, S2] @unchecked
+                    case kyo: Suspend[e.Command, Any, T, S2] @unchecked
                         if tag =:= kyo.tag && handler.accepts(st, kyo.command) =>
                         handler.resume(st, kyo.command, kyo) match
                             case r: handler.Resume[T, S & S2] @unchecked =>
@@ -122,7 +123,7 @@ object core:
         evalLoop(s, suspend(resume(s, () => v)))
     end eval
 
-    abstract class ResultHandler[State, Command[_], E <: Effect[Command, E], Result[_], S]:
+    abstract class ResultHandler[State, Command[_], E <: Effect[E], Result[_], S]:
 
         case class Resume[U, S2](st: State, v: U < (E & S & S2))
 
@@ -141,7 +142,7 @@ object core:
 
     end ResultHandler
 
-    abstract class Handler[Command[_], E <: Effect[Command, E], S]
+    abstract class Handler[Command[_], E <: Effect[E], S]
         extends ResultHandler[Unit, Command, E, Id, S]:
         inline def done[T](st: Unit, v: T) =
             done(v)
@@ -175,13 +176,13 @@ object core:
     private[kyo] object internal:
 
         type MX[T] = Any
-        type EX <: Effect[MX, EX]
+        type EX <: Effect[EX]
 
         abstract class DeepHandler[Command[_], E, S]:
             def done[T: Flat](v: T): Command[T]
             def resume[T, U: Flat](command: Command[T], k: T => Command[U] < S): Command[U] < S
 
-        def deepHandle[Command[_], E <: Effect[Command, E], S, T: Flat](
+        def deepHandle[Command[_], E <: Effect[E], S, T: Flat](
             handler: DeepHandler[Command, E, S],
             v: T < E
         )(using tag: Tag[E]): Command[T] < S =

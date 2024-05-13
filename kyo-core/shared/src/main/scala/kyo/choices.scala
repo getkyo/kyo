@@ -2,7 +2,8 @@ package kyo
 
 import kyo.core.*
 
-class Choices extends Effect[Seq, Choices]
+class Choices extends Effect[Choices]:
+    type Command[T] = Seq[T]
 
 object Choices extends Choices:
 

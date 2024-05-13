@@ -2,7 +2,8 @@ package kyo
 
 import kyo.core.*
 
-class Sums[V] extends Effect[Const[V], Sums[V]]:
+class Sums[V] extends Effect[Sums[V]]:
+    type Command[T] = V
 
     private val handler =
         new ResultHandler[Chunk[V], Const[V], Sums[V], [T] =>> (Chunk[V], T), Any]:

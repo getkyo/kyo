@@ -72,7 +72,8 @@ object Aborts:
                     Left(command)
         end handler
 
-        class DoAbort  extends Effect[Const[Any], DoAbort]
+        class DoAbort extends Effect[DoAbort]:
+            type Command[T] = Any
         object DoAbort extends DoAbort
     end internal
 

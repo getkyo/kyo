@@ -7,7 +7,8 @@ class coreBytecodeSizeTest extends KyoTest:
 
     import kyo.core.*
 
-    object TestEffect extends Effect[Id, TestEffect.type]
+    object TestEffect extends Effect[TestEffect.type]:
+        type Command[T] = T
 
     object TestHandler extends Handler[Id, TestEffect.type, Any]:
         def resume[T, U: Flat, S](command: T, k: T => U < (TestEffect.type & S)) =

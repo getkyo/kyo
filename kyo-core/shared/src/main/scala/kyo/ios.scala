@@ -8,7 +8,7 @@ import scala.annotation.tailrec
 import scala.util.*
 import scala.util.control.NonFatal
 
-sealed trait IOs extends Effect[Const[Unit], IOs]:
+sealed trait IOs extends Effect[IOs]:
 
     private val tag = Tag[IOs]
 

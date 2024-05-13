@@ -248,7 +248,8 @@ object Stream:
 
 end Stream
 
-class Streams[V] extends Effect[Const[Chunk[V]], Streams[V]]
+class Streams[V] extends Effect[Streams[V]]:
+    type Command[T] = Chunk[V]
 
 object Streams:
 
