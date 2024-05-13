@@ -14,7 +14,7 @@ object Tag:
 
     extension [T](t1: Tag[T])
 
-        def show = t1.tpe.takeWhile(_ != ';')
+        def show = t1.tpe.drop(2).takeWhile(_ != ';')
 
         def <:<[U](t2: Tag[U]): Boolean =
             t1 =:= t2 || isSubtype(t1, t2)
@@ -51,24 +51,27 @@ object Tag:
         def checkType(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
             checkSegment(subTag, superTag, subIdx, superIdx) && checkParams(subTag, superTag, subIdx, superIdx)
 
+        def checkSegmentEntry(entrySize: Int, subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
+            @tailrec def loop(offset: Int): Boolean =
+                offset > entrySize || {
+                    val subChar   = subTag.charAt(subIdx + offset)
+                    val superChar = superTag.charAt(superIdx + offset)
+                    subChar == superChar && loop(offset + 1)
+                }
+            loop(0)
+        end checkSegmentEntry
+
         def checkSegment(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
-            @tailrec def loop(subIdx: Int, superIdx: Int, superStart: Int): Boolean =
+            val superSize = decodeInt(superTag.charAt(superIdx))
+            @tailrec def loop(subIdx: Int): Boolean =
                 if subIdx >= subTag.length() || superIdx >= superTag.length() then false
                 else
-                    val subChar   = subTag.charAt(subIdx)
-                    val superChar = superTag.charAt(superIdx)
-                    (subChar == ';' && superChar == ';') || {
-                        if subChar == superChar then
-                            loop(subIdx + 1, superIdx + 1, superStart)
-                        else
-                            nextSegmentEntry(subTag, subIdx) match
-                                case -1  => false
-                                case idx => loop(idx, superStart, superStart)
-                        end if
-                    }
+                    val subSize = decodeInt(subTag.charAt(subIdx))
+                    (subSize == superSize && checkSegmentEntry(subSize, subTag, superTag, subIdx + 1, superIdx + 1)) ||
+                    loop(subIdx + subSize + 3)
                 end if
             end loop
-            loop(subIdx, superIdx, superIdx)
+            loop(subIdx)
         end checkSegment
 
         def nextSegmentEntry(tag: String, idx: Int): Int =
@@ -149,6 +152,19 @@ object Tag:
             '{ new Tag($encoded) }
         end tagImpl
 
+        // printable ASCII chars
+        val maxEncodableInt = ('~' - ' ').toInt
+
+        def encodeInt(i: Int)(using Quotes): Char =
+            import quotes.reflect.*
+            if i >= maxEncodableInt then
+                report.errorAndAbort("Encoded tag string exceeds supported limit: " + maxEncodableInt)
+            (i + ' ').toChar
+        end encodeInt
+
+        def decodeInt(i: Char): Int =
+            (i - ' ').toInt
+
         def encodeType(using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[String] =
             import quotes.reflect.*
 
@@ -162,8 +178,13 @@ object Tag:
                         s"Tag cannot be created for Nothing as it has no values. Use a different type or add explicit type parameters if needed."
                     )
                 case tpe if tpe.typeSymbol.isClassDef =>
-                    val sym  = tpe.typeSymbol
-                    val path = tpe.dealias.baseClasses.map(_.fullName).mkString(";") + ";"
+                    val sym = tpe.typeSymbol
+                    val path = tpe.dealias.baseClasses.map { sym =>
+                        val name = sym.fullName
+                        val size = encodeInt(name.length())
+                        val hash = encodeInt(Math.abs(name.hashCode()) % maxEncodableInt)
+                        s"$size$hash$name"
+                    }.mkString(";") + ";"
                     val variances = sym.typeMembers.flatMap { v =>
                         if !v.isTypeParam then None
                         else if v.flags.is(Flags.Contravariant) then Some("-")

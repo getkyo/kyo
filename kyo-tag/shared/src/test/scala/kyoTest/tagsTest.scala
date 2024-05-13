@@ -217,4 +217,13 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
+    "type with large name" in pendingUntilFixed {
+        assertCompiles(
+            """
+            class A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+            Tag[A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789]
+            """
+        )
+    }
+
 end tagsTest
