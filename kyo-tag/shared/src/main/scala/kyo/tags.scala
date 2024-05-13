@@ -14,7 +14,9 @@ object Tag:
 
     extension [T](t1: Tag[T])
 
-        def show = t1.tpe.drop(2).takeWhile(_ != ';')
+        def show =
+            val decoded = t1.tpe.drop(2).takeWhile(_ != ';')
+            fromCompact.getOrElse(decoded, decoded)
 
         def <:<[U](t2: Tag[U]): Boolean =
             t1 =:= t2 || isSubtype(t1, t2)
@@ -44,6 +46,15 @@ object Tag:
         // Test;Super;java.lang.Object;scala.Matchable;scala.Any;[-Param1;Super;java.lang.Object;scala.Matchable;scala.Any;,+Param2;Super;java.lang.Object;scala.Matchable;scala.Any;]
         // |--------------------Test segment---------------------|-|-------------------Param1 segment----------------------|+|-------------------Param2 segment----------------------|
         //                                                     variance                                                  variance
+
+        val toCompact = Map(
+            "java.lang.Object" -> "!O",
+            "scala.Matchable"  -> "!M",
+            "scala.Any"        -> "!A",
+            "java.lang.String" -> "!S"
+        )
+
+        val fromCompact = toCompact.map(_.swap).toMap
 
         def isSubtype(subTag: Tag[?], superTag: Tag[?]): Boolean =
             checkType(subTag.tpe, superTag.tpe, 0, 0)
@@ -180,7 +191,7 @@ object Tag:
                 case tpe if tpe.typeSymbol.isClassDef =>
                     val sym = tpe.typeSymbol
                     val path = tpe.dealias.baseClasses.map { sym =>
-                        val name = sym.fullName
+                        val name = toCompact.getOrElse(sym.fullName, sym.fullName)
                         val size = encodeInt(name.length())
                         val hash = encodeInt(Math.abs(name.hashCode()) % maxEncodableInt)
                         s"$size$hash$name"

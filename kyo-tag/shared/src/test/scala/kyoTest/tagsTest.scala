@@ -205,6 +205,13 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "show" - {
 
+        "compact" in {
+            assert(Tag[Object].show == "java.lang.Object")
+            assert(Tag[Matchable].show == "scala.Matchable")
+            assert(Tag[Any].show == "scala.Any")
+            assert(Tag[String].show == "java.lang.String")
+        }
+
         "no type params" in {
             assert(Tag[Int].show == "scala.Int")
             assert(Tag[Thread].show == "java.lang.Thread")
