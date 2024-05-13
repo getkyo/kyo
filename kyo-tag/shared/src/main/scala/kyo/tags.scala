@@ -62,23 +62,13 @@ object Tag:
         def checkType(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
             checkSegment(subTag, superTag, subIdx, superIdx) && checkParams(subTag, superTag, subIdx, superIdx)
 
-        def checkSegmentEntry(entrySize: Int, subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
-            @tailrec def loop(offset: Int): Boolean =
-                offset > entrySize || {
-                    val subChar   = subTag.charAt(subIdx + offset)
-                    val superChar = superTag.charAt(superIdx + offset)
-                    subChar == superChar && loop(offset + 1)
-                }
-            loop(0)
-        end checkSegmentEntry
-
         def checkSegment(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
             val superSize = decodeInt(superTag.charAt(superIdx))
             @tailrec def loop(subIdx: Int): Boolean =
                 if subIdx >= subTag.length() || superIdx >= superTag.length() then false
                 else
                     val subSize = decodeInt(subTag.charAt(subIdx))
-                    (subSize == superSize && checkSegmentEntry(subSize, subTag, superTag, subIdx + 1, superIdx + 1)) ||
+                    (subSize == superSize && subTag.regionMatches(subIdx + 1, superTag, superIdx + 1, subSize)) ||
                     loop(subIdx + subSize + 3)
                 end if
             end loop
@@ -97,12 +87,14 @@ object Tag:
         end nextSegmentEntry
 
         def sameType(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
-            @tailrec def loop(subIdx: Int, superIdx: Int): Boolean =
-                val subChar   = subTag.charAt(subIdx)
-                val superChar = superTag.charAt(superIdx)
-                subChar == superChar && (subChar == ';' || loop(subIdx + 1, superIdx + 1))
-            end loop
-            loop(subIdx, superIdx) && checkParams(subTag, superTag, subIdx, superIdx)
+            val endSubIdx   = subTag.indexOf(';', subIdx)
+            val endSuperIdx = superTag.indexOf(';', superIdx)
+            if endSubIdx == -1 || endSuperIdx == -1 then false
+            else
+                val length = Math.min(endSubIdx - subIdx, endSuperIdx - superIdx)
+                subTag.regionMatches(subIdx, superTag, superIdx, length) &&
+                checkParams(subTag, superTag, endSubIdx + 1, endSuperIdx + 1)
+            end if
         end sameType
 
         def checkParams(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
