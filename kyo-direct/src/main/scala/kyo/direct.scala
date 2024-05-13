@@ -5,66 +5,66 @@ import cps.CpsMonadContext
 import cps.async
 import cps.await
 import directInternal.*
+import scala.annotation.tailrec
 import scala.quoted.*
-
-private inline given kyoCpsMonad[S]: KyoCpsMonad[S] = KyoCpsMonad[S]
 
 transparent inline def defer[T](inline f: T) = ${ impl[T]('f) }
 
 inline def await[T, S](v: T < S): T =
     compiletime.error("`await` must be used within a `defer` block")
 
-private def impl[T: Type](f: Expr[T])(using Quotes): Expr[Any] =
+private def impl[T: Type](body: Expr[T])(using Quotes): Expr[Any] =
     import quotes.reflect.*
 
-    Validate(f)
+    Validate(body)
 
-    var effects = List.empty[Type[?]]
+    var effects = List.empty[TypeRepr]
 
-    Trees.traverse(f.asTerm) {
+    Trees.traverse(body.asTerm) {
         case Apply(TypeApply(Ident("await"), List(t, s)), List(v)) =>
-            effects ::= s.tpe.asType
+            effects ::= s.tpe
     }
 
-    val s =
-        effects
-            .distinct
-            .flatMap {
-                case '[s] =>
-                    TypeRepr.of[s] match
-                        case AndType(a, b) =>
-                            List(a.asType, b.asType)
-                        case _ =>
-                            List(Type.of[s])
-            }.sortBy {
-                case '[t] => TypeTree.of[t].show
-            } match
-            case Nil => Type.of[Any]
-            case l =>
-                l.reduce {
-                    case ('[t1], '[t2]) =>
-                        Type.of[t1 & t2]
-                }
+    def flatten(l: List[TypeRepr]): List[TypeRepr] =
+        @tailrec def loop(l: List[TypeRepr], acc: List[TypeRepr]): List[TypeRepr] =
+            l match
+                case Nil =>
+                    acc.distinct.sortBy(_.show)
+                case AndType(a, b) :: Nil =>
+                    loop(a :: b :: Nil, acc)
+                case head :: tail =>
+                    loop(tail, head :: acc)
+        loop(l, Nil)
+    end flatten
 
-    s match
+    val pending =
+        flatten(effects) match
+            case Nil =>
+                TypeRepr.of[Any]
+            case effects =>
+                effects.reduce((a, b) => AndType(a, b))
+    end pending
+
+    pending.asType match
         case '[s] =>
-            val body =
-                Trees.transform(f.asTerm) {
+            val transformedBody =
+                Trees.transform(body.asTerm) {
                     case Apply(TypeApply(Ident("await"), List(t, s2)), List(v)) =>
-                        t.tpe.asType match
-                            case '[t] =>
+                        (t.tpe.asType, s2.tpe.asType) match
+                            case ('[t], '[s2]) =>
                                 '{
-                                    cps.await[[T] =>> T < s, t, [T] =>> T < s](${
-                                        v.asExprOf[t < s]
+                                    given KyoCpsMonad[s2] = KyoCpsMonad[s2]
+                                    cps.await[[T] =>> T < s2, t, [T] =>> T < s2](${
+                                        v.asExprOf[t < s2]
                                     })
                                 }.asTerm
                 }
 
             '{
                 given KyoCpsMonad[s] = KyoCpsMonad[s]
-                async[[U] =>> U < s] {
-                    ${ body.asExprOf[T] }
-                }: T < s
+                async {
+                    ${ transformedBody.asExprOf[T] }
+                }.asInstanceOf[T < s]
             }
     end match
 end impl
