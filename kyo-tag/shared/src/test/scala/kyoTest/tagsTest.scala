@@ -205,6 +205,13 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "show" - {
 
+        "compact" in {
+            assert(Tag[Object].show == "java.lang.Object")
+            assert(Tag[Matchable].show == "scala.Matchable")
+            assert(Tag[Any].show == "scala.Any")
+            assert(Tag[String].show == "java.lang.String")
+        }
+
         "no type params" in {
             assert(Tag[Int].show == "scala.Int")
             assert(Tag[Thread].show == "java.lang.Thread")
@@ -215,6 +222,15 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
             assert(Tag[Test[Int]].show == s"${classOf[Test[?]].getName}[scala.Int]")
             ()
         }
+    }
+
+    "type with large name" in pendingUntilFixed {
+        assertCompiles(
+            """
+            class A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+            Tag[A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789]
+            """
+        )
     }
 
 end tagsTest
