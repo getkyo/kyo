@@ -22,7 +22,7 @@ trait NettyKyoServerInterpreter:
         ses: List[ServerEndpoint[Any, KyoSttpMonad.M]]
     ): Route[KyoSttpMonad.M] =
         given monad: MonadAsyncError[KyoSttpMonad.M] = KyoSttpMonad.instance
-        val runAsync = KyoRunAsync(nettyServerOptions.forkExecution)
+        val runAsync                                 = KyoRunAsync(nettyServerOptions.forkExecution)
         NettyServerInterpreter.toRoute(
             ses,
             nettyServerOptions.interceptors,
