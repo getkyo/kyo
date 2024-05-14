@@ -178,7 +178,7 @@ final private class Worker(
         val (thread, frame) =
             mount match {
                 case null =>
-                    (null, null)
+                    ("", "")
                 case mount: Thread =>
                     (mount.getName(), mount.getStackTrace().head.toString())
             }
@@ -186,9 +186,9 @@ final private class Worker(
             id,
             running,
             thread,
+            frame,
             isBlocked(),
             isStalled(getCurrentCycle()),
-            frame,
             executions,
             preemptions,
             completions,
@@ -206,9 +206,9 @@ case class WorkerStatus(
     id: Int,
     running: Boolean,
     mount: String,
+    frame: String,
     isBlocked: Boolean,
     isStalled: Boolean,
-    frame: String,
     executions: Long,
     preemptions: Long,
     completions: Long,
@@ -224,9 +224,9 @@ case class WorkerStatus(
             id,
             running,
             mount,
+            frame,
             isBlocked,
             isStalled,
-            frame,
             executions - other.executions,
             preemptions - other.preemptions,
             completions - other.completions,

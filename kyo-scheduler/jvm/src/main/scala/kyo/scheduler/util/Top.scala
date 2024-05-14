@@ -93,32 +93,13 @@ object Top extends App {
     private def print(status: Scheduler.Status): String = {
         val sb = new StringBuilder()
 
-        // Header
-        sb.append(f"Kyo Scheduler Status      | LoadAvg: ${status.loadAvg}%1.4f   | Flushes: ${status.flushes}\n\n")
-        sb.append("==============================================================================================\n")
-        // Worker table header
-        sb.append("Worker | Running | Blocked | Stalled | Load  | Exec  | Preempt | Done  | Stolen | Lost | Thread \n")
-        sb.append("================================================================================================\n")
-
-        // Worker table rows
-        status.workers.foreach { w =>
-            if (w != null) {
-                val running = if (w.running) "   🏃  " else "   ⚫  "
-                val blocked = if (w.isBlocked) "   🚧  " else "   ⚫  "
-                val stalled = if (w.isStalled) "   🐢  " else "   ⚫  "
-
-                sb.append(
-                    f"${w.id}%6d | $running | $blocked%-2s | $stalled%-2s | ${w.load}%5d | ${w.executions}%5d | ${w.preemptions}%7d | ${w.completions}%5d | ${w.stolenTasks}%6d | ${w.lostTasks}%4d | ${w.mount} ${w.frame}\n"
-                )
-            }
-        }
-
-        sb.append("\n")
-
-        // Regulator table header
-        sb.append("================================================================================================\n")
-        sb.append("Regulator   |   % | Allow | Reject | Probes | Cmpl  | Adjmts | Updts |    Avg    |  Jitter\n")
-        sb.append("================================================================================================\n")
+        sb.append(f"""
+            |===============================================================================================
+            |Kyo Scheduler Status      | LoadAvg: ${status.loadAvg}%1.4f   | Flushes: ${status.flushes}
+            |===============================================================================================
+            |Regulator   |   %% | Allow | Reject | Probes | Cmpl  | Adjmts | Updts |    Avg    |  Jitter
+            |-----------------------------------------------------------------------------------------------
+            |""".stripMargin)
 
         // Admission regulator row
         val admission       = status.admission
@@ -135,6 +116,30 @@ object Top extends App {
         sb.append(
             f"Concurrency |   - |     - |      - | ${concurrency.regulator.probesSent}%6d | ${concurrency.regulator.probesCompleted}%5d | ${concurrency.regulator.adjustments}%6d | ${concurrency.regulator.updates}%5d | $concurrencyAvg%9s | $concurrencyJitter%8s\n"
         )
+
+        sb.append(f"""
+            |===============================================================================================
+            |Worker | Running | Blocked | Stalled | Load  | Exec  | Preempt | Done  | Stolen | Lost | Thread
+            |-----------------------------------------------------------------------------------------------
+            |""".stripMargin)
+
+        // Worker table rows
+        status.workers.foreach { w =>
+            if (w ne null) {
+                val running = if (w.running) "   🏃  " else "   ⚫  "
+                val blocked = if (w.isBlocked) "   🚧  " else "   ⚫  "
+                val stalled = if (w.isStalled) "   🐢  " else "   ⚫  "
+
+                sb.append(
+                    f"${w.id}%6d | $running | $blocked%-2s | $stalled%-2s | ${w.load}%5d | ${w.executions}%5d | ${w.preemptions}%7d | ${w.completions}%5d | ${w.stolenTasks}%6d | ${w.lostTasks}%4d | ${w.mount} ${w.frame}\n"
+                )
+            }
+        }
+
+        sb.append("\n")
+
+        // Regulator table header
+        sb.append("================================================================================================\n")
 
         sb.toString()
     }
