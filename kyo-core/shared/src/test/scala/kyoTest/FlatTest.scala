@@ -15,6 +15,12 @@ class FlatTest extends KyoTest:
             implicitly[Flat[Fiber[Int]]]
             succeed
         }
+        "derived from Tag" in {
+            def test[T: Tag] =
+                implicitly[Flat[T]]
+                succeed
+            test[Int]
+        }
     }
 
     "nok" - {
