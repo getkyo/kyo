@@ -244,7 +244,7 @@ object Scheduler {
         allocatedWorkers: Int,
         loadAvg: Double,
         flushes: Long,
-        workers: Seq[Worker.WorkerStatus],
+        workers: Seq[WorkerStatus],
         admission: Admission.AdmissionStatus,
         concurrency: Concurrency.AdmissionStatus
     ) {

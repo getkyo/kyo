@@ -1,6 +1,5 @@
 package kyo.scheduler.util
 
-import Top.*
 import java.lang.management.ManagementFactory
 import javax.management.Attribute
 import javax.management.MBeanServer
@@ -8,7 +7,8 @@ import javax.management.ObjectName
 import javax.management.StandardMBean
 import javax.management.remote.JMXConnectorFactory
 import javax.management.remote.JMXServiceURL
-import kyo.scheduler.*
+import kyo.scheduler.InternalTimer
+import kyo.scheduler.Scheduler
 import scala.annotation.nowarn
 import scala.concurrent.duration.*
 import scala.io.StdIn
@@ -40,20 +40,20 @@ class Top(
             mBeanServer.unregisterMBean(objectName)
 }
 
+trait TopMBean {
+    def getStatus(): Scheduler.Status
+}
+
 @nowarn
 object Top extends App {
-
-    trait TopMBean {
-        def getStatus(): Scheduler.Status
-    }
 
     lazy val (host, port) =
         args.toList match {
             case Nil =>
                 ("localhost", 1099)
-            case host :: Nil =>
+            case (host: String) :: Nil =>
                 (host, 1099)
-            case host :: port :: Nil =>
+            case (host: String) :: (port: String) :: Nil =>
                 (host, port.toInt)
             case args =>
                 throw new IllegalArgumentException("Expected host and port but got: " + args)

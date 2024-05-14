@@ -169,7 +169,7 @@ final private class Worker(
     }
     registerStats()
 
-    def status(): Worker.WorkerStatus = {
+    def status(): WorkerStatus = {
         val taskStatus =
             currentTask match {
                 case null => null
@@ -182,7 +182,7 @@ final private class Worker(
                 case mount: Thread =>
                     (mount.getName(), mount.getStackTrace().head.toString())
             }
-        Worker.WorkerStatus(
+        WorkerStatus(
             id,
             running,
             thread,
@@ -202,44 +202,44 @@ final private class Worker(
     }
 }
 
-private object Worker {
+case class WorkerStatus(
+    id: Int,
+    running: Boolean,
+    mount: String,
+    isBlocked: Boolean,
+    isStalled: Boolean,
+    frame: String,
+    executions: Long,
+    preemptions: Long,
+    completions: Long,
+    stolenTasks: Long,
+    lostTasks: Long,
+    load: Int,
+    mounts: Long,
+    currentCycle: Long,
+    currentTask: Task.Status
+) {
+    infix def -(other: WorkerStatus): WorkerStatus =
+        WorkerStatus(
+            id,
+            running,
+            mount,
+            isBlocked,
+            isStalled,
+            frame,
+            executions - other.executions,
+            preemptions - other.preemptions,
+            completions - other.completions,
+            stolenTasks - other.stolenTasks,
+            lostTasks - other.lostTasks,
+            load,
+            mounts - other.mounts,
+            currentCycle,
+            currentTask
+        )
+}
 
-    case class WorkerStatus(
-        id: Int,
-        running: Boolean,
-        mount: String,
-        isBlocked: Boolean,
-        isStalled: Boolean,
-        frame: String,
-        executions: Long,
-        preemptions: Long,
-        completions: Long,
-        stolenTasks: Long,
-        lostTasks: Long,
-        load: Int,
-        mounts: Long,
-        currentCycle: Long,
-        currentTask: Task.Status
-    ) {
-        infix def -(other: WorkerStatus): WorkerStatus =
-            WorkerStatus(
-                id,
-                running,
-                mount,
-                isBlocked,
-                isStalled,
-                frame,
-                executions - other.executions,
-                preemptions - other.preemptions,
-                completions - other.completions,
-                stolenTasks - other.stolenTasks,
-                lostTasks - other.lostTasks,
-                load,
-                mounts - other.mounts,
-                currentCycle,
-                currentTask
-            )
-    }
+private object Worker {
 
     final class WorkerThread(init: Runnable) extends Thread(init) {
         var currentWorker: Worker = null
