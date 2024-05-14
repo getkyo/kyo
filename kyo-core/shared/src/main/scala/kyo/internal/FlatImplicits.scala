@@ -41,6 +41,11 @@ object FlatImplicits:
         def isConcrete(t: TypeRepr) =
             t.typeSymbol.isClassDef
 
+        def hasTag(t: TypeRepr): Boolean =
+            t.asType match
+                case '[t] =>
+                    Expr.summon[Tag[t]].isDefined
+
         def check(t: TypeRepr): Unit =
             t match
                 case OrType(a, b) =>
@@ -50,7 +55,7 @@ object FlatImplicits:
                     check(a)
                     check(b)
                 case _ =>
-                    if isAny(t) || !isConcrete(t.dealias) then
+                    if isAny(t) || (!isConcrete(t.dealias) && !hasTag(t)) then
                         fail(
                             s"Cannot prove ${code(print(t))} isn't nested. " +
                                 s"This error can be reported an unsupported pending effect is passed to a method. " +
