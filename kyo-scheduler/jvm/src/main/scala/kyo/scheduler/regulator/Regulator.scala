@@ -1,8 +1,10 @@
 package kyo.scheduler.regulator
 
+import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.util.*
 import kyo.stats.internal.MetricReceiver
+import kyo.stats.internal.UnsafeGauge
 import scala.util.control.NonFatal
 
 abstract class Regulator(
@@ -12,16 +14,15 @@ abstract class Regulator(
 ) {
     import config.*
 
-    private var step         = 0
-    private val measurements = new MovingStdDev(collectWindow)
+    private var step            = 0
+    private val measurements    = new MovingStdDev(collectWindow)
+    private val probesSent      = new LongAdder
+    private val probesCompleted = new LongAdder
+    private val adjustments     = new LongAdder
+    private val updates         = new LongAdder
 
     protected def probe(): Unit
     protected def update(diff: Int): Unit
-
-    protected def measure(v: Long): Unit = {
-        stats.measurement.observe(v.toDouble)
-        synchronized(measurements.observe(v))
-    }
 
     private val collectTask =
         timer.schedule(collectInterval)(collect())
@@ -31,7 +32,7 @@ abstract class Regulator(
 
     final private def collect(): Unit = {
         try {
-            stats.probe.inc()
+            probesSent.increment()
             probe()
         } catch {
             case ex if NonFatal(ex) =>
@@ -39,8 +40,15 @@ abstract class Regulator(
         }
     }
 
+    protected def measure(v: Long): Unit = {
+        probesCompleted.increment()
+        stats.measurement.observe(v.toDouble)
+        synchronized(measurements.observe(v))
+    }
+
     final private def adjust() = {
         try {
+            adjustments.increment()
             val jitter = synchronized(measurements.dev())
             val load   = loadAvg()
             if (jitter > jitterUpperThreshold) {
@@ -57,6 +65,7 @@ abstract class Regulator(
                     if (step < 0) -pow
                     else pow
                 stats.update.observe(delta)
+                updates.increment()
                 update(delta)
             } else
                 stats.update.observe(0)
@@ -71,6 +80,7 @@ abstract class Regulator(
     def stop(): Unit = {
         collectTask.cancel()
         regulateTask.cancel()
+        stats.gauges.close()
         ()
     }
 
@@ -78,13 +88,49 @@ abstract class Regulator(
 
     private object stats {
         val receiver    = MetricReceiver.get
-        val collect     = receiver.counter(statsScope, "collect")
-        val adjust      = receiver.counter(statsScope, "adjust")
-        val probe       = receiver.counter(statsScope, "probe")
         val loadavg     = receiver.histogram(statsScope, "loadavg")
         val measurement = receiver.histogram(statsScope, "measurement")
         val update      = receiver.histogram(statsScope, "update")
         val jitter      = receiver.histogram(statsScope, "jitter")
+        val gauges = UnsafeGauge.all(
+            receiver.gauge(statsScope, "probesSent")(probesSent.sum().toDouble),
+            receiver.gauge(statsScope, "probesCompleted")(probesSent.sum().toDouble),
+            receiver.gauge(statsScope, "adjustments")(adjustments.sum().toDouble),
+            receiver.gauge(statsScope, "updates")(updates.sum().toDouble)
+        )
     }
 
+    protected def regulatorStatus(): Regulator.Status =
+        Regulator.Status(
+            step,
+            measurements.avg(),
+            measurements.dev(),
+            probesSent.sum(),
+            probesCompleted.sum(),
+            adjustments.sum(),
+            updates.sum()
+        )
+}
+
+object Regulator {
+    case class Status(
+        step: Int,
+        measurementsAvg: Double,
+        measurementsJitter: Double,
+        probesSent: Long,
+        probesCompleted: Long,
+        adjustments: Long,
+        updates: Long
+    ) {
+        infix def -(other: Status): Status =
+            Status(
+                step,
+                measurementsAvg,
+                measurementsJitter,
+                probesSent - other.probesSent,
+                probesCompleted - other.probesCompleted,
+                adjustments - other.adjustments,
+                updates - other.updates
+            )
+    }
 }

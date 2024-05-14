@@ -1,8 +1,10 @@
 package kyo.scheduler
 
+import java.lang.StackWalker.StackFrame
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
+import java.util.concurrent.atomic.LongAdder
 import kyo.stats.internal.MetricReceiver
 import scala.util.control.NonFatal
 
@@ -34,6 +36,9 @@ final private class Worker(
     private var preemptions = 0L
     private var completions = 0L
     private var mounts      = 0L
+    private var stolenTasks = 0L
+
+    private val lostTasks = new LongAdder
 
     private val queue = new Queue[Task]()
 
@@ -59,8 +64,12 @@ final private class Worker(
         load
     }
 
-    def stealingBy(thief: Worker): Task =
-        queue.stealingBy(thief.queue)
+    def stealingBy(thief: Worker): Task = {
+        val task = queue.stealingBy(thief.queue)
+        if (task != null)
+            lostTasks.add(thief.queue.size() + 1)
+        task
+    }
 
     def drain(): Unit =
         if (!queue.isEmpty())
@@ -105,8 +114,11 @@ final private class Worker(
                 currentCycle = cycle
             if (task == null)
                 task = queue.poll()
-            if (task == null)
+            if (task == null) {
                 task = stealTask(this)
+                if (task != null)
+                    stolenTasks += queue.size() + 1
+            }
             if (task != null) {
                 executions += 1
                 if (runTask(task) == Task.Preempted) {
@@ -152,9 +164,79 @@ final private class Worker(
         receiver.gauge(scope, "queue_size")(queue.size())
         receiver.gauge(scope, "current_cycle")(currentCycle.toDouble)
         receiver.gauge(scope, "mounts")(mounts.toDouble)
+        receiver.gauge(scope, "stolen_tasks")(stolenTasks.toDouble)
+        receiver.gauge(scope, "lost_tasks")(lostTasks.sum().toDouble)
     }
     registerStats()
 
+    def status(): WorkerStatus = {
+        val taskStatus =
+            currentTask match {
+                case null => null
+                case task => task.status()
+            }
+        val (thread, frame) =
+            mount match {
+                case null =>
+                    ("", "")
+                case mount: Thread =>
+                    (mount.getName(), mount.getStackTrace().head.toString())
+            }
+        WorkerStatus(
+            id,
+            running,
+            thread,
+            frame,
+            isBlocked(),
+            isStalled(getCurrentCycle()),
+            executions,
+            preemptions,
+            completions,
+            stolenTasks,
+            lostTasks.sum(),
+            load(),
+            mounts,
+            currentCycle,
+            taskStatus
+        )
+    }
+}
+
+case class WorkerStatus(
+    id: Int,
+    running: Boolean,
+    mount: String,
+    frame: String,
+    isBlocked: Boolean,
+    isStalled: Boolean,
+    executions: Long,
+    preemptions: Long,
+    completions: Long,
+    stolenTasks: Long,
+    lostTasks: Long,
+    load: Int,
+    mounts: Long,
+    currentCycle: Long,
+    currentTask: Task.Status
+) {
+    infix def -(other: WorkerStatus): WorkerStatus =
+        WorkerStatus(
+            id,
+            running,
+            mount,
+            frame,
+            isBlocked,
+            isStalled,
+            executions - other.executions,
+            preemptions - other.preemptions,
+            completions - other.completions,
+            stolenTasks - other.stolenTasks,
+            lostTasks - other.lostTasks,
+            load,
+            mounts - other.mounts,
+            currentCycle,
+            currentTask
+        )
 }
 
 private object Worker {

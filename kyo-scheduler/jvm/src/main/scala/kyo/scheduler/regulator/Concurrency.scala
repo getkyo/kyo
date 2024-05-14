@@ -22,9 +22,21 @@ final class Concurrency(
     protected def update(diff: Int): Unit =
         updateConcurrency(diff)
 
+    def status(): Concurrency.AdmissionStatus =
+        Concurrency.AdmissionStatus(
+            regulatorStatus()
+        )
 }
 
 object Concurrency {
+
+    case class AdmissionStatus(
+        regulator: Regulator.Status
+    ) {
+        infix def -(other: AdmissionStatus): AdmissionStatus =
+            AdmissionStatus(regulator - other.regulator)
+    }
+
     val defaultConfig: Config = Config(
         collectWindow = Flag("concurrency.collectWindow", 200),
         collectInterval = Flag("concurrency.collectIntervalMs", 10).millis,
