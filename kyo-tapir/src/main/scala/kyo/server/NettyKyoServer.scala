@@ -106,7 +106,8 @@ case class NettyKyoServer(
                     route,
                     unsafeRunAsync(options.forkExecution, _),
                     channelGroup,
-                    isShuttingDown
+                    isShuttingDown,
+                    None
                 ),
                 eventLoopGroup,
                 socketOverride

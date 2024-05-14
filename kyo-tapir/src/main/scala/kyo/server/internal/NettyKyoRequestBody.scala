@@ -21,7 +21,7 @@ private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoStt
 
     override def publisherToBytes(
         publisher: Publisher[HttpContent],
-        contentLength: Option[Int],
+        contentLength: Option[Long],
         maxBytes: Option[Long]
     ): KyoSttpMonad.M[Array[Byte]] =
         Fibers.initPromise[Array[Byte]].map { p =>

@@ -195,8 +195,8 @@ lazy val `kyo-tapir` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.10.0",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.10.0"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.10.7",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.10.7"
         )
 
 lazy val `kyo-test` =
@@ -241,7 +241,7 @@ lazy val `kyo-examples` =
         .settings(
             `kyo-settings`,
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.0"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
         )
 
 lazy val `kyo-bench` =
