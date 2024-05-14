@@ -33,7 +33,7 @@ abstract class BenchTest extends AsyncFreeSpec with Assertions:
     def test[T](b: Bench[T]): Unit =
         b match
             case b: SyncAndFork[T] =>
-                "sync" in {
+                s"sync$target" in {
                     assert(runSync(b) == b.expectedResult)
                     detectRuntimeLeak()
                 }
@@ -41,7 +41,7 @@ abstract class BenchTest extends AsyncFreeSpec with Assertions:
         end match
         b match
             case b: Fork[T] =>
-                "fork" in {
+                s"fork$target" in {
                     assert(runFork(b) == b.expectedResult)
                     detectRuntimeLeak()
                 }
