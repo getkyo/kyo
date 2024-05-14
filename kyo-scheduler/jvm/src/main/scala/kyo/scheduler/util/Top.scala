@@ -97,8 +97,8 @@ object Top extends App {
         sb.append(f"Kyo Scheduler Status      | LoadAvg: ${status.loadAvg}%1.4f   | Flushes: ${status.flushes}\n\n")
         sb.append("==============================================================================================\n")
         // Worker table header
-        sb.append("Worker | Running | Blocked | Stalled | Load  | Exec  | Preempt | Done  | Stolen | Lost | Frame\n")
-        sb.append("==============================================================================================\n")
+        sb.append("Worker | Running | Blocked | Stalled | Load  | Exec  | Preempt | Done  | Stolen | Lost | Thread \n")
+        sb.append("================================================================================================\n")
 
         // Worker table rows
         status.workers.foreach { w =>
@@ -108,7 +108,7 @@ object Top extends App {
                 val stalled = if (w.isStalled) "   🐢  " else "   ⚫  "
 
                 sb.append(
-                    f"${w.id}%6d | $running | $blocked%-2s | $stalled%-2s | ${w.load}%5d | ${w.executions}%5d | ${w.preemptions}%7d | ${w.completions}%5d | ${w.stolenTasks}%6d | ${w.lostTasks}%4d | ${w.frame}\n"
+                    f"${w.id}%6d | $running | $blocked%-2s | $stalled%-2s | ${w.load}%5d | ${w.executions}%5d | ${w.preemptions}%7d | ${w.completions}%5d | ${w.stolenTasks}%6d | ${w.lostTasks}%4d | ${w.mount} ${w.frame}\n"
                 )
             }
         }
@@ -116,9 +116,9 @@ object Top extends App {
         sb.append("\n")
 
         // Regulator table header
-        sb.append("==============================================================================================\n")
+        sb.append("================================================================================================\n")
         sb.append("Regulator   |   % | Allow | Reject | Probes | Cmpl  | Adjmts | Updts |    Avg    |  Jitter\n")
-        sb.append("==============================================================================================\n")
+        sb.append("================================================================================================\n")
 
         // Admission regulator row
         val admission       = status.admission
