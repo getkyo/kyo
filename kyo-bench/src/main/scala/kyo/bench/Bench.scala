@@ -12,7 +12,11 @@ import zio.UIO
     jvmArgs = Array(
         "-Dcats.effect.tracing.mode=DISABLED",
         "-XX:+UnlockExperimentalVMOptions",
-        "-XX:-DoJVMTIVirtualThreadTransitions"
+        "-XX:-DoJVMTIVirtualThreadTransitions",
+        "-Dcom.sun.management.jmxremote",
+        "-Dcom.sun.management.jmxremote.port=1099",
+        "-Dcom.sun.management.jmxremote.authenticate=false",
+        "-Dcom.sun.management.jmxremote.ssl=false"
     ),
     jvmArgsPrepend = Array(
         "--add-opens=java.base/java.lang=ALL-UNNAMED"

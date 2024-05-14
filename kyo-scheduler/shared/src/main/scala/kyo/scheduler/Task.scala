@@ -27,9 +27,20 @@ trait Task {
             if (state < 0) -state + v
             else state + v
     }
+
+    def status(): Task.Status =
+        Task.Status(
+            shouldPreempt(),
+            runtime()
+        )
 }
 
 object Task {
+
+    case class Status(
+        preempting: Boolean,
+        runtime: Int
+    )
 
     implicit val taskOrdering: Ordering[Task] =
         new Ordering[Task] {

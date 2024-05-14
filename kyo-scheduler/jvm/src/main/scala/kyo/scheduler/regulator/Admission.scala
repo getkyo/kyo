@@ -1,10 +1,12 @@
 package kyo.scheduler.regulator
 
 import java.util.concurrent.ThreadLocalRandom
+import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.util.Flag
 import kyo.stats.internal.MetricReceiver
+import kyo.stats.internal.UnsafeGauge
 import scala.concurrent.duration.*
 import scala.util.hashing.MurmurHash3
 
@@ -18,13 +20,8 @@ final class Admission(
 
     @volatile private var admissionPercent = 100
 
-    final private class ProbeTask extends Task {
-        val start = nowMillis()
-        def run(startMillis: Long, clock: InternalClock) = {
-            measure(nowMillis() - start)
-            Task.Done
-        }
-    }
+    private val rejected = new LongAdder
+    private val allowed  = new LongAdder
 
     def percent(): Int = admissionPercent
 
@@ -37,9 +34,17 @@ final class Admission(
     def reject(key: Int): Boolean = {
         val r =
             (key.abs % 100) > admissionPercent
-        if (r) stats.rejected.inc()
-        else stats.allowed.inc()
+        if (r) rejected.increment()
+        else allowed.increment()
         r
+    }
+
+    final private class ProbeTask extends Task {
+        val start = nowMillis()
+        def run(startMillis: Long, clock: InternalClock) = {
+            measure(nowMillis() - start)
+            Task.Done
+        }
     }
 
     protected def probe() =
@@ -49,19 +54,45 @@ final class Admission(
         admissionPercent = Math.max(0, Math.min(100, admissionPercent + diff))
 
     override def stop(): Unit = {
-        stats.percent.close()
+        gauges.close()
         super.stop()
     }
 
-    private object stats {
+    private val gauges = {
         val receiver = MetricReceiver.get
-        val percent  = receiver.gauge(statsScope, "percent")(admissionPercent)
-        val allowed  = receiver.counter(statsScope, "allowed")
-        val rejected = receiver.counter(statsScope, "rejected")
+        UnsafeGauge.all(
+            receiver.gauge(statsScope, "percent")(admissionPercent),
+            receiver.gauge(statsScope, "allowed")(allowed.sum().toDouble),
+            receiver.gauge(statsScope, "rejected")(rejected.sum().toDouble)
+        )
     }
+
+    def status(): Admission.AdmissionStatus =
+        Admission.AdmissionStatus(
+            admissionPercent,
+            allowed.sum(),
+            rejected.sum(),
+            regulatorStatus()
+        )
 }
 
 object Admission {
+
+    case class AdmissionStatus(
+        admissionPercent: Int,
+        allowed: Long,
+        rejected: Long,
+        regulator: Regulator.Status
+    ) {
+        infix def -(other: AdmissionStatus): AdmissionStatus =
+            AdmissionStatus(
+                admissionPercent - other.admissionPercent,
+                allowed - other.allowed,
+                rejected - other.rejected,
+                regulator - other.regulator
+            )
+    }
+
     val defaultConfig: Config =
         Config(
             collectWindow = Flag("admission.collectWindow", 40),

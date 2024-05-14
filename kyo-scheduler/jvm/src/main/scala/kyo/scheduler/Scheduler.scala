@@ -11,11 +11,13 @@ import kyo.scheduler.regulator.Concurrency
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
+import kyo.scheduler.util.Top
 import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
 import kyo.stats.internal.UnsafeGauge
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.*
 import scala.util.control.NonFatal
 
 final class Scheduler(
@@ -50,6 +52,8 @@ final class Scheduler(
 
     private val concurrencyRegulator =
         new Concurrency(loadAvg, updateWorkers, Thread.sleep(_), System.nanoTime, timer)
+
+    private val top = new Top(status, enableTopJMX, enableTopConsoleMs, timer)
 
     def schedule(task: Task): Unit =
         schedule(task, null)
@@ -161,6 +165,7 @@ final class Scheduler(
         admissionRegulator.stop()
         concurrencyRegulator.stop()
         gauges.close()
+        top.close()
     }
 
     private def updateWorkers(delta: Int) = {
@@ -212,9 +217,52 @@ final class Scheduler(
             receiver.gauge(scope, "flushes")(flushes.sum().toDouble)
         )
     }
+
+    def status(): Scheduler.Status = {
+        val workersStatus =
+            for (i <- 0 until allocatedWorkers) yield workers(i) match {
+                case null => null
+                case worker =>
+                    worker.status()
+            }
+        Scheduler.Status(
+            currentWorkers,
+            allocatedWorkers,
+            loadAvg(),
+            flushes.sum(),
+            workersStatus,
+            admissionRegulator.status(),
+            concurrencyRegulator.status()
+        )
+    }
 }
 
 object Scheduler {
+
+    case class Status(
+        currentWorkers: Int,
+        allocatedWorkers: Int,
+        loadAvg: Double,
+        flushes: Long,
+        workers: Seq[Worker.WorkerStatus],
+        admission: Admission.AdmissionStatus,
+        concurrency: Concurrency.AdmissionStatus
+    ) {
+        infix def -(other: Status): Status =
+            Status(
+                currentWorkers,
+                allocatedWorkers,
+                loadAvg,
+                flushes - other.flushes,
+                workers.zipAll(other.workers, null, null).map {
+                    case (a, null) => a
+                    case (null, b) => b
+                    case (a, b)    => a - b
+                },
+                admission - other.admission,
+                concurrency - other.concurrency
+            )
+    }
 
     private lazy val defaultWorkerExecutor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)))
     private lazy val defaultClockExecutor  = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))
@@ -230,7 +278,9 @@ object Scheduler {
         scheduleTries: Int,
         scheduleStride: Int,
         virtualizeWorkers: Boolean,
-        timeSliceMs: Int
+        timeSliceMs: Int,
+        enableTopJMX: Boolean,
+        enableTopConsoleMs: Int
     )
     object Config {
         val default: Config = {
@@ -242,7 +292,20 @@ object Scheduler {
             val scheduleStride    = Math.max(1, Flag("scheduleStride", 8))
             val virtualizeWorkers = Flag("virtualizeWorkers", false)
             val timeSliceMs       = Flag("timeSliceMs", 5)
-            Config(cores, coreWorkers, minWorkers, maxWorkers, scheduleTries, scheduleStride, virtualizeWorkers, timeSliceMs)
+            val enableTopJMX      = Flag("enableTopJMX", true)
+            val enableTopConsole  = Flag("enableTopConsoleMs", 0)
+            Config(
+                cores,
+                coreWorkers,
+                minWorkers,
+                maxWorkers,
+                scheduleTries,
+                scheduleStride,
+                virtualizeWorkers,
+                timeSliceMs,
+                enableTopJMX,
+                enableTopConsole
+            )
         }
     }
 }
