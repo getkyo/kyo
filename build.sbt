@@ -207,9 +207,9 @@ lazy val `kyo-test` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %% "zio"          % "2.1.1",
-            libraryDependencies += "dev.zio" %% "zio-test"     % "2.1.1",
-            libraryDependencies += "dev.zio" %% "zio-test-sbt" % "2.1.1" % Test
+            libraryDependencies += "dev.zio" %%% "zio"          % "2.1.1",
+            libraryDependencies += "dev.zio" %%% "zio-test"     % "2.1.1",
+            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % "2.1.1" % Test
         ).jsSettings(
             `js-settings`
         )
