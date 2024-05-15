@@ -207,9 +207,9 @@ lazy val `kyo-test` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %% "zio"          % "2.1.1",
-            libraryDependencies += "dev.zio" %% "zio-test"     % "2.1.1",
-            libraryDependencies += "dev.zio" %% "zio-test-sbt" % "2.1.1" % Test
+            libraryDependencies += "dev.zio" %%% "zio"          % "2.1.1",
+            libraryDependencies += "dev.zio" %%% "zio-test"     % "2.1.1",
+            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % "2.1.1" % Test
         ).jsSettings(
             `js-settings`
         )
@@ -330,5 +330,6 @@ import org.scalajs.jsenv.nodejs.*
 lazy val `js-settings` = Seq(
     Compile / doc / sources := Seq.empty,
     fork                    := false,
-    jsEnv                   := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120")))
+    jsEnv                   := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
+    libraryDependencies     += "io.github.cquiroz" %%% "scala-java-time" % "2.5.0"
 )
