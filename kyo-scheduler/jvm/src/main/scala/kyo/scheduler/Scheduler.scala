@@ -4,6 +4,7 @@ import Scheduler.*
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.regulator.Admission
@@ -219,18 +220,32 @@ final class Scheduler(
     }
 
     def status(): Scheduler.Status = {
-        val workersStatus =
-            for (i <- 0 until allocatedWorkers) yield workers(i) match {
-                case null => null
-                case worker =>
-                    worker.status()
+        def workerStatus(i: Int) = {
+            workers(i) match {
+                case null   => null
+                case worker => worker.status()
+            }
+        }
+        val activeWorkers =
+            (0 until currentWorkers).map(workerStatus)
+        val inactiveWorkers =
+            (currentWorkers until allocatedWorkers).map(workerStatus)
+        val (activeThreads, totalThreads) =
+            workerExecutor match {
+                case exec: ThreadPoolExecutor =>
+                    (exec.getActiveCount(), exec.getPoolSize())
+                case _ =>
+                    (-1, -1)
             }
         Scheduler.Status(
             currentWorkers,
             allocatedWorkers,
             loadAvg(),
             flushes.sum(),
-            workersStatus,
+            activeThreads,
+            totalThreads,
+            activeWorkers,
+            inactiveWorkers,
             admissionRegulator.status(),
             concurrencyRegulator.status()
         )
@@ -244,21 +259,30 @@ object Scheduler {
         allocatedWorkers: Int,
         loadAvg: Double,
         flushes: Long,
-        workers: Seq[WorkerStatus],
+        activeThreads: Int,
+        totalThreads: Int,
+        activeWorkers: Seq[WorkerStatus],
+        inactiveWorkers: Seq[WorkerStatus],
         admission: Admission.AdmissionStatus,
         concurrency: Concurrency.AdmissionStatus
     ) {
+        private def delta(a: Seq[WorkerStatus], b: Seq[WorkerStatus]) =
+            a.zipAll(b, null, null).map {
+                case (a, null) => a
+                case (null, b) => b
+                case (a, b)    => a - b
+            }
+
         infix def -(other: Status): Status =
             Status(
                 currentWorkers,
                 allocatedWorkers,
                 loadAvg,
                 flushes - other.flushes,
-                workers.zipAll(other.workers, null, null).map {
-                    case (a, null) => a
-                    case (null, b) => b
-                    case (a, b)    => a - b
-                },
+                activeThreads,
+                totalThreads,
+                delta(activeWorkers, other.activeWorkers),
+                delta(inactiveWorkers, other.inactiveWorkers),
                 admission - other.admission,
                 concurrency - other.concurrency
             )
