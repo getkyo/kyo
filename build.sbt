@@ -281,8 +281,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
             libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
-            libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.2.3",
-            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.2.3",
+            libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.2.4",
+            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.2.4",
             libraryDependencies += "dev.zio"             %% "zio"                 % "2.1.1",
             libraryDependencies += "dev.zio"             %% "zio-concurrent"      % "2.1.1",
             libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC26",
@@ -328,8 +328,8 @@ lazy val readme =
 import org.scalajs.jsenv.nodejs.*
 
 lazy val `js-settings` = Seq(
-    Compile / doc / sources := Seq.empty,
-    fork                    := false,
-    jsEnv                   := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
-    libraryDependencies     += "io.github.cquiroz" %%% "scala-java-time" % "2.5.0"
+    Compile / doc / sources                     := Seq.empty,
+    fork                                        := false,
+    jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.5.0"
 )
