@@ -39,8 +39,8 @@ object Envs:
 
     private val cachedHandler =
         new ResultHandler[Any, Const[Unit], Envs[Any], Id, Any]:
-            def done[T](st: Any, v: T) = v
-            def resume[T, U: Flat, S2](st: Any, command: Unit, k: T => U < (Envs[Any] & S2)) =
+            def done[T](st: Any, v: T)(using Tag[Envs[Any]]) = v
+            def resume[T, U: Flat, S2](st: Any, command: Unit, k: T => U < (Envs[Any] & S2))(using Tag[Envs[Any]]) =
                 Resume(st, k(st.asInstanceOf[T]))
 
     /** An effect `Envs[VS]` includes a dependency on `V`, and once `V` has been handled, `Envs[VS]` should be replaced by `Out`

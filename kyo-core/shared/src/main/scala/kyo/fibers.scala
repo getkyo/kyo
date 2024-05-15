@@ -344,7 +344,7 @@ object fibersInternal:
                         Long.MaxValue
                 val handler =
                     new Handler[Fiber, FiberGets, IOs]:
-                        def resume[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S)) =
+                        def resume[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S))(using Tag[FiberGets]) =
                             m match
                                 case Promise(p) =>
                                     Resume((), p.block(deadline).map(f))

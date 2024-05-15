@@ -50,9 +50,9 @@ object Aborts:
 
         val handler =
             new ResultHandler[ClassTag[?], Const[Any], DoAbort, [T] =>> Either[Any, T], Any]:
-                def done[T](st: ClassTag[?], v: T) = Right(v)
+                def done[T](st: ClassTag[?], v: T)(using Tag[DoAbort]) = Right(v)
 
-                override def failed(st: ClassTag[?], ex: Throwable) =
+                override def failed(st: ClassTag[?], ex: Throwable)(using Tag[DoAbort]) =
                     type V
                     given ClassTag[V] = st.asInstanceOf[ClassTag[V]]
                     ex match
@@ -68,7 +68,7 @@ object Aborts:
                         case _    => false
                 end accepts
 
-                def resume[T, U: Flat, S2](st: ClassTag[?], command: Any, k: T => U < (DoAbort & S2)) =
+                def resume[T, U: Flat, S2](st: ClassTag[?], command: Any, k: T => U < (DoAbort & S2))(using Tag[DoAbort]) =
                     Left(command)
         end handler
 

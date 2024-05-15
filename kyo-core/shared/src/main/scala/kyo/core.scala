@@ -130,35 +130,35 @@ object core:
         def accepts[T](st: State, command: Command[T]): Boolean =
             true
 
-        def done[T](st: State, v: T): Result[T] < S
+        def done[T](st: State, v: T)(using Tag[E]): Result[T] < S
 
-        def failed(st: State, ex: Throwable): Nothing < (E & S) = throw ex
+        def failed(st: State, ex: Throwable)(using Tag[E]): Nothing < (E & S) = throw ex
 
         def resume[T, U: Flat, S2](
             st: State,
             command: Command[T],
             k: T => U < (E & S2)
-        ): (Result[U] | Resume[U, S2]) < (S & S2)
+        )(using Tag[E]): (Result[U] | Resume[U, S2]) < (S & S2)
 
     end ResultHandler
 
     abstract class Handler[Command[_], E <: Effect[E], S]
         extends ResultHandler[Unit, Command, E, Id, S]:
-        inline def done[T](st: Unit, v: T) =
+        inline def done[T](st: Unit, v: T)(using Tag[E]) =
             done(v)
         inline def resume[T, U: Flat, S2](
             st: Unit,
             command: Command[T],
             k: T => U < (E & S2)
-        ): (U | Resume[U, S2]) < (S & S2) =
+        )(using Tag[E]): (U | Resume[U, S2]) < (S & S2) =
             resume(command, k)
 
-        def done[T](v: T): T < S = v
+        def done[T](v: T)(using Tag[E]): T < S = v
 
         def resume[T, U: Flat, S2](
             command: Command[T],
             k: T => U < (E & S2)
-        ): (U | Resume[U, S2]) < (S & S2)
+        )(using Tag[E]): (U | Resume[U, S2]) < (S & S2)
     end Handler
 
     trait Safepoint[-E]:
