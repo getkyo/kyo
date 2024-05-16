@@ -324,7 +324,8 @@ lazy val readme =
             `kyo-cache`,
             `kyo-sttp`,
             `kyo-tapir`,
-            `kyo-bench`
+            `kyo-bench`,
+            `kyo-zio`
         )
 
 import org.scalajs.jsenv.nodejs.*

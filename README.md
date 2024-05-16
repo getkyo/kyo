@@ -2096,6 +2096,62 @@ val a: Unit < Routes =
 
 For further examples, Kyo's [example ledger service](https://github.com/getkyo/kyo/tree/main/kyo-examples/jvm/src/main/scala/kyo/examples/ledger) provides practical applications of these concepts.
 
+### ZIOs: Integration with ZIO
+
+The `ZIOs` effect provides seamless integration between Kyo and the ZIO library. The effect is designed to enable gradual adoption of Kyo within a ZIO codebase. The integration properly suspends side effects and propagates fiber cancellations/interrupts between both libraries.
+
+```scala
+import kyo._
+import zio._
+
+// Use the 'get' method to extract a 'ZIO' effect
+val a: Int < ZIOs =
+  ZIOs.get(ZIO.succeed(42))
+
+// 'get' also supports error handling with 'Aborts'
+val b: Int < (Aborts[String] & ZIOs) =
+  ZIOs.get(ZIO.fail("error"))
+
+// Handle the 'ZIOs' effect to obtain a 'ZIO' effect
+val c: Task[Int] =
+  ZIOs.run(a)
+```
+
+Kyo and ZIO effects can be seamlessly mixed and matched within computations, allowing developers to leverage the power of both libraries. Here are a few examples showcasing this integration:
+
+```scala
+import kyo._
+import zio._
+
+// Note how ZIOs includes the
+// IOs and Fibers effects
+val a: Int < ZIOs = 
+  for
+    v1 <- ZIOs.get(ZIO.succeed(21))
+    v2 <- IOs(21)
+    v3 <- Fibers.init(-42).map(_.get)
+  yield v1 + v2 + v3
+
+// Using fibers from both libraries
+val b: Int < ZIOs = 
+  for
+    f1 <- ZIOs.get(ZIO.succeed(21).fork)
+    f2 <- Fibers.init(IOs(21))
+    v1 <- ZIOs.get(f1.join)
+    v2 <- f2.get
+  yield v1 + v2
+
+// Transforming ZIO effects within Kyo computations
+val c: Int < ZIOs = 
+  ZIOs.get(ZIO.succeed(21)).map(_ * 2)
+
+// Transforming Kyo effects within ZIO effects
+val d: Task[Int] = 
+  ZIOs.run(IOs(21).map(_ * 2))
+```
+
+> Note: Support for ZIO environments (`R` in `ZIO[R, E, A]`) is currently in development. Once implemented, it will be possible to use ZIO effects with environments directly within Kyo computations.
+
 ### AIs: LLM Abstractions via OpenAI
 
 Coming soon..
