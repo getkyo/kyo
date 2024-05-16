@@ -106,6 +106,29 @@ object core:
         end handle
     end extension
 
+    inline def catching[T, S, U >: T, S2](v: => T < S)(
+        inline pf: PartialFunction[Throwable, U < S2]
+    ): U < (S & S2) =
+        def catchingLoop(v: U < (S & S2)): U < (S & S2) =
+            v match
+                case kyo: Suspend[MX, Any, U, S & S2] @unchecked =>
+                    new Continue[MX, Any, U, S & S2](kyo):
+                        def apply(v: Any < (S & S2), s: Safepoint[S & S2], l: Locals.State) =
+                            try
+                                catchingLoop(kyo(v, s, l))
+                            catch
+                                case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
+                                    pf(ex)
+                case _ =>
+                    v.asInstanceOf[T]
+        try
+            catchingLoop(v)
+        catch
+            case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
+                pf(ex)
+        end try
+    end catching
+
     inline def eval[T, S, S2](v: => T < S)(
         inline resume: (Safepoint[S & S2], () => T < (S & S2)) => T < (S & S2),
         inline done: (Safepoint[S & S2], T) => T < (S & S2) = (s: Safepoint[S & S2], v: T) => v,
