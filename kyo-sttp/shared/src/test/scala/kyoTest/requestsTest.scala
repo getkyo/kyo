@@ -47,4 +47,23 @@ class requestsTest extends KyoTest:
             }.map(_.get)
         }
     }
+    "with meter" in run {
+        var calls = 0
+        val meter = new Meter:
+            def available                 = ???
+            def tryRun[T, S](v: => T < S) = ???
+            def run[T, S](v: => T < S) =
+                calls += 1
+                v
+        val backend = (new TestBackend).withMeter(meter)
+        Requests.run(backend) {
+            Fibers.init {
+                for
+                    r <- Requests[String](_.get(uri"https://httpbin.org/get"))
+                yield
+                    assert(r == "mocked")
+                    assert(calls == 1)
+            }.map(_.get)
+        }
+    }
 end requestsTest

@@ -8,7 +8,15 @@ opaque type Requests <: Fibers = Fibers
 object Requests:
 
     abstract class Backend:
+        self =>
+
         def send[T](r: Request[T, Any]): Response[T] < Fibers
+
+        def withMeter(m: Meter): Backend =
+            new Backend:
+                def send[T](r: Request[T, Any]) =
+                    m.run(self.send(r))
+    end Backend
 
     private val local = Locals.init[Backend](PlatformBackend.default)
 
