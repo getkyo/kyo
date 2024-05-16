@@ -93,7 +93,7 @@ case class NettyKyoServer(
     private def startUsingSocketOverride[SA <: SocketAddress](socketOverride: Option[SA])
         : KyoSttpMonad.M[(SA, () => KyoSttpMonad.M[Unit])] =
         val eventLoopGroup                           = config.eventLoopConfig.initEventLoopGroup()
-        given monadError: MonadError[KyoSttpMonad.M] = KyoSttpMonad.instance
+        given monadError: MonadError[KyoSttpMonad.M] = KyoSttpMonad
         val route                                    = Route.combine(routes)
         val eventExecutor                            = new DefaultEventExecutor()
         val channelGroup                             = new DefaultChannelGroup(eventExecutor) // thread safe
