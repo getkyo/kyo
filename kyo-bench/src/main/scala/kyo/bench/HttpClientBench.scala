@@ -4,8 +4,7 @@ import org.http4s.ember.client.EmberClientBuilder
 
 class HttpClientBench extends Bench.ForkOnly("pong"):
 
-    val port = 9999
-    val url  = TestHttpServer.start(port)
+    val url = TestHttpServer.start(1)
 
     lazy val catsClient =
         import cats.effect.*
