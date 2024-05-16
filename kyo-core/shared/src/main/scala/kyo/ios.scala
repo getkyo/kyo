@@ -36,10 +36,7 @@ sealed trait IOs extends Effect[IOs]:
         }
 
     def attempt[T, S](v: => T < S): Try[T] < S =
-        core.catching(v.map(Success(_): Try[T])) {
-            case ex if NonFatal(ex) =>
-                Failure(ex)
-        }
+        core.catching(v.map(Success(_): Try[T]))(Failure(_))
 
     def catching[T, S, U >: T, S2](v: => T < S)(
         pf: PartialFunction[Throwable, U < S2]
