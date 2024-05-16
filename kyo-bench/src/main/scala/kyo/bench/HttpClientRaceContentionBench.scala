@@ -5,9 +5,8 @@ import org.http4s.ember.client.EmberClientBuilder
 class HttpClientRaceContentionBench
     extends Bench.ForkOnly("pong"):
 
-    val port        = 9999
     val concurrency = 100
-    val url         = TestHttpServer.start(port)
+    val url         = TestHttpServer.start(concurrency)
 
     lazy val catsClient =
         import cats.effect.*
@@ -55,7 +54,7 @@ class HttpClientRaceContentionBench
     override def kyoBenchFiber() =
         import kyo.*
 
-        Fibers.race(Seq.fill(concurrency)(Requests.run(Requests[String](_.get(kyoUrl)))))
+        Fibers.race(Seq.fill(concurrency)(Requests.run(kyoClient)(Requests[String](_.get(kyoUrl)))))
     end kyoBenchFiber
 
     val zioUrl =
