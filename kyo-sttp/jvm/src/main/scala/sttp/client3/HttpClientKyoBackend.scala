@@ -30,7 +30,7 @@ class HttpClientKyoBackend private (
     customEncodingHandler: InputStreamEncodingHandler
 ) extends HttpClientAsyncBackend[M, Nothing, WebSockets, InputStream, InputStream](
         client,
-        KyoSttpMonad.instance,
+        KyoSttpMonad,
         closeClient,
         customizeRequest,
         customEncodingHandler
@@ -41,16 +41,16 @@ class HttpClientKyoBackend private (
     override protected val bodyToHttpClient =
         new BodyToHttpClient[KyoSttpMonad.M, Nothing]:
             override val streams: NoStreams                  = NoStreams
-            override given monad: MonadError[KyoSttpMonad.M] = KyoSttpMonad.instance
+            override given monad: MonadError[KyoSttpMonad.M] = KyoSttpMonad
             override def streamToPublisher(stream: Nothing) =
                 stream
 
     override protected val bodyFromHttpClient =
         new InputStreamBodyFromHttpClient[KyoSttpMonad.M, Nothing]:
             override def inputStreamToStream(is: InputStream) =
-                KyoSttpMonad.instance.error(new IllegalStateException("Streaming is not supported"))
+                KyoSttpMonad.error(new IllegalStateException("Streaming is not supported"))
             override val streams: NoStreams                  = NoStreams
-            override given monad: MonadError[KyoSttpMonad.M] = KyoSttpMonad.instance
+            override given monad: MonadError[KyoSttpMonad.M] = KyoSttpMonad
             override def compileWebSocketPipe(
                 ws: WebSocket[KyoSttpMonad.M],
                 pipe: streams.Pipe[WebSocketFrame.Data[?], WebSocketFrame]
@@ -121,5 +121,5 @@ object HttpClientKyoBackend:
         )
 
     def stub: SttpBackendStub[KyoSttpMonad.M, WebSockets] =
-        SttpBackendStub(KyoSttpMonad.instance)
+        SttpBackendStub(KyoSttpMonad)
 end HttpClientKyoBackend

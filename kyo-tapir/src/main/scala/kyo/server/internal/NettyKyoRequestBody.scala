@@ -17,7 +17,7 @@ private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoStt
     extends NettyRequestBody[KyoSttpMonad.M, NoStreams]:
 
     override val streams: capabilities.Streams[NoStreams] = NoStreams
-    override given monad: MonadError[KyoSttpMonad.M]      = KyoSttpMonad.instance
+    override given monad: MonadError[KyoSttpMonad.M]      = KyoSttpMonad
 
     override def publisherToBytes(
         publisher: Publisher[HttpContent],
