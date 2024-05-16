@@ -45,7 +45,7 @@ class HttpClientRaceContentionBench
 
     lazy val kyoClient =
         import kyo.*
-        PlatformBackend.default
+        IOs.run(Meters.initSemaphore(5).map(PlatformBackend.default.withMeter))
 
     val kyoUrl =
         import sttp.client3.*
