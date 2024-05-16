@@ -104,6 +104,26 @@ object core:
                         r.asInstanceOf[Result[T]]
             handleLoop(state, value)
         end handle
+
+        inline def deepHandle[Command[_], S, T: Flat](
+            handler: DeepHandler[Command, E, S]
+        )(
+            v: T < E
+        )(using tag: Tag[E]): Command[T] < S =
+            def deepHandleLoop(v: T < (E & S)): Command[T] < S =
+                v match
+                    case kyo: Suspend[Command, Any, T, E] @unchecked =>
+                        bug.checkTag(kyo.tag, tag)
+                        handler.resume(
+                            kyo.command,
+                            (v: Any) => deepHandleLoop(kyo(v))
+                        )
+                    case _ =>
+                        handler.done(v.asInstanceOf[T])
+            if isNull(v) then
+                throw new NullPointerException
+            deepHandleLoop(v)
+        end deepHandle
     end extension
 
     inline def catching[T, S, U >: T, S2](v: => T < S)(
@@ -184,6 +204,10 @@ object core:
         )(using Tag[E]): (U | Resume[U, S2]) < (S & S2)
     end Handler
 
+    abstract class DeepHandler[Command[_], E, S]:
+        def done[T: Flat](v: T): Command[T]
+        def resume[T, U: Flat](command: Command[T], k: T => Command[U] < S): Command[U] < S
+
     trait Safepoint[-E]:
         def preempt(): Boolean
         def suspend[T, S](v: => T < S): T < (E & S)
@@ -200,29 +224,6 @@ object core:
 
         type MX[T] = Any
         type EX <: Effect[EX]
-
-        abstract class DeepHandler[Command[_], E, S]:
-            def done[T: Flat](v: T): Command[T]
-            def resume[T, U: Flat](command: Command[T], k: T => Command[U] < S): Command[U] < S
-
-        def deepHandle[Command[_], E <: Effect[E], S, T: Flat](
-            handler: DeepHandler[Command, E, S],
-            v: T < E
-        )(using tag: Tag[E]): Command[T] < S =
-            def deepHandleLoop(v: T < (E & S)): Command[T] < S =
-                v match
-                    case kyo: Suspend[Command, Any, T, E] @unchecked =>
-                        bug.checkTag(kyo.tag, tag)
-                        handler.resume(
-                            kyo.command,
-                            (v: Any) => deepHandleLoop(kyo(v))
-                        )
-                    case _ =>
-                        handler.done(v.asInstanceOf[T])
-            if isNull(v) then
-                throw new NullPointerException
-            deepHandleLoop(v)
-        end deepHandle
 
         sealed abstract class Kyo[+T, -S]
 

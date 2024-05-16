@@ -331,7 +331,7 @@ object fibersInternal:
                     m.transform(f)
 
         def run[T: Flat](v: T < Fibers): Fiber[T] < IOs =
-            IOs(deepHandle(deepHandler, IOs.runLazy(v)))
+            IOs(this.deepHandle(deepHandler)(IOs.runLazy(v)))
 
         def runAndBlock[T: Flat, S](timeout: Duration)(
             v: T < (IOs & FiberGets & S)

@@ -2100,6 +2100,104 @@ For further examples, Kyo's [example ledger service](https://github.com/getkyo/k
 
 Coming soon..
 
+## Defining New Effects (Advanced)
+
+While Kyo provides a wide range of built-in effects, there may be situations where you need to define your own custom effects. Defining new effects is an advanced feature that most users typically won't need to deal with, but it can be useful in certain scenarios where you want to extend the functionality of Kyo or create domain-specific effects.
+
+To define a new effect, you need to create a subclass of the `Effect` trait and specify the effect's `Command` type. The `Command` type represents the data associated with the effect's operations. Here's an example of creating a simple `Counter` effect:
+
+```scala
+import kyo.*
+import kyo.core.* // needed to define effects
+
+class Counter extends Effect[Counter]:
+  type Command[T] = (Int, T)
+```
+
+In this example, `Counter` is a new effect that uses `(Int, T)` as its `Command` type, where `Int` represents the amount to increment or decrement the counter, and `T` is the value to be returned after updating the counter. Next, let's define the operations for the `Counter` effect in its companion object:
+
+```scala mdoc:nest
+object Counter extends Counter:
+  def inc[T, S](amount: Int)(v: T < S): T < (Counter & S) =
+    v.map(v => this.suspend((amount, v)))
+
+  def dec[T, S](amount: Int)(v: T < S): T < (Counter & S) =
+    v.map(v => this.suspend((-amount, v)))
+```
+
+The `inc` and `dec` operations suspend the `Counter` effect with the provided amount and the computation `v`. The `inc` operation increments the counter by the specified amount, while the `dec` operation decrements it.
+
+### Effect Handlers
+
+Effect handlers specify how to interpret and execute the operations of an effect. In Kyo, it's a common style pattern to define effect handling using a `run` method in the effect's companion object. Here's an example of defining the run method and the effect handler for the `Counter` effect that prints commands to the console as an example:
+
+```scala mdoc:nest
+val handler = new Handler[[T] =>> (Int, T), Counter, Any]:
+  def resume[T, U: Flat, S](command: (Int, T), k: T => U < (Counter & S))(using Tag[Counter]) =
+    val (amount, v) = command
+    println(amount)
+    Resume((), k(v))
+```
+
+Now, let's use the `Counter` effect in a computation:
+
+```scala mdoc:nest
+val a: Int < Counter = 
+  Counter.inc(5) {
+    Counter.dec(2)(10)
+  }
+
+// Typically wrapped in a `run`
+// method by Kyo effects
+val b: Int < Any = 
+  Counter.handle(handler)((), a)
+```
+
+In this example, `a` is a computation prints `5` and `2` and finally returns the value `10`. We handle the `Counter` effect using `Counter.run`, which returns a tuple containing the final count and the result of the computation.
+
+Kyo provides other types of handlers for more advanced use cases:
+
+**ResultHandler**: Used when the handler needs to maintain additional state across effect operations.
+
+```scala mdoc:nest
+case class CounterState(count: Int, log: Chunk[String])
+
+val counterResultHandler = new ResultHandler[CounterState, [T] =>> (Int, T), Counter, [T] =>> (Int, Chunk[String], T), Any]:
+  def done[T](st: CounterState, v: T)(using Tag[Counter]) = (st.count, st.log, v)
+  
+  def resume[T, U: Flat, S](st: CounterState, command: (Int, T), k: T => U < (Counter & S))(using Tag[Counter]) =
+    val (amount, v) = command
+    val newState = CounterState(st.count + amount, st.log.append(s"Counter updated by $amount"))
+    Resume(newState, k(v))
+
+def runWithLog[T: Flat, S](v: T < (Counter & S)): (Int, Chunk[String], T) < S =
+  Counter.handle(counterResultHandler)(CounterState(0, Chunk.empty), v)
+```
+
+In this example, the `counterResultHandler` uses `CounterState` to keep track of the counter value and a log of counter updates. The `runWithLog` method handles the effect using the `counterResultHandler` and returns a tuple containing the final count, the update log, and the result of the computation.
+
+**DeepHandler**: Used when the effect is the last one to be handled, forming a traditional monad interface.
+
+```scala mdoc:nest
+val counterDeepHandler = new DeepHandler[[T] =>> (Int, T), Counter, Any]:
+  def done[T: Flat](v: T): (Int, T) = (0, v)
+  
+  def resume[T, U: Flat](command: (Int, T), k: T => (Int, U) < Any) =
+    val (amount, v) = command
+    // Note how this isn't possible with a regular handler
+    val (innerCount, u) = k(v).pure 
+    println((amount, innerCount))
+    (amount + innerCount, u)
+
+def runDeep[T: Flat](v: T < Counter): (Int, T) < Any =
+  Counter.deepHandle(counterDeepHandler)(v)
+```
+
+The `resume` method is called for each `Counter` effect operation. It extracts the amount and value `v` from the `command`, invokes the continuation `k` with `v`, and then combines the `amount` with the `innerCount` obtained from the recursive handling of the continuation. The resulting tuple contains the updated counter state and the result of the computation.
+
+The `DeepHandler` is particularly useful when the effect is the last one to be handled and you want to transform the effect into a value that can be further processed using standard functional combinators like `map` and `flatMap`. It allows you to work with the effect in a way that resembles a traditional monad.
+Note that when using `DeepHandler`, the effect should be the outermost one in the effect stack, as it assumes that there are no other effects left to be handled. If there are other effects present, you would typically use `Handler` or `ResultHandler` to handle the effect and leave the remaining effects to be handled later.
+
 ## Restrictions
 
 ### Recursive Computations
