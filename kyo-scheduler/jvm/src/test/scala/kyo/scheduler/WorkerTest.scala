@@ -5,6 +5,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.Task.Done
@@ -19,11 +20,12 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
     private def createWorker(
         executor: Executor = _ => (),
         scheduleTask: (Task, Worker) => Unit = (_, _) => ???,
+        stop: () => Boolean = () => false,
         stealTask: Worker => Task = _ => null,
         getCurrentCycle: () => Long = () => 0
     ): Worker = {
         val clock = InternalClock(executor)
-        new Worker(0, executor, scheduleTask, stealTask, getCurrentCycle, clock)
+        new Worker(0, _ => stop(), executor, scheduleTask, stealTask, getCurrentCycle, clock)
     }
 
     "enqueue" - {
@@ -367,5 +369,21 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
                 assert(task1.executions == 1)
             }
         }
+
+        "stop" in withExecutor { exec =>
+            val started = new CountDownLatch(1)
+            val stop    = new AtomicBoolean
+            val done    = new CountDownLatch(1)
+            exec.execute { () =>
+                started.countDown()
+                val worker = createWorker(stop = () => stop.get())
+                worker.run()
+                done.countDown()
+            }
+            started.await()
+            stop.set(true)
+            done.await()
+        }
     }
+
 }

@@ -10,6 +10,7 @@ import scala.util.control.NonFatal
 
 final private class Worker(
     id: Int,
+    stop: Int => Boolean,
     exec: Executor,
     scheduleTask: (Task, Worker) => Unit,
     stealTask: Worker => Task,
@@ -90,18 +91,19 @@ final private class Worker(
         available
     }
 
-    def isStalled(cycles: Long): Boolean =
+    private def isStalled(cycles: Long): Boolean =
         running && currentCycle < cycles - 2
 
-    def isBlocked(): Boolean = {
-        val mount = this.mount
-        mount != null && {
-            val state = mount.getState().ordinal()
-            state == Thread.State.BLOCKED.ordinal() ||
-            state == Thread.State.WAITING.ordinal() ||
-            state == Thread.State.TIMED_WAITING.ordinal()
+    private def isBlocked(): Boolean =
+        running && {
+            val mount = this.mount
+            mount != null && {
+                val state = mount.getState().ordinal()
+                state == Thread.State.BLOCKED.ordinal() ||
+                state == Thread.State.WAITING.ordinal() ||
+                state == Thread.State.TIMED_WAITING.ordinal()
+            }
         }
-    }
 
     def run(): Unit = {
         mounts += 1
@@ -135,6 +137,12 @@ final private class Worker(
                     clearCurrent()
                     return
                 }
+            }
+            if (stop(id)) {
+                running = false
+                if (task != null) schedule(task)
+                drain()
+                return
             }
         }
     }
