@@ -30,7 +30,11 @@ class KyoSttpMonad extends MonadAsyncError[M]:
         handleWrappedError(rt)(h)
 
     def ensure[T](f: T < Fibers, e: => Unit < Fibers) =
-        IOs.ensure(Fibers.run(e).unit)(f)
+        Fibers.initPromise[Unit].map { p =>
+            def run =
+                Fibers.run(e).map(p.become).unit
+            IOs.ensure(run)(f).map(r => p.get.andThen(r))
+        }
 
     def error[T](t: Throwable) =
         IOs.fail(t)
