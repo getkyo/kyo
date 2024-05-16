@@ -376,6 +376,24 @@ class streamsTest extends KyoTest:
                     (Seq.fill(n)(2), ())
             )
         }
+        "produce until" in pendingUntilFixed {
+            IOs.run {
+                Atomics.initLong(0).map { counter =>
+                    Streams
+                        .initSeq(0 until 100)
+                        .transform(_ => counter.getAndIncrement)
+                        .take(0)
+                        .runSeq
+                        .map {
+                            case (seq, _) =>
+                                assert(seq.isEmpty)
+                        }.map { _ =>
+                            counter.get.map(transforms => assert(transforms == 0))
+                        }
+                }
+            }.pure
+            ()
+        }
     }
 
     "concat" - {
