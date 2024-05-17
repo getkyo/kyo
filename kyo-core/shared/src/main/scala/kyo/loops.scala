@@ -2,6 +2,7 @@ package kyo
 
 import kyo.core.internal.Kyo
 import scala.annotation.tailrec
+import scala.annotation.targetName
 import scala.util.NotGiven
 
 object Loops:
@@ -17,18 +18,23 @@ object Loops:
     private val _continueUnit = Continue[Unit](())
 
     inline def continue[T]: Result[Unit, T] = _continueUnit
-    inline def done[T]: Result[T, Unit]     = ()
 
-    inline def done[Input, Output](v: Output): Result[Input, Output]       = v
+    @targetName("done0")
+    def done[T]: Result[T, Unit] = ()
+    @targetName("done1")
+    def done[Input, Output](v: Output): Result[Input, Output] = v
+    @targetName("done2")
+    def done[Input1, Input2, Output](v: Output): Result2[Input1, Input2, Output] = v
+    @targetName("done3")
+    def done[Input1, Input2, Input3, Output](v: Output): Result3[Input1, Input2, Input3, Output] = v
+
     inline def continue[Input, Output, S](v: Input): Result[Input, Output] = Continue(v)
 
-    inline def done[Input1, Input2, Output](v: Output): Result2[Input1, Input2, Output] = v
     inline def continue[Input1, Input2, Output](
         v1: Input1,
         v2: Input2
     ): Result2[Input1, Input2, Output] = Continue2(v1, v2)
 
-    inline def done[Input1, Input2, Input3, Output](v: Output): Result3[Input1, Input2, Input3, Output] = v
     inline def continue[Input1, Input2, Input3, Output](
         v1: Input1,
         v2: Input2,
