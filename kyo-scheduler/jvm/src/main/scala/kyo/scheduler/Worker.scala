@@ -8,17 +8,18 @@ import java.util.concurrent.atomic.LongAdder
 import kyo.stats.internal.MetricReceiver
 import scala.util.control.NonFatal
 
-final private class Worker(
+abstract private class Worker(
     id: Int,
-    stop: Int => Boolean,
     exec: Executor,
     scheduleTask: (Task, Worker) => Unit,
     stealTask: Worker => Task,
-    getCurrentCycle: () => Long,
     clock: InternalClock
 ) extends Runnable {
 
     import Worker.internal.*
+
+    protected def shouldStop(): Boolean
+    protected def getCurrentCycle(): Long
 
     val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
 
@@ -138,7 +139,7 @@ final private class Worker(
                     return
                 }
             }
-            if (stop(id)) {
+            if (shouldStop()) {
                 running = false
                 if (task != null) schedule(task)
                 drain()

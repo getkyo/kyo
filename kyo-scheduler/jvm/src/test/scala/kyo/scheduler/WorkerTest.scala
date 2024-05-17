@@ -22,10 +22,13 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
         scheduleTask: (Task, Worker) => Unit = (_, _) => ???,
         stop: () => Boolean = () => false,
         stealTask: Worker => Task = _ => null,
-        getCurrentCycle: () => Long = () => 0
+        currentCycle: () => Long = () => 0
     ): Worker = {
         val clock = InternalClock(executor)
-        new Worker(0, _ => stop(), executor, scheduleTask, stealTask, getCurrentCycle, clock)
+        new Worker(0, executor, scheduleTask, stealTask, clock) {
+            def getCurrentCycle() = currentCycle()
+            def shouldStop()      = stop()
+        }
     }
 
     "enqueue" - {
@@ -170,7 +173,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
 
         "executing a task that gets preempted" in {
-            val worker      = createWorker(getCurrentCycle = () => 1)
+            val worker      = createWorker(currentCycle = () => 1)
             var preemptions = 0
             val task = TestTask(
                 _run = () =>

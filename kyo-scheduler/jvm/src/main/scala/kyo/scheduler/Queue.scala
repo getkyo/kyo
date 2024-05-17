@@ -19,83 +19,101 @@ final private class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
         items
     }
 
-    def add(value: T): Unit =
-        modify {
+    def add(value: T): Unit = {
+        lock()
+        try {
             items += 1
-            queue.enqueue(value)
+            queue += value
             ()
-        }
+        } finally
+            unlock()
+    }
 
     def offer(value: T): Boolean =
-        tryModify {
-            items += 1
-            queue.enqueue(value)
-            true
+        tryLock() && {
+            try {
+                items += 1
+                queue += value
+                true
+            } finally
+                unlock()
         }
 
     def poll(): T =
         if (isEmpty())
             null.asInstanceOf[T]
-        else
-            modify {
+        else {
+            lock()
+            try {
                 if (isEmpty())
                     null.asInstanceOf[T]
                 else {
                     items -= 1
                     queue.dequeue()
                 }
-            }
+            } finally
+                unlock()
+        }
 
     def addAndPoll(value: T): T =
         if (isEmpty())
             value
-        else
-            modify {
+        else {
+            lock()
+            try {
                 if (isEmpty()) value
                 else {
                     val r = queue.dequeue()
-                    queue.enqueue(value)
+                    queue += value
                     r
                 }
-            }
+            } finally
+                unlock()
+        }
 
     def stealingBy(to: Queue[T]): T = {
         var t: T = null.asInstanceOf[T]
-        !isEmpty() && tryModify {
-            !isEmpty() && to.isEmpty() && to.tryModify {
-                t = queue.dequeue()
-                val s = size() - 1
-                var i = s - Math.ceil(s.toDouble / 2).intValue()
-                items -= i + 1
-                to.items += i
-                while (i > 0) {
-                    to.queue.enqueue(queue.dequeue())
-                    i -= 1
+        !isEmpty() && tryLock() && {
+            try {
+                !isEmpty() && to.isEmpty() && to.tryLock() && {
+                    try {
+                        t = queue.dequeue()
+                        val s = size() - 1
+                        var i = s - Math.ceil(s.toDouble / 2).intValue()
+                        items -= i + 1
+                        to.items += i
+                        while (i > 0) {
+                            to.queue += queue.dequeue()
+                            i -= 1
+                        }
+                        true
+                    } finally
+                        to.unlock()
                 }
-                true
-            }
+            } finally
+                unlock()
         }
         t
     }
 
     def drain(f: T => Unit): Unit = {
-        val tasks =
-            modify {
+        val tasks = {
+            lock()
+            try {
                 items = 0
                 queue.dequeueAll
-            }
+            } finally
+                unlock()
+        }
         tasks.foreach(f)
     }
 
-    private def modify[T](f: => T): T = {
+    private def lock(): Unit =
         while (!compareAndSet(false, true)) {}
-        try f
-        finally set(false)
-    }
 
-    private def tryModify[T](f: => Boolean): Boolean =
-        compareAndSet(false, true) && {
-            try f
-            finally set(false)
-        }
+    private def tryLock(): Boolean =
+        compareAndSet(false, true)
+
+    private def unlock(): Unit =
+        set(false)
 }
