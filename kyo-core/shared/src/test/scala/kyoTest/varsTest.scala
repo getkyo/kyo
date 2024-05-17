@@ -33,9 +33,9 @@ class varsTest extends KyoTest:
 
     "nested let" in {
         IOs.run {
-            Vars.run(1) {
+            Vars.run[Int](1) {
                 IOs {
-                    Vars.run(2) {
+                    Vars.run[Int](2) {
                         Vars.get[Int].map { innerValue =>
                             assert(innerValue == 2)
                         }
@@ -45,7 +45,7 @@ class varsTest extends KyoTest:
                         assert(outerValue == 1)
                     }
             }
-        }
+        }.pure
     }
 
     "string value" in {
