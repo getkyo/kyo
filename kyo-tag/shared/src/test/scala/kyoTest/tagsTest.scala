@@ -2,23 +2,26 @@ package kyoTest
 
 import izumi.reflect.Tag as ITag
 import kyo.*
+import kyo.Tag.Intersection
+import kyo.Tag.Union
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec
+import scala.annotation.nowarn
 
 class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
 
-    def test[T1: Tag: ITag, T2: Tag: ITag]: Unit =
+    def test[T1, T2](using k1: Tag[T1], i1: ITag[T1], k2: Tag[T2], i2: ITag[T2]): Unit =
         "T1 <:< T2" in {
-            val kresult = Tag[T1] <:< Tag[T2]
-            val iresult = ITag[T1] <:< ITag[T2]
+            val kresult = k1 <:< k2
+            val iresult = i1 <:< i2
             assert(
                 kresult == iresult,
                 s"Tag[T1] <:< Tag[T2] is $kresult but ITag[T1] <:< ITag[T2] is $iresult"
             )
         }
         "T2 <:< T1" in {
-            val kresult = Tag[T2] <:< Tag[T1]
-            val iresult = ITag[T2] <:< ITag[T1]
+            val kresult = k2 <:< k1
+            val iresult = i2 <:< i1
             assert(
                 kresult == iresult,
                 s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
@@ -231,6 +234,280 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
             Tag[A0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789]
             """
         )
+    }
+
+    "type unions" - {
+
+        def test[T1, T2](using k1: Union[T1], i1: ITag[T1], k2: Union[T2], i2: ITag[T2]): Unit =
+            "T1 <:< T2" in {
+                val kresult = k1 <:< k2
+                val iresult = i1 <:< i2
+                assert(
+                    kresult == iresult,
+                    s"Tag[T1] <:< Tag[T2] is $kresult but ITag[T1] <:< ITag[T2] is $iresult"
+                )
+            }
+            "T2 <:< T1" in {
+                val kresult = k2 <:< k1
+                val iresult = i2 <:< i1
+                assert(
+                    kresult == iresult,
+                    s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
+                )
+            }
+            ()
+        end test
+
+        "union subtype" - {
+            class A
+            class B extends A
+            class C extends A
+            test[B | C, A]
+        }
+
+        "union supertype" - {
+            class A
+            class B extends A
+            class C
+            test[B, A | C]
+        }
+
+        "union subtype of union" - {
+            class A
+            class B extends A
+            class C extends A
+            class D
+            test[B | C, A | D]
+        }
+
+        "union not subtype" - {
+            class A
+            class B
+            class C
+            test[A | B, C]
+        }
+
+        "union not supertype" - {
+            class A
+            class B extends A
+            class C extends B
+            test[A, B | C]
+        }
+
+        "union not subtype of union" - {
+            class A
+            class B
+            class C
+            class D
+            test[A | B, C | D]
+        }
+
+        "union equality" - {
+            class A
+            class B
+            test[A | B, A | B]
+        }
+
+        "union inequality" - {
+            class A
+            class B
+            class C
+            test[A | B, A | C]
+        }
+        "union with Any" - {
+            class A
+            test[A | Any, Any]
+        }
+
+        "union with Nothing" - {
+            class A
+            test[A | Nothing, A]
+        }
+
+        "union with a subtype" - {
+            class A
+            class B extends A
+            test[A | B, A]
+        }
+
+        "union with a supertype" - {
+            class A
+            class B extends A
+            test[A, A | B]
+        }
+
+        "union of a type with itself" - {
+            class A
+            test[A | A, A]
+        }
+
+        "union of two unrelated types" - {
+            class A
+            class B
+            test[A | B, AnyRef]
+        }
+
+        "union of a type and its subtype" - {
+            class A
+            class B extends A
+            test[A | B, A]
+        }
+
+        "union of a type and its supertype" - {
+            class A
+            class B extends A
+            test[B, A | B]
+        }
+
+        "unsupported" in {
+            @nowarn
+            trait A
+            @nowarn
+            trait B
+            assertDoesNotCompile("Union[A & B]")
+            assertDoesNotCompile("Union[A & B | A]")
+            assertDoesNotCompile("Union[A | B & A]")
+        }
+    }
+
+    "type intersections" - {
+
+        def test[T1, T2](using k1: Intersection[T1], i1: ITag[T1], k2: Intersection[T2], i2: ITag[T2]): Unit =
+            "T1 <:< T2" in {
+                val kresult = k1 <:< k2
+                val iresult = i1 <:< i2
+                assert(
+                    kresult == iresult,
+                    s"Tag[T1] <:< Tag[T2] is $kresult but ITag[T1] <:< ITag[T2] is $iresult"
+                )
+            }
+            "T2 <:< T1" in {
+                val kresult = k2 <:< k1
+                val iresult = i2 <:< i1
+                assert(
+                    kresult == iresult,
+                    s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
+                )
+            }
+            ()
+        end test
+
+        "intersection subtype" - {
+            trait A
+            trait B
+            class C extends A with B
+            test[C, A & B]
+        }
+
+        "intersection supertype" - {
+            trait A
+            trait B
+            trait C
+            class D extends A with B with C
+            test[A & B, D]
+        }
+
+        "intersection subtype of intersection" - {
+            trait A
+            trait B extends A
+            trait C extends A
+            trait D
+            test[B & C, A & D]
+        }
+
+        "intersection edge case 1" - {
+            trait A
+            class B
+            test[A & B, A]
+        }
+
+        "intersection edge case 2" - {
+            trait A
+            trait B
+            class C extends A
+            class D extends A with B
+            test[C & B, D]
+        }
+
+        "intersection not subtype" - {
+            trait A
+            trait B
+            trait C
+            test[A & B, C]
+        }
+
+        "intersection not supertype" - {
+            trait A
+            trait B extends A
+            class C extends B
+            test[A, B & C]
+        }
+
+        "intersection not subtype of intersection" - {
+            trait A
+            trait B
+            trait C
+            trait D
+            test[A & B, C & D]
+        }
+
+        "intersection equality" - {
+            trait A
+            trait B
+            test[A & B, A & B]
+        }
+
+        "intersection inequality" - {
+            trait A
+            trait B
+            trait C
+            test[A & B, A & C]
+        }
+
+        "intersection with Any" - {
+            class A
+            test[A & Any, A]
+        }
+
+        "intersection with a subtype" - {
+            class A
+            class B extends A
+            test[A & B, B]
+        }
+
+        "intersection with a supertype" - {
+            class A
+            class B extends A
+            test[B & A, B]
+        }
+
+        "intersection of a type with itself" - {
+            class A
+            test[A & A, A]
+        }
+
+        "intersection of a type and its subtype" - {
+            class A
+            class B extends A
+            test[A & B, B]
+        }
+
+        "intersection of a type and its supertype" - {
+            class A
+            class B extends A
+            test[B & A, B]
+        }
+
+        "unsupported" in {
+            @nowarn
+            trait A
+            @nowarn
+            trait B
+            assertDoesNotCompile("Intersection[A | B]")
+            assertDoesNotCompile("Intersection[A & B | A]")
+            assertDoesNotCompile("Intersection[A | B & A]")
+        }
+
     }
 
 end tagsTest

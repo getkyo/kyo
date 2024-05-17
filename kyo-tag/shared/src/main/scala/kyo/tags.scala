@@ -14,23 +14,97 @@ object Tag:
 
     extension [T](t1: Tag[T])
 
-        def show =
+        def show: String =
             val decoded = t1.tpe.drop(2).takeWhile(_ != ';')
             fromCompact.getOrElse(decoded, decoded)
 
-        def <:<[U](t2: Tag[U]): Boolean =
+        infix def <:<[U](t2: Tag[U]): Boolean =
             t1 =:= t2 || isSubtype(t1, t2)
 
-        def =:=[U](t2: Tag[U]): Boolean =
+        infix def =:=[U](t2: Tag[U]): Boolean =
             (t1.tpe eq t2.tpe) || t1.tpe == t2.tpe
 
-        def =!=[U](t2: Tag[U]): Boolean =
+        infix def =!=[U](t2: Tag[U]): Boolean =
             (t1.tpe ne t2.tpe) || t1.tpe != t2.tpe
 
-        def >:>[U](t2: Tag[U]): Boolean =
+        infix def >:>[U](t2: Tag[U]): Boolean =
             t1 =:= t2 || isSubtype(t2, t1)
 
     end extension
+
+    case class Union[T](tags: Seq[Tag[?]]) extends AnyVal
+
+    object Union:
+
+        inline given apply[T]: Union[T] = ${ unionImpl[T] }
+
+        extension [T](t1: Union[T])
+            def show: String =
+                t1.tags.map(_.show).mkString(" | ")
+
+            infix def <:<[U](t2: Tag[U]): Boolean =
+                t1.tags.forall(_ <:< t2)
+
+            infix def =:=[U](t2: Tag[U]): Boolean =
+                t1.tags.forall(t2 =:= _)
+
+            infix def =!=[U](t2: Tag[U]): Boolean =
+                t1.tags.exists(t2 =!= _)
+
+            infix def >:>[U](t2: Tag[U]): Boolean =
+                t1.tags.exists(t2 <:< _)
+
+            infix def <:<(t2: Union[?]): Boolean =
+                t1.tags.forall(tag1 => t2.tags.exists(tag1 <:< _))
+
+            infix def =:=(t2: Union[?]): Boolean =
+                t1.tags.forall(tag1 => t2.tags.exists(tag1 =:= _)) &&
+                    t2.tags.forall(tag2 => t1.tags.exists(tag2 =:= _))
+
+            infix def =!=(t2: Union[?]): Boolean =
+                !(t1 =:= t2)
+
+            infix def >:>(t2: Union[?]): Boolean =
+                t2.tags.forall(tag2 => t1.tags.exists(_ >:> tag2))
+        end extension
+    end Union
+
+    case class Intersection[T](tags: Seq[Tag[?]]) extends AnyVal
+
+    object Intersection:
+
+        inline given apply[T]: Intersection[T] = ${ intersectionImpl[T] }
+
+        extension [T](t1: Intersection[T])
+            def show: String =
+                t1.tags.map(_.show).mkString(" & ")
+
+            infix def <:<[U](t2: Tag[U]): Boolean =
+                t1.tags.exists(_ <:< t2)
+
+            infix def =:=[U](t2: Tag[U]): Boolean =
+                t1.tags.forall(_ =:= t2)
+
+            infix def =!=[U](t2: Tag[U]): Boolean =
+                !(t1 =:= t2)
+
+            infix def >:>[U](t2: Tag[U]): Boolean =
+                t1.tags.forall(t2 >:> _)
+
+            infix def <:<(t2: Intersection[?]): Boolean =
+                t2.tags.forall(tag2 => t1.tags.exists(_ <:< tag2))
+
+            infix def =:=(t2: Intersection[?]): Boolean =
+                t1.tags.forall(tag1 => t2.tags.exists(tag1 =:= _)) &&
+                    t2.tags.forall(tag2 => t1.tags.exists(tag2 =:= _))
+
+            infix def =!=(t2: Intersection[?]): Boolean =
+                !(t1 =:= t2)
+
+            infix def >:>(t2: Intersection[?]): Boolean =
+                t1.tags.forall(tag1 => t2.tags.exists(tag1 >:> _))
+        end extension
+    end Intersection
 
     private[Tag] object internal:
 
@@ -155,6 +229,47 @@ object Tag:
             '{ new Tag($encoded) }
         end tagImpl
 
+        def tags[T: Type](using q: Quotes)(flatten: q.reflect.TypeRepr => Seq[q.reflect.TypeRepr]): Expr[Seq[Tag[?]]] =
+            import quotes.reflect.*
+            Expr.ofSeq {
+                flatten(TypeRepr.of[T]).foldLeft(Seq.empty[Expr[Tag[?]]]) {
+                    (acc, tpe) =>
+                        tpe.asType match
+                            case '[t] =>
+                                Expr.summon[Tag[t]] match
+                                    case None =>
+                                        failMissing(tpe)
+                                    case Some(tag) =>
+                                        acc :+ tag
+                        end match
+                }
+            }
+        end tags
+
+        def unionImpl[T: Type](using q: Quotes): Expr[Union[T]] =
+            import quotes.reflect.*
+
+            def flatten(tpe: TypeRepr): Seq[TypeRepr] =
+                tpe match
+                    case OrType(a, b) => flatten(a) ++ flatten(b)
+                    case tpe: AndType => report.errorAndAbort(s"Union tags don't support type intersections. Found: ${tpe.show}")
+                    case tpe          => Seq(tpe)
+
+            '{ Union(${ tags(using q)(flatten) }) }
+        end unionImpl
+
+        def intersectionImpl[T: Type](using q: Quotes): Expr[Intersection[T]] =
+            import quotes.reflect.*
+
+            def flatten(tpe: TypeRepr): Seq[TypeRepr] =
+                tpe match
+                    case AndType(a, b) => flatten(a) ++ flatten(b)
+                    case tpe: OrType   => report.errorAndAbort(s"Intersection tags don't support type unions. Found: ${tpe.show}")
+                    case tpe           => Seq(tpe)
+
+            '{ Intersection(${ tags(using q)(flatten) }) }
+        end intersectionImpl
+
         // printable ASCII chars
         val maxEncodableInt = ('~' - ' ').toInt
 
@@ -211,15 +326,20 @@ object Tag:
                         case '[tpe] =>
                             Expr.summon[Tag[tpe]] match
                                 case None =>
-                                    report.errorAndAbort(
-                                        report.errorAndAbort(s"Please provide an implicit kyo.Tag[${TypeRepr.of[tpe].show}] parameter.")
-                                    )
+                                    failMissing(TypeRepr.of[tpe])
                                 case Some(value) =>
                                     '{ $value.tpe }
                         case _ =>
                             report.errorAndAbort(s"Tag only supports class types and type parameters, but got: ${tpe.show}")
             end match
         end encodeType
+
+        def failMissing(using Quotes)(missing: quotes.reflect.TypeRepr) =
+            import quotes.reflect.*
+            report.errorAndAbort(
+                report.errorAndAbort(s"Please provide an implicit kyo.Tag[${missing.show}] parameter.")
+            )
+        end failMissing
 
         def concat(l: List[Expr[String]])(using Quotes): Expr[String] =
             def loop(l: List[Expr[String]], acc: String, exprs: List[Expr[String]]): Expr[String] =
