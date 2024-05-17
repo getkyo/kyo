@@ -176,7 +176,11 @@ final class Scheduler(
 
     private def ensureWorkers() =
         for (idx <- allocatedWorkers until currentWorkers) {
-            workers(idx) = new Worker(idx, _ >= currentWorkers, pool, schedule, steal, () => cycles, clock)
+            workers(idx) =
+                new Worker(idx, pool, schedule, steal, clock) {
+                    def shouldStop(): Boolean   = idx >= currentWorkers
+                    def getCurrentCycle(): Long = cycles
+                }
             allocatedWorkers += 1
         }
 
