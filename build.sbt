@@ -63,6 +63,7 @@ lazy val kyo =
             `kyo-settings`
         ).aggregate(
             `kyo-scheduler`,
+            `kyo-scheduler-zio`,
             `kyo-tag`,
             `kyo-core`,
             `kyo-direct`,
@@ -94,6 +95,25 @@ lazy val `kyo-scheduler` =
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.5"  % Test
         )
         .jsSettings(`js-settings`)
+
+lazy val `kyo-scheduler-zio` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-scheduler-zio"))
+        .dependsOn(`kyo-scheduler`)
+        .settings(
+            `kyo-settings`,
+            scalacOptions --= Seq(
+                "-Wvalue-discard",
+                "-Wunused:all",
+                "-language:strictEquality"
+            ),
+            scalacOptions += "-Xsource:3",
+            libraryDependencies += "dev.zio"       %%% "zio"       % "2.1.1",
+            libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.16" % Test,
+            crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version)
+        )
 
 lazy val `kyo-tag` =
     crossProject(JSPlatform, JVMPlatform)
@@ -252,6 +272,7 @@ lazy val `kyo-bench` =
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-sttp`)
+        .dependsOn(`kyo-scheduler-zio`)
         .settings(
             `kyo-settings`,
             // Forks each test suite individually

@@ -25,24 +25,13 @@ import zio.UIO
 @BenchmarkMode(Array(Mode.Throughput))
 abstract class Bench[T](val expectedResult: T):
 
-    @Param(Array("false"))
-    var replaceZioExecutor = false
-
     lazy val zioRuntime =
-        import zio.*
+        val replaceZioExecutor =
+            System.getProperty("replaceZioExecutor", "false") == "true"
         if !replaceZioExecutor then
             zio.Runtime.default.unsafe
         else
-            given Unsafe = Unsafe.unsafe(identity)
-            val exec =
-                new Executor:
-                    val scheduler                     = kyo.scheduler.Scheduler.get
-                    def metrics(using unsafe: Unsafe) = None
-                    def submit(runnable: Runnable)(implicit unsafe: Unsafe): Boolean =
-                        scheduler.schedule(kyo.scheduler.Task(runnable.run()))
-                        true
-            val kExecutorLayer = Runtime.setExecutor(exec) ++ Runtime.setBlockingExecutor(exec)
-            Runtime.unsafe.fromLayer(kExecutorLayer).unsafe
+            KyoSchedulerRuntime.default.unsafe
         end if
     end zioRuntime
 end Bench
