@@ -5,7 +5,7 @@ import zio.*
 import zio.internal.ExecutionMetrics
 import zio.internal.FiberRuntime
 
-object KyoSchedulerRuntime {
+object KyoSchedulerZioRuntime {
 
     lazy val default: Runtime[Any] = {
         val exec =
@@ -21,8 +21,7 @@ object KyoSchedulerRuntime {
         Unsafe.unsafe { implicit u =>
             Runtime.default.unsafe.run {
                 for {
-                    scope   <- Scope.make
-                    env     <- (Runtime.setExecutor(exec) ++ Runtime.setBlockingExecutor(exec)).build(scope)
+                    env     <- (Runtime.setExecutor(exec) ++ Runtime.setBlockingExecutor(exec)).build(Scope.global)
                     runtime <- ZIO.runtime[Any].provideEnvironment(env)
                 } yield runtime
             }.getOrThrowFiberFailure()
