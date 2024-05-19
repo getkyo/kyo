@@ -9,29 +9,47 @@ class PositionTest extends KyoTest:
 
     "implicitly" in {
         val f = implicitly[Position]
-        assert(f.toString() == "PositionTest.scala:11 - val f")
+        assert(f.toString == "PositionTest.scala:11")
     }
 
     "using" in {
         val e = makeErrorMessage("Hello World")
-        assert(e == "PositionTest.scala:16 - val e - Hello World")
+        assert(e == "PositionTest.scala:16 - Hello World")
     }
 
     "given" in {
         given file: Position = Position.derive
 
         val e = makeErrorMessage("")
-        assert(e == "PositionTest.scala:21 - val file - ")
+        assert(e == "PositionTest.scala:21 - ")
     }
+    "WithOwner" - {
+        import Position.WithOwner.given Position
 
-    "scope" in {
-        def t1 = Position.derive
-        assert(t1.toString() == "PositionTest.scala:28 - method t1")
+        "implicitly" in {
+            val f = implicitly[Position]
+            assert(f.toString == "PositionTest.scala:30 - val f")
+        }
 
-        val t2 = Position.derive
-        assert(t2.toString() == "PositionTest.scala:31 - val t2")
+        "using" in {
+            val e = makeErrorMessage("Hello World")
+            assert(e == "PositionTest.scala:35 - val e - Hello World")
+        }
+        "given" in {
+            given file: Position = Position.derive
 
-        class t4(using val p: Position)
-        assert(t4().p.toString() == "PositionTest.scala:35 - class PositionTest")
+            val e = makeErrorMessage("")
+            assert(e == "PositionTest.scala:39 - ")
+        }
+        "scope" in {
+            def t1 = Position.WithOwner.derive
+            assert(t1.toString == "PositionTest.scala:45 - method t1")
+
+            val t2 = Position.WithOwner.derive
+            assert(t2.toString == "PositionTest.scala:48 - val t2")
+
+            class t4(using val p: Position)
+            assert(t4().p.toString == "PositionTest.scala:52 - class PositionTest")
+        }
     }
 end PositionTest
