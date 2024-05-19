@@ -31,7 +31,7 @@ abstract class Bench[T](val expectedResult: T):
         if !replaceZioExecutor then
             zio.Runtime.default.unsafe
         else
-            KyoSchedulerRuntime.default.unsafe
+            KyoSchedulerZioRuntime.default.unsafe
         end if
     end zioRuntime
 end Bench
