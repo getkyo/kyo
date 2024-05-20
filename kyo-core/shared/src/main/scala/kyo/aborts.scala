@@ -35,7 +35,7 @@ object Aborts:
 
     def run[V]: RunDsl[V] = RunDsl[V]
 
-    def fold[T](default: T): Fold[T] = Fold[T](default)
+    def fold[V, T](default: T): Fold[V, T] = Fold[V, T](default)
 
     class CatchingDsl[V <: Throwable]:
         def apply[T: Flat, S](v: => T < S)(
@@ -52,10 +52,10 @@ object Aborts:
 
         // TODO: Can this extend AnyVal? Requires ResultHandler to be a `trait`
         // TODO: is this type safe?
-        class Fold[T](default: T) extends ResultHandler[ClassTag[?], DoAbort.Command, DoAbort, Const[Any], Any]:
-            def apply[V, S, VS, VR](v: T < (Aborts[VS] & S))(
+        class Fold[V, T](default: T) extends ResultHandler[ClassTag[?], DoAbort.Command, DoAbort, Const[Any], Any]:
+            def apply[S, VS, VR](v: (T | Nothing) < (Aborts[VS] & S))(
                 using
-                f: Flat[T],
+                f: Flat[T | Nothing],
                 h: HasAborts[V, VS] { type Remainder = VR },
                 ct: ClassTag[V]
             ): T < (VR & S) =

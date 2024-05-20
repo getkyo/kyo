@@ -257,6 +257,21 @@ class abortsTest extends KyoTest:
                 assert(Aborts.fold("Fold!")(fail(false)).pure == "Success!")
                 assert(Aborts.fold("Fold!")(fail(true)).pure == "Fold!")
             }
+            "incremental" in {
+                def fail(b: Boolean): Int < (Aborts[Boolean] & Aborts[String]) =
+                    Aborts.when(b)("Fail!")
+                        .andThen(Aborts.when(!b)(false))
+                        .andThen(-1)
+
+                def fold(b: Boolean): Int =
+                    val s: Int < Aborts[Boolean] = Aborts.fold[String, Int](1)(fail(b))
+                    val i: Int < Any             = Aborts.fold[Boolean, Int](2)(s)
+                    i.pure
+                end fold
+
+                assert(fold(true) == 1)
+                assert(fold(false) == 2)
+            }
         }
         "fail" in {
             val ex: Throwable = new Exception("throwable failure")
