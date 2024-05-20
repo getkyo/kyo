@@ -17,9 +17,11 @@ sealed trait IOs extends Effect[IOs]:
     inline def apply[T, S](
         inline f: => T < (IOs & S)
     ): T < (IOs & S) =
-        new KyoIO[T, S]:
-            def apply(v: Unit, s: Safepoint[IOs & S], l: Locals.State) =
-                f
+        fromKyo {
+            new KyoIO[T, S]:
+                def apply(v: Unit, s: Safepoint[IOs & S], l: Locals.State) =
+                    f
+        }
 
     def fail[T](ex: Throwable): T < IOs =
         IOs(throw ex)
@@ -63,9 +65,11 @@ sealed trait IOs extends Effect[IOs]:
                         runLazyLoop(k(()))
                     else
                         val k = kyo.asInstanceOf[Suspend[MX, Any, T, S & IOs]]
-                        new Continue[MX, Any, T, S](k):
-                            def apply(v: Any, s: Safepoint[S], l: Locals.State) =
-                                runLazyLoop(k(v, s, l))
+                        fromKyo {
+                            new Continue[MX, Any, T, S](k):
+                                def apply(v: Any, s: Safepoint[S], l: Locals.State) =
+                                    runLazyLoop(k(v, s, l))
+                        }
                 case _ =>
                     v.asInstanceOf[T]
             end match

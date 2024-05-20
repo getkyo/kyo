@@ -241,7 +241,7 @@ object core:
             val tag     = s.tag
         end Continue
 
-        implicit inline def fromKyo[T, S](v: Kyo[T, S]): T < S =
-            v.asInstanceOf[T < S]
+        inline def fromKyo[T, S](inline v: Kyo[T, S]): T < S =
+            v
     end internal
 end core

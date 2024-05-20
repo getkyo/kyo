@@ -7,6 +7,7 @@ import org.scalatest.concurrent.ScalaFutures.*
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.language.implicitConversions
 import scala.util.Try
 
 class KyoTest extends AsyncFreeSpec with NonImplicitAssertions:

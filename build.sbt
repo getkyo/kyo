@@ -10,7 +10,6 @@ val compilerOptions = Seq(
     "-feature",
     "-unchecked",
     "-deprecation",
-    "-language:implicitConversions",
     "-Wvalue-discard",
     "-Wunused:all",
     "-language:strictEquality"
