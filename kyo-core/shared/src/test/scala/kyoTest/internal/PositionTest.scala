@@ -24,7 +24,7 @@ class PositionTest extends KyoTest:
         assert(e == "PositionTest.scala:21 - ")
     }
     "WithOwner" - {
-        import Position.WithOwner.given Position
+        inline given Position = Position.WithOwner.derive
 
         "implicitly" in {
             val f = implicitly[Position]

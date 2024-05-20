@@ -1,6 +1,7 @@
 package kyo.internal
 
 import scala.collection.mutable.LinkedHashMap
+import scala.language.implicitConversions
 import scala.quoted.*
 
 case class Param[T](code: String, value: T) derives CanEqual

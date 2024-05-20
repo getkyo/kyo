@@ -13,8 +13,10 @@ class Defers extends Effect[Defers]:
 object Defers extends Defers:
 
     inline def apply[T, S](inline v: => T < S): T < (S & Defers) =
-        new Defer[T, S]:
-            def apply(ign: Unit, s: Safepoint[S & Defers], l: Locals.State): T < S = v
+        fromKyo {
+            new Defer[T, S]:
+                def apply(ign: Unit, s: Safepoint[S & Defers], l: Locals.State): T < S = v
+        }
 
     def run[T: Flat, S](v: T < (Defers & S)): T < S =
         this.handle(handler)((), v)
