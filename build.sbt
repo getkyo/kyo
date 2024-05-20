@@ -4,6 +4,8 @@ val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
 
+val zioVersion = "2.1.1"
+
 val compilerOptions = Seq(
     "-encoding",
     "utf8",
@@ -110,7 +112,7 @@ lazy val `kyo-scheduler-zio` =
                 "-language:strictEquality"
             ),
             scalacOptions += "-Xsource:3",
-            libraryDependencies += "dev.zio"       %%% "zio"       % "2.1.1",
+            libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
             libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.16" % Test,
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version)
         )
@@ -227,9 +229,9 @@ lazy val `kyo-test` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio"          % "2.1.1",
-            libraryDependencies += "dev.zio" %%% "zio-test"     % "2.1.1",
-            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % "2.1.1" % Test
+            libraryDependencies += "dev.zio" %%% "zio"          % zioVersion,
+            libraryDependencies += "dev.zio" %%% "zio-test"     % zioVersion,
+            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
         ).jsSettings(
             `js-settings`
         )
@@ -242,9 +244,9 @@ lazy val `kyo-zio` =
         .dependsOn(`kyo-core` % "test->test;compile->compile")
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %% "zio"          % "2.1.0-RC3",
-            libraryDependencies += "dev.zio" %% "zio-test"     % "2.1.0-RC3",
-            libraryDependencies += "dev.zio" %% "zio-test-sbt" % "2.1.0-RC3" % Test
+            libraryDependencies += "dev.zio" %% "zio"          % zioVersion,
+            libraryDependencies += "dev.zio" %% "zio-test"     % zioVersion,
+            libraryDependencies += "dev.zio" %% "zio-test-sbt" % zioVersion % Test
         ).jsSettings(
             `js-settings`
         )
@@ -304,8 +306,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
             libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.2.4",
             libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.2.4",
-            libraryDependencies += "dev.zio"             %% "zio"                 % "2.1.1",
-            libraryDependencies += "dev.zio"             %% "zio-concurrent"      % "2.1.1",
+            libraryDependencies += "dev.zio"             %% "zio"                 % zioVersion,
+            libraryDependencies += "dev.zio"             %% "zio-concurrent"      % zioVersion,
             libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC26",
             libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.10.2",
