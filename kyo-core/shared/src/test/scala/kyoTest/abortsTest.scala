@@ -223,6 +223,41 @@ class abortsTest extends KyoTest:
                 assert(res == expected)
             }
         }
+        "fold" - {
+            "fail" in {
+                val v: Int < Aborts[String] = Aborts.fail("Fail!")
+                assert(Aborts.fold(21)(v).pure == 21)
+            }
+            "IOs" in {
+                val v: Int < (IOs & Aborts[String]) = IOs(42)
+                assert(IOs.run(Aborts.fold(21)(v)).pure == 42)
+            }
+            "IOs & Aborts" in {
+                val v: String < (IOs & Aborts[String]) = IOs("Success!").map(_ => Aborts.fail("Fail!"))
+                assert(IOs.run(Aborts.fold("Fold!")(v)).pure == "Fold!")
+            }
+            "success != default" in {
+                given CanEqual[Super, Super] = CanEqual.derived
+                trait Super
+                case object ResultSub extends Super
+                case object FoldSub   extends Super
+
+                val v: Super < Aborts[String] = ResultSub
+                assert(Aborts.fold(FoldSub)(v).pure == ResultSub)
+            }
+            "Aborts[String | Int | Throwable | Boolean]" in {
+                def fail(b: Boolean): String < Aborts[String | Int | Throwable | Boolean] =
+                    for
+                        _ <- Aborts.when(b)("Fail!")
+                        _ <- Aborts.when(b)(42)
+                        _ <- Aborts.when(b)(ex1)
+                        _ <- Aborts.when(b)(true)
+                    yield "Success!"
+
+                assert(Aborts.fold("Fold!")(fail(false)).pure == "Success!")
+                assert(Aborts.fold("Fold!")(fail(true)).pure == "Fold!")
+            }
+        }
         "fail" in {
             val ex: Throwable = new Exception("throwable failure")
             val a             = Aborts.fail(ex)

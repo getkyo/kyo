@@ -35,6 +35,8 @@ object Aborts:
 
     def run[V]: RunDsl[V] = RunDsl[V]
 
+    def fold[T](default: T): Fold[T] = Fold[T](default)
+
     class CatchingDsl[V <: Throwable]:
         def apply[T: Flat, S](v: => T < S)(
             using ct: ClassTag[V]
@@ -47,6 +49,31 @@ object Aborts:
     def catching[V <: Throwable]: CatchingDsl[V] = CatchingDsl[V]
 
     private object internal:
+
+        // TODO: Can this extend AnyVal? Requires ResultHandler to be a `trait`
+        // TODO: is this type safe?
+        class Fold[T](default: T) extends ResultHandler[ClassTag[?], Const[Any], DoAbort, Const[Any], Any]:
+            def apply[V, S, VS, VR](v: T < (Aborts[VS] & S))(
+                using
+                ev: Flat[T],
+                h: HasAborts[V, VS] { type Remainder = VR },
+                ct: ClassTag[V]
+            ): T < (VR & S) =
+                DoAbort.handle(this)(ct, v).asInstanceOf[T < (VR & S)]
+
+            def done[T0](st: ClassTag[?], v: T0)(using Tag[DoAbort]): T0 = v
+            override def accepts[T0](st: ClassTag[?], command: Any) = // TODO: can we avoid ClassTags? We are resolving all aborts
+                type V
+                given ClassTag[V] = st.asInstanceOf[ClassTag[V]]
+                command match
+                    case v: V => true
+                    case _    => false
+                end match
+            end accepts
+
+            def resume[T0, U: Flat, S2](st: ClassTag[?], command: Any, k: T0 => U < (DoAbort & S2))(using Tag[DoAbort]) =
+                default.asInstanceOf[T0]
+        end Fold
 
         val handler =
             new ResultHandler[ClassTag[?], Const[Any], DoAbort, [T] =>> Either[Any, T], Any]:
