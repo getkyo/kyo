@@ -149,17 +149,6 @@ object Tag:
             loop(subIdx)
         end checkSegment
 
-        def nextSegmentEntry(tag: String, idx: Int): Int =
-            @tailrec def loop(idx: Int): Int =
-                if idx >= tag.length() then -1
-                else
-                    (tag.charAt(idx): @switch) match
-                        case ';'             => idx + 1
-                        case '[' | ',' | ']' => -1
-                        case _               => loop(idx + 1)
-            loop(idx)
-        end nextSegmentEntry
-
         def sameType(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
             val endSubIdx   = subTag.indexOf(';', subIdx)
             val endSuperIdx = superTag.indexOf(';', superIdx)
