@@ -52,10 +52,10 @@ object Aborts:
 
         // TODO: Can this extend AnyVal? Requires ResultHandler to be a `trait`
         // TODO: is this type safe?
-        class Fold[T](default: T) extends ResultHandler[ClassTag[?], Const[Any], DoAbort, Const[Any], Any]:
+        class Fold[T](default: T) extends ResultHandler[ClassTag[?], DoAbort.Command, DoAbort, Const[Any], Any]:
             def apply[V, S, VS, VR](v: T < (Aborts[VS] & S))(
                 using
-                ev: Flat[T],
+                f: Flat[T],
                 h: HasAborts[V, VS] { type Remainder = VR },
                 ct: ClassTag[V]
             ): T < (VR & S) =
@@ -66,13 +66,13 @@ object Aborts:
                 type V
                 given ClassTag[V] = st.asInstanceOf[ClassTag[V]]
                 command match
-                    case v: V => true
+                    case _: V => true
                     case _    => false
                 end match
             end accepts
 
             def resume[T0, U: Flat, S2](st: ClassTag[?], command: Any, k: T0 => U < (DoAbort & S2))(using Tag[DoAbort]) =
-                default.asInstanceOf[T0]
+                default
         end Fold
 
         val handler =
