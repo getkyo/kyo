@@ -224,16 +224,11 @@ final class Scheduler(
     }
 
     def status(): Scheduler.Status = {
-        def workerStatus(i: Int) = {
+        def workerStatus(i: Int) =
             workers(i) match {
                 case null   => null
                 case worker => worker.status()
             }
-        }
-        val activeWorkers =
-            (0 until currentWorkers).map(workerStatus)
-        val inactiveWorkers =
-            (currentWorkers until allocatedWorkers).map(workerStatus)
         val (activeThreads, totalThreads) =
             workerExecutor match {
                 case exec: ThreadPoolExecutor =>
@@ -248,8 +243,7 @@ final class Scheduler(
             flushes.sum(),
             activeThreads,
             totalThreads,
-            activeWorkers,
-            inactiveWorkers,
+            (0 until allocatedWorkers).map(workerStatus),
             admissionRegulator.status(),
             concurrencyRegulator.status()
         )
@@ -265,8 +259,7 @@ object Scheduler {
         flushes: Long,
         activeThreads: Int,
         totalThreads: Int,
-        activeWorkers: Seq[WorkerStatus],
-        inactiveWorkers: Seq[WorkerStatus],
+        workers: Seq[WorkerStatus],
         admission: Admission.AdmissionStatus,
         concurrency: Concurrency.AdmissionStatus
     ) {
@@ -285,8 +278,7 @@ object Scheduler {
                 flushes - other.flushes,
                 activeThreads,
                 totalThreads,
-                delta(activeWorkers, other.activeWorkers),
-                delta(inactiveWorkers, other.inactiveWorkers),
+                delta(workers, other.workers),
                 admission - other.admission,
                 concurrency - other.concurrency
             )
