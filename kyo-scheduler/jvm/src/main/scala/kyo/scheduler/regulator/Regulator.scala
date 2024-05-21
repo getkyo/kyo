@@ -2,6 +2,7 @@ package kyo.scheduler.regulator
 
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.InternalTimer
+import kyo.scheduler.top.RegulatorStatus
 import kyo.scheduler.util.*
 import kyo.stats.internal.MetricReceiver
 import kyo.stats.internal.UnsafeGauge
@@ -100,8 +101,8 @@ abstract class Regulator(
         )
     }
 
-    protected def regulatorStatus(): Regulator.Status =
-        Regulator.Status(
+    protected def regulatorStatus(): RegulatorStatus =
+        RegulatorStatus(
             step,
             measurements.avg(),
             measurements.dev(),
@@ -110,27 +111,4 @@ abstract class Regulator(
             adjustments.sum(),
             updates.sum()
         )
-}
-
-object Regulator {
-    case class Status(
-        step: Int,
-        measurementsAvg: Double,
-        measurementsJitter: Double,
-        probesSent: Long,
-        probesCompleted: Long,
-        adjustments: Long,
-        updates: Long
-    ) {
-        infix def -(other: Status): Status =
-            Status(
-                step,
-                measurementsAvg,
-                measurementsJitter,
-                probesSent - other.probesSent,
-                probesCompleted - other.probesCompleted,
-                adjustments - other.adjustments,
-                updates - other.updates
-            )
-    }
 }
