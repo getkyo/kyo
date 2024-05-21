@@ -4,6 +4,7 @@ import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
+import kyo.scheduler.top.AdmissionStatus
 import kyo.scheduler.util.Flag
 import kyo.stats.internal.MetricReceiver
 import kyo.stats.internal.UnsafeGauge
@@ -67,8 +68,8 @@ final class Admission(
         )
     }
 
-    def status(): Admission.AdmissionStatus =
-        Admission.AdmissionStatus(
+    def status(): AdmissionStatus =
+        AdmissionStatus(
             admissionPercent,
             allowed.sum(),
             rejected.sum(),
@@ -77,21 +78,6 @@ final class Admission(
 }
 
 object Admission {
-
-    case class AdmissionStatus(
-        admissionPercent: Int,
-        allowed: Long,
-        rejected: Long,
-        regulator: Regulator.Status
-    ) {
-        infix def -(other: AdmissionStatus): AdmissionStatus =
-            AdmissionStatus(
-                admissionPercent - other.admissionPercent,
-                allowed - other.allowed,
-                rejected - other.rejected,
-                regulator - other.regulator
-            )
-    }
 
     val defaultConfig: Config =
         Config(

@@ -9,10 +9,11 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.regulator.Admission
 import kyo.scheduler.regulator.Concurrency
+import kyo.scheduler.top.Reporter
+import kyo.scheduler.top.Status
 import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
-import kyo.scheduler.util.Top
 import kyo.scheduler.util.XSRandom
 import kyo.stats.internal.MetricReceiver
 import kyo.stats.internal.UnsafeGauge
@@ -54,7 +55,7 @@ final class Scheduler(
     private val concurrencyRegulator =
         new Concurrency(loadAvg, updateWorkers, Thread.sleep(_), System.nanoTime, timer)
 
-    private val top = new Top(status, enableTopJMX, enableTopConsoleMs, timer)
+    private val top = new Reporter(status, enableTopJMX, enableTopConsoleMs, timer)
 
     def schedule(task: Task): Unit =
         schedule(task, null)
@@ -223,7 +224,7 @@ final class Scheduler(
         )
     }
 
-    def status(): Scheduler.Status = {
+    def status(): Status = {
         def workerStatus(i: Int) =
             workers(i) match {
                 case null   => null
@@ -236,7 +237,7 @@ final class Scheduler(
                 case _ =>
                     (-1, -1)
             }
-        Scheduler.Status(
+        Status(
             currentWorkers,
             allocatedWorkers,
             loadAvg(),
@@ -251,38 +252,6 @@ final class Scheduler(
 }
 
 object Scheduler {
-
-    case class Status(
-        currentWorkers: Int,
-        allocatedWorkers: Int,
-        loadAvg: Double,
-        flushes: Long,
-        activeThreads: Int,
-        totalThreads: Int,
-        workers: Seq[WorkerStatus],
-        admission: Admission.AdmissionStatus,
-        concurrency: Concurrency.AdmissionStatus
-    ) {
-        private def delta(a: Seq[WorkerStatus], b: Seq[WorkerStatus]) =
-            a.zipAll(b, null, null).map {
-                case (a, null) => a
-                case (null, b) => b
-                case (a, b)    => a - b
-            }
-
-        infix def -(other: Status): Status =
-            Status(
-                currentWorkers,
-                allocatedWorkers,
-                loadAvg,
-                flushes - other.flushes,
-                activeThreads,
-                totalThreads,
-                delta(workers, other.workers),
-                admission - other.admission,
-                concurrency - other.concurrency
-            )
-    }
 
     private lazy val defaultWorkerExecutor = Executors.newCachedThreadPool(Threads("kyo-scheduler-worker", new Worker.WorkerThread(_)))
     private lazy val defaultClockExecutor  = Executors.newSingleThreadExecutor(Threads("kyo-scheduler-clock"))

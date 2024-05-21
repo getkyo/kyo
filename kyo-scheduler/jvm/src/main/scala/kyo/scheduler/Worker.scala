@@ -5,6 +5,7 @@ import java.lang.invoke.MethodHandles
 import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.LongAdder
+import kyo.scheduler.top.WorkerStatus
 import kyo.stats.internal.MetricReceiver
 import scala.util.control.NonFatal
 
@@ -179,11 +180,6 @@ abstract private class Worker(
     registerStats()
 
     def status(): WorkerStatus = {
-        val taskStatus =
-            currentTask match {
-                case null => null
-                case task => task.status()
-            }
         val (thread, frame) =
             mount match {
                 case null =>
@@ -205,47 +201,9 @@ abstract private class Worker(
             lostTasks.sum(),
             load(),
             mounts,
-            currentCycle,
-            taskStatus
+            currentCycle
         )
     }
-}
-
-case class WorkerStatus(
-    id: Int,
-    running: Boolean,
-    mount: String,
-    frame: String,
-    isBlocked: Boolean,
-    isStalled: Boolean,
-    executions: Long,
-    preemptions: Long,
-    completions: Long,
-    stolenTasks: Long,
-    lostTasks: Long,
-    load: Int,
-    mounts: Long,
-    currentCycle: Long,
-    currentTask: Task.Status
-) {
-    infix def -(other: WorkerStatus): WorkerStatus =
-        WorkerStatus(
-            id,
-            running,
-            mount,
-            frame,
-            isBlocked,
-            isStalled,
-            executions - other.executions,
-            preemptions - other.preemptions,
-            completions - other.completions,
-            stolenTasks - other.stolenTasks,
-            lostTasks - other.lostTasks,
-            load,
-            mounts - other.mounts,
-            currentCycle,
-            currentTask
-        )
 }
 
 private object Worker {

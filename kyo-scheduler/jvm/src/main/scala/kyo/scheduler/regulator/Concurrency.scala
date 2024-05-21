@@ -1,6 +1,8 @@
 package kyo.scheduler.regulator
 
 import kyo.scheduler.*
+import kyo.scheduler.top.AdmissionStatus
+import kyo.scheduler.top.ConcurrencyStatus
 import kyo.scheduler.util.Flag
 import scala.concurrent.duration.*
 
@@ -22,20 +24,13 @@ final class Concurrency(
     protected def update(diff: Int): Unit =
         updateConcurrency(diff)
 
-    def status(): Concurrency.AdmissionStatus =
-        Concurrency.AdmissionStatus(
+    def status(): ConcurrencyStatus =
+        ConcurrencyStatus(
             regulatorStatus()
         )
 }
 
 object Concurrency {
-
-    case class AdmissionStatus(
-        regulator: Regulator.Status
-    ) {
-        infix def -(other: AdmissionStatus): AdmissionStatus =
-            AdmissionStatus(regulator - other.regulator)
-    }
 
     val defaultConfig: Config = Config(
         collectWindow = Flag("concurrency.collectWindow", 200),
