@@ -90,7 +90,7 @@ lazy val `kyo-scheduler` =
                 "-Wunused:all",
                 "-language:strictEquality"
             ),
-            scalacOptions += "-Xsource:3",
+            scalacOptions ++= (if (scalaVersion.value != scala3Version) Seq("-Xsource:3") else Nil),
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16" % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.5"  % Test
