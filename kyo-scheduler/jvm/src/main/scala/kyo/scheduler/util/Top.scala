@@ -134,6 +134,9 @@ object Top extends App {
 
         def print(w: WorkerStatus) =
             if (w ne null) {
+                if (w.id == status.currentWorkers)
+                    sb.append("------------------------------------- Inactive ------------------------------------------------\n")
+
                 val running = if (w.running) "   🏃  " else "   ⚫  "
                 val blocked = if (w.isBlocked) "   🚧  " else "   ⚫  "
                 val stalled = if (w.isStalled) "   🐢  " else "   ⚫  "
@@ -143,11 +146,7 @@ object Top extends App {
                 )
             }
 
-        status.activeWorkers.foreach(print)
-        if (status.inactiveWorkers.nonEmpty) {
-            sb.append("------------------------------------- Inactive ------------------------------------------------\n")
-            status.inactiveWorkers.foreach(print)
-        }
+        status.workers.foreach(print)
         sb.append("=====================================================================================================\n")
 
         sb.toString()
