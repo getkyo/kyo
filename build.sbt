@@ -203,7 +203,7 @@ lazy val `kyo-sttp` =
         .dependsOn(`kyo-core` % "test->test;compile->compile")
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.6"
+            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.7"
         )
         .jsSettings(`js-settings`)
 
