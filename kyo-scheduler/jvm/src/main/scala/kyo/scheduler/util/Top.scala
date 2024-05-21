@@ -24,15 +24,21 @@ class Top(
     private val mBeanServer: MBeanServer = ManagementFactory.getPlatformMBeanServer
     private val objectName               = new ObjectName("kyo.scheduler:type=Top")
 
+    private var lastConsoleStatus: Scheduler.Status = null
+
+    if (enableTopConsoleMs > 0)
+        timer.schedule(enableTopConsoleMs.millis) {
+            val currentStatus = status()
+            if (lastConsoleStatus != null) {
+                println(Top.print(currentStatus - lastConsoleStatus))
+            }
+            lastConsoleStatus = currentStatus
+        }
+
     if (enableTopJMX) {
         close()
         mBeanServer.registerMBean(new StandardMBean(this, classOf[TopMBean]), objectName)
     }
-
-    if (enableTopConsoleMs > 0)
-        timer.schedule(enableTopConsoleMs.millis) {
-            println(Top.print(status()))
-        }
 
     def getStatus() = status()
 
