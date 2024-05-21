@@ -31,7 +31,7 @@ class Top(
 
     if (enableTopConsoleMs > 0)
         timer.schedule(enableTopConsoleMs.millis) {
-            println(print(status()))
+            println(Top.print(status()))
         }
 
     def getStatus() = status()
@@ -91,7 +91,7 @@ object Top extends App {
         }
     }
 
-    private def print(status: Scheduler.Status): String = {
+    private[util] def print(status: Scheduler.Status): String = {
         val sb = new StringBuilder()
 
         sb.append(f"""
