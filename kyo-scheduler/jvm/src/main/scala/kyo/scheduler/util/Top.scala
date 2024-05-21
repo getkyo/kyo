@@ -29,7 +29,7 @@ class Top(
     if (enableTopConsoleMs > 0)
         timer.schedule(enableTopConsoleMs.millis) {
             val currentStatus = status()
-            if (lastConsoleStatus != null) {
+            if (lastConsoleStatus ne null) {
                 println(Top.print(currentStatus - lastConsoleStatus))
             }
             lastConsoleStatus = currentStatus
