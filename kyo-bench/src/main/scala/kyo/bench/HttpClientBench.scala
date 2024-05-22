@@ -4,6 +4,8 @@ import org.http4s.ember.client.EmberClientBuilder
 
 class HttpClientBench extends Bench.ForkOnly("pong"):
 
+    override val zioRuntimeLayer = zio.http.Client.default
+
     val url = TestHttpServer.start(1)
 
     lazy val catsClient =
@@ -39,14 +41,15 @@ class HttpClientBench extends Bench.ForkOnly("pong"):
     val zioUrl =
         import zio.http.*
         URL.decode(this.url).toOption.get
-
-    // TODO: Initialize client once and reuse
     def zioBench() =
         import zio.*
-        // import zio.http.*
-
-        // ZIO.service[Client].flatMap(_.url(zioUrl).get("")).flatMap(_.body.asString).provide(Client.default, Scope.default).orDie
-        ZIO.succeed("pong")
+        import zio.http.*
+        ZIO.service[Client]
+            .flatMap(_.url(zioUrl).get(""))
+            .flatMap(_.body.asString)
+            .provideSome[Client](Scope.default)
+            .orDie
+            .asInstanceOf[UIO[String]]
     end zioBench
 
 end HttpClientBench
