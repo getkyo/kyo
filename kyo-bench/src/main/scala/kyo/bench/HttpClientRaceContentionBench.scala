@@ -72,9 +72,8 @@ class HttpClientRaceContentionBench
                 .flatMap(_.url(zioUrl).get(""))
                 .flatMap(_.body.asString)
                 .provideSome[Client](Scope.default)
-                .orDie
-                .asInstanceOf[UIO[String]]
-        ZIO.raceAll(request, Seq.fill(concurrency - 1)(request))
+                .asInstanceOf[Task[String]]
+        ZIO.raceAll(request, Seq.fill(concurrency - 1)(request)).orDie
     end zioBench
 
 end HttpClientRaceContentionBench
