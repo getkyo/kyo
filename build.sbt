@@ -268,7 +268,7 @@ lazy val `kyo-examples` =
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
+        .crossType(CrossType.Pure)
         .in(file("kyo-bench"))
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
