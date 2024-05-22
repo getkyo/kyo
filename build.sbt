@@ -151,7 +151,7 @@ lazy val `kyo-core` =
 lazy val `kyo-direct` =
     crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Pure)
+        .crossType(CrossType.Full)
         .in(file("kyo-direct"))
         .dependsOn(`kyo-core` % "test->test;compile->compile")
         .settings(
@@ -163,7 +163,7 @@ lazy val `kyo-direct` =
 lazy val `kyo-stats-otel` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Pure)
+        .crossType(CrossType.Full)
         .in(file("kyo-stats-otel"))
         .dependsOn(`kyo-core` % "test->test;compile->compile")
         .settings(
@@ -210,7 +210,7 @@ lazy val `kyo-sttp` =
 lazy val `kyo-tapir` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Pure)
+        .crossType(CrossType.Full)
         .in(file("kyo-tapir"))
         .dependsOn(`kyo-core` % "test->test;compile->compile")
         .dependsOn(`kyo-sttp`)
@@ -268,7 +268,7 @@ lazy val `kyo-examples` =
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Pure)
+        .crossType(CrossType.Full)
         .in(file("kyo-bench"))
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
@@ -325,7 +325,7 @@ addCommandAlias("checkReadme", ";readme/rewriteReadmeFile; readme/mdoc")
 lazy val readme =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Pure)
+        .crossType(CrossType.Full)
         .in(file("target/readme"))
         .enablePlugins(MdocPlugin)
         .settings(
