@@ -25,6 +25,11 @@ import zio.ZLayer
 )
 @BenchmarkMode(Array(Mode.Throughput))
 abstract class Bench[T](val expectedResult: T):
+    private var finalizers: List[() => Unit] = Nil
+
+    @TearDown
+    def tearDown(): Unit = finalizers.foreach(_())
+
     def zioRuntimeLayer: ZLayer[Any, Any, Any] = ZLayer.empty
 
     lazy val zioRuntime =
@@ -33,7 +38,9 @@ abstract class Bench[T](val expectedResult: T):
 
         if !replaceZioExecutor then
             if zioRuntimeLayer ne ZLayer.empty then
-                ZIORuntime.fromLayer(zioRuntimeLayer).unsafe
+                val (runtime, finalizer) = ZIORuntime.fromLayerWithFinalizer(zioRuntimeLayer)
+                finalizers = finalizer :: finalizers
+                runtime.unsafe
             else
                 zio.Runtime.default.unsafe
         else
