@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import kyo.*
 import org.openjdk.jmh.annotations.*
 import zio.UIO
+import zio.ZLayer
 
 @State(Scope.Benchmark)
 @Fork(
@@ -24,12 +25,17 @@ import zio.UIO
 )
 @BenchmarkMode(Array(Mode.Throughput))
 abstract class Bench[T](val expectedResult: T):
+    def zioRuntimeLayer: ZLayer[Any, Any, Any] = ZLayer.empty
 
     lazy val zioRuntime =
         val replaceZioExecutor =
             System.getProperty("replaceZioExecutor", "false") == "true"
+
         if !replaceZioExecutor then
-            zio.Runtime.default.unsafe
+            if zioRuntimeLayer ne ZLayer.empty then
+                ZIORuntime.fromLayer(zioRuntimeLayer).unsafe
+            else
+                zio.Runtime.default.unsafe
         else
             KyoSchedulerZioRuntime.default.unsafe
         end if
