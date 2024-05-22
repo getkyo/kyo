@@ -98,7 +98,7 @@ def example1(
     a.flatMap(v => b.map(_ + v))
 
 // But using only `map` is recommended 
-// since it funcions like `flatMap` due 
+// since it functions like `flatMap` due 
 // to effect widening.
 def example2(
     a: Int < IOs, 
