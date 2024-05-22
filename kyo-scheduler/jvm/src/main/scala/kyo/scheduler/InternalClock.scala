@@ -4,7 +4,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.locks.LockSupport
 import kyo.stats.internal.MetricReceiver
 
-final private case class InternalClock(executor: Executor) {
+final case class InternalClock(executor: Executor) {
 
     @volatile private var _stop = false
 
