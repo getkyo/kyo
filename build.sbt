@@ -72,6 +72,7 @@ lazy val kyo =
             `kyo-cache`,
             `kyo-sttp`,
             `kyo-tapir`,
+            `kyo-caliban`,
             `kyo-bench`,
             `kyo-test`,
             `kyo-zio`,
@@ -218,6 +219,20 @@ lazy val `kyo-tapir` =
             `kyo-settings`,
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.10.7",
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.10.7"
+        )
+
+lazy val `kyo-caliban` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-caliban"))
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-zio`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.6.0",
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.6.0"
         )
 
 lazy val `kyo-test` =
