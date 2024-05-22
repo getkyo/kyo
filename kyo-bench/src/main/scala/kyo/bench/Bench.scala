@@ -30,22 +30,19 @@ abstract class Bench[T](val expectedResult: T):
     @TearDown
     def tearDown(): Unit = finalizers.foreach(_())
 
-    def zioRuntimeLayer: ZLayer[Any, Any, Any] = ZLayer.empty
+    def zioRuntimeLayer: ZLayer[Any, Any, Any] =
+        if System.getProperty("replaceZioExecutor", "false") == "true" then
+            KyoSchedulerZioRuntime.layer
+        else
+            ZLayer.empty
 
     lazy val zioRuntime =
-        val replaceZioExecutor =
-            System.getProperty("replaceZioExecutor", "false") == "true"
-
-        if !replaceZioExecutor then
-            if zioRuntimeLayer ne ZLayer.empty then
-                val (runtime, finalizer) = ZIORuntime.fromLayerWithFinalizer(zioRuntimeLayer)
-                finalizers = finalizer :: finalizers
-                runtime.unsafe
-            else
-                zio.Runtime.default.unsafe
+        if zioRuntimeLayer ne ZLayer.empty then
+            val (runtime, finalizer) = ZIORuntime.fromLayerWithFinalizer(zioRuntimeLayer)
+            finalizers = finalizer :: finalizers
+            runtime.unsafe
         else
-            KyoSchedulerZioRuntime.default.unsafe
-        end if
+            zio.Runtime.default.unsafe
     end zioRuntime
 end Bench
 

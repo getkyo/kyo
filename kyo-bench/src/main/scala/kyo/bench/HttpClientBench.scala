@@ -4,7 +4,7 @@ import org.http4s.ember.client.EmberClientBuilder
 
 class HttpClientBench extends Bench.ForkOnly("pong"):
 
-    override val zioRuntimeLayer = zio.http.Client.default
+    override val zioRuntimeLayer = super.zioRuntimeLayer.merge(zio.http.Client.default)
 
     val url = TestHttpServer.start(1)
 

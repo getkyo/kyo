@@ -4,7 +4,7 @@ import org.http4s.ember.client.EmberClientBuilder
 
 class HttpClientContentionBench
     extends Bench.ForkOnly(Seq.fill(Runtime.getRuntime().availableProcessors())("pong")):
-    override val zioRuntimeLayer = zio.http.Client.default
+    override val zioRuntimeLayer = super.zioRuntimeLayer.merge(zio.http.Client.default)
 
     val concurrency = Runtime.getRuntime().availableProcessors()
     val url         = TestHttpServer.start(concurrency)
