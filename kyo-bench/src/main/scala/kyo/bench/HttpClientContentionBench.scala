@@ -4,6 +4,7 @@ import org.http4s.ember.client.EmberClientBuilder
 
 class HttpClientContentionBench
     extends Bench.ForkOnly(Seq.fill(Runtime.getRuntime().availableProcessors())("pong")):
+    override val zioRuntimeLayer = zio.http.Client.default
 
     val concurrency = Runtime.getRuntime().availableProcessors()
     val url         = TestHttpServer.start(concurrency)
@@ -43,14 +44,18 @@ class HttpClientContentionBench
         import zio.http.*
         URL.decode(this.url).toOption.get
 
-    // TODO: Initialize client once and reuse
     def zioBench() =
         import zio.*
-        // import zio.http.*
+        import zio.http.*
 
-        // val run = ZIO.service[Client].flatMap(_.url(zioUrl).get("")).flatMap(_.body.asString).provide(Client.default, Scope.default).orDie
-        // ZIO.collectAll(Seq.fill(concurrency)(run.forkDaemon)).flatMap(ZIO.foreach(_)(_.join))
-        ZIO.succeed(Seq.fill(concurrency)("pong"))
+        val request =
+            ZIO.service[Client]
+                .flatMap(_.url(zioUrl).get(""))
+                .flatMap(_.body.asString)
+                .provideSome[Client](Scope.default)
+                .asInstanceOf[Task[String]]
+
+        ZIO.collectAll(Seq.fill(concurrency)(request.forkDaemon)).flatMap(ZIO.foreach(_)(_.join)).orDie
     end zioBench
 
 end HttpClientContentionBench
