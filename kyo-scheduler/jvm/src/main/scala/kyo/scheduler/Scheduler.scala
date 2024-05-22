@@ -15,8 +15,6 @@ import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
-import kyo.stats.internal.MetricReceiver
-import kyo.stats.internal.UnsafeGauge
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.*
@@ -166,7 +164,6 @@ final class Scheduler(
         cycleTask.cancel(true)
         admissionRegulator.stop()
         concurrencyRegulator.stop()
-        gauges.close()
         top.close()
     }
 
@@ -213,16 +210,13 @@ final class Scheduler(
         }
     }
 
-    private val gauges = {
-        val scope    = statsScope()
-        val receiver = MetricReceiver.get
-        UnsafeGauge.all(
-            receiver.gauge(scope, "current_workers")(currentWorkers),
-            receiver.gauge(scope, "allocated_workers")(allocatedWorkers),
-            receiver.gauge(scope, "load_avg")(loadAvg()),
-            receiver.gauge(scope, "flushes")(flushes.sum().toDouble)
+    private val gauges =
+        List(
+            statsScope.gauge("current_workers")(currentWorkers),
+            statsScope.gauge("allocated_workers")(allocatedWorkers),
+            statsScope.gauge("load_avg")(loadAvg()),
+            statsScope.gauge("flushes")(flushes.sum().toDouble)
         )
-    }
 
     def status(): Status = {
         def workerStatus(i: Int) =

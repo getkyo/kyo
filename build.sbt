@@ -68,6 +68,7 @@ lazy val kyo =
             `kyo-tag`,
             `kyo-core`,
             `kyo-direct`,
+            `kyo-stats-registry`,
             `kyo-stats-otel`,
             `kyo-cache`,
             `kyo-sttp`,
@@ -82,6 +83,7 @@ lazy val `kyo-scheduler` =
     crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
+        .dependsOn(`kyo-stats-registry`)
         .in(file("kyo-scheduler"))
         .settings(
             `kyo-settings`,
@@ -157,6 +159,25 @@ lazy val `kyo-direct` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.21"
+        )
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-stats-registry` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-stats-registry"))
+        .settings(
+            `kyo-settings`,
+            scalacOptions --= Seq(
+                "-Wvalue-discard",
+                "-Wunused:all",
+                "-language:strictEquality"
+            ),
+            scalacOptions += "-Xsource:3",
+            libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.1",
+            libraryDependencies += "org.scalatest"  %%% "scalatest"    % "3.2.16" % Test,
+            crossScalaVersions                       := List(scala3Version, scala212Version, scala213Version)
         )
         .jsSettings(`js-settings`)
 

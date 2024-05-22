@@ -6,8 +6,6 @@ import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.top.AdmissionStatus
 import kyo.scheduler.util.Flag
-import kyo.stats.internal.MetricReceiver
-import kyo.stats.internal.UnsafeGauge
 import scala.concurrent.duration.*
 import scala.util.hashing.MurmurHash3
 
@@ -54,19 +52,12 @@ final class Admission(
     protected def update(diff: Int): Unit =
         admissionPercent = Math.max(0, Math.min(100, admissionPercent + diff))
 
-    override def stop(): Unit = {
-        gauges.close()
-        super.stop()
-    }
-
-    private val gauges = {
-        val receiver = MetricReceiver.get
-        UnsafeGauge.all(
-            receiver.gauge(statsScope, "percent")(admissionPercent),
-            receiver.gauge(statsScope, "allowed")(allowed.sum().toDouble),
-            receiver.gauge(statsScope, "rejected")(rejected.sum().toDouble)
+    private val gauges =
+        List(
+            statsScope.gauge("percent")(admissionPercent),
+            statsScope.counterGauge("allowed")(allowed.sum()),
+            statsScope.counterGauge("rejected")(rejected.sum())
         )
-    }
 
     def status(): AdmissionStatus =
         AdmissionStatus(

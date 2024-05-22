@@ -6,7 +6,6 @@ import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.top.WorkerStatus
-import kyo.stats.internal.MetricReceiver
 import scala.util.control.NonFatal
 
 abstract private class Worker(
@@ -165,19 +164,17 @@ abstract private class Worker(
         }
     }
 
-    private def registerStats() = {
-        val scope    = statsScope("worker", id.toString)
-        val receiver = MetricReceiver.get
-        receiver.gauge(scope, "executions")(executions.toDouble)
-        receiver.gauge(scope, "preemptions")(preemptions.toDouble)
-        receiver.gauge(scope, "completions")(completions.toDouble)
-        receiver.gauge(scope, "queue_size")(queue.size())
-        receiver.gauge(scope, "current_cycle")(currentCycle.toDouble)
-        receiver.gauge(scope, "mounts")(mounts.toDouble)
-        receiver.gauge(scope, "stolen_tasks")(stolenTasks.toDouble)
-        receiver.gauge(scope, "lost_tasks")(lostTasks.sum().toDouble)
-    }
-    registerStats()
+    private val gauges =
+        List(
+            statsScope.gauge("queue_size")(queue.size()),
+            statsScope.gauge("current_cycle")(currentCycle.toDouble),
+            statsScope.counterGauge("executions")(executions),
+            statsScope.counterGauge("preemptions")(preemptions),
+            statsScope.counterGauge("completions")(completions),
+            statsScope.counterGauge("mounts")(mounts),
+            statsScope.counterGauge("stolen_tasks")(stolenTasks),
+            statsScope.counterGauge("lost_tasks")(lostTasks.sum())
+        )
 
     def status(): WorkerStatus = {
         val (thread, frame) =
