@@ -2,7 +2,6 @@ package kyo.scheduler
 
 import java.util.concurrent.Executor
 import java.util.concurrent.locks.LockSupport
-import kyo.stats.internal.MetricReceiver
 
 final private case class InternalClock(executor: Executor) {
 
@@ -30,15 +29,9 @@ final private case class InternalClock(executor: Executor) {
 
     def currentMillis(): Long = millis
 
-    def stop(): Unit = {
-        gauge.close()
+    def stop(): Unit =
         _stop = true
-    }
 
-    private val gauge = {
-        val receiver = MetricReceiver.get
-        val scope    = statsScope("clock")
-        receiver.gauge(scope, "skew")((System.currentTimeMillis() - millis).toDouble)
-    }
-
+    private val gauge =
+        statsScope.scope("clock").gauge("skew")((System.currentTimeMillis() - millis).toDouble)
 }

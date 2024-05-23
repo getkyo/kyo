@@ -1,26 +1,22 @@
 package kyoTest.stats
 
 import kyo.*
-import kyo.stats.*
 import kyoTest.KyoTest
 
 class StatsTest extends KyoTest:
 
-    "noop" in {
-        val stats = Stats.noop
-        assert(stats.scope("test") eq stats)
-        assert(stats.initCounter("a").unsafe eq Counter.noop.unsafe)
-        assert(stats.initHistogram("a").unsafe eq Histogram.noop.unsafe)
-        assert(stats.initGauge("a")(1).unsafe eq Gauge.noop.unsafe)
-        val v = new Object
-        assert(IOs.run(stats.traceSpan("a")(v)) eq v)
-    }
-
-    "scope" in {
-        val stats = Stats.initScope("test")
-        assert(stats.initCounter("a").unsafe eq Counter.noop.unsafe)
-        assert(stats.initHistogram("a").unsafe eq Histogram.noop.unsafe)
-        assert(stats.initGauge("a")(1).unsafe eq Gauge.noop.unsafe)
+    "scope" in runJVM {
+        val stats        = Stats.initScope("test1")
+        val counter      = stats.initCounter("a")
+        val histogram    = stats.initHistogram("a")
+        val gauge        = stats.initGauge("a")(1)
+        val counterGauge = stats.initCounterGauge("a")(1)
+        IOs.run(counter.add(1))
+        IOs.run(histogram.observe(1))
+        assert(IOs.run(counter.get) == 1)
+        assert(IOs.run(histogram.count) == 1)
+        assert(IOs.run(gauge.collect) == 1)
+        assert(IOs.run(counterGauge.collect) == 1)
         val v = new Object
         assert(IOs.run(stats.traceSpan("a")(v)) eq v)
     }
