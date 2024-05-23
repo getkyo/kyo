@@ -4,7 +4,7 @@ import java.util.concurrent.locks.LockSupport
 
 class BlockingContentionBench extends Bench.ForkOnly(()):
 
-    val concurrency = Runtime.getRuntime().availableProcessors() * 10
+    val concurrency = Runtime.getRuntime().availableProcessors() * 30
 
     def block(): Unit =
         LockSupport.parkNanos(100000) // 0.1 ms

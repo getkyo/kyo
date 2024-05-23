@@ -45,8 +45,7 @@ case class WorkerStatus(
     stolenTasks: Long,
     lostTasks: Long,
     load: Int,
-    mounts: Long,
-    currentCycle: Long
+    mounts: Long
 ) {
     infix def -(other: WorkerStatus): WorkerStatus =
         WorkerStatus(
@@ -62,8 +61,7 @@ case class WorkerStatus(
             stolenTasks - other.stolenTasks,
             lostTasks - other.lostTasks,
             load,
-            mounts - other.mounts,
-            currentCycle
+            mounts - other.mounts
         )
 }
 

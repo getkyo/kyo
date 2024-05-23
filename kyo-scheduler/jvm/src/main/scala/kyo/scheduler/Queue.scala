@@ -96,17 +96,18 @@ final private class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
         t
     }
 
-    def drain(f: T => Unit): Unit = {
-        val tasks = {
-            lock()
-            try {
-                items = 0
-                queue.dequeueAll
-            } finally
-                unlock()
+    def drain(f: T => Unit): Unit =
+        if (!isEmpty()) {
+            val tasks = {
+                lock()
+                try {
+                    items = 0
+                    queue.dequeueAll
+                } finally
+                    unlock()
+            }
+            tasks.foreach(f)
         }
-        tasks.foreach(f)
-    }
 
     private def lock(): Unit =
         while (!compareAndSet(false, true)) {}
