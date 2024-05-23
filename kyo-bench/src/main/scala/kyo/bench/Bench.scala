@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import kyo.*
 import org.openjdk.jmh.annotations.*
 import zio.UIO
+import zio.ZLayer
 
 @State(Scope.Benchmark)
 @Fork(
@@ -24,15 +25,24 @@ import zio.UIO
 )
 @BenchmarkMode(Array(Mode.Throughput))
 abstract class Bench[T](val expectedResult: T):
+    private var finalizers: List[() => Unit] = Nil
+
+    @TearDown
+    def tearDown(): Unit = finalizers.foreach(_())
+
+    def zioRuntimeLayer: ZLayer[Any, Any, Any] =
+        if System.getProperty("replaceZioExecutor", "false") == "true" then
+            KyoSchedulerZioRuntime.layer
+        else
+            ZLayer.empty
 
     lazy val zioRuntime =
-        val replaceZioExecutor =
-            System.getProperty("replaceZioExecutor", "false") == "true"
-        if !replaceZioExecutor then
-            zio.Runtime.default.unsafe
+        if zioRuntimeLayer ne ZLayer.empty then
+            val (runtime, finalizer) = ZIORuntime.fromLayerWithFinalizer(zioRuntimeLayer)
+            finalizers = finalizer :: finalizers
+            runtime.unsafe
         else
-            KyoSchedulerZioRuntime.default.unsafe
-        end if
+            zio.Runtime.default.unsafe
     end zioRuntime
 end Bench
 

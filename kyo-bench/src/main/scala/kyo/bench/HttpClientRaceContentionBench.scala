@@ -5,6 +5,8 @@ import org.http4s.ember.client.EmberClientBuilder
 class HttpClientRaceContentionBench
     extends Bench.ForkOnly("pong"):
 
+    override val zioRuntimeLayer = super.zioRuntimeLayer.merge(zio.http.Client.default)
+
     val concurrency = 100
     val url         = TestHttpServer.start(concurrency)
 
@@ -61,10 +63,17 @@ class HttpClientRaceContentionBench
         import zio.http.*
         URL.decode(this.url).toOption.get
 
-    // TODO: Initialize client once and reuse
     def zioBench() =
         import zio.*
-        ZIO.succeed("pong")
+        import zio.http.*
+
+        val request =
+            ZIO.service[Client]
+                .flatMap(_.url(zioUrl).get(""))
+                .flatMap(_.body.asString)
+                .provideSome[Client](Scope.default)
+                .asInstanceOf[Task[String]]
+        ZIO.raceAll(request, Seq.fill(concurrency - 1)(request)).orDie
     end zioBench
 
 end HttpClientRaceContentionBench
