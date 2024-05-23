@@ -1249,8 +1249,6 @@ val b: Histogram =
   stats.initHistogram(
     name = "my_histogram",
     description = "some description",
-    unit = "some unit",
-    attributes = Attributes.add("key", "value")
   )
 
 // Gauges take a by-name function to 
@@ -1259,14 +1257,11 @@ val c: Gauge =
   stats.initGauge("free_memory") {
     Runtime.getRuntime().freeMemory()
   }
-
-// Ensure gauges are closed once 
-// they're not needed to avoid leaks
-val d: Unit < IOs =
-  c.close
 ```
 
-> Note: Although stats initialization may perform side effects, Kyo chooses to consider the operation pure since stats are meant to be initialized in a static scope for optimal performance.
+Metrics are automatically garbage collected once no strong references to them are present anymore.
+
+> Note: Although stats initialization perform side effects, Kyo chooses to consider the operation pure since stats are meant to be initialized in a static scope for optimal performance.
 
 Tracing can be performed via the `traceSpan` method. It automatically initializes the span and closes it at the end of the traced computation even in the presence of failures or asynchronous operations. Nested traces are bound to their parent span via `Locals`.
 
