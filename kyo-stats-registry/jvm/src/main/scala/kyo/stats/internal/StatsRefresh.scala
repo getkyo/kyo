@@ -4,7 +4,6 @@ import java.util.ServiceLoader
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
-import kyo.stats.internal.StatsRegistry
 
 trait StatsRefresh {
     self: StatsRegistry.internal.type =>

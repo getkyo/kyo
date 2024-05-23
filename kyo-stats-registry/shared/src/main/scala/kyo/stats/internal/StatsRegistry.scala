@@ -13,8 +13,6 @@ import scala.annotation.tailrec
 
 object StatsRegistry {
 
-    import internal.*
-
     def scope(path: String*): Scope = new Scope(path.reverse.toList)
 
     class Scope private[kyo] (reversePath: List[String]) {
@@ -24,7 +22,7 @@ object StatsRegistry {
         def scope(p: String*) = new Scope(p.reverse.toList ::: reversePath)
 
         def counter(name: String, description: String = "empty"): UnsafeCounter =
-            counters.get(name :: reversePath, description, new UnsafeCounter())
+            internal.counters.get(name :: reversePath, description, new UnsafeCounter())
 
         def histogram(
             name: String,
@@ -32,20 +30,24 @@ object StatsRegistry {
             numberOfSignificantValueDigits: Int = 4,
             highestToLowestValueRatio: Long = 2
         ): UnsafeHistogram =
-            histograms.get(name :: reversePath, description, new UnsafeHistogram(numberOfSignificantValueDigits, highestToLowestValueRatio))
+            internal.histograms.get(
+                name :: reversePath,
+                description,
+                new UnsafeHistogram(numberOfSignificantValueDigits, highestToLowestValueRatio)
+            )
 
         def gauge(name: String, description: String = "empty")(run: => Double): UnsafeGauge =
-            gauges.get(name :: reversePath, description, new UnsafeGauge(() => run))
+            internal.gauges.get(name :: reversePath, description, new UnsafeGauge(() => run))
 
         def counterGauge(name: String, description: String = "empty")(run: => Long): UnsafeCounterGauge =
-            counterGauges.get(name :: reversePath, description, new UnsafeCounterGauge(() => run))
+            internal.counterGauges.get(name :: reversePath, description, new UnsafeCounterGauge(() => run))
     }
 
     def addExporter(exporter: StatsExporter) =
-        exporters.add(exporter)
+        internal.exporters.add(exporter)
 
     def removeExporter(exporter: StatsExporter) =
-        exporters.remove(exporter)
+        internal.exporters.remove(exporter)
 
     private[kyo] object internal extends StatsRefresh {
 
