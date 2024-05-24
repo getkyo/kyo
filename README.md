@@ -1,4 +1,4 @@
-### Please visit https://getkyo.io for an indexed version of this documentation.
+1119### Please visit https://getkyo.io for an indexed version of this documentation.
 ##
 
 <img src="https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png" width="200" alt="Kyo">
@@ -1037,6 +1037,7 @@ To instantiate an aspect, use the `Aspects.init` method. It takes three type par
 ```scala
 import kyo._
 import java.io.Closeable
+import kyo.internal.Trace
 
 class Database extends Closeable {
   def count: Int < IOs = 42
@@ -1057,7 +1058,7 @@ val countPlusOne =
   new Cut[Database, Int, IOs] {
     // The first param is the input of the computation and the second is
     // the computation being handled
-    def apply[S](v: Database < S)(f: Database => Int < IOs) =
+    def apply[S](v: Database < S)(f: Database => Int < IOs)(using Trace) =
       v.map(db => f(db).map(_ + 1))
   }
 
@@ -1076,7 +1077,7 @@ def example(db: Database): Int < IOs =
 // Another 'Cut' implementation
 val countTimesTen =
   new Cut[Database, Int, IOs] {
-    def apply[S](v: Database < S)(f: Database => Int < IOs) =
+    def apply[S](v: Database < S)(f: Database => Int < IOs)(using Trace) =
       v.map(db => f(db).map(_ * 10))
   }
 
@@ -1990,6 +1991,7 @@ To perform a request, use the `apply` method. It takes a builder function based 
 import kyo._
 import sttp.client3._
 import kyo.Requests.Backend
+import kyo.internal.Trace
 
 // Perform a request using a builder function
 val a: String < Requests =
@@ -2014,7 +2016,7 @@ val d: String < Fibers =
 // Implementing a custom mock backend
 val backend: Backend =
   new Backend {
-    def send[T](r: Request[T, Any]) = {
+    def send[T](r: Request[T, Any])(using Trace) = {
       Response.ok(Right("mocked")).asInstanceOf[Response[T]]
     }
   }
@@ -2036,6 +2038,7 @@ Users are free to use any JSON libraries supported by Sttp; however, [zio-json](
 import kyo.*
 import sttp.tapir.*
 import sttp.tapir.server.netty.*
+import kyo.internal.Trace
 
 // A simple health route using an endpoint builder
 val a: Unit < Routes =
