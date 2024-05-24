@@ -1,6 +1,7 @@
 package kyoTest
 
 import kyo.*
+import kyo.internal.Trace
 import org.scalatest.compatible.Assertion
 import scala.concurrent.Future
 
@@ -19,7 +20,7 @@ class aspectsTest extends KyoTest:
 
         "with cut" in run {
             val cut = new Cut[Int, Int, IOs]:
-                def apply[S](v: Int < S)(f: Int => Int < IOs) =
+                def apply[S](v: Int < S)(f: Int => Int < IOs)(using Trace) =
                     v.map(v => f(v + 1))
             aspect.let[Assertion, IOs](cut) {
                 test(1).map(v => assert(v == 3))
@@ -28,7 +29,7 @@ class aspectsTest extends KyoTest:
 
         "sandboxed" in run {
             val cut = new Cut[Int, Int, IOs]:
-                def apply[S](v: Int < S)(f: Int => Int < IOs) =
+                def apply[S](v: Int < S)(f: Int => Int < IOs)(using Trace) =
                     v.map(v => f(v + 1))
             aspect.let[Assertion, IOs](cut) {
                 aspect.sandbox {
@@ -39,10 +40,10 @@ class aspectsTest extends KyoTest:
 
         "nested cuts" in run {
             val cut1 = new Cut[Int, Int, IOs]:
-                def apply[S](v: Int < S)(f: Int => Int < IOs) =
+                def apply[S](v: Int < S)(f: Int => Int < IOs)(using Trace) =
                     v.map(v => f(v * 3))
             val cut2 = new Cut[Int, Int, IOs]:
-                def apply[S](v: Int < S)(f: Int => Int < IOs) =
+                def apply[S](v: Int < S)(f: Int => Int < IOs)(using Trace) =
                     v.map(v => f(v + 5))
             aspect.let[Assertion, IOs](cut1) {
                 aspect.let[Assertion, IOs](cut2) {
@@ -63,10 +64,10 @@ class aspectsTest extends KyoTest:
             yield (v1, v2)
 
         val cut1 = new Cut[Int, Int, IOs]:
-            def apply[S](v: Int < S)(f: Int => Int < IOs) =
+            def apply[S](v: Int < S)(f: Int => Int < IOs)(using Trace) =
                 v.map(v => f(v * 3))
         val cut2 = new Cut[Int, Int, IOs]:
-            def apply[S](v: Int < S)(f: Int => Int < IOs) =
+            def apply[S](v: Int < S)(f: Int => Int < IOs)(using Trace) =
                 v.map(v => f(v + 5))
         aspect1.let[Assertion, IOs](cut1) {
             aspect2.let[Assertion, IOs](cut2) {
@@ -86,7 +87,7 @@ class aspectsTest extends KyoTest:
             yield (v1, v2)
 
         val cut = new Cut[Int, Int, IOs]:
-            def apply[S](v: Int < S)(f: Int => Int < IOs) =
+            def apply[S](v: Int < S)(f: Int => Int < IOs)(using Trace) =
                 v.map(v => f(v * 3))
         aspect1.let[Assertion, IOs](cut) {
             aspect2.let[Assertion, IOs](aspect1) {

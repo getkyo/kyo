@@ -1,3 +1,4 @@
+import kyo.internal.Trace
 import scala.annotation.implicitNotFound
 import scala.util.NotGiven
 
@@ -7,28 +8,28 @@ package object kyo:
 
     extension [T, S](v: T < S)(using NotGiven[Any => S])
 
-        inline def flatMap[U, S2](inline f: T => U < S2): U < (S & S2) =
+        inline def flatMap[U, S2](inline f: T => U < S2)(using Trace): U < (S & S2) =
             if isNull(v) then
                 throw new NullPointerException
             kyo.core.transform(v)(f)
         end flatMap
 
-        inline def map[U, S2](inline f: T => U < S2): U < (S & S2) =
+        inline def map[U, S2](inline f: T => U < S2)(using Trace): U < (S & S2) =
             flatMap(f)
 
-        def unit: Unit < S =
+        def unit(using Trace): Unit < S =
             map(_ => ())
 
-        def withFilter(p: T => Boolean): T < S =
+        def withFilter(p: T => Boolean)(using Trace): T < S =
             map(v => if !p(v) then throw new MatchError(v) else v)
 
-        def flatten[U, S2](using ev: T => U < S2): U < (S & S2) =
+        def flatten[U, S2](using ev: T => U < S2)(using Trace): U < (S & S2) =
             flatMap(ev)
 
-        inline def andThen[U, S2](inline f: => U < S2)(using ev: T => Unit): U < (S & S2) =
+        inline def andThen[U, S2](inline f: => U < S2)(using ev: T => Unit, trace: Trace): U < (S & S2) =
             flatMap(_ => f)
 
-        def repeat(i: Int)(using ev: T => Unit): Unit < S =
+        def repeat(i: Int)(using ev: T => Unit, trace: Trace): Unit < S =
             if i <= 0 then () else andThen(repeat(i - 1))
 
         private[kyo] def isPure: Boolean =
@@ -45,10 +46,10 @@ package object kyo:
         ): T = v.asInstanceOf[T]
     end extension
 
-    def zip[T1, T2, S](v1: T1 < S, v2: T2 < S): (T1, T2) < S =
+    def zip[T1, T2, S](v1: T1 < S, v2: T2 < S)(using Trace): (T1, T2) < S =
         v1.map(t1 => v2.map(t2 => (t1, t2)))
 
-    def zip[T1, T2, T3, S](v1: T1 < S, v2: T2 < S, v3: T3 < S): (T1, T2, T3) < S =
+    def zip[T1, T2, T3, S](v1: T1 < S, v2: T2 < S, v3: T3 < S)(using Trace): (T1, T2, T3) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => (t1, t2, t3))))
 
     def zip[T1, T2, T3, T4, S](
@@ -56,7 +57,7 @@ package object kyo:
         v2: T2 < S,
         v3: T3 < S,
         v4: T4 < S
-    ): (T1, T2, T3, T4) < S =
+    )(using Trace): (T1, T2, T3, T4) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
 
     inline def discard[T](v: T): Unit =

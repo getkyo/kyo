@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.core.*
+import kyo.internal.Trace
 
 class Envs[+V] extends Effect[Envs[V]]:
     type Command[T] = Tag[T]
@@ -18,7 +19,7 @@ object Envs:
     private val envsTag: Tag[EnvsErased]   = Tag[EnvsErased]
     private inline given [V]: Tag[Envs[V]] = envsTag.asInstanceOf[Tag[Envs[V]]]
 
-    def get[V](using tag: Tag[V]): V < Envs[V] =
+    def get[V](using tag: Tag[V], trace: Trace): V < Envs[V] =
         envs[V].suspend[V](tag)
 
     def run[V >: Nothing: Tag, T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
@@ -37,7 +38,8 @@ object Envs:
         inline def apply[T, S](inline f: V => T < S)(
             using
             inline intersection: Tag.Intersection[V],
-            inline tag: Tag[V]
+            inline tag: Tag[V],
+            inline trace: Trace
         ): T < (Envs[V] & S) =
             envs[V].suspend[V, T, S](tag, f)
         end apply

@@ -4,6 +4,7 @@ import core.*
 import core.internal.*
 import iosInternal.*
 import java.util.concurrent.atomic.AtomicReference
+import kyo.internal.Trace
 import scala.annotation.tailrec
 import scala.util.*
 import scala.util.control.NonFatal
@@ -16,20 +17,21 @@ sealed trait IOs extends Effect[IOs]:
 
     inline def apply[T, S](
         inline f: => T < (IOs & S)
-    ): T < (IOs & S) =
+    )(using inline _trace: Trace): T < (IOs & S) =
         fromKyo {
             new KyoIO[T, S]:
+                def trace = _trace
                 def apply(v: Unit, s: Safepoint[IOs & S], l: Locals.State) =
                     f
         }
 
-    def fail[T](ex: Throwable): T < IOs =
+    def fail[T](ex: Throwable)(using Trace): T < IOs =
         IOs(throw ex)
 
-    def fail[T](msg: String): T < IOs =
+    def fail[T](msg: String)(using Trace): T < IOs =
         fail(new Exception(msg))
 
-    def fromTry[T, S](v: Try[T] < S): T < (IOs & S) =
+    def fromTry[T, S](v: Try[T] < S)(using Trace): T < (IOs & S) =
         v.map {
             case Success(v) =>
                 v
@@ -37,15 +39,15 @@ sealed trait IOs extends Effect[IOs]:
                 fail(ex)
         }
 
-    def attempt[T, S](v: => T < S): Try[T] < S =
+    def attempt[T, S](v: => T < S)(using Trace): Try[T] < S =
         core.catching(v.map(Success(_): Try[T]))(Failure(_))
 
     def catching[T, S, U >: T, S2](v: => T < S)(
         pf: PartialFunction[Throwable, U < S2]
-    ): U < (S & S2) =
+    )(using Trace): U < (S & S2) =
         core.catching(v)(pf)
 
-    def run[T: Flat](v: T < IOs): T =
+    def run[T: Flat](v: T < IOs)(using Trace): T =
         @tailrec def runLoop(v: T < IOs): T =
             v match
                 case kyo: Suspend[IO, Unit, T, IOs] @unchecked =>
@@ -56,7 +58,7 @@ sealed trait IOs extends Effect[IOs]:
         runLoop(v)
     end run
 
-    def runLazy[T: Flat, S](v: T < (IOs & S)): T < S =
+    def runLazy[T: Flat, S](v: T < (IOs & S))(using _trace: Trace)(using Trace): T < S =
         @tailrec def runLazyLoop(v: T < (IOs & S)): T < S =
             v match
                 case kyo: Suspend[?, ?, ?, ?] =>
@@ -67,6 +69,7 @@ sealed trait IOs extends Effect[IOs]:
                         val k = kyo.asInstanceOf[Suspend[MX, Any, T, S & IOs]]
                         fromKyo {
                             new Continue[MX, Any, T, S](k):
+                                def trace = _trace
                                 def apply(v: Any, s: Safepoint[S], l: Locals.State) =
                                     runLazyLoop(k(v, s, l))
                         }
@@ -77,7 +80,7 @@ sealed trait IOs extends Effect[IOs]:
         runLazyLoop(v)
     end runLazy
 
-    def ensure[T, S](f: => Unit < IOs)(v: T < S): T < (IOs & S) =
+    def ensure[T, S](f: => Unit < IOs)(v: T < S)(using Trace): T < (IOs & S) =
         val ensure = new Ensure:
             def run = f
         eval(v: T < (IOs & S))(

@@ -2,6 +2,7 @@ package kyo
 
 import java.util.concurrent.atomic.DoubleAdder as JDoubleAdder
 import java.util.concurrent.atomic.LongAdder as JLongAdder
+import kyo.internal.Trace
 
 object Adders:
     val initLong: LongAdder < IOs     = IOs(new LongAdder(new JLongAdder()))
@@ -9,16 +10,16 @@ object Adders:
 
 class LongAdder private[kyo] (private val ref: JLongAdder) extends AnyVal:
 
-    def add(v: Long): Unit < IOs = IOs(ref.add(v))
-    def decrement: Unit < IOs    = IOs(ref.decrement())
-    def increment: Unit < IOs    = IOs(ref.increment())
-    def get: Long < IOs          = IOs(ref.sum())
-    def reset: Unit < IOs        = IOs(ref.reset())
+    def add(v: Long)(using Trace): Unit < IOs = IOs(ref.add(v))
+    def decrement(using Trace): Unit < IOs    = IOs(ref.decrement())
+    def increment(using Trace): Unit < IOs    = IOs(ref.increment())
+    def get(using Trace): Long < IOs          = IOs(ref.sum())
+    def reset(using Trace): Unit < IOs        = IOs(ref.reset())
 end LongAdder
 
 class DoubleAdder private[kyo] (private val ref: JDoubleAdder) extends AnyVal:
 
-    def add(v: Double): Unit < IOs = IOs(ref.add(v))
-    def get: Double < IOs          = IOs(ref.sum())
-    def reset: Unit < IOs          = IOs(ref.reset())
+    def add(v: Double)(using Trace): Unit < IOs = IOs(ref.add(v))
+    def get(using Trace): Double < IOs          = IOs(ref.sum())
+    def reset(using Trace): Unit < IOs          = IOs(ref.reset())
 end DoubleAdder

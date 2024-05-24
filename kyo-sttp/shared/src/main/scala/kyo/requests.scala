@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.*
+import kyo.internal.Trace
 import sttp.client3.*
 
 opaque type Requests <: Fibers = Fibers
@@ -10,20 +11,20 @@ object Requests:
     abstract class Backend:
         self =>
 
-        def send[T](r: Request[T, Any]): Response[T] < Fibers
+        def send[T](r: Request[T, Any])(using Trace): Response[T] < Fibers
 
         def withMeter(m: Meter): Backend =
             new Backend:
-                def send[T](r: Request[T, Any]) =
+                def send[T](r: Request[T, Any])(using Trace) =
                     m.run(self.send(r))
     end Backend
 
     private val local = Locals.init[Backend](PlatformBackend.default)
 
-    def run[T, S](v: T < (Requests & S)): T < (Fibers & S) =
+    def run[T, S](v: T < (Requests & S))(using Trace): T < (Fibers & S) =
         v
 
-    def run[T, S](b: Backend)(v: T < (Requests & S)): T < (Fibers & S) =
+    def run[T, S](b: Backend)(v: T < (Requests & S))(using Trace): T < (Fibers & S) =
         local.let(b)(v)
 
     type BasicRequest = sttp.client3.RequestT[Empty, Either[?, String], Any]
@@ -36,10 +37,10 @@ object Requests:
                 Right(v)
         }
 
-    def apply[T](f: BasicRequest => Request[Either[?, T], Any]): T < Requests =
+    def apply[T](f: BasicRequest => Request[Either[?, T], Any])(using Trace): T < Requests =
         request(f(basicRequest))
 
-    def request[T](req: Request[Either[?, T], Any]): T < Requests =
+    def request[T](req: Request[Either[?, T], Any])(using Trace): T < Requests =
         local.use(_.send(req)).map {
             _.body match
                 case Left(ex: Throwable) =>

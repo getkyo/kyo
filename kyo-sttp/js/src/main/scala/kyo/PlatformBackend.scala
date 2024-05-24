@@ -1,12 +1,13 @@
 package kyo
 
 import kyo.Requests.Backend
+import kyo.internal.Trace
 import sttp.client3.*
 
 object PlatformBackend:
     val default =
         new Backend:
             val b = FetchBackend()
-            def send[T](r: Request[T, Any]) =
+            def send[T](r: Request[T, Any])(using Trace) =
                 Fibers.fromFuture(r.send(b))
 end PlatformBackend
