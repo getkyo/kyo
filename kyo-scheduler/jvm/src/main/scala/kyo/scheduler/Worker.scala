@@ -6,7 +6,6 @@ import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.top.WorkerStatus
-import kyo.stats.internal.MetricReceiver
 import scala.util.control.NonFatal
 
 abstract private class Worker(
@@ -14,13 +13,13 @@ abstract private class Worker(
     exec: Executor,
     scheduleTask: (Task, Worker) => Unit,
     stealTask: Worker => Task,
-    clock: InternalClock
+    clock: InternalClock,
+    timeSliceMs: Int
 ) extends Runnable {
 
     import Worker.internal.*
 
     protected def shouldStop(): Boolean
-    protected def getCurrentCycle(): Long
 
     val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
 
@@ -29,11 +28,10 @@ abstract private class Worker(
 
     val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
 
-    @volatile private var currentCycle = 0L
+    @volatile private var taskStartMs       = 0L
+    @volatile private var currentTask: Task = null
 
     val c1, c2, c3, c4, c5, c6, c7 = 0L // padding
-
-    @volatile private var currentTask: Task = null
 
     private var executions  = 0L
     private var preemptions = 0L
@@ -47,13 +45,9 @@ abstract private class Worker(
 
     private val schedule = scheduleTask(_, this)
 
-    def enqueue(cycle: Long, task: Task, force: Boolean = false): Boolean = {
-        val proceed = force || checkAvailability(cycle)
-        if (proceed) {
-            queue.add(task)
-            wakeup()
-        }
-        proceed
+    def enqueue(task: Task): Unit = {
+        queue.add(task)
+        wakeup()
     }
 
     def wakeup() =
@@ -62,50 +56,47 @@ abstract private class Worker(
 
     def load() = {
         var load = queue.size()
-        if (currentTask != null)
+        if (currentTask ne null)
             load += 1
         load
     }
 
     def stealingBy(thief: Worker): Task = {
         val task = queue.stealingBy(thief.queue)
-        if (task != null)
+        if (task ne null)
             lostTasks.add(thief.queue.size() + 1)
         task
     }
 
     def drain(): Unit =
-        if (!queue.isEmpty())
-            queue.drain(schedule)
+        queue.drain(schedule)
 
-    def cycle(cycles: Long): Unit = {
-        val task = currentTask
-        if (task != null && currentCycle < cycles - 1)
-            task.doPreempt()
-        checkAvailability(cycles)
-        ()
-    }
-
-    def checkAvailability(cycles: Long): Boolean = {
-        val available = !isStalled(cycles) && !isBlocked()
+    def checkAvailability(nowMs: Long): Boolean = {
+        val available = !checkStalling(nowMs) && !isBlocked()
         if (!available)
             drain()
         available
     }
 
-    private def isStalled(cycles: Long): Boolean =
-        running && currentCycle < cycles - 2
-
-    private def isBlocked(): Boolean =
-        running && {
-            val mount = this.mount
-            mount != null && {
-                val state = mount.getState().ordinal()
-                state == Thread.State.BLOCKED.ordinal() ||
-                state == Thread.State.WAITING.ordinal() ||
-                state == Thread.State.TIMED_WAITING.ordinal()
-            }
+    private def checkStalling(nowMs: Long): Boolean = {
+        val task    = currentTask
+        val start   = taskStartMs
+        val stalled = (task ne null) && start > 0 && start < nowMs - timeSliceMs
+        if (stalled) {
+            task.doPreempt()
         }
+        stalled
+    }
+
+    private def isBlocked(): Boolean = {
+        val mount = this.mount
+        (mount ne null) && {
+            val state = mount.getState().ordinal()
+            state == Thread.State.BLOCKED.ordinal() ||
+            state == Thread.State.WAITING.ordinal() ||
+            state == Thread.State.TIMED_WAITING.ordinal()
+        }
+    }
 
     def run(): Unit = {
         mounts += 1
@@ -113,17 +104,14 @@ abstract private class Worker(
         setCurrent(this)
         var task: Task = null
         while (true) {
-            val cycle = getCurrentCycle()
-            if (currentCycle != cycle)
-                currentCycle = cycle
-            if (task == null)
+            if (task eq null)
                 task = queue.poll()
-            if (task == null) {
+            if (task eq null) {
                 task = stealTask(this)
-                if (task != null)
+                if (task ne null)
                     stolenTasks += queue.size() + 1
             }
-            if (task != null) {
+            if (task ne null) {
                 executions += 1
                 if (runTask(task) == Task.Preempted) {
                     preemptions += 1
@@ -142,7 +130,7 @@ abstract private class Worker(
             }
             if (shouldStop()) {
                 running = false
-                if (task != null) schedule(task)
+                if (task ne null) schedule(task)
                 drain()
                 return
             }
@@ -152,6 +140,7 @@ abstract private class Worker(
     private def runTask(task: Task): Task.Result = {
         currentTask = task
         val start = clock.currentMillis()
+        taskStartMs = start
         try
             task.run(start, clock)
         catch {
@@ -161,23 +150,21 @@ abstract private class Worker(
                 Task.Done
         } finally {
             currentTask = null
+            taskStartMs = 0
             task.addRuntime((clock.currentMillis() - start).asInstanceOf[Int])
         }
     }
 
-    private def registerStats() = {
-        val scope    = statsScope("worker", id.toString)
-        val receiver = MetricReceiver.get
-        receiver.gauge(scope, "executions")(executions.toDouble)
-        receiver.gauge(scope, "preemptions")(preemptions.toDouble)
-        receiver.gauge(scope, "completions")(completions.toDouble)
-        receiver.gauge(scope, "queue_size")(queue.size())
-        receiver.gauge(scope, "current_cycle")(currentCycle.toDouble)
-        receiver.gauge(scope, "mounts")(mounts.toDouble)
-        receiver.gauge(scope, "stolen_tasks")(stolenTasks.toDouble)
-        receiver.gauge(scope, "lost_tasks")(lostTasks.sum().toDouble)
-    }
-    registerStats()
+    private val gauges =
+        List(
+            statsScope.gauge("queue_size")(queue.size()),
+            statsScope.counterGauge("executions")(executions),
+            statsScope.counterGauge("preemptions")(preemptions),
+            statsScope.counterGauge("completions")(completions),
+            statsScope.counterGauge("mounts")(mounts),
+            statsScope.counterGauge("stolen_tasks")(stolenTasks),
+            statsScope.counterGauge("lost_tasks")(lostTasks.sum())
+        )
 
     def status(): WorkerStatus = {
         val (thread, frame) =
@@ -193,15 +180,14 @@ abstract private class Worker(
             thread,
             frame,
             isBlocked(),
-            isStalled(getCurrentCycle()),
+            checkStalling(clock.currentMillis()),
             executions,
             preemptions,
             completions,
             stolenTasks,
             lostTasks.sum(),
             load(),
-            mounts,
-            currentCycle
+            mounts
         )
     }
 }

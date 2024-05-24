@@ -4,8 +4,6 @@ import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.top.RegulatorStatus
 import kyo.scheduler.util.*
-import kyo.stats.internal.MetricReceiver
-import kyo.stats.internal.UnsafeGauge
 import scala.util.control.NonFatal
 
 abstract class Regulator(
@@ -43,7 +41,7 @@ abstract class Regulator(
 
     protected def measure(v: Long): Unit = {
         probesCompleted.increment()
-        stats.measurement.observe(v.toDouble)
+        stats.measurement.observe(Math.max(0, v.toDouble))
         synchronized(measurements.observe(v))
     }
 
@@ -65,11 +63,9 @@ abstract class Regulator(
                 val delta =
                     if (step < 0) -pow
                     else pow
-                stats.update.observe(delta)
                 updates.increment()
                 update(delta)
-            } else
-                stats.update.observe(0)
+            }
             stats.jitter.observe(jitter)
             stats.loadavg.observe(load)
         } catch {
@@ -81,23 +77,20 @@ abstract class Regulator(
     def stop(): Unit = {
         collectTask.cancel()
         regulateTask.cancel()
-        stats.gauges.close()
-        ()
     }
 
-    protected val statsScope = kyo.scheduler.statsScope("regulator", getClass.getSimpleName())
+    protected val statsScope = kyo.scheduler.statsScope.scope("regulator", getClass.getSimpleName().toLowerCase())
 
     private object stats {
-        val receiver    = MetricReceiver.get
-        val loadavg     = receiver.histogram(statsScope, "loadavg")
-        val measurement = receiver.histogram(statsScope, "measurement")
-        val update      = receiver.histogram(statsScope, "update")
-        val jitter      = receiver.histogram(statsScope, "jitter")
-        val gauges = UnsafeGauge.all(
-            receiver.gauge(statsScope, "probesSent")(probesSent.sum().toDouble),
-            receiver.gauge(statsScope, "probesCompleted")(probesSent.sum().toDouble),
-            receiver.gauge(statsScope, "adjustments")(adjustments.sum().toDouble),
-            receiver.gauge(statsScope, "updates")(updates.sum().toDouble)
+        val loadavg     = statsScope.histogram("loadavg")
+        val measurement = statsScope.histogram("measurement")
+        val update      = statsScope.histogram("update")
+        val jitter      = statsScope.histogram("jitter")
+        val gauges = List(
+            statsScope.gauge("probes_sent")(probesSent.sum().toDouble),
+            statsScope.gauge("probes_completed")(probesSent.sum().toDouble),
+            statsScope.gauge("adjustments")(adjustments.sum().toDouble),
+            statsScope.gauge("updates")(updates.sum.toDouble)
         )
     }
 

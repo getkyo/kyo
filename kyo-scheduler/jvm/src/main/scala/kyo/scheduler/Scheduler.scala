@@ -15,8 +15,6 @@ import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
-import kyo.stats.internal.MetricReceiver
-import kyo.stats.internal.UnsafeGauge
 import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.*
@@ -38,12 +36,6 @@ final class Scheduler(
 
     @volatile private var allocatedWorkers = 0
     @volatile private var currentWorkers   = coreWorkers
-
-    val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
-
-    @volatile private var cycles = 0L
-
-    val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
 
     ensureWorkers()
 
@@ -76,55 +68,54 @@ final class Scheduler(
         ExecutionContext.fromExecutor(asExecutor)
 
     private def schedule(task: Task, submitter: Worker): Unit = {
-        val cycles = this.cycles
-        @tailrec def loop(tries: Int = 0): Unit = {
-            var worker: Worker = null
-            if (submitter == null && tries == 0)
-                worker = Worker.current()
-            if (worker == null) {
-                val currentWorkers = this.currentWorkers
-                var position       = XSRandom.nextInt(currentWorkers)
-                var stride         = Math.min(currentWorkers, scheduleStride)
-                var minLoad        = Int.MaxValue
-                while (stride > 0 && minLoad != 0) {
-                    val candidate = workers(position)
-                    if (
-                        candidate != null &&
-                        (candidate ne submitter) &&
-                        candidate.checkAvailability(cycles)
-                    ) {
-                        val l = candidate.load()
-                        if (l < minLoad) {
-                            minLoad = l
-                            worker = candidate
-                        }
-                    }
-                    position += 1
-                    if (position == currentWorkers)
-                        position = 0
-                    stride -= 1
-                }
-            }
-            while (worker == null)
-                worker = workers(XSRandom.nextInt(currentWorkers))
-            if (!worker.enqueue(cycles, task, force = tries >= scheduleTries))
-                loop(tries + 1)
+        val nowMs          = clock.currentMillis()
+        var worker: Worker = null
+        if (submitter eq null) {
+            worker = Worker.current()
+            if ((worker ne null) && !worker.checkAvailability(nowMs))
+                worker = null
         }
-        loop()
+        if (worker eq null) {
+            val currentWorkers = this.currentWorkers
+            var position       = XSRandom.nextInt(currentWorkers)
+            var stride         = Math.min(currentWorkers, scheduleStride)
+            var minLoad        = Int.MaxValue
+            while (stride > 0 && minLoad != 0) {
+                val candidate = workers(position)
+                if (
+                    (candidate ne null) &&
+                    (candidate ne submitter) &&
+                    candidate.checkAvailability(nowMs)
+                ) {
+                    val l = candidate.load()
+                    if (l < minLoad) {
+                        minLoad = l
+                        worker = candidate
+                    }
+                }
+                position += 1
+                if (position == currentWorkers)
+                    position = 0
+                stride -= 1
+            }
+        }
+        while (worker eq null)
+            worker = workers(XSRandom.nextInt(currentWorkers))
+        worker.enqueue(task)
     }
 
     private def steal(thief: Worker): Task = {
-        val cycles         = this.cycles
+        val nowMs          = clock.currentMillis()
         val currentWorkers = this.currentWorkers
         var worker: Worker = null
         var maxLoad        = 1
-        var position       = 0
-        while (position < currentWorkers) {
+        var position       = XSRandom.nextInt(currentWorkers)
+        var stride         = Math.min(currentWorkers, stealStride)
+        while (stride > 0) {
             val candidate = workers(position)
             if (
-                candidate != null &&
-                (candidate ne thief) &&
-                candidate.checkAvailability(cycles)
+                (candidate ne null) &&
+                (candidate ne thief)
             ) {
                 val load = candidate.load()
                 if (load > maxLoad) {
@@ -133,8 +124,11 @@ final class Scheduler(
                 }
             }
             position += 1
+            if (position == currentWorkers)
+                position = 0
+            stride -= 1
         }
-        if (worker != null)
+        if (worker ne null)
             worker.stealingBy(thief)
         else
             null
@@ -142,7 +136,7 @@ final class Scheduler(
 
     def flush() = {
         val worker = Worker.current()
-        if (worker != null) {
+        if (worker ne null) {
             flushes.increment()
             worker.drain()
         }
@@ -155,7 +149,7 @@ final class Scheduler(
         var sum      = 0
         while (position < currentWorkers) {
             val w = workers(position)
-            if (w != null)
+            if (w ne null)
                 sum += w.load()
             position += 1
         }
@@ -166,7 +160,6 @@ final class Scheduler(
         cycleTask.cancel(true)
         admissionRegulator.stop()
         concurrencyRegulator.stop()
-        gauges.close()
         top.close()
     }
 
@@ -178,9 +171,8 @@ final class Scheduler(
     private def ensureWorkers() =
         for (idx <- allocatedWorkers until currentWorkers) {
             workers(idx) =
-                new Worker(idx, pool, schedule, steal, clock) {
-                    def shouldStop(): Boolean   = idx >= currentWorkers
-                    def getCurrentCycle(): Long = cycles
+                new Worker(idx, pool, schedule, steal, clock, timeSliceMs) {
+                    def shouldStop(): Boolean = idx >= currentWorkers
                 }
             allocatedWorkers += 1
         }
@@ -188,22 +180,21 @@ final class Scheduler(
     private val cycleTask =
         timerExecutor.scheduleAtFixedRate(
             () => cycleWorkers(),
-            timeSliceMs,
-            timeSliceMs,
-            TimeUnit.MILLISECONDS
+            cycleNs,
+            cycleNs,
+            TimeUnit.NANOSECONDS
         )
 
     private def cycleWorkers(): Unit = {
         try {
-            val cycles = this.cycles + 1
-            this.cycles = cycles
+            val nowMs    = clock.currentMillis()
             var position = 0
             while (position < allocatedWorkers) {
                 val worker = workers(position)
-                if (worker != null) {
+                if (worker ne null) {
                     if (position >= currentWorkers)
                         worker.drain()
-                    worker.cycle(cycles)
+                    worker.checkAvailability(nowMs)
                 }
                 position += 1
             }
@@ -213,16 +204,13 @@ final class Scheduler(
         }
     }
 
-    private val gauges = {
-        val scope    = statsScope()
-        val receiver = MetricReceiver.get
-        UnsafeGauge.all(
-            receiver.gauge(scope, "current_workers")(currentWorkers),
-            receiver.gauge(scope, "allocated_workers")(allocatedWorkers),
-            receiver.gauge(scope, "load_avg")(loadAvg()),
-            receiver.gauge(scope, "flushes")(flushes.sum().toDouble)
+    private val gauges =
+        List(
+            statsScope.gauge("current_workers")(currentWorkers),
+            statsScope.gauge("allocated_workers")(allocatedWorkers),
+            statsScope.gauge("load_avg")(loadAvg()),
+            statsScope.gauge("flushes")(flushes.sum().toDouble)
         )
-    }
 
     def status(): Status = {
         def workerStatus(i: Int) =
@@ -264,23 +252,25 @@ object Scheduler {
         coreWorkers: Int,
         minWorkers: Int,
         maxWorkers: Int,
-        scheduleTries: Int,
         scheduleStride: Int,
+        stealStride: Int,
         virtualizeWorkers: Boolean,
         timeSliceMs: Int,
+        cycleNs: Int,
         enableTopJMX: Boolean,
         enableTopConsoleMs: Int
     )
     object Config {
         val default: Config = {
             val cores             = Runtime.getRuntime().availableProcessors()
-            val coreWorkers       = Math.max(1, Flag("coreWorkers", cores))
+            val coreWorkers       = Math.max(1, Flag("coreWorkers", cores * 10))
             val minWorkers        = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
             val maxWorkers        = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
-            val scheduleTries     = Math.max(1, Flag("scheduleTries", 32))
-            val scheduleStride    = Math.max(1, Flag("scheduleStride", 8))
+            val scheduleStride    = Math.max(1, Flag("scheduleStride", cores))
+            val stealStride       = Math.max(1, Flag("stealStride", cores * 4))
             val virtualizeWorkers = Flag("virtualizeWorkers", false)
-            val timeSliceMs       = Flag("timeSliceMs", 5)
+            val timeSliceMs       = Flag("timeSliceMs", 10)
+            val cycleNs           = Flag("cycleNs", 100000)
             val enableTopJMX      = Flag("enableTopJMX", true)
             val enableTopConsole  = Flag("enableTopConsoleMs", 0)
             Config(
@@ -288,10 +278,11 @@ object Scheduler {
                 coreWorkers,
                 minWorkers,
                 maxWorkers,
-                scheduleTries,
                 scheduleStride,
+                stealStride,
                 virtualizeWorkers,
                 timeSliceMs,
+                cycleNs,
                 enableTopJMX,
                 enableTopConsole
             )
