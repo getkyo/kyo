@@ -116,7 +116,7 @@ lazy val `kyo-scheduler-zio-3` = `kyo-scheduler-zio-base`.settings(
 )
 
 lazy val `kyo-scheduler-zio` = `kyo-scheduler-zio-base`.settings(
-    scalacOptions += "-Xsource:3",
+    scalacOptions ++= (if (CrossVersion.partialVersion(scalaVersion.value).exists(_._1 == 3)) Seq("-Xsource:3") else Nil),
     crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
 )
 
