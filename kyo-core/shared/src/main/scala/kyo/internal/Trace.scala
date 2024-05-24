@@ -7,11 +7,13 @@ opaque type Trace = String
 
 object Trace:
 
+    private val maxSnippetLines = 3
+
     extension (t: Trace)
         def show: String       = t
         def position: Position = Position(t.takeWhile(_ != '\n').drop(1))
         def method: String     = t.drop(position.show.length + 2).takeWhile(isIdentifierPart)
-        def sourceCode: String = t.drop(position.show.length + 2)
+        def snippet: String    = t.drop(position.show.length + 2)
     end extension
 
     implicit inline def derive: Trace =
@@ -19,9 +21,12 @@ object Trace:
 
     private def traceImpl(using Quotes): Expr[Trace] =
         val position = Position.infer
+
         import quotes.reflect.*
-        val macroPosition = quotes.reflect.Position.ofMacroExpansion
-        val source        = macroPosition.sourceFile.content.getOrElse(report.errorAndAbort("Can't locate source code to generate trace."))
+
+        val source =
+            Position.ofMacroExpansion.sourceFile.content
+                .getOrElse(report.errorAndAbort("Can't locate source code to generate trace."))
 
         @tailrec
         def parse(source: List[Char], acc: List[Char] = Nil, closes: Int = 0): String =
@@ -39,15 +44,14 @@ object Trace:
         end parse
 
         def print(code: String): String =
-            code.split('\n').take(3).toList match
+            code.split('\n').take(maxSnippetLines).toList match
                 case Nil         => ""
                 case head :: Nil => head
                 case head :: tail =>
                     val spaces = tail.map(_.takeWhile(_ == ' ').length).minOption.getOrElse(0)
                     (head :: tail.map(_.drop(spaces))).mkString("\n")
 
-        val code = print(parse(source.reverse.drop(source.length() - macroPosition.start).toList))
-        report.info(code)
+        val code = print(parse(source.reverse.drop(source.length() - Position.ofMacroExpansion.start).toList))
         Expr(s"$position\n$code")
     end traceImpl
 
