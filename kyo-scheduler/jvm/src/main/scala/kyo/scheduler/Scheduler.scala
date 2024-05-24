@@ -70,12 +70,12 @@ final class Scheduler(
     private def schedule(task: Task, submitter: Worker): Unit = {
         val nowMs          = clock.currentMillis()
         var worker: Worker = null
-        if (submitter == null) {
+        if (submitter eq null) {
             worker = Worker.current()
-            if (worker != null && !worker.checkAvailability(nowMs))
+            if ((worker ne null) && !worker.checkAvailability(nowMs))
                 worker = null
         }
-        if (worker == null) {
+        if (worker eq null) {
             val currentWorkers = this.currentWorkers
             var position       = XSRandom.nextInt(currentWorkers)
             var stride         = Math.min(currentWorkers, scheduleStride)
@@ -83,7 +83,7 @@ final class Scheduler(
             while (stride > 0 && minLoad != 0) {
                 val candidate = workers(position)
                 if (
-                    candidate != null &&
+                    (candidate ne null) &&
                     (candidate ne submitter) &&
                     candidate.checkAvailability(nowMs)
                 ) {
@@ -99,7 +99,7 @@ final class Scheduler(
                 stride -= 1
             }
         }
-        while (worker == null)
+        while (worker eq null)
             worker = workers(XSRandom.nextInt(currentWorkers))
         worker.enqueue(task)
     }
@@ -114,7 +114,7 @@ final class Scheduler(
         while (stride > 0) {
             val candidate = workers(position)
             if (
-                candidate != null &&
+                (candidate ne null) &&
                 (candidate ne thief)
             ) {
                 val load = candidate.load()
@@ -128,7 +128,7 @@ final class Scheduler(
                 position = 0
             stride -= 1
         }
-        if (worker != null)
+        if (worker ne null)
             worker.stealingBy(thief)
         else
             null
@@ -136,7 +136,7 @@ final class Scheduler(
 
     def flush() = {
         val worker = Worker.current()
-        if (worker != null) {
+        if (worker ne null) {
             flushes.increment()
             worker.drain()
         }
@@ -149,7 +149,7 @@ final class Scheduler(
         var sum      = 0
         while (position < currentWorkers) {
             val w = workers(position)
-            if (w != null)
+            if (w ne null)
                 sum += w.load()
             position += 1
         }
@@ -191,7 +191,7 @@ final class Scheduler(
             var position = 0
             while (position < allocatedWorkers) {
                 val worker = workers(position)
-                if (worker != null) {
+                if (worker ne null) {
                     if (position >= currentWorkers)
                         worker.drain()
                     worker.checkAvailability(nowMs)

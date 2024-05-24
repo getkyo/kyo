@@ -56,14 +56,14 @@ abstract private class Worker(
 
     def load() = {
         var load = queue.size()
-        if (currentTask != null)
+        if (currentTask ne null)
             load += 1
         load
     }
 
     def stealingBy(thief: Worker): Task = {
         val task = queue.stealingBy(thief.queue)
-        if (task != null)
+        if (task ne null)
             lostTasks.add(thief.queue.size() + 1)
         task
     }
@@ -81,7 +81,7 @@ abstract private class Worker(
     private def checkStalling(nowMs: Long): Boolean = {
         val task    = currentTask
         val start   = taskStartMs
-        val stalled = task != null && start > 0 && start < nowMs - timeSliceMs
+        val stalled = (task ne null) && start > 0 && start < nowMs - timeSliceMs
         if (stalled) {
             task.doPreempt()
         }
@@ -90,7 +90,7 @@ abstract private class Worker(
 
     private def isBlocked(): Boolean = {
         val mount = this.mount
-        mount != null && {
+        (mount ne null) && {
             val state = mount.getState().ordinal()
             state == Thread.State.BLOCKED.ordinal() ||
             state == Thread.State.WAITING.ordinal() ||
@@ -104,14 +104,14 @@ abstract private class Worker(
         setCurrent(this)
         var task: Task = null
         while (true) {
-            if (task == null)
+            if (task eq null)
                 task = queue.poll()
-            if (task == null) {
+            if (task eq null) {
                 task = stealTask(this)
-                if (task != null)
+                if (task ne null)
                     stolenTasks += queue.size() + 1
             }
-            if (task != null) {
+            if (task ne null) {
                 executions += 1
                 if (runTask(task) == Task.Preempted) {
                     preemptions += 1
@@ -130,7 +130,7 @@ abstract private class Worker(
             }
             if (shouldStop()) {
                 running = false
-                if (task != null) schedule(task)
+                if (task ne null) schedule(task)
                 drain()
                 return
             }

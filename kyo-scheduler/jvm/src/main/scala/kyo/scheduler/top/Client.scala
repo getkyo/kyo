@@ -48,7 +48,7 @@ object Client {
 
         while (true) {
             val status = mbeanServerConnection.getAttribute(objectName, "Status").asInstanceOf[Status]
-            if (lastStatus != null) {
+            if (lastStatus ne null) {
                 consumeStatus(status - lastStatus)
             }
             lastStatus = status
