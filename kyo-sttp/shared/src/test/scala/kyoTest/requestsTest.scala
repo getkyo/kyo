@@ -9,7 +9,7 @@ class requestsTest extends KyoTest:
 
     class TestBackend extends Requests.Backend:
         var calls = 0
-        def send[T](r: Request[T, Any])(using Trace) =
+        def send[T](r: Request[T, Any]) =
             calls += 1
             Response.ok(Right("mocked")).asInstanceOf[Response[T]]
     end TestBackend
