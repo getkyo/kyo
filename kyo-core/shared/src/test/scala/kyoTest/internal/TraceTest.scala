@@ -24,16 +24,25 @@ class TraceTest extends KyoTest:
 
     "two params" in {
         def test(a: Int, b: String)(using t: Trace) = t.snippet
-        assert(test(1, "hello") == "test(1, \"hello\")")
+        assert(test(1, "hello") == """test(1, "hello")""")
     }
 
     "multiple param lists" in {
         def test(a: Int)(b: String)(using t: Trace) = t.snippet
-        assert(test(1)("hello") == "test(1)(\"hello\")")
+        assert(test(1)("hello") == """test(1)("hello")""")
     }
 
     "infix method" in pendingUntilFixed {
         object Test:
+            infix def test(v: Int)(using t: Trace) = t.snippet
+
+        assert((Test test 42) == "Test test 42")
+        ()
+    }
+
+    "extension infix method" in pendingUntilFixed {
+        object Test
+        extension (test: Test.type)
             infix def test(v: Int)(using t: Trace) = t.snippet
 
         assert((Test test 42) == "Test test 42")
@@ -55,12 +64,12 @@ class TraceTest extends KyoTest:
     "type parameter" in {
         def test[T](a: T)(using t: Trace) = t.snippet
         assert(test(1) == "test(1)")
-        assert(test("hello") == "test(\"hello\")")
+        assert(test("hello") == """test("hello")""")
     }
 
     "named arguments" in {
         def test(a: Int, b: String)(using t: Trace) = t.snippet
-        assert(test(a = 1, b = "hello") == "test(a = 1, b = \"hello\")")
+        assert(test(a = 1, b = "hello") == """test(a = 1, b = "hello")""")
     }
 
     "varargs" in {
@@ -100,7 +109,7 @@ class TraceTest extends KyoTest:
 
     "mixed backticks and regular identifiers" in {
         def `test-method`(`a-param`: Int, bParam: String)(using t: Trace) = t.snippet
-        assert(`test-method`(1, "hello") == "`test-method`(1, \"hello\")")
+        assert(`test-method`(1, "hello") == """`test-method`(1, "hello")""")
     }
 
     "unicode identifiers" in {
@@ -115,31 +124,31 @@ class TraceTest extends KyoTest:
 
     "method with keyword identifiers" in {
         def `val`(`def`: Int, `type`: String)(using t: Trace) = t.snippet
-        assert(`val`(1, "hello") == "`val`(1, \"hello\")")
+        assert(`val`(1, "hello") == """`val`(1, "hello")""")
     }
 
     "nested method calls" in {
         def outer(a: String)(using t: Trace) = t.snippet
         def inner(b: String)(using t: Trace) = t.snippet
-        assert(outer(inner("hello")) == "outer(inner(\"hello\"))")
+        assert(outer(inner("hello")) == """outer(inner("hello"))""")
     }
 
     "method with complex expressions" in {
         def test(a: Int, b: String)(using t: Trace) = t.snippet
-        assert(test(1 + 2 * 3, s"hello ${1 + 1}") == "test(1 + 2 * 3, s\"hello ${1 + 1}\")")
+        assert(test(1 + 2 * 3, s"hello ${1 + 1}") == """test(1 + 2 * 3, s"hello ${1 + 1}")""")
     }
 
     "method with default and non-default parameters" in {
         def test(a: Int, b: String = "world")(using t: Trace) = t.snippet
         assert(test(1) == "test(1)")
-        assert(test(1, "hello") == "test(1, \"hello\")")
+        assert(test(1, "hello") == """test(1, "hello")""")
     }
 
     "method with repeated parameters" in {
         def test(a: Int, b: String*)(using t: Trace) = t.snippet
         assert(test(1) == "test(1)")
-        assert(test(1, "hello") == "test(1, \"hello\")")
-        assert(test(1, "hello", "world") == "test(1, \"hello\", \"world\")")
+        assert(test(1, "hello") == """test(1, "hello")""")
+        assert(test(1, "hello", "world") == """test(1, "hello", "world")""")
     }
 
     "method with by-name parameters" in {
@@ -158,14 +167,14 @@ class TraceTest extends KyoTest:
 
     "method with a type parameter bounded by a complex type" in {
         def test[T <: Either[String, Int]](a: T)(using t: Trace) = t.snippet
-        assert(test(Left("hello")) == "test(Left(\"hello\"))")
+        assert(test(Left("hello")) == """test(Left("hello"))""")
         assert(test(Right(1)) == "test(Right(1))")
     }
 
     "explicit type parameter" in {
         def test[T](a: T)(using t: Trace) = t.snippet
         assert(test[Int](1) == "test[Int](1)")
-        assert(test[String]("hello") == "test[String](\"hello\")")
+        assert(test[String]("hello") == """test[String]("hello")""")
     }
 
     "explicit type parameter with a value type" in {
@@ -177,25 +186,25 @@ class TraceTest extends KyoTest:
 
     "explicit type parameter with a reference type" in {
         def test[T](a: T)(using t: Trace) = t.snippet
-        assert(test[String]("hello") == "test[String](\"hello\")")
+        assert(test[String]("hello") == """test[String]("hello")""")
         assert(test[List[Int]](List(1, 2, 3)) == "test[List[Int]](List(1, 2, 3))")
     }
 
     "explicit type parameter with a generic type" in {
         def test[T](a: T)(using t: Trace) = t.snippet
         assert(test[Option[Int]](Some(1)) == "test[Option[Int]](Some(1))")
-        assert(test[Either[String, Int]](Left("hello")) == "test[Either[String, Int]](Left(\"hello\"))")
+        assert(test[Either[String, Int]](Left("hello")) == """test[Either[String, Int]](Left("hello"))""")
     }
 
     "explicit type parameter with a tuple type" in {
         def test[T](a: T)(using t: Trace) = t.snippet
-        assert(test[(Int, String)]((1, "hello")) == "test[(Int, String)]((1, \"hello\"))")
+        assert(test[(Int, String)]((1, "hello")) == """test[(Int, String)]((1, "hello"))""")
         assert(test[(Boolean, Char, Double)]((true, 'a', 3.14)) == "test[(Boolean, Char, Double)]((true, 'a', 3.14))")
     }
 
     "explicit type parameter with a function type" in {
         def test[T](a: T)(using t: Trace) = t.snippet
-        assert(test[Int => String](i => s"$i") == "test[Int => String](i => s\"$i\")")
+        assert(test[Int => String](i => s"$i") == """test[Int => String](i => s"$i")""")
         assert(test[(String, Int) => Boolean]((s, i) => s.length == i) == "test[(String, Int) => Boolean]((s, i) => s.length == i)")
     }
 
@@ -251,8 +260,8 @@ class TraceTest extends KyoTest:
     "method with multiple by-name parameters with {}" in {
         def test(a: => Int)(b: => String)(using t: Trace) =
             t.snippet
-        assert(test(1) { "hello" } == "test(1) { \"hello\" }")
-        assert(test(1 + 2) { s"hello" } == "test(1 + 2) { s\"hello\" }")
+        assert(test(1) { "hello" } == """test(1) { "hello" }""")
+        assert(test(1 + 2) { s"hello" } == """test(1 + 2) { s"hello" }""")
     }
 
     "extension method with a by-name parameter with {}" in {
@@ -266,7 +275,7 @@ class TraceTest extends KyoTest:
         def test[T](a: => T)(using t: Trace) =
             t.snippet
         assert(test[Int] { 1 } == "test[Int] { 1 }")
-        assert(test[String] { s"hello" } == "test[String] { s\"hello\" }")
+        assert(test[String] { s"hello" } == """test[String] { s"hello" }""")
     }
 
     "identation" in {
