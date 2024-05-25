@@ -50,6 +50,7 @@ sealed trait Layer[-A, +B]:
     def run(memoMap: scala.collection.mutable.Map[Layer[?, ?], Any]): EnvMap[B] < (Fibers) =
         println("HELLO")
         // look into the memoMap for ourselves.
+
         // if it DOES exist, we have to run
         memoMap.get(self) match
             case Some(result) =>
