@@ -207,20 +207,20 @@ The order in which you handle effects in Kyo can significantly influence both th
 import kyo._
 import scala.util._
 
-def optionsFirst(a: Int < (Options & Aborts[Exception])): Either[Exception, Option[Int]] = {
+def optionsFirst(a: Int < (Options & Aborts[Exception])): Either[Exception, Option[Int]] = 
   val b: Option[Int] < Aborts[Exception] = 
     Options.run(a)
   val c: Either[Exception, Option[Int]] < Any = 
     Aborts.run[Exception](b)
   c.pure
-}
-def abortsFirst(a: Int < (Options & Aborts[Exception])): Option[Either[Exception, Int]] = {
+
+def abortsFirst(a: Int < (Options & Aborts[Exception])): Option[Either[Exception, Int]] = 
   val b: Either[Exception, Int] < Options =
     Aborts.run[Exception](a)
   val c: Option[Either[Exception, Int]] < Any = 
     Options.run(b)
   c.pure
-}
+
 
 // The sequence in which effects are handled has a significant impact on the outcome. 
 // This is especially true for effects that can short-circuit the computation.
