@@ -45,31 +45,29 @@ sealed trait Layer[-A, +B]:
     //  And(To(FromKyo(DB), FromKyo(Users)), To(FromKyo(DB), App))
     //
 
+    val tagAny = summon[Tag[Envs[Any]]]
     //  🔺 <- dunce cap for using mutation
-    private def run(memoMap: scala.collection.mutable.Map[Layer[?, ?], Any]): EnvMap[B] < (Envs[Any] & Fibers) =
-        trait Uninstantiatable
+    def run(memoMap: scala.collection.mutable.Map[Layer[?, ?], Any]): EnvMap[B] < (Fibers) =
+        println("HELLO")
         // look into the memoMap for ourselves.
         // if it DOES exist, we have to run
         memoMap.get(self) match
-            case Some(result) => ???
+            case Some(result) =>
+                ???
             case None =>
                 self match
                     case And(lhs, rhs) =>
                         for
                             leftResult  <- lhs.run(memoMap)
                             rightResult <- rhs.run(memoMap)
-                        yield leftResult.union(rightResult)
+                        yield leftResult.union(rightResult).asInstanceOf[EnvMap[B] < (Fibers)]
 
-                    case To(lhs, rhs) =>
-                        for
-                            leftResult  <- lhs.run(memoMap)
-                            rightResult <- Envs.run(leftResult)(rhs.run(memoMap))
-                        yield rightResult
-
-                    case FromKyo(kyo) =>
+                    case layer @ FromKyo(kyo) =>
+                        println("Running FromKyo")
                         kyo.map { result =>
                             memoMap += (self -> result)
-                        }
+                            result
+                        }.asInstanceOf[EnvMap[B] < (Fibers)]
         end match
     end run
 
@@ -91,11 +89,12 @@ object Layers:
     // >>>
     case class To[In1, Out1, In2, Out2](lhs: Layer[In1, Out1], rhs: Layer[Out1 & In2, Out2]) extends Layer[In1 & In2, Out2]
 
-    case class FromKyo[In, Out](kyo: EnvMap[Out] < (Envs[In] & Fibers)) extends Layer[In, Out]
+    case class FromKyo[In, Out](kyo: EnvMap[Out] < (Envs[In] & Fibers))(using tag: Tag[Out]) extends Layer[In, Out]
 
     type Effects = Fibers & IOs
 
-    def make[A, B](v: B < (Effects & Envs[A])): Layer[A, B] = ???
+    def make[A, B: Tag](v: B < (Effects & Envs[A])): Layer[A, B] =
+        FromKyo(v.map(EnvMap(_)))
 
     // macro for merge?
     def provide[B, S0, S1](layer: Layer[Any, B] < S0)(v: Any < Envs[B] & S1) = ???
@@ -117,20 +116,29 @@ object LayerApp extends KyoApp:
     val kyoApp: Unit < (IOs & Envs[Bank]) =
         Envs.get[Bank].map(_.start)
 
-    val makeBank: Bank < Envs[DB] & Envs[Config]   = ???
-    val makeUsers: Users < Envs[DB] & Envs[Config] = ???
-    val makeDB: DB < Envs[Config]                  = ???
-    val makeConfig: Config < IOs                   = ???
+    // val makeBank: Bank < Envs[DB] & Envs[Config]   = ???
+    // val makeUsers: Users < Envs[DB] & Envs[Config] = ???
+    // val makeDB: DB < Envs[Config]                  = ???
+    // val makeConfig: Config < IOs                   = ???
 
-    val userLayer: Layer[DB & Config, Users] = Layers.make(makeUsers)
-    val bankLayer: Layer[DB & Config, Bank]  = Layers.make(makeBank)
+    // val userLayer: Layer[DB & Config, Users] = Layers.make(makeUsers)
+    // val bankLayer: Layer[DB & Config, Bank]  = Layers.make(makeBank)
 
-    val usersFinalLayer: Layer[DB, Users] = configLayer >>> userLayer
-    val bankFinalLayer: Layer[Any, Bank]  = configLayer >+> dbLayer >>> bankLayer
-    val c: Layer[DB, Users & Bank]        = bankFinalLayer ++ usersFinalLayer
+    // val usersFinalLayer: Layer[DB, Users] = configLayer >>> userLayer
+    // val bankFinalLayer: Layer[Any, Bank]  = configLayer >+> dbLayer >>> bankLayer
+    // val c: Layer[DB, Users & Bank]        = bankFinalLayer ++ usersFinalLayer
 
-    lazy val dbLayer: Layer[Config, DB]      = Layers.make(makeDB)
-    lazy val configLayer: Layer[Any, Config] = Layers.make(makeConfig)
+    // lazy val dbLayer: Layer[Config, DB]      = Layers.make(makeDB)
+    // lazy val configLayer: Layer[Any, Config] = Layers.make(makeConfig)
+
+    val stupidLayer = Layers.make(
+        IOs {
+            println("HELLO")
+            "HELLO"
+        }
+    )
+
+    run(stupidLayer.run(scala.collection.mutable.Map.empty[Layer[?, ?], Any]).map(_.get[String]))
 end LayerApp
 
 //    run:
