@@ -46,18 +46,24 @@ sealed trait Layer[-A, +B]:
     //
 
     val tagAny = summon[Tag[Envs[Any]]]
+
     //  🔺 <- dunce cap for using mutation
     def run(memoMap: scala.collection.mutable.Map[Layer[?, ?], Any]): EnvMap[B] < (Fibers) =
-        println("HELLO")
         // look into the memoMap for ourselves.
-
         // if it DOES exist, we have to run
         memoMap.get(self) match
             case Some(result) =>
                 ???
+
             case None =>
                 self match
                     case And(lhs, rhs) =>
+                        for
+                            leftResult  <- lhs.run(memoMap)
+                            rightResult <- rhs.run(memoMap)
+                        yield leftResult.union(rightResult).asInstanceOf[EnvMap[B] < (Fibers)]
+
+                    case To(lhs, rhs) =>
                         for
                             leftResult  <- lhs.run(memoMap)
                             rightResult <- rhs.run(memoMap)
@@ -90,12 +96,47 @@ object Layers:
     // >>>
     case class To[In1, Out1, In2, Out2](lhs: Layer[In1, Out1], rhs: Layer[Out1 & In2, Out2]) extends Layer[In1 & In2, Out2]
 
-    case class FromKyo[In, Out](kyo: EnvMap[Out] < (Envs[In] & Fibers))(using tag: Tag[Out]) extends Layer[In, Out]
+    case class FromKyo[In, Out](kyo: EnvMap[Out] < (Envs[EnvMap[In]] & Fibers & IOs))(using val tag: Tag[Out]) extends Layer[In, Out]
 
     type Effects = Fibers & IOs
 
-    def make[A, B: Tag](v: B < (Effects & Envs[A])): Layer[A, B] =
-        FromKyo(v.map(EnvMap(_)))
+    trait Extract[In]:
+        type Out
+
+    object Extract extends LowPriorityExtract:
+
+        type WithOut[A, B] = Extract[A] { type Out = B }
+
+        // Envs[A] & R -> A & Extract[R]
+        given and[A, B](using extractB: Extract[B]): Extract[Envs[A] & B] with
+            type Out = A & extractB.Out
+
+        // Envs[A] -> A
+        given envs[A]: Extract[Envs[A]] with
+            type Out = A
+
+        case class Box[A]()
+        def test[A](using extract: Extract[A]): Layer[extract.Out, Int] = ???
+
+        val layer   = test[Envs[Int] & Envs[Boolean] & Envs[String]]
+        val l0: Int = layer
+
+    end Extract
+
+    def make[A: Tag, B: Tag](kyo: B < (Effects & Envs[A])): Layer[A, B] =
+        FromKyo {
+            for
+                envMap <- Envs.get[EnvMap[A]]
+                result <- Envs.run(envMap.get[A])(kyo)
+            yield EnvMap(result)
+        }
+
+    // def make[A: Tag, B: Tag](kyo: B < Effects): Layer[A, B] =
+    //     FromKyo {
+    //         for
+    //             result <- kyo
+    //         yield EnvMap(result)
+    //     }
 
     // macro for merge?
     def provide[B, S0, S1](layer: Layer[Any, B] < S0)(v: Any < Envs[B] & S1) = ???
@@ -132,14 +173,22 @@ object LayerApp extends KyoApp:
     // lazy val dbLayer: Layer[Config, DB]      = Layers.make(makeDB)
     // lazy val configLayer: Layer[Any, Config] = Layers.make(makeConfig)
 
-    val stupidLayer = Layers.make(
-        IOs {
-            println("HELLO")
-            "HELLO"
-        }
-    )
+    val stupidLayer = Layers.make(IOs { println("HELLO"); "HELLO" })
+    val badLayer    = Layers.make(IOs { println("TWELVE"); 12 })
+    val combined    = badLayer ++ stupidLayer
 
-    run(stupidLayer.run(scala.collection.mutable.Map.empty[Layer[?, ?], Any]).map(_.get[String]))
+    val program =
+        for
+            envMap <- combined.run(scala.collection.mutable.Map.empty[Layer[?, ?], Any])
+            _ <- IOs {
+                val stringValue = envMap.get[String]
+                val intValue    = envMap.get[Int]
+                println(s"THE ENV MAP CONTAINS A STRING: $stringValue")
+                println(s"THE ENV MAP CONTAINS AN INT: $intValue")
+            }
+        yield ()
+
+    run(program)
 end LayerApp
 
 //    run:
