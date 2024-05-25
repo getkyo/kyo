@@ -97,7 +97,10 @@ lazy val `kyo-scheduler` =
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16" % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.5"  % Test
         )
-        .jsSettings(`js-settings`)
+        .jsSettings(
+            `js-settings`,
+            libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1",
+        )
 
 lazy val `kyo-scheduler-zio` =
     crossProject(JVMPlatform)
