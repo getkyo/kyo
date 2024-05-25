@@ -171,7 +171,7 @@ final class Scheduler(
     private def ensureWorkers() =
         for (idx <- allocatedWorkers until currentWorkers) {
             workers(idx) =
-                new Worker(idx, pool, schedule, steal, clock, timeSliceMs) {
+                new Worker(idx, pool, schedule, steal, clock, timeSliceMs, javaInterruptAfterMs) {
                     def shouldStop(): Boolean = idx >= currentWorkers
                 }
             allocatedWorkers += 1
@@ -257,22 +257,24 @@ object Scheduler {
         virtualizeWorkers: Boolean,
         timeSliceMs: Int,
         cycleNs: Int,
+        javaInterruptAfterMs: Int,
         enableTopJMX: Boolean,
         enableTopConsoleMs: Int
     )
     object Config {
         val default: Config = {
-            val cores             = Runtime.getRuntime().availableProcessors()
-            val coreWorkers       = Math.max(1, Flag("coreWorkers", cores * 10))
-            val minWorkers        = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
-            val maxWorkers        = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
-            val scheduleStride    = Math.max(1, Flag("scheduleStride", cores))
-            val stealStride       = Math.max(1, Flag("stealStride", cores * 4))
-            val virtualizeWorkers = Flag("virtualizeWorkers", false)
-            val timeSliceMs       = Flag("timeSliceMs", 10)
-            val cycleNs           = Flag("cycleNs", 100000)
-            val enableTopJMX      = Flag("enableTopJMX", true)
-            val enableTopConsole  = Flag("enableTopConsoleMs", 0)
+            val cores                = Runtime.getRuntime().availableProcessors()
+            val coreWorkers          = Math.max(1, Flag("coreWorkers", cores * 10))
+            val minWorkers           = Math.max(1, Flag("minWorkers", coreWorkers.toDouble / 2).intValue())
+            val maxWorkers           = Math.max(minWorkers, Flag("maxWorkers", coreWorkers * 100))
+            val scheduleStride       = Math.max(1, Flag("scheduleStride", cores))
+            val stealStride          = Math.max(1, Flag("stealStride", cores * 4))
+            val virtualizeWorkers    = Flag("virtualizeWorkers", false)
+            val timeSliceMs          = Flag("timeSliceMs", 10)
+            val cycleNs              = Flag("cycleNs", 100000)
+            val javaInterruptAfterMs = Flag("javaInterruptAfterMs", timeSliceMs * 4)
+            val enableTopJMX         = Flag("enableTopJMX", true)
+            val enableTopConsole     = Flag("enableTopConsoleMs", 0)
             Config(
                 cores,
                 coreWorkers,
@@ -283,6 +285,7 @@ object Scheduler {
                 virtualizeWorkers,
                 timeSliceMs,
                 cycleNs,
+                javaInterruptAfterMs,
                 enableTopJMX,
                 enableTopConsole
             )
