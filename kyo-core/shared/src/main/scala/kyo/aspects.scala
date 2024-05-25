@@ -8,31 +8,31 @@ object Aspects:
 
     def init[T, U, S](using Trace): Aspect[T, U, S] =
         init(new Cut[T, U, S]:
-            def apply[S2](v: T < S2)(f: T => U < (IOs & S))(using Trace) =
+            def apply[S2](v: T < S2)(f: T => U < (IOs & S)) =
                 v.map(f)
         )
 
-    def init[T, U, S](default: Cut[T, U, S]): Aspect[T, U, S] =
+    def init[T, U, S](default: Cut[T, U, S])(using Trace): Aspect[T, U, S] =
         new Aspect[T, U, S](default)
 
-    def chain[T, U, S](head: Cut[T, U, S], tail: Seq[Cut[T, U, S]]) =
+    def chain[T, U, S](head: Cut[T, U, S], tail: Seq[Cut[T, U, S]])(using Trace) =
         tail.foldLeft(head)(_.andThen(_))
 end Aspects
 
 import Aspects.*
 
 abstract class Cut[T, U, S]:
-    def apply[S2](v: T < S2)(f: T => U < (IOs & S))(using Trace): U < (IOs & S & S2)
+    def apply[S2](v: T < S2)(f: T => U < (IOs & S)): U < (IOs & S & S2)
 
-    def andThen(other: Cut[T, U, S]): Cut[T, U, S] =
+    def andThen(other: Cut[T, U, S])(using Trace): Cut[T, U, S] =
         new Cut[T, U, S]:
-            def apply[S2](v: T < S2)(f: T => U < (IOs & S))(using Trace) =
+            def apply[S2](v: T < S2)(f: T => U < (IOs & S)) =
                 Cut.this(v)(other(_)(f))
 end Cut
 
-final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S]) extends Cut[T, U, S]:
+final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S])(using Trace) extends Cut[T, U, S]:
 
-    def apply[S2](v: T < S2)(f: T => U < (IOs & S))(using Trace) =
+    def apply[S2](v: T < S2)(f: T => U < (IOs & S)) =
         local.use { map =>
             map.get(this) match
                 case Some(a: Cut[T, U, S] @unchecked) =>

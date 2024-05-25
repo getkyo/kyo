@@ -9,17 +9,17 @@ import sttp.client3.*
 
 object PlatformBackend:
 
-    def apply(backend: SttpBackend[KyoSttpMonad.M, WebSockets]): Backend =
+    def apply(backend: SttpBackend[KyoSttpMonad.M, WebSockets])(using Trace): Backend =
         new Backend:
-            def send[T](r: Request[T, Any])(using Trace) =
+            def send[T](r: Request[T, Any]) =
                 r.send(backend)
 
-    def apply(client: HttpClient): Backend =
+    def apply(client: HttpClient)(using Trace): Backend =
         apply(HttpClientKyoBackend.usingClient(client))
 
     val default =
         new Backend:
             val b = HttpClientKyoBackend()
-            def send[T](r: Request[T, Any])(using Trace) =
+            def send[T](r: Request[T, Any]) =
                 r.send(b)
 end PlatformBackend

@@ -11,11 +11,11 @@ object Requests:
     abstract class Backend:
         self =>
 
-        def send[T](r: Request[T, Any])(using Trace): Response[T] < Fibers
+        def send[T](r: Request[T, Any]): Response[T] < Fibers
 
-        def withMeter(m: Meter): Backend =
+        def withMeter(m: Meter)(using Trace): Backend =
             new Backend:
-                def send[T](r: Request[T, Any])(using Trace) =
+                def send[T](r: Request[T, Any]) =
                     m.run(self.send(r))
     end Backend
 
