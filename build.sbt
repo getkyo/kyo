@@ -97,7 +97,7 @@ lazy val `kyo-scheduler` =
         )
         .jsSettings(
             `js-settings`,
-            libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1",
+            libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
         )
 
 def `kyo-scheduler-zio-base` =
@@ -340,8 +340,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.27",
             libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.27",
             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0-RC7",
-            libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.7",
-            libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.7",
+            libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.8",
+            libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.8",
             libraryDependencies += "org.scalatest"       %% "scalatest"           % "3.2.16" % Test
         )
 
