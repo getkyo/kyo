@@ -50,13 +50,13 @@ class resolversTest extends KyoTest:
 
         ZIOs.run {
             for
-                bindings <- Resolvers.run { Resolvers.add(api) }
+                server <- Resolvers.run { Resolvers.add(api) }
                 res <- Requests.run {
                     Requests[String](_
-                        .post(Uri.unsafeApply(bindings.hostName, bindings.port))
+                        .post(Uri.unsafeApply(server.hostName, server.port))
                         .body("""{"query":"{ k1 k2 k3 k4 }"}"""))
                 }
-                _ <- bindings.stop()
+                _ <- server.stop()
             yield assert(res == """{"data":{"k1":42,"k2":42,"k3":42,"k4":42}}""")
         }
     }
@@ -74,13 +74,13 @@ class resolversTest extends KyoTest:
                         endpoint.logic
                     )
                 }
-                bindings <- NettyKyoServer().addEndpoints(modifiedEndpoints).start()
+                server <- NettyKyoServer().addEndpoints(modifiedEndpoints).start()
                 res <- Requests.run {
                     Requests[String](_
-                        .post(Uri.unsafeApply(bindings.hostName, bindings.port, List("api")))
+                        .post(Uri.unsafeApply(server.hostName, server.port, List("api")))
                         .body("""{"query":"{ k1 k2 k3 k4 }"}"""))
                 }
-                _ <- bindings.stop()
+                _ <- server.stop()
             yield assert(res == """{"data":{"k1":42,"k2":42,"k3":42,"k4":42}}""")
         }
     }
