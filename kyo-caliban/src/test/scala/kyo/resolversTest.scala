@@ -3,6 +3,7 @@ package kyo
 import _root_.caliban.*
 import _root_.caliban.render
 import _root_.caliban.schema.Schema
+import _root_.caliban.schema.SchemaDerivation
 import kyo.*
 import kyoTest.KyoTest
 import sttp.model.Uri
@@ -11,6 +12,7 @@ import sttp.tapir.json.zio.*
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.netty.NettyKyoServer
 import zio.Task
+import zio.ZLayer
 
 class resolversTest extends KyoTest:
 
@@ -42,6 +44,29 @@ class resolversTest extends KyoTest:
             interpreter <- api.interpreter
             res         <- interpreter.execute("{ k1 k2 k3 k4 }")
         yield assert(res.data.toString == """{"k1":42,"k2":42,"k3":42,"k4":42}""")
+        end for
+    }
+
+    "arbitrary kyo effects" in runZIO {
+        type Env = Vars[Int] & Consoles
+        object schema extends SchemaDerivation[Runner[Env]]
+
+        case class Query(k: Int < Env) derives schema.SemiAuto
+
+        val api = graphQL(RootResolver(Query(
+            for
+                _ <- Vars.update[Int](_ + 1)
+                v <- Vars.get[Int]
+                _ <- Consoles.println(v)
+            yield v
+        )))
+        val layer = ZLayer.succeed(new Runner[Env]:
+            def apply[T: Flat](v: T < Env): Task[T] = ZIOs.run(Consoles.run(Vars.run(0)(v)))
+        )
+        for
+            interpreter <- api.interpreter
+            res         <- interpreter.execute("{ k }").provide(layer)
+        yield assert(res.data.toString == """{"k":1}""")
         end for
     }
 
