@@ -27,6 +27,14 @@ class fibersTest extends KyoTest:
                 d <- p.get
             yield assert(a && !b && c && d == 1)
         }
+        "complete null" in run {
+            IOs.attempt(Fibers.initPromise[AnyRef].map(_.complete(null))).map {
+                case Failure(ex) =>
+                    assert(ex.isInstanceOf[NullPointerException])
+                case _ =>
+                    fail()
+            }
+        }
         "failure" in run {
             val ex = new Exception
             for
