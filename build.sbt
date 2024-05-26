@@ -100,30 +100,24 @@ lazy val `kyo-scheduler` =
             libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
         )
 
-def `kyo-scheduler-zio-base` =
-    sbtcrossproject.CrossProject("kyo-scheduler-zio", file("kyo-scheduler-zio"))(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .dependsOn(`kyo-scheduler`)
-        .settings(
-            `kyo-settings`,
-            scalacOptions --= Seq(
-                "-Wvalue-discard",
-                "-Wunused:all",
-                "-language:strictEquality"
-            ),
-            libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
-            libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.16" % Test
-        )
-
-lazy val `kyo-scheduler-zio-3` = `kyo-scheduler-zio-base`.settings(
-    crossScalaVersions := List(scala3Version)
-)
-
-lazy val `kyo-scheduler-zio` = `kyo-scheduler-zio-base`.settings(
-    scalacOptions ++= (if (CrossVersion.partialVersion(scalaVersion.value).exists(_._1 == 3)) Seq("-Xsource:3") else Nil),
-    crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
-)
+lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio", file("kyo-scheduler-zio"))(JVMPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .crossType(CrossType.Full)
+    .dependsOn(`kyo-scheduler`)
+    .settings(
+        `kyo-settings`,
+        scalacOptions --= Seq(
+            "-Wvalue-discard",
+            "-Wunused:all",
+            "-language:strictEquality"
+        ),
+        libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
+        libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.16" % Test
+    )
+    .settings(
+        scalacOptions ++= (if (CrossVersion.partialVersion(scalaVersion.value).exists(_._1 == 2)) Seq("-Xsource:3") else Nil),
+        crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+    )
 
 lazy val `kyo-tag` =
     crossProject(JSPlatform, JVMPlatform)
@@ -301,7 +295,7 @@ lazy val `kyo-bench` =
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-sttp`)
-        .dependsOn(`kyo-scheduler-zio-3`)
+        .dependsOn(`kyo-scheduler-zio`)
         .settings(
             `kyo-settings`,
             // Forks each test suite individually
