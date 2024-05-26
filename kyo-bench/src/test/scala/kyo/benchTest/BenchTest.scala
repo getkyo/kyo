@@ -10,7 +10,7 @@ abstract class BenchTest extends AsyncFreeSpec with Assertions:
     enum Target:
         case Cats
         case Kyo
-        case Zio
+        case ZIO
     end Target
 
     def target: Target
