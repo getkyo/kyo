@@ -166,10 +166,6 @@ object LayerApp extends KyoApp:
     run(program)
 end LayerApp
 
-//    run:
-//        Layers.provide()
-//        Layers.merge(bankLayer, dbLayer, configLayer).using(kyoApp)
-
 final class EnvMap[+R](private[kyo] val map: Map[Tag[?], Any]):
     def get[A >: R](using tag: Tag[A]): A = map(tag).asInstanceOf[A]
 
@@ -180,23 +176,22 @@ final class EnvMap[+R](private[kyo] val map: Map[Tag[?], Any]):
         new EnvMap(map ++ that.map)
 
     def allTags: Intersection[?] = Intersection(map.keys.toSeq)
-
 end EnvMap
 
 object EnvMap extends App:
     val empty: EnvMap[Any] = EnvMap(Map.empty[Tag[?], Any])
 
-    def apply[A: Tag](a: A): EnvMap[A]                                     = new EnvMap(Map(Tag[A] -> a))
-    def apply[A: Tag, B: Tag](a: A, b: B): EnvMap[A & B]                   = new EnvMap(Map(Tag[A] -> a, Tag[B] -> b))
-    def apply[A: Tag, B: Tag, C: Tag](a: A, b: B, c: C): EnvMap[A & B & C] = new EnvMap(Map(Tag[A] -> a, Tag[B] -> b, Tag[C] -> c))
+    def apply[A: Tag](a: A): EnvMap[A] =
+        new EnvMap(Map(Tag[A] -> a))
 
-    val x: EnvMap[String]           = EnvMap("String")
-    val y: EnvMap[String & Boolean] = x.add(false)
+    def apply[A: Tag, B: Tag](a: A, b: B): EnvMap[A & B] =
+        new EnvMap(Map(Tag[A] -> a, Tag[B] -> b))
 
-    assert(y.get[Boolean].isInstanceOf[Boolean])
-    assert(y.get[String].isInstanceOf[String])
-//    assert(y.get[String & Boolean])
-//    assert(y.get[Int])
+    def apply[A: Tag, B: Tag, C: Tag](a: A, b: B, c: C): EnvMap[A & B & C] =
+        new EnvMap(Map(Tag[A] -> a, Tag[B] -> b, Tag[C] -> c))
+
+    def apply[A: Tag, B: Tag, C: Tag, D: Tag](a: A, b: B, c: C, d: D): EnvMap[A & B & C & D] =
+        new EnvMap(Map(Tag[A] -> a, Tag[B] -> b, Tag[C] -> c, Tag[D] -> d))
 end EnvMap
 
 class EnvMaps[+V] extends Effect[EnvMaps[V]]:
