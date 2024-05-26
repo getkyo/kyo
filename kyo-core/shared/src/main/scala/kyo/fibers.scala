@@ -104,10 +104,7 @@ case class Promise[T] private (private val p: IOPromise[T]) extends Fiber[T]:
         }
 
     def complete(v: T < IOs): Boolean < IOs =
-        if isNull(v) then
-            throw new NullPointerException("Can't complete a fiber with `null`.")
         IOs(p.complete(v))
-    end complete
 
     def become(other: Fiber[T]): Boolean < IOs =
         other match

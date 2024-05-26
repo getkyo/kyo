@@ -22,21 +22,13 @@ object KyoUtil:
             }
         }
 
-    private val void: Null < IOs = IOs(null)
-
     def nettyFutureToScala[T](f: io.netty.util.concurrent.Future[T]): T < Fibers =
         Fibers.initPromise[T].map { p =>
             p.onComplete(_ => IOs(f.cancel(true)).unit).andThen {
                 f.addListener((future: io.netty.util.concurrent.Future[T]) =>
                     discard {
                         IOs.run {
-                            if future.isSuccess then
-                                val res = future.getNow
-                                if isNull(res) then
-                                    p.complete(void.asInstanceOf[T < IOs])
-                                else
-                                    p.complete(res)
-                                end if
+                            if future.isSuccess then p.complete(future.getNow)
                             else if future.isCancelled then
                                 p.complete(Fibers.interrupted)
                             else p.complete(IOs.fail(future.cause()))
