@@ -123,19 +123,6 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
-    "dispatches java interrupt" in withScheduler { scheduler =>
-        val cdl = new CountDownLatch(1)
-        scheduler.schedule(TestTask(_run = () => {
-            try Thread.sleep(Int.MaxValue)
-            catch {
-                case ex: InterruptedException =>
-                    cdl.countDown()
-            }
-            Task.Done
-        }))
-        cdl.await()
-    }
-
     "asExecutor" - {
         "returns an executor that schedules tasks" in withScheduler { scheduler =>
             val executor = scheduler.asExecutor

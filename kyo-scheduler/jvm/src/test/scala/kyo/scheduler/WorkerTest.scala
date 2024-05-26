@@ -25,7 +25,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
         currentCycle: () => Long = () => 0
     ): Worker = {
         val clock = InternalClock(executor)
-        new Worker(0, executor, scheduleTask, stealTask, clock, 5, 20) {
+        new Worker(0, executor, scheduleTask, stealTask, clock, 5) {
             def getCurrentCycle() = currentCycle()
             def shouldStop()      = stop()
         }

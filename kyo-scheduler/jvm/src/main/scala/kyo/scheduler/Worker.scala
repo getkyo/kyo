@@ -14,8 +14,7 @@ abstract private class Worker(
     scheduleTask: (Task, Worker) => Unit,
     stealTask: Worker => Task,
     clock: InternalClock,
-    timeSliceMs: Int,
-    javaInterruptAfterMs: Int
+    timeSliceMs: Int
 ) extends Runnable {
 
     import Worker.internal.*
@@ -85,11 +84,6 @@ abstract private class Worker(
         val stalled = (task ne null) && start > 0 && start < nowMs - timeSliceMs
         if (stalled) {
             task.doPreempt()
-            if (javaInterruptAfterMs > 0) {
-                val thread = mount
-                if (thread != null && (currentTask eq task) && start < nowMs - javaInterruptAfterMs && !thread.isInterrupted())
-                    thread.interrupt()
-            }
         }
         stalled
     }
