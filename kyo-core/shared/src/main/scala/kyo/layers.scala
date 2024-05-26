@@ -1,62 +1,29 @@
 package kyo
 
+import kyo.EnvMaps.HasEnvs
 import kyo.Flat.unsafe
 import kyo.Tag.Intersection
 import kyo.core.*
 import scala.compiletime.ops.int
 
-// -> Pending
-// -> Result
-
-// Envs[A] -> A.size == 1
-
-// Type level memo
-
-//type Layer[P, R] = ???
-
-//object layers {}
-
-// ZLayer[A & A2, E, B]
-// Layer[B] < Envs[A] & Envs[A2] & Aborts[E]
-// Envs.run(a)
-
-// layer: Layer[A & B]
-// kyo : Thing < Envs[A] & Envs[B]
-// kyo.provide(layer) : Thing
-
-// ZIO.serviceWithZIO{App](_.run).provide(App.live, ...)
-// App.live.run(
-//
-// Envs.get[App].map(_.run).providing(App.live)
-//
 sealed trait Layer[-A, +B]:
     self =>
 
     import Layers.*
 
-    def >>>[B1, C](that: Layer[B & B1, C]): Layer[A & B1, C] =
-        To(self, that)
-
-    def ++[B1, C](that: Layer[B1, C]): Layer[A & B1, B & C] =
-        And(self, that)
-
-    def >+>[B1, C](that: Layer[B & B1, C]): Layer[A & B1, B & C] =
-        self ++ (self >>> that)
+    def >>>[B1, C](that: Layer[B & B1, C]): Layer[A & B1, C]     = To(self, that)
+    def ++[B1, C](that: Layer[B1, C]): Layer[A & B1, B & C]      = And(self, that)
+    def >+>[B1, C](that: Layer[B & B1, C]): Layer[A & B1, B & C] = self ++ (self >>> that)
 
     //  - DB >>> Users
     //  - DB >>> App
     //  And(To(FromKyo(DB), FromKyo(Users)), To(FromKyo(DB), App))
-    //
-
-    val tagAny = summon[Tag[Envs[Any]]]
 
     //  🔺 <- dunce cap for using mutation
-    def run(memoMap: scala.collection.mutable.Map[Layer[?, ?], Any]): EnvMap[B] < (Fibers) =
-        // look into the memoMap for ourselves.
-        // if it DOES exist, we have to run
+    def run(memoMap: scala.collection.mutable.Map[Layer[?, ?], Any]): EnvMap[B] < Effects =
         memoMap.get(self) match
             case Some(result) =>
-                ???
+                result.asInstanceOf[EnvMap[B] < Effects]
 
             case None =>
                 self match
@@ -64,20 +31,22 @@ sealed trait Layer[-A, +B]:
                         for
                             leftResult  <- lhs.run(memoMap)
                             rightResult <- rhs.run(memoMap)
-                        yield leftResult.union(rightResult).asInstanceOf[EnvMap[B] < (Fibers)]
+                        yield leftResult.union(rightResult).asInstanceOf[EnvMap[B] < Effects]
 
                     case To(lhs, rhs) =>
                         for
-                            leftResult  <- lhs.run(memoMap)
-                            rightResult <- rhs.run(memoMap)
-                        yield leftResult.union(rightResult).asInstanceOf[EnvMap[B] < (Fibers)]
+                            leftResult <- lhs.run(memoMap)
+                            hasEnvs = new HasEnvs[Any, Any]:
+                                type Remainder = Any
+                            intersection = leftResult.allTags.asInstanceOf[Intersection[Any]]
+                            rightResult <- EnvMaps.provide(leftResult)(rhs.run(memoMap))(using unsafe.bypass, hasEnvs, intersection)
+                        yield rightResult
 
                     case layer @ FromKyo(kyo) =>
-                        println("Running FromKyo")
-                        kyo.map { result =>
+                        kyo().map { result =>
                             memoMap += (self -> result)
                             result
-                        }.asInstanceOf[EnvMap[B] < (Fibers)]
+                        }.asInstanceOf[EnvMap[B] < Effects]
         end match
     end run
 
@@ -90,34 +59,30 @@ extension [Out](layer: Layer[Any, Out])
     def build: Out < Fibers = ???
 
 // def run -> A < Effects
-
 // V < Envs[A] & Envs[B]
 // Envs.run(envMap.get[A])(v)
 
 object Layers:
+    type Effects = Fibers & IOs & Resources
 
-    case class And[In1, Out1, In2, Out2](lhs: Layer[In1, Out1], rhs: Layer[In2, Out2]) extends Layer[In1 & In2, Out1 & Out2]
-
+    case class And[In1, Out1, In2, Out2](lhs: Layer[In1, Out1], rhs: Layer[In2, Out2])       extends Layer[In1 & In2, Out1 & Out2]
     case class To[In1, Out1, In2, Out2](lhs: Layer[In1, Out1], rhs: Layer[Out1 & In2, Out2]) extends Layer[In1 & In2, Out2]
+    case class FromKyo[In, Out](kyo: () => EnvMap[Out] < (EnvMaps[In] & Effects))(using val tag: Tag[Out]) extends Layer[In, Out]
 
-    case class FromKyo[In, Out](kyo: EnvMap[Out] < (Envs[EnvMap[In]] & Fibers & IOs))(using val tag: Tag[Out]) extends Layer[In, Out]
-
-    type Effects = Fibers & IOs
-
-    def make[A: Tag, B: Tag](kyo: B < (Effects & Envs[A])): Layer[A, B] =
-        FromKyo {
-            for
-                envMap <- Envs.get[EnvMap[A]]
-                result <- Envs.run(envMap.get[A])(kyo)
-            yield EnvMap(result)
+    // COMPLEXITY:
+    // - ZLayer.scoped <<<
+    //
+    // - Finalizers (Ref Counting)
+    // - Memoizaiton
+    // - Parallelization
+    // - FiberRefs
+    //
+    // db >>> users
+    // db >>> events
+    def make[A: Tag, B: Tag](kyo: => B < (Effects & EnvMaps[A])): Layer[A, B] =
+        FromKyo { () =>
+            kyo.map { result => EnvMap(result) }
         }
-
-    // def make[A: Tag, B: Tag](kyo: B < Effects): Layer[A, B] =
-    //     FromKyo {
-    //         for
-    //             result <- kyo
-    //         yield EnvMap(result)
-    //     }
 
     // macro for merge?
     def provide[B, S0, S1](layer: Layer[Any, B] < S0)(v: Any < Envs[B] & S1) = ???
@@ -130,42 +95,57 @@ end Layers
 // end extension
 
 object LayerApp extends KyoApp:
-    trait Config
-    trait DB
-    trait Bank:
-        def start: Unit < IOs
-    trait Users
 
-    val kyoApp: Unit < (IOs & Envs[Bank]) =
-        Envs.get[Bank].map(_.start)
+    case class Config(name: String)
+    object Config:
+        val layer = Layers.make(Config("Hello"))
 
-    // val makeBank: Bank < Envs[DB] & Envs[Config]   = ???
-    // val makeUsers: Users < Envs[DB] & Envs[Config] = ???
-    // val makeDB: DB < Envs[Config]                  = ???
-    // val makeConfig: Config < IOs                   = ???
+    case class DB(config: Config)
+    object DB:
+        val layer: Layer[Config, DB] = Layers.make {
+            for
+                config <- EnvMaps.get[Config]
+                _ <- Resources.acquireRelease(
+                    IOs { println("Acquiring DB with config: " + config.name) }
+                )(_ =>
+                    IOs { println("Releasing DB with config: " + config.name) }
+                )
+                _ <- IOs { println("DONE") }
+            yield DB(config)
+        }
+    end DB
 
-    // val userLayer: Layer[DB & Config, Users] = Layers.make(makeUsers)
-    // val bankLayer: Layer[DB & Config, Bank]  = Layers.make(makeBank)
+    case class Users(db: DB)
+    object Users:
+        val layer: Layer[DB, Users] = Layers.make {
+            for
+                db <- EnvMaps.get[DB]
+                _  <- IOs { println("I AM STARTING UP THE USERS WITH DB: " + db) }
+            yield new Users(db)
+        }
+    end Users
 
-    // val usersFinalLayer: Layer[DB, Users] = configLayer >>> userLayer
-    // val bankFinalLayer: Layer[Any, Bank]  = configLayer >+> dbLayer >>> bankLayer
-    // val c: Layer[DB, Users & Bank]        = bankFinalLayer ++ usersFinalLayer
+    case class Events(db: DB)
+    object Events:
+        val layer: Layer[DB, Events] = Layers.make {
+            for
+                db <- EnvMaps.get[DB]
+                _  <- IOs { println("I AM STARTING UP THE EVENTS WITH DB: " + db) }
+            yield new Events(db)
+        }
+    end Events
 
-    // lazy val dbLayer: Layer[Config, DB]      = Layers.make(makeDB)
-    // lazy val configLayer: Layer[Any, Config] = Layers.make(makeConfig)
-
-    val stupidLayer = Layers.make(IOs { println("HELLO"); "HELLO" })
-    val badLayer    = Layers.make(IOs { println("TWELVE"); 12 })
-    val combined    = badLayer ++ stupidLayer
+    val configDbLayer: Layer[Any, DB]        = Config.layer >>> DB.layer
+    val dbUsersLayer: Layer[Any, Users]      = configDbLayer >>> Users.layer
+    val dbEventsLayer: Layer[Any, Events]    = configDbLayer >>> Events.layer
+    val combined: Layer[Any, Users & Events] = dbUsersLayer ++ dbEventsLayer
 
     val program =
         for
             envMap <- combined.run(scala.collection.mutable.Map.empty[Layer[?, ?], Any])
             _ <- IOs {
-                val stringValue = envMap.get[String]
-                val intValue    = envMap.get[Int]
-                println(s"THE ENV MAP CONTAINS A STRING: $stringValue")
-                println(s"THE ENV MAP CONTAINS AN INT: $intValue")
+                println(s"""USERS: ${envMap.get[Users]}""")
+                println(s"""EVENTS: ${envMap.get[Events]}""")
             }
         yield ()
 
@@ -184,6 +164,8 @@ final class EnvMap[+R](private[kyo] val map: Map[Tag[?], Any]):
 
     def union[R0](that: EnvMap[R0]): EnvMap[R0] =
         new EnvMap(map ++ that.map)
+
+    def allTags: Intersection[?] = Intersection(map.keys.toSeq)
 
 end EnvMap
 
@@ -211,6 +193,8 @@ object EnvMaps:
     private def envs[V]: EnvMaps[V] = envs.asInstanceOf[EnvMaps[V]]
 
     trait EnvMapsErased
+
+    // A little ugly.
     val envMapsTag: Tag[EnvMapsErased] = Tag[EnvMapsErased]
     def fakeTag[V]: Tag[EnvMaps[V]]    = envMapsTag.asInstanceOf[Tag[EnvMaps[V]]]
 
@@ -257,6 +241,11 @@ object TestEnvMaps extends KyoApp:
 
     val program: String < EnvMaps[String & Int & Boolean] =
         for
+            // Suspend(command: (), tag: Tag[Envs[A]])
+            // suspend.tag == handler.tag
+
+            // Suspend[](command: tag[A])
+            // handler
             string  <- EnvMaps.get[String]
             id      <- EnvMaps.get[Int]
             boolean <- EnvMaps.get[Boolean]
