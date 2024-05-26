@@ -114,11 +114,16 @@ private[kyo] class IOPromise[T](state: State[T])
             true
         }
 
+    private val nullCompletion = IOs(null)
+
     final def complete(v: T < IOs): Boolean =
+        val r =
+            if !isNull(v) then v
+            else nullCompletion.asInstanceOf[T < IOs]
         @tailrec def loop(): Boolean =
             get() match
                 case p: Pending[T] @unchecked =>
-                    complete(p, v) || loop()
+                    complete(p, r) || loop()
                 case _ =>
                     false
         loop()
