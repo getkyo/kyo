@@ -1,6 +1,9 @@
 package kyo
 
-import kyo.Layers.And
+import kyo.Flat.unsafe
+import kyo.Tag.Intersection
+import kyo.core.*
+import scala.compiletime.ops.int
 
 // -> Pending
 // -> Result
@@ -88,40 +91,18 @@ extension [Out](layer: Layer[Any, Out])
 
 // def run -> A < Effects
 
+// V < Envs[A] & Envs[B]
+// Envs.run(envMap.get[A])(v)
+
 object Layers:
 
-    // ++
     case class And[In1, Out1, In2, Out2](lhs: Layer[In1, Out1], rhs: Layer[In2, Out2]) extends Layer[In1 & In2, Out1 & Out2]
 
-    // >>>
     case class To[In1, Out1, In2, Out2](lhs: Layer[In1, Out1], rhs: Layer[Out1 & In2, Out2]) extends Layer[In1 & In2, Out2]
 
     case class FromKyo[In, Out](kyo: EnvMap[Out] < (Envs[EnvMap[In]] & Fibers & IOs))(using val tag: Tag[Out]) extends Layer[In, Out]
 
     type Effects = Fibers & IOs
-
-    trait Extract[In]:
-        type Out
-
-    object Extract extends LowPriorityExtract:
-
-        type WithOut[A, B] = Extract[A] { type Out = B }
-
-        // Envs[A] & R -> A & Extract[R]
-        given and[A, B](using extractB: Extract[B]): Extract[Envs[A] & B] with
-            type Out = A & extractB.Out
-
-        // Envs[A] -> A
-        given envs[A]: Extract[Envs[A]] with
-            type Out = A
-
-        case class Box[A]()
-        def test[A](using extract: Extract[A]): Layer[extract.Out, Int] = ???
-
-        val layer   = test[Envs[Int] & Envs[Boolean] & Envs[String]]
-        val l0: Int = layer
-
-    end Extract
 
     def make[A: Tag, B: Tag](kyo: B < (Effects & Envs[A])): Layer[A, B] =
         FromKyo {
@@ -209,7 +190,9 @@ end EnvMap
 object EnvMap extends App:
     val empty: EnvMap[Any] = EnvMap(Map.empty[Tag[?], Any])
 
-    def apply[A: Tag](a: A): EnvMap[A] = new EnvMap(Map(Tag[A] -> a))
+    def apply[A: Tag](a: A): EnvMap[A]                                     = new EnvMap(Map(Tag[A] -> a))
+    def apply[A: Tag, B: Tag](a: A, b: B): EnvMap[A & B]                   = new EnvMap(Map(Tag[A] -> a, Tag[B] -> b))
+    def apply[A: Tag, B: Tag, C: Tag](a: A, b: B, c: C): EnvMap[A & B & C] = new EnvMap(Map(Tag[A] -> a, Tag[B] -> b, Tag[C] -> c))
 
     val x: EnvMap[String]           = EnvMap("String")
     val y: EnvMap[String & Boolean] = x.add(false)
@@ -220,31 +203,69 @@ object EnvMap extends App:
 //    assert(y.get[Int])
 end EnvMap
 
-// ----------------
-// 1. !Startup! Injection -> immediate extraction
-//      -> DB
-//      -> Config
-//      -> Logger
+class EnvMaps[+V] extends Effect[EnvMaps[V]]:
+    type Command[T] = Tag[?]
 
-// def run = for {
-//     db <- ZIO.service[DB]
-//     config <- ZIO.service[Config]
+object EnvMaps:
+    private case object envs extends EnvMaps[Any]
+    private def envs[V]: EnvMaps[V] = envs.asInstanceOf[EnvMaps[V]]
 
-// Config -> DB
-// Config -> Logger
+    trait EnvMapsErased
+    val envMapsTag: Tag[EnvMapsErased] = Tag[EnvMapsErased]
+    def fakeTag[V]: Tag[EnvMaps[V]]    = envMapsTag.asInstanceOf[Tag[EnvMaps[V]]]
 
-// ------------------
-// 2. !Runtime! Injection
-//      -> Metrics
-//      -> Request Context
-//      -> transaction
+    def get[V](using tag: Tag[V]): V < EnvMaps[V] =
+        envs[V].suspend[V](tag)(using fakeTag[V])
 
-//      ZIO[Metrics, E, A]
-//          .provide(
-//              Metrics.live ?? -> creates new every time
-//              Transaction.layer(requestId) ?? -> creates new every time
-//          )
-//          )
-//          )
-//          )
-//          )
+    class ProvideDsl[V]:
+        def apply[T: Flat, S, VS, VR](env: EnvMap[V])(value: T < (EnvMaps[VS] & S))(
+            using
+            HasEnvs[V, VS] { type Remainder = VR },
+            Intersection[V]
+        ): T < (S & VR) =
+            given Tag[EnvMaps[V]] = fakeTag[V]
+            envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
+        end apply
+    end ProvideDsl
+
+    def provide[V >: Nothing]: ProvideDsl[V] =
+        new ProvideDsl[V]
+
+    private def handler[V](using intersection: Intersection[V]) =
+        new ResultHandler[EnvMap[V], Const[Tag[?]], EnvMaps[V], Id, Any]:
+            override def accepts[T](st: EnvMap[V], command: Tag[?]): Boolean =
+                intersection.tags.exists(t => command <:< t)
+
+            def done[T](st: EnvMap[V], v: T)(using Tag[EnvMaps[V]]) = v
+
+            def resume[T, U: Flat, S2](st: EnvMap[V], command: Tag[?], k: T => U < (EnvMaps[V] & S2))(using Tag[EnvMaps[V]]) =
+                Resume(st, k(st.get(using command.asInstanceOf[Tag[Any]]).asInstanceOf[T]))
+
+    sealed trait HasEnvs[V, VS]:
+        type Remainder
+
+    trait LowPriorityHasEnvs:
+        given hasEnvs[V, VR]: HasEnvs[V, V & VR] with
+            type Remainder = EnvMaps[VR]
+
+    object HasEnvs extends LowPriorityHasEnvs:
+        given isEnvs[V]: HasEnvs[V, V] with
+            type Remainder = Any
+end EnvMaps
+
+object TestEnvMaps extends KyoApp:
+
+    val program: String < EnvMaps[String & Int & Boolean] =
+        for
+            string  <- EnvMaps.get[String]
+            id      <- EnvMaps.get[Int]
+            boolean <- EnvMaps.get[Boolean]
+        yield s"STRING: $string, ID: $id, BOOLEAN: $boolean"
+
+    val resolved: String =
+        val envMap = EnvMap(123, "Hello", true)
+        EnvMaps.provide(envMap)(program).pure
+    end resolved
+
+    run(resolved)
+end TestEnvMaps
