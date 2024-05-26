@@ -4,7 +4,6 @@ import kyo.EnvMaps.HasEnvs
 import kyo.Flat.unsafe
 import kyo.Tag.Intersection
 import kyo.core.*
-import scala.compiletime.ops.int
 
 sealed trait Layer[-A, +B]:
     self =>
@@ -17,10 +16,14 @@ sealed trait Layer[-A, +B]:
 
     //  - DB >>> Users
     //  - DB >>> App
-    //  And(To(FromKyo(DB), FromKyo(Users)), To(FromKyo(DB), App))
+    //  - And(To(FromKyo(DB), FromKyo(Users)), To(FromKyo(DB), App))
 
     //  🔺 <- dunce cap for using mutation
-    def run(memoMap: scala.collection.mutable.Map[Layer[?, ?], Any]): EnvMap[B] < Effects =
+
+    def run: EnvMap[B] < Effects =
+        doRun(scala.collection.mutable.Map.empty[Layer[?, ?], Any])
+
+    private def doRun(memoMap: scala.collection.mutable.Map[Layer[?, ?], Any]): EnvMap[B] < Effects =
         memoMap.get(self) match
             case Some(result) =>
                 result.asInstanceOf[EnvMap[B] < Effects]
@@ -29,17 +32,17 @@ sealed trait Layer[-A, +B]:
                 self match
                     case And(lhs, rhs) =>
                         for
-                            leftResult  <- lhs.run(memoMap)
-                            rightResult <- rhs.run(memoMap)
+                            leftResult  <- lhs.doRun(memoMap)
+                            rightResult <- rhs.doRun(memoMap)
                         yield leftResult.union(rightResult).asInstanceOf[EnvMap[B] < Effects]
 
                     case To(lhs, rhs) =>
                         for
-                            leftResult <- lhs.run(memoMap)
+                            leftResult <- lhs.doRun(memoMap)
                             hasEnvs = new HasEnvs[Any, Any]:
                                 type Remainder = Any
                             intersection = leftResult.allTags.asInstanceOf[Intersection[Any]]
-                            rightResult <- EnvMaps.provide(leftResult)(rhs.run(memoMap))(using unsafe.bypass, hasEnvs, intersection)
+                            rightResult <- EnvMaps.provide(leftResult)(rhs.doRun(memoMap))(using unsafe.bypass, hasEnvs, intersection)
                         yield rightResult
 
                     case layer @ FromKyo(kyo) =>
@@ -48,7 +51,7 @@ sealed trait Layer[-A, +B]:
                             result
                         }.asInstanceOf[EnvMap[B] < Effects]
         end match
-    end run
+    end doRun
 
 end Layer
 
@@ -79,9 +82,20 @@ object Layers:
     //
     // db >>> users
     // db >>> events
-    def make[A: Tag, B: Tag](kyo: => B < (Effects & EnvMaps[A])): Layer[A, B] =
+    def apply[A, B: Tag](kyo: => B < (Effects & EnvMaps[A])): Layer[A, B] =
         FromKyo { () =>
             kyo.map { result => EnvMap(result) }
+        }
+
+    def from[A: Tag, B: Tag](f: A => B): Layer[A, B] =
+        Layers.apply { EnvMaps.get[A].map(f) }
+
+    def from[A: Tag, B: Tag, C: Tag](f: (A, B) => C): Layer[A & B, C] =
+        Layers.apply {
+            for
+                a <- EnvMaps.get[A]
+                b <- EnvMaps.get[B]
+            yield f(a, b)
         }
 
     // macro for merge?
@@ -98,11 +112,11 @@ object LayerApp extends KyoApp:
 
     case class Config(name: String)
     object Config:
-        val layer = Layers.make(Config("Hello"))
+        val layer = Layers.apply(Config("Hello"))
 
     case class DB(config: Config)
     object DB:
-        val layer: Layer[Config, DB] = Layers.make {
+        val layer: Layer[Config, DB] = Layers.apply {
             for
                 config <- EnvMaps.get[Config]
                 _ <- Resources.acquireRelease(
@@ -117,7 +131,7 @@ object LayerApp extends KyoApp:
 
     case class Users(db: DB)
     object Users:
-        val layer: Layer[DB, Users] = Layers.make {
+        val layer: Layer[DB, Users] = Layers.apply {
             for
                 db <- EnvMaps.get[DB]
                 _  <- IOs { println("I AM STARTING UP THE USERS WITH DB: " + db) }
@@ -127,7 +141,7 @@ object LayerApp extends KyoApp:
 
     case class Events(db: DB)
     object Events:
-        val layer: Layer[DB, Events] = Layers.make {
+        val layer: Layer[DB, Events] = Layers.apply {
             for
                 db <- EnvMaps.get[DB]
                 _  <- IOs { println("I AM STARTING UP THE EVENTS WITH DB: " + db) }
@@ -142,7 +156,7 @@ object LayerApp extends KyoApp:
 
     val program =
         for
-            envMap <- combined.run(scala.collection.mutable.Map.empty[Layer[?, ?], Any])
+            envMap <- combined.run
             _ <- IOs {
                 println(s"""USERS: ${envMap.get[Users]}""")
                 println(s"""EVENTS: ${envMap.get[Events]}""")
