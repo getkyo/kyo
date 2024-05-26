@@ -30,11 +30,8 @@ object Resolvers:
             apis = resolvers.toIndexed
             api <- if apis.isEmpty then Aborts.fail(new Throwable("You need at least one resolver"))
             else apis.tail.foldLeft(apis.head)(_ |+| _)
-            interpreter <- ZIOs.get(api.interpreter)
-            runtime     <- ZIOs.get(ZIO.runtime[Any])
-            httpInterpreter = HttpInterpreter(interpreter)
-            endpoints       = httpInterpreter.serverEndpoints[Any, NoStreams](NoStreams)
-        yield endpoints.map(e => convertEndpoint(e, runtime))
+            (interpreter, runtime) <- ZIOs.get(api.interpreter <*> ZIO.runtime[Any])
+        yield HttpInterpreter(interpreter).serverEndpoints[Any, NoStreams](NoStreams).map(convertEndpoint(_, runtime))
 
     end endpoints
 
