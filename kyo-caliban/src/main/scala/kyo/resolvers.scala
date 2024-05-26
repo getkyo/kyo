@@ -21,6 +21,23 @@ object Resolvers:
     private given StreamConstructor[Nothing] =
         (_: ZStream[Any, Throwable, Byte]) => throw new Throwable("Streaming is not supported")
 
+    def endpoints[T, S](v: Unit < (Resolvers & S))(using
+        requestCodec: JsonCodec[GraphQLRequest],
+        responseValueCodec: JsonCodec[ResponseValue]
+    ): List[ServerEndpoint[Any, KyoSttpMonad.M]] < (ZIOs & Aborts[Throwable] & S) =
+        for
+            (resolvers, _) <- Sums.run[GraphQL[Any]].apply[Unit, Fibers & S](v)
+            apis = resolvers.toIndexed
+            api <- if apis.isEmpty then Aborts.fail(new Throwable("You need at least one resolver"))
+            else apis.tail.foldLeft(apis.head)(_ |+| _)
+            interpreter <- ZIOs.get(api.interpreter)
+            runtime     <- ZIOs.get(ZIO.runtime[Any])
+            httpInterpreter = HttpInterpreter(interpreter)
+            endpoints       = httpInterpreter.serverEndpoints[Any, NoStreams](NoStreams)
+        yield endpoints.map(e => convertEndpoint(e, runtime))
+
+    end endpoints
+
     def run[T, S](v: Unit < (Resolvers & S))(using
         requestCodec: JsonCodec[GraphQLRequest],
         responseValueCodec: JsonCodec[ResponseValue]
@@ -31,19 +48,7 @@ object Resolvers:
         requestCodec: JsonCodec[GraphQLRequest],
         responseValueCodec: JsonCodec[ResponseValue]
     ): NettyKyoServerBinding < (Fibers & ZIOs & Aborts[Throwable] & S) =
-        for
-            (resolvers, _) <- Sums.run[GraphQL[Any]].apply[Unit, Fibers & S](v)
-            apis = resolvers.toIndexed
-            api <- if apis.isEmpty then Aborts.fail(new Throwable("You need at least one resolver"))
-            else apis.tail.foldLeft(apis.head)(_ |+| _)
-            interpreter <- ZIOs.get(api.interpreter)
-            runtime     <- ZIOs.get(ZIO.runtime[Any])
-            httpInterpreter = HttpInterpreter(interpreter)
-            endpoints       = httpInterpreter.serverEndpoints[Any, NoStreams](NoStreams)
-            bindings <- IOs(server.addEndpoints(endpoints.map(e => convertEndpoint(e, runtime))).start())
-        yield bindings
-
-    end run
+        endpoints(v).map(endpoints => IOs(server.addEndpoints(endpoints).start()))
 
     def add(api: GraphQL[Any]): Unit < Resolvers =
         Sums.add(api)

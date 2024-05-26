@@ -6,7 +6,10 @@ import _root_.caliban.schema.Schema
 import kyo.*
 import kyoTest.KyoTest
 import sttp.model.Uri
+import sttp.tapir.*
 import sttp.tapir.json.zio.*
+import sttp.tapir.server.ServerEndpoint
+import sttp.tapir.server.netty.NettyKyoServer
 import zio.Task
 
 class resolversTest extends KyoTest:
@@ -53,6 +56,31 @@ class resolversTest extends KyoTest:
                         .post(Uri.unsafeApply(bindings.hostName, bindings.port))
                         .body("""{"query":"{ k1 k2 k3 k4 }"}"""))
                 }
+                _ <- bindings.stop()
+            yield assert(res == """{"data":{"k1":42,"k2":42,"k3":42,"k4":42}}""")
+        }
+    }
+
+    "run server under a nested path" in runZIO {
+        val api = graphQL(RootResolver(Query(42, 42, 42, 42)))
+
+        ZIOs.run {
+            for
+                endpoints <- Resolvers.endpoints { Resolvers.add(api) }
+                modifiedEndpoints = endpoints.map { endpoint =>
+                    ServerEndpoint(
+                        endpoint.endpoint.prependIn(stringToPath("api")),
+                        endpoint.securityLogic,
+                        endpoint.logic
+                    )
+                }
+                bindings <- NettyKyoServer().addEndpoints(modifiedEndpoints).start()
+                res <- Requests.run {
+                    Requests[String](_
+                        .post(Uri.unsafeApply(bindings.hostName, bindings.port, List("api")))
+                        .body("""{"query":"{ k1 k2 k3 k4 }"}"""))
+                }
+                _ <- bindings.stop()
             yield assert(res == """{"data":{"k1":42,"k2":42,"k3":42,"k4":42}}""")
         }
     }
