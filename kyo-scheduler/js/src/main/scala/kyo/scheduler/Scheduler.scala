@@ -1,6 +1,6 @@
 package kyo.scheduler
 
-import org.scalajs.macrotaskexecutor.MacrotaskExecutor
+import scala.scalajs.concurrent.JSExecutionContext
 
 object Scheduler {
     val get = new Scheduler
@@ -10,11 +10,12 @@ class Scheduler {
 
     private val clock = new InternalClock()
 
-    def schedule(t: Task): Unit =
-        MacrotaskExecutor.execute { () =>
+    def schedule(t: Task): Unit = {
+        JSExecutionContext.queue.execute { () =>
             if (t.run(clock.currentMillis(), clock) == Task.Preempted)
                 schedule(t)
         }
+    }
 
     def flush(): Unit = {}
 

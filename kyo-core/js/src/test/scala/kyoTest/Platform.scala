@@ -1,7 +1,7 @@
 package kyoTest
 
 object Platform:
-    def executionContext        = org.scalajs.macrotaskexecutor.MacrotaskExecutor
+    def executionContext        = scala.scalajs.concurrent.JSExecutionContext.queue
     def isJVM: Boolean          = false
     def isJS: Boolean           = true
     def isDebugEnabled: Boolean = false

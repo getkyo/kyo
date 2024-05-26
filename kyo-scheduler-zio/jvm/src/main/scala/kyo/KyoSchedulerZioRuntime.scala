@@ -5,7 +5,7 @@ import zio.*
 import zio.internal.ExecutionMetrics
 import zio.internal.FiberRuntime
 
-object KyoSchedulerZIORuntime {
+object KyoSchedulerZioRuntime {
     private[kyo] lazy val layer = {
         val exec =
             new Executor {

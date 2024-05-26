@@ -1,3 +1,5 @@
+import sys.process.*
+
 val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
@@ -15,7 +17,7 @@ val compilerOptions = Seq(
     "-language:strictEquality"
 )
 
-ThisBuild / scalaVersion           := scala3Version
+scalaVersion                       := scala3Version
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
 sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
 sonatypeProfileName                := "io.getkyo"
@@ -96,15 +98,13 @@ lazy val `kyo-scheduler` =
             libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16" % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.5"  % Test
         )
-        .jsSettings(
-            `js-settings`,
-            libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
-        )
+        .jsSettings(`js-settings`)
 
-def `kyo-scheduler-zio-base` =
-    sbtcrossproject.CrossProject("kyo-scheduler-zio", file("kyo-scheduler-zio"))(JVMPlatform)
+lazy val `kyo-scheduler-zio` =
+    crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
+        .in(file("kyo-scheduler-zio"))
         .dependsOn(`kyo-scheduler`)
         .settings(
             `kyo-settings`,
@@ -113,18 +113,11 @@ def `kyo-scheduler-zio-base` =
                 "-Wunused:all",
                 "-language:strictEquality"
             ),
+            scalacOptions += "-Xsource:3",
             libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
-            libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.16" % Test
+            libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.16" % Test,
+            crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version)
         )
-
-lazy val `kyo-scheduler-zio-3` = `kyo-scheduler-zio-base`.settings(
-    crossScalaVersions := List(scala3Version)
-)
-
-lazy val `kyo-scheduler-zio` = `kyo-scheduler-zio-base`.settings(
-    scalacOptions ++= (if (CrossVersion.partialVersion(scalaVersion.value).exists(_._1 == 3)) Seq("-Xsource:3") else Nil),
-    crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
-)
 
 lazy val `kyo-tag` =
     crossProject(JSPlatform, JVMPlatform)
@@ -318,7 +311,7 @@ lazy val `kyo-bench` =
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-sttp`)
-        .dependsOn(`kyo-scheduler-zio-3`)
+        .dependsOn(`kyo-scheduler-zio`)
         .settings(
             `kyo-settings`,
             // Forks each test suite individually
@@ -326,6 +319,7 @@ lazy val `kyo-bench` =
                 val javaOptionsValue = javaOptions.value.toVector
                 val envsVarsValue    = envVars.value
                 (Test / definedTests).value map { test =>
+                    import sbt.dsl.LinterLevel.Ignore
                     Tests.Group(
                         name = test.name,
                         tests = Seq(test),
@@ -357,8 +351,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.27",
             libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.27",
             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0-RC7",
-            libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.8",
-            libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.8",
+            libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.7",
+            libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.7",
             libraryDependencies += "org.scalatest"       %% "scalatest"           % "3.2.16" % Test
         )
 
@@ -400,5 +394,5 @@ lazy val `js-settings` = Seq(
     Compile / doc / sources                     := Seq.empty,
     fork                                        := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.5.0" % "provided"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.5.0"
 )
