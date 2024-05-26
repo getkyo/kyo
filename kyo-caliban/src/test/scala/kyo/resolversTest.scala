@@ -5,6 +5,8 @@ import _root_.caliban.render
 import _root_.caliban.schema.Schema
 import kyo.*
 import kyoTest.KyoTest
+import sttp.model.Uri
+import sttp.tapir.json.zio.*
 import zio.Task
 
 class resolversTest extends KyoTest:
@@ -38,6 +40,21 @@ class resolversTest extends KyoTest:
             res         <- interpreter.execute("{ k1 k2 k3 k4 }")
         yield assert(res.data.toString == """{"k1":42,"k2":42,"k3":42,"k4":42}""")
         end for
+    }
+
+    "run server" in runZIO {
+        val api = graphQL(RootResolver(Query(42, 42, 42, 42)))
+
+        ZIOs.run {
+            for
+                bindings <- Resolvers.run { Resolvers.add(api) }
+                res <- Requests.run {
+                    Requests[String](_
+                        .post(Uri.unsafeApply(bindings.hostName, bindings.port))
+                        .body("""{"query":"{ k1 k2 k3 k4 }"}"""))
+                }
+            yield assert(res == """{"data":{"k1":42,"k2":42,"k3":42,"k4":42}}""")
+        }
     }
 
 end resolversTest

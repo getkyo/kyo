@@ -15,3 +15,5 @@ given [R, T: Flat, S](using ev: Schema[R, T], ev2: (T < S) <:< (T < (Aborts[Thro
 
         override def resolve(value: T < S): Step[R] =
             QueryStep(ZQuery.fromZIONow(ZIOs.run(ev2(value).map(ev.resolve))))
+
+end given
