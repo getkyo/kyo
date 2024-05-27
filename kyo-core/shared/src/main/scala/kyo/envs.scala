@@ -57,14 +57,17 @@ object Envs:
         envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
     end provide
 
-    private def handler[V](using intersection: Tag.Intersection[V]) =
-        new ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any]:
-            override def accepts[T](st: TypeMap[V], command: Tag[T]): Boolean =
-                intersection <:< command
+    private def handler[V]: ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any] =
+        cachedHandler.asInstanceOf[ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any]]
 
-            def done[T](st: TypeMap[V], v: T)(using Tag[Envs[V]]) = v
+    private val cachedHandler =
+        new ResultHandler[TypeMap[Any], Tag, Envs[Any], Id, Any]:
+            override def accepts[T](st: TypeMap[Any], command: Tag[T]): Boolean =
+                st.tag <:< command
 
-            def resume[T, U: Flat, S2](st: TypeMap[V], command: Tag[T], k: T => U < (Envs[V] & S2))(using Tag[Envs[V]]) =
+            def done[T](st: TypeMap[Any], v: T)(using Tag[Envs[Any]]) = v
+
+            def resume[T, U: Flat, S2](st: TypeMap[Any], command: Tag[T], k: T => U < (Envs[Any] & S2))(using Tag[Envs[Any]]) =
                 Resume(st, k(st.get(using command.asInstanceOf[Tag[Any]]).asInstanceOf[T]))
 
     sealed trait HasEnvs[V, +VS]:
