@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo.*
-import kyo.Choices.eval
 import scala.util.NotGiven
 
 class envsTest extends KyoTest:

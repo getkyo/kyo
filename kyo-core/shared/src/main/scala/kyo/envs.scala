@@ -15,8 +15,8 @@ object Envs:
     // However, then handler.tag != kyo.tag in the handle implementation.
     // So we have to use this type erased tag and rely on our `accepts` implementation
     private trait EnvsErased
-    private val envsTag: Tag[EnvsErased]     = Tag[EnvsErased]
-    private def makeEnvsTag[V]: Tag[Envs[V]] = envsTag.asInstanceOf[Tag[Envs[V]]]
+    private val envsTag: Tag[EnvsErased]            = Tag[EnvsErased]
+    private inline def makeEnvsTag[V]: Tag[Envs[V]] = envsTag.asInstanceOf[Tag[Envs[V]]]
 
     def get[V](using tag: Tag[V]): V < Envs[V] =
         envs[V].suspend[V](tag)(using makeEnvsTag[V])
@@ -63,7 +63,7 @@ object Envs:
     private val cachedHandler =
         new ResultHandler[TypeMap[Any], Tag, Envs[Any], Id, Any]:
             override def accepts[T](st: TypeMap[Any], command: Tag[T]): Boolean =
-                st.tag <:< command
+                st <:< command
 
             def done[T](st: TypeMap[Any], v: T)(using Tag[Envs[Any]]) = v
 
@@ -93,35 +93,3 @@ object Envs:
     end HasEnvs
 
 end Envs
-
-// I'm going to delete this and rebase atop Adam's changes once those are in :)
-opaque type TypeMap[+R] = Map[Tag[?], Any]
-
-object TypeMap:
-    def empty: TypeMap[Any] = Map.empty[Tag[?], Any]
-
-    def apply[A: Tag](a: A): TypeMap[A] =
-        Map(Tag[A] -> a)
-
-    def apply[A: Tag, B: Tag](a: A, b: B): TypeMap[A & B] =
-        Map(Tag[A] -> a, Tag[B] -> b)
-
-    def apply[A: Tag, B: Tag, C: Tag](a: A, b: B, c: C): TypeMap[A & B & C] =
-        Map(Tag[A] -> a, Tag[B] -> b, Tag[C] -> c)
-
-    def apply[A: Tag, B: Tag, C: Tag, D: Tag](a: A, b: B, c: C, d: D): TypeMap[A & B & C & D] =
-        Map(Tag[A] -> a, Tag[B] -> b, Tag[C] -> c, Tag[D] -> d)
-
-    extension [R](map: TypeMap[R])
-        def get[A >: R](using tag: Tag[A]): A = map(tag).asInstanceOf[A]
-
-        def add[A](value: A)(using tag: Tag[A]): TypeMap[R & A] =
-            map.updated(tag, value)
-
-        def union[R0](that: TypeMap[R0]): TypeMap[R & R0] =
-            map ++ that
-
-        def tag: Tag.Intersection[?] = Tag.Intersection(map.keys.toSeq)
-    end extension
-
-end TypeMap
