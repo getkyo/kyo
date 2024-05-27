@@ -1,6 +1,8 @@
 package kyoTest
 
 import kyo.*
+import kyo.Choices.eval
+import scala.util.NotGiven
 
 class envsTest extends KyoTest:
 
@@ -205,5 +207,85 @@ class envsTest extends KyoTest:
                 }
             }
         }
+    }
+
+    "provide" - {
+        "providing env maps" in {
+            val kyo =
+                for
+                    string <- Envs.get[String]
+                    int    <- Envs.get[Int]
+                    bool   <- Envs.get[Boolean]
+                yield (string, int, bool)
+
+            val envMap = TypeMap("Hello", 123, true)
+            assert(
+                Envs.provide(envMap)(kyo).pure == ("Hello", 123, true)
+            )
+        }
+
+        "leaving off one service" in {
+            val kyo =
+                for
+                    string <- Envs.get[String]
+                    int    <- Envs.get[Int]
+                    bool   <- Envs.get[Boolean]
+                yield (string, int, bool)
+
+            val envMap: TypeMap[String & Int]                       = TypeMap("Hello", 123)
+            val withTypeMap: (String, Int, Boolean) < Envs[Boolean] = Envs.provide(envMap)(kyo)
+            val withBool: (String, Int, Boolean) < Any              = Envs.run(true)(withTypeMap)
+            assert(
+                withBool.pure == ("Hello", 123, true)
+            )
+        }
+
+        "multiple provide calls" in {
+            val kyo =
+                for
+                    string <- Envs.get[String]
+                    int    <- Envs.get[Int]
+                    bool   <- Envs.get[Boolean]
+                yield (string, int, bool)
+
+            val stringTypeMap = TypeMap("Hello")
+            val intTypeMap    = TypeMap(123)
+            val boolTypeMap   = TypeMap(true)
+            assert(
+                Envs.run(true)(
+                    Envs.provide(stringTypeMap)(Envs.provide(intTypeMap)(Envs.provide(boolTypeMap)(kyo)))
+                ).pure == ("Hello", 123, true)
+            )
+        }
+
+        "providing the wrong env map" in {
+            assertDoesNotCompile("""
+                val kyo: String < Envs[String] = Envs.get[String]
+                val envMap: TypeMap[Int]        = TypeMap(12)
+                Envs.provide(envMap)(kyo).pure
+            """)
+        }
+
+        "providing an empty env map" in {
+            assertDoesNotCompile("""
+                val kyo = Envs.get[String]
+                val envMap = TypeMap.empty
+                Envs.provide(envMap)(kyo).pure
+            """)
+        }
+
+        "providing a superset of the required services" in {
+            val kyo =
+                for
+                    string <- Envs.get[String]
+                    int    <- Envs.get[Int]
+                yield (string, int)
+
+            val envMap = TypeMap("Hello", 123, true)
+            assert(
+                Envs.provide(envMap)(kyo).pure == ("Hello", 123)
+            )
+        }
+
     }
 end envsTest
