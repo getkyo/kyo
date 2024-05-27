@@ -214,7 +214,9 @@ lazy val `kyo-os-lib` =
         .dependsOn(`kyo-core` % "test->test;compile->compile")
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.10.1"
+            scalacOptions --= Seq(
+                "-language:strictEquality"
+            ),
         )
 
 lazy val `kyo-sttp` =
