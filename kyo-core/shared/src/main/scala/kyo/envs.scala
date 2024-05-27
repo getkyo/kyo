@@ -57,15 +57,6 @@ object Envs:
         envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
     end provide
 
-    def provideReverse[V >: Nothing, T: Flat, S, VS, VR](value: T < (Envs[VS] & S))(env: TypeMap[V])(
-        using
-        HasEnvs[V, VS] { type Remainder = VR },
-        Tag.Intersection[V]
-    ): T < (S & VR) =
-        given Tag[Envs[V]] = makeEnvsTag[V]
-        envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
-    end provideReverse
-
     private def handler[V](using intersection: Tag.Intersection[V]) =
         new ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any]:
             override def accepts[T](st: TypeMap[V], command: Tag[T]): Boolean =
