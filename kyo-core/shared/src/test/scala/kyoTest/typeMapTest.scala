@@ -65,8 +65,8 @@ class typeMapTest extends KyoTest:
         import scala.util.Try
         import scala.util.Failure
 
-        def test[T: Tag](e: TypeMap[T], contents: String, tpe: String) =
-            Try(e.get[T]) match
+        def test[A: Tag](e: TypeMap[A], contents: String, tpe: String) =
+            Try(e.get[A]) match
                 case Failure(error) => assert(
                         error.getMessage == s"fatal: kyo.TypeMap of contents [$contents] missing value of type: [$tpe]."
                     )
