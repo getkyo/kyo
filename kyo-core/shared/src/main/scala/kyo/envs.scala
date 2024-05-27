@@ -38,12 +38,16 @@ object Envs:
       *
       * The environment may either be a value or a [[TypeMap]]
       */
-    inline def run[In, V, T: Flat, S, VS, VR](env: In)(value: T < (Envs[VS] & S))(
-        using
-        inline runInput: RunInput[In] { type Out = TypeMap[V] },
-        inline hasEnvs: HasEnvs[V, VS] { type Remainder = VR }
+    inline def runTypeMap[V, T: Flat, S, VS, VR](env: TypeMap[V])(value: T < (Envs[VS] & S))(
+        using HasEnvs[V, VS] { type Remainder = VR }
     ): T < (S & VR) =
-        envs[V].handle(handler[V])(runInput(env), value).asInstanceOf[T < (S & VR)]
+        envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
+    end runTypeMap
+
+    inline def run[V: Tag, T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
+        using HasEnvs[V, VS] { type Remainder = VR }
+    ): T < (S & VR) =
+        envs[V].handle(handler[V])(TypeMap(env), value).asInstanceOf[T < (S & VR)]
     end run
 
     trait RunInput[-In]:

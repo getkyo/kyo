@@ -208,7 +208,7 @@ class envsTest extends KyoTest:
         }
     }
 
-    "provide" - {
+    "runTypeMap" - {
         "providing env maps" in {
             val kyo =
                 for
@@ -219,7 +219,7 @@ class envsTest extends KyoTest:
 
             val envMap = TypeMap("Hello", 123, true)
             assert(
-                Envs.run(envMap)(kyo).pure == ("Hello", 123, true)
+                Envs.runTypeMap(envMap)(kyo).pure == ("Hello", 123, true)
             )
         }
 
@@ -232,7 +232,7 @@ class envsTest extends KyoTest:
                 yield (string, int, bool)
 
             val envMap: TypeMap[String & Int]                       = TypeMap("Hello", 123)
-            val withTypeMap: (String, Int, Boolean) < Envs[Boolean] = Envs.run(envMap)(kyo)
+            val withTypeMap: (String, Int, Boolean) < Envs[Boolean] = Envs.runTypeMap(envMap)(kyo)
             val withBool: (String, Int, Boolean) < Any              = Envs.run(true)(withTypeMap)
             assert(
                 withBool.pure == ("Hello", 123, true)
@@ -252,7 +252,7 @@ class envsTest extends KyoTest:
             val boolTypeMap   = TypeMap(true)
             assert(
                 Envs.run(true)(
-                    Envs.run(stringTypeMap)(Envs.run(intTypeMap)(Envs.run(boolTypeMap)(kyo)))
+                    Envs.runTypeMap(stringTypeMap)(Envs.runTypeMap(intTypeMap)(Envs.runTypeMap(boolTypeMap)(kyo)))
                 ).pure == ("Hello", 123, true)
             )
         }
@@ -261,7 +261,7 @@ class envsTest extends KyoTest:
             assertDoesNotCompile("""
                 val kyo: String < Envs[String] = Envs.get[String]
                 val envMap: TypeMap[Int]        = TypeMap(12)
-                Envs.provide(envMap)(kyo).pure
+                Envs.runTypeMap(envMap)(kyo).pure
             """)
         }
 
@@ -269,7 +269,7 @@ class envsTest extends KyoTest:
             assertDoesNotCompile("""
                 val kyo = Envs.get[String]
                 val envMap = TypeMap.empty
-                Envs.provide(envMap)(kyo).pure
+                Envs.runTypeMap(envMap)(kyo).pure
             """)
         }
 
@@ -281,7 +281,7 @@ class envsTest extends KyoTest:
                         int    <- Envs.get[Int]
                     yield (string, int)
                 val envMap = TypeMap("Hello")
-                Envs.provide(envMap)(kyo).pure
+                Envs.runTypeMap(envMap)(kyo).pure
             """)
         }
 
@@ -294,7 +294,7 @@ class envsTest extends KyoTest:
 
             val envMap = TypeMap("Hello", 123, true)
             assert(
-                Envs.run(envMap)(kyo).pure == ("Hello", 123)
+                Envs.runTypeMap(envMap)(kyo).pure == ("Hello", 123)
             )
         }
 
