@@ -70,8 +70,18 @@ object Envs:
             def resume[T, U: Flat, S2](st: TypeMap[Any], command: Tag[T], k: T => U < (Envs[Any] & S2))(using Tag[Envs[Any]]) =
                 Resume(st, k(st.get(using command.asInstanceOf[Tag[Any]]).asInstanceOf[T]))
 
+    /** An effect `Envs[VS]` includes a dependency on `V`, and once `V` has been handled, `Envs[VS]` should be replaced by `Out`
+      *
+      * @tparam V
+      *   the dependency included in `VS`
+      * @tparam VS
+      *   all of the `Envs` dependencies represented by type intersection
+      */
     sealed trait HasEnvs[V, +VS]:
+        /** Remaining effect type, once the `V` dependency has been provided
+          */
         type Remainder
+    end HasEnvs
 
     trait LowPriorityHasEnvs:
         given hasEnvs[V, VR]: HasEnvs[V, V & VR] with
