@@ -9,8 +9,24 @@ extension [A](self: TypeMap[A])
     private inline def fatal(using t: Tag[?]): Nothing =
         throw new RuntimeException(s"fatal: kyo.TypeMap of contents [$self] missing value of type: [${t.show}].")
 
-    inline def get[B >: A](using inline t: Tag[B]): B =
-        self.getOrElse(t, fatal).asInstanceOf[B]
+    def get[B >: A](using t: Tag[B]): B =
+        val b = self.getOrElse(t, null)
+        if !isNull(b) then b.asInstanceOf[B]
+        else
+            var sub: B = null.asInstanceOf[B]
+            val it     = self.iterator
+            try // iterator should never throw given type constraint on B
+                while isNull(sub) do
+                    val (tag, item) = it.next()
+                    if tag <:< t then
+                        sub = item.asInstanceOf[B]
+                end while
+            catch
+                case _: NoSuchElementException => fatal
+            end try
+            sub
+        end if
+    end get
 
     inline def add[B](b: B)(using inline t: Tag[B]): TypeMap[A & B] =
         self.updated(t, b)
