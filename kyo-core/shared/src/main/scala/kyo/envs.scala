@@ -9,7 +9,7 @@ object Envs:
     private case object envs extends Envs[Any]
     private def envs[V]: Envs[V] = envs.asInstanceOf[Envs[V]]
 
-    // Envs.get[String] would normally use a tag of Envs[String]
+    // TODO: Envs.get[String] would normally use a tag of Envs[String]
     // Yet we may provide a Layer with an output of String & Int.
     // This would usually give the handler a tag of Envs[String & Int]
     // However, then handler.tag != kyo.tag in the handle implementation.
