@@ -38,6 +38,9 @@ extension [A](self: TypeMap[A])
     inline def isEmpty: Boolean = self.isEmpty
 
     private[kyo] inline def tag: Intersection[?] = Intersection(self.keySet.toIndexedSeq)
+
+    private[kyo] inline def <:<(tag: Tag[?]): Boolean =
+        self.keySet.exists(_ <:< tag)
 end extension
 
 object TypeMap:
