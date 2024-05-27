@@ -2,7 +2,7 @@ package kyo.bench
 
 import org.openjdk.jmh.annotations.Benchmark
 
-case class Env(config: String)
+case class EnvValue(config: String)
 case class Event(name: String)
 case class State(value: Int)
 
@@ -13,10 +13,10 @@ class MtlBench extends Bench(()):
     @Benchmark
     def syncKyo() =
         import kyo.*
-        def testKyo: Unit < (Aborts[Throwable] & Envs[Env] & Vars[State] & Sums[Event]) =
+        def testKyo: Unit < (Aborts[Throwable] & Envs[EnvValue] & Vars[State] & Sums[Event]) =
             Seqs.foreach(loops)(_ =>
                 for
-                    conf <- Envs.use[Env](_.config)
+                    conf <- Envs.use[EnvValue](_.config)
                     _    <- Sums.add(Event(s"Env = $conf"))
                     _    <- Vars.update((state: State) => state.copy(value = state.value + 1))
                 yield ()
@@ -24,7 +24,7 @@ class MtlBench extends Bench(()):
         Aborts.run[Throwable](
             Vars.run(State(2))(
                 Sums.run(
-                    Envs.run(Env("config"))(
+                    Envs.run(EnvValue("config"))(
                         testKyo.andThen(Vars.get[State])
                     )
                 )
@@ -36,16 +36,16 @@ class MtlBench extends Bench(()):
     def syncZPure() =
         import zio.prelude.fx.ZPure
 
-        def testZPure: ZPure[Event, State, State, Env, Throwable, Unit] =
+        def testZPure: ZPure[Event, State, State, EnvValue, Throwable, Unit] =
             ZPure.foreachDiscard(loops)(_ =>
                 for
-                    conf <- ZPure.serviceWith[Env](_.config)
+                    conf <- ZPure.serviceWith[EnvValue](_.config)
                     _    <- ZPure.log(Event(s"Env = $conf"))
                     _    <- ZPure.update[State, State](state => state.copy(value = state.value + 1))
                 yield ()
             )
 
-        testZPure.provideService(Env("config")).runAll(State(2))
+        testZPure.provideService(EnvValue("config")).runAll(State(2))
     end syncZPure
 
     @Benchmark
@@ -55,19 +55,19 @@ class MtlBench extends Bench(()):
 
         type F[A] = Either[Throwable, A]
 
-        def testRWST: IRWST[F, Env, Chain[Event], State, State, Unit] =
+        def testRWST: IRWST[F, EnvValue, Chain[Event], State, State, Unit] =
             loops.traverse_(_ =>
                 for
-                    conf <- IndexedReaderWriterStateT.ask[F, Env, Chain[Event], State].map(_.config)
-                    _ <- IndexedReaderWriterStateT.tell[F, Env, Chain[Event], State](
+                    conf <- IndexedReaderWriterStateT.ask[F, EnvValue, Chain[Event], State].map(_.config)
+                    _ <- IndexedReaderWriterStateT.tell[F, EnvValue, Chain[Event], State](
                         Chain(Event(s"Env = $conf"))
                     )
-                    _ <- IndexedReaderWriterStateT.modify[F, Env, Chain[Event], State, State](state =>
+                    _ <- IndexedReaderWriterStateT.modify[F, EnvValue, Chain[Event], State, State](state =>
                         state.copy(value = state.value + 1)
                     )
                 yield ()
             )
-        testRWST.run(Env("config"), State(2))
+        testRWST.run(EnvValue("config"), State(2))
     end syncRWST
 
 end MtlBench

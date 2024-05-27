@@ -63,7 +63,7 @@ package object kyo:
         ()
 
     private[kyo] inline def isNull[T](v: T): Boolean =
-        v.asInstanceOf[AnyRef] == null
+        v.asInstanceOf[AnyRef] eq null
 
     private[kyo] object bug:
 
