@@ -1,7 +1,6 @@
 package kyo
 
 import caliban.*
-import caliban.interop.tapir.TapirAdapter.Configurator
 import caliban.render
 import caliban.schema.Schema
 import caliban.schema.SchemaDerivation
@@ -10,8 +9,6 @@ import kyoTest.KyoTest
 import sttp.model.Uri
 import sttp.tapir.*
 import sttp.tapir.json.zio.*
-import sttp.tapir.server.ServerEndpoint
-import sttp.tapir.server.netty.NettyKyoServer
 import zio.Task
 import zio.ZLayer
 

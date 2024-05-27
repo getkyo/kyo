@@ -19,28 +19,27 @@ object Resolvers:
     private given StreamConstructor[Nothing] =
         (_: ZStream[Any, Throwable, Byte]) => throw new Throwable("Streaming is not supported")
 
-    def run[T, S](v: HttpInterpreter[Any, CalibanError] < (Resolvers & S))
-        : NettyKyoServerBinding < (Fibers & ZIOs & Aborts[Throwable] & S) =
+    def run[T, S](v: HttpInterpreter[Any, CalibanError] < (Resolvers & S)): NettyKyoServerBinding < (ZIOs & Aborts[Throwable] & S) =
         run[T, S](NettyKyoServer())(v)
 
     def run[T, S](server: NettyKyoServer)(v: HttpInterpreter[Any, CalibanError] < (Resolvers & S))
-        : NettyKyoServerBinding < (Fibers & ZIOs & Aborts[Throwable] & S) =
+        : NettyKyoServerBinding < (ZIOs & Aborts[Throwable] & S) =
         ZIOs.get(ZIO.runtime[Any]).map(runtime => run(server, runtime)(v))
 
     def run[R, T, S](runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolvers & S))(using
         tag: Tag[Runner[R]]
-    ): NettyKyoServerBinding < (Fibers & ZIOs & Aborts[Throwable] & S) =
+    ): NettyKyoServerBinding < (ZIOs & Aborts[Throwable] & S) =
         run[R, T, S](NettyKyoServer(), runner)(v)
 
     def run[R, T, S](server: NettyKyoServer, runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolvers & S))(using
         tag: Tag[Runner[R]]
-    ): NettyKyoServerBinding < (Fibers & ZIOs & Aborts[Throwable] & S) =
+    ): NettyKyoServerBinding < (ZIOs & Aborts[Throwable] & S) =
         ZIOs.get(ZIO.runtime[Any]).flatMap(runtime => run(server, runtime.withEnvironment(ZEnvironment(runner)))(v))
 
     def run[R, T, S](
         server: NettyKyoServer,
         runtime: Runtime[R]
-    )(v: HttpInterpreter[R, CalibanError] < (Resolvers & S)): NettyKyoServerBinding < (Fibers & ZIOs & Aborts[Throwable] & S) =
+    )(v: HttpInterpreter[R, CalibanError] < (Resolvers & S)): NettyKyoServerBinding < (ZIOs & Aborts[Throwable] & S) =
         for
             interpreter <- v
             endpoints = interpreter.serverEndpoints[R, NoStreams](NoStreams).map(convertEndpoint(_, runtime))
