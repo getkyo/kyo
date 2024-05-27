@@ -97,6 +97,15 @@ class typeMapTest extends KyoTest:
                   |""".stripMargin
             )
         }
+        "subtype" in {
+            abstract class A
+            class B extends A
+            val b = new B
+
+            val e: TypeMap[A & B] = TypeMap(b)
+
+            assert(e.get[A] eq b)
+        }
     }
 
     ".add" - {
@@ -117,6 +126,21 @@ class typeMapTest extends KyoTest:
                 """
                   | def union[A, B](ab: A | B) =
                   |     TypeMap.empty.add(ab)
+                  |""".stripMargin
+            )
+        }
+        "subtype" in {
+            abstract class A
+            val a = new A {}
+            abstract class B extends A
+            val b1 = new B {}
+
+            val e1: TypeMap[A] = TypeMap(a)
+            val e2             = e1.add[A](b1)
+            assert(e2.get[A] eq b1)
+            assertDoesNotCompile(
+                """
+                  | e2.get[B]
                   |""".stripMargin
             )
         }
