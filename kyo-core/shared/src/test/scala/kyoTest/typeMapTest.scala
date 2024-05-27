@@ -8,11 +8,9 @@ class typeMapTest extends KyoTest:
             assert(TypeMap.empty.isEmpty)
         }
         "get[A]" in {
-            assertDoesNotCompile(
-                """
+            assertDoesNotCompile("""
                   | TypeMap.empty.get[String]
-                  |""".stripMargin
-            )
+                  |""".stripMargin)
         }
     }
     "single" - {
@@ -82,16 +80,49 @@ class typeMapTest extends KyoTest:
         }
     }
 
-    "add" - {
+    ".get" - {
+        "A & B" in {
+            assertDoesNotCompile(
+                """
+                  | def intersection[A, B](m: TypeMap[A & B]) =
+                  |     m.get[A & B]
+                  |""".stripMargin
+            )
+        }
+        "A | B" in {
+            assertDoesNotCompile(
+                """
+                  | def union[A, B](m: TypeMap[A & B]) =
+                  |     m.get[A | B]
+                  |""".stripMargin
+            )
+        }
+    }
+
+    ".add" - {
         "TypeMap[Int] -> TypeMap[Int & Boolean]" in {
             val e1: TypeMap[Int]           = TypeMap(42)
             val e2: TypeMap[Int & Boolean] = e1.add(true)
             assert(e2.get[Int] == 42)
             assert(e2.get[Boolean])
         }
+        "A & B" in {
+            assertDoesNotCompile("""
+                  | def intersection[A, B](ab: A & B) =
+                  |     TypeMap.empty.add(ab)
+                  |""".stripMargin)
+        }
+        "A | B" in {
+            assertDoesNotCompile(
+                """
+                  | def union[A, B](ab: A | B) =
+                  |     TypeMap.empty.add(ab)
+                  |""".stripMargin
+            )
+        }
     }
 
-    "union" - {
+    ".union" - {
         "TypeMap[Int] + TypeMap[Char] -> TypeMap[Int & Char]" in {
             val e1: TypeMap[Int]        = TypeMap(42)
             val e2: TypeMap[Char]       = TypeMap('c')
@@ -101,7 +132,7 @@ class typeMapTest extends KyoTest:
         }
     }
 
-    "prune" - {
+    ".prune" - {
         "Env[Int & String] -> Env[Int]" in pendingUntilFixed {
             assertCompiles(
                 """
