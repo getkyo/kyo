@@ -1,9 +1,9 @@
 package kyo
 
-import _root_.caliban.*
-import _root_.caliban.render
-import _root_.caliban.schema.Schema
-import _root_.caliban.schema.SchemaDerivation
+import caliban.*
+import caliban.render
+import caliban.schema.Schema
+import caliban.schema.SchemaDerivation
 import kyo.*
 import kyoTest.KyoTest
 import sttp.model.Uri

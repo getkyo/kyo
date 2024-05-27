@@ -1,8 +1,8 @@
 package kyo
 
-import _root_.caliban.introspection.adt.__Type
-import _root_.caliban.schema.*
-import _root_.caliban.schema.Step.QueryStep
+import caliban.introspection.adt.__Type
+import caliban.schema.*
+import caliban.schema.Step.QueryStep
 import kyo.*
 import zio.Task
 import zio.ZIO
