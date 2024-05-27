@@ -37,6 +37,16 @@ object Resolvers:
     ): NettyKyoServerBinding < (Fibers & ZIOs & Aborts[Throwable] & S) =
         ZIOs.get(ZIO.runtime[Any]).flatMap(runtime => run(server, runtime.withEnvironment(ZEnvironment(runner)))(v))
 
+    def run[R, T, S](
+        server: NettyKyoServer,
+        runtime: Runtime[R]
+    )(v: HttpInterpreter[R, CalibanError] < (Resolvers & S)): NettyKyoServerBinding < (Fibers & ZIOs & Aborts[Throwable] & S) =
+        for
+            interpreter <- v
+            endpoints = interpreter.serverEndpoints[R, NoStreams](NoStreams).map(convertEndpoint(_, runtime))
+            bindings <- IOs(server.addEndpoints(endpoints).start())
+        yield bindings
+
     def get[R](api: GraphQL[R])(using
         requestCodec: JsonCodec[GraphQLRequest],
         responseValueCodec: JsonCodec[ResponseValue]
@@ -52,15 +62,5 @@ object Resolvers:
             _ => _ => Right(()),
             _ => _ => req => Unsafe.unsafe { implicit u => runtime.unsafe.run(endpoint.logic(zioMonadError)(())(req)).getOrThrow() }
         )
-
-    private def run[R, T, S](
-        server: NettyKyoServer,
-        runtime: Runtime[R]
-    )(v: HttpInterpreter[R, CalibanError] < (Resolvers & S)): NettyKyoServerBinding < (Fibers & ZIOs & Aborts[Throwable] & S) =
-        for
-            interpreter <- v
-            endpoints = interpreter.serverEndpoints[R, NoStreams](NoStreams).map(convertEndpoint(_, runtime))
-            bindings <- IOs(server.addEndpoints(endpoints).start())
-        yield bindings
 
 end Resolvers
