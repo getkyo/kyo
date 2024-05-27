@@ -227,7 +227,7 @@ class filesTest extends KyoTest:
                 _ <- folder.mkDir
                 _ <- path1.mkFile
                 _ <- path2.mkFile
-                
+
             } yield ()
             assert (IOs.run(createFolders.andThen(folder.walk.map(_.runSeq))).pure._1.map(_.toString).toSet == Set("folder/path1", "folder/path2"))
         }*/
