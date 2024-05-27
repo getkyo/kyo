@@ -32,8 +32,7 @@ object Routes:
             Route(
                 e.serverSecurityLogic[A, KyoSttpMonad.M](a => Right(a)).serverLogic((a: A) =>
                     (i: I) =>
-                        val ranEnvs = Envs.run(a)(f(i))
-                        Aborts.run(ranEnvs)
+                        Aborts.run(Envs.run(a)(f(i)))
                 )
             )
         ).unit

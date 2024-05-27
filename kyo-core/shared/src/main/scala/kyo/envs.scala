@@ -21,19 +21,19 @@ object Envs:
     def get[V](using tag: Tag[V]): V < Envs[V] =
         envs[V].suspend[V](tag)
 
-    inline def run[V: Tag, T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
+    def run[V >: Nothing: Tag, T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
         using HasEnvs[V, VS] { type Remainder = VR }
     ): T < (S & VR) =
         envs[V].handle(handler[V])(TypeMap(env), value).asInstanceOf[T < (S & VR)]
     end run
 
-    inline def runTypeMap[V, T: Flat, S, VS, VR](env: TypeMap[V])(value: T < (Envs[VS] & S))(
+    def runTypeMap[V >: Nothing, T: Flat, S, VS, VR](env: TypeMap[V])(value: T < (Envs[VS] & S))(
         using HasEnvs[V, VS] { type Remainder = VR }
     ): T < (S & VR) =
         envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
     end runTypeMap
 
-    class UseDsl[V]:
+    class UseDsl[V >: Nothing]:
         inline def apply[T, S](inline f: V => T < S)(
             using
             inline intersection: Tag.Intersection[V],
@@ -43,7 +43,7 @@ object Envs:
         end apply
     end UseDsl
 
-    def use[V]: UseDsl[V] =
+    def use[V >: Nothing]: UseDsl[V] =
         new UseDsl[V]
 
     private def handler[V]: ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any] =
