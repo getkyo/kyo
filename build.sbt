@@ -2,7 +2,8 @@ val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
 
-val zioVersion = "2.1.1"
+val zioVersion       = "2.1.1"
+val scalaTestVersion = "3.2.18"
 
 val compilerOptions = Seq(
     "-encoding",
@@ -92,8 +93,8 @@ lazy val `kyo-scheduler` =
             ),
             scalacOptions += "-Xsource:3",
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
-            libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16" % Test,
-            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.5"  % Test
+            libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
+            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"          % Test
         )
         .jsSettings(
             `js-settings`,
@@ -112,7 +113,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
             "-language:strictEquality"
         ),
         libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
-        libraryDependencies += "org.scalatest" %%% "scalatest" % "3.2.16" % Test
+        libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
     )
     .settings(
         scalacOptions ++= (if (CrossVersion.partialVersion(scalaVersion.value).exists(_._1 == 2)) Seq("-Xsource:3") else Nil),
@@ -126,8 +127,8 @@ lazy val `kyo-tag` =
         .in(file("kyo-tag"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.scalatest" %%% "scalatest"     % "3.2.16" % Test,
-            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.9"  % Test
+            libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
+            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.9"          % Test
         )
         .jsSettings(`js-settings`)
 
@@ -143,11 +144,11 @@ lazy val `kyo-core` =
             libraryDependencies += "com.lihaoyi"   %%% "pprint"          % "0.9.0",
             libraryDependencies += "org.jctools"     % "jctools-core"    % "4.0.3",
             libraryDependencies += "org.slf4j"       % "slf4j-api"       % "2.0.13",
-            libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC26" % Test,
-            libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.1"      % Test,
-            libraryDependencies += "org.scalatest" %%% "scalatest"       % "3.2.16"     % Test,
-            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"      % Test,
-            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"  % Test
+            libraryDependencies += "dev.zio"       %%% "zio-laws-laws"   % "1.0.0-RC26"     % Test,
+            libraryDependencies += "dev.zio"       %%% "zio-test-sbt"    % "2.1.1"          % Test,
+            libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
+            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"          % Test,
+            libraryDependencies += "javassist"       % "javassist"       % "3.12.1.GA"      % Test
         )
         .jsSettings(`js-settings`)
 
@@ -177,7 +178,7 @@ lazy val `kyo-stats-registry` =
             ),
             scalacOptions += "-Xsource:3",
             libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.1",
-            libraryDependencies += "org.scalatest"  %%% "scalatest"    % "3.2.16" % Test,
+            libraryDependencies += "org.scalatest"  %%% "scalatest"    % scalaTestVersion % Test,
             crossScalaVersions                       := List(scala3Version, scala212Version, scala213Version)
         )
         .jsSettings(`js-settings`)
@@ -336,7 +337,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0-RC7",
             libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.8",
             libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.8",
-            libraryDependencies += "org.scalatest"       %% "scalatest"           % "3.2.16" % Test
+            libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
