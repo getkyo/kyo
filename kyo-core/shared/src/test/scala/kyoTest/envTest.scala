@@ -7,6 +7,13 @@ class envTest extends KyoTest:
         "Env.empty" in {
             assert(Env.empty.isEmpty)
         }
+        "get[A]" in {
+            assertDoesNotCompile(
+                """
+                  | Env.empty.get[String]
+                  |""".stripMargin
+            )
+        }
     }
     "single" - {
         "Env[String]" in {

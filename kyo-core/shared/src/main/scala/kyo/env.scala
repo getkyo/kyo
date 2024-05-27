@@ -6,29 +6,20 @@ import scala.collection.immutable.HashMap
 opaque type Env[+R] = HashMap[Tag[?], Any]
 extension [R](self: Env[R])
 
-    private def fatal(using t: Tag[?]): Nothing =
+    private inline def fatal(using t: Tag[?]): Nothing =
         throw new RuntimeException(s"fatal: kyo.Env of contents [$self] missing value of type: [${t.show}].")
 
-    def get[A >: R](using Tag[A]): A =
-        getOrElse(fatal)
+    inline def get[A >: R](using inline t: Tag[A]): A =
+        self.getOrElse(t, fatal).asInstanceOf[A]
 
-    def getOrElse[A >: R](default: => A)(using t: Tag[A]): A =
-        val result = self.getOrElse(t, null)
-        if isNull(result) then
-            default
-        else
-            result.asInstanceOf[A]
-        end if
-    end getOrElse
-
-    def add[A: Tag](a: A): Env[R & A] =
-        self.updated(Tag[A], a)
+    inline def add[A: Tag](a: A)(using inline t: Tag[A]): Env[R & A] =
+        self.updated(t, a)
 
     def union[R0](that: Env[R0]): Env[R & R0] =
         self ++ that
 
-    def size: Int        = self.size
-    def isEmpty: Boolean = self.isEmpty
+    inline def size: Int        = self.size
+    inline def isEmpty: Boolean = self.isEmpty
 
     private[kyo] def tag: Intersection[?] = Intersection(self.keySet.toIndexedSeq)
 end extension
