@@ -29,7 +29,7 @@ class envsTest extends KyoTest:
         trait Super:
             def i = 42
         case class Sub() extends Super
-        assert(Envs.run[Super](Sub())(Envs.use[Super](_.i)).pure == 42)
+        assert(Envs.run(Sub())(Envs.use[Super](_.i)).pure == 42)
     }
 
     "inference" in {
@@ -219,7 +219,7 @@ class envsTest extends KyoTest:
 
             val envMap = TypeMap("Hello", 123, true)
             assert(
-                Envs.provide(envMap)(kyo).pure == ("Hello", 123, true)
+                Envs.run(envMap)(kyo).pure == ("Hello", 123, true)
             )
         }
 
@@ -232,7 +232,7 @@ class envsTest extends KyoTest:
                 yield (string, int, bool)
 
             val envMap: TypeMap[String & Int]                       = TypeMap("Hello", 123)
-            val withTypeMap: (String, Int, Boolean) < Envs[Boolean] = Envs.provide(envMap)(kyo)
+            val withTypeMap: (String, Int, Boolean) < Envs[Boolean] = Envs.run(envMap)(kyo)
             val withBool: (String, Int, Boolean) < Any              = Envs.run(true)(withTypeMap)
             assert(
                 withBool.pure == ("Hello", 123, true)
@@ -252,7 +252,7 @@ class envsTest extends KyoTest:
             val boolTypeMap   = TypeMap(true)
             assert(
                 Envs.run(true)(
-                    Envs.provide(stringTypeMap)(Envs.provide(intTypeMap)(Envs.provide(boolTypeMap)(kyo)))
+                    Envs.run(stringTypeMap)(Envs.run(intTypeMap)(Envs.run(boolTypeMap)(kyo)))
                 ).pure == ("Hello", 123, true)
             )
         }
@@ -294,7 +294,7 @@ class envsTest extends KyoTest:
 
             val envMap = TypeMap("Hello", 123, true)
             assert(
-                Envs.provide(envMap)(kyo).pure == ("Hello", 123)
+                Envs.run(envMap)(kyo).pure == ("Hello", 123)
             )
         }
 

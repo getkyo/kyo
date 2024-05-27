@@ -15,11 +15,11 @@ object Envs:
     // However, then handler.tag != kyo.tag in the handle implementation.
     // So we have to use this type erased tag and rely on our `accepts` implementation
     private trait EnvsErased
-    private val envsTag: Tag[EnvsErased]            = Tag[EnvsErased]
-    private inline def makeEnvsTag[V]: Tag[Envs[V]] = envsTag.asInstanceOf[Tag[Envs[V]]]
+    private val envsTag: Tag[EnvsErased]   = Tag[EnvsErased]
+    private inline given [V]: Tag[Envs[V]] = envsTag.asInstanceOf[Tag[Envs[V]]]
 
     def get[V](using tag: Tag[V]): V < Envs[V] =
-        envs[V].suspend[V](tag)(using makeEnvsTag[V])
+        envs[V].suspend[V](tag)
 
     class UseDsl[V]:
         inline def apply[T, S](inline f: V => T < S)(
@@ -27,35 +27,40 @@ object Envs:
             inline intersection: Tag.Intersection[V],
             inline tag: Tag[V]
         ): T < (Envs[V] & S) =
-            envs[V].suspend[V, T, S](tag, f)(using makeEnvsTag[V])
+            envs[V].suspend[V, T, S](tag, f)
         end apply
     end UseDsl
 
-    def use[V >: Nothing]: UseDsl[V] =
+    def use[V]: UseDsl[V] =
         new UseDsl[V]
 
-    class RunDsl[V]:
-        def apply[T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
-            using
-            HasEnvs[V, VS] { type Remainder = VR },
-            Tag[V]
-        ): T < (S & VR) =
-            given Tag[Envs[V]] = makeEnvsTag[V]
-            envs[V].handle(handler[V])(TypeMap(env), value).asInstanceOf[T < (S & VR)]
-        end apply
-    end RunDsl
-
-    def run[V >: Nothing]: RunDsl[V] =
-        new RunDsl[V]
-
-    def provide[V >: Nothing, T: Flat, S, VS, VR](env: TypeMap[V])(value: T < (Envs[VS] & S))(
+    /** Runs the Kyo with the given environment.
+      *
+      * The environment may either be a value or a [[TypeMap]]
+      */
+    inline def run[In, V, T: Flat, S, VS, VR](env: In)(value: T < (Envs[VS] & S))(
         using
-        HasEnvs[V, VS] { type Remainder = VR },
-        Tag.Intersection[V]
+        inline runInput: RunInput[In] { type Out = TypeMap[V] },
+        inline hasEnvs: HasEnvs[V, VS] { type Remainder = VR }
     ): T < (S & VR) =
-        given Tag[Envs[V]] = makeEnvsTag[V]
-        envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
-    end provide
+        envs[V].handle(handler[V])(runInput(env), value).asInstanceOf[T < (S & VR)]
+    end run
+
+    trait RunInput[-In]:
+        type Out
+        inline def apply(in: In): Out
+
+    object RunInput:
+        // V => TypeMap[V]
+        inline given [V](using tag: Tag[V]): RunInput[V] with
+            type Out = TypeMap[V]
+            inline def apply(in: V): TypeMap[V] = TypeMap(in)
+
+        // TypeMap[V] => TypeMap[V]
+        inline given [V]: RunInput[TypeMap[V]] with
+            type Out = TypeMap[V]
+            inline def apply(in: TypeMap[V]): TypeMap[V] = in
+    end RunInput
 
     private def handler[V]: ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any] =
         cachedHandler.asInstanceOf[ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any]]
