@@ -274,6 +274,18 @@ class envsTest extends KyoTest:
             """)
         }
 
+        "providing only a subset of the required services" in {
+            assertDoesNotCompile("""
+                val kyo =
+                    for
+                        string <- Envs.get[String]
+                        int    <- Envs.get[Int]
+                    yield (string, int)
+                val envMap = TypeMap("Hello")
+                Envs.provide(envMap)(kyo).pure
+            """)
+        }
+
         "providing a superset of the required services" in {
             val kyo =
                 for
