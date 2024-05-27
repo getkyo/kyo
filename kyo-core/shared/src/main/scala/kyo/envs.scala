@@ -21,6 +21,18 @@ object Envs:
     def get[V](using tag: Tag[V]): V < Envs[V] =
         envs[V].suspend[V](tag)
 
+    inline def run[V: Tag, T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
+        using HasEnvs[V, VS] { type Remainder = VR }
+    ): T < (S & VR) =
+        envs[V].handle(handler[V])(TypeMap(env), value).asInstanceOf[T < (S & VR)]
+    end run
+
+    inline def runTypeMap[V, T: Flat, S, VS, VR](env: TypeMap[V])(value: T < (Envs[VS] & S))(
+        using HasEnvs[V, VS] { type Remainder = VR }
+    ): T < (S & VR) =
+        envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
+    end runTypeMap
+
     class UseDsl[V]:
         inline def apply[T, S](inline f: V => T < S)(
             using
@@ -33,38 +45,6 @@ object Envs:
 
     def use[V]: UseDsl[V] =
         new UseDsl[V]
-
-    /** Runs the Kyo with the given environment.
-      *
-      * The environment may either be a value or a [[TypeMap]]
-      */
-    inline def runTypeMap[V, T: Flat, S, VS, VR](env: TypeMap[V])(value: T < (Envs[VS] & S))(
-        using HasEnvs[V, VS] { type Remainder = VR }
-    ): T < (S & VR) =
-        envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
-    end runTypeMap
-
-    inline def run[V: Tag, T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
-        using HasEnvs[V, VS] { type Remainder = VR }
-    ): T < (S & VR) =
-        envs[V].handle(handler[V])(TypeMap(env), value).asInstanceOf[T < (S & VR)]
-    end run
-
-    trait RunInput[-In]:
-        type Out
-        inline def apply(in: In): Out
-
-    object RunInput:
-        // V => TypeMap[V]
-        inline given [V](using tag: Tag[V]): RunInput[V] with
-            type Out = TypeMap[V]
-            inline def apply(in: V): TypeMap[V] = TypeMap(in)
-
-        // TypeMap[V] => TypeMap[V]
-        inline given [V]: RunInput[TypeMap[V]] with
-            type Out = TypeMap[V]
-            inline def apply(in: TypeMap[V]): TypeMap[V] = in
-    end RunInput
 
     private def handler[V]: ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any] =
         cachedHandler.asInstanceOf[ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any]]
