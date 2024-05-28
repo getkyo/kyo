@@ -76,7 +76,7 @@ class typeMapTest extends KyoTest:
         }
         "non-empty" in {
             val e: TypeMap[String & Boolean] = TypeMap[Boolean](true).asInstanceOf[TypeMap[String & Boolean]]
-            test[String](e, """HashMap(Tag(-4scala.Boolean;,%scala.AnyVal;"b!M;"V!A;) -> true)""", "java.lang.String")
+            test[String](e, """HashMap(!_9;!W3;!U1;!V2; -> true)""", "java.lang.String")
         }
     }
 

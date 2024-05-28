@@ -1,5 +1,4 @@
 import kyo.internal.Trace
-import scala.annotation.implicitNotFound
 import scala.util.NotGiven
 
 package object kyo:
@@ -37,13 +36,13 @@ package object kyo:
 
     end extension
 
-    extension [T, S](v: T < S)
-        def pure(using
-            @implicitNotFound(msg = """
-              | .pure must be called on Kyos with no remaining pending effects.
-              | Expected: `$T < Any`, but found: `$T < $S`.
-              """.stripMargin) ev: S =:= Any
-        ): T = v.asInstanceOf[T]
+    extension [T: Flat](v: T < Any)
+        def pure: T =
+            v match
+                case kyo: kyo.core.internal.Suspend[?, ?, ?, ?] =>
+                    bug.failTag(kyo.tag)
+                case v =>
+                    v.asInstanceOf[T]
     end extension
 
     def zip[T1, T2, S](v1: T1 < S, v2: T2 < S)(using Trace): (T1, T2) < S =
@@ -76,15 +75,15 @@ package object kyo:
         ): Nothing =
             bug(s"Unexpected effect '${actual.show}' found in 'pure'.")
 
-        inline def failTag(
-            inline actual: Tag[?],
-            inline expected: Tag[?]*
+        inline def failTag[T, U](
+            inline actual: Tag.Full[T],
+            inline expected: Tag.Full[U]
         ): Nothing =
-            bug(s"Unexpected effect '${actual.show}' found while handling '${expected.map(_.show).mkString(" & ")}'.")
+            bug(s"Unexpected effect '${actual.show}' found while handling '${expected.show}'.")
 
         inline def checkTag[T, U](
-            inline actual: Tag[U],
-            inline expected: Tag[T]
+            inline actual: Tag.Full[U],
+            inline expected: Tag.Full[T]
         ): Unit =
             if actual =!= expected then
                 failTag(actual, expected)
