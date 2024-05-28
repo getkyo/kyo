@@ -280,10 +280,7 @@ object Tag:
             import quotes.reflect.*
             if i >= charsPrintable.length || i < 0 then
                 report.errorAndAbort(s"Encoded tag 'Int($i)' exceeds supported limit: " + charsPrintable.length)
-            val encoded = charsPrintable(i)
-            if decodeInt(encoded) != i then
-                report.errorAndAbort(s"Bug: invalid Int encoding. Expected $i but got ${decodeInt(encoded)}")
-            encoded
+            charsPrintable(i)
         end encodeInt
 
         def decodeInt(c: Char): Int =
