@@ -2,109 +2,128 @@ package kyo
 
 import scala.annotation.switch
 import scala.annotation.tailrec
+import scala.collection.immutable
 import scala.quoted.*
 
-case class Tag[T](tpe: String) extends AnyVal
+opaque type Tag[T] = String
 
 object Tag:
+
+    type Full[T] = Tag[T] | Set[T]
+
+    given [T, U]: CanEqual[Full[T], Full[U]] = CanEqual.derived
 
     import internal.*
 
     inline given apply[T]: Tag[T] = ${ tagImpl[T] }
 
-    extension [T](t1: Tag[T])
+    extension [T](t1: Full[T])
 
         def show: String =
-            val decoded = t1.tpe.drop(2).takeWhile(_ != ';')
-            fromCompact.getOrElse(decoded, decoded)
+            t1 match
+                case t1: String =>
+                    val decoded = t1.drop(2).takeWhile(_ != ';')
+                    fromCompact.getOrElse(decoded, decoded)
+                case t1: Set[T] =>
+                    t1.show
 
-        infix def <:<[U](t2: Tag[U]): Boolean =
-            t1 =:= t2 || isSubtype(t1, t2)
+        infix def <:<[U](t2: Full[U]): Boolean =
+            t1 match
+                case t1: String =>
+                    t2 match
+                        case t2: String => isSubtype(t1, t2)
+                        case t2: Set[?] => t2 >:> t1
+                case t1: Set[T] =>
+                    t1 <:< t2
 
-        infix def =:=[U](t2: Tag[U]): Boolean =
-            (t1.tpe eq t2.tpe) || t1.tpe == t2.tpe
+        infix def =:=[U](t2: Full[U]): Boolean =
+            (t1 eq t2) || t1 == t2
 
-        infix def =!=[U](t2: Tag[U]): Boolean =
-            (t1.tpe ne t2.tpe) || t1.tpe != t2.tpe
+        infix def =!=[U](t2: Full[U]): Boolean =
+            !(t1 =:= t2)
 
-        infix def >:>[U](t2: Tag[U]): Boolean =
-            t1 =:= t2 || isSubtype(t2, t1)
+        infix def >:>[U](t2: Full[U]): Boolean =
+            t2 <:< t1
+
+        def erased: Tag[Any] = t1.asInstanceOf[Tag[Any]]
 
     end extension
 
-    case class Union[T](tags: Seq[Tag[?]]) extends AnyVal
+    sealed trait Set[T]:
+        def show: String
+        infix def <:<[U](t2: Full[U]): Boolean
+        infix def =:=[U](t2: Full[U]): Boolean
+        infix def =!=[U](t2: Full[U]): Boolean =
+            !(this =:= t2)
+        infix def >:>[U](t2: Full[U]): Boolean
+        def erased: Set[Any] = this.asInstanceOf[Set[Any]]
+    end Set
 
-    object Union:
+    object Set:
+        inline given apply[T]: Set[T] = ${ setImpl[T] }
 
-        inline given apply[T]: Union[T] = ${ unionImpl[T] }
+    case class Union[T](tags: Seq[Tag[Any]]) extends Set[T]:
+        def show: String =
+            tags.map(_.show).mkString(" | ")
 
-        extension [T](t1: Union[T])
-            def show: String =
-                t1.tags.map(_.show).mkString(" | ")
+        infix def <:<[U](t2: Full[U]): Boolean =
+            t2 match
+                case t2: Union[?] =>
+                    tags.forall(tag1 => t2.tags.exists(tag1 <:< _))
+                case _ =>
+                    tags.forall(_ <:< t2)
 
-            infix def <:<[U](t2: Tag[U]): Boolean =
-                t1.tags.forall(_ <:< t2)
+        infix def >:>[U](t2: Full[U]): Boolean =
+            t2 match
+                case t2: Union[?] =>
+                    t2.tags.forall(tag2 => tags.exists(_ >:> tag2))
+                case _ =>
+                    tags.exists(t2 <:< _)
 
-            infix def =:=[U](t2: Tag[U]): Boolean =
-                t1.tags.forall(t2 =:= _)
-
-            infix def =!=[U](t2: Tag[U]): Boolean =
-                t1.tags.exists(t2 =!= _)
-
-            infix def >:>[U](t2: Tag[U]): Boolean =
-                t1.tags.exists(t2 <:< _)
-
-            infix def <:<(t2: Union[?]): Boolean =
-                t1.tags.forall(tag1 => t2.tags.exists(tag1 <:< _))
-
-            infix def =:=(t2: Union[?]): Boolean =
-                t1.tags.forall(tag1 => t2.tags.exists(tag1 =:= _)) &&
-                    t2.tags.forall(tag2 => t1.tags.exists(tag2 =:= _))
-
-            infix def =!=(t2: Union[?]): Boolean =
-                !(t1 =:= t2)
-
-            infix def >:>(t2: Union[?]): Boolean =
-                t2.tags.forall(tag2 => t1.tags.exists(_ >:> tag2))
-        end extension
+        infix def =:=[U](t2: Full[U]): Boolean =
+            t2 match
+                case t2: Union[?] =>
+                    tags.forall(tag1 => t2.tags.exists(tag1 =:= _)) &&
+                    t2.tags.forall(tag2 => tags.exists(tag2 =:= _))
+                case _ =>
+                    tags.forall(t2 =:= _)
     end Union
 
-    case class Intersection[T](tags: Seq[Tag[?]]) extends AnyVal
+    object Union:
+        private[Tag] def raw[T](tags: Seq[String]) = new Union[T](tags.asInstanceOf[Seq[Tag[Any]]])
+        inline given apply[T]: Union[T]            = ${ unionImpl[T] }
+
+    case class Intersection[T](tags: Seq[Tag[Any]]) extends Set[T]:
+        def show: String =
+            tags.map(_.show).mkString(" & ")
+
+        infix def <:<[U](t2: Full[U]): Boolean =
+            t2 match
+                case t2: Intersection[?] =>
+                    t2.tags.forall(tag2 => tags.exists(_ <:< tag2))
+                case _ =>
+                    tags.exists(_ <:< t2)
+
+        infix def >:>[U](t2: Full[U]): Boolean =
+            t2 match
+                case t2: Intersection[?] =>
+                    tags.forall(tag1 => t2.tags.exists(tag1 >:> _))
+                case _ =>
+                    tags.forall(t2 >:> _)
+
+        infix def =:=[U](t2: Full[U]): Boolean =
+            t2 match
+                case t2: Intersection[?] =>
+                    tags.forall(tag1 => t2.tags.exists(tag1 =:= _)) &&
+                    t2.tags.forall(tag2 => tags.exists(tag2 =:= _))
+                case _ =>
+                    tags.forall(_ =:= t2)
+
+    end Intersection
 
     object Intersection:
-
-        inline given apply[T]: Intersection[T] = ${ intersectionImpl[T] }
-
-        extension [T](t1: Intersection[T])
-            def show: String =
-                t1.tags.map(_.show).mkString(" & ")
-
-            infix def <:<[U](t2: Tag[U]): Boolean =
-                t1.tags.exists(_ <:< t2)
-
-            infix def =:=[U](t2: Tag[U]): Boolean =
-                t1.tags.forall(_ =:= t2)
-
-            infix def =!=[U](t2: Tag[U]): Boolean =
-                !(t1 =:= t2)
-
-            infix def >:>[U](t2: Tag[U]): Boolean =
-                t1.tags.forall(t2 >:> _)
-
-            infix def <:<(t2: Intersection[?]): Boolean =
-                t2.tags.forall(tag2 => t1.tags.exists(_ <:< tag2))
-
-            infix def =:=(t2: Intersection[?]): Boolean =
-                t1.tags.forall(tag1 => t2.tags.exists(tag1 =:= _)) &&
-                    t2.tags.forall(tag2 => t1.tags.exists(tag2 =:= _))
-
-            infix def =!=(t2: Intersection[?]): Boolean =
-                !(t1 =:= t2)
-
-            infix def >:>(t2: Intersection[?]): Boolean =
-                t1.tags.forall(tag1 => t2.tags.exists(tag1 >:> _))
-        end extension
-    end Intersection
+        private[Tag] def raw[T](tags: Seq[String]) = new Intersection[T](tags.asInstanceOf[Seq[Tag[Any]]])
+        inline given apply[T]: Intersection[T]     = ${ intersectionImpl[T] }
 
     private[Tag] object internal:
 
@@ -121,17 +140,8 @@ object Tag:
         // |--------------------Test segment---------------------|-|-------------------Param1 segment----------------------|+|-------------------Param2 segment----------------------|
         //                                                     variance                                                  variance
 
-        val toCompact = Map(
-            "java.lang.Object" -> "!O",
-            "scala.Matchable"  -> "!M",
-            "scala.Any"        -> "!A",
-            "java.lang.String" -> "!S"
-        )
-
-        val fromCompact = toCompact.map(_.swap).toMap
-
-        def isSubtype(subTag: Tag[?], superTag: Tag[?]): Boolean =
-            checkType(subTag.tpe, superTag.tpe, 0, 0)
+        def isSubtype(subTag: String, superTag: String): Boolean =
+            checkType(subTag, superTag, 0, 0)
 
         def checkType(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
             checkSegment(subTag, superTag, subIdx, superIdx) && checkParams(subTag, superTag, subIdx, superIdx)
@@ -214,26 +224,26 @@ object Tag:
         def tagImpl[T: Type](using Quotes): Expr[Tag[T]] =
             import quotes.reflect.*
 
-            val encoded = encodeType(TypeRepr.of[T])
-            '{ new Tag($encoded) }
+            encodeType(TypeRepr.of[T])
         end tagImpl
 
-        def tags[T: Type](using q: Quotes)(flatten: q.reflect.TypeRepr => Seq[q.reflect.TypeRepr]): Expr[Seq[Tag[?]]] =
+        def tags[T: Type](using q: Quotes)(flatten: q.reflect.TypeRepr => Seq[q.reflect.TypeRepr]): Expr[Seq[String]] =
             import quotes.reflect.*
             Expr.ofSeq {
-                flatten(TypeRepr.of[T]).foldLeft(Seq.empty[Expr[Tag[?]]]) {
-                    (acc, tpe) =>
-                        tpe.asType match
-                            case '[t] =>
-                                Expr.summon[Tag[t]] match
-                                    case None =>
-                                        failMissing(tpe)
-                                    case Some(tag) =>
-                                        acc :+ tag
-                        end match
+                flatten(TypeRepr.of[T]).foldLeft(Seq.empty[Expr[Tag[Any]]]) {
+                    (acc, repr) =>
+                        acc :+ encodeType(repr)
                 }
             }
         end tags
+
+        def setImpl[T: Type](using q: Quotes): Expr[Set[T]] =
+            import quotes.reflect.*
+            TypeRepr.of[T] match
+                case AndType(_, _) => intersectionImpl[T]
+                case _             => unionImpl[T]
+            end match
+        end setImpl
 
         def unionImpl[T: Type](using q: Quotes): Expr[Union[T]] =
             import quotes.reflect.*
@@ -244,7 +254,7 @@ object Tag:
                     case tpe: AndType => report.errorAndAbort(s"Union tags don't support type intersections. Found: ${tpe.show}")
                     case tpe          => Seq(tpe)
 
-            '{ Union(${ tags(using q)(flatten) }) }
+            '{ Union.raw[T](${ tags(using q)(flatten) }) }
         end unionImpl
 
         def intersectionImpl[T: Type](using q: Quotes): Expr[Intersection[T]] =
@@ -256,29 +266,37 @@ object Tag:
                     case tpe: OrType   => report.errorAndAbort(s"Intersection tags don't support type unions. Found: ${tpe.show}")
                     case tpe           => Seq(tpe)
 
-            '{ Intersection(${ tags(using q)(flatten) }) }
+            '{ Intersection.raw[T](${ tags(using q)(flatten) }) }
         end intersectionImpl
 
-        // printable ASCII chars
-        val maxEncodableInt = ('~' - ' ').toInt
+        // Encodes ints using printable ASCII chars
+        val charsReserved  = immutable.Set('[', ']', '(', ')', ';', ',')
+        val charsPrintable = (' ' to '~').filter(!charsReserved.contains(_)).toArray
 
         def encodeInt(i: Int)(using Quotes): Char =
             import quotes.reflect.*
-            if i >= maxEncodableInt then
-                report.errorAndAbort("Encoded tag string exceeds supported limit: " + maxEncodableInt)
-            (i + ' ').toChar
+            if i >= charsPrintable.length || i < 0 then
+                report.errorAndAbort(s"Encoded tag 'Int($i)' exceeds supported limit: " + charsPrintable.length)
+            val encoded = charsPrintable(i)
+            if decodeInt(encoded) != i then
+                report.errorAndAbort(s"Bug: invalid Int encoding. Expected $i but got ${decodeInt(encoded)}")
+            encoded
         end encodeInt
 
-        def decodeInt(i: Char): Int =
-            (i - ' ').toInt
+        def decodeInt(c: Char): Int =
+            charsPrintable.indexOf(c)
 
         def encodeType(using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[String] =
             import quotes.reflect.*
 
             tpe.dealias match
-                case AndType(_, _) | OrType(_, _) =>
+                case AndType(_, _) =>
                     report.errorAndAbort(
-                        s"Unsupported intersection or union type in Tag: ${tpe.show}. Only class types and type parameters are allowed."
+                        s"Method doesn't accept intersection types. Found: ${tpe.show}."
+                    )
+                case OrType(_, _) =>
+                    report.errorAndAbort(
+                        s"Method doesn't accept union types. Found: ${tpe.show}."
                     )
                 case tpe if tpe.typeSymbol.fullName == "scala.Nothing" =>
                     report.errorAndAbort(
@@ -289,7 +307,7 @@ object Tag:
                     val path = tpe.dealias.baseClasses.map { sym =>
                         val name = toCompact.getOrElse(sym.fullName, sym.fullName)
                         val size = encodeInt(name.length())
-                        val hash = encodeInt(Math.abs(name.hashCode()) % maxEncodableInt)
+                        val hash = encodeInt(Math.abs(name.hashCode()) % charsPrintable.length)
                         s"$size$hash$name"
                     }.mkString(";") + ";"
                     val variances = sym.typeMembers.flatMap { v =>
@@ -317,9 +335,7 @@ object Tag:
                                 case None =>
                                     failMissing(TypeRepr.of[tpe])
                                 case Some(value) =>
-                                    '{ $value.tpe }
-                        case _ =>
-                            report.errorAndAbort(s"Tag only supports class types and type parameters, but got: ${tpe.show}")
+                                    value.asExprOf[String]
             end match
         end encodeType
 
@@ -347,5 +363,45 @@ object Tag:
                         loop(next, "", head :: Expr(acc) :: exprs)
             loop(l, "", Nil)
         end concat
+
+        val toCompact = Map(
+            "java.lang.Object"                              -> "0",
+            "scala.Matchable"                               -> "1",
+            "scala.Any"                                     -> "2",
+            "scala.AnyVal"                                  -> "3",
+            "java.lang.String"                              -> "4",
+            "scala.Int"                                     -> "5",
+            "scala.Long"                                    -> "6",
+            "scala.Float"                                   -> "7",
+            "scala.Double"                                  -> "8",
+            "scala.Boolean"                                 -> "9",
+            "scala.Unit"                                    -> "a",
+            "scala.Option"                                  -> "b",
+            "scala.Some"                                    -> "c",
+            "scala.None"                                    -> "d",
+            "scala.Left"                                    -> "e",
+            "scala.Right"                                   -> "f",
+            "scala.Tuple2"                                  -> "g",
+            "scala.collection.immutable.List"               -> "h",
+            "scala.collection.immutable.Nil"                -> "i",
+            "scala.collection.immutable.Map"                -> "j",
+            "scala.Nothing"                                 -> "k",
+            "java.lang.CharSequence"                        -> "l",
+            "java.lang.Comparable"                          -> "m",
+            "java.io.Serializable"                          -> "n",
+            "scala.Product"                                 -> "o",
+            "scala.Equals"                                  -> "p",
+            "kyo.core$.Effect"                              -> "q",
+            "kyo.fibersInternal$.FiberGets"                 -> "r",
+            "kyo.Streams"                                   -> "s",
+            "kyo.aborts$package$.Aborts$.internal$.DoAbort" -> "t",
+            "kyo.zios$package$.ZIOs$.internal$.Tasks"       -> "u",
+            "kyo.IOs"                                       -> "v",
+            "scala.Char"                                    -> "x",
+            "java.lang.Throwable"                           -> "y",
+            "java.lang.Exception"                           -> "z"
+        )
+
+        val fromCompact = toCompact.map(_.swap).toMap
     end internal
 end Tag

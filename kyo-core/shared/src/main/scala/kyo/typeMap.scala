@@ -3,15 +3,15 @@ package kyo
 import kyo.Tag.Intersection
 import scala.collection.immutable.HashMap
 
-opaque type TypeMap[+A] = HashMap[Tag[?], Any]
+opaque type TypeMap[+A] = HashMap[Tag[Any], Any]
 
 extension [A](self: TypeMap[A])
 
-    private inline def fatal(using t: Tag[?]): Nothing =
+    private inline def fatal[T](using t: Tag[T]): Nothing =
         throw new RuntimeException(s"fatal: kyo.TypeMap of contents [$self] missing value of type: [${t.show}].")
 
     def get[B >: A](using t: Tag[B]): B =
-        val b = self.getOrElse(t, null)
+        val b = self.getOrElse(t.erased, null)
         if !isNull(b) then b.asInstanceOf[B]
         else
             var sub: B = null.asInstanceOf[B]
@@ -30,7 +30,7 @@ extension [A](self: TypeMap[A])
     end get
 
     inline def add[B](b: B)(using inline t: Tag[B]): TypeMap[A & B] =
-        self.updated(t, b)
+        self.updated(t.erased, b)
 
     inline def union[B](that: TypeMap[B]): TypeMap[A & B] =
         self ++ that
@@ -40,19 +40,29 @@ extension [A](self: TypeMap[A])
 
     private[kyo] inline def tag: Intersection[?] = Intersection(self.keySet.toIndexedSeq)
 
-    private[kyo] inline def <:<(tag: Tag[?]): Boolean =
+    private[kyo] inline def <:<[T](tag: Tag[T]): Boolean =
         self.keySet.exists(_ <:< tag)
 end extension
 
 object TypeMap:
     val empty: TypeMap[Any] = HashMap.empty
 
-    def apply[A: Tag](a: A): TypeMap[A] =
-        HashMap(Tag[A] -> a)
-    def apply[A: Tag, B: Tag](a: A, b: B): TypeMap[A & B] =
-        HashMap(Tag[A] -> a, Tag[B] -> b)
-    def apply[A: Tag, B: Tag, C: Tag](a: A, b: B, c: C): TypeMap[A & B & C] =
-        HashMap(Tag[A] -> a, Tag[B] -> b, Tag[C] -> c)
-    def apply[A: Tag, B: Tag, C: Tag, D: Tag](a: A, b: B, c: C, d: D): TypeMap[A & B & C & D] =
-        HashMap(Tag[A] -> a, Tag[B] -> b, Tag[C] -> c, Tag[D] -> d)
+    def apply[A](a: A)(using ta: Tag[A]): TypeMap[A] =
+        HashMap(ta.erased -> a)
+    def apply[A, B](a: A, b: B)(using ta: Tag[A], tb: Tag[B]): TypeMap[A & B] =
+        HashMap(ta.erased -> a, tb.erased -> b)
+    def apply[A: Tag, B: Tag, C: Tag](a: A, b: B, c: C)(using ta: Tag[A], tb: Tag[B], tc: Tag[C]): TypeMap[A & B & C] =
+        HashMap(ta.erased -> a, tb.erased -> b, tc.erased -> c)
+    def apply[A: Tag, B: Tag, C: Tag, D: Tag](a: A, b: B, c: C, d: D)(using
+        ta: Tag[A],
+        tb: Tag[B],
+        tc: Tag[C],
+        td: Tag[D]
+    ): TypeMap[A & B & C & D] =
+        HashMap(
+            ta.erased -> a,
+            tb.erased -> b,
+            tc.erased -> c,
+            td.erased -> d
+        )
 end TypeMap
