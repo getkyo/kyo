@@ -71,6 +71,7 @@ lazy val kyoJVM = project
         `kyo-bench`.jvm,
         `kyo-test`.jvm,
         `kyo-zio`.jvm,
+        `kyo-grpc`.jvm,
         `kyo-examples`.jvm
     )
 
@@ -88,7 +89,8 @@ lazy val kyoJS = project
         `kyo-stats-registry`.js,
         `kyo-sttp`.js,
         `kyo-test`.js,
-        `kyo-zio`.js
+        `kyo-zio`.js,
+        `kyo-grpc`.js
     )
 
 lazy val `kyo-scheduler` =
@@ -284,6 +286,18 @@ lazy val `kyo-zio` =
             libraryDependencies += "dev.zio" %%% "zio"          % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-test"     % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
+        ).jsSettings(
+            `js-settings`
+        )
+
+
+lazy val `kyo-grpc` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .settings(
+            `kyo-settings`
         ).jsSettings(
             `js-settings`
         )
