@@ -64,8 +64,8 @@ object Resolvers:
             _ =>
                 _ =>
                     req =>
-                        val f = Unsafe.unsafe { implicit u => runtime.unsafe.runToFuture(endpoint.logic(zioMonadError)(())(req)) }
-                        KyoSttpMonad.async[Either[TapirResponse, CalibanResponse[NoStreams.BinaryStream]]] { cb =>
+                        val f = Unsafe.unsafely { runtime.unsafe.runToFuture(endpoint.logic(zioMonadError)(())(req)) }
+                        KyoSttpMonad.async { cb =>
                             f.onComplete(r => cb(r.toEither))(ExecutionContext.parasitic)
                             Canceler(() => f.cancel())
                         }
