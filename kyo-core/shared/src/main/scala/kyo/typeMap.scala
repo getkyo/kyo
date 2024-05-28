@@ -45,6 +45,9 @@ extension [A](self: TypeMap[A])
 end extension
 
 object TypeMap:
+
+    given flat[A]: Flat[TypeMap[A]] = Flat.unsafe.bypass
+
     val empty: TypeMap[Any] = HashMap.empty
 
     def apply[A](a: A)(using ta: Tag[A]): TypeMap[A] =
