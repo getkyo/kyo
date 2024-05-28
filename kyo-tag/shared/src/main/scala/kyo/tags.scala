@@ -17,6 +17,9 @@ object Tag:
 
     inline given apply[T]: Tag[T] = ${ tagImpl[T] }
 
+    extension [T](t1: Tag[T])
+        def erased: Tag[Any] = t1.asInstanceOf[Tag[Any]]
+
     extension [T](t1: Full[T])
 
         def show: String =
@@ -45,7 +48,7 @@ object Tag:
         infix def >:>[U](t2: Full[U]): Boolean =
             t2 <:< t1
 
-        def erased: Tag[Any] = t1.asInstanceOf[Tag[Any]]
+        def erased: Full[Any] = t1.asInstanceOf[Full[Any]]
 
     end extension
 
