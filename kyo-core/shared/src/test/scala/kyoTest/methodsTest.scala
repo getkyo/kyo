@@ -7,6 +7,10 @@ class methodsTest extends KyoTest:
     "pure" in {
         assert(IOs.run(IOs(1)).pure == 1)
         assertDoesNotCompile("IOs(1).pure")
+        def widen[A](v: A < Any) = v
+        assert(widen(TypeMap(1, true)).pure.get[Boolean])
+        val _: Int < IOs = widen(IOs(42)).pure
+        assertDoesNotCompile("widen(IOs(42)).pure == 42")
     }
 
     "map" in {
