@@ -43,7 +43,12 @@ package object kyo:
               | .pure must be called on Kyos with no remaining pending effects.
               | Expected: `$T < Any`, but found: `$T < $S`.
               """.stripMargin) ev: S =:= Any
-        ): T = v.asInstanceOf[T]
+        ): T =
+            v match
+                case kyo: kyo.core.internal.Suspend[?, ?, ?, ?] =>
+                    bug.failTag(kyo.tag)
+                case v =>
+                    v.asInstanceOf[T]
     end extension
 
     def zip[T1, T2, S](v1: T1 < S, v2: T2 < S)(using Trace): (T1, T2) < S =

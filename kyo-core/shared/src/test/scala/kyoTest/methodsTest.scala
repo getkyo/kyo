@@ -1,16 +1,29 @@
 package kyoTest
 
 import kyo.*
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 
 class methodsTest extends KyoTest:
+
+    def widen[A](v: A < Any): A < Any = v
 
     "pure" in {
         assert(IOs.run(IOs(1)).pure == 1)
         assertDoesNotCompile("IOs(1).pure")
-        def widen[A](v: A < Any) = v
         assert(widen(TypeMap(1, true)).pure.get[Boolean])
-        val _: Int < IOs = widen(IOs(42)).pure
         assertDoesNotCompile("widen(IOs(42)).pure == 42")
+    }
+
+    "pure widened" in pendingUntilFixed {
+        assertDoesNotCompile("val _: Int < IOs = widen(IOs(42)).pure")
+    }
+
+    "pure bug failure" in {
+        Try((IOs(42)).asInstanceOf[Int < Any].pure) match
+            case Failure(ex) => assert(ex.getClass.getName().contains("KyoBugException"))
+            case Success(_)  => fail()
     }
 
     "map" in {
