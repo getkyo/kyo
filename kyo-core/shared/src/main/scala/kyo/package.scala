@@ -1,3 +1,4 @@
+import scala.annotation.implicitNotFound
 import scala.util.NotGiven
 
 package object kyo:
@@ -35,13 +36,13 @@ package object kyo:
 
     end extension
 
-    extension [T: Flat](v: T < Any)
-        def pure: T =
-            v match
-                case kyo: kyo.core.internal.Suspend[?, ?, ?, ?] =>
-                    bug.failTag(kyo.tag)
-                case v =>
-                    v.asInstanceOf[T]
+    extension [T, S](v: T < S)
+        def pure(using
+            @implicitNotFound(msg = """
+              | .pure must be called on Kyos with no remaining pending effects.
+              | Expected: `$T < Any`, but found: `$T < $S`.
+              """.stripMargin) ev: S =:= Any
+        ): T = v.asInstanceOf[T]
     end extension
 
     def zip[T1, T2, S](v1: T1 < S, v2: T2 < S): (T1, T2) < S =
