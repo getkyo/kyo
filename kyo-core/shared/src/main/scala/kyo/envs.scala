@@ -83,4 +83,5 @@ object Envs:
             type Remainder = Any
     end HasEnvs
 
+    private[kyo] val bypassHasEnvs = new HasEnvs[Any, Any] {}
 end Envs
