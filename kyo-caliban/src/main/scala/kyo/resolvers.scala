@@ -4,6 +4,8 @@ import caliban.*
 import caliban.interop.tapir.*
 import caliban.interop.tapir.TapirAdapter.*
 import kyo.internal.KyoSttpMonad
+import scala.concurrent.ExecutionContext
+import sttp.monad.Canceler
 import sttp.tapir.Codec.JsonCodec
 import sttp.tapir.Endpoint
 import sttp.tapir.capabilities.NoStreams
@@ -59,7 +61,14 @@ object Resolvers:
         ServerEndpoint[Unit, Unit, I, TapirResponse, CalibanResponse[NoStreams.BinaryStream], Any, KyoSttpMonad.M](
             endpoint.endpoint.asInstanceOf[Endpoint[Unit, I, TapirResponse, CalibanResponse[NoStreams.BinaryStream], Any]],
             _ => _ => Right(()),
-            _ => _ => req => Unsafe.unsafe { implicit u => runtime.unsafe.run(endpoint.logic(zioMonadError)(())(req)).getOrThrow() }
+            _ =>
+                _ =>
+                    req =>
+                        val f = Unsafe.unsafe { implicit u => runtime.unsafe.runToFuture(endpoint.logic(zioMonadError)(())(req)) }
+                        KyoSttpMonad.async[Either[TapirResponse, CalibanResponse[NoStreams.BinaryStream]]] { cb =>
+                            f.onComplete(r => cb(r.toEither))(ExecutionContext.parasitic)
+                            Canceler(() => f.cancel())
+                        }
         )
 
 end Resolvers
