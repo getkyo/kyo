@@ -15,28 +15,27 @@ class layersTest extends KyoTest:
             case class Food(calories: Int)
             case class Stomach(food: Food)
 
-            val foodLayer: Layer[Any, Food]        = Layers(Food(100))
-            val stomachLayer: Layer[Food, Stomach] = Layers.from(Stomach(_))
-            val composed: Layer[Any, Stomach]      = foodLayer >>> stomachLayer
+            val foodLayer: Layer[Any, Food, Any]        = Layers(Food(100))
+            val stomachLayer: Layer[Food, Stomach, Any] = Layers.from(Stomach(_))
+            val composed: Layer[Any, Stomach, Any]      = foodLayer >>> stomachLayer
 
-            composed.run.map { env =>
-                assert(env.get[Stomach].food.calories == 100)
-            }
+            val env = composed.run.pure
+            assert(env.get[Stomach].food.calories == 100)
         }
 
         "a ++ b" in run {
             case class Water(liters: Int)
             case class Fire(heat: Int)
 
-            val waterLayer: Layer[Any, Water] = Layers(Water(2))
-            val fireLayer: Layer[Any, Fire]   = Layers(Fire(500))
+            val waterLayer: Layer[Any, Water, Any] = Layers(Water(2))
+            val fireLayer: Layer[Any, Fire, Any]   = Layers(Fire(500))
 
-            val combinedLayer: Layer[Any, Water & Fire] = waterLayer ++ fireLayer
+            val combinedLayer: Layer[Any, Water & Fire, Any] = waterLayer ++ fireLayer
 
-            combinedLayer.run.map { env =>
-                assert(env.get[Water].liters == 2)
-                assert(env.get[Fire].heat == 500)
-            }
+            val env = combinedLayer.run.pure
+            assert(env.get[Water].liters == 2)
+            assert(env.get[Fire].heat == 500)
+
         }
 
         "a >+> b >+> c" in run {
@@ -44,17 +43,16 @@ class layersTest extends KyoTest:
             case class Shark(belly: Guppy)
             case class MegaShark(belly: Shark)
 
-            val guppyLayer: Layer[Any, Guppy]           = Layers(Guppy("Tiny Guppy"))
-            val sharkLayer: Layer[Guppy, Shark]         = Layers.from(g => Shark(g))
-            val megaSharkLayer: Layer[Shark, MegaShark] = Layers.from(s => MegaShark(s))
+            val guppyLayer: Layer[Any, Guppy, Any]           = Layers(Guppy("Tiny Guppy"))
+            val sharkLayer: Layer[Guppy, Shark, Any]         = Layers.from(g => Shark(g))
+            val megaSharkLayer: Layer[Shark, MegaShark, Any] = Layers.from(s => MegaShark(s))
 
-            val combinedLayer: Layer[Any, Guppy & Shark & MegaShark] = guppyLayer >+> sharkLayer >+> megaSharkLayer
+            val combinedLayer: Layer[Any, Guppy & Shark & MegaShark, Any] = guppyLayer >+> sharkLayer >+> megaSharkLayer
 
-            combinedLayer.run.map { env =>
-                assert(env.get[Guppy].name == "Tiny Guppy")
-                assert(env.get[Shark].belly.name == "Tiny Guppy")
-                assert(env.get[MegaShark].belly.belly.name == "Tiny Guppy")
-            }
+            val env = combinedLayer.run.pure
+            assert(env.get[Guppy].name == "Tiny Guppy")
+            assert(env.get[Shark].belly.name == "Tiny Guppy")
+            assert(env.get[MegaShark].belly.belly.name == "Tiny Guppy")
         }
     }
 

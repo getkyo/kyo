@@ -83,5 +83,7 @@ object Envs:
             type Remainder = Any
     end HasEnvs
 
-    private[kyo] val bypassHasEnvs = new HasEnvs[Any, Any] {}
+    private[kyo] val bypassHasEnvs   = new HasEnvs[Any, Any] {}
+    private[kyo] def bypass[A, B, C] = bypassHasEnvs.asInstanceOf[HasEnvs[A, B] { type Remainder = C }]
+
 end Envs
