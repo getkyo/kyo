@@ -4,6 +4,7 @@ import kyo.Tag.Intersection
 import scala.collection.immutable.HashMap
 
 opaque type TypeMap[+A] = HashMap[Tag[?], Any]
+
 extension [A](self: TypeMap[A])
 
     private inline def fatal(using t: Tag[?]): Nothing =

@@ -2,12 +2,8 @@ package kyoTest
 
 import kyo.*
 import org.scalatest.compatible.Assertion
-import scala.concurrent.Future
 
 class aspectsTest extends KyoTest:
-
-    private def run(v: Assertion < IOs) =
-        Future.successful(IOs.run(v))
 
     "one aspect" - {
         val aspect       = Aspects.init[Int, Int, IOs]

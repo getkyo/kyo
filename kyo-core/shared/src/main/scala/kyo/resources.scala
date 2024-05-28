@@ -1,6 +1,7 @@
 package kyo
 
 import java.io.Closeable
+import kyo.internal.Trace
 
 opaque type Resources <: Fibers = Fibers
 
@@ -8,7 +9,7 @@ object Resources:
 
     private val local = Locals.init[Queues.Unbounded[Unit < Fibers] | None.type](None)
 
-    def ensure(v: => Unit < Fibers): Unit < Resources =
+    def ensure(v: => Unit < Fibers)(using Trace): Unit < Resources =
         local.use {
             case _: None.type =>
                 bug("Can't locate Resources finalizer queue.")
@@ -20,17 +21,17 @@ object Resources:
                 }
         }
 
-    def acquireRelease[T, S](acquire: => T < (S & Fibers))(release: T => Unit < Fibers): T < (Resources & S) =
+    def acquireRelease[T, S](acquire: => T < (S & Fibers))(release: T => Unit < Fibers)(using Trace): T < (Resources & S) =
         IOs {
             acquire.map { resource =>
                 ensure(release(resource)).andThen(resource)
             }
         }
 
-    def acquire[T <: Closeable](resource: => T < Fibers): T < Resources =
+    def acquire[T <: Closeable](resource: => T < Fibers)(using Trace): T < Resources =
         acquireRelease(resource)(r => IOs(r.close()))
 
-    def run[T, S](v: T < (Resources & S)): T < (Fibers & S) =
+    def run[T, S](v: T < (Resources & S))(using Trace): T < (Fibers & S) =
         Queues.initUnbounded[Unit < Fibers](Access.Mpsc).map { q =>
             Fibers.initPromise[Unit].map { p =>
                 def close: Unit < IOs =

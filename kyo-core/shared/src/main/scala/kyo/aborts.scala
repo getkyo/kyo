@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.core.*
+import kyo.internal.Trace
 import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 
@@ -12,14 +13,14 @@ object Aborts:
 
     opaque type Effects[-V] = DoAbort
 
-    def fail[V](v: V): Nothing < Aborts[V] =
+    def fail[V](v: V)(using Trace): Nothing < Aborts[V] =
         DoAbort.suspend(v).asInstanceOf[Nothing < Aborts[V]]
 
-    def when[V](b: Boolean)(value: => V): Unit < Aborts[V] =
+    def when[V](b: Boolean)(value: => V)(using Trace): Unit < Aborts[V] =
         if b then fail(value)
         else ()
 
-    def get[V, T](e: Either[V, T]): T < Aborts[V] =
+    def get[V, T](e: Either[V, T])(using Trace): T < Aborts[V] =
         e match
             case Right(v) => v
             case Left(v)  => fail(v)
@@ -28,7 +29,8 @@ object Aborts:
         def apply[V0 <: V, T: Flat, S, VS, VR](v: T < (Aborts[VS] & S))(
             using
             h: HasAborts[V0, VS] { type Remainder = VR },
-            ct: ClassTag[V0]
+            ct: ClassTag[V0],
+            trace: Trace
         ): Either[V, T] < (VR & S) =
             DoAbort.handle(handler)(ct, v).asInstanceOf[Either[V, T] < (VR & S)]
     end RunDsl
@@ -37,7 +39,9 @@ object Aborts:
 
     class CatchingDsl[V <: Throwable]:
         def apply[T: Flat, S](v: => T < S)(
-            using ct: ClassTag[V]
+            using
+            ct: ClassTag[V],
+            trace: Trace
         ): T < (Aborts[V] & S) =
             IOs.catching(v) {
                 case ex: V => Aborts.fail(ex)

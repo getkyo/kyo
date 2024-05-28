@@ -1,12 +1,13 @@
 package kyo
 
 import java.util.concurrent.CopyOnWriteArraySet
+import kyo.internal.Trace
 
 object Hubs:
 
     private[kyo] val closed = IOs.fail("Hub closed!")
 
-    def init[T: Flat](capacity: Int): Hub[T] < IOs =
+    def init[T: Flat](capacity: Int)(using Trace): Hub[T] < IOs =
         Channels.init[T](capacity).map { ch =>
             IOs {
                 val listeners = new CopyOnWriteArraySet[Channel[T]]
@@ -30,21 +31,21 @@ object Hubs:
 
     class Listener[T] private[kyo] (hub: Hub[T], child: Channel[T]):
 
-        def size: Int < IOs = child.size
+        def size(using Trace): Int < IOs = child.size
 
-        def isEmpty: Boolean < IOs = child.isEmpty
+        def isEmpty(using Trace): Boolean < IOs = child.isEmpty
 
-        def isFull: Boolean < IOs = child.isFull
+        def isFull(using Trace): Boolean < IOs = child.isFull
 
-        def poll: Option[T] < IOs = child.poll
+        def poll(using Trace): Option[T] < IOs = child.poll
 
-        def takeFiber: Fiber[T] < IOs = child.takeFiber
+        def takeFiber(using Trace): Fiber[T] < IOs = child.takeFiber
 
-        def take: T < Fibers = child.take
+        def take(using Trace): T < Fibers = child.take
 
-        def isClosed: Boolean < IOs = child.isClosed
+        def isClosed(using Trace): Boolean < IOs = child.isClosed
 
-        def close: Option[Seq[T]] < IOs =
+        def close(using Trace): Option[Seq[T]] < IOs =
             hub.remove(child).andThen(child.close)
 
     end Listener
@@ -58,23 +59,23 @@ class Hub[T: Flat] private[kyo] (
     listeners: CopyOnWriteArraySet[Channel[T]]
 ):
 
-    def size: Int < IOs = ch.size
+    def size(using Trace): Int < IOs = ch.size
 
-    def offer(v: T): Boolean < IOs = ch.offer(v)
+    def offer(v: T)(using Trace): Boolean < IOs = ch.offer(v)
 
-    def offerUnit(v: T): Unit < IOs = ch.offerUnit(v)
+    def offerUnit(v: T)(using Trace): Unit < IOs = ch.offerUnit(v)
 
-    def isEmpty: Boolean < IOs = ch.isEmpty
+    def isEmpty(using Trace): Boolean < IOs = ch.isEmpty
 
-    def isFull: Boolean < IOs = ch.isFull
+    def isFull(using Trace): Boolean < IOs = ch.isFull
 
-    def putFiber(v: T): Fiber[Unit] < IOs = ch.putFiber(v)
+    def putFiber(v: T)(using Trace): Fiber[Unit] < IOs = ch.putFiber(v)
 
-    def put(v: T): Unit < Fibers = ch.put(v)
+    def put(v: T)(using Trace): Unit < Fibers = ch.put(v)
 
-    def isClosed: Boolean < IOs = ch.isClosed
+    def isClosed(using Trace): Boolean < IOs = ch.isClosed
 
-    def close: Option[Seq[T]] < IOs =
+    def close(using Trace): Option[Seq[T]] < IOs =
         fiber.interrupt.map { _ =>
             ch.close.map { r =>
                 IOs {
@@ -90,10 +91,10 @@ class Hub[T: Flat] private[kyo] (
             }
         }
 
-    def listen: Listener[T] < IOs =
+    def listen(using Trace): Listener[T] < IOs =
         listen(0)
 
-    def listen(bufferSize: Int): Listener[T] < IOs =
+    def listen(bufferSize: Int)(using Trace): Listener[T] < IOs =
         isClosed.map {
             case true => closed
             case false =>
@@ -114,7 +115,7 @@ class Hub[T: Flat] private[kyo] (
                 }
         }
 
-    private[kyo] def remove(child: Channel[T]): Unit < IOs =
+    private[kyo] def remove(child: Channel[T])(using Trace): Unit < IOs =
         IOs {
             listeners.remove(child)
             ()

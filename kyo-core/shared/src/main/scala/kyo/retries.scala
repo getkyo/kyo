@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.Trace
 import scala.util.*
 
 object Retries:
@@ -22,10 +23,10 @@ object Retries:
     object Policy:
         val default = Policy(_ => Duration.Zero, 3)
 
-    def apply[T: Flat, S](policy: Policy)(v: => T < S): T < (Fibers & S) =
+    def apply[T: Flat, S](policy: Policy)(v: => T < S)(using Trace): T < (Fibers & S) =
         apply(_ => policy)(v)
 
-    def apply[T: Flat, S](builder: Policy => Policy)(v: => T < S): T < (Fibers & S) =
+    def apply[T: Flat, S](builder: Policy => Policy)(v: => T < S)(using Trace): T < (Fibers & S) =
         val b = builder(Policy.default)
         Loops.indexed { attempt =>
             IOs.attempt(v).map {
