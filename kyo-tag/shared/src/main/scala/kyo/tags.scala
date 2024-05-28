@@ -40,7 +40,7 @@ object Tag:
                     t1 <:< t2
 
         infix def =:=[U](t2: Full[U]): Boolean =
-            (t1 eq t2) || t1 == t2
+            (t1.asInstanceOf[AnyRef] eq t2.asInstanceOf[AnyRef]) || t1 == t2
 
         infix def =!=[U](t2: Full[U]): Boolean =
             !(t1 =:= t2)
@@ -52,7 +52,7 @@ object Tag:
 
     end extension
 
-    sealed trait Set[T]:
+    sealed trait Set[T] extends Any:
         def show: String
         infix def <:<[U](t2: Full[U]): Boolean
         infix def =:=[U](t2: Full[U]): Boolean
@@ -65,7 +65,7 @@ object Tag:
     object Set:
         inline given apply[T]: Set[T] = ${ setImpl[T] }
 
-    case class Union[T](tags: Seq[Tag[Any]]) extends Set[T]:
+    case class Union[T](tags: Seq[Tag[Any]]) extends AnyVal with Set[T]:
         def show: String =
             tags.map(_.show).mkString(" | ")
 
@@ -96,7 +96,7 @@ object Tag:
         private[Tag] def raw[T](tags: Seq[String]) = new Union[T](tags.asInstanceOf[Seq[Tag[Any]]])
         inline given apply[T]: Union[T]            = ${ unionImpl[T] }
 
-    case class Intersection[T](tags: Seq[Tag[Any]]) extends Set[T]:
+    case class Intersection[T](tags: Seq[Tag[Any]]) extends AnyVal with Set[T]:
         def show: String =
             tags.map(_.show).mkString(" & ")
 
