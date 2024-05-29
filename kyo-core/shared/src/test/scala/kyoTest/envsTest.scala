@@ -258,11 +258,11 @@ class envsTest extends KyoTest:
         }
 
         "providing the wrong env map" in {
-            assert(scala.compiletime.testing.typeChecks("""
+            assertDoesNotCompile("""
             val kyo: String < Envs[String] = Envs.get[String]
             val envMap: TypeMap[Int]       = TypeMap(12)
             Envs.runTypeMap(envMap)(kyo).pure
-            """))
+            """)
         }
 
         "providing an empty env map" in {

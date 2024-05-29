@@ -36,7 +36,7 @@ package object kyo:
 
     end extension
 
-    extension [T](v: T < Any)
+    extension [T: Flat](v: T < Any)
         def pure: T =
             v match
                 case kyo: kyo.core.internal.Suspend[?, ?, ?, ?] =>
