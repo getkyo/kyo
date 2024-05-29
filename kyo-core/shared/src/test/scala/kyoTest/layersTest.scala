@@ -64,7 +64,7 @@ class layersTest extends KyoTest:
 
             var sourceInitializationCount = 0
 
-            val magicSourceLayer = Layers {
+            val magicSourceLayer: Layer[Any, MagicSource, IOs] = Layers {
                 IOs { sourceInitializationCount += 1 }.map { _ => MagicSource("Fireball") }
             }
 

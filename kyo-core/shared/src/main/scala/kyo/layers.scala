@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Flat.unsafe
 import kyo.core.*
+import scala.annotation.targetName
 
 // Layer[In, Out]
 
@@ -38,12 +39,12 @@ sealed trait Layer[-In, +Out, -S]:
 
     //  🔺 <- dunce cap for using mutation
 
-    private[kyo] def doRun(memoMap: scala.collection.mutable.Map[Layer[?, ?, ?], Any]): TypeMap[Out] < (S & Envs[In]) =
+    private[kyo] def doRun(
+        memoMap: scala.collection.mutable.Map[Layer[?, ?, ?], Any] = scala.collection.mutable.Map.empty[Layer[?, ?, ?], Any]
+    ): TypeMap[Out] < (S & Envs[In]) =
         type Expected = TypeMap[Out] < (S & Envs[In])
         memoMap.get(self) match
-            case Some(result) =>
-                result.asInstanceOf[Expected]
-
+            case Some(result) => result.asInstanceOf[Expected]
             case None =>
                 self match
                     case And(lhs, rhs) =>
@@ -72,13 +73,13 @@ sealed trait Layer[-In, +Out, -S]:
 
 end Layer
 extension [In, Out, S](layer: Layer[In, Out, S])
+    @targetName("runS")
     def run: TypeMap[Out] < (S & Envs[In]) =
-        layer.doRun(scala.collection.mutable.Map.empty[Layer[?, ?, ?], Any])
+        layer.doRun()
 
 extension [Out, S](layer: Layer[Any, Out, S])
-    @annotation.targetName("OOPS")
     def run: TypeMap[Out] < S =
-        layer.doRun(scala.collection.mutable.Map.empty[Layer[?, ?, ?], Any]).asInstanceOf[TypeMap[Out] < S]
+        layer.doRun().asInstanceOf[TypeMap[Out] < S]
 //
 
 // def run -> A < Effects
