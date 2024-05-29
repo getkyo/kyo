@@ -33,12 +33,11 @@ sealed trait Layer[-In, +Out, -S]:
 
     import Layers.*
 
-    def >>>[In2, Out2, S1](that: Layer[Out & In2, Out2, S1]): Layer[In & In2, Out2, S & S1] = To(self, that) // In1, Out1, In2, Out2, S
-    def ++[B1, C, S1](that: Layer[B1, C, S1]): Layer[In & B1, Out & C, S & S1]              = And(self, that)
-    def >+>[B1, C, S1](that: Layer[Out & B1, C, S1]): Layer[In & B1, Out & C, S & S1]       = self ++ (self >>> that)
+    def >>>[In2, Out2, S2](that: Layer[Out & In2, Out2, S2]): Layer[In & In2, Out2, S & S2]       = To(self, that)
+    def ++[In2, Out2, S2](that: Layer[In2, Out2, S2]): Layer[In & In2, Out & Out2, S & S2]        = And(self, that)
+    def >+>[In2, Out2, S2](that: Layer[Out & In2, Out2, S2]): Layer[In & In2, Out & Out2, S & S2] = self ++ (self >>> that)
 
     //  🔺 <- dunce cap for using mutation
-
     private[kyo] def doRun(
         memoMap: scala.collection.mutable.Map[Layer[?, ?, ?], Any] = scala.collection.mutable.Map.empty[Layer[?, ?, ?], Any]
     ): TypeMap[Out] < (S & Envs[In]) =
@@ -63,7 +62,7 @@ sealed trait Layer[-In, +Out, -S]:
                             yield rightResult
                         }.asInstanceOf[Expected]
 
-                    case layer @ FromKyo(kyo) =>
+                    case FromKyo(kyo) =>
                         kyo().map { result =>
                             memoMap += (self -> result)
                             result
