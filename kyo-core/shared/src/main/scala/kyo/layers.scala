@@ -1,43 +1,17 @@
 package kyo
 
+import Layers.internal.*
 import kyo.Flat.unsafe
 import kyo.core.*
 import scala.annotation.targetName
 
-// Layer[In, Out]
-
-// Out < Layers[In]
-
-type Layers[In]
-
-// val lengthLayer = Layers(Envs.get[String].map(_.length)) : Int < (Layers[String] & Choices)
-// val intLayer    = Layers("Hello")
-// intLayer >>> lengthLayer
-//
-// Set -> Predefined
-// Type Parameter
-// -> flex alternative pending sets
-
-// Layer(Choices.get(1, 2, 3).map(n => n.toString))
-
-// Layer[Any, String, Choices]
-// layer.run ->    String < Choices
-
-// val = Layer(1): Layer[Any, Int, Any].run.pure
-
-// Aborts.fail("oops").catchAll
-// IOs(1Os)
-
 sealed trait Layer[-In, +Out, -S]:
     self =>
-
-    import Layers.*
 
     def >>>[In2, Out2, S2](that: Layer[Out & In2, Out2, S2]): Layer[In & In2, Out2, S & S2]       = To(self, that)
     def ++[In2, Out2, S2](that: Layer[In2, Out2, S2]): Layer[In & In2, Out & Out2, S & S2]        = And(self, that)
     def >+>[In2, Out2, S2](that: Layer[Out & In2, Out2, S2]): Layer[In & In2, Out & Out2, S & S2] = self ++ (self >>> that)
 
-    //  🔺 <- dunce cap for using mutation
     private[kyo] def doRun(
         memoMap: scala.collection.mutable.Map[Layer[?, ?, ?], Any] = scala.collection.mutable.Map.empty[Layer[?, ?, ?], Any]
     ): TypeMap[Out] < (S & Envs[In]) =
@@ -79,23 +53,15 @@ extension [In, Out, S](layer: Layer[In, Out, S])
 extension [Out, S](layer: Layer[Any, Out, S])
     def run: TypeMap[Out] < S =
         layer.doRun().asInstanceOf[TypeMap[Out] < S]
-//
-
-// def run -> A < Effects
-// V < Envs[A] & Envs[B]
-// Envs.run(envMap.get[A])(v)
-// Envs.runTypeMap
-// macro? Envs.run(...)(kyo)
-// zio.provide(...)
-// Envs.run(...) <- accepts varargs
-// A < S
-// Layer[A, B, S]
 
 object Layers:
-
-    case class And[In1, Out1, In2, Out2, S](lhs: Layer[In1, Out1, S], rhs: Layer[In2, Out2, S]) extends Layer[In1 & In2, Out1 & Out2, S]
-    case class To[In1, Out1, In2, Out2, S](lhs: Layer[In1, Out1, S], rhs: Layer[Out1 & In2, Out2, S]) extends Layer[In1 & In2, Out2, S]
-    case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Envs[In] & S))(using val tag: Tag[Out]) extends Layer[In, Out, S]
+    private[kyo] object internal:
+        case class And[In1, Out1, In2, Out2, S](lhs: Layer[In1, Out1, S], rhs: Layer[In2, Out2, S])
+            extends Layer[In1 & In2, Out1 & Out2, S]
+        case class To[In1, Out1, In2, Out2, S](lhs: Layer[In1, Out1, S], rhs: Layer[Out1 & In2, Out2, S])
+            extends Layer[In1 & In2, Out2, S]
+        case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Envs[In] & S))(using val tag: Tag[Out]) extends Layer[In, Out, S]
+    end internal
 
     def apply[A, B: Tag, S](kyo: => B < (Envs[A] & S)): Layer[A, B, S] =
         FromKyo { () =>
@@ -106,26 +72,17 @@ object Layers:
         apply { Resources.run(kyo) }
 
     def from[A: Tag, B: Tag, S](f: A => B < S): Layer[A, B, S] =
-        Layers.apply {
-            Envs.get[A].map(f)
-        }
+        apply { Envs.get[A].map(f) }
 
     def from[A: Tag, B: Tag, C: Tag, S](f: (A, B) => C < S): Layer[A & B, C, S] =
-        Layers.apply {
+        apply {
             for
                 a <- Envs.get[A]
                 b <- Envs.get[B]
             yield f(a, b)
         }
 
-    // macro for merge?
-//    def provide[B, S0, S1](layer: Layer[Any, B,] < S0)(v: Any < Envs[B] & S1) = ???
 end Layers
-
-// A->B >>> A&B>C
-// extension [A0, B0](self: Layer[A0, B0])
-
-// end extension
 
 object LayerApp extends KyoApp:
 
