@@ -391,7 +391,11 @@ lazy val readme =
             `kyo-sttp`,
             `kyo-tapir`,
             `kyo-bench`,
-            `kyo-zio`
+            `kyo-zio`,
+            `kyo-caliban`
+        )
+        .settings(
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
         )
 
 import org.scalajs.jsenv.nodejs.*

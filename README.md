@@ -2153,19 +2153,22 @@ val d: Task[Int] =
 
 `Resolvers` integrates with the [Caliban](https://github.com/ghostdogpr/caliban) library to help setup GraphQL servers.
 
-The first integration is that you can use Kyo effects inside your Caliban schemas.
-- If your Kyo effects is `(Aborts[Throwable] & ZIOs)` or a subtype of it, a Caliban `Schema` can be derived automatically.
+The first integration is that you can use Kyo effects inside your Caliban schemas by importing `kyo.given`.
+- If your Kyo effects is `(Aborts[Throwable] & ZIOs)` or a subtype of it (`ZIOs` includes `Fibers & IOs`), a Caliban `Schema` can be derived automatically.
 - If your Kyo effect is something else, a Caliban schema can be derived if it has a `Runner` for that effect as part of ZIO environment.
 
 ```scala
+import caliban.schema.*
+import kyo.{ given, *}
+
 // this works by just importing kyo.*
 case class Query(k: Int < Aborts[Throwable]) derives Schema.SemiAuto
 
-// for other effects, you need to extend `SchemaDerivation[Runner[YourEnv]]`
-type Env = Vars[Int] & Envs[String]
-object schema extends SchemaDerivation[Runner[Env]]
+// for other effects, you need to extend `SchemaDerivation[Runner[YourCustomEffects]]`
+type CustomEffects = Vars[Int] & Envs[String]
+object schema extends SchemaDerivation[Runner[CustomEffects]]
 
-case class Query(k: Int < Env) derives schema.SemiAuto
+case class Query2(k: Int < CustomEffects) derives schema.SemiAuto
 ```
 
 Then, the `Resolvers` effect allows easily turning these schemas into a GraphQL server.
@@ -2173,9 +2176,12 @@ The method `Resolvers.get` is used for importing a `GraphQL` object from Caliban
 You can then run this effect using `Resolvers.run` to get an HTTP server. This effect requires `ZIOs` because Caliban uses ZIO internally to run.
 
 ```scala
-import kyo.*
 import caliban.*
-import caliban.schema.Schema
+import caliban.schema.*
+import kyo.{ given, *}
+import sttp.tapir.json.zio.*
+import sttp.tapir.server.netty.*
+import zio.Task
 
 case class Query(k: Int < Aborts[Throwable]) derives Schema.SemiAuto
 val api = graphQL(RootResolver(Query(42)))
@@ -2193,9 +2199,21 @@ val c: Task[NettyKyoServerBinding] = ZIOs.run(b)
 
 When using arbitrary Kyo effects, you need to provide the `Runner` for that effect when calling the `run` function.
 ```scala
-// runner for our Vars[Int] & Envs[String]
-val runner = new Runner[Vars[Int] & Envs[String]]:
-  def apply[T: Flat](v: T < (Vars[Int] & Envs[String])): Task[T] = ZIOs.run(Envs.run("kyo")(Vars.run(0)(v)))
+import caliban.*
+import caliban.schema.*
+import kyo.{ given, *}
+import sttp.tapir.json.zio.*
+import zio.Task
+
+type CustomEffects = Vars[Int] & Envs[String]
+object schema extends SchemaDerivation[Runner[CustomEffects]]
+case class Query(k: Int < CustomEffects) derives schema.SemiAuto
+
+val api = graphQL(RootResolver(Query(42)))
+
+// runner for our CustomEffects
+val runner = new Runner[CustomEffects]:
+  def apply[T: Flat](v: T < CustomEffects): Task[T] = ZIOs.run(Envs.run("kyo")(Vars.run(0)(v)))
 
 val d = Resolvers.run(runner) { Resolvers.get(api) }
 ```
