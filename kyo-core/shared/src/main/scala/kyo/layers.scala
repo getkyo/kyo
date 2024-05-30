@@ -68,9 +68,6 @@ object Layers:
             kyo.map { result => TypeMap(result) }
         }
 
-    def scoped[A, B: Tag, S](kyo: => B < (Envs[A] & Resources & S)): Layer[A, B, Fibers & S] =
-        apply { Resources.run(kyo) }
-
     def from[A: Tag, B: Tag, S](f: A => B < S): Layer[A, B, S] =
         apply { Envs.get[A].map(f) }
 
