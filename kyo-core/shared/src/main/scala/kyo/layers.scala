@@ -3,7 +3,9 @@ package kyo
 import Layers.internal.*
 import kyo.Flat.unsafe
 import kyo.core.*
+
 import scala.annotation.targetName
+import scala.collection.immutable.HashMap
 
 sealed trait Layer[-In, +Out, -S]:
     self =>
@@ -62,6 +64,8 @@ object Layers:
             extends Layer[In1 & In2, Out2, S]
         case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Envs[In] & S))(using val tag: Tag[Out]) extends Layer[In, Out, S]
     end internal
+
+    val empty: Layer[Any, Any, Any] = apply { TypeMap.empty }
 
     def apply[A, B: Tag, S](kyo: => B < (Envs[A] & S)): Layer[A, B, S] =
         FromKyo { () =>
