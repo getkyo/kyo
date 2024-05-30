@@ -11,7 +11,12 @@ import sttp.tapir.Endpoint
 import sttp.tapir.capabilities.NoStreams
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.netty.*
-import zio.*
+import zio.RIO
+import zio.Runtime
+import zio.Tag
+import zio.Unsafe
+import zio.ZEnvironment
+import zio.ZIO
 import zio.stream.ZStream
 
 opaque type Resolvers = Aborts[CalibanError] & ZIOs
@@ -54,20 +59,25 @@ object Resolvers:
     ): HttpInterpreter[R, CalibanError] < Resolvers =
         ZIOs.get(api.interpreter.map(HttpInterpreter(_)))
 
+    private val rightUnit: Right[Nothing, Unit] = Right(())
+
     private def convertEndpoint[R, I](
         endpoint: ServerEndpoint.Full[Unit, Unit, I, TapirResponse, CalibanResponse[NoStreams.BinaryStream], NoStreams, [x] =>> RIO[R, x]],
         runtime: Runtime[R]
     ): ServerEndpoint[Any, KyoSttpMonad.M] =
         ServerEndpoint[Unit, Unit, I, TapirResponse, CalibanResponse[NoStreams.BinaryStream], Any, KyoSttpMonad.M](
             endpoint.endpoint.asInstanceOf[Endpoint[Unit, I, TapirResponse, CalibanResponse[NoStreams.BinaryStream], Any]],
-            _ => _ => Right(()),
+            _ => _ => rightUnit,
             _ =>
                 _ =>
                     req =>
                         val f = Unsafe.unsafely { runtime.unsafe.runToFuture(endpoint.logic(zioMonadError)(())(req)) }
                         KyoSttpMonad.async { cb =>
                             f.onComplete(r => cb(r.toEither))(ExecutionContext.parasitic)
-                            Canceler(() => f.cancel())
+                            Canceler { () =>
+                                val _ = f.cancel()
+                                ()
+                            }
                         }
         )
 

@@ -260,8 +260,8 @@ lazy val `kyo-caliban` =
         .dependsOn(`kyo-sttp` % "test->test")
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.6.0",
-            libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.6.0",
+            libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.7.0",
+            libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.7.0",
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7" % Test
         )
 
