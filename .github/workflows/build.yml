@@ -23,8 +23,8 @@ jobs:
 
     - name: Build JVM
       run: |
-        sbt 'kyo-bench/test' 'kyo-cache/test' '+kyo-scheduler/test' '+kyo-scheduler-zio/test' 'kyo-core/test' 'kyo-direct/test' 'kyo-test/test' 'kyo-zio/test' 'kyo-examples/test' 'kyo-os-lib/test' 'kyo-stats-otel/test' 'kyo-sttp/test' 'kyo-tapir/test'
+        sbt '+kyoJVM/test'
 
     - name: Build JS
       run: |
-        sbt '+kyo-schedulerJS/test' 'kyo-coreJS/test' 'kyo-directJS/test' 'kyo-sttpJS/test' 'kyo-testJS/test' 'kyo-zioJS/test'
+        sbt '+kyoJS/test'

@@ -21,9 +21,9 @@ class resolversTest extends KyoTest:
             zio.Runtime.default.unsafe.run(v).getOrThrow()
         )
 
-    def testServer() =
+    def testServer(port: Int) =
         import scala.concurrent.duration.*
-        NettyKyoServer(NettyConfig.default.copy(gracefulShutdownTimeout = Some(5.millis)))
+        NettyKyoServer(NettyConfig.default.copy(port = port, gracefulShutdownTimeout = Some(5.millis)))
 
     case class Query(
         k1: Int < Aborts[Throwable],
@@ -81,7 +81,7 @@ class resolversTest extends KyoTest:
 
         ZIOs.run {
             for
-                server <- Resolvers.run(testServer()) {
+                server <- Resolvers.run(testServer(8080)) {
                     Resolvers.get(api)
                 }
                 res <- Requests.run {
@@ -99,7 +99,7 @@ class resolversTest extends KyoTest:
 
         ZIOs.run {
             for
-                server <- Resolvers.run(testServer()) {
+                server <- Resolvers.run(testServer(8081)) {
                     Resolvers.get(api).map(_.configure(Configurator.setEnableIntrospection(true)))
                 }
                 res <- Requests.run {
@@ -130,7 +130,7 @@ class resolversTest extends KyoTest:
 
         ZIOs.run {
             for
-                server <- Resolvers.run(testServer(), runner) { Resolvers.get(api) }
+                server <- Resolvers.run(testServer(8082), runner) { Resolvers.get(api) }
                 res <- Requests.run {
                     Requests[String](_
                         .post(Uri.unsafeApply(server.hostName, server.port))
