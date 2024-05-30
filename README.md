@@ -17,14 +17,15 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 
 Kyo is available on Maven Central in multiple modules:
 
-| Module           | Scala 3 | Scala JS | Description                         |
-|------------------|---------|----------|-------------------------------------|
-| kyo-core         | ✅      | ✅       | Core and concurrent effects         |
-| kyo-direct       | ✅      | ✅       | Direct syntax support               |
-| kyo-sttp         | ✅      | ✅       | Sttp HTTP Client                    |
-| kyo-tapir        | ✅      | ✅       | Tapir HTTP Server                   |
-| kyo-cache        | ✅      |          | Caffeine caching                    |
-| kyo-stats-otel   | ✅      |          | Stats exporter for OpenTelemetry    |
+| Module         | Scala 3 | Scala JS | Description                      |
+|----------------|---------|----------|----------------------------------|
+| kyo-core       | ✅       | ✅        | Core and concurrent effects      |
+| kyo-direct     | ✅       | ✅        | Direct syntax support            |
+| kyo-sttp       | ✅       | ✅        | Sttp HTTP Client                 |
+| kyo-tapir      | ✅       | ✅        | Tapir HTTP Server                |
+| kyo-caliban    | ✅       | ✅        | Caliban GraphQL Server           |
+| kyo-cache      | ✅       |          | Caffeine caching                 |
+| kyo-stats-otel | ✅       |          | Stats exporter for OpenTelemetry |
 
 For Scala 3:
 
@@ -35,6 +36,7 @@ libraryDependencies += "io.getkyo" %% "kyo-cache" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-stats-otel" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-sttp" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-tapir" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-caliban" % "<version>"
 ```
 
 For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, and `kyo-sttp`):
@@ -2147,6 +2149,75 @@ val d: Task[Int] =
 
 > Note: Support for ZIO environments (`R` in `ZIO[R, E, A]`) is currently in development. Once implemented, it will be possible to use ZIO effects with environments directly within Kyo computations.
 
+### Resolvers: GraphQL Server via Caliban
+
+`Resolvers` integrates with the [Caliban](https://github.com/ghostdogpr/caliban) library to help setup GraphQL servers.
+
+The first integration is that you can use Kyo effects inside your Caliban schemas by importing `kyo.given`.
+- If your Kyo effects is `(Aborts[Throwable] & ZIOs)` or a subtype of it (`ZIOs` includes `Fibers & IOs`), a Caliban `Schema` can be derived automatically.
+- If your Kyo effect is something else, a Caliban schema can be derived if it has a `Runner` for that effect as part of ZIO environment.
+
+```scala
+import caliban.schema.*
+import kyo.{ given, *}
+
+// this works by just importing kyo.*
+case class Query(k: Int < Aborts[Throwable]) derives Schema.SemiAuto
+
+// for other effects, you need to extend `SchemaDerivation[Runner[YourCustomEffects]]`
+type CustomEffects = Vars[Int] & Envs[String]
+object schema extends SchemaDerivation[Runner[CustomEffects]]
+
+case class Query2(k: Int < CustomEffects) derives schema.SemiAuto
+```
+
+Then, the `Resolvers` effect allows easily turning these schemas into a GraphQL server.
+The method `Resolvers.get` is used for importing a `GraphQL` object from Caliban into Kyo.
+You can then run this effect using `Resolvers.run` to get an HTTP server. This effect requires `ZIOs` because Caliban uses ZIO internally to run.
+
+```scala
+import caliban.*
+import caliban.schema.*
+import kyo.{ given, *}
+import sttp.tapir.json.zio.*
+import sttp.tapir.server.netty.*
+import zio.Task
+
+case class Query(k: Int < Aborts[Throwable]) derives Schema.SemiAuto
+val api = graphQL(RootResolver(Query(42)))
+
+val a: NettyKyoServerBinding < (ZIOs & Aborts[CalibanError]) =
+  Resolvers.run { Resolvers.get(api) }
+
+// similarly to the tapir integration, you can also pass a `NettyKyoServer` explicitly
+val b: NettyKyoServerBinding < (ZIOs & Aborts[CalibanError]) =
+  Resolvers.run(NettyKyoServer().port(9999)) { Resolvers.get(api) }
+
+// you can turn this into a ZIO as seen in the ZIO integration
+val c: Task[NettyKyoServerBinding] = ZIOs.run(b)
+```
+
+When using arbitrary Kyo effects, you need to provide the `Runner` for that effect when calling the `run` function.
+```scala
+import caliban.*
+import caliban.schema.*
+import kyo.{ given, *}
+import sttp.tapir.json.zio.*
+import zio.Task
+
+type CustomEffects = Vars[Int] & Envs[String]
+object schema extends SchemaDerivation[Runner[CustomEffects]]
+case class Query(k: Int < CustomEffects) derives schema.SemiAuto
+
+val api = graphQL(RootResolver(Query(42)))
+
+// runner for our CustomEffects
+val runner = new Runner[CustomEffects]:
+  def apply[T: Flat](v: T < CustomEffects): Task[T] = ZIOs.run(Envs.run("kyo")(Vars.run(0)(v)))
+
+val d = Resolvers.run(runner) { Resolvers.get(api) }
+```
+
 ### AIs: LLM Abstractions via OpenAI
 
 Coming soon..
@@ -2168,7 +2239,7 @@ def test[S](v: Int < S) =
 
 // If the input has no pending effects,
 // `S` is inferred  to `Any` and the
-// value is evaluated immediatelly 
+// value is evaluated immediately 
 // to 43
 val a: Int < Any =
   test(42)
