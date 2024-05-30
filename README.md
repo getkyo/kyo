@@ -337,7 +337,7 @@ The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a co
 
 The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
 
-> Note: `defer` is currently the only macro in Kyo. All other features use regular language constructs.
+> Note: `defer` is currently the only user-facing macro in Kyo. All other features use regular language constructs.
 
 ### Defining an App
 
