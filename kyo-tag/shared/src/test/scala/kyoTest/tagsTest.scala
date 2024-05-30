@@ -225,20 +225,20 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
     "show" - {
 
         "compact" in {
-            assert(Tag[Object].show == "java.lang.Object")
-            assert(Tag[Matchable].show == "scala.Matchable")
-            assert(Tag[Any].show == "scala.Any")
-            assert(Tag[String].show == "java.lang.String")
+            assert(Tag[Object].show == "Tag[java.lang.Object]")
+            assert(Tag[Matchable].show == "Tag[scala.Matchable]")
+            assert(Tag[Any].show == "Tag[scala.Any]")
+            assert(Tag[String].show == "Tag[java.lang.String]")
         }
 
         "no type params" in {
-            assert(Tag[Int].show == "scala.Int")
-            assert(Tag[Thread].show == "java.lang.Thread")
+            assert(Tag[Int].show == "Tag[scala.Int]")
+            assert(Tag[Thread].show == "Tag[java.lang.Thread]")
         }
 
         "type params" in pendingUntilFixed {
             class Test[T]
-            assert(Tag[Test[Int]].show == s"${classOf[Test[?]].getName}[scala.Int]")
+            assert(Tag[Test[Int]].show == s"Tag[${classOf[Test[?]].getName}[scala.Int]]")
             ()
         }
     }

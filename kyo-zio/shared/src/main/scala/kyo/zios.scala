@@ -46,7 +46,7 @@ object ZIOs:
                             val k = kyo.asInstanceOf[Suspend[Task, Any, U, ZIOs]]
                             k.command.flatMap(v => loop(k(v)))
                         else
-                            bug.failTag(kyo.tag, Tag.Intersection[FiberGets & Tasks & IOs])
+                            bug.failTag(kyo, Tag.Intersection[FiberGets & Tasks & IOs])
                     catch
                         case ex if NonFatal(ex) =>
                             ZIO.fail(ex)
