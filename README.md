@@ -22,8 +22,8 @@ Kyo is available on Maven Central in multiple modules:
 | kyo-core       | ✅       | ✅        | Core and concurrent effects      |
 | kyo-direct     | ✅       | ✅        | Direct syntax support            |
 | kyo-sttp       | ✅       | ✅        | Sttp HTTP Client                 |
-| kyo-tapir      | ✅       | ✅        | Tapir HTTP Server                |
-| kyo-caliban    | ✅       | ✅        | Caliban GraphQL Server           |
+| kyo-tapir      | ✅       |          | Tapir HTTP Server                |
+| kyo-caliban    | ✅       |          | Caliban GraphQL Server           |
 | kyo-cache      | ✅       |          | Caffeine caching                 |
 | kyo-stats-otel | ✅       |          | Stats exporter for OpenTelemetry |
 
