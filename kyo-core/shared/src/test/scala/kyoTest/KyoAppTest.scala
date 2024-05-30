@@ -33,7 +33,7 @@ class KyoAppTest extends KyoTest:
     "effects" taggedAs jvmOnly in {
         def run: Int < KyoApp.Effects =
             for
-                _ <- Timers.scheduleAtFixedRate(1.seconds, 1.seconds)(())
+                _ <- Timers.scheduleAtFixedRate(1.second, 1.second)(())
                 i <- Randoms.nextInt
                 _ <- Consoles.println(s"$i")
                 _ <- Clocks.now

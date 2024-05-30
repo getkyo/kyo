@@ -18,7 +18,7 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 Kyo is available on Maven Central in multiple modules:
 
 | Module         | Scala 3 | Scala JS | Description                      |
-|----------------|---------|----------|----------------------------------|
+| -------------- | ------- | -------- | -------------------------------- |
 | kyo-core       | ✅       | ✅        | Core and concurrent effects      |
 | kyo-direct     | ✅       | ✅        | Direct syntax support            |
 | kyo-sttp       | ✅       | ✅        | Sttp HTTP Client                 |
@@ -29,7 +29,7 @@ Kyo is available on Maven Central in multiple modules:
 
 For Scala 3:
 
-```scala 
+```scala
 libraryDependencies += "io.getkyo" %% "kyo-core" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-direct" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-cache" % "<version>"
@@ -41,7 +41,7 @@ libraryDependencies += "io.getkyo" %% "kyo-caliban" % "<version>"
 
 For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, and `kyo-sttp`):
 
-```scala 
+```scala
 libraryDependencies += "io.getkyo" %%% "kyo-core" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-direct" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-sttp" % "<version>"
@@ -57,7 +57,7 @@ In Kyo, computations are expressed via the infix type `<`, known as "Pending". I
 1. The type of the expected output.
 2. The pending effects that need to be handled, represented as an unordered type-level set via a type intersection.
 
-```scala 
+```scala
 import kyo._
 
 // 'Int' pending 'Options'
@@ -788,19 +788,19 @@ val g: Chunk[Int] = e.filter(_ % 2 == 0).pure
 
 `Chunks` provides two main subtypes: `Chunk` for regular chunks and `Chunks.Indexed` for indexed chunks. The table below summarizes the time complexity of various operations for each type:
 
-| Description                | Operations                                           | Regular Chunk | Indexed Chunk |
-|----------------------------|------------------------------------------------------|---------------|---------------|
-| Creation                   | `Chunks.init`, `Chunks.initSeq`                      | O(n)          | O(n)          |
-| Size and emptiness         | `size`, `isEmpty`                                    | O(1)          | O(1)          |
-| Take and drop              | `take`, `dropLeft`, `dropRight`, `slice`             | O(1)          | O(1)          |
-| Append and last            | `append`, `last`                                     | O(1)          | O(1)          |
-| Element access             | `apply`, `head`, `tail`                              | N/A           | O(1)          |
-| Concatenation              | `concat`                                             | O(n)          | O(n)          |
-| Effectful map and filter   | `map`, `filter`, `collect`, `takeWhile`, `dropWhile` | O(n)          | O(n)          |
-| Effectful side effects     | `foreach`, `collectUnit`                             | O(n)          | O(n)          |
-| Effectful fold             | `foldLeft`                                           | O(n)          | O(n)          |
-| Copying to arrays          | `toArray`, `copyTo`                                  | O(n)          | O(n)          |
-| Other operations           | `flatten`, `changes`, `toSeq`, `toIndexed`           | O(n)          | O(n)          |
+| Description              | Operations                                           | Regular Chunk | Indexed Chunk |
+| ------------------------ | ---------------------------------------------------- | ------------- | ------------- |
+| Creation                 | `Chunks.init`, `Chunks.initSeq`                      | O(n)          | O(n)          |
+| Size and emptiness       | `size`, `isEmpty`                                    | O(1)          | O(1)          |
+| Take and drop            | `take`, `dropLeft`, `dropRight`, `slice`             | O(1)          | O(1)          |
+| Append and last          | `append`, `last`                                     | O(1)          | O(1)          |
+| Element access           | `apply`, `head`, `tail`                              | N/A           | O(1)          |
+| Concatenation            | `concat`                                             | O(n)          | O(n)          |
+| Effectful map and filter | `map`, `filter`, `collect`, `takeWhile`, `dropWhile` | O(n)          | O(n)          |
+| Effectful side effects   | `foreach`, `collectUnit`                             | O(n)          | O(n)          |
+| Effectful fold           | `foldLeft`                                           | O(n)          | O(n)          |
+| Copying to arrays        | `toArray`, `copyTo`                                  | O(n)          | O(n)          |
+| Other operations         | `flatten`, `changes`, `toSeq`, `toIndexed`           | O(n)          | O(n)          |
 
 When deciding between `Chunk` and `Chunks.Indexed`, consider the primary operations you'll be performing on the data. If you mainly need to `append` elements, `take` slices, or `drop` elements from the beginning or end of the sequence, `Chunk` is a good choice. Its `O(1)` complexity for these operations makes it efficient for such tasks.
 
@@ -1367,13 +1367,13 @@ import kyo._
 
 // A computation that sleeps for 1s
 val a: Unit < Fibers =
-  Fibers.sleep(1.seconds)
+  Fibers.sleep(1.second)
 
 // Times out and interrupts the provided 
 // computation in case it doesn't produce 
 // a result within 1s
 val b: Int < Fibers =
-  Fibers.timeout(1.seconds)(Math.cos(42).toInt)
+  Fibers.timeout(1.second)(Math.cos(42).toInt)
 ```
 
 The `fromFuture` methods provide interoperability with Scala's `Future`.
@@ -1573,12 +1573,12 @@ val d: Unit < IOs =
 
 It's also possible to specify a concurrent `Access` policy as the second parameter of the `Queues.init` methods. This configuration has an effect only on the JVM and is ignored in ScalaJS.
 
-| Policy | Full Form                           | Description |
-|--------|-------------------------------------|-------------|
+| Policy | Full Form                              | Description                                                                                                                                                                                                          |
+| ------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Mpmc   | Multiple Producers, Multiple Consumers | Supports multiple threads/fibers simultaneously enqueuing and dequeuing elements. This is the most flexible but may incur the most overhead due to the need to synchronize between multiple producers and consumers. |
-| Mpsc   | Multiple Producers, Single Consumer   | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed. |
-| Spmc   | Single Producer, Multiple Consumers   | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers. |
-| Spsc   | Single Producer, Single Consumer      | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements. |
+| Mpsc   | Multiple Producers, Single Consumer    | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed.                                            |
+| Spmc   | Single Producer, Multiple Consumers    | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers.                   |
+| Spsc   | Single Producer, Single Consumer       | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements.                                                                     |
 
 Each policy is suitable for different scenarios and comes with its own trade-offs. For example, `Mpmc` is highly flexible but can be slower due to the need for more complex synchronization. `Spsc`, being the most restrictive, allows for optimizations that could make it faster for specific single-producer, single-consumer scenarios.
 
@@ -1742,7 +1742,7 @@ val b: Meter < IOs =
 val c: Meter < IOs =
   Meters.initRateLimiter(
     rate = 10, 
-    period = 1.seconds
+    period = 1.second
   )
 
 // 'pipeline': Combine multiple 'Meter's
@@ -1792,7 +1792,7 @@ val a: Unit < IOs =
 
 // Schedule a delayed task
 val b: TimerTask < IOs =
-  Timers.schedule(delay = 1.seconds)(a)
+  Timers.schedule(delay = 1.second)(a)
 
 // Recurring task with
 // intial delay
@@ -1834,7 +1834,7 @@ import kyo._
 
 // Example TimerTask
 val a: TimerTask < IOs = 
-  Timers.schedule(1.seconds)(())
+  Timers.schedule(1.second)(())
 
 // Try to cancel the task
 val b: Boolean < IOs =

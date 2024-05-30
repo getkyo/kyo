@@ -62,7 +62,7 @@ object DurationSpec extends ZIOSpecDefault:
             ),
             test("overflow") {
                 val multiplied = Duration.Infinity * 1.1
-                val added      = Duration.Infinity + 1.nanos
+                val added      = Duration.Infinity + 1.nano
                 val hours      = Long.MaxValue.nanos
 
                 assertTrue(multiplied == Duration.Infinity)
