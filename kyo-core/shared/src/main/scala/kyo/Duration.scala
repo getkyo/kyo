@@ -51,6 +51,16 @@ extension (value: Long)
     inline def weeks: Duration   = value.as(Weeks)
     inline def months: Duration  = value.as(Months)
     inline def years: Duration   = value.as(Years)
+    inline def nano: Duration    = value.asNanos
+    inline def micro: Duration   = value.as(Micros)
+    inline def milli: Duration   = value.as(Millis)
+    inline def second: Duration  = value.as(Seconds)
+    inline def minute: Duration  = value.as(Minutes)
+    inline def hour: Duration    = value.as(Hours)
+    inline def day: Duration     = value.as(Days)
+    inline def week: Duration    = value.as(Weeks)
+    inline def month: Duration   = value.as(Months)
+    inline def year: Duration    = value.as(Years)
 end extension
 
 extension (self: Duration)
