@@ -1,6 +1,7 @@
 package kyo
 
 import Chunks.Indexed
+import kyo.internal.Trace
 import scala.annotation.tailrec
 import scala.reflect.ClassTag
 
@@ -81,7 +82,7 @@ sealed abstract class Chunk[T] derives CanEqual:
         end if
     end concat
 
-    final def map[U, S](f: T => U < S): Chunk[U] < S =
+    final def map[U, S](f: T => U < S)(using Trace): Chunk[U] < S =
         if isEmpty then Chunks.init
         else
             val size    = this.size
@@ -94,7 +95,7 @@ sealed abstract class Chunk[T] derives CanEqual:
             }
     end map
 
-    final def filter[S](f: T => Boolean < S): Chunk[T] < S =
+    final def filter[S](f: T => Boolean < S)(using Trace): Chunk[T] < S =
         if isEmpty then Chunks.init
         else
             val size    = this.size
@@ -111,7 +112,7 @@ sealed abstract class Chunk[T] derives CanEqual:
             }
     end filter
 
-    final def takeWhile[S](f: T => Boolean < S): Chunk[T] < S =
+    final def takeWhile[S](f: T => Boolean < S)(using Trace): Chunk[T] < S =
         if isEmpty then Chunks.init
         else
             val size    = this.size
@@ -127,7 +128,7 @@ sealed abstract class Chunk[T] derives CanEqual:
                     Loops.done(acc)
             }
 
-    final def dropWhile[S](f: T => Boolean < S): Chunk[T] < S =
+    final def dropWhile[S](f: T => Boolean < S)(using Trace): Chunk[T] < S =
         if isEmpty then Chunks.init
         else
             val size    = this.size
@@ -164,7 +165,7 @@ sealed abstract class Chunk[T] derives CanEqual:
             loop(0, null, Chunks.init)
     end changes
 
-    final def collect[U, S](pf: PartialFunction[T, U < S]): Chunk[U] < S =
+    final def collect[U, S](pf: PartialFunction[T, U < S])(using Trace): Chunk[U] < S =
         if isEmpty then Chunks.init
         else
             val size    = this.size
@@ -183,7 +184,7 @@ sealed abstract class Chunk[T] derives CanEqual:
                     Loops.done(acc)
             }
 
-    final def collectUnit[U, S](pf: PartialFunction[T, Unit < S]): Unit < S =
+    final def collectUnit[U, S](pf: PartialFunction[T, Unit < S])(using Trace): Unit < S =
         if isEmpty then ()
         else
             val size    = this.size
@@ -202,7 +203,7 @@ sealed abstract class Chunk[T] derives CanEqual:
                     Loops.done
             }
 
-    final def foreach[S](f: T => Unit < S): Unit < S =
+    final def foreach[S](f: T => Unit < S)(using Trace): Unit < S =
         if isEmpty then ()
         else
             val size    = this.size
@@ -216,7 +217,7 @@ sealed abstract class Chunk[T] derives CanEqual:
             }
     end foreach
 
-    final def foldLeft[S, U: Flat](init: U)(f: (U, T) => U < S): U < S =
+    final def foldLeft[S, U: Flat](init: U)(f: (U, T) => U < S)(using Trace): U < S =
         if isEmpty then init
         else
             val size    = this.size

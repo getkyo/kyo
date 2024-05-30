@@ -4,6 +4,7 @@ import Cache.*
 import com.github.benmanes.caffeine
 import com.github.benmanes.caffeine.cache.Caffeine
 import java.util.concurrent.TimeUnit
+import kyo.internal.Trace
 import scala.runtime.AbstractFunction1
 import scala.util.Failure
 import scala.util.Success
@@ -87,7 +88,7 @@ object Caches:
             copy(b.refreshAfterWrite(d.toMillis, TimeUnit.MILLISECONDS))
     end Builder
 
-    def init(f: Builder => Builder): Cache < IOs =
+    def init(f: Builder => Builder)(using Trace): Cache < IOs =
         IOs {
             new Cache(
                 f(new Builder(Caffeine.newBuilder())).b

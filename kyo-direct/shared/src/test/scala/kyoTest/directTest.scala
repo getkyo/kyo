@@ -1,6 +1,7 @@
 package kyoTest
 
 import kyo.*
+import kyo.internal.Trace
 import scala.util.Try
 
 class directTest extends KyoTest:
@@ -107,15 +108,15 @@ class directTest extends KyoTest:
     "consoles" in {
         object console extends Console:
 
-            def printErr(s: String): Unit < IOs = ???
+            def printErr(s: String)(using Trace): Unit < IOs = ???
 
-            def println(s: String): Unit < IOs = ???
+            def println(s: String)(using Trace): Unit < IOs = ???
 
-            def print(s: String): Unit < IOs = ???
+            def print(s: String)(using Trace): Unit < IOs = ???
 
-            def readln: String < IOs = "hello"
+            def readln(using Trace): String < IOs = "hello"
 
-            def printlnErr(s: String): Unit < IOs = ???
+            def printlnErr(s: String)(using Trace): Unit < IOs = ???
         end console
         val io: String < IOs = Consoles.run(console)(defer(await(Consoles.readln)))
         assert(IOs.run(io) == "hello")

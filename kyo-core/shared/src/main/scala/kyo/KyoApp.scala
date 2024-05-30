@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.Trace
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
 
@@ -8,7 +9,7 @@ abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
     def random: Random   = Random.default
     def clock: Clock     = Clock.default
 
-    override protected def handle[T: Flat](v: T < KyoApp.Effects): Unit =
+    override protected def handle[T: Flat](v: T < KyoApp.Effects)(using Trace): Unit =
         KyoApp.run {
             Logs.let(log) {
                 Randoms.let(random) {
@@ -24,7 +25,7 @@ object KyoApp:
 
     abstract class Base[S]:
 
-        protected def handle[T: Flat](v: T < S): Unit
+        protected def handle[T: Flat](v: T < S)(using Trace): Unit
 
         final protected def args: Array[String] = _args
 
@@ -36,25 +37,25 @@ object KyoApp:
             this._args = args
             for proc <- initCode do proc()
 
-        protected def run[T: Flat](v: => T < S): Unit =
+        protected def run[T: Flat](v: => T < S)(using Trace): Unit =
             initCode += (() => handle(v))
     end Base
 
     type Effects = Fibers & Resources & Aborts[Throwable] & Consoles
 
-    def attempt[T: Flat](timeout: Duration)(v: T < Effects): Try[T] =
+    def attempt[T: Flat](timeout: Duration)(v: T < Effects)(using Trace): Try[T] =
         IOs.run(runFiber(timeout)(v).block(timeout))
 
-    def run[T: Flat](timeout: Duration)(v: T < Effects): T =
+    def run[T: Flat](timeout: Duration)(v: T < Effects)(using Trace): T =
         attempt(timeout)(v).get
 
-    def run[T: Flat](v: T < Effects): T =
+    def run[T: Flat](v: T < Effects)(using Trace): T =
         run(Duration.Infinity)(v)
 
-    def runFiber[T: Flat](v: T < Effects): Fiber[Try[T]] =
+    def runFiber[T: Flat](v: T < Effects)(using Trace): Fiber[Try[T]] =
         runFiber(Duration.Infinity)(v)
 
-    def runFiber[T: Flat](timeout: Duration)(v: T < Effects): Fiber[Try[T]] =
+    def runFiber[T: Flat](timeout: Duration)(v: T < Effects)(using Trace): Fiber[Try[T]] =
         def v0: Try[T] < (Fibers & Resources & Consoles) = Aborts.run[Throwable](v).map(_.toTry)
         def v1: Try[T] < (Fibers & Resources)            = Consoles.run(v0)
         def v2: Try[T] < Fibers                          = Resources.run(v1)

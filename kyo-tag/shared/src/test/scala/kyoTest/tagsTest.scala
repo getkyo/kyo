@@ -10,7 +10,7 @@ import scala.annotation.nowarn
 
 class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
 
-    def test[T1, T2](using k1: Tag[T1], i1: ITag[T1], k2: Tag[T2], i2: ITag[T2]): Unit =
+    inline def test[T1, T2](using k1: Tag[T1], i1: ITag[T1], k2: Tag[T2], i2: ITag[T2]): Unit =
         "T1 <:< T2" in {
             val kresult = k1 <:< k2
             val iresult = i1 <:< i2
@@ -25,6 +25,22 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
             assert(
                 kresult == iresult,
                 s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
+            )
+        }
+        "T2 =:= T1" in {
+            val kresult = k2 =:= k1
+            val iresult = i2 =:= i1
+            assert(
+                kresult == iresult,
+                s"Tag[T2] =:= Tag[T1] is $kresult but ITag[T2] =:= ITag[T1] is $iresult"
+            )
+        }
+        "T2 =!= T1" in {
+            val kresult = k2 =!= k1
+            val iresult = !(i2 =:= i1)
+            assert(
+                kresult == iresult,
+                s"Tag[T2] =!= Tag[T1] is $kresult but ITag[T2] =!= ITag[T1] is $iresult"
             )
         }
         ()
@@ -238,7 +254,7 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "type unions" - {
 
-        def test[T1, T2](using k1: Union[T1], i1: ITag[T1], k2: Union[T2], i2: ITag[T2]): Unit =
+        inline def test[T1, T2](using k1: Union[T1], i1: ITag[T1], k2: Union[T2], i2: ITag[T2]): Unit =
             "T1 <:< T2" in {
                 val kresult = k1 <:< k2
                 val iresult = i1 <:< i2
@@ -253,6 +269,22 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
                 assert(
                     kresult == iresult,
                     s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
+                )
+            }
+            "T2 =:= T1" in {
+                val kresult = k2 =:= k1
+                val iresult = i2 =:= i1
+                assert(
+                    kresult == iresult,
+                    s"Tag[T2] =:= Tag[T1] is $kresult but ITag[T2] =:= ITag[T1] is $iresult"
+                )
+            }
+            "T2 =!= T1" in {
+                val kresult = k2 =!= k1
+                val iresult = !(i2 =:= i1)
+                assert(
+                    kresult == iresult,
+                    s"Tag[T2] =!= Tag[T1] is $kresult but ITag[T2] =!= ITag[T1] is $iresult"
                 )
             }
             ()
@@ -372,7 +404,7 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "type intersections" - {
 
-        def test[T1, T2](using k1: Intersection[T1], i1: ITag[T1], k2: Intersection[T2], i2: ITag[T2]): Unit =
+        inline def test[T1, T2](using k1: Intersection[T1], i1: ITag[T1], k2: Intersection[T2], i2: ITag[T2]): Unit =
             "T1 <:< T2" in {
                 val kresult = k1 <:< k2
                 val iresult = i1 <:< i2
@@ -387,6 +419,22 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
                 assert(
                     kresult == iresult,
                     s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
+                )
+            }
+            "T2 =:= T1" in {
+                val kresult = k2 =:= k1
+                val iresult = i2 =:= i1
+                assert(
+                    kresult == iresult,
+                    s"Tag[T2] =:= Tag[T1] is $kresult but ITag[T2] =:= ITag[T1] is $iresult"
+                )
+            }
+            "T2 =!= T1" in {
+                val kresult = k2 =!= k1
+                val iresult = !(i2 =:= i1)
+                assert(
+                    kresult == iresult,
+                    s"Tag[T2] =!= Tag[T1] is $kresult but ITag[T2] =!= ITag[T1] is $iresult"
                 )
             }
             ()
@@ -508,6 +556,100 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
             assertDoesNotCompile("Intersection[A | B & A]")
         }
 
+    }
+
+    "mixing tag types" - {
+
+        inline def test[T1, T2](using k1: Tag.Set[T1], i1: ITag[T1], k2: Tag.Set[T2], i2: ITag[T2]): Unit =
+            "T1 <:< T2" in {
+                val kresult = k1 <:< k2
+                val iresult = i1 <:< i2
+                assert(
+                    kresult == iresult,
+                    s"Tag[T1] <:< Tag[T2] is $kresult but ITag[T1] <:< ITag[T2] is $iresult"
+                )
+            }
+            "T2 <:< T1" in {
+                val kresult = k2 <:< k1
+                val iresult = i2 <:< i1
+                assert(
+                    kresult == iresult,
+                    s"Tag[T2] <:< Tag[T1] is $kresult but ITag[T2] <:< ITag[T1] is $iresult"
+                )
+            }
+            "T2 =:= T1" in {
+                val kresult = k2 =:= k1
+                val iresult = i2 =:= i1
+                assert(
+                    kresult == iresult,
+                    s"Tag[T2] =:= Tag[T1] is $kresult but ITag[T2] =:= ITag[T1] is $iresult"
+                )
+            }
+            "T2 =!= T1" in {
+                val kresult = k2 =!= k1
+                val iresult = !(i2 =:= i1)
+                assert(
+                    kresult == iresult,
+                    s"Tag[T2] =!= Tag[T1] is $kresult but ITag[T2] =!= ITag[T1] is $iresult"
+                )
+            }
+            ()
+        end test
+
+        class A
+        class B extends A
+        class C extends B
+        class D
+        class E extends D
+        class F extends D
+
+        "union, tag" - test[B | C, A]
+        "tag, intersection" - test[C, A & B]
+        "intersection, union" - test[E & F, D | A]
+        "union, union" - test[B | C, C | B]
+        "intersection, intersection" - test[E & F, F & E]
+        "union, intersection" - test[B | C, B & C]
+        "tag, union" - test[B, C | D]
+        "tag, intersection 2" - test[B, C & D]
+        "union, tag 2" - test[A | D, B]
+        "intersection, tag" - test[A & D, B]
+
+        "complex scenario" - {
+            trait A
+            trait B extends A
+            trait C extends B
+            class D
+            class E extends D
+            class F extends E
+            class G extends F
+            test[C & G, A & D | B & E]
+        }
+
+        "edge case 1" - {
+            trait A
+            class B extends A
+            test[B & A, B | A]
+        }
+
+        "edge case 2" - {
+            trait A
+            class B extends A
+            test[A | B, B & A]
+        }
+
+        "edge case 3" - {
+            trait A
+            class B extends A
+            class C extends B
+            test[A & B & C, C]
+        }
+
+        "edge case 4" - {
+            trait A
+            class B extends A
+            class C extends B
+            test[C, A | B | C]
+        }
     }
 
 end tagsTest

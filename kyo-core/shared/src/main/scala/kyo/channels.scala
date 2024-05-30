@@ -1,38 +1,39 @@
 package kyo
 
+import kyo.internal.Trace
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 
 abstract class Channel[T]:
     self =>
 
-    def size: Int < IOs
+    def size(using Trace): Int < IOs
 
-    def offer(v: T): Boolean < IOs
+    def offer(v: T)(using Trace): Boolean < IOs
 
-    def offerUnit(v: T): Unit < IOs
+    def offerUnit(v: T)(using Trace): Unit < IOs
 
-    def poll: Option[T] < IOs
+    def poll(using Trace): Option[T] < IOs
 
-    def isEmpty: Boolean < IOs
+    def isEmpty(using Trace): Boolean < IOs
 
-    def isFull: Boolean < IOs
+    def isFull(using Trace): Boolean < IOs
 
-    def putFiber(v: T): Fiber[Unit] < IOs
+    def putFiber(v: T)(using Trace): Fiber[Unit] < IOs
 
-    def takeFiber: Fiber[T] < IOs
+    def takeFiber(using Trace): Fiber[T] < IOs
 
-    def put(v: T): Unit < Fibers =
+    def put(v: T)(using Trace): Unit < Fibers =
         putFiber(v).map(_.get)
 
-    def take: T < Fibers =
+    def take(using Trace): T < Fibers =
         takeFiber.map(_.get)
 
-    def isClosed: Boolean < IOs
+    def isClosed(using Trace): Boolean < IOs
 
-    def drain: Seq[T] < IOs
+    def drain(using Trace): Seq[T] < IOs
 
-    def close: Option[Seq[T]] < IOs
+    def close(using Trace): Option[Seq[T]] < IOs
 end Channel
 
 object Channels:
@@ -51,27 +52,27 @@ object Channels:
                     val takes = new MpmcUnboundedXaddArrayQueue[Promise[T]](8)
                     val puts  = new MpmcUnboundedXaddArrayQueue[(T, Promise[Unit])](8)
 
-                    def size    = op(u.size())
-                    def isEmpty = op(u.isEmpty())
-                    def isFull  = op(u.isFull())
+                    def size(using Trace)    = op(u.size())
+                    def isEmpty(using Trace) = op(u.isEmpty())
+                    def isFull(using Trace)  = op(u.isFull())
 
-                    def offer(v: T) =
+                    def offer(v: T)(using Trace) =
                         op {
                             try u.offer(v)
                             finally flush()
                         }
-                    def offerUnit(v: T) =
+                    def offerUnit(v: T)(using Trace) =
                         op {
                             try discard(u.offer(v))
                             finally flush()
                         }
-                    val poll =
+                    def poll(using Trace) =
                         op {
                             try Option(u.poll())
                             finally flush()
                         }
 
-                    def putFiber(v: T) =
+                    def putFiber(v: T)(using Trace) =
                         op {
                             try
                                 if u.offer(v) then
@@ -84,7 +85,7 @@ object Channels:
                                 flush()
                         }
 
-                    val takeFiber =
+                    def takeFiber(using Trace) =
                         op {
                             try
                                 val v = u.poll()
@@ -107,11 +108,11 @@ object Channels:
                                 v
                         }
 
-                    def isClosed = queue.isClosed
+                    def isClosed(using Trace) = queue.isClosed
 
-                    def drain = queue.drain
+                    def drain(using Trace) = queue.drain
 
-                    def close =
+                    def close(using Trace) =
                         IOs {
                             u.close() match
                                 case None =>

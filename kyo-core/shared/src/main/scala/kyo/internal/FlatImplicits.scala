@@ -44,7 +44,7 @@ object FlatImplicits:
         def hasTag(t: TypeRepr): Boolean =
             t.asType match
                 case '[t] =>
-                    Expr.summon[Tag[t]].isDefined
+                    Expr.summon[Tag.Full[t]].isDefined
 
         def check(t: TypeRepr): Unit =
             t match

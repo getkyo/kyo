@@ -1,6 +1,7 @@
 package kyoTest
 
 import kyo.*
+import kyo.internal.Trace
 
 class consolesTest extends KyoTest:
 
@@ -42,25 +43,25 @@ class consolesTest extends KyoTest:
         var printlns    = List.empty[String]
         var printlnErrs = List.empty[String]
 
-        def readln: String < IOs =
+        def readln(using Trace): String < IOs =
             IOs {
                 val v = readlns.head
                 readlns = readlns.tail
                 v
             }
-        def print(s: String): Unit < IOs =
+        def print(s: String)(using Trace): Unit < IOs =
             IOs {
                 prints ::= s
             }
-        def printErr(s: String): Unit < IOs =
+        def printErr(s: String)(using Trace): Unit < IOs =
             IOs {
                 printErrs ::= s
             }
-        def println(s: String): Unit < IOs =
+        def println(s: String)(using Trace): Unit < IOs =
             IOs {
                 printlns ::= s
             }
-        def printlnErr(s: String): Unit < IOs =
+        def printlnErr(s: String)(using Trace): Unit < IOs =
             IOs {
                 printlnErrs ::= s
             }

@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Requests.Backend
+import kyo.internal.Trace
 import sttp.client3.*
 
 object PlatformBackend:
