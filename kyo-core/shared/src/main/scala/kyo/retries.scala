@@ -29,7 +29,7 @@ object Retries:
     def apply[T: Flat, S](builder: Policy => Policy)(v: => T < S)(using Trace): T < (Fibers & S) =
         val b = builder(Policy.default)
         Loops.indexed { attempt =>
-            IOs.attempt(v).map {
+            IOs.toTry(v).map {
                 case Failure(ex) =>
                     if attempt < b.limit then
                         Fibers.sleep(b.backoff(attempt)).andThen {
