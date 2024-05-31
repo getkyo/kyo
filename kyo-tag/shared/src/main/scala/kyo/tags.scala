@@ -26,7 +26,8 @@ object Tag:
             t1 match
                 case t1: String =>
                     val decoded = t1.drop(2).takeWhile(_ != ';')
-                    fromCompact.getOrElse(decoded, decoded)
+                    val s       = fromCompact.getOrElse(decoded, decoded)
+                    s"Tag[$s]"
                 case t1: Set[T] =>
                     t1.show
 
@@ -67,7 +68,8 @@ object Tag:
 
     case class Union[T](tags: Seq[Tag[Any]]) extends AnyVal with Set[T]:
         def show: String =
-            tags.map(_.show).mkString(" | ")
+            val s = tags.map(_.show).mkString(" | ")
+            s"Tag.Union[$s]"
 
         infix def <:<[U](t2: Full[U]): Boolean =
             t2 match
@@ -98,7 +100,8 @@ object Tag:
 
     case class Intersection[T](tags: Seq[Tag[Any]]) extends AnyVal with Set[T]:
         def show: String =
-            tags.map(_.show).mkString(" & ")
+            val s = tags.map(_.show).mkString(" & ")
+            s"Tag.Intersection[$s]"
 
         infix def <:<[U](t2: Full[U]): Boolean =
             t2 match
