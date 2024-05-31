@@ -160,7 +160,6 @@ object KYO:
         fl: Flat[A]
     ): A < (SA & SD & SR) =
         dependency.map(d => Envs.run[D, A, SA, E, SR](d)(effect))
-        // V >: Nothing: Tag, T: Flat, S, VS, VR
 
     def scoped[A, S](resource: => A < (S & Resources)): A < (Fibers & S) =
         Resources.run(resource)
