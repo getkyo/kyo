@@ -1,7 +1,6 @@
 package kyo
 
 import Layers.internal.*
-import kyo.Flat.unsafe
 import kyo.core.*
 import scala.annotation.targetName
 
@@ -32,7 +31,7 @@ sealed trait Layer[-In, +Out, -S]:
                         {
                             for
                                 leftResult  <- lhs.doRun(memoMap)
-                                rightResult <- Envs.runTypeMap(leftResult)(rhs.doRun(memoMap))(using unsafe.bypass, Envs.bypass)
+                                rightResult <- Envs.runTypeMap(leftResult)(rhs.doRun(memoMap))(using summon, Envs.bypass)
                             yield rightResult
                         }.asInstanceOf[Expected]
 
@@ -71,14 +70,24 @@ object Layers:
         }
 
     def from[A: Tag, B: Tag, S](f: A => B < S): Layer[A, B, S] =
-        apply { Envs.get[A].map(f) }
+        apply {
+            Envs.get[A].map(f)
+        }
 
     def from[A: Tag, B: Tag, C: Tag, S](f: (A, B) => C < S): Layer[A & B, C, S] =
         apply {
-            for
-                a <- Envs.get[A]
-                b <- Envs.get[B]
-            yield f(a, b)
+            zip(Envs.get[A], Envs.get[B]).map { case (a, b) => f(a, b) }
+        }
+
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, S](f: (A, B, C) => D < S): Layer[A & B & C, D, S] =
+        apply {
+            zip(Envs.get[A], Envs.get[B], Envs.get[C])
+                .map { case (a, b, c) => f(a, b, c) }
+        }
+
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, S](f: (A, B, C, D) => E < S): Layer[A & B & C & D, E, S] =
+        apply {
+            zip(Envs.get[A], Envs.get[B], Envs.get[C], Envs.get[D]).map { case (a, b, c, d) => f(a, b, c, d) }
         }
 
 end Layers

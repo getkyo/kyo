@@ -259,17 +259,17 @@ class envsTest extends KyoTest:
 
         "providing the wrong env map" in {
             assertDoesNotCompile("""
-            val kyo: String < Envs[String] = Envs.get[String]
-            val envMap: TypeMap[Int]       = TypeMap(12)
-            Envs.runTypeMap(envMap)(kyo).pure
+                val kyo: String < Envs[String] = Envs.get[String]
+                val envMap: TypeMap[Int]       = TypeMap(12)
+                Envs.runTypeMap(envMap)(kyo).pure
             """)
         }
 
         "providing an empty env map" in {
             assertDoesNotCompile("""
-            val kyo    = Envs.get[String]
-            val envMap = TypeMap.empty
-            Envs.runTypeMap(envMap)(kyo).pure
+                val kyo    = Envs.get[String]
+                val envMap = TypeMap.empty
+                Envs.runTypeMap(envMap)(kyo).pure
             """)
         }
 

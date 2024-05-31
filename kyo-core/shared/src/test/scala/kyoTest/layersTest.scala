@@ -1,14 +1,7 @@
 package kyoTest
 
 import kyo.*
-// import kyo.syntax.*
 
-// TODO:
-// - Replace Envs with the implementation of EnvMaps
-// - Allow Envs.run to accept a layer...
-// - kyo.provide(food, heat, stomach, spells)
-// - kyo.provide(food, heat, stomach, spells)
-// - Envs.run(1)
 class layersTest extends KyoTest:
     "composition" - {
         "a >>> b" in run {
