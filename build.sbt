@@ -187,7 +187,7 @@ lazy val `kyo-stats-registry` =
                 "-language:strictEquality"
             ),
             scalacOptions += "-Xsource:3",
-            libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.1",
+            libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2",
             libraryDependencies += "org.scalatest"  %%% "scalatest"    % scalaTestVersion % Test,
             crossScalaVersions                       := List(scala3Version, scala212Version, scala213Version)
         )
