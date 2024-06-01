@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.core.internal.Kyo
+import kyo.internal.Trace
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.util.NotGiven
@@ -45,7 +46,7 @@ object Loops:
         input: Input
     )(
         inline run: Input => Result[Input, Output] < S
-    ): Output < S =
+    )(using Trace): Output < S =
         def _loop(input: Input): Output < S =
             loop(input)
         @tailrec def loop(input: Input): Output < S =
@@ -69,7 +70,7 @@ object Loops:
         input2: Input2
     )(
         inline run: (Input1, Input2) => Result2[Input1, Input2, Output] < S
-    ): Output < S =
+    )(using Trace): Output < S =
         def _loop(input1: Input1, input2: Input2): Output < S =
             loop(input1, input2)
         @tailrec def loop(input1: Input1, input2: Input2): Output < S =
@@ -94,7 +95,7 @@ object Loops:
         input3: Input3
     )(
         inline run: (Input1, Input2, Input3) => Result3[Input1, Input2, Input3, Output] < S
-    ): Output < S =
+    )(using Trace): Output < S =
         def _loop(input1: Input1, input2: Input2, input3: Input3): Output < S =
             loop(input1, input2, input3)
         @tailrec def loop(input1: Input1, input2: Input2, input3: Input3): Output < S =
@@ -115,7 +116,7 @@ object Loops:
 
     inline def indexed[Output: Flat, S](
         inline run: Int => Result[Unit, Output] < S
-    ): Output < S =
+    )(using Trace): Output < S =
         def _loop(idx: Int): Output < S =
             loop(idx)
         @tailrec def loop(idx: Int): Output < S =
@@ -138,7 +139,7 @@ object Loops:
         input: Input
     )(
         inline run: (Int, Input) => Result[Input, Output] < S
-    ): Output < S =
+    )(using Trace): Output < S =
         def _loop(idx: Int, input: Input): Output < S =
             loop(idx, input)
         @tailrec def loop(idx: Int, input: Input): Output < S =
@@ -162,7 +163,7 @@ object Loops:
         input2: Input2
     )(
         inline run: (Int, Input1, Input2) => Result2[Input1, Input2, Output] < S
-    ): Output < S =
+    )(using Trace): Output < S =
         def _loop(idx: Int, input1: Input1, input2: Input2): Output < S =
             loop(idx, input1, input2)
         @tailrec def loop(idx: Int, input1: Input1, input2: Input2): Output < S =
@@ -187,7 +188,7 @@ object Loops:
         input3: Input3
     )(
         inline run: (Int, Input1, Input2, Input3) => Result3[Input1, Input2, Input3, Output] < S
-    ): Output < S =
+    )(using Trace): Output < S =
         def _loop(idx: Int, input1: Input1, input2: Input2, input3: Input3): Output < S =
             loop(idx, input1, input2, input3)
         @tailrec def loop(idx: Int, input1: Input1, input2: Input2, input3: Input3): Output < S =
@@ -208,7 +209,7 @@ object Loops:
 
     inline def foreach[S](
         inline run: => Result[Unit, Unit] < S
-    ): Unit < S =
+    )(using Trace): Unit < S =
         def _loop(): Unit < S =
             loop()
         @tailrec def loop(): Unit < S =
@@ -227,7 +228,7 @@ object Loops:
         loop()
     end foreach
 
-    inline def repeat[S](n: Int)(inline run: => Unit < S): Unit < S =
+    inline def repeat[S](n: Int)(inline run: => Unit < S)(using Trace): Unit < S =
         def _loop(i: Int): Unit < S =
             loop(i)
         @tailrec def loop(i: Int = 0): Unit < S =
@@ -241,7 +242,7 @@ object Loops:
         loop()
     end repeat
 
-    inline def forever[S](inline run: Unit < S): Unit < S =
+    inline def forever[S](inline run: Unit < S)(using Trace): Unit < S =
         def _loop(): Unit < S =
             loop()
         @tailrec def loop(): Unit < S =

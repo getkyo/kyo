@@ -3,6 +3,7 @@ package kyoTest
 import Tagged.*
 import java.time.Instant
 import kyo.*
+import kyo.internal.Trace
 
 class KyoAppTest extends KyoTest:
 
@@ -74,32 +75,32 @@ class KyoAppTest extends KyoTest:
             instantRef <- Atomics.initRef(Instant.MAX)
             randomRef  <- Atomics.initRef("")
             testClock = new Clock:
-                override def now: Instant < IOs = Instant.EPOCH
+                override def now(using Trace): Instant < IOs = Instant.EPOCH
             testRandom = new Random:
-                override def nextInt: Int < IOs = ???
+                override def nextInt(using Trace): Int < IOs = ???
 
-                override def nextInt(exclusiveBound: Int): Int < IOs = ???
+                override def nextInt(exclusiveBound: Int)(using Trace): Int < IOs = ???
 
-                override def nextLong: Long < IOs = ???
+                override def nextLong(using Trace): Long < IOs = ???
 
-                override def nextDouble: Double < IOs = ???
+                override def nextDouble(using Trace): Double < IOs = ???
 
-                override def nextBoolean: Boolean < IOs = ???
+                override def nextBoolean(using Trace): Boolean < IOs = ???
 
-                override def nextFloat: Float < IOs = ???
+                override def nextFloat(using Trace): Float < IOs = ???
 
-                override def nextGaussian: Double < IOs = ???
+                override def nextGaussian(using Trace): Double < IOs = ???
 
-                override def nextValue[T](seq: Seq[T]): T < IOs = ???
+                override def nextValue[T](seq: Seq[T])(using Trace): T < IOs = ???
 
-                override def nextValues[T](length: Int, seq: Seq[T]): Seq[T] < IOs = ???
+                override def nextValues[T](length: Int, seq: Seq[T])(using Trace): Seq[T] < IOs = ???
 
-                override def nextStringAlphanumeric(length: Int): String < IOs = "FooBar"
+                override def nextStringAlphanumeric(length: Int)(using Trace): String < IOs = "FooBar"
 
-                override def nextString(length: Int, chars: Seq[Char]): String < IOs = ???
-                override def nextBytes(length: Int): Seq[Byte] < IOs                 = ???
+                override def nextString(length: Int, chars: Seq[Char])(using Trace): String < IOs = ???
+                override def nextBytes(length: Int)(using Trace): Seq[Byte] < IOs                 = ???
 
-                override def shuffle[T](seq: Seq[T]): Seq[T] < IOs = ???
+                override def shuffle[T](seq: Seq[T])(using Trace): Seq[T] < IOs = ???
 
                 override def unsafe: Random.Unsafe = ???
 

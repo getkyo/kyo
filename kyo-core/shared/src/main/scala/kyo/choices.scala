@@ -1,24 +1,25 @@
 package kyo
 
 import kyo.core.*
+import kyo.internal.Trace
 
 class Choices extends Effect[Choices]:
     type Command[T] = Seq[T]
 
 object Choices extends Choices:
 
-    def run[T: Flat, S](v: T < (Choices & S)): Seq[T] < S =
+    def run[T: Flat, S](v: T < (Choices & S))(using Trace): Seq[T] < S =
         this.handle(handler)((), v)
 
-    def get[T](v: Seq[T]): T < Choices =
+    def get[T](v: Seq[T])(using Trace): T < Choices =
         this.suspend(v)
 
-    def eval[T, U, S](v: Seq[T])(f: T => U < S): U < (Choices & S) =
+    def eval[T, U, S](v: Seq[T])(f: T => U < S)(using Trace): U < (Choices & S) =
         v match
             case Seq(head) => f(head)
             case v         => this.suspend(v, f)
 
-    def filter[S](v: Boolean < S): Unit < (Choices & S) =
+    def filter[S](v: Boolean < S)(using Trace): Unit < (Choices & S) =
         v.map {
             case true =>
                 ()
@@ -26,7 +27,7 @@ object Choices extends Choices:
                 drop
         }
 
-    val drop: Nothing < Choices =
+    def drop(using Trace): Nothing < Choices =
         suspend(this)(Seq.empty)
 
     private val handler =

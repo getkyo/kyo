@@ -1,10 +1,11 @@
 package kyo
 
 import kyo.core.*
+import kyo.internal.Trace
 
 object Seqs:
 
-    def map[T, U, S, S2](seq: Seq[T])(f: T => U < S2): Seq[U] < (S & S2) =
+    def map[T, U, S, S2](seq: Seq[T])(f: T => U < S2)(using Trace): Seq[U] < (S & S2) =
         seq.size match
             case 0 => Seq.empty
             case 1 => f(seq(0)).map(Seq(_))
@@ -25,7 +26,7 @@ object Seqs:
                         Chunks.initSeq(seq).map(f).map(_.toSeq)
                 end match
 
-    def foreach[T, U, S](seq: Seq[T])(f: T => Unit < S): Unit < S =
+    def foreach[T, U, S](seq: Seq[T])(f: T => Unit < S)(using Trace): Unit < S =
         seq.size match
             case 0 =>
             case 1 => f(seq(0))
@@ -47,7 +48,7 @@ object Seqs:
         end match
     end foreach
 
-    def foldLeft[T, U: Flat, S](seq: Seq[T])(acc: U)(f: (U, T) => U < S): U < S =
+    def foldLeft[T, U: Flat, S](seq: Seq[T])(acc: U)(f: (U, T) => U < S)(using Trace): U < S =
         seq.size match
             case 0 => acc
             case 1 => f(acc, seq(0))
@@ -70,7 +71,7 @@ object Seqs:
         end match
     end foldLeft
 
-    def collect[T, S](seq: Seq[T < S]): Seq[T] < S =
+    def collect[T, S](seq: Seq[T < S])(using Trace): Seq[T] < S =
         seq.size match
             case 0 => Seq.empty
             case 1 => seq(0).map(Seq(_))
@@ -91,7 +92,7 @@ object Seqs:
                         Chunks.initSeq(seq).map(identity).map(_.toSeq)
                 end match
 
-    def collectUnit[T, S](seq: Seq[Unit < S]): Unit < S =
+    def collectUnit[T, S](seq: Seq[Unit < S])(using Trace): Unit < S =
         seq.size match
             case 0 =>
             case 1 => seq(0)
@@ -113,7 +114,7 @@ object Seqs:
                 end match
     end collectUnit
 
-    def fill[T, S](n: Int)(v: => T < S): Seq[T] < S =
+    def fill[T, S](n: Int)(v: => T < S)(using Trace): Seq[T] < S =
         Loops.indexed(Chunks.init[T]) { (idx, acc) =>
             if idx == n then Loops.done(acc.toSeq)
             else v.map(t => Loops.continue(acc.append(t)))

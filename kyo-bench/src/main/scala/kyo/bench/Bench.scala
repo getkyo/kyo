@@ -31,8 +31,8 @@ abstract class Bench[T](val expectedResult: T):
     def tearDown(): Unit = finalizers.foreach(_())
 
     def zioRuntimeLayer: ZLayer[Any, Any, Any] =
-        if System.getProperty("replaceZioExecutor", "false") == "true" then
-            KyoSchedulerZioRuntime.layer
+        if System.getProperty("replaceZIOExecutor", "false") == "true" then
+            KyoSchedulerZIORuntime.layer
         else
             ZLayer.empty
 
@@ -64,7 +64,7 @@ object Bench:
         def forkCats(): T = IO.cede.flatMap(_ => catsBench()).unsafeRunSync()
 
         @Benchmark
-        def forkZio(): T = zio.Unsafe.unsafe(implicit u =>
+        def forkZIO(): T = zio.Unsafe.unsafe(implicit u =>
             zioRuntime.run(zio.ZIO.yieldNow.flatMap(_ => zioBench())).getOrThrow()
         )
     end Fork
@@ -81,7 +81,7 @@ object Bench:
         def syncCats(): T = catsBench().unsafeRunSync()
 
         @Benchmark
-        def syncZio(): T = zio.Unsafe.unsafe(implicit u =>
+        def syncZIO(): T = zio.Unsafe.unsafe(implicit u =>
             zioRuntime.run(zioBench()).getOrThrow()
         )
     end SyncAndFork

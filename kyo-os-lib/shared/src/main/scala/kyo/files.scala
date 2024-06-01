@@ -1,35 +1,36 @@
 package kyo
 
 import kyo.*
+import kyo.internal.Trace
 import os.*
 import scala.io.*
 
 class Files(val path: List[String]):
 
-    def parts: List[Files.Part] = path
+    def parts(using Trace): List[Files.Part] = path
 
-    def osPath = path.foldLeft(os.root)(_ / _)
+    def osPath(using Trace) = path.foldLeft(os.root)(_ / _)
 
-    def read: String < IOs =
+    def read(using Trace): String < IOs =
         IOs(os.read(osPath))
 
     def read(
         charSet: Codec = java.nio.charset.StandardCharsets.UTF_8,
         offset: Long = 0,
         count: Int = Int.MaxValue
-    ): String < IOs =
+    )(using Trace): String < IOs =
         IOs(os.read(osPath, charSet, offset, count))
 
-    def readAll(extension: String): IndexedSeq[(String, String)] < IOs =
+    def readAll(extension: String)(using Trace): IndexedSeq[(String, String)] < IOs =
         IOs(os.list(osPath).filter(_.ext == extension).map(p => p.baseName -> os.read(p)))
 
-    def readBytes: Array[Byte] < IOs =
+    def readBytes(using Trace): Array[Byte] < IOs =
         IOs(os.read.bytes(osPath))
 
     def readBytes(
         offset: Long = 0,
         count: Int = Int.MaxValue
-    )(path: String*): Array[Byte] < IOs =
+    )(path: String*)(using Trace): Array[Byte] < IOs =
         IOs(os.read.bytes(osPath, offset, count))
 
     def readLines: IndexedSeq[String] < IOs =
@@ -37,39 +38,39 @@ class Files(val path: List[String]):
 
     def readLines(
         charSet: Codec = java.nio.charset.StandardCharsets.UTF_8
-    )(path: String*): IndexedSeq[String] < IOs =
+    )(path: String*)(using Trace): IndexedSeq[String] < IOs =
         IOs(os.read.lines(osPath, charSet))
 
-    def truncate(size: Long): Unit < IOs =
+    def truncate(size: Long)(using Trace): Unit < IOs =
         IOs(os.truncate(osPath, size))
 
-    def append(value: String, perms: PermSet = null, createFolders: Boolean = true) =
+    def append(value: String, perms: PermSet = null, createFolders: Boolean = true)(using Trace) =
         IOs(os.write.append(osPath, value, perms, createFolders))
 
-    def write(value: String, perms: PermSet = null, createFolders: Boolean = true) =
+    def write(value: String, perms: PermSet = null, createFolders: Boolean = true)(using Trace) =
         IOs(os.write(osPath, value, perms, createFolders))
 
-    def list: IndexedSeq[Files] < IOs =
+    def list(using Trace): IndexedSeq[Files] < IOs =
         list(true)
 
-    def list(sort: Boolean): IndexedSeq[Files] < IOs =
+    def list(sort: Boolean)(using Trace): IndexedSeq[Files] < IOs =
         IOs(os.list(osPath, sort).map(p => new Files(p.segments.toList)))
 
-    def list(extension: String): IndexedSeq[Files] < IOs =
+    def list(extension: String)(using Trace): IndexedSeq[Files] < IOs =
         IOs(os.list(osPath).filter(_.last.endsWith(extension)).map(p =>
             new Files(p.segments.toList)
         ))
 
-    def isDir: Boolean < IOs =
+    def isDir(using Trace): Boolean < IOs =
         IOs(os.isDir(osPath))
 
-    def isFile: Boolean < IOs =
+    def isFile(using Trace): Boolean < IOs =
         IOs(os.isFile(osPath))
 
-    def isLink: Boolean < IOs =
+    def isLink(using Trace): Boolean < IOs =
         IOs(os.isLink(osPath))
 
-    def mkDir: Unit < IOs =
+    def mkDir(using Trace): Unit < IOs =
         IOs(os.makeDir.all(osPath))
 
     def move(
@@ -77,7 +78,7 @@ class Files(val path: List[String]):
         replaceExisting: Boolean = false,
         atomicMove: Boolean = false,
         createFolders: Boolean = true
-    ) =
+    )(using Trace) =
         IOs(os.move(osPath, to.osPath, atomicMove, createFolders))
 
     def copy(
@@ -87,7 +88,7 @@ class Files(val path: List[String]):
         copyAttributes: Boolean = false,
         createFolders: Boolean = true,
         mergeFolders: Boolean = false
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         IOs(os.copy(
             osPath,
             to.osPath,
@@ -98,19 +99,19 @@ class Files(val path: List[String]):
             mergeFolders
         ))
 
-    def remove: Boolean < IOs =
+    def remove(using Trace): Boolean < IOs =
         remove(false)
 
-    def remove(checkExists: Boolean): Boolean < IOs =
+    def remove(checkExists: Boolean)(using Trace): Boolean < IOs =
         IOs(os.remove(osPath, checkExists))
 
-    def removeAll: Unit < IOs =
+    def removeAll(using Trace): Unit < IOs =
         IOs(os.remove.all(osPath))
 
-    def exists: Boolean < IOs =
+    def exists(using Trace): Boolean < IOs =
         exists(true)
 
-    def exists(followLinks: Boolean): Boolean < IOs =
+    def exists(followLinks: Boolean)(using Trace): Boolean < IOs =
         IOs(os.exists(osPath, followLinks))
 
     override def toString = s"Files(\"${path.mkString("/")}\")"

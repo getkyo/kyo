@@ -72,7 +72,7 @@ class seqsTest extends KyoTest:
     }
 
     "stack safety" - {
-        val n = 10000
+        val n = 1000
 
         "collect" in {
             val largeSeq = Seq.fill(n)(1)

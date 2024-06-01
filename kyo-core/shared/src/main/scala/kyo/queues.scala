@@ -2,23 +2,24 @@ package kyo
 
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kyo.internal.Trace
 import org.jctools.queues.*
 import scala.annotation.tailrec
 
 class Queue[T] private[kyo] (private[kyo] val unsafe: Queues.Unsafe[T]):
 
-    def capacity: Int               = unsafe.capacity
-    def size: Int < IOs             = op(unsafe.size())
-    def isEmpty: Boolean < IOs      = op(unsafe.isEmpty())
-    def isFull: Boolean < IOs       = op(unsafe.isFull())
-    def offer(v: T): Boolean < IOs  = op(unsafe.offer(v))
-    def poll: Option[T] < IOs       = op(Option(unsafe.poll()))
-    def peek: Option[T] < IOs       = op(Option(unsafe.peek()))
-    def drain: Seq[T] < IOs         = op(unsafe.drain())
-    def isClosed: Boolean < IOs     = IOs(unsafe.isClosed())
-    def close: Option[Seq[T]] < IOs = IOs(unsafe.close())
+    def capacity(using Trace): Int               = unsafe.capacity
+    def size(using Trace): Int < IOs             = op(unsafe.size())
+    def isEmpty(using Trace): Boolean < IOs      = op(unsafe.isEmpty())
+    def isFull(using Trace): Boolean < IOs       = op(unsafe.isFull())
+    def offer(v: T)(using Trace): Boolean < IOs  = op(unsafe.offer(v))
+    def poll(using Trace): Option[T] < IOs       = op(Option(unsafe.poll()))
+    def peek(using Trace): Option[T] < IOs       = op(Option(unsafe.peek()))
+    def drain(using Trace): Seq[T] < IOs         = op(unsafe.drain())
+    def isClosed(using Trace): Boolean < IOs     = IOs(unsafe.isClosed())
+    def close(using Trace): Option[Seq[T]] < IOs = IOs(unsafe.close())
 
-    protected inline def op[T, S](inline v: => T < IOs): T < IOs =
+    protected inline def op[T, S](inline v: => T < IOs)(using inline trace: Trace): T < IOs =
         IOs {
             if unsafe.isClosed() then
                 Queues.closed
@@ -66,7 +67,7 @@ object Queues:
     end Unsafe
 
     class Unbounded[T] private[kyo] (unsafe: Queues.Unsafe[T]) extends Queue[T](unsafe):
-        def add[S](v: T < S): Unit < (IOs & S) =
+        def add[S](v: T < S)(using Trace): Unit < (IOs & S) =
             op(v.map(offer).unit)
 
     def init[T](capacity: Int, access: Access = kyo.Access.Mpmc): Queue[T] < IOs =

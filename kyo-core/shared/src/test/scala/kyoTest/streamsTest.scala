@@ -517,4 +517,11 @@ class streamsTest extends KyoTest:
         }
     }
 
+    "nesting with other effect" in {
+        val stream: Stream[Unit, Int, Any] < IOs =
+            IOs(Seq(1, 2, 3)).map(seq => Streams.initSeq(seq))
+        IOs.run(stream.map(_.runSeq)).pure
+        succeed
+    }
+
 end streamsTest

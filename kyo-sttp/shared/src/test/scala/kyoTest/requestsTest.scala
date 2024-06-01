@@ -1,6 +1,7 @@
 package kyoTest
 
 import kyo.*
+import kyo.internal.Trace
 import scala.util.*
 import sttp.client3.*
 
@@ -50,9 +51,9 @@ class requestsTest extends KyoTest:
     "with meter" in run {
         var calls = 0
         val meter = new Meter:
-            def available                 = ???
-            def tryRun[T, S](v: => T < S) = ???
-            def run[T, S](v: => T < S) =
+            def available(using Trace)                 = ???
+            def tryRun[T, S](v: => T < S)(using Trace) = ???
+            def run[T, S](v: => T < S)(using Trace) =
                 calls += 1
                 v
         val backend = (new TestBackend).withMeter(meter)

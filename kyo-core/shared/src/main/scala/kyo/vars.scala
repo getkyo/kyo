@@ -2,6 +2,7 @@ package kyo
 
 import Vars.internal.*
 import kyo.core.*
+import kyo.internal.Trace
 
 class Vars[V] extends Effect[Vars[V]]:
     type Command[T] = Op[V]
@@ -29,24 +30,26 @@ object Vars:
         type Op[V] = Get.type | Set[V] | Update[V]
     end internal
 
-    def get[V](using Tag[Vars[V]]): V < Vars[V] =
+    def get[V](using Tag[Vars[V]])(using Trace): V < Vars[V] =
         vars[V].suspend[V](Get)
 
     class UseDsl[V]:
-        inline def apply[T, S](inline f: V => T < S)(using inline tag: Tag[Vars[V]]): T < (Vars[V] & S) =
+        inline def apply[T, S](inline f: V => T < S)(using inline tag: Tag[Vars[V]], inline trace: Trace): T < (Vars[V] & S) =
             vars[V].suspend[V, T, S](Get, f)
 
     def use[V >: Nothing]: UseDsl[V] = new UseDsl[V]
 
-    def set[V](value: V)(using Tag[Vars[V]]): Unit < Vars[V] =
+    def set[V](value: V)(using Tag[Vars[V]], Trace): Unit < Vars[V] =
         vars[V].suspend[Unit](Set(value))
 
-    def update[V](f: V => V)(using Tag[Vars[V]]): Unit < Vars[V] =
+    def update[V](f: V => V)(using Tag[Vars[V]], Trace): Unit < Vars[V] =
         vars[V].suspend[Unit](Update(f))
 
     class RunDsl[V]:
         def apply[T: Flat, S2](state: V)(value: T < (Vars[V] & S2))(
-            using Tag[Vars[V]]
+            using
+            Tag[Vars[V]],
+            Trace
         ): T < S2 =
             vars[V].handle(vars[V].handler)(state, value)
     end RunDsl

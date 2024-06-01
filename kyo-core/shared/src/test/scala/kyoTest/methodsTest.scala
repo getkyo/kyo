@@ -4,9 +4,31 @@ import kyo.*
 
 class methodsTest extends KyoTest:
 
+    def widen[A](v: A < Any) = v
+
+    "toString JVM" in runJVM {
+        assert(IOs(1).toString() == "Kyo(Tag[kyo.IOs],Command(()),Trace(methodsTest.scala:10,method=IOs,snippet=IOs(1)))")
+        assert(
+            IOs(1).map(_ + 1).toString() == "Kyo(Tag[kyo.IOs],Command(()),Trace(methodsTest.scala:12,method=map,snippet=map(_ + 1)))"
+        )
+    }
+
+    "toString JS" in runJS {
+        assert(IOs(1).toString() == "Kyo(Tag[kyo.IOs],Command(undefined),Trace(methodsTest.scala:17,method=IOs,snippet=IOs(1)))")
+        assert(
+            IOs(1).map(_ + 1).toString() == "Kyo(Tag[kyo.IOs],Command(undefined),Trace(methodsTest.scala:19,method=map,snippet=map(_ + 1)))"
+        )
+    }
+
     "pure" in {
         assert(IOs.run(IOs(1)).pure == 1)
         assertDoesNotCompile("IOs(1).pure")
+        assert(widen(TypeMap(1, true)).pure.get[Boolean])
+        assertDoesNotCompile("widen(IOs(42)).pure == 42")
+    }
+
+    "pure widened" in {
+        assertDoesNotCompile("val _: Int < IOs = widen(IOs(42)).pure")
     }
 
     "map" in {

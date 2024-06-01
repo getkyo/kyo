@@ -3,7 +3,6 @@ package kyo.server.internal
 import io.netty.channel.Channel
 import io.netty.channel.ChannelFuture
 import kyo.*
-import scala.concurrent.CancellationException
 
 object KyoUtil:
     def nettyChannelFutureToScala(nettyFuture: ChannelFuture): Channel < Fibers =
@@ -14,7 +13,7 @@ object KyoUtil:
                         IOs.run {
                             if future.isSuccess then p.complete(future.channel())
                             else if future.isCancelled then
-                                p.complete(IOs.fail(new CancellationException))
+                                p.complete(Fibers.interrupted)
                             else p.complete(IOs.fail(future.cause()))
                         }
                     }
@@ -31,7 +30,7 @@ object KyoUtil:
                         IOs.run {
                             if future.isSuccess then p.complete(future.getNow)
                             else if future.isCancelled then
-                                p.complete(IOs.fail(new CancellationException))
+                                p.complete(Fibers.interrupted)
                             else p.complete(IOs.fail(future.cause()))
                         }
                     }

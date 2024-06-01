@@ -1,11 +1,12 @@
 package kyo
 
 import kyo.internal.Param
+import kyo.internal.Trace
 
 object Logs extends logsPlatformSpecific:
     private val local = Locals.init(unsafe)
 
-    def let[T, S](u: Unsafe)(f: => T < (IOs & S)): T < (IOs & S) =
+    def let[T, S](u: Unsafe)(f: => T < (IOs & S))(using Trace): T < (IOs & S) =
         local.let(u)(f)
 
     trait Unsafe:
@@ -135,7 +136,7 @@ object Logs extends logsPlatformSpecific:
         end ConsoleLogger
     end Unsafe
 
-    private inline def logWhen(inline enabled: Unsafe => Boolean)(inline log: Unsafe => Unit): Unit < IOs =
+    private inline def logWhen(inline enabled: Unsafe => Boolean)(inline log: Unsafe => Unit)(using Trace): Unit < IOs =
         local.use { unsafe =>
             if enabled(unsafe) then
                 IOs(log(unsafe))
@@ -145,77 +146,77 @@ object Logs extends logsPlatformSpecific:
 
     inline def trace(inline params: Param[?]*)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         trace(Param.show(params*))
 
     inline def trace(inline msg: => String)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         logWhen(_.traceEnabled)(_.trace(msg))
 
     inline def trace(inline msg: => String, inline t: => Throwable)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         logWhen(_.traceEnabled)(_.trace(msg, t))
 
     inline def debug(inline params: Param[?]*)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         debug(Param.show(params*))
 
     inline def debug(inline msg: => String)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         logWhen(_.debugEnabled)(_.debug(msg))
 
     inline def debug(inline msg: => String, inline t: => Throwable)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         logWhen(_.debugEnabled)(_.debug(msg, t))
 
     inline def info(inline params: Param[?]*)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         info(Param.show(params*))
 
     inline def info(inline msg: => String)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         logWhen(_.infoEnabled)(_.info(msg))
 
     inline def info(inline msg: => String, inline t: => Throwable)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         logWhen(_.infoEnabled)(_.info(msg, t))
 
     inline def warn(inline params: Param[?]*)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         warn(Param.show(params*))
 
     inline def warn(inline msg: => String)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         logWhen(_.warnEnabled)(_.warn(msg))
 
     inline def warn(inline msg: => String, inline t: => Throwable)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         logWhen(_.warnEnabled)(_.warn(msg, t))
 
     inline def error(inline params: Param[?]*)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         error(Param.show(params*))
 
     inline def error(inline msg: => String)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         logWhen(_.errorEnabled)(_.error(msg))
 
     inline def error(inline msg: => String, inline t: => Throwable)(
         using inline file: internal.Position
-    ): Unit < IOs =
+    )(using Trace): Unit < IOs =
         logWhen(_.errorEnabled)(_.error(msg, t))
 
 end Logs
