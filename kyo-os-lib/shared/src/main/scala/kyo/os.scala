@@ -21,7 +21,7 @@ sealed trait ProcessCommand:
 
     /** Spawns a new process and returns its output as a String
       */
-    def string(using Trace): String < IOs =
+    def text(using Trace): String < IOs =
         stream.map { inputStream =>
             new String(inputStream.readAllBytes())
         }

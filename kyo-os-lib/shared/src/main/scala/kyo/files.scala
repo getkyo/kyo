@@ -16,34 +16,34 @@ import scala.jdk.CollectionConverters.*
 import scala.jdk.StreamConverters.*
 
 class Files(val path: List[String]):
-    def toJPath: JPath               = Paths.get(path.mkString("/"))
+    def toJava: JPath                = Paths.get(path.mkString("/"))
     lazy val parts: List[Files.Part] = path
 
     /** Methods to read files completely
       */
     def read(using Trace): String < IOs =
-        IOs(JFiles.readString(toJPath))
+        IOs(JFiles.readString(toJava))
 
     def read(charset: Charset)(using Trace): String < IOs =
-        IOs(JFiles.readString(toJPath, charset))
+        IOs(JFiles.readString(toJava, charset))
 
     def readAll(extension: String)(using Trace): Seq[(String, String)] < IOs =
         list(extension).map { paths =>
             Seqs.map(paths) { p =>
-                p.read.map(content => p.toJPath.getName(0).toString() -> content)
+                p.read.map(content => p.toJava.getName(0).toString() -> content)
             }
         }
 
     def readBytes(using Trace): Array[Byte] < IOs =
-        IOs(JFiles.readAllBytes(toJPath))
+        IOs(JFiles.readAllBytes(toJava))
 
     def readLines(using Trace): List[String] < IOs =
-        IOs(JFiles.readAllLines(toJPath).asScala.toList)
+        IOs(JFiles.readAllLines(toJava).asScala.toList)
 
     def readLines(
         charSet: Charset = java.nio.charset.StandardCharsets.UTF_8
     )(using Trace): List[String] < IOs =
-        IOs(JFiles.readAllLines(toJPath, charSet).asScala.toList)
+        IOs(JFiles.readAllLines(toJava, charSet).asScala.toList)
 
     /** Methods to append and write to files
       */
@@ -51,20 +51,20 @@ class Files(val path: List[String]):
     /** Appends a String to this path.
       */
     def append(value: String, createFolders: Boolean = true)(using Trace): Unit < IOs =
-        if createFolders then IOs(JFiles.writeString(toJPath, value, StandardOpenOption.APPEND, StandardOpenOption.CREATE)).unit
+        if createFolders then IOs(JFiles.writeString(toJava, value, StandardOpenOption.APPEND, StandardOpenOption.CREATE)).unit
         else
-            IOs(javaExists(toJPath.getParent())).map { parentExists =>
-                if parentExists then IOs(JFiles.writeString(toJPath, value, StandardOpenOption.APPEND)).unit
+            IOs(javaExists(toJava.getParent())).map { parentExists =>
+                if parentExists then IOs(JFiles.writeString(toJava, value, StandardOpenOption.APPEND)).unit
                 else IOs.unit
             }
 
     /** Appends a Bytes Array to this path.
       */
     def appendBytes(value: Array[Byte], createFolders: Boolean = true)(using Trace): Unit < IOs =
-        if createFolders then IOs(JFiles.write(toJPath, value, StandardOpenOption.APPEND, StandardOpenOption.CREATE)).unit
+        if createFolders then IOs(JFiles.write(toJava, value, StandardOpenOption.APPEND, StandardOpenOption.CREATE)).unit
         else
-            IOs(javaExists(toJPath.getParent())).map { parentExists =>
-                if parentExists then IOs(JFiles.write(toJPath, value, StandardOpenOption.APPEND)).unit
+            IOs(javaExists(toJava.getParent())).map { parentExists =>
+                if parentExists then IOs(JFiles.write(toJava, value, StandardOpenOption.APPEND)).unit
                 else IOs.unit
             }
 
@@ -72,30 +72,30 @@ class Files(val path: List[String]):
       */
     def appendLines(value: List[String], createFolders: Boolean = true)(using Trace): Unit < IOs =
         if createFolders then
-            IOs(JFiles.write(toJPath, value.asJava, StandardOpenOption.APPEND, StandardOpenOption.CREATE)).unit
+            IOs(JFiles.write(toJava, value.asJava, StandardOpenOption.APPEND, StandardOpenOption.CREATE)).unit
         else
-            IOs(javaExists(toJPath.getParent())).map { parentExists =>
-                if parentExists then IOs(JFiles.write(toJPath, value.asJava, StandardOpenOption.APPEND)).unit
+            IOs(javaExists(toJava.getParent())).map { parentExists =>
+                if parentExists then IOs(JFiles.write(toJava, value.asJava, StandardOpenOption.APPEND)).unit
                 else IOs.unit
             }
 
     /** Writes a String to this path.
       */
     def write(value: String, createFolders: Boolean = true)(using Trace): Unit < IOs =
-        if createFolders then IOs(JFiles.writeString(toJPath, value, StandardOpenOption.WRITE, StandardOpenOption.CREATE)).unit
+        if createFolders then IOs(JFiles.writeString(toJava, value, StandardOpenOption.WRITE, StandardOpenOption.CREATE)).unit
         else
-            IOs(javaExists(toJPath.getParent())).map { parentExists =>
-                if parentExists then IOs(JFiles.writeString(toJPath, value, StandardOpenOption.WRITE)).unit
+            IOs(javaExists(toJava.getParent())).map { parentExists =>
+                if parentExists then IOs(JFiles.writeString(toJava, value, StandardOpenOption.WRITE)).unit
                 else IOs.unit
             }
 
     /** Writes a Bytes Array to this path.
       */
     def writeBytes(value: Array[Byte], createFolders: Boolean = true)(using Trace): Unit < IOs =
-        if createFolders then IOs(JFiles.write(toJPath, value, StandardOpenOption.WRITE, StandardOpenOption.CREATE)).unit
+        if createFolders then IOs(JFiles.write(toJava, value, StandardOpenOption.WRITE, StandardOpenOption.CREATE)).unit
         else
-            IOs(javaExists(toJPath.getParent())).map { parentExists =>
-                if parentExists then IOs(JFiles.write(toJPath, value, StandardOpenOption.WRITE)).unit
+            IOs(javaExists(toJava.getParent())).map { parentExists =>
+                if parentExists then IOs(JFiles.write(toJava, value, StandardOpenOption.WRITE)).unit
                 else IOs.unit
             }
 
@@ -103,10 +103,10 @@ class Files(val path: List[String]):
       */
     def writeLines(value: List[String], createFolders: Boolean = true)(using Trace): Unit < IOs =
         if createFolders then
-            IOs(JFiles.write(toJPath, value.asJava, StandardOpenOption.WRITE, StandardOpenOption.CREATE)).unit
+            IOs(JFiles.write(toJava, value.asJava, StandardOpenOption.WRITE, StandardOpenOption.CREATE)).unit
         else
-            IOs(javaExists(toJPath.getParent())).map { parentExists =>
-                if parentExists then IOs(JFiles.write(toJPath, value.asJava, StandardOpenOption.WRITE)).unit
+            IOs(javaExists(toJava.getParent())).map { parentExists =>
+                if parentExists then IOs(JFiles.write(toJava, value.asJava, StandardOpenOption.WRITE)).unit
                 else IOs.unit
             }
 
@@ -117,7 +117,7 @@ class Files(val path: List[String]):
       */
     def readStream(charset: Charset = java.nio.charset.StandardCharsets.UTF_8)(using Trace): Stream[Unit, String, Fibers] < Resources =
         readLoop[String, Array[Byte], (FileChannel, ByteBuffer)](
-            (FileChannel.open(toJPath, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
+            (FileChannel.open(toJava, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
             ch => ch._1.close(),
             readOnceBytes,
             arr => Chunks.init(new String(arr, charset))
@@ -127,7 +127,7 @@ class Files(val path: List[String]):
       */
     def readLinesStream(charset: Charset = java.nio.charset.StandardCharsets.UTF_8)(using Trace): Stream[Unit, String, Fibers] < Resources =
         readLoop[String, String, BufferedReader](
-            JFiles.newBufferedReader(toJPath, Charset.defaultCharset()),
+            JFiles.newBufferedReader(toJava, Charset.defaultCharset()),
             reader => reader.close(),
             readOnceLines,
             line => Chunks.init(line)
@@ -137,7 +137,7 @@ class Files(val path: List[String]):
       */
     def readBytesStream(using Trace): Stream[Unit, Byte, Fibers] < Resources =
         readLoop[Byte, Array[Byte], (FileChannel, ByteBuffer)](
-            (FileChannel.open(toJPath, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
+            (FileChannel.open(toJava, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
             ch => ch._1.close(),
             readOnceBytes,
             arr => Chunks.initSeq(arr.toSeq)
@@ -190,7 +190,7 @@ class Files(val path: List[String]):
       */
     def truncate(size: Long)(using Trace): FileChannel < Resources =
         Resources
-            .acquireRelease(FileChannel.open(toJPath, StandardOpenOption.WRITE))(ch => ch.close())
+            .acquireRelease(FileChannel.open(toJava, StandardOpenOption.WRITE))(ch => ch.close())
             .map { ch =>
                 ch.truncate(size)
                 ch
@@ -200,12 +200,12 @@ class Files(val path: List[String]):
     /** List contents of path
       */
     def list(using Trace): IndexedSeq[Files] < IOs =
-        IOs(JFiles.list(toJPath).toScala(LazyList).toIndexedSeq).map(_.map(path => Files(path.toString)))
+        IOs(JFiles.list(toJava).toScala(LazyList).toIndexedSeq).map(_.map(path => Files(path.toString)))
 
     /** List contents of path with given extension
       */
     def list(extension: String)(using Trace): IndexedSeq[Files] < IOs =
-        IOs(JFiles.list(toJPath).toScala(LazyList)).map(_.filter(path =>
+        IOs(JFiles.list(toJava).toScala(LazyList)).map(_.filter(path =>
             path.getFileName().toString().split('.').toList.lastOption.getOrElse("") == extension
         )).map(_.toIndexedSeq).map(_.map(path => Files(path.toString)))
 
@@ -217,7 +217,7 @@ class Files(val path: List[String]):
     /** Returns if the path exists
       */
     def exists(followLinks: Boolean)(using Trace): Boolean < IOs =
-        val path = toJPath
+        val path = toJava
         if path == null then IOs(false)
         else if followLinks then IOs(JFiles.exists(path))
         else IOs(JFiles.exists(path, LinkOption.NOFOLLOW_LINKS))
@@ -230,32 +230,32 @@ class Files(val path: List[String]):
     /** Returns if the path represents a directory
       */
     def isDir(using Trace): Boolean < IOs =
-        IOs(JFiles.isDirectory(toJPath))
+        IOs(JFiles.isDirectory(toJava))
 
     /** Returns if the path represents a file
       */
     def isFile(using Trace): Boolean < IOs =
-        IOs(JFiles.isRegularFile(toJPath))
+        IOs(JFiles.isRegularFile(toJava))
 
     /** Returns if the path represents a symbolic link
       */
     def isLink(using Trace): Boolean < IOs =
-        IOs(JFiles.isSymbolicLink(toJPath))
+        IOs(JFiles.isSymbolicLink(toJava))
 
     /** Creates a directory in this path
       */
     def mkDir(using Trace): Unit < IOs =
-        IOs(javaExists(toJPath.getParent())).map { parentsExist =>
-            if parentsExist == true then IOs(JFiles.createDirectory(toJPath))
-            else IOs(JFiles.createDirectories(toJPath))
+        IOs(javaExists(toJava.getParent())).map { parentsExist =>
+            if parentsExist == true then IOs(JFiles.createDirectory(toJava))
+            else IOs(JFiles.createDirectories(toJava))
         }.unit
 
     /** Creates a directory in this path
       */
     def mkFile(using Trace): Unit < IOs =
-        IOs(javaExists(toJPath.getParent())).map { parentsExist =>
-            if parentsExist == true then IOs(JFiles.createDirectory(toJPath))
-            else IOs(JFiles.createDirectories(toJPath))
+        IOs(javaExists(toJava.getParent())).map { parentsExist =>
+            if parentsExist == true then IOs(JFiles.createDirectory(toJava))
+            else IOs(JFiles.createDirectories(toJava))
         }.unit
     end mkFile
 
@@ -270,10 +270,10 @@ class Files(val path: List[String]):
         val opts = (if atomicMove then List(StandardCopyOption.ATOMIC_MOVE) else Nil) ++ (if replaceExisting then
                                                                                               List(StandardCopyOption.REPLACE_EXISTING)
                                                                                           else Nil)
-        IOs(javaExists(toJPath.getParent())).map { parentExists =>
+        IOs(javaExists(toJava.getParent())).map { parentExists =>
             (parentExists, createFolders) match
-                case (true, _)     => IOs(JFiles.move(toJPath, to.toJPath, opts*)).unit
-                case (false, true) => Files(toJPath.getParent().toString).mkDir.andThen(IOs(JFiles.move(toJPath, to.toJPath, opts*)).unit)
+                case (true, _)     => IOs(JFiles.move(toJava, to.toJava, opts*)).unit
+                case (false, true) => Files(toJava.getParent().toString).mkDir.andThen(IOs(JFiles.move(toJava, to.toJava, opts*)).unit)
                 case _             => ()
         }
     end move
@@ -291,10 +291,10 @@ class Files(val path: List[String]):
         val opts = (if followLinks then List.empty[CopyOption] else List[CopyOption](LinkOption.NOFOLLOW_LINKS)) ++
             (if copyAttributes then List[CopyOption](StandardCopyOption.COPY_ATTRIBUTES) else List.empty[CopyOption]) ++
             (if replaceExisting then List[CopyOption](StandardCopyOption.REPLACE_EXISTING) else List.empty[CopyOption])
-        IOs(javaExists(toJPath.getParent())).map { parentExists =>
+        IOs(javaExists(toJava.getParent())).map { parentExists =>
             (parentExists, createFolders) match
-                case (true, _)     => IOs(JFiles.copy(toJPath, to.toJPath, opts*)).unit
-                case (false, true) => Files(toJPath.getParent().toString).mkDir.andThen(IOs(JFiles.copy(toJPath, to.toJPath, opts*)).unit)
+                case (true, _)     => IOs(JFiles.copy(toJava, to.toJava, opts*)).unit
+                case (false, true) => Files(toJava.getParent().toString).mkDir.andThen(IOs(JFiles.copy(toJava, to.toJava, opts*)).unit)
                 case _             => IOs.unit
         }
     end copy
@@ -309,17 +309,17 @@ class Files(val path: List[String]):
     def remove(checkExists: Boolean)(using Trace): Boolean < IOs =
         IOs {
             if checkExists then
-                JFiles.delete(toJPath)
+                JFiles.delete(toJava)
                 true
             else
-                JFiles.deleteIfExists(toJPath)
+                JFiles.deleteIfExists(toJava)
         }
 
     /** Removes this path and all its contents
       */
     def removeAll(using Trace): Unit < IOs =
         IOs {
-            val path = toJPath
+            val path = toJava
             if javaExists(path) then
                 val visitor = new SimpleFileVisitor[JPath]:
                     override def visitFile(path: JPath, basicFileAttributes: BasicFileAttributes): FileVisitResult =
@@ -342,7 +342,7 @@ class Files(val path: List[String]):
     /** Creates a stream of the contents of this path with given depth
       */
     def walk(maxDepth: Int)(using Trace): Stream[Unit, Files, Any] < IOs =
-        IOs(JFiles.walk(toJPath).toScala(LazyList)).map(seq =>
+        IOs(JFiles.walk(toJava).toScala(LazyList)).map(seq =>
             Streams.initSeq(seq).transform(path => Files(path.toString))
         )
 
@@ -374,7 +374,7 @@ end Files
 
 extension [S](stream: Stream[Unit, Byte, S])
     def sink(path: Files)(using Trace): Unit < (Resources & S) =
-        Resources.acquireRelease(FileChannel.open(path.toJPath, StandardOpenOption.WRITE))(ch => ch.close()).map { fileCh =>
+        Resources.acquireRelease(FileChannel.open(path.toJava, StandardOpenOption.WRITE))(ch => ch.close()).map { fileCh =>
             stream.transformChunks(bytes =>
                 IOs(fileCh.write(ByteBuffer.wrap(bytes.toArray))).map(_ => Chunk.empty[Byte])
             ).runDiscard
@@ -384,7 +384,7 @@ end extension
 extension [S](stream: Stream[Unit, String, S])
     @scala.annotation.targetName("stringSink")
     def sink(path: Files, charset: Codec = java.nio.charset.StandardCharsets.UTF_8)(using Trace): Unit < (Resources & S) =
-        Resources.acquireRelease(FileChannel.open(path.toJPath, StandardOpenOption.WRITE))(ch => ch.close()).map { fileCh =>
+        Resources.acquireRelease(FileChannel.open(path.toJava, StandardOpenOption.WRITE))(ch => ch.close()).map { fileCh =>
             stream.transform(s =>
                 IOs(fileCh.write(ByteBuffer.wrap(s.getBytes))).unit
             ).runDiscard
@@ -394,7 +394,7 @@ extension [S](stream: Stream[Unit, String, S])
         path: Files,
         charset: Codec = java.nio.charset.StandardCharsets.UTF_8
     )(using Trace): Unit < (Resources & S) =
-        Resources.acquireRelease(FileChannel.open(path.toJPath, StandardOpenOption.WRITE))(ch => ch.close()).map { fileCh =>
+        Resources.acquireRelease(FileChannel.open(path.toJava, StandardOpenOption.WRITE))(ch => ch.close()).map { fileCh =>
             stream.transform(line =>
                 IOs {
                     fileCh.write(ByteBuffer.wrap(line.getBytes))

@@ -9,7 +9,7 @@ class osTest extends KyoTest:
 
     "execute command" in run {
         assert {
-            IOs.run(ProcessCommand("echo", "-n", "some string").string).pure == "some string"
+            IOs.run(ProcessCommand("echo", "-n", "some string").text).pure == "some string"
         }
     }
     "stream as stdin" in run {
@@ -17,18 +17,18 @@ class osTest extends KyoTest:
         val c      = ProcessCommand("cat").stdin(ProcessInput.Stream(stream))
 
         assert {
-            IOs.run(c.string).pure == "some string"
+            IOs.run(c.text).pure == "some string"
         }
     }
     "piped commands" in run {
         val c = ProcessCommand("echo", "-n", "some string") andThen ProcessCommand("cat")
-        assert(IOs.run(c.string).pure == "some string")
+        assert(IOs.run(c.text).pure == "some string")
     }
     "piped commands with stream stdin" in run {
         val stream = new ByteArrayInputStream("2\n1".getBytes(StandardCharsets.UTF_8))
         val c0     = ProcessCommand("cat") andThen ProcessCommand("sort")
         val c      = c0.stdin(ProcessInput.Stream(stream))
-        assert(IOs.run(c.string).pure == "1\n2\n")
+        assert(IOs.run(c.text).pure == "1\n2\n")
     }
 
     "read stdout to stream" in run {

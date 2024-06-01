@@ -6,13 +6,13 @@ class jvmTest extends KyoTest:
 
     "execute new jvm and throw error" in run {
         assert {
-            IOs.run(jvm.process(classOf[MainClass.type], "some-arg" :: Nil).waitFor).pure == 1
+            IOs.run(jvm.process(classOf[MainClass.type], "some-arg" :: Nil).map(_.waitFor)).pure == 1
         }
     }
 
     "execute new jvm and end without error" in run {
         assert {
-            IOs.run(jvm.process(classOf[MainClass.type]).waitFor).pure == 0
+            IOs.run(jvm.process(classOf[MainClass.type]).map(_.waitFor)).pure == 0
         }
     }
 
