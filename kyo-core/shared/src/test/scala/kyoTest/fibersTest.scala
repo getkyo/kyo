@@ -148,7 +148,7 @@ class fibersTest extends KyoTest:
 
         "timeout" in runJVM {
             IOs.attempt(Fibers.runAndBlock(Duration.Infinity)(
-                Fibers.timeout(10.millis)(Fibers.sleep(1.days).andThen(1))
+                Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
             )).map {
                 case Failure(Fibers.Interrupted) => succeed
                 case v                           => fail(v.toString())
@@ -157,7 +157,7 @@ class fibersTest extends KyoTest:
 
         "block timeout" in runJVM {
             IOs.attempt(Fibers.runAndBlock(10.millis)(
-                Fibers.sleep(1.days).andThen(1)
+                Fibers.sleep(1.day).andThen(1)
             )).map {
                 case Failure(Fibers.Interrupted) => succeed
                 case v                           => fail(v.toString())
@@ -166,7 +166,7 @@ class fibersTest extends KyoTest:
 
         "multiple fibers timeout" in runJVM {
             IOs.attempt(Fibers.runAndBlock(10.millis)(
-                Seqs.fill(100)(Fibers.sleep(1.millis)).unit.andThen(1)
+                Seqs.fill(100)(Fibers.sleep(1.milli)).unit.andThen(1)
             )).map {
                 case Failure(Fibers.Interrupted) => succeed
                 case v                           => fail(v.toString())
@@ -244,7 +244,7 @@ class fibersTest extends KyoTest:
         "waits for the first success" in runJVM {
             val ex = new Exception
             Fibers.race(
-                Fibers.sleep(1.millis).andThen(42),
+                Fibers.sleep(1.milli).andThen(42),
                 IOs.fail[Int](ex)
             ).map { r =>
                 assert(r == 42)
@@ -255,7 +255,7 @@ class fibersTest extends KyoTest:
             val ex2 = new Exception
             IOs.attempt(
                 Fibers.race(
-                    Fibers.sleep(1.millis).andThen(IOs.fail[Int](ex1)),
+                    Fibers.sleep(1.milli).andThen(IOs.fail[Int](ex1)),
                     IOs.fail[Int](ex2)
                 )
             ).map {

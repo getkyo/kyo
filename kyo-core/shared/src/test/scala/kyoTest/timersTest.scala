@@ -9,7 +9,7 @@ class timersTest extends KyoTest:
     "schedule" in run {
         for
             p     <- Fibers.initPromise[String]
-            _     <- Timers.schedule(1.millis)(p.complete("hello").map(require(_)))
+            _     <- Timers.schedule(1.milli)(p.complete("hello").map(require(_)))
             hello <- p.get
         yield assert(hello == "hello")
     }
@@ -19,7 +19,7 @@ class timersTest extends KyoTest:
         Timers.let(Timer(exec)) {
             for
                 p     <- Fibers.initPromise[String]
-                _     <- Timers.schedule(1.millis)(p.complete("hello").map(require(_)))
+                _     <- Timers.schedule(1.milli)(p.complete("hello").map(require(_)))
                 hello <- p.get
             yield assert(hello == "hello")
         }
@@ -41,8 +41,8 @@ class timersTest extends KyoTest:
         for
             ref <- Atomics.initInt(0)
             task <- Timers.scheduleAtFixedRate(
-                1.millis,
-                1.millis
+                1.milli,
+                1.milli
             )(ref.incrementAndGet.unit)
             _         <- Fibers.sleep(5.millis)
             n         <- ref.get
@@ -54,8 +54,8 @@ class timersTest extends KyoTest:
         for
             ref <- Atomics.initInt(0)
             task <- Timers.scheduleWithFixedDelay(
-                1.millis,
-                1.millis
+                1.milli,
+                1.milli
             )(ref.incrementAndGet.unit)
             _         <- Fibers.sleep(5.millis)
             n         <- ref.get
@@ -67,7 +67,7 @@ class timersTest extends KyoTest:
         for
             ref <- Atomics.initInt(0)
             task <- Timers.scheduleWithFixedDelay(
-                1.millis
+                1.milli
             )(ref.incrementAndGet.unit)
             _         <- Fibers.sleep(5.millis)
             n         <- ref.get

@@ -56,7 +56,7 @@ class retriesTest extends KyoTest:
         var calls = 0
         val start = System.currentTimeMillis()
         IOs.attempt {
-            Retries(_.limit(4).exponential(1.millis)) {
+            Retries(_.limit(4).exponential(1.milli)) {
                 calls += 1
                 throw ex
             }

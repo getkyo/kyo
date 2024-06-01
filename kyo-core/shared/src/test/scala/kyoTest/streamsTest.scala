@@ -78,7 +78,7 @@ class streamsTest extends KyoTest:
                 }
                 "Fibers" in run {
                     Streams.initSource[Int](
-                        Fibers.delay(1.nanos)(Streams.emitSeq(Seq(1)))
+                        Fibers.delay(1.nano)(Streams.emitSeq(Seq(1)))
                     ).buffer(10).runSeq.map { r =>
                         assert(r == (Seq(1), ()))
                     }

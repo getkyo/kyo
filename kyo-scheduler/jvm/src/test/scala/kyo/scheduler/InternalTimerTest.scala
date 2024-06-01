@@ -12,7 +12,7 @@ class InternalTimerTest extends AnyFreeSpec with NonImplicitAssertions {
     "schedule" in withExecutor { exec =>
         val timer = InternalTimer(exec)
         val cdl   = new CountDownLatch(1)
-        val task  = timer.schedule(1.nanos)(cdl.countDown())
+        val task  = timer.schedule(1.nano)(cdl.countDown())
         cdl.await()
         task.cancel()
     }
@@ -20,7 +20,7 @@ class InternalTimerTest extends AnyFreeSpec with NonImplicitAssertions {
     "scheduleOnce" in withExecutor { exec =>
         val timer = InternalTimer(exec)
         val cdl   = new CountDownLatch(1)
-        val task  = timer.scheduleOnce(1.nanos)(cdl.countDown())
+        val task  = timer.scheduleOnce(1.nano)(cdl.countDown())
         cdl.await()
         task.cancel()
     }
