@@ -29,7 +29,7 @@ Kyo is available on Maven Central in multiple modules:
 
 For Scala 3:
 
-```scala
+```scala 
 libraryDependencies += "io.getkyo" %% "kyo-core" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-direct" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-cache" % "<version>"
@@ -41,7 +41,7 @@ libraryDependencies += "io.getkyo" %% "kyo-caliban" % "<version>"
 
 For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, and `kyo-sttp`):
 
-```scala
+```scala 
 libraryDependencies += "io.getkyo" %%% "kyo-core" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-direct" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-sttp" % "<version>"
@@ -57,7 +57,7 @@ In Kyo, computations are expressed via the infix type `<`, known as "Pending". I
 1. The type of the expected output.
 2. The pending effects that need to be handled, represented as an unordered type-level set via a type intersection.
 
-```scala
+```scala 
 import kyo._
 
 // 'Int' pending 'Options'
