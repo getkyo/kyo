@@ -8,86 +8,87 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kyo.*
+import kyo.internal.Trace
 import scala.jdk.CollectionConverters.*
 
-sealed trait Command:
+sealed trait ProcessCommand:
     self =>
-    import Command.*
+    import ProcessCommand.*
 
     /** Spawns a new process executing this command
       */
-    def spawn: Process < (IOs)
+    def spawn(using Trace): Process < IOs
 
     /** Spawns a new process and returns its output as a String
       */
-    def string: String < (IOs) =
+    def string(using Trace): String < IOs =
         stream.map { inputStream =>
             new String(inputStream.readAllBytes())
         }
 
     /** Spawns a new process and returns its output as a Stream
       */
-    def stream =
+    def stream(using Trace): InputStream < IOs =
         spawn.map(_.stdout)
 
-    def exitValue =
+    def exitValue(using Trace): Int < IOs =
         spawn.map(_.exitValue)
 
-    def waitFor =
+    def waitFor(using Trace): Int < IOs =
         spawn.map(_.waitFor)
 
-    def waitFor(timeout: Long, unit: TimeUnit) =
+    def waitFor(timeout: Long, unit: TimeUnit)(using Trace): Boolean < IOs =
         spawn.map(_.waitFor(timeout, unit))
 
-    def pipe(that: Command): Command =
-        Command.Piped(self.flatten ++ that.flatten).simplify
+    def pipe(that: ProcessCommand): ProcessCommand =
+        ProcessCommand.Piped(self.flatten ++ that.flatten).simplify
 
-    def >>(that: Command): Command =
+    def andThen(that: ProcessCommand): ProcessCommand =
         self.pipe(that)
 
-    def flatten: List[Command.Simple]
+    def flatten: List[ProcessCommand.Simple]
 
-    def +(that: Command): Command =
+    def +(that: ProcessCommand): ProcessCommand =
         val cs = self.flatten ++ that.flatten
-        if cs.length > 1 then Command.Piped(cs) else cs.head
+        if cs.length > 1 then ProcessCommand.Piped(cs) else cs.head
 
-    def map(f: Command.Simple => Command): Command
+    def map(f: ProcessCommand.Simple => ProcessCommand): ProcessCommand
 
-    def simplify: Command =
+    def simplify: ProcessCommand =
         self match
-            case Command.Piped(cs) if cs.length == 1 => cs.head
-            case c                                   => c
+            case ProcessCommand.Piped(cs) if cs.length == 1 => cs.head
+            case c                                          => c
 
     /** Modifies the current working directory of the command
       */
-    def cwd(newCwd: Path): Command
+    def cwd(newCwd: Path): ProcessCommand
 
     /** Modifies the environment variables of the command
       */
-    def env(newEnv: Map[String, String]): Command
+    def env(newEnv: Map[String, String]): ProcessCommand
 
     /** Modifies the `stdin` of the command
       */
-    def stdin(newStdin: ProcessInput): Command
+    def stdin(newStdin: ProcessInput): ProcessCommand
 
     /** Modifies the `stdout` of the command
       */
-    def stdout(newStdout: ProcessOutput): Command
+    def stdout(newStdout: ProcessOutput): ProcessCommand
 
     /** Modifies the `stderr` of the command
       */
-    def stderr(newStderr: ProcessOutput): Command
+    def stderr(newStderr: ProcessOutput): ProcessCommand
 
     /** Changes `redirectErrorStream` property
       */
-    def redirectErrorStream(value: Boolean): Command
+    def redirectErrorStream(value: Boolean): ProcessCommand
 
-end Command
+end ProcessCommand
 
-object Command:
+object ProcessCommand:
 
-    def apply(commands: String*): Command.Simple =
-        Command.Simple(commands.toList)
+    def apply(commands: String*): ProcessCommand.Simple =
+        ProcessCommand.Simple(commands.toList)
 
     case class Simple(
         command: List[String],
@@ -97,9 +98,9 @@ object Command:
         stdout: ProcessOutput = ProcessOutput.Pipe,
         stderr: ProcessOutput = ProcessOutput.Pipe,
         redirectErrorStream: Boolean = false
-    ) extends Command:
+    ) extends ProcessCommand:
         self =>
-        override def spawn: Process < (IOs) =
+        override def spawn(using Trace): Process < IOs =
             for
                 process <- IOs {
                     val builder = new ProcessBuilder(command*)
@@ -133,21 +134,21 @@ object Command:
                     case _ => IOs.unit
             yield process
 
-        override def cwd(newCwd: Path): Command                   = self.copy(cwd = Some(newCwd))
-        override def env(newEnv: Map[String, String]): Command    = self.copy(env = newEnv)
-        override def stdin(newStdin: ProcessInput): Command       = self.copy(stdin = newStdin)
-        override def stdout(newStdout: ProcessOutput): Command    = self.copy(stdout = newStdout)
-        override def stderr(newStderr: ProcessOutput): Command    = self.copy(stderr = newStderr)
-        override def redirectErrorStream(value: Boolean): Command = self.copy(redirectErrorStream = value)
+        override def cwd(newCwd: Path): ProcessCommand                   = self.copy(cwd = Some(newCwd))
+        override def env(newEnv: Map[String, String]): ProcessCommand    = self.copy(env = newEnv)
+        override def stdin(newStdin: ProcessInput): ProcessCommand       = self.copy(stdin = newStdin)
+        override def stdout(newStdout: ProcessOutput): ProcessCommand    = self.copy(stdout = newStdout)
+        override def stderr(newStderr: ProcessOutput): ProcessCommand    = self.copy(stderr = newStderr)
+        override def redirectErrorStream(value: Boolean): ProcessCommand = self.copy(redirectErrorStream = value)
 
-        override def flatten: List[Command.Simple]              = List(self)
-        override def map(f: Command.Simple => Command): Command = f(self)
+        override def flatten: List[ProcessCommand.Simple]                            = List(self)
+        override def map(f: ProcessCommand.Simple => ProcessCommand): ProcessCommand = f(self)
 
     end Simple
 
-    case class Piped(commands: List[Command.Simple]) extends Command:
+    case class Piped(commands: List[ProcessCommand.Simple]) extends ProcessCommand:
         self =>
-        def spawnAll: List[Process] < (IOs) =
+        def spawnAll(using Trace): List[Process] < IOs =
             if commands.isEmpty then IOs(List.empty)
             else
                 commands.tail.foldLeft(commands.head.spawn.map(p => (p :: Nil, p.stdout))) { case (acc, nextCommand) =>
@@ -157,34 +158,34 @@ object Command:
                         nextProcess <- nextCommand.stdin(ProcessInput.Stream(lastStdout)).spawn
                     yield (processes ++ List(nextProcess), nextProcess.stdout)
                 }.map(_._1)
-        override def spawn: Process < (IOs) =
+        override def spawn(using Trace): Process < IOs =
             spawnAll.map(_.last)
 
-        override def cwd(newCwd: Path): Command                   = self.map(_.copy(cwd = Some(newCwd)))
-        override def env(newEnv: Map[String, String]): Command    = self.map(_.copy(env = newEnv))
-        override def stdin(newStdin: ProcessInput): Command       = self.map(_.copy(stdin = newStdin))
-        override def stdout(newStdout: ProcessOutput): Command    = self.map(_.copy(stdout = newStdout))
-        def stderr(newStderr: ProcessOutput): Command             = self.map(_.copy(stderr = newStderr))
-        override def redirectErrorStream(value: Boolean): Command = self.map(_.copy(redirectErrorStream = value))
-        override def flatten: List[Command.Simple]                = commands
-        override def map(f: Command.Simple => Command): Command   = Command.Piped(commands.map(f).map(_.flatten).flatten)
+        override def cwd(newCwd: Path): ProcessCommand                   = self.map(_.copy(cwd = Some(newCwd)))
+        override def env(newEnv: Map[String, String]): ProcessCommand    = self.map(_.copy(env = newEnv))
+        override def stdin(newStdin: ProcessInput): ProcessCommand       = self.map(_.copy(stdin = newStdin))
+        override def stdout(newStdout: ProcessOutput): ProcessCommand    = self.map(_.copy(stdout = newStdout))
+        def stderr(newStderr: ProcessOutput): ProcessCommand             = self.map(_.copy(stderr = newStderr))
+        override def redirectErrorStream(value: Boolean): ProcessCommand = self.map(_.copy(redirectErrorStream = value))
+        override def flatten: List[ProcessCommand.Simple]                = commands
+        override def map(f: ProcessCommand.Simple => ProcessCommand): ProcessCommand =
+            ProcessCommand.Piped(commands.map(f).map(_.flatten).flatten)
     end Piped
-end Command
+end ProcessCommand
 
-case class Process(private val process: JProcess) extends java.io.Closeable:
-    def stdin: OutputStream                                   = process.getOutputStream
-    def stdout: InputStream                                   = process.getInputStream
-    def stderr: InputStream                                   = process.getErrorStream
-    def waitFor: Int < IOs                                    = IOs(process.waitFor())
-    def waitFor(timeout: Long, unit: TimeUnit): Boolean < IOs = IOs(process.waitFor(timeout, unit))
-    def exitValue: Int < IOs                                  = IOs(process.exitValue())
-    def destroy: Unit < IOs                                   = IOs(process.destroy())
-    def destroyForcibly: JProcess < IOs                       = IOs(process.destroyForcibly())
-    def isAlive: Boolean < IOs                                = IOs(process.isAlive())
-    def close                                                 = IOs.run(destroy).pure
+case class Process(private val process: JProcess):
+    def stdin: OutputStream                                                = process.getOutputStream
+    def stdout: InputStream                                                = process.getInputStream
+    def stderr: InputStream                                                = process.getErrorStream
+    def waitFor(using Trace): Int < IOs                                    = IOs(process.waitFor())
+    def waitFor(timeout: Long, unit: TimeUnit)(using Trace): Boolean < IOs = IOs(process.waitFor(timeout, unit))
+    def exitValue(using Trace): Int < IOs                                  = IOs(process.exitValue())
+    def destroy(using Trace): Unit < IOs                                   = IOs(process.destroy())
+    def destroyForcibly(using Trace): JProcess < IOs                       = IOs(process.destroyForcibly())
+    def isAlive(using Trace): Boolean < IOs                                = IOs(process.isAlive())
 end Process
 
-sealed trait ProcessOutput
+sealed trait ProcessOutput derives CanEqual
 object ProcessOutput:
     case class FileRedirect(file: File)       extends ProcessOutput
     case class FileAppendRedirect(file: File) extends ProcessOutput
@@ -198,7 +199,7 @@ object ProcessOutput:
             case ProcessOutput.Pipe                     => Redirect.PIPE
 end ProcessOutput
 
-sealed trait ProcessInput
+sealed trait ProcessInput derives CanEqual
 object ProcessInput:
     case object Inherit                    extends ProcessInput
     case object Pipe                       extends ProcessInput

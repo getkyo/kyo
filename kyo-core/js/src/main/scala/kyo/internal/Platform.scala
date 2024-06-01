@@ -1,4 +1,4 @@
-package kyoTest
+package kyo.internal
 
 object Platform:
     def executionContext        = org.scalajs.macrotaskexecutor.MacrotaskExecutor

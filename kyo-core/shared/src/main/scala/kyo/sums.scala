@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.core.*
+import kyo.internal.Trace
 
 class Sums[V] extends Effect[Sums[V]]:
     type Command[T] = V
@@ -16,12 +17,14 @@ object Sums:
     private object sums extends Sums[Any]
     private def sums[V]: Sums[V] = sums.asInstanceOf[Sums[V]]
 
-    def add[V](v: V)(using Tag[Sums[V]]): Unit < Sums[V] =
+    def add[V](v: V)(using Tag[Sums[V]], Trace): Unit < Sums[V] =
         sums[V].suspend[Unit](v)
 
     class RunDsl[V]:
         def apply[T: Flat, S](v: T < (Sums[V] & S))(
-            using Tag[Sums[V]]
+            using
+            Tag[Sums[V]],
+            Trace
         ): (Chunk[V], T) < S =
             sums[V].handle(sums[V].handler)(Chunks.init, v)
     end RunDsl

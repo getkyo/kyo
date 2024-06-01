@@ -3,17 +3,18 @@ package kyo
 import java.net.http.HttpClient
 import kyo.Requests.Backend
 import kyo.internal.KyoSttpMonad
+import kyo.internal.Trace
 import sttp.capabilities.WebSockets
 import sttp.client3.*
 
 object PlatformBackend:
 
-    def apply(backend: SttpBackend[KyoSttpMonad.M, WebSockets]): Backend =
+    def apply(backend: SttpBackend[KyoSttpMonad.M, WebSockets])(using Trace): Backend =
         new Backend:
             def send[T](r: Request[T, Any]) =
                 r.send(backend)
 
-    def apply(client: HttpClient): Backend =
+    def apply(client: HttpClient)(using Trace): Backend =
         apply(HttpClientKyoBackend.usingClient(client))
 
     val default =

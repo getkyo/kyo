@@ -72,11 +72,11 @@ class typeMapTest extends KyoTest:
 
         "empty" in {
             val e: TypeMap[Boolean] = TypeMap.empty.asInstanceOf[TypeMap[Boolean]]
-            test(e, "HashMap()", "scala.Boolean")
+            test(e, "HashMap()", "Tag[scala.Boolean]")
         }
         "non-empty" in {
             val e: TypeMap[String & Boolean] = TypeMap[Boolean](true).asInstanceOf[TypeMap[String & Boolean]]
-            test[String](e, """HashMap(Tag(-4scala.Boolean;,%scala.AnyVal;"b!M;"V!A;) -> true)""", "java.lang.String")
+            test[String](e, """HashMap(!_9;!W3;!U1;!V2; -> true)""", "Tag[java.lang.String]")
         }
     }
 
@@ -96,6 +96,15 @@ class typeMapTest extends KyoTest:
                   |     m.get[A | B]
                   |""".stripMargin
             )
+        }
+        "subtype" in {
+            abstract class A
+            class B extends A
+            val b = new B
+
+            val e: TypeMap[A & B] = TypeMap(b)
+
+            assert(e.get[A] eq b)
         }
     }
 
@@ -117,6 +126,21 @@ class typeMapTest extends KyoTest:
                 """
                   | def union[A, B](ab: A | B) =
                   |     TypeMap.empty.add(ab)
+                  |""".stripMargin
+            )
+        }
+        "subtype" in {
+            abstract class A
+            val a = new A {}
+            abstract class B extends A
+            val b1 = new B {}
+
+            val e1: TypeMap[A] = TypeMap(a)
+            val e2             = e1.add[A](b1)
+            assert(e2.get[A] eq b1)
+            assertDoesNotCompile(
+                """
+                  | e2.get[B]
                   |""".stripMargin
             )
         }

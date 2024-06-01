@@ -1,25 +1,26 @@
 package kyoTest
 
 import kyo.*
+import kyo.internal.Trace
 
 class randomsTest extends KyoTest:
 
     "mocked" - {
         val testRandom: Random = new Random:
-            def nextInt                                   = 10
-            def nextInt(n: Int)                           = Math.min(55, n - 1)
-            def nextLong                                  = 20L
-            def nextBoolean                               = true
-            def nextDouble                                = 30d
-            def nextFloat                                 = 40f
-            def nextGaussian                              = 50d
-            def nextValue[T](seq: Seq[T])                 = seq.last
-            def nextValues[T](length: Int, seq: Seq[T])   = Seq.fill(length)(seq.last)
-            def nextStringAlphanumeric(length: Int)       = "a" * length
-            def nextString(length: Int, chars: Seq[Char]) = chars.last.toString * length
-            def nextBytes(length: Int)                    = Seq.fill(length)(1.toByte)
-            def shuffle[T](seq: Seq[T])                   = seq.reverse
-            def unsafe                                    = ???
+            def nextInt(using Trace)                                   = 10
+            def nextInt(n: Int)(using Trace)                           = Math.min(55, n - 1)
+            def nextLong(using Trace)                                  = 20L
+            def nextBoolean(using Trace)                               = true
+            def nextDouble(using Trace)                                = 30d
+            def nextFloat(using Trace)                                 = 40f
+            def nextGaussian(using Trace)                              = 50d
+            def nextValue[T](seq: Seq[T])(using Trace)                 = seq.last
+            def nextValues[T](length: Int, seq: Seq[T])(using Trace)   = Seq.fill(length)(seq.last)
+            def nextStringAlphanumeric(length: Int)(using Trace)       = "a" * length
+            def nextString(length: Int, chars: Seq[Char])(using Trace) = chars.last.toString * length
+            def nextBytes(length: Int)(using Trace)                    = Seq.fill(length)(1.toByte)
+            def shuffle[T](seq: Seq[T])(using Trace)                   = seq.reverse
+            def unsafe                                                 = ???
 
         "nextInt" in {
             val v = IOs.run(Randoms.let(testRandom)(Randoms.nextInt))

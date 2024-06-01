@@ -99,7 +99,7 @@ class ziosTest extends KyoTest:
         def zioLoop(a: LongAdder = new LongAdder): Task[Unit] =
             ZIO.attempt(a.increment()).flatMap(_ => zioLoop(a))
 
-        if Platform.isJVM then
+        if kyo.internal.Platform.isJVM then
 
             "zio to kyo" in runZIO {
                 for

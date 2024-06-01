@@ -69,7 +69,7 @@ private[kyo] class IOTask[T](
                                 )
                         end match
                     else
-                        IOs(bug.failTag(kyo.tag, Tag[FiberGets], Tag[IOs]))
+                        IOs(bug.failTag(kyo, Tag.Intersection[FiberGets & IOs]))
                 case _ =>
                     complete(curr.asInstanceOf[T < IOs])
                     finalize()
