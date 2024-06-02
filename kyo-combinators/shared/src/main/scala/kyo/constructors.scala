@@ -7,10 +7,7 @@ import scala.annotation.targetName
 import scala.concurrent.Future
 import scala.reflect.ClassTag
 import scala.util.NotGiven
-
-private object ConstructorsInternal:
-    val none: Nothing < Options =
-        Options.empty
+    
 
 extension (kyoObject: Kyo.type)
     def acquireRelease[A, S](acquire: => A < S)(release: A => Unit < IOs): A < (S & Resources) =
@@ -144,6 +141,9 @@ extension (kyoObject: Kyo.type)
         err: => Throwable < S1
     ): Unit < (S & S1 & IOs) =
         message.map(m => err.map(e => Logs.trace(m, e)))
+
+    def none: Nothing < Options =
+        Options.empty
 
     def never: Nothing < Fibers =
         Fibers.never.join
