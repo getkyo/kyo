@@ -292,15 +292,82 @@ lazy val `kyo-zio` =
 
 
 lazy val `kyo-grpc` =
+  crossProject(JVMPlatform, JSPlatform)
+    .withoutSuffixFor(JVMPlatform)
+    .settings(
+        publishArtifact := false,
+        publish := {},
+        publishLocal := {}
+    )
+    .aggregate(
+        `kyo-grpc-core`
+    )
+
+
+lazy val `kyo-grpc-core` =
     crossProject(JVMPlatform, JSPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-core` % "test->test;compile->compile")
+        .in(file("kyo-grpc") / "core")
         .settings(
             `kyo-settings`
         ).jsSettings(
             `js-settings`
         )
+
+
+lazy val `kyo-grpc-code-gen` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-grpc") / "code-gen")
+        .settings(
+            `kyo-settings`,
+            buildInfoKeys := Seq[BuildInfoKey](name, organization, version, scalaVersion, sbtVersion),
+            // TODO: What package to use here?
+            buildInfoPackage := "kyo.grpc.compiler",
+            // TODO: Which versions should this be for?
+            crossScalaVersions := List(scala3Version, scala212Version, scala213Version),
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb" %% "compilerplugin" % scalapb.compiler.Version.scalapbVersion,
+                "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
+            )
+        ).jsSettings(
+            `js-settings`
+        )
+
+
+// TODO: Why this name?
+// TODO: Can these meta projects be in the sub directory?
+lazy val protocGenKyoGrpc =
+    protocGenProject("protoc-gen-kyo-grpc", `kyo-grpc-code-gen`.jvm)
+        .settings(
+            // TODO: Does it not auto-discover it?
+            Compile / mainClass := Some("kyo.grpc.compiler.CodeGenerator"),
+            crossScalaVersions := Seq(scala212Version)
+        )
+
+
+lazy val e2e =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-grpc") / "e2e")
+        .enablePlugins(LocalCodeGenPlugin)
+        .dependsOn(`kyo-grpc-core`)
+        .settings(
+            publish / skip := true,
+            codeGenClasspath := (`kyo-grpc-code-gen`.jvm / Compile / fullClasspath).value,
+            libraryDependencies ++= Seq(
+                "org.scalameta" %% "munit" % "1.0.0" % Test
+            ),
+            testFrameworks += new TestFramework("munit.Framework"),
+            Compile / PB.targets := Seq(
+                scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
+                genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
+            )
+        )
+
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)

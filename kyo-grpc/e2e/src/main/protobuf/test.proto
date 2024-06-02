@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package kyo.grpc;
+
+enum Color {
+    UNKNOWN = 0;
+    RED = 1;
+    GREEN = 2;
+    BLUE = 3;
+}
+
+message TestMessage {
+    string a = 1;
+    int32 b = 2;
+
+    message NestedMessage {
+      Color color = 1;
+    }
+}
