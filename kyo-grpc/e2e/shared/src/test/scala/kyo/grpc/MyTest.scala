@@ -1,8 +1,8 @@
 package kyo.grpc
 
-import kyo.grpc.test._
+import kyo.grpc.test.*
 
-class MyTest extends munit.FunSuite {
+class MyTest extends munit.FunSuite:
     test("TestMessageFieldNums is generated") {
         assertEquals(TestMessageFieldNums.a, 1)
         assertEquals(TestMessageFieldNums.b, 2)
@@ -11,4 +11,4 @@ class MyTest extends munit.FunSuite {
     test("NestedMessage is generated") {
         assertEquals(TestMessageFieldNums.NestedMessageFieldNums.color, 1)
     }
-}
+end MyTest

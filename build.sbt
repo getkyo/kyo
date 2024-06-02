@@ -1,6 +1,8 @@
 import org.scalajs.jsenv.nodejs.*
 import org.typelevel.scalacoptions.{ScalaVersion, ScalacOption, ScalacOptions}
 
+import scala.util.matching.Regex
+
 val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
@@ -337,7 +339,7 @@ lazy val `kyo-grpc-code-gen` =
             // TODO: What package to use here?
             buildInfoPackage := "kyo.grpc.compiler",
             // TODO: Which versions should this be for?
-            crossScalaVersions := List(scala3Version, scala212Version, scala213Version),
+            crossScalaVersions := List(scala212Version, scala213Version),
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             libraryDependencies ++= Seq(
                 "com.thesamet.scalapb" %% "compilerplugin" % scalapb.compiler.Version.scalapbVersion,
@@ -349,14 +351,32 @@ lazy val `kyo-grpc-code-gen` =
         )
 
 
+lazy val `kyo-grpc-code-gen-2_12` =
+    `kyo-grpc-code-gen`
+        .jvm
+        .settings(
+            scalaVersion := scala212Version
+        )
+
+
+lazy val `kyo-grpc-code-genJS-2_12` =
+    `kyo-grpc-code-gen`
+        .js
+        .settings(
+            scalaVersion := scala212Version
+        )
+
+
 // TODO: Why this name?
 // TODO: Can these meta projects be in the sub directory?
 lazy val `protoc-gen-kyo-grpc` =
     protocGenProject("protoc-gen-kyo-grpc", `kyo-grpc-code-gen`.jvm)
         .settings(
+            `kyo-settings`,
+            scalaVersion := scala212Version,
+            crossScalaVersions := Seq(scala212Version),
             // TODO: Does it not auto-discover it?
-            Compile / mainClass := Some("kyo.grpc.compiler.CodeGenerator"),
-            crossScalaVersions := Seq(scala212Version)
+            Compile / mainClass := Some("kyo.grpc.compiler.CodeGenerator")
         )
 
 
@@ -368,6 +388,7 @@ lazy val `kyo-grpc-e2e` =
         .enablePlugins(LocalCodeGenPlugin)
         .dependsOn(`kyo-grpc-core`)
         .settings(
+            `kyo-settings`,
             publish / skip := true,
             libraryDependencies ++= Seq(
                 "org.scalameta" %% "munit" % "1.0.0" % Test
@@ -378,12 +399,17 @@ lazy val `kyo-grpc-e2e` =
             Compile / PB.targets := Seq(
                 scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
                 genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
+            ),
+            // FIXME: This isn't working.
+            // Ignore warnings in generated sources.
+            scalacOptions ++= (Compile / managedSourceDirectories).value.map(dir =>
+                s"-Wconf:${Regex.quote(dir.getAbsolutePath)}.*:silent",
             )
         ).jvmSettings(
-            codeGenClasspath := (`kyo-grpc-code-gen`.jvm / Compile / fullClasspath).value,
+            codeGenClasspath := (`kyo-grpc-code-gen-2_12` / Compile / fullClasspath).value,
         ).jsSettings(
             `js-settings`,
-            codeGenClasspath := (`kyo-grpc-code-gen`.js / Compile / fullClasspath).value,
+            codeGenClasspath := (`kyo-grpc-code-genJS-2_12` / Compile / fullClasspath).value,
         )
 
 
