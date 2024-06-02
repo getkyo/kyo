@@ -8,7 +8,7 @@ class choicesTest extends KyoTest:
     "choices" - {
         "construct" - {
             "should construct choices from a sequence" in {
-                val effect = KYO.fromSeq(Seq(1, 2, 3))
+                val effect = Kyo.fromSeq(Seq(1, 2, 3))
                 assert(Choices.run(effect).pure == Seq(1, 2, 3))
             }
         }
@@ -78,7 +78,7 @@ class choicesTest extends KyoTest:
 
         "catch" - {
             "should catch" in {
-                val effect1: Int < Options = KYO.none
+                val effect1: Int < Options = Kyo.none
                 assert(effect1.catchOptions(100).pure == 100)
 
                 val effect2: Int < Options = 23
@@ -114,7 +114,7 @@ class choicesTest extends KyoTest:
             "should iterate using foreach" in {
                 var state             = 0
                 def effectFor(i: Int) = IOs { state += i; state }
-                val effect            = KYO.foreach(1 to 10)(effectFor)
+                val effect            = Kyo.foreach(1 to 10)(effectFor)
                 assert(state == 0)
                 val result = IOs.run(effect).pure
                 //                   1, 2, 3,  4,  5,  6,  7,  8,  9, 10
@@ -124,7 +124,7 @@ class choicesTest extends KyoTest:
 
             "should iterate using collect" in {
                 var state = 0
-                val effect = KYO.collect(1 to 10) {
+                val effect = Kyo.collect(1 to 10) {
                     case i if i % 2 == 0 => IOs { state += i; i * 2 }
                 }
                 assert(state == 0)
@@ -136,7 +136,7 @@ class choicesTest extends KyoTest:
             "should iterate using traverse" in {
                 var state   = 0
                 val effects = (1 to 10).map(i => IOs { state += i; state })
-                val effect  = KYO.traverse(effects)
+                val effect  = Kyo.traverse(effects)
                 assert(state == 0)
                 val result = IOs.run(effect).pure
                 assert(result == Seq(1, 3, 6, 10, 15, 21, 28, 36, 45, 55))
@@ -146,7 +146,7 @@ class choicesTest extends KyoTest:
             "should iterate using traverseDiscard" in {
                 var state   = 0
                 val effects = (1 to 10).map(i => IOs { state += i; state })
-                val effect  = KYO.traverseDiscard(effects)
+                val effect  = Kyo.traverseDiscard(effects)
                 assert(state == 0)
                 val result = IOs.run(effect).pure
                 assert(result == ())

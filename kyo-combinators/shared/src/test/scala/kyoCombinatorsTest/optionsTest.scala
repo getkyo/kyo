@@ -9,22 +9,22 @@ class optionsTest extends KyoTest:
         "construct" - {
             "should construct from option" in {
                 val optionEmpty: Option[Int] = None
-                val effectEmpty              = KYO.fromOption(optionEmpty)
+                val effectEmpty              = Kyo.fromOption(optionEmpty)
                 assert(Options.run(effectEmpty).pure == None)
                 val optionFull: Option[Int] = Some(23)
-                val effectFull              = KYO.fromOption(optionFull)
+                val effectFull              = Kyo.fromOption(optionFull)
                 assert(Options.run(effectFull).pure == Some(23))
             }
 
             "should construct from none" in {
-                val effect = KYO.none
+                val effect = Kyo.none
                 assert(Options.run(effect).pure == None)
             }
         }
 
         "handle" - {
             "should handle" in {
-                val effect1: Int < Options = KYO.none
+                val effect1: Int < Options = Kyo.none
                 assert(effect1.handleOptions.pure == None)
 
                 val effect2: Int < Options = 23
@@ -83,7 +83,7 @@ class optionsTest extends KyoTest:
 
         "catch" - {
             "should catch" in {
-                val effect1: Int < Options = KYO.none
+                val effect1: Int < Options = Kyo.none
                 assert(effect1.catchOptions(100).pure == 100)
 
                 val effect2: Int < Options = 23

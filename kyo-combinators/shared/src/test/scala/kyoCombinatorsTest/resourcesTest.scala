@@ -12,7 +12,7 @@ class resourcesTest extends KyoTest:
             val acquire = IOs {
                 (i: Int) => IOs { state = i }
             }
-            val resource = KYO.acquireRelease(acquire)(_(0))
+            val resource = Kyo.acquireRelease(acquire)(_(0))
             val effect: Int < Resources =
                 for
                     setter <- resource
@@ -32,7 +32,7 @@ class resourcesTest extends KyoTest:
 
         "should construct a resource using addFinalizer" in {
             var state   = 0
-            val effect  = KYO.addFinalizer(IOs { state = 100 })
+            val effect  = Kyo.addFinalizer(IOs { state = 100 })
             val handled = IOs.run(Fibers.run(Resources.run(effect)).map(_.toFuture))
             for
                 ass1 <- handled.pure
@@ -45,7 +45,7 @@ class resourcesTest extends KyoTest:
             var state = 0
             val closeable = new AutoCloseable:
                 override def close(): Unit = state = 100
-            val effect     = KYO.fromAutoCloseable(closeable)
+            val effect     = Kyo.fromAutoCloseable(closeable)
             assert(state == 0)
             val handled    = IOs.run(Fibers.run(Resources.run(effect)).map(_.toFuture))
             for

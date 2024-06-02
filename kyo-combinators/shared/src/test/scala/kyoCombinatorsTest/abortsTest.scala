@@ -13,27 +13,27 @@ class abortsTest extends KyoTest:
         "construct" - {
             "should construct from either" in {
                 val either: Either[String, Int] = Left("failure")
-                val effect                      = KYO.fromEither(either)
+                val effect                      = Kyo.fromEither(either)
                 assert(Aborts.run[String](effect).pure == Left("failure"))
             }
 
             "should construct from fail" in {
-                val effect = KYO.fail("failure")
+                val effect = Kyo.fail("failure")
                 assert(Aborts.run[String](effect).pure == Left("failure"))
             }
 
             "should construct from try" in {
-                val effect = KYO.fromTry(Try(throw Exception("failure")))
+                val effect = Kyo.fromTry(Try(throw Exception("failure")))
                 assert(Aborts.run[Throwable](effect).pure.left.toOption.get.getMessage == "failure")
             }
 
             "should construct from a throwing block" in {
-                val effect = KYO.attempt(throw new Exception("failure"))
+                val effect = Kyo.attempt(throw new Exception("failure"))
                 assert(Aborts.run[Throwable](effect).pure.left.toOption.get.getMessage == "failure")
             }
 
             "should construct from a failing IO" in {
-                val effect = KYO.attempt(IOs(throw new Exception("failure")))
+                val effect = Kyo.attempt(IOs(throw new Exception("failure")))
                 assert(IOs.run(
                     Aborts.run[Throwable](effect)
                 ).pure.left.toOption.get.getMessage == "failure")
@@ -111,7 +111,7 @@ class abortsTest extends KyoTest:
                 assert(handledSuccessSeqs.pure == Seq(23))
             }
 
-            "should convert some aborts to seqs" in {
+            "should convert some aborts to choices" in {
                 val failure: Int < Aborts[String | Boolean | Double | Int] =
                     Aborts.fail("failure")
                 val failureSeqs: Int < (Choices & Aborts[Boolean | Double | Int]) =

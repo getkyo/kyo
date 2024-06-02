@@ -9,7 +9,7 @@ class fibersTest extends KyoTest:
         "construct" - {
             "should generate fibers effect from async" in {
                 var state: Int = 0
-                val effect = KYO.async[Int]((continuation) =>
+                val effect = Kyo.async[Int]((continuation) =>
                     state = state + 1
                     continuation(state)
                 )
@@ -22,7 +22,7 @@ class fibersTest extends KyoTest:
 
             "should construct from Future" in {
                 val future        = scala.concurrent.Future(100)
-                val effect        = KYO.fromFuture(future)
+                val effect        = Kyo.fromFuture(future)
                 val handledEffect = IOs.run(Fibers.run(effect).map(_.toFuture)).pure
                 handledEffect.map(v =>
                     assert(v == 100)
@@ -31,7 +31,7 @@ class fibersTest extends KyoTest:
 
             "should construct from Promise" in {
                 val promise = scala.concurrent.Promise[Int]
-                val effect  = KYO.fromPromiseScala(promise)
+                val effect  = Kyo.fromPromiseScala(promise)
                 scala.concurrent.Future {
                     promise.complete(scala.util.Success(100))
                 }
@@ -40,19 +40,19 @@ class fibersTest extends KyoTest:
             }
 
             "should construct from foreachPar" in {
-                val effect        = KYO.foreachPar(Seq(1, 2, 3))(v => v * 2)
+                val effect        = Kyo.foreachPar(Seq(1, 2, 3))(v => v * 2)
                 val handledEffect = IOs.run(Fibers.run(effect).map(_.toFuture)).pure
                 handledEffect.map(v => assert(v == Seq(2, 4, 6)))
             }
 
             "should construct from traversePar" in {
-                val effect        = KYO.traversePar(Seq(IOs(1), IOs(2), IOs(3)))
+                val effect        = Kyo.traversePar(Seq(IOs(1), IOs(2), IOs(3)))
                 val handledEffect = IOs.run(Fibers.run(effect).map(_.toFuture)).pure
                 handledEffect.map(v => assert(v == Seq(1, 2, 3)))
             }
 
             "should generate a fiber that doesn't complete using never" in {
-                val effect = KYO.never
+                val effect = Kyo.never
                 runJVM {
                     val handledEffect = IOs.run(Aborts.run[Throwable](
                         Aborts.catching[Throwable](Fibers.runAndBlock(1.seconds)(effect))
@@ -83,7 +83,7 @@ class fibersTest extends KyoTest:
             }
 
             "should construct from type and use" in {
-                val effect = KYO.serviceWith[String](_.length)
+                val effect = Kyo.serviceWith[String](_.length)
                 assert(Envs.run("value")(effect).pure == 5)
             }
         }

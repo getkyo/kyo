@@ -8,8 +8,11 @@ import scala.concurrent.Future
 import scala.reflect.ClassTag
 import scala.util.NotGiven
 
+private object ConstructorsInternal:
+    val none: Nothing < Options =
+        Options.empty
 
-object KYO:
+extension (kyoObject: Kyo.type)
     def acquireRelease[A, S](acquire: => A < S)(release: A => Unit < IOs): A < (S & Resources) =
         acquire.map(a => Resources.ensure(release(a)).as(a))
 
@@ -41,7 +44,7 @@ object KYO:
     ): Seq[A1] < (S & S1) =
         sequence.flatMap((seq: Seq[A]) => Seqs.collect(seq.collect(useElement)))
 
-    def debug[S](message: => String < S): Unit < (S & IOs) =
+    def debugln[S](message: => String < S): Unit < (S & IOs) =
         message.map(m => Console.default.println(m))
 
     def fail[E, S](error: => E < S): Nothing < (S & Aborts[E]) =
@@ -146,10 +149,7 @@ object KYO:
         Fibers.never.join
             *> IOs(throw new IllegalStateException("Fibers.never completed"))
 
-    val none: Nothing < Options =
-        Options.empty
-
-    def provide[D, SD, A, SA, E, SR](
+    def provideFor[D, SD, A, SA, E, SR](
         dependency: => D < SD
     )(
         effect: A < (SA & Envs[E])
@@ -205,4 +205,4 @@ object KYO:
         sequence.map(seq =>
             foreachPar(seq.map(_.discard))(identity).discard
         )
-end KYO
+

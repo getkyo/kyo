@@ -33,7 +33,7 @@ extension [A, S](effect: A < S)
         effect.tap(value => Console.default.println(s"$prefix: $value"))
 
     def delayed[S1](duration: Duration < S1): A < (S & S1 & Fibers) =
-        KYO.sleep(duration) *> effect
+        Kyo.sleep(duration) *> effect
 
     def discard: Unit < S = as(())
 
@@ -79,7 +79,7 @@ extension [A, S](effect: A < S)
     ): A < (S & S1 & Fibers) =
         def loop(last: A, i: Int): A < (S & S1 & Fibers) =
             fn(last, i).map { case (cont, duration) =>
-                if cont then KYO.sleep(duration) *> effect.map(v => loop(v, i + 1))
+                if cont then Kyo.sleep(duration) *> effect.map(v => loop(v, i + 1))
                 else last
             }
 
@@ -102,7 +102,7 @@ extension [A, S](effect: A < S)
         def loop(last: A, i: Int): A < (S & S1 & Fibers) =
             fn(last, i).map { case (cont, duration) =>
                 if cont then last
-                else KYO.sleep(duration) *> effect.map(v => loop(v, i + 1))
+                else Kyo.sleep(duration) *> effect.map(v => loop(v, i + 1))
             }
 
         effect.map(v => loop(v, 0))
@@ -287,7 +287,7 @@ extension [A, S](effect: A < (S & Options))
         using Flat[A]
     ): A < (S & S1 & Aborts[E]) =
         Options.run(effect).map {
-            case None    => KYO.fail(failure)
+            case None    => Kyo.fail(failure)
             case Some(a) => a
         }
 
@@ -332,7 +332,7 @@ extension [A, S](effect: A < (S & Choices))
         using Flat[A]
     ): A < (S & S1 & Aborts[E]) =
         Choices.run(effect).map {
-            case s if s.isEmpty => KYO.fail[E, S1](error)
+            case s if s.isEmpty => Kyo.fail[E, S1](error)
             case s              => s.head
         }
 
@@ -359,13 +359,13 @@ extension [A, S](effect: A < (S & Fibers))
         ) ev: S => IOs,
         f: Flat[A]
     ): Fiber[A] < (S & IOs & Resources) =
-        KYO.acquireRelease(Fibers.init(effect))(_.interrupt.discard)
+        Kyo.acquireRelease(Fibers.init(effect))(_.interrupt.discard)
 end extension
 
 extension [A, S](fiber: Fiber[A] < S)
     def join: A < (S & Fibers) = Fibers.get(fiber)
     def awaitCompletion(using Flat[A]): Unit < (S & Fibers) =
-        KYO.attempt(Fibers.get(fiber))
+        Kyo.attempt(Fibers.get(fiber))
             .handleAborts
             .discard
 end extension

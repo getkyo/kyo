@@ -11,12 +11,12 @@ class envsTest extends KyoTest:
     "envs" - {
         "construct" - {
             "should construct from type" in {
-                val effect = KYO.service[String]
+                val effect = Kyo.service[String]
                 assert(Envs.run("value")(effect).pure == "value")
             }
 
             "should construct from type and use" in {
-                val effect = KYO.serviceWith[String](_.length)
+                val effect = Kyo.serviceWith[String](_.length)
                 assert(Envs.run("value")(effect).pure == 5)
             }
         }
