@@ -1,7 +1,6 @@
 package kyo.scheduler.top
 
 import scala.annotation.nowarn
-import scala.concurrent.duration.*
 
 @nowarn
 object Console extends App {

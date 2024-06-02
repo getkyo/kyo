@@ -1,7 +1,6 @@
 package kyo.scheduler.regulator
 
 import kyo.scheduler.*
-import kyo.scheduler.top.AdmissionStatus
 import kyo.scheduler.top.ConcurrencyStatus
 import kyo.scheduler.util.Flag
 import scala.concurrent.duration.*

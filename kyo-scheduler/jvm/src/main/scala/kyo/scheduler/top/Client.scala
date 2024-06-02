@@ -1,12 +1,10 @@
 package kyo.scheduler.top
 
-import java.io.PrintWriter
 import javax.management.MBeanServerConnection
 import javax.management.ObjectName
 import javax.management.remote
 import javax.management.remote.JMXConnectorFactory
 import javax.management.remote.JMXServiceURL
-import kyo.scheduler.Scheduler
 import scala.concurrent.duration.*
 
 object Client {
