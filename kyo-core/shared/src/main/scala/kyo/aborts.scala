@@ -3,8 +3,10 @@ package kyo
 import kyo.core.*
 import kyo.internal.Trace
 import scala.reflect.ClassTag
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 import scala.util.control.NonFatal
-import scala.util.{Try, Success, Failure}
 
 type Aborts[-V] >: Aborts.Effects[V] <: Aborts.Effects[V]
 
