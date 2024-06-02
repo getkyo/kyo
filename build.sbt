@@ -153,7 +153,7 @@ lazy val `kyo-core` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "com.lihaoyi"  %%% "pprint"          % "0.9.0",
-            libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.4",
+            libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.13",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC27" % Test,
             libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.1"      % Test,
