@@ -7,9 +7,9 @@ import scala.annotation.targetName
 sealed trait Layer[-In, +Out, -S]:
     self =>
 
-    def >>>[In2, Out2, S2](that: Layer[Out & In2, Out2, S2]): Layer[In & In2, Out2, S & S2]       = To(self, that)
-    def ++[In2, Out2, S2](that: Layer[In2, Out2, S2]): Layer[In & In2, Out & Out2, S & S2]        = And(self, that)
-    def >+>[In2, Out2, S2](that: Layer[Out & In2, Out2, S2]): Layer[In & In2, Out & Out2, S & S2] = self ++ (self >>> that)
+    infix def to[In2, Out2, S2](that: Layer[Out & In2, Out2, S2]): Layer[In & In2, Out2, S & S2]          = To(self, that)
+    infix def and[In2, Out2, S2](that: Layer[In2, Out2, S2]): Layer[In & In2, Out & Out2, S & S2]         = And(self, that)
+    infix def using[In2, Out2, S2](that: Layer[Out & In2, Out2, S2]): Layer[In & In2, Out & Out2, S & S2] = self and (self to that)
 
     private[kyo] def doRun(
         memoMap: scala.collection.mutable.Map[Layer[?, ?, ?], Any] = scala.collection.mutable.Map.empty[Layer[?, ?, ?], Any]
@@ -44,14 +44,17 @@ sealed trait Layer[-In, +Out, -S]:
     end doRun
 
 end Layer
-extension [In, Out, S](layer: Layer[In, Out, S])
-    @targetName("runS")
-    def run: TypeMap[Out] < (S & Envs[In]) =
-        layer.doRun()
 
-extension [Out, S](layer: Layer[Any, Out, S])
-    def run: TypeMap[Out] < S =
-        layer.doRun().asInstanceOf[TypeMap[Out] < S]
+object Layer:
+    extension [In, Out, S](layer: Layer[In, Out, S])
+        @targetName("runS")
+        def run: TypeMap[Out] < (S & Envs[In]) =
+            layer.doRun()
+
+    extension [Out, S](layer: Layer[Any, Out, S])
+        def run: TypeMap[Out] < S =
+            layer.doRun().asInstanceOf[TypeMap[Out] < S]
+end Layer
 
 object Layers:
     private[kyo] object internal:
