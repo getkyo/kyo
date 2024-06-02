@@ -338,20 +338,12 @@ lazy val `kyo-grpc-code-gen` =
             buildInfoPackage := "kyo.grpc.compiler",
             // TODO: Which versions should this be for?
             crossScalaVersions := List(scala3Version, scala212Version, scala213Version),
-            inConfig(Compile)(Seq(
-                unmanagedSourceDirectories ++= {
-                    val sourceDir = sharedSourceDir("main").value
-                    CrossVersion.partialVersion(scalaVersion.value) match {
-                        case Some((major, minor)) if major > 2 || (major == 2 && minor >= 13) =>
-                            Seq(sourceDir / "scala-2.13+")
-                        case _ => Nil
-                    }
-                },
-            )),
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             libraryDependencies ++= Seq(
                 "com.thesamet.scalapb" %% "compilerplugin" % scalapb.compiler.Version.scalapbVersion,
                 "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
-            )
+                "org.scala-lang.modules" %% "scala-collection-compat" % "2.12.0"
+            ),
         ).jsSettings(
             `js-settings`
         )

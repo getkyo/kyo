@@ -3,11 +3,11 @@ package kyo.grpc.compiler
 import com.google.protobuf.Descriptors.*
 import com.google.protobuf.ExtensionRegistry
 import com.google.protobuf.compiler.PluginProtos.CodeGeneratorResponse
-import kyo.grpc.CollectionConverters.*
 import protocbridge.Artifact
 import protocgen.CodeGenApp
 import protocgen.CodeGenRequest
 import protocgen.CodeGenResponse
+import scala.jdk.CollectionConverters.*
 import scalapb.compiler.DescriptorImplicits
 import scalapb.compiler.FunctionalPrinter
 import scalapb.compiler.ProtobufGenerator
