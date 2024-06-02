@@ -5,7 +5,6 @@ import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.top.WorkerStatus
-import scala.annotation.unused
 import scala.util.control.NonFatal
 
 abstract private class Worker(
@@ -155,17 +154,18 @@ abstract private class Worker(
         }
     }
 
-    @unused
-    private val gauges =
-        List(
-            statsScope.gauge("queue_size")(queue.size()),
-            statsScope.counterGauge("executions")(executions),
-            statsScope.counterGauge("preemptions")(preemptions),
-            statsScope.counterGauge("completions")(completions),
-            statsScope.counterGauge("mounts")(mounts),
-            statsScope.counterGauge("stolen_tasks")(stolenTasks),
-            statsScope.counterGauge("lost_tasks")(lostTasks.sum())
-        )
+    locally {
+        val _ =
+            List(
+                statsScope.gauge("queue_size")(queue.size()),
+                statsScope.counterGauge("executions")(executions),
+                statsScope.counterGauge("preemptions")(preemptions),
+                statsScope.counterGauge("completions")(completions),
+                statsScope.counterGauge("mounts")(mounts),
+                statsScope.counterGauge("stolen_tasks")(stolenTasks),
+                statsScope.counterGauge("lost_tasks")(lostTasks.sum())
+            )
+    }
 
     def status(): WorkerStatus = {
         val (thread, frame) =

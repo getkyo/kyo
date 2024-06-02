@@ -2,7 +2,6 @@ package kyo.scheduler
 
 import java.lang.invoke.VarHandle
 import java.util.concurrent.atomic.AtomicBoolean
-import kyo.*
 import scala.collection.mutable.PriorityQueue
 
 final private class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {

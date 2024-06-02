@@ -15,7 +15,6 @@ import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
-import scala.annotation.unused
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 
@@ -202,14 +201,15 @@ final class Scheduler(
         }
     }
 
-    @unused
-    private val gauges =
-        List(
-            statsScope.gauge("current_workers")(currentWorkers),
-            statsScope.gauge("allocated_workers")(allocatedWorkers),
-            statsScope.gauge("load_avg")(loadAvg()),
-            statsScope.gauge("flushes")(flushes.sum().toDouble)
-        )
+    locally {
+        val _ =
+            List(
+                statsScope.gauge("current_workers")(currentWorkers),
+                statsScope.gauge("allocated_workers")(allocatedWorkers),
+                statsScope.gauge("load_avg")(loadAvg()),
+                statsScope.gauge("flushes")(flushes.sum().toDouble)
+            )
+    }
 
     def status(): Status = {
         def workerStatus(i: Int) =
