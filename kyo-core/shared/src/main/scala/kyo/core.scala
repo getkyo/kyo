@@ -224,7 +224,7 @@ object core:
             def deepHandleLoop(v: T < (E & S)): Command[T] < S =
                 v match
                     case kyo: Suspend[Command, Any, T, E] @unchecked =>
-                        bug.checkTag(kyo.tag, tag)
+                        bug.checkTag(kyo, tag)
                         handler.resume(
                             kyo.command,
                             (v: Any) => deepHandleLoop(kyo(v))
@@ -245,6 +245,7 @@ object core:
             def tag: Tag[Any]
             inline def apply(v: T) = apply(v, Safepoint.noop, Locals.State.empty)
             def apply(v: T, s: Safepoint[S], l: Locals.State): U < S
+            override def toString() = s"Kyo(${tag.show},Command($command),${trace.show})"
         end Suspend
 
         abstract class Continue[Command[_], T, U, S](

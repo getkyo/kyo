@@ -8,8 +8,7 @@ class TraceTest extends KyoTest:
     "show" in {
         def test(i: Int)(using t: Trace) = t.show
         assert(test(42) ==
-            """TraceTest.scala:10
-            |test(42)""".stripMargin)
+            "Trace(TraceTest.scala:10,method=test,snippet=test(42))")
     }
 
     "no param" in {

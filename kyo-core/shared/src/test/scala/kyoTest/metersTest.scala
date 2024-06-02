@@ -109,14 +109,14 @@ class metersTest extends KyoTest:
     "rate limiter" - {
         "ok" in runJVM {
             for
-                t  <- Meters.initRateLimiter(2, 1.millis)
+                t  <- Meters.initRateLimiter(2, 1.milli)
                 v1 <- t.run(2)
                 v2 <- t.run(3)
             yield assert(v1 == 2 && v2 == 3)
         }
         "one loop" in runJVM {
             for
-                meter   <- Meters.initRateLimiter(10, 1.millis)
+                meter   <- Meters.initRateLimiter(10, 1.milli)
                 counter <- Atomics.initInt(0)
                 f1      <- Fibers.init(loop(meter, counter))
                 _       <- Fibers.sleep(5.millis)
@@ -126,7 +126,7 @@ class metersTest extends KyoTest:
         }
         "two loops" in runJVM {
             for
-                meter   <- Meters.initRateLimiter(10, 1.millis)
+                meter   <- Meters.initRateLimiter(10, 1.milli)
                 counter <- Atomics.initInt(0)
                 f1      <- Fibers.init(loop(meter, counter))
                 f2      <- Fibers.init(loop(meter, counter))
@@ -142,7 +142,7 @@ class metersTest extends KyoTest:
 
         "run" in runJVM {
             for
-                meter   <- Meters.pipeline(Meters.initRateLimiter(2, 1.millis), Meters.initMutex)
+                meter   <- Meters.pipeline(Meters.initRateLimiter(2, 1.milli), Meters.initMutex)
                 counter <- Atomics.initInt(0)
                 f1      <- Fibers.init(loop(meter, counter))
                 f2      <- Fibers.init(loop(meter, counter))

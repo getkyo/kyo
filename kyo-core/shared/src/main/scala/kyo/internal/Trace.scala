@@ -10,10 +10,10 @@ object Trace:
     private val maxSnippetLines = 3
 
     extension (t: Trace)
-        def show: String       = t
-        def position: Position = Position(t.takeWhile(_ != '\n').drop(1))
-        def method: String     = t.drop(position.show.length + 2).takeWhile(isIdentifierPart)
-        def snippet: String    = t.drop(position.show.length + 2)
+        def show: String       = s"Trace(${position},method=${method},snippet=${snippet})"
+        def position: Position = Position(t.takeWhile(_ != '\n'))
+        def method: String     = t.drop(position.show.length + 1).takeWhile(isIdentifierPart)
+        def snippet: String    = t.drop(position.show.length + 1)
     end extension
 
     implicit inline def derive: Trace =

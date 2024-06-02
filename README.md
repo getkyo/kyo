@@ -17,14 +17,15 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 
 Kyo is available on Maven Central in multiple modules:
 
-| Module           | Scala 3 | Scala JS | Description                         |
-|------------------|---------|----------|-------------------------------------|
-| kyo-core         | ✅      | ✅       | Core and concurrent effects         |
-| kyo-direct       | ✅      | ✅       | Direct syntax support               |
-| kyo-sttp         | ✅      | ✅       | Sttp HTTP Client                    |
-| kyo-tapir        | ✅      | ✅       | Tapir HTTP Server                   |
-| kyo-cache        | ✅      |          | Caffeine caching                    |
-| kyo-stats-otel   | ✅      |          | Stats exporter for OpenTelemetry    |
+| Module         | Scala 3 | Scala JS | Description                      |
+| -------------- | ------- | -------- | -------------------------------- |
+| kyo-core       | ✅       | ✅        | Core and concurrent effects      |
+| kyo-direct     | ✅       | ✅        | Direct syntax support            |
+| kyo-sttp       | ✅       | ✅        | Sttp HTTP Client                 |
+| kyo-tapir      | ✅       |          | Tapir HTTP Server                |
+| kyo-caliban    | ✅       |          | Caliban GraphQL Server           |
+| kyo-cache      | ✅       |          | Caffeine caching                 |
+| kyo-stats-otel | ✅       |          | Stats exporter for OpenTelemetry |
 
 For Scala 3:
 
@@ -35,6 +36,7 @@ libraryDependencies += "io.getkyo" %% "kyo-cache" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-stats-otel" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-sttp" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-tapir" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-caliban" % "<version>"
 ```
 
 For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, and `kyo-sttp`):
@@ -335,7 +337,7 @@ The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a co
 
 The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
 
-> Note: `defer` is currently the only macro in Kyo. All other features use regular language constructs.
+> Note: `defer` is currently the only user-facing macro in Kyo. All other features use regular language constructs.
 
 ### Defining an App
 
@@ -786,19 +788,19 @@ val g: Chunk[Int] = e.filter(_ % 2 == 0).pure
 
 `Chunks` provides two main subtypes: `Chunk` for regular chunks and `Chunks.Indexed` for indexed chunks. The table below summarizes the time complexity of various operations for each type:
 
-| Description                | Operations                                           | Regular Chunk | Indexed Chunk |
-|----------------------------|------------------------------------------------------|---------------|---------------|
-| Creation                   | `Chunks.init`, `Chunks.initSeq`                      | O(n)          | O(n)          |
-| Size and emptiness         | `size`, `isEmpty`                                    | O(1)          | O(1)          |
-| Take and drop              | `take`, `dropLeft`, `dropRight`, `slice`             | O(1)          | O(1)          |
-| Append and last            | `append`, `last`                                     | O(1)          | O(1)          |
-| Element access             | `apply`, `head`, `tail`                              | N/A           | O(1)          |
-| Concatenation              | `concat`                                             | O(n)          | O(n)          |
-| Effectful map and filter   | `map`, `filter`, `collect`, `takeWhile`, `dropWhile` | O(n)          | O(n)          |
-| Effectful side effects     | `foreach`, `collectUnit`                             | O(n)          | O(n)          |
-| Effectful fold             | `foldLeft`                                           | O(n)          | O(n)          |
-| Copying to arrays          | `toArray`, `copyTo`                                  | O(n)          | O(n)          |
-| Other operations           | `flatten`, `changes`, `toSeq`, `toIndexed`           | O(n)          | O(n)          |
+| Description              | Operations                                           | Regular Chunk | Indexed Chunk |
+| ------------------------ | ---------------------------------------------------- | ------------- | ------------- |
+| Creation                 | `Chunks.init`, `Chunks.initSeq`                      | O(n)          | O(n)          |
+| Size and emptiness       | `size`, `isEmpty`                                    | O(1)          | O(1)          |
+| Take and drop            | `take`, `dropLeft`, `dropRight`, `slice`             | O(1)          | O(1)          |
+| Append and last          | `append`, `last`                                     | O(1)          | O(1)          |
+| Element access           | `apply`, `head`, `tail`                              | N/A           | O(1)          |
+| Concatenation            | `concat`                                             | O(n)          | O(n)          |
+| Effectful map and filter | `map`, `filter`, `collect`, `takeWhile`, `dropWhile` | O(n)          | O(n)          |
+| Effectful side effects   | `foreach`, `collectUnit`                             | O(n)          | O(n)          |
+| Effectful fold           | `foldLeft`                                           | O(n)          | O(n)          |
+| Copying to arrays        | `toArray`, `copyTo`                                  | O(n)          | O(n)          |
+| Other operations         | `flatten`, `changes`, `toSeq`, `toIndexed`           | O(n)          | O(n)          |
 
 When deciding between `Chunk` and `Chunks.Indexed`, consider the primary operations you'll be performing on the data. If you mainly need to `append` elements, `take` slices, or `drop` elements from the beginning or end of the sequence, `Chunk` is a good choice. Its `O(1)` complexity for these operations makes it efficient for such tasks.
 
@@ -1365,13 +1367,13 @@ import kyo._
 
 // A computation that sleeps for 1s
 val a: Unit < Fibers =
-  Fibers.sleep(1.seconds)
+  Fibers.sleep(1.second)
 
 // Times out and interrupts the provided 
 // computation in case it doesn't produce 
 // a result within 1s
 val b: Int < Fibers =
-  Fibers.timeout(1.seconds)(Math.cos(42).toInt)
+  Fibers.timeout(1.second)(Math.cos(42).toInt)
 ```
 
 The `fromFuture` methods provide interoperability with Scala's `Future`.
@@ -1571,12 +1573,12 @@ val d: Unit < IOs =
 
 It's also possible to specify a concurrent `Access` policy as the second parameter of the `Queues.init` methods. This configuration has an effect only on the JVM and is ignored in ScalaJS.
 
-| Policy | Full Form                           | Description |
-|--------|-------------------------------------|-------------|
+| Policy | Full Form                              | Description                                                                                                                                                                                                          |
+| ------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Mpmc   | Multiple Producers, Multiple Consumers | Supports multiple threads/fibers simultaneously enqueuing and dequeuing elements. This is the most flexible but may incur the most overhead due to the need to synchronize between multiple producers and consumers. |
-| Mpsc   | Multiple Producers, Single Consumer   | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed. |
-| Spmc   | Single Producer, Multiple Consumers   | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers. |
-| Spsc   | Single Producer, Single Consumer      | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements. |
+| Mpsc   | Multiple Producers, Single Consumer    | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed.                                            |
+| Spmc   | Single Producer, Multiple Consumers    | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers.                   |
+| Spsc   | Single Producer, Single Consumer       | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements.                                                                     |
 
 Each policy is suitable for different scenarios and comes with its own trade-offs. For example, `Mpmc` is highly flexible but can be slower due to the need for more complex synchronization. `Spsc`, being the most restrictive, allows for optimizations that could make it faster for specific single-producer, single-consumer scenarios.
 
@@ -1740,7 +1742,7 @@ val b: Meter < IOs =
 val c: Meter < IOs =
   Meters.initRateLimiter(
     rate = 10, 
-    period = 1.seconds
+    period = 1.second
   )
 
 // 'pipeline': Combine multiple 'Meter's
@@ -1790,7 +1792,7 @@ val a: Unit < IOs =
 
 // Schedule a delayed task
 val b: TimerTask < IOs =
-  Timers.schedule(delay = 1.seconds)(a)
+  Timers.schedule(delay = 1.second)(a)
 
 // Recurring task with
 // intial delay
@@ -1832,7 +1834,7 @@ import kyo._
 
 // Example TimerTask
 val a: TimerTask < IOs = 
-  Timers.schedule(1.seconds)(())
+  Timers.schedule(1.second)(())
 
 // Try to cancel the task
 val b: Boolean < IOs =
@@ -2147,6 +2149,75 @@ val d: Task[Int] =
 
 > Note: Support for ZIO environments (`R` in `ZIO[R, E, A]`) is currently in development. Once implemented, it will be possible to use ZIO effects with environments directly within Kyo computations.
 
+### Resolvers: GraphQL Server via Caliban
+
+`Resolvers` integrates with the [Caliban](https://github.com/ghostdogpr/caliban) library to help setup GraphQL servers.
+
+The first integration is that you can use Kyo effects inside your Caliban schemas by importing `kyo.given`.
+- If your Kyo effects is `(Aborts[Throwable] & ZIOs)` or a subtype of it (`ZIOs` includes `Fibers & IOs`), a Caliban `Schema` can be derived automatically.
+- If your Kyo effect is something else, a Caliban schema can be derived if it has a `Runner` for that effect as part of ZIO environment.
+
+```scala
+import caliban.schema.*
+import kyo.{ given, *}
+
+// this works by just importing kyo.*
+case class Query(k: Int < Aborts[Throwable]) derives Schema.SemiAuto
+
+// for other effects, you need to extend `SchemaDerivation[Runner[YourCustomEffects]]`
+type CustomEffects = Vars[Int] & Envs[String]
+object schema extends SchemaDerivation[Runner[CustomEffects]]
+
+case class Query2(k: Int < CustomEffects) derives schema.SemiAuto
+```
+
+Then, the `Resolvers` effect allows easily turning these schemas into a GraphQL server.
+The method `Resolvers.get` is used for importing a `GraphQL` object from Caliban into Kyo.
+You can then run this effect using `Resolvers.run` to get an HTTP server. This effect requires `ZIOs` because Caliban uses ZIO internally to run.
+
+```scala
+import caliban.*
+import caliban.schema.*
+import kyo.{ given, *}
+import sttp.tapir.json.zio.*
+import sttp.tapir.server.netty.*
+import zio.Task
+
+case class Query(k: Int < Aborts[Throwable]) derives Schema.SemiAuto
+val api = graphQL(RootResolver(Query(42)))
+
+val a: NettyKyoServerBinding < (ZIOs & Aborts[CalibanError]) =
+  Resolvers.run { Resolvers.get(api) }
+
+// similarly to the tapir integration, you can also pass a `NettyKyoServer` explicitly
+val b: NettyKyoServerBinding < (ZIOs & Aborts[CalibanError]) =
+  Resolvers.run(NettyKyoServer().port(9999)) { Resolvers.get(api) }
+
+// you can turn this into a ZIO as seen in the ZIO integration
+val c: Task[NettyKyoServerBinding] = ZIOs.run(b)
+```
+
+When using arbitrary Kyo effects, you need to provide the `Runner` for that effect when calling the `run` function.
+```scala
+import caliban.*
+import caliban.schema.*
+import kyo.{ given, *}
+import sttp.tapir.json.zio.*
+import zio.Task
+
+type CustomEffects = Vars[Int] & Envs[String]
+object schema extends SchemaDerivation[Runner[CustomEffects]]
+case class Query(k: Int < CustomEffects) derives schema.SemiAuto
+
+val api = graphQL(RootResolver(Query(42)))
+
+// runner for our CustomEffects
+val runner = new Runner[CustomEffects]:
+  def apply[T: Flat](v: T < CustomEffects): Task[T] = ZIOs.run(Envs.run("kyo")(Vars.run(0)(v)))
+
+val d = Resolvers.run(runner) { Resolvers.get(api) }
+```
+
 ### AIs: LLM Abstractions via OpenAI
 
 Coming soon..
@@ -2168,7 +2239,7 @@ def test[S](v: Int < S) =
 
 // If the input has no pending effects,
 // `S` is inferred  to `Any` and the
-// value is evaluated immediatelly 
+// value is evaluated immediately 
 // to 43
 val a: Int < Any =
   test(42)

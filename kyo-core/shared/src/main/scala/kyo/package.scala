@@ -40,7 +40,7 @@ package object kyo:
         def pure: T =
             v match
                 case kyo: kyo.core.internal.Suspend[?, ?, ?, ?] =>
-                    bug.failTag(kyo.tag)
+                    bug(s"Unexpected pending effect found in 'pure': " + kyo)
                 case v =>
                     v.asInstanceOf[T]
     end extension
@@ -68,30 +68,24 @@ package object kyo:
 
     private[kyo] object bug:
 
+        import kyo.core.internal.Suspend
+
         case class KyoBugException(msg: String) extends Exception(msg)
 
-        inline def failTag[T, U](
-            inline actual: Tag[U]
+        def failTag[T, U](
+            kyo: Suspend[?, ?, ?, ?],
+            expected: Tag.Full[U]
         ): Nothing =
-            bug(s"Unexpected effect '${actual.show}' found in 'pure'.")
+            bug(s"Unexpected pending effect while handling ${expected}: " + kyo)
 
-        inline def failTag[T, U](
-            inline actual: Tag.Full[T],
+        inline def checkTag[T, S, U](
+            inline kyo: Suspend[?, ?, ?, ?],
             inline expected: Tag.Full[U]
-        ): Nothing =
-            bug(s"Unexpected effect '${actual.show}' found while handling '${expected.show}'.")
-
-        inline def checkTag[T, U](
-            inline actual: Tag.Full[U],
-            inline expected: Tag.Full[T]
         ): Unit =
-            if actual =!= expected then
-                failTag(actual, expected)
-
-        def when(cond: Boolean)(msg: String): Unit =
-            if cond then bug(msg)
+            if kyo.tag =!= expected then
+                failTag(kyo, expected)
 
         def apply(msg: String): Nothing =
-            throw KyoBugException(msg + " Please open an issue 🥹 https://github.com/getkyo/kyo/issues")
+            throw KyoBugException(msg + " Please open an issue 🥹  https://github.com/getkyo/kyo/issues")
     end bug
 end kyo

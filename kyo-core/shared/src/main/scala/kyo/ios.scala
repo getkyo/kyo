@@ -51,7 +51,7 @@ sealed trait IOs extends Effect[IOs]:
         @tailrec def runLoop(v: T < IOs): T =
             v match
                 case kyo: Suspend[IO, Unit, T, IOs] @unchecked =>
-                    bug.checkTag(kyo.tag, tag)
+                    bug.checkTag(kyo, tag)
                     runLoop(kyo(()))
                 case _ =>
                     v.asInstanceOf[T]

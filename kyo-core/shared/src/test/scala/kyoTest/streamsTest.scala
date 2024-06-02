@@ -78,7 +78,7 @@ class streamsTest extends KyoTest:
                 }
                 "Fibers" in run {
                     Streams.initSource[Int](
-                        Fibers.delay(1.nanos)(Streams.emitSeq(Seq(1)))
+                        Fibers.delay(1.nano)(Streams.emitSeq(Seq(1)))
                     ).buffer(10).runSeq.map { r =>
                         assert(r == (Seq(1), ()))
                     }
@@ -515,6 +515,13 @@ class streamsTest extends KyoTest:
                 Streams.initSeq(Seq.fill(n)(1)).runFold(0)(_ + _).pure == (n, ())
             )
         }
+    }
+
+    "nesting with other effect" in {
+        val stream: Stream[Unit, Int, Any] < IOs =
+            IOs(Seq(1, 2, 3)).map(seq => Streams.initSeq(seq))
+        IOs.run(stream.map(_.runSeq)).pure
+        succeed
     }
 
 end streamsTest
