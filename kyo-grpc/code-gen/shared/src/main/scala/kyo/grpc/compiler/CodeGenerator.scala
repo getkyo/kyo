@@ -13,7 +13,7 @@ import scalapb.compiler.FunctionalPrinter
 import scalapb.compiler.ProtobufGenerator
 import scalapb.options.Scalapb
 
-object CodeGenerator extends CodeGenApp:
+object CodeGenerator extends CodeGenApp {
 
     override def registerExtensions(registry: ExtensionRegistry): Unit =
         Scalapb.registerAllExtensions(registry)
@@ -32,7 +32,7 @@ object CodeGenerator extends CodeGenApp:
 
     // This is called by CodeGenApp after the request is parsed.
     def process(request: CodeGenRequest): CodeGenResponse =
-        ProtobufGenerator.parseParameters(request.parameter) match
+        ProtobufGenerator.parseParameters(request.parameter) match {
             case Right(params) =>
                 // Implicits gives you extension methods that provide ScalaPB names and types
                 // for protobuf entities.
@@ -42,16 +42,18 @@ object CodeGenerator extends CodeGenApp:
                 // Process each top-level message in each file.
                 // This can be customized if you want to traverse the input in a different way.
                 CodeGenResponse.succeed(
-                    for
+                    for {
                         file    <- request.filesToGenerate
                         message <- file.getMessageTypes().asScala
-                    yield new MessagePrinter(message, implicits).result
+                    } yield new MessagePrinter(message, implicits).result
                 )
             case Left(error) =>
                 CodeGenResponse.fail(error)
-end CodeGenerator
+        }
+}
 
-class MessagePrinter(message: Descriptor, implicits: DescriptorImplicits):
+class MessagePrinter(message: Descriptor, implicits: DescriptorImplicits) {
+
     import implicits.*
 
     private val MessageObject =
@@ -60,12 +62,12 @@ class MessagePrinter(message: Descriptor, implicits: DescriptorImplicits):
     def scalaFileName =
         MessageObject.fullName.replace('.', '/') + ".scala"
 
-    def result: CodeGeneratorResponse.File =
+    def result: CodeGeneratorResponse.File = {
         val b = CodeGeneratorResponse.File.newBuilder()
         b.setName(scalaFileName)
         b.setContent(content)
         b.build()
-    end result
+    }
 
     def printObject(fp: FunctionalPrinter): FunctionalPrinter =
         fp
@@ -82,12 +84,12 @@ class MessagePrinter(message: Descriptor, implicits: DescriptorImplicits):
     def printField(fp: FunctionalPrinter, fd: FieldDescriptor): FunctionalPrinter =
         fp.add(s"val ${fd.getName} = ${fd.getNumber}")
 
-    def content: String =
+    def content: String = {
         val fp = new FunctionalPrinter()
             .add(
                 s"package ${message.getFile.scalaPackage.fullName}",
                 ""
             ).call(printObject)
         fp.result()
-    end content
-end MessagePrinter
+    }
+}

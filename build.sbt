@@ -324,6 +324,7 @@ lazy val `kyo-grpc-core` =
         )
 
 
+// TODO: Do we need code gen for JS?
 lazy val `kyo-grpc-code-gen` =
     crossProject(JVMPlatform, JSPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -337,6 +338,16 @@ lazy val `kyo-grpc-code-gen` =
             buildInfoPackage := "kyo.grpc.compiler",
             // TODO: Which versions should this be for?
             crossScalaVersions := List(scala3Version, scala212Version, scala213Version),
+            inConfig(Compile)(Seq(
+                unmanagedSourceDirectories ++= {
+                    val sourceDir = sharedSourceDir("main").value
+                    CrossVersion.partialVersion(scalaVersion.value) match {
+                        case Some((major, minor)) if major > 2 || (major == 2 && minor >= 13) =>
+                            Seq(sourceDir / "scala-2.13+")
+                        case _ => Nil
+                    }
+                },
+            )),
             libraryDependencies ++= Seq(
                 "com.thesamet.scalapb" %% "compilerplugin" % scalapb.compiler.Version.scalapbVersion,
                 "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
@@ -366,15 +377,21 @@ lazy val `kyo-grpc-e2e` =
         .dependsOn(`kyo-grpc-core`)
         .settings(
             publish / skip := true,
-            codeGenClasspath := (`kyo-grpc-code-gen`.jvm / Compile / fullClasspath).value,
             libraryDependencies ++= Seq(
                 "org.scalameta" %% "munit" % "1.0.0" % Test
             ),
+            Compile / PB.protoSources += sharedSourceDir("main").value / "protobuf",
+            Test / PB.protoSources += sharedSourceDir("test").value / "protobuf",
             testFrameworks += new TestFramework("munit.Framework"),
             Compile / PB.targets := Seq(
                 scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
                 genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
             )
+        ).jvmSettings(
+            codeGenClasspath := (`kyo-grpc-code-gen`.jvm / Compile / fullClasspath).value,
+        ).jsSettings(
+            `js-settings`,
+            codeGenClasspath := (`kyo-grpc-code-gen`.js / Compile / fullClasspath).value,
         )
 
 
@@ -495,4 +512,8 @@ def scalacOptionToken(proposedScalacOption: ScalacOption) =
 def scalacOptionTokens(proposedScalacOptions: Set[ScalacOption]) = Def.setting {
     val version = ScalaVersion.fromString(scalaVersion.value).right.get
     ScalacOptions.tokensForVersion(version, proposedScalacOptions)
+}
+
+def sharedSourceDir(conf: String) = Def.setting {
+    CrossType.Full.sharedSrcDir(baseDirectory.value, conf).get.getParentFile
 }
