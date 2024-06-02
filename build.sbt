@@ -1,9 +1,13 @@
+import scala.util.Try
+
 val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
 
 val zioVersion       = "2.1.1"
 val scalaTestVersion = "3.2.18"
+
+val isCI = Try(sys.env.getOrElse("CI", "false").toBoolean).getOrElse(false)
 
 val compilerOptions = Seq(
     "-encoding",
@@ -46,7 +50,10 @@ lazy val `kyo-settings` = Seq(
     ThisBuild / versionScheme := Some("early-semver"),
     scalacOptions ++= Seq("-release:11"),
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
-)
+) ++ {
+    // Workaround to make it possible to use git worktrees.
+    if (isCI) Seq.empty else com.github.sbt.git.SbtGit.useReadableConsoleGit
+}
 
 lazy val kyo =
     crossProject(JVMPlatform)
