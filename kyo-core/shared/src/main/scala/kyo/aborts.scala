@@ -4,6 +4,7 @@ import kyo.core.*
 import kyo.internal.Trace
 import scala.reflect.ClassTag
 import scala.util.control.NonFatal
+import scala.util.{Try, Success, Failure}
 
 type Aborts[-V] >: Aborts.Effects[V] <: Aborts.Effects[V]
 
@@ -22,8 +23,13 @@ object Aborts:
 
     def get[V, T](e: Either[V, T])(using Trace): T < Aborts[V] =
         e match
-            case Right(v) => v
+            case Right(t) => t
             case Left(v)  => fail(v)
+
+    def get[T](e: Try[T])(using Trace): T < Aborts[Throwable] =
+        e match
+            case Success(t) => t
+            case Failure(v) => fail(v)
 
     class RunDsl[V]:
         def apply[V0 <: V, T: Flat, S, VS, VR](v: T < (Aborts[VS] & S))(
