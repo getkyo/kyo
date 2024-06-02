@@ -1,3 +1,5 @@
+import com.github.sbt.git.SbtGit.GitKeys.useConsoleForROGit
+
 val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
@@ -21,6 +23,8 @@ ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
 sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
 sonatypeProfileName                := "io.getkyo"
 publish / skip                     := true
+
+ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
 lazy val `kyo-settings` = Seq(
     fork               := true,
