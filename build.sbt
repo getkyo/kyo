@@ -288,7 +288,7 @@ lazy val `kyo-zio` =
             libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
         ).jsSettings(
             `js-settings`
-        )
+        ).jvmSettings()
 
 
 lazy val `kyo-grpc` =
@@ -300,8 +300,16 @@ lazy val `kyo-grpc` =
         publishLocal := {}
     )
     .aggregate(
-        `kyo-grpc-core`
+        `kyo-grpc-core`,
+        `kyo-grpc-code-gen`,
+        `kyo-grpc-e2e`
     )
+
+
+lazy val `kyo-grpc-jvm` =
+    `kyo-grpc`
+        .jvm
+        .aggregate(`protoc-gen-kyo-grpc`.componentProjects.map(p => p: ProjectReference) *)
 
 
 lazy val `kyo-grpc-core` =
@@ -321,6 +329,7 @@ lazy val `kyo-grpc-code-gen` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-grpc") / "code-gen")
+        .enablePlugins(BuildInfoPlugin)
         .settings(
             `kyo-settings`,
             buildInfoKeys := Seq[BuildInfoKey](name, organization, version, scalaVersion, sbtVersion),
@@ -339,7 +348,7 @@ lazy val `kyo-grpc-code-gen` =
 
 // TODO: Why this name?
 // TODO: Can these meta projects be in the sub directory?
-lazy val protocGenKyoGrpc =
+lazy val `protoc-gen-kyo-grpc` =
     protocGenProject("protoc-gen-kyo-grpc", `kyo-grpc-code-gen`.jvm)
         .settings(
             // TODO: Does it not auto-discover it?
@@ -348,7 +357,7 @@ lazy val protocGenKyoGrpc =
         )
 
 
-lazy val e2e =
+lazy val `kyo-grpc-e2e` =
     crossProject(JVMPlatform, JSPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
