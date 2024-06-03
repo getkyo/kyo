@@ -150,8 +150,8 @@ class fibersTest extends KyoTest:
             IOs.toTry(Fibers.runAndBlock(Duration.Infinity)(
                 Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
             )).map {
-                case Failure(Fibers.Interrupted) => succeed
-                case v                           => fail(v.toString())
+                case Failure(_: Fibers.Interrupted) => succeed
+                case v                              => fail(v.toString())
             }
         }
 
@@ -159,8 +159,8 @@ class fibersTest extends KyoTest:
             IOs.toTry(Fibers.runAndBlock(10.millis)(
                 Fibers.sleep(1.day).andThen(1)
             )).map {
-                case Failure(Fibers.Interrupted) => succeed
-                case v                           => fail(v.toString())
+                case Failure(_: Fibers.Interrupted) => succeed
+                case v                              => fail(v.toString())
             }
         }
 
@@ -168,8 +168,26 @@ class fibersTest extends KyoTest:
             IOs.toTry(Fibers.runAndBlock(10.millis)(
                 Seqs.fill(100)(Fibers.sleep(1.milli)).unit.andThen(1)
             )).map {
-                case Failure(Fibers.Interrupted) => succeed
-                case v                           => fail(v.toString())
+                case Failure(_: Fibers.Interrupted) => succeed
+                case v                              => fail(v.toString())
+            }
+        }
+    }
+
+    "timeout" - {
+
+        "success" in run {
+            for
+                result <- Fibers.timeout(100.millis)(Fibers.init(42).map(_.get))
+            yield assert(result == 42)
+        }
+
+        "failure" in run {
+            IOs.attempt(Fibers.timeout(1.millis)(Fibers.sleep(100.millis))).map {
+                case Failure(Fibers.Interrupted(trace)) =>
+                    assert(trace.snippet == "timeout(1.millis)(Fibers.sleep(100.millis))")
+                case _ =>
+                    fail()
             }
         }
     }

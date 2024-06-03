@@ -20,8 +20,8 @@ class KyoSttpMonad extends MonadAsyncError[M]:
         h: PartialFunction[Throwable, T < Fibers]
     ) =
         IOs.catching(rt) {
-            case ex if ex eq Fibers.Interrupted =>
-                Fibers.interrupted
+            case ex: Fibers.Interrupted =>
+                IOs.fail(ex)
             case ex if h.isDefinedAt(ex) =>
                 h(ex)
         }
@@ -55,9 +55,10 @@ class KyoSttpMonad extends MonadAsyncError[M]:
                     case Left(t)  => discard(p.unsafeComplete(IOs.fail(t)))
                     case Right(t) => discard(p.unsafeComplete(t))
                 }
-            p.onComplete { r =>
-                if r.equals(Fibers.interrupted) then
+            p.onComplete {
+                case r: Fibers.Interrupted =>
                     canceller.cancel()
+                case _ =>
             }.andThen(p.get)
         }
 end KyoSttpMonad

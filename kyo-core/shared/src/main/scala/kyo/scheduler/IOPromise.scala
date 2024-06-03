@@ -6,6 +6,7 @@ import java.util.concurrent.locks.LockSupport
 import kyo.*
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
+import kyo.internal.Trace
 
 private[kyo] class IOPromise[T](state: State[T])
     extends AtomicReference(state):
@@ -24,7 +25,7 @@ private[kyo] class IOPromise[T](state: State[T])
         loop(this)
     end isDone
 
-    final def interrupts(i: IOPromise[?]): Unit =
+    final def interrupts(i: IOPromise[?])(using trace: Trace): Unit =
         @tailrec def loop(promise: IOPromise[T]): Unit =
             promise.get() match
                 case p: Pending[T] @unchecked =>
@@ -40,11 +41,11 @@ private[kyo] class IOPromise[T](state: State[T])
         loop(this)
     end interrupts
 
-    final def interrupt(): Boolean =
+    final def interrupt()(using trace: Trace): Boolean =
         @tailrec def loop(promise: IOPromise[T]): Boolean =
             promise.get() match
                 case p: Pending[T] @unchecked =>
-                    promise.complete(p, Fibers.interrupted) || loop(promise)
+                    promise.complete(p, IOs.fail(Fibers.Interrupted(trace))) || loop(promise)
                 case l: Linked[T] @unchecked =>
                     loop(l.p)
                 case _ =>
@@ -129,7 +130,7 @@ private[kyo] class IOPromise[T](state: State[T])
         loop()
     end complete
 
-    final def block(deadline: Long): T < IOs =
+    final def block(deadline: Long)(using trace: Trace): T < IOs =
         def loop(promise: IOPromise[T]): T < IOs =
             promise.get() match
                 case _: Pending[T] @unchecked =>
@@ -146,7 +147,7 @@ private[kyo] class IOPromise[T](state: State[T])
                                 if isNull(result) then
                                     val remainingNanos = deadline - System.currentTimeMillis()
                                     if remainingNanos <= 0 then
-                                        return IOs.fail(Fibers.Interrupted)
+                                        return IOs.fail(Fibers.Interrupted(trace))
                                     else if remainingNanos == Long.MaxValue then
                                         LockSupport.park(this)
                                     else
