@@ -15,7 +15,7 @@ val compilerOptions = Set(
     ScalacOptions.deprecation,
     ScalacOptions.warnValueDiscard,
     ScalacOptions.languageStrictEquality
-) ++ ScalacOptions.warnUnusedOptions
+)
 
 ThisBuild / scalaVersion           := scala3Version
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
