@@ -319,6 +319,7 @@ lazy val `kyo-grpc-core` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-grpc") / "core")
+        .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`
         ).jsSettings(
@@ -390,12 +391,8 @@ lazy val `kyo-grpc-e2e` =
         .settings(
             `kyo-settings`,
             publish / skip := true,
-            libraryDependencies ++= Seq(
-                "org.scalameta" %%% "munit" % "1.0.0" % Test
-            ),
             Compile / PB.protoSources += sharedSourceDir("main").value / "protobuf",
             Test / PB.protoSources += sharedSourceDir("test").value / "protobuf",
-            testFrameworks += new TestFramework("munit.Framework"),
             Compile / PB.targets := Seq(
                 scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
                 genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
