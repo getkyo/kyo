@@ -75,6 +75,12 @@ class abortsTest extends KyoTest:
                 assert(handled == Left("failure"))
             }
         }
+        "try" in {
+            import scala.util.Try
+
+            assert(Aborts.run(Aborts.get(Try(throw ex1))).pure == Left(ex1))
+            assert(Aborts.run(Aborts.get(Try("success!"))).pure == Right("success!"))
+        }
     }
 
     "effectful" - {
