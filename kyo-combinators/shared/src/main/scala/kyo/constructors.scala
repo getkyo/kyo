@@ -7,6 +7,8 @@ import scala.annotation.targetName
 import scala.concurrent.Future
 import scala.reflect.ClassTag
 import scala.util.NotGiven
+import scala.util.Success
+import scala.util.Failure
     
 
 extension (kyoObject: Kyo.type)
@@ -95,7 +97,9 @@ extension (kyoObject: Kyo.type)
         sequence.flatMap(seq => Choices.get(seq))
 
     def fromTry[A, S](_try: => scala.util.Try[A] < S): A < (S & Aborts[Throwable]) =
-        _try.map(t => Aborts.get(t.toEither))
+        _try.map:
+            case Success(a) => a
+            case Failure(e) => Aborts.fail[Throwable](e)
 
     inline def logInfo[S](message: => String < S): Unit < (S & IOs) =
         message.map(m => Logs.info(m))
@@ -203,6 +207,6 @@ extension (kyoObject: Kyo.type)
         sequence: => Seq[A < Fibers] < S
     )(using Flat[A < S]): Unit < (S & Fibers) =
         sequence.map(seq =>
-            foreachPar(seq.map(_.discard))(identity).discard
+            foreachPar(seq.map(_.unit))(identity).unit
         )
 

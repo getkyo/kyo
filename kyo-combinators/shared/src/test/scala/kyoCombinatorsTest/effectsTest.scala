@@ -27,7 +27,7 @@ class effectsTest extends KyoTest:
 
         "discard" in {
             val effect          = IOs(23)
-            val effectDiscarded = effect.discard
+            val effectDiscarded = effect.unit
             val handled         = IOs.run(effectDiscarded)
             assert(handled.pure == ())
         }

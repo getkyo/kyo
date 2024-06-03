@@ -23,7 +23,7 @@ extension [A, S](effect: A < S)
     def <*>[A1, S1](next: => A1 < S1): (A, A1) < (S & S1) =
         effect.map(e => next.map(n => (e, n)))
 
-    def as[A1, S1](value: => A1 < S1): A1 < (S & S1) =
+    inline def as[A1, S1](value: => A1 < S1): A1 < (S & S1) =
         effect.map(_ => value)
 
     def debug: A < (S & IOs) =
@@ -34,8 +34,6 @@ extension [A, S](effect: A < S)
 
     def delayed[S1](duration: Duration < S1): A < (S & S1 & Fibers) =
         Kyo.sleep(duration) *> effect
-
-    def discard: Unit < S = as(())
 
     def repeat(policy: Retries.Policy)(using Flat[A < S]): A < (S & Fibers) =
         def loop(i: Int): A < (S & Fibers) =
@@ -359,7 +357,7 @@ extension [A, S](effect: A < (S & Fibers))
         ) ev: S => IOs,
         f: Flat[A]
     ): Fiber[A] < (S & IOs & Resources) =
-        Kyo.acquireRelease(Fibers.init(effect))(_.interrupt.discard)
+        Kyo.acquireRelease(Fibers.init(effect))(_.interrupt.unit)
 end extension
 
 extension [A, S](fiber: Fiber[A] < S)
@@ -367,7 +365,7 @@ extension [A, S](fiber: Fiber[A] < S)
     def awaitCompletion(using Flat[A]): Unit < (S & Fibers) =
         Kyo.attempt(Fibers.get(fiber))
             .handleAborts
-            .discard
+            .unit
 end extension
 
 extension [A](effect: A < Fibers)
