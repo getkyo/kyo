@@ -10,7 +10,7 @@ object gen {
             "scala",
             Artifact(
                 kyo.grpc.compiler.BuildInfo.organization,
-                "kyo-grpc-codegen_2.12",
+                "kyo-grpc-code-gen_2.12",
                 kyo.grpc.compiler.BuildInfo.version
             ),
             "kyo.grpc.compiler.CodeGenerator$",

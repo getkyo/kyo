@@ -56,7 +56,8 @@ lazy val kyoJVM = project
     .in(file("."))
     .settings(
         name := "kyoJVM",
-        `kyo-settings`
+        `kyo-settings`,
+        crossScalaVersions := Seq.empty
     )
     .aggregate(
         `kyo-scheduler`.jvm,
@@ -81,7 +82,8 @@ lazy val kyoJS = project
     .in(file("js"))
     .settings(
         name := "kyoJS",
-        `kyo-settings`
+        `kyo-settings`,
+        crossScalaVersions := Seq.empty
     )
     .aggregate(
         `kyo-scheduler`.js,
@@ -297,6 +299,7 @@ lazy val `kyo-grpc` =
   crossProject(JVMPlatform, JSPlatform)
     .withoutSuffixFor(JVMPlatform)
     .settings(
+        crossScalaVersions := Seq.empty,
         publishArtifact := false,
         publish := {},
         publishLocal := {}
@@ -328,7 +331,6 @@ lazy val `kyo-grpc-core` =
             `js-settings`
         )
 
-
 // TODO: Do we need code gen for JS?
 lazy val `kyo-grpc-code-gen` =
     crossProject(JVMPlatform, JSPlatform)
@@ -353,27 +355,20 @@ lazy val `kyo-grpc-code-gen` =
             `js-settings`
         )
 
-
-lazy val `kyo-grpc-code-gen-2_12` =
+lazy val `kyo-grpc-code-gen_2.12` =
     `kyo-grpc-code-gen`
         .jvm
-        .settings(
-            scalaVersion := scala212Version
-        )
+        .settings(scalaVersion := scala212Version)
 
-
-lazy val `kyo-grpc-code-genJS-2_12` =
+lazy val `kyo-grpc-code-genJS_2.12` =
     `kyo-grpc-code-gen`
         .js
-        .settings(
-            scalaVersion := scala212Version
-        )
-
+        .settings(scalaVersion := scala212Version)
 
 // TODO: Why this name?
 // TODO: Can these meta projects be in the sub directory?
 lazy val `protoc-gen-kyo-grpc` =
-    protocGenProject("protoc-gen-kyo-grpc", `kyo-grpc-code-gen`.jvm)
+    protocGenProject("protoc-gen-kyo-grpc", `kyo-grpc-code-gen_2.12`)
         .settings(
             `kyo-settings`,
             scalaVersion := scala212Version,
@@ -381,7 +376,10 @@ lazy val `protoc-gen-kyo-grpc` =
             // TODO: Does it not auto-discover it?
             Compile / mainClass := Some("kyo.grpc.compiler.CodeGenerator")
         )
-
+        .aggregateProjectSettings(
+            scalaVersion := scala212Version,
+            crossScalaVersions := Seq(scala212Version)
+        )
 
 lazy val `kyo-grpc-e2e` =
     crossProject(JVMPlatform, JSPlatform)
@@ -405,12 +403,11 @@ lazy val `kyo-grpc-e2e` =
                 s"-Wconf:${Regex.quote(dir.getAbsolutePath)}.*:silent",
             )
         ).jvmSettings(
-            codeGenClasspath := (`kyo-grpc-code-gen-2_12` / Compile / fullClasspath).value,
+            codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
         ).jsSettings(
             `js-settings`,
-            codeGenClasspath := (`kyo-grpc-code-genJS-2_12` / Compile / fullClasspath).value,
+            codeGenClasspath := (`kyo-grpc-code-genJS_2.12` / Compile / fullClasspath).value,
         )
-
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)
