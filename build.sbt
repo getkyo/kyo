@@ -343,8 +343,8 @@ lazy val `kyo-grpc-code-gen` =
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             libraryDependencies ++= Seq(
                 "com.thesamet.scalapb" %% "compilerplugin" % scalapb.compiler.Version.scalapbVersion,
-                "com.thesamet.scalapb" %% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
-                "org.scala-lang.modules" %% "scala-collection-compat" % "2.12.0"
+                "com.thesamet.scalapb" %%% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
+                "org.scala-lang.modules" %%% "scala-collection-compat" % "2.12.0"
             ),
         ).jsSettings(
             `js-settings`
@@ -391,7 +391,7 @@ lazy val `kyo-grpc-e2e` =
             `kyo-settings`,
             publish / skip := true,
             libraryDependencies ++= Seq(
-                "org.scalameta" %% "munit" % "1.0.0" % Test
+                "org.scalameta" %%% "munit" % "1.0.0" % Test
             ),
             Compile / PB.protoSources += sharedSourceDir("main").value / "protobuf",
             Test / PB.protoSources += sharedSourceDir("test").value / "protobuf",
