@@ -5,14 +5,15 @@ import io.grpc.*
 import io.grpc.examples.helloworld.helloworld.GreeterGrpc.{METHOD_SAY_HELLO, SERVICE}
 // TODO: Why does it double up on the helloworld package name?
 import io.grpc.examples.helloworld.helloworld.{HelloReply, HelloRequest}
+import kyo.grpc.*
 
 import scala.util.Try
 
 trait KyoGreeter:
-  def sayHello(request: HelloRequest): HelloReply < Grpcs
+  def sayHello(request: HelloRequest): HelloReply < GrpcResponses
 
 object GreeterService extends KyoGreeter:
-  override def sayHello(request: HelloRequest): HelloReply < Grpcs =
+  override def sayHello(request: HelloRequest): HelloReply < GrpcResponses =
     for {
       _ <- Consoles.run(Consoles.println(s"Got request: $request"))
     } yield HelloReply(s"Hello, ${request.name}")
@@ -25,7 +26,7 @@ object HelloWorldServer extends KyoApp:
         METHOD_SAY_HELLO,
         // TODO: When to use a different type of call?
         ServerCalls.asyncUnaryCall((request: HelloRequest, observer: StreamObserver[HelloReply]) => {
-          val fiber = Grpcs.init(serviceImpl.sayHello(request))
+          val fiber = GrpcResponses.init(serviceImpl.sayHello(request))
           val pendingIOs = fiber.onComplete { reply =>
             IOs.attempt(reply).map(scalapb.grpc.Grpc.completeObserver(observer))
           }
