@@ -3,6 +3,7 @@ package kyo.internal
 import KyoSttpMonad.M
 import kyo.*
 import kyo.core.internal.Kyo
+import scala.util.control.NonFatal
 import sttp.monad.Canceler
 import sttp.monad.MonadAsyncError
 
@@ -55,10 +56,9 @@ class KyoSttpMonad extends MonadAsyncError[M]:
                     case Left(t)  => discard(p.unsafeComplete(IOs.fail(t)))
                     case Right(t) => discard(p.unsafeComplete(t))
                 }
-            p.onComplete {
-                case r: Fibers.Interrupted =>
+            p.onComplete { r =>
+                if r eq KyoUtil.interrupted then
                     canceller.cancel()
-                case _ =>
             }.andThen(p.get)
         }
 end KyoSttpMonad

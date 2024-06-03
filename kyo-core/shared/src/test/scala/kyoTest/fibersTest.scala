@@ -183,7 +183,7 @@ class fibersTest extends KyoTest:
         }
 
         "failure" in run {
-            IOs.attempt(Fibers.timeout(1.millis)(Fibers.sleep(100.millis))).map {
+            IOs.toTry(Fibers.timeout(1.millis)(Fibers.sleep(100.millis))).map {
                 case Failure(Fibers.Interrupted(trace)) =>
                     assert(trace.snippet == "timeout(1.millis)(Fibers.sleep(100.millis))")
                 case _ =>

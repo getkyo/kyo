@@ -4,9 +4,9 @@ import IOPromise.*
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kyo.*
+import kyo.internal.Trace
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
-import kyo.internal.Trace
 
 private[kyo] class IOPromise[T](state: State[T])
     extends AtomicReference(state):
@@ -42,10 +42,11 @@ private[kyo] class IOPromise[T](state: State[T])
     end interrupts
 
     final def interrupt()(using trace: Trace): Boolean =
+        val fail = IOs.fail(Fibers.Interrupted(trace))
         @tailrec def loop(promise: IOPromise[T]): Boolean =
             promise.get() match
                 case p: Pending[T] @unchecked =>
-                    promise.complete(p, IOs.fail(Fibers.Interrupted(trace))) || loop(promise)
+                    promise.complete(p, fail) || loop(promise)
                 case l: Linked[T] @unchecked =>
                     loop(l.p)
                 case _ =>

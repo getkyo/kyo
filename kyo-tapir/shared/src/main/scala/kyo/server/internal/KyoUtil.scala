@@ -3,8 +3,12 @@ package kyo.server.internal
 import io.netty.channel.Channel
 import io.netty.channel.ChannelFuture
 import kyo.*
+import kyo.internal.Trace
 
 object KyoUtil:
+
+    val interrupted = IOs.fail(Fibers.Interrupted(summon[Trace]))
+
     def nettyChannelFutureToScala(nettyFuture: ChannelFuture): Channel < Fibers =
         Fibers.initPromise[Channel].map { p =>
             p.onComplete(_ => IOs(nettyFuture.cancel(true).unit)).andThen {
@@ -13,7 +17,7 @@ object KyoUtil:
                         IOs.run {
                             if future.isSuccess then p.complete(future.channel())
                             else if future.isCancelled then
-                                p.complete(Fibers.interrupted)
+                                p.complete(interrupted)
                             else p.complete(IOs.fail(future.cause()))
                         }
                     }
@@ -30,7 +34,7 @@ object KyoUtil:
                         IOs.run {
                             if future.isSuccess then p.complete(future.getNow)
                             else if future.isCancelled then
-                                p.complete(Fibers.interrupted)
+                                p.complete(interrupted)
                             else p.complete(IOs.fail(future.cause()))
                         }
                     }
