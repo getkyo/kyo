@@ -147,7 +147,7 @@ class fibersTest extends KyoTest:
     "runAndBlock" - {
 
         "timeout" in runJVM {
-            IOs.attempt(Fibers.runAndBlock(Duration.Infinity)(
+            IOs.toTry(Fibers.runAndBlock(Duration.Infinity)(
                 Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
             )).map {
                 case Failure(Fibers.Interrupted) => succeed
@@ -156,7 +156,7 @@ class fibersTest extends KyoTest:
         }
 
         "block timeout" in runJVM {
-            IOs.attempt(Fibers.runAndBlock(10.millis)(
+            IOs.toTry(Fibers.runAndBlock(10.millis)(
                 Fibers.sleep(1.day).andThen(1)
             )).map {
                 case Failure(Fibers.Interrupted) => succeed
@@ -165,7 +165,7 @@ class fibersTest extends KyoTest:
         }
 
         "multiple fibers timeout" in runJVM {
-            IOs.attempt(Fibers.runAndBlock(10.millis)(
+            IOs.toTry(Fibers.runAndBlock(10.millis)(
                 Seqs.fill(100)(Fibers.sleep(1.milli)).unit.andThen(1)
             )).map {
                 case Failure(Fibers.Interrupted) => succeed
@@ -214,7 +214,7 @@ class fibersTest extends KyoTest:
 
     "race" - {
         "zero" in runJVM {
-            IOs.attempt(Fibers.race(Seq())).map { r =>
+            IOs.toTry(Fibers.race(Seq())).map { r =>
                 assert(r.isFailure)
             }
         }
@@ -253,7 +253,7 @@ class fibersTest extends KyoTest:
         "returns the last failure if all fibers fail" in runJVM {
             val ex1 = new Exception
             val ex2 = new Exception
-            IOs.attempt(
+            IOs.toTry(
                 Fibers.race(
                     Fibers.sleep(1.milli).andThen(IOs.fail[Int](ex1)),
                     IOs.fail[Int](ex2)
@@ -267,7 +267,7 @@ class fibersTest extends KyoTest:
 
     "raceFiber" - {
         "zero" in runJVM {
-            IOs.attempt(Fibers.raceFiber(Seq()).map(_.get)).map { r =>
+            IOs.toTry(Fibers.raceFiber(Seq()).map(_.get)).map { r =>
                 assert(r.isFailure)
             }
         }

@@ -441,9 +441,9 @@ val c: Int < IOs =
 val d: Int < IOs =
   IOs.fromTry(Try(1))
 
-// 'attempt' handles any exceptions and returns a 'Try'
+// 'toTry' handles any exceptions and returns a 'Try'
 val e: Try[Int] < IOs =
-  IOs.attempt("1".toInt)
+  IOs.toTry("1".toInt)
 
 // 'catching' takes a partial function to handle exceptions
 val f: Int < IOs =
