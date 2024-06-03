@@ -8,19 +8,6 @@ import io.grpc.examples.helloworld.helloworld.{HelloReply, HelloRequest}
 
 import scala.util.Try
 
-type Grpcs >: Grpcs.Effects <: Grpcs.Effects
-
-object Grpcs:
-  type Effects = Fibers & Aborts[StatusException]
-
-  // TODO: Is there any kind of backpressure or could these closures keep building up?
-  def init[T: Flat](t: => T < Grpcs): Fiber[T] =
-    def pendingFibers: Try[T] < Fibers = Aborts.run[StatusException].apply[StatusException, T, Fibers, StatusException, Any](t).map(_.toTry)
-
-    val pendingIOs: Fiber[Try[T]] < IOs = Fibers.init(pendingFibers)
-    val pendingIOs2: Fiber[T] < IOs = pendingIOs.map(_.transform(_.fold(Fiber.fail, Fiber.value)))
-    IOs.run(pendingIOs2)
-
 trait KyoGreeter:
   def sayHello(request: HelloRequest): HelloReply < Grpcs
 

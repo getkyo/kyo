@@ -321,7 +321,9 @@ lazy val `kyo-grpc-core` =
         .in(file("kyo-grpc") / "core")
         .dependsOn(`kyo-core`)
         .settings(
-            `kyo-settings`
+            `kyo-settings`,
+            // Only Scala 3 since that is all kyo-core supports.
+            libraryDependencies += "io.grpc" % "grpc-api" % "1.64.0"
         ).jsSettings(
             `js-settings`
         )
@@ -340,7 +342,7 @@ lazy val `kyo-grpc-code-gen` =
             // TODO: What package to use here?
             buildInfoPackage := "kyo.grpc.compiler",
             // TODO: Which versions should this be for?
-            crossScalaVersions := List(scala212Version, scala213Version),
+            crossScalaVersions := List(scala212Version, scala213Version, scala3Version),
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             libraryDependencies ++= Seq(
                 "com.thesamet.scalapb" %% "compilerplugin" % scalapb.compiler.Version.scalapbVersion,
