@@ -254,26 +254,10 @@ Kyo provides direct syntax for a more intuitive and concise way to express compu
 
 Essentially, `await` is a syntactic sugar for the `map` function, allowing developers to directly access values from computations without the need for repetitive `map` chaining. This makes the code more linear and intuitive.
 
-```scala
-import kyo._
+```scala mdoc:passthrough
+import kyo.readmeExamples.utils._
 
-// Use the direct syntax
-val a: String < (Aborts[Exception] & Options) =
-  defer {
-    val b: String = 
-      await(Options.get(Some("hello")))
-    val c: String = 
-      await(Aborts.get(Right("world")))
-    b + " " + c
-  }
-
-// Equivalent desugared
-val b: String < (Aborts[Exception] & Options) =
-  Options.get(Some("hello")).map { b =>
-    Aborts.get(Right("world")).map { c =>
-      b + " " + c
-    }
-  }
+printSource("readme-examples/shared/src/main/scala/kyo/Example1.scala")
 ```
 
 The `defer` macro translates the `defer` and `await` constructs by virtualizing control flow. It modifies value definitions, conditional branches, loops, and pattern matching to express compurations in terms of `map`. 

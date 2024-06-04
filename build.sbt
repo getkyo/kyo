@@ -411,7 +411,8 @@ lazy val readme =
             `kyo-tapir`,
             `kyo-bench`,
             `kyo-zio`,
-            `kyo-caliban`
+            `kyo-caliban`,
+            `readme-examples`
         )
         .settings(
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
