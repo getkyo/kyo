@@ -201,11 +201,11 @@ class optionsTest extends KyoTest:
         "or fail" in {
             case object e extends Exception derives CanEqual
             assert(
-                IOs.run(IOs.attempt(Options.getOrElse(Option.empty[Int], IOs.fail(e)))).pure ==
+                IOs.run(IOs.toTry(Options.getOrElse(Option.empty[Int], IOs.fail(e)))).pure ==
                     Failure(e)
             )
             assert(
-                IOs.run(IOs.attempt(Options.getOrElse(Some(1), IOs.fail(e)))).pure ==
+                IOs.run(IOs.toTry(Options.getOrElse(Some(1), IOs.fail(e)))).pure ==
                     Success(1)
             )
         }

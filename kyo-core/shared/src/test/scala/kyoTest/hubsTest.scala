@@ -59,9 +59,9 @@ class hubsTest extends KyoTest:
             _  <- retry(h.isEmpty) // wait transfer
             l  <- h.listen
             c1 <- h.close
-            v1 <- IOs.attempt(h.listen)
-            v2 <- IOs.attempt(h.offer(2))
-            v3 <- IOs.attempt(l.poll)
+            v1 <- IOs.toTry(h.listen)
+            v2 <- IOs.toTry(h.offer(2))
+            v3 <- IOs.toTry(l.poll)
             c2 <- l.close
         yield assert(
             b && c1 == Some(Seq()) && v1.isFailure && v2.isFailure && v3.isFailure && c2 == None
@@ -115,7 +115,7 @@ class hubsTest extends KyoTest:
             _ <- retry(h.isEmpty)
             c <- l.close
             _ <- h.offer(2)
-            v <- IOs.attempt(l.poll)
+            v <- IOs.toTry(l.poll)
         yield assert(c == Some(Seq()) && v.isFailure)
     }
     "hub closure with pending offers" in runJVM {
@@ -123,7 +123,7 @@ class hubsTest extends KyoTest:
             h <- Hubs.init[Int](2)
             _ <- h.offer(1)
             _ <- h.close
-            v <- IOs.attempt(h.offer(2))
+            v <- IOs.toTry(h.offer(2))
         yield assert(v.isFailure)
     }
     "create listener on empty hub" in runJVM {
