@@ -112,4 +112,47 @@ class layersTest extends KyoTest:
             }
         }
     }
+    "effects!" - {
+        "Aborts" in {
+            val shouldSucceed = Layers("A good string")
+            val shouldFail    = Layers("")
+            val maybeFail: Layer[Int, Envs[String] & Aborts[String]] =
+                Layers.from { (s: String) => Aborts.when(s.length < 6)("Too short!").andThen(s.length) }
+
+            val s = shouldSucceed to maybeFail
+            val f = shouldFail to maybeFail
+
+            IOs.run(
+                Aborts.run(s.run).map {
+                    case Right(env: TypeMap[Int]) => assert(env.get[Int] == 13)
+                    case Left(_)                  => fail("Should not have aborted!")
+                }
+            )
+            IOs.run(
+                Aborts.run(f.run).map {
+                    case Right(_)    => fail("Should not have succeeded!")
+                    case Left(error) => assert(error == "Too short!")
+                }
+            )
+        }
+        "Vars" in {
+            val int    = Layers(Vars.get[Int])
+            val string = Layers.from((i: Int) => i.toString)
+            val length = Layers.from((s: String) => Vars.update((_: Int) => s.length).andThen(s.length))
+
+            val c = int to string to length
+
+            IOs.run(Vars.run(42)(c.run.map(env => Vars.get[Int].map(_ -> env))).map { (varI, env) =>
+                assert(env.get[Int] == 2)
+                assert(varI == 2)
+            })
+        }
+        "Fibers" in runJVM {
+            val slow = Fibers.delay(50.millis)(IOs("slow"))
+            val fast = IOs("fast")
+            val f    = Layers(Fibers.race(fast, slow))
+
+            f.run.map(env => assert(env.get[String] == "fast"))
+        }
+    }
 end layersTest
