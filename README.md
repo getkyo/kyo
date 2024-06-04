@@ -1370,13 +1370,13 @@ import kyo._
 
 // A computation that sleeps for 1s
 val a: Unit < Fibers =
-  Fibers.sleep(1.seconds)
+  Fibers.sleep(1.second)
 
 // Times out and interrupts the provided 
 // computation in case it doesn't produce 
 // a result within 1s
 val b: Int < Fibers =
-  Fibers.timeout(1.seconds)(Math.cos(42).toInt)
+  Fibers.timeout(1.second)(Math.cos(42).toInt)
 ```
 
 The `fromFuture` methods provide interoperability with Scala's `Future`.
