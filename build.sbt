@@ -224,8 +224,7 @@ lazy val `kyo-os-lib` =
         .in(file("kyo-os-lib"))
         .dependsOn(`kyo-core`)
         .settings(
-            `kyo-settings`,
-            libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.10.1"
+            `kyo-settings`
         )
 
 lazy val `kyo-sttp` =

@@ -80,6 +80,27 @@ case class Stream[+T: Flat, V, -S](s: T < (Streams[V] & S)):
         Stream(Streams[V].handle(handler)((), s))
     end transform
 
+    def transformChunks[V2: Flat, S2](f: Chunk[V] => Chunk[V2] < S2)(
+        using
+        tag: Tag[Streams[V]],
+        tag2: Tag[Streams[V2]],
+        trace: Trace
+    ): Stream[T, V2, S & S2] =
+        val handler =
+            new Handler[Const[Chunk[V]], Streams[V], Streams[V2] & S & S2]:
+                def resume[T, U: Flat, S3](
+                    command: Chunk[V],
+                    k: T => U < (Streams[V] & S3)
+                )(using Tag[Streams[V]]): (U | Resume[U, S3]) < (Streams[V2] & S & S2 & S3) =
+                    f(command).map { c =>
+                        Streams.emitChunkAndThen(c) {
+                            Resume((), k(().asInstanceOf[T]))
+                        }
+                    }
+                end resume
+        Stream(Streams[V].handle(handler)((), s))
+    end transformChunks
+
     def concat[T2: Flat, S2](
         s2: Stream[T2, V, S2]
     )(using Trace, Tag[Streams[V]]): Stream[(T, T2), V, S & S2] =
