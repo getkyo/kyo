@@ -4,17 +4,17 @@ import Layers.internal.*
 import kyo.core.*
 import scala.annotation.targetName
 
-sealed trait Layer[-In, +Out, -S]:
+sealed trait Layer[+Out, -S]:
     self =>
 
-    infix def to[In2, Out2, S2](that: Layer[Out & In2, Out2, S2]): Layer[In & In2, Out2, S & S2]          = To(self, that)
-    infix def and[In2, Out2, S2](that: Layer[In2, Out2, S2]): Layer[In & In2, Out & Out2, S & S2]         = And(self, that)
-    infix def using[In2, Out2, S2](that: Layer[Out & In2, Out2, S2]): Layer[In & In2, Out & Out2, S & S2] = self and (self to that)
+    infix def to[Out2, S2, In2](that: Layer[Out2, Envs[In2] & S2]): Layer[Out2, S & S2]          = To(self, that)
+    infix def and[Out2, S2](that: Layer[Out2, S2]): Layer[Out & Out2, S & S2]                    = And(self, that)
+    infix def using[Out2, S2, In2](that: Layer[Out2, Envs[In2] & S2]): Layer[Out & Out2, S & S2] = self and (self to that)
 
     private[kyo] def doRun(
-        memoMap: scala.collection.mutable.Map[Layer[?, ?, ?], Any] = scala.collection.mutable.Map.empty[Layer[?, ?, ?], Any]
-    ): TypeMap[Out] < (S & Envs[In]) =
-        type Expected = TypeMap[Out] < (S & Envs[In])
+        memoMap: scala.collection.mutable.Map[Layer[?, ?], Any] = scala.collection.mutable.Map.empty[Layer[?, ?], Any]
+    ): TypeMap[Out] < S =
+        type Expected = TypeMap[Out] < S
         memoMap.get(self) match
             case Some(result) => result.asInstanceOf[Expected]
             case None =>
@@ -46,49 +46,44 @@ sealed trait Layer[-In, +Out, -S]:
 end Layer
 
 object Layer:
-    extension [In, Out, S](layer: Layer[In, Out, S])
-        @targetName("runS")
-        def run: TypeMap[Out] < (S & Envs[In]) =
-            layer.doRun()
+    import Envs.HasEnvs
 
-    extension [Out, S](layer: Layer[Any, Out, S])
-        def run: TypeMap[Out] < S =
-            layer.doRun().asInstanceOf[TypeMap[Out] < S]
+    extension [In, Out, S](layer: Layer[Out, Envs[In] & S])
+        def run[In1, R](using HasEnvs[In1, In] { type Remainder = R }): TypeMap[Out] < (S & R) =
+            layer.doRun().asInstanceOf[TypeMap[Out] < (S & R)]
 end Layer
 
-object Layers:
+object Layers extends KyoApp:
     private[kyo] object internal:
-        case class And[In1, Out1, In2, Out2, S](lhs: Layer[In1, Out1, S], rhs: Layer[In2, Out2, S])
-            extends Layer[In1 & In2, Out1 & Out2, S]
-        case class To[In1, Out1, In2, Out2, S](lhs: Layer[In1, Out1, S], rhs: Layer[Out1 & In2, Out2, S])
-            extends Layer[In1 & In2, Out2, S]
-        case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Envs[In] & S))(using val tag: Tag[Out]) extends Layer[In, Out, S]
+        case class And[Out1, Out2, S1, S2](lhs: Layer[Out1, S1], rhs: Layer[Out2, S2]) extends Layer[Out1 & Out2, S1 & S2]
+        case class To[Out1, Out2, S1, S2](lhs: Layer[?, ?], rhs: Layer[?, ?])          extends Layer[Out1 & Out2, S1 & S2]
+        case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Envs[In] & S))(using val tag: Tag[Out]) extends Layer[Out, S]
     end internal
 
-    val empty: Layer[Any, Any, Any] = FromKyo { () => TypeMap.empty }
+    val empty: Layer[Any, Any] = FromKyo { () => TypeMap.empty }
 
-    def apply[A, B: Tag, S](kyo: => B < (Envs[A] & S)): Layer[A, B, S] =
+    def apply[A: Tag, S](kyo: => A < S): Layer[A, S] =
         FromKyo { () =>
             kyo.map { result => TypeMap(result) }
         }
 
-    def from[A: Tag, B: Tag, S](f: A => B < S): Layer[A, B, S] =
+    def from[A: Tag, B: Tag, S](f: A => B < S): Layer[B, Envs[A] & S] =
         apply {
             Envs.get[A].map(f)
         }
 
-    def from[A: Tag, B: Tag, C: Tag, S](f: (A, B) => C < S): Layer[A & B, C, S] =
+    def from[A: Tag, B: Tag, C: Tag, S](f: (A, B) => C < S): Layer[C, Envs[A & B] & S] =
         apply {
             zip(Envs.get[A], Envs.get[B]).map { case (a, b) => f(a, b) }
         }
 
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, S](f: (A, B, C) => D < S): Layer[A & B & C, D, S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, S](f: (A, B, C) => D < S): Layer[D, Envs[A & B & C] & S] =
         apply {
             zip(Envs.get[A], Envs.get[B], Envs.get[C])
                 .map { case (a, b, c) => f(a, b, c) }
         }
 
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, S](f: (A, B, C, D) => E < S): Layer[A & B & C & D, E, S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, S](f: (A, B, C, D) => E < S): Layer[E, Envs[A & B & C & D] & S] =
         apply {
             zip(Envs.get[A], Envs.get[B], Envs.get[C], Envs.get[D]).map { case (a, b, c, d) => f(a, b, c, d) }
         }

@@ -4,26 +4,27 @@ import kyo.*
 
 class layersTest extends KyoTest:
     "composition" - {
-        "a to b" in {
+        "a to b" in run {
             case class Food(calories: Int)
             case class Stomach(food: Food)
 
-            val foodLayer: Layer[Any, Food, Any]        = Layers(Food(100))
-            val stomachLayer: Layer[Food, Stomach, Any] = Layers.from(Stomach.apply)
-            val composed: Layer[Any, Stomach, Any]      = foodLayer to stomachLayer
+            val foodLayer    = Layers(IOs(Food(100)))
+            val stomachLayer = Layers.from(Stomach.apply)
+            val composed     = foodLayer to stomachLayer
 
-            val env = composed.run.pure
-            assert(env.get[Stomach].food.calories == 100)
+            composed.run.map { env =>
+                assert(env.get[Stomach].food.calories == 100)
+            }
         }
 
         "a and b" in {
             case class Water(liters: Int)
             case class Fire(heat: Int)
 
-            val waterLayer: Layer[Any, Water, Any] = Layers(Water(2))
-            val fireLayer: Layer[Any, Fire, Any]   = Layers(Fire(500))
+            val waterLayer = Layers(Water(2))
+            val fireLayer  = Layers(Fire(500))
 
-            val combinedLayer: Layer[Any, Water & Fire, Any] = waterLayer and fireLayer
+            val combinedLayer = waterLayer and fireLayer
 
             val env = combinedLayer.run.pure
             assert(env.get[Water].liters == 2)
@@ -36,11 +37,11 @@ class layersTest extends KyoTest:
             case class Shark(belly: Guppy)
             case class MegaShark(belly: Shark)
 
-            val guppyLayer: Layer[Any, Guppy, Any]           = Layers(Guppy("Tiny Guppy"))
-            val sharkLayer: Layer[Guppy, Shark, Any]         = Layers.from(g => Shark(g))
-            val megaSharkLayer: Layer[Shark, MegaShark, Any] = Layers.from(s => MegaShark(s))
+            val guppyLayer     = Layers(Guppy("Tiny Guppy"))
+            val sharkLayer     = Layers.from(g => Shark(g))
+            val megaSharkLayer = Layers.from(s => MegaShark(s))
 
-            val combinedLayer: Layer[Any, Guppy & Shark & MegaShark, Any] = guppyLayer using sharkLayer using megaSharkLayer
+            val combinedLayer = guppyLayer using sharkLayer using megaSharkLayer
 
             val env = combinedLayer.run.pure
             assert(env.get[Guppy].name == "Tiny Guppy")
@@ -57,30 +58,30 @@ class layersTest extends KyoTest:
                     override def result: String = "First"
             }
 
-            val second: Layer[Value, Value, Any] = Layers {
+            val second = Layers {
                 for
                     value <- Envs.get[Value]
                 yield new Value:
                     override def result: String = value.result + " Second"
             }
 
-            val third: Layer[Value, Value, Any] = Layers {
+            val third = Layers {
                 for
                     value <- Envs.get[Value]
                 yield new Value:
                     override def result: String = value.result + " Third"
             }
 
-            val all: Layer[Any, Value, Any] = first to second to third
+            val all = first to second to third
             assert(all.run.pure.get[Value].result == "First Second Third")
 
-            val firstThird: Layer[Any, Value, Any] = first to third
+            val firstThird = first to third
             assert(firstThird.run.pure.get[Value].result == "First Third")
 
-            val firstThirdSecond: Layer[Any, Value, Any] = first to third to second
+            val firstThirdSecond = first to third to second
             assert(firstThirdSecond.run.pure.get[Value].result == "First Third Second")
 
-            val withRepeats: Layer[Any, Value, Any] = first to second to second to second to third to third
+            val withRepeats = first to second to second to second to third to third
             assert(withRepeats.run.pure.get[Value].result == "First Second Third")
         }
     }
@@ -93,7 +94,7 @@ class layersTest extends KyoTest:
 
             var sourceInitializationCount = 0
 
-            val magicSourceLayer: Layer[Any, MagicSource, IOs] = Layers {
+            val magicSourceLayer = Layers {
                 IOs { sourceInitializationCount += 1 }.map { _ => MagicSource("Fireball") }
             }
 
