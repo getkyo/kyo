@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.*
 import kyo.internal.BaseKyoTest
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec

@@ -1,6 +1,5 @@
 package kyo
 
-import java.nio.charset.StandardCharsets
 import java.nio.file.Files as JFiles
 import java.nio.file.Paths
 import kyo.*

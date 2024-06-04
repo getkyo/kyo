@@ -2,7 +2,6 @@ package kyo
 
 import java.io.*
 import java.nio.charset.StandardCharsets
-import java.nio.file.Path
 import kyo.*
 
 class osTest extends KyoTest:
@@ -21,12 +20,12 @@ class osTest extends KyoTest:
         }
     }
     "piped commands" in run {
-        val c = ProcessCommand("echo", "-n", "some string") andThen ProcessCommand("cat")
+        val c = ProcessCommand("echo", "-n", "some string").andThen(ProcessCommand("cat"))
         assert(IOs.run(c.text).pure == "some string")
     }
     "piped commands with stream stdin" in run {
         val stream = new ByteArrayInputStream("2\n1".getBytes(StandardCharsets.UTF_8))
-        val c0     = ProcessCommand("cat") andThen ProcessCommand("sort")
+        val c0     = ProcessCommand("cat").andThen(ProcessCommand("sort"))
         val c      = c0.stdin(ProcessInput.Stream(stream))
         assert(IOs.run(c.text).pure == "1\n2\n")
     }

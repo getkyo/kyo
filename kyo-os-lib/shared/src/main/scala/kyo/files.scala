@@ -329,7 +329,7 @@ class Files(val path: List[String]):
                     override def postVisitDirectory(path: JPath, ioException: IOException): FileVisitResult =
                         JFiles.delete(path)
                         FileVisitResult.CONTINUE
-                JFiles.walkFileTree(path, visitor)
+                discard(JFiles.walkFileTree(path, visitor))
             end if
             ()
         }
