@@ -26,7 +26,7 @@ class layersTest extends KyoTest:
 
             val combinedLayer = waterLayer and fireLayer
 
-            val env = combinedLayer.run.pure
+            val env = IOs.run(combinedLayer.run).pure
             assert(env.get[Water].liters == 2)
             assert(env.get[Fire].heat == 500)
 
@@ -43,7 +43,7 @@ class layersTest extends KyoTest:
 
             val combinedLayer = guppyLayer using sharkLayer using megaSharkLayer
 
-            val env = combinedLayer.run.pure
+            val env = IOs.run(combinedLayer.run).pure
             assert(env.get[Guppy].name == "Tiny Guppy")
             assert(env.get[Shark].belly.name == "Tiny Guppy")
             assert(env.get[MegaShark].belly.belly.name == "Tiny Guppy")
@@ -73,16 +73,16 @@ class layersTest extends KyoTest:
             }
 
             val all = first to second to third
-            assert(all.run.pure.get[Value].result == "First Second Third")
+            assert(IOs.run(all.run).pure.get[Value].result == "First Second Third")
 
             val firstThird = first to third
-            assert(firstThird.run.pure.get[Value].result == "First Third")
+            assert(IOs.run(firstThird.run).pure.get[Value].result == "First Third")
 
             val firstThirdSecond = first to third to second
-            assert(firstThirdSecond.run.pure.get[Value].result == "First Third Second")
+            assert(IOs.run(firstThirdSecond.run).pure.get[Value].result == "First Third Second")
 
             val withRepeats = first to second to second to second to third to third
-            assert(withRepeats.run.pure.get[Value].result == "First Second Third")
+            assert(IOs.run(withRepeats.run).pure.get[Value].result == "First Second Third")
         }
     }
 

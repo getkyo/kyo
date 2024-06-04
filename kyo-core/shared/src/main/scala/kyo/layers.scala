@@ -1,6 +1,7 @@
 package kyo
 
 import Layers.internal.*
+import java.util.concurrent.ConcurrentHashMap as JConcurrentHashMap
 import kyo.core.*
 import scala.annotation.targetName
 
@@ -11,13 +12,10 @@ sealed trait Layer[+Out, -S]:
     infix def and[Out2, S2](that: Layer[Out2, S2]): Layer[Out & Out2, S & S2]                    = And(self, that)
     infix def using[Out2, S2, In2](that: Layer[Out2, Envs[In2] & S2]): Layer[Out & Out2, S & S2] = self and (self to that)
 
-    private[kyo] def doRun(
-        memoMap: scala.collection.mutable.Map[Layer[?, ?], Any] = scala.collection.mutable.Map.empty[Layer[?, ?], Any]
-    ): TypeMap[Out] < S =
-        type Expected = TypeMap[Out] < S
+    private[kyo] def doRun(memoMap: JConcurrentHashMap[Layer[?, ?], Any] = JConcurrentHashMap()): TypeMap[Out] < (S & IOs) =
+        type Expected = TypeMap[Out] < (S & IOs)
         memoMap.get(self) match
-            case Some(result) => result.asInstanceOf[Expected]
-            case None =>
+            case nullable if isNull(nullable) =>
                 self match
                     case And(lhs, rhs) =>
                         {
@@ -36,10 +34,9 @@ sealed trait Layer[+Out, -S]:
                         }.asInstanceOf[Expected]
 
                     case FromKyo(kyo) =>
-                        kyo().map { result =>
-                            memoMap += (self -> result)
-                            result
-                        }.asInstanceOf[Expected]
+                        kyo().map { result => IOs(memoMap.compute(self, { (_, _) => result })).map(_ => result) }.asInstanceOf[Expected]
+
+            case result => result.asInstanceOf[Expected]
         end match
     end doRun
 
@@ -49,11 +46,11 @@ object Layer:
     import Envs.HasEnvs
 
     extension [In, Out, S](layer: Layer[Out, Envs[In] & S])
-        def run[In1, R](using HasEnvs[In1, In] { type Remainder = R }): TypeMap[Out] < (S & R) =
-            layer.doRun().asInstanceOf[TypeMap[Out] < (S & R)]
+        def run[In1, R](using HasEnvs[In1, In] { type Remainder = R }): TypeMap[Out] < (S & R & IOs) =
+            layer.doRun().asInstanceOf
 end Layer
 
-object Layers extends KyoApp:
+object Layers:
     private[kyo] object internal:
         case class And[Out1, Out2, S1, S2](lhs: Layer[Out1, S1], rhs: Layer[Out2, S2]) extends Layer[Out1 & Out2, S1 & S2]
         case class To[Out1, Out2, S1, S2](lhs: Layer[?, ?], rhs: Layer[?, ?])          extends Layer[Out1 & Out2, S1 & S2]
