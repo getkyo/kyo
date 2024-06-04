@@ -298,6 +298,17 @@ lazy val `kyo-zio` =
             `js-settings`
         )
 
+lazy val `kyo-combinators` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-combinators"))
+        .dependsOn(`kyo-core` % "compile->compile;test->test")
+        .settings(
+            `kyo-settings`,
+        )
+        .jsSettings(`js-settings`)
+
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)

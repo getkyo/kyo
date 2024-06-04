@@ -21,6 +21,7 @@ Kyo is available on Maven Central in multiple modules:
 | -------------- | ------- | -------- | -------------------------------- |
 | kyo-core       | ✅       | ✅        | Core and concurrent effects      |
 | kyo-direct     | ✅       | ✅        | Direct syntax support            |
+| kyo-combinators| ✅       | ✅        | ZIO-like effect composition      |
 | kyo-sttp       | ✅       | ✅        | Sttp HTTP Client                 |
 | kyo-tapir      | ✅       |          | Tapir HTTP Server                |
 | kyo-caliban    | ✅       |          | Caliban GraphQL Server           |
@@ -32,6 +33,7 @@ For Scala 3:
 ```scala 
 libraryDependencies += "io.getkyo" %% "kyo-core" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-direct" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-combinators" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-cache" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-stats-otel" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-sttp" % "<version>"
@@ -39,11 +41,12 @@ libraryDependencies += "io.getkyo" %% "kyo-tapir" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-caliban" % "<version>"
 ```
 
-For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, and `kyo-sttp`):
+For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, `kyo-combinators`, and `kyo-sttp`):
 
 ```scala 
 libraryDependencies += "io.getkyo" %%% "kyo-core" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-direct" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-combinators" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-sttp" % "<version>"
 ```
 
@@ -2371,6 +2374,96 @@ val a: Int < Options =
 //   Method doesn't accept nested Kyo computations.
 //   Detected: 'scala.Int < kyo.options.Options < kyo.concurrent.fibers.Fibers'. Consider using 'flatten' to resolve. 
 //   Possible pending effects mismatch: Expected 'kyo.concurrent.fibers.Fibers', found 'kyo.options.Options'.
+```
+
+## ZIO-like Combinators
+
+For ZIO users, Kyo's core API can be frustrating for three reasons:
+
+1. It is minimal by design.
+
+While its uncluttered namespaces make it more approachable for beginners, users addicted to ZIO's powerful and intuitive combinators may find it unwieldy and possibly not worth the effort.
+
+2. Effects are handled by functions that take effects as arguments, rather than by methods on effects.
+
+ZIO users are used to having a large menu of combinators on `ZIO` values that can be chained together to manipulate effects fluently. `kyo-core`, by contrast, requires nesting effects within method calls, inverting the order in which users handle effects and requiring them either to create deeply nested expressions or to break expressions up into many intermediate expressions.
+
+3. Factory methods are distributed among different objects
+
+Being more modular that ZIO, Kyo segregates its effect types more cleanly, placing its effect constructors in the companion objects to their corresponding types. This is not a problem given the minimal API that Kyo offers, but ZIO users will miss typing `ZIO.` and seeing a rich menu of factory methods pop up on their IDE.
+
+`kyo-combinators` alleviates these frustrations by providing:
+1. Factory methods on the `Kyo` object, styled after those found on `ZIO`, for many of the core Kyo effect types.
+2. Extension methods on Kyo effects modeled on ZIO combinators.
+
+Generally speaking, the names of `kyo-combinators` methods are the same as the corresponding methods in ZIO. When this is not possible or doesn't make sense, `kyo-combinators` tries to keep close to ZIO conventions.
+
+### Simple example
+
+```scala 3
+import kyo.*
+import scala.concurrent.duration.*
+
+trait HelloService:
+	def sayHelloTo(saluee: String): Unit < (IOs & Aborts[Throwable])
+
+object HelloService:
+    object Live extends HelloService:
+        override def sayHelloTo(saluee: String): Unit < (IOs & Aborts[Throwable]) =
+            Kyo.suspendAttempt {                  // Adds IOs & Aborts[Throwable] effect
+                println(s"Hello $saluee!")
+			}
+
+val keepTicking: Nothing < (Consoles & Fibers) =
+	(Consoles.print(".") *> Kyo.sleep(1.second)).forever
+
+val effect: Unit < (Consoles & Fibers & Resources & Aborts[Throwable] & Envs[NameService]) = for {
+    nameService <- Kyo.service[NameService]       // Adds Envs[NameService] effect
+    _           <- keepTicking.forkScoped         // Adds Consoles, Fibers, and Resources effects
+    saluee      <- Consoles.readln                // Uses Consoles effect
+    _           <- Kyo.sleep(2.seconds)           // Uses Fibers (semantic blocking)
+    _           <- nameService.sayHelloTo(saluee) // Adds Aborts[Throwable] effect
+} yield ()
+
+// There are no combinators for handling IOs or blocking Fibers, since this should
+// be done at the edge of the program
+IOs.run {                                                 // Handles IOs
+    Fibers.runAndBlock(Duration.Inf) {                    // Handles Fibers
+		Kyo.scoped {                                      // Handles Resources
+            effect
+              .provideAs[HelloService](HelloService.Live) // Handles Envs[HelloService]
+              .catchAborts((thr: Throwable) => {          // Handles Aborts[Throwable]
+				  Kyo.debug(s"Failed printing to console: ${throwable}")
+              })
+              .provideDefaultConsole                      // Handles Consoles
+        }
+    }
+}
+```
+
+### Failure conversions
+
+One notable departure from the ZIO API worth calling out is a set of combinators for converting between failure effects. Whereas ZIO has a single channel for describing errors, Kyo has at least three different effect types that can describe failure in the basic sense of "short-circuiting": `Aborts`, `Options`, and `Choices` (an empty `Seq` being equivalent to a short-circuit). It's useful to be able to move between these effects easily, so `kyo-combinators` provides a number of extension methods, usually in the form of `def effect1ToEffect2`.
+
+Some examples:
+
+```scala 3
+val abortsEffect: Int < Aborts[String] = ???
+
+// Converts failures to Options.empty
+val optionsEffect: Int < Options = abortsEffect.abortsToOptions
+
+// Converts option to a single "choice" (or Seq)
+val choicesEffect: Int < Choices = optionsEffect.optionsToChoices
+
+// Fails with Nil#head exception if empty and succeeds with Seq.head if non-empty
+val newAbortsEffect: Int < Aborts[Throwable] = choicesEffect.choicesToThrowable
+
+// Throws a throwable Aborts failure (will actually throw unless suspended)
+val unsafeEffect: Int < Any = newAbortsEffect.implicitAborts
+
+// Catch any suspended throws
+val safeEffect: Int < Aborts[Throwable] = unsafeEffect.explicitAborts
 ```
 
 ## Acknowledgements
