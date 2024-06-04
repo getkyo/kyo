@@ -7,7 +7,7 @@ import java.nio.channels.FileChannel.MapMode.READ_WRITE
 import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
 import java.time.Instant
-import kyo.*
+import kyo.{Result as _, *}
 import kyo.examples.ledger.*
 import sun.misc.Unsafe
 
