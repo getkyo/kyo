@@ -4,7 +4,6 @@ import io.grpc.stub.{ServerCalls, StreamObserver}
 import io.grpc.*
 import io.grpc.examples.helloworld.helloworld.Greeter
 import io.grpc.examples.helloworld.helloworld.GreeterGrpc.{METHOD_SAY_HELLO, SERVICE}
-// TODO: Why does it double up on the helloworld package name?
 import io.grpc.examples.helloworld.helloworld.{HelloReply, HelloRequest}
 import kyo.grpc.*
 

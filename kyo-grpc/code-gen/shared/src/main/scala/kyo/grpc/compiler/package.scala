@@ -12,11 +12,29 @@ package object compiler {
         def addPackage(name: String): FunctionalPrinter =
             fp.add(s"package $name")
 
-        def addObject(name: String)(body: PrinterEndo): FunctionalPrinter =
-            addBlock(s"object $name ")(body)
+        def addObject(name: String, parents: Seq[String] = Seq.empty)(body: PrinterEndo): FunctionalPrinter =
+            fp.add(s"object $name")
+                .addExtends(parents)
+                .appendBlock(body)
 
-        def addTrait(name: String)(body: PrinterEndo): FunctionalPrinter =
-            addBlock(s"trait $name ")(body)
+        def addTrait(name: String, parents: Seq[String] = Seq.empty)(body: PrinterEndo): FunctionalPrinter =
+            fp.add(s"trait $name")
+                .addExtends(parents)
+                .appendBlock(body)
+
+        def addExtends(parents: Seq[String]): FunctionalPrinter =
+            parents.headOption match {
+                case Some(head) =>
+                    fp.indented {
+                      _.add(s"extends $head")
+                          .indented {
+                              parents.tail.foldLeft(_) {
+                                  (fp, parent) => fp.add(s"with $parent")
+                              }
+                          }
+                    }
+                case None => fp
+            }
 
         def addMethod(name: String, parameters: Seq[(String, String)], returnType: String)(body: PrinterEndo): FunctionalPrinter = {
             fp.add(s"def $name(")
@@ -47,5 +65,17 @@ package object compiler {
             fp.add(s"$prefix{")
                 .indented(body)
                 .add("}")
+
+        def appendBlock(body: PrinterEndo): FunctionalPrinter = {
+            append(" {")
+                .indented(body)
+                .add("}")
+        }
+
+        def append(s: String): FunctionalPrinter = {
+            val lastIndex = fp.content.size - 1
+            if (lastIndex > 0) fp.copy(content = fp.content.updated(lastIndex, fp.content(lastIndex) + s))
+            else fp.add(s)
+        }
     }
 }

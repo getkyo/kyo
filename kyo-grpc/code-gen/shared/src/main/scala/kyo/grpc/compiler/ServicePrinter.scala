@@ -25,18 +25,18 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             .build()
     }
 
-    private def content: String = {
+    private def content: String =
         new FunctionalPrinter()
             .addPackage(scalaPackage.fullName)
             .newline
             .call(scalapbServicePrinter.generateScalaDoc(service))
-            .addTrait(name)(_.print(service.getMethods.asScala) { (fp, md) => printMethod(fp, md) })
+            .addTrait(name, Seq(Types.abstractService))(_.print(service.getMethods.asScala) { (fp, md) => printMethod(fp, md) })
             .result()
-    }
 
     private def printMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
         def requestParameter          = "request"          -> method.inputType.scalaType
         def responseObserverParameter = "responseObserver" -> Types.streamObserver(method.outputType.scalaType)
+        // TODO: Only unary is done properly.
         val parameters = method.streamType match {
             case StreamType.Unary           => Seq(requestParameter)
             case StreamType.ClientStreaming => Seq(responseObserverParameter)

@@ -12,6 +12,8 @@ object Types {
 
     def pendingGrpcResponses(t: String) = s"_root_.kyo.<[$t, $grpcResponses]"
 
+    val abstractService = "_root_.scalapb.grpc.AbstractService"
+
     def streamObserver(v: String) = s"_root_.io.grpc.stub.StreamObserver[$v]"
 
 }
