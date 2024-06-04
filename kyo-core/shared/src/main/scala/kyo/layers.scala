@@ -34,7 +34,10 @@ sealed trait Layer[+Out, -S]:
                         }.asInstanceOf[Expected]
 
                     case FromKyo(kyo) =>
-                        kyo().map { result => IOs(memoMap.compute(self, { (_, _) => result })).map(_ => result) }.asInstanceOf[Expected]
+                        kyo().map( result => IOs {
+                            memoMap.putIfAbsent(self, result)
+                            result
+                        }).asInstanceOf[Expected]
 
             case result => result.asInstanceOf[Expected]
         end match
