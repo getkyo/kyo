@@ -97,9 +97,7 @@ extension (kyoObject: Kyo.type)
         sequence.flatMap(seq => Choices.get(seq))
 
     def fromTry[A, S](_try: => scala.util.Try[A] < S): A < (S & Aborts[Throwable]) =
-        _try.map:
-            case Success(a) => a
-            case Failure(e) => Aborts.fail[Throwable](e)
+        _try.map(Aborts.get)
 
     inline def logInfo[S](message: => String < S): Unit < (S & IOs) =
         message.map(m => Logs.info(m))
