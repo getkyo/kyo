@@ -2,6 +2,7 @@ package kyo
 
 import io.grpc.stub.{ServerCalls, StreamObserver}
 import io.grpc.*
+import io.grpc.examples.helloworld.helloworld.Greeter
 import io.grpc.examples.helloworld.helloworld.GreeterGrpc.{METHOD_SAY_HELLO, SERVICE}
 // TODO: Why does it double up on the helloworld package name?
 import io.grpc.examples.helloworld.helloworld.{HelloReply, HelloRequest}
@@ -9,10 +10,7 @@ import kyo.grpc.*
 
 import scala.util.Try
 
-trait KyoGreeter:
-  def sayHello(request: HelloRequest): HelloReply < GrpcResponses
-
-object GreeterService extends KyoGreeter:
+object GreeterService extends Greeter:
   override def sayHello(request: HelloRequest): HelloReply < GrpcResponses =
     for {
       _ <- Consoles.run(Consoles.println(s"Got request: $request"))
@@ -20,7 +18,7 @@ object GreeterService extends KyoGreeter:
 
 object HelloWorldServer extends KyoApp:
 
-  private def buildGreeterService(serviceImpl: KyoGreeter): ServerServiceDefinition =
+  private def buildGreeterService(serviceImpl: Greeter): ServerServiceDefinition =
     ServerServiceDefinition.builder(SERVICE)
       .addMethod(
         METHOD_SAY_HELLO,
