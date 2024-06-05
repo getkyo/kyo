@@ -18,7 +18,7 @@ object Maybe:
                 case v: DefinedEmpty => v.nest
                 case v               => v
 
-    def fromScala[T](opt: Option[T]): Maybe[T] =
+    def fromOption[T](opt: Option[T]): Maybe[T] =
         opt match
             case Some(v) => Defined(v)
             case None    => Empty
@@ -35,12 +35,12 @@ object Maybe:
         def apply[T](v: T): Defined[T] =
             v match
                 case v: DefinedEmpty => v.nest
-                case v: Empty        => DefinedEmpty()
+                case v: Empty        => DefinedEmpty.one
                 case v               => v
 
         // TODO avoid allocation
         def unapply[T](opt: Maybe[T]): Option[T] =
-            opt.toScala
+            opt.toOption
     end Defined
 
     sealed abstract class Empty
@@ -48,7 +48,7 @@ object Maybe:
 
     extension [T](self: Maybe[T])
 
-        inline def toScala: Option[T] =
+        inline def toOption: Option[T] =
             if isEmpty then None
             else Some(get)
 
@@ -94,7 +94,7 @@ object Maybe:
 
         // TODO compilation failure if inlined
         def contains[U](elem: U)(using CanEqual[T, U]): Boolean =
-            !isEmpty && self.get == elem
+            !isEmpty && get == elem
 
         inline def exists(inline f: T => Boolean): Boolean =
             !isEmpty && f(get)
@@ -149,7 +149,8 @@ object Maybe:
 
         object DefinedEmpty:
             val cache = (0 until 100).map(new DefinedEmpty(_)).toArray
-            def apply(depth: Int = 1): DefinedEmpty =
+            val one   = DefinedEmpty(1)
+            def apply(depth: Int): DefinedEmpty =
                 if depth < cache.length then
                     cache(depth)
                 else
