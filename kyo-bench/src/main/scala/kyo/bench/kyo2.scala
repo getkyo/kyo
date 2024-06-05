@@ -21,10 +21,11 @@ object core:
         inline def apply[Command[_], E <: Effect[Command, E]](
             inline _tag: Tag[E],
             inline _command: Command[R]
-        ): R < E =
+        )(using inline _trace: Trace): R < E =
             <(new Suspend[Command, E, R, R, E]:
                 def tag         = _tag
                 def command     = _command
+                def trace       = _trace
                 def apply(v: R) = v
             )
 
@@ -32,10 +33,11 @@ object core:
             inline _tag: Tag[E],
             inline _command: Command[T],
             inline _cont: T => R < S
-        ): R < (E & S) =
+        )(using inline _trace: Trace): R < (E & S) =
             <(new Suspend[Command, E, T, R, S]:
                 def tag         = _tag
                 def command     = _command
+                def trace       = _trace
                 def apply(v: T) = _cont(v)
             )
     end SuspendDsl
@@ -49,7 +51,7 @@ object core:
             inline v: T < (E & S)
         )(
             inline handle: (Command[Any], Any => T < S) => T < (E & S & S2)
-        ): T < (S & S2) =
+        )(using inline _trace: Trace): T < (S & S2) =
             def handleLoop(v: T < (E & S & S2)): T < (S & S2) =
                 v match
                     case <(kyo: Suspend[Command, E, Any, T, S] @unchecked) if kyo.tag =:= tag =>
@@ -58,6 +60,7 @@ object core:
                         <(new Suspend[MX, EX, Any, T, S & S2]:
                             val tag     = kyo.tag
                             val command = kyo.command
+                            def trace   = _trace
                             def apply(v: Any) =
                                 handleLoop(kyo(v))
                         )
@@ -73,7 +76,7 @@ object core:
         )(
             inline handle: (Command[Any], State, Any => T < S) => (State, T < (E & S)) < S2,
             inline done: (State, T) => R = (_: State, v: T) => v
-        ): R < (S & S2) =
+        )(using inline _trace: Trace): R < (S & S2) =
             def handleStateLoop(st: State, v: T < (E & S & S2)): R < (S & S2) =
                 v match
                     case <(kyo: Suspend[Command, E, Any, T, S] @unchecked) if kyo.tag =:= tag =>
@@ -84,6 +87,7 @@ object core:
                         <(new Suspend[MX, EX, Any, R, S & S2]:
                             val tag     = kyo.tag
                             def command = kyo.command
+                            def trace   = _trace
                             def apply(v: Any) =
                                 handleStateLoop(st, kyo(v))
                         )
@@ -96,13 +100,16 @@ object core:
 
     final case class <[+T, -S](private val v: T | Kyo[T, S]) extends AnyVal:
 
-        inline def map[U, S2](inline f: T => U < S2): U < (S & S2) =
+        inline def map[U, S2](inline f: T => U < S2)(
+            using inline _trace: Trace
+        ): U < (S & S2) =
             def mapLoop(v: T < S): U < (S & S2) =
                 v match
                     case <(kyo: Suspend[MX, EX, Any, T, S] @unchecked) =>
                         <(new Suspend[MX, EX, Any, U, S & S2]:
                             val tag     = kyo.tag
                             val command = kyo.command
+                            def trace   = _trace
                             override def apply(v: Any): U < (S & S2) =
                                 mapLoop(kyo(v))
                         )
@@ -111,10 +118,16 @@ object core:
             mapLoop(this)
         end map
 
-        inline def flatMap[U, S2](inline f: T => U < S2): U < (S & S2) =
+        inline def flatMap[U, S2](inline f: T => U < S2)(
+            using inline trace: Trace
+        ): U < (S & S2) =
             map(f)
 
-        inline def andThen[U, S2](inline f: => U < S2)(using T => Unit): U < (S & S2) =
+        inline def andThen[U, S2](inline f: => U < S2)(
+            using
+            inline ev: T => Unit,
+            inline trace: Trace
+        ): U < (S & S2) =
             map(_ => f)
 
         inline def pure: T =
@@ -140,6 +153,7 @@ object core:
 
             def command: Command[T]
             def tag: Tag[E]
+            def trace: Trace
 
             def apply(v: T): U < S
 
@@ -159,7 +173,11 @@ class IO extends Effect[Const[Unit], IO]
 
 object IO:
 
-    inline def apply[V](inline f: => V)(using tag: Tag[IO]): V < IO =
+    inline def apply[V](inline f: => V)(
+        using
+        inline tag: Tag[IO],
+        inline trace: Trace
+    ): V < IO =
         suspend[V](tag, (), _ => f)
 
     def run[R, T, S](v: T < (IO & S))(using tag: Tag[IO]): T < S =
@@ -174,12 +192,21 @@ class Env[R] extends Effect[Const[Unit], Env[R]]
 
 object Env:
 
-    inline def get[R](using inline tag: Tag[Env[R]]): R < Env[R] =
+    inline def get[R](
+        using
+        inline tag: Tag[Env[R]],
+        inline trace: Trace
+    ): R < Env[R] =
         suspend[R](tag, ())
 
     class UseDsl[R](ign: Unit) extends AnyVal:
-        def apply[T, S](f: R => T < S)(using tag: Tag[Env[R]]): T < (Env[R] & S) =
+        inline def apply[T, S](inline f: R => T < S)(
+            using
+            inline tag: Tag[Env[R]],
+            inline trace: Trace
+        ): T < (Env[R] & S) =
             suspend[T](tag, (), f)
+    end UseDsl
 
     def use[R]: UseDsl[R] = UseDsl(())
 
@@ -195,14 +222,26 @@ class Abort[E] extends Effect[Const[Left[E, Nothing]], Abort[E]]
 
 object Abort:
 
-    inline def abort[E](inline value: E)(using inline tag: Tag[Abort[E]]): Nothing < Abort[E] =
+    inline def abort[E](inline value: E)(
+        using
+        inline tag: Tag[Abort[E]],
+        inline trace: Trace
+    ): Nothing < Abort[E] =
         suspend[Nothing](tag, Left(value))
 
-    def when[E](b: Boolean)(value: E)(using Tag[Abort[E]]): Unit < Abort[E] =
+    inline def when[E](b: Boolean)(inline value: E)(
+        using
+        inline tag: Tag[Abort[E]],
+        inline trace: Trace
+    ): Unit < Abort[E] =
         if b then abort(value)
         else ()
 
-    def get[E, T](either: Either[E, T])(using Tag[Abort[E]]): T < Abort[E] =
+    inline def get[E, T](either: Either[E, T])(
+        using
+        inline tag: Tag[Abort[E]],
+        inline trace: Trace
+    ): T < Abort[E] =
         either match
             case Right(value) => value
             case Left(value)  => abort(value)
@@ -227,19 +266,36 @@ object Var:
 
     import internal.*
 
-    inline def get[V](using inline tag: Tag[Var[V]]): V < Var[V] =
+    inline def get[V](
+        using
+        inline tag: Tag[Var[V]],
+        inline trace: Trace
+    ): V < Var[V] =
         suspend[V](tag, Get)
 
     class UseDsl[V](ign: Unit) extends AnyVal:
-        inline def apply[T, S](inline f: V => T < S)(using inline tag: Tag[Var[V]]): T < (Var[V] & S) =
+        inline def apply[T, S](inline f: V => T < S)(
+            using
+            inline tag: Tag[Var[V]],
+            inline trace: Trace
+        ): T < (Var[V] & S) =
             suspend[T](tag, Get, f)
+    end UseDsl
 
     def use[V]: UseDsl[V] = UseDsl(())
 
-    inline def set[V](inline value: V)(using inline tag: Tag[Var[V]]): Unit < Var[V] =
+    inline def set[V](inline value: V)(
+        using
+        inline tag: Tag[Var[V]],
+        inline trace: Trace
+    ): Unit < Var[V] =
         suspend[Unit](tag, Set(value))
 
-    inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]]): Unit < Var[V] =
+    inline def update[V](inline f: V => V)(
+        using
+        inline tag: Tag[Var[V]],
+        inline trace: Trace
+    ): Unit < Var[V] =
         suspend[Unit](tag, v => f(v))
 
     def run[V, T, S](st: V)(v: T < (Var[V] & S))(using tag: Tag[Var[V]]): T < S =
@@ -266,7 +322,11 @@ end Var
 class Sum[V] extends Effect[Const[V], Sum[V]]
 
 object Sum:
-    inline def add[V](inline v: V)(using inline tag: Tag[Sum[V]]): Unit < Sum[V] =
+    inline def add[V](inline v: V)(
+        using
+        inline tag: Tag[Sum[V]],
+        inline trace: Trace
+    ): Unit < Sum[V] =
         suspend[Unit](tag, v)
 
     class RunDsl[V](ign: Unit) extends AnyVal:
@@ -283,13 +343,6 @@ end Sum
 ///////////
 // Loops //
 ///////////
-
-class tt:
-    def test =
-        Loops.transform(1) { i =>
-            Loops.done(i + 1)
-        }
-end tt
 
 object Loops:
 
@@ -312,7 +365,7 @@ object Loops:
         input: Input
     )(
         inline run: Input => Result[Input, Output] < S
-    )(using Trace): Output < S =
+    )(using inline trace: Trace): Output < S =
         def loop(input: Input): Output < S =
             run(input).map {
                 case r: Continue[Input] @unchecked =>
@@ -326,7 +379,7 @@ object Loops:
 
     inline def indexed[Output, S](
         inline run: Int => Result[Unit, Output] < S
-    )(using Trace): Output < S =
+    )(using inline trace: Trace): Output < S =
         def loop(idx: Int): Output < S =
             run(idx).map {
                 case next: Continue[Unit] @unchecked =>
