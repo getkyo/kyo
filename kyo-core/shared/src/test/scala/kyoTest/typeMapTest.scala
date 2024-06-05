@@ -72,11 +72,11 @@ class typeMapTest extends KyoTest:
 
         "empty" in {
             val e: TypeMap[Boolean] = TypeMap.empty.asInstanceOf[TypeMap[Boolean]]
-            test(e, "TypeMap()", "Tag[scala.Boolean]")
+            test(e, "TypeMap()", "scala.Boolean")
         }
         "non-empty" in {
             val e: TypeMap[String & Boolean] = TypeMap[Boolean](true).asInstanceOf[TypeMap[String & Boolean]]
-            test[String](e, """TypeMap(Tag[scala.Boolean] -> true)""", "Tag[java.lang.String]")
+            test[String](e, """TypeMap(scala.Boolean -> true)""", "java.lang.String")
         }
     }
 
@@ -173,13 +173,13 @@ class typeMapTest extends KyoTest:
             val t = TypeMap("str", true, 42, 'c').add(None).add(List[Any]()).add(Map('k' -> 'v'))
             val expected =
                 "TypeMap(" +
-                    "Tag[java.lang.String] -> str, " +
-                    "Tag[scala.collection.immutable.List] -> List(), " +
-                    "Tag[scala.Boolean] -> true, " +
-                    "Tag[scala.collection.immutable.Map] -> Map(k -> v), " +
-                    "Tag[scala.Int] -> 42, " +
-                    "Tag[scala.None$] -> None, " +
-                    "Tag[scala.Char] -> c" +
+                    "java.lang.String -> str, " +
+                    "scala.Boolean -> true, " +
+                    "scala.Char -> c, " +
+                    "scala.Int -> 42, " +
+                    "scala.None$ -> None, " +
+                    "scala.collection.immutable.List -> List(), " +
+                    "scala.collection.immutable.Map -> Map(k -> v)" +
                     ")"
             assert(t.show == expected)
         }

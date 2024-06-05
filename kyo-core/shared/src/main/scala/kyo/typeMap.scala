@@ -8,7 +8,7 @@ opaque type TypeMap[+A] = HashMap[Tag[Any], Any]
 extension [A](self: TypeMap[A])
 
     private inline def fatal[T](using t: Tag[T]): Nothing =
-        throw new RuntimeException(s"fatal: kyo.TypeMap of contents [${self.show}] missing value of type: [${t.show}].")
+        throw new RuntimeException(s"fatal: kyo.TypeMap of contents [${self.show}] missing value of type: [${t.showType}].")
 
     def get[B >: A](using t: Tag[B]): B =
         val b = self.getOrElse(t.erased, null)
@@ -38,7 +38,7 @@ extension [A](self: TypeMap[A])
     inline def size: Int        = self.size
     inline def isEmpty: Boolean = self.isEmpty
 
-    def show: String = self.map { case (tag, value) => s"${tag.show} -> $value" }.toList.sorted.mkString("TypeMap(", ", ", ")")
+    def show: String = self.map { case (tag, value) => s"${tag.showTpe} -> $value" }.toList.sorted.mkString("TypeMap(", ", ", ")")
 
     private[kyo] inline def tag: Intersection[?] = Intersection(self.keySet.toIndexedSeq)
 

@@ -19,17 +19,18 @@ object Tag:
 
     extension [T](t1: Tag[T])
         def erased: Tag[Any] = t1.asInstanceOf[Tag[Any]]
+        def showTpe: String =
+            val decoded = t1.drop(2).takeWhile(_ != ';')
+            fromCompact.getOrElse(decoded, decoded)
+    end extension
 
     extension [T](t1: Full[T])
 
-        def show: String =
+        def showType: String =
             t1 match
-                case t1: String =>
-                    val decoded = t1.drop(2).takeWhile(_ != ';')
-                    val s       = fromCompact.getOrElse(decoded, decoded)
-                    s"Tag[$s]"
-                case t1: Set[T] =>
-                    t1.show
+                case s: Tag[?] => s.showTpe
+                case s: Set[?] => s.showTpe
+        def show: String = s"Tag[${t1.showType}]"
 
         infix def <:<[U](t2: Full[U]): Boolean =
             t1 match
@@ -54,23 +55,19 @@ object Tag:
     end extension
 
     sealed trait Set[T] extends Any:
-        def show: String
         infix def <:<[U](t2: Full[U]): Boolean
         infix def =:=[U](t2: Full[U]): Boolean
         infix def =!=[U](t2: Full[U]): Boolean =
             !(this =:= t2)
         infix def >:>[U](t2: Full[U]): Boolean
         def erased: Set[Any] = this.asInstanceOf[Set[Any]]
+        def showTpe: String
     end Set
 
     object Set:
         inline given apply[T]: Set[T] = ${ setImpl[T] }
 
     case class Union[T](tags: Seq[Tag[Any]]) extends AnyVal with Set[T]:
-        def show: String =
-            val s = tags.map(_.show).mkString(" | ")
-            s"Tag.Union[$s]"
-
         infix def <:<[U](t2: Full[U]): Boolean =
             t2 match
                 case t2: Union[?] =>
@@ -92,6 +89,7 @@ object Tag:
                     t2.tags.forall(tag2 => tags.exists(tag2 =:= _))
                 case _ =>
                     tags.forall(t2 =:= _)
+        def showTpe: String = tags.map(_.showTpe).mkString(" | ")
     end Union
 
     object Union:
@@ -99,9 +97,6 @@ object Tag:
         inline given apply[T]: Union[T]            = ${ unionImpl[T] }
 
     case class Intersection[T](tags: Seq[Tag[Any]]) extends AnyVal with Set[T]:
-        def show: String =
-            val s = tags.map(_.show).mkString(" & ")
-            s"Tag.Intersection[$s]"
 
         infix def <:<[U](t2: Full[U]): Boolean =
             t2 match
@@ -124,6 +119,9 @@ object Tag:
                     t2.tags.forall(tag2 => tags.exists(tag2 =:= _))
                 case _ =>
                     tags.forall(_ =:= t2)
+
+        def showTpe: String =
+            tags.map(_.showTpe).mkString(" & ")
 
     end Intersection
 
