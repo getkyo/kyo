@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.IntEncoder
 import scala.annotation.switch
 import scala.annotation.tailrec
 import scala.collection.immutable
@@ -151,11 +152,11 @@ object Tag:
             checkSegment(subTag, superTag, subIdx, superIdx) && checkParams(subTag, superTag, subIdx, superIdx)
 
         def checkSegment(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
-            val superSize = decodeInt(superTag.charAt(superIdx))
+            val superSize = IntEncoder.decode(superTag.charAt(superIdx))
             @tailrec def loop(subIdx: Int): Boolean =
                 if subIdx >= subTag.length() || superIdx >= superTag.length() then false
                 else
-                    val subSize = decodeInt(subTag.charAt(subIdx))
+                    val subSize = IntEncoder.decode(subTag.charAt(subIdx))
                     (subSize == superSize && subTag.regionMatches(subIdx + 1, superTag, superIdx + 1, subSize)) ||
                     loop(subIdx + subSize + 3)
                 end if
@@ -273,20 +274,6 @@ object Tag:
             '{ Intersection.raw[T](${ tags(using q)(flatten) }) }
         end intersectionImpl
 
-        // Encodes ints using printable ASCII chars
-        val charsReserved  = immutable.Set('[', ']', '(', ')', ';', ',')
-        val charsPrintable = (' ' to '~').filter(!charsReserved.contains(_)).toArray
-
-        def encodeInt(i: Int)(using Quotes): Char =
-            import quotes.reflect.*
-            if i >= charsPrintable.length || i < 0 then
-                report.errorAndAbort(s"Encoded tag 'Int($i)' exceeds supported limit: " + charsPrintable.length)
-            charsPrintable(i)
-        end encodeInt
-
-        def decodeInt(c: Char): Int =
-            charsPrintable.indexOf(c)
-
         def encodeType(using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[String] =
             import quotes.reflect.*
 
@@ -307,8 +294,8 @@ object Tag:
                     val sym = tpe.typeSymbol
                     val path = tpe.dealias.baseClasses.map { sym =>
                         val name = toCompact.getOrElse(sym.fullName, sym.fullName)
-                        val size = encodeInt(name.length())
-                        val hash = encodeInt(Math.abs(name.hashCode()) % charsPrintable.length)
+                        val size = IntEncoder.encode(name.length())
+                        val hash = IntEncoder.encodeHash(name.hashCode())
                         s"$size$hash$name"
                     }.mkString(";") + ";"
                     val variances = sym.typeMembers.flatMap { v =>
