@@ -58,10 +58,10 @@ class MaybeTest extends KyoTest:
 
     "fold" - {
         "applies the empty function for Empty" in {
-            assert(Empty.fold(0, _ => 1) == 0)
+            assert(Empty.fold(0)(_ => 1) == 0)
         }
         "applies the non-empty function for Defined" in {
-            assert(Defined(1).fold(0, x => x + 1) == 2)
+            assert(Defined(1).fold(0)(x => x + 1) == 2)
         }
     }
 
