@@ -247,8 +247,8 @@ class MaybeTest extends KyoTest:
         }
 
         "fold should apply the non-empty function to the nested Maybe" in {
-            assert(Defined(Defined(1)).fold(Defined(0), x => x.map(_ + 1)) == Defined(2))
-            assert(Defined(Maybe.empty[Int]).fold(Defined(0), x => x.map(_ + 1)) == Empty)
+            assert(Defined(Defined(1)).fold(Defined(0))(x => x.map(_ + 1)) == Defined(2))
+            assert(Defined(Maybe.empty[Int]).fold(Defined(0))(x => x.map(_ + 1)) == Empty)
         }
 
         "flatMap should apply the function to the nested Maybe" in {

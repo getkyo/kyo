@@ -74,7 +74,7 @@ object Maybe:
         inline def getOrElse[B >: T](inline default: => B): B =
             if isEmpty then default else get
 
-        inline def fold[U](inline ifEmpty: => U, inline ifDefined: T => U): U =
+        inline def fold[U](inline ifEmpty: => U)(inline ifDefined: T => U): U =
             if isEmpty then ifEmpty else ifDefined(get)
 
         inline def map[U](inline f: T => U): Maybe[U] =
