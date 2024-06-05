@@ -1,7 +1,9 @@
 package kyo2
 
+import java.util.concurrent.atomic.AtomicReference
 import kyo.Chunk
 import kyo.Chunks
+import kyo.Maybe
 import kyo.Tag
 import kyo.internal.Trace
 import language.implicitConversions
@@ -42,7 +44,8 @@ object core:
             )
     end SuspendDsl
 
-    def suspend[R]: SuspendDsl[R] = SuspendDsl(())
+    // TODO Failures if effects don't explicitly specify `R`
+    inline def suspend[R]: SuspendDsl[R] = SuspendDsl(())
 
     object handle:
 
@@ -98,13 +101,21 @@ object core:
 
     end handle
 
-    final case class <[+T, -S](private val v: T | Kyo[T, S]) extends AnyVal:
+    final case class <[+T, -S](private val state: T | Kyo[T, S]) extends AnyVal:
+
+        inline def flatMap[U, S2](inline f: T => U < S2): U < (S & S2) =
+            map(f)
+
+        inline def andThen[U, S2](inline f: => U < S2)(
+            using inline ev: T => Unit
+        ): U < (S & S2) =
+            map(_ => f)
 
         inline def map[U, S2](inline f: T => U < S2)(
             using inline _trace: Trace
         ): U < (S & S2) =
-            def mapLoop(v: T < S): U < (S & S2) =
-                v match
+            def mapLoop(curr: T < S): U < (S & S2) =
+                curr match
                     case <(kyo: Suspend[MX, EX, Any, T, S] @unchecked) =>
                         <(new Suspend[MX, EX, Any, U, S & S2]:
                             val tag     = kyo.tag
@@ -118,24 +129,14 @@ object core:
             mapLoop(this)
         end map
 
-        inline def flatMap[U, S2](inline f: T => U < S2)(
-            using inline trace: Trace
-        ): U < (S & S2) =
-            map(f)
-
-        inline def andThen[U, S2](inline f: => U < S2)(
-            using
-            inline ev: T => Unit,
-            inline trace: Trace
-        ): U < (S & S2) =
-            map(_ => f)
-
         inline def pure: T =
-            v match
+            state match
                 case kyo: Suspend[?, ?, ?, ?, ?] =>
                     ???
                 case v =>
                     v.asInstanceOf[T]
+
+        override def toString() = s"Kyo($state)"
     end <
 
     object `<`:
@@ -150,13 +151,12 @@ object core:
 
         abstract class Suspend[Command[_], E <: Effect[Command, E], T, U, S]
             extends Kyo[U, S]:
-
             def command: Command[T]
             def tag: Tag[E]
             def trace: Trace
-
             def apply(v: T): U < S
 
+            override def toString() = s"Kyo(${tag.show},Command($command),${trace.show})"
         end Suspend
 
     end internal
@@ -173,14 +173,13 @@ class IO extends Effect[Const[Unit], IO]
 
 object IO:
 
-    inline def apply[V](inline f: => V)(
-        using
-        inline tag: Tag[IO],
-        inline trace: Trace
-    ): V < IO =
-        suspend[V](tag, (), _ => f)
+    inline def apply[T, S](inline f: => T < S)(using inline tag: Tag[IO]): T < (IO & S) =
+        suspend[T](tag, (), _ => f)
 
-    def run[R, T, S](v: T < (IO & S))(using tag: Tag[IO]): T < S =
+    inline def defer[T](inline f: => T)(using inline tag: Tag[IO]): T < IO =
+        suspend[T](tag, (), _ => f)
+
+    def run[R, T, S](v: T < (IO & S))(using tag: Tag[IO], trace: Trace): T < S =
         handle(tag, v)((_, cont) => cont(()))
 end IO
 
@@ -192,25 +191,19 @@ class Env[R] extends Effect[Const[Unit], Env[R]]
 
 object Env:
 
-    inline def get[R](
-        using
-        inline tag: Tag[Env[R]],
-        inline trace: Trace
-    ): R < Env[R] =
+    inline def get[R](using inline tag: Tag[Env[R]]): R < Env[R] =
         suspend[R](tag, ())
 
     class UseDsl[R](ign: Unit) extends AnyVal:
         inline def apply[T, S](inline f: R => T < S)(
-            using
-            inline tag: Tag[Env[R]],
-            inline trace: Trace
+            using inline tag: Tag[Env[R]]
         ): T < (Env[R] & S) =
             suspend[T](tag, (), f)
     end UseDsl
 
-    def use[R]: UseDsl[R] = UseDsl(())
+    inline def use[R]: UseDsl[R] = UseDsl(())
 
-    def run[R, T, S](e: R)(v: T < (Env[R] & S))(using tag: Tag[Env[R]]): T < S =
+    def run[R, T, S](e: R)(v: T < (Env[R] & S))(using tag: Tag[Env[R]], trace: Trace): T < S =
         handle(tag, v)((_, cont) => cont(e))
 end Env
 
@@ -223,37 +216,31 @@ class Abort[E] extends Effect[Const[Left[E, Nothing]], Abort[E]]
 object Abort:
 
     inline def abort[E](inline value: E)(
-        using
-        inline tag: Tag[Abort[E]],
-        inline trace: Trace
+        using inline tag: Tag[Abort[E]]
     ): Nothing < Abort[E] =
         suspend[Nothing](tag, Left(value))
 
     inline def when[E](b: Boolean)(inline value: E)(
-        using
-        inline tag: Tag[Abort[E]],
-        inline trace: Trace
+        using inline tag: Tag[Abort[E]]
     ): Unit < Abort[E] =
         if b then abort(value)
         else ()
 
     inline def get[E, T](either: Either[E, T])(
-        using
-        inline tag: Tag[Abort[E]],
-        inline trace: Trace
+        using inline tag: Tag[Abort[E]]
     ): T < Abort[E] =
         either match
             case Right(value) => value
             case Left(value)  => abort(value)
 
     class RunDsl[E](ign: Unit) extends AnyVal:
-        def apply[T, S](v: T < (Abort[E] & S))(using tag: Tag[Abort[E]]): Either[E, T] < S =
+        def apply[T, S](v: T < (Abort[E] & S))(using tag: Tag[Abort[E]], trace: Trace): Either[E, T] < S =
             handle(tag, v.map(Right(_): Either[E, T])) { (command, _) =>
                 command
             }
     end RunDsl
 
-    def run[E]: RunDsl[E] = RunDsl(())
+    inline def run[E]: RunDsl[E] = RunDsl(())
 end Abort
 
 /////////
@@ -266,39 +253,29 @@ object Var:
 
     import internal.*
 
-    inline def get[V](
-        using
-        inline tag: Tag[Var[V]],
-        inline trace: Trace
-    ): V < Var[V] =
+    inline def get[V](using inline tag: Tag[Var[V]]): V < Var[V] =
         suspend[V](tag, Get)
 
     class UseDsl[V](ign: Unit) extends AnyVal:
         inline def apply[T, S](inline f: V => T < S)(
-            using
-            inline tag: Tag[Var[V]],
-            inline trace: Trace
+            using inline tag: Tag[Var[V]]
         ): T < (Var[V] & S) =
             suspend[T](tag, Get, f)
     end UseDsl
 
-    def use[V]: UseDsl[V] = UseDsl(())
+    inline def use[V]: UseDsl[V] = UseDsl(())
 
     inline def set[V](inline value: V)(
-        using
-        inline tag: Tag[Var[V]],
-        inline trace: Trace
+        using inline tag: Tag[Var[V]]
     ): Unit < Var[V] =
         suspend[Unit](tag, Set(value))
 
     inline def update[V](inline f: V => V)(
-        using
-        inline tag: Tag[Var[V]],
-        inline trace: Trace
+        using inline tag: Tag[Var[V]]
     ): Unit < Var[V] =
         suspend[Unit](tag, v => f(v))
 
-    def run[V, T, S](st: V)(v: T < (Var[V] & S))(using tag: Tag[Var[V]]): T < S =
+    def run[V, T, S](st: V)(v: T < (Var[V] & S))(using tag: Tag[Var[V]], trace: Trace): T < S =
         handle.state(tag, st, v) { (command, state, cont) =>
             command match
                 case _: Get.type             => (state, cont(state))
@@ -322,15 +299,11 @@ end Var
 class Sum[V] extends Effect[Const[V], Sum[V]]
 
 object Sum:
-    inline def add[V](inline v: V)(
-        using
-        inline tag: Tag[Sum[V]],
-        inline trace: Trace
-    ): Unit < Sum[V] =
+    inline def add[V](inline v: V)(using inline tag: Tag[Sum[V]]): Unit < Sum[V] =
         suspend[Unit](tag, v)
 
     class RunDsl[V](ign: Unit) extends AnyVal:
-        def apply[T, S](v: T < (Sum[V] & S))(using tag: Tag[Sum[V]]): (Chunk[V], T) < S =
+        def apply[T, S](v: T < (Sum[V] & S))(using tag: Tag[Sum[V]], trace: Trace): (Chunk[V], T) < S =
             handle.state(tag, Chunks.init[V], v)(
                 handle = (command, state, cont) => (state.append(command), cont(())),
                 done = (state, result) => (state, result)
@@ -340,11 +313,11 @@ object Sum:
     def run[V >: Nothing]: RunDsl[V] = RunDsl(())
 end Sum
 
-///////////
-// Loops //
-///////////
+//////////
+// LOOP //
+//////////
 
-object Loops:
+object Loop:
 
     private case class Continue[Input](input: Input)
 
@@ -389,12 +362,13 @@ object Loops:
             }
         loop(0)
     end indexed
-end Loops
+end Loop
 
 //////////
 // SEQS //
 //////////
 
+// TODO What should we use here if we don't use plurals anymore?
 object Seqs:
 
     def foreach[T, U, S](seq: Seq[T])(f: T => Unit < S)(using Trace): Unit < S =
@@ -404,14 +378,14 @@ object Seqs:
             case size =>
                 seq match
                     case seq: IndexedSeq[T] =>
-                        Loops.indexed { idx =>
-                            if idx == size then Loops.done
-                            else f(seq(idx)).andThen(Loops.continue)
+                        Loop.indexed { idx =>
+                            if idx == size then Loop.done
+                            else f(seq(idx)).andThen(Loop.continue)
                         }
                     case seq: List[T] =>
-                        Loops.transform(seq) {
-                            case Nil          => Loops.done
-                            case head :: tail => f(head).andThen(Loops.continue(tail))
+                        Loop.transform(seq) {
+                            case Nil          => Loop.done
+                            case head :: tail => f(head).andThen(Loop.continue(tail))
                         }
                     case seq =>
                         ??? // Chunks.initSeq(seq).foreach(f)
@@ -449,7 +423,6 @@ object Stream:
 
         def get: T < (Emit[V] & S) = s.v
 
-        // It's great how much simpler these methods become!
         def take(n: Int): Stream[T, V, S] =
             Stream {
                 handle.state(tag, n, s.v) { (command, st, cont) =>
@@ -488,3 +461,94 @@ object Stream:
             )
     end extension
 end Stream
+
+//////////////////////
+// Nesting support! //
+//////////////////////
+
+object memoTest extends App:
+
+    def memoize[T](io: T < IO): T < IO < IO =
+        IO.defer {
+            val a = new AtomicReference[Maybe[T]](Maybe.Empty)
+            IO {
+                a.get() match
+                    case Maybe.Empty =>
+                        io.map { r =>
+                            a.compareAndSet(Maybe.Empty, Maybe.Defined(r))
+                            r
+                        }
+                    case Maybe.Defined(v) =>
+                        v
+            }
+        }
+
+    var calls = 0
+
+    val io =
+        for
+            memo <- memoize(IO { calls += 1; println("called"); calls })
+            a    <- memo
+            b    <- memo
+            c    <- memo
+        yield (a, b, c)
+
+    println(IO.run(io))
+    println(calls)
+end memoTest
+
+////////////////
+// FIESTA! 🕺 //
+////////////////
+
+object effectfulFiesta extends App:
+
+    case class Ingredient(name: String, quantity: Int)
+
+    def prepareIngredient(ingredient: Ingredient) =
+        for
+            _ <- Stream.emit(s"Adding ${ingredient.quantity} ${ingredient.name}(s)!")
+            _ <- IO(println(s"Chopping ${ingredient.name}..."))
+            _ <- Var.update[Int](_ + ingredient.quantity)
+            _ <- Sum.add(ingredient.quantity)
+            _ <- IO(println(s"${ingredient.name} added to the mix!"))
+        yield ()
+
+    def prepareFiestaMix(ingredients: List[Ingredient]) =
+        for
+            _     <- Stream.emit("Let's get this fiesta started!")
+            _     <- Seqs.foreach(ingredients)(prepareIngredient)
+            total <- Var.get[Int]
+            _     <- Stream.emit(s"Fiesta mix ready with $total ingredients!")
+            env   <- Env.get[String]
+            _     <- Abort.when(env != "fiesta")("Dude, this is a fiesta! 😤")
+        yield total
+
+    val ingredients = List(
+        Ingredient("tomato", 5),
+        Ingredient("avocado", 3),
+        Ingredient("lime", 2),
+        Ingredient("chili pepper", 1),
+        Ingredient("tortilla chip", 20)
+    )
+
+    val fiestaResult: Int < (Stream.Emit[String] & Var[Int] & Sum[Int] & IO & Env[String] & Abort[String]) =
+        for
+            _     <- Var.set(0)
+            total <- prepareFiestaMix(ingredients)
+            _     <- Abort.get(Right(()))
+            _     <- IO(println(s"Mix ready! Total ingredients: $total"))
+            _     <- IO(println("Fiesta time!!! 🕺"))
+        yield total
+
+    val fiestaMix: (Chunk[Int], (Seq[String], Int)) < (IO & Env[String] & Abort[String]) =
+        Sum.run[Int] {
+            Var.run(0) {
+                Stream.init(fiestaResult).runSeq
+            }
+        }
+
+    println(IO.run(Abort.run(Env.run("fiesta")(fiestaMix))).pure)
+    println(IO.run(Abort.run(Env.run("work")(fiestaMix))).pure)
+
+end effectfulFiesta
