@@ -8,7 +8,7 @@ opaque type TypeMap[+A] = HashMap[Tag[Any], Any]
 extension [A](self: TypeMap[A])
 
     private inline def fatal[T](using t: Tag[T]): Nothing =
-        throw new RuntimeException(s"fatal: kyo.TypeMap of contents [${self.show}] missing value of type: [${t.showType}].")
+        throw new RuntimeException(s"fatal: kyo.TypeMap of contents [${self.show}] missing value of type: [${t.showTpe}].")
 
     def get[B >: A](using t: Tag[B]): B =
         val b = self.getOrElse(t.erased, null)
