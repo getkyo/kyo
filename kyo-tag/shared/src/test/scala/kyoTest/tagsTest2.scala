@@ -6,7 +6,7 @@ import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.annotation.nowarn
 
-class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
+class tagsTest2 extends AsyncFreeSpec with NonImplicitAssertions:
 
     "union supertype" - {
         class A
@@ -624,4 +624,4 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
 //         }
 //     }
 
-end tagsTest
+end tagsTest2

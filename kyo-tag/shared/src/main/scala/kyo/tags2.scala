@@ -43,104 +43,57 @@ object Tag:
         def isSubtype(subTag: String, superTag: String): Boolean =
             checkType(subTag, superTag, 0, 0, false).isValid
 
-        // infix def <:<[U](t2: Full[U]): Boolean =
-        //     t1 match
-        //         case t1: String =>
-        //             t2 match
-        //                 case t2: String          => isSubtype(t1, t2)
-        //                 case t2: Union[?]        => t2.tags.exists(t1 <:< _)
-        //                 case t2: Intersection[?] => t2.tags.forall(_ <:< t1)
-        //         case t1: Union[?] =>
-        //             t2 match
-        //                 case t2: Union[?] =>
-        //                     t1.tags.forall(tag1 => t2.tags.exists(tag1 <:< _))
-        //                 case _ =>
-        //                     t1.tags.forall(_ <:< t2)
-        //         case t1: Intersection[?] =>
-        //             t2 match
-        //                 case t2: Intersection[?] =>
-        //                     t2.tags.forall(tag2 => t1.tags.exists(_ <:< tag2))
-        //                 case _ =>
-        //                     t1.tags.exists(_ <:< t2)
-
         def checkType(subTag: String, superTag: String, subIdx: Int, superIdx: Int, equality: Boolean): Position =
             val subKind   = subTag.charAt(subIdx)
             val superKind = superTag.charAt(superIdx)
 
-            if subKind == 'u' then
-                if superKind == 'u' then
-                    checkUnion(subTag, superTag, subIdx + 1, superIdx + 1)
-                else
-                    checkExists(subTag, superTag, subIdx + 1, superIdx, equality)
-            else if superKind == 'u' then
-                checkExists(superTag, subTag, superIdx + 1, subIdx, equality)
-            else if subKind == 'i' && superKind == 'i' then
-                // checkIntersection(subTag, superTag, subIdx + 1, superIdx + 1, equality)
-                ???
-            else if subKind == 'i' then
-                // checkExistsIntersection(subTag, superTag, subIdx + 1, superIdx, equality)
-                ???
-            else if superKind == 'i' then
-                // checkForallIntersection(subTag, superTag, subIdx, superIdx + 1, equality)
-                ???
-            else
-                checkSingle(subTag, superTag, subIdx + 1, superIdx + 1, equality)
-            end if
+            subKind match
+                case Kind.single =>
+                    superKind match
+                        case Kind.single       => checkSingle(subTag, superTag, subIdx + 1, superIdx + 1, equality)
+                        case Kind.union        => ??? // t2.tags.exists(t1 <:< _)
+                        case Kind.intersection => ??? // t2.tags.forall(_ <:< t1)
+                case Kind.union =>
+                    superKind match
+                        case Kind.union => ??? // t1.tags.forall(tag1 => t2.tags.exists(tag1 <:< _))
+                        case _          => ??? // t1.tags.forall(_ <:< t2)
+                case Kind.intersection =>
+                    superKind match
+                        case Kind.intersection => ??? // t2.tags.forall(tag2 => t1.tags.exists(_ <:< tag2))
+                        case _                 => ??? // t1.tags.exists(_ <:< t2)
+            end match
         end checkType
 
-        def checkUnion(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Position =
-            val subSize   = decodeInt(subTag.charAt(subIdx))
-            val superSize = decodeInt(superTag.charAt(superIdx))
+        // def checkExists(subTag: String, superTag: String, subIdx: Int, superIdx: Int, equality: Boolean): Position =
+        //     val subSize = IntEncoder.decode(subTag.charAt(subIdx))
+        //     @tailrec def loop(i: Int, subIdx: Int, superIdx: Int, found: Boolean): Position =
+        //         if i < subSize then
+        //             val nextPos = checkType(subTag, superTag, subIdx, superIdx, equality)
+        //             loop(i + 1, nextPos.subIdx, superIdx, found || nextPos.isValid)
+        //         else if found then Position(subIdx, superIdx)
+        //         else Position.invalid(subIdx, superIdx)
+        //     loop(0, subIdx + 1, superIdx, false)
+        // end checkExists
 
-            @tailrec def loop(i: Int, subIdx: Int, superIdx: Int, found: Boolean): Position =
-                if i < subSize then
-                    @tailrec def innerLoop(j: Int, superIdx: Int, found: Boolean): Position =
-                        if j < superSize then
-                            val nextPos = checkType(subTag, superTag, subIdx, superIdx, false)
-                            if nextPos.isValid then innerLoop(j + 1, nextPos.superIdx, true)
-                            else innerLoop(j + 1, superIdx, found)
-                        else if found then Position(subIdx + decodeInt(subTag.charAt(subIdx + 1)) + 2, superIdx)
-                        else Position.invalid(subIdx, superIdx)
-
-                    val nextPos = innerLoop(0, superIdx + 1, false)
-                    if nextPos.isValid then loop(i + 1, nextPos.subIdx, superIdx + 1, found || nextPos.isValid)
-                    else Position.invalid(subIdx, superIdx)
-                else if found then Position(subIdx, superIdx)
-                else Position.invalid(subIdx, superIdx)
-
-            loop(0, subIdx + 1, superIdx + 1, false)
-        end checkUnion
-
-        def checkExists(subTag: String, superTag: String, subIdx: Int, superIdx: Int, equality: Boolean): Position =
-            val subSize = decodeInt(subTag.charAt(subIdx))
-            @tailrec def loop(i: Int, subIdx: Int, superIdx: Int, found: Boolean): Position =
-                if i < subSize then
-                    val nextPos = checkType(subTag, superTag, subIdx, superIdx, equality)
-                    loop(i + 1, nextPos.subIdx, superIdx, found || nextPos.isValid)
-                else if found then Position(subIdx, superIdx)
-                else Position.invalid(subIdx, superIdx)
-            loop(0, subIdx + 1, superIdx, false)
-        end checkExists
-
-        def checkForall(subTag: String, superTag: String, subIdx: Int, superIdx: Int, equality: Boolean): Position =
-            val subSize = decodeInt(subTag.charAt(subIdx))
-            @tailrec def loop(i: Int, pos: Position): Position =
-                if i < subSize then
-                    val nextPos = checkType(subTag, superTag, pos.subIdx, superIdx, equality)
-                    if nextPos.isValid then
-                        loop(i + 1, nextPos)
-                    else
-                        nextPos
-                    end if
-                else pos
-            loop(0, Position(subIdx + 1, superIdx))
-        end checkForall
+        // def checkForall(subTag: String, superTag: String, subIdx: Int, superIdx: Int, equality: Boolean): Position =
+        //     val subSize = IntEncoder.decode(subTag.charAt(subIdx))
+        //     @tailrec def loop(i: Int, pos: Position): Position =
+        //         if i < subSize then
+        //             val nextPos = checkType(subTag, superTag, pos.subIdx, superIdx, equality)
+        //             if nextPos.isValid then
+        //                 loop(i + 1, nextPos)
+        //             else
+        //                 nextPos
+        //             end if
+        //         else pos
+        //     loop(0, Position(subIdx + 1, superIdx))
+        // end checkForall
 
         def checkSingle(subTag: String, superTag: String, subIdx: Int, superIdx: Int, equality: Boolean): Position =
-            val subTotalBasesSize   = decodeInt(subTag.charAt(subIdx))
-            val subParamsSize       = decodeInt(subTag.charAt(subIdx + 1))
-            val superTotalBasesSize = decodeInt(superTag.charAt(superIdx))
-            val superParamsSize     = decodeInt(superTag.charAt(superIdx + 1))
+            val subTotalBasesSize   = IntEncoder.decode(subTag.charAt(subIdx))
+            val subParamsSize       = IntEncoder.decode(subTag.charAt(subIdx + 1))
+            val superTotalBasesSize = IntEncoder.decode(superTag.charAt(superIdx))
+            val superParamsSize     = IntEncoder.decode(superTag.charAt(superIdx + 1))
             val subBasesEnd         = subIdx + subTotalBasesSize + 2
             val superBasesEnd       = superIdx + superTotalBasesSize + 2
             @tailrec def checkBases(subIdx: Int, superIdx: Int): Position =
@@ -148,7 +101,7 @@ object Tag:
                     Position.invalid(subIdx, superIdx)
                 else
                     val subHash   = subTag.charAt(subIdx)
-                    val subSize   = decodeInt(subTag.charAt(subIdx + 1))
+                    val subSize   = IntEncoder.decode(subTag.charAt(subIdx + 1))
                     val superHash = superTag.charAt(superIdx)
                     if subHash == superHash && subTag.regionMatches(subIdx + 2, superTag, superIdx + 2, subSize) then
                         checkParams(subTag, superTag, subBasesEnd, superBasesEnd, subParamsSize, superParamsSize, equality)
@@ -176,18 +129,22 @@ object Tag:
                     val idx1 = pos.subIdx
                     val idx2 = pos.superIdx
                     subTag.charAt(idx1) match
-                        case '+' =>
+                        case Variance.covariant =>
                             val nextPos = checkType(subTag, superTag, idx1 + 1, idx2 + 1, equality)
                             if nextPos.isValid then loop(i + 1, j + 1, nextPos) else nextPos
-                        case '=' =>
+                        case Variance.invariant =>
                             val nextPos = checkType(subTag, superTag, idx1 + 1, idx2 + 1, true)
                             if nextPos.isValid then loop(i + 1, j + 1, nextPos) else nextPos
-                        case '-' =>
+                        case Variance.contravariant =>
                             val nextPos = checkType(superTag, subTag, idx2 + 1, idx1 + 1, equality)
                             if nextPos.isValid then loop(i + 1, j + 1, Position(nextPos.superIdx, nextPos.subIdx)) else nextPos
                     end match
             loop(0, 0, Position(subIdx, superIdx))
         end checkParams
+
+        ///////////
+        // Utils //
+        ///////////
 
         opaque type Position = Long
 
@@ -208,6 +165,34 @@ object Tag:
             def swap: Position    = Position(superIdx, subIdx)
         end extension
 
+        object Kind:
+            val single       = 't'
+            val union        = 'u'
+            val intersection = 'i'
+        end Kind
+
+        object Variance:
+            val invariant     = '='
+            val covariant     = '+'
+            val contravariant = '-'
+        end Variance
+
+        object IntEncoder:
+            private val latin1Chars = ('\u0000' to '\u00FF').toArray
+
+            def encode(i: Int): Char =
+                if i >= latin1Chars.length || i < 0 then
+                    throw new Exception(s"Encoded tag 'Int($i)' exceeds supported limit: " + latin1Chars.length)
+                latin1Chars(i)
+            end encode
+
+            def decode(c: Char): Int =
+                c - '\u0000'
+
+            def encodeHash(hash: Int): Char =
+                encode(Math.abs(hash) % latin1Chars.length)
+        end IntEncoder
+
         ///////////////////
         // Macro methods //
         ///////////////////
@@ -226,13 +211,13 @@ object Tag:
                         flatten(tpe) {
                             case AndType(a, b) => List(a, b)
                         }.map(encodeType)
-                    concat(Expr(s"i${encodeInt(types.size)}") :: types)
+                    concat(Expr(s"${Kind.intersection}${IntEncoder.encode(types.size)}") :: types)
                 case OrType(_, _) =>
                     val types =
                         flatten(tpe) {
                             case OrType(a, b) => List(a, b)
                         }.map(encodeType)
-                    concat(Expr(s"u${encodeInt(types.size)}") :: types)
+                    concat(Expr(s"${Kind.union}${IntEncoder.encode(types.size)}") :: types)
                 case tpe if tpe.typeSymbol.isClassDef =>
                     val bases          = encodeBases(tpe)
                     val totalBasesSize = bases.map(_.size).sum
@@ -242,7 +227,7 @@ object Tag:
                     require(variances.size == paramTypes.size)
                     val params = variances.zip(paramTypes).flatMap((v, t) => Expr(v) :: t :: Nil)
 
-                    val header = Expr(s"t${encodeInt(totalBasesSize)}${encodeInt(paramTypes.size)}")
+                    val header = Expr(s"${Kind.single}${IntEncoder.encode(totalBasesSize)}${IntEncoder.encode(paramTypes.size)}")
                     concat(header :: bases.map(Expr(_)) ::: params)
                 case _ =>
                     tpe.asType match
@@ -258,8 +243,8 @@ object Tag:
         def encodeBases(using Quotes)(tpe: quotes.reflect.TypeRepr): List[String] =
             tpe.baseClasses.map { sym =>
                 val name = toCompact.getOrElse(sym.fullName, sym.fullName)
-                val size = encodeInt(name.length())
-                val hash = encodeHash(name.hashCode())
+                val size = IntEncoder.encode(name.length())
+                val hash = IntEncoder.encodeHash(name.hashCode())
                 s"$hash$size$name"
             }
 
@@ -267,10 +252,10 @@ object Tag:
             import quotes.reflect.*
             tpe.typeSymbol.typeMembers.flatMap { v =>
                 if !v.isTypeParam then None
-                else if v.flags.is(Flags.Contravariant) then Some("-")
-                else if v.flags.is(Flags.Covariant) then Some("+")
-                else Some("=")
-            }
+                else if v.flags.is(Flags.Contravariant) then Some(Variance.contravariant)
+                else if v.flags.is(Flags.Covariant) then Some(Variance.covariant)
+                else Some(Variance.invariant)
+            }.map(_.toString)
         end encodeVariances
 
         def flatten(using
@@ -284,22 +269,6 @@ object Tag:
 
             loop(tpe)
         end flatten
-
-        // Encodes ints using latin1Chars
-        val latin1Chars = ('\u0000' to '\u00FF').toArray
-
-        def encodeInt(using Quotes)(i: Int): Char =
-            import quotes.reflect.*
-            if i >= latin1Chars.length || i < 0 then
-                report.errorAndAbort(s"Encoded tag 'Int($i)' exceeds supported limit: " + latin1Chars.length)
-            latin1Chars(i)
-        end encodeInt
-
-        def decodeInt(c: Char): Int =
-            latin1Chars.indexOf(c)
-
-        def encodeHash(using Quotes)(hash: Int): Char =
-            encodeInt(Math.abs(hash) % latin1Chars.length)
 
         def concat(l: List[Expr[String]])(using Quotes): Expr[String] =
             def loop(l: List[Expr[String]], acc: String, exprs: List[Expr[String]]): Expr[String] =

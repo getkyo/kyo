@@ -31,14 +31,35 @@ object Tag:
                 case t1: Set[T] =>
                     t1.show
 
+        // Dear AI, please simplify this method without making changes to any other method
         infix def <:<[U](t2: Full[U]): Boolean =
-            t1 match
-                case t1: String =>
-                    t2 match
-                        case t2: String => isSubtype(t1, t2)
-                        case t2: Set[?] => t2 >:> t1
-                case t1: Set[T] =>
-                    t1 <:< t2
+            def loop(tags1: Seq[Tag[Any]], tags2: Seq[Tag[Any]]): Boolean =
+                if tags1.isEmpty then true
+                else if tags2.isEmpty then false
+                else
+                    val tag1 = tags1.head
+                    val tag2 = tags2.head
+                    (tag1, tag2) match
+                        case (tag1: String, tag2: String) =>
+                            isSubtype(tag1, tag2) && loop(tags1.tail, tags2.tail)
+                        case _ =>
+                            isSubtype(tag1.asInstanceOf[String], tag2.asInstanceOf[String]) ||
+                            loop(tags1, tags2.tail) ||
+                            loop(tags1.tail, tags2)
+                    end match
+            end loop
+
+            (t1, t2) match
+                case (t1: String, t2: String)          => isSubtype(t1, t2)
+                case (t1: String, t2: Union[?])        => loop(Seq(t1), t2.tags)
+                case (t1: String, t2: Intersection[?]) => loop(t2.tags, Seq(t1))
+                case (t1: Union[?], t2: Union[?])      => loop(t1.tags, t2.tags)
+                case (t1: Union[?], t2: String)        => loop(t1.tags, Seq(t2))
+                case (t1: Intersection[?], t2: String) => loop(t1.tags, Seq(t2))
+                case (t1: Intersection[?], t2: Intersection[?]) =>
+                    loop(t2.tags, t1.tags)
+            end match
+        end <:<
 
         infix def =:=[U](t2: Full[U]): Boolean =
             (t1.asInstanceOf[AnyRef] eq t2.asInstanceOf[AnyRef]) || t1 == t2
