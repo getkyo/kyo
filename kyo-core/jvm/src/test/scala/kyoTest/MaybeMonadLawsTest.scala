@@ -27,11 +27,10 @@ object MaybeMonadLawsTest extends ZIOSpecDefault:
                 Maybe(())
             override def map[A, B](f: A => B): Maybe[A] => Maybe[B] =
                 m => m.map(f)
-            override def derive[A: Equal]: Equal[Maybe[A]] =
+            override def derive[A](using e: Equal[A]): Equal[Maybe[A]] =
                 new Equal[Maybe[A]]:
                     protected def checkEqual(l: Maybe[A], r: Maybe[A]): Boolean =
-                        given CanEqual[A, A] = CanEqual.derived
-                        l == r
+                        l.zip(r).forall(e.equal)
 
     def spec = suite("MaybeMonadLawsTest")(
         test("covariant")(checkAllLaws(CovariantLaws)(listGenF, Gen.int)),
