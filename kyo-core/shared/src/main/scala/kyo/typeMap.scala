@@ -38,7 +38,7 @@ extension [A](self: TypeMap[A])
     inline def size: Int        = self.size
     inline def isEmpty: Boolean = self.isEmpty
 
-    def show: String = self.map { case (tag, value) => s"${tag.show} -> $value" }.mkString("TypeMap(", ", ", ")")
+    def show: String = self.map { case (tag, value) => s"${tag.show} -> $value" }.toList.sorted.mkString("TypeMap(", ", ", ")")
 
     private[kyo] inline def tag: Intersection[?] = Intersection(self.keySet.toIndexedSeq)
 
