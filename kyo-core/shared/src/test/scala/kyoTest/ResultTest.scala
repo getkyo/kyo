@@ -50,6 +50,10 @@ class ResultTest extends KyoTest:
         "returns the default value for Failure" in {
             assert(Failure[Int](new Exception("error")).getOrElse(0) == 0)
         }
+        "inference" in {
+            val r: List[String] = Result(List.empty[String]).getOrElse(List.empty)
+            assert(r == List.empty)
+        }
     }
 
     "orElse" - {
@@ -58,6 +62,10 @@ class ResultTest extends KyoTest:
         }
         "returns the alternative for Failure" in {
             assert(Failure[Int](new Exception("error")).orElse(Success(1)) == Success(1))
+        }
+        "inference" in {
+            val r: Result[List[String]] = Result(List.empty[String]).orElse(Result(List.empty))
+            assert(r.get == List.empty)
         }
     }
 
@@ -83,10 +91,14 @@ class ResultTest extends KyoTest:
 
     "fold" - {
         "applies the success function for Success" in {
-            assert(Success(1).fold(_ => 0, x => x + 1) == 2)
+            assert(Success(1).fold(_ => 0)(x => x + 1) == 2)
         }
         "applies the failure function for Failure" in {
-            assert(Failure[Int](new Exception("error")).fold(_ => 0, x => x) == 0)
+            assert(Failure[Int](new Exception("error")).fold(_ => 0)(x => x) == 0)
+        }
+        "catches failures in ifSuccess" in {
+            val ex = new Exception
+            assert(Success(1).fold(_ => 0)(_ => throw ex) == 0)
         }
     }
 
@@ -245,16 +257,28 @@ class ResultTest extends KyoTest:
     }
 
     "edge cases" - {
-        "should handle exceptions during fold" in {
+        "should not handle exceptions in ifFailure" in {
             val tryy      = Success(1)
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.fold(_ => throw exception, _ => throw exception)
+                    tryy.fold(_ => throw exception)(_ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
             assert(result == "caught exception")
+        }
+
+        "should handle exceptions in ifSuccess" in {
+            val tryy      = Success(1)
+            val exception = new RuntimeException("exception")
+            val result =
+                try
+                    tryy.fold(_ => 0)(_ => throw exception)
+                    "no exception"
+                catch
+                    case e: RuntimeException => "caught exception"
+            assert(result == "no exception")
         }
 
         "should handle exceptions during map" in {

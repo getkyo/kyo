@@ -95,9 +95,13 @@ object Result:
                 case Success(value) => Result(f(value))
                 case failure        => failure.asInstanceOf[Result[U]]
 
-        inline def fold[U](inline ifFailure: Throwable => U, inline ifSuccess: T => U): U =
+        inline def fold[U](inline ifFailure: Throwable => U)(inline ifSuccess: T => U): U =
             (self: @unchecked) match
-                case Success(value)     => ifSuccess(value)
+                case Success(value) =>
+                    try ifSuccess(value)
+                    catch
+                        case ex if NonFatal(ex) =>
+                            ifFailure(ex)
                 case Failure(exception) => ifFailure(exception)
 
         inline def filter(inline p: T => Boolean): Result[T] =
