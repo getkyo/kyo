@@ -2412,7 +2412,7 @@ object HelloService:
         override def sayHelloTo(saluee: String): Unit < (IOs & Aborts[Throwable]) =
             Kyo.suspendAttempt {                  // Adds IOs & Aborts[Throwable] effect
                 println(s"Hello $saluee!")
-			}
+            }
 
 val keepTicking: Nothing < (Consoles & Fibers) =
 	(Consoles.print(".") *> Kyo.sleep(1.second)).forever
@@ -2429,7 +2429,7 @@ val effect: Unit < (Consoles & Fibers & Resources & Aborts[Throwable] & Envs[Nam
 // be done at the edge of the program
 IOs.run {                                                 // Handles IOs
     Fibers.runAndBlock(Duration.Inf) {                    // Handles Fibers
-		Kyo.scoped {                                      // Handles Resources
+        Kyo.scoped {                                      // Handles Resources
             effect
               .provideAs[HelloService](HelloService.Live) // Handles Envs[HelloService]
               .catchAborts((thr: Throwable) => {          // Handles Aborts[Throwable]
