@@ -217,16 +217,6 @@ lazy val `kyo-cache` =
             libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
         )
 
-lazy val `kyo-os-lib` =
-    crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-os-lib"))
-        .dependsOn(`kyo-core`)
-        .settings(
-            `kyo-settings`
-        )
-
 lazy val `kyo-sttp` =
     crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -316,7 +306,6 @@ lazy val `kyo-examples` =
         .in(file("kyo-examples"))
         .dependsOn(`kyo-tapir`)
         .dependsOn(`kyo-direct`)
-        .dependsOn(`kyo-os-lib`)
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,

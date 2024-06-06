@@ -1,4 +1,4 @@
-package kyo
+package kyoTest
 
 import java.nio.file.Files as JFiles
 import java.nio.file.Paths
@@ -71,6 +71,10 @@ class filesTest extends KyoTest:
                     Files(name).readLinesStream()
                 }.map(_.runSeq)
             yield assert(v._1 == IndexedSeq("some text", "more text"))
+        }
+        "readLinesStream defers side effects" in {
+            Files("inexistent").readLinesStream()
+            succeed
         }
 
         "append to file from string" in run {

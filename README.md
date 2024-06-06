@@ -1286,6 +1286,149 @@ val b: Int < IOs =
   stats2.traceSpan("my_span")(a)
 ```
 
+### Files: File System Utilities
+
+`Files` provides utilities for interacting with the file system. It offers methods for reading, writing, and manipulating files and directories in a purely functional manner.
+
+```scala
+import kyo._
+
+// Create a Files instance representing a path
+val path: Files = Files("tmp", "file.txt")
+
+// Read the entire contents of a file as a String
+val content: String < IOs = 
+  path.read
+
+// Write a String to a file
+val writeResult: Unit < IOs =
+  path.write("Hello, world!")
+
+// Check if a path exists
+val exists: Boolean < IOs =
+  path.exists
+
+// Create a directory
+val createDir: Unit < IOs =
+  Files("tmp", "test").mkDir
+```
+
+`Files` instances are created by providing a list of path segments, which can be either `String`s or other `Files` instances. This allows for easy composition of paths. `Files` also provides methods for other common file operations:
+
+- Reading: `read`, `readBytes`, `readLines`, `readStream`, `readLinesStream`, `readBytesStream`
+- Writing: `write`, `writeBytes`, `writeLines`, `append`, `appendBytes`, `appendLines`
+- Directory operations: `list`, `walk`
+- File metadata: `exists`, `isDir`, `isFile`, `isLink`
+- File manipulation: `mkDir`, `mkFile`, `move`, `copy`, `remove`, `removeAll`
+
+All methods that perform side effects are suspended using the `IOs` effect, ensuring referential transparency. Methods that work with streams of data, such as `readStream` and `walk`, return a `Stream` of the appropriate type, suspended using the `Resources` effect to ensure proper resource handling.
+
+```scala
+import kyo._
+
+val path: Files = Files("tmp", "file.txt")
+
+// Read a file as a stream of lines
+val lines: Stream[Unit, String, Fibers] < Resources = 
+  path.readLinesStream()
+
+// Process the stream
+val result: Unit < (Resources & Consoles & Fibers) =
+  lines.map(_.transform(line => Consoles.println(line)).runDiscard)
+
+// Walk a directory tree
+val tree: Stream[Unit, Files, Any] < IOs =
+  Files("tmp").walk
+
+// Process each file in the tree
+val processedTree: Unit < (Consoles & Fibers) =
+  tree.map(_.transform(file => file.read.map(content => Consoles.println(s"File: ${file}, Content: $content"))).runDiscard)
+```
+
+`Files` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `sink` and `sinkLines` extension methods on `Stream` enable writing streams of data back to files.
+
+```scala
+import kyo._
+
+// Create a stream of bytes
+val bytes: Stream[Unit, Byte, IOs] = Streams.initSeq(Seq(1, 2, 3))
+
+// Write the stream to a file
+val sinkResult: Unit < (Resources & IOs) =
+  bytes.sink(Files("path", "to", "file.bin"))
+```
+
+### Process: Process Execution
+
+`Process` provides a way to spawn and interact with external processes from within Kyo. It offers a purely functional interface for process creation, execution, and management.
+
+```scala
+import kyo._
+
+// Create a simple command
+val command: Process.Command = Process.Command("echo", "Hello, World!")
+
+// Spawn the process and obtain the result
+val result: String < IOs = command.text
+```
+
+The core of `Process` is the `Process.Command` type, which represents a command to be executed. It can be created using the `Process.Command.apply` method, which takes a variable number of arguments representing the command and its arguments.
+
+The `Process` object also provides a `jvm` sub-object for spawning JVM processes directly.
+
+```scala
+import kyo._
+
+class MyClass extends KyoApp:
+  run {
+    Consoles.println(s"Executed with args: $args")
+  }
+
+// Spawn a new JVM process
+val jvmProcess: Process < IOs = 
+  Process.jvm.spawn(classOf[MyClass], List("arg1", "arg2"))
+```
+
+Once a `Process.Command` is created, it can be executed using various methods:
+
+- `spawn`: Spawns the process and returns a `Process` instance.
+- `text`: Spawns the process, waits for it to complete, and returns the standard output as a string.
+- `stream`: Spawns the process and returns an `InputStream` of the standard output.
+- `exitValue`: Spawns the process, waits for it to complete, and returns the exit code.
+- `waitFor`: Spawns the process, waits for it to complete, and returns the exit code.
+
+`Process.Command` instances can be transformed and combined using methods like `pipe`, `andThen`, `+`, `map`, and `cwd`, `env`, `stdin`, `stdout`, `stderr` for modifying the process's properties.
+
+```scala
+import kyo._
+import java.io.File
+import java.nio.file.Path
+
+// Create a piped command
+val pipedCommand = Process.Command("echo", "Hello, World!").pipe(Process.Command("wc", "-w"))
+
+// Modify the command's environment and working directory
+val modifiedCommand = pipedCommand.env(Map("VAR" -> "value")).cwd(Path.of("/path/to/dir"))
+
+// Spawn the modified command
+val modifiedResult: String < IOs = modifiedCommand.text
+```
+
+`Process` also provides `Input` and `Output` types for fine-grained control over the process's standard input, output, and error streams.
+
+```scala
+import kyo._
+import java.io.File
+
+// Create a command with custom input and output
+val command = Process.Command("my-command")
+  .stdin(Process.Input.fromString("input data"))
+  .stdout(Process.Output.FileRedirect(new File("output.txt")))
+  .stderr(Process.Output.Inherit)
+```
+
+The `Process` type returned by `spawn` provides methods for interacting with the spawned process, such as `waitFor`, `exitValue`, `destroy`, and `isAlive`.
+
 ## Concurrent Effects
 
 The `kyo.concurrent` package provides utilities for dealing with concurrency in Scala applications. It's a powerful set of effects designed for easier asynchronous programming, built on top of other core functionalities provided by the `kyo` package.
