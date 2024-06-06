@@ -34,7 +34,7 @@ class Cache(private[kyo] val store: Store):
                                             .unit.andThen(v)
                                     case Failure(ex) =>
                                         IOs(store.invalidate(key))
-                                            .andThen(p.complete(IOs.fail(ex)))
+                                            .andThen(p.completeResult(Result.failure(ex)))
                                             .unit.andThen(IOs.fail(ex))
                                 }
                             }

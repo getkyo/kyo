@@ -2,6 +2,7 @@ package kyo
 
 import Result.*
 import kyo.Flat
+import scala.util.Try
 import scala.util.control.NonFatal
 
 opaque type Result[+T] >: (Success[T] | Failure[T]) = Success[T] | Failure[T]
@@ -25,6 +26,11 @@ object Result:
     def fromEither[T](either: Either[Throwable, T]): Result[T] = either match
         case Right(value)    => Success(value)
         case Left(exception) => Failure(exception)
+
+    def fromTry[T](t: Try[T]): Result[T] =
+        t match
+            case scala.util.Failure(ex)    => failure(ex)
+            case scala.util.Success(value) => success(value)
 
     opaque type Success[+T] = T | SuccessFailure[T]
 
@@ -128,6 +134,16 @@ object Result:
             (self: @unchecked) match
                 case Success(value)     => Right(value)
                 case Failure(exception) => Left(exception)
+
+        inline def toIOs: T < IOs =
+            (self: @unchecked) match
+                case Success(value)     => value
+                case Failure(exception) => IOs(throw exception)
+
+        inline def toTry: Try[T] =
+            (self: @unchecked) match
+                case Success(value)     => scala.util.Success(value)
+                case Failure(exception) => scala.util.Failure(exception)
     end extension
 
     private object internal:

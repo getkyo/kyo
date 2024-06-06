@@ -13,8 +13,8 @@ object KyoUtil:
                         IOs.run {
                             if future.isSuccess then p.complete(future.channel())
                             else if future.isCancelled then
-                                p.complete(Fibers.interrupted)
-                            else p.complete(IOs.fail(future.cause()))
+                                p.completeResult(Fibers.interrupted)
+                            else p.completeResult(Result.failure(future.cause()))
                         }
                     }
                 )
@@ -30,8 +30,8 @@ object KyoUtil:
                         IOs.run {
                             if future.isSuccess then p.complete(future.getNow)
                             else if future.isCancelled then
-                                p.complete(Fibers.interrupted)
-                            else p.complete(IOs.fail(future.cause()))
+                                p.completeResult(Fibers.interrupted)
+                            else p.completeResult(Result.failure(future.cause()))
                         }
                     }
                 )

@@ -19,9 +19,9 @@ class completionStageTest extends KyoTest:
             cf.completeExceptionally(err)
             val res   = Fibers.fromCompletionStage(cf)
             val fiber = Fibers.run(res)
-            fiber.map(_.getTry.map {
-                case Failure(e) => assert(e == err)
-                case Success(_) => assert(false)
+            fiber.map(_.getResult.map {
+                case Result.Failure(e) => assert(e == err)
+                case Result.Success(_) => assert(false)
             })
         }
 

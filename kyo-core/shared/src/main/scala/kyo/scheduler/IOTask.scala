@@ -71,7 +71,7 @@ private[kyo] class IOTask[T](
                     else
                         IOs(bug.failTag(kyo, Tag.Intersection[FiberGets & IOs]))
                 case _ =>
-                    complete(curr.asInstanceOf[T < IOs])
+                    complete(Result.success(curr.asInstanceOf[T]))
                     finalize()
                     nullIO
         end if
@@ -83,7 +83,7 @@ private[kyo] class IOTask[T](
             curr = eval(curr, scheduler, startMillis, clock)
         catch
             case ex if (NonFatal(ex)) =>
-                complete(IOs.fail(ex))
+                complete(Result.failure(ex))
                 curr = nullIO
         end try
         if !isNull(curr) then

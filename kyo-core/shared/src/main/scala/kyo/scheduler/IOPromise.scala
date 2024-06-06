@@ -71,7 +71,7 @@ private[kyo] class IOPromise[T](state: State[T])
                 case l: Linked[T] @unchecked =>
                     loop(l.p)
                 case v =>
-                    p.flush(v.asInstanceOf[T < IOs])
+                    p.flush(v.asInstanceOf[Result[T]])
         loop(this)
     end merge
 
@@ -89,7 +89,7 @@ private[kyo] class IOPromise[T](state: State[T])
         loop(other.compress())
     end become
 
-    final def onComplete(f: T < IOs => Unit): Unit =
+    final def onComplete(f: Result[T] => Unit): Unit =
         @tailrec def loop(promise: IOPromise[T]): Unit =
             promise.get() match
                 case p: Pending[T] @unchecked =>
@@ -98,7 +98,7 @@ private[kyo] class IOPromise[T](state: State[T])
                 case l: Linked[T] @unchecked =>
                     loop(l.p)
                 case v =>
-                    try f(v.asInstanceOf[T < IOs])
+                    try f(v.asInstanceOf[Result[T]])
                     catch
                         case ex if NonFatal(ex) =>
                             Logs.unsafe.error("uncaught exception", ex)
@@ -107,19 +107,19 @@ private[kyo] class IOPromise[T](state: State[T])
 
     protected def onComplete(): Unit = {}
 
-    private def complete(p: Pending[T], v: T < IOs): Boolean =
+    private def complete(p: Pending[T], v: Result[T]): Boolean =
         compareAndSet(p, v) && {
             onComplete()
             p.flush(v)
             true
         }
 
-    private val nullCompletion = IOs(null)
+    private val nullCompletion = Result.success(null)
 
-    final def complete(v: T < IOs): Boolean =
+    final def complete(v: Result[T]): Boolean =
         val r =
             if !isNull(v) then v
-            else nullCompletion.asInstanceOf[T < IOs]
+            else nullCompletion.asInstanceOf[Result[T]]
         @tailrec def loop(): Boolean =
             get() match
                 case p: Pending[T] @unchecked =>
@@ -129,58 +129,56 @@ private[kyo] class IOPromise[T](state: State[T])
         loop()
     end complete
 
-    final def block(deadline: Long): T < IOs =
-        def loop(promise: IOPromise[T]): T < IOs =
+    final def block(deadline: Long): T =
+        def loop(promise: IOPromise[T]): T =
             promise.get() match
                 case _: Pending[T] @unchecked =>
-                    IOs {
-                        Scheduler.get.flush()
-                        val b = new (T < IOs => Unit) with (() => T < IOs):
-                            @volatile
-                            private var result: T < IOs = null.asInstanceOf[T < IOs]
-                            private val waiter          = Thread.currentThread()
-                            def apply(v: T < IOs) =
-                                result = v
-                                LockSupport.unpark(waiter)
-                            @tailrec def apply() =
-                                if isNull(result) then
-                                    val remainingNanos = deadline - System.currentTimeMillis()
-                                    if remainingNanos <= 0 then
-                                        return IOs.fail(Fibers.Interrupted)
-                                    else if remainingNanos == Long.MaxValue then
-                                        LockSupport.park(this)
-                                    else
-                                        LockSupport.parkNanos(this, remainingNanos)
-                                    end if
-                                    apply()
+                    Scheduler.get.flush()
+                    val b = new (Result[T] => Unit) with (() => Result[T]):
+                        @volatile
+                        private var result: Result[T] = null.asInstanceOf[Result[T]]
+                        private val waiter            = Thread.currentThread()
+                        def apply(r: Result[T]) =
+                            result = r
+                            LockSupport.unpark(waiter)
+                        @tailrec def apply() =
+                            if isNull(result) then
+                                val remainingNanos = deadline - System.currentTimeMillis()
+                                if remainingNanos <= 0 then
+                                    return Fibers.interrupted
+                                else if remainingNanos == Long.MaxValue then
+                                    LockSupport.park(this)
                                 else
-                                    result
-                            end apply
-                        onComplete(b)
-                        b()
-                    }
+                                    LockSupport.parkNanos(this, remainingNanos)
+                                end if
+                                apply()
+                            else
+                                result
+                        end apply
+                    onComplete(b)
+                    b().get
                 case l: Linked[T] @unchecked =>
                     loop(l.p)
                 case v =>
-                    v.asInstanceOf[T < IOs]
-        IOs(loop(this))
+                    v.asInstanceOf[T]
+        loop(this)
     end block
 end IOPromise
 
 private[kyo] object IOPromise:
 
-    type State[T] = (T < IOs) | Pending[T] | Linked[T]
+    type State[T] = Result[T] | Pending[T] | Linked[T]
 
     case class Linked[T](p: IOPromise[T])
 
     abstract class Pending[T]:
         self =>
 
-        def run(v: T < IOs): Pending[T]
+        def run(v: Result[T]): Pending[T]
 
-        def add(f: T < IOs => Unit): Pending[T] =
+        def add(f: Result[T] => Unit): Pending[T] =
             new Pending[T]:
-                def run(v: T < IOs) =
+                def run(v: Result[T]) =
                     try f(v)
                     catch
                         case ex if NonFatal(ex) =>
@@ -191,24 +189,24 @@ private[kyo] object IOPromise:
 
         final def interrupt(p: IOPromise[?]): Pending[T] =
             new Pending[T]:
-                def run(v: T < IOs) =
+                def run(v: Result[T]) =
                     p.interrupt()
                     self
                 end run
 
         final def merge(tail: Pending[T]): Pending[T] =
-            @tailrec def loop(p: Pending[T], v: T < IOs): Pending[T] =
+            @tailrec def loop(p: Pending[T], v: Result[T]): Pending[T] =
                 p match
                     case _ if (p eq Pending.Empty) =>
                         tail
                     case p: Pending[T] =>
                         loop(p.run(v), v)
             new Pending[T]:
-                def run(v: T < IOs) =
+                def run(v: Result[T]) =
                     loop(self, v)
         end merge
 
-        final def flush(v: T < IOs): Unit =
+        final def flush(v: Result[T]): Unit =
             @tailrec def loop(p: Pending[T]): Unit =
                 p match
                     case _ if (p eq Pending.Empty) => ()
@@ -221,6 +219,6 @@ private[kyo] object IOPromise:
     object Pending:
         def apply[T](): Pending[T] = Empty.asInstanceOf[Pending[T]]
         case object Empty extends Pending[Nothing]:
-            def run(v: Nothing < IOs) = this
+            def run(v: Result[Nothing]) = this
     end Pending
 end IOPromise

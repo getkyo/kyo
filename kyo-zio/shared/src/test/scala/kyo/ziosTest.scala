@@ -113,7 +113,7 @@ class ziosTest extends KyoTest:
                 for
                     f <- Fibers.init(ZIOs.get(zioLoop()))
                     _ <- f.interrupt
-                    r <- f.getTry
+                    r <- f.getResult
                 yield assert(r.isFailure)
                 end for
             }
