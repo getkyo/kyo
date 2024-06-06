@@ -139,7 +139,7 @@ lazy val `kyo-tag` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
-            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.9"          % Test
+            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
         )
         .jsSettings(`js-settings`)
 
@@ -358,7 +358,7 @@ lazy val `kyo-bench` =
                     )
                 }
             },
-            libraryDependencies += "dev.zio"             %% "izumi-reflect"       % "2.3.9",
+            libraryDependencies += "dev.zio"             %% "izumi-reflect"       % "2.3.10",
             libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
             libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
