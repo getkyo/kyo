@@ -127,7 +127,7 @@ class Files(val path: List[String]):
       */
     def readLinesStream(charset: Charset = java.nio.charset.StandardCharsets.UTF_8)(using Trace): Stream[Unit, String, Fibers] < Resources =
         readLoop[String, String, BufferedReader](
-            JFiles.newBufferedReader(toJava, Charset.defaultCharset()),
+            IOs(JFiles.newBufferedReader(toJava, Charset.defaultCharset())),
             reader => reader.close(),
             readOnceLines,
             line => Chunks.init(line)
@@ -137,7 +137,7 @@ class Files(val path: List[String]):
       */
     def readBytesStream(using Trace): Stream[Unit, Byte, Fibers] < Resources =
         readLoop[Byte, Array[Byte], (FileChannel, ByteBuffer)](
-            (FileChannel.open(toJava, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
+            IOs(FileChannel.open(toJava, StandardOpenOption.READ), ByteBuffer.allocate(2048)),
             ch => ch._1.close(),
             readOnceBytes,
             arr => Chunks.initSeq(arr.toSeq)
@@ -163,7 +163,7 @@ class Files(val path: List[String]):
         }
 
     private def readLoop[A, ReadTpe, Res](
-        acquire: Res,
+        acquire: Res < IOs,
         release: Res => Unit < Fibers,
         readOnce: Res => Option[ReadTpe] < IOs,
         writeOnce: ReadTpe => Chunk[A]
@@ -399,9 +399,7 @@ extension [S](stream: Stream[Unit, String, S])
                 IOs {
                     fileCh.write(ByteBuffer.wrap(line.getBytes))
                     fileCh.write(ByteBuffer.wrap(System.lineSeparator().getBytes))
-                }.map(_ =>
-                    ()
-                )
+                }.unit
             ).runDiscard
         }
 end extension
