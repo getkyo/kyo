@@ -56,7 +56,7 @@ case class Promise[T] private (private val p: IOPromise[T]) extends Fiber[T]:
             val r = new IOPromise[Try[T]]
             r.interrupts(p)
             p.onComplete { t =>
-                discard(r.complete(IOs.attempt(t)))
+                discard(r.complete(IOs.toTry(t)))
             }
             new Promise(r).get
         }
@@ -306,7 +306,7 @@ object fibersInternal:
     case class Done[T: Flat](result: T < IOs) extends Fiber[T]:
         def isDone(using Trace)                               = true
         def get(using Trace)                                  = result
-        def getTry(using Trace)                               = IOs.attempt(result)
+        def getTry(using Trace)                               = IOs.toTry(result)
         def onComplete(f: T < IOs => Unit < IOs)(using Trace) = f(result)
         def block(timeout: Duration)(using Trace)             = result
         def interrupt(using Trace)                            = false

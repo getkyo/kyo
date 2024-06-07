@@ -18,7 +18,7 @@ class retriesTest extends KyoTest:
         }
         "nok" in run {
             var calls = 0
-            IOs.attempt {
+            IOs.toTry {
                 Retries(_.limit(0)) {
                     calls += 1
                     throw ex
@@ -41,7 +41,7 @@ class retriesTest extends KyoTest:
         }
         "nok" in run {
             var calls = 0
-            IOs.attempt {
+            IOs.toTry {
                 Retries(_.limit(3)) {
                     calls += 1
                     throw ex
@@ -55,7 +55,7 @@ class retriesTest extends KyoTest:
     "backoff" in run {
         var calls = 0
         val start = System.currentTimeMillis()
-        IOs.attempt {
+        IOs.toTry {
             Retries(_.limit(4).exponential(1.milli)) {
                 calls += 1
                 throw ex

@@ -242,6 +242,19 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
             ()
         }
     }
+    "showTpe" - {
+        "primitive" in {
+            assert(Tag[Int].showTpe == "scala.Int")
+            assert(Tag[Long].showTpe == "scala.Long")
+            assert(Tag[Float].showTpe == "scala.Float")
+            assert(Tag[Double].showTpe == "scala.Double")
+            assert(Tag[Boolean].showTpe == "scala.Boolean")
+        }
+        "custom" in {
+            trait CustomType
+            assert(Tag[CustomType].showTpe == "kyoTest.tagsTest._$CustomType")
+        }
+    }
 
     "type with large name" in pendingUntilFixed {
         assertCompiles(
@@ -400,6 +413,21 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
             assertDoesNotCompile("Union[A & B | A]")
             assertDoesNotCompile("Union[A | B & A]")
         }
+
+        "showTpe" - {
+            "primitive" in {
+                assert(Union[Int].showTpe == "scala.Int")
+                assert(Union[Int | Boolean].showTpe == "scala.Int | scala.Boolean")
+                assert(Union[Int | Boolean | String].showTpe == "scala.Int | scala.Boolean | java.lang.String")
+            }
+            "custom" in {
+                trait A
+                trait B
+
+                assert(Union[A].showTpe == "kyoTest.tagsTest._$A")
+                assert(Union[A | B].showTpe == "kyoTest.tagsTest._$A | kyoTest.tagsTest._$B")
+            }
+        }
     }
 
     "type intersections" - {
@@ -554,6 +582,21 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
             assertDoesNotCompile("Intersection[A | B]")
             assertDoesNotCompile("Intersection[A & B | A]")
             assertDoesNotCompile("Intersection[A | B & A]")
+        }
+
+        "showTpe" - {
+            "primitive" in {
+                assert(Intersection[Int].showTpe == "scala.Int")
+                assert(Intersection[Int & Boolean].showTpe == "scala.Int & scala.Boolean")
+                assert(Intersection[Int & Boolean & String].showTpe == "scala.Int & scala.Boolean & java.lang.String")
+            }
+            "custom" in {
+                trait A
+                trait B
+
+                assert(Intersection[A].showTpe == "kyoTest.tagsTest._$A")
+                assert(Intersection[A & B].showTpe == "kyoTest.tagsTest._$A & kyoTest.tagsTest._$B")
+            }
         }
 
     }

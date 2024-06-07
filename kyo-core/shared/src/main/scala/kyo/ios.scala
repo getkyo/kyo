@@ -39,7 +39,7 @@ sealed trait IOs extends Effect[IOs]:
                 fail(ex)
         }
 
-    def attempt[T, S](v: => T < S)(using Trace): Try[T] < S =
+    def toTry[T, S](v: => T < S)(using Trace): Try[T] < S =
         core.catching(v.map(Success(_): Try[T]))(Failure(_))
 
     def catching[T, S, U >: T, S2](v: => T < S)(

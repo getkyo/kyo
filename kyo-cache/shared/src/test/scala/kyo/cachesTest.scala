@@ -51,8 +51,8 @@ class cachesTest extends KyoTest:
                     end if
                 }.map(_.get)
             }
-            v1 <- IOs.attempt(m(1))
-            v2 <- IOs.attempt(m(1))
+            v1 <- IOs.toTry(m(1))
+            v2 <- IOs.toTry(m(1))
         yield assert(calls == 2 && v1 == Failure(ex) && v2 == Success(2))
         end for
     }

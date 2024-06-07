@@ -18,7 +18,7 @@ object Hubs:
                                 val puts =
                                     listeners.toArray
                                         .toList.asInstanceOf[List[Channel[T]]]
-                                        .map(child => IOs.attempt(child.put(v)))
+                                        .map(child => IOs.toTry(child.put(v)))
                                 Fibers.parallel(puts).map(_ => Loops.continue)
                             }
                         }
@@ -84,7 +84,7 @@ class Hub[T: Flat] private[kyo] (
                     Loops.indexed { idx =>
                         if idx == array.length then Loops.done
                         else
-                            IOs.attempt(array(idx).asInstanceOf[Channel[T]].close)
+                            IOs.toTry(array(idx).asInstanceOf[Channel[T]].close)
                                 .map(_ => Loops.continue)
                     }.andThen(r)
                 }
