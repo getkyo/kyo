@@ -70,6 +70,7 @@ lazy val kyoJVM = project
         `kyo-test`.jvm,
         `kyo-zio`.jvm,
         `kyo-examples`.jvm
+        `kyo-prometheus`
     )
 
 lazy val kyoJS = project
@@ -421,3 +422,22 @@ lazy val `js-settings` = Seq(
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.5.0" % "provided"
 )
+
+lazy val `kyo-prometheus` = project
+  .in(file("kyo-prometheus"))
+  .settings(
+    name := "kyo-prometheus",
+    `kyo-settings`,
+    libraryDependencies ++= Seq(
+      "io.prometheus" % "simpleclient" % "0.11.0",
+      "io.prometheus" % "simpleclient_hotspot" % "0.11.0",
+      "io.prometheus" % "simpleclient_common" % "0.11.0",
+      "com.softwaremill.sttp.tapir" %% "tapir-core" % "1.0.0",
+      "com.softwaremill.sttp.tapir" %% "tapir-http4s-server" % "1.0.0",
+      "org.http4s" %% "http4s-blaze-server" % "0.23.12",
+      "org.http4s" %% "http4s-dsl" % "0.23.12",
+      "org.http4s" %% "http4s-circe" % "0.23.12",
+      "io.circe" %% "circe-generic" % "0.14.3",
+      "io.circe" %% "circe-parser" % "0.14.3"
+    )
+  )
