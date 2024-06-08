@@ -4,7 +4,6 @@ import io.prometheus.client.{CollectorRegistry, Counter, Histogram}
 import io.prometheus.client.hotspot.DefaultExports
 
 object Metrics {
-  // Initialize the default JVM metrics
   DefaultExports.initialize()
 
   // Create your custom metrics
