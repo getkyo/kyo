@@ -35,7 +35,7 @@ class KyoSttpMonadTest extends KyoTest:
 
     "error" in run {
         val ex = new Exception
-        IOs.attempt(KyoSttpMonad.error(ex)).map(r => assert(r == Failure(ex)))
+        IOs.toTry(KyoSttpMonad.error(ex)).map(r => assert(r == Failure(ex)))
     }
 
     "unit" in {
@@ -49,7 +49,7 @@ class KyoSttpMonadTest extends KyoTest:
         }
         "nok" in run {
             val ex = new Exception
-            IOs.attempt(KyoSttpMonad.eval(throw ex)).map(r => assert(r == Failure(ex)))
+            IOs.toTry(KyoSttpMonad.eval(throw ex)).map(r => assert(r == Failure(ex)))
         }
     }
 
@@ -59,7 +59,7 @@ class KyoSttpMonadTest extends KyoTest:
         }
         "nok" in run {
             val ex = new Exception
-            IOs.attempt(KyoSttpMonad.suspend(throw ex)).map(r => assert(r == Failure(ex)))
+            IOs.toTry(KyoSttpMonad.suspend(throw ex)).map(r => assert(r == Failure(ex)))
         }
     }
 
@@ -78,7 +78,7 @@ class KyoSttpMonadTest extends KyoTest:
                 cb(Left(ex))
                 Canceler(() => {})
             }
-            IOs.attempt(result).map(r => assert(r == Failure(ex)))
+            IOs.toTry(result).map(r => assert(r == Failure(ex)))
         }
 
         "cancel" in run {

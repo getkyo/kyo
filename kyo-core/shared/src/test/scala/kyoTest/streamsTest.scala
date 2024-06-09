@@ -78,7 +78,7 @@ class streamsTest extends KyoTest:
                 }
                 "Fibers" in run {
                     Streams.initSource[Int](
-                        Fibers.delay(1.nanos)(Streams.emitSeq(Seq(1)))
+                        Fibers.delay(1.nano)(Streams.emitSeq(Seq(1)))
                     ).buffer(10).runSeq.map { r =>
                         assert(r == (Seq(1), ()))
                     }
@@ -382,6 +382,58 @@ class streamsTest extends KyoTest:
                     Streams
                         .initSeq(0 until 100)
                         .transform(_ => counter.getAndIncrement)
+                        .take(0)
+                        .runSeq
+                        .map {
+                            case (seq, _) =>
+                                assert(seq.isEmpty)
+                        }.map { _ =>
+                            counter.get.map(transforms => assert(transforms == 0))
+                        }
+                }
+            }.pure
+            ()
+        }
+    }
+
+    "transformChunks" - {
+        "double" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).transformChunks(_.take(2).map(_ * 2)).runSeq.pure == (Seq(2, 4), ())
+            )
+        }
+
+        "to string" in {
+            assert(
+                Streams.initSeq(Seq(1, 2, 3)).transformChunks(_.append(4).map(_.toString)).runSeq.pure ==
+                    (Seq("1", "2", "3", "4"), ())
+            )
+        }
+
+        "with effects" in {
+            val stream      = Streams.initSeq(Seq(1, 2, 3))
+            val transformed = stream.transformChunks(v => IOs(v.map(_ * 2))).runSeq
+            assert(IOs.run(transformed).pure == (Seq(2, 4, 6), ()))
+        }
+
+        "with failures" in {
+            val stream      = Streams.initSeq(Seq("1", "2", "abc", "3"))
+            val transformed = stream.transformChunks(c => Aborts.catching[NumberFormatException](c.map(_.toInt))).runSeq
+            assert(Aborts.run(transformed).pure.isLeft)
+        }
+
+        "stack safety" in {
+            assert(
+                Streams.initSeq(Seq.fill(n)(1)).transformChunks(_.map(_ + 1)).runSeq.pure ==
+                    (Seq.fill(n)(2), ())
+            )
+        }
+        "produce until" in pendingUntilFixed {
+            IOs.run {
+                Atomics.initLong(0).map { counter =>
+                    Streams
+                        .initSeq(0 until 100)
+                        .transformChunks(_.map(_ => counter.getAndIncrement))
                         .take(0)
                         .runSeq
                         .map {

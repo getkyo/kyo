@@ -28,7 +28,7 @@ class Cache(private[kyo] val store: Store):
                                         ()
                                 }
                             } {
-                                IOs.attempt[U, S](f(v)).map {
+                                IOs.toTry[U, S](f(v)).map {
                                     case Success(v) =>
                                         p.complete(v)
                                             .unit.andThen(v)

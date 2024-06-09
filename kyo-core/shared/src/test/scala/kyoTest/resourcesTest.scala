@@ -30,7 +30,7 @@ class resourcesTest extends KyoTest:
         val r1 = Resource(1)
         val r2 = Resource(2)
         IOs.run {
-            Fibers.runAndBlock(1.seconds) {
+            Fibers.runAndBlock(1.second) {
                 Resources.run(Resources.acquire(r1()))
             }
         }
@@ -44,7 +44,7 @@ class resourcesTest extends KyoTest:
         val r1 = Resource(1)
         val r2 = Resource(2)
         IOs.run {
-            Fibers.runAndBlock(1.seconds) {
+            Fibers.runAndBlock(1.second) {
                 Resources.run(Resources.acquire(r1()).map(_ => assert(r1.closes == 0)))
             }
         }
@@ -79,7 +79,7 @@ class resourcesTest extends KyoTest:
         val r1 = Resource(1)
         val r2 = Resource(2)
         IOs.run {
-            Fibers.runAndBlock(1.seconds) {
+            Fibers.runAndBlock(1.second) {
                 Resources.run(Resources.acquire(r1()).map(_ => Resources.acquire(r2())))
             }
         }
@@ -94,7 +94,7 @@ class resourcesTest extends KyoTest:
         val r2 = Resource(2)
         val r: Int =
             IOs.run {
-                Fibers.runAndBlock(1.seconds) {
+                Fibers.runAndBlock(1.second) {
                     Resources.run {
                         for
                             r1 <- Resources.acquire(r1())
@@ -117,7 +117,7 @@ class resourcesTest extends KyoTest:
         val r2 = Resource(2)
         val r: Int < Envs[Int] =
             IOs.runLazy {
-                Fibers.runAndBlock(1.seconds) {
+                Fibers.runAndBlock(1.second) {
                     Resources.run[Int, IOs & Envs[Int]] {
                         val io: Int < (Resources & IOs & Envs[Int]) =
                             for
@@ -143,7 +143,7 @@ class resourcesTest extends KyoTest:
 
     "nested" in run {
         val r1 = Resource(1)
-        val r  = IOs.run(Fibers.runAndBlock(1.seconds)(Resources.run(Resources.run(Resources.acquire(r1())))))
+        val r  = IOs.run(Fibers.runAndBlock(1.second)(Resources.run(Resources.run(Resources.acquire(r1())))))
         assert(r == r1)
         assert(r1.acquires == 1)
         assert(r1.closes == 1)
@@ -151,7 +151,7 @@ class resourcesTest extends KyoTest:
 
     "effectful acquireRelease" in run {
         val finalizedResource = IOs.run {
-            Fibers.runAndBlock(1.seconds) {
+            Fibers.runAndBlock(1.second) {
                 Resources.run {
                     for
                         r          <- Resources.acquireRelease(EffectfulResource(1))(_.close)
@@ -170,7 +170,7 @@ class resourcesTest extends KyoTest:
         "ensure" taggedAs jvmOnly in {
             var closes = 0
             IOs.run {
-                Fibers.runAndBlock(1.seconds) {
+                Fibers.runAndBlock(1.second) {
                     Resources.run(Resources.ensure(Fibers.init(closes += 1).map(_.get).unit))
                 }
             }
@@ -189,7 +189,7 @@ class resourcesTest extends KyoTest:
                 }.map(_.get)
             IOs.run {
                 Options.run {
-                    Fibers.runAndBlock(1.seconds) {
+                    Fibers.runAndBlock(1.second) {
                         Resources.run(Resources.acquireRelease(acquire)(release))
                     }
                 }
@@ -200,7 +200,7 @@ class resourcesTest extends KyoTest:
         "acquire" taggedAs jvmOnly in {
             val r = Resource(1)
             IOs.run {
-                Fibers.runAndBlock(1.seconds) {
+                Fibers.runAndBlock(1.second) {
                     Resources.run(Resources.acquire(Fibers.init(r).map(_.get)))
                 }
             }

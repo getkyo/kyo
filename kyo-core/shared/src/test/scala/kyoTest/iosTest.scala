@@ -119,7 +119,7 @@ class iosTest extends KyoTest:
         "success" in {
             var called = false
             assert(
-                IOs.attempt(IOs.run(IOs.ensure { called = true }(1))).pure ==
+                IOs.toTry(IOs.run(IOs.ensure { called = true }(1))).pure ==
                     Try(1)
             )
             assert(called)
@@ -128,7 +128,7 @@ class iosTest extends KyoTest:
             val ex     = new Exception
             var called = false
             assert(
-                IOs.attempt(IOs.run(IOs.ensure { called = true } {
+                IOs.toTry(IOs.run(IOs.ensure { called = true } {
                     IOs[Int, Any](throw ex)
                 })).pure ==
                     Failure(ex)
@@ -139,16 +139,16 @@ class iosTest extends KyoTest:
 
     val e = new Exception
 
-    "attempt" - {
+    "toTry" - {
         "failure" in {
             assert(
-                IOs.run(IOs.attempt((throw e): Int)) ==
+                IOs.run(IOs.toTry((throw e): Int)) ==
                     Failure(e)
             )
         }
         "success" in {
             assert(
-                IOs.run(IOs.attempt(1)) ==
+                IOs.run(IOs.toTry(1)) ==
                     Success(1)
             )
         }
@@ -157,13 +157,13 @@ class iosTest extends KyoTest:
     "fromTry" - {
         "failure" in {
             assert(
-                IOs.run(IOs.attempt(IOs.fromTry(Failure[Int](e)))) ==
+                IOs.run(IOs.toTry(IOs.fromTry(Failure[Int](e)))) ==
                     Failure(e)
             )
         }
         "success" in {
             assert(
-                IOs.run(IOs.attempt(IOs.fromTry(Success(1)))) ==
+                IOs.run(IOs.toTry(IOs.fromTry(Success(1)))) ==
                     Success(1)
             )
         }
@@ -171,7 +171,7 @@ class iosTest extends KyoTest:
 
     "fail" in {
         assert(
-            IOs.run(IOs.attempt(IOs.fail[Int](e))) ==
+            IOs.run(IOs.toTry(IOs.fail[Int](e))) ==
                 Failure(e)
         )
     }
@@ -179,25 +179,25 @@ class iosTest extends KyoTest:
     "failures" - {
         "handle" in {
             assert(
-                IOs.run(IOs.attempt(1: Int < IOs)) ==
+                IOs.run(IOs.toTry(1: Int < IOs)) ==
                     Try(1)
             )
         }
         "handle + transform" in {
             assert(
-                IOs.run(IOs.attempt((1: Int < IOs).map(_ + 1))) ==
+                IOs.run(IOs.toTry((1: Int < IOs).map(_ + 1))) ==
                     Try(2)
             )
         }
         "handle + effectful transform" in {
             assert(
-                IOs.run(IOs.attempt((1: Int < IOs).map(i => IOs.fromTry(Try(i + 1))))) ==
+                IOs.run(IOs.toTry((1: Int < IOs).map(i => IOs.fromTry(Try(i + 1))))) ==
                     Try(2)
             )
         }
         "handle + transform + effectful transform" in {
             assert(
-                IOs.run(IOs.attempt((1: Int < IOs).map(_ + 1).map(i => IOs.fromTry(Try(i + 1))))) ==
+                IOs.run(IOs.toTry((1: Int < IOs).map(_ + 1).map(i => IOs.fromTry(Try(i + 1))))) ==
                     Try(3)
             )
         }
@@ -205,7 +205,7 @@ class iosTest extends KyoTest:
             val e = new Exception
             assert(
                 IOs.run(
-                    IOs.attempt((1: Int < IOs).map(_ + 1).map(i => IOs.fromTry(Try[Int](throw e))))
+                    IOs.toTry((1: Int < IOs).map(_ + 1).map(i => IOs.fromTry(Try[Int](throw e))))
                 ) ==
                     Failure(e)
             )
@@ -215,39 +215,39 @@ class iosTest extends KyoTest:
     "effectful" - {
         "handle" in {
             assert(
-                IOs.run(IOs.attempt(IOs.fromTry(Try(1)))) ==
+                IOs.run(IOs.toTry(IOs.fromTry(Try(1)))) ==
                     Try(1)
             )
         }
         "handle + transform" in {
             assert(
-                IOs.run(IOs.attempt(IOs.fromTry(Try(1)).map(_ + 1))) ==
+                IOs.run(IOs.toTry(IOs.fromTry(Try(1)).map(_ + 1))) ==
                     Try(2)
             )
         }
         "handle + effectful transform" in {
             assert(
-                IOs.run(IOs.attempt(IOs.fromTry(Try(1)).map(i => IOs.fromTry(Try(i + 1))))) ==
+                IOs.run(IOs.toTry(IOs.fromTry(Try(1)).map(i => IOs.fromTry(Try(i + 1))))) ==
                     Try(2)
             )
         }
         "handle + transform + effectful transform" in {
             assert(
                 IOs.run(
-                    IOs.attempt((IOs.fromTry(Try(1))).map(_ + 1).map(i => IOs.fromTry(Try(i + 1))))
+                    IOs.toTry((IOs.fromTry(Try(1))).map(_ + 1).map(i => IOs.fromTry(Try(i + 1))))
                 ) ==
                     Try(3)
             )
         }
         "handle + failed transform" in {
             assert(
-                IOs.run(IOs.attempt((IOs.fromTry(Try(1))).map(_ => (throw e): Int))) ==
+                IOs.run(IOs.toTry((IOs.fromTry(Try(1))).map(_ => (throw e): Int))) ==
                     Failure(e)
             )
         }
         "handle + transform + effectful transform + failed transform" in {
             assert(
-                IOs.run(IOs.attempt((IOs.fromTry(Try(1))).map(_ + 1).map(i =>
+                IOs.run(IOs.toTry((IOs.fromTry(Try(1))).map(_ + 1).map(i =>
                     IOs.fromTry(Try(i + 1))
                 ).map(_ =>
                     (throw e): Int
@@ -257,7 +257,7 @@ class iosTest extends KyoTest:
         }
         "handle + transform + failed effectful transform" in {
             assert(
-                IOs.run(IOs.attempt((IOs.fromTry(Try(1))).map(_ + 1).map(i =>
+                IOs.run(IOs.toTry((IOs.fromTry(Try(1))).map(_ + 1).map(i =>
                     IOs.fromTry(Try((throw e): Int))
                 ))) ==
                     Failure(e)
@@ -267,7 +267,7 @@ class iosTest extends KyoTest:
             assert(
                 IOs.run(
                     Options.run(
-                        IOs.attempt[Int, Options & IOs](
+                        IOs.toTry[Int, Options & IOs](
                             IOs.fromTry(Try(Option(1))).map(opt =>
                                 Options.get(opt: Option[Int] < IOs).map(_ => (throw e): Int)
                             )

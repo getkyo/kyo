@@ -1,6 +1,6 @@
 package kyo.examples.ledger.db
 
-import kyo.*
+import kyo.{Result as _, *}
 import kyo.examples.ledger.*
 
 trait DB:

@@ -101,7 +101,7 @@ class directTest extends KyoTest:
     }
     "tries" in {
         def test(t: Try[Int]) =
-            assert(t == IOs.run(IOs.attempt(defer(await(IOs.fromTry(t))))))
+            assert(t == IOs.run(IOs.toTry(defer(await(IOs.fromTry(t))))))
         test(Try(1))
         test(Try(throw new Exception("a")))
     }

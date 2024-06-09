@@ -18,9 +18,10 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 Kyo is available on Maven Central in multiple modules:
 
 | Module         | Scala 3 | Scala JS | Description                      |
-|----------------|---------|----------|----------------------------------|
+| -------------- | ------- | -------- | -------------------------------- |
 | kyo-core       | ✅       | ✅        | Core and concurrent effects      |
 | kyo-direct     | ✅       | ✅        | Direct syntax support            |
+| kyo-combinators| ✅       | ✅        | ZIO-like effect composition      |
 | kyo-sttp       | ✅       | ✅        | Sttp HTTP Client                 |
 | kyo-tapir      | ✅       |          | Tapir HTTP Server                |
 | kyo-caliban    | ✅       |          | Caliban GraphQL Server           |
@@ -32,6 +33,7 @@ For Scala 3:
 ```scala 
 libraryDependencies += "io.getkyo" %% "kyo-core" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-direct" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-combinators" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-cache" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-stats-otel" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-sttp" % "<version>"
@@ -39,11 +41,12 @@ libraryDependencies += "io.getkyo" %% "kyo-tapir" % "<version>"
 libraryDependencies += "io.getkyo" %% "kyo-caliban" % "<version>"
 ```
 
-For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, and `kyo-sttp`):
+For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, `kyo-combinators`, and `kyo-sttp`):
 
 ```scala 
 libraryDependencies += "io.getkyo" %%% "kyo-core" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-direct" % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-combinators" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-sttp" % "<version>"
 ```
 
@@ -425,9 +428,9 @@ val c: Int < IOs =
 val d: Int < IOs =
   IOs.fromTry(Try(1))
 
-// 'attempt' handles any exceptions and returns a 'Try'
+// 'toTry' handles any exceptions and returns a 'Try'
 val e: Try[Int] < IOs =
-  IOs.attempt("1".toInt)
+  IOs.toTry("1".toInt)
 
 // 'catching' takes a partial function to handle exceptions
 val f: Int < IOs =
@@ -772,19 +775,19 @@ val g: Chunk[Int] = e.filter(_ % 2 == 0).pure
 
 `Chunks` provides two main subtypes: `Chunk` for regular chunks and `Chunks.Indexed` for indexed chunks. The table below summarizes the time complexity of various operations for each type:
 
-| Description                | Operations                                           | Regular Chunk | Indexed Chunk |
-|----------------------------|------------------------------------------------------|---------------|---------------|
-| Creation                   | `Chunks.init`, `Chunks.initSeq`                      | O(n)          | O(n)          |
-| Size and emptiness         | `size`, `isEmpty`                                    | O(1)          | O(1)          |
-| Take and drop              | `take`, `dropLeft`, `dropRight`, `slice`             | O(1)          | O(1)          |
-| Append and last            | `append`, `last`                                     | O(1)          | O(1)          |
-| Element access             | `apply`, `head`, `tail`                              | N/A           | O(1)          |
-| Concatenation              | `concat`                                             | O(n)          | O(n)          |
-| Effectful map and filter   | `map`, `filter`, `collect`, `takeWhile`, `dropWhile` | O(n)          | O(n)          |
-| Effectful side effects     | `foreach`, `collectUnit`                             | O(n)          | O(n)          |
-| Effectful fold             | `foldLeft`                                           | O(n)          | O(n)          |
-| Copying to arrays          | `toArray`, `copyTo`                                  | O(n)          | O(n)          |
-| Other operations           | `flatten`, `changes`, `toSeq`, `toIndexed`           | O(n)          | O(n)          |
+| Description              | Operations                                           | Regular Chunk | Indexed Chunk |
+| ------------------------ | ---------------------------------------------------- | ------------- | ------------- |
+| Creation                 | `Chunks.init`, `Chunks.initSeq`                      | O(n)          | O(n)          |
+| Size and emptiness       | `size`, `isEmpty`                                    | O(1)          | O(1)          |
+| Take and drop            | `take`, `dropLeft`, `dropRight`, `slice`             | O(1)          | O(1)          |
+| Append and last          | `append`, `last`                                     | O(1)          | O(1)          |
+| Element access           | `apply`, `head`, `tail`                              | N/A           | O(1)          |
+| Concatenation            | `concat`                                             | O(n)          | O(n)          |
+| Effectful map and filter | `map`, `filter`, `collect`, `takeWhile`, `dropWhile` | O(n)          | O(n)          |
+| Effectful side effects   | `foreach`, `collectUnit`                             | O(n)          | O(n)          |
+| Effectful fold           | `foldLeft`                                           | O(n)          | O(n)          |
+| Copying to arrays        | `toArray`, `copyTo`                                  | O(n)          | O(n)          |
+| Other operations         | `flatten`, `changes`, `toSeq`, `toIndexed`           | O(n)          | O(n)          |
 
 When deciding between `Chunk` and `Chunks.Indexed`, consider the primary operations you'll be performing on the data. If you mainly need to `append` elements, `take` slices, or `drop` elements from the beginning or end of the sequence, `Chunk` is a good choice. Its `O(1)` complexity for these operations makes it efficient for such tasks.
 
@@ -1267,6 +1270,149 @@ val b: Int < IOs =
   stats2.traceSpan("my_span")(a)
 ```
 
+### Files: File System Utilities
+
+`Files` provides utilities for interacting with the file system. It offers methods for reading, writing, and manipulating files and directories in a purely functional manner.
+
+```scala
+import kyo._
+
+// Create a Files instance representing a path
+val path: Files = Files("tmp", "file.txt")
+
+// Read the entire contents of a file as a String
+val content: String < IOs = 
+  path.read
+
+// Write a String to a file
+val writeResult: Unit < IOs =
+  path.write("Hello, world!")
+
+// Check if a path exists
+val exists: Boolean < IOs =
+  path.exists
+
+// Create a directory
+val createDir: Unit < IOs =
+  Files("tmp", "test").mkDir
+```
+
+`Files` instances are created by providing a list of path segments, which can be either `String`s or other `Files` instances. This allows for easy composition of paths. `Files` also provides methods for other common file operations:
+
+- Reading: `read`, `readBytes`, `readLines`, `readStream`, `readLinesStream`, `readBytesStream`
+- Writing: `write`, `writeBytes`, `writeLines`, `append`, `appendBytes`, `appendLines`
+- Directory operations: `list`, `walk`
+- File metadata: `exists`, `isDir`, `isFile`, `isLink`
+- File manipulation: `mkDir`, `mkFile`, `move`, `copy`, `remove`, `removeAll`
+
+All methods that perform side effects are suspended using the `IOs` effect, ensuring referential transparency. Methods that work with streams of data, such as `readStream` and `walk`, return a `Stream` of the appropriate type, suspended using the `Resources` effect to ensure proper resource handling.
+
+```scala
+import kyo._
+
+val path: Files = Files("tmp", "file.txt")
+
+// Read a file as a stream of lines
+val lines: Stream[Unit, String, Fibers] < Resources = 
+  path.readLinesStream()
+
+// Process the stream
+val result: Unit < (Resources & Consoles & Fibers) =
+  lines.map(_.transform(line => Consoles.println(line)).runDiscard)
+
+// Walk a directory tree
+val tree: Stream[Unit, Files, Any] < IOs =
+  Files("tmp").walk
+
+// Process each file in the tree
+val processedTree: Unit < (Consoles & Fibers) =
+  tree.map(_.transform(file => file.read.map(content => Consoles.println(s"File: ${file}, Content: $content"))).runDiscard)
+```
+
+`Files` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `sink` and `sinkLines` extension methods on `Stream` enable writing streams of data back to files.
+
+```scala
+import kyo._
+
+// Create a stream of bytes
+val bytes: Stream[Unit, Byte, IOs] = Streams.initSeq(Seq(1, 2, 3))
+
+// Write the stream to a file
+val sinkResult: Unit < (Resources & IOs) =
+  bytes.sink(Files("path", "to", "file.bin"))
+```
+
+### Process: Process Execution
+
+`Process` provides a way to spawn and interact with external processes from within Kyo. It offers a purely functional interface for process creation, execution, and management.
+
+```scala
+import kyo._
+
+// Create a simple command
+val command: Process.Command = Process.Command("echo", "Hello, World!")
+
+// Spawn the process and obtain the result
+val result: String < IOs = command.text
+```
+
+The core of `Process` is the `Process.Command` type, which represents a command to be executed. It can be created using the `Process.Command.apply` method, which takes a variable number of arguments representing the command and its arguments.
+
+The `Process` object also provides a `jvm` sub-object for spawning JVM processes directly.
+
+```scala
+import kyo._
+
+class MyClass extends KyoApp:
+  run {
+    Consoles.println(s"Executed with args: $args")
+  }
+
+// Spawn a new JVM process
+val jvmProcess: Process < IOs = 
+  Process.jvm.spawn(classOf[MyClass], List("arg1", "arg2"))
+```
+
+Once a `Process.Command` is created, it can be executed using various methods:
+
+- `spawn`: Spawns the process and returns a `Process` instance.
+- `text`: Spawns the process, waits for it to complete, and returns the standard output as a string.
+- `stream`: Spawns the process and returns an `InputStream` of the standard output.
+- `exitValue`: Spawns the process, waits for it to complete, and returns the exit code.
+- `waitFor`: Spawns the process, waits for it to complete, and returns the exit code.
+
+`Process.Command` instances can be transformed and combined using methods like `pipe`, `andThen`, `+`, `map`, and `cwd`, `env`, `stdin`, `stdout`, `stderr` for modifying the process's properties.
+
+```scala
+import kyo._
+import java.io.File
+import java.nio.file.Path
+
+// Create a piped command
+val pipedCommand = Process.Command("echo", "Hello, World!").pipe(Process.Command("wc", "-w"))
+
+// Modify the command's environment and working directory
+val modifiedCommand = pipedCommand.env(Map("VAR" -> "value")).cwd(Path.of("/path/to/dir"))
+
+// Spawn the modified command
+val modifiedResult: String < IOs = modifiedCommand.text
+```
+
+`Process` also provides `Input` and `Output` types for fine-grained control over the process's standard input, output, and error streams.
+
+```scala
+import kyo._
+import java.io.File
+
+// Create a command with custom input and output
+val command = Process.Command("my-command")
+  .stdin(Process.Input.fromString("input data"))
+  .stdout(Process.Output.FileRedirect(new File("output.txt")))
+  .stderr(Process.Output.Inherit)
+```
+
+The `Process` type returned by `spawn` provides methods for interacting with the spawned process, such as `waitFor`, `exitValue`, `destroy`, and `isAlive`.
+
 ## Concurrent Effects
 
 The `kyo.concurrent` package provides utilities for dealing with concurrency in Scala applications. It's a powerful set of effects designed for easier asynchronous programming, built on top of other core functionalities provided by the `kyo` package.
@@ -1351,13 +1497,13 @@ import kyo._
 
 // A computation that sleeps for 1s
 val a: Unit < Fibers =
-  Fibers.sleep(1.seconds)
+  Fibers.sleep(1.second)
 
 // Times out and interrupts the provided 
 // computation in case it doesn't produce 
 // a result within 1s
 val b: Int < Fibers =
-  Fibers.timeout(1.seconds)(Math.cos(42).toInt)
+  Fibers.timeout(1.second)(Math.cos(42).toInt)
 ```
 
 The `fromFuture` methods provide interoperability with Scala's `Future`.
@@ -1557,12 +1703,12 @@ val d: Unit < IOs =
 
 It's also possible to specify a concurrent `Access` policy as the second parameter of the `Queues.init` methods. This configuration has an effect only on the JVM and is ignored in ScalaJS.
 
-| Policy | Full Form                           | Description |
-|--------|-------------------------------------|-------------|
+| Policy | Full Form                              | Description                                                                                                                                                                                                          |
+| ------ | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Mpmc   | Multiple Producers, Multiple Consumers | Supports multiple threads/fibers simultaneously enqueuing and dequeuing elements. This is the most flexible but may incur the most overhead due to the need to synchronize between multiple producers and consumers. |
-| Mpsc   | Multiple Producers, Single Consumer   | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed. |
-| Spmc   | Single Producer, Multiple Consumers   | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers. |
-| Spsc   | Single Producer, Single Consumer      | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements. |
+| Mpsc   | Multiple Producers, Single Consumer    | Allows multiple threads/fibers to enqueue elements but restricts dequeuing to a single consumer. This can be more efficient than `Mpmc` when only one consumer is needed.                                            |
+| Spmc   | Single Producer, Multiple Consumers    | Allows only a single thread/fiber to enqueue elements, but multiple threads/fibers can dequeue elements. Useful when only one source is generating elements to be processed by multiple consumers.                   |
+| Spsc   | Single Producer, Single Consumer       | The most restrictive but potentially fastest policy. Only one thread/fiber can enqueue elements, and only one thread/fiber can dequeue elements.                                                                     |
 
 Each policy is suitable for different scenarios and comes with its own trade-offs. For example, `Mpmc` is highly flexible but can be slower due to the need for more complex synchronization. `Spsc`, being the most restrictive, allows for optimizations that could make it faster for specific single-producer, single-consumer scenarios.
 
@@ -1726,7 +1872,7 @@ val b: Meter < IOs =
 val c: Meter < IOs =
   Meters.initRateLimiter(
     rate = 10, 
-    period = 1.seconds
+    period = 1.second
   )
 
 // 'pipeline': Combine multiple 'Meter's
@@ -1776,7 +1922,7 @@ val a: Unit < IOs =
 
 // Schedule a delayed task
 val b: TimerTask < IOs =
-  Timers.schedule(delay = 1.seconds)(a)
+  Timers.schedule(delay = 1.second)(a)
 
 // Recurring task with
 // intial delay
@@ -1818,7 +1964,7 @@ import kyo._
 
 // Example TimerTask
 val a: TimerTask < IOs = 
-  Timers.schedule(1.seconds)(())
+  Timers.schedule(1.second)(())
 
 // Try to cancel the task
 val b: Boolean < IOs =
@@ -2355,6 +2501,96 @@ val a: Int < Options =
 //   Method doesn't accept nested Kyo computations.
 //   Detected: 'scala.Int < kyo.options.Options < kyo.concurrent.fibers.Fibers'. Consider using 'flatten' to resolve. 
 //   Possible pending effects mismatch: Expected 'kyo.concurrent.fibers.Fibers', found 'kyo.options.Options'.
+```
+
+## ZIO-like Combinators
+
+For ZIO users, Kyo's core API can be frustrating for three reasons:
+
+1. It is minimal by design.
+
+While its uncluttered namespaces make it more approachable for beginners, users addicted to ZIO's powerful and intuitive combinators may find it unwieldy and possibly not worth the effort.
+
+2. Effects are handled by functions that take effects as arguments, rather than by methods on effects.
+
+ZIO users are used to having a large menu of combinators on `ZIO` values that can be chained together to manipulate effects fluently. `kyo-core`, by contrast, requires nesting effects within method calls, inverting the order in which users handle effects and requiring them either to create deeply nested expressions or to break expressions up into many intermediate expressions.
+
+3. Factory methods are distributed among different objects
+
+Being more modular that ZIO, Kyo segregates its effect types more cleanly, placing its effect constructors in the companion objects to their corresponding types. This is not a problem given the minimal API that Kyo offers, but ZIO users will miss typing `ZIO.` and seeing a rich menu of factory methods pop up on their IDE.
+
+`kyo-combinators` alleviates these frustrations by providing:
+1. Factory methods on the `Kyo` object, styled after those found on `ZIO`, for many of the core Kyo effect types.
+2. Extension methods on Kyo effects modeled on ZIO combinators.
+
+Generally speaking, the names of `kyo-combinators` methods are the same as the corresponding methods in ZIO. When this is not possible or doesn't make sense, `kyo-combinators` tries to keep close to ZIO conventions.
+
+### Simple example
+
+```scala 3
+import kyo.*
+import scala.concurrent.duration.*
+
+trait HelloService:
+	def sayHelloTo(saluee: String): Unit < (IOs & Aborts[Throwable])
+
+object HelloService:
+    object Live extends HelloService:
+        override def sayHelloTo(saluee: String): Unit < (IOs & Aborts[Throwable]) =
+            Kyo.suspendAttempt {                  // Adds IOs & Aborts[Throwable] effect
+                println(s"Hello $saluee!")
+            }
+
+val keepTicking: Nothing < (Consoles & Fibers) =
+	(Consoles.print(".") *> Kyo.sleep(1.second)).forever
+
+val effect: Unit < (Consoles & Fibers & Resources & Aborts[Throwable] & Envs[NameService]) = for {
+    nameService <- Kyo.service[NameService]       // Adds Envs[NameService] effect
+    _           <- keepTicking.forkScoped         // Adds Consoles, Fibers, and Resources effects
+    saluee      <- Consoles.readln                // Uses Consoles effect
+    _           <- Kyo.sleep(2.seconds)           // Uses Fibers (semantic blocking)
+    _           <- nameService.sayHelloTo(saluee) // Adds Aborts[Throwable] effect
+} yield ()
+
+// There are no combinators for handling IOs or blocking Fibers, since this should
+// be done at the edge of the program
+IOs.run {                                                 // Handles IOs
+    Fibers.runAndBlock(Duration.Inf) {                    // Handles Fibers
+        Kyo.scoped {                                      // Handles Resources
+            effect
+              .provideAs[HelloService](HelloService.Live) // Handles Envs[HelloService]
+              .catchAborts((thr: Throwable) => {          // Handles Aborts[Throwable]
+				  Kyo.debug(s"Failed printing to console: ${throwable}")
+              })
+              .provideDefaultConsole                      // Handles Consoles
+        }
+    }
+}
+```
+
+### Failure conversions
+
+One notable departure from the ZIO API worth calling out is a set of combinators for converting between failure effects. Whereas ZIO has a single channel for describing errors, Kyo has at least three different effect types that can describe failure in the basic sense of "short-circuiting": `Aborts`, `Options`, and `Choices` (an empty `Seq` being equivalent to a short-circuit). It's useful to be able to move between these effects easily, so `kyo-combinators` provides a number of extension methods, usually in the form of `def effect1ToEffect2`.
+
+Some examples:
+
+```scala 3
+val abortsEffect: Int < Aborts[String] = ???
+
+// Converts failures to Options.empty
+val optionsEffect: Int < Options = abortsEffect.abortsToOptions
+
+// Converts option to a single "choice" (or Seq)
+val choicesEffect: Int < Choices = optionsEffect.optionsToChoices
+
+// Fails with Nil#head exception if empty and succeeds with Seq.head if non-empty
+val newAbortsEffect: Int < Aborts[Throwable] = choicesEffect.choicesToThrowable
+
+// Throws a throwable Aborts failure (will actually throw unless suspended)
+val unsafeEffect: Int < Any = newAbortsEffect.implicitAborts
+
+// Catch any suspended throws
+val safeEffect: Int < Aborts[Throwable] = unsafeEffect.explicitAborts
 ```
 
 ## Acknowledgements

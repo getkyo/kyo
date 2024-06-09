@@ -162,7 +162,7 @@ sealed abstract class Chunk[T] derives CanEqual:
                     end if
                 else
                     acc
-            loop(0, null, Chunks.init)
+            loop(0, first, Chunks.init)
     end changes
 
     final def collect[U, S](pf: PartialFunction[T, U < S])(using Trace): Chunk[U] < S =
@@ -278,7 +278,7 @@ sealed abstract class Chunk[T] derives CanEqual:
                     if dropRight > 0 then
                         loop(c.chunk, end, dropLeft, dropRight - 1)
                     else if end > 0 then
-                        array(end - 1) = c.value
+                        array(start + end - 1) = c.value
                         loop(c.chunk, end - 1, dropLeft, dropRight)
                 case c: Drop[T] =>
                     loop(c.chunk, end, dropLeft + c.dropLeft, dropRight + c.dropRight)
