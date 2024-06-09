@@ -69,7 +69,7 @@ lazy val kyoJVM = project
         `kyo-bench`.jvm,
         `kyo-test`.jvm,
         `kyo-zio`.jvm,
-        `kyo-examples`.jvm
+        `kyo-examples`.jvm,
         `kyo-prometheus`
     )
 
@@ -428,16 +428,14 @@ lazy val `kyo-prometheus` = project
   .settings(
     name := "kyo-prometheus",
     `kyo-settings`,
+    mainClass := Some("com.example.Main"),
     libraryDependencies ++= Seq(
-      "io.prometheus" % "simpleclient" % "0.11.0",
-      "io.prometheus" % "simpleclient_hotspot" % "0.11.0",
-      "io.prometheus" % "simpleclient_common" % "0.11.0",
-      "com.softwaremill.sttp.tapir" %% "tapir-core" % "1.0.0",
-      "com.softwaremill.sttp.tapir" %% "tapir-http4s-server" % "1.0.0",
-      "org.http4s" %% "http4s-blaze-server" % "0.23.12",
-      "org.http4s" %% "http4s-dsl" % "0.23.12",
-      "org.http4s" %% "http4s-circe" % "0.23.12",
-      "io.circe" %% "circe-generic" % "0.14.3",
-      "io.circe" %% "circe-parser" % "0.14.3"
+        "io.prometheus" % "simpleclient" % "0.11.0",
+        "io.prometheus" % "simpleclient_hotspot" % "0.11.0",
+        "io.prometheus" % "simpleclient_httpserver" % "0.11.0",
+        "com.softwaremill.sttp.tapir" %% "tapir-core" % "1.0.0",
+        "com.softwaremill.sttp.tapir" %% "tapir-prometheus-metrics" % "1.0.0",
+        "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.0.0"
     )
   )
+  .dependsOn(`kyo-tapir`.jvm)

@@ -1,19 +1,28 @@
-package kyo.prometheus
-
-import io.prometheus.client.{CollectorRegistry, Counter, Histogram}
-import io.prometheus.client.hotspot.DefaultExports
+import io.prometheus.client.{Counter, Gauge, Summary}
 
 object Metrics {
-  DefaultExports.initialize()
-
-  // Create your custom metrics
-  val requestCounter: Counter = Counter.build()
-    .name("http_requests_total")
-    .help("Total number of HTTP requests.")
+  val requestCount: Counter = Counter.build()
+    .name("request_count")
+    .help("Total request count")
     .register()
 
-  val requestLatency: Histogram = Histogram.build()
-    .name("http_request_duration_seconds")
-    .help("HTTP request latency in seconds.")
+  val inProgressRequests: Gauge = Gauge.build()
+    .name("in_progress_requests")
+    .help("In progress requests")
     .register()
+
+  val requestDuration: Summary = Summary.build()
+    .name("request_duration_seconds")
+    .help("Time spent processing request")
+    .register()
+
+  def processRequest(): Unit = {
+    inProgressRequests.inc()
+    val start = System.nanoTime()
+    Thread.sleep(scala.util.Random.nextInt(1000))
+    val duration = (System.nanoTime() - start) / 1e9d
+    requestDuration.observe(duration)
+    inProgressRequests.dec()
+    requestCount.inc()
+  }
 }

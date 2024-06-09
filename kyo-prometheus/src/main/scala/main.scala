@@ -1,25 +1,27 @@
-package kyo.prometheus
+import sttp.tapir._
+import sttp.tapir.server.netty.NettyFutureServerInterpreter
+import sttp.tapir.prometheus.PrometheusMetrics
 
-import cats.effect.{ExitCode, IO, IOApp}
-import org.http4s.HttpRoutes
-import org.http4s.dsl.io._
-import org.http4s.server.Router
-import org.http4s.server.blaze.BlazeServerBuilder
+import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.Future
 
-import scala.concurrent.ExecutionContext.global
+object main extends App {
+  // Start Prometheus endpoint
+  PrometheusEndpoint.start()
 
-object Main extends IOApp {
-  val allRoutes: HttpRoutes[IO] = Router(
-    "/" -> PrometheusEndpoint.metricsRoutes
-  )
+  // Define metrics endpoint
+  val prometheusMetrics = PrometheusMetrics.default[Future]()
+  val metricsEndpoint = endpoint.get.in(prometheusMetrics.path).serverLogicSuccess(_ => Future.successful(prometheusMetrics.registry))
 
-  // Create the http4s server
-  override def run(args: List[String]): IO[ExitCode] =
-    BlazeServerBuilder[IO](global)
-      .bindHttp(8080, "0.0.0.0")
-      .withHttpApp(allRoutes.orNotFound)
-      .serve
-      .compile
-      .drain
-      .as(ExitCode.Success)
+  val bindAndCheck = for {
+    binding <- NettyFutureServerInterpreter().toServer(metricsEndpoint).flatMap(_.start())
+  } yield binding
+
+  bindAndCheck.onComplete { result =>
+    println(s"Prometheus metrics server started: $result")
+  }
+
+  while (true) {
+    Metrics.processRequest()
+  }
 }
