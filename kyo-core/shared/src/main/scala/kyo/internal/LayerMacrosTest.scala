@@ -2,7 +2,6 @@ package kyo.internal
 
 import kyo.*
 
-
 object LayerMacrosTest extends KyoApp:
     case class MagicSource(name: String)
     case class Wizard(name: String, source: MagicSource)
@@ -13,8 +12,8 @@ object LayerMacrosTest extends KyoApp:
     }
     val wizardLayer = Layers.from(source => Wizard("Gandalf", source))
     val spellLayer  = Layers.from(source => Spell(100, source))
-    val autoWired = LayerMacros.layersToNodesTest[Wizard & Spell](wizardLayer, spellLayer, magicSourceLayer)
+    val autoWired   = LayerMacros.layersToNodesTest[Wizard & Spell](wizardLayer, spellLayer, magicSourceLayer)
 
     run:
         autoWired.run.map(_.show)
-
+end LayerMacrosTest
