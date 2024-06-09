@@ -13,15 +13,16 @@ object LayerMacrosTest extends KyoApp:
     val fireBallLayer = Layers(Fireball)
     val waterLayer    = Layers(Water)
 
-    val gandalfLayer = Layers.from((source: MagicSource) => IOs(Wizard("Gandalf", source)))
-    val harryLayer   = Layers.from((source: MagicSource) => IOs(Wizard("Harry", source)))
-    val spellLayer   = Layers.from(source => Spell(100, source))
+    val gandalfLayer: Layer[Wizard, Envs[MagicSource] & IOs] =
+        Layers.from((source: MagicSource) => IOs(Wizard("Gandalf", source))) and Layers(12)
+    val harryLayer = Layers.from((source: MagicSource) => IOs(Wizard("Harry", source)))
+    val spellLayer = Layers.from(source => Spell(100, source))
 
     val autoWired = LayerMacros.mergeLayers[Wizard & Spell](
         // gandalfLayer,
         harryLayer,
         spellLayer,
-        fireBallLayer, // this is bad
+        // fireBallLayer // this is bad
         waterLayer
     )
 

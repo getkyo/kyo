@@ -3,14 +3,44 @@ package kyo.internal
 import kyo.*
 import scala.quoted.*
 
+// TODO: Ensure this ain't circular
+// modifyLogger: Logger -> Logger
+// baseLogger: () -> Logger
+
+extension (string: String)
+    def bold      = scala.Console.BOLD + string + scala.Console.RESET
+    def underline = scala.Console.UNDERLINED + string + scala.Console.RESET
+    def dim       = s"\u001b[2m$string\u001b[0m"
+    def red       = scala.Console.RED + string + scala.Console.RESET
+    def green     = scala.Console.GREEN + string + scala.Console.RESET
+    def blue      = scala.Console.BLUE + string + scala.Console.RESET
+
+end extension
+
 object LayerMacros:
     transparent inline def mergeLayers[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
         ${ layersToNodesImpl[Target]('layers) }
 
     transparent inline def reflect(using q: Quotes): q.reflectModule = q.reflect
 
-    def debugNode[Out, S](using Quotes)(node: Node[quotes.reflect.TypeRepr, Expr[Layer[Out, S]]]): String =
-        s"Node(In: ${node.inputs.map(_.show).mkString("{", ", ", "}")}, Out: ${node.outputs.map(_.show).mkString("{", ", ", "}")}, ${node.value.show})"
+    def reportErrors(using Quotes)(errors: ::[GraphError[reflect.TypeRepr, Expr[Layer[?, ?]]]]): Nothing =
+        import reflect.*
+        val messages = errors.map { error =>
+            error match
+                case GraphError.MissingInput(input, Some(parent)) =>
+                    s"Missing input ${input.show} for ${parent.value.show}".red
+
+                case GraphError.MissingInput(input, None) =>
+                    s"Missing layer for target ${input.show}".red
+
+                case GraphError.AmbiguousInputs(target, found, parent) =>
+                    s"Ambigious input ${target.show} found in ${found.map(_.value.show).mkString("{", ", ", "}")}".red
+
+                case GraphError.CircularDependency(node) =>
+                    s"MAKE CIRCULAR DEPENDENYC ERROR PRETTIESY ".red
+        }.distinct
+        report.errorAndAbort(messages.mkString("\n"))
+    end reportErrors
 
     def layersToNodesImpl[Target: Type](using Quotes)(expr: Expr[Seq[Layer[?, ?]]]): Expr[Layer[Target, ?]] =
         import reflect.*
@@ -20,20 +50,14 @@ object LayerMacros:
             case Varargs(layers) =>
                 val nodes = layers.map(layerToNode(_))
 
-                // TODO: we need to check distinction by subtype
-                // this does not prevent ambigious layers for subtypes
-                val duplicates = nodes.groupBy(_.outputs).collect {
-                    case (outputs, nodes) if nodes.sizeIs > 1 => nodes
-                }.flatten
-
-                if duplicates.nonEmpty then
-                    def show = duplicates.map(_.value.show).mkString("{", ", ", "}")
-                    report.errorAndAbort(s"Ambigious layers provided: $show")
-
                 val graph = Graph(nodes.toSet)(_ <:< _)
 
-                val targets     = flattenAnd(TypeRepr.of[Target])
-                val targetLayer = graph.buildTarget(targets)
+                val targets = flattenAnd(TypeRepr.of[Target])
+                val targetLayer = graph.buildTargets(targets, None) match
+                    case Validated.Success(value) =>
+                        value
+                    case Validated.Error(errors) =>
+                        reportErrors(errors)
 
                 def debugFold = targetLayer.fold[String]("(" + _ + " and " + _ + ")", "(" + _ + " to " + _ + ")", _.value.show, "Empty")
 
@@ -130,20 +154,79 @@ object LayerLike:
 
 final case class Node[Key, Value](inputs: Set[Key], outputs: Set[Key], value: Value)
 
+enum Validated[+E, +A]:
+    case Success(value: A)
+    case Error(errors: ::[E])
+
+    def map[B](f: A => B): Validated[E, B] =
+        this match
+            case Success(value) => Success(f(value))
+            case Error(errors)  => Error(errors)
+
+    def flatMap[E1 >: E, B](f: A => Validated[E1, B]): Validated[E1, B] =
+        this match
+            case Success(value) => f(value)
+            case Error(errors)  => Error(errors)
+
+    def zipWith[E1 >: E, B, C](that: Validated[E1, B])(f: (A, B) => C): Validated[E1, C] =
+        (this, that) match
+            case (Success(value1), Success(value2)) => Success(f(value1, value2))
+            case (Error(e :: es), Error(es2))       => Error(::(e, es ++ es2))
+            case (Error(errors1), _)                => Error(errors1)
+            case (_, Error(errors2))                => Error(errors2)
+end Validated
+
+object Validated:
+    def succeed[E, A](value: A): Validated[E, A] = Success(value)
+    def error[E, A](error: E): Validated[E, A]   = Error(::(error, Nil))
+
+    def traverse[E, A, B](set: Set[A])(f: A => Validated[E, B]): Validated[E, Set[B]] =
+        set.foldLeft[Validated[E, Set[B]]](Validated.Success(Set.empty)) { (acc, item) =>
+            acc.zipWith(f(item)) { (accSet, b) =>
+                accSet + b
+            }
+        }
+
+    def sequence[E, A](set: Set[Validated[E, A]]): Validated[E, Set[A]] =
+        set.foldLeft(Validated.Success(Set.empty)) { (acc, item) =>
+            acc.zipWith(item) { (accSet, b) =>
+                accSet + b
+            }
+        }
+end Validated
+
+enum GraphError[Key, Value]:
+    case MissingInput(input: Key, parent: Option[Node[Key, Value]])
+    case CircularDependency(node: Node[Key, Value]) // TODO: Maybe also trace the path.
+    case AmbiguousInputs(target: Key, found: Set[Node[Key, Value]], parent: Option[Node[Key, Value]])
+end GraphError
+
 final case class Graph[Key, Value](nodes: Set[Node[Key, Value]])(equals: (Key, Key) => Boolean):
 
-    def buildTarget(targets: Set[Key]): LayerLike[Node[Key, Value]] =
-        val values = findNodesWithOutputs(targets).map { node =>
-            if node.inputs.isEmpty then LayerLike.Value(node)
-            else
-                val inputNode = buildTarget(node.inputs)
-                inputNode to LayerLike.Value(node)
-        }
-        values.reduceOption { (left, right) =>
-            left and right
-        }.getOrElse(LayerLike.Empty)
-    end buildTarget
+    def buildTargets(targets: Set[Key], parent: Option[Node[Key, Value]]): Validated[GraphError[Key, Value], LayerLike[Node[Key, Value]]] =
+        for
+            nodes <- findNodesWithOutputs(targets, parent)
+            values <- Validated.traverse(nodes) { node =>
+                if node.inputs.isEmpty then Validated.succeed(LayerLike.Value(node))
+                else
+                    buildTargets(node.inputs, Some(node))
+                        .map { input => input to LayerLike.Value(node) }
+            }
+        yield values.reduceOption(_ and _).getOrElse(LayerLike.Empty)
+    end buildTargets
 
-    def findNodesWithOutputs(targets: Set[Key]): Set[Node[Key, Value]] =
-        nodes.filter(node => node.outputs.exists(output => targets.exists(target => equals(output, target))))
+    def findNodesWithOutputs(
+        targets: Set[Key],
+        parent: Option[Node[Key, Value]]
+    ): Validated[GraphError[Key, Value], Set[Node[Key, Value]]] =
+        Validated.traverse(targets) { target => findNodeWithOutputFor(target, parent) }
+
+    def findNodeWithOutputFor(target: Key, parent: Option[Node[Key, Value]]): Validated[GraphError[Key, Value], Node[Key, Value]] =
+        val matching = nodes.filter { node => node.outputs.exists(output => equals(output, target)) }
+        matching.size match
+            case 1 => Validated.succeed(matching.head)
+            case 0 => Validated.error(GraphError.MissingInput(target, parent))
+            case _ => Validated.error(GraphError.AmbiguousInputs(target, matching, parent))
+        end match
+    end findNodeWithOutputFor
 end Graph
