@@ -322,7 +322,6 @@ lazy val `readme-examples` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-tapir`)
         .dependsOn(`kyo-direct`)
-        .dependsOn(`kyo-os-lib`)
         .settings(
             `kyo-settings`
         )
