@@ -3,16 +3,27 @@ package kyo.internal
 import kyo.*
 
 object LayerMacrosTest extends KyoApp:
-    case class MagicSource(name: String)
+    trait MagicSource
+    case object Fireball extends MagicSource
+    case object Water    extends MagicSource
+
     case class Wizard(name: String, source: MagicSource)
     case class Spell(powerLevel: Int, source: MagicSource)
 
-    val magicSourceLayer = Layers {
-        MagicSource("Fireball")
-    }
-    val wizardLayer = Layers.from((source: MagicSource) => IOs(Wizard("Gandalf", source)))
-    val spellLayer  = Layers.from(source => Spell(100, source))
-    val autoWired   = LayerMacros.mergeLayers[Wizard & Spell](wizardLayer, spellLayer, magicSourceLayer)
+    val fireBallLayer = Layers(Fireball)
+    val waterLayer    = Layers(Water)
+
+    val gandalfLayer = Layers.from((source: MagicSource) => IOs(Wizard("Gandalf", source)))
+    val harryLayer   = Layers.from((source: MagicSource) => IOs(Wizard("Harry", source)))
+    val spellLayer   = Layers.from(source => Spell(100, source))
+
+    val autoWired = LayerMacros.mergeLayers[Wizard & Spell](
+        // gandalfLayer,
+        harryLayer,
+        spellLayer,
+        fireBallLayer, // this is bad
+        waterLayer
+    )
 
     run:
         autoWired.run.map(_.show)

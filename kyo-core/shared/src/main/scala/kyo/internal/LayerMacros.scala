@@ -19,12 +19,23 @@ object LayerMacros:
         expr match
             case Varargs(layers) =>
                 val nodes = layers.map(layerToNode(_))
-                val graph = Graph(nodes.toSet)(_ =:= _)
+
+                // TODO: we need to check distinction by subtype
+                // this does not prevent ambigious layers for subtypes
+                val duplicates = nodes.groupBy(_.outputs).collect {
+                    case (outputs, nodes) if nodes.sizeIs > 1 => nodes
+                }.flatten
+
+                if duplicates.nonEmpty then
+                    def show = duplicates.map(_.value.show).mkString("{", ", ", "}")
+                    report.errorAndAbort(s"Ambigious layers provided: $show")
+
+                val graph = Graph(nodes.toSet)(_ <:< _)
 
                 val targets     = flattenAnd(TypeRepr.of[Target])
                 val targetLayer = graph.buildTarget(targets)
 
-                val debugFold = targetLayer.fold[String]("(" + _ + " and " + _ + ")", "(" + _ + " to " + _ + ")", _.value.show, "Empty")
+                def debugFold = targetLayer.fold[String]("(" + _ + " and " + _ + ")", "(" + _ + " to " + _ + ")", _.value.show, "Empty")
 
                 // val message = nodes.map(debugNode).mkString("\n")
                 //  println(s"""
@@ -43,8 +54,13 @@ object LayerMacros:
                                 '{ $left.to($right) }
                     },
                     _.value,
-                    // TODO: provide better error; Will also be reached if full deps are not provided
-                    report.errorAndAbort("No target found. Cannot produce Empty layer ")
+                    // TODO: provide better error
+                    report.errorAndAbort(
+                        s"""
+                    Empty layer found as input to Layer with non-zero requirements. Did you fully resolve dependencies?
+                    Debug: $debugFold
+                    """
+                    )
                 )
 
                 exprFold.asInstanceOf[Expr[Layer[Target, ?]]]
@@ -112,9 +128,9 @@ object LayerLike:
     def apply[A](value: A): LayerLike[A]            = Value(value)
     given [A]: CanEqual[LayerLike[A], LayerLike[A]] = CanEqual.derived
 
-case class Node[Key, Value](inputs: Set[Key], outputs: Set[Key], value: Value)
+final case class Node[Key, Value](inputs: Set[Key], outputs: Set[Key], value: Value)
 
-case class Graph[Key, Value](nodes: Set[Node[Key, Value]])(equals: (Key, Key) => Boolean):
+final case class Graph[Key, Value](nodes: Set[Node[Key, Value]])(equals: (Key, Key) => Boolean):
 
     def buildTarget(targets: Set[Key]): LayerLike[Node[Key, Value]] =
         val values = findNodesWithOutputs(targets).map { node =>
