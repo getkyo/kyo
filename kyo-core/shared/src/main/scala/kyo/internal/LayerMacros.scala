@@ -18,8 +18,8 @@ extension (string: String)
 end extension
 
 object LayerMacros:
-    transparent inline def mergeLayers[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
-        ${ layersToNodesImpl[Target]('layers) }
+    transparent inline def make[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
+        ${ makeImpl[Target]('layers) }
 
     transparent inline def reflect(using q: Quotes): q.reflectModule = q.reflect
 
@@ -42,7 +42,7 @@ object LayerMacros:
         report.errorAndAbort(messages.mkString("\n"))
     end reportErrors
 
-    def layersToNodesImpl[Target: Type](using Quotes)(expr: Expr[Seq[Layer[?, ?]]]): Expr[Layer[Target, ?]] =
+    def makeImpl[Target: Type](using Quotes)(expr: Expr[Seq[Layer[?, ?]]]): Expr[Layer[Target, ?]] =
         import reflect.*
         if TypeRepr.of[Target] =:= TypeRepr.of[Nothing] then
             report.errorAndAbort("Type Parameter: `Target` cannot be Nothing")
@@ -59,15 +59,6 @@ object LayerMacros:
                     case Validated.Error(errors) =>
                         reportErrors(errors)
 
-                def debugFold = targetLayer.fold[String]("(" + _ + " and " + _ + ")", "(" + _ + " to " + _ + ")", _.value.show, "Empty")
-
-                // val message = nodes.map(debugNode).mkString("\n")
-                //  println(s"""
-                //  targets: ${targets.map(_.show).mkString("{", ", ", "}")}
-                //  input: ${message}
-                //  output: ${debugFold}
-                //  """)
-
                 val exprFold = targetLayer.fold[Expr[Layer[?, ?]]](
                     { case ('{ $left: Layer[out1, s1] }, '{ $right: Layer[out2, s2] }) =>
                         '{ $left.and($right) }
@@ -77,14 +68,18 @@ object LayerMacros:
                             case '{ $right: Layer[out2, Envs[`out1`] & s2] } =>
                                 '{ $left.to($right) }
                     },
-                    _.value,
-                    // TODO: provide better error
-                    report.errorAndAbort(
-                        s"""
+                    _.value, {
+                        // TODO: MAke nIcEr PlZEaz
+                        val debugFold =
+                            targetLayer.fold[String]("(" + _ + " and " + _ + ")", "(" + _ + " to " + _ + ")", _.value.show, "Empty")
+
+                        report.errorAndAbort(
+                            s"""
                     Empty layer found as input to Layer with non-zero requirements. Did you fully resolve dependencies?
                     Debug: $debugFold
                     """
-                    )
+                        )
+                    }
                 )
 
                 exprFold.asInstanceOf[Expr[Layer[Target, ?]]]
@@ -92,7 +87,7 @@ object LayerMacros:
             case _ =>
                 report.errorAndAbort("NO LAYERS")
         end match
-    end layersToNodesImpl
+    end makeImpl
 
     def layerToNode(using Quotes)(expr: Expr[Layer[?, ?]]): Node[reflect.TypeRepr, Expr[Layer[?, ?]]] =
         import reflect.*
