@@ -6,25 +6,16 @@ import kyo.Chunk
 import kyo.Chunks
 import kyo.Maybe
 import kyo.Tag
-// I think we should rename Frame to Frame so a Stack is a Seq[Frame]
-import kyo.internal.Trace as Frame
+import kyo.internal.Trace
 import language.implicitConversions
 import scala.annotation.targetName
 import scala.quoted.*
 import scala.reflect.ClassTag
+import scala.util.NotGiven
 import scala.util.Random
 
-opaque type FrameId = Long
-
-object FrameId:
-    implicit inline def derive: FrameId =
-        ${ frameIdImpl }
-
-    private def frameIdImpl(using Quotes): Expr[FrameId] =
-        Expr(Random.nextLong)
-end FrameId
-
-// This new iteration adds optimizations (mostly `inline`) and safepoints.
+// This new iteration adds back optimizations (mostly `inline`),
+// safepoints, and wiring of locals.
 object core:
 
     type Id[T]    = T
@@ -40,13 +31,16 @@ object core:
             inline _tag: Tag[E],
             inline _input: I[T],
             inline f: O[T] => U < S = (v: O[T]) => v
-        )(using _frame: Frame): U < (E & S) =
+        )(using _trace: Trace): U < (E & S) =
             <(new Suspend[I, O, E, T, U, S]:
                 def tag   = _tag
                 def input = _input
-                def frame = _frame
-                def apply(v: O[T]): U < S =
-                    f(v)
+                def trace = _trace
+                def apply(v: O[T], s: Safepoint, l: Local.State): U < S =
+                    if s.preempt() then
+                        s.suspend(f(v))
+                    else
+                        f(v)
             )
     end SuspendDsl
 
@@ -61,7 +55,7 @@ object core:
             inline v: T < (E & S)
         )(
             inline handle: [C] => (I[C], O[C] => T < (E & S & S2)) => T < (E & S & S2)
-        )(using inline _frame: Frame): T < (S & S2) =
+        )(using inline _trace: Trace): T < (S & S2) =
             def handleLoop(v: T < (E & S & S2)): T < (S & S2) =
                 v match
                     case <(kyo: Suspend[I, O, E, Any, T, E & S & S2] @unchecked) if tag <:< kyo.tag =>
@@ -70,9 +64,15 @@ object core:
                         <(new Suspend[IX, OX, EX, Any, T, S & S2]:
                             val tag   = kyo.tag
                             val input = kyo.input
-                            def frame = _frame
-                            def apply(v: OX[Any]) =
-                                handleLoop(kyo(v))
+                            def trace = _trace
+                            def apply(v: OX[Any], s: Safepoint, l: Local.State) =
+                                val r = kyo(v, s, l)
+                                if s.preempt() then
+                                    s.suspend(handleLoop(r))
+                                else
+                                    handleLoop(r)
+                                end if
+                            end apply
                         )
                     case <(v) =>
                         v.asInstanceOf[T]
@@ -86,7 +86,7 @@ object core:
         )(
             inline handle: [C] => (I[C], State, O[C] => T < (E & S & S2)) => (State, T < (E & S & S2)) < (S & S2),
             inline done: (State, T) => U < (S & S2) = (_: State, v: T) => v
-        )(using inline _frame: Frame): U < (S & S2) =
+        )(using inline _trace: Trace): U < (S & S2) =
             def handleStateLoop(st: State, v: T < (E & S & S2)): U < (S & S2) =
                 v match
                     case <(kyo: Suspend[I, O, E, Any, T, E & S & S2] @unchecked) if tag <:< kyo.tag =>
@@ -95,9 +95,15 @@ object core:
                         <(new Suspend[IX, OX, EX, Any, U, S & S2]:
                             val tag   = kyo.tag
                             val input = kyo.input
-                            def frame = _frame
-                            def apply(v: OX[Any]) =
-                                handleStateLoop(st, kyo(v))
+                            def trace = _trace
+                            def apply(v: OX[Any], s: Safepoint, l: Local.State) =
+                                val r = kyo(v, s, l)
+                                if s.preempt() then
+                                    s.suspend(handleStateLoop(st, r))
+                                else
+                                    handleStateLoop(st, r)
+                                end if
+                            end apply
                         )
                     case <(v) =>
                         done(st, v.asInstanceOf[T])
@@ -105,11 +111,15 @@ object core:
         end state
     end handle
 
-    abstract class Runtime:
-        def enter(frame: Frame): Boolean
-        def exit(frame: Frame): Unit
-        def suspend[T, S](frame: Frame, v: T < S): T < S
-    end Runtime
+    trait Safepoint:
+        def preempt(): Boolean
+        def suspend[T, S](v: => T < S): T < S
+
+    object Safepoint:
+        val noop = new Safepoint:
+            def preempt()                  = false
+            def suspend[T, S](v: => T < S) = v
+    end Safepoint
 
     final case class <[+T, -S](private val state: T | Pending[T, S]) extends AnyVal:
 
@@ -123,7 +133,8 @@ object core:
 
         // Nested methods within an `inline` method are handled by the compiler by adding a new
         // method to the enclosing class of the call site. Essentially, each `map` generates a
-        // new local method for the transformation. This approach has a few important characteristics:
+        // new local `mapLoop` method for the transformation. This approach has a few important
+        // characteristics:
         //
         // 1. The `f` function is "stored" directly into `mapLoop` without requiring allocation
         // or even a field since Scala is able to beta-reduce the inlined function application.
@@ -132,22 +143,28 @@ object core:
         // 3. A new `Suspension` class is generated for each inlined `mapLoop`, which is similar
         // in code cache usage to lambdas in other effect systems via `LambdaMetafactory`
         // at run time. There's a tradeoff with larger jar sizes, though.
-        // 4. The `Frame` and `Tag` values are stored in methods returning constant strings from
+        // 4. The `Trace` and `Tag` values are stored in methods returning constant strings from
         // the class pool, also not requiring fields or allocations.
         // 5. The code gets specialized to the call site, which can avoid primitive boxing, and
         // the call to `kyo` in `Suspend.apply` can get inlined by the JIT compiler given that
         // a transformation has typically a single specific previous step and thus the call site
         // is monomorphic in the majority of the cases.
-        inline def map[U, S2](inline f: T => U < S2)(using inline _frame: Frame): U < (S & S2) =
+        inline def map[U, S2](inline f: T => U < S2)(using inline _trace: Trace): U < (S & S2) =
             def mapLoop(curr: T < S): U < (S & S2) =
                 curr match
                     case <(kyo: Suspend[IX, OX, EX, Any, T, S] @unchecked) =>
                         <(new Suspend[IX, OX, EX, Any, U, S & S2]:
                             val tag   = kyo.tag
                             val input = kyo.input
-                            def frame = _frame
-                            def apply(v: OX[Any]) =
-                                mapLoop(kyo(v))
+                            def trace = _trace
+                            def apply(v: OX[Any], s: Safepoint, l: Local.State) =
+                                val r = kyo(v, s, l)
+                                if s.preempt() then
+                                    s.suspend(mapLoop(r))
+                                else
+                                    mapLoop(r)
+                                end if
+                            end apply
                         )
                     case <(v) =>
                         f(v.asInstanceOf[T])
@@ -174,11 +191,13 @@ object core:
 
             def tag: Tag[E]
             def input: I[T]
-            def frame: Frame
-            def apply(v: O[T]): U < S
+            def trace: Trace
+
+            def apply(v: O[T]): U < S = apply(v, Safepoint.noop, Local.State.empty)
+            def apply(v: O[T], s: Safepoint, l: Local.State): U < S
 
             override def toString() =
-                s"Kyo(${tag.show}, Input($input), ${frame.position}, ${frame.snippet})"
+                s"Kyo(${tag.show}, Input($input), ${trace.position}, ${trace.snippet})"
         end Suspend
 
     end internal
@@ -186,6 +205,18 @@ object core:
 end core
 
 import core.*
+
+///////////
+// Local //
+///////////
+
+abstract class Local[T]
+
+object Local:
+    type State = Map[Local[?], Any]
+    object State:
+        def empty: State = Map.empty
+end Local
 
 ////////
 // IO //
@@ -200,7 +231,7 @@ sealed trait IO extends Effect[Const[Unit], Const[Unit]]
 // approach essentially creates a new class for each call site that performs a
 // suspension. Like with `map`, this approach has some major benefits:
 //
-// 1. The `Frame` and `Tag` values are stored in methods returning strings from
+// 1. The `Trace` and `Tag` values are stored in methods returning strings from
 // the class constant pool, not even requiring fields or allocations.
 // 2. The `input` is specialized to the suspension call site, which can avoid
 // boxing in case effects suspend with primitive values.
@@ -215,7 +246,7 @@ sealed trait IO extends Effect[Const[Unit], Const[Unit]]
 // be interleaved with the handling of other effects.
 object IO:
 
-    // No need to require a `Frame` here since `suspend` will summon it after inlining.
+    // No need to require a `Trace` here since `suspend` will summon it after inlining.
     inline def apply[T, S](inline f: => T < S)(using inline tag: Tag[IO]): T < (IO & S) =
         suspend[Any](tag, (), _ => f)
 
@@ -223,7 +254,7 @@ object IO:
         suspend[Any](tag, (), _ => f)
 
     // Inline effect suspension but not effect handling
-    def run[R, T, S](v: T < (IO & S))(using tag: Tag[IO], frame: Frame): T < S =
+    def run[R, T, S](v: T < (IO & S))(using tag: Tag[IO], trace: Trace): T < S =
         handle(tag, v)([C] => (_, cont) => cont(()))
 end IO
 
@@ -249,7 +280,7 @@ object Env:
 
     def run[R >: Nothing: Tag, T, S, VS, VR](env: R)(v: T < (Env[VS] & S))(
         using HasEnv[R, VS] { type Remainder = VR }
-    )(using tag: Tag[Env[R]], t: Frame): T < (S & VR) =
+    )(using tag: Tag[Env[R]], t: Trace): T < (S & VR) =
         // TODO I can't see a way to make the `HasEnv` mechanism not
         // require a type cast
         handle(tag, v)([C] => (_, cont) => cont(env)).asInstanceOf[T < (S & VR)]
@@ -265,6 +296,7 @@ object Env:
         given isEnv[V]: HasEnv[V, V] with
             type Remainder = Any
     end HasEnv
+
 end Env
 
 ///////////
@@ -298,7 +330,7 @@ object Abort:
             using
             h: HasAbort[E0, ES] { type Remainder = ER },
             tag: Tag[Abort[E]],
-            frame: Frame
+            trace: Trace
         ): Either[E, T] < (ER & S) =
             // TODO Also needs a type cast because of `HasAbort`
             handle(tag, v.map(Right(_): Either[E, T])) {
@@ -357,7 +389,7 @@ object Var:
     inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]]): Unit < Var[V] =
         suspend(tag, Update(f))
 
-    def run[V, T, S](st: V)(v: T < (Var[V] & S))(using tag: Tag[Var[V]], t: Frame): T < S =
+    def run[V, T, S](st: V)(v: T < (Var[V] & S))(using tag: Tag[Var[V]], t: Trace): T < S =
         handle.state(tag, st, v) {
             [C] =>
                 (input, state, cont) =>
@@ -383,7 +415,7 @@ object Sum:
         suspend[Any](tag, v)
 
     class RunDsl[V](ign: Unit) extends AnyVal:
-        def apply[T, S](v: T < (Sum[V] & S))(using tag: Tag[Sum[V]], t: Frame): (Chunk[V], T) < S =
+        def apply[T, S](v: T < (Sum[V] & S))(using tag: Tag[Sum[V]], t: Trace): (Chunk[V], T) < S =
             handle.state(tag, Chunks.init[V], v)(
                 handle = [C] => (input, state, cont) => (state.append(input), cont(())),
                 done = (state, result) => (state, result)
@@ -411,7 +443,7 @@ object Loop:
         input: Input
     )(
         inline run: Input => Result[Input, Output] < S
-    )(using inline frame: Frame): Output < S =
+    )(using inline trace: Trace): Output < S =
         // The compiler is able to make the method tail-recursive
         // if the loop can be resumed immediatelly and, if there's
         // a suspension, the stack is automatically unfolded. It's
@@ -440,7 +472,7 @@ end Loop
 // TODO What should we use here if we don't use plurals anymore?
 object Seqs:
 
-    def foreach[T, U, S](seq: Seq[T])(f: T => Unit < S)(using Frame): Unit < S =
+    def foreach[T, U, S](seq: Seq[T])(f: T => Unit < S)(using Trace): Unit < S =
         Loop.transform(seq) {
             case Nil          => Loop.done
             case head :: tail => f(head).andThen(Loop.continue(tail))
@@ -453,7 +485,7 @@ end Seqs
 
 case class Stream[T, V, S](get: T < (Stream.Emit[V] & S)):
 
-    def take(n: Int)(using tag: Tag[Stream.Emit[V]], t: Frame): Stream[T, V, S] =
+    def take(n: Int)(using tag: Tag[Stream.Emit[V]], t: Trace): Stream[T, V, S] =
         Stream {
             handle.state(tag, n, get) {
                 [C] =>
@@ -464,7 +496,7 @@ case class Stream[T, V, S](get: T < (Stream.Emit[V] & S)):
             }
         }
 
-    def runChunk(using tag: Tag[Stream.Emit[V]], t: Frame): (Chunk[V], T) < S =
+    def runChunk(using tag: Tag[Stream.Emit[V]], t: Trace): (Chunk[V], T) < S =
         handle.state(tag, Chunk.empty[V], get)(
             handle = [C] => (input, st, cont) => (st.append(input), cont(())),
             done = (st, r) => (st, r)
@@ -478,7 +510,7 @@ object Stream:
     def init[V, T, S](v: T < (Emit[V] & S)): Stream[T, V, S] =
         Stream(v)
 
-    def initSeq[V](seq: Seq[V])(using tag: Tag[Emit[V]], t: Frame): Stream[Unit, V, Any] =
+    def initSeq[V](seq: Seq[V])(using tag: Tag[Emit[V]], t: Trace): Stream[Unit, V, Any] =
         def loop(seq: Seq[V]): Unit < Emit[V] =
             seq match
                 case Seq()        => ()
