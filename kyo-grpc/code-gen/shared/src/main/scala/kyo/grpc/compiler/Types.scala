@@ -16,4 +16,6 @@ object Types {
 
     def streamObserver(v: String) = s"_root_.io.grpc.stub.StreamObserver[$v]"
 
+    def serviceCompanion(a: String) = s"scalapb.grpc.ServiceCompanion[$a]"
+
 }

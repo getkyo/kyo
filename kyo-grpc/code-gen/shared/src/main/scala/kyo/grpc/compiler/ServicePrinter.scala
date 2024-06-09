@@ -30,10 +30,22 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             .addPackage(scalaPackage.fullName)
             .newline
             .call(scalapbServicePrinter.generateScalaDoc(service))
-            .addTrait(name, Seq(Types.abstractService))(_.print(service.getMethods.asScala) { (fp, md) => printMethod(fp, md) })
-            .result()
+            .addTrait(name, Seq(Types.abstractService)) {
+                _.indented(printServiceCompanionMethod)
+                    .newline
+                    .print(service.getMethods.asScala) { (fp, md) =>
+                        printServiceMethod(fp, md)
+                    }
+            }.result()
 
-    private def printMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
+    private def printServiceCompanionMethod(fp: FunctionalPrinter): FunctionalPrinter = {
+//        fp.addNullaryMethod(mods(_.Override), "serviceCompanion", Types.serviceCompanion(name)) {
+//
+//        }
+        ???
+    }
+
+    private def printServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
         def requestParameter          = "request"          -> method.inputType.scalaType
         def responseObserverParameter = "responseObserver" -> Types.streamObserver(method.outputType.scalaType)
         // TODO: Only unary is done properly.
@@ -51,6 +63,6 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
         }
         fp
             .call(scalapbServicePrinter.generateScalaDoc(method))
-            .addAbstractMethod(method.name, parameters, returnType)
+            .addMethod(method.name).addParameterList(parameters *).addReturnType(returnType)
     }
 }

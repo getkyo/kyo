@@ -71,7 +71,8 @@ lazy val kyoJVM = project
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
         `kyo-caliban`.jvm,
-        `kyo-bench`.jvm,
+        // TODO: Re-enable
+        //`kyo-bench`.jvm,
         `kyo-test`.jvm,
         `kyo-zio`.jvm,
         `kyo-grpc`.jvm,
@@ -349,7 +350,8 @@ lazy val `kyo-grpc-code-gen` =
             libraryDependencies ++= Seq(
                 "com.thesamet.scalapb" %% "compilerplugin" % scalapb.compiler.Version.scalapbVersion,
                 "com.thesamet.scalapb" %%% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
-                "org.scala-lang.modules" %%% "scala-collection-compat" % "2.12.0"
+                "org.scala-lang.modules" %%% "scala-collection-compat" % "2.12.0",
+                "org.typelevel" %%% "paiges-core" % "0.4.3"
             ),
         ).jsSettings(
             `js-settings`
@@ -505,7 +507,8 @@ lazy val readme =
             `kyo-cache`,
             `kyo-sttp`,
             `kyo-tapir`,
-            `kyo-bench`,
+            // TODO: Re-enable
+            //`kyo-bench`,
             `kyo-zio`,
             `kyo-caliban`
         )
