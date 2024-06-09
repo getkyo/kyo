@@ -1,5 +1,3 @@
-package kyo.readmeExamples
-
 import kyo.*
 
 // Use the direct syntax

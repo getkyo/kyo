@@ -28,16 +28,6 @@ object utils:
         end if
     end readSource
 
-    def fileExtension(path: String): String =
-        val javaPath = java.nio.file.Paths.get(path)
-        val fileExtension =
-            javaPath.getFileName.toString
-                .split('.')
-                .lastOption
-                .getOrElse("")
-        fileExtension
-    end fileExtension
-
     def printSource(
         path: String,
         lines: Seq[(Int, Int)] = Seq.empty,
@@ -46,7 +36,7 @@ object utils:
     ) =
         val title     = if comment then s"""title="$path"""" else ""
         val showLines = if showLineNumbers then "showLineNumbers" else ""
-        println(s"""```${fileExtension(path)} ${title} ${showLines}""")
+        println(s"""```scala""")
         println(readSource(path, lines))
         println("```")
     end printSource
