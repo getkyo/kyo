@@ -25,6 +25,8 @@ object Maybe:
 
     def empty[T]: Maybe[T] = Empty
 
+    def defined[T](v: T): Maybe[T] = Defined(v)
+
     def when[T](cond: Boolean)(v: => T): Maybe[T] =
         if cond then v else Empty
 

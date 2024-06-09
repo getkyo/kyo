@@ -54,6 +54,18 @@ class BroadFlatMapBench extends Bench.SyncAndFork(BigInt(610)):
     end syncKyo2
 
     @Benchmark
+    def syncKyo5(): BigInt =
+        import kyo5.*
+        import kyo5.core.*
+
+        def kyoFib(n: Int): BigInt < IO =
+            if n <= 1 then BigInt(n)
+            else kyoFib(n - 1).flatMap(a => kyoFib(n - 2).flatMap(b => a + b))
+
+        IO.run(kyoFib(depth)).pure
+    end syncKyo5
+
+    @Benchmark
     def syncOx(): BigInt =
         oxFib(depth)
 
