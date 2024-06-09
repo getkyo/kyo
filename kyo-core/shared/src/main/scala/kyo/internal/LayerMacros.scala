@@ -4,8 +4,7 @@ import kyo.*
 import scala.quoted.*
 
 object LayerMacros:
-    // TODO: make sure that `Target` is provided ie not Nothing
-    transparent inline def layersToNodesTest[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
+    transparent inline def mergeLayers[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
         ${ layersToNodesImpl[Target]('layers) }
 
     transparent inline def reflect(using q: Quotes): q.reflectModule = q.reflect
@@ -15,6 +14,8 @@ object LayerMacros:
 
     def layersToNodesImpl[Target: Type](using Quotes)(expr: Expr[Seq[Layer[?, ?]]]): Expr[Layer[Target, ?]] =
         import reflect.*
+        if TypeRepr.of[Target] =:= TypeRepr.of[Nothing] then
+            report.errorAndAbort("Type Parameter: `Target` cannot be Nothing")
         expr match
             case Varargs(layers) =>
                 val nodes = layers.map(layerToNode(_))
@@ -24,6 +25,14 @@ object LayerMacros:
                 val targetLayer = graph.buildTarget(targets)
 
                 val debugFold = targetLayer.fold[String]("(" + _ + " and " + _ + ")", "(" + _ + " to " + _ + ")", _.value.show, "Empty")
+
+                // val message = nodes.map(debugNode).mkString("\n")
+                //  println(s"""
+                //  targets: ${targets.map(_.show).mkString("{", ", ", "}")}
+                //  input: ${message}
+                //  output: ${debugFold}
+                //  """)
+
                 val exprFold = targetLayer.fold[Expr[Layer[?, ?]]](
                     { case ('{ $left: Layer[out1, s1] }, '{ $right: Layer[out2, s2] }) =>
                         '{ $left.and($right) }
@@ -34,17 +43,11 @@ object LayerMacros:
                                 '{ $left.to($right) }
                     },
                     _.value,
+                    // TODO: provide better error; Will also be reached if full deps are not provided
                     report.errorAndAbort("No target found. Cannot produce Empty layer ")
                 )
 
                 exprFold.asInstanceOf[Expr[Layer[Target, ?]]]
-            //  val message = nodes.map(debugNode).mkString("\n")
-            //  report.errorAndAbort(s"""
-            //  targets: ${targets.map(_.show).mkString("{", ", ", "}")}
-            //  input: ${message}
-            //  output: ${debugFold}
-            //  expr: ${exprFold.show}
-            //  """)
 
             case _ =>
                 report.errorAndAbort("NO LAYERS")
@@ -112,6 +115,7 @@ object LayerLike:
 case class Node[Key, Value](inputs: Set[Key], outputs: Set[Key], value: Value)
 
 case class Graph[Key, Value](nodes: Set[Node[Key, Value]])(equals: (Key, Key) => Boolean):
+
     def buildTarget(targets: Set[Key]): LayerLike[Node[Key, Value]] =
         val values = findNodesWithOutputs(targets).map { node =>
             if node.inputs.isEmpty then LayerLike.Value(node)

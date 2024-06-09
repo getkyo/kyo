@@ -10,9 +10,9 @@ object LayerMacrosTest extends KyoApp:
     val magicSourceLayer = Layers {
         MagicSource("Fireball")
     }
-    val wizardLayer = Layers.from(source => Wizard("Gandalf", source))
+    val wizardLayer = Layers.from((source: MagicSource) => IOs(Wizard("Gandalf", source)))
     val spellLayer  = Layers.from(source => Spell(100, source))
-    val autoWired   = LayerMacros.layersToNodesTest[Wizard & Spell](wizardLayer, spellLayer, magicSourceLayer)
+    val autoWired   = LayerMacros.mergeLayers[Wizard & Spell](wizardLayer, spellLayer, magicSourceLayer)
 
     run:
         autoWired.run.map(_.show)
