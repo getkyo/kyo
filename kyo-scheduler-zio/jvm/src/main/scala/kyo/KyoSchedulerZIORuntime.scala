@@ -19,7 +19,7 @@ object KyoSchedulerZIORuntime {
                     true
                 }
             }
-        Runtime.setExecutor(exec) ++ Runtime.setBlockingExecutor(exec)
+        Runtime.setExecutor(exec) ++ Runtime.setBlockingExecutor(exec) ++ Runtime.disableFlags(RuntimeFlag.CooperativeYielding)
     }
 
     lazy val default: Runtime[Any] = {
