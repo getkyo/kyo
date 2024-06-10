@@ -90,4 +90,7 @@ object Layers:
             zip(Envs.get[A], Envs.get[B], Envs.get[C], Envs.get[D]).map { case (a, b, c, d) => f(a, b, c, d) }
         }
 
+    transparent inline def make[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
+        ${ kyo.internal.LayerMacros.makeImpl[Target]('layers) }
+
 end Layers

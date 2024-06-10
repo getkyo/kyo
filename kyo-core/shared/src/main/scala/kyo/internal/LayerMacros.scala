@@ -7,19 +7,15 @@ import scala.quoted.*
 // modifyLogger: Logger -> Logger
 // baseLogger: () -> Logger
 
-extension (string: String)
-    def bold      = scala.Console.BOLD + string + scala.Console.RESET
-    def underline = scala.Console.UNDERLINED + string + scala.Console.RESET
-    def dim       = s"\u001b[2m$string\u001b[0m"
-    def red       = scala.Console.RED + string + scala.Console.RESET
-    def green     = scala.Console.GREEN + string + scala.Console.RESET
-    def blue      = scala.Console.BLUE + string + scala.Console.RESET
-
-end extension
-
-object LayerMacros:
-    transparent inline def make[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
-        ${ makeImpl[Target]('layers) }
+private[kyo] object LayerMacros:
+    extension (string: String)
+        def bold      = scala.Console.BOLD + string + scala.Console.RESET
+        def underline = scala.Console.UNDERLINED + string + scala.Console.RESET
+        def dim       = s"\u001b[2m$string\u001b[0m"
+        def red       = scala.Console.RED + string + scala.Console.RESET
+        def green     = scala.Console.GREEN + string + scala.Console.RESET
+        def blue      = scala.Console.BLUE + string + scala.Console.RESET
+    end extension
 
     transparent inline def reflect(using q: Quotes): q.reflectModule = q.reflect
 
@@ -37,7 +33,7 @@ object LayerMacros:
                     s"Ambigious input ${target.show} found in ${found.map(_.value.show).mkString("{", ", ", "}")}".red
 
                 case GraphError.CircularDependency(node) =>
-                    s"MAKE CIRCULAR DEPENDENYC ERROR PRETTIESY ".red
+                    s"MAKE CIRCULAR DEPENDENYC ERROR PRETTIESY $node".red
         }.distinct
         report.errorAndAbort(messages.mkString("\n"))
     end reportErrors
@@ -49,7 +45,6 @@ object LayerMacros:
         expr match
             case Varargs(layers) =>
                 val nodes = layers.map(layerToNode(_))
-
                 val graph = Graph(nodes.toSet)(_ <:< _)
 
                 val targets = flattenAnd(TypeRepr.of[Target])
@@ -148,6 +143,8 @@ object LayerLike:
     given [A]: CanEqual[LayerLike[A], LayerLike[A]] = CanEqual.derived
 
 final case class Node[Key, Value](inputs: Set[Key], outputs: Set[Key], value: Value)
+object Node:
+    given [Key, Value]: CanEqual[Node[Key, Value], Node[Key, Value]] = CanEqual.derived
 
 enum Validated[+E, +A]:
     case Success(value: A)
@@ -219,7 +216,11 @@ final case class Graph[Key, Value](nodes: Set[Node[Key, Value]])(equals: (Key, K
     def findNodeWithOutputFor(target: Key, parent: Option[Node[Key, Value]]): Validated[GraphError[Key, Value], Node[Key, Value]] =
         val matching = nodes.filter { node => node.outputs.exists(output => equals(output, target)) }
         matching.size match
-            case 1 => Validated.succeed(matching.head)
+            case 1 =>
+                val matched = matching.head
+                parent match
+                    case Some(p) if p == matched => Validated.error(GraphError.CircularDependency(matched))
+                    case _                       => Validated.succeed(matched)
             case 0 => Validated.error(GraphError.MissingInput(target, parent))
             case _ => Validated.error(GraphError.AmbiguousInputs(target, matching, parent))
         end match
