@@ -12,7 +12,8 @@ val compilerOptions = Seq(
     "-unchecked",
     "-deprecation",
     "-Wvalue-discard",
-    "-language:strictEquality"
+    "-language:strictEquality",
+    "-Ykind-projector"
 )
 
 ThisBuild / scalaVersion           := scala3Version

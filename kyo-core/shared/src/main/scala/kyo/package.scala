@@ -12,7 +12,7 @@ package object kyo:
         inline def flatMap[U, S2](inline f: T => U < S2)(using Trace): U < (S & S2) =
             if isNull(v) then
                 throw new NullPointerException
-            kyo.core.transform(v)(f)
+            kyo.core.bind(v)(f)
         end flatMap
 
         inline def map[U, S2](inline f: T => U < S2)(using Trace): U < (S & S2) =
@@ -34,16 +34,16 @@ package object kyo:
             if i <= 0 then () else andThen(repeat(i - 1))
 
         private[kyo] def isPure: Boolean =
-            !v.isInstanceOf[core.internal.Kyo[?, ?]]
+            !v.isInstanceOf[kyo.core.internal.Suspend[?, ?, ?, ?, ?, ?]]
 
     end extension
 
-    extension [T: Flat](v: T < Any)
+    extension [T](v: T < Any)
         def pure: T =
             v match
-                case kyo: kyo.core.internal.Suspend[?, ?, ?, ?] =>
+                case <(kyo: kyo.core.internal.Suspend[?, ?, ?, ?, ?, ?]) =>
                     bug(s"Unexpected pending effect found in 'pure': " + kyo)
-                case v =>
+                case <(v) =>
                     v.asInstanceOf[T]
     end extension
 
@@ -75,13 +75,13 @@ package object kyo:
         case class KyoBugException(msg: String) extends Exception(msg)
 
         def failTag[T, U](
-            kyo: Suspend[?, ?, ?, ?],
+            kyo: Suspend[?, ?, ?, ?, ?, ?],
             expected: Tag.Full[U]
         ): Nothing =
             bug(s"Unexpected pending effect while handling ${expected}: " + kyo)
 
         inline def checkTag[T, S, U](
-            inline kyo: Suspend[?, ?, ?, ?],
+            inline kyo: Suspend[?, ?, ?, ?, ?, ?],
             inline expected: Tag.Full[U]
         ): Unit =
             if kyo.tag =!= expected then

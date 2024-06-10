@@ -76,7 +76,7 @@ class seqsTest extends KyoTest:
 
         "collect" in {
             val largeSeq = Seq.fill(n)(1)
-            assert(Seqs.collect(largeSeq).pure == largeSeq)
+            assert(Seqs.collect(largeSeq.map(v => v)).pure == largeSeq)
         }
 
         "collectUnit" in {

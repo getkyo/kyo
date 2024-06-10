@@ -40,7 +40,7 @@ object Channels:
 
     private val closed = IOs.fail("Channel closed!")
 
-    def init[T: Flat](
+    def init[T](
         capacity: Int,
         access: Access = kyo.Access.Mpmc
     ): Channel[T] < IOs =

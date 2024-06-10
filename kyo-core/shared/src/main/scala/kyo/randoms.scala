@@ -95,7 +95,7 @@ object Random:
             def nextBoolean(using Trace): Boolean < IOs              = IOs(u.nextBoolean)
             def nextFloat(using Trace): Float < IOs                  = IOs(u.nextFloat)
             def nextGaussian(using Trace): Double < IOs              = IOs(u.nextGaussian)
-            def nextValue[T](seq: Seq[T])(using Trace): T < IOs      = IOs(u.nextValue(seq))
+            def nextValue[T](seq: Seq[T])(using Trace): T < IOs      = IOs(u.nextValue[T](seq))
             def nextValues[T](length: Int, seq: Seq[T])(using Trace): Seq[T] < IOs =
                 IOs(u.nextValues(length, seq))
             def nextStringAlphanumeric(length: Int)(using Trace): String < IOs =

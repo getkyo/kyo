@@ -27,13 +27,13 @@ object Options:
             case Some(v) => v
         }
 
-    def run[T: Flat, S](v: T < (Options & S))(using Trace): Option[T] < S =
+    def run[T, S](v: T < (Options & S))(using Trace): Option[T] < S =
         Aborts.run(v).map {
             case Left(e)  => None
             case Right(v) => Some(v)
         }
 
-    def orElse[T: Flat, S](l: (T < (Options & S))*)(using Trace): T < (Options & S) =
+    def orElse[T, S](l: (T < (Options & S))*)(using Trace): T < (Options & S) =
         l.toList match
             case Nil => Options.empty
             case h :: t =>

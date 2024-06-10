@@ -8,7 +8,6 @@ opaque type Maybe[+T] >: (Empty | Defined[T]) = Empty | Defined[T]
 object Maybe:
     given [T, U](using CanEqual[T, U]): CanEqual[Maybe[T], Maybe[U]] = CanEqual.derived
     given [T]: Conversion[Maybe[T], IterableOnce[T]]                 = _.iterator
-    given [T: Flat]: Flat[Maybe[T]]                                  = Flat.unsafe.bypass
 
     def apply[T](v: T): Maybe[T] =
         if isNull(v) then

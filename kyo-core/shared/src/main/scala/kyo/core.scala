@@ -3,134 +3,161 @@ package kyo
 import kyo.Locals.State
 import kyo.internal.Trace
 import scala.annotation.tailrec
+import scala.language.implicitConversions
 import scala.util.control.NonFatal
 
 object core:
 
-    import internal.*
-
     type Id[T]    = T
     type Const[T] = [U] =>> T
 
-    opaque type <[+T, -S] >: T = T | internal.Kyo[T, S]
+    import internal.*
 
-    trait Effect[+E]:
-        type Command[_]
+    abstract class Effect[-I[_], +O[_]]
 
-    extension [E <: Effect[E]](e: E)
+    final case class <[+T, -S](private val state: T | Pending[T, S]) extends AnyVal
 
-        inline def suspend[T](inline cmd: e.Command[T])(
-            using
+    object `<`:
+        implicit def lift[T](v: T): T < Any =
+            <(v)
+
+    case class SuspendDsl[T](ign: Unit) extends AnyVal:
+        inline def apply[I[_], O[_], E <: Effect[I, O], U, S](
             inline _tag: Tag[E],
-            inline _trace: Trace
-        ): T < E =
-            new Suspend[e.Command, T, T, E]:
-                def trace   = _trace
-                def command = cmd
-                def tag     = _tag.asInstanceOf[Tag[Any]]
-                def apply(v: T, s: Safepoint[E], l: State) =
-                    v
+            inline _input: I[T],
+            inline cont: O[T] => U < S = (v: O[T]) => v
+        )(using _trace: Trace): U < (E & S) =
+            <(new Suspend[I, O, E, T, U, S]:
+                def tag   = _tag
+                def input = _input
+                def trace = _trace
+                def apply(v: O[T], s: Safepoint, l: Locals.State): U < S =
+                    if s.preempt() then
+                        s.suspend(cont(v))
+                    else
+                        cont(v)
+            )
+    end SuspendDsl
 
-        inline def suspend[T, U, S](inline cmd: e.Command[T], inline f: T => U < S)(
-            using
-            inline _tag: Tag[E],
-            inline _trace: Trace
-        ): U < (E & S) =
-            new Suspend[e.Command, T, U, S]:
-                def trace   = _trace
-                def command = cmd
-                def tag     = _tag.asInstanceOf[Tag[Any]]
-                def apply(v: T, s: Safepoint[S], l: State) =
-                    f(v)
-    end extension
+    inline def suspend[T]: SuspendDsl[T] = SuspendDsl(())
 
-    inline def transform[T, S, U, S2](v: T < S)(inline k: T => (U < S2))(using inline _trace: Trace): U < (S & S2) =
-        def transformLoop(v: T < S): U < (S & S2) =
-            v match
-                case kyo: Suspend[MX, Any, T, S] @unchecked =>
-                    new Continue[MX, Any, U, S & S2](kyo):
+    inline def bind[T, U, S, S2](v: T < S)(inline f: T => U < S2)(using inline _trace: Trace): U < (S & S2) =
+        def bindLoop(curr: T < S): U < (S & S2) =
+            curr match
+                case <(kyo: Suspend[IX, OX, EX, Any, T, S] @unchecked) =>
+                    <(new Continue[IX, OX, EX, Any, U, S & S2](kyo):
                         def trace = _trace
-                        def apply(v: Any, s: Safepoint[S & S2], l: Locals.State) =
-                            val r = kyo(v, s.asInstanceOf[Safepoint[S]], l)
+                        def apply(v: OX[Any], s: Safepoint, l: Locals.State) =
+                            val r = kyo(v, s, l)
                             if s.preempt() then
-                                s.suspend(transformLoop(r))
+                                s.suspend(bindLoop(r))
                             else
-                                transformLoop(r)
+                                bindLoop(r)
                             end if
                         end apply
-                case v =>
-                    k(v.asInstanceOf[T])
-        transformLoop(v)
-    end transform
+                    )
+                case <(v) =>
+                    f(v.asInstanceOf[T])
+        bindLoop(v)
+    end bind
 
-    extension [E <: Effect[E]](e: E)
-        inline def handle[State, Result[_], T, S, S2](
-            handler: ResultHandler[State, e.Command, E, Result, S]
+    abstract class Continuation[T, U, S]:
+        def apply(v: T): U < S
+
+    object handle:
+        inline def apply[I[_], O[_], E <: Effect[I, O], T, S, S2](
+            inline tag: Tag[E],
+            inline v: T < (E & S)
         )(
-            state: State,
-            value: T < (E & S2)
-        )(using inline tag: Tag[E], inline flat: Flat[T], inline _trace: Trace): Result[T] < (S & S2) =
-            def _handleLoop(st: State, value: T < (E & S & S2)): Result[T] < (S & S2) =
-                handleLoop(st, value)
-            @tailrec def handleLoop(st: State, value: T < (E & S & S2)): Result[T] < (S & S2) =
-                value match
-                    case kyo: Suspend[e.Command, Any, T, S2] @unchecked
-                        if tag =:= kyo.tag && handler.accepts(st, kyo.command) =>
-                        handler.resume(st, kyo.command, kyo) match
-                            case r: handler.Resume[T, S & S2] @unchecked =>
-                                handleLoop(r.st, r.v)
-                            case kyo: Kyo[Result[T] | handler.Resume[T, S2], S & S2] @unchecked =>
-                                resultLoop(kyo)
-                            case r =>
-                                r.asInstanceOf[Result[T]]
-                        end match
-                    case kyo: Suspend[MX, Any, T, E & S & S2] @unchecked =>
-                        new Continue[MX, Any, Result[T], S & S2](kyo):
-                            def trace = _trace
-                            def apply(v: Any, s: Safepoint[S & S2], l: Locals.State) =
-                                val r =
-                                    try kyo(v, s, l)
-                                    catch
-                                        case ex if NonFatal(ex) =>
-                                            handler.failed(st, ex)
-                                _handleLoop(st, r)
-                            end apply
-                    case v =>
-                        handler.done(st, v.asInstanceOf[T])
-            def resultLoop(v: (Result[T] | handler.Resume[T, S2]) < (S & S2)): Result[T] < (S & S2) =
+            inline handle: [C] => (I[C], Continuation[O[C], T, E & S & S2]) => T < (E & S & S2),
+            inline accept: [C] => I[C] => Boolean = [C] => (_: I[C]) => true
+        )(using inline _trace: Trace): T < (S & S2) =
+            def handleLoop(v: T < (E & S & S2)): T < (S & S2) =
                 v match
-                    case r: handler.Resume[T, S & S2] @unchecked =>
-                        _handleLoop(r.st, r.v)
-                    case kyo: Suspend[MX, Any, Result[T] | handler.Resume[T, S2], S & S2] @unchecked =>
-                        new Continue[MX, Any, Result[T], S & S2](kyo):
+                    case <(kyo: Suspend[I, O, E, Any, T, E & S & S2] @unchecked) if tag =:= kyo.tag && accept(kyo.input) =>
+                        handleLoop(handle(kyo.input, kyo))
+                    case <(kyo: Suspend[IX, OX, EX, Any, T, E & S & S2] @unchecked) =>
+                        <(new Continue[IX, OX, EX, Any, T, S & S2](kyo):
                             def trace = _trace
-                            def apply(
-                                v: Any,
-                                s: Safepoint[S & S2],
-                                l: Locals.State
-                            ) =
-                                resultLoop(kyo(v, s, l))
-                    case r =>
-                        r.asInstanceOf[Result[T]]
-            handleLoop(state, value)
-        end handle
-    end extension
+                            def apply(v: OX[Any], s: Safepoint, l: Locals.State) =
+                                val r = kyo(v, s, l)
+                                if s.preempt() then
+                                    s.suspend(handleLoop(r))
+                                else
+                                    handleLoop(r)
+                                end if
+                            end apply
+                        )
+                    case <(v) =>
+                        v.asInstanceOf[T]
+            handleLoop(v)
+        end apply
+
+        inline def state[I[_], O[_], E <: Effect[I, O], State, T, U, S, S2](
+            inline tag: Tag[E],
+            inline st: State,
+            inline v: T < (E & S)
+        )(
+            inline handle: [C] => (I[C], State, Continuation[O[C], T, E & S & S2]) => (State, T < (E & S & S2)) < (S & S2),
+            inline done: (State, T) => U < (S & S2) = (_: State, v: T) => v
+        )(using inline _trace: Trace): U < (S & S2) =
+            def handleStateLoop(st: State, v: T < (E & S & S2)): U < (S & S2) =
+                v match
+                    case <(kyo: Suspend[I, O, E, Any, T, E & S & S2] @unchecked) if tag =:= kyo.tag =>
+                        bind(handle(kyo.input, st, kyo))(handleStateLoop)
+                    case <(kyo: Suspend[IX, OX, EX, Any, T, S] @unchecked) =>
+                        <(new Continue[IX, OX, EX, Any, U, S & S2](kyo):
+                            def trace = _trace
+                            def apply(v: OX[Any], s: Safepoint, l: Locals.State) =
+                                val r = kyo(v, s, l)
+                                if s.preempt() then
+                                    s.suspend(handleStateLoop(st, r))
+                                else
+                                    handleStateLoop(st, r)
+                                end if
+                            end apply
+                        )
+                    case <(v) =>
+                        done(st, v.asInstanceOf[T])
+            handleStateLoop(st, v)
+        end state
+    end handle
+
+    inline def eval[T, S, S2](v: => T < S)(
+        inline resume: (Safepoint, () => T < (S & S2)) => T < (S & S2),
+        inline done: (Safepoint, T) => T < (S & S2) = (s: Safepoint, v: T) => v,
+        inline suspend: T < (S & S2) => T < (S & S2) = (v: T < (S & S2)) => v
+    )(using inline _trace: Trace): T < (S & S2) =
+        def evalLoop(s: Safepoint, v: T < (S & S2)): T < (S & S2) =
+            v match
+                case <(kyo: Suspend[IX, OX, EX, Any, T, S & S2] @unchecked) =>
+                    <(new Continue[IX, OX, EX, Any, T, S & S2](kyo):
+                        def trace = _trace
+                        def apply(v: OX[Any], s: Safepoint, l: Locals.State) =
+                            suspend(evalLoop(s, resume(s, () => kyo(v, s, l))))
+                    )
+                case <(v) =>
+                    suspend(done(s, v.asInstanceOf[T]))
+        val s = Safepoint.noop
+        evalLoop(s, suspend(resume(s, () => v)))
+    end eval
 
     inline def catching[T, S, U >: T, S2](v: => T < S)(
         inline pf: PartialFunction[Throwable, U < S2]
     )(using inline _trace: Trace): U < (S & S2) =
         def catchingLoop(v: U < (S & S2)): U < (S & S2) =
             v match
-                case kyo: Suspend[MX, Any, U, S & S2] @unchecked =>
-                    new Continue[MX, Any, U, S & S2](kyo):
+                case <(kyo: Suspend[IX, OX, EX, Any, U, S & S2] @unchecked) =>
+                    <(new Continue[IX, OX, EX, Any, U, S & S2](kyo):
                         def trace = _trace
-                        def apply(v: Any < (S & S2), s: Safepoint[S & S2], l: Locals.State) =
+                        def apply(v: OX[Any], s: Safepoint, l: Locals.State) =
                             try
                                 catchingLoop(kyo(v, s, l))
                             catch
                                 case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
                                     pf(ex)
-                case _ =>
+                    )
+                case <(v) =>
                     v.asInstanceOf[T]
         try
             catchingLoop(v)
@@ -140,122 +167,44 @@ object core:
         end try
     end catching
 
-    inline def eval[T, S, S2](v: => T < S)(
-        inline resume: (Safepoint[S & S2], () => T < (S & S2)) => T < (S & S2),
-        inline done: (Safepoint[S & S2], T) => T < (S & S2) = (s: Safepoint[S & S2], v: T) => v,
-        inline suspend: T < (S & S2) => T < (S & S2) = (v: T < (S & S2)) => v
-    )(using inline _trace: Trace): T < (S & S2) =
-        def evalLoop(s: Safepoint[S & S2], v: T < (S & S2)): T < (S & S2) =
-            v match
-                case kyo: Suspend[MX, Any, T, S & S2] @unchecked =>
-                    new Continue[MX, Any, T, S & S2](kyo):
-                        def trace = _trace
-                        def apply(v: Any, s: Safepoint[S & S2], l: Locals.State) =
-                            suspend(evalLoop(s, resume(s, () => kyo(v, s, l))))
-                case v =>
-                    suspend(done(s, v.asInstanceOf[T]))
-        val s = Safepoint.noop
-        evalLoop(s, suspend(resume(s, () => v)))
-    end eval
-
-    abstract class ResultHandler[State, Command[_], E <: Effect[E], Result[_], S]:
-
-        case class Resume[U, S2](st: State, v: U < (E & S & S2))
-
-        def accepts[T](st: State, command: Command[T]): Boolean =
-            true
-
-        def done[T](st: State, v: T)(using Tag[E]): Result[T] < S
-
-        def failed(st: State, ex: Throwable)(using Tag[E]): Nothing < (E & S) = throw ex
-
-        def resume[T, U: Flat, S2](
-            st: State,
-            command: Command[T],
-            k: T => U < (E & S2)
-        )(using Tag[E]): (Result[U] | Resume[U, S2]) < (S & S2)
-
-    end ResultHandler
-
-    abstract class Handler[Command[_], E <: Effect[E], S]
-        extends ResultHandler[Unit, Command, E, Id, S]:
-        inline def done[T](st: Unit, v: T)(using Tag[E]) =
-            done(v)
-        inline def resume[T, U: Flat, S2](
-            st: Unit,
-            command: Command[T],
-            k: T => U < (E & S2)
-        )(using Tag[E]): (U | Resume[U, S2]) < (S & S2) =
-            resume(command, k)
-
-        def done[T](v: T)(using Tag[E]): T < S = v
-
-        def resume[T, U: Flat, S2](
-            command: Command[T],
-            k: T => U < (E & S2)
-        )(using Tag[E]): (U | Resume[U, S2]) < (S & S2)
-    end Handler
-
-    trait Safepoint[-E]:
-        def preempt(): Boolean
-        def suspend[T, S](v: => T < S): T < (E & S)
-
-    object Safepoint:
-        private val _noop = new Safepoint[?]:
-            def preempt()                  = false
-            def suspend[T, S](v: => T < S) = v
-        inline def noop[S]: Safepoint[S] =
-            _noop.asInstanceOf[Safepoint[S]]
-    end Safepoint
-
     private[kyo] object internal:
+        type IX[_]
+        type OX[_]
+        type EX <: Effect[IX, OX]
 
-        type MX[T] = Any
-        type EX <: Effect[EX]
+        trait Safepoint:
+            def preempt(): Boolean
+            def suspend[T, S](v: => T < S): T < S
 
-        abstract class DeepHandler[Command[_], E, S]:
-            def done[T: Flat](v: T): Command[T]
-            def resume[T, U: Flat](command: Command[T], k: T => Command[U] < S): Command[U] < S
+        object Safepoint:
+            val noop = new Safepoint:
+                def preempt()                  = false
+                def suspend[T, S](v: => T < S) = v
+        end Safepoint
 
-        def deepHandle[Command[_], E <: Effect[E], S, T: Flat](
-            handler: DeepHandler[Command, E, S],
-            v: T < E
-        )(using tag: Tag[E]): Command[T] < S =
-            def deepHandleLoop(v: T < (E & S)): Command[T] < S =
-                v match
-                    case kyo: Suspend[Command, Any, T, E] @unchecked =>
-                        bug.checkTag(kyo, tag)
-                        handler.resume(
-                            kyo.command,
-                            (v: Any) => deepHandleLoop(kyo(v))
-                        )
-                    case _ =>
-                        handler.done(v.asInstanceOf[T])
-            if isNull(v) then
-                throw new NullPointerException
-            deepHandleLoop(v)
-        end deepHandle
+        sealed trait Pending[+T, -S]
 
-        sealed abstract class Kyo[+T, -S]
+        abstract class Suspend[I[_], O[_], E <: Effect[I, O], T, U, S]
+            extends Continuation[O[T], U, S] with Pending[U, S]:
 
-        abstract class Suspend[Command[_], T, U, S] extends Kyo[U, S]
-            with Function1[T, U < S]:
+            def tag: Tag[E]
+            def input: I[T]
             def trace: Trace
-            def command: Command[T]
-            def tag: Tag[Any]
-            inline def apply(v: T) = apply(v, Safepoint.noop, Locals.State.empty)
-            def apply(v: T, s: Safepoint[S], l: Locals.State): U < S
-            override def toString() = s"Kyo(${tag.show},Command($command),${trace.show})"
+
+            def apply(v: O[T]): U < S = apply(v, Safepoint.noop, Locals.State.empty)
+            def apply(v: O[T], s: Safepoint, l: Locals.State): U < S
+
+            override def toString() =
+                s"Kyo(${tag.show}, Input($input), ${trace.position}, ${trace.snippet})"
         end Suspend
 
-        abstract class Continue[Command[_], T, U, S](
-            s: Suspend[Command, T, ?, ?]
-        ) extends Suspend[Command, T, U, S]:
-            val command = s.command
-            val tag     = s.tag
+        abstract class Continue[I[_], O[_], E <: Effect[I, O], T, U, S](
+            prev: Suspend[I, O, E, T, ?, ?]
+        ) extends Suspend[I, O, E, T, U, S]:
+            val tag   = prev.tag
+            val input = prev.input
         end Continue
 
-        inline def fromKyo[T, S](inline v: Kyo[T, S]): T < S =
-            v
     end internal
+
 end core

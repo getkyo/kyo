@@ -1,7 +1,6 @@
 package kyo
 
 import Result.*
-import kyo.Flat
 import scala.util.control.NonFatal
 
 opaque type Result[+T] >: (Success[T] | Failure[T]) = Success[T] | Failure[T]
@@ -9,7 +8,6 @@ opaque type Result[+T] >: (Success[T] | Failure[T]) = Success[T] | Failure[T]
 object Result:
     import internal.*
 
-    given [T: Flat]: Flat[Result[T]]                                = Flat.unsafe.bypass
     given [T](using CanEqual[T, T]): CanEqual[Result[T], Result[T]] = CanEqual.derived
 
     def apply[T](expr: => T): Result[T] =

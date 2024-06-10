@@ -217,7 +217,7 @@ sealed abstract class Chunk[T] derives CanEqual:
             }
     end foreach
 
-    final def foldLeft[S, U: Flat](init: U)(f: (U, T) => U < S)(using Trace): U < S =
+    final def foldLeft[S, U](init: U)(f: (U, T) => U < S)(using Trace): U < S =
         if isEmpty then init
         else
             val size    = this.size
@@ -406,7 +406,7 @@ object Chunks:
             Compact(array)
     end fill
 
-    def collect[T: Flat, S](c: Chunk[T < S]): Chunk[T] < S =
+    def collect[T, S](c: Chunk[T < S]): Chunk[T] < S =
         c.map(identity)
 
     private[kyo] object internal:

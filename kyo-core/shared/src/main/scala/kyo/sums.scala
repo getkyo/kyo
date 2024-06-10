@@ -3,32 +3,33 @@ package kyo
 import kyo.core.*
 import kyo.internal.Trace
 
-class Sums[V] extends Effect[Sums[V]]:
-    type Command[T] = V
-
-    private val handler =
-        new ResultHandler[Chunk[V], Const[V], Sums[V], [T] =>> (Chunk[V], T), Any]:
-            def done[T](st: Chunk[V], v: T)(using Tag[Sums[V]]) = (st, v)
-            def resume[T, U: Flat, S](st: Chunk[V], command: V, k: T => U < (Sums[V] & S))(using Tag[Sums[V]]) =
-                Resume(st.append(command), k(().asInstanceOf[T]))
-end Sums
+class Sums[V] extends Effect[Const[V], Const[Unit]]
 
 object Sums:
-    private object sums extends Sums[Any]
-    private def sums[V]: Sums[V] = sums.asInstanceOf[Sums[V]]
 
-    def add[V](v: V)(using Tag[Sums[V]], Trace): Unit < Sums[V] =
-        sums[V].suspend[Unit](v)
+    inline def add[V](inline v: V)(
+        using
+        inline tag: Tag[Sums[V]],
+        inline trace: Trace
+    ): Unit < Sums[V] =
+        suspend[Any](tag, v)
 
-    class RunDsl[V]:
-        def apply[T: Flat, S](v: T < (Sums[V] & S))(
+    class RunDsl[V](ign: Unit) extends AnyVal:
+        def apply[T, S](v: T < (Sums[V] & S))(
             using
-            Tag[Sums[V]],
-            Trace
+            tag: Tag[Sums[V]],
+            trace: Trace
         ): (Chunk[V], T) < S =
-            sums[V].handle(sums[V].handler)(Chunks.init, v)
+            handle.state(tag, Chunks.init[V], v)(
+                handle =
+                    [C] =>
+                        (input, state, cont) =>
+                            (state.append(input), cont(())),
+                done =
+                    (state, result) => (state, result)
+            )
     end RunDsl
 
-    def run[V >: Nothing]: RunDsl[V] = new RunDsl[V]
+    inline def run[V >: Nothing]: RunDsl[V] = RunDsl(())
 
 end Sums

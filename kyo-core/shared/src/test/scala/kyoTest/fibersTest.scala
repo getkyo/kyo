@@ -30,7 +30,7 @@ class fibersTest extends KyoTest:
         "complete null" in run {
             for
                 p <- Fibers.initPromise[AnyRef]
-                b <- p.complete(null)
+                b <- p.complete(null.asInstanceOf[AnyRef < IOs])
                 r <- p.get
             yield assert(b && r == null)
         }

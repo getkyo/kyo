@@ -7,7 +7,7 @@ object Hubs:
 
     private[kyo] val closed = IOs.fail("Hub closed!")
 
-    def init[T: Flat](capacity: Int)(using Trace): Hub[T] < IOs =
+    def init[T](capacity: Int)(using Trace): Hub[T] < IOs =
         Channels.init[T](capacity).map { ch =>
             IOs {
                 val listeners = new CopyOnWriteArraySet[Channel[T]]
@@ -53,7 +53,7 @@ end Hubs
 
 import Hubs.*
 
-class Hub[T: Flat] private[kyo] (
+class Hub[T] private[kyo] (
     ch: Channel[T],
     fiber: Fiber[Unit],
     listeners: CopyOnWriteArraySet[Channel[T]]

@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.core.internal.Kyo
+import kyo.core.internal.*
 import kyo.internal.Trace
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -42,7 +42,7 @@ object Loops:
         v3: Input3
     ): Result3[Input1, Input2, Input3, Output] = Continue3(v1, v2, v3)
 
-    inline def transform[Input, Output: Flat, S](
+    inline def transform[Input, Output, S](
         input: Input
     )(
         inline run: Input => Result[Input, Output] < S
@@ -51,21 +51,21 @@ object Loops:
             loop(input)
         @tailrec def loop(input: Input): Output < S =
             run(input) match
-                case next: Continue[Input] @unchecked =>
+                case <(next: Continue[Input] @unchecked) =>
                     loop(next.input)
-                case kyo: Kyo[Output | Continue[Input], S] @unchecked =>
+                case kyo @ <(_: Suspend[?, ?, ?, ?, ?, ?]) =>
                     kyo.map {
                         case next: Continue[Input] =>
                             _loop(next.input)
                         case res =>
                             res.asInstanceOf[Output]
                     }
-                case res =>
+                case <(res) =>
                     res.asInstanceOf[Output]
         loop(input)
     end transform
 
-    inline def transform[Input1, Input2, Output: Flat, S](
+    inline def transform[Input1, Input2, Output, S](
         input1: Input1,
         input2: Input2
     )(
@@ -75,21 +75,21 @@ object Loops:
             loop(input1, input2)
         @tailrec def loop(input1: Input1, input2: Input2): Output < S =
             run(input1, input2) match
-                case next: Continue2[Input1, Input2] @unchecked =>
+                case <(next: Continue2[Input1, Input2] @unchecked) =>
                     loop(next.input1, next.input2)
-                case kyo: Kyo[Output | Continue2[Input1, Input2], S] @unchecked =>
+                case kyo @ <(_: Suspend[?, ?, ?, ?, ?, ?]) =>
                     kyo.map {
                         case next: Continue2[Input1, Input2] @unchecked =>
                             _loop(next.input1, next.input2)
                         case res =>
                             res.asInstanceOf[Output]
                     }
-                case res =>
+                case <(res) =>
                     res.asInstanceOf[Output]
         loop(input1, input2)
     end transform
 
-    inline def transform[Input1, Input2, Input3, Output: Flat, S](
+    inline def transform[Input1, Input2, Input3, Output, S](
         input1: Input1,
         input2: Input2,
         input3: Input3
@@ -100,42 +100,42 @@ object Loops:
             loop(input1, input2, input3)
         @tailrec def loop(input1: Input1, input2: Input2, input3: Input3): Output < S =
             run(input1, input2, input3) match
-                case next: Continue3[Input1, Input2, Input3] @unchecked =>
+                case <(next: Continue3[Input1, Input2, Input3] @unchecked) =>
                     loop(next.input1, next.input2, next.input3)
-                case kyo: Kyo[Output | Continue3[Input1, Input2, Input3], S] @unchecked =>
+                case kyo @ <(_: Suspend[?, ?, ?, ?, ?, ?]) =>
                     kyo.map {
                         case next: Continue3[Input1, Input2, Input3] =>
                             _loop(next.input1, next.input2, next.input3)
                         case res =>
                             res.asInstanceOf[Output]
                     }
-                case res =>
+                case <(res) =>
                     res.asInstanceOf[Output]
         loop(input1, input2, input3)
     end transform
 
-    inline def indexed[Output: Flat, S](
+    inline def indexed[Output, S](
         inline run: Int => Result[Unit, Output] < S
     )(using Trace): Output < S =
         def _loop(idx: Int): Output < S =
             loop(idx)
         @tailrec def loop(idx: Int): Output < S =
             run(idx) match
-                case next: Continue[Unit] @unchecked =>
+                case <(next: Continue[Unit] @unchecked) =>
                     loop(idx + 1)
-                case kyo: Kyo[Output | Continue[Unit], S] @unchecked =>
+                case kyo @ <(_: Suspend[?, ?, ?, ?, ?, ?]) =>
                     kyo.map {
                         case next: Continue[Unit] @unchecked =>
                             _loop(idx + 1)
                         case res =>
                             res.asInstanceOf[Output]
                     }
-                case res =>
+                case <(res) =>
                     res.asInstanceOf[Output]
         loop(0)
     end indexed
 
-    inline def indexed[Input, Output: Flat, S](
+    inline def indexed[Input, Output, S](
         input: Input
     )(
         inline run: (Int, Input) => Result[Input, Output] < S
@@ -144,21 +144,21 @@ object Loops:
             loop(idx, input)
         @tailrec def loop(idx: Int, input: Input): Output < S =
             run(idx, input) match
-                case next: Continue[Input] @unchecked =>
+                case <(next: Continue[Input] @unchecked) =>
                     loop(idx + 1, next.input)
-                case kyo: Kyo[Output | Continue[Input], S] @unchecked =>
+                case kyo @ <(_: Suspend[?, ?, ?, ?, ?, ?]) =>
                     kyo.map {
                         case next: Continue[Input] @unchecked =>
                             _loop(idx + 1, next.input)
                         case res =>
                             res.asInstanceOf[Output]
                     }
-                case res =>
+                case <(res) =>
                     res.asInstanceOf[Output]
         loop(0, input)
     end indexed
 
-    inline def indexed[Input1, Input2, Output: Flat, S](
+    inline def indexed[Input1, Input2, Output, S](
         input1: Input1,
         input2: Input2
     )(
@@ -168,21 +168,21 @@ object Loops:
             loop(idx, input1, input2)
         @tailrec def loop(idx: Int, input1: Input1, input2: Input2): Output < S =
             run(idx, input1, input2) match
-                case next: Continue2[Input1, Input2] @unchecked =>
+                case <(next: Continue2[Input1, Input2] @unchecked) =>
                     loop(idx + 1, next.input1, next.input2)
-                case kyo: Kyo[Output | Continue2[Input1, Input2], S] @unchecked =>
+                case kyo @ <(_: Suspend[?, ?, ?, ?, ?, ?]) =>
                     kyo.map {
                         case next: Continue2[Input1, Input2] =>
                             _loop(idx + 1, next.input1, next.input2)
                         case res =>
                             res.asInstanceOf[Output]
                     }
-                case res =>
+                case <(res) =>
                     res.asInstanceOf[Output]
         loop(0, input1, input2)
     end indexed
 
-    inline def indexed[Input1, Input2, Input3, Output: Flat, S](
+    inline def indexed[Input1, Input2, Input3, Output, S](
         input1: Input1,
         input2: Input2,
         input3: Input3
@@ -193,16 +193,16 @@ object Loops:
             loop(idx, input1, input2, input3)
         @tailrec def loop(idx: Int, input1: Input1, input2: Input2, input3: Input3): Output < S =
             run(idx, input1, input2, input3) match
-                case next: Continue3[Input1, Input2, Input3] @unchecked =>
+                case <(next: Continue3[Input1, Input2, Input3] @unchecked) =>
                     loop(idx + 1, next.input1, next.input2, next.input3)
-                case kyo: Kyo[Output | Continue3[Input1, Input2, Input3], S] @unchecked =>
+                case kyo @ <(_: Suspend[?, ?, ?, ?, ?, ?]) =>
                     kyo.map {
                         case next: Continue3[Input1, Input2, Input3] =>
                             _loop(idx + 1, next.input1, next.input2, next.input3)
                         case res =>
                             res.asInstanceOf[Output]
                     }
-                case res =>
+                case <(res) =>
                     res.asInstanceOf[Output]
         loop(0, input1, input2, input3)
     end indexed
@@ -214,16 +214,16 @@ object Loops:
             loop()
         @tailrec def loop(): Unit < S =
             run match
-                case next: Continue[Unit] @unchecked =>
+                case <(next: Continue[Unit] @unchecked) =>
                     loop()
-                case kyo: Kyo[Unit | Continue[Unit], S] @unchecked =>
+                case kyo @ <(_: Suspend[?, ?, ?, ?, ?, ?]) =>
                     kyo.map {
                         case next: Continue[Unit] =>
                             _loop()
                         case res =>
                             ()
                     }
-                case res =>
+                case <(res) =>
                     ()
         loop()
     end foreach
@@ -235,7 +235,7 @@ object Loops:
             if i == n then ()
             else
                 run match
-                    case kyo: Kyo[Unit, S] @unchecked =>
+                    case kyo @ <(_: Suspend[?, ?, ?, ?, ?, ?]) =>
                         kyo.andThen(_loop(i + 1))
                     case _ =>
                         loop(i + 1)
@@ -247,7 +247,7 @@ object Loops:
             loop()
         @tailrec def loop(): Unit < S =
             run match
-                case kyo: Kyo[Unit, S] @unchecked =>
+                case kyo @ <(_: Suspend[?, ?, ?, ?, ?, ?]) =>
                     kyo.andThen(_loop())
                 case _ =>
                     loop()

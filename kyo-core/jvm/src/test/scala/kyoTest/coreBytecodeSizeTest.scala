@@ -7,25 +7,25 @@ class coreBytecodeSizeTest extends KyoTest:
 
     import kyo.core.*
 
-    object TestEffect extends Effect[TestEffect.type]:
-        type Command[T] = T
-
-    object TestHandler extends Handler[Id, TestEffect.type, Any]:
-        def resume[T, U: Flat, S](command: T, k: T => U < (TestEffect.type & S))(using Tag[TestEffect.type]) =
-            Resume((), k(command))
+    sealed trait TestEffect extends Effect[Const[Int], Const[Int]]
 
     class TestSuspend:
-        def test(e: TestEffect.type) = suspend(e)(42)
+        def test = suspend[Any](Tag[TestEffect], 42)
 
     class TestTransform:
-        def test(v: Int < TestEffect.type) = transform(v)(_ + 1)
+        def test(v: Int < TestEffect) = bind(v)(_ + 1)
 
     class TestHandle:
-        def test(h: TestHandler.type, v: Int < TestEffect.type) = TestEffect.handle(h)((), v)
+        def test(v: Int < TestEffect): Int < Any =
+            handle[Const[Int], Const[Int], TestEffect, Int, Any, Any](
+                Tag[TestEffect],
+                v
+            )([C] => (input, cont) => cont(input + 1))
+    end TestHandle
 
     "suspend" in runJVM {
         val map = methodBytecodeSize[TestSuspend]
-        assert(map == Map("test" -> 14))
+        assert(map == Map("test" -> 40))
     }
 
     "transform" in runJVM {

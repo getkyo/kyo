@@ -1,38 +1,36 @@
-package kyo
+// package kyo
 
-import kyo.core.*
-import kyo.internal.Trace
+// import kyo.core.*
+// import kyo.internal.Trace
 
-class Choices extends Effect[Choices]:
-    type Command[T] = Seq[T]
+// sealed trait Choices extends Effect[Seq, Id]
 
-object Choices extends Choices:
+// object Choices:
 
-    def run[T: Flat, S](v: T < (Choices & S))(using Trace): Seq[T] < S =
-        this.handle(handler)((), v)
+//     inline def get[T](inline v: Seq[T])(using inline tag: Tag[Choices]): T < Choices =
+//         suspend(tag, v)
 
-    def get[T](v: Seq[T])(using Trace): T < Choices =
-        this.suspend(v)
+//     def run[T, S](v: T < (Choices & S))(using tag: Tag[Choices], trace: Trace): Seq[T] < S =
+//         handle[Seq, Id, Choices, Seq[T], S, Any](tag, v.map(Seq(_))) {
+//             [C] =>
+//                 (input, cont) =>
+//                     Seqs.collect(input.map(e => Choices.run(cont(e)))).map(_.flatten.flatten)
+//         }
 
-    def eval[T, U, S](v: Seq[T])(f: T => U < S)(using Trace): U < (Choices & S) =
-        v match
-            case Seq(head) => f(head)
-            case v         => this.suspend(v, f)
+//     inline def eval[T, U, S](v: Seq[T])(f: T => U < S)(using inline tag: Tag[Choices]): U < (Choices & S) =
+//         v match
+//             case Seq(head) => f(head)
+//             case v         => suspend(tag, v, f)
 
-    def filter[S](v: Boolean < S)(using Trace): Unit < (Choices & S) =
-        v.map {
-            case true =>
-                ()
-            case false =>
-                drop
-        }
+//     def filter[S](v: Boolean < S)(using Trace): Unit < (Choices & S) =
+//         v.map {
+//             case true =>
+//                 ()
+//             case false =>
+//                 drop
+//         }
 
-    def drop(using Trace): Nothing < Choices =
-        suspend(this)(Seq.empty)
+//     def drop(using Trace): Nothing < Choices =
+//         get(Seq.empty)
 
-    private val handler =
-        new ResultHandler[Unit, Seq, Choices, Seq, Any]:
-            def done[T](st: Unit, v: T)(using Tag[Choices]) = Seq(v)
-            def resume[T, U: Flat, S](st: Unit, v: Seq[T], f: T => U < (Choices & S))(using Tag[Choices]) =
-                Seqs.collect(v.map(e => Choices.run(f(e)))).map(_.flatten)
-end Choices
+// end Choices

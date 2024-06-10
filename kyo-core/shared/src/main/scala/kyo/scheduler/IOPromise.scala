@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kyo.*
 import scala.annotation.tailrec
+import scala.util.Try
 import scala.util.control.NonFatal
 
 private[kyo] class IOPromise[T](state: State[T])
@@ -114,7 +115,7 @@ private[kyo] class IOPromise[T](state: State[T])
             true
         }
 
-    private val nullCompletion = IOs(null)
+    private val nullCompletion = IOs(<(null))
 
     final def complete(v: T < IOs): Boolean =
         val r =
@@ -135,18 +136,18 @@ private[kyo] class IOPromise[T](state: State[T])
                 case _: Pending[T] @unchecked =>
                     IOs {
                         Scheduler.get.flush()
-                        val b = new (T < IOs => Unit) with (() => T < IOs):
+                        object state extends (T < IOs => Unit):
                             @volatile
                             private var result: T < IOs = null.asInstanceOf[T < IOs]
                             private val waiter          = Thread.currentThread()
                             def apply(v: T < IOs) =
                                 result = v
                                 LockSupport.unpark(waiter)
-                            @tailrec def apply() =
+                            @tailrec def apply(): T < IOs =
                                 if isNull(result) then
                                     val remainingNanos = deadline - System.currentTimeMillis()
                                     if remainingNanos <= 0 then
-                                        return IOs.fail(Fibers.Interrupted)
+                                        return Fibers.interrupted
                                     else if remainingNanos == Long.MaxValue then
                                         LockSupport.park(this)
                                     else
@@ -156,8 +157,9 @@ private[kyo] class IOPromise[T](state: State[T])
                                 else
                                     result
                             end apply
-                        onComplete(b)
-                        b()
+                        end state
+                        onComplete(state)
+                        state()
                     }
                 case l: Linked[T] @unchecked =>
                     loop(l.p)
@@ -209,6 +211,8 @@ private[kyo] object IOPromise:
         end merge
 
         final def flush(v: T < IOs): Unit =
+            if isNull(v) || Try(isNull(IOs.run(v))).getOrElse(false) then
+                println(("flush", v))
             @tailrec def loop(p: Pending[T]): Unit =
                 p match
                     case _ if (p eq Pending.Empty) => ()

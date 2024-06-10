@@ -30,11 +30,11 @@ trait BaseKyoTest:
         else
             5.seconds
 
-    // given Conversion[Assertion, Future[Assertion]] = Future.successful(_)
+    implicit def assertionToFuture[S](a: Assertion): Future[Assertion] < S = Future.successful(a)
 
     def runJVM(
         v: => Assertion < KyoApp.Effects
-    )(using Flat[Assertion]): Future[Assertion] =
+    ): Future[Assertion] =
         if kyo.internal.Platform.isJVM then
             run(v)
         else
@@ -42,7 +42,7 @@ trait BaseKyoTest:
 
     def runJS(
         v: => Assertion < KyoApp.Effects
-    )(using Flat[Assertion]): Future[Assertion] =
+    ): Future[Assertion] =
         if kyo.internal.Platform.isJS then
             run(v)
         else
@@ -50,7 +50,13 @@ trait BaseKyoTest:
 
     def run(
         v: => Assertion < KyoApp.Effects
-    )(using Flat[Assertion]): Future[Assertion] =
-        IOs.run(KyoApp.runFiber(timeout)(v).toFuture).map(_.get)(using Platform.executionContext)
+    ): Future[Assertion] =
+        val a = KyoApp.runFiber(timeout)(v)
+        val b = IOs.run(a.toFuture)
+        val c = b.map(_.get)(using Platform.executionContext)
+        println((a, b, c))
+        c
+        // IOs.run(KyoApp.runFiber(timeout)(v).toFuture).map(_.get)(using Platform.executionContext)
+    end run
 
 end BaseKyoTest

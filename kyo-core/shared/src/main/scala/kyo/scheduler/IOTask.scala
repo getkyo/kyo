@@ -1,11 +1,11 @@
 package kyo.scheduler
 
 import kyo.{Clock as _, *}
+import kyo.Fibers.internal.*
+import kyo.IOs.internal.*
 import kyo.Locals.State
 import kyo.core.*
 import kyo.core.internal.*
-import kyo.fibersInternal.*
-import kyo.iosInternal.*
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
@@ -40,33 +40,24 @@ private[kyo] class IOTask[T](
                 curr
         else
             curr match
-                case kyo: Suspend[?, ?, ?, ?] =>
+                case <(kyo: Suspend[?, ?, ?, ?, ?, ?]) =>
                     if kyo.tag =:= Tag[IOs] then
-                        val k = kyo.asInstanceOf[Suspend[IO, Unit, T, Fibers]]
+                        val k = kyo.asInstanceOf[Suspend[Const[Unit], Const[Unit], IOs, Any, T, Fibers]]
                         eval(k((), this, locals), scheduler, startMillis, clock)
                     else if kyo.tag =:= Tag[FiberGets] then
-                        val k = kyo.asInstanceOf[Suspend[Fiber, Any, T, Fibers]]
-                        k.command match
+                        val k = kyo.asInstanceOf[Suspend[Fiber, Id, Fibers, Any, T, Fibers]]
+                        k.input match
                             case Promise(p) =>
                                 this.interrupts(p)
                                 val runtime = (clock.currentMillis() - startMillis + this.runtime()).toInt
                                 p.onComplete { (v: Any < IOs) =>
-                                    val io = IOs(k(
-                                        v,
-                                        this.asInstanceOf[Safepoint[FiberGets]],
-                                        locals
-                                    ))
+                                    val io = IOs(k(v, this, locals))
                                     this.become(IOTask(io, locals, ensures, runtime))
                                     ()
                                 }
                                 nullIO
                             case Done(v) =>
-                                eval(
-                                    k(v, this.asInstanceOf[Safepoint[FiberGets]], locals),
-                                    scheduler,
-                                    startMillis,
-                                    clock
-                                )
+                                eval(k(v, this, locals), scheduler, startMillis, clock)
                         end match
                     else
                         IOs(bug.failTag(kyo, Tag.Intersection[FiberGets & IOs]))

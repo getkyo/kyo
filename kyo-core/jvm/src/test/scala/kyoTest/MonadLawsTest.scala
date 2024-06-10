@@ -1,7 +1,6 @@
 package kyoTest
 
 import kyo.*
-import kyo.Flat.unsafe.bypass
 import zio.Trace
 import zio.prelude.Equal
 import zio.prelude.coherent.CovariantDeriveEqual
@@ -32,7 +31,7 @@ object MonadLawsTest extends ZIOSpecDefault:
             override def any: Myo[Any] =
                 Myo(())
             override def map[A, B](f: A => B): Myo[A] => Myo[B] =
-                m => Myo[B](m.v.map(f))
+                m => Myo[B](m.v.map(f(_)))
             override def derive[A: Equal]: Equal[Myo[A]] =
                 new Equal[Myo[A]]:
                     protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean =

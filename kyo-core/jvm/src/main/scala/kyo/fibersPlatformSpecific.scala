@@ -5,10 +5,10 @@ import kyo.scheduler.IOPromise
 import kyo.scheduler.IOTask
 
 trait fibersPlatformSpecific:
-    def fromCompletionStage[T: Flat](cs: CompletionStage[T]): T < Fibers =
+    def fromCompletionStage[T](cs: CompletionStage[T]): T < Fibers =
         Fibers.get(fromCompletionStageFiber(cs))
 
-    def fromCompletionStageFiber[T: Flat](cs: CompletionStage[T]): Fiber[T] < IOs =
+    def fromCompletionStageFiber[T](cs: CompletionStage[T]): Fiber[T] < IOs =
         Locals.save { st =>
             IOs {
                 val p = new IOPromise[T]()

@@ -2,14 +2,17 @@ package kyo
 
 import core.*
 import core.internal.*
-import iosInternal.*
 import java.util.concurrent.atomic.AtomicReference
 import kyo.internal.Trace
 import scala.annotation.tailrec
 import scala.util.*
 import scala.util.control.NonFatal
 
-sealed trait IOs extends Effect[IOs]:
+sealed trait IOs extends Effect[Const[Unit], Const[Unit]]
+
+object IOs:
+
+    import internal.*
 
     private val tag = Tag[IOs]
 
@@ -18,10 +21,10 @@ sealed trait IOs extends Effect[IOs]:
     inline def apply[T, S](
         inline f: => T < (IOs & S)
     )(using inline _trace: Trace): T < (IOs & S) =
-        fromKyo {
+        < {
             new KyoIO[T, S]:
                 def trace = _trace
-                def apply(v: Unit, s: Safepoint[IOs & S], l: Locals.State) =
+                def apply(v: Unit, s: Safepoint, l: Locals.State) =
                     f
         }
 
@@ -47,33 +50,33 @@ sealed trait IOs extends Effect[IOs]:
     )(using Trace): U < (S & S2) =
         core.catching(v)(pf)
 
-    def run[T: Flat](v: T < IOs)(using Trace): T =
+    def run[T](v: T < IOs)(using Trace): T =
         @tailrec def runLoop(v: T < IOs): T =
             v match
-                case kyo: Suspend[IO, Unit, T, IOs] @unchecked =>
-                    bug.checkTag(kyo, tag)
+                case <(kyo: Suspend[Const[Unit], Const[Unit], IOs, Unit, T, IOs] @unchecked) =>
+                    // bug.checkTag(kyo, tag)
                     runLoop(kyo(()))
-                case _ =>
+                case <(v) =>
                     v.asInstanceOf[T]
         runLoop(v)
     end run
 
-    def runLazy[T: Flat, S](v: T < (IOs & S))(using _trace: Trace)(using Trace): T < S =
+    def runLazy[T, S](v: T < (IOs & S))(using _trace: Trace)(using Trace): T < S =
         @tailrec def runLazyLoop(v: T < (IOs & S)): T < S =
             v match
-                case kyo: Suspend[?, ?, ?, ?] =>
+                case <(kyo: Suspend[?, ?, ?, ?, ?, ?]) =>
                     if kyo.tag =:= tag then
-                        val k = kyo.asInstanceOf[Suspend[IO, Unit, T, S & IOs]]
+                        val k = kyo.asInstanceOf[Suspend[Const[Unit], Const[Unit], IOs, Unit, T, S & IOs]]
                         runLazyLoop(k(()))
                     else
-                        val k = kyo.asInstanceOf[Suspend[MX, Any, T, S & IOs]]
-                        fromKyo {
-                            new Continue[MX, Any, T, S](k):
+                        val k = kyo.asInstanceOf[Suspend[IX, OX, EX, Any, T, S & IOs]]
+                        <(
+                            new Continue[IX, OX, EX, Any, T, S](k):
                                 def trace = _trace
-                                def apply(v: Any, s: Safepoint[S], l: Locals.State) =
+                                def apply(v: OX[Any], s: Safepoint, l: Locals.State) =
                                     runLazyLoop(k(v, s, l))
-                        }
-                case _ =>
+                        )
+                case <(v) =>
                     v.asInstanceOf[T]
             end match
         end runLazyLoop
@@ -102,52 +105,51 @@ sealed trait IOs extends Effect[IOs]:
         )
     end ensure
 
+    private[kyo] object internal:
+
+        abstract class Ensure
+            extends AtomicReference[Any]
+            with Function0[Unit]:
+
+            protected def run: Unit < IOs
+
+            def apply(): Unit =
+                if compareAndSet(null, ()) then
+                    try IOs.run(run)
+                    catch
+                        case ex if NonFatal(ex) =>
+                            Logs.unsafe.error(s"IOs.ensure function failed", ex)
+        end Ensure
+
+        abstract private[kyo] class KyoIO[T, S]
+            extends Suspend[Const[Unit], Const[Unit], IOs, Unit, T, IOs & S]:
+            final def tag   = Tag[IOs]
+            final def input = ()
+        end KyoIO
+
+        trait Preempt extends Safepoint:
+            def ensure(f: () => Unit): Unit
+            def remove(f: () => Unit): Unit
+            def suspend[T, S](v: => T < S): T < S =
+                IOs(v).asInstanceOf[T < S]
+        end Preempt
+        object Preempt:
+            def ensure(s: Safepoint, e: Ensure): Unit =
+                s match
+                    case p: Preempt => p.ensure(e)
+                    case _          =>
+
+            def remove(s: Safepoint, e: Ensure): Unit =
+                s match
+                    case p: Preempt => p.remove(e)
+                    case _          =>
+            val never: Preempt =
+                new Preempt:
+                    def ensure(f: () => Unit) = ()
+                    def remove(f: () => Unit) = ()
+                    def preempt()             = false
+        end Preempt
+        type IO[+T] = T
+    end internal
+
 end IOs
-object IOs extends IOs
-
-private[kyo] object iosInternal:
-
-    abstract class Ensure
-        extends AtomicReference[Any]
-        with Function0[Unit]:
-
-        protected def run: Unit < IOs
-
-        def apply(): Unit =
-            if compareAndSet(null, ()) then
-                try IOs.run(run)
-                catch
-                    case ex if NonFatal(ex) =>
-                        Logs.unsafe.error(s"IOs.ensure function failed", ex)
-    end Ensure
-
-    abstract private[kyo] class KyoIO[T, S]
-        extends Suspend[IO, Unit, T, (IOs & S)]:
-        final def command = ()
-        final def tag     = Tag[IOs].asInstanceOf[Tag[Any]]
-    end KyoIO
-
-    trait Preempt extends Safepoint[IOs]:
-        def ensure(f: () => Unit): Unit
-        def remove(f: () => Unit): Unit
-        def suspend[T, S](v: => T < S): T < (IOs & S) =
-            IOs(v)
-    end Preempt
-    object Preempt:
-        def ensure(s: Safepoint[?], e: Ensure): Unit =
-            s match
-                case p: Preempt => p.ensure(e)
-                case _          =>
-
-        def remove(s: Safepoint[?], e: Ensure): Unit =
-            s match
-                case p: Preempt => p.remove(e)
-                case _          =>
-        val never: Preempt =
-            new Preempt:
-                def ensure(f: () => Unit) = ()
-                def remove(f: () => Unit) = ()
-                def preempt()             = false
-    end Preempt
-    type IO[+T] = T
-end iosInternal

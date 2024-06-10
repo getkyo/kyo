@@ -1,59 +1,56 @@
 package kyo
 
-import Vars.internal.*
 import kyo.core.*
 import kyo.internal.Trace
 
-class Vars[V] extends Effect[Vars[V]]:
-    type Command[T] = Op[V]
-
-    private val handler =
-        new ResultHandler[V, Const[Op[V]], Vars[V], Id, Any]:
-            def done[T](st: V, v: T)(using Tag[Vars[V]]) = v
-            def resume[T, U: Flat, S2](st: V, op: Op[V], k: T => U < (Vars[V] & S2))(using Tag[Vars[V]]) =
-                op match
-                    case _: Get.type =>
-                        Resume(st, k(st.asInstanceOf[T]))
-                    case Set(v) =>
-                        Resume(v, k(().asInstanceOf[T]))
-                    case Update(f) =>
-                        Resume(f(st), k(().asInstanceOf[T]))
-end Vars
+sealed trait Vars[V] extends Effect[Vars.Input[V, *], Id]
 
 object Vars:
-    private case object vars extends Vars[Any]
-    private def vars[V]: Vars[V] = vars.asInstanceOf[Vars[V]]
-    object internal:
-        case object Get
-        case class Set[V](v: V)
-        case class Update[V](f: V => V)
-        type Op[V] = Get.type | Set[V] | Update[V]
-    end internal
 
-    def get[V](using Tag[Vars[V]])(using Trace): V < Vars[V] =
-        vars[V].suspend[V](Get)
+    sealed trait Input[V, X]
+    private object Input:
+        case class Get[V]()             extends Input[V, V]
+        case class Set[V](value: V)     extends Input[V, Unit]
+        case class Update[V](f: V => V) extends Input[V, Unit]
+        val _get   = Get[Any]()
+        def get[V] = _get.asInstanceOf[Get[V]]
+    end Input
 
-    class UseDsl[V]:
-        inline def apply[T, S](inline f: V => T < S)(using inline tag: Tag[Vars[V]], inline trace: Trace): T < (Vars[V] & S) =
-            vars[V].suspend[V, T, S](Get, f)
+    import Input.*
 
-    def use[V >: Nothing]: UseDsl[V] = new UseDsl[V]
+    inline def get[V](using inline tag: Tag[Vars[V]]): V < Vars[V] =
+        suspend[V](tag, Input.get[V])
 
-    def set[V](value: V)(using Tag[Vars[V]], Trace): Unit < Vars[V] =
-        vars[V].suspend[Unit](Set(value))
+    class UseDsl[V](ign: Unit) extends AnyVal:
+        inline def apply[T, S](inline f: V => T < S)(
+            using inline tag: Tag[Vars[V]]
+        ): T < (Vars[V] & S) =
+            suspend[V](tag, Get(), f)
+    end UseDsl
 
-    def update[V](f: V => V)(using Tag[Vars[V]], Trace): Unit < Vars[V] =
-        vars[V].suspend[Unit](Update(f))
+    inline def use[V]: UseDsl[V] = UseDsl(())
 
-    class RunDsl[V]:
-        def apply[T: Flat, S2](state: V)(value: T < (Vars[V] & S2))(
-            using
-            Tag[Vars[V]],
-            Trace
-        ): T < S2 =
-            vars[V].handle(vars[V].handler)(state, value)
+    inline def set[V](inline value: V)(using inline tag: Tag[Vars[V]]): Unit < Vars[V] =
+        suspend(tag, Set(value))
+
+    inline def update[V](inline f: V => V)(using inline tag: Tag[Vars[V]]): Unit < Vars[V] =
+        suspend(tag, Update(f))
+
+    case class RunDsl[V](ign: Unit) extends AnyVal:
+        def apply[T, S](st: V)(v: T < (Vars[V] & S))(using tag: Tag[Vars[V]], t: Trace): T < S =
+            handle.state(tag, st, v) {
+                [C] =>
+                    (input, state, cont) =>
+                        input match
+                            case Get() =>
+                                (state, cont(state))
+                            case Set(value) =>
+                                (value, cont(()))
+                            case Update(f) =>
+                                (f(state), cont(()))
+            }
     end RunDsl
 
-    def run[V >: Nothing]: RunDsl[V] = new RunDsl[V]
+    inline def run[V >: Nothing]: RunDsl[V] = RunDsl(())
 
 end Vars

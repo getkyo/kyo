@@ -72,7 +72,7 @@ class methodsTest extends KyoTest:
     "nested" - {
         def lift[T](v: T): T < IOs                          = IOs(v)
         def add(v: Int < IOs)                               = v.map(_ + 1)
-        def transform[T, U](v: T < IOs, f: T => U): U < IOs = v.map(f)
+        def transform[T, U](v: T < IOs, f: T => U): U < IOs = v.map(f(_))
         val io: Int < IOs < IOs =
             lift(lift(1))
         "map + flatten" in {

@@ -3,12 +3,9 @@ package kyo
 import kyo.core.*
 import kyo.internal.Trace
 
-class Envs[+V] extends Effect[Envs[V]]:
-    type Command[T] = Tag[T]
+sealed trait Envs[+V] extends Effect[Tag, Id]
 
 object Envs:
-    private case object envs extends Envs[Any]
-    private def envs[V]: Envs[V] = envs.asInstanceOf[Envs[V]]
 
     // TODO: Envs.get[String] would normally use a tag of Envs[String]
     // Yet we may provide a Layer with an output of String & Int.
@@ -16,50 +13,38 @@ object Envs:
     // However, then handler.tag != kyo.tag in the handle implementation.
     // So we have to use this type erased tag and rely on our `accepts` implementation
     private trait EnvsErased
-    private val envsTag: Tag[EnvsErased]   = Tag[EnvsErased]
-    private inline given [V]: Tag[Envs[V]] = envsTag.asInstanceOf[Tag[Envs[V]]]
+    private val _envsTag: Tag[EnvsErased]          = Tag[EnvsErased]
+    private inline def envsErased[V]: Tag[Envs[V]] = _envsTag.asInstanceOf[Tag[Envs[V]]]
 
-    def get[V](using tag: Tag[V], trace: Trace): V < Envs[V] =
-        envs[V].suspend[V](tag)
+    inline def get[V](using inline tag: Tag[V], inline trace: Trace): V < Envs[V] =
+        suspend[V](envsErased[V], tag)
 
-    def run[V >: Nothing: Tag, T: Flat, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
+    def run[V >: Nothing: Tag, T, S, VS, VR](env: V)(value: T < (Envs[VS] & S))(
         using HasEnvs[V, VS] { type Remainder = VR }
     ): T < (S & VR) =
-        envs[V].handle(handler[V])(TypeMap(env), value).asInstanceOf[T < (S & VR)]
-    end run
+        runTypeMap(TypeMap(env))(value)
 
-    def runTypeMap[V >: Nothing, T: Flat, S, VS, VR](env: TypeMap[V])(value: T < (Envs[VS] & S))(
+    def runTypeMap[V >: Nothing, T, S, VS, VR](env: TypeMap[V])(value: T < (Envs[VS] & S))(
         using HasEnvs[V, VS] { type Remainder = VR }
     ): T < (S & VR) =
-        envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
+        handle(envsErased[VS], value)(
+            accept = [C] => input => env <:< input,
+            handle = [C] =>
+                (input, cont) => cont(env.get(using input.asInstanceOf[Tag[V]]).asInstanceOf[C])
+        )
     end runTypeMap
 
-    class UseDsl[V >: Nothing]:
+    case class UseDsl[V >: Nothing](ign: Unit) extends AnyVal:
         inline def apply[T, S](inline f: V => T < S)(
             using
             inline intersection: Tag.Intersection[V],
             inline tag: Tag[V],
             inline trace: Trace
         ): T < (Envs[V] & S) =
-            envs[V].suspend[V, T, S](tag, f)
-        end apply
+            suspend[V](envsErased[V], tag, f)
     end UseDsl
 
-    def use[V >: Nothing]: UseDsl[V] =
-        new UseDsl[V]
-
-    private def handler[V]: ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any] =
-        cachedHandler.asInstanceOf[ResultHandler[TypeMap[V], Tag, Envs[V], Id, Any]]
-
-    private val cachedHandler =
-        new ResultHandler[TypeMap[Any], Tag, Envs[Any], Id, Any]:
-            override def accepts[T](st: TypeMap[Any], command: Tag[T]): Boolean =
-                st <:< command
-
-            def done[T](st: TypeMap[Any], v: T)(using Tag[Envs[Any]]) = v
-
-            def resume[T, U: Flat, S2](st: TypeMap[Any], command: Tag[T], k: T => U < (Envs[Any] & S2))(using Tag[Envs[Any]]) =
-                Resume(st, k(st.get(using command.asInstanceOf[Tag[Any]]).asInstanceOf[T]))
+    inline def use[V >: Nothing]: UseDsl[V] = UseDsl(())
 
     /** An effect `Envs[VS]` includes a dependency on `V`, and once `V` has been handled, `Envs[VS]` should be replaced by `Out`
       *

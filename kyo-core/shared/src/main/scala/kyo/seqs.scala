@@ -48,7 +48,7 @@ object Seqs:
         end match
     end foreach
 
-    def foldLeft[T, U: Flat, S](seq: Seq[T])(acc: U)(f: (U, T) => U < S)(using Trace): U < S =
+    def foldLeft[T, U, S](seq: Seq[T])(acc: U)(f: (U, T) => U < S)(using Trace): U < S =
         seq.size match
             case 0 => acc
             case 1 => f(acc, seq(0))

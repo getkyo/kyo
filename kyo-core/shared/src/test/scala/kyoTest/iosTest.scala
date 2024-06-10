@@ -21,7 +21,7 @@ class iosTest extends KyoTest:
             assert(IOs.runLazy(v).pure == 1)
             assert(called)
         }
-        "next handled effects can execute" in run {
+        "next handled effects can execute" in {
             var called = false
             val v =
                 Envs.get[Int].map { i =>
@@ -39,7 +39,7 @@ class iosTest extends KyoTest:
             )
             assert(called)
         }
-        "failure" in run {
+        "failure" in {
             val ex        = new Exception
             def fail: Int = throw ex
 
@@ -54,7 +54,7 @@ class iosTest extends KyoTest:
             }
             succeed
         }
-        "stack-safe" in run {
+        "stack-safe" in {
             val frames = 10000
             def loop(i: Int): Int < IOs =
                 IOs {
@@ -70,7 +70,7 @@ class iosTest extends KyoTest:
         }
     }
     "run" - {
-        "execution" in run {
+        "execution" in {
             var called = false
             val v: Int < IOs =
                 IOs {
@@ -84,7 +84,7 @@ class iosTest extends KyoTest:
             )
             assert(called)
         }
-        "stack-safe" in run {
+        "stack-safe" in {
             val frames = 100000
             def loop(i: Int): Assertion < IOs =
                 IOs {
@@ -93,9 +93,9 @@ class iosTest extends KyoTest:
                     else
                         succeed
                 }
-            loop(0)
+            IOs.run(loop(0)).pure
         }
-        "failure" in run {
+        "failure" in {
             val ex        = new Exception
             def fail: Int = throw ex
 
@@ -111,7 +111,7 @@ class iosTest extends KyoTest:
             succeed
         }
         "doesn't accept other pending effects" in {
-            assertDoesNotCompile("IOs.run[Int < Options](Options.get(Some(1)))")
+            assert(Options.run(IOs.run[Int < Options](Options.get(Some(1)))).pure == Some(1))
         }
     }
 
@@ -119,7 +119,7 @@ class iosTest extends KyoTest:
         "success" in {
             var called = false
             assert(
-                IOs.toTry(IOs.run(IOs.ensure { called = true }(1))).pure ==
+                IOs.toTry(IOs.run(IOs.ensure { called = true }(<(1)))).pure ==
                     Try(1)
             )
             assert(called)
@@ -128,9 +128,9 @@ class iosTest extends KyoTest:
             val ex     = new Exception
             var called = false
             assert(
-                IOs.toTry(IOs.run(IOs.ensure { called = true } {
+                IOs.run(IOs.toTry(IOs.ensure { called = true } {
                     IOs[Int, Any](throw ex)
-                })).pure ==
+                })) ==
                     Failure(ex)
             )
             assert(called)
