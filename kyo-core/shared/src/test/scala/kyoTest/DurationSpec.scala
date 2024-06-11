@@ -99,7 +99,7 @@ object DurationSpec extends ZIOSpecDefault:
             test("Long.to*") {
                 for
                     result <- typeCheck("Long.MaxValue.toNanos")
-                yield assertTrue(result.is(_.left).contains("Required: kyo.Duration"))
+                yield assertTrue(result.is(_.left).contains("value toNanos is not a member of Long"))
             },
             test("toString") {
                 val d = 10.nanos.toString
