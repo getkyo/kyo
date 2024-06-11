@@ -30,11 +30,11 @@ class Cache(private[kyo] val store: Store):
                             } {
                                 IOs.toTry[U, S](f(v)).map {
                                     case Success(v) =>
-                                        p.complete(v)
+                                        p.completeSuccess(v)
                                             .unit.andThen(v)
                                     case Failure(ex) =>
                                         IOs(store.invalidate(key))
-                                            .andThen(p.complete(IOs.fail(ex)))
+                                            .andThen(p.completeFailure(ex))
                                             .unit.andThen(IOs.fail(ex))
                                 }
                             }

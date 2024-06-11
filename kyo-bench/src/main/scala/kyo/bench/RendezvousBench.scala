@@ -71,7 +71,7 @@ class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
                     waiting.cas(null, (p, n)).flatMap {
                         case false =>
                             waiting.getAndSet(null).flatMap {
-                                _.asInstanceOf[Promise[Int]].complete(n)
+                                _.asInstanceOf[Promise[Int]].completeSuccess(n)
                             }
                         case true =>
                             p.get
@@ -89,7 +89,7 @@ class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
                         case false =>
                             waiting.getAndSet(null).flatMap {
                                 case (p2: Promise[Unit] @unchecked, i: Int) =>
-                                    p2.complete(()).map(_ => i)
+                                    p2.completeSuccess(()).map(_ => i)
                             }
                         case true =>
                             p.get

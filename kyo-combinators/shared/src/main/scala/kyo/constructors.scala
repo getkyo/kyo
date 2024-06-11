@@ -26,7 +26,7 @@ extension (kyoObject: Kyo.type)
             registerFn = (eff: A < Fibers) =>
                 val effFiber = Fibers.init(eff)
                 val updatePromise =
-                    effFiber.map(_.onComplete(a => promise.complete(a).unit))
+                    effFiber.map(_.onComplete(a => promise.completeResult(a).unit))
                 val updatePromiseIO = Fibers.init(updatePromise).unit
                 IOs.run(updatePromiseIO)
             _ <- register(registerFn)

@@ -1566,10 +1566,10 @@ val c: Int < Fibers =
 val d: Unit < IOs =
   a.onComplete(println(_))
 
-// A variant of `get` that returns a `Try`
+// A variant of `get` that returns a `Result`
 // with the failed or successful result
-val e: Try[Int] < Fibers =
-  a.getTry
+val e: Result[Int] < Fibers =
+  a.getResult
 
 // Try to interrupt/cancel a fiber
 val f: Boolean < IOs =
@@ -1623,7 +1623,7 @@ val a: Promise[Int] < IOs =
 
 // Try to fulfill a promise
 val b: Boolean < IOs =
-  a.map(_.complete(42))
+  a.map(_.completeSuccess(42))
 
 // Fullfil the promise with 
 // another fiber
