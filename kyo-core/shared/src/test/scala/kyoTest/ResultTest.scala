@@ -3,6 +3,7 @@ package kyoTest
 import kyo.*
 import kyo.Result.Failure
 import kyo.Result.Success
+import kyoTest.Tagged.jvmOnly
 
 class ResultTest extends KyoTest:
 
@@ -303,6 +304,72 @@ class ResultTest extends KyoTest:
                 catch
                     case e: RuntimeException => "caught exception"
             assert(result == "no exception")
+        }
+    }
+
+    "toTry" - {
+        "Success to Try" in {
+            val success: Result[Int] = Success(42)
+            val tryResult            = success.toTry
+            assert(tryResult.isSuccess)
+            assert(tryResult.get == 42)
+        }
+
+        "Failure to Try" in {
+            val exception            = new RuntimeException("Something went wrong")
+            val failure: Result[Int] = Failure(exception)
+            val tryResult            = failure.toTry
+            assert(tryResult.isFailure)
+            assert(tryResult.failed.get == exception)
+        }
+
+        "deeply nested Success to Try" in {
+            val nested: Result[Result[Result[Int]]] = Success(Success(Success(42)))
+            val tryResult                           = nested.toTry
+            assert(tryResult.isSuccess)
+            assert(tryResult.get == Success(Success(42)))
+        }
+
+        "deeply nested Failure to Try" in {
+            val exception                           = new RuntimeException("Something went wrong")
+            val nested: Result[Result[Result[Int]]] = Success(Success(Failure(exception)))
+            val tryResult                           = nested.toTry
+            assert(tryResult.isSuccess)
+            assert(tryResult.get == Success(Failure(exception)))
+        }
+    }
+
+    "null values" - {
+        "Success with null value" in {
+            val result: Result[String] = Success(null)
+            assert(result.isSuccess)
+            assert(result.get == null)
+        }
+
+        "Success with null value flatMap" in {
+            val result: Result[String] = Success(null)
+            val flatMapped             = result.flatMap(str => Success(s"mapped: $str"))
+            assert(flatMapped == Success("mapped: null"))
+        }
+
+        "Failure with null exception" taggedAs jvmOnly in {
+            val result: Result[Int] = Failure(null)
+            assert(result.isFailure)
+            assertThrows[NullPointerException](result.get)
+        }
+
+        "Failure with null exception flatMap" taggedAs jvmOnly in {
+            val result: Result[Int] = Failure(null)
+            val flatMapped          = result.flatMap(num => Success(num + 1))
+            assert(flatMapped.isFailure)
+            assertThrows[NullPointerException](flatMapped.get)
+        }
+
+        "Failure with null exception map" taggedAs jvmOnly in {
+            val result: Result[Int] = Failure(null)
+            val mapped              = result.map(num => num + 1)
+            assert(mapped.isFailure)
+            assertThrows[NullPointerException](mapped.get)
         }
     }
 
