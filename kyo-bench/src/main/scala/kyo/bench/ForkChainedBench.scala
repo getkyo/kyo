@@ -25,7 +25,7 @@ class ForkChainedBench extends Bench.ForkOnly(0):
         import kyo.*
 
         def iterate(p: Promise[Unit], n: Int): Unit < IOs =
-            if n <= 0 then p.complete(()).unit
+            if n <= 0 then p.completeSuccess(()).unit
             else IOs.unit.flatMap(_ => Fibers.init(iterate(p, n - 1)).unit)
 
         for

@@ -50,9 +50,9 @@ private[kyo] class IOTask[T](
                             case Promise(p) =>
                                 this.interrupts(p)
                                 val runtime = (clock.currentMillis() - startMillis + this.runtime()).toInt
-                                p.onComplete { (v: Any < IOs) =>
+                                p.onComplete { r =>
                                     val io = IOs(k(
-                                        v,
+                                        IOs(r.get),
                                         this.asInstanceOf[Safepoint[FiberGets]],
                                         locals
                                     ))
@@ -62,7 +62,7 @@ private[kyo] class IOTask[T](
                                 nullIO
                             case Done(v) =>
                                 eval(
-                                    k(v, this.asInstanceOf[Safepoint[FiberGets]], locals),
+                                    k(IOs(v.get), this.asInstanceOf[Safepoint[FiberGets]], locals),
                                     scheduler,
                                     startMillis,
                                     clock
@@ -71,7 +71,7 @@ private[kyo] class IOTask[T](
                     else
                         IOs(bug.failTag(kyo, Tag.Intersection[FiberGets & IOs]))
                 case _ =>
-                    complete(curr.asInstanceOf[T < IOs])
+                    complete(Result.success(curr.asInstanceOf[T]))
                     finalize()
                     nullIO
         end if
@@ -83,7 +83,7 @@ private[kyo] class IOTask[T](
             curr = eval(curr, scheduler, startMillis, clock)
         catch
             case ex if (NonFatal(ex)) =>
-                complete(IOs.fail(ex))
+                complete(Result.failure(ex))
                 curr = nullIO
         end try
         if !isNull(curr) then

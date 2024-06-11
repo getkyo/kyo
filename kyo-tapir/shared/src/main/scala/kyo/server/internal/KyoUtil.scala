@@ -11,10 +11,10 @@ object KyoUtil:
                 nettyFuture.addListener((future: ChannelFuture) =>
                     discard {
                         IOs.run {
-                            if future.isSuccess then p.complete(future.channel())
+                            if future.isSuccess then p.completeSuccess(future.channel())
                             else if future.isCancelled then
-                                p.complete(Fibers.interrupted)
-                            else p.complete(IOs.fail(future.cause()))
+                                p.completeResult(Fibers.interruptedResult)
+                            else p.completeFailure(future.cause())
                         }
                     }
                 )
@@ -28,10 +28,10 @@ object KyoUtil:
                 f.addListener((future: io.netty.util.concurrent.Future[T]) =>
                     discard {
                         IOs.run {
-                            if future.isSuccess then p.complete(future.getNow)
+                            if future.isSuccess then p.completeSuccess(future.getNow)
                             else if future.isCancelled then
-                                p.complete(Fibers.interrupted)
-                            else p.complete(IOs.fail(future.cause()))
+                                p.completeResult(Fibers.interruptedResult)
+                            else p.completeFailure(future.cause())
                         }
                     }
                 )

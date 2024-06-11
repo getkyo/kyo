@@ -13,7 +13,7 @@ class fibersTest extends KyoTest:
         "complete" in run {
             for
                 p <- Fibers.initPromise[Int]
-                a <- p.complete(1)
+                a <- p.completeSuccess(1)
                 b <- p.isDone
                 c <- p.get
             yield assert(a && b && c == 1)
@@ -21,8 +21,8 @@ class fibersTest extends KyoTest:
         "complete twice" in run {
             for
                 p <- Fibers.initPromise[Int]
-                a <- p.complete(1)
-                b <- p.complete(2)
+                a <- p.completeSuccess(1)
+                b <- p.completeSuccess(2)
                 c <- p.isDone
                 d <- p.get
             yield assert(a && !b && c && d == 1)
@@ -30,7 +30,7 @@ class fibersTest extends KyoTest:
         "complete null" in run {
             for
                 p <- Fibers.initPromise[AnyRef]
-                b <- p.complete(null)
+                b <- p.completeSuccess(null)
                 r <- p.get
             yield assert(b && r == null)
         }
@@ -38,10 +38,10 @@ class fibersTest extends KyoTest:
             val ex = new Exception
             for
                 p <- Fibers.initPromise[Int]
-                a <- p.complete(IOs.fail(ex))
+                a <- p.completeFailure(ex)
                 b <- p.isDone
-                c <- p.getTry
-            yield assert(a && b && c == Failure[Int](ex))
+                c <- p.getResult
+            yield assert(a && b && c == Result.Failure[Int](ex))
             end for
         }
 
@@ -50,7 +50,7 @@ class fibersTest extends KyoTest:
                 for
                     p1 <- Fibers.initPromise[Int]
                     p2 <- Fibers.initPromise[Int]
-                    a  <- p2.complete(42)
+                    a  <- p2.completeSuccess(42)
                     b  <- p1.become(p2)
                     c  <- p1.isDone
                     d  <- p1.get
@@ -62,11 +62,11 @@ class fibersTest extends KyoTest:
                 for
                     p1 <- Fibers.initPromise[Int]
                     p2 <- Fibers.initPromise[Int]
-                    a  <- p2.complete(IOs.fail(ex))
+                    a  <- p2.completeFailure(ex)
                     b  <- p1.become(p2)
                     c  <- p1.isDone
-                    d  <- p1.getTry
-                yield assert(a && b && c && d == Failure(ex))
+                    d  <- p1.getResult
+                yield assert(a && b && c && d == Result.Failure(ex))
                 end for
             }
 
@@ -74,8 +74,8 @@ class fibersTest extends KyoTest:
                 for
                     p1 <- Fibers.initPromise[Int]
                     p2 <- Fibers.initPromise[Int]
-                    a  <- p1.complete(42)
-                    b  <- p2.complete(99)
+                    a  <- p1.completeSuccess(42)
+                    b  <- p2.completeSuccess(99)
                     c  <- p1.become(p2)
                     d  <- p1.get
                 yield assert(a && b && !c && d == 42)
