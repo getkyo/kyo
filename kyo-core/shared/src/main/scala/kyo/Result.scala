@@ -2,6 +2,7 @@ package kyo
 
 import Result.*
 import kyo.Flat
+import scala.util.Try
 import scala.util.control.NonFatal
 
 opaque type Result[+T] >: (Success[T] | Failure[T]) = Success[T] | Failure[T]
@@ -38,11 +39,7 @@ object Result:
 
         // TODO avoid Option allocation
         def unapply[T](self: Result[T]): Option[T] =
-            (self: @unchecked) match
-                case _: Failure[?] => None
-                case s: SuccessFailure[?] =>
-                    Some(s.unnest.asInstanceOf[T])
-                case s: T @unchecked => Some(s)
+            self.fold(_ => None)(Some(_))
 
     end Success
 
@@ -52,9 +49,7 @@ object Result:
 
         // TODO avoid Option allocation
         def unapply[T](self: Result[T]): Option[Throwable] =
-            self match
-                case f: Failure[?] => Some(f.exception)
-                case _             => None
+            self.fold(Some(_))(_ => None)
     end Failure
 
     extension [T](self: Result[T])
@@ -65,69 +60,69 @@ object Result:
 
         inline def isFailure: Boolean = !isSuccess
 
-        inline def get: T =
+        inline def fold[U](inline ifFailure: Throwable => U)(inline ifSuccess: T => U): U =
             (self: @unchecked) match
-                case Success(value)     => value
-                case Failure(exception) => throw exception
+                case self: Failure[T] =>
+                    ifFailure(self.exception)
+                case _ =>
+                    try
+                        self match
+                            case self: SuccessFailure[T] @unchecked =>
+                                ifSuccess(self.unnest.asInstanceOf[T])
+                            case self =>
+                                ifSuccess(self.asInstanceOf[T])
+                    catch
+                        case ex if NonFatal(ex) => ifFailure(ex)
+
+        inline def get: T =
+            fold(ex => throw ex)(v => v)
 
         inline def getOrElse[U >: T](inline default: => U): U =
-            (self: @unchecked) match
-                case Success(value) => value
-                case Failure(_)     => default
+            fold(_ => default)(v => v)
 
-        inline def orElse[U >: T](inline alternative: => Result[U]): Result[U] =
-            (self: @unchecked) match
-                case Success(value) => self
-                case Failure(_)     => alternative
+        def orElse[U >: T](alternative: => Result[U]): Result[U] =
+            fold(_ => alternative)(v => Result.success(v))
 
         inline def flatMap[U](inline f: T => Result[U]): Result[U] =
             (self: @unchecked) match
-                case Success(value) => Result(f(value)).flatten
-                case failure        => failure.asInstanceOf[Result[U]]
-
-        inline def flatten[U](using ev: T <:< Result[U]): Result[U] =
-            (self: @unchecked) match
-                case Success(value) => ev(value)
-                case failure        => failure.asInstanceOf[Result[U]]
-
-        inline def map[U](inline f: T => U): Result[U] =
-            (self: @unchecked) match
-                case Success(value) => Result(f(value))
-                case failure        => failure.asInstanceOf[Result[U]]
-
-        inline def fold[U](inline ifFailure: Throwable => U)(inline ifSuccess: T => U): U =
-            (self: @unchecked) match
-                case Success(value) =>
-                    try ifSuccess(value)
+                case _: Failure[?] =>
+                    self.asInstanceOf[Result[U]]
+                case _ =>
+                    try f(self.get)
                     catch
                         case ex if NonFatal(ex) =>
-                            ifFailure(ex)
-                case Failure(exception) => ifFailure(exception)
+                            Failure(ex)
+
+        inline def flatten[U](using ev: T <:< Result[U]): Result[U] =
+            flatMap(ev)
+
+        inline def map[U](inline f: T => U): Result[U] =
+            flatMap(v => Result.success(f(v)))
 
         inline def filter(inline p: T => Boolean): Result[T] =
-            (self: @unchecked) match
-                case Success(value) if p(value) => self
-                case Success(value)             => Failure(new NoSuchElementException("Predicate does not hold for " + value))
-                case failure                    => self
+            flatMap { v =>
+                if !p(v) then
+                    throw new NoSuchElementException("Predicate does not hold for " + v)
+                v
+            }
 
         inline def recover[U >: T](inline rescueException: PartialFunction[Throwable, U]): Result[U] =
             (self: @unchecked) match
-                case Success(value) => self
                 case Failure(exception) if rescueException.isDefinedAt(exception) =>
                     Result(rescueException(exception))
-                case failure => failure.asInstanceOf[Result[U]]
+                case _ => self.asInstanceOf[Result[U]]
 
         inline def recoverWith[U >: T](inline rescueException: PartialFunction[Throwable, Result[U]]): Result[U] =
             (self: @unchecked) match
-                case Success(value) => self
                 case Failure(exception) if rescueException.isDefinedAt(exception) =>
                     rescueException(exception)
-                case failure => failure.asInstanceOf[Result[U]]
+                case _ => self.asInstanceOf[Result[U]]
 
         inline def toEither: Either[Throwable, T] =
-            (self: @unchecked) match
-                case Success(value)     => Right(value)
-                case Failure(exception) => Left(exception)
+            fold(Left(_))(Right(_))
+
+        inline def toTry: Try[T] =
+            fold(scala.util.Failure(_))(scala.util.Success(_))
     end extension
 
     private object internal:
