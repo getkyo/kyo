@@ -37,7 +37,7 @@ class ForkManyBench extends Bench.ForkOnly(0):
             ref     <- Atomics.initInt(depth)
             effect = ref.decrementAndGet.flatMap {
                 case 1 =>
-                    promise.complete(())
+                    promise.completeSuccess(())
                 case _ =>
                     false
             }

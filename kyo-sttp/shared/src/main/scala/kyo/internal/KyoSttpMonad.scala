@@ -21,7 +21,7 @@ class KyoSttpMonad extends MonadAsyncError[M]:
     ) =
         IOs.catching(rt) {
             case ex if ex eq Fibers.Interrupted =>
-                Fibers.interrupted
+                Fibers.interruptedIOs
             case ex if h.isDefinedAt(ex) =>
                 h(ex)
         }
@@ -52,11 +52,11 @@ class KyoSttpMonad extends MonadAsyncError[M]:
         Fibers.initPromise[T].map { p =>
             val canceller =
                 register {
-                    case Left(t)  => discard(p.unsafeComplete(IOs.fail(t)))
-                    case Right(t) => discard(p.unsafeComplete(t))
+                    case Left(t)  => discard(p.unsafeComplete(Result.failure(t)))
+                    case Right(t) => discard(p.unsafeComplete(Result.success(t)))
                 }
             p.onComplete { r =>
-                if r.equals(Fibers.interrupted) then
+                if r.equals(Fibers.interruptedResult) then
                     canceller.cancel()
             }.andThen(p.get)
         }

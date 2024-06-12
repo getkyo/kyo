@@ -559,7 +559,7 @@ class loopsTest extends KyoTest:
     "forever" in runJVM {
         for
             p <- Fibers.initPromise[Unit]
-            f <- Fibers.init(Loops.forever(p.complete(()).unit))
+            f <- Fibers.init(Loops.forever(p.completeSuccess(()).unit))
             _ <- p.get
             _ <- f.interrupt
         yield succeed

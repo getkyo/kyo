@@ -114,7 +114,7 @@ class channelsTest extends KyoTest:
                 c <- Channels.init[Int](2)
                 f <- c.takeFiber
                 r <- c.close
-                d <- f.getTry
+                d <- f.getResult
                 t <- IOs.toTry(c.isFull)
             yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
         }
@@ -125,7 +125,7 @@ class channelsTest extends KyoTest:
                 _ <- c.put(2)
                 f <- c.putFiber(3)
                 r <- c.close
-                d <- f.getTry
+                d <- f.getResult
                 t <- IOs.toTry(c.offerUnit(1))
             yield assert(r == Some(Seq(1, 2)) && d.isFailure && t.isFailure)
         }
@@ -134,7 +134,7 @@ class channelsTest extends KyoTest:
                 c <- Channels.init[Int](0)
                 f <- c.putFiber(1)
                 r <- c.close
-                d <- f.getTry
+                d <- f.getResult
                 t <- IOs.toTry(c.poll)
             yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
         }
@@ -143,7 +143,7 @@ class channelsTest extends KyoTest:
                 c <- Channels.init[Int](0)
                 f <- c.takeFiber
                 r <- c.close
-                d <- f.getTry
+                d <- f.getResult
                 t <- IOs.toTry(c.put(1))
             yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
         }

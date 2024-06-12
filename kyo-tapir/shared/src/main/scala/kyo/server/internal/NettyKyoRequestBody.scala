@@ -26,7 +26,7 @@ private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoStt
     ): KyoSttpMonad.M[Array[Byte]] =
         Fibers.initPromise[Array[Byte]].map { p =>
             val fut = SimpleSubscriber.processAll(publisher, contentLength, maxBytes)
-            fut.onComplete(r => IOs.run(p.complete(IOs(r.get))))(ExecutionContext.parasitic)
+            fut.onComplete(r => IOs.run(p.completeResult(Result(r.get))))(ExecutionContext.parasitic)
             p.get
         }
 
