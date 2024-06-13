@@ -5,6 +5,8 @@ package object kyo:
 
     export core.<
 
+    object Kyo
+
     extension [T, S](v: T < S)(using NotGiven[Any => S])
 
         inline def flatMap[U, S2](inline f: T => U < S2)(using Trace): U < (S & S2) =

@@ -14,8 +14,8 @@ trait fibersPlatformSpecific:
                 val p = new IOPromise[T]()
                 cs.whenComplete { (success, error) =>
                     val io = IOs {
-                        if error == null then p.complete(success)
-                        else p.complete(IOs.fail(error))
+                        if error == null then p.complete(Result.success(success))
+                        else p.complete(Result.failure(error))
                     }
                     IOTask(io, st)
                     ()

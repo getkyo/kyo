@@ -1,8 +1,10 @@
 #!/bin/sh
-echo "Running pre-commit hook to format Scala source files"
+echo "\033[0;32mRunning pre-commit hook to format Scala source files. SBT might show a stack trace for AirframeLogManager but it's expected.\033[0m"
 sbt scalafmtAll
 if ! git diff --exit-code --quiet
 then
-    echo "Formatting changes detected. Please stage the changes and commit again."
+    echo "\033[0;31mFormatting changes detected. Please stage the changes and commit again.\033[0m"
     exit 1
+else
+    echo "\033[0;32mNo formatting changes detected. Proceeding with the commit.\033[0m"
 fi

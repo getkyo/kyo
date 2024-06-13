@@ -19,8 +19,8 @@ import scala.util.control.NoStackTrace
 sealed abstract class Fiber[+T]:
     def isDone(using Trace): Boolean < IOs
     def get(using Trace): T < Fibers
-    def getTry(using Trace): Try[T] < Fibers
-    def onComplete(f: T < IOs => Unit < IOs)(using Trace): Unit < IOs
+    def getResult(using Trace): Result[T] < Fibers
+    def onComplete(f: Result[T] => Unit < IOs)(using Trace): Unit < IOs
     def block(timeout: Duration)(using Trace): T < IOs
     def interrupt(using Trace): Boolean < IOs
     def toFuture(using Trace): Future[T] < IOs
@@ -32,10 +32,10 @@ object Fiber:
     val unit: Fiber[Unit] = value(())
 
     def value[T: Flat](v: T): Fiber[T] =
-        Done(v)
+        Done(Result.success(v))
 
     def fail[T: Flat](ex: Throwable): Fiber[T] =
-        Done(IOs.fail(ex))
+        Done(Result.failure(ex))
 
 end Fiber
 
@@ -51,17 +51,17 @@ case class Promise[T] private (private val p: IOPromise[T]) extends Fiber[T]:
 
     def get(using Trace) = FiberGets(this)
 
-    def getTry(using Trace) =
+    def getResult(using Trace) =
         IOs {
-            val r = new IOPromise[Try[T]]
+            val r = new IOPromise[Result[T]]
             r.interrupts(p)
             p.onComplete { t =>
-                discard(r.complete(IOs.attempt(t)))
+                discard(r.complete(Result.success(t)))
             }
             new Promise(r).get
         }
 
-    def onComplete(f: T < IOs => Unit < IOs)(using Trace) =
+    def onComplete(f: Result[T] => Unit < IOs)(using Trace) =
         IOs(p.onComplete(r => IOs.run(f(r))))
 
     def block(timeout: Duration)(using Trace) =
@@ -71,7 +71,7 @@ case class Promise[T] private (private val p: IOPromise[T]) extends Fiber[T]:
                     System.currentTimeMillis() + timeout.toMillis
                 else
                     Long.MaxValue
-            p.block(deadline)
+            p.block(deadline).get
         }
 
     def interrupt(using Trace) =
@@ -81,7 +81,7 @@ case class Promise[T] private (private val p: IOPromise[T]) extends Fiber[T]:
         IOs {
             val r = scala.concurrent.Promise[T]()
             p.onComplete { v =>
-                r.complete(Try(IOs.run(v)))
+                r.complete(v.toTry)
             }
             r.future
         }
@@ -92,29 +92,35 @@ case class Promise[T] private (private val p: IOPromise[T]) extends Fiber[T]:
             r.interrupts(p)
             p.onComplete { v =>
                 try
-                    IOs.run(t(IOs.run(v))) match
+                    IOs.run(t(v.get)) match
                         case Promise(v: IOPromise[U]) =>
                             discard(r.become(v))
                         case Done(v) =>
                             discard(r.complete(v))
                 catch
                     case ex if (NonFatal(ex)) =>
-                        discard(r.complete(IOs.fail(ex)))
+                        discard(r.complete(Result.failure(ex)))
             }
             new Promise(r)
         }
 
-    def complete(v: T < IOs)(using Trace): Boolean < IOs =
+    def completeSuccess(v: T)(using Trace): Boolean < IOs =
+        IOs(p.complete(Result.success(v)))
+
+    def completeFailure(ex: Throwable)(using Trace): Boolean < IOs =
+        IOs(p.complete(Result.failure(ex)))
+
+    def completeResult(v: Result[T])(using Trace): Boolean < IOs =
         IOs(p.complete(v))
 
     def become(other: Fiber[T])(using Trace): Boolean < IOs =
         other match
             case Done(v) =>
-                complete(v)
+                completeResult(v)
             case Promise(p2: IOPromise[T]) =>
                 IOs(p.become(p2))
 
-    private[kyo] def unsafeComplete(v: T < IOs): Boolean =
+    private[kyo] def unsafeComplete(v: Result[T]): Boolean =
         p.complete(v)
 end Promise
 
@@ -130,7 +136,8 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
         override def getCause() = null
     end Interrupted
 
-    private[kyo] val interrupted = IOs.fail(Interrupted)
+    private[kyo] val interruptedResult = Result.failure(Interrupted)
+    private[kyo] val interruptedIOs    = IOs.fail(Interrupted)
 
     def run[T: Flat](v: T < Fibers)(using Trace): Fiber[T] < IOs =
         FiberGets.run(v)
@@ -187,15 +194,12 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
                             state.interrupts(fiber)
                             fiber.onComplete { r =>
                                 try
-                                    results(i) =
-                                        IOs.run(r)(
-                                            using Flat.unsafe.bypass // bypass to avoid capturing
-                                        )
+                                    results(i) = r.get
                                     if pending.decrementAndGet() == 0 then
-                                        discard(state.complete(ArraySeq.unsafeWrapArray(results)))
+                                        discard(state.complete(Result.success(ArraySeq.unsafeWrapArray(results))))
                                 catch
                                     case ex if (NonFatal(ex)) =>
-                                        discard(state.complete(IOs.fail(ex)))
+                                        discard(state.complete(Result.failure(ex)))
                             }
                         }
                         Promise(state)
@@ -212,14 +216,14 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
             case size =>
                 Locals.save { st =>
                     IOs {
-                        class State extends IOPromise[T] with Function1[T < IOs, Unit]:
+                        class State extends IOPromise[T] with Function1[Result[T], Unit]:
                             val pending = new AtomicInteger(size)
-                            def apply(v: T < IOs): Unit =
+                            def apply(v: Result[T]): Unit =
                                 val last = pending.decrementAndGet() == 0
-                                try discard(complete(IOs.run(v)))
+                                try discard(complete(Result.success(v.get)))
                                 catch
                                     case ex if (NonFatal(ex)) =>
-                                        if last then discard(complete(IOs.fail(ex)))
+                                        if last then discard(complete(Result.failure(ex)))
                                 end try
                             end apply
                         end State
@@ -244,7 +248,7 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
         initPromise[Unit].map { p =>
             if d.isFinite then
                 val run: Unit < IOs =
-                    IOs(discard(IOTask(IOs(p.complete(())), Locals.State.empty)))
+                    IOs(discard(IOTask(IOs(p.completeSuccess(())), Locals.State.empty)))
                 Timers.schedule(d)(run).map { t =>
                     IOs.ensure(t.cancel.unit)(p.get)
                 }
@@ -273,9 +277,9 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
                         IOs {
                             r match
                                 case Success(v) =>
-                                    p.complete(v)
+                                    p.complete(Result.success(v))
                                 case Failure(ex) =>
-                                    p.complete(IOs.fail(ex))
+                                    p.complete(Result.failure(ex))
                         }
                     IOTask(io, st)
                 }(ExecutionContext.parasitic)
@@ -303,18 +307,20 @@ end Fibers
 
 object fibersInternal:
 
-    case class Done[T: Flat](result: T < IOs) extends Fiber[T]:
-        def isDone(using Trace)                               = true
-        def get(using Trace)                                  = result
-        def getTry(using Trace)                               = IOs.attempt(result)
-        def onComplete(f: T < IOs => Unit < IOs)(using Trace) = f(result)
-        def block(timeout: Duration)(using Trace)             = result
-        def interrupt(using Trace)                            = false
+    case class Done[T: Flat](result: Result[T]) extends Fiber[T]:
+        def isDone(using Trace)                                 = true
+        def get(using Trace)                                    = result.get
+        def getResult(using Trace)                              = result
+        def onComplete(f: Result[T] => Unit < IOs)(using Trace) = f(result)
+        def block(timeout: Duration)(using Trace)               = result.get
+        def interrupt(using Trace)                              = false
 
-        def toFuture(using Trace) = Future.fromTry(Try(IOs.run(result)))
+        def toFuture(using Trace) = Future.fromTry(result.toTry)
 
-        def transform[U: Flat](t: T => Fiber[U] < IOs)(using Trace) =
-            result.map(t)
+        def transform[U: Flat](f: T => Fiber[U] < IOs)(using Trace) =
+            result match
+                case Result.Success(v) => f(v)
+                case _                 => this.asInstanceOf[Fiber[U]]
     end Done
 
     class FiberGets extends Effect[FiberGets]:
@@ -347,11 +353,12 @@ object fibersInternal:
                 val handler =
                     new Handler[Fiber, FiberGets, IOs]:
                         def resume[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S))(using Tag[FiberGets]) =
-                            m match
-                                case Promise(p) =>
-                                    Resume((), p.block(deadline).map(f))
-                                case Done(v) =>
-                                    Resume((), v.map(f))
+                            val result =
+                                m match
+                                    case Promise(p) => p.block(deadline)
+                                    case Done(v)    => v
+                            Resume((), IOs(f(result.get)))
+                        end resume
                 FiberGets.handle(handler)((), v)
             }
 

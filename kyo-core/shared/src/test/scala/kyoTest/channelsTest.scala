@@ -97,7 +97,7 @@ class channelsTest extends KyoTest:
             for
                 c <- Channels.init[Int](2)
                 r <- c.close
-                t <- IOs.attempt(c.offer(1))
+                t <- IOs.toTry(c.offer(1))
             yield assert(r == Some(Seq()) && t.isFailure)
         }
         "non-empty" in runJVM {
@@ -106,7 +106,7 @@ class channelsTest extends KyoTest:
                 _ <- c.put(1)
                 _ <- c.put(2)
                 r <- c.close
-                t <- IOs.attempt(c.isEmpty)
+                t <- IOs.toTry(c.isEmpty)
             yield assert(r == Some(Seq(1, 2)) && t.isFailure)
         }
         "pending take" in runJVM {
@@ -114,8 +114,8 @@ class channelsTest extends KyoTest:
                 c <- Channels.init[Int](2)
                 f <- c.takeFiber
                 r <- c.close
-                d <- f.getTry
-                t <- IOs.attempt(c.isFull)
+                d <- f.getResult
+                t <- IOs.toTry(c.isFull)
             yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
         }
         "pending put" in runJVM {
@@ -125,8 +125,8 @@ class channelsTest extends KyoTest:
                 _ <- c.put(2)
                 f <- c.putFiber(3)
                 r <- c.close
-                d <- f.getTry
-                t <- IOs.attempt(c.offerUnit(1))
+                d <- f.getResult
+                t <- IOs.toTry(c.offerUnit(1))
             yield assert(r == Some(Seq(1, 2)) && d.isFailure && t.isFailure)
         }
         "no buffer w/ pending put" in runJVM {
@@ -134,8 +134,8 @@ class channelsTest extends KyoTest:
                 c <- Channels.init[Int](0)
                 f <- c.putFiber(1)
                 r <- c.close
-                d <- f.getTry
-                t <- IOs.attempt(c.poll)
+                d <- f.getResult
+                t <- IOs.toTry(c.poll)
             yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
         }
         "no buffer w/ pending take" in runJVM {
@@ -143,8 +143,8 @@ class channelsTest extends KyoTest:
                 c <- Channels.init[Int](0)
                 f <- c.takeFiber
                 r <- c.close
-                d <- f.getTry
-                t <- IOs.attempt(c.put(1))
+                d <- f.getResult
+                t <- IOs.toTry(c.put(1))
             yield assert(r == Some(Seq()) && d.isFailure && t.isFailure)
         }
     }

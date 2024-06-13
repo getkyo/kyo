@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.internal.IntEncoder
 import scala.annotation.switch
 import scala.annotation.tailrec
 import scala.collection.immutable
@@ -19,17 +20,18 @@ object Tag:
 
     extension [T](t1: Tag[T])
         def erased: Tag[Any] = t1.asInstanceOf[Tag[Any]]
+        def showTpe: String =
+            val decoded = t1.drop(2).takeWhile(_ != ';')
+            fromCompact.getOrElse(decoded, decoded)
+    end extension
 
     extension [T](t1: Full[T])
 
-        def show: String =
+        def showType: String =
             t1 match
-                case t1: String =>
-                    val decoded = t1.drop(2).takeWhile(_ != ';')
-                    val s       = fromCompact.getOrElse(decoded, decoded)
-                    s"Tag[$s]"
-                case t1: Set[T] =>
-                    t1.show
+                case s: Tag[?] => s.showTpe
+                case s: Set[?] => s.showTpe
+        def show: String = s"Tag[${t1.showType}]"
 
         infix def <:<[U](t2: Full[U]): Boolean =
             t1 match
@@ -54,23 +56,19 @@ object Tag:
     end extension
 
     sealed trait Set[T] extends Any:
-        def show: String
         infix def <:<[U](t2: Full[U]): Boolean
         infix def =:=[U](t2: Full[U]): Boolean
         infix def =!=[U](t2: Full[U]): Boolean =
             !(this =:= t2)
         infix def >:>[U](t2: Full[U]): Boolean
         def erased: Set[Any] = this.asInstanceOf[Set[Any]]
+        def showTpe: String
     end Set
 
     object Set:
         inline given apply[T]: Set[T] = ${ setImpl[T] }
 
     case class Union[T](tags: Seq[Tag[Any]]) extends AnyVal with Set[T]:
-        def show: String =
-            val s = tags.map(_.show).mkString(" | ")
-            s"Tag.Union[$s]"
-
         infix def <:<[U](t2: Full[U]): Boolean =
             t2 match
                 case t2: Union[?] =>
@@ -92,6 +90,7 @@ object Tag:
                     t2.tags.forall(tag2 => tags.exists(tag2 =:= _))
                 case _ =>
                     tags.forall(t2 =:= _)
+        def showTpe: String = tags.map(_.showTpe).mkString(" | ")
     end Union
 
     object Union:
@@ -99,9 +98,6 @@ object Tag:
         inline given apply[T]: Union[T]            = ${ unionImpl[T] }
 
     case class Intersection[T](tags: Seq[Tag[Any]]) extends AnyVal with Set[T]:
-        def show: String =
-            val s = tags.map(_.show).mkString(" & ")
-            s"Tag.Intersection[$s]"
 
         infix def <:<[U](t2: Full[U]): Boolean =
             t2 match
@@ -124,6 +120,9 @@ object Tag:
                     t2.tags.forall(tag2 => tags.exists(tag2 =:= _))
                 case _ =>
                     tags.forall(_ =:= t2)
+
+        def showTpe: String =
+            tags.map(_.showTpe).mkString(" & ")
 
     end Intersection
 
@@ -153,11 +152,11 @@ object Tag:
             checkSegment(subTag, superTag, subIdx, superIdx) && checkParams(subTag, superTag, subIdx, superIdx)
 
         def checkSegment(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
-            val superSize = decodeInt(superTag.charAt(superIdx))
+            val superSize = IntEncoder.decode(superTag.charAt(superIdx))
             @tailrec def loop(subIdx: Int): Boolean =
                 if subIdx >= subTag.length() || superIdx >= superTag.length() then false
                 else
-                    val subSize = decodeInt(subTag.charAt(subIdx))
+                    val subSize = IntEncoder.decode(subTag.charAt(subIdx))
                     (subSize == superSize && subTag.regionMatches(subIdx + 1, superTag, superIdx + 1, subSize)) ||
                     loop(subIdx + subSize + 3)
                 end if
@@ -275,20 +274,6 @@ object Tag:
             '{ Intersection.raw[T](${ tags(using q)(flatten) }) }
         end intersectionImpl
 
-        // Encodes ints using printable ASCII chars
-        val charsReserved  = immutable.Set('[', ']', '(', ')', ';', ',')
-        val charsPrintable = (' ' to '~').filter(!charsReserved.contains(_)).toArray
-
-        def encodeInt(i: Int)(using Quotes): Char =
-            import quotes.reflect.*
-            if i >= charsPrintable.length || i < 0 then
-                report.errorAndAbort(s"Encoded tag 'Int($i)' exceeds supported limit: " + charsPrintable.length)
-            charsPrintable(i)
-        end encodeInt
-
-        def decodeInt(c: Char): Int =
-            charsPrintable.indexOf(c)
-
         def encodeType(using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[String] =
             import quotes.reflect.*
 
@@ -309,8 +294,8 @@ object Tag:
                     val sym = tpe.typeSymbol
                     val path = tpe.dealias.baseClasses.map { sym =>
                         val name = toCompact.getOrElse(sym.fullName, sym.fullName)
-                        val size = encodeInt(name.length())
-                        val hash = encodeInt(Math.abs(name.hashCode()) % charsPrintable.length)
+                        val size = IntEncoder.encode(name.length())
+                        val hash = IntEncoder.encodeHash(name.hashCode())
                         s"$size$hash$name"
                     }.mkString(";") + ";"
                     val variances = sym.typeMembers.flatMap { v =>

@@ -50,7 +50,7 @@ class PingPongBench extends Bench.ForkOnly(()):
                         _ <- Fibers.init(chan.put(()))
                         _ <- chan.take
                         n <- ref.decrementAndGet
-                        _ <- if n == 0 then promise.complete(()).unit else IOs.unit
+                        _ <- if n == 0 then promise.completeSuccess(()).unit else IOs.unit
                     yield ()
                 _ <- repeat(depth)(Fibers.init(effect))
             yield ()

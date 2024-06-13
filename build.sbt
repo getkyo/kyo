@@ -5,7 +5,7 @@ val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
 
-val zioVersion       = "2.1.1"
+val zioVersion       = "2.1.2"
 val scalaTestVersion = "3.2.18"
 
 val compilerOptions = Set(
@@ -132,7 +132,7 @@ lazy val `kyo-tag` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
-            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.9"          % Test
+            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
         )
         .jsSettings(`js-settings`)
 
@@ -146,10 +146,10 @@ lazy val `kyo-core` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "com.lihaoyi"  %%% "pprint"          % "0.9.0",
-            libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.4",
+            libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.13",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC27" % Test,
-            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.1"      % Test,
+            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.2"      % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.6"      % Test,
             libraryDependencies += "javassist"      % "javassist"       % "3.12.1.GA"  % Test
         )
@@ -190,8 +190,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.38.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.38.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.39.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.39.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
 
@@ -204,17 +204,6 @@ lazy val `kyo-cache` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
-        )
-
-lazy val `kyo-os-lib` =
-    crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-os-lib"))
-        .dependsOn(`kyo-core`)
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "com.lihaoyi" %% "os-lib" % "0.10.1"
         )
 
 lazy val `kyo-sttp` =
@@ -253,8 +242,8 @@ lazy val `kyo-caliban` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.7.0",
-            libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.7.0",
+            libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.7.1",
+            libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.7.1",
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7" % Test
         )
 
@@ -288,6 +277,17 @@ lazy val `kyo-zio` =
             `js-settings`
         )
 
+lazy val `kyo-combinators` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-combinators"))
+        .dependsOn(`kyo-core` % "compile->compile;test->test")
+        .settings(
+            `kyo-settings`
+        )
+        .jsSettings(`js-settings`)
+
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -295,7 +295,6 @@ lazy val `kyo-examples` =
         .in(file("kyo-examples"))
         .dependsOn(`kyo-tapir`)
         .dependsOn(`kyo-direct`)
-        .dependsOn(`kyo-os-lib`)
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
@@ -337,7 +336,7 @@ lazy val `kyo-bench` =
                     )
                 }
             },
-            libraryDependencies += "dev.zio"             %% "izumi-reflect"       % "2.3.9",
+            libraryDependencies += "dev.zio"             %% "izumi-reflect"       % "2.3.10",
             libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
             libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",

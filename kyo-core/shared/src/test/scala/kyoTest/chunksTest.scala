@@ -425,6 +425,12 @@ class chunksTest extends KyoTest:
             val chunk = Chunks.init(Chunks.init(1), Chunks.init(2, 3), Chunks.init(4, 5, 6, 7))
             assert(chunk.flatten == Chunks.init(1, 2, 3, 4, 5, 6, 7))
         }
+
+        "appends" in {
+            val chunk: Chunk[Chunk[Int]] =
+                Chunks.init(Chunks.init[Int].append(1).append(2), Chunks.init(3, 4).append(5), Chunks.init(6, 7).append(8).append(9))
+            assert(chunk.flatten == Chunks.init(1, 2, 3, 4, 5, 6, 7, 8, 9))
+        }
     }
 
     "toArray" - {
@@ -712,6 +718,12 @@ class chunksTest extends KyoTest:
         "handles a chunk with all duplicate elements" in {
             val chunk = Chunks.init(1, 1, 1, 1, 1)
             assert(chunk.changes == Chunks.init(1))
+        }
+
+        "with initial values" in {
+            val chunk = Chunks.init(1, 1, 1, 1, 1)
+            assert(chunk.changes(0) == Chunks.init(1))
+            assert(chunk.changes(1) == Chunks.init[Int])
         }
     }
 
