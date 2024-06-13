@@ -59,10 +59,6 @@ package object kyo:
     )(using Trace): (T1, T2, T3, T4) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
 
-    inline def discard[T](v: T): Unit =
-        val _ = v
-        ()
-
     private[kyo] inline def isNull[T](v: T): Boolean =
         v.asInstanceOf[AnyRef] eq null
 

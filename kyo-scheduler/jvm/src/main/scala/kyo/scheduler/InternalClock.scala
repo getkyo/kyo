@@ -1,5 +1,7 @@
 package kyo.scheduler
 
+import kyo.discard
+
 import java.util.concurrent.Executor
 import java.util.concurrent.locks.LockSupport
 
@@ -32,8 +34,5 @@ final private[kyo] case class InternalClock(executor: Executor) {
     def stop(): Unit =
         _stop = true
 
-    locally {
-        val _ =
-            statsScope.scope("clock").gauge("skew")((System.currentTimeMillis() - millis).toDouble)
-    }
+    discard(statsScope.scope("clock").gauge("skew")((System.currentTimeMillis() - millis).toDouble))
 }

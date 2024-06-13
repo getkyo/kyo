@@ -1,12 +1,14 @@
 package kyo.scheduler
 
 import Scheduler.*
+
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
+import kyo.discard
 import kyo.scheduler.regulator.Admission
 import kyo.scheduler.regulator.Concurrency
 import kyo.scheduler.top.Reporter
@@ -15,6 +17,7 @@ import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
+
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 
@@ -201,15 +204,14 @@ final class Scheduler(
         }
     }
 
-    locally {
-        val _ =
-            List(
-                statsScope.gauge("current_workers")(currentWorkers),
-                statsScope.gauge("allocated_workers")(allocatedWorkers),
-                statsScope.gauge("load_avg")(loadAvg()),
-                statsScope.gauge("flushes")(flushes.sum().toDouble)
-            )
-    }
+    discard(
+        List(
+            statsScope.gauge("current_workers")(currentWorkers),
+            statsScope.gauge("allocated_workers")(allocatedWorkers),
+            statsScope.gauge("load_avg")(loadAvg()),
+            statsScope.gauge("flushes")(flushes.sum().toDouble)
+        )
+    )
 
     def status(): Status = {
         def workerStatus(i: Int) =

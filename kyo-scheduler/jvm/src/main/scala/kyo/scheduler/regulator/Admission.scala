@@ -2,6 +2,7 @@ package kyo.scheduler.regulator
 
 import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.atomic.LongAdder
+import kyo.discard
 import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.top.AdmissionStatus
@@ -52,14 +53,13 @@ final class Admission(
     protected def update(diff: Int): Unit =
         admissionPercent = Math.max(0, Math.min(100, admissionPercent + diff))
 
-    locally {
-        val _ =
-            List(
-                statsScope.gauge("percent")(admissionPercent),
-                statsScope.counterGauge("allowed")(allowed.sum()),
-                statsScope.counterGauge("rejected")(rejected.sum())
-            )
-    }
+    discard(
+        List(
+            statsScope.gauge("percent")(admissionPercent),
+            statsScope.counterGauge("allowed")(allowed.sum()),
+            statsScope.counterGauge("rejected")(rejected.sum())
+        )
+    )
 
     def status(): AdmissionStatus =
         AdmissionStatus(
