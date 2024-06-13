@@ -1,0 +1,91 @@
+package kyo2.kernel
+
+import scala.annotation.tailrec
+import scala.quoted.*
+
+opaque type Frame <: AnyRef = String
+
+object Frame:
+
+    private val snippetShortMaxChars = 25
+
+    given CanEqual[Frame, Frame] = CanEqual.derived
+
+    case class Parsed(
+        declaringClass: String,
+        methodName: String,
+        position: Position,
+        snippetShort: String,
+        snippetLong: String
+    )
+
+    case class Position(
+        fileName: String,
+        lineNumber: Int,
+        columnNumber: Int
+    ):
+        override def toString = s"$fileName:$lineNumber:$columnNumber"
+    end Position
+
+    extension (t: Frame)
+        def parse: Parsed =
+            val arr = t.split('£')
+            Parsed(arr(0), arr(1), Position(arr(2), arr(3).toInt, arr(4).toInt), arr(5), arr(6))
+
+        def show: String = parse.toString.replaceFirst("Parsed", "Frame")
+    end extension
+
+    implicit inline def derive: Frame = ${ frameImpl }
+
+    private def frameImpl(using Quotes): Expr[String] =
+        import quotes.reflect.*
+
+        val pos                      = quotes.reflect.Position.ofMacroExpansion
+        val (startLine, startColumn) = (pos.startLine, pos.startColumn)
+        val endLine                  = pos.endLine
+
+        val fileContent =
+            pos.sourceFile.content
+                .getOrElse(report.errorAndAbort("Can't locate source code to generate frame."))
+
+        val markedContent = fileContent.take(pos.end) + "📍" + fileContent.drop(pos.end)
+        val lines         = markedContent.linesIterator.toList
+        val snippetLines  = lines.slice(startLine - 1, endLine + 2).filter(_.exists(_ != ' '))
+        val toDrop        = snippetLines.map(_.takeWhile(_ == ' ').size).minOption.getOrElse(0)
+
+        def parseSnippetShort(l: List[Char], closes: Int = 0, acc: List[Char] = Nil): List[Char] =
+            l match
+                case Nil if closes == 0 => acc
+                case Nil                => Nil
+                case '(' :: tail        => parseSnippetShort(tail, closes + 1, '(' :: acc)
+                case ')' :: tail        => parseSnippetShort(tail, closes - 1, ')' :: acc)
+                case '\n' :: _          => acc
+                case ' ' :: tail if closes == 0 =>
+                    acc
+                case c :: tail => parseSnippetShort(tail, closes, c :: acc)
+
+        val snippetShort =
+            parseSnippetShort(fileContent.take(pos.end).reverse.toList)
+                .takeRight(snippetShortMaxChars).mkString.trim.reverse.padTo(snippetShortMaxChars, ' ').reverse
+        val snippetLong = snippetLines.map(_.drop(toDrop)).mkString("\n")
+        val cls         = findEnclosing(_.isClassDef)
+        val method      = findEnclosing(_.isDefDef)
+
+        Expr(s"$cls£$method£${pos.sourceFile.name}£${startLine + 1}£${startColumn + 1}£$snippetShort£$snippetLong")
+    end frameImpl
+
+    private def findEnclosing(using Quotes)(predicate: quotes.reflect.Symbol => Boolean): String =
+        import quotes.reflect.*
+
+        @tailrec
+        def findSymbol(sym: Symbol): Symbol =
+            if predicate(sym) then sym
+            else if sym.isNoSymbol then Symbol.noSymbol
+            else findSymbol(sym.owner)
+
+        val symbol = findSymbol(Symbol.spliceOwner)
+        if symbol.isClassDef then symbol.fullName
+        else if symbol.isDefDef then symbol.name
+        else "Unknown"
+    end findEnclosing
+end Frame

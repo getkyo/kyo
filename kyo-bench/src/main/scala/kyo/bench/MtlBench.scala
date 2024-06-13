@@ -33,6 +33,28 @@ class MtlBench extends Bench(()):
     end syncKyo
 
     @Benchmark
+    def syncKyo2() =
+        import kyo2.*
+        def testKyo: Unit < (Abort[Throwable] & Env[EnvValue] & Var[State] & Sum[Event]) =
+            Kyo.seq.foreach(loops)(_ =>
+                for
+                    conf <- Env.use[EnvValue](_.config)
+                    _    <- Sum.add(Event(s"Env = $conf"))
+                    _    <- Var.update((state: State) => state.copy(value = state.value + 1))
+                yield ()
+            )
+        Abort.run[Throwable](
+            Var.run(State(2))(
+                Sum.run(
+                    Env.run(EnvValue("config"))(
+                        testKyo.andThen(Var.get[State])
+                    )
+                )
+            )
+        ).eval
+    end syncKyo2
+
+    @Benchmark
     def syncZPure() =
         import zio.prelude.fx.ZPure
 
