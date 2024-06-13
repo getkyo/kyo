@@ -14,7 +14,8 @@ val compilerOptions = Seq(
     "-unchecked",
     "-deprecation",
     "-Wvalue-discard",
-    "-language:strictEquality"
+    "-language:strictEquality",
+    "-Ykind-projector"
 )
 
 ThisBuild / scalaVersion           := scala3Version
@@ -62,6 +63,7 @@ lazy val kyoJVM = project
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
         `kyo-tag`.jvm,
+        `kyo-prelude`.jvm,
         `kyo-core`.jvm,
         `kyo-direct`.jvm,
         `kyo-stats-registry`.jvm,
@@ -85,6 +87,7 @@ lazy val kyoJS = project
     .aggregate(
         `kyo-scheduler`.js,
         `kyo-tag`.js,
+        `kyo-prelude`.js,
         `kyo-core`.js,
         `kyo-direct`.js,
         `kyo-stats-registry`.js,
@@ -104,7 +107,8 @@ lazy val `kyo-scheduler` =
             scalacOptions --= Seq(
                 "-Wvalue-discard",
                 "-Wunused:all",
-                "-language:strictEquality"
+                "-language:strictEquality",
+                "-Ykind-projector"
             ),
             scalacOptions += "-Xsource:3",
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
@@ -125,7 +129,8 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         scalacOptions --= Seq(
             "-Wvalue-discard",
             "-Wunused:all",
-            "-language:strictEquality"
+            "-language:strictEquality",
+            "-Ykind-projector"
         ),
         libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
         libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
@@ -147,6 +152,20 @@ lazy val `kyo-tag` =
         )
         .jsSettings(`js-settings`)
 
+lazy val `kyo-prelude` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-tag`)
+        .in(file("kyo-prelude"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC27" % Test,
+            libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % "2.1.2"      % Test,
+            libraryDependencies += "org.javassist" % "javassist"     % "3.30.2-GA"  % Test
+        )
+        .jsSettings(`js-settings`)
+
 lazy val `kyo-core` =
     crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -162,7 +181,7 @@ lazy val `kyo-core` =
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC27" % Test,
             libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.3"      % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.6"      % Test,
-            libraryDependencies += "javassist"      % "javassist"       % "3.12.1.GA"  % Test
+            libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
         .jsSettings(`js-settings`)
 
@@ -188,7 +207,8 @@ lazy val `kyo-stats-registry` =
             scalacOptions --= Seq(
                 "-Wvalue-discard",
                 "-Wunused:all",
-                "-language:strictEquality"
+                "-language:strictEquality",
+                "-Ykind-projector"
             ),
             scalacOptions += "-Xsource:3",
             libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2",
@@ -324,6 +344,7 @@ lazy val `kyo-bench` =
         .in(file("kyo-bench"))
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-prelude`)
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-scheduler-zio`)
         .settings(

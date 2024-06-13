@@ -19,7 +19,7 @@ object Tag:
     inline given apply[T]: Tag[T] = ${ tagImpl[T] }
 
     extension [T](t1: Tag[T])
-        def erased: Tag[Any] = t1.asInstanceOf[Tag[Any]]
+        inline def erased: Tag[Any] = t1.asInstanceOf[Tag[Any]]
         def showTpe: String =
             val decoded = t1.drop(2).takeWhile(_ != ';')
             fromCompact.getOrElse(decoded, decoded)
