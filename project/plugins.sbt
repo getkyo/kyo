@@ -12,3 +12,7 @@ addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.12")
 // addSbtPlugin("com.gradle" % "sbt-develocity" % "1.0.1")
 
 // addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
+
+libraryDependencies ++= Seq(
+    "org.typelevel" %% "scalac-options" % "0.1.5"
+)
