@@ -99,6 +99,9 @@ object Result:
         inline def map[U](inline f: T => U): Result[U] =
             flatMap(v => Result.success(f(v)))
 
+        inline def withFilter(inline p: T => Boolean): Result[T] =
+            filter(p)
+
         inline def filter(inline p: T => Boolean): Result[T] =
             flatMap { v =>
                 if !p(v) then
