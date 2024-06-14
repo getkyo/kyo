@@ -91,6 +91,6 @@ object Layers:
         }
 
     transparent inline def make[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
-        ${ kyo.internal.LayerMacros.makeImpl[Target]('layers) }
+        kyo.internal.LayerMacros.make[Target](layers*)
 
 end Layers

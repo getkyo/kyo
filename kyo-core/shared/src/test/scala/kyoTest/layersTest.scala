@@ -227,4 +227,31 @@ class layersTest extends KyoTest:
             assertDoesNotCompile("""Layers.make[String](a, b, c)""")
         }
     }
+    "provide" - {
+        "no layer" in {
+            assertDoesNotCompile("""Envs.get[Boolean].provide()""")
+        }
+        "one layer" in run {
+            class Foo:
+                def bar: Boolean = true
+            val foo = Layers(Foo())
+            Envs.get[Foo].map(_.bar).map(assert(_)).provide(foo)
+        }
+        "multiple layers" in run {
+            val a = Layers(42)
+            val b = Layers.from((i: Int) => i.toString)
+            val c = Layers.from((s: String) => s.length % 2 == 0)
+
+            Envs.get[Boolean].map(assert(_)).provide(a, b, c)
+        }
+        "missing layer" in {
+            val c = Layers('c')
+            val d = Layers.from((c: Char) => c.isDigit)
+
+            assertDoesNotCompile("""Envs.get[String].provide(c, d)""")
+        }
+        "intersection" in run {
+            Envs.get[Int].map(_ => Envs.get[String]).map(_ => succeed).provide(Layers(42), Layers("hello"))
+        }
+    }
 end layersTest

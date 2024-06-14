@@ -38,6 +38,9 @@ private[kyo] object LayerMacros:
         report.errorAndAbort(messages.mkString("\n"))
     end reportErrors
 
+    transparent inline def make[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
+        ${ kyo.internal.LayerMacros.makeImpl[Target]('layers) }
+
     def makeImpl[Target: Type](using Quotes)(expr: Expr[Seq[Layer[?, ?]]]): Expr[Layer[Target, ?]] =
         import reflect.*
         if TypeRepr.of[Target] =:= TypeRepr.of[Nothing] then
@@ -79,8 +82,7 @@ private[kyo] object LayerMacros:
 
                 exprFold.asInstanceOf[Expr[Layer[Target, ?]]]
 
-            case _ =>
-                report.errorAndAbort("NO LAYERS")
+            case _ => report.errorAndAbort("No layers found. Did you forget to provide them?".red)
         end match
     end makeImpl
 
@@ -195,13 +197,17 @@ end GraphError
 
 final case class Graph[Key, Value](nodes: Set[Node[Key, Value]])(equals: (Key, Key) => Boolean):
 
-    def buildTargets(targets: Set[Key], parent: Option[Node[Key, Value]]): Validated[GraphError[Key, Value], LayerLike[Node[Key, Value]]] =
+    def buildTargets(
+        targets: Set[Key],
+        parent: Option[Node[Key, Value]],
+        seen: Set[Node[Key, Value]] = Set.empty
+    ): Validated[GraphError[Key, Value], LayerLike[Node[Key, Value]]] =
         for
-            nodes <- findNodesWithOutputs(targets, parent)
+            nodes <- findNodesWithOutputs(targets, parent, seen)
             values <- Validated.traverse(nodes) { node =>
                 if node.inputs.isEmpty then Validated.succeed(LayerLike.Value(node))
                 else
-                    buildTargets(node.inputs, Some(node))
+                    buildTargets(node.inputs, Some(node), seen = seen + node)
                         .map { input => input to LayerLike.Value(node) }
             }
         yield values.reduceOption(_ and _).getOrElse(LayerLike.Empty)
@@ -209,18 +215,22 @@ final case class Graph[Key, Value](nodes: Set[Node[Key, Value]])(equals: (Key, K
 
     def findNodesWithOutputs(
         targets: Set[Key],
-        parent: Option[Node[Key, Value]]
+        parent: Option[Node[Key, Value]],
+        seen: Set[Node[Key, Value]]
     ): Validated[GraphError[Key, Value], Set[Node[Key, Value]]] =
-        Validated.traverse(targets) { target => findNodeWithOutputFor(target, parent) }
+        Validated.traverse(targets) { target => findNodeWithOutputFor(target, parent, seen) }
 
-    def findNodeWithOutputFor(target: Key, parent: Option[Node[Key, Value]]): Validated[GraphError[Key, Value], Node[Key, Value]] =
+    def findNodeWithOutputFor(
+        target: Key,
+        parent: Option[Node[Key, Value]],
+        seen: Set[Node[Key, Value]]
+    ): Validated[GraphError[Key, Value], Node[Key, Value]] =
         val matching = nodes.filter { node => node.outputs.exists(output => equals(output, target)) }
         matching.size match
             case 1 =>
                 val matched = matching.head
-                parent match
-                    case Some(p) if p == matched => Validated.error(GraphError.CircularDependency(matched))
-                    case _                       => Validated.succeed(matched)
+                if seen.contains(matched) then Validated.error(GraphError.CircularDependency(matched))
+                else Validated.succeed(matched)
             case 0 => Validated.error(GraphError.MissingInput(target, parent))
             case _ => Validated.error(GraphError.AmbiguousInputs(target, matching, parent))
         end match
