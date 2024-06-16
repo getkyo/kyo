@@ -62,7 +62,9 @@ object ExtendedSyntax {
 //                case ZeroWidth(_) | Text(_) | Empty => false
 //            }
 
-        def hanging(i: Int): Doc =
-            FlatAlt(Doc.hardLine + Doc.spaces(i) + doc.aligned, Doc.space + doc)
+        // This is unsafe. It violates the invariants of FlatAlt
+        def hanging(i: Int, sep: Doc = Doc.space): Doc = {
+          FlatAlt(Doc.hardLine + Doc.spaces(i) + doc.aligned, sep + doc.flatten).grouped
+        }
     }
 }

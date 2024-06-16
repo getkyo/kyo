@@ -355,7 +355,7 @@ class ScalaFunctionalPrinterOpsTest extends AnyFreeSpec {
                       |b""".stripMargin
                 val actual = fp.addObject("Foo").addBody(_.add(body)).result()
                 val expected =
-                    """object Foo = {
+                    """object Foo {
                        |  a
                        |  b
                        |}""".stripMargin

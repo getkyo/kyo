@@ -18,7 +18,7 @@ object Builders {
 
     def extendsList(docs: Iterable[Doc]): Doc =
         when(docs.nonEmpty) {
-            (Doc.text("extends ") + Doc.intercalate(Doc.line + Doc.text("with "), docs)).hanging(INDENT * 2).grouped
+            (Doc.text("extends ") + Doc.intercalate(Doc.line + Doc.text("with "), docs)).hanging(INDENT * 2)
         }
 
     def typedName(parameter: (String, String)): Doc = {
