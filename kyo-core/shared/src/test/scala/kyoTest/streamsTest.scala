@@ -164,11 +164,14 @@ class streamsTest extends KyoTest:
 
         "take some" in {
             assert(
-                Streams.initSeq(Seq(1, 2, 3, 4, 5)).takeWhile(_ < 4).runSeq.pure == (Seq(
-                    1,
-                    2,
-                    3
-                ), ())
+                Streams.initSeq(Seq(1, 2, 3, 4, 5)).takeWhile(_ < 4).runSeq.pure == (
+                    Seq(
+                        1,
+                        2,
+                        3
+                    ),
+                    ()
+                )
             )
         }
 
