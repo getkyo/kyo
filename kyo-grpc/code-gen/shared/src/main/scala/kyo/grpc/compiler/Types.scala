@@ -4,8 +4,6 @@ object Types {
 
     val unit = "_root_.scala.Unit"
 
-    val executionContext = "_root_.scala.concurrent.ExecutionContext"
-
     def future(t: String) = s"_root_.scala.concurrent.Future[$t]"
 
     def pending(t: String, s: String) = s"_root_.kyo.<[$t, $s]"
@@ -13,6 +11,8 @@ object Types {
     val grpcResponses = "_root_.kyo.grpc.GrpcResponses"
 
     def pendingGrpcResponses(t: String) = s"_root_.kyo.<[$t, $grpcResponses]"
+
+    val serverHandler = "_root_.kyo.grpc.ServerHandler"
 
     val javaServiceDescriptor = "_root_.com.google.protobuf.Descriptors.ServiceDescriptor"
 

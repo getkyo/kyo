@@ -327,7 +327,11 @@ lazy val `kyo-grpc-core` =
         .settings(
             `kyo-settings`,
             // Only Scala 3 since that is all kyo-core supports.
-            libraryDependencies += "io.grpc" % "grpc-api" % "1.64.0"
+            libraryDependencies ++= Seq(
+                "io.grpc" % "grpc-api" % "1.64.0",
+                // It is a little unusual to include this here but it greatly reduces the amount of generated code.
+                "io.grpc" % "grpc-stub" % "1.64.0"
+            )
         ).jsSettings(
             `js-settings`
         )

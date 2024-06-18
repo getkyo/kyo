@@ -37,19 +37,11 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
     private def printServiceTrait(fp: FunctionalPrinter): FunctionalPrinter =
         fp.addTrait(name)
             .addAnnotations(Seq(service.deprecatedAnnotation).filter(_.nonEmpty)*)
-            .addParents(Types.abstractService)
             .addBody {
-                _.call(printServiceCompanionMethod)
-                    .print(service.getMethods.asScala) { (fp, md) =>
-                        printServiceMethod(fp, md)
-                    }
+                _.print(service.getMethods.asScala) { (fp, md) =>
+                    printServiceMethod(fp, md)
+                }
             }
-
-    private def printServiceCompanionMethod(fp: FunctionalPrinter): FunctionalPrinter =
-        fp.addMethod("serviceCompanion")
-            .addMods(_.Override)
-            .addReturnType(s"$name.type")
-            .addBody(_.add(name))
 
     private def printServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
         def requestParameter          = "request"          -> method.inputType.scalaType
@@ -78,23 +70,14 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
     private def printServiceObject(fp: FunctionalPrinter): FunctionalPrinter =
         fp.addObject(name)
             .addAnnotations(Seq(service.deprecatedAnnotation).filter(_.nonEmpty)*)
-            .addParents(Types.serviceCompanion(name))
             .addBody {
-                _.addMethod("javaDescriptor")
-                    .addReturnType(Types.javaServiceDescriptor)
-                    .addBody(_.add(service.javaDescriptorSource))
-                    .endMethod
-                    .addMethod("scalaDescriptor")
-                    .addReturnType(Types.serviceDescriptor)
-                    .addBody(_.add(service.scalaDescriptorSource))
-                    .endMethod
-                    .call(printBindServiceMethod)
+                _.call(printBindServiceMethod)
             }
 
     private def printBindServiceMethod(fp: FunctionalPrinter): FunctionalPrinter = {
         val methods = service.methods.map(printMethodImplementation)
         fp.addMethod("bindService")
-            .addParameterList("serviceImpl" -> name, "executionContext" -> Types.executionContext)
+            .addParameterList("serviceImpl" -> name)
             .addReturnType(Types.serverServiceDefinition)
             .addBody(
                 _.add(s"""${Types.serverServiceDefinition}.builder(${service.grpcDescriptor.fullNameWithMaybeRoot})""")
@@ -104,20 +87,14 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
     }
 
     private def printMethodImplementation(method: MethodDescriptor)(fp: FunctionalPrinter): FunctionalPrinter = {
-        val callOpening = method.streamType match {
-            case StreamType.Unary           => s"${Types.serverCalls}.asyncUnaryCall { (request, responseObserver) =>"
-            case StreamType.ClientStreaming => s"${Types.serverCalls}.asyncClientStreamingCall { responseObserver =>"
-            case StreamType.ServerStreaming => s"${Types.serverCalls}.asyncServerStreamingCall { (request, responseObserver) =>"
-            case StreamType.Bidirectional   => s"${Types.serverCalls}.asyncBidiStreamingCall { responseObserver =>"
+        val handler = method.streamType match {
+            case StreamType.Unary => s"${Types.serverHandler}.unary(serviceImpl.${method.name})"
+            case _                => ???
         }
         fp.add(".addMethod(")
             .indented(
                 _.add(s"${method.grpcDescriptor.fullNameWithMaybeRoot},")
-                    .add(callOpening)
-                    .indented(
-                        _.add(s"val fiber = ${Types.grpcResponses}.init(serviceImpl.${method.name}(request))")
-                    )
-                    .add("}")
+                    .add(handler)
             )
             .add(")")
     }
