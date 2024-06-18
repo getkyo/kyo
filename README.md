@@ -2097,7 +2097,7 @@ val h: Unit < IOs =
 
 ## Data Types
 
-## Maybe: Allocation-free Optional Values
+### Maybe: Allocation-free Optional Values
 
 `Maybe` provides an allocation-free alternative to Scala's standard `Option` type. It is designed to be a drop-in replacement for `Option`, offering similar functionality while minimizing memory allocation.
 
@@ -2173,7 +2173,7 @@ val nested: Maybe[Maybe[Int]] = Maybe(Maybe(42))
 val flattened: Maybe[Int] = nested.flatten
 ```
 
-## Result: Low-allocation Try Alternative
+### Result: Low-allocation Try Alternative
 
 `Result` is a low-allocation alternative to Scala's `Try` type, designed to represent the result of a computation that may either succeed with a value or fail with an exception. It minimizes memory allocation overhead, especially in the case of successful results.
 
