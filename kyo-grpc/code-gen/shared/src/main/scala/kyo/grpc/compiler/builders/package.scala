@@ -1,14 +1,17 @@
 package kyo.grpc.compiler
 
-import org.typelevel.paiges.{Doc, Docx}
 import org.typelevel.paiges.ExtendedSyntax.*
+import org.typelevel.paiges.{Doc, Docx}
 import scalapb.compiler.FunctionalPrinter
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
 
-object Builders {
+package object builders {
 
     def when(condition: Boolean)(doc: => Doc): Doc =
         if (condition) doc else Doc.empty
+
+    def hardList(docs: Iterable[Doc]): Doc =
+        Doc.intercalate(Doc.hardLine, docs)
 
     def stackList(docs: Iterable[Doc]): Doc =
         Doc.intercalate(Doc.char(',') + Doc.line, docs)

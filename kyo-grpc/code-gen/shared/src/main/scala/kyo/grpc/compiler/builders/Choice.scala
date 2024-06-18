@@ -1,4 +1,4 @@
-package kyo.grpc.compiler
+package kyo.grpc.compiler.builders
 
 import scala.language.implicitConversions
 

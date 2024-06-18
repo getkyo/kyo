@@ -22,7 +22,7 @@ object HelloWorldServer extends KyoApp:
       .addMethod(
         METHOD_SAY_HELLO,
         // TODO: When to use a different type of call?
-        ServerCalls.asyncUnaryCall((request: HelloRequest, observer: StreamObserver[HelloReply]) => {
+        ServerCalls.asyncUnaryCall((request, observer) => {
           val fiber = GrpcResponses.init(serviceImpl.sayHello(request))
           val pendingIOs = fiber.onComplete { reply =>
             IOs.attempt(reply).map(scalapb.grpc.Grpc.completeObserver(observer))
@@ -53,5 +53,31 @@ object HelloWorldServer extends KyoApp:
       _ <- Fibers.sleep(Duration.Infinity)
     } yield {
       "Goodbye!"
+    }
+  }
+
+  object Greeter2 extends _root_.scalapb.grpc.ServiceCompanion[Greeter] {
+    def javaDescriptor: _root_.com.google.protobuf.Descriptors.ServiceDescriptor =
+      io.grpc.examples.helloworld.helloworld.HelloworldProto.javaDescriptor.getServices().get(0)
+
+    def scalaDescriptor: _root_.scalapb.descriptors.ServiceDescriptor =
+      io.grpc.examples.helloworld.helloworld.HelloworldProto.scalaDescriptor.services(0)
+
+    def bindService(
+                     serviceImpl: Greeter,
+                     executionContext: _root_.scala.concurrent.ExecutionContext
+                   ): _root_.io.grpc.ServerServiceDefinition = {
+      _root_.io.grpc.ServerServiceDefinition.builder(_root_.io.grpc.examples.helloworld.helloworld.GreeterGrpc.SERVICE)
+        .addMethod(
+          _root_.io.grpc.examples.helloworld.helloworld.GreeterGrpc.METHOD_SAY_HELLO,
+          ServerCalls.asyncUnaryCall((request, observer) => {
+            val fiber = GrpcResponses.init(serviceImpl.sayHello(request))
+            val pendingIOs = fiber.onComplete { reply =>
+              IOs.attempt(reply).map(scalapb.grpc.Grpc.completeObserver(observer))
+            }
+            IOs.run(pendingIOs)
+          })
+        )
+        .build()
     }
   }

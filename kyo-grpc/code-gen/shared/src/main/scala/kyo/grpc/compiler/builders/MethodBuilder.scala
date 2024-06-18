@@ -1,20 +1,26 @@
-package kyo.grpc.compiler
+package kyo.grpc.compiler.builders
 
-import org.typelevel.paiges.{Doc, Docx}
+import kyo.grpc.compiler.INDENT
+import org.typelevel.paiges.Doc
 import org.typelevel.paiges.ExtendedSyntax.*
-import scalapb.compiler.FunctionalPrinter
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
-import Builders.*
 
 final case class MethodBuilder(
-    mods: Seq[String],
-    name: String,
+    id: String,
+    annotations: Vector[Doc] = Vector.empty,
+    mods: Vector[Doc] = Vector.empty,
     typeParameters: Vector[String] = Vector.empty,
     parameterLists: Vector[Seq[(String, String)]] = Vector.empty,
     implicitParameters: Vector[(String, String)] = Vector.empty,
     returnType: Option[String] = None,
-    body: Option[PrinterEndo] = None
+    body: Option[Doc] = None
 ) {
+
+    def appendAnnotations(annotations: Seq[String]): MethodBuilder =
+        copy(annotations = this.annotations ++ annotations.map(Doc.text))
+
+    def appendMods(mods: Seq[String]): MethodBuilder =
+        copy(mods = this.mods ++ mods.map(Doc.text))
 
     def appendTypeParameters(params: Seq[String]): MethodBuilder =
         copy(typeParameters = typeParameters ++ params)
@@ -29,12 +35,20 @@ final case class MethodBuilder(
         copy(returnType = Some(returnType))
 
     def setBody(body: PrinterEndo): MethodBuilder =
+        setBody(printToDoc(body))
+
+    def setBody(body: Doc): MethodBuilder =
         copy(body = Some(body))
 
-    def print(fp: FunctionalPrinter): FunctionalPrinter = {
-        val modPrefixDoc = when(mods.nonEmpty)(Doc.spread(mods.map(Doc.text)) + Doc.space)
+    def result: Doc = {
+        // Has trailing whitespace if non-empty.
+        val annotationsDoc =
+            if (annotations.isEmpty) Doc.empty
+            else hardList(annotations) + Doc.hardLine
 
-        val defNameDoc = Doc.text("def ") :+ name
+        val modPrefixDoc = when(mods.nonEmpty)(Doc.spread(mods) + Doc.space)
+
+        val defNameDoc = Doc.text("def ") :+ id
 
         val typeParametersDocs = typeParameters.map(Doc.text)
 
@@ -52,7 +66,7 @@ final case class MethodBuilder(
 
         val implicitParametersDoc = when(implicitParameters.nonEmpty) {
             stackList(implicitParameters.map(typedName))
-              .tightBracketRightBy(Doc.text("(implicit"), Doc.char(')'))
+                .tightBracketRightBy(Doc.text("(implicit"), Doc.char(')'))
         }
 
         val allParameterListsDoc = (parameterListsDoc + implicitParametersDoc).regrouped
@@ -62,21 +76,19 @@ final case class MethodBuilder(
         }
 
         val signatureDoc =
-            (modPrefixDoc +
+            (annotationsDoc +
+                modPrefixDoc +
                 defNameDoc +
                 typeParametersDoc +
                 allParameterListsDoc +
                 returnTypeDoc).grouped
 
-        val doc = body.fold(signatureDoc) { f =>
-            val bodyDoc = printToDoc(f)
+        body.fold(signatureDoc) { bodyDoc =>
             val bracketedBodyDoc = {
                 if (bodyDoc.containsHardLine) Doc.text(" {") + Doc.hardLine + bodyDoc.indent(INDENT) + Doc.hardLine + Doc.char('}')
                 else bodyDoc.hanging(INDENT)
             }
             (signatureDoc :+ " =") + bracketedBodyDoc
         }.grouped
-
-        fp.addDoc(doc)
     }
 }

@@ -30,20 +30,26 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             .addPackage(scalaPackage.fullName)
             .newline
             .call(scalapbServicePrinter.generateScalaDoc(service))
-            .addTrait(name, Seq(Types.abstractService)) {
-                _.indented(printServiceCompanionMethod)
-                    .newline
+            .call(printServiceTrait)
+            .call(printServiceObject)
+            .result()
+
+    private def printServiceTrait(fp: FunctionalPrinter): FunctionalPrinter =
+        fp.addTrait(name)
+            .addAnnotations(Seq(service.deprecatedAnnotation).filter(_.nonEmpty)*)
+            .addParents(Types.abstractService)
+            .addBody {
+                _.call(printServiceCompanionMethod)
                     .print(service.getMethods.asScala) { (fp, md) =>
                         printServiceMethod(fp, md)
                     }
-            }.result()
+            }
 
-    private def printServiceCompanionMethod(fp: FunctionalPrinter): FunctionalPrinter = {
-//        fp.addNullaryMethod(mods(_.Override), "serviceCompanion", Types.serviceCompanion(name)) {
-//
-//        }
-        ???
-    }
+    private def printServiceCompanionMethod(fp: FunctionalPrinter): FunctionalPrinter =
+        fp.addMethod("serviceCompanion")
+            .addMods(_.Override)
+            .addReturnType(s"$name.type")
+            .addBody(_.add(name))
 
     private def printServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
         def requestParameter          = "request"          -> method.inputType.scalaType
@@ -63,6 +69,56 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
         }
         fp
             .call(scalapbServicePrinter.generateScalaDoc(method))
-            .addMethod(method.name).addParameterList(parameters *).addReturnType(returnType)
+            .addMethod(method.name)
+            .addAnnotations(Seq(method.deprecatedAnnotation).filter(_.nonEmpty)*)
+            .addParameterList(parameters*)
+            .addReturnType(returnType)
+    }
+
+    private def printServiceObject(fp: FunctionalPrinter): FunctionalPrinter =
+        fp.addObject(name)
+            .addAnnotations(Seq(service.deprecatedAnnotation).filter(_.nonEmpty)*)
+            .addParents(Types.serviceCompanion(name))
+            .addBody {
+                _.addMethod("javaDescriptor")
+                    .addReturnType(Types.javaServiceDescriptor)
+                    .addBody(_.add(service.javaDescriptorSource))
+                    .endMethod
+                    .addMethod("scalaDescriptor")
+                    .addReturnType(Types.serviceDescriptor)
+                    .addBody(_.add(service.scalaDescriptorSource))
+                    .endMethod
+                    .call(printBindServiceMethod)
+            }
+
+    private def printBindServiceMethod(fp: FunctionalPrinter): FunctionalPrinter = {
+        val methods = service.methods.map(printMethodImplementation)
+        fp.addMethod("bindService")
+            .addParameterList("serviceImpl" -> name, "executionContext" -> Types.executionContext)
+            .addReturnType(Types.serverServiceDefinition)
+            .addBody(
+                _.add(s"""${Types.serverServiceDefinition}.builder(${service.grpcDescriptor.fullNameWithMaybeRoot})""")
+                    .call(methods*)
+                    .add(".build()")
+            )
+    }
+
+    private def printMethodImplementation(method: MethodDescriptor)(fp: FunctionalPrinter): FunctionalPrinter = {
+        val callOpening = method.streamType match {
+            case StreamType.Unary           => s"${Types.serverCalls}.asyncUnaryCall { (request, responseObserver) =>"
+            case StreamType.ClientStreaming => s"${Types.serverCalls}.asyncClientStreamingCall { responseObserver =>"
+            case StreamType.ServerStreaming => s"${Types.serverCalls}.asyncServerStreamingCall { (request, responseObserver) =>"
+            case StreamType.Bidirectional   => s"${Types.serverCalls}.asyncBidiStreamingCall { responseObserver =>"
+        }
+        fp.add(".addMethod(")
+            .indented(
+                _.add(s"${method.grpcDescriptor.fullNameWithMaybeRoot},")
+                    .add(callOpening)
+                    .indented(
+                        _.add(s"val fiber = ${Types.grpcResponses}.init(serviceImpl.${method.name}(request))")
+                    )
+                    .add("}")
+            )
+            .add(")")
     }
 }

@@ -28,14 +28,14 @@ class ScalaFunctionalPrinterOpsTest extends AnyFreeSpec {
             }
             "should add an abstract method with a mod" in {
                 val fp = new FunctionalPrinter()
-                val actual = fp.addMethod(mods(_.Override), "foo").result()
+                val actual = fp.addMethod("foo").addMods(_.Override).result()
                 val expected =
                     """override def foo""".stripMargin
                 assert(actual == expected)
             }
             "should add an abstract method with multiple mods" in {
                 val fp = new FunctionalPrinter()
-                val actual = fp.addMethod(mods(_.Private, _.Override), "foo").result()
+                val actual = fp.addMethod("foo").addMods(_.Private, _.Override).result()
                 val expected =
                     """private override def foo""".stripMargin
                 assert(actual == expected)
@@ -283,14 +283,14 @@ class ScalaFunctionalPrinterOpsTest extends AnyFreeSpec {
             }
             "should add an object with a mod" in {
                 val fp = new FunctionalPrinter()
-                val actual = fp.addObject(mods(_.Case), "Foo").result()
+                val actual = fp.addObject("Foo").addMods(_.Case).result()
                 val expected =
                     """case object Foo""".stripMargin
                 assert(actual == expected)
             }
             "should add an object with multiple mods" in {
                 val fp = new FunctionalPrinter()
-                val actual = fp.addObject(mods(_.Private, _.Case), "Foo").result()
+                val actual = fp.addObject("Foo").addMods(_.Private, _.Case).result()
                 val expected =
                     """private case object Foo""".stripMargin
                 assert(actual == expected)

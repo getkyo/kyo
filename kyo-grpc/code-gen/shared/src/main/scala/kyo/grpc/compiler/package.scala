@@ -1,5 +1,6 @@
 package kyo.grpc
 
+import kyo.grpc.compiler.builders.*
 import org.typelevel.paiges.Doc
 import scalapb.compiler.FunctionalPrinter
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
@@ -11,10 +12,88 @@ package object compiler {
     private[compiler] val WIDTH  = 100
     private[compiler] val INDENT = 2
 
-    def mods(chooses: Mod.Choose*): Seq[String] =
-        chooses.map(_.choice)
+    def mods(chooses: Mod.Choose*): Vector[String] =
+        chooses.map(_.choice).toVector
+
+    final case class AddClassDsl(builder: ClassBuilder, fp: FunctionalPrinter) {
+
+        def addAnnotations(annotations: String*): AddClassDsl =
+            copy(builder = builder.appendAnnotations(annotations))
+
+        def addMods(mods: Mod.Choose*): AddClassDsl =
+            copy(builder = builder.appendMods(mods.map(_.choice)))
+
+        def addParents(params: String*): AddClassDsl =
+            copy(builder = builder.appendParents(params))
+
+        def addBody(body: PrinterEndo): AddClassDsl =
+            copy(builder = builder.setBody(body))
+
+        def addBodyDoc(body: Doc): AddClassDsl =
+            copy(builder = builder.setBody(body))
+
+        def endClass: FunctionalPrinter = fp.addDoc(builder.result)
+    }
+
+    object AddClassDsl {
+        implicit def endClass(dsl: AddClassDsl): FunctionalPrinter = dsl.endClass
+    }
+
+    final case class AddObjectDsl(builder: ObjectBuilder, fp: FunctionalPrinter) {
+
+        def addAnnotations(annotations: String*): AddObjectDsl =
+            copy(builder = builder.appendAnnotations(annotations))
+
+        def addMods(mods: Mod.Choose*): AddObjectDsl =
+            copy(builder = builder.appendMods(mods.map(_.choice)))
+
+        def addParents(params: String*): AddObjectDsl =
+            copy(builder = builder.appendParents(params))
+
+        def addBody(body: PrinterEndo): AddObjectDsl =
+            copy(builder = builder.setBody(body))
+
+        def addBodyDoc(body: Doc): AddObjectDsl =
+            copy(builder = builder.setBody(body))
+
+        def endObject: FunctionalPrinter = fp.addDoc(builder.result)
+    }
+
+    object AddObjectDsl {
+        implicit def endObject(dsl: AddObjectDsl): FunctionalPrinter = dsl.endObject
+    }
+
+    final case class AddTraitDsl(builder: TraitBuilder, fp: FunctionalPrinter) {
+
+        def addAnnotations(annotations: String*): AddTraitDsl =
+            copy(builder = builder.appendAnnotations(annotations))
+
+        def addMods(mods: Mod.Choose*): AddTraitDsl =
+            copy(builder = builder.appendMods(mods.map(_.choice)))
+
+        def addParents(params: String*): AddTraitDsl =
+            copy(builder = builder.appendParents(params))
+
+        def addBody(body: PrinterEndo): AddTraitDsl =
+            copy(builder = builder.setBody(body))
+
+        def addBodyDoc(body: Doc): AddTraitDsl =
+            copy(builder = builder.setBody(body))
+
+        def endTrait: FunctionalPrinter = fp.addDoc(builder.result)
+    }
+
+    object AddTraitDsl {
+        implicit def endTrait(dsl: AddTraitDsl): FunctionalPrinter = dsl.endTrait
+    }
 
     final case class AddMethodDsl(builder: MethodBuilder, fp: FunctionalPrinter) {
+
+        def addAnnotations(annotations: String*): AddMethodDsl =
+            copy(builder = builder.appendAnnotations(annotations))
+
+        def addMods(mods: Mod.Choose*): AddMethodDsl =
+            copy(builder = builder.appendMods(mods.map(_.choice)))
 
         def addTypeParameters(params: String*): AddMethodDsl =
             copy(builder = builder.appendTypeParameters(params))
@@ -31,86 +110,32 @@ package object compiler {
         def addBody(body: PrinterEndo): AddMethodDsl =
             copy(builder = builder.setBody(body))
 
-        def print: FunctionalPrinter = builder.print(fp)
+        def addBodyDoc(body: Doc): AddMethodDsl =
+            copy(builder = builder.setBody(body))
+
+        def endMethod: FunctionalPrinter = fp.addDoc(builder.result)
     }
 
     object AddMethodDsl {
-        implicit def print(dsl: AddMethodDsl): FunctionalPrinter = dsl.print
-    }
-
-    final case class AddObjectDsl(builder: ObjectBuilder, fp: FunctionalPrinter) {
-
-        def addParents(params: String*): AddObjectDsl =
-            copy(builder = builder.appendParents(params))
-
-        def addBody(body: PrinterEndo): AddObjectDsl =
-            copy(builder = builder.setBody(body))
-
-        def print: FunctionalPrinter = builder.print(fp)
-    }
-
-    object AddObjectDsl {
-        implicit def print(dsl: AddObjectDsl): FunctionalPrinter = dsl.print
+        implicit def endMethod(dsl: AddMethodDsl): FunctionalPrinter = dsl.endMethod
     }
 
     implicit class ScalaFunctionalPrinterOps(val fp: FunctionalPrinter) extends AnyVal {
 
-        def addPackage(name: String): FunctionalPrinter =
-            fp.add(s"package $name")
+        def addPackage(id: String): FunctionalPrinter =
+            fp.add(s"package $id")
 
-        def addMethod(
-                         name: String
-                     ): AddMethodDsl =
-            addMethod(Seq.empty, name)
+        def addClass(id: String): AddClassDsl =
+            AddClassDsl(ClassBuilder(id), fp)
 
-        def addMethod(
-                         mods: Seq[String],
-                         name: String
-                     ): AddMethodDsl =
-            AddMethodDsl(MethodBuilder(mods, name), fp)
+        def addObject(id: String): AddObjectDsl =
+            AddObjectDsl(ObjectBuilder(id), fp)
 
-        def addObject(
-            name: String
-        ): AddObjectDsl =
-            addObject(Seq.empty, name)
+        def addTrait(id: String): AddTraitDsl =
+            AddTraitDsl(TraitBuilder(id), fp)
 
-        def addObject(
-            mods: Seq[String],
-            name: String
-        ): AddObjectDsl =
-            AddObjectDsl(ObjectBuilder(mods, name), fp)
-
-        // TODO: Replace
-
-        def addTrait(name: String, parents: Seq[String] = Seq.empty)(body: PrinterEndo): FunctionalPrinter =
-            fp.add(s"trait $name")
-                .addExtends(parents)
-                .appendBlock(body)
-
-        def addExtends(parents: Seq[String]): FunctionalPrinter =
-            parents.headOption match {
-                case Some(head) =>
-                    fp.indented {
-                        _.add(s"extends $head")
-                            .indented {
-                                parents.tail.foldLeft(_) {
-                                    (fp, parent) => fp.add(s"with $parent")
-                                }
-                            }
-                    }
-                case None => fp
-            }
-
-        def addBlock(prefix: String)(body: PrinterEndo): FunctionalPrinter =
-            fp.add(s"$prefix{")
-                .indented(body)
-                .add("}")
-
-        def appendBlock(body: PrinterEndo): FunctionalPrinter = {
-            append(" {")
-                .indented(body)
-                .add("}")
-        }
+        def addMethod(id: String): AddMethodDsl =
+            AddMethodDsl(MethodBuilder(id), fp)
 
         def append(s: String): FunctionalPrinter = {
             val lastIndex = fp.content.size - 1
