@@ -76,7 +76,6 @@ object Runtime:
     end handle
 
     private def handle(self: Runtime, cause: Throwable): Nothing =
-        println("handling! " + self.trace.filter(_ != null).map(_.parse.position).toList)
         val size   = Math.min(self.traceIdx, maxTraceFrames)
         val trace  = copyTrace(self.trace, self.traceIdx).filter(_ != null).map(_.parse)
         val toDrop = trace.map(_.snippetShort.takeWhile(_ == ' ').size).min
