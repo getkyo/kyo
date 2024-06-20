@@ -58,10 +58,10 @@ object RuntimeEffect:
                         def frame = _frame
                         def apply(v: OX[Any], values: Values)(using Runtime) =
                             val tag   = _tag
-                            val value = values.getOrElse(tag, null).asInstanceOf[A]
+                            val value = values.getOrElse(tag, null)
                             val updated =
                                 if isNull(value) then values.set(tag, ifUndefined)
-                                else values.set(tag, ifDefined(value))
+                                else values.set(tag, ifDefined(value.asInstanceOf[A]))
                             handleLoop(kyo(v, updated))
                         end apply
                 case <(kyo) =>
