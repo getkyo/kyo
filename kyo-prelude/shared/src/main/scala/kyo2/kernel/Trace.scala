@@ -20,13 +20,13 @@ object Trace:
         final private var frames = new Array[Frame](maxTraceFrames)
         final private var index  = 0
 
-        final protected def pushFrame(frame: Frame): Unit =
+        final private[kernel] def pushFrame(frame: Frame): Unit =
             val idx = this.index
             frames(idx & (maxTraceFrames - 1)) = frame
             this.index = idx + 1
         end pushFrame
 
-        final protected def saveTrace(): Trace =
+        final private[kernel] def saveTrace(): Trace =
             val newTrace   = borrow()
             val newFrames  = newTrace.frames
             val copyLength = math.min(index, maxTraceFrames)

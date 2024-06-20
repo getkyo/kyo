@@ -31,6 +31,18 @@ class EnqueueDequeueBench extends Bench.ForkOnly(()):
         Channels.init[Unit](1, Access.Spsc).flatMap(loop(_, 0))
     end kyoBenchFiber
 
+    override def kyoBenchFiber2() =
+        import kyo2.*
+
+        def loop(c: Channel[Unit], i: Int): Unit < (Abort[Closed] & Async & IO) =
+            if i >= depth then
+                IO.unit
+            else
+                c.put(()).flatMap(_ => c.take.flatMap(_ => loop(c, i + 1)))
+
+        Channel.init[Unit](1, Access.Spsc).flatMap(loop(_, 0))
+    end kyoBenchFiber2
+
     def zioBench() =
         import zio.*
 
