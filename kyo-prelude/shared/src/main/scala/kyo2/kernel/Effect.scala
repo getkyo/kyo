@@ -14,14 +14,14 @@ object Effect:
             def apply(ign: Unit, values: Values)(using Runtime) =
                 v
 
-    case class SuspendOps[A](ign: Unit):
+    case class SuspendOps[A](ign: Unit) extends AnyVal:
 
         inline def apply[I[_], O[_], E <: Effect[I, O], B, S](
             inline _tag: Tag[E],
             inline _input: I[A],
             inline _cont: O[A] => B < S = (v: O[A]) => v
         )(using inline _frame: Frame): B < (S & E) =
-            new Suspend[I, O, E, A, B, S & E]:
+            new KyoSuspend[I, O, E, A, B, S & E]:
                 def frame = _frame
                 def tag   = _tag
                 def input = _input
@@ -45,13 +45,13 @@ object Effect:
         )(using inline _frame: Frame, runtime: Runtime): B < (S & S2 & S3) =
             def handleLoop(v: A < (E & S & S2 & S3), values: Values)(using Runtime): B < (S & S2 & S3) =
                 v match
-                    case <(kyo: Suspend[I, O, E, Any, A, E & S & S2] @unchecked) if accept(kyo.input, kyo.tag.erased) =>
+                    case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if accept(kyo.input, kyo.tag.erased) =>
                         Runtime.handle(
                             suspend = handleLoop(kyo, values),
                             continue = runtime => handleLoop(handle[Any](kyo.input, kyo(_, values)(using runtime)), values)(using runtime)
                         )
-                    case <(kyo: Suspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked) =>
-                        new Suspend[IX, OX, EX, Any, B, S & S2 & S3]:
+                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked) =>
+                        new KyoSuspend[IX, OX, EX, Any, B, S & S2 & S3]:
                             val tag   = kyo.tag
                             val input = kyo.input
                             def frame = _frame
@@ -75,18 +75,18 @@ object Effect:
         )(using inline _frame: Frame, inline runtime: Runtime): A < (S & S2) =
             def handle2Loop(kyo: A < (E1 & E2 & S & S2), values: Values)(using Runtime): A < (S & S2) =
                 kyo match
-                    case <(kyo: Suspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
+                    case <(kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
                         Runtime.handle(
                             suspend = handle2Loop(kyo, values),
                             continue = runtime => handle2Loop(handle1[Any](kyo.input, kyo(_, values)(using runtime)), values)(using runtime)
                         )
-                    case <(kyo: Suspend[I2, O2, E2, Any, A, E1 & E2 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
+                    case <(kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
                         Runtime.handle(
                             suspend = handle2Loop(kyo, values),
                             continue = runtime => handle2Loop(handle2[Any](kyo.input, kyo(_, values)(using runtime)), values)(using runtime)
                         )
-                    case <(kyo: Suspend[IX, OX, EX, Any, A, E1 & E2 & S & S2] @unchecked) =>
-                        new Suspend[IX, OX, EX, Any, A, S & S2]:
+                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & S & S2] @unchecked) =>
+                        new KyoSuspend[IX, OX, EX, Any, A, S & S2]:
                             val tag   = kyo.tag
                             val input = kyo.input
                             def frame = _frame
@@ -115,23 +115,23 @@ object Effect:
         )(using inline _frame: Frame, runtime: Runtime): A < (S & S2) =
             def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), values: Values)(using Runtime): A < (S & S2) =
                 v match
-                    case <(kyo: Suspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
+                    case <(kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
                         Runtime.handle(
                             suspend = handle3Loop(kyo, values),
                             continue = runtime => handle3Loop(handle1[Any](kyo.input, kyo(_, values)(using runtime)), values)(using runtime)
                         )
-                    case <(kyo: Suspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
+                    case <(kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
                         Runtime.handle(
                             suspend = handle3Loop(kyo, values),
                             continue = runtime => handle3Loop(handle2[Any](kyo.input, kyo(_, values)(using runtime)), values)(using runtime)
                         )
-                    case <(kyo: Suspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag3 =:= kyo.tag =>
+                    case <(kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag3 =:= kyo.tag =>
                         Runtime.handle(
                             suspend = handle3Loop(kyo, values),
                             continue = runtime => handle3Loop(handle3[Any](kyo.input, kyo(_, values)(using runtime)), values)(using runtime)
                         )
-                    case <(kyo: Suspend[IX, OX, EX, Any, A, E1 & E2 & E3 & S & S2] @unchecked) =>
-                        new Suspend[IX, OX, EX, Any, A, S & S2]:
+                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & S & S2] @unchecked) =>
+                        new KyoSuspend[IX, OX, EX, Any, A, S & S2]:
                             val tag   = kyo.tag
                             val input = kyo.input
                             def frame = _frame
@@ -156,15 +156,15 @@ object Effect:
         )(using inline _frame: Frame, runtime: Runtime): U < (S & S2) =
             def handleLoop(state: State, v: A < (E & S & S2), values: Values)(using Runtime): U < (S & S2) =
                 v match
-                    case <(kyo: Suspend[I, O, E, Any, A, E & S & S2] @unchecked) if accept(kyo.input, kyo.tag.erased) =>
+                    case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if accept(kyo.input, kyo.tag.erased) =>
                         Runtime.handle(
                             suspend = handleLoop(state, kyo, values),
                             continue = runtime =>
                                 val (nst, res) = handle(kyo.input, state, kyo(_, values)(using runtime))
                                 handleLoop(nst, res, values)(using runtime)
                         )
-                    case <(kyo: Suspend[IX, OX, EX, Any, A, E & S & S2] @unchecked) =>
-                        new Suspend[IX, OX, EX, Any, U, S & S2]:
+                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked) =>
+                        new KyoSuspend[IX, OX, EX, Any, U, S & S2]:
                             val tag   = kyo.tag
                             val input = kyo.input
                             def frame = _frame
@@ -185,8 +185,8 @@ object Effect:
     )(using inline _frame: Frame, runtime: Runtime): B < (S & S2) =
         def catchingLoop(v: B < (S & S2))(using Runtime): B < (S & S2) =
             (v: @unchecked) match
-                case <(kyo: Suspend[IX, OX, EX, Any, B, S & S2] @unchecked) =>
-                    new Suspend[IX, OX, EX, Any, B, S & S2]:
+                case <(kyo: KyoSuspend[IX, OX, EX, Any, B, S & S2] @unchecked) =>
+                    new KyoSuspend[IX, OX, EX, Any, B, S & S2]:
                         val tag   = kyo.tag
                         val input = kyo.input
                         def frame = _frame

@@ -51,8 +51,8 @@ object RuntimeEffect:
     ): B < S =
         def handleLoop(v: B < (E & S))(using Runtime): B < S =
             v match
-                case <(kyo: Suspend[IX, OX, EX, Any, B, S] @unchecked) =>
-                    new Suspend[IX, OX, EX, Any, B, S]:
+                case <(kyo: KyoSuspend[IX, OX, EX, Any, B, S] @unchecked) =>
+                    new KyoSuspend[IX, OX, EX, Any, B, S]:
                         val tag   = kyo.tag
                         val input = kyo.input
                         def frame = _frame
@@ -85,8 +85,8 @@ object RuntimeEffect:
                     else runtime.save(values)
                 def boundaryLoop(v: A < S): A < S =
                     v match
-                        case <(kyo: Suspend[IX, OX, EX, Any, A, S] @unchecked) =>
-                            new Suspend[IX, OX, EX, Any, A, S]:
+                        case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
+                            new KyoSuspend[IX, OX, EX, Any, A, S]:
                                 val tag   = kyo.tag
                                 val input = kyo.input
                                 def frame = _frame

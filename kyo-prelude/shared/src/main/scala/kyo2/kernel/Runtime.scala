@@ -40,6 +40,8 @@ end Runtime
 
 object Runtime:
 
+    implicit inline def get: Runtime = local.get()
+
     private[kernel] inline def eval[T](
         inline f: Runtime => T
     )(using inline frame: Frame): T =
@@ -59,20 +61,13 @@ object Runtime:
     private[kernel] inline def handle[A, S](
         inline suspend: => A < S,
         inline continue: Runtime => A < S
-    )(using inline frame: Frame, inline runtime: Runtime): A < S =
-        val self =
-            if isNull(runtime) then local.get()
-            else runtime
-        val res: A < S =
-            self.enter(frame) match
-                case -1 =>
-                    Effect.defer(suspend)
-                case depth =>
-                    try continue(self)
-                    finally self.exit(depth)
-                    end try
-        end res
-        res
+    )(using inline frame: Frame, self: Runtime): A < S =
+        self.enter(frame) match
+            case -1 =>
+                Effect.defer(suspend)
+            case depth =>
+                try continue(self)
+                finally self.exit(depth)
     end handle
 
     private def handle(self: Runtime, cause: Throwable): Nothing =
@@ -120,7 +115,5 @@ object Runtime:
         val empty = State(new Array(maxStackDepth), 0, Values.empty)
 
     private[kernel] val local = ThreadLocal.withInitial(() => Runtime(0, State.empty))
-
-    implicit inline def infer: Runtime = null
 
 end Runtime

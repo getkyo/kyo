@@ -36,10 +36,8 @@ object `<`:
         )(using Runtime): U < (S & S2) =
             def mapLoop(v: A < S)(using Runtime): U < (S & S2) =
                 v match
-                    case <(kyo: Suspend[IX, OX, EX, Any, A, S] @unchecked) =>
-                        new Suspend[IX, OX, EX, Any, U, S & S2]:
-                            val tag   = kyo.tag
-                            val input = kyo.input
+                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
+                        new KyoContinue[IX, OX, EX, Any, U, S & S2](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], values: Values)(using Runtime) =
                                 mapLoop(kyo(v, values))
@@ -61,7 +59,7 @@ object `<`:
         inline def eval: T =
             @tailrec def evalLoop(kyo: T < Any)(using Runtime): T =
                 kyo match
-                    case <(kyo: Suspend[Const[Unit], Const[Unit], Defer, Any, T, Any] @unchecked)
+                    case <(kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, T, Any] @unchecked)
                         if kyo.tag =:= Tag[Defer] =>
                         evalLoop(kyo((), Values.empty))
                     case <(kyo: Kyo[T, Any] @unchecked) =>

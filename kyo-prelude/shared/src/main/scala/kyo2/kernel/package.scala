@@ -33,7 +33,7 @@ package object kernel:
 
         sealed abstract class Kyo[+T, -S]
 
-        abstract class Suspend[I[_], O[_], E <: Effect[I, O], A, U, S]
+        abstract class KyoSuspend[I[_], O[_], E <: Effect[I, O], A, U, S]
             extends Kyo[U, S]:
             def tag: Tag[E]
             def input: I[A]
@@ -44,9 +44,15 @@ package object kernel:
             final override def toString =
                 val parsed = frame.parse
                 s"Kyo(${tag.show}, Input($input), ${parsed.position}, ${parsed.snippetShort})"
-        end Suspend
+        end KyoSuspend
 
-        abstract class KyoDefer[T, S] extends Suspend[Const[Unit], Const[Unit], Defer, Any, T, S]:
+        abstract class KyoContinue[I[_], O[_], E <: Effect[I, O], A, U, S](kyo: KyoSuspend[I, O, E, A, ?, ?])
+            extends KyoSuspend[I, O, E, A, U, S]:
+            val tag   = kyo.tag
+            val input = kyo.input
+        end KyoContinue
+
+        abstract class KyoDefer[T, S] extends KyoSuspend[Const[Unit], Const[Unit], Defer, Any, T, S]:
             final def tag   = Tag[Defer]
             final def input = ()
 
