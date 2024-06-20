@@ -16,7 +16,7 @@ trait BaseKyoTest[S]:
     def run(v: Future[Assertion] < S): Future[Assertion]
 
     @targetName("runAssertion")
-    def run(v: Assertion < Any): Future[Assertion] = Future.successful(v.eval)
+    def run(v: Assertion < S): Future[Assertion] = run(v.map(Future.successful(_)))
 
     def runJVM(v: => Future[Assertion] < S): Future[Assertion] =
         if Platform.isJVM then

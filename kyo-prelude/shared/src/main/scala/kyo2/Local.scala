@@ -31,7 +31,7 @@ end Local
 
 object Local:
 
-    inline def apply[T](inline defaultValue: T): Local[T] =
+    inline def init[T](inline defaultValue: T): Local[T] =
         new Local[T]:
             val default: T = defaultValue
 
