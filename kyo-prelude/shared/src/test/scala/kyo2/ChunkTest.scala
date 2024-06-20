@@ -159,12 +159,12 @@ class ChunkTest extends Test:
                     chunk.map { n =>
                         kyo2.Env.get[Int].map { factor =>
                             if n % factor == 0 then n * factor
-                            else kyo2.Abort.fail(s"$n is not divisible by $factor")
+                            else kyo2.Abort.failure(s"$n is not divisible by $factor")
                         }
                     }
                 }
             }
-            assert(result.eval == Left("1 is not divisible by 3"))
+            assert(result.eval == Result.failure("1 is not divisible by 3"))
         }
         "with a function using Var and Abort" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
@@ -173,12 +173,12 @@ class ChunkTest extends Test:
                     chunk.map { n =>
                         kyo2.Var.get[Int].map { multiplier =>
                             if n % 2 == 0 then kyo2.Var.set(multiplier * n).andThen(n * multiplier)
-                            else kyo2.Abort.fail("Odd number encountered")
+                            else kyo2.Abort.failure("Odd number encountered")
                         }
                     }
                 }
             }
-            assert(result.eval == Left("Odd number encountered"))
+            assert(result.eval == Result.failure("Odd number encountered"))
         }
         "with an empty chunk" in {
             val chunk  = kyo2.Chunk.empty[Int]
@@ -217,12 +217,12 @@ class ChunkTest extends Test:
                             if b then
                                 if n % 2 == 0 then kyo2.Var.set(false).andThen(true)
                                 else false
-                            else kyo2.Abort.fail(())
+                            else kyo2.Abort.failure(())
                         }
                     }
                 }
             }
-            assert(result.eval == Left(()))
+            assert(result.eval == Result.failure(()))
         }
 
         "with a predicate that filters out all elements" in {
@@ -232,7 +232,7 @@ class ChunkTest extends Test:
         }
     }
 
-    "foldLeft" - {
+    "foldResult.failure" - {
         "with a pure function" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
             val result = chunk.foldLeft(0)(_ + _)
@@ -246,12 +246,12 @@ class ChunkTest extends Test:
                     chunk.foldLeft(0) { (acc, n) =>
                         kyo2.Env.get[Int].map { max =>
                             if acc + n <= max then acc + n
-                            else kyo2.Abort.fail(s"Sum exceeded max value of $max")
+                            else kyo2.Abort.failure(s"Sum exceeded max value of $max")
                         }
                     }
                 }
             }
-            assert(result.eval == Left("Sum exceeded max value of 10"))
+            assert(result.eval == Result.failure("Sum exceeded max value of 10"))
         }
 
         "with a function using Var and Env" in {
@@ -814,14 +814,14 @@ class ChunkTest extends Test:
                                     kyo2.Env.get[Int].map { max =>
                                         if sum + n * multiplier <= max then
                                             kyo2.Var.set(multiplier * n).andThen(sum += n * multiplier)
-                                        else kyo2.Abort.fail(s"Sum exceeded max value of $max")
+                                        else kyo2.Abort.failure(s"Sum exceeded max value of $max")
                                     }
                                 }
                         }
                     }
                 }
             }
-            assert(result.eval == Left("Sum exceeded max value of 10"))
+            assert(result.eval == Result.failure("Sum exceeded max value of 10"))
             assert(sum == 4)
         }
     }

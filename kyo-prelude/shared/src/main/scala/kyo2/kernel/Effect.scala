@@ -51,6 +51,7 @@ object Effect:
     inline def suspendMap[A]: SuspendMapOps[A] = SuspendMapOps(())
 
     object handle:
+
         inline def apply[I[_], O[_], E <: Effect[I, O], A, B, S, S2, S3](
             inline tag: Tag[E],
             v: A < (E & S)
