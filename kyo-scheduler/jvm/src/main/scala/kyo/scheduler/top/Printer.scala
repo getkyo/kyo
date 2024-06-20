@@ -1,5 +1,7 @@
 package kyo.scheduler.top
 
+import kyo.scheduler.Worker
+
 object Printer {
 
     def apply(status: Status) = {
@@ -47,7 +49,7 @@ object Printer {
                 if (w.id == status.currentWorkers)
                     sb.append("------------------------------------- Inactive ------------------------------------------------\n")
 
-                val running = if (w.running) "   🏃  " else "   ⚫  "
+                val running = if (w.state eq Worker.State.Running) "   🏃  " else "   ⚫  "
                 val blocked = if (w.isBlocked) "   🚧  " else "   ⚫  "
                 val stalled = if (w.isStalled) "   🐢  " else "   ⚫  "
 

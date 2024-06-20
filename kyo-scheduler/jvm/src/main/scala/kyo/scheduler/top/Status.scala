@@ -1,5 +1,7 @@
 package kyo.scheduler.top
 
+import kyo.scheduler.Worker
+
 case class Status(
     currentWorkers: Int,
     allocatedWorkers: Int,
@@ -34,7 +36,7 @@ case class Status(
 
 case class WorkerStatus(
     id: Int,
-    running: Boolean,
+    state: Worker.State,
     mount: String,
     frame: String,
     isBlocked: Boolean,
@@ -50,7 +52,7 @@ case class WorkerStatus(
     infix def -(other: WorkerStatus): WorkerStatus =
         WorkerStatus(
             id,
-            running,
+            state,
             mount,
             frame,
             isBlocked,

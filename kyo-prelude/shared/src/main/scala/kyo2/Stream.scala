@@ -155,6 +155,11 @@ case class Stream[-S, V](v: Ack < (Emit[Chunk[V]] & S)):
         ))
     end changes
 
+    def foreachChunk[A, S2](f: Chunk[V] => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
+        Effect.handle(tag, v: Ack < (Emit[Chunk[V]] & S & S2))(
+            handle = [C] => (input, cont) => f(input).andThen(cont(Continue()))
+        ).unit
+
     def runDiscard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < S =
         Effect.handle(tag, v.unit)(
             [C] => (input, cont) => cont(Stop)
@@ -166,6 +171,19 @@ case class Stream[-S, V](v: Ack < (Emit[Chunk[V]] & S)):
                 (input, state, cont) =>
                     input.foldLeft(state)(f).map((_, cont(Continue()))),
             done = (state, _) => state
+        )
+
+    def runFoldChunk[A, S2](acc: A)(f: (A, Chunk[V]) => A < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): A < (S & S2) =
+        Effect.handle.state(tag, acc, v)(
+            handle = [C] =>
+                (input, state, cont) =>
+                    f(state, input).map((_, cont(Continue()))),
+            done = (state, _) => state
+        )
+
+    def runAck[S2](f: Chunk[V] => Ack < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
+        Effect.handle(tag, v.unit)(
+            [C] => (input, cont) => f(input).map(cont)
         )
 
     def runSeq(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Seq[V] < S =
@@ -205,5 +223,8 @@ object Stream:
     @targetName("initSeq")
     def init[V, S](seq: Seq[V] < S)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[S, V] =
         init(seq.map(Chunk.from))
+
+    // def init[V, S](seq: Channel[Chunk[V]] < S)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[S, V] =
+    //     ???
 
 end Stream
