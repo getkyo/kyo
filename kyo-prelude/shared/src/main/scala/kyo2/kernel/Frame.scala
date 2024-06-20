@@ -17,7 +17,9 @@ object Frame:
         position: Position,
         snippetShort: String,
         snippetLong: String
-    )
+    ):
+        override def toString = s"Frame($declaringClass, $methodName, $position, ${snippetShort.dropWhile(_ == ' ')})"
+    end Parsed
 
     case class Position(
         fileName: String,
@@ -32,7 +34,7 @@ object Frame:
             val arr = t.split('£')
             Parsed(arr(0), arr(1), Position(arr(2), arr(3).toInt, arr(4).toInt), arr(5), arr(6))
 
-        def show: String = parse.toString.replaceFirst("Parsed", "Frame")
+        def show: String = parse.toString
     end extension
 
     implicit inline def derive: Frame = ${ frameImpl }
