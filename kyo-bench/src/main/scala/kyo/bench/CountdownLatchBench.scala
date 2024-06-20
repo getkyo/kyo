@@ -35,6 +35,21 @@ class CountdownLatchBench extends Bench.ForkOnly(0):
         end for
     end kyoBenchFiber
 
+    override def kyoBenchFiber2() =
+        import kyo2.*
+
+        def iterate(l: Latch, n: Int): Unit < IO =
+            if n <= 0 then IO.unit
+            else l.release.flatMap(_ => iterate(l, n - 1))
+
+        for
+            l <- Latch.init(depth)
+            _ <- Async.run(iterate(l, depth))
+            _ <- l.await
+        yield 0
+        end for
+    end kyoBenchFiber2
+
     def zioBench() =
         import zio.*
         import zio.concurrent.*
