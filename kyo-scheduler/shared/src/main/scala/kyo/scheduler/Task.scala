@@ -21,7 +21,7 @@ trait Task {
         else state
     }
 
-    private[kyo] def addRuntime(v: Int) = {
+    def addRuntime(v: Int) = {
         val state = this.state
         this.state =
             if (state < 0) -state + v

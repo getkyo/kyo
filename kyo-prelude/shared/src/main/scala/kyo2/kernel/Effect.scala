@@ -165,6 +165,46 @@ object Effect:
             handle3Loop(v, Context.empty)
         end apply
 
+        inline def partial[I1[_], O1[_], E1 <: Effect[I1, O1], I2[_], O2[_], E2 <: Effect[I2, O2], I3[_], O3[_], E3 <: Effect[
+            I3,
+            O3
+        ], A, S, S2](
+            inline tag1: Tag[E1],
+            inline tag2: Tag[E2],
+            inline tag3: Tag[E3],
+            v: A < (E1 & E2 & E3 & S)
+        )(
+            inline handle1: Safepoint ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle2: Safepoint ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle3: Safepoint ?=> [C] => (I3[C], O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
+        )(using inline _frame: Frame, safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
+            def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using Safepoint): A < (E1 & E2 & E3 & S & S2) =
+                v match
+                    case <(kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
+                        Safepoint.handle(kyo.input)(
+                            eval = handle1[Any](kyo.input, kyo(_, context)),
+                            suspend = handle3Loop(kyo, context),
+                            continue = handle3Loop(_, context)
+                        )
+                    case <(kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
+                        Safepoint.handle(kyo.input)(
+                            eval = handle2[Any](kyo.input, kyo(_, context)),
+                            suspend = handle3Loop(kyo, context),
+                            continue = handle3Loop(_, context)
+                        )
+                    case <(kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag3 =:= kyo.tag =>
+                        Safepoint.handle(kyo.input)(
+                            eval = handle3[Any](kyo.input, kyo(_, context)),
+                            suspend = handle3Loop(kyo, context),
+                            continue = handle3Loop(_, context)
+                        )
+                    case kyo =>
+                        kyo
+                end match
+            end handle3Loop
+            handle3Loop(v, Context.empty)
+        end partial
+
         inline def state[I[_], O[_], E <: Effect[I, O], State, A, B, S, S2](
             inline tag: Tag[E],
             inline state: State,
