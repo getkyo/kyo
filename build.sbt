@@ -67,6 +67,7 @@ lazy val kyoJVM = project
         `kyo-tag`.jvm,
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
+        `kyo-core2`.jvm,
         `kyo-direct`.jvm,
         `kyo-stats-registry`.jvm,
         `kyo-stats-otel`.jvm,
@@ -91,6 +92,7 @@ lazy val kyoJS = project
         `kyo-tag`.js,
         `kyo-prelude`.js,
         `kyo-core`.js,
+        `kyo-core2`.js,
         `kyo-direct`.js,
         `kyo-stats-registry`.js,
         `kyo-sttp`.js,
@@ -171,6 +173,25 @@ lazy val `kyo-core` =
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.13",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC27" % Test,
             libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.7"      % Test,
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.6"      % Test,
+            libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
+        )
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-core2` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-scheduler`)
+        .dependsOn(`kyo-prelude`)
+        .in(file("kyo-core2"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.lihaoyi"  %%% "pprint"          % "0.9.0",
+            libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
+            libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.13",
+            libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC27" % Test,
+            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.3"      % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.6"      % Test,
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
@@ -329,7 +350,7 @@ lazy val `kyo-bench` =
         .in(file("kyo-bench"))
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-prelude`)
+        .dependsOn(`kyo-core2`)
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-scheduler-zio`)
         .settings(

@@ -69,6 +69,7 @@ object Result:
     end Fail
 
     case class Panic(exception: Throwable) extends Error[Nothing]:
+        exception.printStackTrace()
         def getFailure = exception
 
     object Panic:
