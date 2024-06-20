@@ -2,6 +2,7 @@ package kyo2.kernel
 
 import internal.*
 import kyo.*
+import kyo2.Maybe
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 import scala.util.NotGiven
@@ -50,6 +51,25 @@ object `<`:
                         )
             mapLoop(v)
         end map
+
+        private[kyo2] inline def pure: Maybe[A] =
+            v match
+                case <(kyo: Kyo[?, ?]) => Maybe.empty
+                case <(v)              => Maybe(v.asInstanceOf[A])
+
+        private[kyo2] inline def partialEval(interceptor: Safepoint.Interceptor)(using frame: Frame, safepoint: Safepoint): A < S =
+            @tailrec def partialEvalLoop(kyo: A < S)(using Safepoint): A < S =
+                if !interceptor.enter(frame, ()) then kyo
+                else
+                    kyo match
+                        case <(kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, S] @unchecked)
+                            if kyo.tag =:= Tag[Defer] =>
+                            partialEvalLoop(kyo((), Context.empty))
+                        case kyo =>
+                            kyo
+            end partialEvalLoop
+            Safepoint.immediate(interceptor)(partialEvalLoop(v))
+        end partialEval
     end extension
 
     extension [A, S, S2](inline kyo: A < S < S2)
