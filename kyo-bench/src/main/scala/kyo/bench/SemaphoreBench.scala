@@ -31,6 +31,18 @@ class SemaphoreBench extends Bench.ForkOnly(()):
         Meters.initSemaphore(1).flatMap(loop(_, 0))
     end kyoBenchFiber
 
+    override def kyoBenchFiber2() =
+        import kyo2.*
+
+        def loop(s: Meter, i: Int): Unit < (Abort[Closed] & Async) =
+            if i >= depth then
+                IO.unit
+            else
+                s.run(()).flatMap(_ => loop(s, i + 1))
+
+        Meter.initSemaphore(1).flatMap(loop(_, 0))
+    end kyoBenchFiber2
+
     def zioBench() =
         import zio.*
 

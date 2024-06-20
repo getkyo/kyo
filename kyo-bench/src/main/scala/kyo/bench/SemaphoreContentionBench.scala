@@ -55,6 +55,28 @@ class SemaphoreContentionBench extends Bench.ForkOnly(()):
         end for
     end kyoBenchFiber
 
+    override def kyoBenchFiber2() =
+        import kyo2.*
+
+        def repeat[A](n: Int)(io: A < IO): A < IO =
+            if n <= 1 then io
+            else io.flatMap(_ => repeat(n - 1)(io))
+
+        def loop(sem: Meter, cdl: Latch, i: Int = 0): Unit < (Abort[Closed] & Async) =
+            if i >= depth then
+                cdl.release
+            else
+                sem.run(()).flatMap(_ => loop(sem, cdl, i + 1))
+
+        for
+            sem <- Meter.initSemaphore(permits)
+            cdl <- Latch.init(parallism)
+            _   <- repeat(parallism)(Async.run(loop(sem, cdl)))
+            _   <- cdl.await
+        yield {}
+        end for
+    end kyoBenchFiber2
+
     def zioBench() =
         import zio.*
         import zio.concurrent.*
