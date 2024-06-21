@@ -44,7 +44,7 @@ end Runtime
 
 object Runtime:
 
-    implicit inline def get: Runtime = local.get()
+    implicit def get: Runtime = local.get()
 
     private[kernel] inline def eval[T](
         inline f: => T
