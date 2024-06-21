@@ -126,7 +126,7 @@ class RuntimeEffectTest extends Test:
             assert(result.eval == "10-middle-true")
         }
 
-        "complex transformation" in {
+        "with transformation" in {
             val effect =
                 for
                     i <- testRuntimeEffect1
@@ -138,6 +138,92 @@ class RuntimeEffectTest extends Test:
             }
 
             assert(result.eval == "1-start")
+        }
+    }
+
+    "boundary" - {
+        sealed trait TestEffect       extends RuntimeEffect[Int]
+        sealed trait AnotherEffect    extends RuntimeEffect[String]
+        sealed trait NotRuntimeEffect extends Effect[Const[Int], Const[Int]]
+
+        "isolates runtime effect" in {
+            val a = RuntimeEffect.suspend(Tag[TestEffect])
+            val b: Int < TestEffect =
+                RuntimeEffect.boundary(a) { cont =>
+                    val _: Int < Any = cont
+                    cont.map(_ * 2)
+                }
+            val c = RuntimeEffect.handle(Tag[TestEffect], 2, _ => 3)(b)
+            assert(c.eval == 4)
+        }
+
+        "continuation can be evaluated" in {
+            var called = 0
+            val a =
+                RuntimeEffect.suspend(Tag[TestEffect]).map { v =>
+                    called += 1
+                    v
+                }
+            val b: Int < TestEffect =
+                RuntimeEffect.boundary(a) { cont =>
+                    assert(called == 0)
+                    val _: Int < Any = cont
+                    assert(called == 0)
+                    val r = cont.map(_ * 2).eval
+                    assert(called == 1)
+                    r
+                }
+            val c = RuntimeEffect.handle(Tag[TestEffect], 2, _ => 3)(b)
+            assert(c.eval == 4)
+            assert(called == 1)
+        }
+
+        "preserve outer runtime effects" in {
+            val outerEffect = RuntimeEffect.suspend(Tag[TestEffect])
+            val innerEffect = RuntimeEffect.suspend(Tag[TestEffect])
+            val result =
+                for
+                    outer <- outerEffect
+                    inner <- RuntimeEffect.boundary(innerEffect) { isolatedEffect =>
+                        isolatedEffect.map(_ * 2)
+                    }
+                yield outer + inner
+            val handled = RuntimeEffect.handle(Tag[TestEffect], 20, _ => 20)(result)
+            assert(handled.eval == 60)
+        }
+
+        "nested boundaries" in {
+            val effect: Int < TestEffect = RuntimeEffect.suspend(Tag[TestEffect])
+            val result: Int < TestEffect =
+                RuntimeEffect.boundary(effect) { outer =>
+                    RuntimeEffect.boundary(outer) { inner =>
+                        inner.map(_ * 2)
+                    }
+                }
+            val handled: Int < Any = RuntimeEffect.handle(Tag[TestEffect], 10, _ => 21)(result)
+            assert(handled.eval == 20)
+        }
+
+        "two effects" in {
+            val effect1 = RuntimeEffect.suspend[Int, TestEffect](Tag[TestEffect])
+            val effect2 = RuntimeEffect.suspend[String, AnotherEffect](Tag[AnotherEffect])
+
+            val effect: String < (TestEffect & AnotherEffect) =
+                for
+                    i <- effect1
+                    s <- effect2
+                yield s"$i-$s"
+
+            val result = RuntimeEffect.boundary(effect) { isolated =>
+                val _: String < Any = isolated
+                isolated.map(_.toUpperCase)
+            }
+
+            val handled = RuntimeEffect.handle(Tag[TestEffect], 10, _ => 42) {
+                RuntimeEffect.handle(Tag[AnotherEffect], "default", _.reverse)(result)
+            }
+
+            assert(handled.eval == "10-DEFAULT")
         }
     }
 
