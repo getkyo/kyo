@@ -4,6 +4,7 @@ import internal.*
 import kyo.Tag
 import kyo2.bug
 import kyo2.isNull
+import scala.util.NotGiven
 
 abstract class RuntimeEffect[+A]
 
@@ -75,14 +76,12 @@ object RuntimeEffect:
         case _                => S
 
     def boundary[A, B, S, S2](v: A < S)(
-        f: (() => A < WithoutRuntimeEffects[S]) => B < S2
+        f: A < WithoutRuntimeEffects[S] => B < S2
     )(using _frame: Frame): B < (S & S2) =
         new KyoDefer[B, S & S2]:
             def frame = _frame
             def apply(ign: Unit, values: Values)(using runtime: Runtime) =
-                val state =
-                    if isNull(runtime) then Runtime.local.get().save(values)
-                    else runtime.save(values)
+                val state = runtime.save(values)
                 def boundaryLoop(v: A < S): A < S =
                     v match
                         case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
@@ -100,7 +99,7 @@ object RuntimeEffect:
                                 end apply
                         case _ =>
                             v
-                f(() => boundaryLoop(v).asInstanceOf[A < WithoutRuntimeEffects[S]])
+                f(Effect.defer(boundaryLoop(v).asInstanceOf[A < WithoutRuntimeEffects[S]]))
             end apply
         end new
     end boundary
