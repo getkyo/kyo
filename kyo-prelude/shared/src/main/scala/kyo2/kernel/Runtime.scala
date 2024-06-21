@@ -15,8 +15,7 @@ final class Runtime(initDepth: Int, initState: Runtime.State):
     private val trace         = Runtime.copyTrace(initState.trace, traceIdx)
 
     private def enter(_frame: Frame): Int =
-        require(Thread.currentThread eq owner, "Leaked runtime! " + (Thread.currentThread, owner))
-        if depth < maxStackDepth then
+        if (Thread.currentThread eq owner) && depth < maxStackDepth then
             pushFrame(_frame)
             val depth = this.depth
             this.depth = depth + 1
