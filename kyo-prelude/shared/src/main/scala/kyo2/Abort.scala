@@ -5,6 +5,7 @@ import kernel.Const
 import kernel.Effect
 import kernel.Frame
 import kyo.Tag
+import scala.annotation.targetName
 import scala.reflect.ClassTag
 import scala.util.Failure
 import scala.util.Success
@@ -17,7 +18,7 @@ object Abort:
     private inline def erasedTag[E]: Tag[Abort[E]] = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
     inline def fail[E](inline value: E): Nothing < Abort[E] =
-        Effect.suspend[Any](erasedTag[E], value, _ => ???)
+        Effect.suspendMap[Any](erasedTag[E], value)(_ => ???)
 
     inline def when[E](b: Boolean)(inline value: E)(
         using inline tag: Tag[Abort[E]]
@@ -36,10 +37,17 @@ object Abort:
                 case None    => fail(None)
                 case Some(v) => v
 
-        inline def apply[T](e: Try[T]): T < Abort[Throwable] =
+        inline def apply[A](e: Try[A]): A < Abort[Throwable] =
             e match
                 case Success(t) => t
                 case Failure(v) => fail(v)
+
+        inline def apply[A](r: Result[A]): A < Abort[Throwable] =
+            r.fold(fail)(v => v)
+
+        @targetName("maybe")
+        inline def apply[A](m: Maybe[A]): A < Abort[Maybe.Empty] =
+            m.fold(fail(Maybe.Empty))(v => v)
     end GetOps
 
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
