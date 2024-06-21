@@ -29,7 +29,6 @@ lazy val `kyo-settings` = Seq(
     scalaVersion       := scala3Version,
     crossScalaVersions := List(scala3Version),
     scalacOptions     ++= scalacOptionTokens(compilerOptions).value,
-    Test / scalacOptions --= scalacOptionToken(ScalacOptions.languageStrictEquality).value,
     scalafmtOnCompile := false,
     organization      := "io.getkyo",
     homepage          := Some(url("https://getkyo.io")),
