@@ -9,7 +9,6 @@ import scala.concurrent.Future
 import scala.reflect.ClassTag
 import scala.util.NotGiven
 
-
 extension [A, S](effect: A < S)
     @targetName("zipRight")
     def *>[A1, S1](next: => A1 < S1): A1 < (S & S1) =
@@ -304,7 +303,7 @@ extension [A, S, E](effect: A < (S & Envs[E]))
         using
         fl: Flat[A],
         he: HasEnvs[E1, E] { type Remainder = SR },
-        t: Tag[E1],
+        t: Tag[E1]
     ): A < (S & S1 & SR) =
         dependency.map(d => Envs.run[E1, A, S, E, SR](d)(effect))
 
@@ -423,5 +422,3 @@ final class ProvideAsPartiallyApplied[A, S, E, E1, ER](
     def apply[S1](dependency: E1 < S1): A < (S & S1 & ER) =
         dependency.map(d => Envs.run(d)(effect))
 end ProvideAsPartiallyApplied
-
-

@@ -1,8 +1,8 @@
 package KyoTest
 
 import kyo.*
-import scala.concurrent.Future
 import kyoTest.KyoTest
+import scala.concurrent.Future
 
 class resourcesTest extends KyoTest:
 
@@ -21,7 +21,7 @@ class resourcesTest extends KyoTest:
                 yield result
             val beforeResources                = scala.concurrent.Future(assert(state == 0))
             val handledResources: Int < Fibers = Resources.run(effect)
-            val handled = IOs.run(Fibers.run(handledResources).map(_.toFuture))
+            val handled                        = IOs.run(Fibers.run(handledResources).map(_.toFuture))
             for
                 assertion1 <- beforeResources
                 assertion2 <- handled.pure.map(_ == 50)
@@ -45,9 +45,9 @@ class resourcesTest extends KyoTest:
             var state = 0
             val closeable = new AutoCloseable:
                 override def close(): Unit = state = 100
-            val effect     = Kyo.fromAutoCloseable(closeable)
+            val effect = Kyo.fromAutoCloseable(closeable)
             assert(state == 0)
-            val handled    = IOs.run(Fibers.run(Resources.run(effect)).map(_.toFuture))
+            val handled = IOs.run(Fibers.run(Resources.run(effect)).map(_.toFuture))
             for
                 ass2 <- handled.pure.map(v => assert(v.equals(closeable)))
                 ass3 <- Future(assert(state == 100))

@@ -6,10 +6,9 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.concurrent.Future
 import scala.reflect.ClassTag
+import scala.util.Failure
 import scala.util.NotGiven
 import scala.util.Success
-import scala.util.Failure
-    
 
 extension (kyoObject: Kyo.type)
     def acquireRelease[A, S](acquire: => A < S)(release: A => Unit < IOs): A < (S & Resources) =
@@ -86,8 +85,7 @@ extension (kyoObject: Kyo.type)
     def fromFuture[A: Flat, S](future: => Future[A] < S): A < (S & Fibers) =
         future.map(f => Fibers.fromFuture(f))
 
-    def fromPromiseScala[A: Flat, S](promise: => scala.concurrent.Promise[A] < S)
-        : A < (S & Fibers) =
+    def fromPromiseScala[A: Flat, S](promise: => scala.concurrent.Promise[A] < S): A < (S & Fibers) =
         promise.map(p => fromFuture(p.future))
 
     def fromOption[A, S](option: => Option[A] < S): A < (S & Options) =
@@ -207,4 +205,4 @@ extension (kyoObject: Kyo.type)
         sequence.map(seq =>
             foreachPar(seq.map(_.unit))(identity).unit
         )
-
+end extension

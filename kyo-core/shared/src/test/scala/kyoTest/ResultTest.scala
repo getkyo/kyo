@@ -373,4 +373,61 @@ class ResultTest extends KyoTest:
         }
     }
 
+    "for comprehensions" - {
+        "yield a Success result" in {
+            val result =
+                for
+                    x <- Success(1)
+                    y <- Success(2)
+                    z <- Success(3)
+                yield x + y + z
+
+            assert(result == Success(6))
+        }
+
+        "short-circuit on Failure" in {
+            val result =
+                for
+                    x <- Success(1)
+                    y <- Failure[Int](new Exception("error"))
+                    z <- Success(3)
+                yield x + y + z
+
+            assert(result.isFailure)
+        }
+
+        "handle exceptions in the yield" in {
+            val result =
+                for
+                    x <- Success(1)
+                    y <- Success(2)
+                yield throw new Exception("error")
+
+            assert(result.isFailure)
+        }
+
+        "sequence operations with flatMap" in {
+            val result =
+                for
+                    x <- Success(1)
+                    y <- Success(2)
+                    if y > 0
+                    z <- Success(3)
+                yield x + y + z
+
+            assert(result == Success(6))
+        }
+
+        "fail the comprehension with a guard" in {
+            val result =
+                for
+                    x <- Success(1)
+                    y <- Success(-1)
+                    if y > 0
+                yield x + y
+
+            assert(result.isFailure)
+        }
+    }
+
 end ResultTest

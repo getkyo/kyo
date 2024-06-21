@@ -1,9 +1,8 @@
 package KyoTest
 
 import kyo.*
-import scala.util.Try
 import kyoTest.KyoTest
-
+import scala.util.Try
 
 class abortsTest extends KyoTest:
 
@@ -79,7 +78,7 @@ class abortsTest extends KyoTest:
                 assert(handledFailureOptions.pure == None)
                 val success: Int < Aborts[String | Boolean | Double | Int] = 23
                 val successOptions: Int < Options                          = success.abortsToOptions
-                val handledSuccessOptions = Options.run(successOptions)
+                val handledSuccessOptions                                  = Options.run(successOptions)
                 assert(handledSuccessOptions.pure == Some(23))
             }
 
@@ -89,13 +88,13 @@ class abortsTest extends KyoTest:
                 val failureOptions: Int < (Options & Aborts[Boolean | Double | Int]) =
                     failure.someAbortsToOptions[String]
                 val handledFailureOptions = Options.run(failureOptions)
-                val handledFailureAborts = Aborts.run[Boolean | Double | Int](handledFailureOptions)
+                val handledFailureAborts  = Aborts.run[Boolean | Double | Int](handledFailureOptions)
                 assert(handledFailureAborts.pure == Right(None))
                 val success: Int < Aborts[String | Boolean | Double | Int] = 23
                 val successOptions: Int < (Options & Aborts[Boolean | Double | Int]) =
                     success.someAbortsToOptions[String]
                 val handledSuccessOptions = Options.run(successOptions)
-                val handledSuccessAborts = Aborts.run[Boolean | Double | Int](handledSuccessOptions)
+                val handledSuccessAborts  = Aborts.run[Boolean | Double | Int](handledSuccessOptions)
                 assert(handledSuccessAborts.pure == Right(Some(23)))
             }
 
@@ -107,7 +106,7 @@ class abortsTest extends KyoTest:
                 assert(handledFailureSeqs.pure.isEmpty)
                 val success: Int < Aborts[String | Boolean | Double | Int] = 23
                 val successSeqs: Int < Choices                             = success.abortsToChoices
-                val handledSuccessSeqs = Choices.run(successSeqs)
+                val handledSuccessSeqs                                     = Choices.run(successSeqs)
                 assert(handledSuccessSeqs.pure == Seq(23))
             }
 
@@ -135,7 +134,7 @@ class abortsTest extends KyoTest:
                 val handledFailure: Int < Any =
                     failure.catchAborts {
                         case "failure" => 100
-                        case other     =>      200
+                        case other     => 200
                     }
                 assert(handledFailure.pure == 100)
                 val success: Int < Aborts[String | Boolean | Double | Int] = 23
@@ -146,7 +145,6 @@ class abortsTest extends KyoTest:
                     }
                 assert(handledSuccess.pure == 23)
             }
-                
 
             "should catch all aborts with a partial function" in {
                 val failure: Int < Aborts[String | Boolean | Double | Int] =
