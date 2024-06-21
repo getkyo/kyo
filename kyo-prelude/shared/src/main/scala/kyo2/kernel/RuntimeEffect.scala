@@ -16,7 +16,7 @@ object RuntimeEffect:
     inline def suspend[A, E <: RuntimeEffect[A], B, S](
         inline tag: Tag[E]
     )(
-        inline f: A => B < S
+        inline f: Runtime ?=> A => B < S
     ): B < (E & S) =
         suspend(tag, bug("Unexpected pending runtime effect: " + tag.show))(f)
 
