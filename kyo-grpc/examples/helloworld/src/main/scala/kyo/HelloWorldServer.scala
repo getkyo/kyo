@@ -3,6 +3,7 @@ package kyo
 import io.grpc.*
 import io.grpc.examples.helloworld.helloworld.{Greeter, HelloReply, HelloRequest}
 import kyo.grpc.*
+import sun.misc.{Signal, SignalHandler}
 
 object GreeterService extends Greeter:
   override def sayHello(request: HelloRequest): HelloReply < GrpcResponses =
@@ -10,10 +11,7 @@ object GreeterService extends Greeter:
       _ <- Consoles.run(Consoles.println(s"Got request: $request"))
     } yield HelloReply(s"Hello, ${request.name}")
 
-object HelloWorldServer extends KyoApp:
-
-  private def buildServer(port: Int, services: Seq[ServerServiceDefinition]): Server =
-    services.foldLeft(ServerBuilder.forPort(port))(_.addService(_)).build()
+object HelloWorldServer extends KyoGrpServerApp:
 
   private val port: Int = 9001
 
@@ -23,18 +21,16 @@ object HelloWorldServer extends KyoApp:
 
   run {
     for {
-      // TODO: Get the shutdown working properly.
       _ <- Consoles.println(s"Server is running on port $port. Press Ctrl-C to stop.")
       server <- Resources.acquireRelease(IOs(buildServer(port, services).start())) { (server: Server) =>
-        IOs.run(Consoles.run(Consoles.print("Shutting down...")))
-        // TODO: Add a timeout.
-        server.shutdown().awaitTermination()
-        IOs.run(Consoles.run(Consoles.println("Done.")))
+        for {
+          _ <- Consoles.run(Consoles.print("Shutting down..."))
+          _ <- IOs(server.shutdown().awaitTermination())
+          _ <- Consoles.run(Consoles.println("Done."))
+        } yield ()
       }
-      _ <- Fibers.sleep(Duration.Infinity)
-    } yield {
-      "Goodbye!"
-    }
+      s <- waitForInterrupt
+    } yield "Goodbye!"
   }
 
 end HelloWorldServer
