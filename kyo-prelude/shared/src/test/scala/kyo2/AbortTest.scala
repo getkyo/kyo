@@ -81,6 +81,25 @@ class AbortsTest extends Test:
         }
     }
 
+    "get" - {
+        "either" in {
+            assert(Abort.run(Abort.get(Left(1))).eval == Left(1))
+            assert(Abort.run(Abort.get[Ex1](Right(1))).eval == Right(1))
+        }
+        "result" in {
+            assert(Abort.run(Abort.get(Result.success(1))).eval == Right(1))
+            assert(Abort.run(Abort.get(Result.failure(ex1))).eval == Left(ex1))
+        }
+        "option" in {
+            assert(Abort.run(Abort.get(Option.empty)).eval == Left(None))
+            assert(Abort.run(Abort.get(Some(1))).eval == Right(1))
+        }
+        "maybe" in {
+            assert(Abort.run(Abort.get(Maybe.empty)).eval == Left(Maybe.Empty))
+            assert(Abort.run(Abort.get(Maybe(1))).eval == Right(1))
+        }
+    }
+
     "effectful" - {
         "success" - {
             val v: Int < Abort[Ex1] = kyo2.Abort.get[Ex1](Right(1))
