@@ -55,7 +55,7 @@ object Effect:
             inline tag: Tag[E],
             v: A < (E & S)
         )(
-            inline handle: [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
+            inline handle: Runtime ?=> [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
             inline done: A => B < S3 = (v: A) => v,
             accept: [C] => (I[C], Tag[Any]) => Boolean = [C] => (v: I[C], tag2: Tag[Any]) => tag =:= tag2
         )(using inline _frame: Frame, runtime: Runtime): B < (S & S2 & S3) =
@@ -86,8 +86,8 @@ object Effect:
             inline tag2: Tag[E2],
             v: A < (E1 & E2 & S)
         )(
-            inline handle1: [C] => (I1[C], O1[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2),
-            inline handle2: [C] => (I2[C], O2[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2)
+            inline handle1: Runtime ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2),
+            inline handle2: Runtime ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2)
         )(using inline _frame: Frame, runtime: Runtime): A < (S & S2) =
             def handle2Loop(kyo: A < (E1 & E2 & S & S2), values: Values)(using Runtime): A < (S & S2) =
                 kyo match
@@ -125,9 +125,9 @@ object Effect:
             inline tag3: Tag[E3],
             v: A < (E1 & E2 & E3 & S)
         )(
-            inline handle1: [C] => (I1[C], O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
-            inline handle2: [C] => (I2[C], O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
-            inline handle3: [C] => (I3[C], O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
+            inline handle1: Runtime ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle2: Runtime ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle3: Runtime ?=> [C] => (I3[C], O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
         )(using inline _frame: Frame, runtime: Runtime): A < (S & S2) =
             def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), values: Values)(using Runtime): A < (S & S2) =
                 v match
@@ -166,7 +166,7 @@ object Effect:
             inline state: State,
             v: A < (E & S)
         )(
-            inline handle: [C] => (I[C], State, O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)),
+            inline handle: Runtime ?=> [C] => (I[C], State, O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)),
             inline done: (State, A) => U < (S & S2) = (_: State, v: A) => v,
             accept: [C] => (I[C], Tag[Any]) => Boolean = [C] => (v: I[C], tag2: Tag[Any]) => tag =:= tag2
         )(using inline _frame: Frame, runtime: Runtime): U < (S & S2) =
