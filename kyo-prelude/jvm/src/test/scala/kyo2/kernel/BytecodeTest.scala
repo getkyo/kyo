@@ -11,6 +11,9 @@ class BytecodeTest extends Test:
     class TestSuspend:
         def test() = Effect.suspend[Int](Tag[TestEffect.type], 42)
 
+    class TestSuspendMap:
+        def test() = Effect.suspendMap[Int](Tag[TestEffect.type], 42)(_ + 1)
+
     class TestMap:
         def test(v: Int < TestEffect.type) = v.map(_ + 1)
 
@@ -19,17 +22,22 @@ class BytecodeTest extends Test:
 
     "suspend" in {
         val map = methodBytecodeSize[TestSuspend]
-        assert(map == Map("test" -> 30))
+        assert(map == Map("test" -> 20))
+    }
+
+    "suspendMap" in {
+        val map = methodBytecodeSize[TestSuspendMap]
+        assert(map == Map("test" -> 20))
     }
 
     "map" in {
         val map = methodBytecodeSize[TestMap]
-        assert(map == Map("test" -> 30, "anonfun" -> 14, "mapLoop" -> 164))
+        assert(map == Map("test" -> 30, "anonfun" -> 14, "mapLoop" -> 156))
     }
 
     "handle" in {
         val map = methodBytecodeSize[TestHandle]
-        assert(map == Map("test" -> 56, "anonfun" -> 17, "handleLoop" -> 274))
+        assert(map == Map("test" -> 56, "anonfun" -> 17, "handleLoop" -> 264))
     }
 
     def methodBytecodeSize[T](using ct: ClassTag[T]): Map[String, Int] =

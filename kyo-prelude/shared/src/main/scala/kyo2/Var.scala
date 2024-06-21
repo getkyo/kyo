@@ -15,7 +15,7 @@ object Var:
         inline def apply[A, S](inline f: V => A < S)(
             using inline tag: Tag[Var[V]]
         ): A < (Var[V] & S) =
-            Effect.suspend[V](tag, internal.get[V], f)
+            Effect.suspendMap[V](tag, internal.get[V])(f)
     end UseOps
 
     inline def use[V]: UseOps[V] = UseOps(())
