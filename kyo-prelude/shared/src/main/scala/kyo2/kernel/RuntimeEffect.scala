@@ -37,11 +37,8 @@ object RuntimeEffect:
             def apply(v: Unit, values: Values)(using Runtime) =
                 Runtime.handle(
                     suspend = this,
-                    continue = runtime =>
-                        val value = values.getOrElse(_tag, default).asInstanceOf[A]
-                        f(using runtime)(value)
+                    continue = f(values.getOrElse(_tag, default).asInstanceOf[A])
                 )
-            end apply
 
     inline def handle[A, E <: RuntimeEffect[A], B, S](
         inline _tag: Tag[E],

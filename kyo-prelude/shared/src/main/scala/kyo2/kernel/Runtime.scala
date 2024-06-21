@@ -14,12 +14,10 @@ final class Runtime(initDepth: Int, initState: Runtime.State):
     private var traceIdx      = initState.traceIdx
     private val trace         = Runtime.copyTrace(initState.trace, traceIdx)
 
-    private def enter(_frame: Frame, force: Boolean = false): Int =
+    private def enter(_frame: Frame): Int =
         require(Thread.currentThread eq owner, "Leaked runtime! " + (Thread.currentThread, owner))
-        if force || depth < maxStackDepth then
-            val traceIdx = this.traceIdx
-            trace(traceIdx & (maxTraceFrames - 1)) = _frame
-            this.traceIdx = traceIdx + 1
+        if depth < maxStackDepth then
+            pushFrame(_frame)
             val depth = this.depth
             this.depth = depth + 1
             depth + 1
@@ -27,6 +25,12 @@ final class Runtime(initDepth: Int, initState: Runtime.State):
             -1
         end if
     end enter
+
+    private def pushFrame(frame: Frame): Unit =
+        val traceIdx = this.traceIdx
+        trace(traceIdx & (maxTraceFrames - 1)) = frame
+        this.traceIdx = traceIdx + 1
+    end pushFrame
 
     private[kernel] def clearTrace(): Unit =
         traceIdx = 0
@@ -43,13 +47,13 @@ object Runtime:
     implicit inline def get: Runtime = local.get()
 
     private[kernel] inline def eval[T](
-        inline f: Runtime => T
+        inline f: => T
     )(using inline frame: Frame): T =
         val parent = Runtime.local.get()
         val self   = new Runtime(0, State.empty)
         Runtime.local.set(self)
-        self.enter(frame, force = true)
-        try f(self)
+        self.pushFrame(frame)
+        try f
         catch
             case ex: Throwable if NonFatal(ex) =>
                 handle(self, ex)
@@ -59,14 +63,13 @@ object Runtime:
     end eval
 
     private[kernel] inline def handle[A, S](
-        inline suspend: => A < S,
-        inline continue: Runtime => A < S
+        inline suspend: Runtime ?=> A < S,
+        inline continue: => A < S
     )(using inline frame: Frame, self: Runtime): A < S =
         self.enter(frame) match
-            case -1 =>
-                Effect.defer(suspend)
+            case -1 => Effect.defer(suspend)
             case depth =>
-                try continue(self)
+                try continue
                 finally self.exit(depth)
     end handle
 

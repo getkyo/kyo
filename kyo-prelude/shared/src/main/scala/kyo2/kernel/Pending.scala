@@ -46,7 +46,7 @@ object `<`:
                         val value = v.asInstanceOf[A]
                         Runtime.handle(
                             suspend = mapLoop(value),
-                            continue = runtime => f(using runtime)(value)
+                            continue = f(value)
                         )
             mapLoop(v)
         end map
@@ -69,7 +69,7 @@ object `<`:
                         v.asInstanceOf[T]
                 end match
             end evalLoop
-            Runtime.eval(runtime => evalLoop(v)(using runtime))
+            Runtime.eval(evalLoop(v))
         end eval
     end extension
 end `<`

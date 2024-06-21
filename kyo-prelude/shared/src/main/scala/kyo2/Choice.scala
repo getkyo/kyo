@@ -13,7 +13,7 @@ object Choice:
     inline def eval[T, U, S](seq: Seq[T])(inline f: T => U < S): U < (Choice & S) =
         seq match
             case Seq(head) => f(head)
-            case seq       => Effect.suspend[T](Tag[Choice], seq, f)
+            case seq       => Effect.suspendMap[T](Tag[Choice], seq)(f)
 
     inline def dropIf[S](condition: Boolean): Unit < (Choice & S) =
         if condition then drop
