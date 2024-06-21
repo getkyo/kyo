@@ -1,5 +1,6 @@
 package kyo2.kernel
 
+import kyo.Tag
 import kyo2.Test
 import kyo2.kernel.*
 
@@ -33,8 +34,9 @@ class PendingTest extends Test:
     }
 
     "flatten" in {
-        val x: Int < Any < Any = (10: Int < Any): Int < Any < Any
-        val y: Int < Any       = x.flatten
+        def widen[A](v: A): A < Any = v
+        val x: Int < Any < Any      = widen(10: Int < Any)
+        val y: Int < Any            = x.flatten
         assert(y.eval == 10)
     }
 
@@ -62,9 +64,30 @@ class PendingTest extends Test:
         assert(x.eval == 10)
     }
 
-    "eval should not compile for specific effects" in {
+    "eval should not compile for pending effects" in {
         trait CustomEffect extends Effect[Const[Unit], Const[Unit]]
         assertDoesNotCompile("val x: Int < CustomEffect = 5; x.eval")
+    }
+
+    "lift" - {
+
+        sealed trait TestEffect extends Effect[Const[Unit], Const[Unit]]
+        val effect: Unit < TestEffect = Effect.suspend[Any](Tag[TestEffect], ())
+
+        "allows lifting pure values" in {
+            val x: Int < Any = 5
+            assert(x.eval == 5)
+        }
+
+        "prevents lifting nested kyo computations" - {
+            "method effect mismatch" in {
+                def test1(v: Int < Any) = v.map(_ + 1)
+                assertDoesNotCompile("test1(effect)")
+            }
+            "inference widening" in {
+                assertDoesNotCompile("val _: Int < Any < Any = (1: Int < Any)")
+            }
+        }
     }
 
 end PendingTest

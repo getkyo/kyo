@@ -5,7 +5,7 @@ import scala.annotation.tailrec
 
 class KyoTest extends Test:
 
-    def widen[A](v: A < Any) = v
+    def widen[A](v: A): A < Any = v
 
     "toString JVM" taggedAs jvmOnly in run {
         assert(Env.use[Int](_ + 1).toString() ==

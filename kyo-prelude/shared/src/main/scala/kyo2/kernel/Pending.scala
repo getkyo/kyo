@@ -4,6 +4,7 @@ import internal.*
 import kyo.*
 import scala.annotation.tailrec
 import scala.language.implicitConversions
+import scala.util.NotGiven
 import scala.util.control.NonFatal
 
 case class <[+A, -S](private val curr: A | Kyo[A, S]) extends AnyVal
@@ -12,7 +13,7 @@ object `<`:
 
     implicit private[kyo2] inline def apply[A, S](p: Kyo[A, S]): A < S = new <(p)
 
-    implicit inline def lift[A, S](v: A): A < S = <(v)
+    implicit inline def lift[A, S](v: A)(using inline ng: NotGiven[A <:< (Any < Nothing)]): A < S = <(v)
 
     extension [A, S](inline v: A < S)
 
