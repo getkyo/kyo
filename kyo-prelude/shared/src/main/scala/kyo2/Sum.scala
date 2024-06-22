@@ -13,7 +13,7 @@ object Sum:
     inline def add[V](inline v: V)(using inline tag: Tag[Sum[V]]): Unit < Sum[V] =
         Effect.suspend[Any](tag, v)
 
-    case class RunOps[V](ign: Unit) extends AnyVal:
+    case class RunOps[V](dummy: Unit) extends AnyVal:
         def apply[T, S](v: T < (Sum[V] & S))(
             using
             tag: Tag[Sum[V]],

@@ -11,10 +11,10 @@ object Effect:
     def defer[A, S](f: Safepoint ?=> A < S): A < S =
         new KyoDefer[A, S]:
             def frame = summon[Frame]
-            def apply(ign: Unit, values: Values)(using Safepoint) =
+            def apply(dummy: Unit, values: Values)(using Safepoint) =
                 f
 
-    case class SuspendOps[A](ign: Unit) extends AnyVal:
+    case class SuspendOps[A](dummy: Unit) extends AnyVal:
 
         inline def apply[I[_], O[_], E <: Effect[I, O]](
             inline _tag: Tag[E],
@@ -30,7 +30,7 @@ object Effect:
 
     inline def suspend[A]: SuspendOps[A] = SuspendOps(())
 
-    class SuspendMapOps[A](ign: Unit) extends AnyVal:
+    class SuspendMapOps[A](dummy: Unit) extends AnyVal:
         inline def apply[I[_], O[_], E <: Effect[I, O], B, S](
             inline _tag: Tag[E],
             inline _input: I[A]

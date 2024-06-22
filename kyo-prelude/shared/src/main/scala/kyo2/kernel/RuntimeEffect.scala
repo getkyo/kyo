@@ -77,7 +77,7 @@ object RuntimeEffect:
     )(using _frame: Frame): B < (S & S2) =
         new KyoDefer[B, S & S2]:
             def frame = _frame
-            def apply(ign: Unit, values: Values)(using safepoint: Safepoint) =
+            def apply(dummy: Unit, values: Values)(using safepoint: Safepoint) =
                 val state = safepoint.save(values)
                 def boundaryLoop(v: A < S): A < S =
                     v match

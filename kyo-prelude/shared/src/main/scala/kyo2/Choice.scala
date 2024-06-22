@@ -15,7 +15,7 @@ object Choice:
             case Seq(head) => f(head)
             case seq       => Effect.suspendMap[T](Tag[Choice], seq)(f)
 
-    inline def dropIf[S](condition: Boolean): Unit < (Choice & S) =
+    inline def dropIf(condition: Boolean): Unit < Choice =
         if condition then drop
         else ()
 

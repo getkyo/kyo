@@ -26,7 +26,7 @@ object Abort:
         if b then fail(value)
         else ()
 
-    class GetOps[E >: Nothing](ign: Unit) extends AnyVal:
+    class GetOps[E >: Nothing](dummy: Unit) extends AnyVal:
         inline def apply[A](either: Either[E, A]): A < Abort[E] =
             either match
                 case Right(value) => value
@@ -52,7 +52,7 @@ object Abort:
 
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
-    class RunOps[E >: Nothing](ign: Unit) extends AnyVal:
+    class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
         def apply[E0 <: E, A, B, ES, ER](v: A < (Abort[ES] & B))(
             using
             h: HasAbort[E0, ES] { type Remainder = ER },
@@ -75,7 +75,7 @@ object Abort:
 
     inline def run[E >: Nothing]: RunOps[E] = RunOps(())
 
-    class CatchingOps[E <: Throwable](ign: Unit) extends AnyVal:
+    class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
         def apply[A, B](v: => A < B)(
             using
             ct: ClassTag[E],
