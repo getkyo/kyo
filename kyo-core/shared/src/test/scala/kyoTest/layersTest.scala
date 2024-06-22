@@ -157,31 +157,44 @@ class layersTest extends KyoTest:
     }
     "make" - {
         "none" in {
-            assertDoesNotCompile("""Layers.make[String]()""")
+            assertDoesNotCompile("""Layers.init[String]()""")
         }
         "missing Target" in {
             val a = Layers(true)
-            assertDoesNotCompile("""Layers.make(a)""")
+            assertDoesNotCompile("""Layers.init(a)""")
         }
         "circular dependency" in {
             val a = Layers.from((s: String) => s.size)
             val b = Layers.from((i: Int) => i % 2 == 0)
             val c = Layers.from((b: Boolean) => b.toString)
 
-            assertDoesNotCompile("""Layers.make[String](a, b, c)""")
+            assertDoesNotCompile("""Layers.init[String](a, b, c)""")
         }
         "missing input" in {
             val a = Layers.from((s: String) => s.size)
             val b = Layers.from((i: Int) => i % 2 == 0)
 
-            assertDoesNotCompile("""Layers.make[Boolean](a, b)""")
+            assertDoesNotCompile("""Layers.init[Boolean](a, b)""")
+        }
+        "missing multiple inputs" in {
+            val a = Layers.from((s: String) => s.isEmpty)
+            val b = Layers.from((i: Int) => i.toDouble)
+            val c = Layers.from((_: Boolean, _: Double) => 'c')
+
+            assertDoesNotCompile("""Layers.init[Char](a, b, c)""")
         }
         "missing output" in {
             val a = Layers(42)
             val b = Layers.from((i: Int) => i.toDouble)
             val c = Layers.from((d: Double) => d.toLong)
 
-            assertDoesNotCompile("""Layers.make[String](a, b, c)""")
+            assertDoesNotCompile("""Layers.init[String](a, b, c)""")
+        }
+        "ambigious input" in {
+            val a = Layers(42)
+            val b = Layers(42)
+
+            assertDoesNotCompile("""Layers.init[Int](a, b)""")
         }
         "complex layer" in run {
             val s = Layers("Start")
@@ -197,7 +210,7 @@ class layersTest extends KyoTest:
             case class GrandChild(several: Several, age: Int, parent: Child) extends Parent
             val grandChild = Layers.from((several, age, child) => GrandChild(several, age, child))
 
-            Layers.make[GrandChild](s, i, b, several, child, grandChild).run.map { env =>
+            Layers.init[GrandChild](s, i, b, several, child, grandChild).run.map { env =>
                 val grandchild = env.get[GrandChild]
                 assert(grandchild.several.s == "Start")
                 assert(grandchild.several.i == 5)
@@ -217,41 +230,41 @@ class layersTest extends KyoTest:
             val b = Layers.from((a: A) => Aborts.when(false)("").andThen(B(a)))
             val c = Layers.from((b: B) => Vars.get[Unit].andThen(C(b)))
 
-            assertCompiles("""Layers.make[C](a, b, c)""")
+            assertCompiles("""Layers.init[C](a, b, c)""")
         }
         "pruneable inputs" in pendingUntilFixed {
             val a = Layers("")
             val b = Layers(true)
             val c = Layers(0)
 
-            assertDoesNotCompile("""Layers.make[String](a, b, c)""")
+            assertDoesNotCompile("""Layers.init[String](a, b, c)""")
         }
     }
-    "provide" - {
+    "runLayers" - {
         "no layer" in {
-            assertDoesNotCompile("""Envs.get[Boolean].provide()""")
+            assertDoesNotCompile("""Envs.runLayers()(Envs.get[Boolean])""")
         }
         "one layer" in run {
             class Foo:
                 def bar: Boolean = true
             val foo = Layers(Foo())
-            Envs.get[Foo].map(_.bar).map(assert(_)).provide(foo)
+            Envs.runLayers(foo)(Envs.get[Foo].map(_.bar).map(assert(_)))
         }
         "multiple layers" in run {
             val a = Layers(42)
             val b = Layers.from((i: Int) => i.toString)
             val c = Layers.from((s: String) => s.length % 2 == 0)
 
-            Envs.get[Boolean].map(assert(_)).provide(a, b, c)
+            Envs.runLayers(a, b, c)(Envs.get[Boolean].map(assert(_)))
         }
         "missing layer" in {
             val c = Layers('c')
             val d = Layers.from((c: Char) => c.isDigit)
 
-            assertDoesNotCompile("""Envs.get[String].provide(c, d)""")
+            assertDoesNotCompile("""Envs.runLayers(c, d)(Envs.get[String])""")
         }
         "intersection" in run {
-            Envs.get[Int].map(_ => Envs.get[String]).map(_ => succeed).provide(Layers(42), Layers("hello"))
+            Envs.runLayers(Layers(42), Layers("hello"))(Envs.get[Int].map(_ => Envs.get[String]).map(_ => succeed))
         }
     }
 end layersTest

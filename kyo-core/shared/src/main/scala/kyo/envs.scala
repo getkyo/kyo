@@ -34,6 +34,12 @@ object Envs:
         envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
     end runTypeMap
 
+    transparent inline def runLayers[T, S, V](inline layers: Layer[?, ?]*)(value: T < (Envs[V] & S)): T < (S & IOs) = {
+        Layers.init[V](layers*).run.map: env =>
+            runTypeMap(env)(value)
+    }.asInstanceOf[T < (S & IOs)]
+    end runLayers
+
     class UseDsl[V >: Nothing]:
         inline def apply[T, S](inline f: V => T < S)(
             using

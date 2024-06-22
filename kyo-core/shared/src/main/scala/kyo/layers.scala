@@ -5,14 +5,14 @@ import java.util.concurrent.ConcurrentHashMap as JConcurrentHashMap
 import kyo.core.*
 import scala.annotation.targetName
 
-sealed trait Layer[+Out, -S]:
+abstract class Layer[+Out, -S]:
     self =>
 
-    infix def to[Out2, S2, In2](that: Layer[Out2, Envs[In2] & S2]): Layer[Out2, S & S2]          = To(self, that)
-    infix def and[Out2, S2](that: Layer[Out2, S2]): Layer[Out & Out2, S & S2]                    = And(self, that)
-    infix def using[Out2, S2, In2](that: Layer[Out2, Envs[In2] & S2]): Layer[Out & Out2, S & S2] = self and (self to that)
+    final infix def to[Out2, S2, In2](that: Layer[Out2, Envs[In2] & S2]): Layer[Out2, S & S2]          = To(self, that)
+    final infix def and[Out2, S2](that: Layer[Out2, S2]): Layer[Out & Out2, S & S2]                    = And(self, that)
+    final infix def using[Out2, S2, In2](that: Layer[Out2, Envs[In2] & S2]): Layer[Out & Out2, S & S2] = self and (self to that)
 
-    private[kyo] def doRun(memoMap: JConcurrentHashMap[Layer[?, ?], Any] = JConcurrentHashMap()): TypeMap[Out] < (S & IOs) =
+    final private[kyo] def doRun(memoMap: JConcurrentHashMap[Layer[?, ?], Any] = JConcurrentHashMap()): TypeMap[Out] < (S & IOs) =
         type Expected = TypeMap[Out] < (S & IOs)
         memoMap.get(self) match
             case nullable if isNull(nullable) =>
@@ -52,7 +52,7 @@ object Layer:
 
     extension [In, Out, S](layer: Layer[Out, Envs[In] & S])
         def run[In1, R](using HasEnvs[In1, In] { type Remainder = R }): TypeMap[Out] < (S & R & IOs) =
-            layer.doRun().asInstanceOf
+            layer.doRun().asInstanceOf[TypeMap[Out] < (S & R & IOs)]
 end Layer
 
 object Layers:
@@ -90,7 +90,7 @@ object Layers:
             zip(Envs.get[A], Envs.get[B], Envs.get[C], Envs.get[D]).map { case (a, b, c, d) => f(a, b, c, d) }
         }
 
-    transparent inline def make[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
+    transparent inline def init[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
         kyo.internal.LayerMacros.make[Target](layers*)
 
 end Layers

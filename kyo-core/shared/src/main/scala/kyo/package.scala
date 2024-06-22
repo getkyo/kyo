@@ -7,13 +7,6 @@ package object kyo:
 
     object Kyo
 
-    extension [T, S, R](inline kyo: T < (S & Envs[R]))
-        inline def provide(inline layers: Layer[?, ?]*): T < (S & IOs) = {
-            Layers.make[R](layers*).run.map: env =>
-                Envs.runTypeMap(env)(kyo)
-        }.asInstanceOf
-    end extension
-
     extension [T, S](v: T < S)(using NotGiven[Any => S])
 
         inline def flatMap[U, S2](inline f: T => U < S2)(using Trace): U < (S & S2) =
