@@ -7,7 +7,7 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
 import scala.concurrent.duration.*
 
-class RuntimeTest extends Test:
+class SafepointTest extends Test:
 
     def fork[A](f: => A < Any): A < Any =
         Effect.defer {
@@ -17,11 +17,11 @@ class RuntimeTest extends Test:
 
     "does not allow capturing across threads" in {
         val computation = Effect.defer {
-            val runtime = summon[Runtime]
+            val runtime = summon[Safepoint]
             fork {
                 Effect.defer {
-                    val newRuntime = summon[Runtime]
-                    assert(runtime ne newRuntime)
+                    val newSafepoint = summon[Safepoint]
+                    assert(runtime ne newSafepoint)
                 }
             }
         }
@@ -31,20 +31,20 @@ class RuntimeTest extends Test:
 
     "allows resuming in the same thread" in {
         val computation = Effect.defer {
-            val runtime = summon[Runtime]
+            val runtime = summon[Safepoint]
             Effect.defer {
-                val sameRuntime = summon[Runtime]
-                assert(runtime eq sameRuntime)
+                val sameSafepoint = summon[Safepoint]
+                assert(runtime eq sameSafepoint)
             }
         }
 
         computation.eval
     }
 
-    "suspends when Runtime is from a different thread" in {
-        var capturedRuntime: Runtime = null
+    "suspends when Safepoint is from a different thread" in {
+        var capturedSafepoint: Safepoint = null
         val computation = Effect.defer {
-            capturedRuntime = summon[Runtime]
+            capturedSafepoint = summon[Safepoint]
             ()
         }
 
@@ -52,8 +52,8 @@ class RuntimeTest extends Test:
 
         val differentThreadComputation = fork {
             Effect.defer {
-                val currentRuntime = summon[Runtime]
-                assert(capturedRuntime ne currentRuntime)
+                val currentSafepoint = summon[Safepoint]
+                assert(capturedSafepoint ne currentSafepoint)
             }
         }
 
@@ -62,25 +62,25 @@ class RuntimeTest extends Test:
 
     "handles nested deferrals correctly" in {
         val computation = Effect.defer {
-            val outerRuntime = summon[Runtime]
+            val outerSafepoint = summon[Safepoint]
             Effect.defer {
-                val innerRuntime = summon[Runtime]
-                assert(outerRuntime eq innerRuntime)
+                val innerSafepoint = summon[Safepoint]
+                assert(outerSafepoint eq innerSafepoint)
             }
         }
 
         computation.eval
     }
 
-    "propagates Runtime through flatMap" in {
+    "propagates Safepoint through flatMap" in {
         val computation = Effect.defer {
-            val initialRuntime = summon[Runtime]
+            val initialSafepoint = summon[Safepoint]
             Effect.defer {
                 42
             }.flatMap { value =>
                 Effect.defer {
-                    val laterRuntime = summon[Runtime]
-                    assert(initialRuntime eq laterRuntime)
+                    val laterSafepoint = summon[Safepoint]
+                    assert(initialSafepoint eq laterSafepoint)
                     assert(value == 42)
                 }
             }
@@ -89,12 +89,12 @@ class RuntimeTest extends Test:
         computation.eval
     }
 
-    "maintains different Runtimes across forks" in {
+    "maintains different Safepoints across forks" in {
         val computation = Effect.defer {
-            val runtime1 = summon[Runtime]
+            val runtime1 = summon[Safepoint]
             fork {
                 Effect.defer {
-                    val runtime2 = summon[Runtime]
+                    val runtime2 = summon[Safepoint]
                     assert(runtime1 ne runtime2)
                 }
             }
@@ -104,16 +104,16 @@ class RuntimeTest extends Test:
     }
 
     "no leak between forked executions" in run {
-        var capturedRuntime: Runtime = null
+        var capturedSafepoint: Safepoint = null
 
         val computation1 = Effect.defer {
-            capturedRuntime = Runtime.get
+            capturedSafepoint = Safepoint.get
             42
         }
 
         val computation2 = Effect.defer {
-            val currentRuntime = Runtime.get
-            assert(currentRuntime ne capturedRuntime)
+            val currentSafepoint = Safepoint.get
+            assert(currentSafepoint ne capturedSafepoint)
             84
         }
 
@@ -124,12 +124,12 @@ class RuntimeTest extends Test:
         end for
     }
 
-    "new Runtime for nested eval calls" in run {
+    "new Safepoint for nested eval calls" in run {
         val outerComputation = Effect.defer {
-            val outerRuntime = Runtime.get
+            val outerSafepoint = Safepoint.get
             val innerComputation = Effect.defer {
-                val innerRuntime = Runtime.get
-                assert(innerRuntime ne outerRuntime)
+                val innerSafepoint = Safepoint.get
+                assert(innerSafepoint ne outerSafepoint)
                 21
             }
             innerComputation.eval * 2
@@ -138,29 +138,29 @@ class RuntimeTest extends Test:
         outerComputation.map(result => assert(result == 42))
     }
 
-    "capture Runtime in closures" in run {
-        var capturedRuntime: Runtime = null
+    "capture Safepoint in closures" in run {
+        var capturedSafepoint: Safepoint = null
 
         val computation = Effect.defer {
-            capturedRuntime = Runtime.get
-            () => Runtime.get // Return a closure that accesses Runtime
+            capturedSafepoint = Safepoint.get
+            () => Safepoint.get // Return a closure that accesses Safepoint
         }
 
         val closure = computation.eval
 
         Effect.defer {
-            val currentRuntime = Runtime.get
-            assert(currentRuntime ne capturedRuntime)
-            assert(closure() eq currentRuntime)
+            val currentSafepoint = Safepoint.get
+            assert(currentSafepoint ne capturedSafepoint)
+            assert(closure() eq currentSafepoint)
         }
     }
 
     "forced runtime leak" in {
-        val runtime = Runtime.get
+        val runtime = Safepoint.get
 
         val res =
             fork {
-                given Runtime = runtime
+                given Safepoint = runtime
                 (1: Int < Any).map(_ + 1).map(_ + 2)
             }
 
@@ -168,15 +168,15 @@ class RuntimeTest extends Test:
     }
 
     "forced runtime leak + eval" in {
-        val runtime = Runtime.get
+        val runtime = Safepoint.get
 
         val res =
             fork {
-                given Runtime = runtime
+                given Safepoint = runtime
                 (1: Int < Any).map(_ + 1).map(_ + 2).eval
             }
 
         assert(res.eval == 4)
     }
 
-end RuntimeTest
+end SafepointTest

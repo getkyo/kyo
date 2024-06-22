@@ -1,8 +1,5 @@
 package kyo2
 
-import kernel.Runtime
-import kyo2.kernel.Runtime
-
 class EnvTest extends Test:
 
     "value" in {
