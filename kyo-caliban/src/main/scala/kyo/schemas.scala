@@ -10,7 +10,8 @@ import zio.query.ZQuery
 
 given zioSchema[R, T: Flat, S](using ev: Schema[R, T], ev2: (T < S) <:< (T < (Aborts[Throwable] & ZIOs))): Schema[R, T < S] =
     new Schema[R, T < S]:
-        override def canFail: Boolean = true
+        override def nullable: Boolean = ev.nullable
+        override def canFail: Boolean  = ev.canFail
 
         override def toType(isInput: Boolean, isSubscription: Boolean): __Type =
             ev.toType_(isInput, isSubscription)
@@ -25,7 +26,8 @@ trait Runner[S]:
 
 given runnerSchema[R, T: Flat, S](using ev: Schema[R, T], tag: zio.Tag[Runner[S]]): Schema[R & Runner[S], T < S] =
     new Schema[R & Runner[S], T < S]:
-        override def canFail: Boolean = true
+        override def nullable: Boolean = ev.nullable
+        override def canFail: Boolean  = ev.canFail
 
         override def toType(isInput: Boolean, isSubscription: Boolean): __Type =
             ev.toType_(isInput, isSubscription)

@@ -35,11 +35,11 @@ class resolversTest extends KyoTest:
 
     "schema derivation" in {
         val expected = """type Query {
-                         |  k1: Int
-                         |  k2: Int
-                         |  k3: Int
-                         |  k4: Int
-                         |  k5: Int
+                         |  k1: Int!
+                         |  k2: Int!
+                         |  k3: Int!
+                         |  k4: Int!
+                         |  k5: Int!
                          |}""".stripMargin
         assert(render[Query].trim == expected)
     }

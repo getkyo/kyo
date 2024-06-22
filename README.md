@@ -1566,10 +1566,10 @@ val c: Int < Fibers =
 val d: Unit < IOs =
   a.onComplete(println(_))
 
-// A variant of `get` that returns a `Try`
+// A variant of `get` that returns a `Result`
 // with the failed or successful result
-val e: Try[Int] < Fibers =
-  a.getTry
+val e: Result[Int] < Fibers =
+  a.getResult
 
 // Try to interrupt/cancel a fiber
 val f: Boolean < IOs =
@@ -1623,7 +1623,7 @@ val a: Promise[Int] < IOs =
 
 // Try to fulfill a promise
 val b: Boolean < IOs =
-  a.map(_.complete(42))
+  a.map(_.completeSuccess(42))
 
 // Fullfil the promise with 
 // another fiber
@@ -2094,6 +2094,144 @@ val g: Unit < IOs =
 val h: Unit < IOs = 
   doubleAdder.map(_.reset)
 ```
+
+## Data Types
+
+### Maybe: Allocation-free Optional Values
+
+`Maybe` provides an allocation-free alternative to Scala's standard `Option` type. It is designed to be a drop-in replacement for `Option`, offering similar functionality while minimizing memory allocation.
+
+```scala
+import kyo._
+
+// Create a 'Maybe' value
+val a: Maybe[Int] = Maybe(42)
+
+// 'Maybe.empty' represents the absence of a value
+val b: Maybe[Int] = Maybe.empty[Int]
+
+// 'Maybe.when' conditionally creates a 'Maybe' value
+val c: Maybe[Int] = Maybe.when(true)(42)
+
+// 'Maybe.fromOption' converts an 'Option' to a 'Maybe'
+val d: Maybe[Int] = Maybe.fromOption(Some(42))
+
+// 'isEmpty' checks if the 'Maybe' is empty
+val e: Boolean = a.isEmpty
+
+// 'isDefined' checks if the 'Maybe' has a value
+val f: Boolean = a.isDefined
+
+// 'get' retrieves the value, throwing if empty
+val g: Int = a.get
+
+// 'getOrElse' provides a default value if empty
+val h: Int = b.getOrElse(0)
+
+// 'fold' applies a function based on emptiness
+val i: String = a.fold("Empty")(_.toString)
+
+// 'map' transforms the value if present
+val j: Maybe[String] = a.map(_.toString)
+
+// 'flatMap' allows chaining 'Maybe' operations
+val k: Maybe[Int] = a.flatMap(v => Maybe(v + 1))
+
+// 'filter' conditionally keeps or discards the value
+val l: Maybe[Int] = a.filter(_ > 0)
+
+// 'contains' checks if the 'Maybe' contains a value
+val m: Boolean = a.contains(42)
+
+// 'exists' checks if a predicate holds for the value
+val n: Boolean = a.exists(_ > 0)
+
+// 'foreach' applies a side-effecting function if non-empty
+a.foreach(println)
+
+// 'collect' applies a partial function if defined
+val o: Maybe[String] = a.collect { case 42 => "forty-two" }
+
+// 'orElse' returns an alternative if empty
+val p: Maybe[Int] = b.orElse(Maybe(0))
+
+// 'zip' combines two 'Maybe' values into a tuple
+val q: Maybe[(Int, String)] = a.zip(Maybe("hello"))
+
+// 'toOption' converts a 'Maybe' to an 'Option'
+val r: Option[Int] = a.toOption
+
+// Using 'Maybe' in a for-comprehension
+val s: Maybe[Int] = for {
+  x <- Maybe(1)
+  y <- Maybe(2)
+  if x < y
+} yield x + y
+
+// Nesting 'Maybe' values
+val nested: Maybe[Maybe[Int]] = Maybe(Maybe(42))
+val flattened: Maybe[Int] = nested.flatten
+```
+
+### Result: Low-allocation Try Alternative
+
+`Result` is a low-allocation alternative to Scala's `Try` type, designed to represent the result of a computation that may either succeed with a value or fail with an exception. It minimizes memory allocation overhead, especially in the case of successful results.
+
+```scala
+import kyo._
+import scala.util.Try
+
+// Create a 'Result' from a value
+val a: Result[Int] = Result.success(42)
+
+// Create a 'Result' from an exception
+val b: Result[Int] = Result.failure(new Exception("Oops"))
+
+// Use 'apply' to create a 'Result' from a block of code
+val c: Result[Int] = Result(42 / 0)
+
+// 'isSuccess' checks if the 'Result' is a success
+val d: Boolean = a.isSuccess
+
+// 'isFailure' checks if the 'Result' is a failure
+val e: Boolean = b.isFailure
+
+// 'get' retrieves the value if successful, otherwise throws
+val f: Int = a.get
+
+// 'getOrElse' provides a default value for failures
+val g: Int = b.getOrElse(0)
+
+// 'fold' applies a function based on success or failure
+val h: String = a.fold(_.getMessage)(_.toString)
+
+// 'map' transforms the value if successful
+val i: Result[String] = a.map(_.toString)
+
+// 'flatMap' allows chaining 'Result' operations
+val j: Result[Int] = a.flatMap(v => Result.success(v + 1))
+
+// 'flatten' removes one level of nesting from a 'Result[Result[T]]'
+val k: Result[Result[Int]] = Result.success(a)
+val l: Result[Int] = k.flatten
+
+// 'filter' conditionally keeps or discards the value
+val m: Result[Int] = a.filter(_ > 0)
+
+// 'recover' allows handling failures with a partial function
+val n: Result[Int] = b.recover { case _: ArithmeticException => 0 }
+
+// 'recoverWith' allows handling failures with a partial function returning a 'Result'
+val o: Result[Int] = b.recoverWith { case _: ArithmeticException => Result.success(0) }
+
+// 'toEither' converts a 'Result' to an 'Either'
+val p: Either[Throwable, Int] = a.toEither
+
+// 'toTry' converts a 'Result' to a 'Try'
+val q: Try[Int] = a.toTry
+```
+
+Under the hood, `Result` is defined as an opaque type that is a supertype of `Success[T]` and `Failure[T]`. Success[T] represents a successful result and is encoded as either the value itself (`T`) or a special SuccessFailure[`T`] case class. The `SuccessFailure[T]` case class is used to handle the rare case where a `Failure[T]` needs to be wrapped in a `Success[T]`. On the other hand, a failed `Result` is always represented by a `Failure[T]` case class, which contains the exception that caused the failure. This means that creating a `Failure[T]` does incur an allocation cost. Additionally, some methods on `Result`, such as `fold`, `map`, and `flatMap`, may allocate in certain cases due to the need to catch and handle exceptions.
 
 ## Integrations
 

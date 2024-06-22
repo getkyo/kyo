@@ -38,7 +38,7 @@ object ZIOs:
                                     ZIO.suspend(loop(k(v)))
                                 case Promise(p) =>
                                     ZIO.asyncInterrupt[Any, Throwable, U] { cb =>
-                                        p.onComplete(v => cb(ZIO.suspend(loop(v.map(k)))))
+                                        p.onComplete(v => cb(ZIO.suspend(loop(IOs(k(v.get))))))
                                         Left(ZIO.succeed(p.interrupt()))
                                     }
                             end match

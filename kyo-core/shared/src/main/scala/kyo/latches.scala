@@ -37,7 +37,7 @@ object Latches:
                                 if c > 0 && !count.compareAndSet(c, c - 1) then
                                     loop(count.get)
                                 else if c == 1 then
-                                    discard(promise.unsafeComplete(()))
+                                    discard(promise.unsafeComplete(Result.success(())))
                             loop(count.get())
                         }
 

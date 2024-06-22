@@ -152,7 +152,7 @@ object Channels:
                                     // If the queue has been emptied before the
                                     // transfer, requeue the consumer's promise.
                                     discard(takes.add(p))
-                                else if !p.unsafeComplete(v) && !u.offer(v) then
+                                else if !p.unsafeComplete(Result.success(v)) && !u.offer(v) then
                                     // If completing the take fails and the queue
                                     // cannot accept the value back, enqueue a
                                     // placeholder put operation to preserve the value.
@@ -171,7 +171,7 @@ object Channels:
                                     // Complete the put's promise if the value is
                                     // successfully enqueued. If the fiber became
                                     // interrupted, the completion will be ignored.
-                                    discard(p.unsafeComplete(()))
+                                    discard(p.unsafeComplete(Result.success(())))
                                 else
                                     // If the queue becomes full before the transfer,
                                     // requeue the producer's operation.
@@ -186,12 +186,12 @@ object Channels:
                             if t != null then
                                 val (v, p) = t
                                 val p2     = takes.poll()
-                                if p2 != null && p2.unsafeComplete(v) then
+                                if p2 != null && p2.unsafeComplete(Result.success(v)) then
                                     // If the transfer is successful, complete
                                     // the put's promise. If the consumer's fiber
                                     // became interrupted, the completion will be
                                     // ignored.
-                                    discard(p.unsafeComplete(()))
+                                    discard(p.unsafeComplete(Result.success(())))
                                 else
                                     // If the transfer to the consumer fails, requeue
                                     // the producer's operation.

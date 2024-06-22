@@ -1,8 +1,10 @@
+import com.github.sbt.git.SbtGit.GitKeys.useConsoleForROGit
+
 val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
 
-val zioVersion       = "2.1.2"
+val zioVersion       = "2.1.3"
 val scalaTestVersion = "3.2.18"
 
 val compilerOptions = Seq(
@@ -20,6 +22,8 @@ ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
 sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
 sonatypeProfileName                := "io.getkyo"
 publish / skip                     := true
+
+ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
 lazy val `kyo-settings` = Seq(
     fork               := true,
@@ -156,7 +160,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.13",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC27" % Test,
-            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.2"      % Test,
+            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.3"      % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.6"      % Test,
             libraryDependencies += "javassist"      % "javassist"       % "3.12.1.GA"  % Test
         )
@@ -201,8 +205,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.38.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.38.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.39.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.39.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
 
