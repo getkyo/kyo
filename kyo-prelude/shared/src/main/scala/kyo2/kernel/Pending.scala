@@ -32,19 +32,19 @@ object `<`:
         inline def repeat(i: Int)(using ev: A => Unit): Unit < S =
             if i <= 0 then () else andThen(repeat(i - 1))
 
-        inline def map[U, S2](inline f: Runtime ?=> A => U < S2)(
+        inline def map[U, S2](inline f: Safepoint ?=> A => U < S2)(
             using inline _frame: Frame
-        )(using Runtime): U < (S & S2) =
-            def mapLoop(v: A < S)(using Runtime): U < (S & S2) =
+        )(using Safepoint): U < (S & S2) =
+            def mapLoop(v: A < S)(using Safepoint): U < (S & S2) =
                 v match
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
                         new KyoContinue[IX, OX, EX, Any, U, S & S2](kyo):
                             def frame = _frame
-                            def apply(v: OX[Any], values: Values)(using Runtime) =
+                            def apply(v: OX[Any], values: Values)(using Safepoint) =
                                 mapLoop(kyo(v, values))
                     case <(v) =>
                         val value = v.asInstanceOf[A]
-                        Runtime.handle(
+                        Safepoint.handle(
                             suspend = mapLoop(value),
                             continue = f(value)
                         )
@@ -58,7 +58,7 @@ object `<`:
 
     extension [T](inline v: T < Any)
         inline def eval: T =
-            @tailrec def evalLoop(kyo: T < Any)(using Runtime): T =
+            @tailrec def evalLoop(kyo: T < Any)(using Safepoint): T =
                 kyo match
                     case <(kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, T, Any] @unchecked)
                         if kyo.tag =:= Tag[Defer] =>
@@ -69,7 +69,7 @@ object `<`:
                         v.asInstanceOf[T]
                 end match
             end evalLoop
-            Runtime.eval(evalLoop(v))
+            Safepoint.eval(evalLoop(v))
         end eval
     end extension
 end `<`

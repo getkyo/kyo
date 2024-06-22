@@ -1,7 +1,7 @@
 package kyo2
 
 import kyo.Tag
-import kyo2.kernel.Runtime
+import kyo2.kernel.Safepoint
 
 private[kyo2] type Frame = kernel.Frame
 private[kyo2] inline def Frame = kernel.Frame

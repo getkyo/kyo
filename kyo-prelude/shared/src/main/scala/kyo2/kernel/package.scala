@@ -39,7 +39,7 @@ package object kernel:
             def input: I[A]
             def frame: Frame
 
-            def apply(v: O[A], values: Values)(using Runtime): U < S
+            def apply(v: O[A], values: Values)(using Safepoint): U < S
 
             final override def toString =
                 val parsed = frame.parse

@@ -16,7 +16,7 @@ object RuntimeEffect:
     inline def suspend[A, E <: RuntimeEffect[A], B, S](
         inline tag: Tag[E]
     )(
-        inline f: Runtime ?=> A => B < S
+        inline f: Safepoint ?=> A => B < S
     ): B < (E & S) =
         suspend(tag, bug("Unexpected pending runtime effect: " + tag.show))(f)
 
@@ -30,12 +30,12 @@ object RuntimeEffect:
         inline _tag: Tag[E],
         inline default: => A
     )(
-        inline f: Runtime ?=> A => B < S
+        inline f: Safepoint ?=> A => B < S
     )(using inline _frame: Frame): B < S =
         new KyoDefer[B, S]:
             def frame = _frame
-            def apply(v: Unit, values: Values)(using Runtime) =
-                Runtime.handle(
+            def apply(v: Unit, values: Values)(using Safepoint) =
+                Safepoint.handle(
                     suspend = this,
                     continue = f(values.getOrElse(_tag, default).asInstanceOf[A])
                 )
@@ -47,14 +47,14 @@ object RuntimeEffect:
     )(v: B < (E & S))(
         using inline _frame: Frame
     ): B < S =
-        def handleLoop(v: B < (E & S))(using Runtime): B < S =
+        def handleLoop(v: B < (E & S))(using Safepoint): B < S =
             v match
                 case <(kyo: KyoSuspend[IX, OX, EX, Any, B, S] @unchecked) =>
                     new KyoSuspend[IX, OX, EX, Any, B, S]:
                         val tag   = kyo.tag
                         val input = kyo.input
                         def frame = _frame
-                        def apply(v: OX[Any], values: Values)(using Runtime) =
+                        def apply(v: OX[Any], values: Values)(using Safepoint) =
                             val tag   = _tag
                             val value = values.getOrElse(tag, null)
                             val updated =
@@ -77,8 +77,8 @@ object RuntimeEffect:
     )(using _frame: Frame): B < (S & S2) =
         new KyoDefer[B, S & S2]:
             def frame = _frame
-            def apply(ign: Unit, values: Values)(using runtime: Runtime) =
-                val state = runtime.save(values)
+            def apply(ign: Unit, values: Values)(using safepoint: Safepoint) =
+                val state = safepoint.save(values)
                 def boundaryLoop(v: A < S): A < S =
                     v match
                         case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
@@ -86,12 +86,12 @@ object RuntimeEffect:
                                 val tag   = kyo.tag
                                 val input = kyo.input
                                 def frame = _frame
-                                def apply(v: OX[Any], values: Values)(using Runtime) =
-                                    val parent = Runtime.local.get()
-                                    Runtime.local.set(Runtime(parent.depth, state))
+                                def apply(v: OX[Any], values: Values)(using Safepoint) =
+                                    val parent = Safepoint.local.get()
+                                    Safepoint.local.set(Safepoint(parent.depth, state))
                                     val r =
                                         try kyo(v, state.values)
-                                        finally Runtime.local.set(parent)
+                                        finally Safepoint.local.set(parent)
                                     boundaryLoop(r)
                                 end apply
                         case _ =>

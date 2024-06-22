@@ -6,13 +6,13 @@ import kyo2.isNull
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-final class Runtime(initDepth: Int, initState: Runtime.State):
-    import Runtime.State
+final class Safepoint(initDepth: Int, initState: Safepoint.State):
+    import Safepoint.State
 
     private val owner         = Thread.currentThread()
     private[kernel] var depth = initDepth
     private var traceIdx      = initState.traceIdx
-    private val trace         = Runtime.copyTrace(initState.trace, traceIdx)
+    private val trace         = Safepoint.copyTrace(initState.trace, traceIdx)
 
     private def enter(_frame: Frame): Int =
         if (Thread.currentThread eq owner) && depth < maxStackDepth then
@@ -38,33 +38,33 @@ final class Runtime(initDepth: Int, initState: Runtime.State):
         this.depth = depth - 1
 
     private[kernel] def save(values: Values) =
-        State(Runtime.copyTrace(trace, traceIdx), traceIdx, values)
-end Runtime
+        State(Safepoint.copyTrace(trace, traceIdx), traceIdx, values)
+end Safepoint
 
-object Runtime:
+object Safepoint:
 
-    implicit def get: Runtime = local.get()
+    implicit def get: Safepoint = local.get()
 
     private[kernel] inline def eval[T](
         inline f: => T
     )(using inline frame: Frame): T =
-        val parent = Runtime.local.get()
-        val self   = new Runtime(0, State.empty)
-        Runtime.local.set(self)
+        val parent = Safepoint.local.get()
+        val self   = new Safepoint(0, State.empty)
+        Safepoint.local.set(self)
         self.pushFrame(frame)
         try f
         catch
             case ex: Throwable if NonFatal(ex) =>
                 handle(self, ex)
         finally
-            Runtime.local.set(parent)
+            Safepoint.local.set(parent)
         end try
     end eval
 
     private[kernel] inline def handle[A, S](
-        inline suspend: Runtime ?=> A < S,
+        inline suspend: Safepoint ?=> A < S,
         inline continue: => A < S
-    )(using inline frame: Frame, self: Runtime): A < S =
+    )(using inline frame: Frame, self: Safepoint): A < S =
         self.enter(frame) match
             case -1 => Effect.defer(suspend)
             case depth =>
@@ -72,7 +72,7 @@ object Runtime:
                 finally self.exit(depth)
     end handle
 
-    private def handle(self: Runtime, cause: Throwable): Nothing =
+    private def handle(self: Safepoint, cause: Throwable): Nothing =
         val size   = Math.min(self.traceIdx, maxTraceFrames)
         val trace  = copyTrace(self.trace, self.traceIdx).filter(_ != null).map(_.parse)
         val toDrop = trace.map(_.snippetShort.takeWhile(_ == ' ').size).min
@@ -116,6 +116,6 @@ object Runtime:
     object State:
         val empty = State(new Array(maxStackDepth), 0, Values.empty)
 
-    private[kernel] val local = ThreadLocal.withInitial(() => Runtime(0, State.empty))
+    private[kernel] val local = ThreadLocal.withInitial(() => Safepoint(0, State.empty))
 
-end Runtime
+end Safepoint
