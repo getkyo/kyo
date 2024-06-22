@@ -12,7 +12,7 @@ class KyoTest extends Test:
             "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(()), KyoTest.scala:11:16, ssert(Env.use[Int](_ + 1)))")
         assert(
             Env.get[Int].map(_ + 1).toString() ==
-                "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(()), KyoTest.scala:14:36,   Env.get[Int].map(_ + 1)))"
+                "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(()), KyoTest.scala:14:36, Env.get[Int].map(_ + 1)))"
         )
     }
 
@@ -21,7 +21,7 @@ class KyoTest extends Test:
             "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(undefined), KyoTest.scala:20:16, ssert(Env.use[Int](_ + 1)))")
         assert(
             Env.get[Int].map(_ + 1).toString() ==
-                "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(undefined), KyoTest.scala:23:36,   Env.get[Int].map(_ + 1)))"
+                "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(undefined), KyoTest.scala:23:36, Env.get[Int].map(_ + 1)))"
         )
     }
 

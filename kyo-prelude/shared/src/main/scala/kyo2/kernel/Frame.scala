@@ -68,7 +68,7 @@ object Frame:
 
         val snippetShort =
             parseSnippetShort(fileContent.take(pos.end).reverse.toList)
-                .takeRight(snippetShortMaxChars).mkString.trim.reverse.padTo(snippetShortMaxChars, ' ').reverse
+                .takeRight(snippetShortMaxChars).mkString.trim
         val snippetLong = snippetLines.map(_.drop(toDrop)).mkString("\n")
         val cls         = findEnclosing(_.isClassDef)
         val method      = findEnclosing(_.isDefDef)

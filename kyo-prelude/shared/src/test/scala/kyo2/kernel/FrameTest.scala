@@ -25,7 +25,7 @@ class FrameTest extends Test:
         assert(parsed.position.fileName == "FrameTest.scala")
         assert(parsed.position.lineNumber == 9)
         assert(parsed.position.columnNumber == 28)
-        assert(parsed.snippetShort == "              test(1 + 2)")
+        assert(parsed.snippetShort == "test(1 + 2)")
         assert(parsed.snippetLong == "def test1 = test(1 + 2)📍")
     }
 

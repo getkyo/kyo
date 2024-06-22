@@ -73,12 +73,12 @@ object Safepoint:
     end handle
 
     private def handle(self: Safepoint, cause: Throwable): Nothing =
-        val size   = Math.min(self.traceIdx, maxTraceFrames)
-        val trace  = copyTrace(self.trace, self.traceIdx).filter(_ != null).map(_.parse)
-        val toDrop = trace.map(_.snippetShort.takeWhile(_ == ' ').size).min
+        val size  = Math.min(self.traceIdx, maxTraceFrames)
+        val trace = copyTrace(self.trace, self.traceIdx).filter(_ != null).map(_.parse)
+        val toPad = trace.map(_.snippetShort.size).max + 1
         val elements = trace.map { frame =>
             StackTraceElement(
-                frame.snippetShort.drop(toDrop) + " @ " + frame.declaringClass,
+                frame.snippetShort.reverse.padTo(toPad, ' ').reverse + " @ " + frame.declaringClass,
                 frame.methodName,
                 frame.position.fileName,
                 frame.position.lineNumber
