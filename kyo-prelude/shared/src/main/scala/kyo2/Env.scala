@@ -13,7 +13,7 @@ object Env:
     private inline def erasedTag[R] = Tag[Env[Any]].asInstanceOf[Tag[Env[R]]]
 
     inline def get[R](using inline tag: Tag[R]): R < Env[R] =
-        use[R](v => v)
+        use[R](identity)
 
     def run[R >: Nothing: Tag, T, S, RS, RR](env: R)(value: T < (Env[RS] & S))(
         using

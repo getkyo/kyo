@@ -9,7 +9,7 @@ sealed trait Var[V] extends Effect[Input[V, *], Id]
 object Var:
 
     inline def get[V](using inline tag: Tag[Var[V]]): V < Var[V] =
-        use[V](v => v)
+        use[V](identity)
 
     class UseOps[V](dummy: Unit) extends AnyVal:
         inline def apply[A, S](inline f: V => A < S)(

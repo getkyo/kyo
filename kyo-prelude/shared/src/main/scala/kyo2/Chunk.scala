@@ -405,7 +405,7 @@ object Chunk:
     end fill
 
     def collect[T, S](c: Chunk[T < S]): Chunk[T] < S =
-        c.map(v => v)
+        c.map(identity)
 
     private[kyo2] object internal:
 

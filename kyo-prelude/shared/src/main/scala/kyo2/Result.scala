@@ -73,10 +73,10 @@ object Result:
                         case ex if NonFatal(ex) => ifFailure(ex)
 
         inline def get: A =
-            fold(ex => throw ex)(v => v)
+            fold(ex => throw ex)(identity)
 
         inline def getOrElse[B >: A](inline default: => B): B =
-            fold(_ => default)(v => v)
+            fold(_ => default)(identity)
 
         def orElse[B >: A](alternative: => Result[B]): Result[B] =
             fold(_ => alternative)(v => Result.success(v))

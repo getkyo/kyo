@@ -11,7 +11,7 @@ abstract class RuntimeEffect[+A]
 object RuntimeEffect:
 
     inline def suspend[A, E <: RuntimeEffect[A]](inline tag: Tag[E]): A < E =
-        suspend(tag)(v => v)
+        suspend(tag)(identity)
 
     inline def suspend[A, E <: RuntimeEffect[A], B, S](
         inline tag: Tag[E]
@@ -24,7 +24,7 @@ object RuntimeEffect:
         inline tag: Tag[E],
         inline default: => A
     ): A < Any =
-        suspend(tag, default)(v => v)
+        suspend(tag, default)(identity)
 
     inline def suspend[A, E <: RuntimeEffect[A], B, S](
         inline _tag: Tag[E],

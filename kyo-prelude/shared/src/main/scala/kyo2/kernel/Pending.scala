@@ -54,7 +54,7 @@ object `<`:
 
     extension [A, S, S2](inline kyo: A < S < S2)
         inline def flatten: A < (S & S2) =
-            kyo.map(v => v)
+            kyo.map(identity)
 
     extension [T](inline v: T < Any)
         inline def eval: T =
