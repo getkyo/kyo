@@ -105,7 +105,6 @@ class TraceTest extends Test:
                 ex.printStackTrace(printWriter)
                 printWriter.flush()
                 val trace = stringWriter.toString.linesIterator.takeWhile(!_.contains("$init$$$anonfun")).mkString("\n")
-                println(trace)
                 assert(trace == expected.stripMargin.trim)
 
 end TraceTest
