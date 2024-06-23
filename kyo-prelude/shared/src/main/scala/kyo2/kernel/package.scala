@@ -9,7 +9,7 @@ package object kernel:
     type Const[A] = [U] =>> A
 
     enum Mode derives CanEqual:
-        case Debugging, Development, Staging, Production
+        case Development, Staging, Production
 
     private object internal:
 

@@ -7,12 +7,7 @@ object Platform:
 
     val mode: Mode =
         Option(System.getProperty("kyo.kernel.Platform.mode"))
-            .map(Mode.valueOf).getOrElse {
-                if isDebugEnabled then
-                    Mode.Debugging
-                else
-                    Mode.Development
-            }
+            .map(Mode.valueOf).getOrElse(Mode.Development)
 
     val executionContext: ExecutionContext = scala.concurrent.ExecutionContext.global
     val isJVM: Boolean                     = true
