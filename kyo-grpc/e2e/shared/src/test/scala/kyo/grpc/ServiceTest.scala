@@ -64,9 +64,10 @@ class ServiceTest extends KyoTest:
             b match
                 case other: Status =>
                     status.getCode == other.getCode &&
-                        status.getDescription == other.getDescription &&
-                        status.getCause == other.getCause
+                    status.getDescription == other.getDescription &&
+                    status.getCause == other.getCause
                 case _ => false
+    end given
 
     private def createClientAndServer =
         for
@@ -76,15 +77,28 @@ class ServiceTest extends KyoTest:
         yield client
 
     private def createServer(port: Int) =
-        Resources.acquireRelease(IOs(ServerBuilder.forPort(port).addService(TestService.bindService(TestServiceImpl)).build().start())) {
-            server =>
-                IOs(server.shutdown().awaitTermination())
+        Resources.acquireRelease(
+            IOs(
+                ServerBuilder
+                    .forPort(port)
+                    .addService(TestService.bindService(TestServiceImpl))
+                    .build()
+                    .start()
+            )
+        ) { server =>
+            IOs(server.shutdown().awaitTermination())
         }
 
     private def createClient(port: Int) =
-        Resources.acquireRelease(IOs(ManagedChannelBuilder.forAddress("localhost", port).usePlaintext().build())) {
-            channel =>
-                IOs(channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)).unit
+        Resources.acquireRelease(
+            IOs(
+                ManagedChannelBuilder
+                    .forAddress("localhost", port)
+                    .usePlaintext()
+                    .build()
+            )
+        ) { channel =>
+            IOs(channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)).unit
         }.map(TestServiceGrpc.stub)
 
     private def findFreePort =
