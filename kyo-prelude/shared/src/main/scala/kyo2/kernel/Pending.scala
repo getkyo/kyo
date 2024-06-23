@@ -5,7 +5,6 @@ import kyo.*
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 import scala.util.NotGiven
-import scala.util.control.NonFatal
 
 case class <[+A, -S](private val curr: A | Kyo[A, S]) extends AnyVal
 
@@ -40,7 +39,7 @@ object `<`:
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
                         new KyoContinue[IX, OX, EX, Any, U, S & S2](kyo):
                             def frame = _frame
-                            def apply(v: OX[Any], values: Values)(using Safepoint) =
+                            def apply(v: OX[Any], values: Context)(using Safepoint) =
                                 mapLoop(kyo(v, values))
                     case <(v) =>
                         val value = v.asInstanceOf[A]
@@ -62,7 +61,7 @@ object `<`:
                 kyo match
                     case <(kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, T, Any] @unchecked)
                         if kyo.tag =:= Tag[Defer] =>
-                        evalLoop(kyo((), Values.empty))
+                        evalLoop(kyo((), Context.empty))
                     case <(kyo: Kyo[T, Any] @unchecked) =>
                         kyo2.bug.failTag(kyo, Tag[Any])
                     case <(v) =>

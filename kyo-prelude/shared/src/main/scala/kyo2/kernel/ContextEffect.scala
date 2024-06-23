@@ -6,27 +6,27 @@ import kyo2.bug
 import kyo2.isNull
 import scala.util.NotGiven
 
-abstract class RuntimeEffect[+A]
+abstract class ContextEffect[+A]
 
-object RuntimeEffect:
+object ContextEffect:
 
-    inline def suspend[A, E <: RuntimeEffect[A]](inline tag: Tag[E]): A < E =
+    inline def suspend[A, E <: ContextEffect[A]](inline tag: Tag[E]): A < E =
         suspend(tag)(identity)
 
-    inline def suspend[A, E <: RuntimeEffect[A], B, S](
+    inline def suspend[A, E <: ContextEffect[A], B, S](
         inline tag: Tag[E]
     )(
         inline f: Safepoint ?=> A => B < S
     ): B < (E & S) =
         suspend(tag, bug("Unexpected pending runtime effect: " + tag.show))(f)
 
-    inline def suspend[A, E <: RuntimeEffect[A]](
+    inline def suspend[A, E <: ContextEffect[A]](
         inline tag: Tag[E],
         inline default: => A
     ): A < Any =
         suspend(tag, default)(identity)
 
-    inline def suspend[A, E <: RuntimeEffect[A], B, S](
+    inline def suspend[A, E <: ContextEffect[A], B, S](
         inline _tag: Tag[E],
         inline default: => A
     )(
@@ -34,13 +34,13 @@ object RuntimeEffect:
     )(using inline _frame: Frame): B < S =
         new KyoDefer[B, S]:
             def frame = _frame
-            def apply(v: Unit, values: Values)(using Safepoint) =
+            def apply(v: Unit, values: Context)(using Safepoint) =
                 Safepoint.handle(
                     suspend = this,
                     continue = f(values.getOrElse(_tag, default).asInstanceOf[A])
                 )
 
-    inline def handle[A, E <: RuntimeEffect[A], B, S](
+    inline def handle[A, E <: ContextEffect[A], B, S](
         inline _tag: Tag[E],
         inline ifUndefined: A,
         inline ifDefined: A => A
@@ -54,7 +54,7 @@ object RuntimeEffect:
                         val tag   = kyo.tag
                         val input = kyo.input
                         def frame = _frame
-                        def apply(v: OX[Any], values: Values)(using Safepoint) =
+                        def apply(v: OX[Any], values: Context)(using Safepoint) =
                             val tag   = _tag
                             val value = values.getOrElse(tag, null)
                             val updated =
@@ -68,7 +68,7 @@ object RuntimeEffect:
     end handle
 
     type WithoutRuntimeEffects[S] = S match
-        case RuntimeEffect[x] => Any
+        case ContextEffect[x] => Any
         case s1 & s2          => WithoutRuntimeEffects[s1] & WithoutRuntimeEffects[s2]
         case _                => S
 
@@ -77,7 +77,7 @@ object RuntimeEffect:
     )(using _frame: Frame): B < (S & S2) =
         new KyoDefer[B, S & S2]:
             def frame = _frame
-            def apply(dummy: Unit, values: Values)(using safepoint: Safepoint) =
+            def apply(dummy: Unit, values: Context)(using safepoint: Safepoint) =
                 val state = safepoint.save(values)
                 def boundaryLoop(v: A < S): A < S =
                     v match
@@ -86,7 +86,7 @@ object RuntimeEffect:
                                 val tag   = kyo.tag
                                 val input = kyo.input
                                 def frame = _frame
-                                def apply(v: OX[Any], values: Values)(using Safepoint) =
+                                def apply(v: OX[Any], values: Context)(using Safepoint) =
                                     val parent = Safepoint.local.get()
                                     Safepoint.local.set(Safepoint(parent.depth, state))
                                     val r =
@@ -100,4 +100,4 @@ object RuntimeEffect:
             end apply
         end new
     end boundary
-end RuntimeEffect
+end ContextEffect

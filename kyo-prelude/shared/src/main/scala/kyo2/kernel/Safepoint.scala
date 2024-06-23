@@ -37,7 +37,7 @@ final class Safepoint(initDepth: Int, initState: Safepoint.State):
     private def exit(depth: Int): Unit =
         this.depth = depth - 1
 
-    private[kernel] def save(values: Values) =
+    private[kernel] def save(values: Context) =
         State(Safepoint.copyTrace(trace, traceIdx), traceIdx, values)
 end Safepoint
 
@@ -110,11 +110,11 @@ object Safepoint:
     final class State(
         val trace: Array[Frame],
         val traceIdx: Int,
-        val values: Values
+        val values: Context
     )
 
     object State:
-        val empty = State(new Array(maxStackDepth), 0, Values.empty)
+        val empty = State(new Array(maxStackDepth), 0, Context.empty)
 
     private[kernel] val local = ThreadLocal.withInitial(() => Safepoint(0, State.empty))
 

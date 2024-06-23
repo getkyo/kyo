@@ -5,7 +5,7 @@ import kyo2.*
 import kyo2.kernel.*
 import scala.util.NotGiven
 
-sealed trait Env[+R] extends RuntimeEffect[TypeMap[R]]
+sealed trait Env[+R] extends ContextEffect[TypeMap[R]]
 
 object Env:
 
@@ -26,13 +26,13 @@ object Env:
         HasEnv[R, RS] { type Remainder = RR },
         Frame
     ): T < (S & RR) =
-        RuntimeEffect.handle(erasedTag[R], env, _.union(env))(value).asInstanceOf[T < (S & RR)]
+        ContextEffect.handle(erasedTag[R], env, _.union(env))(value).asInstanceOf[T < (S & RR)]
 
     class UseOps[R >: Nothing](dummy: Unit) extends AnyVal:
         inline def apply[A, S](inline f: R => A < S)(
             using tag: Tag[R]
         ): A < (Env[R] & S) =
-            RuntimeEffect.suspend(erasedTag[R]) { map =>
+            ContextEffect.suspend(erasedTag[R]) { map =>
                 f(map.get(using tag.erased).asInstanceOf[R])
             }
     end UseOps

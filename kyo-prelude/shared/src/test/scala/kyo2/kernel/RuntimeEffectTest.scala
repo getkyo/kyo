@@ -6,18 +6,18 @@ import kyo2.kernel.*
 
 class RuntimeEffectTest extends Test:
 
-    sealed trait TestRuntimeEffect1 extends RuntimeEffect[Int]
-    sealed trait TestRuntimeEffect2 extends RuntimeEffect[String]
-    sealed trait TestRuntimeEffect3 extends RuntimeEffect[Boolean]
+    sealed trait TestRuntimeEffect1 extends ContextEffect[Int]
+    sealed trait TestRuntimeEffect2 extends ContextEffect[String]
+    sealed trait TestRuntimeEffect3 extends ContextEffect[Boolean]
 
     def testRuntimeEffect1: Int < TestRuntimeEffect1 =
-        RuntimeEffect.suspend(Tag[TestRuntimeEffect1])
+        ContextEffect.suspend(Tag[TestRuntimeEffect1])
 
     def testRuntimeEffect2: String < TestRuntimeEffect2 =
-        RuntimeEffect.suspend(Tag[TestRuntimeEffect2])
+        ContextEffect.suspend(Tag[TestRuntimeEffect2])
 
     def testRuntimeEffect3: Boolean < TestRuntimeEffect3 =
-        RuntimeEffect.suspend(Tag[TestRuntimeEffect3])
+        ContextEffect.suspend(Tag[TestRuntimeEffect3])
 
     "suspend" in {
         val effect = testRuntimeEffect1
@@ -27,7 +27,7 @@ class RuntimeEffectTest extends Test:
     "handle" - {
         "single effect" in {
             val effect = testRuntimeEffect1
-            val result = RuntimeEffect.handle(Tag[TestRuntimeEffect1], 42, _ + 1)(effect)
+            val result = ContextEffect.handle(Tag[TestRuntimeEffect1], 42, _ + 1)(effect)
             assert(result.eval == 42)
         }
 
@@ -39,8 +39,8 @@ class RuntimeEffectTest extends Test:
                 yield s"$i-$s"
 
             val result =
-                RuntimeEffect.handle(Tag[TestRuntimeEffect1], 42, _ + 1) {
-                    RuntimeEffect.handle(Tag[TestRuntimeEffect2], "default", _.toUpperCase)(effect)
+                ContextEffect.handle(Tag[TestRuntimeEffect1], 42, _ + 1) {
+                    ContextEffect.handle(Tag[TestRuntimeEffect2], "default", _.toUpperCase)(effect)
                 }
 
             assert(result.eval == "42-default")
@@ -55,9 +55,9 @@ class RuntimeEffectTest extends Test:
                 yield s"$i-$s-$b"
 
             val result =
-                RuntimeEffect.handle(Tag[TestRuntimeEffect1], 42, _ + 1) {
-                    RuntimeEffect.handle(Tag[TestRuntimeEffect2], "default", _.toUpperCase) {
-                        RuntimeEffect.handle(Tag[TestRuntimeEffect3], false, !_)(effect): String < (TestRuntimeEffect1 & TestRuntimeEffect2)
+                ContextEffect.handle(Tag[TestRuntimeEffect1], 42, _ + 1) {
+                    ContextEffect.handle(Tag[TestRuntimeEffect2], "default", _.toUpperCase) {
+                        ContextEffect.handle(Tag[TestRuntimeEffect3], false, !_)(effect): String < (TestRuntimeEffect1 & TestRuntimeEffect2)
                     }
                 }
 
@@ -66,7 +66,7 @@ class RuntimeEffectTest extends Test:
 
         "ifUndefined behavior" in {
             val effect = testRuntimeEffect1
-            val result = RuntimeEffect.handle(Tag[TestRuntimeEffect1], 100, _ * 2)(effect)
+            val result = ContextEffect.handle(Tag[TestRuntimeEffect1], 100, _ * 2)(effect)
             assert(result.eval == 100)
         }
 
@@ -78,8 +78,8 @@ class RuntimeEffectTest extends Test:
                 yield i
 
             val result =
-                RuntimeEffect.handle(Tag[TestRuntimeEffect1], 100, _ * 2) {
-                    RuntimeEffect.handle(Tag[TestRuntimeEffect1], 100, _ * 2)(effect)
+                ContextEffect.handle(Tag[TestRuntimeEffect1], 100, _ * 2) {
+                    ContextEffect.handle(Tag[TestRuntimeEffect1], 100, _ * 2)(effect)
                 }
             assert(result.eval == 200)
         }
@@ -92,7 +92,7 @@ class RuntimeEffectTest extends Test:
                     i3 <- testRuntimeEffect1
                 yield i1 + i2 + i3
 
-            val result = RuntimeEffect.handle(Tag[TestRuntimeEffect1], 10, _ + 1)(effect)
+            val result = ContextEffect.handle(Tag[TestRuntimeEffect1], 10, _ + 1)(effect)
             assert(result.eval == 30)
         }
 
@@ -101,10 +101,10 @@ class RuntimeEffectTest extends Test:
             val outerEffect =
                 for
                     i <- testRuntimeEffect1
-                    s <- RuntimeEffect.handle(Tag[TestRuntimeEffect2], "inner", _.toUpperCase)(innerEffect)
+                    s <- ContextEffect.handle(Tag[TestRuntimeEffect2], "inner", _.toUpperCase)(innerEffect)
                 yield s"$i-$s"
 
-            val result = RuntimeEffect.handle(Tag[TestRuntimeEffect1], 42, _ + 1)(outerEffect)
+            val result = ContextEffect.handle(Tag[TestRuntimeEffect1], 42, _ + 1)(outerEffect)
             assert(result.eval == "42-inner")
         }
 
@@ -117,9 +117,9 @@ class RuntimeEffectTest extends Test:
                 yield s"$i-$s-$b"
 
             val result =
-                RuntimeEffect.handle(Tag[TestRuntimeEffect3], true, !_) {
-                    RuntimeEffect.handle(Tag[TestRuntimeEffect2], "middle", _.toUpperCase) {
-                        RuntimeEffect.handle(Tag[TestRuntimeEffect1], 10, _ * 2)(effect): String < (TestRuntimeEffect2 & TestRuntimeEffect3)
+                ContextEffect.handle(Tag[TestRuntimeEffect3], true, !_) {
+                    ContextEffect.handle(Tag[TestRuntimeEffect2], "middle", _.toUpperCase) {
+                        ContextEffect.handle(Tag[TestRuntimeEffect1], 10, _ * 2)(effect): String < (TestRuntimeEffect2 & TestRuntimeEffect3)
                     }
                 }
 
@@ -133,8 +133,8 @@ class RuntimeEffectTest extends Test:
                     s <- testRuntimeEffect2
                 yield s"$i-$s"
 
-            val result = RuntimeEffect.handle(Tag[TestRuntimeEffect1], 1, i => if i < 10 then i * 2 else i / 2) {
-                RuntimeEffect.handle(Tag[TestRuntimeEffect2], "start", s => s + s.length.toString)(effect)
+            val result = ContextEffect.handle(Tag[TestRuntimeEffect1], 1, i => if i < 10 then i * 2 else i / 2) {
+                ContextEffect.handle(Tag[TestRuntimeEffect2], "start", s => s + s.length.toString)(effect)
             }
 
             assert(result.eval == "1-start")
@@ -142,30 +142,30 @@ class RuntimeEffectTest extends Test:
     }
 
     "boundary" - {
-        sealed trait TestEffect       extends RuntimeEffect[Int]
-        sealed trait AnotherEffect    extends RuntimeEffect[String]
+        sealed trait TestEffect       extends ContextEffect[Int]
+        sealed trait AnotherEffect    extends ContextEffect[String]
         sealed trait NotRuntimeEffect extends Effect[Const[Int], Const[Int]]
 
         "isolates runtime effect" in {
-            val a = RuntimeEffect.suspend(Tag[TestEffect])
+            val a = ContextEffect.suspend(Tag[TestEffect])
             val b: Int < TestEffect =
-                RuntimeEffect.boundary(a) { cont =>
+                ContextEffect.boundary(a) { cont =>
                     val _: Int < Any = cont
                     cont.map(_ * 2)
                 }
-            val c = RuntimeEffect.handle(Tag[TestEffect], 2, _ => 3)(b)
+            val c = ContextEffect.handle(Tag[TestEffect], 2, _ => 3)(b)
             assert(c.eval == 4)
         }
 
         "continuation can be evaluated" in {
             var called = 0
             val a =
-                RuntimeEffect.suspend(Tag[TestEffect]).map { v =>
+                ContextEffect.suspend(Tag[TestEffect]).map { v =>
                     called += 1
                     v
                 }
             val b: Int < TestEffect =
-                RuntimeEffect.boundary(a) { cont =>
+                ContextEffect.boundary(a) { cont =>
                     assert(called == 0)
                     val _: Int < Any = cont
                     assert(called == 0)
@@ -173,40 +173,40 @@ class RuntimeEffectTest extends Test:
                     assert(called == 1)
                     r
                 }
-            val c = RuntimeEffect.handle(Tag[TestEffect], 2, _ => 3)(b)
+            val c = ContextEffect.handle(Tag[TestEffect], 2, _ => 3)(b)
             assert(c.eval == 4)
             assert(called == 1)
         }
 
         "preserve outer runtime effects" in {
-            val outerEffect = RuntimeEffect.suspend(Tag[TestEffect])
-            val innerEffect = RuntimeEffect.suspend(Tag[TestEffect])
+            val outerEffect = ContextEffect.suspend(Tag[TestEffect])
+            val innerEffect = ContextEffect.suspend(Tag[TestEffect])
             val result =
                 for
                     outer <- outerEffect
-                    inner <- RuntimeEffect.boundary(innerEffect) { isolatedEffect =>
+                    inner <- ContextEffect.boundary(innerEffect) { isolatedEffect =>
                         isolatedEffect.map(_ * 2)
                     }
                 yield outer + inner
-            val handled = RuntimeEffect.handle(Tag[TestEffect], 20, _ => 20)(result)
+            val handled = ContextEffect.handle(Tag[TestEffect], 20, _ => 20)(result)
             assert(handled.eval == 60)
         }
 
         "nested boundaries" in {
-            val effect: Int < TestEffect = RuntimeEffect.suspend(Tag[TestEffect])
+            val effect: Int < TestEffect = ContextEffect.suspend(Tag[TestEffect])
             val result: Int < TestEffect =
-                RuntimeEffect.boundary(effect) { outer =>
-                    RuntimeEffect.boundary(outer) { inner =>
+                ContextEffect.boundary(effect) { outer =>
+                    ContextEffect.boundary(outer) { inner =>
                         inner.map(_ * 2)
                     }
                 }
-            val handled: Int < Any = RuntimeEffect.handle(Tag[TestEffect], 10, _ => 21)(result)
+            val handled: Int < Any = ContextEffect.handle(Tag[TestEffect], 10, _ => 21)(result)
             assert(handled.eval == 20)
         }
 
         "two effects" in {
-            val effect1 = RuntimeEffect.suspend[Int, TestEffect](Tag[TestEffect])
-            val effect2 = RuntimeEffect.suspend[String, AnotherEffect](Tag[AnotherEffect])
+            val effect1 = ContextEffect.suspend[Int, TestEffect](Tag[TestEffect])
+            val effect2 = ContextEffect.suspend[String, AnotherEffect](Tag[AnotherEffect])
 
             val effect: String < (TestEffect & AnotherEffect) =
                 for
@@ -214,13 +214,13 @@ class RuntimeEffectTest extends Test:
                     s <- effect2
                 yield s"$i-$s"
 
-            val result = RuntimeEffect.boundary(effect) { isolated =>
+            val result = ContextEffect.boundary(effect) { isolated =>
                 val _: String < Any = isolated
                 isolated.map(_.toUpperCase)
             }
 
-            val handled = RuntimeEffect.handle(Tag[TestEffect], 10, _ => 42) {
-                RuntimeEffect.handle(Tag[AnotherEffect], "default", _.reverse)(result)
+            val handled = ContextEffect.handle(Tag[TestEffect], 10, _ => 42) {
+                ContextEffect.handle(Tag[AnotherEffect], "default", _.reverse)(result)
             }
 
             assert(handled.eval == "10-DEFAULT")
