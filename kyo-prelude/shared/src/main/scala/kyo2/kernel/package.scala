@@ -53,7 +53,7 @@ package object kernel:
                 else context(tag.erased).asInstanceOf[B]
 
             inline def get[A, E <: ContextEffect[A]](tag: Tag[E]): A =
-                getOrElse(tag, bug(s"Missing value for runtime effect '${tag}'. Values: $context"))
+                getOrElse(tag, bug(s"Missing value for context effect '${tag}'. Values: $context"))
 
             inline def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
                 Context(context.updated(tag.asInstanceOf[Tag[Any]], value.asInstanceOf[AnyRef]))

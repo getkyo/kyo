@@ -18,7 +18,7 @@ object ContextEffect:
     )(
         inline f: Safepoint ?=> A => B < S
     ): B < (E & S) =
-        suspend(tag, bug("Unexpected pending runtime effect: " + tag.show))(f)
+        suspend(tag, bug("Unexpected pending context effect: " + tag.show))(f)
 
     inline def suspend[A, E <: ContextEffect[A]](
         inline tag: Tag[E],
@@ -67,13 +67,13 @@ object ContextEffect:
         handleLoop(v)
     end handle
 
-    type WithoutRuntimeEffects[S] = S match
+    type WithoutContextEffects[S] = S match
         case ContextEffect[x] => Any
-        case s1 & s2          => WithoutRuntimeEffects[s1] & WithoutRuntimeEffects[s2]
+        case s1 & s2          => WithoutContextEffects[s1] & WithoutContextEffects[s2]
         case _                => S
 
     def boundary[A, B, S, S2](v: A < S)(
-        f: A < WithoutRuntimeEffects[S] => B < S2
+        f: A < WithoutContextEffects[S] => B < S2
     )(using _frame: Frame): B < (S & S2) =
         new KyoDefer[B, S & S2]:
             def frame = _frame
@@ -96,7 +96,7 @@ object ContextEffect:
                                 end apply
                         case _ =>
                             v
-                f(Effect.defer(boundaryLoop(v).asInstanceOf[A < WithoutRuntimeEffects[S]]))
+                f(Effect.defer(boundaryLoop(v).asInstanceOf[A < WithoutContextEffects[S]]))
             end apply
         end new
     end boundary
