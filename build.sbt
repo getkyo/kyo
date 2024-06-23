@@ -398,14 +398,18 @@ lazy val `kyo-grpc-e2e` =
                 scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
                 genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
             ),
-            libraryDependencies ++= Seq(
-                "com.thesamet.scalapb" %%% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion
-            )
         ).jvmSettings(
-            codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value
+            codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
+                "io.grpc" % "grpc-netty" % "1.64.0"
+            )
         ).jsSettings(
             `js-settings`,
-            codeGenClasspath := (`kyo-grpc-code-genJS_2.12` / Compile / fullClasspath).value
+            codeGenClasspath := (`kyo-grpc-code-genJS_2.12` / Compile / fullClasspath).value,
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0"
+            )
         )
 
 lazy val `kyo-examples` =
