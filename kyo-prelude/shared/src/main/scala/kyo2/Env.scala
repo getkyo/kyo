@@ -33,15 +33,9 @@ object Env:
         inline def apply[A, S](inline f: R => A < S)(
             using tag: Tag[R]
         ): A < (Env[R] & S) =
-            def loop(): A < (Env[R] & S) =
-                RuntimeEffect.suspend(erasedTag[R]) { map =>
-                    val value = map.getOrElse(null)(using tag.erased).asInstanceOf[R]
-                    if isNull(value) then loop()
-                    else f(value)
-                }
-            end loop
-            loop()
-        end apply
+            RuntimeEffect.suspend(erasedTag[R]) { map =>
+                f(map.get(using tag.erased).asInstanceOf[R])
+            }
     end UseOps
 
     inline def use[R >: Nothing]: UseOps[R] = UseOps(())
