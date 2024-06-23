@@ -194,7 +194,7 @@ final class Scheduler(
                 if (worker ne null) {
                     if (position >= currentWorkers)
                         worker.drain()
-                    worker.checkAvailability(nowMs)
+                    val _ = worker.checkAvailability(nowMs)
                 }
                 position += 1
             }

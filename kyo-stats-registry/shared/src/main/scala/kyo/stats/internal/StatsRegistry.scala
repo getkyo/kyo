@@ -57,7 +57,7 @@ object StatsRegistry {
         val counterGauges  = new Store[UnsafeCounterGauge]
         lazy val exporters = Collections.newSetFromMap(new ConcurrentHashMap[StatsExporter, java.lang.Boolean])
 
-        class Store[T] {
+        class Store[T <: AnyRef] {
             val map = new ConcurrentHashMap[List[String], (WeakReference[T], String)]
 
             @tailrec final def get(reversePath: List[String], description: String, init: => T): T = {

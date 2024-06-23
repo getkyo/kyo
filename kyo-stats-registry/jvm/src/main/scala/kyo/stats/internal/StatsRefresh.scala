@@ -22,5 +22,7 @@ trait StatsRefresh {
     Executors.newSingleThreadScheduledExecutor(threadFactory)
         .scheduleAtFixedRate(() => refresh(), refreshInterval, refreshInterval, TimeUnit.MILLISECONDS)
 
-    ServiceLoader.load(classOf[StatsExporter]).iterator().forEachRemaining(exporters.add(_))
+    ServiceLoader.load(classOf[StatsExporter]).iterator().forEachRemaining { exporter =>
+        val _ = exporters.add(exporter)
+    }
 }
