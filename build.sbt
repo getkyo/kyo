@@ -400,9 +400,7 @@ lazy val `kyo-grpc-e2e` =
             ),
             libraryDependencies ++= Seq(
                 "com.thesamet.scalapb" %%% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion
-            ),
-            // TODO: Workaround for https://github.com/scalapb/ScalaPB/issues/1705.
-            scalacOptions --= scalacOptionToken(ScalacOptions.languageStrictEquality).value
+            )
         ).jvmSettings(
             codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value
         ).jsSettings(
