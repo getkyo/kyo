@@ -34,10 +34,10 @@ object ContextEffect:
     )(using inline _frame: Frame): B < S =
         new KyoDefer[B, S]:
             def frame = _frame
-            def apply(v: Unit, values: Context)(using Safepoint) =
+            def apply(v: Unit, context: Context)(using Safepoint) =
                 Safepoint.handle(
                     suspend = this,
-                    continue = f(values.getOrElse(_tag, default).asInstanceOf[A])
+                    continue = f(context.getOrElse(_tag, default).asInstanceOf[A])
                 )
 
     inline def handle[A, E <: ContextEffect[A], B, S](
@@ -54,12 +54,12 @@ object ContextEffect:
                         val tag   = kyo.tag
                         val input = kyo.input
                         def frame = _frame
-                        def apply(v: OX[Any], values: Context)(using Safepoint) =
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
                             val tag   = _tag
-                            val value = values.getOrElse(tag, null)
+                            val value = context.getOrElse(tag, null)
                             val updated =
-                                if isNull(value) then values.set(tag, ifUndefined)
-                                else values.set(tag, ifDefined(value.asInstanceOf[A]))
+                                if isNull(value) then context.set(tag, ifUndefined)
+                                else context.set(tag, ifDefined(value.asInstanceOf[A]))
                             handleLoop(kyo(v, updated))
                         end apply
                 case <(kyo) =>
@@ -77,8 +77,8 @@ object ContextEffect:
     )(using _frame: Frame): B < (S & S2) =
         new KyoDefer[B, S & S2]:
             def frame = _frame
-            def apply(dummy: Unit, values: Context)(using safepoint: Safepoint) =
-                val state = safepoint.save(values)
+            def apply(dummy: Unit, context: Context)(using safepoint: Safepoint) =
+                val state = safepoint.save(context)
                 def boundaryLoop(v: A < S): A < S =
                     v match
                         case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
@@ -86,11 +86,11 @@ object ContextEffect:
                                 val tag   = kyo.tag
                                 val input = kyo.input
                                 def frame = _frame
-                                def apply(v: OX[Any], values: Context)(using Safepoint) =
+                                def apply(v: OX[Any], context: Context)(using Safepoint) =
                                     val parent = Safepoint.local.get()
                                     Safepoint.local.set(Safepoint(parent.depth, state))
                                     val r =
-                                        try kyo(v, state.values)
+                                        try kyo(v, state.context)
                                         finally Safepoint.local.set(parent)
                                     boundaryLoop(r)
                                 end apply

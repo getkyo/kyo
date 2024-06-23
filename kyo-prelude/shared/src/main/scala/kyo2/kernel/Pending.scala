@@ -39,8 +39,8 @@ object `<`:
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
                         new KyoContinue[IX, OX, EX, Any, U, S & S2](kyo):
                             def frame = _frame
-                            def apply(v: OX[Any], values: Context)(using Safepoint) =
-                                mapLoop(kyo(v, values))
+                            def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                mapLoop(kyo(v, context))
                     case <(v) =>
                         val value = v.asInstanceOf[A]
                         Safepoint.handle(

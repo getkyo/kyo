@@ -30,7 +30,7 @@ package object kernel:
             def input: I[A]
             def frame: Frame
 
-            def apply(v: O[A], values: Context)(using Safepoint): U < S
+            def apply(v: O[A], context: Context)(using Safepoint): U < S
 
             final override def toString =
                 val parsed = frame.parse
@@ -47,16 +47,16 @@ package object kernel:
             final def tag   = Tag[Defer]
             final def input = ()
 
-        class Context(values: immutable.Map[Tag[Any], AnyRef]) extends AnyVal:
+        class Context(context: immutable.Map[Tag[Any], AnyRef]) extends AnyVal:
             inline def getOrElse[A, E <: ContextEffect[A], B >: A](tag: Tag[E], inline default: => B): B =
-                if !values.contains(tag.erased) then default
-                else values(tag.erased).asInstanceOf[B]
+                if !context.contains(tag.erased) then default
+                else context(tag.erased).asInstanceOf[B]
 
             inline def get[A, E <: ContextEffect[A]](tag: Tag[E]): A =
-                getOrElse(tag, bug(s"Missing value for runtime effect '${tag}'. Values: $values"))
+                getOrElse(tag, bug(s"Missing value for runtime effect '${tag}'. Values: $context"))
 
             inline def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
-                Context(values.updated(tag.asInstanceOf[Tag[Any]], value.asInstanceOf[AnyRef]))
+                Context(context.updated(tag.asInstanceOf[Tag[Any]], value.asInstanceOf[AnyRef]))
         end Context
 
         object Context:

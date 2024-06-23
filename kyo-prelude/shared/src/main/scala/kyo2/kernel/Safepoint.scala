@@ -37,8 +37,8 @@ final class Safepoint(initDepth: Int, initState: Safepoint.State):
     private def exit(depth: Int): Unit =
         this.depth = depth - 1
 
-    private[kernel] def save(values: Context) =
-        State(Safepoint.copyTrace(trace, traceIdx), traceIdx, values)
+    private[kernel] def save(context: Context) =
+        State(Safepoint.copyTrace(trace, traceIdx), traceIdx, context)
 end Safepoint
 
 object Safepoint:
@@ -110,7 +110,7 @@ object Safepoint:
     final class State(
         val trace: Array[Frame],
         val traceIdx: Int,
-        val values: Context
+        val context: Context
     )
 
     object State:
