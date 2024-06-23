@@ -3,7 +3,7 @@ package kyo.grpc
 import kyo.grpc.test.*
 import kyo.*
 
-class MyTest extends KyoTest:
+class ServiceTest extends KyoTest:
 
     "TestMessageFieldNums is generated" in IOs.run {
         assert(TestMessageFieldNums.a == 1)
@@ -14,4 +14,4 @@ class MyTest extends KyoTest:
         assert(TestMessageFieldNums.NestedMessageFieldNums.color == 1)
     }
 
-end MyTest
+end ServiceTest

@@ -1,9 +1,8 @@
 package kyo
 
 import io.grpc.*
-import io.grpc.examples.helloworld.helloworld.{Greeter, HelloReply, HelloRequest}
+import io.grpc.examples.helloworld.helloworld.*
 import kyo.grpc.*
-import sun.misc.{Signal, SignalHandler}
 
 object GreeterService extends Greeter:
   override def sayHello(request: HelloRequest): HelloReply < GrpcResponses =

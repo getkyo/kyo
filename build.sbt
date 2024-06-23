@@ -72,7 +72,7 @@ lazy val kyoJVM = project
         `kyo-tapir`.jvm,
         `kyo-caliban`.jvm,
         // TODO: Re-enable
-        //`kyo-bench`.jvm,
+        // `kyo-bench`.jvm,
         `kyo-test`.jvm,
         `kyo-zio`.jvm,
         `kyo-grpc`.jvm,
@@ -295,28 +295,25 @@ lazy val `kyo-zio` =
             `js-settings`
         ).jvmSettings()
 
-
 lazy val `kyo-grpc` =
-  crossProject(JVMPlatform, JSPlatform)
-    .withoutSuffixFor(JVMPlatform)
-    .settings(
-        crossScalaVersions := Seq.empty,
-        publishArtifact := false,
-        publish := {},
-        publishLocal := {}
-    )
-    .aggregate(
-        `kyo-grpc-core`,
-        `kyo-grpc-code-gen`,
-        `kyo-grpc-e2e`
-    )
-
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .settings(
+            crossScalaVersions := Seq.empty,
+            publishArtifact    := false,
+            publish            := {},
+            publishLocal       := {}
+        )
+        .aggregate(
+            `kyo-grpc-core`,
+            `kyo-grpc-code-gen`,
+            `kyo-grpc-e2e`
+        )
 
 lazy val `kyo-grpc-jvm` =
     `kyo-grpc`
         .jvm
         .aggregate(`protoc-gen-kyo-grpc`.componentProjects.map(p => p: ProjectReference) *)
-
 
 lazy val `kyo-grpc-core` =
     crossProject(JVMPlatform, JSPlatform)
@@ -352,11 +349,10 @@ lazy val `kyo-grpc-code-gen` =
             crossScalaVersions := List(scala212Version, scala213Version, scala3Version),
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             libraryDependencies ++= Seq(
-                "com.thesamet.scalapb" %% "compilerplugin" % scalapb.compiler.Version.scalapbVersion,
-                "com.thesamet.scalapb" %%% "scalapb-runtime" % scalapb.compiler.Version.scalapbVersion,
+                "com.thesamet.scalapb"    %% "compilerplugin"          % scalapb.compiler.Version.scalapbVersion,
                 "org.scala-lang.modules" %%% "scala-collection-compat" % "2.12.0",
-                "org.typelevel" %%% "paiges-core" % "0.4.3"
-            ),
+                "org.typelevel"          %%% "paiges-core"             % "0.4.3"
+            )
         ).jsSettings(
             `js-settings`
         )
@@ -377,13 +373,13 @@ lazy val `protoc-gen-kyo-grpc` =
     protocGenProject("protoc-gen-kyo-grpc", `kyo-grpc-code-gen_2.12`)
         .settings(
             `kyo-settings`,
-            scalaVersion := scala212Version,
+            scalaVersion       := scala212Version,
             crossScalaVersions := Seq(scala212Version),
             // TODO: Does it not auto-discover it?
             Compile / mainClass := Some("kyo.grpc.compiler.CodeGenerator")
         )
         .aggregateProjectSettings(
-            scalaVersion := scala212Version,
+            scalaVersion       := scala212Version,
             crossScalaVersions := Seq(scala212Version)
         )
 
@@ -398,21 +394,20 @@ lazy val `kyo-grpc-e2e` =
             `kyo-settings`,
             publish / skip := true,
             Compile / PB.protoSources += sharedSourceDir("main").value / "protobuf",
-            Test / PB.protoSources += sharedSourceDir("test").value / "protobuf",
             Compile / PB.targets := Seq(
                 scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
                 genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
             ),
-            // FIXME: This isn't working.
-            // Ignore warnings in generated sources.
-            scalacOptions ++= (Compile / managedSourceDirectories).value.map(dir =>
-                s"-Wconf:${Regex.quote(dir.getAbsolutePath)}.*:silent",
-            )
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb" %%% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion
+            ),
+            // TODO: Workaround for https://github.com/scalapb/ScalaPB/issues/1705.
+            scalacOptions --= scalacOptionToken(ScalacOptions.languageStrictEquality).value
         ).jvmSettings(
-            codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
+            codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value
         ).jsSettings(
             `js-settings`,
-            codeGenClasspath := (`kyo-grpc-code-genJS_2.12` / Compile / fullClasspath).value,
+            codeGenClasspath := (`kyo-grpc-code-genJS_2.12` / Compile / fullClasspath).value
         )
 
 lazy val `kyo-examples` =
@@ -512,7 +507,7 @@ lazy val readme =
             `kyo-sttp`,
             `kyo-tapir`,
             // TODO: Re-enable
-            //`kyo-bench`,
+            // `kyo-bench`,
             `kyo-zio`,
             `kyo-caliban`
         )
