@@ -1,16 +1,7 @@
 package kyo2
 
-import java.util.ArrayDeque
-import java.util.Arrays
-import java.util.HashMap
 import kyo.Tag
-import scala.annotation.tailrec
-import scala.annotation.targetName
 import scala.collection.immutable
-import scala.collection.mutable
-import scala.quoted.Type
-import scala.util.control.NonFatal
-import scala.util.hashing.Hashing.Default
 
 package object kernel:
 

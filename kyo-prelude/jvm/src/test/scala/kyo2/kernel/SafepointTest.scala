@@ -3,9 +3,7 @@ package kyo2.kernel
 import kyo2.*
 import kyo2.Tagged.*
 import scala.concurrent.Await
-import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
-import scala.concurrent.duration.*
 
 class SafepointTest extends Test:
 

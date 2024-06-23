@@ -15,9 +15,7 @@ import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
-import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
-import scala.concurrent.duration.*
 import scala.util.control.NonFatal
 
 final class Scheduler(

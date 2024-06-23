@@ -1,6 +1,5 @@
 package kyo2
 
-import java.awt.Window.Type
 import kyo.Tag
 import kyo2.*
 import kyo2.kernel.*

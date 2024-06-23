@@ -3,7 +3,6 @@ package kyo2.internal
 import kyo2.*
 import kyo2.kernel.Platform
 import scala.annotation.targetName
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.Try
 

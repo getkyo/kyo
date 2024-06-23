@@ -3,8 +3,6 @@ package kyo2
 import kyo.Tag
 import kyo2.*
 import kyo2.kernel.*
-import scala.annotation.implicitNotFound
-import scala.annotation.tailrec
 
 sealed trait Sum[V] extends Effect[Const[V], Const[Unit]]
 
