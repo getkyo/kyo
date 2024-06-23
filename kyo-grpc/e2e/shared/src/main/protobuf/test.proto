@@ -3,30 +3,35 @@ syntax = "proto3";
 package kyo.grpc;
 
 service TestService {
-    rpc Unary(Request) returns (Response);
+  rpc Unary(Request) returns (Response);
 }
 
 message Request {
-    oneof sealed_value {
-        Echo echo = 1;
-        Fail fail = 2;
-    }
+  oneof sealed_value {
+    Echo echo = 1;
+    Abort abort = 2;
+    Fail fail = 3;
+  }
 }
 
 message Response {
-    oneof sealed_value {
-        EchoEcho echo = 1;
-    }
+  oneof sealed_value {
+    EchoEcho echo = 1;
+  }
 }
 
 message Echo {
-    string message = 1;
+  string message = 1;
 }
 
 message EchoEcho {
-    string message = 1;
+  string message = 1;
+}
+
+message Abort {
+  int32 code = 1;
 }
 
 message Fail {
-    int32 code = 1;
+  string message = 1;
 }
