@@ -34,6 +34,12 @@ object Envs:
         envs[V].handle(handler[V])(env, value).asInstanceOf[T < (S & VR)]
     end runTypeMap
 
+    transparent inline def runLayers[T, S, V](inline layers: Layer[?, ?]*)(value: T < (Envs[V] & S)): T < (S & IOs) = {
+        Layers.init[V](layers*).run.map: env =>
+            runTypeMap(env)(value)
+    }.asInstanceOf[T < (S & IOs)]
+    end runLayers
+
     class UseDsl[V >: Nothing]:
         inline def apply[T, S](inline f: V => T < S)(
             using
@@ -82,5 +88,8 @@ object Envs:
         given isEnvs[V]: HasEnvs[V, V] with
             type Remainder = Any
     end HasEnvs
+
+    private[kyo] val bypassHasEnvs   = new HasEnvs[Any, Any] {}
+    private[kyo] def bypass[A, B, C] = bypassHasEnvs.asInstanceOf[HasEnvs[A, B] { type Remainder = C }]
 
 end Envs
