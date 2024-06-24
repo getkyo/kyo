@@ -63,15 +63,29 @@ object TypeMap:
 
     def apply[A](a: A)(using ta: Tag[A]): TypeMap[A] =
         HashMap(ta.erased -> a)
-    def apply[A, B](a: A, b: B)(using ta: Tag[A], tb: Tag[B]): TypeMap[A & B] =
+    def apply[A, B](a: A, b: B)(using ta: Tag[A], tb: Tag[B], ev1: NotGiven[A <:< B], ev2: NotGiven[B <:< A]): TypeMap[A & B] =
         HashMap(ta.erased -> a, tb.erased -> b)
-    def apply[A: Tag, B: Tag, C: Tag](a: A, b: B, c: C)(using ta: Tag[A], tb: Tag[B], tc: Tag[C]): TypeMap[A & B & C] =
+    def apply[A: Tag, B: Tag, C: Tag](a: A, b: B, c: C)(using
+        ta: Tag[A],
+        tb: Tag[B],
+        tc: Tag[C],
+        ev1: NotGiven[A <:< B],
+        ev2: NotGiven[B <:< A],
+        ev3: NotGiven[B <:< C],
+        ev4: NotGiven[C <:< B]
+    ): TypeMap[A & B & C] =
         HashMap(ta.erased -> a, tb.erased -> b, tc.erased -> c)
     def apply[A: Tag, B: Tag, C: Tag, D: Tag](a: A, b: B, c: C, d: D)(using
         ta: Tag[A],
         tb: Tag[B],
         tc: Tag[C],
-        td: Tag[D]
+        td: Tag[D],
+        ev1: NotGiven[A <:< B],
+        ev2: NotGiven[B <:< A],
+        ev3: NotGiven[B <:< C],
+        ev4: NotGiven[C <:< B],
+        ev5: NotGiven[C <:< D],
+        ev6: NotGiven[D <:< C]
     ): TypeMap[A & B & C & D] =
         HashMap(
             ta.erased -> a,

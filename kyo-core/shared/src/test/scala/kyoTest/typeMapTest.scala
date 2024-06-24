@@ -66,7 +66,7 @@ class typeMapTest extends KyoTest:
             assert(e.get[Char] == 'c')
             assert(e.size == 4)
         }
-        "distinct" in pendingUntilFixed {
+        "distinct" in {
             assertDoesNotCompile("TypeMap(0, 0)")
         }
     }
