@@ -145,6 +145,7 @@ class typeMapTest extends KyoTest:
         "narrows and replaces" in {
             val e1: TypeMap[A] = TypeMap(a)
             val e2: TypeMap[B] = e1.add[B](b)
+            assert(e2.size == 1)
             assert(e2.get[A] eq b)
         }
         "cannot widen" in {
