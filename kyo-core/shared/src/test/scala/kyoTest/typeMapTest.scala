@@ -4,6 +4,12 @@ import kyo.Tag
 import kyo.TypeMap
 
 class typeMapTest extends KyoTest:
+
+    private abstract class A
+    private val a = new A {}
+    private abstract class B extends A
+    private val b = new B {}
+
     "empty" - {
         "TypeMap.empty" in {
             assert(TypeMap.empty.isEmpty)
@@ -99,10 +105,6 @@ class typeMapTest extends KyoTest:
             )
         }
         "subtype" in {
-            abstract class A
-            class B extends A
-            val b = new B
-
             val e: TypeMap[A & B] = TypeMap(b)
 
             assert(e.get[A] eq b)
@@ -131,14 +133,9 @@ class typeMapTest extends KyoTest:
             )
         }
         "subtype" in {
-            abstract class A
-            val a = new A {}
-            abstract class B extends A
-            val b1 = new B {}
-
             val e1: TypeMap[A] = TypeMap(a)
-            val e2             = e1.add[A](b1)
-            assert(e2.get[A] eq b1)
+            val e2             = e1.add[A](b)
+            assert(e2.get[A] eq b)
             assertDoesNotCompile(
                 """
                   | e2.get[B]
@@ -146,25 +143,15 @@ class typeMapTest extends KyoTest:
             )
         }
         "narrows and replaces" in {
-            abstract class A
-            val a = new A {}
-            abstract class B extends A
-            val b1 = new B {}
-
             val e1: TypeMap[A] = TypeMap(a)
-            val e2: TypeMap[B] = e1.add[B](b1)
-            assert(e2.get[A] eq b1)
+            val e2: TypeMap[B] = e1.add[B](b)
+            assert(e2.get[A] eq b)
         }
         "cannot widen" in {
-            abstract class A
-            val a = new A {}
-            abstract class B extends A
-            val b1 = new B {}
-
             val e1: TypeMap[A] = TypeMap(a)
             assertDoesNotCompile(
                 """
-                  | e1.add[B](b1): TypeMap[A & B]
+                  | e1.add[B](b): TypeMap[A & B]
                   |""".stripMargin
             )
         }
