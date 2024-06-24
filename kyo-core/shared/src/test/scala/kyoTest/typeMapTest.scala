@@ -160,7 +160,7 @@ class typeMapTest extends KyoTest:
     ".prune" - {
         "Env[Int] -> Env[Any]" in {
             val p = TypeMap(42).prune[Any]
-            assert(p.isEmpty)
+            assert(p.size == 1)
         }
         "Env[Int & String] -> Env[Int]" in {
             val e = TypeMap(42, "")

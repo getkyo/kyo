@@ -37,7 +37,7 @@ object TypeMap:
             self ++ that
 
         def prune[B >: A](using t: Tag[B]): TypeMap[B] =
-            if t =:= Tag[Any] then empty
+            if t =:= Tag[Any] then self
             else self.filter { case (tag, _) => tag <:< t }
 
         inline def size: Int        = self.size
