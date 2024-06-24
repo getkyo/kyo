@@ -26,7 +26,7 @@ object Abort:
         if b then fail(value)
         else ()
 
-    class GetOps[E >: Nothing](dummy: Unit) extends AnyVal:
+    final class GetOps[E >: Nothing](dummy: Unit) extends AnyVal:
         inline def apply[A](either: Either[E, A]): A < Abort[E] =
             either match
                 case Right(value) => value

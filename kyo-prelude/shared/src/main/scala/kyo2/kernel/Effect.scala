@@ -14,7 +14,7 @@ object Effect:
             def apply(dummy: Unit, context: Context)(using Safepoint) =
                 f
 
-    case class SuspendOps[A](dummy: Unit) extends AnyVal:
+    final class SuspendOps[A](dummy: Unit) extends AnyVal:
 
         inline def apply[I[_], O[_], E <: Effect[I, O]](
             inline _tag: Tag[E],
@@ -30,7 +30,7 @@ object Effect:
 
     inline def suspend[A]: SuspendOps[A] = SuspendOps(())
 
-    class SuspendMapOps[A](dummy: Unit) extends AnyVal:
+    final class SuspendMapOps[A](dummy: Unit) extends AnyVal:
         inline def apply[I[_], O[_], E <: Effect[I, O], B, S](
             inline _tag: Tag[E],
             inline _input: I[A]
