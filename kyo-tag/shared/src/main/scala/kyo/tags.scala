@@ -42,6 +42,9 @@ object Tag:
                 case t1: Set[T] =>
                     t1 <:< t2
 
+        infix def <:!<[U](t2: Full[U]): Boolean =
+            ! <:<(t2)
+
         infix def =:=[U](t2: Full[U]): Boolean =
             (t1.asInstanceOf[AnyRef] eq t2.asInstanceOf[AnyRef]) || t1 == t2
 
@@ -50,6 +53,9 @@ object Tag:
 
         infix def >:>[U](t2: Full[U]): Boolean =
             t2 <:< t1
+
+        infix def >:!>[U](t2: Full[U]): Boolean =
+            t2 <:!< t1
 
         def erased: Full[Any] = t1.asInstanceOf[Full[Any]]
 
