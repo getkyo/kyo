@@ -218,18 +218,6 @@ class typeMapTest extends KyoTest:
                   | val p = e.prune[Exception]
                   |""".stripMargin)
         }
-//        "complex" in {
-//            val e =
-//                TypeMap
-//                    .empty
-//                    .add(new Throwable)
-//                    .add(new Exception)
-//                    .add(new RuntimeException)
-//                    .add(new NullPointerException)
-//                    .add(new ClassCastException)
-//            val p = e.prune[RuntimeException]
-//            assert(p.size == 3)
-//        }
         "intersection" in pendingUntilFixed {
             assertCompiles("""
                 |val e = TypeMap(true, "")
