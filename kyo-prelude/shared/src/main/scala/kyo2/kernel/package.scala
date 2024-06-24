@@ -59,7 +59,7 @@ package object kernel:
                 getOrElse(tag, bug(s"Missing value for context effect '${tag}'. Values: $context"))
 
             inline def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
-                Context(context.updated(tag.asInstanceOf[Tag[Any]], value.asInstanceOf[AnyRef]))
+                Context(context.updated(tag.erased, value.asInstanceOf[AnyRef]))
         end Context
 
         object Context:
