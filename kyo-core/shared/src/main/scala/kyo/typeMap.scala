@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tag.Intersection
-
 import scala.collection.immutable.HashMap
 import scala.util.NotGiven
 
@@ -35,11 +34,6 @@ object TypeMap:
         inline def add[B](b: B)(using inline t: Tag[B], inline ev1: NotGiven[A <:< B], inline ev2: NotGiven[B <:< A]): TypeMap[A & B] =
             self.updated(t.erased, b)
 
-        // TODO: Test with intersection for A. Make sure you can replace A & C with B and you get B & C out.
-        // TODO: Test with intersection for B. Make sure you can't replace A with A & B or even A with B & C.
-        inline def replace[B <: A](b: B)(using inline t: Tag[B]): TypeMap[B] =
-            self.view.filterKeys(_ >:!> t).to[TypeMap[B]](HashMap).updated(t.erased, b)
-
         inline def union[B](that: TypeMap[B]): TypeMap[A & B] =
             self ++ that
 
@@ -56,6 +50,11 @@ object TypeMap:
 
         private[kyo] inline def <:<[T](tag: Tag[T]): Boolean =
             self.keySet.exists(_ <:< tag)
+    end extension
+
+    extension [A, B](self: TypeMap[A & B])
+        inline def replace[C <: A](c: C)(using inline t: Tag[C]): TypeMap[B & C] =
+            self.view.filterKeys(_ >:!> t).to[TypeMap[B]](HashMap).updated(t.erased, c)
     end extension
 
     given flat[A]: Flat[TypeMap[A]] = Flat.unsafe.bypass

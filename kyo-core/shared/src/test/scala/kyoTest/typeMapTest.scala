@@ -5,12 +5,14 @@ import kyo.TypeMap
 
 class typeMapTest extends KyoTest:
 
-    private abstract class A
+    private trait A
     private val a = new A {}
-    private abstract class B extends A
+    private trait B extends A
     private val b = new B {}
-    private abstract class C
+    private trait C
     private val c = new C {}
+    private trait D extends A with C
+    private val d = new D {}
 
     "empty" - {
         "TypeMap.empty" in {
@@ -155,14 +157,33 @@ class typeMapTest extends KyoTest:
     ".replace" - {
         "replaces" in {
             val e1: TypeMap[A] = TypeMap(a)
-            val e2: TypeMap[A] = e1.replace[A](b)
+            val e2             = e1.replace(b)
+            assert(e2.size == 1)
             assert(e2.get[A] eq b)
+            assert(e2.get[B] eq b)
         }
         "narrows" in {
             val e1: TypeMap[A] = TypeMap(a)
-            val e2: TypeMap[B] = e1.replace[B](b)
+            val e2             = e1.replace(b)
             assert(e2.size == 1)
             assert(e2.get[A] eq b)
+            assert(e2.get[B] eq b)
+        }
+        "replace intersection" in {
+            val e1: TypeMap[A & C] = TypeMap(a).add(c)
+            val e2                 = e1.replace(b)
+            assert(e2.size == 2)
+            assert(e2.get[A] eq b)
+            assert(e2.get[B] eq b)
+            assert(e2.get[C] eq c)
+        }
+        "replace superset" in {
+            val e1: TypeMap[A & C] = TypeMap(a).add(c)
+            val e2                 = e1.replace(d)
+            assert(e2.size == 1)
+            assert(e2.get[A] eq d)
+            assert(e2.get[C] eq d)
+            assert(e2.get[D] eq d)
         }
     }
 
