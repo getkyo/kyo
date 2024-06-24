@@ -9,7 +9,7 @@ val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
 
 val zioVersion       = "2.1.4"
-val scalaTestVersion = "3.2.18"
+val scalaTestVersion = "3.2.19"
 
 val compilerOptions = Set(
     ScalacOptions.encoding("utf8"),
