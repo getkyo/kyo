@@ -162,7 +162,7 @@ class typeMapTest extends KyoTest:
             assert(e2.get[A] eq b)
             assert(e2.get[B] eq b)
         }
-        "replace intersection" in {
+        "intersection" in {
             val e1: TypeMap[A & C] = TypeMap(a).add(c)
             val e2                 = e1.replace(b)
             assert(e2.size == 2)
@@ -170,7 +170,7 @@ class typeMapTest extends KyoTest:
             assert(e2.get[B] eq b)
             assert(e2.get[C] eq c)
         }
-        "replace superset" in {
+        "superset" in {
             val e1: TypeMap[A & C] = TypeMap(a).add(c)
             val e2                 = e1.replace(d)
             assert(e2.size == 1)
@@ -198,19 +198,23 @@ class typeMapTest extends KyoTest:
     }
 
     ".merge" - {
-        "TypeMap[Int] + TypeMap[Char] -> TypeMap[Int & Char]" in {
-            val e1: TypeMap[Int]        = TypeMap(42)
-            val e2: TypeMap[Char]       = TypeMap('c')
-            val e3: TypeMap[Int & Char] = e1.merge(e2)
-            assert(e3.get[Int] == 42)
-            assert(e3.get[Char] == 'c')
+        "intersection" in {
+            val e1: TypeMap[A & C] = TypeMap(a).add(c)
+            val e2: TypeMap[B]     = TypeMap(b)
+            val e3                 = e1.merge(e2)
+            assert(e3.size == 2)
+            assert(e3.get[A] eq b)
+            assert(e3.get[B] eq b)
+            assert(e3.get[C] eq c)
         }
-        "need not be distinct" in {
-            val e1: TypeMap[Int & Char] = TypeMap(42).add('c')
-            val e2: TypeMap[Char]       = TypeMap('d')
-            val e3                      = e1.merge(e2)
-            assert(e3.get[Int] == 42)
-            assert(e3.get[Char] == 'd')
+        "superset" in {
+            val e1: TypeMap[A & C] = TypeMap(a).add(c)
+            val e2: TypeMap[D]     = TypeMap(d)
+            val e3                 = e1.merge(e2)
+            assert(e3.size == 1)
+            assert(e3.get[A] eq d)
+            assert(e3.get[C] eq d)
+            assert(e3.get[D] eq d)
         }
     }
 

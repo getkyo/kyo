@@ -50,7 +50,7 @@ object TypeMap:
 
         // TODO: This O(n*m)
         inline def merge[B](that: TypeMap[B]): TypeMap[A & B] =
-            self ++ that
+            self.view.filterKeys(key => that.keysIterator.forall(_ <:!< key)).to[TypeMap[A]](HashMap) ++ that
 
         def prune[B >: A](using t: Tag[B]): TypeMap[B] =
             if t =:= Tag[Any] then empty
