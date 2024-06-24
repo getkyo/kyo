@@ -48,8 +48,11 @@ package object kernel:
             final def input = ()
 
         class Context(context: immutable.Map[Tag[Any], AnyRef]) extends AnyVal:
+            inline def contains[A, E <: ContextEffect[A]](tag: Tag[E]): Boolean =
+                context.contains(tag.erased)
+
             inline def getOrElse[A, E <: ContextEffect[A], B >: A](tag: Tag[E], inline default: => B): B =
-                if !context.contains(tag.erased) then default
+                if !contains(tag) then default
                 else context(tag.erased).asInstanceOf[B]
 
             inline def get[A, E <: ContextEffect[A]](tag: Tag[E]): A =

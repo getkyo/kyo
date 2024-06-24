@@ -55,11 +55,10 @@ object ContextEffect:
                         val input = kyo.input
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            val tag   = _tag
-                            val value = context.getOrElse(tag, null)
+                            val tag = _tag // avoid inlining the tag multiple times
                             val updated =
-                                if isNull(value) then context.set(tag, ifUndefined)
-                                else context.set(tag, ifDefined(value.asInstanceOf[A]))
+                                if !context.contains(tag) then context.set(tag, ifUndefined)
+                                else context.set(tag, ifDefined(context.get(tag)))
                             handleLoop(kyo(v, updated))
                         end apply
                 case <(kyo) =>
