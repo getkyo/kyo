@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Tag.Intersection
+import scala.annotation.implicitNotFound
 import scala.collection.immutable.HashMap
 import scala.util.NotGiven
 
@@ -31,10 +32,24 @@ object TypeMap:
             end if
         end get
 
-        inline def add[B](b: B)(using inline t: Tag[B], inline ev1: NotGiven[A <:< B], inline ev2: NotGiven[B <:< A]): TypeMap[A & B] =
+        inline def add[B](b: B)(using
+            inline t: Tag[B],
+            @implicitNotFound("add requires distinct types. Use replace instead.") inline ev1: NotGiven[A <:< B],
+            @implicitNotFound("add requires distinct types. Use replace instead.") inline ev2: NotGiven[B <:< A]
+        ): TypeMap[A & B] =
             self.updated(t.erased, b)
 
-        inline def union[B](that: TypeMap[B]): TypeMap[A & B] =
+        inline def union[B](that: TypeMap[B])(
+            using
+            @implicitNotFound("union requires distinct types. Use merge instead.")
+            inline ev1: NotGiven[A <:< B],
+            @implicitNotFound("union requires distinct types. Use merge instead.")
+            inline ev2: NotGiven[B <:< A]
+        ): TypeMap[A & B] =
+            self ++ that
+
+        // TODO: This O(n*m)
+        inline def merge[B](that: TypeMap[B]): TypeMap[A & B] =
             self ++ that
 
         def prune[B >: A](using t: Tag[B]): TypeMap[B] =
@@ -53,6 +68,7 @@ object TypeMap:
     end extension
 
     extension [A, B](self: TypeMap[A & B])
+        // TODO: Is there any way to get a Tag[A] and remove that key directly rather than filtering?
         inline def replace[C <: A](c: C)(using inline t: Tag[C]): TypeMap[B & C] =
             self.view.filterKeys(_ >:!> t).to[TypeMap[B]](HashMap).updated(t.erased, c)
     end extension
@@ -63,15 +79,26 @@ object TypeMap:
 
     def apply[A](a: A)(using ta: Tag[A]): TypeMap[A] =
         HashMap(ta.erased -> a)
-    def apply[A, B](a: A, b: B)(using ta: Tag[A], tb: Tag[B], ev1: NotGiven[A <:< B], ev2: NotGiven[B <:< A]): TypeMap[A & B] =
+    def apply[A, B](a: A, b: B)(using
+        ta: Tag[A],
+        tb: Tag[B],
+        @implicitNotFound("TypeMap requires distinct types.")
+        ev1: NotGiven[A <:< B],
+        @implicitNotFound("TypeMap requires distinct types.")
+        ev2: NotGiven[B <:< A]
+    ): TypeMap[A & B] =
         HashMap(ta.erased -> a, tb.erased -> b)
     def apply[A: Tag, B: Tag, C: Tag](a: A, b: B, c: C)(using
         ta: Tag[A],
         tb: Tag[B],
         tc: Tag[C],
+        @implicitNotFound("TypeMap requires distinct types.")
         ev1: NotGiven[A <:< B],
+        @implicitNotFound("TypeMap requires distinct types.")
         ev2: NotGiven[B <:< A],
+        @implicitNotFound("TypeMap requires distinct types.")
         ev3: NotGiven[B <:< C],
+        @implicitNotFound("TypeMap requires distinct types.")
         ev4: NotGiven[C <:< B]
     ): TypeMap[A & B & C] =
         HashMap(ta.erased -> a, tb.erased -> b, tc.erased -> c)
@@ -80,11 +107,17 @@ object TypeMap:
         tb: Tag[B],
         tc: Tag[C],
         td: Tag[D],
+        @implicitNotFound("TypeMap requires distinct types.")
         ev1: NotGiven[A <:< B],
+        @implicitNotFound("TypeMap requires distinct types.")
         ev2: NotGiven[B <:< A],
+        @implicitNotFound("TypeMap requires distinct types.")
         ev3: NotGiven[B <:< C],
+        @implicitNotFound("TypeMap requires distinct types.")
         ev4: NotGiven[C <:< B],
+        @implicitNotFound("TypeMap requires distinct types.")
         ev5: NotGiven[C <:< D],
+        @implicitNotFound("TypeMap requires distinct types.")
         ev6: NotGiven[D <:< C]
     ): TypeMap[A & B & C & D] =
         HashMap(

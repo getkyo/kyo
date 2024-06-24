@@ -71,8 +71,7 @@ class typeMapTest extends KyoTest:
         }
     }
     "fatal" - {
-        import scala.util.Try
-        import scala.util.Failure
+        import scala.util.{Failure, Try}
 
         def test[A: Tag](e: TypeMap[A], contents: String, tpe: String) =
             Try(e.get[A]) match
@@ -129,28 +128,22 @@ class typeMapTest extends KyoTest:
                   |""".stripMargin)
         }
         "A | B" in {
-            assertDoesNotCompile(
-                """
+            assertDoesNotCompile("""
                   | def union[A, B](ab: A | B) =
                   |     TypeMap.empty.add(ab)
-                  |""".stripMargin
-            )
+                  |""".stripMargin)
         }
         "cannot narrow" in {
             val e1: TypeMap[A] = TypeMap(a)
-            assertDoesNotCompile(
-                """
+            assertDoesNotCompile("""
                   | e1.add[B](b)
-                  |""".stripMargin
-            )
+                  |""".stripMargin)
         }
         "cannot widen" in {
             val e1: TypeMap[B] = TypeMap(b)
-            assertDoesNotCompile(
-                """
+            assertDoesNotCompile("""
                   | e1.add[A](a)
-                  |""".stripMargin
-            )
+                  |""".stripMargin)
         }
     }
 
@@ -195,6 +188,30 @@ class typeMapTest extends KyoTest:
             assert(e3.get[Int] == 42)
             assert(e3.get[Char] == 'c')
         }
+        "must be distinct" in {
+            val e1: TypeMap[Int & Char] = TypeMap(42).add('c')
+            val e2: TypeMap[Char]       = TypeMap('c')
+            assertDoesNotCompile("""
+                  |val e3 = e1.union(e2)
+                  |""".stripMargin)
+        }
+    }
+
+    ".merge" - {
+        "TypeMap[Int] + TypeMap[Char] -> TypeMap[Int & Char]" in {
+            val e1: TypeMap[Int]        = TypeMap(42)
+            val e2: TypeMap[Char]       = TypeMap('c')
+            val e3: TypeMap[Int & Char] = e1.merge(e2)
+            assert(e3.get[Int] == 42)
+            assert(e3.get[Char] == 'c')
+        }
+        "need not be distinct" in {
+            val e1: TypeMap[Int & Char] = TypeMap(42).add('c')
+            val e2: TypeMap[Char]       = TypeMap('d')
+            val e3                      = e1.merge(e2)
+            assert(e3.get[Int] == 42)
+            assert(e3.get[Char] == 'd')
+        }
     }
 
     ".prune" - {
@@ -206,6 +223,14 @@ class typeMapTest extends KyoTest:
             val e = TypeMap(42, "")
             val p = e.prune[Int]
             assert(p.size == 1)
+        }
+        "Env[Int & String & Boolean] -> Env[Int & String]" in pendingUntilFixed {
+            assertCompiles("""
+                  |val e = TypeMap(42, "", true)
+                  |val p = e.prune[Int & String]
+                  |val p1 = e.prune[Int]
+                  |val p2: TypeMap[Int] = e
+                  |val p3 = TypeMap(e.get[Int])""".stripMargin)
         }
         "Env[Sub] -> Env[Super]" in {
             val e = TypeMap(new RuntimeException)
