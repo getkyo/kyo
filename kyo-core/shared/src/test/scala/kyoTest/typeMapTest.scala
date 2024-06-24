@@ -145,6 +145,29 @@ class typeMapTest extends KyoTest:
                   |""".stripMargin
             )
         }
+        "narrows and replaces" in {
+            abstract class A
+            val a = new A {}
+            abstract class B extends A
+            val b1 = new B {}
+
+            val e1: TypeMap[A] = TypeMap(a)
+            val e2: TypeMap[B] = e1.add[B](b1)
+            assert(e2.get[A] eq b1)
+        }
+        "cannot widen" in {
+            abstract class A
+            val a = new A {}
+            abstract class B extends A
+            val b1 = new B {}
+
+            val e1: TypeMap[A] = TypeMap(a)
+            assertDoesNotCompile(
+                """
+                  | e1.add[B](b1): TypeMap[A & B]
+                  |""".stripMargin
+            )
+        }
     }
 
     ".union" - {
