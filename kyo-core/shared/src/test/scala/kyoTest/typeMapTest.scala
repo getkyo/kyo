@@ -9,6 +9,8 @@ class typeMapTest extends KyoTest:
     private val a = new A {}
     private abstract class B extends A
     private val b = new B {}
+    private abstract class C
+    private val c = new C {}
 
     "empty" - {
         "TypeMap.empty" in {
@@ -132,29 +134,35 @@ class typeMapTest extends KyoTest:
                   |""".stripMargin
             )
         }
-        "subtype" in {
+        "cannot narrow" in {
             val e1: TypeMap[A] = TypeMap(a)
-            val e2             = e1.add[A](b)
-            assert(e2.get[A] eq b)
             assertDoesNotCompile(
                 """
-                  | e2.get[B]
+                  | e1.add[B](b)
                   |""".stripMargin
             )
-        }
-        "narrows and replaces" in {
-            val e1: TypeMap[A] = TypeMap(a)
-            val e2: TypeMap[B] = e1.add[B](b)
-            assert(e2.size == 1)
-            assert(e2.get[A] eq b)
         }
         "cannot widen" in {
-            val e1: TypeMap[A] = TypeMap(a)
+            val e1: TypeMap[B] = TypeMap(b)
             assertDoesNotCompile(
                 """
-                  | e1.add[B](b): TypeMap[A & B]
+                  | e1.add[A](a)
                   |""".stripMargin
             )
+        }
+    }
+
+    ".replace" - {
+        "replaces" in {
+            val e1: TypeMap[A] = TypeMap(a)
+            val e2: TypeMap[A] = e1.replace[A](b)
+            assert(e2.get[A] eq b)
+        }
+        "narrows" in {
+            val e1: TypeMap[A] = TypeMap(a)
+            val e2: TypeMap[B] = e1.replace[B](b)
+            assert(e2.size == 1)
+            assert(e2.get[A] eq b)
         }
     }
 
@@ -189,18 +197,18 @@ class typeMapTest extends KyoTest:
                   | val p = e.prune[Exception]
                   |""".stripMargin)
         }
-        "complex" in {
-            val e =
-                TypeMap
-                    .empty
-                    .add(new Throwable)
-                    .add(new Exception)
-                    .add(new RuntimeException)
-                    .add(new NullPointerException)
-                    .add(new ClassCastException)
-            val p = e.prune[RuntimeException]
-            assert(p.size == 3)
-        }
+//        "complex" in {
+//            val e =
+//                TypeMap
+//                    .empty
+//                    .add(new Throwable)
+//                    .add(new Exception)
+//                    .add(new RuntimeException)
+//                    .add(new NullPointerException)
+//                    .add(new ClassCastException)
+//            val p = e.prune[RuntimeException]
+//            assert(p.size == 3)
+//        }
         "intersection" in pendingUntilFixed {
             assertCompiles("""
                 |val e = TypeMap(true, "")

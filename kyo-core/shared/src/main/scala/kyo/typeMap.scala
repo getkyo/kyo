@@ -1,7 +1,9 @@
 package kyo
 
 import kyo.Tag.Intersection
+
 import scala.collection.immutable.HashMap
+import scala.util.NotGiven
 
 opaque type TypeMap[+A] = HashMap[Tag[Any], Any]
 
@@ -30,8 +32,13 @@ object TypeMap:
             end if
         end get
 
-        inline def add[B](b: B)(using inline t: Tag[B]): TypeMap[A & B] =
+        inline def add[B](b: B)(using inline t: Tag[B], inline ev1: NotGiven[A <:< B], inline ev2: NotGiven[B <:< A]): TypeMap[A & B] =
             self.updated(t.erased, b)
+
+        // TODO: Test with intersection for A. Make sure you can replace A & C with B and you get B & C out.
+        // TODO: Test with intersection for B. Make sure you can't replace A with A & B or even A with B & C.
+        inline def replace[B <: A](b: B)(using inline t: Tag[B]): TypeMap[B] =
+            self.view.filterKeys(_ >:!> t).to[TypeMap[B]](HashMap).updated(t.erased, b)
 
         inline def union[B](that: TypeMap[B]): TypeMap[A & B] =
             self ++ that
