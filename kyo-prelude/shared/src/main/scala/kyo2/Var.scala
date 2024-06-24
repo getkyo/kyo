@@ -11,7 +11,7 @@ object Var:
     inline def get[V](using inline tag: Tag[Var[V]]): V < Var[V] =
         use[V](identity)
 
-    class UseOps[V](dummy: Unit) extends AnyVal:
+    final class UseOps[V](dummy: Unit) extends AnyVal:
         inline def apply[A, S](inline f: V => A < S)(
             using inline tag: Tag[Var[V]]
         ): A < (Var[V] & S) =
@@ -26,7 +26,7 @@ object Var:
     inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]]): Unit < Var[V] =
         Effect.suspend[Unit](tag, (v => f(v)): Update[V])
 
-    class RunOps[V](dummy: Unit) extends AnyVal:
+    final class RunOps[V](dummy: Unit) extends AnyVal:
         def apply[A, S](state: V)(v: A < (Var[V] & S))(using tag: Tag[Var[V]], frame: Frame): A < S =
             Effect.handle.state(tag, state, v) {
                 [C] =>

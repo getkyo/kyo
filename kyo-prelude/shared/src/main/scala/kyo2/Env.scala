@@ -28,7 +28,7 @@ object Env:
     ): T < (S & RR) =
         ContextEffect.handle(erasedTag[R], env, _.union(env))(value).asInstanceOf[T < (S & RR)]
 
-    class UseOps[R >: Nothing](dummy: Unit) extends AnyVal:
+    final class UseOps[R >: Nothing](dummy: Unit) extends AnyVal:
         inline def apply[A, S](inline f: R => A < S)(
             using tag: Tag[R]
         ): A < (Env[R] & S) =

@@ -52,7 +52,7 @@ object Abort:
 
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
-    class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
+    final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
         def apply[E0 <: E, A, B, ES, ER](v: A < (Abort[ES] & B))(
             using
             h: HasAbort[E0, ES] { type Remainder = ER },
@@ -75,7 +75,7 @@ object Abort:
 
     inline def run[E >: Nothing]: RunOps[E] = RunOps(())
 
-    class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
+    final class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
         def apply[A, B](v: => A < B)(
             using
             ct: ClassTag[E],
