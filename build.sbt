@@ -1,12 +1,14 @@
 import com.github.sbt.git.SbtGit.GitKeys.useConsoleForROGit
 import org.scalajs.jsenv.nodejs.*
-import org.typelevel.scalacoptions.{ScalaVersion, ScalacOption, ScalacOptions}
+import org.typelevel.scalacoptions.ScalacOption
+import org.typelevel.scalacoptions.ScalacOptions
+import org.typelevel.scalacoptions.ScalaVersion
 
 val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
 
-val zioVersion       = "2.1.3"
+val zioVersion       = "2.1.4"
 val scalaTestVersion = "3.2.18"
 
 val compilerOptions = Set(
@@ -31,7 +33,7 @@ lazy val `kyo-settings` = Seq(
     fork               := true,
     scalaVersion       := scala3Version,
     crossScalaVersions := List(scala3Version),
-    scalacOptions     ++= scalacOptionTokens(compilerOptions).value,
+    scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     scalafmtOnCompile := false,
     organization      := "io.getkyo",
     homepage          := Some(url("https://getkyo.io")),
@@ -48,7 +50,7 @@ lazy val `kyo-settings` = Seq(
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     sonatypeProfileName                := "io.getkyo",
     Test / testOptions += Tests.Argument("-oDG"),
-    ThisBuild / versionScheme := Some("early-semver"),
+    ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
 )
@@ -151,7 +153,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.13",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC27" % Test,
-            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.3"      % Test,
+            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.4"      % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.6"      % Test,
             libraryDependencies += "javassist"      % "javassist"       % "3.12.1.GA"  % Test
         )
