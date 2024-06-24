@@ -1,6 +1,7 @@
 package kyoTest
 
-import kyo.*
+import kyo.Tag
+import kyo.TypeMap
 
 class typeMapTest extends KyoTest:
     "empty" - {
@@ -157,14 +158,44 @@ class typeMapTest extends KyoTest:
     }
 
     ".prune" - {
-        "Env[Int & String] -> Env[Int]" in pendingUntilFixed {
-            assertCompiles(
-                """
-                  | val e = TypeMap(42, "")
-                  | val p = e.prune[Int]
-                  | assert(p.size == 1)
-                  |""".stripMargin
-            )
+        "Env[Int] -> Env[Any]" in {
+            val p = TypeMap(42).prune[Any]
+            assert(p.isEmpty)
+        }
+        "Env[Int & String] -> Env[Int]" in {
+            val e = TypeMap(42, "")
+            val p = e.prune[Int]
+            assert(p.size == 1)
+        }
+        "Env[Sub] -> Env[Super]" in {
+            val e = TypeMap(new RuntimeException)
+            val p = e.prune[Exception].prune[Throwable]
+            assert(p.size == 1)
+        }
+        "Env[Super] -> Env[Sub]" in {
+            assertDoesNotCompile("""
+                  | val e = TypeMap(new Throwable)
+                  | val p = e.prune[Exception]
+                  |""".stripMargin)
+        }
+        "complex" in {
+            val e =
+                TypeMap
+                    .empty
+                    .add(new Throwable)
+                    .add(new Exception)
+                    .add(new RuntimeException)
+                    .add(new NullPointerException)
+                    .add(new ClassCastException)
+            val p = e.prune[RuntimeException]
+            assert(p.size == 3)
+        }
+        "intersection" in pendingUntilFixed {
+            assertCompiles("""
+                |val e = TypeMap(true, "")
+                |val p = e.prune[Boolean & String]
+                |assert(p.size == 2)
+                |""".stripMargin)
         }
     }
 
