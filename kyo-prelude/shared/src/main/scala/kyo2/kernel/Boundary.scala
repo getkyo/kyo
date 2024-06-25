@@ -37,7 +37,7 @@ end Boundary
 
 object Boundary:
 
-    implicit transparent inline def derive[Ctx, S]: Boundary[Ctx, S] = ${ boundaryImpl[Ctx, S] }
+    inline given derive[Ctx, S]: Boundary[Ctx, S] = ${ boundaryImpl[Ctx, S] }
 
     private def boundaryImpl[Ctx: Type, S: Type](using Quotes): Expr[Boundary[Ctx, S]] =
         import quotes.reflect.*
