@@ -47,22 +47,25 @@ package object kernel:
             final def tag   = Tag[Defer]
             final def input = ()
 
-        class Context(context: immutable.Map[Tag[Any], AnyRef]) extends AnyVal:
-            inline def contains[A, E <: ContextEffect[A]](tag: Tag[E]): Boolean =
-                context.contains(tag.erased)
-
-            inline def getOrElse[A, E <: ContextEffect[A], B >: A](tag: Tag[E], inline default: => B): B =
-                if !contains(tag) then default
-                else context(tag.erased).asInstanceOf[B]
-
-            inline def get[A, E <: ContextEffect[A]](tag: Tag[E]): A =
-                getOrElse(tag, bug(s"Missing value for context effect '${tag}'. Values: $context"))
-
-            inline def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
-                Context(context.updated(tag.erased, value.asInstanceOf[AnyRef]))
-        end Context
+        opaque type Context = Map[Tag[Any], AnyRef]
 
         object Context:
-            inline def empty: Context = Context(immutable.Map.empty)
+            val empty: Context = Map.empty
+
+            extension (context: Context)
+                inline def contains[A, E <: ContextEffect[A]](tag: Tag[E]): Boolean =
+                    context.contains(tag.erased)
+
+                inline def getOrElse[A, E <: ContextEffect[A], B >: A](tag: Tag[E], inline default: => B): B =
+                    if !contains(tag) then default
+                    else context(tag.erased).asInstanceOf[B]
+
+                inline def get[A, E <: ContextEffect[A]](tag: Tag[E]): A =
+                    getOrElse(tag, bug(s"Missing value for context effect '${tag}'. Values: $context"))
+
+                inline def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
+                    context.updated(tag.erased, value.asInstanceOf[AnyRef])
+            end extension
+        end Context
     end internal
 end kernel
