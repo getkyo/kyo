@@ -33,7 +33,7 @@ object Env:
             using tag: Tag[R]
         ): A < (Env[R] & S) =
             ContextEffect.suspend(erasedTag[R]) { map =>
-                f(map.get(using tag.erased).asInstanceOf[R])
+                f(map.asInstanceOf[TypeMap[R]].get(using tag))
             }
     end UseOps
 
