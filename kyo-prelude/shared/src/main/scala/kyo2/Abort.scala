@@ -5,6 +5,7 @@ import kernel.Const
 import kernel.Effect
 import kernel.Frame
 import kyo.Tag
+import kyo2.kernel.Reducible
 import scala.annotation.targetName
 import scala.reflect.ClassTag
 import scala.util.Failure
@@ -15,6 +16,7 @@ sealed trait Abort[-E] extends Effect[Const[E], Const[Unit]]
 
 object Abort:
 
+    given eliminateAbort: Reducible.Eliminable[Abort[Nothing]] with {}
     private inline def erasedTag[E]: Tag[Abort[E]] = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
     inline def fail[E](inline value: E): Nothing < Abort[E] =
@@ -53,21 +55,26 @@ object Abort:
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
     final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
-        def apply[E0 <: E, A, B, ES, ER](v: A < (Abort[ES] & B))(
+        def apply[A, S, ES, ER](v: A < (Abort[E | ER] & S))(
             using
-            h: HasAbort[E0, ES] { type Remainder = ER },
             ct: ClassTag[E],
-            frame: Frame
-        ): Either[E, A] < (ER & B) =
+            frame: Frame,
+            reduce: Reducible[Abort[ER]]
+        ): Either[E, A] < (S & reduce.SReduced) =
             Effect.catching {
-                Effect.handle(erasedTag[E], v.map(Right(_): Either[E, A]))(
-                    accept = [C] =>
-                        (input, _) =>
-                            (input.asInstanceOf[Any]) match
-                                case input: E => true
-                                case _        => false,
-                    handle = [C] => (input, _) => Left(input)
-                ).asInstanceOf[Either[E, A] < ER & B]
+                reduce {
+                    Effect.handle[Const[E], Const[Unit], Abort[E], Either[E, A], Either[E, A], Abort[ER] & S, Abort[ER] & S, Any](
+                        erasedTag[E],
+                        v.map(Right(_): Either[E, A])
+                    )(
+                        accept = [C] =>
+                            (input, _) =>
+                                (input.asInstanceOf[Any]) match
+                                    case input: E => true
+                                    case _        => false,
+                        handle = [C] => (input, _) => Left(input)
+                    )
+                }
             } {
                 case fail: E => Left(fail)
             }
@@ -87,15 +94,4 @@ object Abort:
     end CatchingOps
 
     inline def catching[E <: Throwable]: CatchingOps[E] = CatchingOps(())
-
-    sealed trait HasAbort[E, ES]:
-        type Remainder
-
-    trait LowPriorityHasAbort:
-        given hasAbort[E, ER]: HasAbort[E, E | ER] with
-            type Remainder = Abort[ER]
-
-    object HasAbort extends LowPriorityHasAbort:
-        given isAbort[E]: HasAbort[E, E] with
-            type Remainder = Any
 end Abort
