@@ -2,8 +2,6 @@ package kyo2
 
 import kyo.Tag
 import kyo.Tag.Intersection
-import kyo2.bug
-import kyo2.isNull
 import scala.collection.immutable.HashMap
 
 opaque type TypeMap[+A] = HashMap[Tag[Any], Any]
@@ -12,30 +10,36 @@ object TypeMap:
     extension [A](self: TypeMap[A])
 
         private inline def fatal[T](using t: Tag[T]): Nothing =
-            bug(s"fatal: kyo.TypeMap of contents [${self.show}] missing value of type: [${t.showTpe}].")
+            throw new RuntimeException(s"fatal: kyo.TypeMap of contents [${self.show}] missing value of type: [${t.showTpe}].")
 
-        def get[B >: A](using Tag[B]): B =
-            TypeMap.getOrElse(self)(fatal)
-
-        def getOrElse[B >: A](default: => B)(using t: Tag[B]): B =
+        def get[B >: A](using t: Tag[B]): B =
             val b = self.getOrElse(t.erased, null)
             if !isNull(b) then b.asInstanceOf[B]
             else
-                val it = self.iterator
-                while it.hasNext do
-                    val (tag, item) = it.next()
-                    if tag <:< t then
-                        return item.asInstanceOf[B]
-                end while
-                default
+                var sub: B = null.asInstanceOf[B]
+                val it     = self.iterator
+                try // iterator should never throw given type constraint on B
+                    while isNull(sub) do
+                        val (tag, item) = it.next()
+                        if tag <:< t then
+                            sub = item.asInstanceOf[B]
+                    end while
+                catch
+                    case _: NoSuchElementException => fatal
+                end try
+                sub
             end if
-        end getOrElse
+        end get
 
         inline def add[B](b: B)(using inline t: Tag[B]): TypeMap[A & B] =
             self.updated(t.erased, b)
 
         inline def union[B](that: TypeMap[B]): TypeMap[A & B] =
             self ++ that
+
+        def prune[B >: A](using t: Tag[B]): TypeMap[B] =
+            if t =:= Tag[Any] then self
+            else self.filter { case (tag, _) => tag <:< t }
 
         inline def size: Int        = self.size
         inline def isEmpty: Boolean = self.isEmpty
