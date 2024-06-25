@@ -5,9 +5,9 @@ import scala.quoted.*
 
 final class Boundary[Ctx, S](dummy: Unit) extends AnyVal:
 
-    def apply[A, B, S2, S3](v: A < (Ctx & S & S2))(
-        f: A < (S & S2) => B < S3
-    )(using _frame: Frame): B < (Ctx & S3) =
+    inline def apply[A, B, S2, S3](inline v: A < (Ctx & S & S2))(
+        inline f: A < (S & S2) => B < S3
+    )(using inline _frame: Frame): B < (Ctx & S3) =
         new KyoDefer[B, Ctx & S3]:
             def frame = _frame
             def apply(dummy: Unit, context: Context)(using safepoint: Safepoint) =
@@ -43,15 +43,17 @@ object Boundary:
         import quotes.reflect.*
         def flatten(tpe: TypeRepr): List[TypeRepr] =
             tpe match
-                case AndType(left, right) => flatten(left) ++ flatten(right)
-                case t                    => List(t)
+                case AndType(left, right)        => flatten(left) ++ flatten(right)
+                case t if t =:= TypeRepr.of[Any] => Nil
+                case t                           => List(t)
 
         val s = flatten(TypeRepr.of[S])
 
         val r = flatten(TypeRepr.of[Ctx]).filter(tpe => !s.exists(_ <:< tpe))
 
-        if !r.forall(tpe => (tpe <:< TypeRepr.of[ContextEffect[?]]) || (tpe =:= TypeRepr.of[Any])) then
-            report.errorAndAbort("")
+        val nok = r.filterNot(tpe => (tpe <:< TypeRepr.of[ContextEffect[?]]) || (tpe =:= TypeRepr.of[Any]))
+        if nok.nonEmpty then
+            report.errorAndAbort(s"Expected context effects. Found: '${nok.map(_.show).mkString(" & ")}'")
 
         '{ Boundary(()) }
     end boundaryImpl

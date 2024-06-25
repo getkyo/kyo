@@ -114,6 +114,10 @@ class BoundaryTest extends Test:
         assert(handled.eval == "10-2")
     }
 
+    "detects for non-context effects" in {
+        assertDoesNotCompile("summon[Boundary[NotContextEffect, Any]]")
+    }
+
     "fork boundary" - {
 
         "leaving only context effects pending" - {
