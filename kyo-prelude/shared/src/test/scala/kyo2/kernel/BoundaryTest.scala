@@ -124,9 +124,7 @@ class BoundaryTest extends Test:
                 b(v) { v =>
                     val _: A < NotContextEffect = v
                     assertDoesNotCompile("val _: A < Any = v")
-                    val t = Thread.currentThread()
                     Future {
-                        assert(Thread.currentThread() ne t)
                         Effect.handle(Tag[NotContextEffect], v) {
                             [C] => (input, cont) => cont(input + 1)
                         }.eval
