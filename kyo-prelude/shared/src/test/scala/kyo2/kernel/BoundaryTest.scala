@@ -2,16 +2,17 @@ package kyo2.kernel
 
 import kyo.Tag
 import kyo2.Test
+import scala.concurrent.Future
 
 class BoundaryTest extends Test:
     sealed trait TestEffect       extends ContextEffect[Int]
     sealed trait AnotherEffect    extends ContextEffect[String]
-    sealed trait NotRuntimeEffect extends Effect[Const[Int], Const[Int]]
+    sealed trait NotContextEffect extends Effect[Const[Int], Const[Int]]
 
     "isolates runtime effect" in {
         val a = ContextEffect.suspend(Tag[TestEffect])
         val b: Int < TestEffect =
-            Boundary(a) { cont =>
+            summon[Boundary[TestEffect, Any]](a) { cont =>
                 val _: Int < Any = cont
                 cont.map(_ * 2)
             }
@@ -27,7 +28,7 @@ class BoundaryTest extends Test:
                 v
             }
         val b: Int < TestEffect =
-            Boundary(a) { cont =>
+            summon[Boundary[TestEffect, Any]](a) { cont =>
                 assert(called == 0)
                 val _: Int < Any = cont
                 assert(called == 0)
@@ -46,7 +47,7 @@ class BoundaryTest extends Test:
         val result =
             for
                 outer <- outerEffect
-                inner <- Boundary(innerEffect) { isolatedEffect =>
+                inner <- summon[Boundary[TestEffect, Any]](innerEffect) { isolatedEffect =>
                     isolatedEffect.map(_ * 2)
                 }
             yield outer + inner
@@ -57,8 +58,8 @@ class BoundaryTest extends Test:
     "nested boundaries" in {
         val effect: Int < TestEffect = ContextEffect.suspend(Tag[TestEffect])
         val result: Int < TestEffect =
-            Boundary(effect) { outer =>
-                Boundary(outer) { inner =>
+            summon[Boundary[TestEffect, Any]](effect) { outer =>
+                summon[Boundary[TestEffect, Any]](outer) { inner =>
                     inner.map(_ * 2)
                 }
             }
@@ -76,7 +77,7 @@ class BoundaryTest extends Test:
                 s <- effect2
             yield s"$i-$s"
 
-        val result = Boundary(effect) { isolated =>
+        val result = summon[Boundary[TestEffect & AnotherEffect, Any]](effect) { isolated =>
             val _: String < Any = isolated
             isolated.map(_.toUpperCase)
         }
@@ -86,5 +87,136 @@ class BoundaryTest extends Test:
         }
 
         assert(handled.eval == "10-DEFAULT")
+    }
+
+    "with non-context effect" in {
+        val effect1 = ContextEffect.suspend[Int, TestEffect](Tag[TestEffect])
+        val effect2 = Effect.suspend[Int](Tag[NotContextEffect], 1)
+
+        val effect: String < (TestEffect & NotContextEffect) =
+            for
+                i <- effect1
+                s <- effect2
+            yield s"$i-$s"
+
+        val result = summon[Boundary[TestEffect, Any]](effect) { isolated =>
+            val _: String < NotContextEffect = isolated
+            assertDoesNotCompile("val _: String < Any = isolated")
+            isolated.map(_.toUpperCase)
+        }
+
+        val handled = ContextEffect.handle(Tag[TestEffect], 10, _ => 42) {
+            Effect.handle(Tag[NotContextEffect], result) {
+                [C] => (input, cont) => cont(input + 1)
+            }
+        }
+
+        assert(handled.eval == "10-2")
+    }
+
+    "fork boundary" - {
+
+        "leaving only context effects pending" - {
+
+            def fork[E, A, Ctx](v: => A < (NotContextEffect & Ctx))(
+                using b: Boundary[Ctx, Any]
+            ): Future[A] < Ctx =
+                b(v) { v =>
+                    val _: A < NotContextEffect = v
+                    assertDoesNotCompile("val _: A < Any = v")
+                    val t = Thread.currentThread()
+                    Future {
+                        assert(Thread.currentThread() ne t)
+                        Effect.handle(Tag[NotContextEffect], v) {
+                            [C] => (input, cont) => cont(input + 1)
+                        }.eval
+                    }
+                }
+            end fork
+
+            "no suspension" in {
+                fork(1).eval.map(i => assert(i == 1))
+            }
+
+            "context effect suspension" in {
+                val a: Future[Int] < TestEffect = fork(ContextEffect.suspend(Tag[TestEffect]))
+                val b: Future[Int] < Any        = ContextEffect.handle(Tag[TestEffect], 10, _ + 10)(a)
+                b.eval.map(i => assert(i == 10))
+            }
+
+            "non-context effect suspension" in {
+                val a: Future[Int] < Any = fork(Effect.suspend[Any](Tag[NotContextEffect], 1))
+                a.eval.map(i => assert(i == 2))
+            }
+
+            "context and non-context effect suspension" in {
+                val a: Future[Int] < TestEffect =
+                    fork(Effect.suspend[Any](Tag[NotContextEffect], 1).map(i => ContextEffect.suspend(Tag[TestEffect]).map(_ + i)))
+                val b: Future[Int] < Any =
+                    ContextEffect.handle(Tag[TestEffect], 10, _ + 10)(a)
+                b.eval.map(i => assert(i == 12))
+            }
+        }
+
+        "leaving context effects + non-context effect pending" - {
+
+            def fork[E, A, Ctx](v: => A < (NotContextEffect & Ctx))(
+                using b: Boundary[Ctx, NotContextEffect]
+            ): Future[A] < (Ctx & NotContextEffect) =
+                b(v) { v =>
+                    val _: A < NotContextEffect = v
+                    assertDoesNotCompile("val _: A < Any = v")
+                    Effect.suspendMap[Any](Tag[NotContextEffect], 1) { i =>
+                        Future {
+                            Effect.handle(Tag[NotContextEffect], v) {
+                                [C] => (input, cont) => cont(input + i)
+                            }.eval
+                        }
+                    }
+                }
+            end fork
+
+            "no suspension" in {
+                val a: Future[Int] < NotContextEffect = fork(1)
+                val b: Future[Int] < Any =
+                    Effect.handle(Tag[NotContextEffect], a) {
+                        [C] => (input, cont) => cont(input + 1)
+                    }
+                b.eval.map(i => assert(i == 1))
+            }
+
+            "context effect suspension" in {
+                val a: Future[Int] < (TestEffect & NotContextEffect) =
+                    fork(ContextEffect.suspend(Tag[TestEffect]))
+                val b: Future[Int] < NotContextEffect =
+                    ContextEffect.handle(Tag[TestEffect], 10, _ + 10)(a)
+                val c: Future[Int] < Any =
+                    Effect.handle(Tag[NotContextEffect], b) {
+                        [C] => (input, cont) => cont(input + 1)
+                    }
+                c.eval.map(i => assert(i == 10))
+            }
+
+            "non-context effect suspension" in {
+                val a: Future[Int] < NotContextEffect = fork(Effect.suspend[Any](Tag[NotContextEffect], 1))
+                val b: Future[Int] < Any =
+                    Effect.handle(Tag[NotContextEffect], a) {
+                        [C] => (input, cont) => cont(input + 1)
+                    }
+                b.eval.map(i => assert(i == 3))
+            }
+
+            "context and non-context effect suspension" in {
+                val a: Future[Int] < (TestEffect & NotContextEffect) =
+                    fork(Effect.suspend[Any](Tag[NotContextEffect], 1).map(i => ContextEffect.suspend(Tag[TestEffect]).map(_ + i)))
+                val b: Future[Int] < NotContextEffect =
+                    ContextEffect.handle(Tag[TestEffect], 10, _ + 10)(a)
+                val c =
+                    Effect.handle(Tag[NotContextEffect], b) {
+                        [C] => (input, cont) => cont(input + 1)
+                    }
+                c.eval.map(i => assert(i == 13))
+            }
+        }
     }
 end BoundaryTest

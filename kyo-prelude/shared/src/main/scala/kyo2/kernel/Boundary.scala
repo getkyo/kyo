@@ -1,25 +1,21 @@
 package kyo2.kernel
 
 import internal.*
+import scala.quoted.*
 
-object Boundary:
+final class Boundary[Ctx, S](dummy: Unit) extends AnyVal:
 
-    type WithoutContextEffects[S] = S match
-        case ContextEffect[x] => Any
-        case s1 & s2          => WithoutContextEffects[s1] & WithoutContextEffects[s2]
-        case _                => S
-
-    def apply[A, B, S, S2](v: A < S)(
-        f: A < WithoutContextEffects[S] => B < S2
-    )(using _frame: Frame): B < (S & S2) =
-        new KyoDefer[B, S & S2]:
+    def apply[A, B, S2, S3](v: A < (Ctx & S & S2))(
+        f: A < (S & S2) => B < S3
+    )(using _frame: Frame): B < (Ctx & S3) =
+        new KyoDefer[B, Ctx & S3]:
             def frame = _frame
             def apply(dummy: Unit, context: Context)(using safepoint: Safepoint) =
                 val state = safepoint.save(context)
-                def boundaryLoop(v: A < S): A < S =
+                def boundaryLoop(v: A < (S & S2)): A < (S & S2) =
                     v match
                         case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
-                            new KyoSuspend[IX, OX, EX, Any, A, S]:
+                            new KyoSuspend[IX, OX, EX, Any, A, S & S2]:
                                 val tag   = kyo.tag
                                 val input = kyo.input
                                 def frame = _frame
@@ -33,8 +29,30 @@ object Boundary:
                                 end apply
                         case _ =>
                             v
-                f(Effect.defer(boundaryLoop(v).asInstanceOf[A < WithoutContextEffects[S]]))
+                f(Effect.defer(boundaryLoop(v.asInstanceOf[A < (S & S2)])))
             end apply
         end new
     end apply
+end Boundary
+
+object Boundary:
+
+    implicit transparent inline def derive[Ctx, S]: Boundary[Ctx, S] = ${ boundaryImpl[Ctx, S] }
+
+    private def boundaryImpl[Ctx: Type, S: Type](using Quotes): Expr[Boundary[Ctx, S]] =
+        import quotes.reflect.*
+        def flatten(tpe: TypeRepr): List[TypeRepr] =
+            tpe match
+                case AndType(left, right) => flatten(left) ++ flatten(right)
+                case t                    => List(t)
+
+        val s = flatten(TypeRepr.of[S])
+
+        val r = flatten(TypeRepr.of[Ctx]).filter(tpe => !s.exists(_ <:< tpe))
+
+        if !r.forall(tpe => (tpe <:< TypeRepr.of[ContextEffect[?]]) || (tpe =:= TypeRepr.of[Any])) then
+            report.errorAndAbort("")
+
+        '{ Boundary(()) }
+    end boundaryImpl
 end Boundary
