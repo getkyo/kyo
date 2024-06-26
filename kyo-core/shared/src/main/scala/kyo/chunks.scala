@@ -9,6 +9,8 @@ sealed abstract class Chunk[T] derives CanEqual:
 
     import Chunks.internal.*
 
+    private inline given ClassTag[T] = ClassTag.Any.asInstanceOf[ClassTag[T]]
+
     //////////////////
     // O(1) methods //
     //////////////////
@@ -75,7 +77,7 @@ sealed abstract class Chunk[T] derives CanEqual:
         else if other.isEmpty then this
         else
             val s     = size
-            val array = new Array[T](s + other.size)(using ClassTag(classOf[Any]))
+            val array = new Array[T](s + other.size)
             this.copyTo(array, 0)
             other.copyTo(array, s)
             Compact(array)
@@ -256,7 +258,7 @@ sealed abstract class Chunk[T] derives CanEqual:
                 else
                     acc
 
-            val unnested = new Array[U](totalSize())(using ClassTag(classOf[Any]))
+            val unnested = new Array[U](totalSize())(using ClassTag.Any.asInstanceOf[ClassTag[U]])
 
             @tailrec def copy(idx: Int = 0, offset: Int = 0): Unit =
                 if idx < nested.length then
@@ -313,7 +315,7 @@ sealed abstract class Chunk[T] derives CanEqual:
             case c: Compact[T] =>
                 c.array
             case c =>
-                c.toArray(using ClassTag(classOf[Any]))
+                c.toArray
 
     override def equals(other: Any) =
         (this eq other.asInstanceOf[Object]) || {
@@ -392,7 +394,7 @@ object Chunks:
         else
             values match
                 case seq: IndexedSeq[T] => FromSeq(seq)
-                case _                  => Compact(values.toArray(using ClassTag(classOf[Any])))
+                case _                  => Compact(values.toArray(using ClassTag.Any.asInstanceOf[ClassTag[T]]))
 
     def fill[T](n: Int)(v: T): Chunk[T] =
         if n <= 0 then Chunks.init
