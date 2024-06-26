@@ -10,6 +10,7 @@ object Result:
     import internal.*
 
     given [E, A](using CanEqual[A, A]): CanEqual[Result[E, A], Result[E, A]] = CanEqual.derived
+    given [E, A]: CanEqual[Result[E, A], Panic]                              = CanEqual.derived
 
     def apply[A](expr: => A): Result[Nothing, A] =
         try
@@ -97,8 +98,8 @@ object Result:
         inline def flatMap[E2, U](inline f: T => Result[E2, U]): Result[E | E2, U] =
             (self: @unchecked) match
                 case self: Cause[E] => self
-                case self: Success[T] =>
-                    try f(self.get)
+                case self =>
+                    try f(self.asInstanceOf[Success[T]].get)
                     catch
                         case ex if NonFatal(ex) =>
                             Panic(ex)
@@ -109,14 +110,15 @@ object Result:
         inline def map[U](inline f: T => U): Result[E, U] =
             flatMap(v => Result.success(f(v)))
 
-        inline def withFilter(inline p: T => Boolean): Result[E, T] =
+        inline def withFilter(inline p: T => Boolean): Result[E | NoSuchElementException, T] =
             filter(p)
 
-        inline def filter(inline p: T => Boolean): Result[E, T] =
+        inline def filter(inline p: T => Boolean): Result[E | NoSuchElementException, T] =
             flatMap { v =>
                 if !p(v) then
-                    throw new NoSuchElementException("Predicate does not hold for " + v)
-                v
+                    Panic(new NoSuchElementException("Predicate does not hold for " + v))
+                else
+                    v
             }
 
         inline def recover[U >: T](inline pf: PartialFunction[Cause[E], U]): Result[E, U] =
