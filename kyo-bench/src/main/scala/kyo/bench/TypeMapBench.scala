@@ -27,6 +27,16 @@ class TypeMapBench extends Bench(()):
     end setup
 
     @Benchmark
+    def getOneZIO(bh: Blackhole) =
+        bh.consume(zioEnv.get[Foo040])
+    end getOneZIO
+
+    @Benchmark
+    def getOneKyo(bh: Blackhole) =
+        bh.consume(kyoEnv.get[Foo040])
+    end getOneKyo
+
+    @Benchmark
     def getZIO(bh: Blackhole) =
         bh.consume(zioEnv.get[Foo040])
         bh.consume(zioEnv.get[Foo041])
