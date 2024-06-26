@@ -1,7 +1,6 @@
 package kyo2
 
 import kyo.Tag
-import kyo2.Abort.HasAbort
 import kyo2.kernel.*
 import kyo2.kernel.ContextEffect.suspend
 import kyo2.scheduler.*
@@ -18,7 +17,19 @@ object Demo:
     val a: Fiber[Nothing, Int] < IO = Async.run(1: Int < Any)
 
     // Fork with Abort
-    val b: Fiber[Int, Int] < IO = Async.run(1: Int < (Abort[Int] & Async))
+    val b: Fiber[Int, Int] < IO = Async.run(1: Int < Abort[Int])
+
+    // Fork with Env
+    val c: Fiber[Nothing, Int] < (IO & Env[Int]) = Async.run(1: Int < Env[Int])
+
+    // Fork with multiple effects
+    val d: Fiber[Int, Int] < (IO & Env[Int]) = Async.run(1: Int < (Abort[Int] & Env[Int] & Async))
+
+    val e: Fiber[Int | Boolean, Int] < (IO & Env[Int]) = Async.run(1: Int < (Abort[Int] & Abort[Boolean] & Env[Int] & Async))
+
+    // Fails to compile if an unsupported effect is used
+    // Compilation error: Expected context effects. Found: 'kyo2.Var[scala.Int]'
+    // Async.run(1: Int < Var[Int])
 
     // val y = x.map(Async.get)
     // val y: Fiber[Int, Int] < (Env[Int] & IO) = x
@@ -26,11 +37,11 @@ end Demo
 
 object Fiber:
 
-    private val _unit              = value(())
+    private val _unit              = success(())
     def unit: Fiber[Nothing, Unit] = _unit
 
-    def value[E, A](v: A): Fiber[E, A]                  = result(Result.success(v))
-    def fail[E](ex: E): Fiber[E, Nothing]               = result(Result.failure(ex))
+    def success[E, A](v: A): Fiber[E, A]                = result(Result.success(v))
+    def failure[E](ex: E): Fiber[E, Nothing]            = result(Result.failure(ex))
     def panic[E, A](ex: Throwable): Fiber[E, A]         = result(Result.panic(ex))
     def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
 

@@ -19,16 +19,18 @@ object Result:
         try success(expr)
         catch case ex if NonFatal(ex) => panic(ex)
 
-    def success[E, A](value: A): Result[E, A]           = value.asInstanceOf[Result[E, A]]
+    def success[E, A](value: A): Result[E, A]           = value
     def failure[E, A](error: E): Result[E, A]           = Cause(error)
     def panic[E, A](exception: Throwable): Result[E, A] = Panic(exception)
 
     extension [E, A](self: Result[E, A])
         inline def fold[B](inline ifCause: E => B, inline ifPanic: Throwable => B, inline ifSuccess: A => B): B =
             self match
-                case Cause(e)  => ifCause(e.asInstanceOf[E])
-                case Panic(ex) => ifPanic(ex)
-                case _         => ifSuccess(self.asInstanceOf[A])
+                case self: Failure[E] @unchecked =>
+                    self match
+                        case Cause(error)     => ifCause(error)
+                        case Panic(exception) => ifPanic(exception)
+                case _ => ifSuccess(self.asInstanceOf[A])
 
         inline def isSuccess: Boolean = !self.isInstanceOf[Failure[?]]
         inline def isFailure: Boolean = self.isInstanceOf[Failure[?]]
@@ -37,14 +39,14 @@ object Result:
 
         inline def flatMap[EE >: E, B](inline f: A => Result[EE, B]): Result[EE, B] =
             self match
-                case _: Failure[E] => self.asInstanceOf[Result[EE, B]]
+                case self: Failure[E] => self
                 case _ =>
                     try f(self.asInstanceOf[A])
                     catch case ex if NonFatal(ex) => panic(ex)
 
         inline def map[B](inline f: A => B): Result[E, B] =
             self match
-                case _: Failure[E] => self.asInstanceOf[Result[E, B]]
+                case self: Failure[E] => self
                 case _ =>
                     try success(f(self.asInstanceOf[A]))
                     catch case ex if NonFatal(ex) => panic(ex)
@@ -80,7 +82,7 @@ object Result:
                     catch case ex if NonFatal(ex) => panic(ex)
                 case _ => self
 
-        def toEither: Either[E, A] = fold(Left(_), _ => Left(null.asInstanceOf[E]), Right(_))
+        def toEither: Either[E, A] = fold(Left(_), throw _, Right(_))
 
         def toTry: Try[A] = fold(
             e => scala.util.Failure(new NoSuchElementException(s"Cause: $e")),
