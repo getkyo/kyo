@@ -84,7 +84,7 @@ object Fiber:
                             [C] => (input, cont) => cont(()),
                             [C] =>
                                 (input, cont) =>
-                                    locally {
+                                    locally { // scalafmt bug workaround
                                         val p = new IOPromise[E, A](interrupts = input)
                                         input.onComplete { r =>
                                             discard(p.become(loop(cont(r.asInstanceOf))))
