@@ -42,7 +42,7 @@ object Effect:
                 def tag   = _tag
                 def input = _input
                 def apply(v: O[A], context: Context)(using Safepoint) =
-                    Safepoint.handle(
+                    Safepoint.handle(v)(
                         suspend = _cont(v),
                         continue = _cont(v)
                     )
@@ -62,7 +62,7 @@ object Effect:
             def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
                 v match
                     case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if accept(kyo.input, kyo.tag.erased) =>
-                        Safepoint.handle(
+                        Safepoint.handle(kyo.input)(
                             suspend = handleLoop(kyo, context),
                             continue = handleLoop(handle[Any](kyo.input, kyo(_, context)), context)
                         )
@@ -92,12 +92,12 @@ object Effect:
             def handle2Loop(kyo: A < (E1 & E2 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
                 kyo match
                     case <(kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
-                        Safepoint.handle(
+                        Safepoint.handle(kyo.input)(
                             suspend = handle2Loop(kyo, context),
                             continue = handle2Loop(handle1[Any](kyo.input, kyo(_, context)), context)
                         )
                     case <(kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
-                        Safepoint.handle(
+                        Safepoint.handle(kyo.input)(
                             suspend = handle2Loop(kyo, context),
                             continue = handle2Loop(handle2[Any](kyo.input, kyo(_, context)), context)
                         )
@@ -132,17 +132,17 @@ object Effect:
             def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
                 v match
                     case <(kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
-                        Safepoint.handle(
+                        Safepoint.handle(kyo.input)(
                             suspend = handle3Loop(kyo, context),
                             continue = handle3Loop(handle1[Any](kyo.input, kyo(_, context)), context)
                         )
                     case <(kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
-                        Safepoint.handle(
+                        Safepoint.handle(kyo.input)(
                             suspend = handle3Loop(kyo, context),
                             continue = handle3Loop(handle2[Any](kyo.input, kyo(_, context)), context)
                         )
                     case <(kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag3 =:= kyo.tag =>
-                        Safepoint.handle(
+                        Safepoint.handle(kyo.input)(
                             suspend = handle3Loop(kyo, context),
                             continue = handle3Loop(handle3[Any](kyo.input, kyo(_, context)), context)
                         )
@@ -173,7 +173,7 @@ object Effect:
             def handleLoop(state: State, v: A < (E & S & S2), context: Context)(using Safepoint): U < (S & S2) =
                 v match
                     case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if accept(kyo.input, kyo.tag.erased) =>
-                        Safepoint.handle(
+                        Safepoint.handle(kyo.input)(
                             suspend = handleLoop(state, kyo, context),
                             continue =
                                 val (nst, res) = handle(kyo.input, state, kyo(_, context))

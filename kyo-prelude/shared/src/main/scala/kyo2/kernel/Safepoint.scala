@@ -14,9 +14,9 @@ final class Safepoint(initDepth: Int, initState: Safepoint.State):
     private var traceIdx      = initState.traceIdx
     private val trace         = Safepoint.copyTrace(initState.trace, traceIdx)
 
-    private def enter(_frame: Frame): Int =
+    private def enter(frame: Frame, value: Any): Int =
         if (Thread.currentThread eq owner) && depth < maxStackDepth then
-            pushFrame(_frame)
+            pushFrame(frame)
             val depth = this.depth
             this.depth = depth + 1
             depth + 1
@@ -61,12 +61,13 @@ object Safepoint:
         end try
     end eval
 
-    private[kernel] inline def handle[A, S](
+    private[kernel] inline def handle[V, A, S](value: V)(
         inline suspend: Safepoint ?=> A < S,
         inline continue: => A < S
     )(using inline frame: Frame, self: Safepoint): A < S =
-        self.enter(frame) match
-            case -1 => Effect.defer(suspend)
+        self.enter(frame, value) match
+            case -1 =>
+                Effect.defer(suspend)
             case depth =>
                 try continue
                 finally self.exit(depth)
