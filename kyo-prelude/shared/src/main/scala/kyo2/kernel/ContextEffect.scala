@@ -35,10 +35,12 @@ object ContextEffect:
         new KyoDefer[B, S]:
             def frame = _frame
             def apply(v: Unit, context: Context)(using Safepoint) =
-                Safepoint.handle(
+                val value = context.getOrElse(_tag, default).asInstanceOf[A]
+                Safepoint.handle(value)(
                     suspend = this,
-                    continue = f(context.getOrElse(_tag, default).asInstanceOf[A])
+                    continue = f(value)
                 )
+            end apply
 
     inline def handle[A, E <: ContextEffect[A], B, S](
         inline _tag: Tag[E],

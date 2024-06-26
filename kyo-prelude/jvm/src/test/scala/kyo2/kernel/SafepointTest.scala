@@ -1,5 +1,7 @@
 package kyo2.kernel
 
+import java.lang.management.ManagementFactory
+import java.util.ArrayDeque
 import kyo2.*
 import kyo2.Tagged.*
 import scala.concurrent.Await
@@ -13,11 +15,21 @@ class SafepointTest extends Test:
             Await.result(future, timeout.toScala): A
         }
 
-    "install" in {
-        val l = new Safepoint.Listen:
-            def onEnter(frame: Frame): Unit = println(frame.parse.snippetShort)
-            def onExit()                    = {}
-        Safepoint.use(l)(Effect.defer(1).map(_ + 1).map(_ + 2).eval)
+    "listen" in {
+        val l = new Safepoint.Listen(1):
+            def onEnter(frame: Frame, step: Int, value: Any): Unit = println((step, frame.parse.position, value))
+            def onExit()                                           = {}
+        Safepoint.preempt(l)(Effect.defer(1).map(_ + 1).map(_ + 2).eval)
+        succeed
+    }
+
+    "profile" in {
+        val l = new Safepoint.Listen(0.5):
+            val threadMXBean = ManagementFactory.getThreadMXBean();
+            def onEnter(frame: Frame, step: Int, value: Any): Unit =
+                println((step, frame.parse.position, threadMXBean.getCurrentThreadCpuTime()))
+            def onExit() = {}
+        Safepoint.preempt(l)(Effect.defer(1).map(_ + 1).map(_ + 2).map(_ + 3).map(_ + 4).map(_ + 5).eval)
         succeed
     }
 

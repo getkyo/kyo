@@ -2,6 +2,7 @@ package kyo2.kernel
 
 import internal.*
 import java.util.Arrays
+import java.util.concurrent.ThreadLocalRandom
 import kyo2.isNull
 import kyo2.kernel.Safepoint.*
 import scala.annotation.tailrec
@@ -13,13 +14,17 @@ final class Safepoint(initDepth: Int, initPreempt: Preempt, initState: State):
     private val owner           = Thread.currentThread()
     private[kernel] var depth   = initDepth
     private[kernel] var preempt = initPreempt
+    private val random          = ThreadLocalRandom.current()
     private var traceIdx        = initState.traceIdx
     private val trace           = copyTrace(initState.trace, traceIdx)
 
-    private def enter(frame: Frame): Int =
-        if (Thread.currentThread eq owner) && depth < maxStackDepth && ((preempt eq null) || preempt.enter(frame)) then
-            pushFrame(frame)
-            val depth = this.depth
+    private def enter(frame: Frame, value: Any): Int =
+        val depth = this.depth
+        if (Thread.currentThread eq owner) &&
+            depth < maxStackDepth &&
+            (isNull(preempt) || preempt.enter(frame, random.nextInt(), value))
+        then
+            pushFrame(frame, traceIdx)
             this.depth = depth + 1
             depth + 1
         else
@@ -27,8 +32,7 @@ final class Safepoint(initDepth: Int, initPreempt: Preempt, initState: State):
         end if
     end enter
 
-    private def pushFrame(frame: Frame): Unit =
-        val traceIdx = this.traceIdx
+    private def pushFrame(frame: Frame, traceIdx: Int): Unit =
         trace(traceIdx & (maxTraceFrames - 1)) = frame
         this.traceIdx = traceIdx + 1
     end pushFrame
@@ -38,7 +42,6 @@ final class Safepoint(initDepth: Int, initPreempt: Preempt, initState: State):
 
     private def exit(depth: Int): Unit =
         this.depth = depth - 1
-        this.traceIdx = traceIdx - 1
         if preempt ne null then
             preempt.exit()
     end exit
@@ -50,38 +53,55 @@ end Safepoint
 object Safepoint:
 
     abstract private[kyo2] class Preempt:
-        def enter(frame: Frame): Boolean
+        def enter(frame: Frame, token: Int, value: Any): Boolean
         def exit(): Unit
 
-    abstract private[kyo2] class Listen extends Preempt:
-        final def enter(frame: Frame) =
-            onEnter(frame)
-            true
-        final def exit(): Unit =
-            onExit()
-        def onEnter(frame: Frame): Unit
-        def onExit(): Unit
-    end Listen
-
-    private[kyo2] def use[A, S](p: Preempt)(v: => A < S)(using safepoint: Safepoint): A < S =
+    private[kyo2] inline def preempt[A, S](p: Preempt)(inline v: => A < S)(using safepoint: Safepoint): A < S =
         val prev = safepoint.preempt
         val np =
             if prev eq null then p
             else
                 new Preempt:
-                    def enter(frame: Frame) =
-                        p.enter(frame) && prev.enter(frame)
+                    def enter(frame: Frame, token: Int, value: Any) =
+                        p.enter(frame, token, value) && prev.enter(frame, token, value)
                     def exit() =
                         p.exit()
                         prev.exit()
         safepoint.preempt = np
         try v
         finally safepoint.preempt = prev
-    end use
+    end preempt
+
+    abstract private[kyo2] class Listen(samplingPercent: Double) extends Preempt:
+        val samplingThreshold = (samplingPercent * 1024).toInt
+        final def enter(frame: Frame, token: Int, value: Any) =
+            println(("l", token & 1023, samplingThreshold))
+            if (token & 1023) < samplingThreshold then
+                onEnter(frame, token, value)
+            true
+        end enter
+        final def exit(): Unit = {}
+        def onEnter(frame: Frame, token: Int, value: Any): Unit
+    end Listen
+
+    private[kyo2] inline def listen[A, S](p: Listen)(inline v: => A < S)(using inline _frame: Frame): A < S =
+        def listenLoop(v: A < S)(using Safepoint): A < S =
+            v match
+                case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
+                    new KyoSuspend[IX, OX, EX, Any, A, S]:
+                        val tag   = kyo.tag
+                        val input = kyo.input
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using safepoint: Safepoint) =
+                            preempt(p)(listenLoop(kyo(v, context)))
+                case kyo =>
+                    kyo
+        listenLoop(v)
+    end listen
 
     implicit def get: Safepoint = local.get()
 
-    private[kernel] inline def eval[T](inline f: => T)(using inline frame: Frame)(using self: Safepoint): T =
+    private[kernel] inline def eval[T](inline f: => T)(using inline self: Safepoint): T =
         try f
         catch
             case ex: Throwable if NonFatal(ex) =>
@@ -89,11 +109,11 @@ object Safepoint:
         end try
     end eval
 
-    private[kernel] inline def handle[A, S](
+    private[kernel] inline def handle[V, A, S](value: V)(
         inline suspend: Safepoint ?=> A < S,
         inline continue: => A < S
     )(using inline frame: Frame, self: Safepoint): A < S =
-        self.enter(frame) match
+        self.enter(frame, value) match
             case -1 => Effect.defer(suspend)
             case depth =>
                 try continue
