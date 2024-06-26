@@ -3,7 +3,7 @@ package kyo2.kernel
 import internal.*
 import scala.quoted.*
 
-final class Boundary[Ctx, S](dummy: Unit) extends AnyVal:
+final class Boundary[Ctx, S] private (dummy: Unit) extends AnyVal:
 
     inline def apply[A, B, S2, S3](inline v: A < (Ctx & S & S2))(
         inline f: A < (S & S2) => B < S3
@@ -39,6 +39,10 @@ object Boundary:
 
     inline given derive[Ctx, S]: Boundary[Ctx, S] = ${ boundaryImpl[Ctx, S] }
 
+    def apply[Ctx, S](using boundary: Boundary[Ctx, S]): Boundary[Ctx, S] = boundary
+
+    private def create[Ctx, S]: Boundary[Ctx, S] = new Boundary(())
+
     private def boundaryImpl[Ctx: Type, S: Type](using Quotes): Expr[Boundary[Ctx, S]] =
         import quotes.reflect.*
         def flatten(tpe: TypeRepr): List[TypeRepr] =
@@ -55,6 +59,6 @@ object Boundary:
         if nok.nonEmpty then
             report.errorAndAbort(s"Expected context effects. Found: '${nok.map(_.show).mkString(" & ")}'")
 
-        '{ Boundary(()) }
+        '{ create[Ctx, S] }
     end boundaryImpl
 end Boundary

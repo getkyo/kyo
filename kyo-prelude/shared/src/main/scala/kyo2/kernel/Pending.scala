@@ -6,6 +6,7 @@ import scala.annotation.tailrec
 import scala.language.implicitConversions
 import scala.util.NotGiven
 
+// TODO Constructor should be private but there's an issue with inlining
 case class <[+A, -S](private val curr: A | Kyo[A, S]) extends AnyVal
 
 object `<`:
