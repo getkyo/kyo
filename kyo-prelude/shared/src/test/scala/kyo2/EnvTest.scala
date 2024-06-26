@@ -161,7 +161,7 @@ class EnvTest extends Test:
                     kyo2.Env.get[Service1].map(_(1))
                 assert(
                     kyo2.Abort.run(kyo2.Env.run(service1)(a)).eval ==
-                        Right(2)
+                        Result.success(2)
                 )
             }
             "short circuit" in {
@@ -169,7 +169,7 @@ class EnvTest extends Test:
                     kyo2.Env.get[Service1].map(_(0))
                 assert(
                     kyo2.Abort.run(kyo2.Env.run(service1)(a)).eval ==
-                        Left(None)
+                        Result.failure(None)
                 )
             }
         }
@@ -184,21 +184,21 @@ class EnvTest extends Test:
                     val b = kyo2.Env.run(service2)(v)
                     val c = kyo2.Env.run(service1)(b)
                     assert(
-                        kyo2.Abort.run(c).eval == Right(3)
+                        kyo2.Abort.run(c).eval == Result.success(3)
                     )
                 }
                 "reverse handling order" in {
                     val b = kyo2.Env.run(service1)(v)
                     val c = kyo2.Env.run(service2)(b)
                     assert(
-                        kyo2.Abort.run(c).eval == Right(3)
+                        kyo2.Abort.run(c).eval == Result.success(3)
                     )
                 }
                 "dependent services" in {
                     val v2: Int < (Env[Service2] & Abort[None.type]) = kyo2.Env.run(service1)(v)
                     assert(
                         kyo2.Abort.run(kyo2.Env.run(service2)(v2)).eval ==
-                            Right(3)
+                            Result.success(3)
                     )
                 }
             }
@@ -298,13 +298,13 @@ class EnvTest extends Test:
     "interactions with Abort" - {
         "should propagate Abort failures within Env" in {
             val result = kyo2.Env.run("test")(kyo2.Abort.run[String](kyo2.Abort.fail("failure")))
-            assert(result.eval == Left("failure"))
+            assert(result.eval == Result.failure("failure"))
         }
 
         "should have access to the environment within Abort" in {
             val env    = "test"
             val result = kyo2.Env.run(env)(kyo2.Abort.run[String](kyo2.Env.get[String]))
-            assert(result.eval == Right(env))
+            assert(result.eval == Result.success(env))
         }
     }
 

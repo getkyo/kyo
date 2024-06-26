@@ -55,28 +55,29 @@ object Abort:
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
     final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
-        def apply[A, S, ES, ER](v: A < (Abort[E | ER] & S))(
+        def apply[A, S, ES, ER](v: => A < (Abort[E | ER] & S))(
             using
             ct: ClassTag[E],
             frame: Frame,
             reduce: Reducible[Abort[ER]]
-        ): Either[E, A] < (S & reduce.SReduced) =
+        ): Result[E, A] < (S & reduce.SReduced) =
             Effect.catching {
                 reduce {
-                    Effect.handle[Const[E], Const[Unit], Abort[E], Either[E, A], Either[E, A], Abort[ER] & S, Abort[ER] & S, Any](
+                    Effect.handle[Const[E], Const[Unit], Abort[E], Result[E, A], Result[E, A], Abort[ER] & S, Abort[ER] & S, Any](
                         erasedTag[E],
-                        v.map(Right(_): Either[E, A])
+                        v.map(Result.success[E, A](_))
                     )(
                         accept = [C] =>
                             (input, _) =>
                                 (input.asInstanceOf[Any]) match
                                     case input: E => true
                                     case _        => false,
-                        handle = [C] => (input, _) => Left(input)
+                        handle = [C] => (input, _) => Result.failure(input)
                     )
                 }
             } {
-                case fail: E => Left(fail)
+                case fail: E => Result.failure(fail)
+                case fail    => Result.panic(fail)
             }
     end RunOps
 
