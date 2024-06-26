@@ -4,134 +4,157 @@ import Result.*
 import scala.util.Try
 import scala.util.control.NonFatal
 
-opaque type Result[+A] >: (Success[A] | Failure[A]) = Success[A] | Failure[A]
+opaque type Result[+E, +A] >: (Success[A] | Failure[E]) = Success[A] | Cause[E]
 
 object Result:
     import internal.*
 
-    given [A](using CanEqual[A, A]): CanEqual[Result[A], Result[A]] = CanEqual.derived
+    given [E, A](using CanEqual[A, A]): CanEqual[Result[E, A], Result[E, A]] = CanEqual.derived
 
-    def apply[A](expr: => A): Result[A] =
+    def apply[A](expr: => A): Result[Nothing, A] =
         try
             Success(expr)
         catch
-            case ex: Throwable if NonFatal(ex) => Failure(ex)
+            case ex: Throwable if NonFatal(ex) => Panic(ex)
 
-    def success[A](value: A): Result[A] = Success(value)
+    def success[E, A](value: A): Result[E, A] = Success(value)
 
-    def failure[A](exception: Throwable): Result[A] = Failure(exception)
+    def failure[E, A](error: E): Result[E, A] = Failure(error)
 
-    def fromEither[A](either: Either[Throwable, A]): Result[A] = either match
+    def panic[E, A](exception: Throwable): Result[E, A] = Panic(exception)
+
+    def fromEither[E, T](either: Either[E, T]): Result[E, T] = either match
         case Right(value)    => Success(value)
         case Left(exception) => Failure(exception)
 
-    opaque type Success[+A] = A | SuccessFailure[A]
+    opaque type Success[+T] = T | SuccessFailure[T]
 
     object Success:
 
-        def apply[A](value: A): Success[A] =
+        def apply[T](value: T): Success[T] =
             value match
-                case v: SuccessFailure[?]     => v.nest.asInstanceOf[Success[A]]
-                case v: Failure[A] @unchecked => SuccessFailure(v)
+                case v: SuccessFailure[?]     => v.nest.asInstanceOf[Success[T]]
+                case v: Failure[T] @unchecked => SuccessFailure(v)
                 case v                        => v
 
         // TODO avoid Option allocation
-        def unapply[A](self: Result[A]): Option[A] =
-            self.fold(_ => None)(Some(_))
+        def unapply[E, T](self: Result[E, T]): Option[T] =
+            self.fold(_ => None)(_ => None)(Some(_))
 
     end Success
 
-    case class Failure[+A](exception: Throwable)
+    sealed abstract class Cause[+E]
+
+    case class Failure[+E](error: E) extends Cause[E]
 
     object Failure:
-
-        // TODO avoid Option allocation
-        def unapply[A](self: Result[A]): Option[Throwable] =
-            self.fold(Some(_))(_ => None)
+        def unapply[E, A](result: Result[E, A]): Option[E] =
+            (result: @unchecked) match
+                case result: Failure[E] => Some(result.error)
+                case _                  => None
     end Failure
 
-    extension [A](self: Result[A])
-        inline def isSuccess: Boolean =
+    case class Panic(exception: Throwable) extends Cause[Nothing]
+
+    extension [E, T](self: Result[E, T])
+
+        def isSuccess: Boolean =
             self match
-                case _: Failure[?] => false
-                case _             => true
+                case _: Cause[?] => false
+                case _           => true
 
-        inline def isFailure: Boolean = !isSuccess
+        def isFailure: Boolean =
+            self.isInstanceOf[Failure[?]]
 
-        inline def fold[B](inline ifFailure: Throwable => B)(inline ifSuccess: A => B): B =
+        def isPanic: Boolean =
+            self.isInstanceOf[Panic]
+
+        inline def fold[U](inline ifFailure: E => U)(inline ifPanic: Throwable => U)(inline ifSuccess: T => U): U =
             (self: @unchecked) match
-                case self: Failure[A] =>
-                    ifFailure(self.exception)
+                case self: Failure[E] =>
+                    ifFailure(self.error)
+                case self: Panic =>
+                    ifPanic(self.exception)
                 case _ =>
                     try
                         self match
-                            case self: SuccessFailure[A] @unchecked =>
-                                ifSuccess(self.unnest.asInstanceOf[A])
+                            case self: SuccessFailure[T] @unchecked =>
+                                ifSuccess(self.unnest.asInstanceOf[T])
                             case self =>
-                                ifSuccess(self.asInstanceOf[A])
+                                ifSuccess(self.asInstanceOf[T])
                     catch
-                        case ex if NonFatal(ex) => ifFailure(ex)
+                        case ex if NonFatal(ex) => ifPanic(ex)
 
-        inline def get: A =
-            fold(ex => throw ex)(identity)
+        def get(using E =:= Nothing): T =
+            fold(ex => throw new NoSuchElementException(s"Cause: $ex"))(throw _)(identity)
 
-        inline def getOrElse[B >: A](inline default: => B): B =
-            fold(_ => default)(identity)
+        inline def getOrElse[U >: T](inline default: => U): U =
+            fold(_ => default)(_ => default)(identity)
 
-        def orElse[B >: A](alternative: => Result[B]): Result[B] =
-            fold(_ => alternative)(v => Result.success(v))
+        def orElse[E2, U >: T](alternative: => Result[E2, U]): Result[E | E2, U] =
+            fold(_ => alternative)(_ => alternative)(v => Result.success(v))
 
-        inline def flatMap[B](inline f: A => Result[B]): Result[B] =
+        inline def flatMap[E2, U](inline f: T => Result[E2, U]): Result[E | E2, U] =
             (self: @unchecked) match
-                case _: Failure[?] =>
-                    self.asInstanceOf[Result[B]]
-                case _ =>
+                case self: Cause[E] => self
+                case self: Success[T] =>
                     try f(self.get)
                     catch
                         case ex if NonFatal(ex) =>
-                            Failure(ex)
+                            Panic(ex)
 
-        inline def flatten[B](using ev: A <:< Result[B]): Result[B] =
+        def flatten[E2, U](using ev: T <:< Result[E2, U]): Result[E | E2, U] =
             flatMap(ev)
 
-        inline def map[B](inline f: A => B): Result[B] =
+        inline def map[U](inline f: T => U): Result[E, U] =
             flatMap(v => Result.success(f(v)))
 
-        inline def filter(inline p: A => Boolean): Result[A] =
+        inline def withFilter(inline p: T => Boolean): Result[E, T] =
+            filter(p)
+
+        inline def filter(inline p: T => Boolean): Result[E, T] =
             flatMap { v =>
                 if !p(v) then
                     throw new NoSuchElementException("Predicate does not hold for " + v)
                 v
             }
 
-        inline def recover[B >: A](inline rescueException: PartialFunction[Throwable, B]): Result[B] =
-            (self: @unchecked) match
-                case Failure(exception) if rescueException.isDefinedAt(exception) =>
-                    Result(rescueException(exception))
-                case _ => self.asInstanceOf[Result[B]]
+        inline def recover[U >: T](inline pf: PartialFunction[Cause[E], U]): Result[E, U] =
+            try
+                (self: @unchecked) match
+                    case self: Cause[E] if pf.isDefinedAt(self) =>
+                        Result.success(pf(self))
+                    case _ => self
+            catch
+                case ex: Throwable if NonFatal(ex) =>
+                    Panic(ex)
 
-        inline def recoverWith[B >: A](inline rescueException: PartialFunction[Throwable, Result[B]]): Result[B] =
-            (self: @unchecked) match
-                case Failure(exception) if rescueException.isDefinedAt(exception) =>
-                    rescueException(exception)
-                case _ => self.asInstanceOf[Result[B]]
+        inline def recoverWith[E2, U >: T](inline pf: PartialFunction[Cause[E], Result[E2, U]]): Result[E | E2, U] =
+            try
+                (self: @unchecked) match
+                    case self: Cause[E] if pf.isDefinedAt(self) =>
+                        pf(self)
+                    case _ => self
+            catch
+                case ex: Throwable if NonFatal(ex) =>
+                    Panic(ex)
 
-        inline def toEither: Either[Throwable, A] =
-            fold(Left(_))(Right(_))
+        def toEither: Either[E | Throwable, T] =
+            fold(Left(_))(Left(_))(Right(_))
 
-        inline def toTry: Try[A] =
-            fold(scala.util.Failure(_))(scala.util.Success(_))
+        def toTry: Try[T] =
+            fold(e => scala.util.Failure(new NoSuchElementException(s"Cause: $e")))(scala.util.Failure(_))(scala.util.Success(_))
     end extension
 
     private object internal:
-        case class SuccessFailure[+A](failure: Failure[A], depth: Int = 1):
-            def unnest: Result[A] =
+        case class SuccessFailure[+T](cause: Cause[T], depth: Int = 1):
+            def unnest: Result[Any, T] =
                 if depth > 1 then
-                    SuccessFailure(failure, depth - 1)
+                    SuccessFailure(cause, depth - 1)
                 else
-                    failure
-            def nest: Success[A] =
-                SuccessFailure(failure, depth + 1)
+                    cause
+            def nest: Success[T] =
+                SuccessFailure(cause, depth + 1)
         end SuccessFailure
     end internal
 end Result
