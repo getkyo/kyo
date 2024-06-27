@@ -12,7 +12,7 @@ class BoundaryTest extends Test:
     "isolates runtime effect" in {
         val a = ContextEffect.suspend(Tag[TestEffect])
         val b: Int < TestEffect =
-            summon[Boundary[TestEffect, Any]](a) { cont =>
+            Boundary[TestEffect, Any](a) { cont =>
                 val _: Int < Any = cont
                 cont.map(_ * 2)
             }
@@ -28,7 +28,7 @@ class BoundaryTest extends Test:
                 v
             }
         val b: Int < TestEffect =
-            summon[Boundary[TestEffect, Any]](a) { cont =>
+            Boundary[TestEffect, Any](a) { cont =>
                 assert(called == 0)
                 val _: Int < Any = cont
                 assert(called == 0)
@@ -47,7 +47,7 @@ class BoundaryTest extends Test:
         val result =
             for
                 outer <- outerEffect
-                inner <- summon[Boundary[TestEffect, Any]](innerEffect) { isolatedEffect =>
+                inner <- Boundary[TestEffect, Any](innerEffect) { isolatedEffect =>
                     isolatedEffect.map(_ * 2)
                 }
             yield outer + inner
@@ -58,8 +58,8 @@ class BoundaryTest extends Test:
     "nested boundaries" in {
         val effect: Int < TestEffect = ContextEffect.suspend(Tag[TestEffect])
         val result: Int < TestEffect =
-            summon[Boundary[TestEffect, Any]](effect) { outer =>
-                summon[Boundary[TestEffect, Any]](outer) { inner =>
+            Boundary[TestEffect, Any](effect) { outer =>
+                Boundary[TestEffect, Any](outer) { inner =>
                     inner.map(_ * 2)
                 }
             }
@@ -77,7 +77,7 @@ class BoundaryTest extends Test:
                 s <- effect2
             yield s"$i-$s"
 
-        val result = summon[Boundary[TestEffect & AnotherEffect, Any]](effect) { isolated =>
+        val result = Boundary[TestEffect & AnotherEffect, Any](effect) { isolated =>
             val _: String < Any = isolated
             isolated.map(_.toUpperCase)
         }
@@ -99,7 +99,7 @@ class BoundaryTest extends Test:
                 s <- effect2
             yield s"$i-$s"
 
-        val result = summon[Boundary[TestEffect, Any]](effect) { isolated =>
+        val result = Boundary[TestEffect, Any](effect) { isolated =>
             val _: String < NotContextEffect = isolated
             assertDoesNotCompile("val _: String < Any = isolated")
             isolated.map(_.toUpperCase)
@@ -115,7 +115,7 @@ class BoundaryTest extends Test:
     }
 
     "detects for non-context effects" in {
-        assertDoesNotCompile("summon[Boundary[NotContextEffect, Any]]")
+        assertDoesNotCompile("Boundary[NotContextEffect, Any]")
     }
 
     "fork boundary" - {
