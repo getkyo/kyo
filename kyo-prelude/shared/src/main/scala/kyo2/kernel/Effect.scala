@@ -11,8 +11,11 @@ object Effect:
     def defer[A, S](f: Safepoint ?=> A < S): A < S =
         new KyoDefer[A, S]:
             def frame = summon[Frame]
-            def apply(dummy: Unit, context: Context)(using Safepoint) =
-                f
+            def apply(v: Unit, context: Context)(using Safepoint) =
+                Safepoint.handle(v)(
+                    suspend = this,
+                    continue = f
+                )
 
     final class SuspendOps[A](dummy: Unit) extends AnyVal:
 

@@ -2,6 +2,8 @@ package kyo2.kernel
 
 import kyo2.*
 import kyo2.Tagged.*
+import scala.collection.mutable.Queue
+import scala.collection.mutable.Stack
 import scala.concurrent.Await
 import scala.concurrent.Future
 
@@ -175,6 +177,209 @@ class SafepointTest extends Test:
             }
 
         assert(res.eval == 4)
+    }
+
+    "interceptors" - {
+        "immediate" - {
+            "use the interceptor" in {
+                var executed = false
+                val interceptor = new Safepoint.Interceptor:
+                    def ensure(f: () => Unit): Unit = ()
+                    def enter(frame: Frame, value: Any): Boolean =
+                        executed = true
+                        true
+                    def exit(): Unit = ()
+
+                Safepoint.immediate(interceptor)((1: Int < Any).map(_ + 1).eval)
+                assert(executed)
+            }
+
+            "restore previous interceptor" in {
+                var count = 0
+                val interceptor1 = new Safepoint.Interceptor:
+                    def ensure(f: () => Unit): Unit = ()
+                    def enter(frame: Frame, value: Any): Boolean =
+                        count += 1
+                        true
+                    def exit(): Unit = ()
+
+                val interceptor2 = new Safepoint.Interceptor:
+                    def ensure(f: () => Unit): Unit = ()
+                    def enter(frame: Frame, value: Any): Boolean =
+                        count += 10
+                        true
+                    def exit(): Unit = ()
+
+                Safepoint.immediate(interceptor1) {
+                    Safepoint.immediate(interceptor2)((1: Int < Any).map(_ + 1).eval)
+                }.eval
+
+                assert(count == 11)
+            }
+        }
+
+        "propagating" - {
+            "through suspensions" in {
+                var count = 0
+                val interceptor = new Safepoint.Interceptor:
+                    def ensure(f: () => Unit): Unit = ()
+                    def enter(frame: Frame, value: Any): Boolean =
+                        count += 1
+                        true
+                    def exit(): Unit = ()
+
+                def suspendingFunction(): Int < Any =
+                    Effect.defer(42).map(_ + 1)
+
+                Safepoint.propagating(interceptor) {
+                    for
+                        _ <- suspendingFunction()
+                        _ <- suspendingFunction()
+                    yield 42
+                }.eval
+
+                assert(count == 6)
+            }
+
+            "restores previous interceptor after completion" in {
+                var outerCount = 0
+                var innerCount = 0
+
+                val outerInterceptor = new Safepoint.Interceptor:
+                    def ensure(f: () => Unit): Unit = ()
+                    def enter(frame: Frame, value: Any): Boolean =
+                        outerCount += 1
+                        true
+                    def exit(): Unit = ()
+
+                val innerInterceptor = new Safepoint.Interceptor:
+                    def ensure(f: () => Unit): Unit = ()
+                    def enter(frame: Frame, value: Any): Boolean =
+                        innerCount += 1
+                        true
+                    def exit(): Unit = ()
+
+                def suspendingFunction(): Int < Any =
+                    Effect.defer(42).map(_ + 1)
+
+                Safepoint.immediate(outerInterceptor) {
+                    Safepoint.propagating(innerInterceptor) {
+                        for
+                            _ <- suspendingFunction()
+                            _ <- suspendingFunction()
+                        yield 42
+                    }.map(_ => suspendingFunction())
+                }.eval
+
+                assert(outerCount == 0)
+                assert(innerCount == 6)
+            }
+        }
+
+        "example logging interceptor" in {
+            import scala.collection.mutable.ArrayBuffer
+
+            class LoggingInterceptor extends Safepoint.Interceptor:
+                val logs = ArrayBuffer.empty[String]
+
+                def enter(frame: Frame, value: Any): Boolean =
+                    val parsed = frame.parse
+                    logs += s"Entering ${parsed.methodName} with value: $value"
+                    true
+                end enter
+
+                def exit(): Unit =
+                    logs += "Exiting method"
+            end LoggingInterceptor
+
+            val interceptor = new LoggingInterceptor()
+
+            def computation(x: Int): Int < Any =
+                Effect.defer {
+                    x + 1
+                }.map { y =>
+                    Effect.defer {
+                        y * 2
+                    }
+                }
+
+            val result = Safepoint.propagating(interceptor) {
+                for
+                    a <- computation(5)
+                    b <- computation(a)
+                yield b
+            }.eval
+
+            assert(result == 26)
+
+            val expectedLogs = Seq(
+                "Entering apply with value: ()",
+                "Exiting method",
+                "Entering computation with value: 6",
+                "Exiting method",
+                "Entering apply with value: ()",
+                "Exiting method",
+                "Entering Unknown with value: 12",
+                "Exiting method",
+                "Entering apply with value: ()",
+                "Exiting method",
+                "Entering computation with value: 13",
+                "Exiting method",
+                "Entering apply with value: ()",
+                "Exiting method",
+                "Entering $anonfun with value: 26",
+                "Exiting method"
+            )
+
+            assert(interceptor.logs == expectedLogs)
+        }
+
+        "example wall-clock profiling interceptor" in {
+            import scala.collection.mutable.Stack
+
+            class ProfilingInterceptor extends Safepoint.Interceptor:
+                val starts = Stack.empty[(Frame, Long)]
+                var log    = Stack.empty[(Frame, Long)]
+
+                def enter(frame: Frame, value: Any): Boolean =
+                    starts.push((frame, System.nanoTime()))
+                    true
+
+                def exit(): Unit =
+                    val (frame, start) = starts.pop()
+                    log.push((frame, System.nanoTime() - start))
+            end ProfilingInterceptor
+
+            val interceptor = new ProfilingInterceptor
+
+            def computation(x: Int): Int < Any =
+                Effect.defer {
+                    Thread.sleep(1)
+                    x + 1
+                }.map { y =>
+                    Effect.defer {
+                        Thread.sleep(1)
+                        y * 2
+                    }
+                }
+
+            val result = Safepoint.propagating(interceptor) {
+                for
+                    a <- computation(5)
+                    b <- computation(a)
+                yield b
+            }.eval
+
+            assert(result == 26)
+
+            interceptor.log.foreach { case (frame, duration) =>
+                assert(duration > 0)
+                assert(duration < 3000000)
+            }
+
+            assert(interceptor.log.size == 8)
+            assert(interceptor.log.exists(_._1.parse.methodName == "computation"))
+        }
     }
 
 end SafepointTest
