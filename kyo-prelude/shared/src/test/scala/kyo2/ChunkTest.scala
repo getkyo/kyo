@@ -164,7 +164,7 @@ class ChunkTest extends Test:
                     }
                 }
             }
-            assert(result.eval == Result.failure("1 is not divisible by 3"))
+            assert(result.eval == Result.error("1 is not divisible by 3"))
         }
         "with a function using Var and Abort" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
@@ -178,7 +178,7 @@ class ChunkTest extends Test:
                     }
                 }
             }
-            assert(result.eval == Result.failure("Odd number encountered"))
+            assert(result.eval == Result.error("Odd number encountered"))
         }
         "with an empty chunk" in {
             val chunk  = kyo2.Chunk.empty[Int]
@@ -222,7 +222,7 @@ class ChunkTest extends Test:
                     }
                 }
             }
-            assert(result.eval == Result.failure(()))
+            assert(result.eval == Result.error(()))
         }
 
         "with a predicate that filters out all elements" in {
@@ -251,7 +251,7 @@ class ChunkTest extends Test:
                     }
                 }
             }
-            assert(result.eval == Result.failure("Sum exceeded max value of 10"))
+            assert(result.eval == Result.error("Sum exceeded max value of 10"))
         }
 
         "with a function using Var and Env" in {
@@ -821,7 +821,7 @@ class ChunkTest extends Test:
                     }
                 }
             }
-            assert(result.eval == Result.failure("Sum exceeded max value of 10"))
+            assert(result.eval == Result.error("Sum exceeded max value of 10"))
             assert(sum == 4)
         }
     }

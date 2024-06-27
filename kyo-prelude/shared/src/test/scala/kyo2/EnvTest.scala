@@ -169,7 +169,7 @@ class EnvTest extends Test:
                     kyo2.Env.get[Service1].map(_(0))
                 assert(
                     kyo2.Abort.run(kyo2.Env.run(service1)(a)).eval ==
-                        Result.failure(None)
+                        Result.error(None)
                 )
             }
         }
@@ -298,7 +298,7 @@ class EnvTest extends Test:
     "interactions with Abort" - {
         "should propagate Abort failures within Env" in {
             val result = kyo2.Env.run("test")(kyo2.Abort.run[String](kyo2.Abort.fail("failure")))
-            assert(result.eval == Result.failure("failure"))
+            assert(result.eval == Result.error("failure"))
         }
 
         "should have access to the environment within Abort" in {

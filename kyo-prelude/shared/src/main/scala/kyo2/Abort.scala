@@ -72,11 +72,11 @@ object Abort:
                                 (input.asInstanceOf[Any]) match
                                     case input: E => true
                                     case _        => false,
-                        handle = [C] => (input, _) => Result.failure(input)
+                        handle = [C] => (input, _) => Result.error(input)
                     )
                 }
             } {
-                case fail: E => Result.failure(fail)
+                case fail: E => Result.error(fail)
                 case fail    => Result.panic(fail)
             }
     end RunOps
