@@ -21,7 +21,7 @@ final class Boundary[Ctx, S] private (dummy: Unit) extends AnyVal:
                                 def frame = _frame
                                 def apply(v: OX[Any], context: Context)(using Safepoint) =
                                     val parent = Safepoint.local.get()
-                                    Safepoint.local.set(Safepoint(parent.depth, state))
+                                    Safepoint.local.set(Safepoint(parent.depth, parent.interceptor, state))
                                     val r =
                                         try kyo(v, state.context)
                                         finally Safepoint.local.set(parent)

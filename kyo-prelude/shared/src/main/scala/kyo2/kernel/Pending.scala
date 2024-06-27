@@ -44,7 +44,7 @@ object `<`:
                                 mapLoop(kyo(v, context))
                     case <(v) =>
                         val value = v.asInstanceOf[A]
-                        Safepoint.handle(
+                        Safepoint.handle(value)(
                             suspend = mapLoop(value),
                             continue = f(value)
                         )

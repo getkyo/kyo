@@ -35,7 +35,7 @@ object ContextEffect:
         new KyoDefer[B, S]:
             def frame = _frame
             def apply(v: Unit, context: Context)(using Safepoint) =
-                Safepoint.handle(
+                Safepoint.handle(v)(
                     suspend = this,
                     continue = f(context.getOrElse(_tag, default).asInstanceOf[A])
                 )
