@@ -27,6 +27,43 @@ class ResultTest extends Test:
         }
     }
 
+    "fromTry" - {
+        "should return Success for successful Try" in {
+            val tryValue = scala.util.Try(5)
+            val result   = Result.fromTry(tryValue)
+            assert(result == Result.success(5))
+        }
+
+        "should return Error for failed Try" in {
+            val exception = new RuntimeException("Test exception")
+            val tryValue  = scala.util.Try(throw exception)
+            val result    = Result.fromTry(tryValue)
+            assert(result == Result.error(exception))
+        }
+    }
+
+    "fromEither" - {
+        "should return Success for Right" in {
+            val eitherValue = Right(5)
+            val result      = Result.fromEither(eitherValue)
+            assert(result == Result.success(5))
+        }
+
+        "should return Error for Left" in {
+            val eitherValue = Left("Error message")
+            val result      = Result.fromEither(eitherValue)
+            assert(result == Result.error("Error message"))
+        }
+
+        "should maintain type parameters" in {
+            val result: Result[String, Int] = Result.fromEither(Right(5))
+            assert(result == Result.success(5))
+
+            val result2: Result[String, Int] = Result.fromEither(Left("Error"))
+            assert(result2 == Result.error("Error"))
+        }
+    }
+
     "isSuccess" - {
         "returns true for Success" in {
             assert(Result.success(1).isSuccess)
