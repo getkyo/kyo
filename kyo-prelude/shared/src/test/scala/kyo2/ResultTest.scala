@@ -1,55 +1,89 @@
 package kyo2
 
-import Tagged.jvmOnly
 import kyo2.Result
-import kyo2.Result.Failure
-import kyo2.Result.Success
+import kyo2.Result.*
+import kyo2.Tagged.*
+import scala.util.Try
 
 class ResultTest extends Test:
 
-    val try2: Result[Result[Int]] = Success(Failure(new Exception("error")))
+    val ex = new Exception
 
-    "should match Success containing Failure" in {
+    val try2: Result[String, Result[String, Int]] = Success(Error("error"))
+
+    "should match Success containing Error" in {
         val result = try2 match
-            case Success(Failure(e)) => e.getMessage
-            case _                   => ""
+            case Success(Error(e)) => e
+            case _                 => ""
         assert(result == "error")
+    }
+
+    "attempt" - {
+        "success" in {
+            assert(Result.attempt(1) == Success(1))
+        }
+        "failure" in {
+            assert(Result.attempt(throw ex) == Error(ex))
+        }
     }
 
     "isSuccess" - {
         "returns true for Success" in {
-            assert(Success(1).isSuccess)
+            assert(Result.success(1).isSuccess)
         }
-        "returns false for Failure" in {
-            assert(!Failure[Int](new Exception("error")).isSuccess)
+        "returns false for Error" in {
+            assert(!Result.error(ex).isSuccess)
+        }
+        "returns false for Panic" in {
+            assert(!Result.panic(ex).isSuccess)
         }
     }
 
-    "isFailure" - {
+    "isError" - {
         "returns false for Success" in {
-            assert(!Success(1).isFailure)
+            assert(!Result.success(1).isError)
         }
-        "returns true for Failure" in {
-            assert(Failure[Int](new Exception("error")).isFailure)
+        "returns true for Error" in {
+            assert(Result.error(ex).isError)
+        }
+        "returns false for Panic" in {
+            assert(!Result.panic(ex).isError)
+        }
+    }
+
+    "isPanic" - {
+        "returns false for Success" in {
+            assert(!Result.success(1).isPanic)
+        }
+        "returns false for Error" in {
+            assert(!Result.error(ex).isPanic)
+        }
+        "returns true for Panic" in {
+            assert(Result.panic(ex).isPanic)
         }
     }
 
     "get" - {
         "returns the value for Success" in {
-            assert(Success(1).get == 1)
+            assert(Result.success(1).get == 1)
         }
-        "throws the exception for Failure" in {
-            val ex = new Exception("error")
-            assertThrows[Exception](Failure[Int](ex).get)
+        "can't be called for Error" in {
+            assertDoesNotCompile("Result.error(ex).get")
+        }
+        "throws an exception for Panic" in {
+            assertThrows[Exception](Result.panic(ex).get)
         }
     }
 
     "getOrElse" - {
         "returns the value for Success" in {
-            assert(Success(1).getOrElse(0) == 1)
+            assert(Result.success(1).getOrElse(0) == 1)
         }
-        "returns the default value for Failure" in {
-            assert(Failure[Int](new Exception("error")).getOrElse(0) == 0)
+        "returns the default value for Error" in {
+            assert(Result.error(ex).getOrElse(0) == 0)
+        }
+        "returns the default value for Panic" in {
+            assert(Result.panic(ex).getOrElse(0) == 0)
         }
         "inference" in {
             val r: List[String] = Result(List.empty[String]).getOrElse(List.empty)
@@ -59,96 +93,100 @@ class ResultTest extends Test:
 
     "orElse" - {
         "returns itself for Success" in {
-            assert(Success(1).orElse(Success(2)) == Success(1))
+            assert(Result.success(1).orElse(Result.success(2)) == Success(1))
         }
-        "returns the alternative for Failure" in {
-            assert(Failure[Int](new Exception("error")).orElse(Success(1)) == Success(1))
+        "returns the alternative for Error" in {
+            assert(Result.error(ex).orElse(Success(1)) == Success(1))
         }
-        "inference" in {
-            val r: Result[List[String]] = Result(List.empty[String]).orElse(Result(List.empty))
-            assert(r.get == List.empty)
+        "returns the alternative for Panic" in {
+            assert(Result.panic(ex).orElse(Success(1)) == Success(1))
         }
     }
 
     "flatMap" - {
         "applies the function for Success" in {
-            assert(Success(1).flatMap(x => Success(x + 1)) == Success(2))
+            assert(Result.success(1).flatMap(x => Result.success(x + 1)) == Success(2))
         }
-        "does not apply the function for Failure" in {
-            val ex = new Exception("error")
-            assert(Failure[Int](ex).flatMap(x => Success(x + 1)) == Failure[Int](ex))
+        "does not apply the function for Error" in {
+            assert(Result.error[String, Int]("error").flatMap(x => Success(x + 1)) == Error("error"))
+        }
+        "does not apply the function for Panic" in {
+            assert(Result.panic[String, Int](ex).flatMap(x => Success(x + 1)) == Panic(ex))
         }
     }
 
     "map" - {
         "applies the function for Success" in {
-            assert(Success(1).map(_ + 1) == Success(2))
+            assert(Result.success(1).map(_ + 1) == Success(2))
         }
-        "does not apply the function for Failure" in {
-            val ex = new Exception("error")
-            assert(Failure[Int](ex).map(_ + 1) == Failure[Int](ex))
+        "does not apply the function for Error" in {
+            assert(Result.error[String, Int]("error").map(_ + 1) == Error("error"))
+        }
+        "does not apply the function for Panic" in {
+            assert(Result.panic[String, Int](ex).map(_ + 1) == Panic(ex))
         }
     }
 
     "fold" - {
         "applies the success function for Success" in {
-            assert(Success(1).fold(_ => 0)(x => x + 1) == 2)
+            assert(Result.success(1).fold(_ => 0)(_ => 0)(x => x + 1) == 2)
         }
-        "applies the failure function for Failure" in {
-            assert(Failure[Int](new Exception("error")).fold(_ => 0)(x => x) == 0)
+        "applies the failure function for Error" in {
+            assert(Result.error[String, Int]("error").fold(_ => 0)(_ => 1)(x => x) == 0)
         }
-        "catches failures in ifSuccess" in {
-            val ex = new Exception
-            assert(Success(1).fold(_ => 0)(_ => throw ex) == 0)
+        "applies the panic function for Panic" in {
+            assert(Result.panic[String, Int](ex).fold(_ => 0)(_ => 1)(x => x) == 1)
         }
     }
 
     "filter" - {
+        "adds NoSuchElementException" in {
+            val x = Result.success(2).filter(_ % 2 == 0)
+            assertCompiles("val _: Result[NoSuchElementException, Int] = x")
+        }
         "returns itself if the predicate holds for Success" in {
-            assert(Success(2).filter(_ % 2 == 0) == Success(2))
+            assert(Result.success(2).filter(_ % 2 == 0) == Success(2))
         }
-        "returns Failure if the predicate doesn't hold for Success" in {
-            assert(Success(1).filter(_ % 2 == 0).isFailure)
+        "returns Error if the predicate doesn't hold for Success" in {
+            assert(Result.success(1).filter(_ % 2 == 0).isError)
         }
-        "returns itself for Failure" in {
-            val ex = new Exception("error")
-            assert(Failure[Int](ex).filter(_ => true) == Failure[Int](ex))
+        "returns itself for Error" in {
+            assert(Result.error[String, Int]("error").filter(_ => true) == Error("error"))
         }
     }
 
     "recover" - {
         "returns itself for Success" in {
-            assert(Success(1).recover { case _: Exception => 0 } == Success(1))
+            assert(Result.success(1).recover { case _ => 0 } == Success(1))
         }
-        "returns Success with the mapped value if the partial function is defined for Failure" in {
-            assert(Failure[Int](new Exception("error")).recover { case _: Exception => 0 } == Success(0))
+        "returns Success with the mapped value if the partial function is defined for Error" in {
+            assert(Result.error("error").recover { case _ => 0 } == Success(0))
         }
-        "returns itself if the partial function is not defined for Failure" in {
-            val ex = new Exception("error")
-            assert(Failure[Int](ex).recover { case _: RuntimeException => 0 } == Failure[Int](ex))
+        "returns itself if the partial function is not defined for Error" in {
+            assert(Result.error("error").recover { case _ if false => 0 } == Error("error"))
         }
     }
 
     "recoverWith" - {
         "returns itself for Success" in {
-            assert(Success(1).recoverWith { case _: Exception => Success(0) } == Success(1))
+            assert(Result.success(1).recoverWith { case _ => Success(0) } == Success(1))
         }
-        "returns the mapped Result if the partial function is defined for Failure" in {
-            assert(Failure[Int](new Exception("error")).recoverWith { case _: Exception => Success(0) } == Success(0))
+        "returns the mapped Result if the partial function is defined for Error" in {
+            assert(Error("error").recoverWith { case _ => Success(0) } == Success(0))
         }
-        "returns itself if the partial function is not defined for Failure" in {
-            val ex = new Exception("error")
-            assert(Failure[Int](ex).recoverWith { case _: RuntimeException => Success(0) } == Failure[Int](ex))
+        "returns itself if the partial function is not defined for Error" in {
+            val error = Error("error")
+            assert(Error(error).recoverWith { case _ if false => Success(0) } == Error(error))
         }
     }
 
     "toEither" - {
         "returns Right with the value for Success" in {
-            assert(Success(1).toEither == Right(1))
+            assert(Result.success(1).toEither == Right(1))
         }
-        "returns Left with the exception for Failure" in {
-            val ex = new Exception("error")
-            assert(Failure[Int](ex).toEither == Left(ex))
+        "returns Left with the error for Error" in {
+            val error = "error"
+            assert(Error(error).toEither == Left(error))
         }
     }
 
@@ -171,24 +209,74 @@ class ResultTest extends Test:
             assert(nestedResult.isSuccess)
         }
 
-        "isFailure should return false for deeply nested Success" in {
-            assert(!nestedResult.isFailure)
+        "isError should return false for deeply nested Success" in {
+            assert(!nestedResult.isError)
         }
     }
 
-    "Success with nested Failure" - {
-        val successWithNestedFailure: Success[Failure[Int]] = Success(Failure[Int](new Exception("error")))
-
-        "get should return the nested Failure" in {
-            assert(successWithNestedFailure.get.isFailure)
+    "toTry" - {
+        "Success to Try" in {
+            val success: Result[Nothing, Int] = Success(42)
+            val tryResult                     = success.toTry
+            assert(tryResult.isSuccess)
+            assert(tryResult.get == 42)
         }
 
-        "isSuccess should return true" in {
-            assert(successWithNestedFailure.isSuccess)
+        "Error to Try" - {
+            "Throwable error" in {
+                val failure: Result[Exception, Int] = Error(ex)
+                val tryResult                       = failure.toTry
+                assert(tryResult.isFailure)
+                assert(tryResult.failed.get == ex)
+            }
+            "Nothing error" in {
+                val failure: Result[Nothing, Int] = Result.success(1)
+                val tryResult                     = failure.toTry
+                assert(tryResult == Try(1))
+            }
+            "fails to compile for non-Throwable error" in {
+                val failure: Result[String, Int] = Error("Something went wrong")
+                assertDoesNotCompile("failure.toTry")
+            }
         }
 
-        "isFailure should return false" in {
-            assert(!successWithNestedFailure.isFailure)
+        "Panic to Try" in {
+            val panic: Result[Throwable, Int] = Result.panic(new Exception("Panic"))
+            val tryResult                     = panic.toTry
+            assert(tryResult.isFailure)
+            assert(tryResult.failed.get.isInstanceOf[Exception])
+            assert(tryResult.failed.get.getMessage == "Panic")
+        }
+    }
+
+    "null values" - {
+        "Success with null value" in {
+            val result: Result[Nothing, String] = Success(null)
+            assert(result.isSuccess)
+            assert(result.get == null)
+        }
+
+        "Success with null value flatMap" in {
+            val result: Result[Nothing, String] = Success(null)
+            val flatMapped                      = result.flatMap(str => Success(s"mapped: $str"))
+            assert(flatMapped == Success("mapped: null"))
+        }
+
+        "Error with null error" taggedAs jvmOnly in {
+            val result: Result[String, Int] = Error(null)
+            assert(result == Error(null))
+        }
+
+        "Error with null exception flatMap" taggedAs jvmOnly in {
+            val result: Result[String, Int] = Error(null)
+            val flatMapped                  = result.flatMap(num => Success(num + 1))
+            assert(flatMapped == Error(null))
+        }
+
+        "Error with null exception map" taggedAs jvmOnly in {
+            val result: Result[String, Int] = Error(null)
+            val mapped                      = result.map(num => num + 1)
+            assert(mapped == Error(null))
         }
     }
 
@@ -211,59 +299,74 @@ class ResultTest extends Test:
 
         "matching with guards" - {
             "should match Success with a guard" in {
-                val tryy: Result[Int] = Success(2)
+                val tryy: Result[Nothing, Int] = Success(2)
                 val result = tryy match
                     case Success(x) if x > 1 => "greater than 1"
                     case Success(_)          => "less than or equal to 1"
-                    case Failure(_)          => "failure"
+                    case Error(_)            => "failure"
                 assert(result == "greater than 1")
             }
 
-            "should match Failure with a guard" in {
-                val tryy: Result[Int] = Failure(new Exception("error"))
+            "should match Error with a guard" in {
+                val tryy: Result[String, Int] = Error("error")
                 val result = tryy match
-                    case Failure(e) if e.getMessage.length > 5 => "long error"
-                    case Failure(_)                            => "short error"
-                    case Success(_)                            => "success"
+                    case Error(e) if e.length > 5 => "long error"
+                    case Error(_)                 => "short error"
+                    case Success(_)               => "success"
                 assert(result == "short error")
-            }
-        }
-
-        "matching nested Results" - {
-            val try1: Result[Result[Int]] = Success(Success(1))
-            val try2: Result[Result[Int]] = Success(Failure(new Exception("error")))
-            val try3: Result[Result[Int]] = Failure(new Exception("error"))
-
-            "should match deeply nested Success" in {
-                val result = try1 match
-                    case Success(Success(x)) => x
-                    case _                   => 0
-                assert(result == 1)
-            }
-
-            "should match Success containing Failure" in {
-                val result = try2 match
-                    case Success(Failure(e)) => e.getMessage
-                    case _                   => ""
-                assert(result == "error")
-            }
-
-            "should match top-level Failure" in {
-                val result = try3 match
-                    case Failure(e) => e.getMessage
-                    case _          => ""
-                assert(result == "error")
             }
         }
     }
 
+    "inference" - {
+        "flatMap" in {
+            val result: Result[String, Int]    = Result.success(5)
+            val mapped: Result[String, String] = result.flatMap(x => Result.success(x.toString))
+            assert(mapped == Success("5"))
+        }
+
+        "flatMap with different error types" in {
+            val r1: Result[String, Int]              = Result.success(5)
+            val r2: Result[Int, String]              = Result.success("hello")
+            val nested: Result[String | Int, String] = r1.flatMap(x => r2.map(y => s"$x $y"))
+            assert(nested == Success("5 hello"))
+        }
+
+        "for-comprehension with multiple flatMaps" in {
+            def divideIfEven(x: Int): Result[String, Int] =
+                if x % 2 == 0 then Result.success(10 / x) else Result.error("Odd number")
+
+            val complex: Result[String, String] =
+                for
+                    a <- Result.success(4)
+                    b <- divideIfEven(a)
+                    c <- Result.success(b * 2)
+                yield c.toString
+
+            assert(complex == Success("4"))
+        }
+    }
+
     "edge cases" - {
-        "should not handle exceptions in ifFailure" in {
+
+        "should not handle exceptions in ifError" in {
             val tryy      = Success(1)
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.fold(_ => throw exception)(_ => throw exception)
+                    tryy.fold(_ => throw exception)(_ => throw exception)(_ => throw exception)
+                    "no exception"
+                catch
+                    case e: RuntimeException => "caught exception"
+            assert(result == "caught exception")
+        }
+
+        "should not handle exceptions in ifPanic" in {
+            val tryy      = Result.panic(ex)
+            val exception = new RuntimeException("exception")
+            val result =
+                try
+                    tryy.fold(_ => throw exception)(_ => throw exception)(_ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
@@ -275,7 +378,7 @@ class ResultTest extends Test:
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.fold(_ => 0)(_ => throw exception)
+                    tryy.fold(_ => 0)(_ => 0)(_ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
@@ -305,71 +408,77 @@ class ResultTest extends Test:
                     case e: RuntimeException => "caught exception"
             assert(result == "no exception")
         }
-    }
 
-    "toTry" - {
-        "Success to Try" in {
-            val success: Result[Int] = Success(42)
-            val tryResult            = success.toTry
-            assert(tryResult.isSuccess)
-            assert(tryResult.get == 42)
+        "nested Success containing Error" in {
+            val nested: Result[String, Result[Int, String]] = Result.success(Result.error(42))
+            val flattened                                   = nested.flatten
+
+            assert(flattened == Error(42))
         }
 
-        "Failure to Try" in {
-            val exception            = new RuntimeException("Something went wrong")
-            val failure: Result[Int] = Failure(exception)
-            val tryResult            = failure.toTry
-            assert(tryResult.isFailure)
-            assert(tryResult.failed.get == exception)
+        "recover with a partial function" in {
+            val result: Result[String, Int] = Result.error("error")
+            val recovered = result.recover {
+                case Error("error") => 0
+                case _              => -1
+            }
+
+            assert(recovered == Success(0))
         }
 
-        "deeply nested Success to Try" in {
-            val nested: Result[Result[Result[Int]]] = Success(Success(Success(42)))
-            val tryResult                           = nested.toTry
-            assert(tryResult.isSuccess)
-            assert(tryResult.get == Success(Success(42)))
+        "empty Success" in {
+            val empty: Result[Nothing, Unit] = Result.success(())
+            assert(empty == Success(()))
         }
 
-        "deeply nested Failure to Try" in {
-            val exception                           = new RuntimeException("Something went wrong")
-            val nested: Result[Result[Result[Int]]] = Success(Success(Failure(exception)))
-            val tryResult                           = nested.toTry
-            assert(tryResult.isSuccess)
-            assert(tryResult.get == Success(Failure(exception)))
-        }
-    }
-
-    "null values" - {
-        "Success with null value" in {
-            val result: Result[String] = Success(null)
-            assert(result.isSuccess)
-            assert(result.get == null)
+        "Panic distinct from Error" in {
+            val exception = new RuntimeException("Unexpected error")
+            val panic     = Result.panic(exception)
+            assert(!panic.isError)
+            assert(panic match
+                case Panic(_) => true
+                case _        => false
+            )
         }
 
-        "Success with null value flatMap" in {
-            val result: Result[String] = Success(null)
-            val flatMapped             = result.flatMap(str => Success(s"mapped: $str"))
-            assert(flatMapped == Success("mapped: null"))
+        "deeply nested Success/Error" in {
+            val deeplyNested = Success(Success(Success(Error("deep error"))))
+            assert(deeplyNested.flatten == Success(Success(Error("deep error"))))
+            assert(deeplyNested.flatten.flatten == Success(Error("deep error")))
+            assert(deeplyNested.flatten.flatten.flatten == Error("deep error"))
         }
 
-        "Failure with null exception" taggedAs jvmOnly in {
-            val result: Result[Int] = Failure(null)
-            assert(result.isFailure)
-            assertThrows[NullPointerException](result.get)
+        "Panic propagation through flatMap" in {
+            val panic  = Result.panic(new RuntimeException("Unexpected"))
+            val result = panic.flatMap(_ => Success(1)).flatMap(_ => Error("won't happen"))
+            assert(result == panic)
         }
 
-        "Failure with null exception flatMap" taggedAs jvmOnly in {
-            val result: Result[Int] = Failure(null)
-            val flatMapped          = result.flatMap(num => Success(num + 1))
-            assert(flatMapped.isFailure)
-            assertThrows[NullPointerException](flatMapped.get)
+        "Error type widening" in {
+            val r1: Result[String, Int] = Error("error1")
+            val r2: Result[Int, String] = Error(42)
+            val combined                = r1.orElse(r2)
+            assert(combined.isError)
+            assert(combined match
+                case Error(_: String | _: Int) => true
+                case _                         => false
+            )
         }
 
-        "Failure with null exception map" taggedAs jvmOnly in {
-            val result: Result[Int] = Failure(null)
-            val mapped              = result.map(num => num + 1)
-            assert(mapped.isFailure)
-            assertThrows[NullPointerException](mapped.get)
+        "nested flatMap with type changes" in {
+            def f(i: Int): Result[String, Int] =
+                if i > 0 then Success(i) else Error("non-positive")
+            def g(d: Int): Result[Int, String] =
+                if d < 10 then Success(d.toString) else Error(d.toInt)
+
+            val result = Success(5).flatMap(f).flatMap(g)
+            assert(result == Success("5"))
+
+            val result2 = Success(-1).flatMap(f).flatMap(g)
+            assert(result2 == Error("non-positive"))
+
+            val result3 = Success(20).flatMap(f).flatMap(g)
+            assert(result3 == Error(20))
         }
     }
 

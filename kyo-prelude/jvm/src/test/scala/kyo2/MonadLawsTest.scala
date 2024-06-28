@@ -1,5 +1,6 @@
 package kyo2
 
+import kyo2.Result
 import zio.Trace
 import zio.prelude.Equal
 import zio.prelude.coherent.CovariantDeriveEqual
@@ -61,7 +62,7 @@ object MonadLawsTest extends ZIOSpecDefault:
             override def derive[A: Equal]: Equal[Myo[A]] =
                 new Equal[Myo[A]]:
                     protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean =
-                        def run(m: Myo[A]): Either[String, A] =
+                        def run(m: Myo[A]): Result[String, A] =
                             Var.run(true)(
                                 Sum.run(
                                     Abort.run(
