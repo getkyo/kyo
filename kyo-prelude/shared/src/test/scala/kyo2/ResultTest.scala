@@ -17,6 +17,15 @@ class ResultTest extends Test:
         assert(result == "error")
     }
 
+    "attempt" - {
+        "success" in {
+            assert(Result.attempt(1) == Success(1))
+        }
+        "failure" in {
+            assert(Result.attempt(throw ex) == Error(ex))
+        }
+    }
+
     "isSuccess" - {
         "returns true for Success" in {
             assert(Result.success(1).isSuccess)

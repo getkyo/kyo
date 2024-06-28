@@ -18,6 +18,12 @@ object Result:
         catch
             case ex: Throwable if NonFatal(ex) => Panic(ex)
 
+    def attempt[A](expr: => A): Result[Throwable, A] =
+        try
+            Success(expr)
+        catch
+            case ex: Throwable if NonFatal(ex) => Error(ex)
+
     def success[E, A](value: A): Result[E, A] = Success(value)
 
     def error[E, A](error: E): Result[E, A] = Error(error)
