@@ -3,6 +3,7 @@ package kyo2
 import kyo2.Result
 import kyo2.Result.*
 import kyo2.Tagged.*
+import scala.util.Try
 
 class ResultTest extends Test:
 
@@ -67,7 +68,7 @@ class ResultTest extends Test:
             assert(Result.success(1).get == 1)
         }
         "can't be called for Error" in {
-            assertDoesNotCompile("Result.failure(ex).get")
+            assertDoesNotCompile("Result.error(ex).get")
         }
         "throws an exception for Panic" in {
             assertThrows[Exception](Result.panic(ex).get)
@@ -221,16 +222,27 @@ class ResultTest extends Test:
             assert(tryResult.get == 42)
         }
 
-        "Error to Try" in {
-            val failure: Result[String, Int] = Error("Something went wrong")
-            val tryResult                    = failure.toTry
-            assert(tryResult.isFailure)
-            assert(tryResult.failed.get.isInstanceOf[NoSuchElementException])
+        "Error to Try" - {
+            "Throwable error" in {
+                val failure: Result[Exception, Int] = Error(ex)
+                val tryResult                       = failure.toTry
+                assert(tryResult.isFailure)
+                assert(tryResult.failed.get == ex)
+            }
+            "Nothing error" in {
+                val failure: Result[Nothing, Int] = Result.success(1)
+                val tryResult                     = failure.toTry
+                assert(tryResult == Try(1))
+            }
+            "fails to compile for non-Throwable error" in {
+                val failure: Result[String, Int] = Error("Something went wrong")
+                assertDoesNotCompile("failure.toTry")
+            }
         }
 
         "Panic to Try" in {
-            val panic: Result[String, Int] = Result.panic(new Exception("Panic"))
-            val tryResult                  = panic.toTry
+            val panic: Result[Throwable, Int] = Result.panic(new Exception("Panic"))
+            val tryResult                     = panic.toTry
             assert(tryResult.isFailure)
             assert(tryResult.failed.get.isInstanceOf[Exception])
             assert(tryResult.failed.get.getMessage == "Panic")
