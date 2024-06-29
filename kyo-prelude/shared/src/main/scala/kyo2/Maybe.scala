@@ -127,10 +127,10 @@ object Maybe:
         def toList: List[A] =
             if isEmpty then List.empty else get :: Nil
 
-        def toRight[X](left: => X): Either[X, A] =
+        inline def toRight[X](inline left: => X): Either[X, A] =
             if isEmpty then Left(left) else Right(get)
 
-        def toLeft[X](right: => X): Either[A, X] =
+        inline def toLeft[X](inline right: => X): Either[A, X] =
             if isEmpty then Right(right) else Left(get)
 
     end extension
