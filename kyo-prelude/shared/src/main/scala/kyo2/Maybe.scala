@@ -41,7 +41,7 @@ object Maybe:
 
     end Defined
 
-    implicit class Ops[A](maybe: Maybe[A]) extends AnyVal:
+    implicit final class Ops[A](maybe: Maybe[A]) extends AnyVal:
         def isEmpty: Boolean = maybe.isEmpty
         def get: A           = maybe.get
 
@@ -55,9 +55,7 @@ object Maybe:
             else Some(get)
 
         def isEmpty: Boolean =
-            self match
-                case _: Empty => true
-                case _        => false
+            self.isInstanceOf[Empty]
 
         inline def isDefined: Boolean = !isEmpty
 
