@@ -69,8 +69,7 @@ lazy val kyoJVM = project
         `kyo-bench`.jvm,
         `kyo-test`.jvm,
         `kyo-zio`.jvm,
-        `kyo-examples`.jvm,
-        `readme-examples`.jvm
+        `kyo-examples`.jvm
     )
 
 lazy val kyoJS = project
@@ -314,18 +313,6 @@ lazy val `kyo-examples` =
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.8"
         )
 
-lazy val `readme-examples` = 
-    crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("readme-examples"))
-        .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-tapir`)
-        .dependsOn(`kyo-direct`)
-        .settings(
-            `kyo-settings`
-        )
-
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -409,8 +396,7 @@ lazy val readme =
             `kyo-tapir`,
             `kyo-bench`,
             `kyo-zio`,
-            `kyo-caliban`,
-            `readme-examples`
+            `kyo-caliban`
         )
         .settings(
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
