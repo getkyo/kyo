@@ -166,13 +166,10 @@ class ResultTest extends Test:
 
     "fold" - {
         "applies the success function for Success" in {
-            assert(Result.success(1).fold(_ => 0)(_ => 0)(x => x + 1) == 2)
+            assert(Result.success(1).fold(_ => 0)(x => x + 1) == 2)
         }
-        "applies the failure function for Error" in {
-            assert(Result.error[String, Int]("error").fold(_ => 0)(_ => 1)(x => x) == 0)
-        }
-        "applies the panic function for Panic" in {
-            assert(Result.panic[String, Int](ex).fold(_ => 0)(_ => 1)(x => x) == 1)
+        "applies the failure function for Failure" in {
+            assert(Result.error[String, Int]("error").fold(_ => 0)(x => x) == 0)
         }
     }
 
@@ -391,7 +388,7 @@ class ResultTest extends Test:
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.fold(_ => throw exception)(_ => throw exception)(_ => throw exception)
+                    tryy.fold(_ => throw exception)(_ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
@@ -403,7 +400,7 @@ class ResultTest extends Test:
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.fold(_ => throw exception)(_ => throw exception)(_ => throw exception)
+                    tryy.fold(_ => throw exception)(_ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
@@ -415,7 +412,7 @@ class ResultTest extends Test:
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.fold(_ => 0)(_ => 0)(_ => throw exception)
+                    tryy.fold(_ => 0)(_ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"

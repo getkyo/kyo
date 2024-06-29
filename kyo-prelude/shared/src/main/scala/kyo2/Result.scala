@@ -46,13 +46,15 @@ object Result:
                 case v                      => v
 
         def unapply[E, A](self: Result[E, A]): Maybe.Ops[A] =
-            self.fold(_ => Maybe.empty)(_ => Maybe.empty)(Maybe(_))
+            self.fold(_ => Maybe.empty)(Maybe(_))
 
     end Success
 
-    sealed abstract class Failure[+E]
+    sealed abstract class Failure[+E]:
+        def getFailure: E | Throwable
 
-    case class Error[+E](error: E) extends Failure[E]
+    case class Error[+E](error: E) extends Failure[E]:
+        def getFailure = error
 
     object Error:
         def unapply[E, A](result: Result[E, A]): Maybe.Ops[E] =
@@ -62,7 +64,8 @@ object Result:
                 case _ => Maybe.empty
     end Error
 
-    case class Panic(exception: Throwable) extends Failure[Nothing]
+    case class Panic(exception: Throwable) extends Failure[Nothing]:
+        def getFailure = exception
 
     object Panic:
         def apply(exception: Throwable): Panic =
@@ -85,14 +88,13 @@ object Result:
         def isPanic: Boolean =
             self.isInstanceOf[Panic]
 
-        inline def fold[B](inline ifError: E => B)(inline ifPanic: Throwable => B)(inline ifSuccess: A => B): B =
+        inline def fold[B](inline ifFailure: Failure[E] => B)(inline ifSuccess: A => B): B =
             self match
-                case self: Error[E] @unchecked =>
-                    ifError(self.error)
-                case self =>
+                case self: Failure[E] @unchecked => ifFailure(self)
+                case _ =>
                     try ifSuccess(self.asInstanceOf[Result[Nothing, A]].get)
                     catch
-                        case ex if NonFatal(ex) => ifPanic(ex)
+                        case ex => ifFailure(Panic(ex))
 
         def get(
             using
@@ -108,10 +110,10 @@ object Result:
         end get
 
         inline def getOrElse[B >: A](inline default: => B): B =
-            fold(_ => default)(_ => default)(identity)
+            fold(_ => default)(identity)
 
         def orElse[E2, B >: A](alternative: => Result[E2, B]): Result[E | E2, B] =
-            fold(_ => alternative)(_ => alternative)(Result.success)
+            fold(_ => alternative)(Result.success)
 
         inline def flatMap[E2, B](inline f: A => Result[E2, B]): Result[E | E2, B] =
             self match
@@ -157,13 +159,13 @@ object Result:
                 case ex => Panic(ex)
 
         def toEither: Either[E | Throwable, A] =
-            fold(Left(_))(Left(_))(Right(_))
+            fold(e => Left(e.getFailure))(Right(_))
 
         def toTry(using
             @implicitNotFound("Error type must be a 'Throwable' to invoke 'toTry'. Found: '${E}'")
             ev: E <:< Throwable
         ): Try[A] =
-            fold(e => scala.util.Failure(ev(e)))(scala.util.Failure(_))(scala.util.Success(_))
+            fold(e => scala.util.Failure(e.getFailure.asInstanceOf[Throwable]))(scala.util.Success(_))
 
     end extension
 
