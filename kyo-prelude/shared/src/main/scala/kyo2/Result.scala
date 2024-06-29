@@ -140,7 +140,7 @@ object Result:
                     v
             }
 
-        inline def recover[B >: A](inline pf: PartialFunction[Failure[E], B]): Result[E, B] =
+        inline def recover[B >: A](pf: PartialFunction[Failure[E], B]): Result[E, B] =
             try
                 self match
                     case self: Failure[E] @unchecked if pf.isDefinedAt(self) =>
@@ -149,7 +149,7 @@ object Result:
             catch
                 case ex => Panic(ex)
 
-        inline def recoverWith[E2, B >: A](inline pf: PartialFunction[Failure[E], Result[E2, B]]): Result[E | E2, B] =
+        inline def recoverWith[E2, B >: A](pf: PartialFunction[Failure[E], Result[E2, B]]): Result[E | E2, B] =
             try
                 self match
                     case self: Failure[E] @unchecked if pf.isDefinedAt(self) =>

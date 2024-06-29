@@ -105,7 +105,7 @@ object Maybe:
         inline def foreach(inline f: A => Unit): Unit =
             if !isEmpty then f(get)
 
-        inline def collect[B](inline pf: PartialFunction[A, B]): Maybe[B] =
+        inline def collect[B](pf: PartialFunction[A, B]): Maybe[B] =
             if !isEmpty then
                 val value = get
                 if pf.isDefinedAt(value) then
