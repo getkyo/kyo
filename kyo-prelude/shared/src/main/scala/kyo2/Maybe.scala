@@ -115,7 +115,7 @@ object Maybe:
                 end if
             else Empty
 
-        def orElse[B >: A](alternative: => Maybe[B]): Maybe[B] =
+        inline def orElse[B >: A](inline alternative: => Maybe[B]): Maybe[B] =
             if isEmpty then alternative else self
 
         def zip[B](that: Maybe[B]): Maybe[(A, B)] =
