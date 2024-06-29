@@ -45,7 +45,7 @@ object Abort:
                 case Failure(v) => fail(v)
 
         inline def apply[E, A](r: Result[E, A]): A < Abort[E | Throwable] =
-            r.fold(fail)(fail)(identity)
+            r.fold(e => fail(e.getFailure))(identity)
 
         @targetName("maybe")
         inline def apply[A](m: Maybe[A]): A < Abort[Maybe.Empty] =

@@ -6,8 +6,8 @@ import Maybe.internal.*
 opaque type Maybe[+A] >: (Empty | Defined[A]) = Empty | Defined[A]
 
 object Maybe:
-    given [A, B](using CanEqual[A, B]): CanEqual[Maybe[A], Maybe[B]] = CanEqual.derived
-    given [A]: Conversion[Maybe[A], IterableOnce[A]]                 = _.iterator
+    inline given [A, B](using inline ce: CanEqual[A, B]): CanEqual[Maybe[A], Maybe[B]] = CanEqual.derived
+    given [A]: Conversion[Maybe[A], IterableOnce[A]]                                   = _.iterator
 
     def apply[A](v: A): Maybe[A] =
         if isNull(v) then
@@ -24,7 +24,7 @@ object Maybe:
 
     def empty[A]: Maybe[A] = Empty
 
-    def when[A](cond: Boolean)(v: => A): Maybe[A] =
+    inline def when[A](cond: Boolean)(inline v: => A): Maybe[A] =
         if cond then v else Empty
 
     opaque type Defined[+A] = A | DefinedEmpty
@@ -37,37 +37,37 @@ object Maybe:
                 case v: Empty        => DefinedEmpty.one
                 case v               => v
 
-        // TODO avoid allocation
-        def unapply[A](opt: Maybe[A]): Option[A] =
-            opt.toOption
+        def unapply[A](opt: Maybe[A]): Maybe.Ops[A] = opt
+
     end Defined
+
+    implicit final class Ops[A](maybe: Maybe[A]) extends AnyVal:
+        def isEmpty: Boolean = maybe.isEmpty
+        def get: A           = maybe.get
 
     sealed abstract class Empty
     case object Empty extends Empty
 
     extension [A](self: Maybe[A])
 
-        inline def toOption: Option[A] =
+        def toOption: Option[A] =
             if isEmpty then None
             else Some(get)
 
-        inline def isEmpty: Boolean =
-            self match
-                case _: Empty => true
-                case _        => false
+        def isEmpty: Boolean =
+            self.isInstanceOf[Empty]
 
         inline def isDefined: Boolean = !isEmpty
 
         inline def nonEmpty: Boolean = !isEmpty
 
-        // TODO compilation failure if inlined
         def get: A =
             (self: @unchecked) match
                 case _: Empty =>
                     throw new NoSuchElementException("Maybe.get")
                 case self: DefinedEmpty =>
                     self.unnest.asInstanceOf[A]
-                case v: A @unchecked =>
+                case v: A =>
                     v
 
         inline def getOrElse[B >: A](inline default: => B): B =
@@ -91,7 +91,6 @@ object Maybe:
         inline def filterNot(inline f: A => Boolean): Maybe[A] =
             if isEmpty || !f(get) then self else Empty
 
-        // TODO compilation failure if inlined
         def contains[B](elem: B)(using CanEqual[A, B]): Boolean =
             !isEmpty && get == elem
 
@@ -104,7 +103,7 @@ object Maybe:
         inline def foreach(inline f: A => Unit): Unit =
             if !isEmpty then f(get)
 
-        inline def collect[B](inline pf: PartialFunction[A, B]): Maybe[B] =
+        inline def collect[B](pf: PartialFunction[A, B]): Maybe[B] =
             if !isEmpty then
                 val value = get
                 if pf.isDefinedAt(value) then
@@ -120,10 +119,10 @@ object Maybe:
         def zip[B](that: Maybe[B]): Maybe[(A, B)] =
             if isEmpty || that.isEmpty then Empty else (get, that.get)
 
-        inline def iterator: Iterator[A] =
+        def iterator: Iterator[A] =
             if isEmpty then collection.Iterator.empty else collection.Iterator.single(get)
 
-        inline def toList: List[A] =
+        def toList: List[A] =
             if isEmpty then List.empty else get :: Nil
 
         inline def toRight[X](inline left: => X): Either[X, A] =

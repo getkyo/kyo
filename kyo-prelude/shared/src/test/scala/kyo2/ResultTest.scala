@@ -27,6 +27,43 @@ class ResultTest extends Test:
         }
     }
 
+    "fromTry" - {
+        "should return Success for successful Try" in {
+            val tryValue = scala.util.Try(5)
+            val result   = Result.fromTry(tryValue)
+            assert(result == Result.success(5))
+        }
+
+        "should return Error for failed Try" in {
+            val exception = new RuntimeException("Test exception")
+            val tryValue  = scala.util.Try(throw exception)
+            val result    = Result.fromTry(tryValue)
+            assert(result == Result.error(exception))
+        }
+    }
+
+    "fromEither" - {
+        "should return Success for Right" in {
+            val eitherValue = Right(5)
+            val result      = Result.fromEither(eitherValue)
+            assert(result == Result.success(5))
+        }
+
+        "should return Error for Left" in {
+            val eitherValue = Left("Error message")
+            val result      = Result.fromEither(eitherValue)
+            assert(result == Result.error("Error message"))
+        }
+
+        "should maintain type parameters" in {
+            val result: Result[String, Int] = Result.fromEither(Right(5))
+            assert(result == Result.success(5))
+
+            val result2: Result[String, Int] = Result.fromEither(Left("Error"))
+            assert(result2 == Result.error("Error"))
+        }
+    }
+
     "isSuccess" - {
         "returns true for Success" in {
             assert(Result.success(1).isSuccess)
@@ -129,13 +166,10 @@ class ResultTest extends Test:
 
     "fold" - {
         "applies the success function for Success" in {
-            assert(Result.success(1).fold(_ => 0)(_ => 0)(x => x + 1) == 2)
+            assert(Result.success(1).fold(_ => 0)(x => x + 1) == 2)
         }
-        "applies the failure function for Error" in {
-            assert(Result.error[String, Int]("error").fold(_ => 0)(_ => 1)(x => x) == 0)
-        }
-        "applies the panic function for Panic" in {
-            assert(Result.panic[String, Int](ex).fold(_ => 0)(_ => 1)(x => x) == 1)
+        "applies the failure function for Failure" in {
+            assert(Result.error[String, Int]("error").fold(_ => 0)(x => x) == 0)
         }
     }
 
@@ -354,7 +388,7 @@ class ResultTest extends Test:
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.fold(_ => throw exception)(_ => throw exception)(_ => throw exception)
+                    tryy.fold(_ => throw exception)(_ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
@@ -366,7 +400,7 @@ class ResultTest extends Test:
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.fold(_ => throw exception)(_ => throw exception)(_ => throw exception)
+                    tryy.fold(_ => throw exception)(_ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
@@ -378,7 +412,7 @@ class ResultTest extends Test:
             val exception = new RuntimeException("exception")
             val result =
                 try
-                    tryy.fold(_ => 0)(_ => 0)(_ => throw exception)
+                    tryy.fold(_ => 0)(_ => throw exception)
                     "no exception"
                 catch
                     case e: RuntimeException => "caught exception"
