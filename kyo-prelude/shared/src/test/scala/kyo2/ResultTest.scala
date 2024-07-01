@@ -64,6 +64,49 @@ class ResultTest extends Test:
         }
     }
 
+    "value" - {
+        "returns Defined with the value for Success" in {
+            assert(Result.success(42).value == Maybe(42))
+        }
+
+        "returns Empty for Error" in {
+            assert(Result.error("error").value == Maybe.empty)
+        }
+
+        "returns Empty for Panic" in {
+            assert(Result.panic(new Exception).value == Maybe.empty)
+        }
+    }
+
+    "error" - {
+        "returns Defined with the error for Error" in {
+            assert(Result.error("error").error == Maybe("error"))
+        }
+
+        "returns Empty for Success" in {
+            assert(Result.success(42).error == Maybe.empty)
+        }
+
+        "returns Empty for Panic" in {
+            assert(Result.panic(new Exception).error == Maybe.empty)
+        }
+    }
+
+    "panic" - {
+        "returns Defined with the exception for Panic" in {
+            val ex = new Exception("test")
+            assert(Result.panic(ex).panic == Maybe(ex))
+        }
+
+        "returns Empty for Success" in {
+            assert(Result.success(42).panic == Maybe.empty)
+        }
+
+        "returns Empty for Error" in {
+            assert(Result.error("error").panic == Maybe.empty)
+        }
+    }
+
     "isSuccess" - {
         "returns true for Success" in {
             assert(Result.success(1).isSuccess)

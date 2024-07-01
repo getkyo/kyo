@@ -159,7 +159,7 @@ class ChunkTest extends Test:
                     chunk.map { n =>
                         kyo2.Env.get[Int].map { factor =>
                             if n % factor == 0 then n * factor
-                            else kyo2.Abort.fail(s"$n is not divisible by $factor")
+                            else kyo2.Abort.error(s"$n is not divisible by $factor")
                         }
                     }
                 }
@@ -173,7 +173,7 @@ class ChunkTest extends Test:
                     chunk.map { n =>
                         kyo2.Var.get[Int].map { multiplier =>
                             if n % 2 == 0 then kyo2.Var.set(multiplier * n).andThen(n * multiplier)
-                            else kyo2.Abort.fail("Odd number encountered")
+                            else kyo2.Abort.error("Odd number encountered")
                         }
                     }
                 }
@@ -217,7 +217,7 @@ class ChunkTest extends Test:
                             if b then
                                 if n % 2 == 0 then kyo2.Var.set(false).andThen(true)
                                 else false
-                            else kyo2.Abort.fail(())
+                            else kyo2.Abort.error(())
                         }
                     }
                 }
@@ -246,7 +246,7 @@ class ChunkTest extends Test:
                     chunk.foldLeft(0) { (acc, n) =>
                         kyo2.Env.get[Int].map { max =>
                             if acc + n <= max then acc + n
-                            else kyo2.Abort.fail(s"Sum exceeded max value of $max")
+                            else kyo2.Abort.error(s"Sum exceeded max value of $max")
                         }
                     }
                 }
@@ -814,7 +814,7 @@ class ChunkTest extends Test:
                                     kyo2.Env.get[Int].map { max =>
                                         if sum + n * multiplier <= max then
                                             kyo2.Var.set(multiplier * n).andThen(sum += n * multiplier)
-                                        else kyo2.Abort.fail(s"Sum exceeded max value of $max")
+                                        else kyo2.Abort.error(s"Sum exceeded max value of $max")
                                     }
                                 }
                         }

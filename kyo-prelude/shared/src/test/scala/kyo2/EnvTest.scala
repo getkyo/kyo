@@ -142,9 +142,9 @@ class EnvTest extends Test:
     "effectful services" - {
 
         trait Service1:
-            def apply(i: Int): Int < Abort[None.type]
+            def apply(i: Int): Int < Abort[Maybe.Empty]
         trait Service2:
-            def apply(i: Int): Int < Abort[None.type]
+            def apply(i: Int): Int < Abort[Maybe.Empty]
 
         val service1 = new Service1:
             def apply(i: Int) = i match
@@ -169,7 +169,7 @@ class EnvTest extends Test:
                     kyo2.Env.get[Service1].map(_(0))
                 assert(
                     kyo2.Abort.run(kyo2.Env.run(service1)(a)).eval ==
-                        Result.error(None)
+                        Result.error(Maybe.empty)
                 )
             }
         }
@@ -179,7 +179,7 @@ class EnvTest extends Test:
                     kyo2.Env.get[Service1].map(_(1)).map { i =>
                         kyo2.Env.get[Service2].map(_(i))
                     }
-                val v: Int < (Env[Service1] & Env[Service2] & Abort[None.type]) = a
+                val v: Int < (Env[Service1] & Env[Service2] & Abort[Maybe.Empty]) = a
                 "same handling order" in {
                     val b = kyo2.Env.run(service2)(v)
                     val c = kyo2.Env.run(service1)(b)
@@ -195,7 +195,7 @@ class EnvTest extends Test:
                     )
                 }
                 "dependent services" in {
-                    val v2: Int < (Env[Service2] & Abort[None.type]) = kyo2.Env.run(service1)(v)
+                    val v2: Int < (Env[Service2] & Abort[Maybe.Empty]) = kyo2.Env.run(service1)(v)
                     assert(
                         kyo2.Abort.run(kyo2.Env.run(service2)(v2)).eval ==
                             Result.success(3)
@@ -297,7 +297,7 @@ class EnvTest extends Test:
 
     "interactions with Abort" - {
         "should propagate Abort failures within Env" in {
-            val result = kyo2.Env.run("test")(kyo2.Abort.run[String](kyo2.Abort.fail("failure")))
+            val result = kyo2.Env.run("test")(kyo2.Abort.run[String](kyo2.Abort.error("failure")))
             assert(result.eval == Result.error("failure"))
         }
 

@@ -2,6 +2,7 @@ package kyo2
 
 import Result.*
 import scala.annotation.implicitNotFound
+import scala.annotation.targetName
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -87,6 +88,23 @@ object Result:
 
         def isPanic: Boolean =
             self.isInstanceOf[Panic]
+
+        def value: Maybe[A] =
+            self match
+                case self: Failure[?] => Maybe.empty
+                case self             => Maybe(self.asInstanceOf[A])
+
+        @targetName("maybeError")
+        def error: Maybe[E] =
+            self match
+                case self: Error[E] @unchecked => Maybe(self.error)
+                case _                         => Maybe.empty
+
+        @targetName("maybePanic")
+        def panic: Maybe[Throwable] =
+            self match
+                case self: Panic => Maybe(self.exception)
+                case _           => Maybe.empty
 
         inline def fold[B](inline ifFailure: Failure[E] => B)(inline ifSuccess: A => B): B =
             self match

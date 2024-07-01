@@ -60,11 +60,11 @@ object Effect:
         )(
             inline handle: Safepoint ?=> [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
             inline done: A => B < S3 = (v: A) => v,
-            accept: [C] => (I[C], Tag[Any]) => Boolean = [C] => (v: I[C], tag2: Tag[Any]) => tag =:= tag2
+            inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
         )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2 & S3) =
             def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
                 v match
-                    case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if accept(kyo.input, kyo.tag.erased) =>
+                    case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if tag =:= kyo.tag && accept(kyo.input) =>
                         Safepoint.handle(kyo.input)(
                             suspend = handleLoop(kyo, context),
                             continue = handleLoop(handle[Any](kyo.input, kyo(_, context)), context)
@@ -171,11 +171,11 @@ object Effect:
         )(
             inline handle: Safepoint ?=> [C] => (I[C], State, O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)),
             inline done: (State, A) => U < (S & S2) = (_: State, v: A) => v,
-            accept: [C] => (I[C], Tag[Any]) => Boolean = [C] => (v: I[C], tag2: Tag[Any]) => tag =:= tag2
+            inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
         )(using inline _frame: Frame, safepoint: Safepoint): U < (S & S2) =
             def handleLoop(state: State, v: A < (E & S & S2), context: Context)(using Safepoint): U < (S & S2) =
                 v match
-                    case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if accept(kyo.input, kyo.tag.erased) =>
+                    case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if tag =:= kyo.tag && accept(kyo.input) =>
                         Safepoint.handle(kyo.input)(
                             suspend = handleLoop(state, kyo, context),
                             continue =

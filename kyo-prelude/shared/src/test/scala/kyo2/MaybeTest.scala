@@ -1,6 +1,7 @@
 package kyo2
 
 import kyo2.Maybe.*
+import kyo2.Maybe.internal.DefinedEmpty
 
 class MaybeTest extends Test:
 
@@ -11,6 +12,9 @@ class MaybeTest extends Test:
         }
         "creates Empty for null values" in {
             assert(Maybe(null) == Empty)
+        }
+        "creates DefinedEmpty for Empty" in {
+            assert(Maybe(Maybe.empty).equals(DefinedEmpty.one))
         }
     }
 

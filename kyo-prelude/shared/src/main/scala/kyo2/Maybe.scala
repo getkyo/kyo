@@ -10,12 +10,8 @@ object Maybe:
     given [A]: Conversion[Maybe[A], IterableOnce[A]]                                   = _.iterator
 
     def apply[A](v: A): Maybe[A] =
-        if isNull(v) then
-            Empty
-        else
-            v match
-                case v: DefinedEmpty => v.nest
-                case v               => v
+        if isNull(v) then Empty
+        else Defined(v)
 
     def fromOption[A](opt: Option[A]): Maybe[A] =
         opt match
