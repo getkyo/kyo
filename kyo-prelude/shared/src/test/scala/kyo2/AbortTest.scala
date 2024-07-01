@@ -1,7 +1,5 @@
 package kyo2
 
-import scala.reflect.ClassTag
-
 class AbortsTest extends Test:
 
     case class Ex1() extends RuntimeException derives CanEqual
