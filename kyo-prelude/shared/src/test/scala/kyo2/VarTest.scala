@@ -29,6 +29,11 @@ class VarTest extends Test:
         assert(r == 2)
     }
 
+    "runTuple" in {
+        val r = kyo2.Var.runTuple(1)(kyo2.Var.update[Int](_ + 1).andThen(kyo2.Var.get[Int]).map(_ + 1)).eval
+        assert(r == (2, 3))
+    }
+
     "scope" - {
         "should not affect the outer state" in {
             val result = kyo2.Var.run(42)(
@@ -46,8 +51,8 @@ class VarTest extends Test:
     }
 
     "nested let" in {
-        kyo2.Var.run[Int](1) {
-            kyo2.Var.run[Int](2) {
+        kyo2.Var.run(1) {
+            kyo2.Var.run(2) {
                 kyo2.Var.get[Int].map { innerValue =>
                     assert(innerValue == 2)
                 }

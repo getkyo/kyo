@@ -26,22 +26,27 @@ object Var:
     inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]]): Unit < Var[V] =
         Effect.suspend[Unit](tag, (v => f(v)): Update[V])
 
-    final class RunOps[V](dummy: Unit) extends AnyVal:
-        def apply[A, S](state: V)(v: A < (Var[V] & S))(using tag: Tag[Var[V]], frame: Frame): A < S =
-            Effect.handle.state(tag, state, v) {
-                [C] =>
-                    (input, state, cont) =>
-                        input match
-                            case input: Get[?] =>
-                                (state, cont(state))
-                            case input: Set[?] =>
-                                (input(), cont(()))
-                            case input: Update[?] =>
-                                (input(state), cont(()))
-            }
-    end RunOps
+    private inline def runWith[V, A, S, B, S2](state: V)(v: A < (Var[V] & S))(
+        inline f: (V, A) => B < S2
+    )(using inline tag: Tag[Var[V]], inline frame: Frame): B < (S & S2) =
+        Effect.handle.state(tag, state, v)(
+            [C] =>
+                (input, state, cont) =>
+                    input match
+                        case input: Get[?] =>
+                            (state, cont(state))
+                        case input: Set[?] =>
+                            (input(), cont(()))
+                        case input: Update[?] =>
+                            (input(state), cont(())),
+            done = f
+        )
 
-    inline def run[V >: Nothing]: RunOps[V] = RunOps(())
+    def run[V, A, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): A < S =
+        runWith(state)(v)((_, result) => result)
+
+    def runTuple[V, A, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): (V, A) < S =
+        runWith(state)(v)((state, result) => (state, result))
 
     object internal:
         sealed trait Input[V, X]
