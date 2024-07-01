@@ -5,34 +5,42 @@ import scala.quoted.*
 
 final class Boundary[Ctx, S] private (dummy: Unit) extends AnyVal:
 
-    inline def apply[A, B, S2, S3](inline v: A < (Ctx & S & S2))(
+    inline def apply[A, B, S2, S3](inline v: => A < (Ctx & S & S2))(
         inline f: A < (S & S2) => B < S3
     )(using inline _frame: Frame): B < (Ctx & S3) =
         new KyoDefer[B, Ctx & S3]:
             def frame = _frame
             def apply(dummy: Unit, context: Context)(using safepoint: Safepoint) =
                 val state = safepoint.save(context)
-                def boundaryLoop(v: A < (S & S2)): A < (S & S2) =
-                    v match
-                        case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
-                            new KyoSuspend[IX, OX, EX, Any, A, S & S2]:
-                                val tag   = kyo.tag
-                                val input = kyo.input
-                                def frame = _frame
-                                def apply(v: OX[Any], context: Context)(using Safepoint) =
-                                    val parent = Safepoint.local.get()
-                                    Safepoint.local.set(Safepoint(parent.depth, parent.interceptor, state))
-                                    val r =
-                                        try kyo(v, state.context)
-                                        finally Safepoint.local.set(parent)
-                                    boundaryLoop(r)
-                                end apply
-                        case _ =>
-                            v
-                f(Effect.defer(boundaryLoop(v.asInstanceOf[A < (S & S2)])))
-            end apply
-        end new
-    end apply
+                f(Effect.defer(boundaryLoop(v, state)))
+
+    inline def apply[A, B, S2, S3](seq: Seq[A < (Ctx & S & S2)])(
+        inline f: Seq[A < (S & S2)] => B < S3
+    )(using inline _frame: Frame): B < (Ctx & S3) =
+        new KyoDefer[B, Ctx & S3]:
+            def frame = _frame
+            def apply(dummy: Unit, context: Context)(using safepoint: Safepoint) =
+                val state = safepoint.save(context)
+                f(seq.map(item => boundaryLoop(item, state)))
+
+    private def boundaryLoop[A, S2](v: A < (Ctx & S & S2), state: Safepoint.State)(using Frame): A < (S & S2) =
+        v match
+            case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
+                new KyoSuspend[IX, OX, EX, Any, A, S & S2]:
+                    val tag   = kyo.tag
+                    val input = kyo.input
+                    def frame = summon[Frame]
+                    def apply(v: OX[Any], context: Context)(using Safepoint) =
+                        val parent = Safepoint.local.get()
+                        Safepoint.local.set(Safepoint(parent.depth, parent.interceptor, state))
+                        val r =
+                            try kyo(v, state.context)
+                            finally Safepoint.local.set(parent)
+                        boundaryLoop(r, state)
+                    end apply
+            case <(kyo) =>
+                kyo.asInstanceOf[A]
+
 end Boundary
 
 object Boundary:

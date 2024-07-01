@@ -221,4 +221,78 @@ class BoundaryTest extends Test:
             }
         }
     }
+
+    "seq boundary" - {
+        "empty sequence" in {
+            val result = Boundary[TestEffect, Any](Seq.empty[Int < TestEffect]) { seq =>
+                assert(seq.isEmpty)
+                42
+            }
+            val handled = ContextEffect.handle(Tag[TestEffect], 0, _ => 0)(result)
+            assert(handled.eval == 42)
+        }
+
+        "sequence of pure values" in {
+            val seq = Seq(1, 2, 3)
+            val result = Boundary[TestEffect, Any](seq.map(x => x: Int < TestEffect)) { isolatedSeq =>
+                assert(isolatedSeq.size == 3)
+                isolatedSeq.map(_.eval).sum
+            }
+            val handled = ContextEffect.handle(Tag[TestEffect], 0, _ => 0)(result)
+            assert(handled.eval == 6)
+        }
+
+        "sequence with effects" in {
+            val seq = Seq(
+                ContextEffect.suspend(Tag[TestEffect]),
+                ContextEffect.suspend(Tag[TestEffect]),
+                ContextEffect.suspend(Tag[TestEffect])
+            )
+            val result = Boundary[TestEffect, Any](seq) { isolatedSeq =>
+                isolatedSeq.map(_.eval).sum
+            }
+            val handled = ContextEffect.handle(Tag[TestEffect], 10, _ + 1)(result)
+            assert(handled.eval == 30)
+        }
+
+        "sequence with mixed pure and effect values" in {
+            val seq = Seq(
+                1: Int < TestEffect,
+                ContextEffect.suspend(Tag[TestEffect]),
+                3: Int < TestEffect
+            )
+            val result = Boundary[TestEffect, Any](seq) { isolatedSeq =>
+                isolatedSeq.map(_.eval).sum
+            }
+            val handled = ContextEffect.handle(Tag[TestEffect], 10, _ + 1)(result)
+            assert(handled.eval == 14)
+        }
+
+        "nested effects in sequence" in {
+            val seq = Seq(
+                ContextEffect.suspend(Tag[TestEffect]).map(_ * 2),
+                ContextEffect.suspend(Tag[TestEffect]).flatMap(x => ContextEffect.suspend(Tag[TestEffect]).map(_ + x)),
+                ContextEffect.suspend(Tag[TestEffect])
+            )
+            val result = Boundary[TestEffect, Any](seq) { isolatedSeq =>
+                isolatedSeq.map(_.eval).sum
+            }
+            val handled = ContextEffect.handle(Tag[TestEffect], 10, _ + 1)(result)
+            assert(handled.eval == 50)
+        }
+
+        "with multiple effect types" in {
+            val seq = Seq(
+                ContextEffect.suspend[Int, TestEffect](Tag[TestEffect]),
+                ContextEffect.suspend[String, AnotherEffect](Tag[AnotherEffect]).map(_.length)
+            )
+            val result = Boundary[TestEffect & AnotherEffect, Any](seq) { isolatedSeq =>
+                isolatedSeq.map(_.eval).sum
+            }
+            val handled = ContextEffect.handle(Tag[TestEffect], 10, _ + 1) {
+                ContextEffect.handle(Tag[AnotherEffect], "test", _.toUpperCase)(result)
+            }
+            assert(handled.eval == 14)
+        }
+    }
 end BoundaryTest
