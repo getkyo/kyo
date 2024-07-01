@@ -87,7 +87,7 @@ class AbortsTest extends Test:
             assert(Abort.run(Abort.get[Ex1](Right(1))).eval == Result.success(1))
         }
         "result" in {
-            assert(Abort.run(Abort.get(Result.success(1))).eval == Result.success(1))
+            assert(Abort.run(Abort.get(Result.success[Ex1, Int](1))).eval == Result.success(1))
             assert(Abort.run(Abort.get(Result.error(ex1))).eval == Result.error(ex1))
         }
         "option" in {

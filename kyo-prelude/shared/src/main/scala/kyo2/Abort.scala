@@ -43,8 +43,11 @@ object Abort:
                 case scala.util.Success(t) => t
                 case scala.util.Failure(v) => error(v)
 
-        inline def apply[E, A](r: Result[E, A]): A < Abort[E | Throwable] =
-            r.fold(e => error(e.getFailure))(identity)
+        inline def apply[E, A](r: Result[E, A]): A < Abort[E] =
+            r.fold {
+                case e: Error[E] => error(e.error)
+                case Panic(ex)   => Abort.panic(ex)
+            }(identity)
 
         @targetName("maybe")
         inline def apply[A](m: Maybe[A]): A < Abort[Maybe.Empty] =
