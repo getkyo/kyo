@@ -17,11 +17,12 @@ object Abort:
     given eliminateAbort: Reducible.Eliminable[Abort[Nothing]] with {}
     private inline def erasedTag[E]: Tag[Abort[E]] = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
-    inline def fail[E](inline value: E): Nothing < Abort[E] =
-        Effect.suspendMap[Any](erasedTag[E], Fail(value))(_ => ???)
+    inline def fail[E](inline value: E): Nothing < Abort[E] = error(Fail(value))
 
-    inline def panic[E](ex: Throwable): Nothing < Abort[E] =
-        Effect.suspendMap[Any](erasedTag[E], Panic(ex))(_ => ???)
+    inline def panic[E](ex: Throwable): Nothing < Abort[E] = error(Panic(ex))
+
+    inline def error[E](e: Error[E]): Nothing < Abort[E] =
+        Effect.suspendMap[Any](erasedTag[E], e)(_ => ???)
 
     inline def when[E](b: Boolean)(inline value: => E): Unit < Abort[E] =
         if b then fail(value)
