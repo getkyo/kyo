@@ -70,7 +70,7 @@ class EffectTest extends Test:
             val result = Effect.handle(Tag[TestEffect1], effect)(
                 [C] => (input, cont) => cont(input.toString),
                 done = identity,
-                accept = [C] => (_, tag) => tag == Tag[TestEffect1]
+                accept = [C] => _ == 42
             )
             assert(result.eval == "42")
         }

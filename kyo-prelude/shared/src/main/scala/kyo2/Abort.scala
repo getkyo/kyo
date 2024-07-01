@@ -5,14 +5,12 @@ import kernel.Const
 import kernel.Effect
 import kernel.Frame
 import kyo.Tag
+import kyo2.Result.*
 import kyo2.kernel.Reducible
 import scala.annotation.targetName
 import scala.reflect.ClassTag
-import scala.util.Failure
-import scala.util.Success
-import scala.util.Try
 
-sealed trait Abort[-E] extends Effect[Const[E], Const[Unit]]
+sealed trait Abort[-E] extends Effect[Const[Error[E]], Const[Unit]]
 
 object Abort:
 
@@ -20,11 +18,12 @@ object Abort:
     private inline def erasedTag[E]: Tag[Abort[E]] = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
     inline def fail[E](inline value: E): Nothing < Abort[E] =
-        Effect.suspendMap[Any](erasedTag[E], value)(_ => ???)
+        Effect.suspendMap[Any](erasedTag[E], Fail(value))(_ => ???)
 
-    inline def when[E](b: Boolean)(inline value: E)(
-        using inline tag: Tag[Abort[E]]
-    ): Unit < Abort[E] =
+    inline def panic[E](ex: Throwable): Nothing < Abort[E] =
+        Effect.suspendMap[Any](erasedTag[E], Panic(ex))(_ => ???)
+
+    inline def when[E](b: Boolean)(inline value: => E): Unit < Abort[E] =
         if b then fail(value)
         else ()
 
@@ -34,18 +33,21 @@ object Abort:
                 case Right(value) => value
                 case Left(value)  => fail(value)
 
-        inline def apply[A](opt: Option[A]): A < Abort[None.type] =
+        inline def apply[A](opt: Option[A]): A < Abort[Maybe.Empty] =
             opt match
-                case None    => fail(None)
+                case None    => fail(Maybe.Empty)
                 case Some(v) => v
 
-        inline def apply[A](e: Try[A]): A < Abort[Throwable] =
+        inline def apply[A](e: scala.util.Try[A]): A < Abort[Throwable] =
             e match
-                case Success(t) => t
-                case Failure(v) => fail(v)
+                case scala.util.Success(t) => t
+                case scala.util.Failure(v) => fail(v)
 
-        inline def apply[E, A](r: Result[E, A]): A < Abort[E | Throwable] =
-            r.fold(e => fail(e.getFailure))(identity)
+        inline def apply[E, A](r: Result[E, A]): A < Abort[E] =
+            r.fold {
+                case e: Fail[E] => fail(e.error)
+                case Panic(ex)  => Abort.panic(ex)
+            }(identity)
 
         @targetName("maybe")
         inline def apply[A](m: Maybe[A]): A < Abort[Maybe.Empty] =
@@ -58,25 +60,29 @@ object Abort:
         def apply[A, S, ES, ER](v: => A < (Abort[E | ER] & S))(
             using
             ct: ClassTag[E],
+            tag: Tag[E], // TODO Used only to ensure E isn't a type union. There should be a more lightweight solution for this.
             frame: Frame,
             reduce: Reducible[Abort[ER]]
         ): Result[E, A] < (S & reduce.SReduced) =
             Effect.catching {
                 reduce {
-                    Effect.handle[Const[E], Const[Unit], Abort[E], Result[E, A], Result[E, A], Abort[ER] & S, Abort[ER] & S, Any](
+                    Effect.handle[Const[Error[E]], Const[Unit], Abort[E], Result[E, A], Result[E, A], Abort[ER] & S, Abort[ER] & S, Any](
                         erasedTag[E],
                         v.map(Result.success[E, A](_))
                     )(
                         accept = [C] =>
-                            (input, _) =>
-                                (input.asInstanceOf[Any]) match
-                                    case input: E => true
-                                    case _        => false,
-                        handle = [C] => (input, _) => Result.error(input)
+                            input =>
+                                input.isPanic ||
+                                    input.asInstanceOf[Error[Any]].failure.exists {
+                                        case e: E => true
+                                        case _    => false
+                                },
+                        handle = [C] =>
+                            (input, _) => input
                     )
                 }
             } {
-                case fail: E => Result.error(fail)
+                case fail: E => Result.fail(fail)
                 case fail    => Result.panic(fail)
             }
     end RunOps
