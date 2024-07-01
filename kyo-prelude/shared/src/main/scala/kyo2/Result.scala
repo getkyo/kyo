@@ -6,7 +6,7 @@ import scala.annotation.targetName
 import scala.util.Try
 import scala.util.control.NonFatal
 
-opaque type Result[+E, +A] >: (Success[A] | Failure[E]) = Success[A] | Failure[E]
+opaque type Result[+E, +A] >: (Success[A] | Error[E]) = Success[A] | Error[E]
 
 object Result:
     import internal.*
@@ -24,17 +24,17 @@ object Result:
         try
             Success(expr)
         catch
-            case ex if NonFatal(ex) => Error(ex)
+            case ex if NonFatal(ex) => Fail(ex)
 
     inline def success[E, A](inline value: A): Result[E, A]           = Success(value)
-    inline def error[E, A](inline error: E): Result[E, A]             = Error(error)
+    inline def fail[E, A](inline error: E): Result[E, A]              = Fail(error)
     inline def panic[E, A](inline exception: Throwable): Result[E, A] = Panic(exception)
 
     def fromEither[E, A](either: Either[E, A]): Result[E, A] =
-        either.fold(error, success)
+        either.fold(fail, success)
 
     def fromTry[A](t: Try[A]): Result[Throwable, A] =
-        t.fold(error, success)
+        t.fold(fail, success)
 
     opaque type Success[+A] = A | SuccessError[A]
 
@@ -42,30 +42,30 @@ object Result:
 
         def apply[A](value: A): Success[A] =
             value match
-                case v: SuccessError[?]     => v.nest.asInstanceOf[Success[A]]
-                case v: Error[A] @unchecked => SuccessError(v)
-                case v                      => v
+                case v: SuccessError[?]    => v.nest.asInstanceOf[Success[A]]
+                case v: Fail[A] @unchecked => SuccessError(v)
+                case v                     => v
 
         def unapply[E, A](self: Result[E, A]): Maybe.Ops[A] =
             self.fold(_ => Maybe.empty)(Maybe(_))
 
     end Success
 
-    sealed abstract class Failure[+E]:
+    sealed abstract class Error[+E]:
         def getFailure: E | Throwable
 
-    case class Error[+E](error: E) extends Failure[E]:
+    case class Fail[+E](error: E) extends Error[E]:
         def getFailure = error
 
-    object Error:
+    object Fail:
         def unapply[E, A](result: Result[E, A]): Maybe.Ops[E] =
             result match
-                case result: Error[E] @unchecked =>
+                case result: Fail[E] @unchecked =>
                     Maybe(result.error)
                 case _ => Maybe.empty
-    end Error
+    end Fail
 
-    case class Panic(exception: Throwable) extends Failure[Nothing]:
+    case class Panic(exception: Throwable) extends Error[Nothing]:
         def getFailure = exception
 
     object Panic:
@@ -80,25 +80,25 @@ object Result:
 
         def isSuccess: Boolean =
             self match
-                case _: Failure[?] => false
-                case _             => true
+                case _: Error[?] => false
+                case _           => true
 
-        def isError: Boolean =
-            self.isInstanceOf[Error[?]]
+        def isFail =
+            self.isInstanceOf[Fail[?]]
 
         def isPanic: Boolean =
             self.isInstanceOf[Panic]
 
         def value: Maybe[A] =
             self match
-                case self: Failure[?] => Maybe.empty
-                case self             => Maybe(self.asInstanceOf[A])
+                case self: Error[?] => Maybe.empty
+                case self           => Maybe(self.asInstanceOf[A])
 
         @targetName("maybeError")
-        def error: Maybe[E] =
+        def failure: Maybe[E] =
             self match
-                case self: Error[E] @unchecked => Maybe(self.error)
-                case _                         => Maybe.empty
+                case self: Fail[E] @unchecked => Maybe(self.error)
+                case _                        => Maybe.empty
 
         @targetName("maybePanic")
         def panic: Maybe[Throwable] =
@@ -106,9 +106,9 @@ object Result:
                 case self: Panic => Maybe(self.exception)
                 case _           => Maybe.empty
 
-        inline def fold[B](inline ifFailure: Failure[E] => B)(inline ifSuccess: A => B): B =
+        inline def fold[B](inline ifFailure: Error[E] => B)(inline ifSuccess: A => B): B =
             self match
-                case self: Failure[E] @unchecked => ifFailure(self)
+                case self: Error[E] @unchecked => ifFailure(self)
                 case _ =>
                     try ifSuccess(self.asInstanceOf[Result[Nothing, A]].get)
                     catch
@@ -120,10 +120,10 @@ object Result:
             ev: E =:= Nothing
         ): A =
             self match
-                case self: Error[E] @unchecked => throw new NoSuchElementException(s"Failure: ${self.error}")
-                case self: Panic               => throw self.exception
-                case self: SuccessError[?]     => self.unnest.asInstanceOf[A]
-                case self                      => self.asInstanceOf[A]
+                case self: Fail[E] @unchecked => throw new NoSuchElementException(s"Error: ${self.error}")
+                case self: Panic              => throw self.exception
+                case self: SuccessError[?]    => self.unnest.asInstanceOf[A]
+                case self                     => self.asInstanceOf[A]
             end match
         end get
 
@@ -135,7 +135,7 @@ object Result:
 
         inline def flatMap[E2, B](inline f: A => Result[E2, B]): Result[E | E2, B] =
             self match
-                case self: Failure[E] @unchecked => self
+                case self: Error[E] @unchecked => self
                 case self =>
                     try f(self.asInstanceOf[Success[A]].get)
                     catch
@@ -153,24 +153,24 @@ object Result:
         inline def filter(inline p: A => Boolean): Result[E | NoSuchElementException, A] =
             flatMap { v =>
                 if !p(v) then
-                    Error(new NoSuchElementException("Predicate does not hold for " + v))
+                    Fail(new NoSuchElementException("Predicate does not hold for " + v))
                 else
                     v
             }
 
-        inline def recover[B >: A](pf: PartialFunction[Failure[E], B]): Result[E, B] =
+        inline def recover[B >: A](pf: PartialFunction[Error[E], B]): Result[E, B] =
             try
                 self match
-                    case self: Failure[E] @unchecked if pf.isDefinedAt(self) =>
+                    case self: Error[E] @unchecked if pf.isDefinedAt(self) =>
                         Result.success(pf(self))
                     case _ => self
             catch
                 case ex => Panic(ex)
 
-        inline def recoverWith[E2, B >: A](pf: PartialFunction[Failure[E], Result[E2, B]]): Result[E | E2, B] =
+        inline def recoverWith[E2, B >: A](pf: PartialFunction[Error[E], Result[E2, B]]): Result[E | E2, B] =
             try
                 self match
-                    case self: Failure[E] @unchecked if pf.isDefinedAt(self) =>
+                    case self: Error[E] @unchecked if pf.isDefinedAt(self) =>
                         pf(self)
                     case _ => self
             catch
@@ -180,7 +180,7 @@ object Result:
             fold(e => Left(e.getFailure))(Right(_))
 
         def toTry(using
-            @implicitNotFound("Error type must be a 'Throwable' to invoke 'toTry'. Found: '${E}'")
+            @implicitNotFound("Fail type must be a 'Throwable' to invoke 'toTry'. Found: '${E}'")
             ev: E <:< Throwable
         ): Try[A] =
             fold(e => scala.util.Failure(e.getFailure.asInstanceOf[Throwable]))(scala.util.Success(_))
@@ -188,7 +188,7 @@ object Result:
     end extension
 
     private object internal:
-        case class SuccessError[+A](failure: Failure[A], depth: Int = 1):
+        case class SuccessError[+A](failure: Error[A], depth: Int = 1):
             def unnest: Result[Any, A] =
                 if depth > 1 then
                     SuccessError(failure, depth - 1)

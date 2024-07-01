@@ -45,57 +45,57 @@ class AbortsTest extends Test:
                 kyo2.Abort.run[Ex1](kyo2.Abort.get[Ex1](Right(1)).map(_ + 1).map(_ =>
                     kyo2.Abort.get(fail)
                 )).eval ==
-                    Result.error(ex1)
+                    Result.fail(ex1)
             )
         }
         "union tags" - {
             "in suspend 1" in {
                 val effect1: Int < Abort[String | Boolean] =
-                    kyo2.Abort.error("failure")
+                    kyo2.Abort.fail("failure")
                 val handled1: Result[String, Int] < Abort[Boolean] =
                     kyo2.Abort.run[String](effect1)
                 val handled2: Result[Boolean, Result[String, Int]] =
                     kyo2.Abort.run[Boolean](handled1).eval
-                assert(handled2 == Result.success(Result.error("failure")))
+                assert(handled2 == Result.success(Result.fail("failure")))
             }
             "in suspend 2" in {
                 val effect1: Int < Abort[String | Boolean] =
-                    kyo2.Abort.error("failure")
+                    kyo2.Abort.fail("failure")
                 val handled1: Result[Boolean, Int] < Abort[String] =
                     kyo2.Abort.run[Boolean](effect1)
                 val handled2: Result[String, Result[Boolean, Int]] =
                     kyo2.Abort.run[String](handled1).eval
-                assert(handled2 == Result.error("failure"))
+                assert(handled2 == Result.fail("failure"))
             }
             "in handle" in {
                 val effect: Int < Abort[String | Boolean] =
-                    kyo2.Abort.error("failure")
+                    kyo2.Abort.fail("failure")
                 assertDoesNotCompile("kyo2.Abort.run[String | Boolean](effect)")
             }
         }
         "try" in {
             import scala.util.Try
 
-            assert(kyo2.Abort.run(kyo2.Abort.get(Try(throw ex1))).eval == Result.error(ex1))
+            assert(kyo2.Abort.run(kyo2.Abort.get(Try(throw ex1))).eval == Result.fail(ex1))
             assert(kyo2.Abort.run(kyo2.Abort.get(Try("success!"))).eval == Result.success("success!"))
         }
     }
 
     "get" - {
         "either" in {
-            assert(Abort.run(Abort.get(Left(1))).eval == Result.error(1))
+            assert(Abort.run(Abort.get(Left(1))).eval == Result.fail(1))
             assert(Abort.run(Abort.get[Ex1](Right(1))).eval == Result.success(1))
         }
         "result" in {
             assert(Abort.run(Abort.get(Result.success[Ex1, Int](1))).eval == Result.success(1))
-            assert(Abort.run(Abort.get(Result.error(ex1))).eval == Result.error(ex1))
+            assert(Abort.run(Abort.get(Result.fail(ex1))).eval == Result.fail(ex1))
         }
         "option" in {
-            assert(Abort.run(Abort.get(Option.empty)).eval == Result.error(Maybe.Empty))
+            assert(Abort.run(Abort.get(Option.empty)).eval == Result.fail(Maybe.Empty))
             assert(Abort.run(Abort.get(Some(1))).eval == Result.success(1))
         }
         "maybe" in {
-            assert(Abort.run(Abort.get(Maybe.empty)).eval == Result.error(Maybe.Empty))
+            assert(Abort.run(Abort.get(Maybe.empty)).eval == Result.fail(Maybe.Empty))
             assert(Abort.run(Abort.get(Maybe(1))).eval == Result.success(1))
         }
     }
@@ -131,7 +131,7 @@ class AbortsTest extends Test:
                 val fail = Left[Ex1, Int](ex1)
                 assert(
                     kyo2.Abort.run[Ex1](v.map(_ + 1).map(_ => kyo2.Abort.get(fail))).eval ==
-                        Result.error(ex1)
+                        Result.fail(ex1)
                 )
             }
         }
@@ -140,32 +140,32 @@ class AbortsTest extends Test:
             "handle" in {
                 assert(
                     kyo2.Abort.run[Ex1](v).eval ==
-                        Result.error(ex1)
+                        Result.fail(ex1)
                 )
             }
             "handle + transform" in {
                 assert(
                     kyo2.Abort.run[Ex1](v.map(_ + 1)).eval ==
-                        Result.error(ex1)
+                        Result.fail(ex1)
                 )
             }
             "handle + effectful transform" in {
                 assert(
                     kyo2.Abort.run[Ex1](v.map(i => kyo2.Abort.get[Ex1](Right(i + 1)))).eval ==
-                        Result.error(ex1)
+                        Result.fail(ex1)
                 )
             }
             "handle + transform + effectful transform" in {
                 assert(
                     kyo2.Abort.run[Ex1](v.map(_ + 1).map(i => kyo2.Abort.get[Ex1](Right(i + 1)))).eval ==
-                        Result.error(ex1)
+                        Result.fail(ex1)
                 )
             }
             "handle + transform + failed effectful transform" in {
                 val fail = Left[Ex1, Int](ex1)
                 assert(
                     kyo2.Abort.run[Ex1](v.map(_ + 1).map(_ => kyo2.Abort.get(fail))).eval ==
-                        Result.error(ex1)
+                        Result.fail(ex1)
                 )
             }
         }
@@ -175,7 +175,7 @@ class AbortsTest extends Test:
         def test(v: Int): Int < Abort[Ex1] =
             v match
                 case 0 =>
-                    kyo2.Abort.error(ex1)
+                    kyo2.Abort.fail(ex1)
                 case i => 10 / i
         "run" - {
             "success" in {
@@ -187,7 +187,7 @@ class AbortsTest extends Test:
             "failure" in {
                 assert(
                     kyo2.Abort.run[Ex1](test(0)).eval ==
-                        Result.error(ex1)
+                        Result.fail(ex1)
                 )
             }
             "panic" in {
@@ -221,9 +221,9 @@ class AbortsTest extends Test:
             }
             "super" in {
                 val ex                        = new Exception
-                val a: Int < Abort[Exception] = kyo2.Abort.error(ex)
+                val a: Int < Abort[Exception] = kyo2.Abort.fail(ex)
                 val b: Result[Throwable, Int] = kyo2.Abort.run[Throwable](a).eval
-                assert(b == Result.error(ex))
+                assert(b == Result.fail(ex))
             }
             "super success" in {
                 val a: Int < Abort[Exception] = 24
@@ -263,18 +263,18 @@ class AbortsTest extends Test:
         }
         "fail" in {
             val ex: Throwable = new Exception("throwable failure")
-            val a             = kyo2.Abort.error(ex)
-            assert(kyo2.Abort.run[Throwable](a).eval == Result.error(ex))
+            val a             = kyo2.Abort.fail(ex)
+            assert(kyo2.Abort.run[Throwable](a).eval == Result.fail(ex))
         }
         "fail inferred" in {
             val e = "test"
-            val f = kyo2.Abort.error(e)
-            assert(kyo2.Abort.run(f).eval == Result.error(e))
+            val f = kyo2.Abort.fail(e)
+            assert(kyo2.Abort.run(f).eval == Result.fail(e))
         }
         "when" in {
             def test(b: Boolean) = kyo2.Abort.run[String](kyo2.Abort.when(b)("FAIL!")).eval
 
-            assert(test(true) == Result.error("FAIL!"))
+            assert(test(true) == Result.fail("FAIL!"))
             assert(test(false) == Result.success(()))
         }
         "catching" - {
@@ -292,13 +292,13 @@ class AbortsTest extends Test:
                 "failure" in {
                     assert(
                         kyo2.Abort.run[Ex1](kyo2.Abort.catching[Ex1](test(0))).eval ==
-                            Result.error(ex1)
+                            Result.fail(ex1)
                     )
                 }
                 "subclass" in {
                     assert(
                         kyo2.Abort.run[RuntimeException](kyo2.Abort.catching[RuntimeException](test(0))).eval ==
-                            Result.error(ex1)
+                            Result.fail(ex1)
                     )
                 }
                 "distinct" in {
@@ -315,10 +315,10 @@ class AbortsTest extends Test:
 
                     val a = kyo2.Abort.run[Distinct1](distinct)
                     val b = kyo2.Abort.run[Distinct2](a).eval
-                    assert(b == Result.success(Result.error(d1)))
+                    assert(b == Result.success(Result.fail(d1)))
                     assertDoesNotCompile("kyo2.Abort.run[Distinct1 | Distinct2](distinct)")
                     val c = kyo2.Abort.run[Throwable](distinct).eval
-                    assert(c == Result.error(d1))
+                    assert(c == Result.fail(d1))
                 }
                 "ClassTag inference" in pendingUntilFixed {
                     assertCompiles("""
@@ -348,7 +348,7 @@ class AbortsTest extends Test:
                         kyo2.Env.run(0)(
                             kyo2.Abort.run[Ex1](kyo2.Abort.catching[Ex1](test(kyo2.Env.get)))
                         ).eval ==
-                            Result.error(ex1)
+                            Result.fail(ex1)
                     )
                 }
             }
@@ -357,17 +357,17 @@ class AbortsTest extends Test:
                 "should propagate the innermost failure" in {
                     val nested = kyo2.Abort.run[String](
                         kyo2.Abort.run[Int](
-                            kyo2.Abort.error[String]("inner").map(_ => kyo2.Abort.error[Int](42))
+                            kyo2.Abort.fail[String]("inner").map(_ => kyo2.Abort.fail[Int](42))
                         )
                     )
-                    assert(nested.eval == Result.error("inner"))
+                    assert(nested.eval == Result.fail("inner"))
                 }
 
                 "should propagate the outermost failure if there are no inner failures" in {
                     val nested = kyo2.Abort.run(kyo2.Abort.run[String](
                         kyo2.Abort.run[Int](kyo2.Abort.get[Int](Right(42)))
-                    ).map(_ => kyo2.Abort.error("outer")))
-                    assert(nested.eval == Result.error("outer"))
+                    ).map(_ => kyo2.Abort.fail("outer")))
+                    assert(nested.eval == Result.fail("outer"))
                 }
             }
 
@@ -379,8 +379,8 @@ class AbortsTest extends Test:
                 }
 
                 "should propagate Abort failures within Env" in {
-                    val result = kyo2.Env.run("test")(kyo2.Abort.run[String](kyo2.Abort.error("failure")))
-                    assert(result.eval == Result.error("failure"))
+                    val result = kyo2.Env.run("test")(kyo2.Abort.run[String](kyo2.Abort.fail("failure")))
+                    assert(result.eval == Result.fail("failure"))
                 }
             }
 
@@ -397,10 +397,10 @@ class AbortsTest extends Test:
                 "should not modify state on Abort failures" in {
                     val result = kyo2.Var.run(42)(
                         kyo2.Abort.run[String](
-                            kyo2.Var.set[Int](24).map(_ => kyo2.Abort.error("failure"))
+                            kyo2.Var.set[Int](24).map(_ => kyo2.Abort.fail("failure"))
                         )
                     )
-                    assert(result.eval == Result.error("failure"))
+                    assert(result.eval == Result.fail("failure"))
                     assert(kyo2.Var.run(42)(kyo2.Var.get[Int]).eval == 42)
                 }
             }
@@ -409,9 +409,9 @@ class AbortsTest extends Test:
                 "should not execute subsequent operations on failure" in {
                     var executed = false
                     val result = kyo2.Abort.run[String](
-                        kyo2.Abort.error("failure").map(_ => executed = true)
+                        kyo2.Abort.fail("failure").map(_ => executed = true)
                     )
-                    assert(result.eval == Result.error("failure"))
+                    assert(result.eval == Result.fail("failure"))
                     assert(!executed)
                 }
 
@@ -433,7 +433,7 @@ class AbortsTest extends Test:
                 Abort.run[String] {
                     for
                         x <- Env.get[Int]
-                        _ <- if x > 10 then Abort.error("Too big") else Env.get[Int]
+                        _ <- if x > 10 then Abort.fail("Too big") else Env.get[Int]
                         y <- Env.use[Int](_ * 2)
                     yield y
                 }
@@ -448,12 +448,12 @@ class AbortsTest extends Test:
                         for
                             x <- Env.get[Int]
                             _ <- Var.update[Int](_ + x)
-                            _ <- if x > 10 then Abort.error("Too big") else Var.get[Int]
+                            _ <- if x > 10 then Abort.fail("Too big") else Var.get[Int]
                         yield ()
                     }
                 }
             }
-            assert(result.eval == Result.error("Too big"))
+            assert(result.eval == Result.fail("Too big"))
         }
     }
 
@@ -461,36 +461,36 @@ class AbortsTest extends Test:
         "Abort within map" in {
             val result = Abort.run[String] {
                 Env.get[Int].map { x =>
-                    if x > 5 then Abort.error("Too big")
+                    if x > 5 then Abort.fail("Too big")
                     else Env.get[Int]
                 }
             }
-            assert(Env.run(10)(result).eval == Result.error("Too big"))
+            assert(Env.run(10)(result).eval == Result.fail("Too big"))
         }
 
         "multiple Aborts in for-comprehension" in {
             val result = Abort.run[String] {
                 for
                     x <- Env.get[Int]
-                    _ <- if x > 5 then Abort.error("Too big") else Env.get[Int]
+                    _ <- if x > 5 then Abort.fail("Too big") else Env.get[Int]
                     y <- Var.get[Int]
-                    _ <- if y < 0 then Abort.error("Negative") else Var.get[Int]
+                    _ <- if y < 0 then Abort.fail("Negative") else Var.get[Int]
                 yield (x, y)
             }
             val finalResult = Env.run(3) {
                 Var.run(-1)(result)
             }
-            assert(finalResult.eval == Result.error("Negative"))
+            assert(finalResult.eval == Result.fail("Negative"))
         }
 
         "Abort within Abort" in {
             val innerAbort = Abort.run[Int] {
-                Abort.error[String]("Inner error").map(_ => 42)
+                Abort.fail[String]("Inner error").map(_ => 42)
             }
             val outerAbort = Abort.run[String] {
-                innerAbort.map(x => if x.value.exists(_ > 50) then Abort.error("Outer error") else x)
+                innerAbort.map(x => if x.value.exists(_ > 50) then Abort.fail("Outer error") else x)
             }
-            assert(outerAbort.eval == Result.error("Inner error"))
+            assert(outerAbort.eval == Result.fail("Inner error"))
         }
 
         "deeply nested Aborts" in {
@@ -508,7 +508,7 @@ class AbortsTest extends Test:
             for
                 x <- Env.get[Int]
                 y <- Var.get[Int]
-                _ <- if x + y > 10 then Abort.error("Sum too large") else Env.get[Int]
+                _ <- if x + y > 10 then Abort.fail("Sum too large") else Env.get[Int]
             yield x + y
         }
         val finalResult: Result[String, Int] < (Env[Int] & Var[Int]) = result
