@@ -2,6 +2,7 @@ package kyo2.kernel
 
 import internal.*
 import kyo.Tag
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 abstract class Effect[-I[_], +O[_]]
@@ -70,9 +71,7 @@ object Effect:
                             continue = handleLoop(handle[Any](kyo.input, kyo(_, context)), context)
                         )
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked) =>
-                        new KyoSuspend[IX, OX, EX, Any, B, S & S2 & S3]:
-                            val tag   = kyo.tag
-                            val input = kyo.input
+                        new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handleLoop(kyo(v, context), context)
@@ -105,9 +104,7 @@ object Effect:
                             continue = handle2Loop(handle2[Any](kyo.input, kyo(_, context)), context)
                         )
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & S & S2] @unchecked) =>
-                        new KyoSuspend[IX, OX, EX, Any, A, S & S2]:
-                            val tag   = kyo.tag
-                            val input = kyo.input
+                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handle2Loop(kyo(v, context), context)
@@ -150,9 +147,7 @@ object Effect:
                             continue = handle3Loop(handle3[Any](kyo.input, kyo(_, context)), context)
                         )
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & S & S2] @unchecked) =>
-                        new KyoSuspend[IX, OX, EX, Any, A, S & S2]:
-                            val tag   = kyo.tag
-                            val input = kyo.input
+                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handle3Loop(kyo(v, context), context)
@@ -183,9 +178,7 @@ object Effect:
                                 handleLoop(nst, res, context)
                         )
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked) =>
-                        new KyoSuspend[IX, OX, EX, Any, U, S & S2]:
-                            val tag   = kyo.tag
-                            val input = kyo.input
+                        new KyoContinue[IX, OX, EX, Any, U, S & S2](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handleLoop(state, kyo(v, context), context)
@@ -205,9 +198,7 @@ object Effect:
         def catchingLoop(v: B < (S & S2))(using Safepoint): B < (S & S2) =
             (v: @unchecked) match
                 case <(kyo: KyoSuspend[IX, OX, EX, Any, B, S & S2] @unchecked) =>
-                    new KyoSuspend[IX, OX, EX, Any, B, S & S2]:
-                        val tag   = kyo.tag
-                        val input = kyo.input
+                    new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using safepoint: Safepoint) =
                             try catchingLoop(kyo(v, context))
