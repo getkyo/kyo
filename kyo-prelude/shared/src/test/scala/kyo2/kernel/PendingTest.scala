@@ -114,9 +114,13 @@ class PendingTest extends Test:
     }
 
     "evalPartial" - {
+        abstract class TestInterceptor extends Safepoint.Interceptor:
+            def addEnsure(f: () => Unit): Unit    = {}
+            def removeEnsure(f: () => Unit): Unit = {}
+
         "evaluates pure values" in {
             val x: Int < Any = 5
-            val result = x.evalPartial(new Safepoint.Interceptor:
+            val result = x.evalPartial(new TestInterceptor:
                 def enter(frame: Frame, value: Any) = true
                 def exit()                          = ()
             )
@@ -125,7 +129,7 @@ class PendingTest extends Test:
 
         "suspends at effects" in {
             val x: Int < TestEffect = testEffect(5).map(_ + 1)
-            val result = x.evalPartial(new Safepoint.Interceptor:
+            val result = x.evalPartial(new TestInterceptor:
                 def enter(frame: Frame, value: Any) = true
                 def exit()                          = ()
             )
@@ -135,7 +139,7 @@ class PendingTest extends Test:
         "respects the interceptor" in {
             var called       = false
             val x: Int < Any = Effect.defer(5)
-            val result = x.evalPartial(new Safepoint.Interceptor:
+            val result = x.evalPartial(new TestInterceptor:
                 def enter(frame: Frame, value: Any) =
                     called = true; false
                 def exit() = ()
@@ -146,7 +150,7 @@ class PendingTest extends Test:
 
         "evaluates nested suspensions" in {
             val x: Int < Any = Effect.defer(Effect.defer(5))
-            val result = x.evalPartial(new Safepoint.Interceptor:
+            val result = x.evalPartial(new TestInterceptor:
                 def enter(frame: Frame, value: Any) = true
                 def exit()                          = ()
             )

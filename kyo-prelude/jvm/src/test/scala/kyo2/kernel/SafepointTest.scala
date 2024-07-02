@@ -181,10 +181,15 @@ class SafepointTest extends Test:
     }
 
     "interceptors" - {
+        abstract class TestInterceptor extends Safepoint.Interceptor:
+            def addEnsure(f: () => Unit): Unit    = {}
+            def removeEnsure(f: () => Unit): Unit = {}
+
         "immediate" - {
+
             "use the interceptor" in {
                 var executed = false
-                val interceptor = new Safepoint.Interceptor:
+                val interceptor = new TestInterceptor:
                     def ensure(f: () => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         executed = true
@@ -197,14 +202,14 @@ class SafepointTest extends Test:
 
             "restore previous interceptor" in {
                 var count = 0
-                val interceptor1 = new Safepoint.Interceptor:
+                val interceptor1 = new TestInterceptor:
                     def ensure(f: () => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         count += 1
                         true
                     def exit(): Unit = ()
 
-                val interceptor2 = new Safepoint.Interceptor:
+                val interceptor2 = new TestInterceptor:
                     def ensure(f: () => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         count += 10
@@ -222,7 +227,7 @@ class SafepointTest extends Test:
         "propagating" - {
             "through suspensions" in {
                 var count = 0
-                val interceptor = new Safepoint.Interceptor:
+                val interceptor = new TestInterceptor:
                     def ensure(f: () => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         count += 1
@@ -246,14 +251,14 @@ class SafepointTest extends Test:
                 var outerCount = 0
                 var innerCount = 0
 
-                val outerInterceptor = new Safepoint.Interceptor:
+                val outerInterceptor = new TestInterceptor:
                     def ensure(f: () => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         outerCount += 1
                         true
                     def exit(): Unit = ()
 
-                val innerInterceptor = new Safepoint.Interceptor:
+                val innerInterceptor = new TestInterceptor:
                     def ensure(f: () => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         innerCount += 1
@@ -280,7 +285,7 @@ class SafepointTest extends Test:
         "example logging interceptor" in {
             import scala.collection.mutable.ArrayBuffer
 
-            class LoggingInterceptor extends Safepoint.Interceptor:
+            class LoggingInterceptor extends TestInterceptor:
                 val logs = ArrayBuffer.empty[String]
 
                 def enter(frame: Frame, value: Any): Boolean =
@@ -338,7 +343,7 @@ class SafepointTest extends Test:
         "example wall-clock profiling interceptor" in {
             import scala.collection.mutable.Stack
 
-            class ProfilingInterceptor extends Safepoint.Interceptor:
+            class ProfilingInterceptor extends TestInterceptor:
                 val starts = Stack.empty[(Frame, Long)]
                 var log    = Stack.empty[(Frame, Long)]
 
@@ -623,8 +628,10 @@ class SafepointTest extends Test:
                         f()
                         f()
                     end addEnsure
-                    def enter(frame: Frame, value: Any): Boolean = true
-                    def exit(): Unit                             = {}
+
+                    override def removeEnsure(f: () => Unit): Unit = {}
+                    def enter(frame: Frame, value: Any): Boolean   = true
+                    def exit(): Unit                               = {}
 
                 val effect = Safepoint.propagating(interceptor) {
                     Safepoint.ensure {

@@ -53,8 +53,8 @@ object Safepoint:
     implicit def get: Safepoint = local.get()
 
     abstract private[kyo2] class Interceptor:
-        def addEnsure(f: () => Unit): Unit    = {}
-        def removeEnsure(f: () => Unit): Unit = {}
+        def addEnsure(f: () => Unit): Unit
+        def removeEnsure(f: () => Unit): Unit
         def enter(frame: Frame, value: Any): Boolean
         def exit(): Unit
     end Interceptor
