@@ -1,6 +1,7 @@
 package kyo2.kernel
 
 import kyo.Tag
+import kyo2.Kyo
 import kyo2.Test
 import scala.concurrent.Future
 
@@ -293,6 +294,21 @@ class BoundaryTest extends Test:
                 ContextEffect.handle(Tag[AnotherEffect], "test", _.toUpperCase)(result)
             }
             assert(handled.eval == 14)
+        }
+        "preserves ordering of the provided sequence" in {
+            val seq = Seq(
+                ContextEffect.suspend[Int, TestEffect](Tag[TestEffect]).map(_ + 1),
+                ContextEffect.suspend[Int, TestEffect](Tag[TestEffect]).map(_ + 2),
+                ContextEffect.suspend[Int, TestEffect](Tag[TestEffect]).map(_ + 3)
+            )
+
+            val result = Boundary[TestEffect, Any](seq) { isolatedSeq =>
+                Kyo.seq.collect(isolatedSeq)
+            }
+
+            val handled = ContextEffect.handle(Tag[TestEffect], 10, _ => 10)(result)
+
+            assert(handled.eval == Seq(11, 12, 13))
         }
     }
 end BoundaryTest
