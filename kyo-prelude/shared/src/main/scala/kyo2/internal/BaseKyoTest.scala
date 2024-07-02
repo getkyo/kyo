@@ -39,14 +39,14 @@ trait BaseKyoTest[S]:
     given eitherCanEqual[T, U]: CanEqual[Either[T, U], Either[T, U]] = CanEqual.derived
     given throwableCanEqual: CanEqual[Throwable, Throwable]          = CanEqual.derived
 
-    def retry[S](f: => Boolean < S): Boolean < S =
+    def untilTrue[S](f: => Boolean < S): Boolean < S =
         def loop(): Boolean < S =
             f.map {
                 case true  => true
                 case false => loop()
             }
         loop()
-    end retry
+    end untilTrue
 
     def timeout =
         if Platform.isDebugEnabled then
