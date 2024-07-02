@@ -19,9 +19,9 @@ object Abort:
 
     inline def fail[E](inline value: E): Nothing < Abort[E] = error(Fail(value))
 
-    inline def panic[E](ex: Throwable): Nothing < Abort[E] = error(Panic(ex))
+    inline def panic[E](inline ex: Throwable): Nothing < Abort[E] = error(Panic(ex))
 
-    inline def error[E](e: Error[E]): Nothing < Abort[E] =
+    inline def error[E](inline e: Error[E]): Nothing < Abort[E] =
         Effect.suspendMap[Any](erasedTag[E], e)(_ => ???)
 
     inline def when[E](b: Boolean)(inline value: => E): Unit < Abort[E] =
