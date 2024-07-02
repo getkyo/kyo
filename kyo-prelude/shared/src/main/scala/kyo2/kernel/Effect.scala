@@ -209,10 +209,11 @@ object Effect:
                         val tag   = kyo.tag
                         val input = kyo.input
                         def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                        def apply(v: OX[Any], context: Context)(using safepoint: Safepoint) =
                             try catchingLoop(kyo(v, context))
                             catch
                                 case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
+                                    Safepoint.insertTrace(ex)
                                     pf(ex)
                             end try
                         end apply
@@ -221,6 +222,7 @@ object Effect:
         try catchingLoop(v)
         catch
             case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
+                Safepoint.insertTrace(ex)
                 pf(ex)
         end try
     end catching

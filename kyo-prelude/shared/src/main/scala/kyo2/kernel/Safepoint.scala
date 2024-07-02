@@ -102,7 +102,8 @@ object Safepoint:
         try f
         catch
             case ex: Throwable if NonFatal(ex) =>
-                handle(self, ex)
+                insertTrace(ex)(using self)
+                throw ex
         finally
             Safepoint.local.set(parent)
         end try
@@ -120,25 +121,33 @@ object Safepoint:
                 finally self.exit(depth)
     end handle
 
-    private def handle(self: Safepoint, cause: Throwable): Nothing =
-        val size  = Math.min(self.traceIdx, maxTraceFrames)
-        val trace = copyTrace(self.trace, self.traceIdx).filter(_ != null).map(_.parse)
-        val toPad = trace.map(_.snippetShort.size).max + 1
-        val elements = trace.map { frame =>
-            StackTraceElement(
-                frame.snippetShort.reverse.padTo(toPad, ' ').reverse + " @ " + frame.declaringClass,
-                frame.methodName,
-                frame.position.fileName,
-                frame.position.lineNumber
+    // TODO compiler crash if private[kyo2]
+    def insertTrace(cause: Throwable)(using self: Safepoint): Unit =
+        val size = Math.min(self.traceIdx, maxTraceFrames)
+        if size > 0 then
+            val trace = copyTrace(self.trace, self.traceIdx).filter(_ != null).map(_.parse)
+            val toPad = trace.map(_.snippetShort.size).maxOption.getOrElse(0) + 1
+            val elements =
+                trace.foldLeft(List.empty[Frame.Parsed]) {
+                    case (acc, curr) =>
+                        acc match
+                            case `curr` :: tail => acc
+                            case _              => curr :: acc
+                }.reverse.map { frame =>
+                    StackTraceElement(
+                        frame.snippetShort.reverse.padTo(toPad, ' ').reverse + " @ " + frame.declaringClass,
+                        frame.methodName,
+                        frame.position.fileName,
+                        frame.position.lineNumber
+                    )
+                }.reverse
+            val prefix = cause.getStackTrace.takeWhile(e =>
+                e.getFileName() != elements(0).getFileName() || e.getLineNumber != elements(0).getLineNumber()
             )
-        }.reverse
-        val prefix = cause.getStackTrace.takeWhile(e =>
-            e.getFileName() != elements(0).getFileName() || e.getLineNumber != elements(0).getLineNumber()
-        )
-        val suffix = (new Exception).getStackTrace().drop(2)
-        cause.setStackTrace(prefix ++ elements ++ suffix)
-        throw cause
-    end handle
+            val suffix = (new Exception).getStackTrace().drop(2)
+            cause.setStackTrace(prefix ++ elements ++ suffix)
+        end if
+    end insertTrace
 
     private def copyTrace(trace: Array[Frame], idx: Int): Array[Frame] =
         val result = new Array[Frame](maxTraceFrames)

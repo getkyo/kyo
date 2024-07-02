@@ -7,7 +7,7 @@ opaque type Frame <: AnyRef = String
 
 object Frame:
 
-    private val snippetShortMaxChars = 25
+    private val snippetShortMaxChars = 50
 
     given CanEqual[Frame, Frame] = CanEqual.derived
 
@@ -17,22 +17,29 @@ object Frame:
         position: Position,
         snippetShort: String,
         snippetLong: String
-    ):
-        override def toString = s"Frame($declaringClass, $methodName, $position, ${snippetShort.dropWhile(_ == ' ')})"
+    ) derives CanEqual:
+        override def toString = s"Frame($declaringClass, $methodName, $position, $snippetShort)"
     end Parsed
 
     case class Position(
         fileName: String,
         lineNumber: Int,
         columnNumber: Int
-    ):
+    ) derives CanEqual:
         override def toString = s"$fileName:$lineNumber:$columnNumber"
     end Position
 
     extension (t: Frame)
         def parse: Parsed =
             val arr = t.split('£')
-            Parsed(arr(0), arr(1), Position(arr(2), arr(3).toInt, arr(4).toInt), arr(5), arr(6))
+            Parsed(
+                arr(0),
+                arr(1),
+                Position(arr(2), arr(3).toInt, arr(4).toInt),
+                arr(5).split("📍")(0).reverse.take(snippetShortMaxChars).takeWhile(_ != '\n').trim.reverse,
+                arr(5)
+            )
+        end parse
 
         def show: String = parse.toString
     end extension
@@ -66,14 +73,11 @@ object Frame:
                     acc
                 case c :: tail => parseSnippetShort(tail, closes, c :: acc)
 
-        val snippetShort =
-            parseSnippetShort(fileContent.take(pos.end).reverse.toList)
-                .takeRight(snippetShortMaxChars).mkString.trim
-        val snippetLong = snippetLines.map(_.drop(toDrop)).mkString("\n")
-        val cls         = findEnclosing(_.isClassDef)
-        val method      = findEnclosing(_.isDefDef)
+        val snippet = snippetLines.map(_.drop(toDrop)).mkString("\n")
+        val cls     = findEnclosing(_.isClassDef)
+        val method  = findEnclosing(_.isDefDef)
 
-        Expr(s"$cls£$method£${pos.sourceFile.name}£${startLine + 1}£${startColumn + 1}£$snippetShort£$snippetLong")
+        Expr(s"$cls£$method£${pos.sourceFile.name}£${startLine + 1}£${startColumn + 1}£$snippet")
     end frameImpl
 
     private def findEnclosing(using Quotes)(predicate: quotes.reflect.Symbol => Boolean): String =
