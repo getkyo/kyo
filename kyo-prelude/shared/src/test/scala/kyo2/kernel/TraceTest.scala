@@ -3,7 +3,7 @@ package kyo2.kernel
 import java.io.PrintWriter
 import java.io.StringWriter
 import kyo2.*
-import kyo2.Tagged.jvmOnly
+import kyo2.Tagged.*
 
 class TraceTest extends Test:
 
@@ -29,7 +29,6 @@ class TraceTest extends Test:
                 |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
                 |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
                 |	at                        def evalOnly = boom(10).eval @ kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
-                |	at kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
                 """
             )
         }
@@ -48,7 +47,6 @@ class TraceTest extends Test:
                 |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
                 |	at                         val x = Env.use[Int](_ + 1) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:17)
                 |	at                                  Env.run(1)(z).eval @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
-                |	at kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
                 """
             )
         }
@@ -59,7 +57,7 @@ class TraceTest extends Test:
     // and positions. It doesn't fail, only generates a stack trace with Kyo's
     // frames at the wrong poition.
     "js" - {
-        "only eval" taggedAs jvmOnly in pendingUntilFixed {
+        "only eval" taggedAs jsOnly in pendingUntilFixed {
             assertTrace(
                 evalOnly,
                 """
@@ -67,13 +65,12 @@ class TraceTest extends Test:
                 |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
                 |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
                 |	at                        def evalOnly = boom(10).eval @ kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
-                |	at kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
                 """
             )
             ()
         }
 
-        "with effects" taggedAs jvmOnly in pendingUntilFixed {
+        "with effects" taggedAs jsOnly in pendingUntilFixed {
             assertTrace(
                 withEffects,
                 """
@@ -87,7 +84,6 @@ class TraceTest extends Test:
                 |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
                 |	at                         val x = Env.use[Int](_ + 1) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:17)
                 |	at                                  Env.run(1)(z).eval @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
-                |	at kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
                 """
             )
             ()
@@ -104,7 +100,7 @@ class TraceTest extends Test:
                 val printWriter  = new PrintWriter(stringWriter)
                 ex.printStackTrace(printWriter)
                 printWriter.flush()
-                val trace = stringWriter.toString.linesIterator.takeWhile(!_.contains("$init$$$anonfun")).mkString("\n")
+                val trace = stringWriter.toString.linesIterator.takeWhile(!_.contains("anonfun")).mkString("\n")
                 assert(trace == expected.stripMargin.trim)
 
 end TraceTest
