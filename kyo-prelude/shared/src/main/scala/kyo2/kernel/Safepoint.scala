@@ -121,7 +121,8 @@ object Safepoint:
                 finally self.exit(depth)
     end handle
 
-    private[kyo2] def insertTrace(cause: Throwable)(using self: Safepoint): Unit =
+    // TODO compiler crash if private[kyo2]
+    def insertTrace(cause: Throwable)(using self: Safepoint): Unit =
         val size = Math.min(self.traceIdx, maxTraceFrames)
         if size > 0 then
             val trace = copyTrace(self.trace, self.traceIdx).filter(_ != null).map(_.parse)
