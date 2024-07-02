@@ -53,6 +53,8 @@ object Safepoint:
     implicit def get: Safepoint = local.get()
 
     abstract private[kyo2] class Interceptor:
+        def addEnsure(f: () => Unit): Unit
+        def removeEnsure(f: () => Unit): Unit
         def enter(frame: Frame, value: Any): Boolean
         def exit(): Unit
     end Interceptor
@@ -65,6 +67,8 @@ object Safepoint:
             if isNull(prev) || (prev eq p) then p
             else
                 new Interceptor:
+                    override def addEnsure(f: () => Unit): Unit    = p.addEnsure(f)
+                    override def removeEnsure(f: () => Unit): Unit = p.removeEnsure(f)
                     def enter(frame: Frame, value: Any) =
                         p.enter(frame, value) && prev.enter(frame, value)
                     def exit() =
@@ -91,6 +95,38 @@ object Safepoint:
                     v
         immediate(p)(loop(v))
     end propagating
+
+    private[kyo2] def ensure[A, S](f: => Unit)(v: => A < S)(using safepoint: Safepoint, _frame: Frame): A < S =
+        // ensures the function is called once even if an
+        // interceptor executes it multiple times
+        lazy val f0 = f
+        val ensure  = () => f0
+
+        inline def run[T](inline thunk: => T)(using safepoint: Safepoint): T =
+            val interceptor = safepoint.interceptor
+            if !isNull(interceptor) then interceptor.addEnsure(ensure)
+            try thunk
+            catch
+                case ex if NonFatal(ex) =>
+                    ensure()
+                    throw ex
+            end try
+        end run
+
+        def loop(v: A < S)(using safepoint: Safepoint): A < S =
+            v match
+                case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
+                    new KyoContinue[IX, OX, EX, Any, A, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint): A < S =
+                            run(loop(kyo(v, context)))
+                case _ =>
+                    val interceptor = safepoint.interceptor
+                    if !isNull(interceptor) then interceptor.removeEnsure(ensure)
+                    ensure()
+                    v
+        run(loop(v))
+    end ensure
 
     private[kernel] inline def eval[T](
         inline f: => T
