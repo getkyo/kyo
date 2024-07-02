@@ -99,10 +99,10 @@ object Safepoint:
     private[kyo2] def ensure[A, S](f: => Unit)(v: => A < S)(using safepoint: Safepoint, _frame: Frame): A < S =
         // ensures the function is called once even if an
         // interceptor executes it multiple times
-        lazy val run = f
-        val ensure   = () => run
+        lazy val f0 = f
+        val ensure  = () => f0
 
-        inline def eval[T](inline thunk: => T)(using safepoint: Safepoint): T =
+        inline def run[T](inline thunk: => T)(using safepoint: Safepoint): T =
             val interceptor = safepoint.interceptor
             if !isNull(interceptor) then interceptor.addEnsure(ensure)
             try thunk
@@ -111,7 +111,7 @@ object Safepoint:
                     ensure()
                     throw ex
             end try
-        end eval
+        end run
 
         def loop(v: A < S)(using safepoint: Safepoint): A < S =
             v match
@@ -119,13 +119,13 @@ object Safepoint:
                     new KyoContinue[IX, OX, EX, Any, A, S](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint): A < S =
-                            eval(loop(kyo(v, context)))
+                            run(loop(kyo(v, context)))
                 case _ =>
                     val interceptor = safepoint.interceptor
                     if !isNull(interceptor) then interceptor.removeEnsure(ensure)
                     ensure()
                     v
-        eval(loop(v))
+        run(loop(v))
     end ensure
 
     private[kernel] inline def eval[T](
