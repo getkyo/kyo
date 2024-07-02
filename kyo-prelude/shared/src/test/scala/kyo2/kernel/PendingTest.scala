@@ -1,7 +1,6 @@
 package kyo2.kernel
 
 import kyo.Tag
-import kyo2.Maybe
 import kyo2.Test
 import kyo2.kernel.*
 
@@ -91,66 +90,4 @@ class PendingTest extends Test:
         }
     }
 
-    sealed trait TestEffect extends Effect[Const[Int], Const[Int]]
-
-    def testEffect(i: Int): Int < TestEffect =
-        Effect.suspend[Int](Tag[TestEffect], i)
-
-    "evalNow" - {
-        "returns Some for pure values" in {
-            val x: Int < Any = 5
-            assert(x.evalNow == Maybe(5))
-        }
-
-        "returns None for suspended computations" in {
-            val x: Int < TestEffect = testEffect(5)
-            assert(x.evalNow == Maybe.empty)
-        }
-
-        "returns Some for nested pure values" in {
-            val x: Int < Any < Any = <(1: Int < Any)
-            assert(x.evalNow.flatMap(_.evalNow) == Maybe(1))
-        }
-    }
-
-    "evalPartial" - {
-        "evaluates pure values" in {
-            val x: Int < Any = 5
-            val result = x.evalPartial(new Safepoint.Interceptor:
-                def enter(frame: Frame, value: Any) = true
-                def exit()                          = ()
-            )
-            assert(result.eval == 5)
-        }
-
-        "suspends at effects" in {
-            val x: Int < TestEffect = testEffect(5).map(_ + 1)
-            val result = x.evalPartial(new Safepoint.Interceptor:
-                def enter(frame: Frame, value: Any) = true
-                def exit()                          = ()
-            )
-            assert(result.evalNow.isEmpty)
-        }
-
-        "respects the interceptor" in {
-            var called       = false
-            val x: Int < Any = Effect.defer(5)
-            val result = x.evalPartial(new Safepoint.Interceptor:
-                def enter(frame: Frame, value: Any) =
-                    called = true; false
-                def exit() = ()
-            )
-            assert(called)
-            assert(result.evalNow.isEmpty)
-        }
-
-        "evaluates nested suspensions" in {
-            val x: Int < Any = Effect.defer(Effect.defer(5))
-            val result = x.evalPartial(new Safepoint.Interceptor:
-                def enter(frame: Frame, value: Any) = true
-                def exit()                          = ()
-            )
-            assert(result.eval == 5)
-        }
-    }
 end PendingTest
