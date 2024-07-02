@@ -21,7 +21,7 @@ object Abort:
 
     inline def panic[E](inline ex: Throwable): Nothing < Abort[E] = error(Panic(ex))
 
-    inline def error[E](inline e: Error[E]): Nothing < Abort[E] =
+    private[kyo2] inline def error[E](inline e: Error[E]): Nothing < Abort[E] =
         Effect.suspendMap[Any](erasedTag[E], e)(_ => ???)
 
     inline def when[E](b: Boolean)(inline value: => E): Unit < Abort[E] =
