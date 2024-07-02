@@ -50,9 +50,7 @@ object ContextEffect:
         def handleLoop(v: B < (E & S))(using Safepoint): B < S =
             v match
                 case <(kyo: KyoSuspend[IX, OX, EX, Any, B, S] @unchecked) =>
-                    new KyoSuspend[IX, OX, EX, Any, B, S]:
-                        val tag   = kyo.tag
-                        val input = kyo.input
+                    new KyoContinue[IX, OX, EX, Any, B, S](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
                             val tag = _tag // avoid inlining the tag multiple times

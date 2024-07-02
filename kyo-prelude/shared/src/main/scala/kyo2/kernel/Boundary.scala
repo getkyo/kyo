@@ -26,9 +26,7 @@ final class Boundary[Ctx, S] private (dummy: Unit) extends AnyVal:
     private def boundaryLoop[A, S2](v: A < (Ctx & S & S2), state: Safepoint.State)(using Frame): A < (S & S2) =
         v match
             case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
-                new KyoSuspend[IX, OX, EX, Any, A, S & S2]:
-                    val tag   = kyo.tag
-                    val input = kyo.input
+                new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
                     def frame = summon[Frame]
                     def apply(v: OX[Any], context: Context)(using Safepoint) =
                         val parent = Safepoint.local.get()
