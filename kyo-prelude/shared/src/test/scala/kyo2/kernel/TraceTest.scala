@@ -27,9 +27,9 @@ class TraceTest extends Test:
                 """
                 |java.lang.Exception: test exception
                 |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
-                |	at  x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
-                |	at         boom(10).eval @ kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
-                |	at kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)                
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at                        def evalOnly = boom(10).eval @ kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
+                |	at kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
                 """
             )
         }
@@ -40,15 +40,15 @@ class TraceTest extends Test:
                 """
                 |java.lang.Exception: test exception
                 |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
-                |	at       x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
-                |	at  , y).map(_ + _).map(boom) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at   Kyo.zip(x, y).map(_ + _) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at              Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at        Env.use[Int](_ * 2) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:18)
-                |	at              Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at        Env.use[Int](_ + 1) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:17)
-                |	at         Env.run(1)(z).eval @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
-                |	at kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)                
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at          val z = Kyo.zip(x, y).map(_ + _).map(boom) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                    val z = Kyo.zip(x, y).map(_ + _) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                         val y = Env.use[Int](_ * 2) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:18)
+                |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                         val x = Env.use[Int](_ + 1) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:17)
+                |	at                                  Env.run(1)(z).eval @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
+                |	at kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
                 """
             )
         }
@@ -65,9 +65,9 @@ class TraceTest extends Test:
                 """
                 |java.lang.Exception: test exception
                 |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
-                |	at  x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
-                |	at         boom(10).eval @ kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
-                |	at kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)      
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at                        def evalOnly = boom(10).eval @ kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
+                |	at kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
                 """
             )
             ()
@@ -79,15 +79,15 @@ class TraceTest extends Test:
                 """
                 |java.lang.Exception: test exception
                 |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
-                |	at       x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
-                |	at  , y).map(_ + _).map(boom) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at   Kyo.zip(x, y).map(_ + _) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at              Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at        Env.use[Int](_ * 2) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:18)
-                |	at              Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at        Env.use[Int](_ + 1) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:17)
-                |	at         Env.run(1)(z).eval @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
-                |	at kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)  
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at          val z = Kyo.zip(x, y).map(_ + _).map(boom) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                    val z = Kyo.zip(x, y).map(_ + _) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                         val y = Env.use[Int](_ * 2) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:18)
+                |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                         val x = Env.use[Int](_ + 1) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:17)
+                |	at                                  Env.run(1)(z).eval @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
+                |	at kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
                 """
             )
             ()

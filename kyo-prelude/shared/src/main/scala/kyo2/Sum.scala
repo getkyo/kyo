@@ -8,7 +8,7 @@ sealed trait Sum[V] extends Effect[Const[V], Const[Unit]]
 
 object Sum:
 
-    inline def add[V](inline v: V)(using inline tag: Tag[Sum[V]]): Unit < Sum[V] =
+    inline def add[V](inline v: V)(using inline tag: Tag[Sum[V]], inline frame: Frame): Unit < Sum[V] =
         Effect.suspend[Any](tag, v)
 
     final class RunOps[V](dummy: Unit) extends AnyVal:

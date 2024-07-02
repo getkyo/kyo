@@ -9,14 +9,12 @@ abstract class Local[T]:
 
     val default: T
 
-    private val _get: T < Any =
-        ContextEffect.suspend(Tag[Local.State], Map.empty)(_.getOrElse(this, default).asInstanceOf[T])
-
-    def get: T < Any = _get
+    def get(using Frame): T < Any =
+        ContextEffect.suspendMap(Tag[Local.State], Map.empty)(_.getOrElse(this, default).asInstanceOf[T])
 
     // TODO Compilation error if inlined
     def use[U, S](f: T => U < S)(using Frame): U < S =
-        ContextEffect.suspend(Tag[Local.State], Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[T]))
+        ContextEffect.suspendMap(Tag[Local.State], Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[T]))
 
     def let[U, S](value: T)(v: U < S)(using Frame): U < S =
         ContextEffect.handle(Tag[Local.State], Map(this -> value), _.updated(this, value.asInstanceOf[AnyRef]))(v)

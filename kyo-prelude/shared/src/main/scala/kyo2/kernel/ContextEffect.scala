@@ -11,22 +11,22 @@ abstract class ContextEffect[+A]
 object ContextEffect:
 
     inline def suspend[A, E <: ContextEffect[A]](inline tag: Tag[E]): A < E =
-        suspend(tag)(identity)
+        suspendMap(tag)(identity)
 
-    inline def suspend[A, E <: ContextEffect[A], B, S](
+    inline def suspendMap[A, E <: ContextEffect[A], B, S](
         inline tag: Tag[E]
     )(
         inline f: Safepoint ?=> A => B < S
     ): B < (E & S) =
-        suspend(tag, bug("Unexpected pending context effect: " + tag.show))(f)
+        suspendMap(tag, bug("Unexpected pending context effect: " + tag.show))(f)
 
     inline def suspend[A, E <: ContextEffect[A]](
         inline tag: Tag[E],
         inline default: => A
     ): A < Any =
-        suspend(tag, default)(identity)
+        suspendMap(tag, default)(identity)
 
-    inline def suspend[A, E <: ContextEffect[A], B, S](
+    inline def suspendMap[A, E <: ContextEffect[A], B, S](
         inline _tag: Tag[E],
         inline default: => A
     )(

@@ -14,7 +14,7 @@ class FrameTest extends Test:
     }
 
     "show" in {
-        assert(test1.show == "Frame(kyo2.kernel.FrameTest, test1, FrameTest.scala:9:28, test(1 + 2))")
+        assert(test1.show == "Frame(kyo2.kernel.FrameTest, test1, FrameTest.scala:9:28, def test1 = test(1 + 2))")
         assert(test2.show == "Frame(kyo2.kernel.FrameTest, test2, FrameTest.scala:14:6, })")
     }
 
@@ -25,7 +25,7 @@ class FrameTest extends Test:
         assert(parsed.position.fileName == "FrameTest.scala")
         assert(parsed.position.lineNumber == 9)
         assert(parsed.position.columnNumber == 28)
-        assert(parsed.snippetShort == "test(1 + 2)")
+        assert(parsed.snippetShort == "def test1 = test(1 + 2)")
         assert(parsed.snippetLong == "def test1 = test(1 + 2)📍")
     }
 
