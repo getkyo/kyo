@@ -12,7 +12,7 @@ object Env:
     given eliminateEnv: Reducible.Eliminable[Env[Any]] with {}
     private inline def erasedTag[R] = Tag[Env[Any]].asInstanceOf[Tag[Env[R]]]
 
-    inline def get[R](using inline tag: Tag[R]): R < Env[R] =
+    inline def get[R](using inline tag: Tag[R])(using inline frame: Frame): R < Env[R] =
         use[R](identity)
 
     def run[R >: Nothing: Tag, T, S, VR](env: R)(v: T < (Env[R & VR] & S))(
@@ -33,7 +33,7 @@ object Env:
         inline def apply[A, S](inline f: R => A < S)(
             using tag: Tag[R]
         ): A < (Env[R] & S) =
-            ContextEffect.suspend(erasedTag[R]) { map =>
+            ContextEffect.suspendMap(erasedTag[R]) { map =>
                 f(map.asInstanceOf[TypeMap[R]].get(using tag))
             }
     end UseOps

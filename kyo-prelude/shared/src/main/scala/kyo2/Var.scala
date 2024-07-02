@@ -8,22 +8,24 @@ sealed trait Var[V] extends Effect[Input[V, *], Id]
 
 object Var:
 
-    inline def get[V](using inline tag: Tag[Var[V]]): V < Var[V] =
+    inline def get[V](using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
         use[V](identity)
 
     final class UseOps[V](dummy: Unit) extends AnyVal:
         inline def apply[A, S](inline f: V => A < S)(
-            using inline tag: Tag[Var[V]]
+            using
+            inline tag: Tag[Var[V]],
+            inline frame: Frame
         ): A < (Var[V] & S) =
             Effect.suspendMap[V](tag, internal.get[V])(f)
     end UseOps
 
     inline def use[V]: UseOps[V] = UseOps(())
 
-    inline def set[V](inline value: V)(using inline tag: Tag[Var[V]]): Unit < Var[V] =
+    inline def set[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
         Effect.suspend[Unit](tag, (() => value): Set[V])
 
-    inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]]): Unit < Var[V] =
+    inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
         Effect.suspend[Unit](tag, (v => f(v)): Update[V])
 
     private inline def runWith[V, A, S, B, S2](state: V)(v: A < (Var[V] & S))(
