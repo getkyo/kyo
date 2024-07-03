@@ -199,7 +199,7 @@ class ChunkTest extends Test:
             val result = kyo2.Var.run(0) {
                 kyo2.Env.run(2) {
                     chunk.filter { n =>
-                        kyo2.Var.update[Int](_ + 1).andThen {
+                        kyo2.Var.update[Int](_ + 1).unit.andThen {
                             kyo2.Env.get[Int].map(_ == n)
                         }
                     }
@@ -710,7 +710,7 @@ class ChunkTest extends Test:
             val result = kyo2.Env.run(4) {
                 kyo2.Var.run(0) {
                     chunk.takeWhile { n =>
-                        kyo2.Var.update[Int](_ + 1).andThen(kyo2.Var.get[Int]).map { count =>
+                        kyo2.Var.update[Int](_ + 1).unit.andThen(kyo2.Var.get[Int]).map { count =>
                             kyo2.Env.get[Int].map(_ > count)
                         }
                     }
@@ -744,7 +744,7 @@ class ChunkTest extends Test:
             val result = kyo2.Env.run(3) {
                 kyo2.Var.run(0) {
                     chunk.dropWhile { n =>
-                        kyo2.Var.update[Int](_ + 1).andThen(kyo2.Var.get[Int]).map { count =>
+                        kyo2.Var.update[Int](_ + 1).unit.andThen(kyo2.Var.get[Int]).map { count =>
                             kyo2.Env.get[Int].map(_ > count)
                         }
                     }

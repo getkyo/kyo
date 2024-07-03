@@ -25,12 +25,12 @@ class VarTest extends Test:
     }
 
     "update" in {
-        val r = kyo2.Var.run(1)(kyo2.Var.update[Int](_ + 1).andThen(kyo2.Var.get[Int])).eval
+        val r = kyo2.Var.run(1)(kyo2.Var.update[Int](_ + 1).unit.andThen(kyo2.Var.get[Int])).eval
         assert(r == 2)
     }
 
     "runTuple" in {
-        val r = kyo2.Var.runTuple(1)(kyo2.Var.update[Int](_ + 1).andThen(kyo2.Var.get[Int]).map(_ + 1)).eval
+        val r = kyo2.Var.runTuple(1)(kyo2.Var.update[Int](_ + 1).unit.andThen(kyo2.Var.get[Int]).map(_ + 1)).eval
         assert(r == (2, 3))
     }
 

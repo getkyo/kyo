@@ -11,7 +11,7 @@ import zio.test.laws.*
 
 object MonadLawsTest extends ZIOSpecDefault:
 
-    case class Myo[+A](v: A < (Env[String] & Abort[String] & Sum[Int] & Var[Boolean]))
+    case class Myo[+A](v: A < (Env[String] & Abort[String] & Emit[Int] & Var[Boolean]))
 
     val listGenF: GenF[Any, Myo] =
         new GenF[Any, Myo]:
@@ -26,7 +26,7 @@ object MonadLawsTest extends ZIOSpecDefault:
                         if b then Abort.fail("fail") else (v: A < Any)
                     ),
                     gen.zip(intGen).map((v, i) =>
-                        Sum.add(i).andThen(v)
+                        Emit(i).unit.andThen(v)
                     ),
                     gen.zip(boolGen).map((v, b) =>
                         Var.set(b).andThen(v)
@@ -38,13 +38,13 @@ object MonadLawsTest extends ZIOSpecDefault:
                         Var.get[Boolean].map(x => if x then v else Abort.fail("var fail"))
                     ),
                     gen.zip(intGen).map((v, i) =>
-                        Sum.add(i).map(_ => if i % 2 == 0 then v else Abort.fail("sum fail"))
+                        Emit(i).map(_ => if i % 2 == 0 then v else Abort.fail("sum fail"))
                     ),
                     gen.map(v =>
                         for
                             s <- Env.get[String]
                             _ <- Var.update[Boolean](!_)
-                            i <- Sum.add(s.length)
+                            i <- Emit(s.length)
                             _ <- Abort.when(s.length() > 10)("length exceeded")
                         yield v
                     )
@@ -64,7 +64,7 @@ object MonadLawsTest extends ZIOSpecDefault:
                     protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean =
                         def run(m: Myo[A]): Result[String, A] =
                             Var.run(true)(
-                                Sum.run(
+                                Emit.run(
                                     Abort.run(
                                         Env.run("test")(m.v)
                                     )

@@ -25,8 +25,8 @@ object Var:
     inline def set[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
         Effect.suspend[Unit](tag, (() => value): Set[V])
 
-    inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
-        Effect.suspend[Unit](tag, (v => f(v)): Update[V])
+    inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
+        Effect.suspend[V](tag, (v => f(v)): Update[V])
 
     private inline def runWith[V, A, S, B, S2](state: V)(v: A < (Var[V] & S))(
         inline f: (V, A) => B < S2
@@ -40,7 +40,8 @@ object Var:
                         case input: Set[?] =>
                             (input(), cont(()))
                         case input: Update[?] =>
-                            (input(state), cont(())),
+                            val nst = input(state)
+                            (nst, cont(nst)),
             done = f
         )
 
@@ -55,7 +56,7 @@ object Var:
         case class Get[V]() extends Input[V, V]
         abstract class Set[V] extends Input[V, Unit]:
             def apply(): V
-        abstract class Update[V] extends Input[V, Unit]:
+        abstract class Update[V] extends Input[V, V]:
             def apply(v: V): V
         private val _get = Get[Any]()
         def get[V]       = _get.asInstanceOf[Get[V]]

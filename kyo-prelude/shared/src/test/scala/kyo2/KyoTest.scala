@@ -62,7 +62,7 @@ class KyoTest extends Test:
     }
 
     "repeat" in {
-        assert(Var.run(0)(Var.update[Int](_ + 1).repeat(3).andThen(Var.get[Int])).eval == 3)
+        assert(Var.run(0)(Var.update[Int](_ + 1).unit.repeat(3).andThen(Var.get[Int])).eval == 3)
     }
 
     "zip" in {

@@ -159,26 +159,24 @@ object Effect:
             handle3Loop(v, Context.empty)
         end apply
 
-        inline def state[I[_], O[_], E <: Effect[I, O], State, A, B, S, S2](
+        inline def state[I[_], O[_], E <: Effect[I, O], State, A, B, S, S2, S3](
             inline tag: Tag[E],
             inline state: State,
             v: A < (E & S)
         )(
-            inline handle: Safepoint ?=> [C] => (I[C], State, O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)),
-            inline done: (State, A) => B < (S & S2) = (_: State, v: A) => v,
+            inline handle: Safepoint ?=> [C] => (I[C], State, O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)) < S3,
+            inline done: (State, A) => B < (S & S2 & S3) = (_: State, v: A) => v,
             inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
-        )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2) =
-            def handleLoop(state: State, v: A < (E & S & S2), context: Context)(using Safepoint): B < (S & S2) =
+        )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2 & S3) =
+            def handleLoop(state: State, v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
                 v match
                     case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if tag =:= kyo.tag && accept(kyo.input) =>
                         Safepoint.handle(kyo.input)(
                             suspend = handleLoop(state, kyo, context),
-                            continue =
-                                val (nst, res) = handle(kyo.input, state, kyo(_, context))
-                                handleLoop(nst, res, context)
+                            continue = handle(kyo.input, state, kyo(_, context)).map(handleLoop(_, _, context))
                         )
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked) =>
-                        new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
+                        new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handleLoop(state, kyo(v, context), context)
