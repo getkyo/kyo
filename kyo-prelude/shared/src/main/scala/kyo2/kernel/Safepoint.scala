@@ -102,7 +102,7 @@ object Safepoint:
         lazy val f0 = f
         val ensure  = () => f0
 
-        inline def run[T](inline thunk: => T)(using safepoint: Safepoint): T =
+        inline def run[A](inline thunk: => A)(using safepoint: Safepoint): A =
             val interceptor = safepoint.interceptor
             if !isNull(interceptor) then interceptor.addEnsure(ensure)
             try thunk
@@ -128,9 +128,9 @@ object Safepoint:
         run(loop(v))
     end ensure
 
-    private[kernel] inline def eval[T](
-        inline f: => T
-    )(using inline frame: Frame): T =
+    private[kernel] inline def eval[A](
+        inline f: => A
+    )(using inline frame: Frame): A =
         val parent = Safepoint.local.get()
         val self   = new Safepoint(0, parent.interceptor, State.empty)
         Safepoint.local.set(self)

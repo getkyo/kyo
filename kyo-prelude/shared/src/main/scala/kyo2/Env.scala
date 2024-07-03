@@ -15,23 +15,25 @@ object Env:
     inline def get[R](using inline tag: Tag[R])(using inline frame: Frame): R < Env[R] =
         use[R](identity)
 
-    def run[R >: Nothing: Tag, T, S, VR](env: R)(v: T < (Env[R & VR] & S))(
+    def run[R >: Nothing: Tag, A, S, VR](env: R)(v: A < (Env[R & VR] & S))(
         using
         reduce: Reducible[Env[VR]],
         frame: Frame
-    ): T < (S & reduce.SReduced) =
+    ): A < (S & reduce.SReduced) =
         runTypeMap(TypeMap(env))(v)
 
-    def runTypeMap[R >: Nothing, T, S, VR](env: TypeMap[R])(v: T < (Env[R & VR] & S))(
+    def runTypeMap[R >: Nothing, A, S, VR](env: TypeMap[R])(v: A < (Env[R & VR] & S))(
         using
         reduce: Reducible[Env[VR]],
         frame: Frame
-    ): T < (S & reduce.SReduced) =
-        reduce(ContextEffect.handle(erasedTag[R], env, _.union(env))(v): T < (Env[VR] & S))
+    ): A < (S & reduce.SReduced) =
+        reduce(ContextEffect.handle(erasedTag[R], env, _.union(env))(v): A < (Env[VR] & S))
 
     final class UseOps[R >: Nothing](dummy: Unit) extends AnyVal:
         inline def apply[A, S](inline f: R => A < S)(
-            using tag: Tag[R]
+            using
+            inline tag: Tag[R],
+            inline frame: Frame
         ): A < (Env[R] & S) =
             ContextEffect.suspendMap(erasedTag[R]) { map =>
                 f(map.asInstanceOf[TypeMap[R]].get(using tag))

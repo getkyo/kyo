@@ -6,7 +6,7 @@ import scala.collection.immutable
 package object kernel:
 
     type Id[A]    = A
-    type Const[A] = [U] =>> A
+    type Const[A] = [B] =>> A
 
     enum Mode derives CanEqual:
         case Development, Staging, Production
@@ -22,28 +22,28 @@ package object kernel:
 
         sealed trait Defer extends Effect[Const[Unit], Const[Unit]]
 
-        sealed abstract class Kyo[+T, -S]
+        sealed abstract class Kyo[+A, -S]
 
-        abstract class KyoSuspend[I[_], O[_], E <: Effect[I, O], A, U, S]
-            extends Kyo[U, S]:
+        abstract class KyoSuspend[I[_], O[_], E <: Effect[I, O], A, B, S]
+            extends Kyo[B, S]:
             def tag: Tag[E]
             def input: I[A]
             def frame: Frame
 
-            def apply(v: O[A], context: Context)(using Safepoint): U < S
+            def apply(v: O[A], context: Context)(using Safepoint): B < S
 
             final override def toString =
                 val parsed = frame.parse
                 s"Kyo(${tag.show}, Input($input), ${parsed.position}, ${parsed.snippetShort})"
         end KyoSuspend
 
-        abstract class KyoContinue[I[_], O[_], E <: Effect[I, O], A, U, S](kyo: KyoSuspend[I, O, E, A, ?, ?])
-            extends KyoSuspend[I, O, E, A, U, S]:
+        abstract class KyoContinue[I[_], O[_], E <: Effect[I, O], A, B, S](kyo: KyoSuspend[I, O, E, A, ?, ?])
+            extends KyoSuspend[I, O, E, A, B, S]:
             val tag   = kyo.tag
             val input = kyo.input
         end KyoContinue
 
-        abstract class KyoDefer[T, S] extends KyoSuspend[Const[Unit], Const[Unit], Defer, Any, T, S]:
+        abstract class KyoDefer[A, S] extends KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, S]:
             final def tag   = Tag[Defer]
             final def input = ()
 

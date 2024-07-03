@@ -12,11 +12,11 @@ object Sum:
         Effect.suspend[Any](tag, v)
 
     final class RunOps[V](dummy: Unit) extends AnyVal:
-        def apply[T, S](v: T < (Sum[V] & S))(
+        def apply[A, S](v: A < (Sum[V] & S))(
             using
             tag: Tag[Sum[V]],
             frame: Frame
-        ): (Chunk[V], T) < S =
+        ): (Chunk[V], A) < S =
             Effect.handle.state(tag, Chunk.empty[V], v)(
                 handle = [C] => (input, state, cont) => (state.append(input), cont(())),
                 done = (state, res) => (state, res)

@@ -220,7 +220,7 @@ sealed abstract class Chunk[A] derives CanEqual:
             }
     end foreach
 
-    final def foldLeft[S, U](init: U)(f: (U, A) => U < S)(using Frame): U < S =
+    final def foldLeft[S, B](init: B)(f: (B, A) => B < S)(using Frame): B < S =
         if isEmpty then init
         else
             val size    = this.size
@@ -357,22 +357,22 @@ object Chunk:
 
     import internal.*
 
-    sealed abstract class Indexed[T] extends Chunk[T]:
+    sealed abstract class Indexed[A] extends Chunk[A]:
 
         //////////////////
         // O(1) methods //
         //////////////////
 
-        def apply(i: Int): T
+        def apply(i: Int): A
 
-        final def head: T =
+        final def head: A =
             if isEmpty then
                 throw new NoSuchElementException
             else
                 apply(0)
 
-        final def tail: Indexed[T] =
-            if size <= 1 then cachedEmpty.asInstanceOf[Indexed[T]]
+        final def tail: Indexed[A] =
+            if size <= 1 then cachedEmpty.asInstanceOf[Indexed[A]]
             else
                 this match
                     case Tail(chunk, offset, size) =>
@@ -381,23 +381,23 @@ object Chunk:
                         Tail(c, 1, size - 1)
     end Indexed
 
-    def empty[T]: Chunk[T] =
-        cachedEmpty.asInstanceOf[Chunk[T]]
+    def empty[A]: Chunk[A] =
+        cachedEmpty.asInstanceOf[Chunk[A]]
 
-    def apply[T](values: T*): Chunk[T] =
+    def apply[A](values: A*): Chunk[A] =
         from(values)
 
-    def from[T](values: Seq[T]): Chunk[T] =
+    def from[A](values: Seq[A]): Chunk[A] =
         if values.isEmpty then empty
         else
             values match
-                case seq: IndexedSeq[T] => FromSeq(seq)
-                case _                  => Compact(values.toArray(using ClassTag.Any.asInstanceOf[ClassTag[T]]))
+                case seq: IndexedSeq[A] => FromSeq(seq)
+                case _                  => Compact(values.toArray(using ClassTag.Any.asInstanceOf[ClassTag[A]]))
 
-    def fill[T](n: Int)(v: T): Chunk[T] =
+    def fill[A](n: Int)(v: A): Chunk[A] =
         if n <= 0 then empty
         else
-            val array = (new Array[Any](n)).asInstanceOf[Array[T]]
+            val array = (new Array[Any](n)).asInstanceOf[Array[A]]
             @tailrec def loop(idx: Int = 0): Unit =
                 if idx < n then
                     array(idx) = v
@@ -406,16 +406,16 @@ object Chunk:
             Compact(array)
     end fill
 
-    def collect[T, S](c: Chunk[T < S]): Chunk[T] < S =
+    def collect[A, S](c: Chunk[A < S]): Chunk[A] < S =
         c.map(identity)
 
     private[kyo2] object internal:
 
         val cachedEmpty = Compact(new Array[Any](0))
 
-        case class FromSeq[T](
-            seq: IndexedSeq[T]
-        ) extends Indexed[T]:
+        case class FromSeq[A](
+            seq: IndexedSeq[A]
+        ) extends Indexed[A]:
             def size = seq.size
             def apply(i: Int) =
                 if i >= size || i < 0 then
@@ -426,9 +426,9 @@ object Chunk:
             override def toString = s"Chunk.Indexed(${seq.mkString(", ")})"
         end FromSeq
 
-        case class Compact[T](
-            array: Array[T]
-        ) extends Indexed[T]:
+        case class Compact[A](
+            array: Array[A]
+        ) extends Indexed[A]:
             def size = array.length
             def apply(i: Int) =
                 if i >= size || i < 0 then
@@ -439,29 +439,29 @@ object Chunk:
             override def toString = s"Chunk.Indexed(${array.mkString(", ")})"
         end Compact
 
-        case class Tail[T](
-            chunk: Indexed[T],
+        case class Tail[A](
+            chunk: Indexed[A],
             offset: Int,
             size: Int
-        ) extends Indexed[T]:
-            def apply(i: Int): T  = chunk(i + offset)
+        ) extends Indexed[A]:
+            def apply(i: Int): A  = chunk(i + offset)
             override def toString = s"Chunk(${toSeq.mkString(", ")})"
         end Tail
 
-        case class Drop[T](
-            chunk: Chunk[T],
+        case class Drop[A](
+            chunk: Chunk[A],
             dropLeft: Int,
             dropRight: Int,
             size: Int
-        ) extends Chunk[T]:
+        ) extends Chunk[A]:
             override def toString = s"Chunk(${toSeq.mkString(", ")})"
         end Drop
 
-        case class Append[T](
-            chunk: Chunk[T],
-            value: T,
+        case class Append[A](
+            chunk: Chunk[A],
+            value: A,
             size: Int
-        ) extends Chunk[T]:
+        ) extends Chunk[A]:
             override def toString = s"Chunk(${toSeq.mkString(", ")})"
         end Append
     end internal

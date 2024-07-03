@@ -30,6 +30,9 @@ object Result:
     inline def fail[E, A](inline error: E): Result[E, A]              = Fail(error)
     inline def panic[E, A](inline exception: Throwable): Result[E, A] = Panic(exception)
 
+    private val _unit            = Success(())
+    def unit[E]: Result[E, Unit] = _unit
+
     def fromEither[E, A](either: Either[E, A]): Result[E, A] =
         either.fold(fail, success)
 

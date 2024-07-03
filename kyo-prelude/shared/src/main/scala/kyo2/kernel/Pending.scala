@@ -18,28 +18,28 @@ object `<`:
 
     extension [A, S](inline v: A < S)
 
-        inline def unit: Unit < S =
+        inline def unit(using inline frame: Frame): Unit < S =
             map(_ => ())
 
-        inline def andThen[U, S2](inline f: => U < S2)(using inline ev: A => Unit): U < (S & S2) =
+        inline def andThen[B, S2](inline f: => B < S2)(using inline ev: A => Unit, inline frame: Frame): B < (S & S2) =
             map(_ => f)
 
-        inline def flatMap[U, S2](inline f: A => U < S2): U < (S & S2) =
+        inline def flatMap[B, S2](inline f: A => B < S2)(using inline frame: Frame): B < (S & S2) =
             map(v => f(v))
 
-        inline def pipe[U, S2](inline f: A < S => U < S2): U < S2 =
+        inline def pipe[B, S2](inline f: A < S => B < S2)(using inline frame: Frame): B < S2 =
             f(v)
 
-        inline def repeat(i: Int)(using ev: A => Unit): Unit < S =
+        inline def repeat(i: Int)(using inline ev: A => Unit, inline frame: Frame): Unit < S =
             if i <= 0 then () else andThen(repeat(i - 1))
 
-        inline def map[U, S2](inline f: Safepoint ?=> A => U < S2)(
+        inline def map[B, S2](inline f: Safepoint ?=> A => B < S2)(
             using inline _frame: Frame
-        )(using Safepoint): U < (S & S2) =
-            def mapLoop(v: A < S)(using Safepoint): U < (S & S2) =
+        )(using Safepoint): B < (S & S2) =
+            def mapLoop(v: A < S)(using Safepoint): B < (S & S2) =
                 v match
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
-                        new KyoContinue[IX, OX, EX, Any, U, S & S2](kyo):
+                        new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 mapLoop(kyo(v, context))
@@ -74,20 +74,20 @@ object `<`:
     end extension
 
     extension [A, S, S2](inline kyo: A < S < S2)
-        inline def flatten: A < (S & S2) =
+        inline def flatten(using inline frame: Frame): A < (S & S2) =
             kyo.map(identity)
 
-    extension [T](inline v: T < Any)
-        inline def eval: T =
-            @tailrec def evalLoop(kyo: T < Any)(using Safepoint): T =
+    extension [A](inline v: A < Any)
+        inline def eval(using inline frame: Frame): A =
+            @tailrec def evalLoop(kyo: A < Any)(using Safepoint): A =
                 kyo match
-                    case <(kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, T, Any] @unchecked)
+                    case <(kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, Any] @unchecked)
                         if kyo.tag =:= Tag[Defer] =>
                         evalLoop(kyo((), Context.empty))
-                    case <(kyo: Kyo[T, Any] @unchecked) =>
+                    case <(kyo: Kyo[A, Any] @unchecked) =>
                         kyo2.bug.failTag(kyo, Tag[Any])
                     case <(v) =>
-                        v.asInstanceOf[T]
+                        v.asInstanceOf[A]
                 end match
             end evalLoop
             Safepoint.eval(evalLoop(v))

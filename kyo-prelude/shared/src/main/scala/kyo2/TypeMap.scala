@@ -9,7 +9,7 @@ opaque type TypeMap[+A] = HashMap[Tag[Any], Any]
 object TypeMap:
     extension [A](self: TypeMap[A])
 
-        private inline def fatal[T](using t: Tag[T]): Nothing =
+        private inline def fatal[B](using t: Tag[B]): Nothing =
             throw new RuntimeException(s"fatal: kyo.TypeMap of contents [${self.show}] missing value of type: [${t.showTpe}].")
 
         def get[B >: A](using t: Tag[B]): B =
@@ -48,7 +48,7 @@ object TypeMap:
 
         private[kyo2] inline def tag: Intersection[?] = Intersection(self.keySet.toIndexedSeq)
 
-        private[kyo2] inline def <:<[T](tag: Tag[T]): Boolean =
+        private[kyo2] inline def <:<[B](tag: Tag[B]): Boolean =
             self.keySet.exists(_ <:< tag)
     end extension
 

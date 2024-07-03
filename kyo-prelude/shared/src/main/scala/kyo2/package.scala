@@ -9,10 +9,10 @@ private[kyo2] inline def Frame = kernel.Frame
 export kernel.<
 export kernel.Loop
 
-private[kyo2] inline def isNull[T](v: T): Boolean =
+private[kyo2] inline def isNull[A](v: A): Boolean =
     v.asInstanceOf[AnyRef] eq null
 
-private[kyo2] inline def discard[T](v: T): Unit =
+private[kyo2] inline def discard[A](v: A): Unit =
     val _ = v
     ()
 
@@ -20,9 +20,9 @@ private[kyo2] object bug:
 
     case class KyoBugException(msg: String) extends Exception(msg)
 
-    def failTag[T, U, S](
-        kyo: T < S,
-        expected: Tag.Full[U]
+    def failTag[A, B, S](
+        kyo: A < S,
+        expected: Tag.Full[B]
     ): Nothing =
         bug(s"Unexpected pending effect while handling ${expected.show}: " + kyo)
 

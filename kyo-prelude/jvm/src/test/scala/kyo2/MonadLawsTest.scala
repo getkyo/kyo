@@ -11,7 +11,7 @@ import zio.test.laws.*
 
 object MonadLawsTest extends ZIOSpecDefault:
 
-    case class Myo[+T](v: T < (Env[String] & Abort[String] & Sum[Int] & Var[Boolean]))
+    case class Myo[+A](v: A < (Env[String] & Abort[String] & Sum[Int] & Var[Boolean]))
 
     val listGenF: GenF[Any, Myo] =
         new GenF[Any, Myo]:

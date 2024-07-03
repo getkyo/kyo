@@ -9,7 +9,7 @@ class KyoTest extends Test:
 
     "toString JVM" taggedAs jvmOnly in run {
         assert(Env.use[Int](_ + 1).toString() ==
-            "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(()), KyoTest.scala:11:16, assert(Env.use[Int](_ + 1)))")
+            "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(()), KyoTest.scala:11:35, assert(Env.use[Int](_ + 1)))")
         assert(
             Env.get[Int].map(_ + 1).toString() ==
                 "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(()), KyoTest.scala:14:36, Env.get[Int].map(_ + 1)))"
@@ -18,7 +18,7 @@ class KyoTest extends Test:
 
     "toString JS" taggedAs jsOnly in run {
         assert(Env.use[Int](_ + 1).toString() ==
-            "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(undefined), KyoTest.scala:20:16, assert(Env.use[Int](_ + 1)))")
+            "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(undefined), KyoTest.scala:20:35, assert(Env.use[Int](_ + 1)))")
         assert(
             Env.get[Int].map(_ + 1).toString() ==
                 "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(undefined), KyoTest.scala:23:36, Env.get[Int].map(_ + 1)))"
@@ -51,7 +51,7 @@ class KyoTest extends Test:
     }
 
     "flatten" in {
-        def test[T](v: T)                = Env.use[Int](_ => v)
+        def test[A](v: A)                = Env.use[Int](_ => v)
         val a: Int < Env[Int] < Env[Int] = test(Env.get[Int])
         val b: Int < Env[Int]            = a.flatten
         assert(Env.run(1)(b).eval == 1)
@@ -72,9 +72,9 @@ class KyoTest extends Test:
     }
 
     "nested" - {
-        def lift[T](v: T): T < Env[Unit]                                = Env.use[Unit](_ => v)
+        def lift[A](v: A): A < Env[Unit]                                = Env.use[Unit](_ => v)
         def add(v: Int < Env[Unit])                                     = v.map(_ + 1)
-        def transform[T, U](v: T < Env[Unit], f: T => U): U < Env[Unit] = v.map(f(_))
+        def transform[A, B](v: A < Env[Unit], f: A => B): B < Env[Unit] = v.map(f(_))
         val io: Int < Env[Unit] < Env[Unit]                             = lift(lift(1))
         "map + flatten" in {
             val a: Int < Env[Unit] < Env[Unit] =
