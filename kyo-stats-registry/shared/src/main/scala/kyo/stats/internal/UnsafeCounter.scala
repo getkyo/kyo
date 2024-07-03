@@ -12,7 +12,7 @@ class UnsafeCounter {
 
     private[kyo] def delta() = {
         val curr  = get()
-        val delta = curr - last
+        val delta = if (curr >= last) curr - last else Long.MaxValue - last + curr
         last = curr
         delta
     }

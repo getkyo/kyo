@@ -9,7 +9,7 @@ class UnsafeCounterGauge(run: () => Long) {
     def collect(): Long = run()
     private[kyo] def delta() = {
         val curr  = collect()
-        val delta = curr - last
+        val delta = if (curr >= last) curr - last else Long.MaxValue - last + curr
         last = curr
         delta
     }
