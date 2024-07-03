@@ -27,6 +27,10 @@ class ResultTest extends Test:
         }
     }
 
+    "unit" in {
+        assert(Result.unit == Result.success(()))
+    }
+
     "fromTry" - {
         "should return Success for successful Try" in {
             val tryValue = scala.util.Try(5)

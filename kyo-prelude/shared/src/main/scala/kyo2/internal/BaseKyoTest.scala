@@ -35,8 +35,8 @@ trait BaseKyoTest[S]:
         else
             Future.successful(success)
 
-    given tryCanEqual[T]: CanEqual[Try[T], Try[T]]                   = CanEqual.derived
-    given eitherCanEqual[T, U]: CanEqual[Either[T, U], Either[T, U]] = CanEqual.derived
+    given tryCanEqual[A]: CanEqual[Try[A], Try[A]]                   = CanEqual.derived
+    given eitherCanEqual[A, B]: CanEqual[Either[A, B], Either[A, B]] = CanEqual.derived
     given throwableCanEqual: CanEqual[Throwable, Throwable]          = CanEqual.derived
 
     def untilTrue[S](f: => Boolean < S): Boolean < S =

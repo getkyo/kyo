@@ -10,20 +10,20 @@ abstract class ContextEffect[+A]
 
 object ContextEffect:
 
-    inline def suspend[A, E <: ContextEffect[A]](inline tag: Tag[E]): A < E =
+    inline def suspend[A, E <: ContextEffect[A]](inline tag: Tag[E])(using inline frame: Frame): A < E =
         suspendMap(tag)(identity)
 
     inline def suspendMap[A, E <: ContextEffect[A], B, S](
         inline tag: Tag[E]
     )(
         inline f: Safepoint ?=> A => B < S
-    ): B < (E & S) =
+    )(using inline frame: Frame): B < (E & S) =
         suspendMap(tag, bug("Unexpected pending context effect: " + tag.show))(f)
 
     inline def suspend[A, E <: ContextEffect[A]](
         inline tag: Tag[E],
         inline default: => A
-    ): A < Any =
+    )(using inline frame: Frame): A < Any =
         suspendMap(tag, default)(identity)
 
     inline def suspendMap[A, E <: ContextEffect[A], B, S](

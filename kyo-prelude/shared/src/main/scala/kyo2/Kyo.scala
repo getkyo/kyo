@@ -7,29 +7,29 @@ import scala.annotation.tailrec
 
 object Kyo:
 
-    def zip[T1, T2, S](v1: T1 < S, v2: T2 < S)(using Frame): (T1, T2) < S =
+    def zip[A1, A2, S](v1: A1 < S, v2: A2 < S)(using Frame): (A1, A2) < S =
         v1.map(t1 => v2.map(t2 => (t1, t2)))
 
-    def zip[T1, T2, T3, S](v1: T1 < S, v2: T2 < S, v3: T3 < S)(using Frame): (T1, T2, T3) < S =
+    def zip[A1, A2, A3, S](v1: A1 < S, v2: A2 < S, v3: A3 < S)(using Frame): (A1, A2, A3) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => (t1, t2, t3))))
 
-    def zip[T1, T2, T3, T4, S](v1: T1 < S, v2: T2 < S, v3: T3 < S, v4: T4 < S)(using Frame): (T1, T2, T3, T4) < S =
+    def zip[A1, A2, A3, A4, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S)(using Frame): (A1, A2, A3, A4) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
 
     object seq:
-        def map[T, U, S, S2](seq: Seq[T])(f: T => U < S2)(using Frame): Seq[U] < (S & S2) =
+        def map[A, B, S, S2](seq: Seq[A])(f: A => B < S2)(using Frame): Seq[B] < (S & S2) =
             seq.size match
                 case 0 => Seq.empty
                 case 1 => f(seq(0)).map(Seq(_))
                 case size =>
                     seq match
-                        case seq: IndexedSeq[T] =>
-                            Loop.indexed(Chunk.empty[U]) { (idx, acc) =>
+                        case seq: IndexedSeq[A] =>
+                            Loop.indexed(Chunk.empty[B]) { (idx, acc) =>
                                 if idx == size then Loop.done(acc.toSeq)
                                 else f(seq(idx)).map(u => Loop.continue(acc.append(u)))
                             }
-                        case seq: List[T] =>
-                            Loop.transform(seq, Chunk.empty[U]) { (seq, acc) =>
+                        case seq: List[A] =>
+                            Loop.transform(seq, Chunk.empty[B]) { (seq, acc) =>
                                 seq match
                                     case Nil          => Loop.done(acc.toSeq)
                                     case head :: tail => f(head).map(u => Loop.continue(tail, acc.append(u)))
@@ -38,18 +38,18 @@ object Kyo:
                             Chunk.from(seq).map(f).map(_.toSeq)
                     end match
 
-        def foreach[T, U, S](seq: Seq[T])(f: T => Unit < S)(using Frame): Unit < S =
+        def foreach[A, B, S](seq: Seq[A])(f: A => Unit < S)(using Frame): Unit < S =
             seq.size match
                 case 0 =>
                 case 1 => f(seq(0))
                 case size =>
                     seq match
-                        case seq: IndexedSeq[T] =>
+                        case seq: IndexedSeq[A] =>
                             Loop.indexed { idx =>
                                 if idx == size then Loop.done
                                 else f(seq(idx)).andThen(Loop.continue)
                             }
-                        case seq: List[T] =>
+                        case seq: List[A] =>
                             Loop.transform(seq) {
                                 case Nil          => Loop.done
                                 case head :: tail => f(head).andThen(Loop.continue(tail))
@@ -60,18 +60,18 @@ object Kyo:
             end match
         end foreach
 
-        def foldLeft[T, U, S](seq: Seq[T])(acc: U)(f: (U, T) => U < S)(using Frame): U < S =
+        def foldLeft[A, B, S](seq: Seq[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
             seq.size match
                 case 0 => acc
                 case 1 => f(acc, seq(0))
                 case size =>
                     seq match
-                        case seq: IndexedSeq[T] =>
+                        case seq: IndexedSeq[A] =>
                             Loop.indexed(acc) { (idx, acc) =>
                                 if idx == size then Loop.done(acc)
                                 else f(acc, seq(idx)).map(Loop.continue(_))
                             }
-                        case seq: List[T] =>
+                        case seq: List[A] =>
                             Loop.transform(seq, acc) { (seq, acc) =>
                                 seq match
                                     case Nil          => Loop.done(acc)
@@ -83,19 +83,19 @@ object Kyo:
             end match
         end foldLeft
 
-        def collect[T, S](seq: Seq[T < S])(using Frame): Seq[T] < S =
+        def collect[A, S](seq: Seq[A < S])(using Frame): Seq[A] < S =
             seq.size match
                 case 0 => Seq.empty
                 case 1 => seq(0).map(Seq(_))
                 case size =>
                     seq match
-                        case seq: IndexedSeq[T < S] =>
-                            Loop.indexed(Chunk.empty[T]) { (idx, acc) =>
+                        case seq: IndexedSeq[A < S] =>
+                            Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
                                 if idx == size then Loop.done(acc.toSeq)
                                 else seq(idx).map(u => Loop.continue(acc.append(u)))
                             }
-                        case seq: List[T < S] =>
-                            Loop.transform(seq, Chunk.empty[T]) { (seq, acc) =>
+                        case seq: List[A < S] =>
+                            Loop.transform(seq, Chunk.empty[A]) { (seq, acc) =>
                                 seq match
                                     case Nil          => Loop.done(acc.toSeq)
                                     case head :: tail => head.map(u => Loop.continue(tail, acc.append(u)))
@@ -104,7 +104,7 @@ object Kyo:
                             Chunk.from(seq).map(identity).map(_.toSeq)
                     end match
 
-        def collectUnit[T, S](seq: Seq[Unit < S])(using Frame): Unit < S =
+        def collectUnit[A, S](seq: Seq[Unit < S])(using Frame): Unit < S =
             seq.size match
                 case 0 =>
                 case 1 => seq(0)
@@ -126,8 +126,8 @@ object Kyo:
                     end match
         end collectUnit
 
-        def fill[T, S](n: Int)(v: => T < S)(using Frame): Seq[T] < S =
-            Loop.indexed(Chunk.empty[T]) { (idx, acc) =>
+        def fill[A, S](n: Int)(v: => A < S)(using Frame): Seq[A] < S =
+            Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
                 if idx == n then Loop.done(acc.toSeq)
                 else v.map(t => Loop.continue(acc.append(t)))
             }

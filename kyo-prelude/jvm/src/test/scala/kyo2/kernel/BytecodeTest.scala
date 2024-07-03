@@ -40,7 +40,7 @@ class BytecodeTest extends Test:
         assert(map == Map("test" -> 30, "anonfun" -> 15, "handleLoop" -> 266))
     }
 
-    def methodBytecodeSize[T](using ct: ClassTag[T]): Map[String, Int] =
+    def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =
         import javassist.*
         val classpath = System.getProperty("java.class.path")
         val classPool = ClassPool.getDefault

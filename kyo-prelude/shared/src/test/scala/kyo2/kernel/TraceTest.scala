@@ -90,7 +90,7 @@ class TraceTest extends Test:
         }
     }
 
-    def assertTrace[T](f: => T, expected: String) =
+    def assertTrace[A](f: => A, expected: String) =
         try
             f
             fail()
