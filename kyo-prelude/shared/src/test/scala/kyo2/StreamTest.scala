@@ -130,7 +130,7 @@ class StreamTest extends Test:
             val taken = stream.takeWhile { v =>
                 Var.update[Int](_ + 1).map(_ < 4)
             }.runSeq
-            assert(Var.run(0)(taken).eval == Seq(1, 2, 3))
+            assert(Var.runTuple(0)(taken).eval == (4, Seq(1, 2, 3)))
         }
 
         "stack safety" in {
@@ -176,7 +176,7 @@ class StreamTest extends Test:
             val dropped = stream.dropWhile { v =>
                 Var.update[Int](_ + 1).map(_ < 3)
             }.runSeq
-            assert(Var.run(0)(dropped).eval == Seq(3, 4, 5))
+            assert(Var.runTuple(0)(dropped).eval == (3, Seq(3, 4, 5)))
         }
 
         "stack safety" in {
