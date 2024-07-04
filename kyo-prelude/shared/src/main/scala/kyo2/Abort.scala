@@ -83,23 +83,25 @@ object Abort:
                     )
                 }
             } {
-                case fail: E => Result.fail(fail)
-                case fail    => Result.panic(fail)
+                case fail: E if classOf[Throwable].isAssignableFrom(ct.runtimeClass) =>
+                    Result.fail(fail)
+                case fail => Result.panic(fail)
             }
     end RunOps
 
     inline def run[E >: Nothing]: RunOps[E] = RunOps(())
 
     final class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
-        def apply[A, B](v: => A < B)(
+        def apply[A, S](v: => A < S)(
             using
             ct: ClassTag[E],
             frame: Frame
-        ): A < (Abort[E] & B) =
+        ): A < (Abort[E] & S) =
             Effect.catching(v) {
                 case ex: E => Abort.fail(ex)
             }
     end CatchingOps
 
     inline def catching[E <: Throwable]: CatchingOps[E] = CatchingOps(())
+
 end Abort

@@ -79,6 +79,16 @@ object Result:
                 throw exception
     end Panic
 
+    extension [E](self: Error[E])
+        def exception(
+            using
+            @implicitNotFound("Error must be a 'Throwable'")
+            ev: E <:< Throwable
+        ): Throwable =
+            self match
+                case self: Fail[E] => self.error
+                case self: Panic   => self.exception
+
     extension [E, A](self: Result[E, A])
 
         def isSuccess: Boolean =

@@ -295,6 +295,20 @@ class ResultTest extends Test:
         }
     }
 
+    "exception" - {
+        "only available if E is Throwable" in {
+            assertDoesNotCompile("Result.Fail(1).exception")
+        }
+        "from Fail" in {
+            val ex = new Exception
+            assert(Result.Fail(ex).exception == ex)
+        }
+        "from Panic" in {
+            val ex = new Exception
+            assert(Result.Panic(ex).exception == ex)
+        }
+    }
+
     "toTry" - {
         "Success to Try" in {
             val success: Result[Nothing, Int] = Success(42)

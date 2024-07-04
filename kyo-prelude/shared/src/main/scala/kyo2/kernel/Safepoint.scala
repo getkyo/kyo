@@ -6,6 +6,7 @@ import kyo2.isNull
 import kyo2.kernel.Safepoint.*
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
+import scala.util.control.NoStackTrace
 
 final class Safepoint(initDepth: Int, initInterceptor: Interceptor, initState: State):
     import Safepoint.State
@@ -176,7 +177,7 @@ object Safepoint:
     // TODO compiler crash if private[kyo2]
     def insertTrace(cause: Throwable)(using self: Safepoint): Unit =
         val size = Math.min(self.traceIdx, maxTraceFrames)
-        if size > 0 then
+        if size > 0 && !cause.isInstanceOf[NoStackTrace] then
             val trace = copyTrace(self.trace, self.traceIdx).filter(_ != null).map(_.parse)
             val toPad = trace.map(_.snippetShort.size).maxOption.getOrElse(0) + 1
             val elements =
