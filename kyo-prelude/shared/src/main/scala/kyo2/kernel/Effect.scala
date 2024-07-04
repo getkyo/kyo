@@ -198,8 +198,8 @@ object Effect:
 
     end handle
 
-    inline def catching[A, S, B >: A, S2](v: => A < S)(
-        inline pf: PartialFunction[Throwable, B < S2]
+    inline def catching[A, S, B >: A, S2](inline v: => A < S)(
+        inline f: Throwable => B < S2
     )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2) =
         def catchingLoop(v: B < (S & S2))(using Safepoint): B < (S & S2) =
             (v: @unchecked) match
@@ -209,18 +209,18 @@ object Effect:
                         def apply(v: OX[Any], context: Context)(using safepoint: Safepoint) =
                             try catchingLoop(kyo(v, context))
                             catch
-                                case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
+                                case ex: Throwable if NonFatal(ex) =>
                                     Safepoint.insertTrace(ex)
-                                    pf(ex)
+                                    f(ex)
                             end try
                         end apply
                 case _ =>
                     v
         try catchingLoop(v)
         catch
-            case ex: Throwable if (NonFatal(ex) && pf.isDefinedAt(ex)) =>
+            case ex: Throwable if NonFatal(ex) =>
                 Safepoint.insertTrace(ex)
-                pf(ex)
+                f(ex)
         end try
     end catching
 end Effect

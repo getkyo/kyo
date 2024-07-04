@@ -99,6 +99,7 @@ object Abort:
         ): A < (Abort[E] & S) =
             Effect.catching(v) {
                 case ex: E => Abort.fail(ex)
+                case ex    => Abort.panic(ex)
             }
     end CatchingOps
 
