@@ -26,7 +26,6 @@ object Emit:
                 else Maybe(ack)
         end Continue
 
-        opaque type Stop <: Ack = Int
         val Stop: Ack = -1
     end Ack
 
