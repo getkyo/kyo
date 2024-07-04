@@ -29,6 +29,11 @@ object Env:
     ): A < (S & reduce.SReduced) =
         reduce(ContextEffect.handle(erasedTag[R], env, _.union(env))(v): A < (Env[VR] & S))
 
+    transparent inline def runLayer[T, S, V](inline layers: Layer[?, ?]*)(value: T < (Env[V] & S)): T < (S & Memo) =
+        Layer.init[V](layers*).run.map { env =>
+            runTypeMap(env)(value)
+        }.asInstanceOf[T < (S & Memo)]
+
     final class UseOps[R >: Nothing](dummy: Unit) extends AnyVal:
         inline def apply[A, S](inline f: R => A < S)(
             using
