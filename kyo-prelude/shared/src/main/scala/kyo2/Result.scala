@@ -140,6 +140,13 @@ object Result:
             end match
         end get
 
+        def getOrThrow(
+            using
+            @implicitNotFound("Error must be a 'Throwable' to invoke 'getOrThrow'. Found: '${E}'")
+            ev: E <:< Throwable
+        ): A =
+            fold(e => throw e.exception)(identity)
+
         inline def getOrElse[B >: A](inline default: => B): B =
             fold(_ => default)(identity)
 

@@ -175,6 +175,21 @@ class ResultTest extends Test:
         }
     }
 
+    "getOrThrow" - {
+        "returns the value for Success" in {
+            assert(Result.success(1).getOrThrow == 1)
+        }
+        "doesn't compile for non-Throwable Fail" in {
+            assertDoesNotCompile("Result.fail(1).getOrThrow")
+        }
+        "throws for Throwable Fail" in {
+            assert(Try(Result.fail(ex).getOrThrow) == scala.util.Failure(ex))
+        }
+        "throws for Panic" in {
+            assert(Try(Result.panic(ex).getOrThrow) == scala.util.Failure(ex))
+        }
+    }
+
     "orElse" - {
         "returns itself for Success" in {
             assert(Result.success(1).orElse(Result.success(2)) == Success(1))
