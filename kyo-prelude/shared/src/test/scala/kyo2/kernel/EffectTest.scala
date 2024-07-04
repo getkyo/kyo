@@ -88,6 +88,27 @@ class EffectTest extends Test:
 
             assert(result.eval == ("42", "44"))
         }
+
+        "execution is tail-recursive" in {
+            var minDepth = Int.MaxValue
+            var maxDepth = 0
+            def loop(i: Int): Int < TestEffect1 =
+                val depth = (new Exception).getStackTrace().size
+                if depth < minDepth then minDepth = depth
+                if depth > maxDepth then maxDepth = depth
+                if i == 0 then 42
+                else testEffect1(i).map(_ => loop(i - 1))
+            end loop
+
+            val effect = loop(10000)
+
+            val result = Effect.handle(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont(input.toString)
+            )
+
+            assert(result.eval == 42)
+            assert(maxDepth - minDepth <= 10)
+        }
     }
 
     "catching" - {

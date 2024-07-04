@@ -157,6 +157,22 @@ object Safepoint:
                 finally self.exit(depth)
     end handle
 
+    private[kernel] inline def handle[A, B, S](value: Any)(
+        inline eval: => A,
+        inline continue: A => B < S,
+        inline suspend: Safepoint ?=> B < S
+    )(using inline frame: Frame, self: Safepoint): B < S =
+        self.enter(frame, value) match
+            case -1 =>
+                Effect.defer(suspend)
+            case depth =>
+                val a =
+                    try eval
+                    finally self.exit(depth)
+                continue(a)
+        end match
+    end handle
+
     // TODO compiler crash if private[kyo2]
     def insertTrace(cause: Throwable)(using self: Safepoint): Unit =
         val size = Math.min(self.traceIdx, maxTraceFrames)

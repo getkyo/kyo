@@ -67,8 +67,9 @@ object Effect:
                 v match
                     case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if tag =:= kyo.tag && accept(kyo.input) =>
                         Safepoint.handle(kyo.input)(
-                            suspend = handleLoop(kyo, context),
-                            continue = handleLoop(handle[Any](kyo.input, kyo(_, context)), context)
+                            eval = handle[Any](kyo.input, kyo(_, context)),
+                            continue = handleLoop(_, context),
+                            suspend = handleLoop(kyo, context)
                         )
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked) =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
@@ -95,13 +96,15 @@ object Effect:
                 kyo match
                     case <(kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
+                            eval = handle1[Any](kyo.input, kyo(_, context)),
                             suspend = handle2Loop(kyo, context),
-                            continue = handle2Loop(handle1[Any](kyo.input, kyo(_, context)), context)
+                            continue = handle2Loop(_, context)
                         )
                     case <(kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
+                            eval = handle2[Any](kyo.input, kyo(_, context)),
                             suspend = handle2Loop(kyo, context),
-                            continue = handle2Loop(handle2[Any](kyo.input, kyo(_, context)), context)
+                            continue = handle2Loop(_, context)
                         )
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & S & S2] @unchecked) =>
                         new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
@@ -133,18 +136,21 @@ object Effect:
                 v match
                     case <(kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
+                            eval = handle1[Any](kyo.input, kyo(_, context)),
                             suspend = handle3Loop(kyo, context),
-                            continue = handle3Loop(handle1[Any](kyo.input, kyo(_, context)), context)
+                            continue = handle3Loop(_, context)
                         )
                     case <(kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
+                            eval = handle2[Any](kyo.input, kyo(_, context)),
                             suspend = handle3Loop(kyo, context),
-                            continue = handle3Loop(handle2[Any](kyo.input, kyo(_, context)), context)
+                            continue = handle3Loop(_, context)
                         )
                     case <(kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag3 =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
+                            eval = handle3[Any](kyo.input, kyo(_, context)),
                             suspend = handle3Loop(kyo, context),
-                            continue = handle3Loop(handle3[Any](kyo.input, kyo(_, context)), context)
+                            continue = handle3Loop(_, context)
                         )
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & S & S2] @unchecked) =>
                         new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
