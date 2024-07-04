@@ -784,6 +784,8 @@ class ChunkTest extends Test:
             val chunk = Chunk(1, 1, 1, 1, 1)
             assert(chunk.changes(0) == Chunk(1))
             assert(chunk.changes(1) == kyo2.Chunk.empty[Int])
+            assert(chunk.changes(Maybe(0)) == Chunk(1))
+            assert(chunk.changes(Maybe(1)) == kyo2.Chunk.empty[Int])
         }
     }
 

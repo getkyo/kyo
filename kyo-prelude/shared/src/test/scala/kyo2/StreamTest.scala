@@ -232,6 +232,13 @@ class StreamTest extends Test:
             )
         }
 
+        "with initial value" in {
+            assert(
+                Stream.init(Seq(1, 2, 2, 3, 2, 3, 3)).changes(1).runSeq.eval ==
+                    Seq(2, 3, 2, 3)
+            )
+        }
+
         "empty stream" in {
             assert(
                 Stream.init(Seq.empty[Int]).changes.runSeq.eval ==

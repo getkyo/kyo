@@ -136,15 +136,19 @@ case class Stream[-S, V](v: Ack < (Emit[Chunk[V]] & S)):
                 }
         ))
 
-    def changes(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[S, V] =
-        changes(null)
+    def changes(using Tag[Emit[Chunk[V]]], Frame, CanEqual[V, V]): Stream[S, V] =
+        changes(Maybe.empty)
 
-    def changes(first: V | Null)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[S, V] =
+    def changes(first: V)(using Tag[Emit[Chunk[V]]], Frame, CanEqual[V, V]): Stream[S, V] =
+        changes(Maybe(first))
+
+    @targetName("changesMaybe")
+    def changes(first: Maybe[V])(using tag: Tag[Emit[Chunk[V]]], frame: Frame, ce: CanEqual[V, V]): Stream[S, V] =
         Stream[S, V](Effect.handle.state(tag, first, v)(
             [C] =>
                 (input, state, cont) =>
                     val c        = input.changes(state)
-                    val newState = if c.isEmpty then state else c.last
+                    val newState = if c.isEmpty then state else Maybe(c.last)
                     Emit.andMap(c) { ack =>
                         (newState, cont(ack))
                 }
