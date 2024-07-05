@@ -183,10 +183,10 @@ class ResultTest extends Test:
             assertDoesNotCompile("Result.fail(1).getOrThrow")
         }
         "throws for Throwable Fail" in {
-            assert(Try(Result.fail(ex).getOrThrow) == scala.util.Failure(ex))
+            assert(Result.attempt(Result.fail(ex).getOrThrow) == Result.fail(ex))
         }
         "throws for Panic" in {
-            assert(Try(Result.panic(ex).getOrThrow) == scala.util.Failure(ex))
+            assert(Result.attempt(Result.panic(ex).getOrThrow) == Result.fail(ex))
         }
     }
 
