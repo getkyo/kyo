@@ -3,7 +3,6 @@ package kyo2.kernel
 import internal.*
 import kyo.Tag
 import kyo2.bug
-import kyo2.isNull
 import scala.util.NotGiven
 
 abstract class ContextEffect[+A]

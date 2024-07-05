@@ -4,6 +4,7 @@ import Chunk.Indexed
 import kernel.Frame
 import kernel.Loop
 import scala.annotation.tailrec
+import scala.annotation.targetName
 import scala.reflect.ClassTag
 
 sealed abstract class Chunk[A] derives CanEqual:
@@ -147,21 +148,25 @@ sealed abstract class Chunk[A] derives CanEqual:
                     Loop.done(Chunk.empty)
             }
 
-    final def changes: Chunk[A] =
-        changes(null)
+    final def changes(using CanEqual[A, A]): Chunk[A] =
+        changes(Maybe.empty)
 
-    final def changes(first: A | Null): Chunk[A] =
+    final def changes(first: A)(using CanEqual[A, A]): Chunk[A] =
+        changes(Maybe(first))
+
+    @targetName("changesMaybe")
+    final def changes(first: Maybe[A])(using CanEqual[A, A]): Chunk[A] =
         if isEmpty then Chunk.empty
         else
             val size    = this.size
             val indexed = this.toIndexed
-            @tailrec def loop(idx: Int, prev: A | Null, acc: Chunk[A]): Chunk[A] =
+            @tailrec def loop(idx: Int, prev: Maybe[A], acc: Chunk[A]): Chunk[A] =
                 if idx < size then
                     val v = indexed(idx)
-                    if v.equals(prev) then
+                    if prev.contains(v) then
                         loop(idx + 1, prev, acc)
                     else
-                        loop(idx + 1, v, acc.append(v))
+                        loop(idx + 1, Maybe(v), acc.append(v))
                     end if
                 else
                     acc
