@@ -175,6 +175,21 @@ class ResultTest extends Test:
         }
     }
 
+    "getOrThrow" - {
+        "returns the value for Success" in {
+            assert(Result.success(1).getOrThrow == 1)
+        }
+        "doesn't compile for non-Throwable Fail" in {
+            assertDoesNotCompile("Result.fail(1).getOrThrow")
+        }
+        "throws for Throwable Fail" in {
+            assert(Result.attempt(Result.fail(ex).getOrThrow) == Result.fail(ex))
+        }
+        "throws for Panic" in {
+            assert(Result.attempt(Result.panic(ex).getOrThrow) == Result.fail(ex))
+        }
+    }
+
     "orElse" - {
         "returns itself for Success" in {
             assert(Result.success(1).orElse(Result.success(2)) == Success(1))
@@ -292,6 +307,20 @@ class ResultTest extends Test:
 
         "isFail should return false for deeply nested Success" in {
             assert(!nestedResult.isFail)
+        }
+    }
+
+    "exception" - {
+        "only available if E is Throwable" in {
+            assertDoesNotCompile("Result.Fail(1).exception")
+        }
+        "from Fail" in {
+            val ex = new Exception
+            assert(Result.Fail(ex).exception == ex)
+        }
+        "from Panic" in {
+            val ex = new Exception
+            assert(Result.Panic(ex).exception == ex)
         }
     }
 

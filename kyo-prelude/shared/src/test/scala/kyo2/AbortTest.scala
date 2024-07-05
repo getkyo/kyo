@@ -258,6 +258,10 @@ class AbortsTest extends Test:
                     Result.success(Result.success(Result.success(Result.success(Result.success(Result.success(18))))))
                 assert(res == expected)
             }
+            "doesn't produce Fail if E isn't Throwable" in run {
+                val ex = new Exception
+                Abort.run[Any](throw ex).map(result => assert(result == Result.panic(ex)))
+            }
         }
         "fail" in {
             val ex: Throwable = new Exception("throwable failure")

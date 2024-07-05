@@ -65,41 +65,50 @@ object Abort:
             frame: Frame,
             reduce: Reducible[Abort[ER]]
         ): Result[E, A] < (S & reduce.SReduced) =
-            Effect.catching {
-                reduce {
-                    Effect.handle[Const[Error[E]], Const[Unit], Abort[E], Result[E, A], Result[E, A], Abort[ER] & S, Abort[ER] & S, Any](
-                        erasedTag[E],
-                        v.map(Result.success[E, A](_))
-                    )(
-                        accept = [C] =>
-                            input =>
-                                input.isPanic ||
-                                    input.asInstanceOf[Error[Any]].failure.exists {
-                                        case e: E => true
-                                        case _    => false
-                                },
-                        handle = [C] =>
-                            (input, _) => input
-                    )
-                }
-            } {
-                case fail: E => Result.fail(fail)
-                case fail    => Result.panic(fail)
+            reduce {
+                Effect.handle.catching[
+                    Const[Error[E]],
+                    Const[Unit],
+                    Abort[E],
+                    Result[E, A],
+                    Result[E, A],
+                    Abort[ER] & S,
+                    Abort[ER] & S,
+                    Any
+                ](
+                    erasedTag[E],
+                    v.map(Result.success[E, A](_))
+                )(
+                    accept = [C] =>
+                        input =>
+                            input.isPanic ||
+                                input.asInstanceOf[Error[Any]].failure.exists {
+                                    case e: E => true
+                                    case _    => false
+                            },
+                    handle = [C] => (input, _) => input,
+                    recover =
+                        case fail: E if classOf[Throwable].isAssignableFrom(ct.runtimeClass) =>
+                            Result.fail(fail)
+                        case fail => Result.panic(fail)
+                )
             }
     end RunOps
 
     inline def run[E >: Nothing]: RunOps[E] = RunOps(())
 
     final class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
-        def apply[A, B](v: => A < B)(
+        def apply[A, S](v: => A < S)(
             using
             ct: ClassTag[E],
             frame: Frame
-        ): A < (Abort[E] & B) =
+        ): A < (Abort[E] & S) =
             Effect.catching(v) {
                 case ex: E => Abort.fail(ex)
+                case ex    => Abort.panic(ex)
             }
     end CatchingOps
 
     inline def catching[E <: Throwable]: CatchingOps[E] = CatchingOps(())
+
 end Abort

@@ -90,6 +90,26 @@ class TraceTest extends Test:
         }
     }
 
+    "no trace if exception is NoStackTrace" - {
+        "jvm" taggedAs jvmOnly in {
+            import scala.util.control.NoStackTrace
+            assertTrace(
+                throw new NoStackTrace {},
+                "kyo2.kernel.TraceTest$$anon$1"
+            )
+        }
+        "js" taggedAs jsOnly in {
+            import scala.util.control.NoStackTrace
+            assertTrace(
+                throw new NoStackTrace {},
+                """
+                |kyo2.kernel.TraceTest$$anon$2
+                |  <no stack trace available>                
+                """
+            )
+        }
+    }
+
     def assertTrace[A](f: => A, expected: String) =
         try
             f
