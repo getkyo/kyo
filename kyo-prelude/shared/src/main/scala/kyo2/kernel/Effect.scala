@@ -196,6 +196,47 @@ object Effect:
             handleLoop(state, v, Context.empty)
         end state
 
+        inline def catching[I[_], O[_], E <: Effect[I, O], A, B, S, S2, S3](
+            inline tag: Tag[E],
+            inline v: => A < (E & S)
+        )(
+            inline handle: Safepoint ?=> [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
+            inline done: A => B < S3 = (v: A) => v,
+            inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true,
+            inline recover: Throwable => B < (S & S2 & S3)
+        )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2 & S3) =
+            def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
+                v match
+                    case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if tag =:= kyo.tag && accept(kyo.input) =>
+                        Safepoint.handle(kyo.input)(
+                            eval = handle[Any](kyo.input, kyo(_, context)),
+                            continue = handleLoop(_, context),
+                            suspend = handleLoop(kyo, context)
+                        )
+                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked) =>
+                        new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
+                            def frame = _frame
+                            def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                try handleLoop(kyo(v, context), context)
+                                catch
+                                    case ex if NonFatal(ex) =>
+                                        Safepoint.insertTrace(ex)
+                                        recover(ex)
+                            end apply
+                        end new
+                    case <(kyo) =>
+                        done(kyo.asInstanceOf[A])
+                end match
+            end handleLoop
+
+            try handleLoop(v, Context.empty)
+            catch
+                case ex if NonFatal(ex) =>
+                    Safepoint.insertTrace(ex)
+                    recover(ex)
+            end try
+        end catching
+
     end handle
 
     inline def catching[A, S, B >: A, S2](inline v: => A < S)(

@@ -111,6 +111,30 @@ class EffectTest extends Test:
         }
     }
 
+    "handle.catching" - {
+        "failure" in {
+            val effect = Effect.suspend[Int](Tag[TestEffect1], 42)
+            val result = Effect.handle.catching(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => throw new RuntimeException("Test exception"),
+                recover = {
+                    case _: RuntimeException => "recovered"
+                }
+            )
+            assert(result.eval == "recovered")
+        }
+
+        "success" in {
+            val effect = Effect.suspend[Int](Tag[TestEffect1], 42)
+            val result = Effect.handle.catching(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont(input.toString),
+                recover = {
+                    case _: RuntimeException => "recovered"
+                }
+            )
+            assert(result.eval == "42")
+        }
+    }
+
     "catching" - {
         "match" in {
             val effect = Effect.catching {

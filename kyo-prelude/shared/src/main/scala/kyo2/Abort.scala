@@ -65,27 +65,33 @@ object Abort:
             frame: Frame,
             reduce: Reducible[Abort[ER]]
         ): Result[E, A] < (S & reduce.SReduced) =
-            Effect.catching {
-                reduce {
-                    Effect.handle[Const[Error[E]], Const[Unit], Abort[E], Result[E, A], Result[E, A], Abort[ER] & S, Abort[ER] & S, Any](
-                        erasedTag[E],
-                        v.map(Result.success[E, A](_))
-                    )(
-                        accept = [C] =>
-                            input =>
-                                input.isPanic ||
-                                    input.asInstanceOf[Error[Any]].failure.exists {
-                                        case e: E => true
-                                        case _    => false
-                                },
-                        handle = [C] =>
-                            (input, _) => input
-                    )
-                }
-            } {
-                case fail: E if classOf[Throwable].isAssignableFrom(ct.runtimeClass) =>
-                    Result.fail(fail)
-                case fail => Result.panic(fail)
+            reduce {
+                Effect.handle.catching[
+                    Const[Error[E]],
+                    Const[Unit],
+                    Abort[E],
+                    Result[E, A],
+                    Result[E, A],
+                    Abort[ER] & S,
+                    Abort[ER] & S,
+                    Any
+                ](
+                    erasedTag[E],
+                    v.map(Result.success[E, A](_))
+                )(
+                    accept = [C] =>
+                        input =>
+                            input.isPanic ||
+                                input.asInstanceOf[Error[Any]].failure.exists {
+                                    case e: E => true
+                                    case _    => false
+                            },
+                    handle = [C] => (input, _) => input,
+                    recover =
+                        case fail: E if classOf[Throwable].isAssignableFrom(ct.runtimeClass) =>
+                            Result.fail(fail)
+                        case fail => Result.panic(fail)
+                )
             }
     end RunOps
 
