@@ -7,20 +7,33 @@ opaque type Memo = Var[Memo.Cache]
 
 object Memo:
 
-    private[kyo2] case class Cache(map: Map[(Any, Any), Any])
+    // Used to ensure each memoized function
+    // has a different key space
+    private[kyo2] class MemoIdentity
+
+    private[kyo2] class Cache(map: Map[(Any, Any), Any]):
+        def get[A](input: A, id: MemoIdentity): Maybe[Any] =
+            val key = (input, id)
+            if map.contains(key) then
+                Maybe(map(key))
+            else Maybe.empty
+        end get
+        def updated[A, B](input: A, id: MemoIdentity, value: B): Cache =
+            Cache(map.updated((input, id), value))
+    end Cache
 
     private val empty = Cache(Map.empty)
 
     def apply[A, B, S](f: A => B < S)(using Frame): A => B < (S & Memo) =
-        val token = new Object
-        a =>
-            val key = (a, token)
+        val id = new MemoIdentity
+        input =>
             Var.use[Cache] { cache =>
-                cache.map.get(key) match
-                    case Some(cached) => cached.asInstanceOf[B]
-                    case None =>
-                        f(a).map { result =>
-                            Var.update[Cache](c => c.copy(c.map + (key -> result)))
+                cache.get(input, id) match
+                    case Maybe.Defined(cached) =>
+                        cached.asInstanceOf[B]
+                    case Maybe.Empty =>
+                        f(input).map { result =>
+                            Var.update[Cache](_.updated(input, id, result))
                                 .map(_ => result)
                         }
             }
