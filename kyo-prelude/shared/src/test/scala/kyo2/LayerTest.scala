@@ -137,7 +137,7 @@ class LayerTest extends Test:
         "Var" in {
             val int    = Layer(Var.get[Int])
             val string = Layer.from((i: Int) => i.toString)
-            val length = Layer.from((s: String) => Var.update((_: Int) => s.length).andThen(s.length))
+            val length = Layer.from((s: String) => Var.update((_: Int) => s.length).map(_ => s.length))
 
             val c = int to string to length
 
