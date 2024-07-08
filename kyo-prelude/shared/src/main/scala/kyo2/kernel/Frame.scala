@@ -61,21 +61,9 @@ object Frame:
         val lines         = markedContent.linesIterator.toList
         val snippetLines  = lines.slice(startLine - 1, endLine + 2).filter(_.exists(_ != ' '))
         val toDrop        = snippetLines.map(_.takeWhile(_ == ' ').size).minOption.getOrElse(0)
-
-        def parseSnippetShort(l: List[Char], closes: Int = 0, acc: List[Char] = Nil): List[Char] =
-            l match
-                case Nil if closes == 0 => acc
-                case Nil                => Nil
-                case '(' :: tail        => parseSnippetShort(tail, closes + 1, '(' :: acc)
-                case ')' :: tail        => parseSnippetShort(tail, closes - 1, ')' :: acc)
-                case '\n' :: _          => acc
-                case ' ' :: tail if closes == 0 =>
-                    acc
-                case c :: tail => parseSnippetShort(tail, closes, c :: acc)
-
-        val snippet = snippetLines.map(_.drop(toDrop)).mkString("\n")
-        val cls     = findEnclosing(_.isClassDef)
-        val method  = findEnclosing(_.isDefDef)
+        val snippet       = snippetLines.map(_.drop(toDrop)).mkString("\n")
+        val cls           = findEnclosing(_.isClassDef)
+        val method        = findEnclosing(_.isDefDef)
 
         Expr(s"$cls£$method£${pos.sourceFile.name}£${startLine + 1}£${startColumn + 1}£$snippet")
     end frameImpl

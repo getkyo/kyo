@@ -214,11 +214,11 @@ object Effect:
                     case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked) =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
                             def frame = _frame
-                            def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            def apply(v: OX[Any], context: Context)(using safepoint: Safepoint) =
                                 try handleLoop(kyo(v, context), context)
                                 catch
                                     case ex if NonFatal(ex) =>
-                                        Safepoint.insertTrace(ex)
+                                        safepoint.enrich(ex)
                                         recover(ex)
                             end apply
                         end new
@@ -230,10 +230,47 @@ object Effect:
             try handleLoop(v, Context.empty)
             catch
                 case ex if NonFatal(ex) =>
-                    Safepoint.insertTrace(ex)
+                    safepoint.enrich(ex)
                     recover(ex)
             end try
         end catching
+
+        private[kyo2] inline def partial[I1[_], O1[_], E1 <: Effect[I1, O1], I2[_], O2[_], E2 <: Effect[I2, O2], I3[_], O3[_], E3 <: Effect[
+            I3,
+            O3
+        ], A, S, S2](
+            inline tag1: Tag[E1],
+            inline tag2: Tag[E2],
+            inline tag3: Tag[E3],
+            v: A < (E1 & E2 & E3 & S),
+            context: Context
+        )(
+            inline stop: => Boolean,
+            inline handle1: Safepoint ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle2: Safepoint ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle3: Safepoint ?=> [C] => (I3[C], O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
+        )(using inline _frame: Frame, safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
+            def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
+                if stop then v
+                else
+                    v match
+                        case <(kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, Any] @unchecked) if kyo.tag =:= Tag[Defer] =>
+                            handle3Loop(kyo((), context), context)
+                        case <(kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
+                            safepoint.pushFrame(kyo.frame)
+                            handle3Loop(handle1[Any](kyo.input, kyo(_, context)), context)
+                        case <(kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
+                            safepoint.pushFrame(kyo.frame)
+                            handle3Loop(handle2[Any](kyo.input, kyo(_, context)), context)
+                        case <(kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag3 =:= kyo.tag =>
+                            safepoint.pushFrame(kyo.frame)
+                            handle3Loop(handle3[Any](kyo.input, kyo(_, context)), context)
+                        case kyo =>
+                            kyo
+                    end match
+            end handle3Loop
+            handle3Loop(v, context)
+        end partial
 
     end handle
 
@@ -245,11 +282,11 @@ object Effect:
                 case <(kyo: KyoSuspend[IX, OX, EX, Any, B, S & S2] @unchecked) =>
                     new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
                         def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using safepoint: Safepoint) =
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
                             try catchingLoop(kyo(v, context))
                             catch
                                 case ex: Throwable if NonFatal(ex) =>
-                                    Safepoint.insertTrace(ex)
+                                    Safepoint.enrich(ex)
                                     f(ex)
                             end try
                         end apply
@@ -258,7 +295,7 @@ object Effect:
         try catchingLoop(v)
         catch
             case ex: Throwable if NonFatal(ex) =>
-                Safepoint.insertTrace(ex)
+                Safepoint.enrich(ex)
                 f(ex)
         end try
     end catching

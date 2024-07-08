@@ -2,6 +2,7 @@ package kyo2.kernel
 
 import internal.*
 import kyo.Tag
+import kyo2.Maybe
 import kyo2.bug
 import scala.util.NotGiven
 
@@ -36,7 +37,7 @@ object ContextEffect:
             def apply(v: Unit, context: Context)(using Safepoint) =
                 Safepoint.handle(v)(
                     suspend = this,
-                    continue = f(context.getOrElse(_tag, default).asInstanceOf[A])
+                    continue = f(context.get(_tag).getOrElse(default).asInstanceOf[A])
                 )
 
     inline def handle[A, E <: ContextEffect[A], B, S](
@@ -52,11 +53,9 @@ object ContextEffect:
                     new KyoContinue[IX, OX, EX, Any, B, S](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            val tag = _tag // avoid inlining the tag multiple times
-                            val updated =
-                                if !context.contains(tag) then context.set(tag, ifUndefined)
-                                else context.set(tag, ifDefined(context.get(tag)))
-                            handleLoop(kyo(v, updated))
+                            val tag     = _tag // avoid inlining the tag multiple times
+                            val updated = context.get(tag).fold(ifUndefined)(ifDefined)
+                            handleLoop(kyo(v, context.set(tag, updated)))
                         end apply
                 case <(kyo) =>
                     kyo.asInstanceOf[B]
