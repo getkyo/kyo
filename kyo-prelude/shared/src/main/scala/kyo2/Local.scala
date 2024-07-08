@@ -7,18 +7,18 @@ abstract class Local[A]:
 
     import Local.State
 
-    val default: A
+    lazy val default: A
 
-    def get(using Frame): A < Any =
+    final def get(using Frame): A < Any =
         ContextEffect.suspendMap(Tag[Local.State], Map.empty)(_.getOrElse(this, default).asInstanceOf[A])
 
-    def use[B, S](f: A => B < S)(using Frame): B < S =
+    final def use[B, S](f: A => B < S)(using Frame): B < S =
         ContextEffect.suspendMap(Tag[Local.State], Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[A]))
 
-    def let[B, S](value: A)(v: B < S)(using Frame): B < S =
+    final def let[B, S](value: A)(v: B < S)(using Frame): B < S =
         ContextEffect.handle(Tag[Local.State], Map(this -> value), _.updated(this, value.asInstanceOf[AnyRef]))(v)
 
-    def update[B, S](f: A => A)(v: B < S)(using Frame): B < S =
+    final def update[B, S](f: A => A)(v: B < S)(using Frame): B < S =
         ContextEffect.handle(
             Tag[Local.State],
             Map(this -> f(default)),
@@ -30,7 +30,7 @@ object Local:
 
     inline def init[A](inline defaultValue: A): Local[A] =
         new Local[A]:
-            val default: A = defaultValue
+            lazy val default: A = defaultValue
 
     sealed private trait State extends ContextEffect[Map[Local[?], AnyRef]]
 end Local

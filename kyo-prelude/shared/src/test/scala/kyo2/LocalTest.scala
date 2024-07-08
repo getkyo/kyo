@@ -35,6 +35,17 @@ class LocalTest extends Test:
                 Kyo.zip(l1.get, l2.get).eval == (10, 20)
             )
         }
+        "lazy" in {
+            var invoked = 0
+            def default =
+                invoked += 1
+                10
+            val l = Local.init(default)
+            assert(invoked == 0)
+            assert(l.default == 10)
+            assert(l.default == 10)
+            assert(invoked == 1)
+        }
     }
 
     "let" - {
