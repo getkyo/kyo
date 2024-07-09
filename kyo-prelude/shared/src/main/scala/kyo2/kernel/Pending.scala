@@ -14,7 +14,28 @@ object `<`:
 
     implicit private[kyo2] inline def apply[A, S](p: Kyo[A, S]): A < S = new <(p)
 
-    implicit inline def lift[A, S](v: A)(using inline ng: NotGiven[A <:< (Any < Nothing)]): A < S = <(v)
+    implicit inline def lift[A, S](v: A)(using inline ng: NotGiven[A <:< (Any < Nothing)]): A < S =
+        <(v)
+
+    implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
+        using inline ng: NotGiven[B <:< (Any < Nothing)]
+    ): A1 => B < Any =
+        a1 => f(a1)
+
+    implicit inline def liftPureFunction2[A1, A2, B](inline f: (A1, A2) => B)(
+        using inline ng: NotGiven[B <:< (Any < Nothing)]
+    ): (A1, A2) => B < Any =
+        (a1, a2) => f(a1, a2)
+
+    implicit inline def liftPureFunction3[A1, A2, A3, B](inline f: (A1, A2, A3) => B)(
+        using inline ng: NotGiven[B <:< (Any < Nothing)]
+    ): (A1, A2, A3) => B < Any =
+        (a1, a2, a3) => f(a1, a2, a3)
+
+    implicit inline def liftPureFunction4[A1, A2, A3, A4, B](inline f: (A1, A2, A3, A4) => B)(
+        using inline ng: NotGiven[B <:< (Any < Nothing)]
+    ): (A1, A2, A3, A4) => B < Any =
+        (a1, a2, a3, a4) => f(a1, a2, a3, a4)
 
     extension [A, S](inline v: A < S)
 

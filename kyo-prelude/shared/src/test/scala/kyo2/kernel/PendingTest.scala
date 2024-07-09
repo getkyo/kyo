@@ -89,6 +89,55 @@ class PendingTest extends Test:
                 assertDoesNotCompile("val _: Int < Any < Any = (1: Int < Any)")
             }
         }
+
+        "functions" - {
+            "one param" in {
+                val f: Int => String =
+                    _.toString
+                val lifted: Int => String < Any = f
+                assert(lifted(42).eval == "42")
+            }
+
+            "two params" in {
+                val f: (Int, Int) => String =
+                    (a, b) => (a + b).toString
+                val lifted: (Int, Int) => String < Any = f
+                assert(lifted(20, 22).eval == "42")
+            }
+
+            "three params" in {
+                val f: (Int, Int, Int) => String =
+                    (a, b, c) => (a + b + c).toString
+                val lifted: (Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 12).eval == "42")
+            }
+
+            "four params" in {
+                val f: (Int, Int, Int, Int) => String =
+                    (a, b, c, d) => (a + b + c + d).toString
+                val lifted: (Int, Int, Int, Int) => String < Any = f
+                assert(lifted(10, 20, 10, 2).eval == "42")
+            }
+
+            "doesn't lift nested computations" in {
+                val f1: Int => String < Any                  = (_) => "test"
+                val f2: (Int, Int) => String < Any           = (_, _) => "test"
+                val f3: (Int, Int, Int) => String < Any      = (_, _, _) => "test"
+                val f4: (Int, Int, Int, Int) => String < Any = (_, _, _, _) => "test"
+                assertDoesNotCompile("""
+                    val _: Int => String < Any < Any = f1
+                """)
+                assertDoesNotCompile("""
+                    val _: (Int, Int) => String < Any < Any = f2
+                """)
+                assertDoesNotCompile("""
+                    val _: (Int, Int, Int) => String < Any < Any = f3
+                """)
+                assertDoesNotCompile("""
+                    val _: (Int, Int, Int, Int) => String < Any < Any = f4
+                """)
+            }
+        }
     }
 
     sealed trait TestEffect extends Effect[Const[Int], Const[Int]]

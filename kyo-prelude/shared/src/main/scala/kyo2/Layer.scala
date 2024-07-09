@@ -49,19 +49,6 @@ object Layer:
             Kyo.zip(Env.get[A], Env.get[B], Env.get[C], Env.get[D]).map { case (a, b, c, d) => f(a, b, c, d) }
         }
 
-    @targetName("fromPure1")
-    inline def from[A: Tag, B: Tag](inline f: A => B): Layer[B, Env[A]] =
-        from[A, B, Any](f(_))
-    @targetName("fromPure2")
-    inline def from[A: Tag, B: Tag, C: Tag](inline f: (A, B) => C): Layer[C, Env[A & B]] =
-        from[A, B, C, Any](f(_, _))
-    @targetName("fromPure3")
-    inline def from[A: Tag, B: Tag, C: Tag, D: Tag](inline f: (A, B, C) => D): Layer[D, Env[A & B & C]] =
-        from[A, B, C, D, Any](f(_, _, _))
-    @targetName("fromPure4")
-    inline def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag](inline f: (A, B, C, D) => E): Layer[E, Env[A & B & C & D]] =
-        from[A, B, C, D, E, Any](f(_, _, _, _))
-
     transparent inline def init[Target](inline layers: Layer[?, ?]*): Layer[Target, ?] =
         kyo2.internal.LayerMacros.make[Target](layers*)
 
