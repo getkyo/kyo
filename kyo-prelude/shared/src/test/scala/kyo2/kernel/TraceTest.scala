@@ -120,7 +120,10 @@ class TraceTest extends Test:
                 val printWriter  = new PrintWriter(stringWriter)
                 ex.printStackTrace(printWriter)
                 printWriter.flush()
-                val trace = stringWriter.toString.linesIterator.takeWhile(!_.contains("anonfun")).mkString("\n")
+                val full   = stringWriter.toString
+                val top    = full.linesIterator.takeWhile(!_.contains("@")).toList
+                val bottom = full.linesIterator.drop(top.length).takeWhile(_.contains("@")).toList
+                val trace  = (top.mkString("\n") + "\n" + bottom.mkString("\n")).trim()
                 assert(trace == expected.stripMargin.trim)
 
 end TraceTest
