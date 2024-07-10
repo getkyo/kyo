@@ -12,20 +12,37 @@ class VarTest extends Test:
         assert(r == 2)
     }
 
-    "set, get" in {
-        val r = kyo2.Var.run(1)(kyo2.Var.set(2).andThen(kyo2.Var.get[Int])).eval
+    "setUnit, get" in {
+        val r = kyo2.Var.run(1)(kyo2.Var.setUnit(2).andThen(kyo2.Var.get[Int])).eval
         assert(r == 2)
     }
 
-    "get, set, get" in {
+    "set, get" in {
+        val r = kyo2.Var.run(1)(kyo2.Var.set(2)).eval
+        assert(r == 1)
+    }
+
+    "get, setUnit, get" in {
         val r = kyo2.Var.run(1)(
-            kyo2.Var.get[Int].map(i => kyo2.Var.set[Int](i + 1)).andThen(kyo2.Var.get[Int])
+            kyo2.Var.get[Int].map(i => kyo2.Var.setUnit[Int](i + 1)).andThen(kyo2.Var.get[Int])
         ).eval
         assert(r == 2)
     }
 
+    "get, set" in {
+        val r = kyo2.Var.run(1)(
+            kyo2.Var.get[Int].map(i => kyo2.Var.set[Int](i + 1))
+        ).eval
+        assert(r == 1)
+    }
+
     "update" in {
-        val r = kyo2.Var.run(1)(kyo2.Var.update[Int](_ + 1).unit.andThen(kyo2.Var.get[Int])).eval
+        val r = kyo2.Var.run(1)(kyo2.Var.update[Int](_ + 1)).eval
+        assert(r == 2)
+    }
+
+    "updateUnit" in {
+        val r = kyo2.Var.run(1)(kyo2.Var.updateUnit[Int](_ + 1).andThen(Var.get[Int])).eval
         assert(r == 2)
     }
 
@@ -64,7 +81,7 @@ class VarTest extends Test:
     }
 
     "string value" in {
-        val result = kyo2.Var.run("a")(kyo2.Var.set("b").andThen(kyo2.Var.get[String])).eval
+        val result = kyo2.Var.run("a")(kyo2.Var.setUnit("b").andThen(kyo2.Var.get[String])).eval
         assert(result == "b")
     }
 
@@ -73,21 +90,22 @@ class VarTest extends Test:
         val result =
             kyo2.Var.run(1) {
                 for
-                    _ <- kyo2.Var.update[Int] { value =>
+                    u <- kyo2.Var.update[Int] { value =>
                         calls += 1
                         value + 1
                     }
                     result <- kyo2.Var.get[Int]
-                yield result
+                yield (u, result)
             }.eval
-        assert(result == 2 && calls == 1)
+        assert(result == (2, 2) && calls == 1)
     }
 
     "inference" in {
-        val a: Int < Var[Int]                  = kyo2.Var.get[Int]
-        val b: Unit < (Var[Int] & Var[String]) = a.map(i => kyo2.Var.set(i.toString()))
-        val c: Unit < Var[String]              = kyo2.Var.run(1)(b)
-        val d: Unit < Any                      = kyo2.Var.run("t")(c)
-        assert(d.eval == ())
+        val a: Int < Var[Int]                    = kyo2.Var.get[Int]
+        val b: Unit < (Var[Int] & Var[String])   = a.map(i => kyo2.Var.setUnit(i.toString()))
+        val c: String < (Var[Int] & Var[String]) = b.andThen(kyo2.Var.set("c"))
+        val d: String < Var[String]              = kyo2.Var.run(1)(c)
+        val e: String < Any                      = kyo2.Var.run("t")(d)
+        assert(e.eval == "1")
     }
 end VarTest
