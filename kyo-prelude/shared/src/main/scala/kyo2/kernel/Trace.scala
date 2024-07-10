@@ -4,6 +4,7 @@ import internal.*
 import java.util.Arrays
 import java.util.concurrent.atomic.AtomicInteger
 import scala.annotation.tailrec
+import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 
 class Trace(
@@ -19,13 +20,13 @@ object Trace:
         final private var frames = new Array[Frame](maxTraceFrames)
         final private var index  = 0
 
-        final private[kernel] def pushFrame(frame: Frame): Unit =
+        final protected def pushFrame(frame: Frame): Unit =
             val idx = this.index
             frames(idx & (maxTraceFrames - 1)) = frame
             this.index = idx + 1
         end pushFrame
 
-        final private[kernel] def saveTrace(): Trace =
+        final protected def saveTrace(): Trace =
             val newTrace   = borrow()
             val newFrames  = newTrace.frames
             val copyLength = math.min(index, maxTraceFrames)
@@ -52,19 +53,24 @@ object Trace:
         final private[kyo2] def releaseTrace(trace: Trace): Unit =
             release(trace)
 
-        private[kernel] inline def withTrace[T](trace: Trace)(inline f: => T): T =
+        private[kernel] inline def withTrace[T](trace: Trace)(inline f: => T)(using frame: Frame): T =
             val prevFrames = frames
             val prevIdx    = index
             frames = trace.frames
             index = trace.index
+            pushFrame(frame)
             try f
+            catch
+                case ex: Throwable if NonFatal(ex) =>
+                    enrich(ex)
+                    throw ex
             finally
                 frames = prevFrames
                 index = prevIdx
             end try
         end withTrace
 
-        private[kernel] inline def withNewTrace[T](inline f: => T): T =
+        private[kernel] inline def withNewTrace[T](inline f: => T)(using Frame): T =
             val trace: Trace = borrow()
             try
                 withTrace(trace)(f)
@@ -76,7 +82,7 @@ object Trace:
         final private[kernel] def enrich(ex: Throwable): Unit =
             val size = frames.size
             if size > 0 && !ex.isInstanceOf[NoStackTrace] then
-                val trace = frames.take(size).filter(_ != null).map(_.parse)
+                val trace = frames.filter(_ != null).map(_.parse)
                 val toPad = trace.map(_.snippetShort.size).maxOption.getOrElse(0) + 1
                 val elements =
                     trace.foldLeft(List.empty[Frame.Parsed]) {

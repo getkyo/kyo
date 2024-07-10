@@ -133,19 +133,7 @@ object Safepoint:
     private[kernel] inline def eval[A](
         inline f: => A
     )(using inline frame: Frame): A =
-        val parent = Safepoint.local.get()
-        val self   = new Safepoint(0, parent.interceptor, State.empty)
-        Safepoint.local.set(self)
-        self.pushFrame(frame)
-        try f
-        catch
-            case ex: Throwable if NonFatal(ex) =>
-                self.enrich(ex)
-                throw ex
-        finally
-            Safepoint.local.set(parent)
-        end try
-    end eval
+        Safepoint.local.get().withNewTrace(f)
 
     private[kernel] inline def handle[V, A, S](value: V)(
         inline suspend: Safepoint ?=> A < S,

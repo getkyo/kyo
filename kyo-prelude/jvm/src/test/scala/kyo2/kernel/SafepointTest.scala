@@ -125,12 +125,12 @@ class SafepointTest extends Test:
         end for
     }
 
-    "new Safepoint for nested eval calls" in run {
+    "no new Safepoint for nested eval calls" in run {
         val outerComputation = Effect.defer {
             val outerSafepoint = Safepoint.get
             val innerComputation = Effect.defer {
                 val innerSafepoint = Safepoint.get
-                assert(innerSafepoint ne outerSafepoint)
+                assert(innerSafepoint eq outerSafepoint)
                 21
             }
             innerComputation.eval * 2
@@ -151,7 +151,7 @@ class SafepointTest extends Test:
 
         Effect.defer {
             val currentSafepoint = Safepoint.get
-            assert(currentSafepoint ne capturedSafepoint)
+            assert(currentSafepoint eq capturedSafepoint)
             assert(closure() eq currentSafepoint)
         }
     }
