@@ -29,7 +29,7 @@ object MonadLawsTest extends ZIOSpecDefault:
                         Emit(i).unit.andThen(v)
                     ),
                     gen.zip(boolGen).map((v, b) =>
-                        Var.set(b).andThen(v)
+                        Var.setDiscard(b).andThen(v)
                     ),
                     gen.zip(stringGen).map((v, s) =>
                         Env.use[String](_ => ()).andThen(v)
