@@ -15,13 +15,13 @@ class UnsafeCounterGauge(run: () => Long) {
         }
     }
 
-    def FindDelta(a: Long, b: Long) = {
+    private def findDelta(a: Long, b: Long) = {
         (Long.MaxValue - a) + b
     }
 
     private[kyo] def delta() = {
         val curr  = collect()
-        val delta = if (curr >= last) curr - last else FindDelta(last, curr)
+        val delta = if (curr >= last) curr - last else findDelta(last, curr)
         last = curr
         delta
     }
