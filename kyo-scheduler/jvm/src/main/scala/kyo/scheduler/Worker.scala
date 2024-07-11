@@ -1,5 +1,6 @@
 package kyo.scheduler
 
+import Worker.State
 import java.lang.StackWalker.StackFrame
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.VarHandle
@@ -23,7 +24,7 @@ abstract private class Worker(
 
     val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
 
-    @volatile private var running       = false
+    @volatile private var state: State  = State.Idle
     @volatile private var mount: Thread = null
 
     val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
@@ -50,9 +51,10 @@ abstract private class Worker(
         wakeup()
     }
 
-    def wakeup() =
-        if (!running && runningHandle.compareAndSet(this, false, true))
+    def wakeup() = {
+        if ((state eq State.Idle) && stateHandle.compareAndSet(this, State.Idle, State.Running))
             exec.execute(this)
+    }
 
     def load() = {
         var load = queue.size()
@@ -72,8 +74,9 @@ abstract private class Worker(
         queue.drain(schedule)
 
     def checkAvailability(nowMs: Long): Boolean = {
-        val available = !checkStalling(nowMs) && !isBlocked()
-        if (!available)
+        val state     = this.state
+        val available = !checkStalling(nowMs) && (state ne State.Stalled) && !isBlocked()
+        if (!available && (state eq State.Running) && stateHandle.compareAndSet(this, State.Running, State.Stalled))
             drain()
         available
     }
@@ -104,6 +107,7 @@ abstract private class Worker(
         setCurrent(this)
         var task: Task = null
         while (true) {
+            state = State.Running
             if (task eq null)
                 task = queue.poll()
             if (task eq null) {
@@ -121,15 +125,15 @@ abstract private class Worker(
                     task = null
                 }
             } else {
-                running = false
-                if (queue.isEmpty() || !runningHandle.compareAndSet(this, false, true)) {
+                state = State.Idle
+                if (queue.isEmpty() || !stateHandle.compareAndSet(this, State.Idle, State.Running)) {
                     mount = null
                     clearCurrent()
                     return
                 }
             }
             if (shouldStop()) {
-                running = false
+                state = State.Idle
                 if (task ne null) schedule(task)
                 drain()
                 return
@@ -176,7 +180,7 @@ abstract private class Worker(
             }
         WorkerStatus(
             id,
-            running,
+            state eq State.Running,
             thread,
             frame,
             isBlocked(),
@@ -198,11 +202,18 @@ private object Worker {
         var currentWorker: Worker = null
     }
 
+    sealed trait State
+    object State {
+        case object Idle    extends State
+        case object Running extends State
+        case object Stalled extends State
+    }
+
     private[Worker] object internal {
 
-        val runningHandle: VarHandle =
+        val stateHandle: VarHandle =
             MethodHandles.privateLookupIn(classOf[Worker], MethodHandles.lookup())
-                .findVarHandle(classOf[Worker], "running", classOf[Boolean])
+                .findVarHandle(classOf[Worker], "state", classOf[State])
 
         val local = new ThreadLocal[Worker]
 

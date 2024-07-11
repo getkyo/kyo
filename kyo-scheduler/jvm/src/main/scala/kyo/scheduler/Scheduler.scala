@@ -70,7 +70,7 @@ final class Scheduler(
         var worker: Worker = null
         if (submitter eq null) {
             worker = Worker.current()
-            if ((worker ne null) && !worker.checkAvailability(nowMs))
+            if ((worker ne null) && ((worker eq submitter) || !worker.checkAvailability(nowMs)))
                 worker = null
         }
         if (worker eq null) {
