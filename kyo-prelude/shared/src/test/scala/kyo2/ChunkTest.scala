@@ -172,7 +172,7 @@ class ChunkTest extends Test:
                 kyo2.Abort.run[String] {
                     chunk.map { n =>
                         kyo2.Var.get[Int].map { multiplier =>
-                            if n % 2 == 0 then kyo2.Var.setUnit(multiplier * n).andThen(n * multiplier)
+                            if n % 2 == 0 then kyo2.Var.setDiscard(multiplier * n).andThen(n * multiplier)
                             else kyo2.Abort.fail("Odd number encountered")
                         }
                     }
@@ -215,7 +215,7 @@ class ChunkTest extends Test:
                     chunk.filter { n =>
                         kyo2.Var.get[Boolean].map { b =>
                             if b then
-                                if n % 2 == 0 then kyo2.Var.setUnit(false).andThen(true)
+                                if n % 2 == 0 then kyo2.Var.setDiscard(false).andThen(true)
                                 else false
                             else kyo2.Abort.fail(())
                         }
@@ -261,8 +261,8 @@ class ChunkTest extends Test:
                     chunk.foldLeft(1) { (acc, n) =>
                         kyo2.Var.get[Int].map { multiplier =>
                             kyo2.Env.get[String].map { op =>
-                                if op == "*" then kyo2.Var.setUnit(multiplier * n).andThen(acc * n)
-                                else if op == "+" then kyo2.Var.setUnit(multiplier + n).andThen(acc + n)
+                                if op == "*" then kyo2.Var.setDiscard(multiplier * n).andThen(acc * n)
+                                else if op == "+" then kyo2.Var.setDiscard(multiplier + n).andThen(acc + n)
                                 else acc
                             }
                         }
@@ -815,7 +815,7 @@ class ChunkTest extends Test:
                                 kyo2.Var.get[Int].map { multiplier =>
                                     kyo2.Env.get[Int].map { max =>
                                         if sum + n * multiplier <= max then
-                                            kyo2.Var.setUnit(multiplier * n).andThen(sum += n * multiplier)
+                                            kyo2.Var.setDiscard(multiplier * n).andThen(sum += n * multiplier)
                                         else kyo2.Abort.fail(s"Sum exceeded max value of $max")
                                     }
                                 }

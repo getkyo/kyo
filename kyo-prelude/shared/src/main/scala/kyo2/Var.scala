@@ -29,7 +29,7 @@ object Var:
         Effect.suspend[Unit](tag, value: Op[V])
 
     /** Sets a new value and returns `Unit`. */
-    inline def setUnit[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
+    inline def setDiscard[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
         Effect.suspendMap[Unit](tag, value: Op[V])(_ => ())
 
     /** Applies the update function and returns the new value. */
@@ -37,7 +37,7 @@ object Var:
         Effect.suspend[V](tag, (v => f(v)): Update[V])
 
     /** Applies the update function and returns `Unit`. */
-    inline def updateUnit[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
+    inline def updateDiscard[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
         Effect.suspendMap[Unit](tag, (v => f(v)): Update[V])(_ => ())
 
     private inline def runWith[V, A, S, B, S2](state: V)(v: A < (Var[V] & S))(

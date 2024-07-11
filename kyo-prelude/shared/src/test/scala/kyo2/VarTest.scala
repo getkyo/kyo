@@ -13,7 +13,7 @@ class VarTest extends Test:
     }
 
     "setUnit, get" in {
-        val r = kyo2.Var.run(1)(kyo2.Var.setUnit(2).andThen(kyo2.Var.get[Int])).eval
+        val r = kyo2.Var.run(1)(kyo2.Var.setDiscard(2).andThen(kyo2.Var.get[Int])).eval
         assert(r == 2)
     }
 
@@ -24,7 +24,7 @@ class VarTest extends Test:
 
     "get, setUnit, get" in {
         val r = kyo2.Var.run(1)(
-            kyo2.Var.get[Int].map(i => kyo2.Var.setUnit[Int](i + 1)).andThen(kyo2.Var.get[Int])
+            kyo2.Var.get[Int].map(i => kyo2.Var.setDiscard[Int](i + 1)).andThen(kyo2.Var.get[Int])
         ).eval
         assert(r == 2)
     }
@@ -42,7 +42,7 @@ class VarTest extends Test:
     }
 
     "updateUnit" in {
-        val r = kyo2.Var.run(1)(kyo2.Var.updateUnit[Int](_ + 1).andThen(Var.get[Int])).eval
+        val r = kyo2.Var.run(1)(kyo2.Var.updateDiscard[Int](_ + 1).andThen(Var.get[Int])).eval
         assert(r == 2)
     }
 
@@ -81,7 +81,7 @@ class VarTest extends Test:
     }
 
     "string value" in {
-        val result = kyo2.Var.run("a")(kyo2.Var.setUnit("b").andThen(kyo2.Var.get[String])).eval
+        val result = kyo2.Var.run("a")(kyo2.Var.setDiscard("b").andThen(kyo2.Var.get[String])).eval
         assert(result == "b")
     }
 
@@ -102,7 +102,7 @@ class VarTest extends Test:
 
     "inference" in {
         val a: Int < Var[Int]                    = kyo2.Var.get[Int]
-        val b: Unit < (Var[Int] & Var[String])   = a.map(i => kyo2.Var.setUnit(i.toString()))
+        val b: Unit < (Var[Int] & Var[String])   = a.map(i => kyo2.Var.setDiscard(i.toString()))
         val c: String < (Var[Int] & Var[String]) = b.andThen(kyo2.Var.set("c"))
         val d: String < Var[String]              = kyo2.Var.run(1)(c)
         val e: String < Any                      = kyo2.Var.run("t")(d)
