@@ -7,77 +7,77 @@ import scala.util.NotGiven
 
 object Loop:
 
-    abstract class Continue[V1]:
-        private[Loop] def _v1: V1
-    abstract class Continue2[V1, V2]:
-        private[Loop] def _v1: V1
-        private[Loop] def _v2: V2
-    abstract class Continue3[V1, V2, V3]:
-        private[Loop] def _v1: V1
-        private[Loop] def _v2: V2
-        private[Loop] def _v3: V3
+    abstract class Continue[A]:
+        private[Loop] def _1: A
+    abstract class Continue2[A, B]:
+        private[Loop] def _1: A
+        private[Loop] def _2: B
+    abstract class Continue3[A, B, C]:
+        private[Loop] def _1: A
+        private[Loop] def _2: B
+        private[Loop] def _3: C
     end Continue3
-    abstract class Continue4[V1, V2, V3, V4]:
-        private[Loop] def _v1: V1
-        private[Loop] def _v2: V2
-        private[Loop] def _v3: V3
-        private[Loop] def _v4: V4
+    abstract class Continue4[A, B, C, D]:
+        private[Loop] def _1: A
+        private[Loop] def _2: B
+        private[Loop] def _3: C
+        private[Loop] def _4: D
     end Continue4
 
-    opaque type Result[I, O]               = O | Continue[I]
-    opaque type Result2[I1, I2, O]         = O | Continue2[I1, I2]
-    opaque type Result3[I1, I2, I3, O]     = O | Continue3[I1, I2, I3]
-    opaque type Result4[I1, I2, I3, I4, O] = O | Continue4[I1, I2, I3, I4]
+    opaque type Result[A, O]           = O | Continue[A]
+    opaque type Result2[A, B, O]       = O | Continue2[A, B]
+    opaque type Result3[A, B, C, O]    = O | Continue3[A, B, C]
+    opaque type Result4[A, B, C, D, O] = O | Continue4[A, B, C, D]
 
     private val _continueUnit: Continue[Unit] =
         new Continue:
-            def _v1 = ()
+            def _1 = ()
 
     inline def continue[A]: Result[Unit, A] = _continueUnit
 
     @targetName("done0")
     def done[A]: Result[A, Unit] = ()
     @targetName("done1")
-    def done[I, O](v: O): Result[I, O] = v
+    def done[A, O](v: O): Result[A, O] = v
     @targetName("done2")
-    def done[I1, I2, O](v: O): Result2[I1, I2, O] = v
+    def done[A, B, O](v: O): Result2[A, B, O] = v
     @targetName("done3")
-    def done[I1, I2, I3, O](v: O): Result3[I1, I2, I3, O] = v
+    def done[A, B, C, O](v: O): Result3[A, B, C, O] = v
     @targetName("done4")
-    def done[I1, I2, I3, I4, O](v: O): Result4[I1, I2, I3, I4, O] = v
+    def done[A, B, C, D, O](v: O): Result4[A, B, C, D, O] = v
 
-    inline def continue[I, O, S](inline v: I): Result[I, O] =
+    inline def continue[A, O, S](inline v: A): Result[A, O] =
         new Continue:
-            def _v1 = v
+            def _1 = v
 
-    inline def continue[I1, I2, o](inline v1: I1, inline v2: I2): Result2[I1, I2, o] =
+    inline def continue[A, B, o](inline v1: A, inline v2: B): Result2[A, B, o] =
         new Continue2:
-            def _v1 = v1
-            def _v2 = v2
+            def _1 = v1
+            def _2 = v2
 
-    inline def continue[I1, I2, I3, O](inline v1: I1, inline v2: I2, inline v3: I3): Result3[I1, I2, I3, O] =
+    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Result3[A, B, C, O] =
         new Continue3:
-            def _v1 = v1
-            def _v2 = v2
-            def _v3 = v3
+            def _1 = v1
+            def _2 = v2
+            def _3 = v3
 
-    inline def continue[I1, I2, I3, I4, O](inline v1: I1, inline v2: I2, inline v3: I3, inline v4: I4): Result4[I1, I2, I3, I4, O] =
+    inline def continue[A, B, C, D, O](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Result4[A, B, C, D, O] =
         new Continue4:
-            def _v1 = v1
-            def _v2 = v2
-            def _v3 = v3
-            def _v4 = v4
+            def _1 = v1
+            def _2 = v2
+            def _3 = v3
+            def _4 = v4
 
-    inline def apply[I, O, S](inline input: I)(inline run: I => Result[I, O] < S)(using Frame): O < S =
-        def _loop(i1: I): O < S = loop(i1)
-        @tailrec def loop(i1: I): O < S =
+    inline def apply[A, O, S](inline input: A)(inline run: A => Result[A, O] < S)(using Frame): O < S =
+        def _loop(i1: A): O < S = loop(i1)
+        @tailrec def loop(i1: A): O < S =
             run(i1) match
-                case <(next: Continue[I] @unchecked) =>
-                    loop(next._v1)
-                case kyo @ <(_: Kyo[O | Continue[I], S] @unchecked) =>
+                case <(next: Continue[A] @unchecked) =>
+                    loop(next._1)
+                case kyo @ <(_: Kyo[O | Continue[A], S] @unchecked) =>
                     kyo.map {
-                        case next: Continue[I] @unchecked =>
-                            _loop(next._v1)
+                        case next: Continue[A] @unchecked =>
+                            _loop(next._1)
                         case res =>
                             res.asInstanceOf[O]
                     }
@@ -86,16 +86,16 @@ object Loop:
         loop(input)
     end apply
 
-    inline def apply[I1, I2, O, S](input1: I1, input2: I2)(inline run: (I1, I2) => Result2[I1, I2, O] < S)(using Frame): O < S =
-        def _loop(i1: I1, i2: I2): O < S = loop(i1, i2)
-        @tailrec def loop(i1: I1, i2: I2): O < S =
+    inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Result2[A, B, O] < S)(using Frame): O < S =
+        def _loop(i1: A, i2: B): O < S = loop(i1, i2)
+        @tailrec def loop(i1: A, i2: B): O < S =
             run(i1, i2) match
-                case <(next: Continue2[I1, I2] @unchecked) =>
-                    loop(next._v1, next._v2)
-                case kyo @ <(_: Kyo[o | Continue2[I1, I2], S] @unchecked) =>
+                case <(next: Continue2[A, B] @unchecked) =>
+                    loop(next._1, next._2)
+                case kyo @ <(_: Kyo[o | Continue2[A, B], S] @unchecked) =>
                     kyo.map {
-                        case next: Continue2[I1, I2] @unchecked =>
-                            _loop(next._v1, next._v2)
+                        case next: Continue2[A, B] @unchecked =>
+                            _loop(next._1, next._2)
                         case res =>
                             res.asInstanceOf[O]
                     }
@@ -104,18 +104,18 @@ object Loop:
         loop(input1, input2)
     end apply
 
-    inline def apply[I1, I2, I3, O, S](input1: I1, input2: I2, input3: I3)(
-        inline run: (I1, I2, I3) => Result3[I1, I2, I3, O] < S
+    inline def apply[A, B, C, O, S](input1: A, input2: B, input3: C)(
+        inline run: (A, B, C) => Result3[A, B, C, O] < S
     )(using Frame): O < S =
-        def _loop(i1: I1, i2: I2, i3: I3): O < S = loop(i1, i2, i3)
-        @tailrec def loop(i1: I1, i2: I2, i3: I3): O < S =
+        def _loop(i1: A, i2: B, i3: C): O < S = loop(i1, i2, i3)
+        @tailrec def loop(i1: A, i2: B, i3: C): O < S =
             run(i1, i2, i3) match
-                case <(next: Continue3[I1, I2, I3] @unchecked) =>
-                    loop(next._v1, next._v2, next._v3)
-                case kyo @ <(_: Kyo[O | Continue3[I1, I2, I3], S] @unchecked) =>
+                case <(next: Continue3[A, B, C] @unchecked) =>
+                    loop(next._1, next._2, next._3)
+                case kyo @ <(_: Kyo[O | Continue3[A, B, C], S] @unchecked) =>
                     kyo.map {
-                        case next: Continue3[I1, I2, I3] @unchecked =>
-                            _loop(next._v1, next._v2, next._v3)
+                        case next: Continue3[A, B, C] @unchecked =>
+                            _loop(next._1, next._2, next._3)
                         case res =>
                             res.asInstanceOf[O]
                     }
@@ -124,18 +124,18 @@ object Loop:
         loop(input1, input2, input3)
     end apply
 
-    inline def apply[I1, I2, I3, I4, O, S](input1: I1, input2: I2, input3: I3, input4: I4)(
-        inline run: (I1, I2, I3, I4) => Result4[I1, I2, I3, I4, O] < S
+    inline def apply[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
+        inline run: (A, B, C, D) => Result4[A, B, C, D, O] < S
     )(using Frame): O < S =
-        def _loop(i1: I1, i2: I2, i3: I3, i4: I4): O < S = loop(i1, i2, i3, i4)
-        @tailrec def loop(i1: I1, i2: I2, i3: I3, i4: I4): O < S =
+        def _loop(i1: A, i2: B, i3: C, i4: D): O < S = loop(i1, i2, i3, i4)
+        @tailrec def loop(i1: A, i2: B, i3: C, i4: D): O < S =
             run(i1, i2, i3, i4) match
-                case <(next: Continue4[I1, I2, I3, I4] @unchecked) =>
-                    loop(next._v1, next._v2, next._v3, next._v4)
-                case kyo @ <(_: Kyo[O | Continue4[I1, I2, I3, I4], S] @unchecked) =>
+                case <(next: Continue4[A, B, C, D] @unchecked) =>
+                    loop(next._1, next._2, next._3, next._4)
+                case kyo @ <(_: Kyo[O | Continue4[A, B, C, D], S] @unchecked) =>
                     kyo.map {
-                        case next: Continue4[I1, I2, I3, I4] @unchecked =>
-                            _loop(next._v1, next._v2, next._v3, next._v4)
+                        case next: Continue4[A, B, C, D] @unchecked =>
+                            _loop(next._1, next._2, next._3, next._4)
                         case res =>
                             res.asInstanceOf[O]
                     }
@@ -162,16 +162,16 @@ object Loop:
         loop(0)
     end indexed
 
-    inline def indexed[I, O, S](input: I)(inline run: (Int, I) => Result[I, O] < S)(using Frame): O < S =
-        def _loop(idx: Int, i1: I): O < S = loop(idx, i1)
-        @tailrec def loop(idx: Int, i1: I): O < S =
+    inline def indexed[A, O, S](input: A)(inline run: (Int, A) => Result[A, O] < S)(using Frame): O < S =
+        def _loop(idx: Int, i1: A): O < S = loop(idx, i1)
+        @tailrec def loop(idx: Int, i1: A): O < S =
             run(idx, i1) match
-                case <(next: Continue[I] @unchecked) =>
-                    loop(idx + 1, next._v1)
-                case kyo @ <(_: Kyo[O | Continue[I], S] @unchecked) =>
+                case <(next: Continue[A] @unchecked) =>
+                    loop(idx + 1, next._1)
+                case kyo @ <(_: Kyo[O | Continue[A], S] @unchecked) =>
                     kyo.map {
-                        case next: Continue[I] @unchecked =>
-                            _loop(idx + 1, next._v1)
+                        case next: Continue[A] @unchecked =>
+                            _loop(idx + 1, next._1)
                         case res =>
                             res.asInstanceOf[O]
                     }
@@ -180,16 +180,16 @@ object Loop:
         loop(0, input)
     end indexed
 
-    inline def indexed[I1, I2, O, S](input1: I1, input2: I2)(inline run: (Int, I1, I2) => Result2[I1, I2, O] < S)(using Frame): O < S =
-        def _loop(idx: Int, i1: I1, i2: I2): O < S = loop(idx, i1, i2)
-        @tailrec def loop(idx: Int, i1: I1, i2: I2): O < S =
+    inline def indexed[A, B, O, S](input1: A, input2: B)(inline run: (Int, A, B) => Result2[A, B, O] < S)(using Frame): O < S =
+        def _loop(idx: Int, i1: A, i2: B): O < S = loop(idx, i1, i2)
+        @tailrec def loop(idx: Int, i1: A, i2: B): O < S =
             run(idx, i1, i2) match
-                case <(next: Continue2[I1, I2] @unchecked) =>
-                    loop(idx + 1, next._v1, next._v2)
-                case kyo @ <(_: Kyo[O | Continue2[I1, I2], S] @unchecked) =>
+                case <(next: Continue2[A, B] @unchecked) =>
+                    loop(idx + 1, next._1, next._2)
+                case kyo @ <(_: Kyo[O | Continue2[A, B], S] @unchecked) =>
                     kyo.map {
-                        case next: Continue2[I1, I2] @unchecked =>
-                            _loop(idx + 1, next._v1, next._v2)
+                        case next: Continue2[A, B] @unchecked =>
+                            _loop(idx + 1, next._1, next._2)
                         case res =>
                             res.asInstanceOf[O]
                     }
@@ -198,18 +198,18 @@ object Loop:
         loop(0, input1, input2)
     end indexed
 
-    inline def indexed[I1, I2, I3, O, S](input1: I1, input2: I2, input3: I3)(
-        inline run: (Int, I1, I2, I3) => Result3[I1, I2, I3, O] < S
+    inline def indexed[A, B, C, O, S](input1: A, input2: B, input3: C)(
+        inline run: (Int, A, B, C) => Result3[A, B, C, O] < S
     )(using Frame): O < S =
-        def _loop(idx: Int, i1: I1, i2: I2, i3: I3): O < S = loop(idx, i1, i2, i3)
-        @tailrec def loop(idx: Int, i1: I1, i2: I2, i3: I3): O < S =
+        def _loop(idx: Int, i1: A, i2: B, i3: C): O < S = loop(idx, i1, i2, i3)
+        @tailrec def loop(idx: Int, i1: A, i2: B, i3: C): O < S =
             run(idx, i1, i2, i3) match
-                case <(next: Continue3[I1, I2, I3] @unchecked) =>
-                    loop(idx + 1, next._v1, next._v2, next._v3)
-                case kyo @ <(_: Kyo[O | Continue3[I1, I2, I3], S] @unchecked) =>
+                case <(next: Continue3[A, B, C] @unchecked) =>
+                    loop(idx + 1, next._1, next._2, next._3)
+                case kyo @ <(_: Kyo[O | Continue3[A, B, C], S] @unchecked) =>
                     kyo.map {
-                        case next: Continue3[I1, I2, I3] @unchecked =>
-                            _loop(idx + 1, next._v1, next._v2, next._v3)
+                        case next: Continue3[A, B, C] @unchecked =>
+                            _loop(idx + 1, next._1, next._2, next._3)
                         case res =>
                             res.asInstanceOf[O]
                     }
@@ -218,18 +218,18 @@ object Loop:
         loop(0, input1, input2, input3)
     end indexed
 
-    inline def indexed[I1, I2, I3, I4, O, S](input1: I1, input2: I2, input3: I3, input4: I4)(
-        inline run: (Int, I1, I2, I3, I4) => Result4[I1, I2, I3, I4, O] < S
+    inline def indexed[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
+        inline run: (Int, A, B, C, D) => Result4[A, B, C, D, O] < S
     )(using Frame): O < S =
-        def _loop(idx: Int, i1: I1, i2: I2, i3: I3, i4: I4): O < S = loop(idx, i1, i2, i3, i4)
-        @tailrec def loop(idx: Int, i1: I1, i2: I2, i3: I3, i4: I4): O < S =
+        def _loop(idx: Int, i1: A, i2: B, i3: C, i4: D): O < S = loop(idx, i1, i2, i3, i4)
+        @tailrec def loop(idx: Int, i1: A, i2: B, i3: C, i4: D): O < S =
             run(idx, i1, i2, i3, i4) match
-                case <(next: Continue4[I1, I2, I3, I4] @unchecked) =>
-                    loop(idx + 1, next._v1, next._v2, next._v3, next._v4)
-                case kyo @ <(_: Kyo[O | Continue4[I1, I2, I3, I4], S] @unchecked) =>
+                case <(next: Continue4[A, B, C, D] @unchecked) =>
+                    loop(idx + 1, next._1, next._2, next._3, next._4)
+                case kyo @ <(_: Kyo[O | Continue4[A, B, C, D], S] @unchecked) =>
                     kyo.map {
-                        case next: Continue4[I1, I2, I3, I4] @unchecked =>
-                            _loop(idx + 1, next._v1, next._v2, next._v3, next._v4)
+                        case next: Continue4[A, B, C, D] @unchecked =>
+                            _loop(idx + 1, next._1, next._2, next._3, next._4)
                         case res =>
                             res.asInstanceOf[O]
                     }
