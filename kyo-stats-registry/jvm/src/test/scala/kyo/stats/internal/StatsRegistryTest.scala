@@ -81,6 +81,17 @@ class StatsRegistryTest extends AnyFreeSpec {
             counter.add(10)
             assert(counter.get() == 11)
         }
+
+        "handle overflow" in {
+            val scope   = StatsRegistry.scope("counter", "overflow")
+            val counter = scope.counter("my_counter", "A test counter")
+            counter.add(Long.MaxValue - 10)
+            assert(counter.delta() == Long.MaxValue - 10)
+            assert(counter.getLast() == Long.MaxValue - 10)
+            counter.add(20)
+            assert(counter.delta() == 20)
+            assert(counter.getLast() == 10)
+        }
     }
 
     "histogram" - {
@@ -118,6 +129,19 @@ class StatsRegistryTest extends AnyFreeSpec {
             }
             assert(counterGauge.collect() == 1)
             assert(counterGauge.collect() == 2)
+        }
+
+        "handle overflow" in {
+            val scope = StatsRegistry.scope("counterGauge", "overflow")
+            var value = Long.MaxValue - 30
+            val counterGauge = scope.counterGauge("my_counter_gauge", "A test counter gauge") {
+                value += 20
+                value
+            }
+            assert(counterGauge.delta() == Long.MaxValue - 10)
+            assert(counterGauge.getLast() == Long.MaxValue - 10)
+            assert(counterGauge.delta() == 20)
+            assert(counterGauge.getLast() == 10)
         }
     }
 }
