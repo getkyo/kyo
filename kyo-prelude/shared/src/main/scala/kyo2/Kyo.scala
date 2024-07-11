@@ -29,7 +29,7 @@ object Kyo:
                                 else f(seq(idx)).map(u => Loop.continue(acc.append(u)))
                             }
                         case seq: List[A] =>
-                            Loop.transform(seq, Chunk.empty[B]) { (seq, acc) =>
+                            Loop(seq, Chunk.empty[B]) { (seq, acc) =>
                                 seq match
                                     case Nil          => Loop.done(acc.toSeq)
                                     case head :: tail => f(head).map(u => Loop.continue(tail, acc.append(u)))
@@ -50,7 +50,7 @@ object Kyo:
                                 else f(seq(idx)).andThen(Loop.continue)
                             }
                         case seq: List[A] =>
-                            Loop.transform(seq) {
+                            Loop(seq) {
                                 case Nil          => Loop.done
                                 case head :: tail => f(head).andThen(Loop.continue(tail))
                             }
@@ -72,7 +72,7 @@ object Kyo:
                                 else f(acc, seq(idx)).map(Loop.continue(_))
                             }
                         case seq: List[A] =>
-                            Loop.transform(seq, acc) { (seq, acc) =>
+                            Loop(seq, acc) { (seq, acc) =>
                                 seq match
                                     case Nil          => Loop.done(acc)
                                     case head :: tail => f(acc, head).map(Loop.continue(tail, _))
@@ -95,7 +95,7 @@ object Kyo:
                                 else seq(idx).map(u => Loop.continue(acc.append(u)))
                             }
                         case seq: List[A < S] =>
-                            Loop.transform(seq, Chunk.empty[A]) { (seq, acc) =>
+                            Loop(seq, Chunk.empty[A]) { (seq, acc) =>
                                 seq match
                                     case Nil          => Loop.done(acc.toSeq)
                                     case head :: tail => head.map(u => Loop.continue(tail, acc.append(u)))
@@ -116,7 +116,7 @@ object Kyo:
                                 else seq(idx).map(u => Loop.continue)
                             }
                         case seq: List[Unit < S] =>
-                            Loop.transform(seq) { seq =>
+                            Loop(seq) { seq =>
                                 seq match
                                     case Nil          => Loop.done
                                     case head :: tail => head.andThen(Loop.continue(tail))

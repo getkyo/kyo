@@ -4,27 +4,27 @@ import kyo2.*
 
 class LoopTest extends Test:
 
-    "transform" - {
+    "apply" - {
         "with a single iteration" in {
             assert(
-                Loop.transform(1)(i => if i < 5 then Loop.continue(i + 1) else Loop.done(i)).eval == 5
+                Loop(1)(i => if i < 5 then Loop.continue(i + 1) else Loop.done(i)).eval == 5
             )
         }
 
         "with multiple iterations" in {
             assert(
-                Loop.transform(1)(i => if i < 5 then Loop.continue(i + 1) else Loop.done(i)).eval == 5
+                Loop(1)(i => if i < 5 then Loop.continue(i + 1) else Loop.done(i)).eval == 5
             )
         }
 
         "with no iterations" in {
             assert(
-                Loop.transform(5)(i => if i < 5 then Loop.continue(i + 1) else Loop.done(i)).eval == 5
+                Loop(5)(i => if i < 5 then Loop.continue(i + 1) else Loop.done(i)).eval == 5
             )
         }
 
         "accumulate results in a List" in {
-            val result = Loop.transform((0, List.empty[Int])) { case (i, acc) =>
+            val result = Loop((0, List.empty[Int])) { case (i, acc) =>
                 if i < 5 then
                     Loop.continue((i + 1, i :: acc))
                 else
@@ -36,7 +36,7 @@ class LoopTest extends Test:
         "stack safety" in {
             val largeNumber = 100000
             assert(
-                Loop.transform(1)(i => if i < largeNumber then Loop.continue(i + 1) else Loop.done(i)).eval == largeNumber
+                Loop(1)(i => if i < largeNumber then Loop.continue(i + 1) else Loop.done(i)).eval == largeNumber
             )
         }
 
@@ -45,9 +45,9 @@ class LoopTest extends Test:
             val innerLoopIterations = 1000
 
             assert(
-                Loop.transform(0)(i =>
+                Loop(0)(i =>
                     if i < outerLoopIterations then
-                        Loop.continue(Loop.transform(0)(j =>
+                        Loop.continue(Loop(0)(j =>
                             if j < innerLoopIterations then Loop.continue(j + 1) else Loop.done(j)
                         ).eval)
                     else
@@ -62,13 +62,13 @@ class LoopTest extends Test:
             val level3Iterations = 100
 
             assert(
-                Loop.transform(0)(i =>
+                Loop(0)(i =>
                     if i < level1Iterations then
                         Loop.continue(
-                            Loop.transform(0)(j =>
+                            Loop(0)(j =>
                                 if j < level2Iterations then
                                     Loop.continue(
-                                        Loop.transform(0)(k => if k < level3Iterations then Loop.continue(k + 1) else Loop.done(k)).eval
+                                        Loop(0)(k => if k < level3Iterations then Loop.continue(k + 1) else Loop.done(k)).eval
                                     )
                                 else
                                     Loop.done(j)
@@ -81,7 +81,7 @@ class LoopTest extends Test:
         }
 
         "suspend at the beginning" in {
-            val result = Loop.transform(1)(i =>
+            val result = Loop(1)(i =>
                 Effect.defer {
                     if i < 5 then Loop.continue(i + 1) else Loop.done(i)
                 }
@@ -90,7 +90,7 @@ class LoopTest extends Test:
         }
 
         "suspend in the middle" in {
-            val result = Loop.transform(1)(i =>
+            val result = Loop(1)(i =>
                 if i < 3 then
                     Effect.defer(Loop.continue(i + 1))
                 else if i < 5 then
@@ -102,7 +102,7 @@ class LoopTest extends Test:
         }
 
         "suspend at the end" in {
-            val result = Loop.transform(1)(i =>
+            val result = Loop(1)(i =>
                 if i < 5 then
                     Loop.continue(i + 1)
                 else
@@ -112,29 +112,29 @@ class LoopTest extends Test:
         }
     }
 
-    "transform2" - {
+    "apply2" - {
         "with a single iteration" in {
             assert(
-                Loop.transform(1, 1)((i, j) => if i + j < 5 then Loop.continue(i + 1, j + 1) else Loop.done(i + j)).eval == 6
+                Loop(1, 1)((i, j) => if i + j < 5 then Loop.continue(i + 1, j + 1) else Loop.done(i + j)).eval == 6
             )
         }
 
         "with multiple iterations" in {
             assert(
-                Loop.transform(1, 1)((i, j) => if i + j < 10 then Loop.continue(i + 1, j + 1) else Loop.done(i + j)).eval == 10
+                Loop(1, 1)((i, j) => if i + j < 10 then Loop.continue(i + 1, j + 1) else Loop.done(i + j)).eval == 10
             )
         }
 
         "with no iterations" in {
             assert(
-                Loop.transform(5, 5)((i, j) => if i + j < 10 then Loop.continue(i + 1, j + 1) else Loop.done(i + j)).eval == 10
+                Loop(5, 5)((i, j) => if i + j < 10 then Loop.continue(i + 1, j + 1) else Loop.done(i + j)).eval == 10
             )
         }
 
         "stack safety" in {
             val largeNumber = 100000
             assert(
-                Loop.transform(1, 1)((i, j) =>
+                Loop(1, 1)((i, j) =>
                     if i + j < largeNumber then Loop.continue(i + 1, j + 1)
                     else Loop.done(i + j)
                 ).eval == largeNumber
@@ -145,11 +145,11 @@ class LoopTest extends Test:
             val outerLoopIterations = 1000
             val innerLoopIterations = 1000
             assert(
-                Loop.transform(0, 0)((i, j) =>
+                Loop(0, 0)((i, j) =>
                     if i < outerLoopIterations then
                         Loop.continue(
                             i + 1,
-                            Loop.transform(0)(k =>
+                            Loop(0)(k =>
                                 if k < innerLoopIterations then Loop.continue(k + 1)
                                 else Loop.done(k)
                             ).eval
@@ -162,7 +162,7 @@ class LoopTest extends Test:
         "stack safety with interleaved iterations" in {
             val iterations = 100000
             assert(
-                Loop.transform(0, 0)((i, j) =>
+                Loop(0, 0)((i, j) =>
                     if i + j < iterations then
                         if i % 2 == 0 then Loop.continue(i + 1, j)
                         else Loop.continue(i, j + 1)
@@ -172,7 +172,7 @@ class LoopTest extends Test:
         }
 
         "suspend at the beginning" in {
-            val result = Loop.transform(1, 1)((i, j) =>
+            val result = Loop(1, 1)((i, j) =>
                 Effect.defer {
                     if i + j < 5 then Loop.continue(i + 1, j + 1) else Loop.done(i + j)
                 }
@@ -181,7 +181,7 @@ class LoopTest extends Test:
         }
 
         "suspend in the middle" in {
-            val result = Loop.transform(1, 1)((i, j) =>
+            val result = Loop(1, 1)((i, j) =>
                 if i + j < 3 then
                     Effect.defer(Loop.continue(i + 1, j + 1))
                 else if i + j < 5 then
@@ -193,7 +193,7 @@ class LoopTest extends Test:
         }
 
         "suspend at the end" in {
-            val result = Loop.transform(1, 1)((i, j) =>
+            val result = Loop(1, 1)((i, j) =>
                 if i + j < 5 then
                     Loop.continue(i + 1, j + 1)
                 else
@@ -203,10 +203,10 @@ class LoopTest extends Test:
         }
     }
 
-    "transform3" - {
+    "apply3" - {
         "with a single iteration" in {
             assert(
-                Loop.transform(1, 1, 1)((i, j, k) =>
+                Loop(1, 1, 1)((i, j, k) =>
                     if i + j + k < 5 then Loop.continue(i + 1, j + 1, k + 1) else Loop.done(i + j + k)
                 ).eval == 6
             )
@@ -214,7 +214,7 @@ class LoopTest extends Test:
 
         "with multiple iterations" in {
             assert(
-                Loop.transform(1, 1, 1)((i, j, k) =>
+                Loop(1, 1, 1)((i, j, k) =>
                     if i + j + k < 10 then Loop.continue(i + 1, j + 1, k + 1) else Loop.done(i + j + k)
                 ).eval == 12
             )
@@ -222,7 +222,7 @@ class LoopTest extends Test:
 
         "with no iterations" in {
             assert(
-                Loop.transform(5, 5, 5)((i, j, k) =>
+                Loop(5, 5, 5)((i, j, k) =>
                     if i + j + k < 10 then Loop.continue(i + 1, j + 1, k + 1) else Loop.done(i + j + k)
                 ).eval == 15
             )
@@ -231,7 +231,7 @@ class LoopTest extends Test:
         "stack safety" in {
             val largeNumber = 100000
             assert(
-                Loop.transform(1, 1, 1)((i, j, k) =>
+                Loop(1, 1, 1)((i, j, k) =>
                     if i + j + k < largeNumber then Loop.continue(i + 1, j + 1, k + 1)
                     else Loop.done(i + j + k)
                 ).eval == largeNumber + 2
@@ -241,7 +241,7 @@ class LoopTest extends Test:
         "stack safety with interleaved iterations" in {
             val iterations = 100000
             assert(
-                Loop.transform(0, 0, 0)((i, j, k) =>
+                Loop(0, 0, 0)((i, j, k) =>
                     if i + j + k < iterations then
                         if i % 3 == 0 then Loop.continue(i + 1, j, k)
                         else if i % 3 == 1 then Loop.continue(i, j + 1, k)
@@ -252,7 +252,7 @@ class LoopTest extends Test:
         }
 
         "suspend at the beginning" in {
-            val result = Loop.transform(1, 1, 1)((i, j, k) =>
+            val result = Loop(1, 1, 1)((i, j, k) =>
                 Effect.defer {
                     if i + j + k < 5 then Loop.continue(i + 1, j + 1, k + 1) else Loop.done(i + j + k)
                 }
@@ -261,7 +261,7 @@ class LoopTest extends Test:
         }
 
         "suspend in the middle" in {
-            val result = Loop.transform(1, 1, 1)((i, j, k) =>
+            val result = Loop(1, 1, 1)((i, j, k) =>
                 if i + j + k < 3 then
                     Effect.defer(Loop.continue(i + 1, j + 1, k + 1))
                 else if i + j + k < 5 then
@@ -273,13 +273,94 @@ class LoopTest extends Test:
         }
 
         "suspend at the end" in {
-            val result = Loop.transform(1, 1, 1)((i, j, k) =>
+            val result = Loop(1, 1, 1)((i, j, k) =>
                 if i + j + k < 5 then
                     Loop.continue(i + 1, j + 1, k + 1)
                 else
                     Effect.defer(Loop.done(i + j + k))
             )
             assert(result.eval == 6)
+        }
+    }
+
+    "apply4" - {
+        "with a single iteration" in {
+            assert(
+                Loop(1, 1, 1, 1)((i, j, k, l) =>
+                    if i + j + k + l < 5 then Loop.continue(i + 1, j + 1, k + 1, l + 1) else Loop.done(i + j + k + l)
+                ).eval == 8
+            )
+        }
+
+        "with multiple iterations" in {
+            assert(
+                Loop(1, 1, 1, 1)((i, j, k, l) =>
+                    if i + j + k + l < 10 then Loop.continue(i + 1, j + 1, k + 1, l + 1) else Loop.done(i + j + k + l)
+                ).eval == 12
+            )
+        }
+
+        "with no iterations" in {
+            assert(
+                Loop(5, 5, 5, 5)((i, j, k, l) =>
+                    if i + j + k + l < 10 then Loop.continue(i + 1, j + 1, k + 1, l + 1) else Loop.done(i + j + k + l)
+                ).eval == 20
+            )
+        }
+
+        "stack safety" in {
+            val largeNumber = 100000
+            assert(
+                Loop(1, 1, 1, 1)((i, j, k, l) =>
+                    if i + j + k + l < largeNumber then Loop.continue(i + 1, j + 1, k + 1, l + 1)
+                    else Loop.done(i + j + k + l)
+                ).eval == largeNumber
+            )
+        }
+
+        "stack safety with interleaved iterations" in {
+            val iterations = 100000
+            assert(
+                Loop(0, 0, 0, 0)((i, j, k, l) =>
+                    if i + j + k + l < iterations then
+                        if i % 4 == 0 then Loop.continue(i + 1, j, k, l)
+                        else if i % 4 == 1 then Loop.continue(i, j + 1, k, l)
+                        else if i % 4 == 2 then Loop.continue(i, j, k + 1, l)
+                        else Loop.continue(i, j, k, l + 1)
+                    else Loop.done(i + j + k + l)
+                ).eval == iterations
+            )
+        }
+
+        "suspend at the beginning" in {
+            val result = Loop(1, 1, 1, 1)((i, j, k, l) =>
+                Effect.defer {
+                    if i + j + k + l < 5 then Loop.continue(i + 1, j + 1, k + 1, l + 1) else Loop.done(i + j + k + l)
+                }
+            )
+            assert(result.eval == 8)
+        }
+
+        "suspend in the middle" in {
+            val result = Loop(1, 1, 1, 1)((i, j, k, l) =>
+                if i + j + k + l < 3 then
+                    Effect.defer(Loop.continue(i + 1, j + 1, k + 1, i + 1))
+                else if i + j + k + l < 5 then
+                    Loop.continue(i + 1, j + 1, k + 1, l + 1)
+                else
+                    Loop.done(i + j + k + l)
+            )
+            assert(result.eval == 8)
+        }
+
+        "suspend at the end" in {
+            val result = Loop(1, 1, 1, 1)((i, j, k, l) =>
+                if i + j + k + l < 5 then
+                    Loop.continue(i + 1, j + 1, k + 1, l + 1)
+                else
+                    Effect.defer(Loop.done(i + j + k + l))
+            )
+            assert(result.eval == 8)
         }
     }
 
@@ -438,6 +519,51 @@ class LoopTest extends Test:
                     Effect.defer(Loop.done(i + j + k))
             )
             assert(result.eval == 18)
+        }
+    }
+
+    "indexed4" - {
+        "with a single iteration" in {
+            assert(
+                Loop.indexed(1, 1, 1, 1)((idx, i, j, k, l) =>
+                    if idx < 5 then Loop.continue(i + 1, j + 1, k + 1, l + 1) else Loop.done(i + j + k + l)
+                ).eval == 24
+            )
+        }
+
+        "with multiple iterations" in {
+            assert(
+                Loop.indexed(1, 1, 1, 1)((idx, i, j, k, l) =>
+                    if idx < 10 then Loop.continue(i + 1, j + 1, k + 1, l + 1) else Loop.done(i + j + k + l)
+                ).eval == 44
+            )
+        }
+
+        "with no iterations" in {
+            assert(
+                Loop.indexed(1, 1, 1, 1)((idx, i, j, k, l) =>
+                    if idx < 0 then Loop.continue(i + 1, j + 1, k + 1, l + 1) else Loop.done(i + j + k + l)
+                ).eval == 4
+            )
+        }
+
+        "stack safety" in {
+            val largeNumber = 100000
+            assert(
+                Loop.indexed(1, 1, 1, 1)((idx, i, j, k, l) =>
+                    if idx < largeNumber then Loop.continue(i + 1, j + 1, k + 1, l + 1) else Loop.done(i + j + k + l)
+                ).eval == 4 * largeNumber + 4
+            )
+        }
+
+        "suspend" in {
+            val result = Loop.indexed(1, 1, 1, 1)((idx, i, j, k, l) =>
+                if idx < 5 then
+                    Effect.defer(Loop.continue(i + 1, j + 1, k + 1, l + 1))
+                else
+                    Effect.defer(Loop.done(i + j + k + l))
+            )
+            assert(result.eval == 24)
         }
     }
 

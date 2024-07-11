@@ -190,7 +190,7 @@ object Stream:
         Stream[S, V](
             chunk.map { chunk =>
                 Emit.andMap(Chunk.empty[V]) { ack =>
-                    Loop.transform(chunk, ack) { (c, ack) =>
+                    Loop(chunk, ack) { (c, ack) =>
                         ack match
                             case Stop =>
                                 Loop.done(Stop)
