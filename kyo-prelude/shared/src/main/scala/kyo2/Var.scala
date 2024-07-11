@@ -47,7 +47,7 @@ object Var:
             [C] =>
                 (input, state, cont) =>
                     input match
-                        case input: Get =>
+                        case input: Get.type =>
                             (state, cont(state))
                         case input: Update[V] @unchecked =>
                             val nst = input(state)
@@ -66,9 +66,8 @@ object Var:
         runWith(state)(v)((state, result) => (state, result))
 
     object internal:
-        type Op[V] = Get | V | Update[V]
-        class Get
-        object Get extends Get
+        type Op[V] = Get.type | V | Update[V]
+        object Get
         abstract class Update[V]:
             def apply(v: V): V
     end internal
