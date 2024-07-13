@@ -170,9 +170,12 @@ class typeMapTest extends KyoTest:
             assert(e2.get[B] eq b)
             assert(e2.get[C] eq c)
         }
+    }
+
+    ".replaceAll" - {
         "superset" in {
             val e1: TypeMap[A & C] = TypeMap(a).add(c)
-            val e2                 = e1.replace(d)
+            val e2                 = e1.replaceAll(d)
             assert(e2.size == 1)
             assert(e2.get[A] eq d)
             assert(e2.get[C] eq d)

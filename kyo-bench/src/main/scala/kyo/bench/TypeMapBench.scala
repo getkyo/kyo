@@ -109,16 +109,16 @@ class TypeMapBench extends Bench(()):
         var e = kyoEnv
         while i < 10000 do
             e = kyoEnv
-                .add(new Foo040)
-                .add(new Foo041)
-                .add(new Foo042)
-                .add(new Foo043)
-                .add(new Foo044)
-                .add(new Foo045)
-                .add(new Foo046)
-                .add(new Foo047)
-                .add(new Foo048)
-                .add(new Foo049)
+                .replace(new Foo040)
+                .replace(new Foo041)
+                .replace(new Foo042)
+                .replace(new Foo043)
+                .replace(new Foo044)
+                .replace(new Foo045)
+                .replace(new Foo046)
+                .replace(new Foo047)
+                .replace(new Foo048)
+                .replace(new Foo049)
             bh.consume(e.get[Foo040])
             i += 1
         end while
@@ -239,16 +239,14 @@ object BenchmarkedEnvironment:
     final class Foo049
 
     def makeSmallKyo(): TypeMap[SmallEnv] =
-        TypeMap.empty
-            .add(new Bar000)
+        TypeMap(new Bar000)
             .add(new Bar001)
             .add(new Bar002)
             .add(new Bar003)
             .add(new Bar004)
 
     def makeLargeKyo(): TypeMap[Env] =
-        TypeMap.empty
-            .add(new Foo000)
+        TypeMap(new Foo000)
             .add(new Foo001)
             .add(new Foo002)
             .add(new Foo003)
