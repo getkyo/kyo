@@ -107,6 +107,52 @@ class typeMapTest extends KyoTest:
 
             assert(e.get[A] eq b)
         }
+        "deterministic" in {
+            trait A
+            trait B extends A
+            val b = new B {}
+            trait C extends A
+            val c = new C {}
+            trait D extends A
+            val d = new D {}
+            trait E extends A
+            val e = new E {}
+            trait F extends A
+            val f = new F {}
+            trait G extends A
+            val g = new G {}
+            trait H extends A
+            val h = new H {}
+            trait I extends A
+            val i = new I {}
+            trait J extends A
+            val j = new J {}
+            trait K extends A
+            val k = new K {}
+
+            // The current order is: b b d e e e h h j j
+            var map: TypeMap[A] = TypeMap(b)
+            assert(map.get[A] eq b)
+            map = map.add(c)
+            assert(map.get[A] eq b)
+            map = map.add(d)
+            // This fails.
+            assert(map.get[A] eq b)
+            map = map.add(e)
+            assert(map.get[A] eq b)
+            map = map.add(f)
+            assert(map.get[A] eq b)
+            map = map.add(g)
+            assert(map.get[A] eq b)
+            map = map.add(h)
+            assert(map.get[A] eq b)
+            map = map.add(i)
+            assert(map.get[A] eq b)
+            map = map.add(j)
+            assert(map.get[A] eq b)
+            map = map.add(k)
+            assert(map.get[A] eq b)
+        }
     }
 
     ".add" - {
