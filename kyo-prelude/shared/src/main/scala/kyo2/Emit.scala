@@ -74,4 +74,13 @@ object Emit:
 
     inline def runDiscard[V >: Nothing]: RunDiscardOps[V] = RunDiscardOps(())
 
+    final class RunAckOps[V](dummy: Unit) extends AnyVal:
+        def apply[A, S, S2](v: A < (Emit[V] & S))(f: V => Ack < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+            Effect.handle(tag, v)(
+                [C] => (input, cont) => f(input).map(cont)
+            )
+    end RunAckOps
+
+    inline def runAck[V >: Nothing]: RunAckOps[V] = RunAckOps(())
+
 end Emit
