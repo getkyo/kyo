@@ -8,13 +8,21 @@ object Types {
 
     def pending(t: String, s: String) = s"_root_.kyo.<[$t, $s]"
 
+    def pendingGrpcResponses(t: String) = s"_root_.kyo.<[$t, $grpcResponses]"
+
+    def pendingGrpcRequests(t: String) = s"_root_.kyo.<[$t, $grpcRequests]"
+
     val grpcResponses = "_root_.kyo.grpc.GrpcResponses"
 
-    def pendingGrpcResponses(t: String) = s"_root_.kyo.<[$t, $grpcResponses]"
+    val grpcRequests = "_root_.kyo.grpc.GrpcRequests"
 
     val serverHandler = "_root_.kyo.grpc.ServerHandler"
 
     val javaServiceDescriptor = "_root_.com.google.protobuf.Descriptors.ServiceDescriptor"
+
+    val callOptions = "_root_.io.grpc.CallOptions"
+
+    val channel = "_root_.io.grpc.Channel"
 
     val serverServiceDefinition = "_root_.io.grpc.ServerServiceDefinition"
 

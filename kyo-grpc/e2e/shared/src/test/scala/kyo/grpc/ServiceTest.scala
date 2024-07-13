@@ -81,7 +81,7 @@ class ServiceTest extends KyoTest:
             IOs(
                 ServerBuilder
                     .forPort(port)
-                    .addService(TestService.bindService(TestServiceImpl))
+                    .addService(TestService.server(TestServiceImpl))
                     .build()
                     .start()
             )
@@ -90,6 +90,9 @@ class ServiceTest extends KyoTest:
         }
 
     private def createClient(port: Int) =
+        createChannel(port).map(TestService.client)
+
+    private def createChannel(port: Int) =
         Resources.acquireRelease(
             IOs(
                 ManagedChannelBuilder
@@ -99,7 +102,7 @@ class ServiceTest extends KyoTest:
             )
         ) { channel =>
             IOs(channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)).unit
-        }.map(TestServiceGrpc.stub)
+        }
 
     private def findFreePort =
         val socket = new ServerSocket(0)

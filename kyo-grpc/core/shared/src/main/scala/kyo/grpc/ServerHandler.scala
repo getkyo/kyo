@@ -12,11 +12,14 @@ object ServerHandler:
 
     def unary[Request, Response: Flat](f: Request => Response < GrpcResponses): ServerCallHandler[Request, Response] =
         ServerCalls.asyncUnaryCall((request, observer) =>
-            val fiber = GrpcResponses.init(f(request))
-            val pendingIOs = fiber.onComplete { reply =>
-                IOs.attempt(reply).map(completeObserver(observer))
-            }
-            IOs.run(pendingIOs)
+            IOs.run(
+                for {
+                    fiber <- GrpcResponses.init(f(request))
+                    response <- fiber.onComplete { reply =>
+                        IOs.attempt(reply).map(completeObserver(observer))
+                    }
+                } yield response
+            )
         )
 
     // Copied from scalapb.grpc.Grpc#completeObserver.

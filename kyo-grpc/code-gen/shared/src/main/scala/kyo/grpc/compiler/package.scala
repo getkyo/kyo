@@ -23,6 +23,15 @@ package object compiler {
         def addMods(mods: Mod.Choose*): AddClassDsl =
             copy(builder = builder.appendMods(mods.map(_.choice)))
 
+        def addTypeParameters(params: String*): AddClassDsl =
+            copy(builder = builder.appendTypeParameters(params))
+
+        def addParameterList(params: (String, String)*): AddClassDsl =
+            copy(builder = builder.appendParameterList(params))
+
+        def addImplicitParameters(params: (String, String)*): AddClassDsl =
+            copy(builder = builder.appendImplicitParameters(params))
+
         def addParents(params: String*): AddClassDsl =
             copy(builder = builder.appendParents(params))
 
@@ -70,6 +79,9 @@ package object compiler {
 
         def addMods(mods: Mod.Choose*): AddTraitDsl =
             copy(builder = builder.appendMods(mods.map(_.choice)))
+
+        def addTypeParameters(params: String*): AddTraitDsl =
+            copy(builder = builder.appendTypeParameters(params))
 
         def addParents(params: String*): AddTraitDsl =
             copy(builder = builder.appendParents(params))

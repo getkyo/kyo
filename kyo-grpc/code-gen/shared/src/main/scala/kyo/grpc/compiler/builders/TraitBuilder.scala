@@ -7,6 +7,7 @@ final case class TraitBuilder(
     override val id: String,
     override val annotations: Vector[Doc] = Vector.empty,
     override val mods: Vector[Doc] = Vector.empty,
+    typeParameters: Vector[String] = Vector.empty,
     override val parents: Vector[Doc] = Vector.empty,
     override val body: Doc = Doc.empty
 ) extends TemplateBuilder {
@@ -19,6 +20,9 @@ final case class TraitBuilder(
     def appendMods(mods: Seq[String]): TraitBuilder =
         copy(mods = this.mods ++ mods.map(Doc.text))
 
+    def appendTypeParameters(params: Seq[String]): TraitBuilder =
+        copy(typeParameters = typeParameters ++ params)
+
     def appendParents(parents: Seq[String]): TraitBuilder =
         copy(parents = this.parents ++ parents.map(Doc.text))
 
@@ -28,6 +32,11 @@ final case class TraitBuilder(
     def setBody(body: Doc): TraitBuilder =
         copy(body = body)
 
-    // TODO: Add type parameters.
-    override protected def preamble: Doc = super.preamble
+    override protected def preamble: Doc = {
+        val typeParametersDocs = typeParameters.map(Doc.text)
+
+        when(typeParametersDocs.nonEmpty)(
+            "[" +: spreadList(typeParametersDocs) :+ "]"
+        )
+    }
 }

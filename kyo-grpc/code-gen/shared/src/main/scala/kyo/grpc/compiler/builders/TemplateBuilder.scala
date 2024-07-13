@@ -13,6 +13,7 @@ trait TemplateBuilder {
 
     protected def keyword: String
 
+    // TODO: What to call this?
     /** The part between the id and the template.
       *
       * It must contain leading whitespace and no trailing whitespace.

@@ -1,12 +1,16 @@
 package kyo.grpc.compiler.builders
 
 import org.typelevel.paiges.Doc
+import org.typelevel.paiges.ExtendedSyntax.*
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
 
 final case class ClassBuilder(
     override val id: String,
     override val annotations: Vector[Doc] = Vector.empty,
     override val mods: Vector[Doc] = Vector.empty,
+    typeParameters: Vector[String] = Vector.empty,
+    parameterLists: Vector[Seq[(String, String)]] = Vector.empty,
+    implicitParameters: Vector[(String, String)] = Vector.empty,
     // TODO: The first parent could be a constructor.
     override val parents: Vector[Doc] = Vector.empty,
     override val body: Doc = Doc.empty
@@ -20,6 +24,15 @@ final case class ClassBuilder(
     def appendMods(mods: Seq[String]): ClassBuilder =
         copy(mods = this.mods ++ mods.map(Doc.text))
 
+    def appendTypeParameters(params: Seq[String]): ClassBuilder =
+        copy(typeParameters = typeParameters ++ params)
+
+    def appendParameterList(params: Seq[(String, String)]): ClassBuilder =
+        copy(parameterLists = parameterLists :+ params)
+
+    def appendImplicitParameters(params: Seq[(String, String)]): ClassBuilder =
+        copy(implicitParameters = implicitParameters ++ params)
+
     def appendParents(parents: Seq[String]): ClassBuilder =
         copy(parents = this.parents ++ parents.map(Doc.text))
 
@@ -29,6 +42,28 @@ final case class ClassBuilder(
     def setBody(body: Doc): ClassBuilder =
         copy(body = body)
 
-    // TODO: Add type parameters.
-    override protected def preamble: Doc = super.preamble
+    override protected def preamble: Doc = {
+        val typeParametersDocs = typeParameters.map(Doc.text)
+
+        val typeParametersDoc = when(typeParametersDocs.nonEmpty)(
+            "[" +: spreadList(typeParametersDocs) :+ "]"
+        )
+
+        val parameterListsDoc = when(parameterLists.nonEmpty) {
+            val parametersDocs = parameterLists
+                .map(_.map(typedName))
+                .map(stackList)
+                .map(_.tightBracketBy(Doc.char('('), Doc.char(')')))
+            Doc.cat(parametersDocs)
+        }
+
+        val implicitParametersDoc = when(implicitParameters.nonEmpty) {
+            stackList(implicitParameters.map(typedName))
+                .tightBracketRightBy(Doc.text("(implicit"), Doc.char(')'))
+        }
+
+        val allParameterListsDoc = (parameterListsDoc + implicitParametersDoc).regrouped
+
+        typeParametersDoc + allParameterListsDoc
+    }
 }
