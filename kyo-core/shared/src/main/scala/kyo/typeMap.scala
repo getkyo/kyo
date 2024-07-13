@@ -65,21 +65,22 @@ object TypeMap:
 
         private[kyo] inline def <:<[T](tag: Tag[T]): Boolean =
             self.keySet.exists(_ <:< tag)
-
-        // TODO: Is this any better?
-        inline def replace2[B >: A](using tb: Tag[B]): ReplaceDsl[A, B] =
-            ReplaceDsl[A, B](self: TypeMap[A])
     end extension
 
-    class ReplaceDsl[A, B >: A](self: TypeMap[A])(using tb: Tag[B]):
-        def apply[C <: B](c: C)(using tc: Tag[C]): TypeMap[A & C] =
-            self.removed(tb.erased).updated(tc.erased, c)
-
     extension [A, B](self: TypeMap[A & B])
-        inline def replace[C <: A](c: C)(using inline ta: Tag[A], tc: Tag[C]): TypeMap[B & C] =
-            self.removed(ta.erased).updated(tc.erased, c)
+        def replace[C <: A](c: C)(using
+            tA: Tag[A],
+            tC: Tag[C],
+            evA: NotGiven[A =:= Any],
+            evB: NotGiven[B =:= Any]
+        ): TypeMap[B & C] =
+            self.removed(tA.erased).updated(tC.erased, c)
 
-        inline def replaceAll[C <: A](c: C)(using inline t: Tag[C]): TypeMap[B & C] =
+        def replaceAll[C <: A](c: C)(using
+            t: Tag[C],
+            evA: NotGiven[A =:= Any],
+            evB: NotGiven[B =:= Any]
+        ): TypeMap[B & C] =
             self.view.filterKeys(_ >:!> t).to[TypeMap[B]](HashMap).updated(t.erased, c)
     end extension
 

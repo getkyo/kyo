@@ -150,36 +150,69 @@ class typeMapTest extends KyoTest:
     ".replace" - {
         "replaces" in {
             val e1: TypeMap[A] = TypeMap(a)
-            val e2             = e1.replace(b)
+            val e2: TypeMap[A] = e1.replace(b)
             assert(e2.size == 1)
             assert(e2.get[A] eq b)
-            assert(e2.get[B] eq b)
         }
         "narrows" in {
             val e1: TypeMap[A] = TypeMap(a)
-            val e2             = e1.replace(b)
+            val e2: TypeMap[B] = e1.replace(b)
             assert(e2.size == 1)
             assert(e2.get[A] eq b)
             assert(e2.get[B] eq b)
         }
         "intersection" in {
             val e1: TypeMap[A & C] = TypeMap(a).add(c)
-            val e2                 = e1.replace(b)
+            val e2: TypeMap[B & C] = e1.replace(b)
             assert(e2.size == 2)
             assert(e2.get[A] eq b)
             assert(e2.get[B] eq b)
             assert(e2.get[C] eq c)
+        }
+        "does not widen before extending" in {
+            assertDoesNotCompile(
+                """val e1: TypeMap[A & C] = TypeMap(a).add(c)
+                  |val e2: TypeMap[B & C] = e1.replace(b)(using summon[Tag[Any]], summon[Tag[B]])
+                  |""".stripMargin
+            )
+        }
+        "replace widened" in pendingUntilFixed {
+            // This is a problem with the covariance of TypeMap not replace.
+            val e1: TypeMap[AnyRef] = TypeMap(a).add(c)
+            val e2: TypeMap[AnyRef] = e1.replace[AnyRef](d)
+            assert(e2.size == 1)
+            assert(e2.get[AnyRef] eq d)
         }
     }
 
     ".replaceAll" - {
         "superset" in {
             val e1: TypeMap[A & C] = TypeMap(a).add(c)
-            val e2                 = e1.replaceAll(d)
+            val e2: TypeMap[D]     = e1.replaceAll(d)
             assert(e2.size == 1)
             assert(e2.get[A] eq d)
             assert(e2.get[C] eq d)
             assert(e2.get[D] eq d)
+        }
+        "superset of widened" in {
+            val e1: TypeMap[AnyRef] = TypeMap(a).add(c)
+            val e2: TypeMap[D]      = e1.replaceAll(d)
+            assert(e2.size == 1)
+            assert(e2.get[AnyRef] eq d)
+        }
+        "no automatic widening" in {
+            assertDoesNotCompile(
+                """val e1: TypeMap[A & C]  = TypeMap(a).add(c)
+                  |val e2: TypeMap[AnyRef] = e1.replaceAll[AnyRef](d)
+                  |""".stripMargin
+            )
+        }
+        "replace widened" in pendingUntilFixed {
+            // This is a problem with the covariance of TypeMap not replaceAll.
+            val e1: TypeMap[AnyRef] = TypeMap(a).add(c)
+            val e2: TypeMap[AnyRef] = e1.replaceAll[AnyRef](d)
+            assert(e2.size == 1)
+            assert(e2.get[AnyRef] eq d)
         }
     }
 
