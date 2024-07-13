@@ -36,7 +36,7 @@ class TracePoolTest extends Test:
     "clear traces when returning to the pool" in {
         val local = new TestLocal
 
-        for _ <- 0 until TracePool.globalCapacity do
+        for _ <- 0 until TracePool.localCapacity * 1000 do
             val trace = local.borrow()
             trace.frames(0) = Frame.derive
             trace.frames(1) = Frame.derive
@@ -44,7 +44,7 @@ class TracePoolTest extends Test:
             local.release(trace)
         end for
 
-        for _ <- 0 until TracePool.globalCapacity do
+        for _ <- 0 until TracePool.localCapacity * 1000 do
             val recycledTrace = local.borrow()
             assert(recycledTrace.frames.forall(_ == null))
             assert(recycledTrace.index == 0)
