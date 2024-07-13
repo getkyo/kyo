@@ -149,8 +149,9 @@ lazy val `kyo-prelude` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-tag`)
         .in(file("kyo-prelude"))
-        .settings(
+        .settings( 
             `kyo-settings`,
+            libraryDependencies += "org.jctools"   % "jctools-core"  % "4.0.5",
             libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC27" % Test,
             libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % "2.1.2"      % Test,
             libraryDependencies += "org.javassist" % "javassist"     % "3.30.2-GA"  % Test
