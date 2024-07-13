@@ -1,5 +1,7 @@
 package kyo2
 
+import kyo2.Emit.Ack.*
+
 class EmitTest extends Test:
 
     "int" in {
@@ -65,6 +67,76 @@ class EmitTest extends Test:
             yield "a"
         val res = Emit.run(v)
         assert(res.eval == (Chunk(Set(1), Set(2), Set(3)), "a"))
+    }
+
+    "runAck" - {
+        "runAck" - {
+            "with pure function" in {
+                var seen = List.empty[Int]
+                def emits(i: Int): Unit < Emit[Int] =
+                    if i == 5 then ()
+                    else
+                        Emit.andMap(i) {
+                            case Stop        => ()
+                            case Continue(_) => emits(i + 1)
+                        }
+
+                Emit.runAck(emits(0)) { v =>
+                    seen :+= v
+                    if v < 3 then Emit.Ack.Continue()
+                    else Emit.Ack.Stop
+                }.eval
+                assert(seen == List(0, 1, 2, 3))
+            }
+
+            "with effects" in {
+                var seen = List.empty[Int]
+                def emits(i: Int): Unit < Emit[Int] =
+                    if i == 5 then ()
+                    else
+                        Emit.andMap(i) {
+                            case Stop        => ()
+                            case Continue(_) => emits(i + 1)
+                        }
+
+                val result =
+                    Env.run(3) {
+                        Var.runTuple(0) {
+                            Emit.runAck(emits(0)) { v =>
+                                for
+                                    threshold <- Env.get[Int]
+                                    count     <- Var.get[Int]
+                                    _         <- Var.set(count + 1)
+                                    _ = seen :+= v
+                                yield if v <= threshold then Emit.Ack.Continue() else Emit.Ack.Stop
+                            }
+                        }
+                    }.eval
+                assert(seen == List(0, 1, 2, 3, 4))
+                assert(result == (5, ()))
+            }
+
+            "early termination" in {
+                var seen = List.empty[Int]
+                def emits(i: Int): Unit < Emit[Int] =
+                    if i == 5 then ()
+                    else
+                        Emit.andMap(i) {
+                            case Stop        => ()
+                            case Continue(_) => emits(i + 1)
+                        }
+
+                val result = Abort.run[String] {
+                    Emit.runAck(emits(0)) { v =>
+                        seen :+= v
+                        if v < 3 then Emit.Ack.Continue()
+                        else Abort.fail("Reached 3")
+                    }
+                }.eval
+                assert(seen == List(0, 1, 2, 3))
+                assert(result == Result.fail("Reached 3"))
+            }
+        }
     }
 
 end EmitTest
