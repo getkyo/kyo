@@ -25,18 +25,19 @@ class Reporter(
 
     private var lastConsoleStatus: Status = null
 
-    if (enableTopConsoleMs > 0)
-        timer.schedule(enableTopConsoleMs.millis) {
+    if (enableTopConsoleMs > 0) {
+        val _ = timer.schedule(enableTopConsoleMs.millis) {
             val currentStatus = status()
             if (lastConsoleStatus ne null) {
                 println(Printer(currentStatus - lastConsoleStatus))
             }
             lastConsoleStatus = currentStatus
         }
+    }
 
     if (enableTopJMX) {
         close()
-        mBeanServer.registerMBean(new StandardMBean(this, classOf[TopMBean]), objectName)
+        val _ = mBeanServer.registerMBean(new StandardMBean(this, classOf[TopMBean]), objectName)
     }
 
     def getStatus() = status()

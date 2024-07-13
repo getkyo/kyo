@@ -1,20 +1,25 @@
 import com.github.sbt.git.SbtGit.GitKeys.useConsoleForROGit
+import org.scalajs.jsenv.nodejs.*
+import org.typelevel.scalacoptions.ScalacOption
+import org.typelevel.scalacoptions.ScalacOptions
+import org.typelevel.scalacoptions.ScalaVersion
 
 val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
 
-val zioVersion       = "2.1.3"
-val scalaTestVersion = "3.2.18"
+val zioVersion       = "2.1.6"
+val scalaTestVersion = "3.2.19"
 
-val compilerOptions = Seq(
-    "-encoding",
-    "utf8",
-    "-feature",
-    "-unchecked",
-    "-deprecation",
-    "-Wvalue-discard",
-    "-language:strictEquality"
+val compilerOptions = Set(
+    ScalacOptions.encoding("utf8"),
+    ScalacOptions.feature,
+    ScalacOptions.unchecked,
+    ScalacOptions.deprecation,
+    ScalacOptions.warnValueDiscard,
+    ScalacOptions.languageStrictEquality,
+    ScalacOptions.release("11"),
+    ScalacOptions.privateKindProjector
 )
 
 ThisBuild / scalaVersion           := scala3Version
@@ -29,8 +34,8 @@ lazy val `kyo-settings` = Seq(
     fork               := true,
     scalaVersion       := scala3Version,
     crossScalaVersions := List(scala3Version),
-    scalacOptions ++= compilerOptions,
-    scalafmtOnCompile := false,
+    scalacOptions ++= scalacOptionTokens(compilerOptions).value,
+    scalafmtOnCompile := true,
     organization      := "io.getkyo",
     homepage          := Some(url("https://getkyo.io")),
     licenses          := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")),
@@ -46,8 +51,7 @@ lazy val `kyo-settings` = Seq(
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     sonatypeProfileName                := "io.getkyo",
     Test / testOptions += Tests.Argument("-oDG"),
-    ThisBuild / versionScheme := Some("early-semver"),
-    scalacOptions ++= Seq("-release:11"),
+    ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
 )
@@ -62,6 +66,7 @@ lazy val kyoJVM = project
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
         `kyo-tag`.jvm,
+        `kyo-prelude`.jvm,
         `kyo-core`.jvm,
         `kyo-direct`.jvm,
         `kyo-stats-registry`.jvm,
@@ -85,6 +90,7 @@ lazy val kyoJS = project
     .aggregate(
         `kyo-scheduler`.js,
         `kyo-tag`.js,
+        `kyo-prelude`.js,
         `kyo-core`.js,
         `kyo-direct`.js,
         `kyo-stats-registry`.js,
@@ -101,12 +107,7 @@ lazy val `kyo-scheduler` =
         .in(file("kyo-scheduler"))
         .settings(
             `kyo-settings`,
-            scalacOptions --= Seq(
-                "-Wvalue-discard",
-                "-Wunused:all",
-                "-language:strictEquality"
-            ),
-            scalacOptions += "-Xsource:3",
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.6"          % Test
@@ -122,16 +123,11 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
     .dependsOn(`kyo-scheduler`)
     .settings(
         `kyo-settings`,
-        scalacOptions --= Seq(
-            "-Wvalue-discard",
-            "-Wunused:all",
-            "-language:strictEquality"
-        ),
         libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
         libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
     )
     .settings(
-        scalacOptions ++= (if (CrossVersion.partialVersion(scalaVersion.value).exists(_._1 == 2)) Seq("-Xsource:3") else Nil),
+        scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
         crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
     )
 
@@ -144,6 +140,20 @@ lazy val `kyo-tag` =
             `kyo-settings`,
             libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
             libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
+        )
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-prelude` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-tag`)
+        .in(file("kyo-prelude"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC27" % Test,
+            libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % "2.1.2"      % Test,
+            libraryDependencies += "org.javassist" % "javassist"     % "3.30.2-GA"  % Test
         )
         .jsSettings(`js-settings`)
 
@@ -160,9 +170,9 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.13",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC27" % Test,
-            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.3"      % Test,
+            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.6"      % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.6"      % Test,
-            libraryDependencies += "javassist"      % "javassist"       % "3.12.1.GA"  % Test
+            libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
         .jsSettings(`js-settings`)
 
@@ -185,12 +195,7 @@ lazy val `kyo-stats-registry` =
         .in(file("kyo-stats-registry"))
         .settings(
             `kyo-settings`,
-            scalacOptions --= Seq(
-                "-Wvalue-discard",
-                "-Wunused:all",
-                "-language:strictEquality"
-            ),
-            scalacOptions += "-Xsource:3",
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2",
             libraryDependencies += "org.scalatest"  %%% "scalatest"    % scalaTestVersion % Test,
             crossScalaVersions                       := List(scala3Version, scala212Version, scala213Version)
@@ -205,8 +210,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.39.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.39.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.40.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.40.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
 
@@ -257,8 +262,8 @@ lazy val `kyo-caliban` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.7.1",
-            libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.7.1",
+            libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.8.1",
+            libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.8.1",
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7" % Test
         )
 
@@ -324,6 +329,7 @@ lazy val `kyo-bench` =
         .in(file("kyo-bench"))
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-prelude`)
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-scheduler-zio`)
         .settings(
@@ -355,6 +361,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
             libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
+            libraryDependencies += "org.typelevel"       %% "cats-mtl"            % "1.4.0",
             libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.3.0",
             libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.3.0",
             libraryDependencies += "dev.zio"             %% "zio"                 % zioVersion,
@@ -364,7 +371,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.10.2",
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.27",
             libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.27",
-            libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0-RC8",
+            libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0-RC9",
             libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.8",
             libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.8",
             libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
@@ -406,11 +413,17 @@ lazy val readme =
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
         )
 
-import org.scalajs.jsenv.nodejs.*
-
 lazy val `js-settings` = Seq(
     Compile / doc / sources                     := Seq.empty,
     fork                                        := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.5.0" % "provided"
 )
+
+def scalacOptionToken(proposedScalacOption: ScalacOption) =
+    scalacOptionTokens(Set(proposedScalacOption))
+
+def scalacOptionTokens(proposedScalacOptions: Set[ScalacOption]) = Def.setting {
+    val version = ScalaVersion.fromString(scalaVersion.value).right.get
+    ScalacOptions.tokensForVersion(version, proposedScalacOptions)
+}

@@ -15,9 +15,7 @@ import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
-import scala.annotation.tailrec
 import scala.concurrent.ExecutionContext
-import scala.concurrent.duration.*
 import scala.util.control.NonFatal
 
 final class Scheduler(
@@ -72,7 +70,7 @@ final class Scheduler(
         var worker: Worker = null
         if (submitter eq null) {
             worker = Worker.current()
-            if ((worker ne null) && !worker.checkAvailability(nowMs))
+            if ((worker ne null) && ((worker eq submitter) || !worker.checkAvailability(nowMs)))
                 worker = null
         }
         if (worker eq null) {
@@ -194,7 +192,7 @@ final class Scheduler(
                 if (worker ne null) {
                     if (position >= currentWorkers)
                         worker.drain()
-                    worker.checkAvailability(nowMs)
+                    val _ = worker.checkAvailability(nowMs)
                 }
                 position += 1
             }

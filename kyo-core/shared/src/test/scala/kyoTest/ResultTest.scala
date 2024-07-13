@@ -105,10 +105,10 @@ class ResultTest extends KyoTest:
 
     "filter" - {
         "returns itself if the predicate holds for Success" in {
-            assert(Success(2).filter(_ % 2 == 0) == Success(2))
+            assert(Result.success(2).filter(_ % 2 == 0) == Success(2))
         }
         "returns Failure if the predicate doesn't hold for Success" in {
-            assert(Success(1).filter(_ % 2 == 0).isFailure)
+            assert(Result.success(1).filter(_ % 2 == 0).isFailure)
         }
         "returns itself for Failure" in {
             val ex = new Exception("error")
