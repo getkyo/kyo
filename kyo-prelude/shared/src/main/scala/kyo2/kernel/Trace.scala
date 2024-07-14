@@ -82,7 +82,7 @@ object Trace:
         final private[kernel] def enrich(ex: Throwable): Unit =
             val size = frames.size
             if size > 0 && !ex.isInstanceOf[NoStackTrace] then
-                val trace = frames.filter(_ != null).map(_.parse)
+                val trace = frames.withFilter(_ != null).map(_.parse)
                 val toPad = trace.map(_.snippetShort.size).maxOption.getOrElse(0) + 1
                 val elements =
                     trace.foldLeft(List.empty[Frame.Parsed]) {
