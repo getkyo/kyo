@@ -130,13 +130,12 @@ class typeMapTest extends KyoTest:
             trait K extends A
             val k = new K {}
 
-            // The current order is: b b d e e e h h j j
             var map: TypeMap[A] = TypeMap(b)
+
             assert(map.get[A] eq b)
             map = map.add(c)
             assert(map.get[A] eq b)
             map = map.add(d)
-            // This fails.
             assert(map.get[A] eq b)
             map = map.add(e)
             assert(map.get[A] eq b)
@@ -150,6 +149,27 @@ class typeMapTest extends KyoTest:
             assert(map.get[A] eq b)
             map = map.add(j)
             assert(map.get[A] eq b)
+            map = map.add(k)
+            assert(map.get[A] eq b)
+
+            map = map.add(b)
+            assert(map.get[A] eq c)
+            map = map.add(c)
+            assert(map.get[A] eq d)
+            map = map.add(d)
+            assert(map.get[A] eq e)
+            map = map.add(e)
+            assert(map.get[A] eq f)
+            map = map.add(f)
+            assert(map.get[A] eq g)
+            map = map.add(g)
+            assert(map.get[A] eq h)
+            map = map.add(h)
+            assert(map.get[A] eq i)
+            map = map.add(i)
+            assert(map.get[A] eq j)
+            map = map.add(j)
+            assert(map.get[A] eq k)
             map = map.add(k)
             assert(map.get[A] eq b)
         }
