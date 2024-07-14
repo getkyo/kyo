@@ -645,6 +645,53 @@ class SafepointTest extends Test:
                 assert(count == 1)
                 assert(interceptorCalls == 1)
             }
+            "executes ensure function without interceptor" in {
+                var ensureExecuted    = false
+                var interceptorActive = false
+
+                val interceptor = new Safepoint.Interceptor:
+                    override def addEnsure(f: () => Unit): Unit    = {}
+                    override def removeEnsure(f: () => Unit): Unit = {}
+                    def enter(frame: Frame, value: Any): Boolean   = true
+                    def exit(): Unit                               = {}
+
+                val effect = Safepoint.propagating(interceptor) {
+                    Safepoint.ensure {
+                        ensureExecuted = true
+                        interceptorActive = Safepoint.get.interceptor != null
+                    } {
+                        42
+                    }
+                }
+
+                assert(effect.eval == 42)
+                assert(ensureExecuted)
+                assert(!interceptorActive)
+            }
+
+            "executes ensure function without interceptor even on exception" in {
+                var ensureExecuted    = false
+                var interceptorActive = false
+
+                val interceptor = new Safepoint.Interceptor:
+                    override def addEnsure(f: () => Unit): Unit    = {}
+                    override def removeEnsure(f: () => Unit): Unit = {}
+                    def enter(frame: Frame, value: Any): Boolean   = true
+                    def exit(): Unit                               = {}
+
+                assertThrows[RuntimeException] {
+                    Safepoint.propagating(interceptor) {
+                        Safepoint.ensure {
+                            ensureExecuted = true
+                            interceptorActive = Safepoint.get.interceptor != null
+                        } {
+                            throw new RuntimeException("Test exception")
+                        }
+                    }.eval
+                }
+                assert(ensureExecuted)
+                assert(!interceptorActive)
+            }
         }
     }
 

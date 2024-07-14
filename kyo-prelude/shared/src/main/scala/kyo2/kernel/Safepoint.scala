@@ -2,6 +2,7 @@ package kyo2.kernel
 
 import internal.*
 import java.util.Arrays
+import java.util.concurrent.atomic.AtomicBoolean
 import kyo2.isNull
 import kyo2.kernel.Safepoint.*
 import scala.annotation.tailrec
@@ -97,36 +98,47 @@ object Safepoint:
         immediate(p)(loop(v))
     end propagating
 
-    private[kyo2] def ensure[A, S](f: => Unit)(v: => A < S)(using safepoint: Safepoint, _frame: Frame): A < S =
+    abstract private[kyo2] class Ensure extends AtomicBoolean with Function0[Unit]:
+        def run: Unit
+        final def apply(): Unit =
+            if compareAndSet(false, true) then
+                val safepoint = Safepoint.get
+                val prev      = safepoint.interceptor
+                safepoint.interceptor = null
+                try run
+                finally safepoint.interceptor = prev
+    end Ensure
+
+    private inline def ensuring[A](ensure: Ensure)(inline thunk: => A)(using safepoint: Safepoint): A =
+        val interceptor = safepoint.interceptor
+        if !isNull(interceptor) then interceptor.addEnsure(ensure)
+        try thunk
+        catch
+            case ex if NonFatal(ex) =>
+                ensure()
+                throw ex
+        end try
+    end ensuring
+
+    private[kyo2] inline def ensure[A, S](inline f: => Unit)(inline v: => A < S)(using safepoint: Safepoint, inline _frame: Frame): A < S =
         // ensures the function is called once even if an
         // interceptor executes it multiple times
-        lazy val f0 = f
-        val ensure  = () => f0
+        val ensure = new Ensure:
+            def run: Unit = f
 
-        inline def run[A](inline thunk: => A)(using safepoint: Safepoint): A =
-            val interceptor = safepoint.interceptor
-            if !isNull(interceptor) then interceptor.addEnsure(ensure)
-            try thunk
-            catch
-                case ex if NonFatal(ex) =>
-                    ensure()
-                    throw ex
-            end try
-        end run
-
-        def loop(v: A < S)(using safepoint: Safepoint): A < S =
+        def ensureLoop(v: A < S)(using safepoint: Safepoint): A < S =
             v match
                 case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
                     new KyoContinue[IX, OX, EX, Any, A, S](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint): A < S =
-                            run(loop(kyo(v, context)))
+                            ensuring(ensure)(ensureLoop(kyo(v, context)))
                 case _ =>
                     val interceptor = safepoint.interceptor
                     if !isNull(interceptor) then interceptor.removeEnsure(ensure)
                     ensure()
                     v
-        run(loop(v))
+        ensuring(ensure)(ensureLoop(v))
     end ensure
 
     private[kernel] inline def eval[A](
