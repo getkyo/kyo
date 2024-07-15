@@ -12,13 +12,16 @@ object TypeMap:
             throw new RuntimeException(s"fatal: kyo.TypeMap of contents [${self.show}] missing value of type: [${t.showTpe}].")
 
         def get[B >: A](using t: Tag[B]): B =
-            val it = self.iterator
-            while it.hasNext do
-                val (tag, item) = it.next()
-                if tag <:< t then
-                    return item.asInstanceOf[B]
-            end while
-            fatal
+            def search: Any =
+                val it = self.iterator
+                while it.hasNext do
+                    val (tag, item) = it.next()
+                    if tag <:< t then
+                        return item
+                end while
+                fatal
+            end search
+            self.getOrElse(t.erased, search).asInstanceOf[B]
         end get
 
         inline def add[B](b: B)(using inline t: Tag[B]): TypeMap[A & B] =
