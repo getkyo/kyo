@@ -315,24 +315,29 @@ lazy val `kyo-grpc-jvm` =
         .jvm
         .aggregate(`protoc-gen-kyo-grpc`.componentProjects.map(p => p: ProjectReference) *)
 
+// TODO: Split this into client and server
 lazy val `kyo-grpc-core` =
     crossProject(JVMPlatform, JSPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-grpc") / "core")
         .dependsOn(`kyo-core`)
-        .settings(
-            `kyo-settings`,
-            // Only Scala 3 since that is all kyo-core supports.
+        .settings(`kyo-settings`)
+        .jvmSettings(
             libraryDependencies ++= Seq(
+                "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
                 "io.grpc" % "grpc-api" % "1.64.0",
                 // It is a little unusual to include this here but it greatly reduces the amount of generated code.
                 "io.grpc" % "grpc-stub" % "1.64.0"
             )
         ).jsSettings(
-            `js-settings`
+            `js-settings`,
+            libraryDependencies ++= Seq( //
+                "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0"
+            )
         )
 
+// TODO: Split this into shared, client, and server
 // TODO: Do we need code gen for JS?
 lazy val `kyo-grpc-code-gen` =
     crossProject(JVMPlatform, JSPlatform)
@@ -401,7 +406,6 @@ lazy val `kyo-grpc-e2e` =
         ).jvmSettings(
             codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
             libraryDependencies ++= Seq(
-                "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
                 "io.grpc" % "grpc-netty" % "1.64.0"
             )
         ).jsSettings(

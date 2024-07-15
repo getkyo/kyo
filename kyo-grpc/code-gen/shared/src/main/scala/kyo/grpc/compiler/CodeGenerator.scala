@@ -50,6 +50,9 @@ object CodeGenerator extends CodeGenApp {
                 CodeGenResponse.fail(error)
         }
 
+    // TODO: There should be a separate code generator for client and server.
+    //  It is virtually never the case that you have both in the same project so they should be separate.
+
     // TODO
     private def singleFile(file: FileDescriptor) =
         ???

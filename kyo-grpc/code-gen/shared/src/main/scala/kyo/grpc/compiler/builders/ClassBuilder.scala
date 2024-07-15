@@ -1,5 +1,6 @@
 package kyo.grpc.compiler.builders
 
+import kyo.grpc.compiler.builders
 import org.typelevel.paiges.Doc
 import org.typelevel.paiges.ExtendedSyntax.*
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
@@ -9,8 +10,8 @@ final case class ClassBuilder(
     override val annotations: Vector[Doc] = Vector.empty,
     override val mods: Vector[Doc] = Vector.empty,
     typeParameters: Vector[String] = Vector.empty,
-    parameterLists: Vector[Seq[(String, String)]] = Vector.empty,
-    implicitParameters: Vector[(String, String)] = Vector.empty,
+    parameterLists: Vector[Seq[Parameter]] = Vector.empty,
+    implicitParameters: Vector[Parameter] = Vector.empty,
     // TODO: The first parent could be a constructor.
     override val parents: Vector[Doc] = Vector.empty,
     override val body: Doc = Doc.empty
@@ -27,10 +28,10 @@ final case class ClassBuilder(
     def appendTypeParameters(params: Seq[String]): ClassBuilder =
         copy(typeParameters = typeParameters ++ params)
 
-    def appendParameterList(params: Seq[(String, String)]): ClassBuilder =
+    def appendParameterList(params: Seq[Parameter]): ClassBuilder =
         copy(parameterLists = parameterLists :+ params)
 
-    def appendImplicitParameters(params: Seq[(String, String)]): ClassBuilder =
+    def appendImplicitParameters(params: Seq[Parameter]): ClassBuilder =
         copy(implicitParameters = implicitParameters ++ params)
 
     def appendParents(parents: Seq[String]): ClassBuilder =
@@ -49,16 +50,10 @@ final case class ClassBuilder(
             "[" +: spreadList(typeParametersDocs) :+ "]"
         )
 
-        val parameterListsDoc = when(parameterLists.nonEmpty) {
-            val parametersDocs = parameterLists
-                .map(_.map(typedName))
-                .map(stackList)
-                .map(_.tightBracketBy(Doc.char('('), Doc.char(')')))
-            Doc.cat(parametersDocs)
-        }
+        val parameterListsDoc = builders.parameterLists(parameterLists)
 
         val implicitParametersDoc = when(implicitParameters.nonEmpty) {
-            stackList(implicitParameters.map(typedName))
+            stackList(implicitParameters.map(parameter))
                 .tightBracketRightBy(Doc.text("(implicit"), Doc.char(')'))
         }
 

@@ -10,9 +10,9 @@ type GrpcResponses >: GrpcResponses.Effects <: GrpcResponses.Effects
 object GrpcResponses:
     type Effects = Fibers & Aborts[StatusException]
 
-    def init[T: Flat](t: => T < GrpcResponses): Fiber[T] < IOs =
-        def pendingFibers: Try[T] < Fibers =
-            Aborts.run[StatusException].apply[StatusException, T, Fibers, StatusException, Any](t).map(_.toTry)
+    def init[Response: Flat](t: => Response < GrpcResponses): Fiber[Response] < IOs =
+        def pendingFibers: Try[Response] < Fibers =
+            Aborts.run[StatusException].apply[StatusException, Response, Fibers, StatusException, Any](t).map(_.toTry)
 
         Fibers.init(pendingFibers).map(_.transform(_.fold(Fiber.fail, Fiber.value)))
     end init

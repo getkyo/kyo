@@ -1,13 +1,12 @@
 package kyo.grpc
 
+import io.grpc.stub.{ServerCalls, StreamObserver}
 import io.grpc.{ServerCallHandler, Status, StatusException, StatusRuntimeException}
-import io.grpc.stub.ServerCalls
-import io.grpc.stub.StreamObserver
 import kyo.*
-import kyo.IOs
 
 import scala.util.Try
 
+// TODO: Rename.
 object ServerHandler:
 
     def unary[Request, Response: Flat](f: Request => Response < GrpcResponses): ServerCallHandler[Request, Response] =

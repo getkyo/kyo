@@ -18,8 +18,6 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
 
     private val scalapbServicePrinter = new scalapb.compiler.GrpcServicePrinter(service, implicits)
 
-    private val serviceStubName = (service.companionObject / service.stub).fullNameWithMaybeRoot
-
     def result: CodeGeneratorResponse.File = {
         CodeGeneratorResponse.File.newBuilder()
             .setName(s"$dir/$name.scala")
@@ -33,6 +31,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             .newline
             .call(scalapbServicePrinter.generateScalaDoc(service))
             .call(printServiceTrait)
+            .newline
             .call(printServiceObject)
             .result()
 
@@ -46,8 +45,8 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             }
 
     private def printServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
-        def requestParameter          = "request"          -> method.inputType.scalaType
-        def responseObserverParameter = "responseObserver" -> Types.streamObserver(method.outputType.scalaType)
+        def requestParameter          = "request"          :- method.inputType.scalaType
+        def responseObserverParameter = "responseObserver" :- Types.streamObserver(method.outputType.scalaType)
         // TODO: Only unary has the correct types.
         val parameters = method.streamType match {
             case StreamType.Unary           => Seq(requestParameter)
@@ -79,13 +78,13 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
                     .newline
                     .call(printClientTrait)
                     .newline
-                    .call(printStubWrapper)
+                    .call(printClientImpl)
             }
 
     private def printServerMethod(fp: FunctionalPrinter): FunctionalPrinter = {
         val methods = service.methods.map(printAddMethod)
         fp.addMethod("server")
-            .addParameterList("serviceImpl" -> name)
+            .addParameterList("serviceImpl" :- name)
             .addReturnType(Types.serverServiceDefinition)
             .addBody(
                 _.add(s"""${Types.serverServiceDefinition}.builder(${service.grpcDescriptor.fullNameWithMaybeRoot})""")
@@ -107,6 +106,17 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             .add(")")
     }
 
+    private def printClientMethod(fp: FunctionalPrinter): FunctionalPrinter =
+        fp.addMethod("client")
+            .addParameterList(//
+                "channel" :- Types.channel,
+                "options" :- Types.callOptions := (Types.callOptions + ".DEFAULT")
+            )
+            .addReturnType("Client")
+            .addBody(
+                _.add(s"ClientImpl(channel, options)")
+            )
+
     private def printClientTrait(fp: FunctionalPrinter): FunctionalPrinter =
         fp.addTrait("Client")
             .addBody {
@@ -116,8 +126,8 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             }
 
     private def printClientServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
-        def requestParameter          = "request"          -> method.inputType.scalaType
-        def responseObserverParameter = "responseObserver" -> Types.streamObserver(method.outputType.scalaType)
+        def requestParameter          = "request"          :- method.inputType.scalaType
+        def responseObserverParameter = "responseObserver" :- Types.streamObserver(method.outputType.scalaType)
         // TODO: Only unary has the correct types.
         val parameters = method.streamType match {
             case StreamType.Unary           => Seq(requestParameter)
@@ -139,19 +149,22 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             .addReturnType(returnType)
     }
 
-    private def printStubWrapper(fp: FunctionalPrinter): FunctionalPrinter =
-        fp.addClass("ClientStubWrapper")
-            .addParameterList("stub" -> serviceStubName)
+    private def printClientImpl(fp: FunctionalPrinter): FunctionalPrinter =
+        fp.addClass("ClientImpl")
+            .addParameterList(//
+                "channel" :- Types.channel,
+                "options" :- Types.callOptions
+            )
             .addParents("Client")
             .addBody {
                 _.print(service.getMethods.asScala) { (fp, md) =>
-                    printStubWrapperMethod(fp, md)
+                    printClientImplMethod(fp, md)
                 }
             }
 
-    private def printStubWrapperMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
-        def requestParameter          = "request"          -> method.inputType.scalaType
-        def responseObserverParameter = "responseObserver" -> Types.streamObserver(method.outputType.scalaType)
+    private def printClientImplMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
+        def requestParameter          = "request"          :- method.inputType.scalaType
+        def responseObserverParameter = "responseObserver" :- Types.streamObserver(method.outputType.scalaType)
         // TODO: Only unary has the correct types.
         val parameters = method.streamType match {
             case StreamType.Unary           => Seq(requestParameter)
@@ -164,6 +177,12 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.ClientStreaming => Types.streamObserver(method.inputType.scalaType)
             case StreamType.ServerStreaming => Types.unit
             case StreamType.Bidirectional   => Types.streamObserver(method.inputType.scalaType)
+        }
+        val delegate = method.streamType match {
+            case StreamType.Unary           => s"asyncUnaryCall(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
+            case StreamType.ClientStreaming => ???
+            case StreamType.ServerStreaming => ???
+            case StreamType.Bidirectional   => ???
         }
         fp
             .call(scalapbServicePrinter.generateScalaDoc(method))
@@ -173,15 +192,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             .addParameterList(parameters*)
             .addReturnType(returnType)
             .addBody(
-                _.add("???")
+                _.add(s"${Types.clientCalls}.$delegate")
             )
     }
-
-    private def printClientMethod(fp: FunctionalPrinter): FunctionalPrinter =
-        fp.addMethod("client")
-            .addParameterList("channel" -> Types.channel)
-            .addReturnType("Client")
-            .addBody(
-                _.add(s"ClientStubWrapper($serviceStubName(channel))")
-            )
 }

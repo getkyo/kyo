@@ -29,6 +29,19 @@ package object builders {
         name +: (Doc.text(": ") + Doc.text(tpe))
     }
 
+    def parameter(parameter: Parameter): Doc =
+        typedName((parameter.name, parameter.typeName)) +
+            parameter.default.fold(Doc.empty)(default => Doc.text(" = ") + Doc.text(default))
+
+    def parameterLists(parameterss: Vector[Seq[Parameter]]): Doc =
+        when(parameterss.nonEmpty) {
+            val parametersDocs = parameterss
+                .map(_.map(parameter))
+                .map(stackList)
+                .map(_.tightBracketBy(Doc.char('('), Doc.char(')')))
+            Doc.cat(parametersDocs)
+        }
+
     def printToDoc(f: PrinterEndo): Doc =
         Docx.literal(f(new FunctionalPrinter()).result())
 }

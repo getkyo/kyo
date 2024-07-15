@@ -26,10 +26,10 @@ package object compiler {
         def addTypeParameters(params: String*): AddClassDsl =
             copy(builder = builder.appendTypeParameters(params))
 
-        def addParameterList(params: (String, String)*): AddClassDsl =
+        def addParameterList(params: Parameter*): AddClassDsl =
             copy(builder = builder.appendParameterList(params))
 
-        def addImplicitParameters(params: (String, String)*): AddClassDsl =
+        def addImplicitParameters(params: Parameter*): AddClassDsl =
             copy(builder = builder.appendImplicitParameters(params))
 
         def addParents(params: String*): AddClassDsl =
@@ -110,10 +110,10 @@ package object compiler {
         def addTypeParameters(params: String*): AddMethodDsl =
             copy(builder = builder.appendTypeParameters(params))
 
-        def addParameterList(params: (String, String)*): AddMethodDsl =
+        def addParameterList(params: Parameter*): AddMethodDsl =
             copy(builder = builder.appendParameterList(params))
 
-        def addImplicitParameters(params: (String, String)*): AddMethodDsl =
+        def addImplicitParameters(params: Parameter*): AddMethodDsl =
             copy(builder = builder.appendImplicitParameters(params))
 
         def addReturnType(returnType: String): AddMethodDsl =
@@ -157,5 +157,10 @@ package object compiler {
 
         def addDoc(doc: Doc): FunctionalPrinter =
             fp.add(doc.render(WIDTH))
+    }
+
+    implicit class StringParameterOps(val parameterName: String) extends AnyVal {
+
+        def :-(typeName: String): Parameter = Parameter(parameterName, typeName, None)
     }
 }

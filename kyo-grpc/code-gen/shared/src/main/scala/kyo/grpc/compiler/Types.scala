@@ -12,6 +12,8 @@ object Types {
 
     def pendingGrpcRequests(t: String) = s"_root_.kyo.<[$t, $grpcRequests]"
 
+    val clientCalls = "_root_.kyo.grpc.ClientCalls"
+
     val grpcResponses = "_root_.kyo.grpc.GrpcResponses"
 
     val grpcRequests = "_root_.kyo.grpc.GrpcRequests"

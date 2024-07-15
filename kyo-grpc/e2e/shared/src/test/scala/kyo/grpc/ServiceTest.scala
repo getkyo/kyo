@@ -19,7 +19,7 @@ class ServiceTest extends KyoTest:
                 client <- createClientAndServer
                 message = "Hello"
                 request = Echo(message)
-                response <- Fibers.fromFuture(client.unary(request))
+                response <- client.unary(request)
             yield assert(response == EchoEcho(message))
         }
         "abort" in {
@@ -29,7 +29,7 @@ class ServiceTest extends KyoTest:
                         client <- createClientAndServer
                         status  = code.toStatus
                         request = Abort(status.getCode.value)
-                        response <- IOs.catching(Fibers.fromFuture(client.unary(request))) {
+                        response <- IOs.catching(client.unary(request)) {
                             case e: StatusRuntimeException => e
                         }
                     yield
@@ -45,7 +45,7 @@ class ServiceTest extends KyoTest:
                 client <- createClientAndServer
                 message = "Oh no!"
                 request = Fail(message)
-                response <- IOs.catching(Fibers.fromFuture(client.unary(request))) {
+                response <- IOs.catching(client.unary(request)) {
                     case e: StatusRuntimeException => e
                 }
             yield
@@ -90,7 +90,7 @@ class ServiceTest extends KyoTest:
         }
 
     private def createClient(port: Int) =
-        createChannel(port).map(TestService.client)
+        createChannel(port).map(TestService.client(_))
 
     private def createChannel(port: Int) =
         Resources.acquireRelease(

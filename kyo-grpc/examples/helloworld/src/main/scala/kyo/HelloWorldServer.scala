@@ -12,9 +12,11 @@ object GreeterService extends Greeter:
 
 object HelloWorldServer extends KyoGrpServerApp:
 
-  private val port: Int = 9001
+  private val port = 9001
 
   private val services = Seq(
+    // TODO: This should be:
+    //  GreeterService.define(Greeter)
     Greeter.bindService(GreeterService)
   )
 
