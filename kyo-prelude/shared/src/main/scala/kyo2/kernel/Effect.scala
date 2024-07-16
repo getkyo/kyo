@@ -218,7 +218,7 @@ object Effect:
                                 try handleLoop(kyo(v, context), context)
                                 catch
                                     case ex if NonFatal(ex) =>
-                                        Safepoint.insertTrace(ex)
+                                        Safepoint.enrich(ex)
                                         recover(ex)
                             end apply
                         end new
@@ -230,7 +230,7 @@ object Effect:
             try handleLoop(v, Context.empty)
             catch
                 case ex if NonFatal(ex) =>
-                    Safepoint.insertTrace(ex)
+                    Safepoint.enrich(ex)
                     recover(ex)
             end try
         end catching
@@ -245,11 +245,11 @@ object Effect:
                 case <(kyo: KyoSuspend[IX, OX, EX, Any, B, S & S2] @unchecked) =>
                     new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
                         def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using safepoint: Safepoint) =
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
                             try catchingLoop(kyo(v, context))
                             catch
                                 case ex: Throwable if NonFatal(ex) =>
-                                    Safepoint.insertTrace(ex)
+                                    Safepoint.enrich(ex)
                                     f(ex)
                             end try
                         end apply
@@ -258,7 +258,7 @@ object Effect:
         try catchingLoop(v)
         catch
             case ex: Throwable if NonFatal(ex) =>
-                Safepoint.insertTrace(ex)
+                Safepoint.enrich(ex)
                 f(ex)
         end try
     end catching

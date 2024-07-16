@@ -9,14 +9,12 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 
-final class Safepoint(initDepth: Int, initInterceptor: Interceptor, initState: State):
+final class Safepoint(initDepth: Int, initInterceptor: Interceptor, initState: State) extends Trace.Owner:
     import Safepoint.State
 
     private val owner               = Thread.currentThread()
     private[kernel] var depth       = initDepth
     private[kernel] var interceptor = initInterceptor
-    private var traceIdx            = initState.traceIdx
-    private val trace               = copyTrace(initState.trace, traceIdx)
 
     private def enter(frame: Frame, value: Any): Int =
         if (Thread.currentThread eq owner) && depth < maxStackDepth &&
@@ -31,15 +29,6 @@ final class Safepoint(initDepth: Int, initInterceptor: Interceptor, initState: S
         end if
     end enter
 
-    private def pushFrame(frame: Frame): Unit =
-        val traceIdx = this.traceIdx
-        trace(traceIdx & (maxTraceFrames - 1)) = frame
-        this.traceIdx = traceIdx + 1
-    end pushFrame
-
-    private[kernel] def clearTrace(): Unit =
-        traceIdx = 0
-
     private def exit(depth: Int): Unit =
         this.depth = depth - 1
         if !isNull(interceptor) then
@@ -47,7 +36,7 @@ final class Safepoint(initDepth: Int, initInterceptor: Interceptor, initState: S
     end exit
 
     private[kernel] def save(context: Context) =
-        State(Safepoint.copyTrace(trace, traceIdx), traceIdx, context)
+        State(saveTrace(), context)
 end Safepoint
 
 object Safepoint:
@@ -144,19 +133,7 @@ object Safepoint:
     private[kernel] inline def eval[A](
         inline f: => A
     )(using inline frame: Frame): A =
-        val parent = Safepoint.local.get()
-        val self   = new Safepoint(0, parent.interceptor, State.empty)
-        Safepoint.local.set(self)
-        self.pushFrame(frame)
-        try f
-        catch
-            case ex: Throwable if NonFatal(ex) =>
-                insertTrace(ex)(using self)
-                throw ex
-        finally
-            Safepoint.local.set(parent)
-        end try
-    end eval
+        Safepoint.local.get().withNewTrace(f)
 
     private[kernel] inline def handle[V, A, S](value: V)(
         inline suspend: Safepoint ?=> A < S,
@@ -186,57 +163,18 @@ object Safepoint:
         end match
     end handle
 
-    // TODO compiler crash if private[kyo2]
-    def insertTrace(cause: Throwable)(using self: Safepoint): Unit =
-        val size = Math.min(self.traceIdx, maxTraceFrames)
-        if size > 0 && !cause.isInstanceOf[NoStackTrace] then
-            val trace = copyTrace(self.trace, self.traceIdx).filter(_ != null).map(_.parse)
-            val toPad = trace.map(_.snippetShort.size).maxOption.getOrElse(0) + 1
-            val elements =
-                trace.foldLeft(List.empty[Frame.Parsed]) {
-                    case (acc, curr) =>
-                        acc match
-                            case `curr` :: tail => acc
-                            case _              => curr :: acc
-                }.reverse.map { frame =>
-                    StackTraceElement(
-                        frame.snippetShort.reverse.padTo(toPad, ' ').reverse + " @ " + frame.declaringClass,
-                        frame.methodName,
-                        frame.position.fileName,
-                        frame.position.lineNumber
-                    )
-                }.reverse
-            val prefix = cause.getStackTrace.takeWhile(e =>
-                e.getFileName() != elements(0).getFileName() || e.getLineNumber != elements(0).getLineNumber()
-            )
-            val suffix = (new Exception).getStackTrace().drop(2)
-            cause.setStackTrace(prefix ++ elements ++ suffix)
-        end if
-    end insertTrace
-
-    private def copyTrace(trace: Array[Frame], idx: Int): Array[Frame] =
-        val result = new Array[Frame](maxTraceFrames)
-        val offset = Math.max(0, idx - maxTraceFrames)
-        @tailrec def loop(i: Int): Unit =
-            if i < maxTraceFrames then
-                val t = trace((offset + i) & (maxTraceFrames - 1))
-                if t != null then
-                    result(i) = t
-                    loop(i + 1)
-        loop(0)
-        result
-    end copyTrace
+    def enrich(ex: Throwable)(using safepoint: Safepoint): Unit =
+        safepoint.enrich(ex)
 
     import internal.*
 
     final class State(
-        val trace: Array[Frame],
-        val traceIdx: Int,
+        val trace: Trace,
         val context: Context
     )
 
     object State:
-        val empty = State(new Array(maxStackDepth), 0, Context.empty)
+        val empty = State(Trace.init, Context.empty)
 
     private[kernel] val local = ThreadLocal.withInitial(() => Safepoint(0, null, State.empty))
 
