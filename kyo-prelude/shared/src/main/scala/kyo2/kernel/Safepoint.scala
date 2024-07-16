@@ -9,12 +9,11 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 
-final class Safepoint(initDepth: Int, initInterceptor: Interceptor, initState: State) extends Trace.Owner:
-    import Safepoint.State
+final class Safepoint private () extends Trace.Owner:
 
-    private val owner               = Thread.currentThread()
-    private[kernel] var depth       = initDepth
-    private[kernel] var interceptor = initInterceptor
+    private val owner                            = Thread.currentThread()
+    private var depth                            = 0
+    private[kernel] var interceptor: Interceptor = null
 
     private def enter(frame: Frame, value: Any): Int =
         if (Thread.currentThread eq owner) && depth < maxStackDepth &&
@@ -34,9 +33,6 @@ final class Safepoint(initDepth: Int, initInterceptor: Interceptor, initState: S
         if !isNull(interceptor) then
             interceptor.exit()
     end exit
-
-    private[kernel] def save(context: Context) =
-        State(saveTrace(), context)
 end Safepoint
 
 object Safepoint:
@@ -131,9 +127,11 @@ object Safepoint:
     end ensure
 
     private[kernel] inline def eval[A](
-        inline f: => A
+        inline f: Safepoint ?=> A
     )(using inline frame: Frame): A =
-        Safepoint.local.get().withNewTrace(f)
+        val self = Safepoint.get
+        self.withNewTrace(f(using self))
+    end eval
 
     private[kernel] inline def handle[V, A, S](value: V)(
         inline suspend: Safepoint ?=> A < S,
@@ -166,16 +164,6 @@ object Safepoint:
     def enrich(ex: Throwable)(using safepoint: Safepoint): Unit =
         safepoint.enrich(ex)
 
-    import internal.*
-
-    final class State(
-        val trace: Trace,
-        val context: Context
-    )
-
-    object State:
-        val empty = State(Trace.init, Context.empty)
-
-    private[kernel] val local = ThreadLocal.withInitial(() => Safepoint(0, null, State.empty))
+    private val local = ThreadLocal.withInitial(() => new Safepoint)
 
 end Safepoint
