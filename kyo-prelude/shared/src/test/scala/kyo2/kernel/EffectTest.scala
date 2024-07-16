@@ -1,6 +1,7 @@
 package kyo2.kernel
 
 import kyo.Tag
+import kyo2.Maybe
 import kyo2.Test
 import kyo2.kernel.*
 
@@ -238,6 +239,90 @@ class EffectTest extends Test:
                 [C] => (input, state, cont) => (state + 1, cont(Some(input(state))))
             )
             assert(result.eval == (Some(1), Some(5)))
+        }
+    }
+
+    "Effect.partial" - {
+        abstract class TestInterceptor extends Safepoint.Interceptor:
+            def addEnsure(f: () => Unit): Unit    = {}
+            def removeEnsure(f: () => Unit): Unit = {}
+
+        "evaluates pure values" in {
+            val x: Int < Any = 5
+            val result = Effect.handle.partial(
+                Tag[TestEffect1],
+                Tag[TestEffect2],
+                Tag[TestEffect3],
+                x,
+                Context.empty
+            )(
+                stop = false,
+                [C] => (input, cont) => cont(input.toString),
+                [C] => (input, cont) => cont(input.toInt),
+                [C] => (input, cont) => cont(if input then 1.0 else 0.0)
+            )
+            assert(result.evalNow == Maybe(5))
+        }
+
+        "suspends at effects" in {
+            val x: Int < TestEffect1 = testEffect1(5).map(_ => 6)
+            val result = Effect.handle.partial(
+                Tag[TestEffect1],
+                Tag[TestEffect2],
+                Tag[TestEffect3],
+                x,
+                Context.empty
+            )(
+                stop = false,
+                [C] => (input, cont) => cont(input.toString),
+                [C] => (input, cont) => cont(input.toInt),
+                [C] => (input, cont) => cont(if input then 1.0 else 0.0)
+            )
+            assert(result.evalNow == Maybe(6))
+        }
+
+        "respects the stop condition" in {
+            var called       = false
+            val x: Int < Any = Effect.defer(5)
+            val result = Effect.handle.partial(
+                Tag[TestEffect1],
+                Tag[TestEffect2],
+                Tag[TestEffect3],
+                x,
+                Context.empty
+            )(
+                stop = true,
+                [C] =>
+                    (input, cont) =>
+                        called = true; cont(input.toString)
+                ,
+                [C] =>
+                    (input, cont) =>
+                        called = true; cont(input.toInt)
+                ,
+                [C] =>
+                    (input, cont) =>
+                        called = true; cont(if input then 1.0 else 0.0)
+            )
+            assert(!called)
+            assert(result.evalNow.isEmpty)
+        }
+
+        "evaluates nested suspensions" in {
+            val x: Int < Any = Effect.defer(Effect.defer(5))
+            val result = Effect.handle.partial(
+                Tag[TestEffect1],
+                Tag[TestEffect2],
+                Tag[TestEffect3],
+                x,
+                Context.empty
+            )(
+                stop = false,
+                [C] => (input, cont) => cont(input.toString),
+                [C] => (input, cont) => cont(input.toInt),
+                [C] => (input, cont) => cont(if input then 1.0 else 0.0)
+            )
+            assert(result.evalNow == Maybe(5))
         }
     }
 
