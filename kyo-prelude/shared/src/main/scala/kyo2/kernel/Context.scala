@@ -9,7 +9,7 @@ object Context:
     val empty: Context = Map.empty
 
     extension (context: Context)
-        inline def isEmpty = context eq Map.empty
+        inline def isEmpty = context eq empty
 
         inline def contains[A, E <: ContextEffect[A]](tag: Tag[E]): Boolean =
             context.contains(tag.erased)

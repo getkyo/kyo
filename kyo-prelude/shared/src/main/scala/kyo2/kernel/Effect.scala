@@ -182,19 +182,20 @@ object Effect:
                 else
                     v match
                         case <(kyo: KyoSuspend[?, ?, ?, ?, ?, ?]) =>
+                            type Suspend[I[_], O[_], E <: Effect[I, O]] = KyoSuspend[I, O, E, Any, A, E1 & E2 & E3 & S & S2]
                             if kyo.tag =:= Tag[Defer] then
-                                val k = kyo.asInstanceOf[KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, Any]]
+                                val k = kyo.asInstanceOf[Suspend[Const[Unit], Const[Unit], Defer]]
                                 partialLoop(k((), context), context)
                             else
                                 safepoint.pushFrame(kyo.frame)
                                 if tag1 =:= kyo.tag then
-                                    val k = kyo.asInstanceOf[KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2]]
+                                    val k = kyo.asInstanceOf[Suspend[I1, O1, E1]]
                                     partialLoop(handle1[Any](k.input, k(_, context)), context)
                                 else if tag2 =:= kyo.tag then
-                                    val k = kyo.asInstanceOf[KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2]]
+                                    val k = kyo.asInstanceOf[Suspend[I2, O2, E2]]
                                     partialLoop(handle2[Any](k.input, k(_, context)), context)
                                 else if tag3 =:= kyo.tag then
-                                    val k = kyo.asInstanceOf[KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2]]
+                                    val k = kyo.asInstanceOf[Suspend[I3, O3, E3]]
                                     partialLoop(handle3[Any](k.input, k(_, context)), context)
                                 else
                                     v
