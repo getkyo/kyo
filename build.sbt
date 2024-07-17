@@ -36,6 +36,7 @@ ThisBuild / developers := List(
         url("https://github.com/fwbrasil/")
     )
 )
+
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
 ThisBuild / sonatypeRepository     := "https://s01.oss.sonatype.org/service/local"
 ThisBuild / sonatypeProfileName    := "io.getkyo"
