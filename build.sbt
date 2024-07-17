@@ -23,7 +23,7 @@ val compilerOptions = Set(
 )
 
 ThisBuild / scalaVersion           := scala3Version
-ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
+ThisBuild / sonatypeCredentialHost := "oss.sonatype.org"
 sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
 sonatypeProfileName                := "io.getkyo"
 publish / skip                     := true
