@@ -30,23 +30,28 @@ publish / skip                     := true
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
+inThisBuild(
+    List(
+        organization := "io.getkyo",
+        homepage     := Some(url("https://getkyo.io")),
+        licenses     := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")),
+        developers := List(
+            Developer(
+                "fwbrasil",
+                "Flavio Brasil",
+                "fwbrasil@gmail.com",
+                url("https://github.com/fwbrasil/")
+            )
+        )
+    )
+)
+
 lazy val `kyo-settings` = Seq(
     fork               := true,
     scalaVersion       := scala3Version,
     crossScalaVersions := List(scala3Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
-    scalafmtOnCompile := true,
-    organization      := "io.getkyo",
-    homepage          := Some(url("https://getkyo.io")),
-    licenses          := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")),
-    developers := List(
-        Developer(
-            "fwbrasil",
-            "Flavio Brasil",
-            "fwbrasil@gmail.com",
-            url("https://github.com/fwbrasil/")
-        )
-    ),
+    scalafmtOnCompile                  := true,
     ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
     sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
     sonatypeProfileName                := "io.getkyo",
@@ -149,7 +154,7 @@ lazy val `kyo-prelude` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-tag`)
         .in(file("kyo-prelude"))
-        .settings( 
+        .settings(
             `kyo-settings`,
             libraryDependencies += "org.jctools"   % "jctools-core"  % "4.0.5",
             libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC27" % Test,
