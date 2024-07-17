@@ -22,39 +22,32 @@ val compilerOptions = Set(
     ScalacOptions.privateKindProjector
 )
 
-ThisBuild / scalaVersion           := scala3Version
-ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
-sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local"
-sonatypeProfileName                := "io.getkyo"
-publish / skip                     := true
+ThisBuild / scalaVersion := scala3Version
+publish / skip           := true
 
-ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
-
-inThisBuild(
-    List(
-        organization := "io.getkyo",
-        homepage     := Some(url("https://getkyo.io")),
-        licenses     := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0")),
-        developers := List(
-            Developer(
-                "fwbrasil",
-                "Flavio Brasil",
-                "fwbrasil@gmail.com",
-                url("https://github.com/fwbrasil/")
-            )
-        )
+ThisBuild / organization := "io.getkyo"
+ThisBuild / homepage     := Some(url("https://getkyo.io"))
+ThisBuild / licenses     := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0"))
+ThisBuild / developers := List(
+    Developer(
+        "fwbrasil",
+        "Flavio Brasil",
+        "fwbrasil@gmail.com",
+        url("https://github.com/fwbrasil/")
     )
 )
+ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
+ThisBuild / sonatypeRepository     := "https://s01.oss.sonatype.org/service/local"
+ThisBuild / sonatypeProfileName    := "io.getkyo"
+
+ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
 lazy val `kyo-settings` = Seq(
     fork               := true,
     scalaVersion       := scala3Version,
     crossScalaVersions := List(scala3Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
-    scalafmtOnCompile                  := true,
-    ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org",
-    sonatypeRepository                 := "https://s01.oss.sonatype.org/service/local",
-    sonatypeProfileName                := "io.getkyo",
+    scalafmtOnCompile := true,
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
