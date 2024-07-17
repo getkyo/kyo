@@ -36,8 +36,8 @@ ThisBuild / developers := List(
         url("https://github.com/fwbrasil/")
     )
 )
-ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
-ThisBuild / sonatypeRepository     := "https://s01.oss.sonatype.org/service/local"
+ThisBuild / sonatypeCredentialHost := "oss.sonatype.org"
+ThisBuild / sonatypeRepository     := "https://oss.sonatype.org/service/local"
 ThisBuild / sonatypeProfileName    := "io.getkyo"
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
