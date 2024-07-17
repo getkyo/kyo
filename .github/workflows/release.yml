@@ -1,7 +1,7 @@
 name: release
 on:
   push:
-    branches: [disabled]
+    branches: [main]
     tags: ["v0.*"]
 jobs:
   publish:
