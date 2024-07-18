@@ -13,10 +13,7 @@ object Effect:
         new KyoDefer[A, S]:
             def frame = summon[Frame]
             def apply(v: Unit, context: Context)(using Safepoint) =
-                Safepoint.handle(v)(
-                    suspend = this,
-                    continue = f
-                )
+                f
 
     final class SuspendOps[A](dummy: Unit) extends AnyVal:
 
@@ -164,6 +161,52 @@ object Effect:
             end handle3Loop
             handle3Loop(v, Context.empty)
         end apply
+
+        private[kyo2] inline def partial[I1[_], O1[_], E1 <: Effect[I1, O1], I2[_], O2[_], E2 <: Effect[I2, O2], I3[_], O3[_], E3 <: Effect[
+            I3,
+            O3
+        ], A, S, S2](
+            inline tag1: Tag[E1],
+            inline tag2: Tag[E2],
+            inline tag3: Tag[E3],
+            v: A < (E1 & E2 & E3 & S),
+            context: Context
+        )(
+            inline stop: => Boolean,
+            inline handle1: Safepoint ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle2: Safepoint ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle3: Safepoint ?=> [C] => (I3[C], O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
+        )(using inline _frame: Frame, safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
+            def partialLoop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
+                if stop then v
+                else
+                    v match
+                        case <(kyo: KyoSuspend[?, ?, ?, ?, ?, ?]) =>
+                            type Suspend[I[_], O[_], E <: Effect[I, O]] = KyoSuspend[I, O, E, Any, A, E1 & E2 & E3 & S & S2]
+                            if kyo.tag =:= Tag[Defer] then
+                                val k = kyo.asInstanceOf[Suspend[Const[Unit], Const[Unit], Defer]]
+                                partialLoop(k((), context), context)
+                            else
+                                safepoint.pushFrame(kyo.frame)
+                                if tag1 =:= kyo.tag then
+                                    val k = kyo.asInstanceOf[Suspend[I1, O1, E1]]
+                                    partialLoop(handle1[Any](k.input, k(_, context)), context)
+                                else if tag2 =:= kyo.tag then
+                                    val k = kyo.asInstanceOf[Suspend[I2, O2, E2]]
+                                    partialLoop(handle2[Any](k.input, k(_, context)), context)
+                                else if tag3 =:= kyo.tag then
+                                    val k = kyo.asInstanceOf[Suspend[I3, O3, E3]]
+                                    partialLoop(handle3[Any](k.input, k(_, context)), context)
+                                else
+                                    v
+                                end if
+                            end if
+                        case _ =>
+                            v
+                    end match
+            end partialLoop
+            partialLoop(v, context)
+        end partial
 
         inline def state[I[_], O[_], E <: Effect[I, O], State, A, B, S, S2, S3](
             inline tag: Tag[E],

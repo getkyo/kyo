@@ -244,7 +244,7 @@ class SafepointTest extends Test:
                     yield 42
                 }.eval
 
-                assert(count == 6)
+                assert(count == 4)
             }
 
             "restores previous interceptor after completion" in {
@@ -278,7 +278,7 @@ class SafepointTest extends Test:
                 }.eval
 
                 assert(outerCount == 0)
-                assert(innerCount == 6)
+                assert(innerCount == 4)
             }
         }
 
@@ -319,19 +319,11 @@ class SafepointTest extends Test:
             assert(result == 26)
 
             val expectedLogs = Seq(
-                "Entering apply with value: ()",
-                "Exiting method",
                 "Entering computation with value: 6",
-                "Exiting method",
-                "Entering apply with value: ()",
                 "Exiting method",
                 "Entering Unknown with value: 12",
                 "Exiting method",
-                "Entering apply with value: ()",
-                "Exiting method",
                 "Entering computation with value: 13",
-                "Exiting method",
-                "Entering apply with value: ()",
                 "Exiting method",
                 "Entering $anonfun with value: 26",
                 "Exiting method"
@@ -383,7 +375,7 @@ class SafepointTest extends Test:
                 assert(duration < 3000000)
             }
 
-            assert(interceptor.log.size == 8)
+            assert(interceptor.log.size == 4)
             assert(interceptor.log.exists(_._1.parse.methodName == "computation"))
         }
     }
