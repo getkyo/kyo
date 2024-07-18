@@ -77,6 +77,12 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
             class Test[T]
             test[Test[String], Test[Int]]
         }
+
+        "subtype with type parameter" - {
+            class Super
+            class Sub[A] extends Super
+            test[Sub[Int], Super]
+        }
     }
 
     "with variance" - {
