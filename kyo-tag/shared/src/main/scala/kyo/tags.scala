@@ -177,7 +177,7 @@ object Tag:
 
         def checkParams(subTag: String, superTag: String, subIdx: Int, superIdx: Int): Boolean =
             val subStart   = subTag.indexOf('[', subIdx)
-            val superStart = subTag.indexOf('[', superIdx)
+            val superStart = superTag.indexOf('[', superIdx)
             if subStart == -1 || superStart == -1 then
                 superStart == superStart
             else
