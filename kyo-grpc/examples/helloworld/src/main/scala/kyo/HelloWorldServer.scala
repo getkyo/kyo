@@ -6,9 +6,9 @@ import kyo.grpc.*
 
 object GreeterService extends Greeter:
   override def sayHello(request: HelloRequest): HelloReply < GrpcResponses =
-    for {
+    for
       _ <- Consoles.run(Consoles.println(s"Got request: $request"))
-    } yield HelloReply(s"Hello, ${request.name}")
+    yield HelloReply(s"Hello, ${request.name}")
 
 object HelloWorldServer extends KyoGrpServerApp:
 
@@ -17,21 +17,21 @@ object HelloWorldServer extends KyoGrpServerApp:
   private val services = Seq(
     // TODO: This should be:
     //  GreeterService.define(Greeter)
-    Greeter.bindService(GreeterService)
+    Greeter.server(GreeterService)
   )
 
   run {
-    for {
+    for
       _ <- Consoles.println(s"Server is running on port $port. Press Ctrl-C to stop.")
       server <- Resources.acquireRelease(IOs(buildServer(port, services).start())) { (server: Server) =>
-        for {
+        for
           _ <- Consoles.run(Consoles.print("Shutting down..."))
           _ <- IOs(server.shutdown().awaitTermination())
           _ <- Consoles.run(Consoles.println("Done."))
-        } yield ()
+        yield ()
       }
       s <- waitForInterrupt
-    } yield "Goodbye!"
+    yield "Goodbye!"
   }
 
 end HelloWorldServer
