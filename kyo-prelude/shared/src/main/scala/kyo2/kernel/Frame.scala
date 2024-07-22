@@ -1,5 +1,6 @@
 package kyo2.kernel
 
+import kyo2.Ansi
 import scala.annotation.tailrec
 import scala.quoted.*
 
@@ -18,6 +19,10 @@ object Frame:
         snippetShort: String,
         snippetLong: String
     ) derives CanEqual:
+
+        def show: String =
+            Ansi.highlight(s"// $declaringClass $methodName", snippetLong, s"// $position", position.lineNumber)
+
         override def toString = s"Frame($declaringClass, $methodName, $position, $snippetShort)"
     end Parsed
 
@@ -41,7 +46,7 @@ object Frame:
             )
         end parse
 
-        def show: String = parse.toString
+        def show: String = parse.show
     end extension
 
     implicit inline def derive: Frame = ${ frameImpl }
