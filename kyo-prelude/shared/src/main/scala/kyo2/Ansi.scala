@@ -59,13 +59,15 @@ object Ansi:
             if line.trim.startsWith("//") then
                 line.green // Make entire line green for single-line comments
             else
-                line.split("((?<=\\W)|(?=\\W))").map { token =>
-                    if keywords.contains(token) then token.yellow
-                    else if token.matches("\".*\"") then token.green
-                    else if token.matches("/\\*.*\\*/") then token.green // Inline multi-line comments
-                    else if token.matches("[0-9]+") then token.cyan
-                    else token
-                }.mkString
+                line.split("\\b")
+                    .map { token =>
+                        if keywords.contains(token) then token.yellow
+                        else if token.matches("\".*\"") then token.green
+                        else if token.matches("/\\*.*\\*/") then token.green // Inline multi-line comments
+                        else if token.matches("[0-9]+") then token.cyan
+                        else token
+                    }
+                    .mkString
         end highlightLine
 
         private val keywords = Set(
