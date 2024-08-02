@@ -15,6 +15,7 @@ class LongAdder private[kyo] (private val ref: JLongAdder) extends AnyVal:
     def increment(using Trace): Unit < IOs    = IOs(ref.increment())
     def get(using Trace): Long < IOs          = IOs(ref.sum())
     def reset(using Trace): Unit < IOs        = IOs(ref.reset())
+    def sumThenReset(using Trace): Long < IOs = IOs(ref.sumThenReset())
 end LongAdder
 
 class DoubleAdder private[kyo] (private val ref: JDoubleAdder) extends AnyVal:

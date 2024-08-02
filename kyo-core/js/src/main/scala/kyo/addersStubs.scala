@@ -14,4 +14,9 @@ class LongAdder():
     def increment()  = curr += 1
     def sum(): Long  = curr
     def reset()      = curr = 0
+    def sumThenReset(): Long =
+        val res = curr
+        curr = 0
+        res
+    end sumThenReset
 end LongAdder

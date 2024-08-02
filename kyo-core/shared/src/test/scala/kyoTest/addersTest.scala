@@ -42,6 +42,14 @@ class addersTest extends KyoTest:
                 v   <- ref.get
             yield assert(v == 0)
         }
+        "should sum and reset the value" in IOs.run {
+            for
+                ref <- Adders.initLong
+                _   <- ref.add(5)
+                v1  <- ref.sumThenReset
+                v2  <- ref.get
+            yield assert(v1 == 5 && v2 == 0)
+        }
     }
 
     "DoubleAdder" - {
