@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "scalapb.zio_grpc.helloworld";
+option java_outer_classname = "HelloWorldProto";
+
+package helloworld;
+
+// The greeting service definition.
+service Greeter {
+  // Sends a greeting
+  rpc SayHello (HelloRequest) returns (HelloReply) {}
+
+  // Sends a litany of greetings
+  rpc SayHelloStreaming (HelloRequest) returns (stream HelloReply) {}
+}
+
+// The actual message exchanged by the client and the server.
+message Hello {
+  string name = 1;
+  double d = 2;
+  float f = 3;
+  bool b = 4;
+  int32 n = 5;
+  int64 l = 6;
+  oneof choice {
+    string c1 = 7;
+    bool c2 = 8;
+  }
+  message Pet {
+    enum Color {
+      BLACK = 0;
+      WHITE = 1;
+      BLUE = 2;
+      RED = 3;
+      YELLOW = 4;
+      GREEN = 5;
+    }
+    string name = 1;
+    Color color = 2;
+  }
+  repeated Pet pets = 9;
+}
+
+// The request message from the client.
+message HelloRequest {
+  Hello request = 1;
+}
+
+// The response message from the server.
+message HelloReply {
+  Hello response = 1;
+}

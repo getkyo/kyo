@@ -3,13 +3,13 @@ scalaVersion := "3.4.2"
 val grpcVersion = "1.64.0"
 
 libraryDependencies ++= Seq(
-    "io.grpc" % "grpc-netty" % grpcVersion,
-    "io.getkyo" %% "kyo-grpc-core" % kyo.grpc.compiler.BuildInfo.version
+    "io.getkyo" %% "kyo-grpc-core" % kyo.grpc.compiler.BuildInfo.version,
+    "io.grpc" % "grpc-netty" % grpcVersion
 )
 
 Compile / PB.targets := Seq(
-    scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
-    kyo.grpc.gen() -> (Compile / sourceManaged).value / "scalapb"
+    kyo.grpc.gen() -> (Compile / sourceManaged).value / "scalapb",
+    scalapb.gen() -> (Compile / sourceManaged).value / "scalapb"
 )
 
 run / fork := true

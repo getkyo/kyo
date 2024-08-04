@@ -1,8 +1,6 @@
 import org.scalajs.jsenv.nodejs.*
 import org.typelevel.scalacoptions.{ScalaVersion, ScalacOption, ScalacOptions}
 
-import scala.util.matching.Regex
-
 val scala3Version   = "3.4.2"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
@@ -326,15 +324,14 @@ lazy val `kyo-grpc-core` =
         .jvmSettings(
             libraryDependencies ++= Seq(
                 "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
-                "io.grpc" % "grpc-api" % "1.64.0",
+                "io.grpc"               % "grpc-api"             % "1.64.0",
                 // It is a little unusual to include this here but it greatly reduces the amount of generated code.
                 "io.grpc" % "grpc-stub" % "1.64.0"
             )
         ).jsSettings(
             `js-settings`,
             libraryDependencies ++= Seq( //
-                "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0"
-            )
+                "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0")
         )
 
 // TODO: Split this into shared, client, and server
@@ -401,8 +398,9 @@ lazy val `kyo-grpc-e2e` =
             Compile / PB.protoSources += sharedSourceDir("main").value / "protobuf",
             Compile / PB.targets := Seq(
                 scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
+                // TODO: Make this nicer. Like scalapb.zio_grpc.ZioCodeGenerator.
                 genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
-            ),
+            )
         ).jvmSettings(
             codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
             libraryDependencies ++= Seq(
@@ -436,12 +434,26 @@ lazy val `kyo-bench` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Pure)
         .in(file("kyo-bench"))
-        .enablePlugins(JmhPlugin)
-        .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-sttp`)
-        .dependsOn(`kyo-scheduler-zio`)
+        .enablePlugins(JmhPlugin, LocalCodeGenPlugin)
+        .dependsOn(
+            `kyo-core`,
+            `kyo-grpc-core`,
+            `kyo-sttp`,
+            `kyo-scheduler-zio`
+        )
         .settings(
             `kyo-settings`,
+            publish / skip := true,
+            Compile / PB.protoSources += baseDirectory.value.getParentFile / "src" / "main" / "protobuf",
+            Compile / PB.targets := {
+                val scalapbDir = (Compile / sourceManaged).value / "scalapb"
+                Seq(
+                    scalapb.gen()                                 -> scalapbDir,
+                    scalapb.zio_grpc.ZioCodeGenerator             -> scalapbDir,
+                    genModule("kyo.grpc.compiler.CodeGenerator$") -> scalapbDir
+                )
+            },
+            codeGenClasspath          := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
             Test / testForkedParallel := true,
             // Forks each test suite individually
             Test / testGrouping := {
@@ -465,23 +477,29 @@ lazy val `kyo-bench` =
                     )
                 }
             },
-            libraryDependencies += "dev.zio"             %% "izumi-reflect"       % "2.3.9",
-            libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
-            libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
-            libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
-            libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.3.0",
-            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.3.0",
-            libraryDependencies += "dev.zio"             %% "zio"                 % zioVersion,
-            libraryDependencies += "dev.zio"             %% "zio-concurrent"      % zioVersion,
-            libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC27",
-            libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
-            libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.10.2",
-            libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.27",
-            libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.27",
-            libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0-RC8",
-            libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.8",
-            libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.8",
-            libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
+            libraryDependencies ++= Seq(
+                "co.fs2"               %% "fs2-core"             % "3.10.2",
+                "com.softwaremill.ox"  %% "core"                 % "0.0.25",
+                "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
+                "dev.zio"              %% "izumi-reflect"        % "2.3.9",
+                "dev.zio"              %% "zio"                  % zioVersion,
+                "dev.zio"              %% "zio-concurrent"       % zioVersion,
+                "dev.zio"              %% "zio-http"             % "3.0.0-RC8",
+                "dev.zio"              %% "zio-logging"          % "2.3.0",
+                "dev.zio"              %% "zio-logging-slf4j2"   % "2.3.0",
+                "dev.zio"              %% "zio-prelude"          % "1.0.0-RC27",
+                "io.grpc"               % "grpc-netty"           % "1.64.0",
+                "io.vertx"              % "vertx-core"           % "4.5.8",
+                "io.vertx"              % "vertx-web"            % "4.5.8",
+                "org.http4s"           %% "http4s-dsl"           % "0.23.27",
+                "org.http4s"           %% "http4s-ember-client"  % "0.23.27",
+                "org.typelevel"        %% "cats-effect"          % "3.5.4",
+                "org.typelevel"        %% "log4cats-core"        % "2.7.0",
+                "org.typelevel"        %% "log4cats-slf4j"       % "2.7.0"
+            ),
+            libraryDependencies ++= Seq(
+                "org.scalatest" %% "scalatest" % scalaTestVersion
+            ).map(_ % Test)
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")

@@ -18,6 +18,7 @@ addSbtPlugin("com.thesamet" % "sbt-protoc"             % "1.0.7")
 addSbtPlugin("com.thesamet" % "sbt-protoc-gen-project" % "0.1.8")
 
 libraryDependencies ++= Seq(
-    "com.thesamet.scalapb" %% "compilerplugin" % "0.11.15",
-    "org.typelevel"        %% "scalac-options" % "0.1.5"
+    "com.thesamet.scalapb"          %% "compilerplugin"   % "0.11.17",
+    "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-codegen" % "0.6.2",
+    "org.typelevel"                 %% "scalac-options"   % "0.1.5"
 )
