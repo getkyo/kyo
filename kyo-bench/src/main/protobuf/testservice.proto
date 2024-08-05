@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 option java_multiple_files = true;
-option java_package = "scalapb.zio_grpc.helloworld";
+option java_package = "kyo.grpc.helloworld";
 option java_outer_classname = "HelloWorldProto";
 
 package helloworld;
@@ -12,7 +12,7 @@ service Greeter {
   rpc SayHello (HelloRequest) returns (HelloReply) {}
 
   // Sends a litany of greetings
-  rpc SayHelloStreaming (HelloRequest) returns (stream HelloReply) {}
+  //rpc SayHelloStreaming (HelloRequest) returns (stream HelloReply) {}
 }
 
 // The actual message exchanged by the client and the server.
