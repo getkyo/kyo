@@ -39,7 +39,7 @@ object Trace:
                 System.arraycopy(frames, splitIndex, newFrames, 0, firstPartLength)
                 System.arraycopy(frames, 0, newFrames, firstPartLength, splitIndex)
             end if
-            newTrace.index = Math.max(maxTraceFrames, index)
+            newTrace.index = Math.min(maxTraceFrames, index)
             newTrace
         end saveTrace
 
@@ -80,24 +80,38 @@ object Trace:
         end withNewTrace
 
         final private[kernel] def enrich(ex: Throwable): Unit =
-            val size = frames.size
+            val size = if index < maxTraceFrames then index else maxTraceFrames
             if size > 0 && !ex.isInstanceOf[NoStackTrace] then
-                val trace = frames.withFilter(_ != null).map(_.parse)
-                val toPad = trace.map(_.snippetShort.size).maxOption.getOrElse(0) + 1
+
+                val start =
+                    if index < maxTraceFrames then 0
+                    else index & (maxTraceFrames - 1)
+
+                val parsed = new Array[Frame.Parsed](size)
+                @tailrec def parse(idx: Int, maxSnippetSize: Int): Int =
+                    if idx < size then
+                        val curr = frames((start + idx) & (maxTraceFrames - 1)).parse
+                        parsed(idx) = curr
+                        val snippetSize = curr.snippetShort.size
+                        parse(idx + 1, if snippetSize > maxSnippetSize then snippetSize else maxSnippetSize)
+                    else
+                        maxSnippetSize + 1
+                val toPad = parse(0, 0)
+
                 val elements =
-                    trace.foldLeft(List.empty[Frame.Parsed]) {
+                    parsed.foldLeft(List.empty[Frame.Parsed]) {
                         case (acc, curr) =>
                             acc match
                                 case `curr` :: tail => acc
                                 case _              => curr :: acc
-                    }.reverse.map { frame =>
+                    }.map { frame =>
                         StackTraceElement(
                             frame.snippetShort.reverse.padTo(toPad, ' ').reverse + " @ " + frame.declaringClass,
                             frame.methodName,
                             frame.position.fileName,
                             frame.position.lineNumber
                         )
-                    }.reverse
+                    }
                 val prefix = ex.getStackTrace.takeWhile(e =>
                     e.getFileName() != elements(0).getFileName() || e.getLineNumber != elements(0).getLineNumber()
                 )

@@ -20,6 +20,12 @@ class TraceTest extends Test:
         Env.run(1)(z).eval
     end withEffects
 
+    def loop(depth: Int): Int < Any =
+        if depth == 0 then boom(depth)
+        else ((depth - 1): Int < Any).map(loop(_))
+
+    def repeatedFrames = loop(100).eval
+
     "jvm" - {
         "only eval" taggedAs jvmOnly in {
             assertTrace(
@@ -47,6 +53,18 @@ class TraceTest extends Test:
                 |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
                 |	at                         val x = Env.use[Int](_ + 1) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:17)
                 |	at                                  Env.run(1)(z).eval @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
+                """
+            )
+        }
+
+        "repeated frames" taggedAs jvmOnly in {
+            assertTrace(
+                repeatedFrames,
+                """
+                |java.lang.Exception: test exception
+                |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at          else ((depth - 1): Int < Any).map(loop(_)) @ kyo2.kernel.TraceTest.loop(TraceTest.scala:25)                
                 """
             )
         }
@@ -87,6 +105,18 @@ class TraceTest extends Test:
                 """
             )
             ()
+        }
+
+        "repeated frames" taggedAs jvmOnly in {
+            assertTrace(
+                repeatedFrames,
+                """
+                |java.lang.Exception: test exception
+                |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at          else ((depth - 1): Int < Any).map(loop(_)) @ kyo2.kernel.TraceTest.loop(TraceTest.scala:25)                
+                """
+            )
         }
     }
 
