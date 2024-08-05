@@ -489,6 +489,77 @@ class StreamTest extends Test:
         }
     }
 
+    "runForeach" - {
+        "executes the function for each element" in run {
+            var sum = 0
+            Stream.init(Seq(1, 2, 3, 4, 5)).runForeach(i => sum += i).map { _ =>
+                assert(sum == 15)
+            }
+        }
+
+        "works with empty stream" in run {
+            var executed = false
+            Stream.init(Seq.empty[Int]).runForeach(_ => executed = true).map { _ =>
+                assert(!executed)
+            }
+        }
+
+        "works with effects" in run {
+            var sum = 0
+            Stream.init(Seq(1, 2, 3, 4, 5)).runForeach { i =>
+                Env.use[Int] { multiplier =>
+                    sum += i * multiplier
+                }
+            }.pipe(Env.run(2)).map { _ =>
+                assert(sum == 30)
+            }
+        }
+
+        "short-circuits on abort" in run {
+            var sum = 0
+            val result = Abort.run[String] {
+                Stream.init(Seq(1, 2, 3, 4, 5)).runForeach { i =>
+                    sum += i
+                    if i >= 3 then Abort.fail("Reached 3")
+                    else Abort.get(Right(()))
+                }
+            }
+            result.map { r =>
+                assert(r == Result.fail("Reached 3"))
+                assert(sum == 6)
+            }
+        }
+    }
+
+    "runForeachChunk" - {
+        "executes the function for each chunk" in run {
+            var sum = 0
+            Stream.init(Chunk(1, 2, 3, 4, 5)).runForeachChunk(chunk =>
+                sum += chunk.foldLeft(0)(_ + _).eval
+            ).map { _ =>
+                assert(sum == 15)
+            }
+        }
+
+        "works with empty stream" in run {
+            var executed = false
+            Stream.init(Chunk.empty[Int]).runForeachChunk(_ => executed = true).map { _ =>
+                assert(!executed)
+            }
+        }
+
+        "works with effects" in run {
+            var sum = 0
+            Stream.init(Chunk(1, 2, 3, 4, 5)).runForeachChunk { chunk =>
+                Env.use[Int] { multiplier =>
+                    sum += chunk.foldLeft(0)(_ + _).eval * multiplier
+                }
+            }.pipe(Env.run(2)).map { _ =>
+                assert(sum == 30)
+            }
+        }
+    }
+
     "runFold" - {
         "sum" in {
             assert(
@@ -518,7 +589,7 @@ class StreamTest extends Test:
     }
 
     "nesting with other effect" in {
-        val stream: Stream[Any, Int] < Env[Seq[Int]] =
+        val stream: Stream[Int, Any] < Env[Seq[Int]] =
             Env.use[Seq[Int]](seq => Stream.init(seq))
         Env.run(Seq(1, 2, 3))(stream.map(_.runSeq)).eval
         succeed
