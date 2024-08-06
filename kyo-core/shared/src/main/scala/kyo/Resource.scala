@@ -1,50 +1,58 @@
 package kyo
 
 import java.io.Closeable
-import kyo.internal.Trace
+import kyo.Tag
+import kyo.kernel.ContextEffect
 
-opaque type Resources <: Fibers = Fibers
+sealed trait Resource extends ContextEffect[Resource.Finalizer]
 
-object Resources:
+object Resource:
 
-    private val local = Locals.init[Queues.Unbounded[Unit < Fibers] | None.type](None)
+    case class Finalizer(createdAt: Frame, queue: Queue.Unbounded[Unit < Async])
 
-    def ensure(v: => Unit < Fibers)(using Trace): Unit < Resources =
-        local.use {
-            case _: None.type =>
-                bug("Can't locate Resources finalizer queue.")
-            case q: Queues.Unbounded[Unit < Fibers] =>
-                q.offer(IOs(v)).map {
-                    case true => ()
-                    case false =>
-                        bug("Resources finalizer queue already closed.")
-                }
-        }
-
-    def acquireRelease[T, S](acquire: => T < (S & Fibers))(release: T => Unit < Fibers)(using Trace): T < (Resources & S) =
-        IOs {
-            acquire.map { resource =>
-                ensure(release(resource)).andThen(resource)
+    def ensure(v: => Unit < Async)(using frame: Frame): Unit < (Resource & IO) =
+        ContextEffect.suspendMap(Tag[Resource]) { finalizer =>
+            finalizer.queue.offer(IO(v)).map {
+                case true  => ()
+                case false =>
+                    // TODO should this error be tracked?
+                    throw new Closed(
+                        "Resource finalizer queue already closed. This may happen if " +
+                            "a background fiber escapes the scope of a 'Resource.run' call.",
+                        finalizer.createdAt,
+                        frame
+                    )
             }
         }
 
-    def acquire[T <: Closeable](resource: => T < Fibers)(using Trace): T < Resources =
-        acquireRelease(resource)(r => IOs(r.close()))
+    def acquireRelease[T, S](acquire: T < S)(release: T => Unit < Async)(using Frame): T < (Resource & IO & S) =
+        acquire.map { resource =>
+            ensure(release(resource)).andThen(resource)
+        }
 
-    def run[T, S](v: T < (Resources & S))(using Trace): T < (Fibers & S) =
-        Queues.initUnbounded[Unit < Fibers](Access.Mpsc).map { q =>
-            Fibers.initPromise[Unit].map { p =>
-                def close: Unit < IOs =
+    def acquire[T <: Closeable, S](resource: T < S)(using Frame): T < (Resource & IO & S) =
+        acquireRelease(resource)(r => IO(r.close()))
+
+    def run[T, S](v: T < (Resource & S))(using frame: Frame): T < (Async & S) =
+        Queue.initUnbounded[Unit < Async](Access.Mpsc).map { q =>
+            Promise.init[Nothing, Unit].map { p =>
+                val finalizer = Finalizer(frame, q)
+                def close: Unit < IO =
                     q.close.map {
-                        case None =>
-                            bug("Resources finalizer queue already closed.")
-                        case Some(l) =>
-                            Fibers.run(Seqs.collectUnit(l)).map(p.become(_)).unit
+                        case Maybe.Empty =>
+                            bug("Resource finalizer queue already closed.")
+                        case Maybe.Defined(l) =>
+                            Kyo.seq.foreach(l)(task =>
+                                Abort.run[Throwable](task)
+                                    .map(_.fold(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))
+                            )
+                                .pipe(Async.run)
+                                .map(p.becomeUnit)
                     }
-                IOs.ensure(close) {
-                    local.let(q)(v)
-                }.map(result => p.get.andThen(result))
+                ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
+                    .pipe(IO.ensure(close))
+                    .map(result => p.get.andThen(result))
             }
         }
 
-end Resources
+end Resource

@@ -1,24 +1,21 @@
 package kyo
 
 import java.time.Instant
-import kyo.internal.Trace
-
-abstract class Clock:
-    def now(using Trace): Instant < IOs
 
 object Clock:
-    val default: Clock =
-        new Clock:
-            def now(using Trace) = IOs(Instant.now())
-end Clock
+    abstract class Service:
+        def now(using Frame): Instant < IO
 
-object Clocks:
+    val live: Service =
+        new Service:
+            def now(using Frame) = IO(Instant.now())
 
-    private val local = Locals.init(Clock.default)
+    private val local = Local.init(live)
 
-    def let[T, S](c: Clock)(f: => T < (IOs & S))(using Trace): T < (IOs & S) =
+    def let[T, S](c: Service)(f: => T < (IO & S))(using Frame): T < (IO & S) =
         local.let(c)(f)
 
-    def now(using Trace): Instant < IOs =
+    def now(using Frame): Instant < IO =
         local.use(_.now)
-end Clocks
+
+end Clock

@@ -1,48 +1,48 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.internal.Trace
+import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
 
 abstract class Latch:
 
-    def await(using Trace): Unit < Fibers
+    def await(using Frame): Unit < Async
 
-    def release(using Trace): Unit < IOs
+    def release(using Frame): Unit < IO
 
-    def pending(using Trace): Int < IOs
+    def pending(using Frame): Int < IO
 end Latch
 
-object Latches:
+object Latch:
 
-    def init(n: Int): Latch < IOs =
+    def init(n: Int): Latch < IO =
         if n <= 0 then
             new Latch:
-                def await(using Trace)   = ()
-                def release(using Trace) = ()
-                def pending(using Trace) = 0
+                def await(using Frame)   = ()
+                def release(using Frame) = ()
+                def pending(using Frame) = 0
 
-                override def toString = "Latches(0)"
+                override def toString = "Latch(0)"
         else
-            IOs {
+            IO {
                 new Latch:
-                    val promise = Fibers.unsafeInitPromise[Unit]
+                    val promise = IOPromise[Nothing, Unit]()
                     val count   = new AtomicInteger(n)
 
-                    def await(using Trace) = promise.get
+                    def await(using Frame) = Async.get(promise)
 
-                    def release(using Trace) =
-                        IOs {
+                    def release(using Frame) =
+                        IO {
                             @tailrec def loop(c: Int): Unit =
                                 if c > 0 && !count.compareAndSet(c, c - 1) then
                                     loop(count.get)
                                 else if c == 1 then
-                                    discard(promise.unsafeComplete(Result.success(())))
+                                    promise.completeUnit(Result.success(()))
                             loop(count.get())
                         }
 
-                    def pending(using Trace) = IOs(count.get())
+                    def pending(using Frame) = IO(count.get())
 
-                    override def toString = s"Latches($count)"
+                    override def toString = s"Latch($count)"
             }
-end Latches
+end Latch

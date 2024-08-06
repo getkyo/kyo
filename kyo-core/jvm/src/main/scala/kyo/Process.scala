@@ -8,19 +8,18 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import kyo.*
-import kyo.internal.Trace
 import scala.jdk.CollectionConverters.*
 
 case class Process(private val process: JProcess):
-    def stdin: OutputStream                                                = process.getOutputStream
-    def stdout: InputStream                                                = process.getInputStream
-    def stderr: InputStream                                                = process.getErrorStream
-    def waitFor(using Trace): Int < IOs                                    = IOs(process.waitFor())
-    def waitFor(timeout: Long, unit: TimeUnit)(using Trace): Boolean < IOs = IOs(process.waitFor(timeout, unit))
-    def exitValue(using Trace): Int < IOs                                  = IOs(process.exitValue())
-    def destroy(using Trace): Unit < IOs                                   = IOs(process.destroy())
-    def destroyForcibly(using Trace): JProcess < IOs                       = IOs(process.destroyForcibly())
-    def isAlive(using Trace): Boolean < IOs                                = IOs(process.isAlive())
+    def stdin: OutputStream                                               = process.getOutputStream
+    def stdout: InputStream                                               = process.getInputStream
+    def stderr: InputStream                                               = process.getErrorStream
+    def waitFor(using Frame): Int < IO                                    = IO(process.waitFor())
+    def waitFor(timeout: Long, unit: TimeUnit)(using Frame): Boolean < IO = IO(process.waitFor(timeout, unit))
+    def exitValue(using Frame): Int < IO                                  = IO(process.exitValue())
+    def destroy(using Frame): Unit < IO                                   = IO(process.destroy())
+    def destroyForcibly(using Frame): JProcess < IO                       = IO(process.destroyForcibly())
+    def isAlive(using Frame): Boolean < IO                                = IO(process.isAlive())
 end Process
 
 object Process:
@@ -28,14 +27,14 @@ object Process:
     object jvm:
         /** Executes a class with given args for the JVM.
           */
-        def spawn(clazz: Class[?], args: List[String] = Nil)(using Trace): Process < IOs =
+        def spawn(clazz: Class[?], args: List[String] = Nil)(using Frame): Process < IO =
             command(clazz, args).map(_.spawn)
 
         /** Returns a `Process.Command` representing the execution of the `clazz` Class in a new JVM process. To finally execute the
           * command, use `spawn` or use directly `jvm.spawn`.
           */
-        def command(clazz: Class[?], args: List[String] = Nil): Process.Command < IOs =
-            IOs {
+        def command(clazz: Class[?], args: List[String] = Nil): Process.Command < IO =
+            IO {
                 val javaHome  = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java"
                 val classPath = System.getProperty("java.class.path")
                 val command   = javaHome :: "-cp" :: classPath :: clazz.getName().init :: args
@@ -78,27 +77,27 @@ object Process:
 
         /** Spawns a new process executing this command
           */
-        def spawn(using Trace): Process < IOs
+        def spawn(using Frame): Process < IO
 
         /** Spawns a new process and returns its output as a String
           */
-        def text(using Trace): String < IOs =
+        def text(using Frame): String < IO =
             stream.map { inputStream =>
                 new String(inputStream.readAllBytes())
             }
 
         /** Spawns a new process and returns its output as a Stream
           */
-        def stream(using Trace): InputStream < IOs =
+        def stream(using Frame): InputStream < IO =
             spawn.map(_.stdout)
 
-        def exitValue(using Trace): Int < IOs =
+        def exitValue(using Frame): Int < IO =
             spawn.map(_.exitValue)
 
-        def waitFor(using Trace): Int < IOs =
+        def waitFor(using Frame): Int < IO =
             spawn.map(_.waitFor)
 
-        def waitFor(timeout: Long, unit: TimeUnit)(using Trace): Boolean < IOs =
+        def waitFor(timeout: Long, unit: TimeUnit)(using Frame): Boolean < IO =
             spawn.map(_.waitFor(timeout, unit))
 
         def pipe(that: Command): Command =
@@ -161,9 +160,9 @@ object Process:
             redirectErrorStream: Boolean = false
         ) extends Command:
             self =>
-            override def spawn(using Trace): Process < IOs =
+            override def spawn(using Frame): Process < IO =
                 for
-                    process <- IOs {
+                    process <- IO {
                         val builder = new ProcessBuilder(command*)
 
                         builder.redirectErrorStream(redirectErrorStream)
@@ -182,7 +181,7 @@ object Process:
                     }
                     _ <- stdin match
                         case Input.Stream(stream) =>
-                            val resources = Resources.acquireRelease((stream, process.stdin)) { streams =>
+                            val resources = Resource.acquireRelease((stream, process.stdin)) { streams =>
                                 streams._1.close()
                                 streams._2.close()
                             }.map { streams =>
@@ -190,9 +189,9 @@ object Process:
                                 ()
                             }
                             for
-                                _ <- Fibers.init(Resources.run(resources))
+                                _ <- Async.run(Resource.run(resources))
                             yield ()
-                        case _ => IOs.unit
+                        case _ => IO.unit
                 yield process
 
             override def cwd(newCwd: Path)                   = self.copy(cwd = Some(newCwd))
@@ -209,8 +208,8 @@ object Process:
 
         case class Piped(commands: List[Simple]) extends Command:
             self =>
-            def spawnAll(using Trace): List[Process] < IOs =
-                if commands.isEmpty then IOs(List.empty)
+            def spawnAll(using Frame): List[Process] < IO =
+                if commands.isEmpty then IO(List.empty)
                 else
                     commands.tail.foldLeft(commands.head.spawn.map(p => (p :: Nil, p.stdout))) { case (acc, nextCommand) =>
                         for
@@ -219,7 +218,7 @@ object Process:
                             nextProcess <- nextCommand.stdin(Input.Stream(lastStdout)).spawn
                         yield (processes ++ List(nextProcess), nextProcess.stdout)
                     }.map(_._1)
-            override def spawn(using Trace): Process < IOs =
+            override def spawn(using Frame): Process < IO =
                 spawnAll.map(_.last)
 
             override def cwd(newCwd: Path)                   = self.map(_.copy(cwd = Some(newCwd)))

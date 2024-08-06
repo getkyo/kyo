@@ -1,81 +1,79 @@
 package kyo
 
-import kyo.internal.Trace
-
 abstract class Meter:
     self =>
 
-    def available(using Trace): Int < IOs
+    def available(using Frame): Int < (Abort[Closed] & IO)
 
-    def isAvailable(using Trace): Boolean < IOs = available.map(_ > 0)
+    def isAvailable(using Frame): Boolean < (Abort[Closed] & IO) =
+        available.map(_ > 0)
 
-    def run[T, S](v: => T < S)(using Trace): T < (S & Fibers)
+    def run[T, S](v: => T < S)(using Frame): T < (S & Async & Abort[Closed])
 
-    def tryRun[T, S](v: => T < S)(using Trace): Option[T] < (IOs & S)
+    def tryRun[T, S](v: => T < S)(using Frame): Maybe[T] < (IO & S)
 end Meter
 
-object Meters:
+object Meter:
 
     def initNoop: Meter =
         new Meter:
-            def available(using Trace)                 = Int.MaxValue
-            def run[T, S](v: => T < S)(using Trace)    = v
-            def tryRun[T, S](v: => T < S)(using Trace) = v.map(Some(_))
+            def available(using Frame)                 = Int.MaxValue
+            def run[T, S](v: => T < S)(using Frame)    = v
+            def tryRun[T, S](v: => T < S)(using Frame) = v.map(Maybe(_))
 
-    def initMutex(using Trace): Meter < IOs =
+    def initMutex(using Frame): Meter < IO =
         initSemaphore(1)
 
-    def initSemaphore(concurrency: Int)(using Trace): Meter < IOs =
-        Channels.init[Unit](concurrency).map { chan =>
+    def initSemaphore(concurrency: Int)(using Frame): Meter < IO =
+        Channel.init[Unit](concurrency).map { chan =>
             offer(concurrency, chan, ()).map { _ =>
                 new Meter:
-                    def available(using Trace) = chan.size
-                    def release(using Trace)   = chan.offerUnit(())
+                    def available(using Frame) = chan.size
+                    def release(using Frame)   = chan.offerUnit(())
 
-                    def run[T, S](v: => T < S)(using Trace) =
-                        IOs.ensure(release) {
+                    def run[T, S](v: => T < S)(using Frame) =
+                        IO.ensure(release) {
                             chan.take.andThen(v)
                         }
 
-                    def tryRun[T, S](v: => T < S)(using Trace) =
-                        IOs {
-                            IOs.run(chan.poll) match
-                                case None =>
-                                    None
+                    def tryRun[T, S](v: => T < S)(using Frame) =
+                        IO {
+                            chan.unsafePoll match
+                                case Maybe.Empty => Maybe.empty
                                 case _ =>
-                                    IOs.ensure(release) {
-                                        v.map(Some(_))
+                                    IO.ensure(release) {
+                                        v.map(Maybe(_))
                                     }
                         }
             }
         }
 
-    def initRateLimiter(rate: Int, period: Duration)(using Trace): Meter < IOs =
-        Channels.init[Unit](rate).map { chan =>
-            Timers.scheduleAtFixedRate(period)(offer(rate, chan, ())).map { _ =>
+    def initRateLimiter(rate: Int, period: Duration)(using Frame): Meter < IO =
+        Channel.init[Unit](rate).map { chan =>
+            Timer.scheduleAtFixedRate(period)(offer(rate, chan, ())).map { _ =>
                 new Meter:
 
-                    def available(using Trace)              = chan.size
-                    def run[T, S](v: => T < S)(using Trace) = chan.take.map(_ => v)
+                    def available(using Frame)              = chan.size
+                    def run[T, S](v: => T < S)(using Frame) = chan.take.map(_ => v)
 
-                    def tryRun[T, S](v: => T < S)(using Trace) =
+                    def tryRun[T, S](v: => T < S)(using Frame) =
                         chan.poll.map {
-                            case None =>
-                                None
+                            case Maybe.Empty =>
+                                Maybe.empty
                             case _ =>
-                                v.map(Some(_))
+                                v.map(Maybe(_))
                         }
             }
         }
 
-    def pipeline[S1, S2](m1: Meter < S1, m2: Meter < S2)(using Trace): Meter < (IOs & S1 & S2) =
+    def pipeline[S1, S2](m1: Meter < S1, m2: Meter < S2)(using Frame): Meter < (IO & S1 & S2) =
         pipeline[S1 & S2](List(m1, m2))
 
     def pipeline[S1, S2, S3](
         m1: Meter < S1,
         m2: Meter < S2,
         m3: Meter < S3
-    )(using Trace): Meter < (IOs & S1 & S2 & S3) =
+    )(using Frame): Meter < (IO & S1 & S2 & S3) =
         pipeline[S1 & S2 & S3](List(m1, m2, m3))
 
     def pipeline[S1, S2, S3, S4](
@@ -83,34 +81,34 @@ object Meters:
         m2: Meter < S2,
         m3: Meter < S3,
         m4: Meter < S4
-    )(using Trace): Meter < (IOs & S1 & S2 & S3 & S4) =
+    )(using Frame): Meter < (IO & S1 & S2 & S3 & S4) =
         pipeline[S1 & S2 & S3 & S4](List(m1, m2, m3, m4))
 
-    def pipeline[S](meters: Seq[Meter < (IOs & S)])(using Trace): Meter < (IOs & S) =
-        Seqs.collect(meters).map { seq =>
+    def pipeline[S](meters: Seq[Meter < (IO & S)])(using Frame): Meter < (IO & S) =
+        Kyo.seq.collect(meters).map { seq =>
             val meters = seq.toIndexedSeq
             new Meter:
 
-                def available(using Trace) =
-                    Loops.indexed(0) { (idx, acc) =>
-                        if idx == meters.length then Loops.done(acc)
-                        else meters(idx).available.map(v => Loops.continue(acc + v))
+                def available(using Frame) =
+                    Loop.indexed(0) { (idx, acc) =>
+                        if idx == meters.length then Loop.done(acc)
+                        else meters(idx).available.map(v => Loop.continue(acc + v))
                     }
 
-                def run[T, S](v: => T < S)(using Trace) =
-                    def loop(idx: Int = 0): T < (S & Fibers) =
+                def run[T, S](v: => T < S)(using Frame) =
+                    def loop(idx: Int = 0): T < (S & Abort[Closed] & Async) =
                         if idx == meters.length then v
                         else meters(idx).run(loop(idx + 1))
                     loop()
                 end run
 
-                def tryRun[T, S](v: => T < S)(using Trace) =
-                    def loop(idx: Int = 0): Option[T] < (S & IOs) =
-                        if idx == meters.length then v.map(Some(_))
+                def tryRun[T, S](v: => T < S)(using Frame) =
+                    def loop(idx: Int = 0): Maybe[T] < (S & IO) =
+                        if idx == meters.length then v.map(Maybe(_))
                         else
                             meters(idx).tryRun(loop(idx + 1)).map {
-                                case None => None
-                                case r    => r.flatten
+                                case Maybe.Empty => Maybe.empty
+                                case r           => r.flatten
                             }
                     loop()
                 end tryRun
@@ -118,13 +116,13 @@ object Meters:
             end new
         }
 
-    private def offer[T](n: Int, chan: Channel[T], v: T)(using Trace): Unit < IOs =
-        Loops.indexed { idx =>
-            if idx == n then Loops.done
+    private def offer[T](n: Int, chan: Channel[T], v: T)(using Frame): Unit < IO =
+        Loop.indexed { idx =>
+            if idx == n then Loop.done
             else
                 chan.offer(v).map {
-                    case true  => Loops.continue
-                    case false => Loops.done
+                    case true  => Loop.continue
+                    case false => Loop.done
                 }
         }
-end Meters
+end Meter

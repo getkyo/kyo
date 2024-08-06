@@ -2,35 +2,33 @@ package kyo
 
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import kyo.internal.Trace
 import org.jctools.queues.*
 import scala.annotation.tailrec
+import scala.util.control.NoStackTrace
 
-class Queue[T] private[kyo] (private[kyo] val unsafe: Queues.Unsafe[T]):
+class Queue[T] private[kyo] (initFrame: Frame, private[kyo] val unsafe: Queue.Unsafe[T]):
 
-    def capacity(using Trace): Int               = unsafe.capacity
-    def size(using Trace): Int < IOs             = op(unsafe.size())
-    def isEmpty(using Trace): Boolean < IOs      = op(unsafe.isEmpty())
-    def isFull(using Trace): Boolean < IOs       = op(unsafe.isFull())
-    def offer(v: T)(using Trace): Boolean < IOs  = op(unsafe.offer(v))
-    def poll(using Trace): Option[T] < IOs       = op(Option(unsafe.poll()))
-    def peek(using Trace): Option[T] < IOs       = op(Option(unsafe.peek()))
-    def drain(using Trace): Seq[T] < IOs         = op(unsafe.drain())
-    def isClosed(using Trace): Boolean < IOs     = IOs(unsafe.isClosed())
-    def close(using Trace): Option[Seq[T]] < IOs = IOs(unsafe.close())
+    def capacity(using Frame): Int                           = unsafe.capacity
+    def size(using Frame): Int < (Abort[Closed] & IO)        = op(unsafe.size())
+    def isEmpty(using Frame): Boolean < (Abort[Closed] & IO) = op(unsafe.isEmpty())
+    def isFull(using Frame): Boolean < (Abort[Closed] & IO)  = op(unsafe.isFull())
+    def offer(v: T)(using Frame): Boolean < IO               = IO(!unsafe.isClosed() && unsafe.offer(v))
+    def poll(using Frame): Maybe[T] < (Abort[Closed] & IO)   = op(Maybe(unsafe.poll()))
+    def peek(using Frame): Maybe[T] < (Abort[Closed] & IO)   = op(Maybe(unsafe.peek()))
+    def drain(using Frame): Seq[T] < (Abort[Closed] & IO)    = op(unsafe.drain())
+    def isClosed(using Frame): Boolean < IO                  = IO(unsafe.isClosed())
+    def close(using Frame): Maybe[Seq[T]] < IO               = IO(unsafe.close())
 
-    protected inline def op[T, S](inline v: => T < IOs)(using inline trace: Trace): T < IOs =
-        IOs {
+    protected inline def op[T, S](inline v: => T < (IO & S))(using frame: Frame): T < (Abort[Closed] & IO & S) =
+        IO {
             if unsafe.isClosed() then
-                Queues.closed
+                Abort.fail(Closed("Queue", initFrame, frame))
             else
                 v
         }
 end Queue
 
-object Queues:
-
-    private[kyo] val closed = IOs.fail("Queue closed!")
+object Queue:
 
     abstract private[kyo] class Unsafe[T]
         extends AtomicBoolean(false):
@@ -58,23 +56,24 @@ object Queues:
         def isClosed(): Boolean =
             super.get()
 
-        def close(): Option[Seq[T]] =
+        def close(): Maybe[Seq[T]] =
             super.compareAndSet(false, true) match
                 case false =>
-                    None
+                    Maybe.empty
                 case true =>
-                    Some(drain())
+                    Maybe(drain())
     end Unsafe
 
-    class Unbounded[T] private[kyo] (unsafe: Queues.Unsafe[T]) extends Queue[T](unsafe):
-        def add[S](v: T < S)(using Trace): Unit < (IOs & S) =
+    class Unbounded[T] private[kyo] (initFrame: Frame, unsafe: Queue.Unsafe[T]) extends Queue[T](initFrame, unsafe):
+        def add[S](v: T < S)(using Frame): Unit < (Abort[Closed] & IO & S) =
             op(v.map(offer).unit)
 
-    def init[T](capacity: Int, access: Access = kyo.Access.Mpmc): Queue[T] < IOs =
-        IOs {
+    def init[T](capacity: Int, access: Access = Access.Mpmc)(using frame: Frame): Queue[T] < IO =
+        IO {
             capacity match
                 case c if (c <= 0) =>
                     new Queue(
+                        frame,
                         new Unsafe[T]:
                             def capacity    = 0
                             def size()      = 0
@@ -86,6 +85,7 @@ object Queues:
                     )
                 case 1 =>
                     new Queue(
+                        frame,
                         new Unsafe[T]:
                             val state       = new AtomicReference[T]
                             def capacity    = 1
@@ -100,13 +100,13 @@ object Queues:
                     initUnbounded(access)
                 case _ =>
                     access match
-                        case kyo.Access.Mpmc =>
+                        case Access.Mpmc =>
                             fromJava(new MpmcArrayQueue[T](capacity), capacity)
-                        case kyo.Access.Mpsc =>
+                        case Access.Mpsc =>
                             fromJava(new MpscArrayQueue[T](capacity), capacity)
-                        case kyo.Access.Spmc =>
+                        case Access.Spmc =>
                             fromJava(new SpmcArrayQueue[T](capacity), capacity)
-                        case kyo.Access.Spsc =>
+                        case Access.Spsc =>
                             if capacity >= 4 then
                                 fromJava(new SpscArrayQueue[T](capacity), capacity)
                             else
@@ -114,24 +114,25 @@ object Queues:
                                 fromJava(new SpmcArrayQueue[T](capacity), capacity)
         }
 
-    def initUnbounded[T](access: Access = kyo.Access.Mpmc, chunkSize: Int = 8): Unbounded[T] < IOs =
-        IOs {
+    def initUnbounded[T](access: Access = Access.Mpmc, chunkSize: Int = 8)(using Frame): Unbounded[T] < IO =
+        IO {
             access match
-                case kyo.Access.Mpmc =>
+                case Access.Mpmc =>
                     fromJava(new MpmcUnboundedXaddArrayQueue[T](chunkSize))
-                case kyo.Access.Mpsc =>
+                case Access.Mpsc =>
                     fromJava(new MpscUnboundedArrayQueue[T](chunkSize))
-                case kyo.Access.Spmc =>
+                case Access.Spmc =>
                     fromJava(new MpmcUnboundedXaddArrayQueue[T](chunkSize))
-                case kyo.Access.Spsc =>
+                case Access.Spsc =>
                     fromJava(new SpscUnboundedArrayQueue[T](chunkSize))
         }
 
-    def initDropping[T](capacity: Int, access: Access = kyo.Access.Mpmc): Unbounded[T] < IOs =
+    def initDropping[T](capacity: Int, access: Access = Access.Mpmc)(using frame: Frame): Unbounded[T] < IO =
         init[T](capacity, access).map { q =>
             val u = q.unsafe
             val c = capacity
             new Unbounded(
+                frame,
                 new Unsafe[T]:
                     def capacity  = c
                     def size()    = u.size()
@@ -145,11 +146,12 @@ object Queues:
             )
         }
 
-    def initSliding[T](capacity: Int, access: Access = kyo.Access.Mpmc): Unbounded[T] < IOs =
+    def initSliding[T](capacity: Int, access: Access = Access.Mpmc)(using frame: Frame): Unbounded[T] < IO =
         init[T](capacity, access).map { q =>
             val u = q.unsafe
             val c = capacity
             new Unbounded(
+                frame,
                 new Unsafe[T]:
                     def capacity  = c
                     def size()    = u.size()
@@ -172,8 +174,9 @@ object Queues:
             )
         }
 
-    private def fromJava[T](q: java.util.Queue[T]): Unbounded[T] =
+    private def fromJava[T](q: java.util.Queue[T])(using frame: Frame): Unbounded[T] =
         new Unbounded(
+            frame,
             new Unsafe[T]:
                 def capacity    = Int.MaxValue
                 def size()      = q.size
@@ -184,8 +187,9 @@ object Queues:
                 def peek()      = q.peek
         )
 
-    private def fromJava[T](q: java.util.Queue[T], _capacity: Int): Queue[T] =
+    private def fromJava[T](q: java.util.Queue[T], _capacity: Int)(using frame: Frame): Queue[T] =
         new Queue(
+            frame,
             new Unsafe[T]:
                 def capacity    = _capacity
                 def size()      = q.size
@@ -195,4 +199,4 @@ object Queues:
                 def poll()      = q.poll
                 def peek()      = q.peek
         )
-end Queues
+end Queue
