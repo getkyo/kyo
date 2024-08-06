@@ -18,6 +18,7 @@ import scala.concurrent.Future
 import scala.reflect.ClassTag
 import scala.util.NotGiven
 import scala.util.control.NonFatal
+import scala.util.control.NoStackTrace
 
 opaque type Async <: (IO & Async.Join) = Async.Join & IO
 
@@ -111,6 +112,9 @@ object Async:
                     p
                 }
 
+            def interrupt(using frame: Frame): Boolean < IO =
+                interrupt(Result.Panic(Interrupted(frame)))
+
             def interrupt(error: Panic)(using Frame): Boolean < IO =
                 IO(self.interrupt(error))
 
@@ -120,6 +124,9 @@ object Async:
             private[kyo] inline def unsafe: IOPromise[E, A] = self
 
         end extension
+
+        case class Interrupted(at: Frame) extends NoStackTrace
+
     end Fiber
 
     def delay[T, S](d: Duration)(v: => T < S)(using Frame): T < (S & Async) =

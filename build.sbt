@@ -70,7 +70,7 @@ lazy val kyoJVM = project
         // `kyo-direct`.jvm,
         `kyo-stats-registry`.jvm,
         `kyo-stats-otel`.jvm,
-        // `kyo-cache`.jvm,
+        `kyo-cache`.jvm,
         // `kyo-sttp`.jvm,
         // `kyo-tapir`.jvm,
         // `kyo-caliban`.jvm,
@@ -215,16 +215,16 @@ lazy val `kyo-stats-otel` =
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
 
-// lazy val `kyo-cache` =
-//     crossProject(JVMPlatform)
-//         .withoutSuffixFor(JVMPlatform)
-//         .crossType(CrossType.Full)
-//         .in(file("kyo-cache"))
-//         .dependsOn(`kyo-core`)
-//         .settings(
-//             `kyo-settings`,
-//             libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
-//         )
+lazy val `kyo-cache` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-cache"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
+        )
 
 // lazy val `kyo-sttp` =
 //     crossProject(JSPlatform, JVMPlatform)

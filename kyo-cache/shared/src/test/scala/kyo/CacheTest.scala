@@ -1,10 +1,8 @@
 package kyo
 
-import kyo.*
-import kyoTest.*
 import scala.util.*
 
-class cachesTest extends KyoTest:
+class CacheTest extends Test:
 
     "sync" in run {
         var calls = 0
@@ -25,7 +23,7 @@ class cachesTest extends KyoTest:
         for
             c <- Caches.init(_.maxSize(4))
             m = c.memo { (v: Int) =>
-                Fibers.init {
+                Async.run {
                     calls += 1
                     v + 1
                 }.map(_.get)
@@ -42,18 +40,18 @@ class cachesTest extends KyoTest:
         for
             c <- Caches.init(_.maxSize(4))
             m = c.memo { (v: Int) =>
-                Fibers.init {
+                Async.run {
                     calls += 1
                     if calls == 1 then
-                        IOs.fail(ex)
+                        throw ex
                     else
                         v + 1
                     end if
                 }.map(_.get)
             }
-            v1 <- IOs.toTry(m(1))
-            v2 <- IOs.toTry(m(1))
-        yield assert(calls == 2 && v1 == Failure(ex) && v2 == Success(2))
+            v1 <- Abort.run[Throwable](m(1))
+            v2 <- Abort.run[Throwable](m(1))
+        yield assert(calls == 2 && v1 == Result.fail(ex) && v2 == Result.success(2))
         end for
     }
-end cachesTest
+end CacheTest
