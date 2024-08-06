@@ -1,59 +1,75 @@
 package kyo
 
-import Vars.internal.*
-import kyo.core.*
-import kyo.internal.Trace
+import Var.internal.*
+import kyo.Tag
+import kyo.kernel.*
 
-class Vars[V] extends Effect[Vars[V]]:
-    type Command[T] = Op[V]
+sealed trait Var[V] extends Effect[Const[Op[V]], Const[V]]
 
-    private val handler =
-        new ResultHandler[V, Const[Op[V]], Vars[V], Id, Any]:
-            def done[T](st: V, v: T)(using Tag[Vars[V]]) = v
-            def resume[T, U: Flat, S2](st: V, op: Op[V], k: T => U < (Vars[V] & S2))(using Tag[Vars[V]]) =
-                op match
-                    case _: Get.type =>
-                        Resume(st, k(st.asInstanceOf[T]))
-                    case Set(v) =>
-                        Resume(v, k(().asInstanceOf[T]))
-                    case Update(f) =>
-                        Resume(f(st), k(().asInstanceOf[T]))
-end Vars
+object Var:
 
-object Vars:
-    private case object vars extends Vars[Any]
-    private def vars[V]: Vars[V] = vars.asInstanceOf[Vars[V]]
+    /** Obtains the current value of the 'Var'. */
+    inline def get[V](using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
+        use[V](identity)
+
+    final class UseOps[V](dummy: Unit) extends AnyVal:
+        /** Invokes the provided function with the current value of the `Var`. */
+        inline def apply[A, S](inline f: V => A < S)(
+            using
+            inline tag: Tag[Var[V]],
+            inline frame: Frame
+        ): A < (Var[V] & S) =
+            Effect.suspendMap[V](tag, Get: Op[V])(f)
+    end UseOps
+
+    inline def use[V]: UseOps[V] = UseOps(())
+
+    /** Sets a new value and returns the previous one. */
+    inline def set[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
+        Effect.suspend[Unit](tag, value: Op[V])
+
+    /** Sets a new value and returns `Unit`. */
+    inline def setDiscard[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
+        Effect.suspendMap[Unit](tag, value: Op[V])(_ => ())
+
+    /** Applies the update function and returns the new value. */
+    inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
+        Effect.suspend[V](tag, (v => f(v)): Update[V])
+
+    /** Applies the update function and returns `Unit`. */
+    inline def updateDiscard[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
+        Effect.suspendMap[Unit](tag, (v => f(v)): Update[V])(_ => ())
+
+    private inline def runWith[V, A, S, B, S2](state: V)(v: A < (Var[V] & S))(
+        inline f: (V, A) => B < S2
+    )(using inline tag: Tag[Var[V]], inline frame: Frame): B < (S & S2) =
+        Effect.handle.state(tag, state, v)(
+            [C] =>
+                (input, state, cont) =>
+                    input match
+                        case input: Get.type =>
+                            (state, cont(state))
+                        case input: Update[V] @unchecked =>
+                            val nst = input(state)
+                            (nst, cont(nst))
+                        case input: V @unchecked =>
+                            (input, cont(state)),
+            done = f
+        )
+
+    /** Handles the effect and discards the 'Var' state. */
+    def run[V, A, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): A < S =
+        runWith(state)(v)((_, result) => result)
+
+    /** Handles the effect and returns a tuple with the final `Var` state and the computation's result. */
+    def runTuple[V, A, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): (V, A) < S =
+        runWith(state)(v)((state, result) => (state, result))
+
     object internal:
-        case object Get
-        case class Set[V](v: V)
-        case class Update[V](f: V => V)
-        type Op[V] = Get.type | Set[V] | Update[V]
+        type Op[V] = Get.type | V | Update[V]
+        object Get
+        abstract class Update[V]:
+            def apply(v: V): V
     end internal
 
-    def get[V](using Tag[Vars[V]])(using Trace): V < Vars[V] =
-        vars[V].suspend[V](Get)
-
-    class UseDsl[V]:
-        inline def apply[T, S](inline f: V => T < S)(using inline tag: Tag[Vars[V]], inline trace: Trace): T < (Vars[V] & S) =
-            vars[V].suspend[V, T, S](Get, f)
-
-    def use[V >: Nothing]: UseDsl[V] = new UseDsl[V]
-
-    def set[V](value: V)(using Tag[Vars[V]], Trace): Unit < Vars[V] =
-        vars[V].suspend[Unit](Set(value))
-
-    def update[V](f: V => V)(using Tag[Vars[V]], Trace): Unit < Vars[V] =
-        vars[V].suspend[Unit](Update(f))
-
-    class RunDsl[V]:
-        def apply[T: Flat, S2](state: V)(value: T < (Vars[V] & S2))(
-            using
-            Tag[Vars[V]],
-            Trace
-        ): T < S2 =
-            vars[V].handle(vars[V].handler)(state, value)
-    end RunDsl
-
-    def run[V >: Nothing]: RunDsl[V] = new RunDsl[V]
-
-end Vars
+end Var

@@ -1,41 +1,39 @@
 package kyo
 
-import kyo.internal.Trace
+object Aspect:
 
-object Aspects:
+    private[kyo] val local = Local.init(Map.empty[Aspect[?, ?, ?], Cut[?, ?, ?]])
 
-    private[kyo] val local = Locals.init(Map.empty[Aspect[?, ?, ?], Cut[?, ?, ?]])
-
-    def init[T, U, S](using Trace): Aspect[T, U, S] =
-        init(new Cut[T, U, S]:
-            def apply[S2](v: T < S2)(f: T => U < (IOs & S)) =
+    def init[A, B, S](using Frame): Aspect[A, B, S] =
+        init(new Cut[A, B, S]:
+            def apply[S2](v: A < S2)(f: A => B < S) =
                 v.map(f)
         )
 
-    def init[T, U, S](default: Cut[T, U, S])(using Trace): Aspect[T, U, S] =
-        new Aspect[T, U, S](default)
+    def init[A, B, S](default: Cut[A, B, S])(using Frame): Aspect[A, B, S] =
+        new Aspect[A, B, S](default)
 
-    def chain[T, U, S](head: Cut[T, U, S], tail: Seq[Cut[T, U, S]])(using Trace) =
+    def chain[A, B, S](head: Cut[A, B, S], tail: Seq[Cut[A, B, S]])(using Frame) =
         tail.foldLeft(head)(_.andThen(_))
-end Aspects
+end Aspect
 
-import Aspects.*
+import Aspect.*
 
-abstract class Cut[T, U, S]:
-    def apply[S2](v: T < S2)(f: T => U < (IOs & S)): U < (IOs & S & S2)
+abstract class Cut[A, B, S]:
+    def apply[S2](v: A < S2)(f: A => B < S): B < (S & S2)
 
-    def andThen(other: Cut[T, U, S])(using Trace): Cut[T, U, S] =
-        new Cut[T, U, S]:
-            def apply[S2](v: T < S2)(f: T => U < (IOs & S)) =
+    def andThen(other: Cut[A, B, S])(using Frame): Cut[A, B, S] =
+        new Cut[A, B, S]:
+            def apply[S2](v: A < S2)(f: A => B < S) =
                 Cut.this(v)(other(_)(f))
 end Cut
 
-final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S])(using Trace) extends Cut[T, U, S]:
+final class Aspect[A, B, S] private[kyo] (default: Cut[A, B, S])(using Frame) extends Cut[A, B, S]:
 
-    def apply[S2](v: T < S2)(f: T => U < (IOs & S)) =
+    def apply[S2](v: A < S2)(f: A => B < S) =
         local.use { map =>
             map.get(this) match
-                case Some(a: Cut[T, U, S] @unchecked) =>
+                case Some(a: Cut[A, B, S] @unchecked) =>
                     local.let(map - this) {
                         a(v)(f)
                     }
@@ -43,10 +41,10 @@ final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S])(using Trace) ex
                     default(v)(f)
         }
 
-    def sandbox[S](v: T < S)(using Trace): T < (IOs & S) =
+    def sandbox[S](v: A < S)(using Frame): A < S =
         local.use { map =>
             map.get(this) match
-                case Some(a: Cut[T, U, S] @unchecked) =>
+                case Some(a: Cut[A, B, S] @unchecked) =>
                     local.let(map - this) {
                         v
                     }
@@ -54,11 +52,11 @@ final class Aspect[T, U, S] private[kyo] (default: Cut[T, U, S])(using Trace) ex
                     v
         }
 
-    def let[V, S2](a: Cut[T, U, S])(v: V < (IOs & S2))(using Trace): V < (IOs & S & S2) =
+    def let[V, S2](a: Cut[A, B, S])(v: V < S2)(using Frame): V < (S & S2) =
         local.use { map =>
             val cut =
                 map.get(this) match
-                    case Some(b: Cut[T, U, S] @unchecked) =>
+                    case Some(b: Cut[A, B, S] @unchecked) =>
                         b.andThen(a)
                     case _ =>
                         a

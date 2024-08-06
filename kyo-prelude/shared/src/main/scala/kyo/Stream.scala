@@ -1,350 +1,222 @@
 package kyo
 
-import Stream.*
-import Stream.internal.*
-import kyo.*
-import kyo.core.*
-import kyo.core.internal.*
-import kyo.internal.Trace
-import scala.annotation.implicitNotFound
-import scala.annotation.tailrec
+import kyo.Emit.Ack
+import kyo.Emit.Ack.*
+import kyo.Tag
+import kyo.kernel.Effect
+import scala.annotation.targetName
 
-case class Stream[+T: Flat, V, -S](s: T < (Streams[V] & S)):
+case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
 
-    def get(using Trace, Tag[Streams[V]]): T < (Streams[V] & S) =
-        s
+    def emit: Ack < (Emit[Chunk[V]] & S) = v
 
-    def take(n: Int)(using Trace, Tag[Streams[V]]): Stream[T, V, S] =
-        Stream {
-            if n <= 0 then
-                runDiscard
-            else
-                Streams[V].handle(handlers[V, Any].takeHandler)(n, s)
-        }
+    private def continue[S2](f: Int => Ack < (Emit[Chunk[V]] & S & S2))(using Frame): Stream[V, S & S2] =
+        Stream(v.map {
+            case Stop        => Stop
+            case Continue(n) => f(n)
+        })
 
-    def drop(n: Int)(using Trace, Tag[Streams[V]]): Stream[T, V, S] =
-        Stream {
-            if n <= 0 then
-                s
-            else
-                Streams[V].handle(handlers[V, Any].dropHandler)(n, s)
-        }
+    def concat[S2](other: Stream[V, S2])(using Frame): Stream[V, S & S2] =
+        continue(_ => other.emit)
 
-    def takeWhile[S2](f: V => Boolean < S2)(using Trace, Tag[Streams[V]]): Stream[T, V, S & S2] =
-        Stream(Streams[V].handle(handlers[V, S & S2].takeWhile)(f, s))
+    def map[V2, S2](f: V => V2 < S2)(using Tag[Emit[Chunk[V]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
+        mapChunk(_.map(f))
 
-    def dropWhile[S2](f: V => Boolean < S2)(using Trace, Tag[Streams[V]]): Stream[T, V, S & S2] =
-        Stream(Streams[V].handle(handlers[V, S & S2].dropWhile)(f, s))
-
-    def filter[S2](f: V => Boolean < S2)(using Trace, Tag[Streams[V]]): Stream[T, V, S & S2] =
-        Stream(Streams[V].handle(handlers[V, S & S2].filter)(f, s))
-
-    def changes(using Trace, Tag[Streams[V]]): Stream[T, V, S] =
-        Stream(Streams[V].handle(handlers[V, S].changes)(null, s))
-
-    def collect[S2, V2: Flat](
-        pf: PartialFunction[V, Unit < (Streams[V2] & S2)]
-    )(using tag: Tag[Streams[V]], tag2: Tag[Streams[V2]], trace: Trace): Stream[T, V2, S & S2] =
-        val handler =
-            new Handler[Const[Chunk[V]], Streams[V], Streams[V2] & S & S2]:
-                def resume[T, U: Flat, S3](
-                    command: Chunk[V],
-                    k: T => U < (Streams[V] & S3)
-                )(using Tag[Streams[V]]) =
-                    command.collectUnit(pf).andThen {
-                        Streams.emitChunkAndThen(Chunks.init[V2]) {
-                            Resume((), k(().asInstanceOf[T]))
-                        }
-                    }
-        Stream(Streams[V].handle(handler)((), s))
-    end collect
-
-    def transform[V2: Flat, S2](f: V => V2 < S2)(
+    def mapChunk[V2, S2](f: Chunk[V] => Chunk[V2] < S2)(
         using
-        tag: Tag[Streams[V]],
-        tag2: Tag[Streams[V2]],
-        trace: Trace
-    ): Stream[T, V2, S & S2] =
-        val handler =
-            new Handler[Const[Chunk[V]], Streams[V], Streams[V2] & S & S2]:
-                def resume[T, U: Flat, S3](
-                    command: Chunk[V],
-                    k: T => U < (Streams[V] & S3)
-                )(using Tag[Streams[V]]): (U | Resume[U, S3]) < (Streams[V2] & S & S2 & S3) =
-                    command.map(f).map { c =>
-                        Streams.emitChunkAndThen(c) {
-                            Resume((), k(().asInstanceOf[T]))
-                        }
-                    }
-                end resume
-        Stream(Streams[V].handle(handler)((), s))
-    end transform
+        tagV: Tag[Emit[Chunk[V]]],
+        tagV2: Tag[Emit[Chunk[V2]]],
+        frame: Frame
+    ): Stream[V2, S & S2] =
+        Stream[V2, S & S2](Effect.handle.state(tagV, (), v)(
+            [C] =>
+                (input, _, cont) =>
+                    if input.isEmpty then
+                        Emit.andMap(Chunk.empty[V2])(ack => ((), cont(ack)))
+                    else
+                        f(input).map(c => Emit.andMap(c)(ack => ((), cont(ack))))
+        ))
 
-    def transformChunks[V2: Flat, S2](f: Chunk[V] => Chunk[V2] < S2)(
+    def flatMap[S2, V2, S3](f: V => Stream[V2, S2] < S3)(
         using
-        tag: Tag[Streams[V]],
-        tag2: Tag[Streams[V2]],
-        trace: Trace
-    ): Stream[T, V2, S & S2] =
-        val handler =
-            new Handler[Const[Chunk[V]], Streams[V], Streams[V2] & S & S2]:
-                def resume[T, U: Flat, S3](
-                    command: Chunk[V],
-                    k: T => U < (Streams[V] & S3)
-                )(using Tag[Streams[V]]): (U | Resume[U, S3]) < (Streams[V2] & S & S2 & S3) =
-                    f(command).map { c =>
-                        Streams.emitChunkAndThen(c) {
-                            Resume((), k(().asInstanceOf[T]))
-                        }
-                    }
-                end resume
-        Stream(Streams[V].handle(handler)((), s))
-    end transformChunks
+        tagV: Tag[Emit[Chunk[V]]],
+        tagV2: Tag[Emit[Chunk[V2]]],
+        frame: Frame
+    ): Stream[V2, S & S2 & S3] =
+        Stream[V2, S & S2 & S3](Effect.handle.state(tagV, (), v)(
+            [C] =>
+                (input, _, cont) =>
+                    input.foldLeft(Continue(): Ack) { (ack, v) =>
+                        ack match
+                            case Stop        => Stop
+                            case Continue(_) => f(v).map(_.emit)
+                    }.map(ack => ((), cont(ack)))
+        ))
 
-    def concat[T2: Flat, S2](
-        s2: Stream[T2, V, S2]
-    )(using Trace, Tag[Streams[V]]): Stream[(T, T2), V, S & S2] =
-        Stream(s.map(t => s2.s.map((t, _))))
-
-    def buffer[S2 <: S](size: Int)(
+    def flatMapChunk[S2, V2, S3](f: Chunk[V] => Stream[V2, S2] < S3)(
         using
-        @implicitNotFound(
-            "Can't buffer a stream with pending effects other than 'Fibers' and 'IOs'. Found: ${S}"
-        ) ev: S2 => Fibers | IOs,
-        trace: Trace,
-        tag: Tag[Streams[V]]
-    ): Stream[T, V, Fibers & S2] =
-        Stream {
-            val run =
-                Channels.init[Chunk[V] | Stream.Done](size).map { ch =>
-                    val s2 = this.asInstanceOf[Stream[T, V, Fibers]]
-                    Fibers.init(s2.runChannel(ch)).map { f =>
-                        Streams.emitChannel[V](ch).andThen(f.get)
+        tagV: Tag[Emit[Chunk[V]]],
+        tagV2: Tag[Emit[Chunk[V2]]],
+        frame: Frame
+    ): Stream[V2, S & S2 & S3] =
+        Stream[V2, S & S2 & S3](Effect.handle.state(tagV, (), v)(
+            [C] =>
+                (input, _, cont) =>
+                    if input.isEmpty then
+                        Emit.andMap(Chunk.empty[V2])(ack => ((), cont(ack)))
+                    else
+                        f(input).map(_.emit).map(ack => ((), cont(ack)))
+        ))
+
+    private def discard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+        Stream(Effect.handle(tag, v)(
+            [C] => (input, cont) => cont(Stop)
+        ))
+
+    def take(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+        if n <= 0 then discard
+        else
+            Stream[V, S](Effect.handle.state(tag, n, v)(
+                [C] =>
+                    (input, state, cont) =>
+                        if state == 0 then
+                            (0, cont(Stop))
+                        else
+                            val c   = input.take(state)
+                            val nst = state - c.size
+                            Emit.andMap(c)(ack => (nst, cont(ack.maxItems(nst))))
+            ))
+
+    def drop(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+        if n <= 0 then this
+        else
+            Stream[V, S](Effect.handle.state(tag, n, v)(
+                [C] =>
+                    (input, state, cont) =>
+                        if state == 0 then
+                            Emit.andMap(input)(ack => (0, cont(ack)))
+                        else
+                            val c = input.dropLeft(state)
+                            if c.isEmpty then (state - c.size, cont(Continue()))
+                            else Emit.andMap(c)(ack => (0, cont(ack)))
+            ))
+
+    def takeWhile[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
+        Stream[V, S & S2](Effect.handle.state(tag, true, v)(
+            [C] =>
+                (input, state, cont) =>
+                    if !state then (false, cont(Stop))
+                    else
+                        input.takeWhile(f).map { c =>
+                            Emit.andMap(c)(ack => (c.size == input.size, cont(ack)))
                     }
+        ))
+    end takeWhile
+
+    def dropWhile[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
+        Stream[V, S & S2](Effect.handle.state(tag, true, v)(
+            [C] =>
+                (input, state, cont) =>
+                    if state then
+                        input.dropWhile(f).map { c =>
+                            if c.isEmpty then (true, cont(Continue()))
+                            else Emit.andMap(c)(ack => (false, cont(ack)))
+                        }
+                    else
+                        Emit.andMap(input)(ack => (false, cont(ack)))
+        ))
+
+    def filter[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
+        Stream[V, S & S2](Effect.handle.state(tag, (), v)(
+            [C] =>
+                (input, _, cont) =>
+                    input.filter(f).map { c =>
+                        if c.isEmpty then ((), cont(Continue()))
+                        else Emit.andMap(c)(ack => ((), cont(ack)))
                 }
-            run
-        }
+        ))
 
-    def runFold[A: Flat, S2](acc: A)(f: (A, V) => A < S2)(using Trace, Tag[Streams[V]]): (A, T) < (S & S2) =
-        val handler =
-            new ResultHandler[A, Const[Chunk[V]], Streams[V], [T] =>> (A, T), S & S2]:
-                def done[T](st: A, v: T)(using Tag[Streams[V]]) = (st, v)
-                def resume[T, U: Flat, S2](
-                    st: A,
-                    command: Chunk[V],
-                    k: T => U < (Streams[V] & S2)
-                )(using Tag[Streams[V]]) =
-                    command.foldLeft(st)(f).map { r =>
-                        Resume(r, k(().asInstanceOf[T]))
-                    }
-                end resume
-        Streams[V].handle(handler)(acc, s)
-    end runFold
+    def changes(using Tag[Emit[Chunk[V]]], Frame, CanEqual[V, V]): Stream[V, S] =
+        changes(Maybe.empty)
 
-    def runDiscard(using Trace, Tag[Streams[V]]): T < S =
-        Streams[V].handle(handlers[V, Any].discard)((), s)
+    def changes(first: V)(using Tag[Emit[Chunk[V]]], Frame, CanEqual[V, V]): Stream[V, S] =
+        changes(Maybe(first))
 
-    def runChunk(using Trace, Tag[Streams[V]]): (Chunk[V], T) < S =
-        Streams[V].handle(handlers[V, Any].runChunk)(Chunks.init, s)
+    @targetName("changesMaybe")
+    def changes(first: Maybe[V])(using tag: Tag[Emit[Chunk[V]]], frame: Frame, ce: CanEqual[V, V]): Stream[V, S] =
+        Stream[V, S](Effect.handle.state(tag, first, v)(
+            [C] =>
+                (input, state, cont) =>
+                    val c        = input.changes(state)
+                    val newState = if c.isEmpty then state else Maybe(c.last)
+                    Emit.andMap(c) { ack =>
+                        (newState, cont(ack))
+                }
+        ))
+    end changes
 
-    def runSeq(using Trace, Tag[Streams[V]]): (IndexedSeq[V], T) < S =
-        runChunk.map((c, v) => (c.toSeq, v))
+    def runDiscard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < S =
+        Effect.handle(tag, v.unit)(
+            [C] => (input, cont) => cont(Stop)
+        )
 
-    def runChannel(ch: Channel[Chunk[V] | Done])(using Trace, Tag[Streams[V]]): T < (Fibers & S) =
-        val handler =
-            new Handler[Const[Chunk[V]], Streams[V], Fibers]:
-                override def done[T](v: T)(using Tag[Streams[V]]) = ch.put(Done).andThen(v)
-                def resume[T, U: Flat, S](command: Chunk[V], k: T => U < (Streams[V] & S))(using Tag[Streams[V]]) =
-                    ch.put(command).andThen(Resume((), k(().asInstanceOf[T])))
-        Streams[V].handle(handler)((), s)
-    end runChannel
+    def runForeach[S2](f: V => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
+        runForeachChunk(_.foreach(f))
+
+    def runForeachChunk[S2](f: Chunk[V] => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
+        Effect.handle(tag, v.unit)(
+            [C] =>
+                (input, cont) =>
+                    if !input.isEmpty then
+                        f(input).andThen(cont(Continue()))
+                    else
+                        cont(Continue())
+        )
+
+    def runFold[A, S2](acc: A)(f: (A, V) => A < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): A < (S & S2) =
+        Effect.handle.state(tag, acc, v)(
+            handle = [C] =>
+                (input, state, cont) =>
+                    input.foldLeft(state)(f).map((_, cont(Continue()))),
+            done = (state, _) => state
+        )
+
+    def runSeq(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Seq[V] < S =
+        runChunk.map(_.toSeq)
+
+    def runChunk(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Chunk[V] < S =
+        Effect.handle.state(tag, Chunk.empty[Chunk[V]], v)(
+            handle = [C] =>
+                (input, state, cont) =>
+                    (state.append(input), cont(Continue())),
+            done = (state, _) => state.flatten
+        )
 
 end Stream
 
 object Stream:
 
-    import internal.*
+    private val _empty           = Stream(Stop)
+    def empty[V]: Stream[Any, V] = _empty.asInstanceOf[Stream[Any, V]]
 
-    class Done
-    object Done extends Done
+    def init[V, S](chunk: Chunk[V] < S)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+        Stream[V, S](
+            chunk.map { chunk =>
+                Emit.andMap(Chunk.empty[V]) { ack =>
+                    Loop(chunk, ack) { (c, ack) =>
+                        ack match
+                            case Stop =>
+                                Loop.done(Stop)
+                            case Continue(n) =>
+                                if c.isEmpty then Loop.done(Ack.Continue())
+                                else Emit.andMap(c.take(n))(ack => Loop.continue(c.dropLeft(n), ack))
+                    }
+                }
+            }
+        )
 
-    private[kyo] object internal:
-
-        class Handlers[V, S]:
-            val takeHandler =
-                new ResultHandler[Int, Const[Chunk[V]], Streams[V], Id, Streams[V]]:
-                    def done[T](st: Int, v: T)(using Tag[Streams[V]]) = v
-                    def resume[T, U: Flat, S2](
-                        st: Int,
-                        command: Chunk[V],
-                        k: T => U < (Streams[V] & S2)
-                    )(using Tag[Streams[V]]) =
-                        if st == 0 then
-                            Resume(0, k(().asInstanceOf[T]))
-                        else
-                            val t: Chunk[V] = command.take(st)
-                            Streams.emitChunkAndThen(t) {
-                                Resume(st - t.size, k(().asInstanceOf[T]))
-                            }
-            val dropHandler =
-                new ResultHandler[Int, Const[Chunk[V]], Streams[V], Id, Streams[V]]:
-                    def done[T](st: Int, v: T)(using Tag[Streams[V]]) = v
-                    def resume[T, U: Flat, S2](
-                        st: Int,
-                        command: Chunk[V],
-                        k: T => U < (Streams[V] & S2)
-                    )(using Tag[Streams[V]]) =
-                        if st == 0 then
-                            Streams.emitChunkAndThen(command) {
-                                k(().asInstanceOf[T])
-                            }
-                        else
-                            Streams.emitChunkAndThen(command.dropLeft(st)) {
-                                Resume(st - Math.min(command.size, st), k(().asInstanceOf[T]))
-                            }
-
-            val takeWhile =
-                new ResultHandler[V => Boolean < S, Const[Chunk[V]], Streams[V], Id, Streams[V] & S]:
-                    private val stop = (_: V) => false
-
-                    def done[T](st: V => Boolean < S, v: T)(using Tag[Streams[V]]) = v
-                    def resume[T, U: Flat, S3](
-                        st: V => Boolean < S,
-                        command: Chunk[V],
-                        k: T => U < (Streams[V] & S3)
-                    )(using Tag[Streams[V]]) =
-                        if st ne stop then
-                            command.takeWhile(st).map { c =>
-                                Streams.emitChunkAndThen(c) {
-                                    val nst =
-                                        if command.size == c.size then st
-                                        else stop
-                                    Resume(nst, k(().asInstanceOf[T]))
-                                }
-                            }
-                        else
-                            Resume(stop, k(().asInstanceOf[T]))
-
-            val dropWhile =
-                new ResultHandler[V => Boolean < S, Const[Chunk[V]], Streams[V], Id, Streams[V] & S]:
-                    def done[T](st: V => Boolean < S, v: T)(using Tag[Streams[V]]) = v
-                    def resume[T, U: Flat, S3](
-                        st: V => Boolean < S,
-                        command: Chunk[V],
-                        k: T => U < (Streams[V] & S3)
-                    )(using Tag[Streams[V]]) =
-                        command.dropWhile(st).map { c =>
-                            Streams.emitChunkAndThen(c) {
-                                if c.isEmpty || command.isEmpty then
-                                    Resume(st, k(().asInstanceOf[T]))
-                                else
-                                    k(().asInstanceOf[T])
-                            }
-                        }
-            val filter =
-                new ResultHandler[V => Boolean < S, Const[Chunk[V]], Streams[V], Id, Streams[V] & S]:
-                    def done[T](st: V => Boolean < S, v: T)(using Tag[Streams[V]]) = v
-                    def resume[T, U: Flat, S3](
-                        st: V => Boolean < S,
-                        command: Chunk[V],
-                        k: T => U < (Streams[V] & S3)
-                    )(using Tag[Streams[V]]) =
-                        command.filter(st).map { c =>
-                            Streams.emitChunkAndThen(c) {
-                                Resume(st, k(().asInstanceOf[T]))
-                            }
-                        }
-
-            val changes =
-                new ResultHandler[V | Null, Const[Chunk[V]], Streams[V], Id, Streams[V] & S]:
-                    def done[T](st: V | Null, v: T)(using Tag[Streams[V]]) = v
-                    def resume[T, U: Flat, S3](
-                        st: V | Null,
-                        command: Chunk[V],
-                        k: T => U < (Streams[V] & S3)
-                    )(using Tag[Streams[V]]): (U | Resume[U, S3]) < (Streams[V] & S & S3) =
-                        val c = command.changes(st)
-                        Streams.emitChunkAndThen(c) {
-                            val nst = if c.isEmpty then st else c.last
-                            Resume(nst, k(().asInstanceOf[T]))
-                        }
-                    end resume
-
-            val runChunk =
-                new ResultHandler[Chunk[Chunk[V]], Const[Chunk[V]], Streams[V], [T] =>> (Chunk[V], T), S]:
-                    def done[T](st: Chunk[Chunk[V]], v: T)(using Tag[Streams[V]]) = (st.flatten, v)
-                    def resume[T, U: Flat, S2](
-                        st: Chunk[Chunk[V]],
-                        command: Chunk[V],
-                        k: T => U < (Streams[V] & S2)
-                    )(using Tag[Streams[V]]) =
-                        Resume(st.append(command), k(().asInstanceOf[T]))
-
-            val discard = new Handler[Const[Chunk[V]], Streams[V], Any]:
-                def resume[T, U: Flat, S](command: Chunk[V], k: T => U < (Streams[V] & S))(using Tag[Streams[V]]) =
-                    Resume((), k(().asInstanceOf[T]))
-        end Handlers
-
-        private val _handlers = new Handlers[Any, Any]
-
-        inline def handlers[V, S]: Handlers[V, S] = _handlers.asInstanceOf[Handlers[V, S]]
-    end internal
+    @targetName("initSeq")
+    def init[V, S](seq: Seq[V] < S)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+        init(seq.map(Chunk.from))
 
 end Stream
-
-class Streams[V] extends Effect[Streams[V]]:
-    type Command[T] = Chunk[V]
-
-object Streams:
-
-    import internal.*
-
-    def initSource[V]: InitSourceDsl[V] = new InitSourceDsl[V]
-
-    def initSeq[V](c: Seq[V])(using Tag[Streams[V]], Trace): Stream[Unit, V, Any] =
-        initSource(emitSeq(c))
-
-    def initChunk[V](c: Chunk[V])(using Tag[Streams[V]], Trace): Stream[Unit, V, Any] =
-        initSource(emitChunk(c))
-
-    def initChannel[V](ch: Channel[Chunk[V] | Stream.Done])(
-        using
-        Tag[Streams[V]],
-        Trace
-    ): Stream[Unit, V, Fibers] =
-        initSource(emitChannel(ch))
-
-    def emitSeq[V](s: Seq[V])(using Tag[Streams[V]])(using Trace): Unit < Streams[V] =
-        if s.isEmpty then
-            ()
-        else
-            emitChunk(Chunks.initSeq(s))
-
-    inline def emitChunk[V](c: Chunk[V])(using inline tag: Tag[Streams[V]], inline trace: Trace): Unit < Streams[V] =
-        if c.isEmpty then
-            ()
-        else
-            Streams[V].suspend[Unit](c)
-
-    inline def emitChunkAndThen[V, U, S](c: Chunk[V])(inline f: => U < S)(using
-        inline tag: Tag[Streams[V]]
-    )(using Trace): U < (S & Streams[V]) =
-        Streams[V].suspend[Unit, U, S](c, _ => f)
-
-    def emitChannel[V](ch: Channel[Chunk[V] | Stream.Done])(using
-        Tag[Streams[V]]
-    )(using Trace): Unit < (Streams[V] & Fibers) =
-        ch.take.map {
-            case e if e.equals(Stream.Done) =>
-                ()
-            case v: Chunk[V] @unchecked =>
-                emitChunkAndThen(v)(emitChannel(ch))
-        }
-
-    object internal:
-
-        class InitSourceDsl[V]:
-            def apply[T: Flat, S](v: T < (Streams[V] & S))(using Tag[Streams[V]]): Stream[T, V, S] =
-                Stream(v)
-    end internal
-end Streams

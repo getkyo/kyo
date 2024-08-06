@@ -3,112 +3,103 @@ package kyo
 import Maybe.*
 import Maybe.internal.*
 
-opaque type Maybe[+T] >: (Empty | Defined[T]) = Empty | Defined[T]
+opaque type Maybe[+A] >: (Empty | Defined[A]) = Empty | Defined[A]
 
 object Maybe:
-    given [T, U](using CanEqual[T, U]): CanEqual[Maybe[T], Maybe[U]] = CanEqual.derived
-    given [T]: Conversion[Maybe[T], IterableOnce[T]]                 = _.iterator
-    given [T: Flat]: Flat[Maybe[T]]                                  = Flat.unsafe.bypass
+    inline given [A, B](using inline ce: CanEqual[A, B]): CanEqual[Maybe[A], Maybe[B]] = CanEqual.derived
+    given [A]: Conversion[Maybe[A], IterableOnce[A]]                                   = _.iterator
 
-    def apply[T](v: T): Maybe[T] =
-        if isNull(v) then
-            Empty
-        else
-            v match
-                case v: DefinedEmpty => v.nest
-                case v               => v
+    def apply[A](v: A): Maybe[A] =
+        if isNull(v) then Empty
+        else Defined(v)
 
-    def fromOption[T](opt: Option[T]): Maybe[T] =
+    def fromOption[A](opt: Option[A]): Maybe[A] =
         opt match
             case Some(v) => Defined(v)
             case None    => Empty
 
-    def empty[T]: Maybe[T] = Empty
+    def empty[A]: Maybe[A] = Empty
 
-    def when[T](cond: Boolean)(v: => T): Maybe[T] =
+    inline def when[A](cond: Boolean)(inline v: => A): Maybe[A] =
         if cond then v else Empty
 
-    opaque type Defined[+T] = T | DefinedEmpty
+    opaque type Defined[+A] = A | DefinedEmpty
 
     object Defined:
 
-        def apply[T](v: T): Defined[T] =
+        def apply[A](v: A): Defined[A] =
             v match
                 case v: DefinedEmpty => v.nest
                 case v: Empty        => DefinedEmpty.one
                 case v               => v
 
-        // TODO avoid allocation
-        def unapply[T](opt: Maybe[T]): Option[T] =
-            opt.toOption
+        def unapply[A](opt: Maybe[A]): Maybe.Ops[A] = opt
+
     end Defined
+
+    implicit final class Ops[A](maybe: Maybe[A]) extends AnyVal:
+        def isEmpty: Boolean = maybe.isEmpty
+        def get: A           = maybe.get
 
     sealed abstract class Empty
     case object Empty extends Empty
 
-    extension [T](self: Maybe[T])
+    extension [A](self: Maybe[A])
 
-        inline def toOption: Option[T] =
+        def toOption: Option[A] =
             if isEmpty then None
             else Some(get)
 
-        inline def isEmpty: Boolean =
-            self match
-                case _: Empty => true
-                case _        => false
+        def isEmpty: Boolean =
+            self.isInstanceOf[Empty]
 
         inline def isDefined: Boolean = !isEmpty
 
         inline def nonEmpty: Boolean = !isEmpty
 
-        // TODO compilation failure if inlined
-        def get: T =
+        def get: A =
             (self: @unchecked) match
                 case _: Empty =>
                     throw new NoSuchElementException("Maybe.get")
                 case self: DefinedEmpty =>
-                    self.unnest.asInstanceOf[T]
-                case v: T @unchecked =>
+                    self.unnest.asInstanceOf[A]
+                case v: A =>
                     v
 
-        inline def getOrElse[B >: T](inline default: => B): B =
+        inline def getOrElse[B >: A](inline default: => B): B =
             if isEmpty then default else get
 
-        inline def fold[U](inline ifEmpty: => U)(inline ifDefined: T => U): U =
+        inline def fold[B](inline ifEmpty: => B)(inline ifDefined: A => B): B =
             if isEmpty then ifEmpty else ifDefined(get)
 
-        inline def map[U](inline f: T => U): Maybe[U] =
+        inline def map[B](inline f: A => B): Maybe[B] =
             if isEmpty then Empty else f(get)
 
-        inline def flatMap[U](inline f: T => Maybe[U]): Maybe[U] =
+        inline def flatMap[B](inline f: A => Maybe[B]): Maybe[B] =
             if isEmpty then Maybe.empty else f(get)
 
-        inline def flatten[U](using inline ev: T <:< Maybe[U]): Maybe[U] =
+        inline def flatten[B](using inline ev: A <:< Maybe[B]): Maybe[B] =
             if isEmpty then Empty else ev(get)
 
-        inline def withFilter(inline f: T => Boolean): Maybe[T] =
-            filter(f)
-
-        inline def filter(inline f: T => Boolean): Maybe[T] =
+        inline def filter(inline f: A => Boolean): Maybe[A] =
             if isEmpty || f(get) then self else Empty
 
-        inline def filterNot(inline f: T => Boolean): Maybe[T] =
+        inline def filterNot(inline f: A => Boolean): Maybe[A] =
             if isEmpty || !f(get) then self else Empty
 
-        // TODO compilation failure if inlined
-        def contains[U](elem: U)(using CanEqual[T, U]): Boolean =
+        def contains[B](elem: B)(using CanEqual[A, B]): Boolean =
             !isEmpty && get == elem
 
-        inline def exists(inline f: T => Boolean): Boolean =
+        inline def exists(inline f: A => Boolean): Boolean =
             !isEmpty && f(get)
 
-        inline def forall(inline f: T => Boolean): Boolean =
+        inline def forall(inline f: A => Boolean): Boolean =
             isEmpty || f(get)
 
-        inline def foreach(inline f: T => Unit): Unit =
+        inline def foreach(inline f: A => Unit): Unit =
             if !isEmpty then f(get)
 
-        inline def collect[U](inline pf: PartialFunction[T, U]): Maybe[U] =
+        inline def collect[B](pf: PartialFunction[A, B]): Maybe[B] =
             if !isEmpty then
                 val value = get
                 if pf.isDefinedAt(value) then
@@ -118,22 +109,22 @@ object Maybe:
                 end if
             else Empty
 
-        inline def orElse[B >: T](inline alternative: => Maybe[B]): Maybe[B] =
+        inline def orElse[B >: A](inline alternative: => Maybe[B]): Maybe[B] =
             if isEmpty then alternative else self
 
-        def zip[B](that: Maybe[B]): Maybe[(T, B)] =
+        def zip[B](that: Maybe[B]): Maybe[(A, B)] =
             if isEmpty || that.isEmpty then Empty else (get, that.get)
 
-        inline def iterator: Iterator[T] =
+        def iterator: Iterator[A] =
             if isEmpty then collection.Iterator.empty else collection.Iterator.single(get)
 
-        inline def toList: List[T] =
+        def toList: List[A] =
             if isEmpty then List.empty else get :: Nil
 
-        inline def toRight[X](inline left: => X): Either[X, T] =
+        inline def toRight[X](inline left: => X): Either[X, A] =
             if isEmpty then Left(left) else Right(get)
 
-        inline def toLeft[X](inline right: => X): Either[T, X] =
+        inline def toLeft[X](inline right: => X): Either[A, X] =
             if isEmpty then Right(right) else Left(get)
 
     end extension

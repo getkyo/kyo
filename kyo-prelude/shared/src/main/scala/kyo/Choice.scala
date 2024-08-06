@@ -1,38 +1,32 @@
 package kyo
 
-import kyo.core.*
-import kyo.internal.Trace
+import kyo.Tag
+import kyo.kernel.*
 
-class Choices extends Effect[Choices]:
-    type Command[T] = Seq[T]
+sealed trait Choice extends Effect[Seq, Id]
 
-object Choices extends Choices:
+object Choice:
 
-    def run[T: Flat, S](v: T < (Choices & S))(using Trace): Seq[T] < S =
-        this.handle(handler)((), v)
+    inline def get[A](seq: Seq[A])(using inline frame: Frame): A < Choice =
+        Effect.suspend[A](Tag[Choice], seq)
 
-    def get[T](v: Seq[T])(using Trace): T < Choices =
-        this.suspend(v)
-
-    def eval[T, U, S](v: Seq[T])(f: T => U < S)(using Trace): U < (Choices & S) =
-        v match
+    inline def eval[A, B, S](seq: Seq[A])(inline f: A => B < S)(using inline frame: Frame): B < (Choice & S) =
+        seq match
             case Seq(head) => f(head)
-            case v         => this.suspend(v, f)
+            case seq       => Effect.suspendMap[A](Tag[Choice], seq)(f)
 
-    def filter[S](v: Boolean < S)(using Trace): Unit < (Choices & S) =
-        v.map {
-            case true =>
-                ()
-            case false =>
-                drop
+    inline def dropIf(condition: Boolean)(using inline frame: Frame): Unit < Choice =
+        if condition then drop
+        else ()
+
+    inline def drop(using inline frame: Frame): Nothing < Choice =
+        Effect.suspend[Nothing](Tag[Choice], Seq.empty)
+
+    def run[A, S](v: A < (Choice & S))(using Frame): Seq[A] < S =
+        Effect.handle(Tag[Choice], v.map(Seq[A](_))) {
+            [C] =>
+                (input, cont) =>
+                    Kyo.seq.map(input)(v => Choice.run(cont(v))).map(_.flatten.flatten)
         }
 
-    def drop(using Trace): Nothing < Choices =
-        suspend(this)(Seq.empty)
-
-    private val handler =
-        new ResultHandler[Unit, Seq, Choices, Seq, Any]:
-            def done[T](st: Unit, v: T)(using Tag[Choices]) = Seq(v)
-            def resume[T, U: Flat, S](st: Unit, v: Seq[T], f: T => U < (Choices & S))(using Tag[Choices]) =
-                Seqs.collect(v.map(e => Choices.run(f(e)))).map(_.flatten)
-end Choices
+end Choice
