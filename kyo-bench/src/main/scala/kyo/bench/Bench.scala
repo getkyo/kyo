@@ -50,13 +50,8 @@ object Bench:
 
     abstract class Base[T](expectedResult: T) extends Bench[T](expectedResult):
         def zioBench(): UIO[T]
-
         def kyoBenchFiber(): T < Fibers = kyoBench()
         def kyoBench(): T < IOs
-
-        def kyoBenchFiber2(): kyo2.<[T, kyo2.Async & kyo2.Abort[Throwable]] = kyoBench2()
-        def kyoBench2(): kyo2.<[T, kyo2.IO]                                 = ???
-
         def catsBench(): IO[T]
     end Base
 
@@ -64,12 +59,6 @@ object Bench:
 
         @Benchmark
         def forkKyo(): T = IOs.run(Fibers.init(kyoBenchFiber()).flatMap(_.block(Duration.Infinity)))
-
-        @Benchmark
-        def forkKyo2(): T =
-            import kyo2.*
-            kyo2.IO.run(Async.run(kyoBenchFiber2()).flatMap(_.block(Duration.Infinity))).eval.getOrThrow
-        end forkKyo2
 
         @Benchmark
         def forkCats(): T = IO.cede.flatMap(_ => catsBench()).unsafeRunSync()
@@ -87,9 +76,6 @@ object Bench:
 
         @Benchmark
         def syncKyo(): T = IOs.run(kyoBench())
-
-        @Benchmark
-        def syncKyo2(): T = kyo2.IO.run(kyoBench2()).eval
 
         @Benchmark
         def syncCats(): T = catsBench().unsafeRunSync()

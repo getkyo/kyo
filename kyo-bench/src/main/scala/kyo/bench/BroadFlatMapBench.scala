@@ -27,17 +27,6 @@ class BroadFlatMapBench extends Bench.SyncAndFork(BigInt(610)):
         kyoFib(depth)
     end kyoBench
 
-    @Benchmark
-    override def kyoBench2() =
-        import kyo2.*
-
-        def kyoFib(n: Int): BigInt < Any =
-            if n <= 1 then BigInt(n)
-            else kyoFib(n - 1).map(a => kyoFib(n - 2).map(b => a + b))
-
-        kyoFib(depth)
-    end kyoBench2
-
     def zioBench() =
         import zio.*
         def zioFib(n: Int): UIO[BigInt] =

@@ -30,16 +30,6 @@ class ForkJoinContentionBench extends Bench.ForkOnly(()):
         Fibers.parallel(Seq.fill(parallism)(forkJoinAllFibers)).unit
     end kyoBenchFiber
 
-    override def kyoBenchFiber2() =
-        import kyo2.*
-
-        val forkFiber         = Async.run(())
-        val forkAllFibers     = Kyo.seq.map(range)(_ => forkFiber)
-        val forkJoinAllFibers = forkAllFibers.flatMap(fibers => Kyo.seq.map(fibers)(_.get).unit)
-
-        Async.parallel(Seq.fill(parallism)(forkJoinAllFibers)).unit
-    end kyoBenchFiber2
-
     def zioBench() =
         import zio.*
 

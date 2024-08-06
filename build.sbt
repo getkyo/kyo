@@ -350,7 +350,6 @@ lazy val `kyo-bench` =
         .in(file("kyo-bench"))
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-core2`)
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-scheduler-zio`)
         .settings(

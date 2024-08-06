@@ -36,21 +36,6 @@ class ForkChainedBench extends Bench.ForkOnly(0):
         end for
     end kyoBenchFiber
 
-    override def kyoBenchFiber2() =
-        import kyo2.*
-
-        def iterate(p: Promise[Nothing, Unit], n: Int): Any < IO =
-            if n <= 0 then p.complete(Result.unit)
-            else IO.unit.flatMap(_ => Async.run(iterate(p, n - 1)))
-
-        for
-            p <- Promise.init[Nothing, Unit]
-            _ <- Async.run(iterate(p, depth))
-            _ <- p.get
-        yield 0
-        end for
-    end kyoBenchFiber2
-
     def zioBench() =
         import zio.{Promise, ZIO}
 
