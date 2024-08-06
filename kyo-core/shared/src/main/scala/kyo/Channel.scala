@@ -106,7 +106,7 @@ object Channel:
                                 else
                                     val p = IOPromise[Closed, Unit]
                                     puts.add((v, p))
-                                    Fiber.unsafe(p)
+                                    Fiber.initUnsafe(p)
                                 end if
                             finally
                                 flush()
@@ -140,7 +140,7 @@ object Channel:
                                     if isNull(v) then
                                         val p = IOPromise[Closed, T]
                                         takes.add(p)
-                                        Fiber.unsafe(p)
+                                        Fiber.initUnsafe(p)
                                     else
                                         Fiber.success(v)
                                     end if

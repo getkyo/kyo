@@ -1,12 +1,11 @@
-package kyoTest.stats.otel
+package kyo.stats.otel
 
 import io.opentelemetry.api.common.AttributeKey
 import kyo.stats.*
 import kyo.stats.otel.*
-import kyoTest.*
 import scala.jdk.CollectionConverters.*
 
-class OTelAttributesTest extends KyoTest {
+class OTelAttributesTest extends Test {
 
     "test" in {
         val kyoAttrs = Attributes.all(List(

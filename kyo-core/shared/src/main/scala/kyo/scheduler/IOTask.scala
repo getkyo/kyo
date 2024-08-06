@@ -67,7 +67,10 @@ private[kyo] class IOTask[Ctx, E, A](
             if !isNull(curr._1) then
                 curr.evalNow.foreach(a => completeUnit(Result.success(a)))
         catch
-            case ex => completeUnit(Result.panic(ex))
+            case ex =>
+                if ex.isInstanceOf[InterruptedException] then
+                    discard(Thread.interrupted())
+                completeUnit(Result.panic(ex))
         end try
     end eval
 

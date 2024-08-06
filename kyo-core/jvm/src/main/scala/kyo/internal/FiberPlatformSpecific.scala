@@ -16,6 +16,6 @@ trait FiberPlatformSpecific:
                 if error == null then p.completeUnit(Result.success(success))
                 else p.completeUnit(Result.panic(error))
             }
-            Fiber.unsafe(p)
+            Fiber.initUnsafe(p)
         }
 end FiberPlatformSpecific

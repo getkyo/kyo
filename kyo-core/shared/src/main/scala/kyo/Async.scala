@@ -72,7 +72,7 @@ object Async:
 
         private def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
 
-        private[kyo] inline def unsafe[E, A](p: IOPromise[E, A]): Fiber[E, A] = p
+        private[kyo] inline def initUnsafe[E, A](p: IOPromise[E, A]): Fiber[E, A] = p
 
         extension [E, A](self: Fiber[E, A])
 
@@ -116,6 +116,8 @@ object Async:
 
             def interruptUnit(error: Panic)(using Frame): Unit < IO =
                 IO(discard(self.interrupt(error)))
+
+            private[kyo] inline def unsafe: IOPromise[E, A] = self
 
         end extension
     end Fiber

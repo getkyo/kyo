@@ -1,12 +1,11 @@
-package kyoTest.stats.otel
+package kyo.stats.otel
 
 import kyo.*
-import kyoTest.*
 
-class OTelReceiverTest extends KyoTest {
+class OTelReceiverTest extends Test {
 
     "traces" in run {
-        val stats = Stats.initScope("test")
+        val stats = Stat.initScope("test")
         stats.traceSpan("tspan") {
             42d
         }.map { r =>
