@@ -72,7 +72,7 @@ lazy val kyoJVM = project
         `kyo-stats-otel`.jvm,
         `kyo-cache`.jvm,
         `kyo-sttp`.jvm,
-        // `kyo-tapir`.jvm,
+        `kyo-tapir`.jvm,
         // `kyo-caliban`.jvm,
         // `kyo-bench`.jvm,
         // `kyo-test`.jvm,
@@ -238,18 +238,18 @@ lazy val `kyo-sttp` =
         )
         .jsSettings(`js-settings`)
 
-// lazy val `kyo-tapir` =
-//     crossProject(JVMPlatform)
-//         .withoutSuffixFor(JVMPlatform)
-//         .crossType(CrossType.Full)
-//         .in(file("kyo-tapir"))
-//         .dependsOn(`kyo-core`)
-//         .dependsOn(`kyo-sttp`)
-//         .settings(
-//             `kyo-settings`,
-//             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.0",
-//             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.0"
-//         )
+lazy val `kyo-tapir` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-tapir"))
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-sttp`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.0",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.0"
+        )
 
 // lazy val `kyo-caliban` =
 //     crossProject(JVMPlatform)
