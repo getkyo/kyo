@@ -1,6 +1,5 @@
 package kyo2
 
-import kernel.<
 import kernel.Frame
 import kernel.Loop
 import scala.annotation.tailrec

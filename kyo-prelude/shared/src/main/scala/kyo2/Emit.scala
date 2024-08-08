@@ -10,6 +10,7 @@ object Emit:
     opaque type Ack = Int
     object Ack:
         given CanEqual[Ack, Ack] = CanEqual.derived
+        inline given Flat[Ack]   = Flat.unsafe.bypass
 
         extension (ack: Ack)
             def maxItems(n: Int): Ack =
@@ -40,7 +41,7 @@ object Emit:
         Effect.suspendMap[Any](tag, value)(f(_))
 
     final class RunOps[V](dummy: Unit) extends AnyVal:
-        def apply[A, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Chunk[V], A) < S =
+        def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Chunk[V], A) < S =
             Effect.handle.state(tag, Chunk.empty[V], v)(
                 handle = [C] => (input, state, cont) => (state.append(input), cont(Ack.Continue())),
                 done = (state, res) => (state, res)
@@ -50,7 +51,7 @@ object Emit:
     inline def run[V >: Nothing]: RunOps[V] = RunOps(())
 
     final class RunFoldOps[V](dummy: Unit) extends AnyVal:
-        def apply[A, S, B, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(
+        def apply[A, S, B: Flat, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(
             using
             tag: Tag[Emit[V]],
             frame: Frame
@@ -66,7 +67,7 @@ object Emit:
     inline def runFold[V >: Nothing]: RunFoldOps[V] = RunFoldOps(())
 
     final class RunDiscardOps[V](dummy: Unit) extends AnyVal:
-        def apply[A, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): A < S =
+        def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): A < S =
             Effect.handle(tag, v)(
                 handle = [C] => (input, cont) => cont(Ack.Stop)
             )
@@ -75,7 +76,7 @@ object Emit:
     inline def runDiscard[V >: Nothing]: RunDiscardOps[V] = RunDiscardOps(())
 
     final class RunAckOps[V](dummy: Unit) extends AnyVal:
-        def apply[A, S, S2](v: A < (Emit[V] & S))(f: V => Ack < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Ack < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
             Effect.handle(tag, v)(
                 [C] => (input, cont) => f(input).map(cont)
             )

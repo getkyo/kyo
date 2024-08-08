@@ -9,19 +9,19 @@ class KyoTest extends Test:
 
     "toString JVM" taggedAs jvmOnly in run {
         assert(Env.use[Int](_ + 1).toString() ==
-            "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(()), KyoTest.scala:11:35, assert(Env.use[Int](_ + 1)))")
+            "Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(()), KyoTest.scala:11:35, assert(Env.use[Int](_ + 1))")
         assert(
             Env.get[Int].map(_ + 1).toString() ==
-                "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(()), KyoTest.scala:14:36, Env.get[Int].map(_ + 1)))"
+                "Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(()), KyoTest.scala:14:36, Env.get[Int].map(_ + 1))"
         )
     }
 
     "toString JS" taggedAs jsOnly in run {
         assert(Env.use[Int](_ + 1).toString() ==
-            "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(undefined), KyoTest.scala:20:35, assert(Env.use[Int](_ + 1)))")
+            "Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(undefined), KyoTest.scala:20:35, assert(Env.use[Int](_ + 1))")
         assert(
             Env.get[Int].map(_ + 1).toString() ==
-                "<(Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(undefined), KyoTest.scala:23:36, Env.get[Int].map(_ + 1)))"
+                "Kyo(Tag[kyo2.kernel.package$.internal$.Defer], Input(undefined), KyoTest.scala:23:36, Env.get[Int].map(_ + 1))"
         )
     }
 
@@ -32,8 +32,7 @@ class KyoTest extends Test:
     }
 
     "eval widened" in {
-        val v = widen(Env.use[Int](_ + 1)).eval
-        assert(Env.run(1)(v).eval == 2)
+        assertDoesNotCompile("widen(Env.use[Int](_ + 1)).eval")
     }
 
     "map" in {
@@ -82,9 +81,8 @@ class KyoTest extends Test:
             val b: Int < Env[Unit] = a.flatten
             assert(Env.run(())(b).eval == 2)
         }
-        "eval nested" in {
-            val a: Int < Env[Unit] = Env.run(())(io).eval
-            assert(Env.run(())(a).eval == 1)
+        "eval doesn't compile" in {
+            assertDoesNotCompile("Env.run(())(io).eval")
         }
     }
 

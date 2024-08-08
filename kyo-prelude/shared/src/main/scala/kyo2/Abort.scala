@@ -1,6 +1,5 @@
 package kyo2
 
-import kernel.<
 import kernel.Const
 import kernel.Effect
 import kernel.Frame
@@ -58,7 +57,7 @@ object Abort:
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
     final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
-        def apply[A, S, ES, ER](v: => A < (Abort[E | ER] & S))(
+        def apply[A: Flat, S, ES, ER](v: => A < (Abort[E | ER] & S))(
             using
             ct: ClassTag[E],
             tag: Tag[E], // TODO Used only to ensure E isn't a type union. There should be a more lightweight solution for this.
