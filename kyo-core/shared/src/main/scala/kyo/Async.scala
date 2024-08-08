@@ -26,7 +26,7 @@ object Async:
 
     sealed trait Join extends Effect[IOPromise[?, *], Result[Nothing, *]]
 
-    inline def run[E, A, Ctx](inline v: => A < (Abort[E] & Async & Ctx))(
+    inline def run[E, A: Flat, Ctx](inline v: => A < (Abort[E] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, IO],
         reduce: Reducible[Abort[E]],
@@ -34,7 +34,7 @@ object Async:
     ): Fiber[E, A] < (IO & Ctx) =
         boundary((trace, context) => IOTask(v, trace, context))
 
-    def runAndBlock[E, A, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
+    def runAndBlock[E, A: Flat, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, IO],
         frame: Frame
@@ -47,6 +47,8 @@ object Async:
     opaque type Promise[E, A] <: Fiber[E, A] = IOPromise[E, A]
 
     object Promise:
+        inline given [E, A]: Flat[Promise[E, A]] = Flat.unsafe.bypass
+
         def init[E, A](using Frame): Promise[E, A] < IO = IO(IOPromise())
 
         extension [E, A](self: Promise[E, A])
@@ -60,6 +62,8 @@ object Async:
     opaque type Fiber[E, A] = IOPromise[E, A]
 
     object Fiber extends FiberPlatformSpecific:
+
+        inline given [E, A]: Flat[Fiber[E, A]] = Flat.unsafe.bypass
 
         private val _unit = success(())
 
@@ -144,7 +148,7 @@ object Async:
             end if
         }
 
-    def timeout[E, A, Ctx](d: Duration)(v: => A < (Abort[E | Timeout] & Async & Ctx))(
+    def timeout[E, A: Flat, Ctx](d: Duration)(v: => A < (Abort[E | Timeout] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, Async],
         frame: Frame
@@ -157,7 +161,7 @@ object Async:
         }
     end timeout
 
-    def race[E, A, Ctx](first: A < (Abort[E] & Async & Ctx), rest: (A < (Abort[E] & Async & Ctx))*)(
+    def race[E, A: Flat, Ctx](first: A < (Abort[E] & Async & Ctx), rest: (A < (Abort[E] & Async & Ctx))*)(
         using
         boundary: Boundary[Ctx, Async],
         reduce: Reducible[Abort[E]],
@@ -166,7 +170,7 @@ object Async:
         if rest.isEmpty then reduce(first)
         else raceFiber(first, rest*).map(get)
 
-    def raceFiber[E, A, Ctx](first: A < (Abort[E] & Async & Ctx), rest: (A < (Abort[E] & Async & Ctx))*)(
+    def raceFiber[E, A: Flat, Ctx](first: A < (Abort[E] & Async & Ctx), rest: (A < (Abort[E] & Async & Ctx))*)(
         using
         boundary: Boundary[Ctx, IO],
         reduce: Reducible[Abort[E]],
@@ -202,7 +206,7 @@ object Async:
         }
     end raceFiber
 
-    def parallel[E, A, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, Async],
         reduce: Reducible[Abort[E]],
@@ -215,7 +219,7 @@ object Async:
         end match
     end parallel
 
-    def parallelFiber[E, A, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    def parallelFiber[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, IO],
         reduce: Reducible[Abort[E]],
@@ -255,7 +259,7 @@ object Async:
                 }
     end parallelFiber
 
-    def parallel[E, A1, A2, Ctx](
+    def parallel[E, A1: Flat, A2: Flat, Ctx](
         v1: A1 < (Abort[E] & Async & Ctx),
         v2: A2 < (Abort[E] & Async & Ctx)
     )(
@@ -264,11 +268,11 @@ object Async:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): (A1, A2) < (reduce.SReduced & Async & Ctx) =
-        parallel(Seq(v1, v2)).map { s =>
+        parallel(Seq(v1, v2))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2])
         }
 
-    def parallel[E, A1, A2, A3, Ctx](
+    def parallel[E, A1: Flat, A2: Flat, A3: Flat, Ctx](
         v1: A1 < (Abort[E] & Async & Ctx),
         v2: A2 < (Abort[E] & Async & Ctx),
         v3: A3 < (Abort[E] & Async & Ctx)
@@ -278,11 +282,11 @@ object Async:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): (A1, A2, A3) < (reduce.SReduced & Async & Ctx) =
-        parallel(Seq(v1, v2, v3)).map { s =>
+        parallel(Seq(v1, v2, v3))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3])
         }
 
-    def parallel[E, A1, A2, A3, A4, Ctx](
+    def parallel[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, Ctx](
         v1: A1 < (Abort[E] & Async & Ctx),
         v2: A2 < (Abort[E] & Async & Ctx),
         v3: A3 < (Abort[E] & Async & Ctx),
@@ -293,7 +297,7 @@ object Async:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): (A1, A2, A3, A4) < (reduce.SReduced & Async & Ctx) =
-        parallel(Seq(v1, v2, v3, v4)).map { s =>
+        parallel(Seq(v1, v2, v3, v4))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }
 

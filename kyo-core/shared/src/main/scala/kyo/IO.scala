@@ -14,19 +14,19 @@ object IO:
 
     inline def unit: Unit < IO = ()
 
-    inline def apply[T, S](inline f: => T < S)(using inline frame: Frame): T < (IO & S) =
+    inline def apply[A, S](inline f: => A < S)(using inline frame: Frame): A < (IO & S) =
         Effect.suspendMap[Any](Tag[IO], ())(_ => f)
 
-    inline def defer[T](inline f: => T)(using inline frame: Frame): T < IO =
+    inline def defer[A](inline f: => A)(using inline frame: Frame): A < IO =
         Effect.suspendMap[Any](Tag[IO], ())(_ => f)
 
-    inline def ensure[T, S](inline f: => Unit < IO)(v: T < S)(using inline frame: Frame): T < (IO & S) =
+    inline def ensure[A, S](inline f: => Unit < IO)(v: A < S)(using inline frame: Frame): A < (IO & S) =
         IO(Safepoint.ensure(IO.run(f).eval)(v))
 
-    def run[T, S](v: T < IO)(using Frame): T < Any =
+    def run[A: Flat, S](v: A < IO)(using Frame): A < Any =
         runLazy(v)
 
-    def runLazy[T, S](v: T < (IO & S))(using Frame): T < S =
+    def runLazy[A: Flat, S](v: A < (IO & S))(using Frame): A < S =
         Effect.handle(Tag[IO], v) {
             [C] => (_, cont) => cont(())
         }

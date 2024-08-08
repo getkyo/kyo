@@ -335,7 +335,7 @@ class AsyncTest extends Test:
 
     "parallelFiber" - {
         "zero" in run {
-            Async.parallelFiber(Seq()).map(_.get).map { r =>
+            Async.parallelFiber(Seq.empty[Int < Async]).map(_.get).map { r =>
                 assert(r == Seq())
             }
         }

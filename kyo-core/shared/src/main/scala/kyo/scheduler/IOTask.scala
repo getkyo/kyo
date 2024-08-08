@@ -11,11 +11,13 @@ import kyo.scheduler.Task
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-private[kyo] class IOTask[Ctx, E, A](
+private[kyo] class IOTask[Ctx, E, A] private (
     private var curr: A < (Ctx & Async & Abort[E]),
     private var trace: Trace,
     private var ensures: Ensures
 ) extends IOPromise[E, A] with Task:
+
+    inline given Flat[A] = Flat.unsafe.bypass
 
     import IOTask.frame
 
@@ -64,7 +66,7 @@ private[kyo] class IOTask[Ctx, E, A](
                         }
                 )
             }
-            if !isNull(curr._1) then
+            if !isNull(curr) then
                 curr.evalNow.foreach(a => completeUnit(Result.success(a)))
         catch
             case ex =>
@@ -75,7 +77,7 @@ private[kyo] class IOTask[Ctx, E, A](
     final def run(startMillis: Long, clock: InternalClock): Task.Result =
         val safepoint = Safepoint.get
         eval(startMillis, clock)(using safepoint)
-        if isNull(curr._1) || !isPending() then
+        if isNull(curr) || !isPending() then
             ensures.run()
             ensures = Ensures.empty
             if !isNull(trace) then
@@ -88,7 +90,7 @@ private[kyo] class IOTask[Ctx, E, A](
         end if
     end run
 
-    private inline def nullResult = <[A, Ctx & Async & Abort[E]](null)
+    private inline def nullResult = null.asInstanceOf[A < Ctx & Async & Abort[E]]
 
 end IOTask
 
@@ -103,7 +105,7 @@ object IOTask:
         context: Context,
         ensures: Ensures = Ensures.empty,
         runtime: Int = 0
-    )(using Frame): IOTask[Ctx, E, A] =
+    )(using Frame, Flat[A]): IOTask[Ctx, E, A] =
         val ctx = context
         val task =
             if ctx.isEmpty then

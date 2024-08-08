@@ -39,7 +39,7 @@ object ContextEffect:
                     continue = f(context.getOrElse(_tag, default).asInstanceOf[A])
                 )
 
-    inline def handle[A, E <: ContextEffect[A], B, S](
+    inline def handle[A: Flat, E <: ContextEffect[A], B, S](
         inline _tag: Tag[E],
         inline ifUndefined: A,
         inline ifDefined: A => A

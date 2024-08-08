@@ -25,20 +25,20 @@ object Retry:
         val default = Policy(_ => Duration.Zero, 3)
 
     final class RetryOps[E >: Nothing](dummy: Unit) extends AnyVal:
-        def apply[T, S](policy: Policy)(v: => T < S)(
+        def apply[A: Flat, S](policy: Policy)(v: => A < S)(
             using
             ClassTag[E],
             Tag[E],
             Frame
-        ): T < (Async & Abort[E] & S) =
+        ): A < (Async & Abort[E] & S) =
             apply(_ => policy)(v)
 
-        def apply[T, S](builder: Policy => Policy)(v: => T < (Abort[E] & S))(
+        def apply[A: Flat, S](builder: Policy => Policy)(v: => A < (Abort[E] & S))(
             using
             ClassTag[E],
             Tag[E],
             Frame
-        ): T < (Async & Abort[E] & S) =
+        ): A < (Async & Abort[E] & S) =
             val b = builder(Policy.default)
             Loop.indexed { attempt =>
                 Abort.run[E](v).map(_.fold { r =>
