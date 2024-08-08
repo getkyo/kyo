@@ -57,10 +57,10 @@ class HttpClientKyoBackend private (
             ) = pipe
 
     override protected def createSimpleQueue[T] =
-        Channels.init[T](Int.MaxValue)(using Flat.unsafe.bypass).map(new KyoSimpleQueue[T](_))
+        Channel.init[T](Int.MaxValue).map(new KyoSimpleQueue[T](_))
 
     override protected def createSequencer =
-        Meters.initMutex.map(new KyoSequencer(_))
+        Meter.initMutex.map(new KyoSequencer(_))
 
     override protected def standardEncoding: (InputStream, String) => InputStream = {
         case (body, "gzip")    => new GZIPInputStream(body)

@@ -2,14 +2,12 @@ package kyo
 
 import sttp.client3.*
 
-opaque type Requests <: Async = Async
-
 object Requests:
 
     abstract class Backend:
         self =>
 
-        def send[T](r: Request[T, Any]): Response[T] < Async
+        def send[T](r: Request[T, Any]): Response[T] < (Async & Abort[Closed])
 
         def withMeter(m: Meter)(using Frame): Backend =
             new Backend:
@@ -19,32 +17,21 @@ object Requests:
 
     private val local = Local.init[Backend](PlatformBackend.default)
 
-    def run[T, S](v: T < (Requests & S))(using Frame): T < (Async & S) =
-        v
-
-    def run[T, S](b: Backend)(v: T < (Requests & S))(using Frame): T < (Async & S) =
+    def let[T, S](b: Backend)(v: T < S)(using Frame): T < (Async & S) =
         local.let(b)(v)
 
-    type BasicRequest = sttp.client3.RequestT[Empty, Either[?, String], Any]
+    type BasicRequest = RequestT[Empty, Either[String, String], Any]
 
-    val basicRequest: BasicRequest =
-        sttp.client3.basicRequest.mapResponse {
-            case Left(s) =>
-                Left(new Exception(s))
-            case Right(v) =>
-                Right(v)
-        }
+    val basicRequest: BasicRequest = sttp.client3.basicRequest
 
-    def apply[T](f: BasicRequest => Request[Either[?, T], Any])(using Frame): T < Requests =
+    def apply[E, T](f: BasicRequest => Request[Either[E, T], Any])(using Frame): T < (Async & Abort[E | Closed]) =
         request(f(basicRequest))
 
-    def request[T](req: Request[Either[?, T], Any])(using Frame): T < Requests =
+    def request[E, T](req: Request[Either[E, T], Any])(using Frame): T < (Async & Abort[E | Closed]) =
         local.use(_.send(req)).map {
             _.body match
-                case Left(ex: Throwable) =>
-                    IO.fail[T](ex)
                 case Left(ex) =>
-                    IO.fail[T](new Exception("" + ex))
+                    Abort.fail(ex)
                 case Right(value) =>
                     value
         }

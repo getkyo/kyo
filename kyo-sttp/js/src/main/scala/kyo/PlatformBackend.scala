@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Requests.Backend
-import kyo.internal.Trace
 import sttp.client3.*
 
 object PlatformBackend:
@@ -9,5 +8,5 @@ object PlatformBackend:
         new Backend:
             val b = FetchBackend()
             def send[T](r: Request[T, Any]) =
-                Fibers.fromFuture(r.send(b))
+                Fiber.fromFuture(r.send(b)).map(_.get)
 end PlatformBackend

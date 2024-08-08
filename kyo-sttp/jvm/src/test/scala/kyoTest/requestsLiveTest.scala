@@ -1,34 +1,32 @@
-package kyoTest
+package kyo
 
-import kyo.*
 import scala.util.*
 import sttp.client3.*
 
-class requestsLiveTest extends KyoTest:
+class RequestsLiveTest extends Test:
 
     "requests" - {
         "live" - {
             "success" in run {
-                Requests.run {
-                    for
-                        port <- startTestServer("/ping", Success("pong"))
-                        r    <- Requests(_.get(uri"http://localhost:$port/ping"))
-                    yield assert(r == "pong")
-                }
+                for
+                    port <- startTestServer("/ping", Success("pong"))
+                    r    <- Requests(_.get(uri"http://localhost:$port/ping"))
+                yield assert(r == "pong")
             }
             "failure" in run {
-                Requests.run {
-                    for
-                        port <- startTestServer("/ping", Failure(new Exception))
-                        r    <- IOs.toTry(Requests(_.get(uri"http://localhost:$port/ping")))
-                    yield assert(r.isFailure)
-                }
+                for
+                    port <- startTestServer("/ping", Failure(new Exception))
+                    r    <- Abort.run[Any](Requests(_.get(uri"http://localhost:$port/ping")))
+                yield assert(r.isFail)
             }
             "race" in run {
                 val n = 1000
                 for
                     port <- startTestServer("/ping", Success("pong"))
-                    r    <- Fibers.race(Seq.fill(n)(Requests.run(Requests(_.get(uri"http://localhost:$port/ping")))))
+                    r <- Async.race(
+                        Requests(_.get(uri"http://localhost:$port/ping")),
+                        Seq.fill(n)(Requests(_.get(uri"http://localhost:$port/ping")))*
+                    )
                 yield assert(r == "pong")
                 end for
             }
@@ -39,8 +37,8 @@ class requestsLiveTest extends KyoTest:
         endpointPath: String,
         response: Try[String],
         port: Int = 8000
-    ): Int < (IOs & Resources) =
-        IOs {
+    ): Int < (IO & Resource) =
+        IO {
 
             import com.sun.net.httpserver.{HttpExchange, HttpHandler, HttpServer}
             import java.io.OutputStream
@@ -68,7 +66,7 @@ class requestsLiveTest extends KyoTest:
             )
             server.setExecutor(null)
             server.start()
-            Resources.ensure(server.stop(0))
-                .andThen(IOs(server.getAddress.getPort()))
+            Resource.ensure(server.stop(0))
+                .andThen(IO(server.getAddress.getPort()))
         }
-end requestsLiveTest
+end RequestsLiveTest

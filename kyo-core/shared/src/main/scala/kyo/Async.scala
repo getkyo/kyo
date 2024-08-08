@@ -14,6 +14,7 @@ import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.collection.immutable.ArraySeq
+import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.reflect.ClassTag
 import scala.util.NotGiven
@@ -74,6 +75,20 @@ object Async:
         def success[E, A](v: A): Fiber[E, A]        = result(Result.success(v))
         def fail[E, A](ex: E): Fiber[E, A]          = result(Result.fail(ex))
         def panic[E, A](ex: Throwable): Fiber[E, A] = result(Result.panic(ex))
+
+        def fromFuture[T: Flat](f: Future[T])(using Frame): Fiber[Nothing, T] < IO =
+            import scala.util.*
+            IO {
+                val p = new IOPromise[Nothing, T]()
+                f.onComplete {
+                    case Success(v) =>
+                        p.complete(Result.success(v))
+                    case Failure(ex) =>
+                        p.complete(Result.panic(ex))
+                }(ExecutionContext.parasitic)
+                p
+            }
+        end fromFuture
 
         private def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
 

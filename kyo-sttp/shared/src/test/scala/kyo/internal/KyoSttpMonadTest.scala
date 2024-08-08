@@ -1,33 +1,33 @@
-package kyoTest.internal
+package kyoo.internal
 
 import kyo.*
 import kyo.internal.KyoSttpMonad
-import kyoTest.KyoTest
+import org.scalatest.concurrent.Eventually.*
 import scala.util.Failure
 import sttp.monad.Canceler
 
-class KyoSttpMonadTest extends KyoTest:
+class KyoSttpMonadTest extends Test:
 
     "map" in run {
-        KyoSttpMonad.map(IOs(1))(_ + 1).map(r => assert(r == 2))
+        KyoSttpMonad.map(IO(1))(_ + 1).map(r => assert(r == 2))
     }
 
     "flatMap" in run {
-        KyoSttpMonad.flatMap(IOs(1))(v => IOs(v + 1)).map(r => assert(r == 2))
+        KyoSttpMonad.flatMap(IO(1))(v => IO(v + 1)).map(r => assert(r == 2))
     }
 
     "handleError" - {
         "ok" in run {
-            KyoSttpMonad.handleError(IOs(1))(_ => 2).map(r => assert(r == 1))
+            KyoSttpMonad.handleError(IO(1))(_ => 2).map(r => assert(r == 1))
         }
         "nok" in run {
-            KyoSttpMonad.handleError(IOs.fail(new Exception))(_ => 2).map(r => assert(r == 2))
+            KyoSttpMonad.handleError(IO(throw new Exception))(_ => 2).map(r => assert(r == 2))
         }
     }
 
     "ensure" in run {
         var calls = 0
-        KyoSttpMonad.ensure(IOs(1), IOs(calls += 1)).map { r =>
+        KyoSttpMonad.ensure(IO(1), IO(calls += 1)).map { r =>
             assert(r == 1)
             assert(calls == 1)
         }
@@ -35,7 +35,7 @@ class KyoSttpMonadTest extends KyoTest:
 
     "error" in run {
         val ex = new Exception
-        IOs.toTry(KyoSttpMonad.error(ex)).map(r => assert(r == Failure(ex)))
+        Abort.run(KyoSttpMonad.error(ex)).map(r => assert(r == Result.panic(ex)))
     }
 
     "unit" in {
@@ -49,7 +49,7 @@ class KyoSttpMonadTest extends KyoTest:
         }
         "nok" in run {
             val ex = new Exception
-            IOs.toTry(KyoSttpMonad.eval(throw ex)).map(r => assert(r == Failure(ex)))
+            Abort.run(KyoSttpMonad.eval(throw ex)).map(r => assert(r == Result.panic(ex)))
         }
     }
 
@@ -59,7 +59,7 @@ class KyoSttpMonadTest extends KyoTest:
         }
         "nok" in run {
             val ex = new Exception
-            IOs.toTry(KyoSttpMonad.suspend(throw ex)).map(r => assert(r == Failure(ex)))
+            Abort.run(KyoSttpMonad.suspend(throw ex)).map(r => assert(r == Result.panic(ex)))
         }
     }
 
@@ -78,7 +78,7 @@ class KyoSttpMonadTest extends KyoTest:
                 cb(Left(ex))
                 Canceler(() => {})
             }
-            IOs.toTry(result).map(r => assert(r == Failure(ex)))
+            Abort.run(result).map(r => assert(r == Result.panic(ex)))
         }
 
         "cancel" in run {
@@ -86,9 +86,9 @@ class KyoSttpMonadTest extends KyoTest:
             val result = KyoSttpMonad.async[Int] { cb =>
                 Canceler(() => cancelled = true)
             }
-            Fibers.run(result).map(_.interrupt).map { interrupted =>
+            Async.run(result).map(_.interrupt).map { interrupted =>
+                eventually(cancelled)
                 assert(interrupted)
-                assert(cancelled)
             }
         }
     }

@@ -9,7 +9,7 @@ import scala.util.Failure
 import scala.util.Success
 
 class Cache(private[kyo] val store: Store):
-    def memo[T, U, S](
+    def memo[T, U: Flat, S](
         f: T => U < S
     ): T => U < (Async & S) =
         (v: T) =>
@@ -42,21 +42,21 @@ class Cache(private[kyo] val store: Store):
                 }
             }
 
-    def memo2[T1, T2, S, U](
+    def memo2[T1, T2, S, U: Flat](
         f: (T1, T2) => U < S
     ): (T1, T2) => U < (Async & S) =
         val m = memo[(T1, T2), U, S](f.tupled)
         (t1, t2) => m((t1, t2))
     end memo2
 
-    def memo3[T1, T2, T3, S, U](
+    def memo3[T1, T2, T3, S, U: Flat](
         f: (T1, T2, T3) => U < S
     ): (T1, T2, T3) => U < (Async & S) =
         val m = memo[(T1, T2, T3), U, S](f.tupled)
         (t1, t2, t3) => m((t1, t2, t3))
     end memo3
 
-    def memo4[T1, T2, T3, T4, S, U](
+    def memo4[T1, T2, T3, T4, S, U: Flat](
         f: (T1, T2, T3, T4) => U < S
     ): (T1, T2, T3, T4) => U < (Async & S) =
         val m = memo[(T1, T2, T3, T4), U, S](f.tupled)

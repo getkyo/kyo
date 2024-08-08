@@ -71,7 +71,7 @@ lazy val kyoJVM = project
         `kyo-stats-registry`.jvm,
         `kyo-stats-otel`.jvm,
         `kyo-cache`.jvm,
-        // `kyo-sttp`.jvm,
+        `kyo-sttp`.jvm,
         // `kyo-tapir`.jvm,
         // `kyo-caliban`.jvm,
         // `kyo-bench`.jvm,
@@ -93,7 +93,7 @@ lazy val kyoJS = project
         `kyo-core`.js,
         // `kyo-direct`.js,
         `kyo-stats-registry`.js,
-        // `kyo-sttp`.js,
+        `kyo-sttp`.js,
         // `kyo-test`.js,
         `kyo-zio`.js
     )
@@ -226,17 +226,17 @@ lazy val `kyo-cache` =
             libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
         )
 
-// lazy val `kyo-sttp` =
-//     crossProject(JSPlatform, JVMPlatform)
-//         .withoutSuffixFor(JVMPlatform)
-//         .crossType(CrossType.Full)
-//         .in(file("kyo-sttp"))
-//         .dependsOn(`kyo-core`)
-//         .settings(
-//             `kyo-settings`,
-//             libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.7"
-//         )
-//         .jsSettings(`js-settings`)
+lazy val `kyo-sttp` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-sttp"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.7"
+        )
+        .jsSettings(`js-settings`)
 
 // lazy val `kyo-tapir` =
 //     crossProject(JVMPlatform)

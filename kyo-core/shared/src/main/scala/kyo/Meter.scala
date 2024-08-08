@@ -11,6 +11,8 @@ abstract class Meter:
     def run[T, S](v: => T < S)(using Frame): T < (S & Async & Abort[Closed])
 
     def tryRun[T, S](v: => T < S)(using Frame): Maybe[T] < (IO & S)
+
+    def close(using Frame): Boolean < IO
 end Meter
 
 object Meter:
@@ -20,6 +22,7 @@ object Meter:
             def available(using Frame)                 = Int.MaxValue
             def run[T, S](v: => T < S)(using Frame)    = v
             def tryRun[T, S](v: => T < S)(using Frame) = v.map(Maybe(_))
+            def close(using Frame)                     = false
 
     def initMutex(using Frame): Meter < IO =
         initSemaphore(1)
@@ -45,6 +48,9 @@ object Meter:
                                         v.map(Maybe(_))
                                     }
                         }
+
+                    def close(using Frame) =
+                        chan.close.map(_.isDefined)
             }
         }
 
@@ -63,6 +69,9 @@ object Meter:
                             case _ =>
                                 v.map(Maybe(_))
                         }
+
+                    def close(using Frame) =
+                        chan.close.map(_.isDefined)
             }
         }
 
@@ -113,6 +122,8 @@ object Meter:
                     loop()
                 end tryRun
 
+                def close(using Frame): Boolean < IO =
+                    Kyo.seq.map(meters)(_.close).map(_.exists(identity))
             end new
         }
 
