@@ -6,6 +6,8 @@ import kyo2.bug
 opaque type Context = Map[Tag[Any], AnyRef]
 
 object Context:
+    inline given Flat[Context] = Flat.unsafe.bypass
+
     val empty: Context = Map.empty
 
     extension (context: Context)

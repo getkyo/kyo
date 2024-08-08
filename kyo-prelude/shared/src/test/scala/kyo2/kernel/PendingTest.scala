@@ -80,9 +80,9 @@ class PendingTest extends Test:
             assert(x.eval == 5)
         }
 
-        "prevents lifting nested kyo computations" - {
-            "method effect mismatch" in {
-                def test1(v: Int < Any) = v.map(_ + 1)
+        "nested computation" - {
+            "generic method effect mismatch" in {
+                def test1[T](v: T < Any) = v
                 assertDoesNotCompile("test1(effect)")
             }
             "inference widening" in {
@@ -156,9 +156,8 @@ class PendingTest extends Test:
             assert(x.evalNow == Maybe.empty)
         }
 
-        "returns Defined for nested pure values" in {
-            val x: Int < Any < Any = <(1: Int < Any)
-            assert(x.evalNow.flatMap(_.evalNow) == Maybe(1))
+        "doesn't accept nested computations" in {
+            assertDoesNotCompile("def test(x: Int < Any < Any) = x.evalNow")
         }
     }
 

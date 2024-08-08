@@ -15,14 +15,14 @@ object Env:
     inline def get[R](using inline tag: Tag[R])(using inline frame: Frame): R < Env[R] =
         use[R](identity)
 
-    def run[R >: Nothing: Tag, A, S, VR](env: R)(v: A < (Env[R & VR] & S))(
+    def run[R >: Nothing: Tag, A: Flat, S, VR](env: R)(v: A < (Env[R & VR] & S))(
         using
         reduce: Reducible[Env[VR]],
         frame: Frame
     ): A < (S & reduce.SReduced) =
         runTypeMap(TypeMap(env))(v)
 
-    def runTypeMap[R >: Nothing, A, S, VR](env: TypeMap[R])(v: A < (Env[R & VR] & S))(
+    def runTypeMap[R >: Nothing, A: Flat, S, VR](env: TypeMap[R])(v: A < (Env[R & VR] & S))(
         using
         reduce: Reducible[Env[VR]],
         frame: Frame

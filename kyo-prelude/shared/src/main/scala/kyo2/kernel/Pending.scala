@@ -7,15 +7,12 @@ import scala.annotation.tailrec
 import scala.language.implicitConversions
 import scala.util.NotGiven
 
-// TODO Constructor should be private but there's an issue with inlining
-case class <[+A, -S](private val curr: A | Kyo[A, S]) extends AnyVal
+opaque type <[+A, -S] = A | Kyo[A, S]
 
 object `<`:
 
-    implicit private[kyo2] inline def apply[A, S](p: Kyo[A, S]): A < S = new <(p)
-
-    implicit inline def lift[A, S](v: A)(using inline ng: NotGiven[A <:< (Any < Nothing)]): A < S =
-        <(v)
+    implicit private[kernel] inline def fromKyo[A, S](v: Kyo[A, S]): A < S                        = v
+    implicit inline def lift[A, S](v: A)(using inline ng: NotGiven[A <:< (Any < Nothing)]): A < S = v
 
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
         using inline ng: NotGiven[B <:< (Any < Nothing)]
@@ -39,9 +36,6 @@ object `<`:
 
     extension [A, S](inline v: A < S)
 
-        inline def unit(using inline frame: Frame): Unit < S =
-            map(_ => ())
-
         inline def andThen[B, S2](inline f: => B < S2)(using inline ev: A => Unit, inline frame: Frame): B < (S & S2) =
             map(_ => f)
 
@@ -51,20 +45,17 @@ object `<`:
         inline def pipe[B, S2](inline f: A < S => B < S2)(using inline frame: Frame): B < S2 =
             f(v)
 
-        inline def repeat(i: Int)(using inline ev: A => Unit, inline frame: Frame): Unit < S =
-            if i <= 0 then () else andThen(repeat(i - 1))
-
         inline def map[B, S2](inline f: Safepoint ?=> A => B < S2)(
             using inline _frame: Frame
         )(using Safepoint): B < (S & S2) =
             def mapLoop(v: A < S)(using Safepoint): B < (S & S2) =
                 v match
-                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 mapLoop(kyo(v, context))
-                    case <(v) =>
+                    case v =>
                         val value = v.asInstanceOf[A]
                         Safepoint.handle(value)(
                             suspend = mapLoop(value),
@@ -73,27 +64,37 @@ object `<`:
             mapLoop(v)
         end map
 
-        inline def evalNow: Maybe[A] =
+        inline def evalNow(using inline flat: Flat[A]): Maybe[A] =
             v match
-                case <(kyo: Kyo[?, ?]) => Maybe.empty
-                case <(v)              => Maybe(v.asInstanceOf[A])
+                case kyo: Kyo[?, ?] => Maybe.empty
+                case v              => Maybe(v.asInstanceOf[A])
 
     end extension
 
-    extension [A, S, S2](inline kyo: A < S < S2)
-        inline def flatten(using inline frame: Frame): A < (S & S2) =
-            kyo.map(identity)
+    // TODO Compiler crash if inlined
+    extension [A, S](v: A < S)
+        def repeat(i: Int)(using ev: A => Unit, frame: Frame): Unit < S =
+            if i <= 0 then () else v.andThen(repeat(i - 1))
+
+        def unit(using frame: Frame): Unit < S =
+            v.map(_ => ())
+    end extension
+
+    // TODO Compiler crash if inlined
+    extension [A, S, S2](v: A < S < S2)
+        def flatten(using frame: Frame): A < (S & S2) =
+            v.map(identity)
 
     extension [A](inline v: A < Any)
-        inline def eval(using inline frame: Frame): A =
+        inline def eval(using inline frame: Frame, inline flat: Flat[A]): A =
             @tailrec def evalLoop(kyo: A < Any)(using Safepoint): A =
                 kyo match
-                    case <(kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, Any] @unchecked)
+                    case kyo: KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, Any] @unchecked
                         if kyo.tag =:= Tag[Defer] =>
                         evalLoop(kyo((), Context.empty))
-                    case <(kyo: Kyo[A, Any] @unchecked) =>
+                    case kyo: Kyo[A, Any] @unchecked =>
                         kyo2.bug.failTag(kyo, Tag[Any])
-                    case <(v) =>
+                    case v =>
                         v.asInstanceOf[A]
                 end match
             end evalLoop

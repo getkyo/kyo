@@ -7,6 +7,8 @@ import scala.collection.immutable.HashMap
 opaque type TypeMap[+A] = HashMap[Tag[Any], Any]
 
 object TypeMap:
+    inline given [A]: Flat[TypeMap[A]] = Flat.unsafe.bypass
+
     extension [A](self: TypeMap[A])
 
         private inline def fatal[B](using t: Tag[B]): Nothing =
