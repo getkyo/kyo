@@ -6,8 +6,12 @@ import kyo.kernel.Safepoint
 private[kyo] type Frame = kernel.Frame
 private[kyo] inline def Frame = kernel.Frame
 
-export kernel.<
-export kernel.Loop
+type Flat[A] = kernel.Flat[A]
+val Flat = kernel.Flat
+
+type <[+A, -S] = kernel.<[A, S]
+
+val Loop = kernel.Loop
 
 private[kyo] inline def isNull[A](v: A): Boolean =
     v.asInstanceOf[AnyRef] eq null

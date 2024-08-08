@@ -13,6 +13,7 @@ object Result:
 
     inline given [E, A](using inline ce: CanEqual[A, A]): CanEqual[Result[E, A], Result[E, A]] = CanEqual.derived
     given [E, A]: CanEqual[Result[E, A], Panic]                                                = CanEqual.derived
+    inline given [E, A]: Flat[Result[E, A]]                                                    = Flat.unsafe.bypass
 
     inline def apply[A](expr: => A): Result[Nothing, A] =
         try

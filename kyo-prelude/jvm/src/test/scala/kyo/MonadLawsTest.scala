@@ -1,5 +1,6 @@
 package kyo
 
+import Flat.unsafe.bypass
 import kyo.Result
 import zio.Trace
 import zio.prelude.Equal
@@ -11,7 +12,7 @@ import zio.test.laws.*
 
 object MonadLawsTest extends ZIOSpecDefault:
 
-    case class Myo[+A](v: A < (Env[String] & Abort[String] & Emit[Int] & Var[Boolean]))
+    type Myo[+A] = A < (Env[String] & Abort[String] & Emit[Int] & Var[Boolean])
 
     val listGenF: GenF[Any, Myo] =
         new GenF[Any, Myo]:
@@ -48,17 +49,17 @@ object MonadLawsTest extends ZIOSpecDefault:
                             _ <- Abort.when(s.length() > 10)("length exceeded")
                         yield v
                     )
-                ).map(Myo(_))
+                )
             end apply
 
     given CovariantDeriveEqualIdentityFlatten[Myo] =
         new CovariantDeriveEqualIdentityFlatten[Myo]:
             override def flatten[A](ffa: Myo[Myo[A]]): Myo[A] =
-                Myo(ffa.v.flatMap(_.v))
+                ffa.flatten
             override def any: Myo[Any] =
-                Myo(())
+                ()
             override def map[A, B](f: A => B): Myo[A] => Myo[B] =
-                m => Myo[B](m.v.map(f(_)))
+                _.map(f(_))
             override def derive[A: Equal]: Equal[Myo[A]] =
                 new Equal[Myo[A]]:
                     protected def checkEqual(l: Myo[A], r: Myo[A]): Boolean =
@@ -66,12 +67,15 @@ object MonadLawsTest extends ZIOSpecDefault:
                             Var.run(true)(
                                 Emit.run(
                                     Abort.run(
-                                        Env.run("test")(m.v)
+                                        Env.run("test")(m)
                                     )
                                 )
                             ).eval._2
-
-                        run(l).equals(run(r))
+                        (run(l), run(r)) match
+                            case (Result.Success(l), Result.Success(r)) => summon[Equal[A]].equal(l, r)
+                            case (Result.Fail(l), Result.Fail(r))       => l == r
+                            case _                                      => false
+                        end match
                     end checkEqual
 
     def spec = suite("MonadLawsTest")(

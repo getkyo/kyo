@@ -40,7 +40,7 @@ object Var:
     inline def updateDiscard[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
         Effect.suspendMap[Unit](tag, (v => f(v)): Update[V])(_ => ())
 
-    private inline def runWith[V, A, S, B, S2](state: V)(v: A < (Var[V] & S))(
+    private inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
         inline f: (V, A) => B < S2
     )(using inline tag: Tag[Var[V]], inline frame: Frame): B < (S & S2) =
         Effect.handle.state(tag, state, v)(
@@ -58,11 +58,11 @@ object Var:
         )
 
     /** Handles the effect and discards the 'Var' state. */
-    def run[V, A, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): A < S =
+    def run[V, A: Flat, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): A < S =
         runWith(state)(v)((_, result) => result)
 
     /** Handles the effect and returns a tuple with the final `Var` state and the computation's result. */
-    def runTuple[V, A, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): (V, A) < S =
+    def runTuple[V, A: Flat, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): (V, A) < S =
         runWith(state)(v)((state, result) => (state, result))
 
     object internal:

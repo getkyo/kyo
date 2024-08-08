@@ -59,22 +59,22 @@ object Effect:
             inline handle: Safepoint ?=> [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
             inline done: A => B < S3 = (v: A) => v,
             inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
-        )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2 & S3) =
+        )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
             def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
                 v match
-                    case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if tag =:= kyo.tag && accept(kyo.input) =>
+                    case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if tag =:= kyo.tag && accept(kyo.input) =>
                         Safepoint.handle(kyo.input)(
                             eval = handle[Any](kyo.input, kyo(_, context)),
                             continue = handleLoop(_, context),
                             suspend = handleLoop(kyo, context)
                         )
-                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked) =>
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handleLoop(kyo(v, context), context)
                         end new
-                    case <(kyo) =>
+                    case kyo =>
                         done(kyo.asInstanceOf[A])
                 end match
             end handleLoop
@@ -88,28 +88,28 @@ object Effect:
         )(
             inline handle1: Safepoint ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2),
             inline handle2: Safepoint ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2)
-        )(using inline _frame: Frame, safepoint: Safepoint): A < (S & S2) =
+        )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): A < (S & S2) =
             def handle2Loop(kyo: A < (E1 & E2 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
                 kyo match
-                    case <(kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
+                    case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked if tag1 =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
                             eval = handle1[Any](kyo.input, kyo(_, context)),
                             suspend = handle2Loop(kyo, context),
                             continue = handle2Loop(_, context)
                         )
-                    case <(kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
+                    case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & S & S2] @unchecked if tag2 =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
                             eval = handle2[Any](kyo.input, kyo(_, context)),
                             suspend = handle2Loop(kyo, context),
                             continue = handle2Loop(_, context)
                         )
-                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & S & S2] @unchecked) =>
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & S & S2] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handle2Loop(kyo(v, context), context)
                         end new
-                    case <(kyo) =>
+                    case kyo =>
                         kyo.asInstanceOf[A]
                 end match
             end handle2Loop
@@ -128,34 +128,34 @@ object Effect:
             inline handle1: Safepoint ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
             inline handle2: Safepoint ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
             inline handle3: Safepoint ?=> [C] => (I3[C], O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
-        )(using inline _frame: Frame, safepoint: Safepoint): A < (S & S2) =
+        )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): A < (S & S2) =
             def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
                 v match
-                    case <(kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag1 =:= kyo.tag =>
+                    case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked if tag1 =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
                             eval = handle1[Any](kyo.input, kyo(_, context)),
                             suspend = handle3Loop(kyo, context),
                             continue = handle3Loop(_, context)
                         )
-                    case <(kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag2 =:= kyo.tag =>
+                    case kyo: KyoSuspend[I2, O2, E2, Any, A, E1 & E2 & E3 & S & S2] @unchecked if tag2 =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
                             eval = handle2[Any](kyo.input, kyo(_, context)),
                             suspend = handle3Loop(kyo, context),
                             continue = handle3Loop(_, context)
                         )
-                    case <(kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked) if tag3 =:= kyo.tag =>
+                    case kyo: KyoSuspend[I3, O3, E3, Any, A, E1 & E2 & E3 & S & S2] @unchecked if tag3 =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
                             eval = handle3[Any](kyo.input, kyo(_, context)),
                             suspend = handle3Loop(kyo, context),
                             continue = handle3Loop(_, context)
                         )
-                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & S & S2] @unchecked) =>
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E1 & E2 & E3 & S & S2] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handle3Loop(kyo(v, context), context)
                         end new
-                    case <(kyo) =>
+                    case kyo =>
                         kyo.asInstanceOf[A]
                 end match
             end handle3Loop
@@ -176,12 +176,12 @@ object Effect:
             inline handle1: Safepoint ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
             inline handle2: Safepoint ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
             inline handle3: Safepoint ?=> [C] => (I3[C], O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
-        )(using inline _frame: Frame, safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
+        )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
             def partialLoop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
                 if stop then v
                 else
                     v match
-                        case <(kyo: KyoSuspend[?, ?, ?, ?, ?, ?]) =>
+                        case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] =>
                             type Suspend[I[_], O[_], E <: Effect[I, O]] = KyoSuspend[I, O, E, Any, A, E1 & E2 & E3 & S & S2]
                             if kyo.tag =:= Tag[Defer] then
                                 val k = kyo.asInstanceOf[Suspend[Const[Unit], Const[Unit], Defer]]
@@ -216,21 +216,21 @@ object Effect:
             inline handle: Safepoint ?=> [C] => (I[C], State, O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)) < S3,
             inline done: (State, A) => B < (S & S2 & S3) = (_: State, v: A) => v,
             inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
-        )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2 & S3) =
+        )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
             def handleLoop(state: State, v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
                 v match
-                    case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if tag =:= kyo.tag && accept(kyo.input) =>
+                    case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if tag =:= kyo.tag && accept(kyo.input) =>
                         Safepoint.handle(kyo.input)(
                             suspend = handleLoop(state, kyo, context),
                             continue = handle(kyo.input, state, kyo(_, context)).map(handleLoop(_, _, context))
                         )
-                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked) =>
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handleLoop(state, kyo(v, context), context)
                         end new
-                    case <(kyo) =>
+                    case kyo =>
                         done(state, kyo.asInstanceOf[A])
                 end match
             end handleLoop
@@ -245,16 +245,16 @@ object Effect:
             inline done: A => B < S3 = (v: A) => v,
             inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true,
             inline recover: Throwable => B < (S & S2 & S3)
-        )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2 & S3) =
+        )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
             def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
                 v match
-                    case <(kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked) if tag =:= kyo.tag && accept(kyo.input) =>
+                    case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if tag =:= kyo.tag && accept(kyo.input) =>
                         Safepoint.handle(kyo.input)(
                             eval = handle[Any](kyo.input, kyo(_, context)),
                             continue = handleLoop(_, context),
                             suspend = handleLoop(kyo, context)
                         )
-                    case <(kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked) =>
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
@@ -265,7 +265,7 @@ object Effect:
                                         recover(ex)
                             end apply
                         end new
-                    case <(kyo) =>
+                    case kyo =>
                         done(kyo.asInstanceOf[A])
                 end match
             end handleLoop
@@ -285,7 +285,7 @@ object Effect:
     )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2) =
         def catchingLoop(v: B < (S & S2))(using Safepoint): B < (S & S2) =
             (v: @unchecked) match
-                case <(kyo: KyoSuspend[IX, OX, EX, Any, B, S & S2] @unchecked) =>
+                case kyo: KyoSuspend[IX, OX, EX, Any, B, S & S2] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =

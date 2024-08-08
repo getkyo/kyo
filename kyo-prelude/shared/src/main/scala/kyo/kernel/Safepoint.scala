@@ -73,7 +73,7 @@ object Safepoint:
     ): A < S =
         def loop(v: A < S): A < S =
             v match
-                case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
+                case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint): A < S =
@@ -113,7 +113,7 @@ object Safepoint:
 
         def ensureLoop(v: A < S)(using safepoint: Safepoint): A < S =
             v match
-                case <(kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked) =>
+                case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint): A < S =

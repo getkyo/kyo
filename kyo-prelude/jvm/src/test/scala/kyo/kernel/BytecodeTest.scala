@@ -22,22 +22,22 @@ class BytecodeTest extends Test:
 
     "suspend" in {
         val map = methodBytecodeSize[TestSuspend]
-        assert(map == Map("test" -> 20))
+        assert(map == Map("test" -> 16))
     }
 
     "suspendMap" in {
         val map = methodBytecodeSize[TestSuspendMap]
-        assert(map == Map("test" -> 20))
+        assert(map == Map("test" -> 16))
     }
 
     "map" in {
         val map = methodBytecodeSize[TestMap]
-        assert(map == Map("test" -> 24, "anonfun" -> 14, "mapLoop" -> 161))
+        assert(map == Map("test" -> 22, "anonfun" -> 10, "mapLoop" -> 138))
     }
 
     "handle" in {
         val map = methodBytecodeSize[TestHandle]
-        assert(map == Map("test" -> 30, "anonfun" -> 15, "handleLoop" -> 267))
+        assert(map == Map("test" -> 20, "anonfun" -> 8, "handleLoop" -> 240))
     }
 
     def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =

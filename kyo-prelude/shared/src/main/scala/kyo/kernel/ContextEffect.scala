@@ -44,11 +44,13 @@ object ContextEffect:
         inline ifUndefined: A,
         inline ifDefined: A => A
     )(v: B < (E & S))(
-        using inline _frame: Frame
+        using
+        inline _frame: Frame,
+        inline flat: Flat[A]
     ): B < S =
         def handleLoop(v: B < (E & S))(using Safepoint): B < S =
             v match
-                case <(kyo: KyoSuspend[IX, OX, EX, Any, B, S] @unchecked) =>
+                case kyo: KyoSuspend[IX, OX, EX, Any, B, S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, B, S](kyo):
                         def frame = _frame
                         def apply(v: OX[Any], context: Context)(using Safepoint) =
@@ -58,7 +60,7 @@ object ContextEffect:
                                 else context.set(tag, ifDefined(context.get(tag)))
                             handleLoop(kyo(v, updated))
                         end apply
-                case <(kyo) =>
+                case kyo =>
                     kyo.asInstanceOf[B]
         handleLoop(v)
     end handle
