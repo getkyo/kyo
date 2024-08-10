@@ -17,7 +17,7 @@ final class Safepoint private () extends Trace.Owner:
     private[kernel] var interceptor: Interceptor = null
 
     private def enter(frame: Frame, value: Any): Int =
-        bug.require(Thread.currentThread eq owner)
+        bug.check(Thread.currentThread eq owner)
         if depth < maxStackDepth && (isNull(interceptor) || interceptor.enter(frame, value))
         then
             pushFrame(frame)
