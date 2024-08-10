@@ -3,6 +3,7 @@ package kyo.kernel
 import kyo.*
 import kyo.Tag
 import kyo.Tagged.*
+import kyo.bug.KyoBugException
 import scala.collection.mutable.Queue
 import scala.collection.mutable.Stack
 import scala.concurrent.Await
@@ -165,7 +166,7 @@ class SafepointTest extends Test:
                 (1: Int < Any).map(_ + 1).map(_ + 2)
             }
 
-        assert(res.eval == 4)
+        assertThrows[KyoBugException](res.eval)
     }
 
     "forced runtime leak + eval" in {
@@ -177,7 +178,7 @@ class SafepointTest extends Test:
                 (1: Int < Any).map(_ + 1).map(_ + 2).eval
             }
 
-        assert(res.eval == 4)
+        assertThrows[KyoBugException](res.eval)
     }
 
     "interceptors" - {
@@ -194,7 +195,6 @@ class SafepointTest extends Test:
                     def enter(frame: Frame, value: Any): Boolean =
                         executed = true
                         true
-                    def exit(): Unit = ()
 
                 Safepoint.immediate(interceptor)((1: Int < Any).map(_ + 1).eval)
                 assert(executed)
@@ -207,14 +207,12 @@ class SafepointTest extends Test:
                     def enter(frame: Frame, value: Any): Boolean =
                         count += 1
                         true
-                    def exit(): Unit = ()
 
                 val interceptor2 = new TestInterceptor:
                     def ensure(f: () => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         count += 10
                         true
-                    def exit(): Unit = ()
 
                 Safepoint.immediate(interceptor1) {
                     Safepoint.immediate(interceptor2)((1: Int < Any).map(_ + 1).eval)
@@ -232,7 +230,6 @@ class SafepointTest extends Test:
                     def enter(frame: Frame, value: Any): Boolean =
                         count += 1
                         true
-                    def exit(): Unit = ()
 
                 def suspendingFunction(): Int < Any =
                     Effect.defer(42).map(_ + 1)
@@ -256,14 +253,12 @@ class SafepointTest extends Test:
                     def enter(frame: Frame, value: Any): Boolean =
                         outerCount += 1
                         true
-                    def exit(): Unit = ()
 
                 val innerInterceptor = new TestInterceptor:
                     def ensure(f: () => Unit): Unit = ()
                     def enter(frame: Frame, value: Any): Boolean =
                         innerCount += 1
                         true
-                    def exit(): Unit = ()
 
                 def suspendingFunction(): Int < Any =
                     Effect.defer(42).map(_ + 1)
@@ -320,13 +315,9 @@ class SafepointTest extends Test:
 
             val expectedLogs = Seq(
                 "Entering computation with value: 6",
-                "Exiting method",
                 "Entering Unknown with value: 12",
-                "Exiting method",
                 "Entering computation with value: 13",
-                "Exiting method",
-                "Entering $anonfun with value: 26",
-                "Exiting method"
+                "Entering $anonfun with value: 26"
             )
 
             assert(interceptor.logs == expectedLogs)
@@ -340,12 +331,13 @@ class SafepointTest extends Test:
                 var log    = Stack.empty[(Frame, Long)]
 
                 def enter(frame: Frame, value: Any): Boolean =
+                    if starts.nonEmpty then
+                        val (frame, start) = starts.pop()
+                        log.push((frame, System.nanoTime() - start))
                     starts.push((frame, System.nanoTime()))
                     true
+                end enter
 
-                def exit(): Unit =
-                    val (frame, start) = starts.pop()
-                    log.push((frame, System.nanoTime() - start))
             end ProfilingInterceptor
 
             val interceptor = new ProfilingInterceptor
@@ -375,7 +367,7 @@ class SafepointTest extends Test:
                 assert(duration < 3000000)
             }
 
-            assert(interceptor.log.size == 4)
+            assert(interceptor.log.size == 3)
             assert(interceptor.log.exists(_._1.parse.methodName == "computation"))
         }
     }

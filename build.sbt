@@ -74,7 +74,7 @@ lazy val kyoJVM = project
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
         `kyo-caliban`.jvm,
-        // `kyo-bench`.jvm,
+        `kyo-bench`.jvm,
         // `kyo-test`.jvm,
         `kyo-zio`.jvm,
         // `kyo-examples`.jvm
@@ -322,59 +322,59 @@ lazy val `kyo-zio` =
 //             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.8"
 //         )
 
-// lazy val `kyo-bench` =
-//     crossProject(JVMPlatform)
-//         .withoutSuffixFor(JVMPlatform)
-//         .crossType(CrossType.Pure)
-//         .in(file("kyo-bench"))
-//         .enablePlugins(JmhPlugin)
-//         .dependsOn(`kyo-core`)
-//         .dependsOn(`kyo-sttp`)
-//         .dependsOn(`kyo-scheduler-zio`)
-//         .settings(
-//             `kyo-settings`,
-//             Test / testForkedParallel := true,
-//             // Forks each test suite individually
-//             Test / testGrouping := {
-//                 val javaOptionsValue = javaOptions.value.toVector
-//                 val envsVarsValue    = envVars.value
-//                 (Test / definedTests).value map { test =>
-//                     Tests.Group(
-//                         name = test.name,
-//                         tests = Seq(test),
-//                         runPolicy = Tests.SubProcess(
-//                             ForkOptions(
-//                                 javaHome = javaHome.value,
-//                                 outputStrategy = outputStrategy.value,
-//                                 bootJars = Vector.empty,
-//                                 workingDirectory = Some(baseDirectory.value),
-//                                 runJVMOptions = javaOptionsValue,
-//                                 connectInput = connectInput.value,
-//                                 envVars = envsVarsValue
-//                             )
-//                         )
-//                     )
-//                 }
-//             },
-//             libraryDependencies += "dev.zio"             %% "izumi-reflect"       % "2.3.10",
-//             libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
-//             libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
-//             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
-//             libraryDependencies += "org.typelevel"       %% "cats-mtl"            % "1.5.0",
-//             libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.3.0",
-//             libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.3.0",
-//             libraryDependencies += "dev.zio"             %% "zio"                 % zioVersion,
-//             libraryDependencies += "dev.zio"             %% "zio-concurrent"      % zioVersion,
-//             libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC27",
-//             libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
-//             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.10.2",
-//             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.27",
-//             libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.27",
-//             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0-RC9",
-//             libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.9",
-//             libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.9",
-//             libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
-//         )
+lazy val `kyo-bench` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-bench"))
+        .enablePlugins(JmhPlugin)
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-sttp`)
+        .dependsOn(`kyo-scheduler-zio`)
+        .settings(
+            `kyo-settings`,
+            Test / testForkedParallel := true,
+            // Forks each test suite individually
+            Test / testGrouping := {
+                val javaOptionsValue = javaOptions.value.toVector
+                val envsVarsValue    = envVars.value
+                (Test / definedTests).value map { test =>
+                    Tests.Group(
+                        name = test.name,
+                        tests = Seq(test),
+                        runPolicy = Tests.SubProcess(
+                            ForkOptions(
+                                javaHome = javaHome.value,
+                                outputStrategy = outputStrategy.value,
+                                bootJars = Vector.empty,
+                                workingDirectory = Some(baseDirectory.value),
+                                runJVMOptions = javaOptionsValue,
+                                connectInput = connectInput.value,
+                                envVars = envsVarsValue
+                            )
+                        )
+                    )
+                }
+            },
+            libraryDependencies += "dev.zio"             %% "izumi-reflect"       % "2.3.10",
+            libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
+            libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
+            libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
+            libraryDependencies += "org.typelevel"       %% "cats-mtl"            % "1.5.0",
+            libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.3.0",
+            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.3.0",
+            libraryDependencies += "dev.zio"             %% "zio"                 % zioVersion,
+            libraryDependencies += "dev.zio"             %% "zio-concurrent"      % zioVersion,
+            libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC27",
+            libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
+            libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.10.2",
+            libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.27",
+            libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.27",
+            libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0-RC9",
+            libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.9",
+            libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.9",
+            libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
+        )
 
 // lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
 

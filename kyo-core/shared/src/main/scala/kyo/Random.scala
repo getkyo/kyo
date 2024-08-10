@@ -4,7 +4,7 @@ import scala.annotation.tailrec
 
 object Random:
 
-    trait Service:
+    abstract class Service:
         def nextInt(using Frame): Int < IO
         def nextInt(exclusiveBound: Int)(using Frame): Int < IO
         def nextLong(using Frame): Long < IO
@@ -23,7 +23,7 @@ object Random:
 
     object Service:
 
-        trait Unsafe:
+        abstract class Unsafe:
             def nextInt: Int
             def nextInt(exclusiveBound: Int): Int
             def nextLong: Long
@@ -115,42 +115,18 @@ object Random:
     def let[T, S](r: Service)(v: T < S)(using Frame): T < (S & IO) =
         local.let(r)(v)
 
-    def nextInt(using Frame): Int < IO =
-        local.use(_.nextInt)
+    def nextInt(using Frame): Int < IO                                      = local.use(_.nextInt)
+    def nextInt(exclusiveBound: Int)(using Frame): Int < IO                 = local.use(_.nextInt(exclusiveBound))
+    def nextLong(using Frame): Long < IO                                    = local.use(_.nextLong)
+    def nextDouble(using Frame): Double < IO                                = local.use(_.nextDouble)
+    def nextBoolean(using Frame): Boolean < IO                              = local.use(_.nextBoolean)
+    def nextFloat(using Frame): Float < IO                                  = local.use(_.nextFloat)
+    def nextGaussian(using Frame): Double < IO                              = local.use(_.nextGaussian)
+    def nextValue[T](seq: Seq[T])(using Frame): T < IO                      = local.use(_.nextValue(seq))
+    def nextValues[T](length: Int, seq: Seq[T])(using Frame): Seq[T] < IO   = local.use(_.nextValues(length, seq))
+    def nextStringAlphanumeric(length: Int)(using Frame): String < IO       = local.use(_.nextStringAlphanumeric(length))
+    def nextString(length: Int, chars: Seq[Char])(using Frame): String < IO = local.use(_.nextString(length, chars))
+    def nextBytes(length: Int)(using Frame): Seq[Byte] < IO                 = local.use(_.nextBytes(length))
+    def shuffle[T](seq: Seq[T])(using Frame): Seq[T] < IO                   = local.use(_.shuffle(seq))
 
-    def nextInt(exclusiveBound: Int)(using Frame): Int < IO =
-        local.use(_.nextInt(exclusiveBound))
-
-    def nextLong(using Frame): Long < IO =
-        local.use(_.nextLong)
-
-    def nextDouble(using Frame): Double < IO =
-        local.use(_.nextDouble)
-
-    def nextBoolean(using Frame): Boolean < IO =
-        local.use(_.nextBoolean)
-
-    def nextFloat(using Frame): Float < IO =
-        local.use(_.nextFloat)
-
-    def nextGaussian(using Frame): Double < IO =
-        local.use(_.nextGaussian)
-
-    def nextValue[T](seq: Seq[T])(using Frame): T < IO =
-        local.use(_.nextValue(seq))
-
-    def nextValues[T](length: Int, seq: Seq[T])(using Frame): Seq[T] < IO =
-        local.use(_.nextValues(length, seq))
-
-    def nextStringAlphanumeric(length: Int)(using Frame): String < IO =
-        local.use(_.nextStringAlphanumeric(length))
-
-    def nextString(length: Int, chars: Seq[Char])(using Frame): String < IO =
-        local.use(_.nextString(length, chars))
-
-    def nextBytes(length: Int)(using Frame): Seq[Byte] < IO =
-        local.use(_.nextBytes(length))
-
-    def shuffle[T](seq: Seq[T])(using Frame): Seq[T] < IO =
-        local.use(_.shuffle(seq))
 end Random

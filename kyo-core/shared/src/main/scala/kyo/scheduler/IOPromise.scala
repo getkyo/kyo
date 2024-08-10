@@ -25,7 +25,6 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
     def addEnsure(f: () => Unit): Unit           = {}
     def removeEnsure(f: () => Unit): Unit        = {}
     def enter(frame: Frame, value: Any): Boolean = true
-    def exit(): Unit                             = {}
 
     private def cas[E2 <: E, A2 <: A](curr: State[E2, A2], next: State[E2, A2]): Boolean =
         if stateHandle eq null then

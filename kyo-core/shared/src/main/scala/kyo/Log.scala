@@ -9,7 +9,7 @@ object Log extends LogPlatformSpecific:
     def let[T, S](u: Unsafe)(f: => T < (IO & S))(using Frame): T < (IO & S) =
         local.let(u)(f)
 
-    trait Unsafe:
+    abstract class Unsafe:
         def traceEnabled: Boolean
         def debugEnabled: Boolean
         def infoEnabled: Boolean

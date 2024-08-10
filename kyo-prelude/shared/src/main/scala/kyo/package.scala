@@ -30,6 +30,9 @@ private[kyo] object bug:
     ): Nothing =
         bug(s"Unexpected pending effect while handling ${expected.show}: " + kyo)
 
+    def require(cond: Boolean): Unit =
+        if !cond then throw new KyoBugException("Required condition is false.")
+
     def apply(msg: String): Nothing =
         throw KyoBugException(msg + " Please open an issue 🥹  https://github.com/getkyo/kyo/issues")
 end bug

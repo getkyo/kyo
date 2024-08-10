@@ -9,11 +9,13 @@ abstract class Effect[-I[_], +O[_]]
 
 object Effect:
 
-    def defer[A, S](f: Safepoint ?=> A < S): A < S =
+    def defer[A, S](f: Safepoint ?=> A < S)(using fr: Frame): A < S =
         new KyoDefer[A, S]:
             def frame = summon[Frame]
             def apply(v: Unit, context: Context)(using Safepoint) =
                 f
+        end new
+    end defer
 
     final class SuspendOps[A](dummy: Unit) extends AnyVal:
 
@@ -56,7 +58,7 @@ object Effect:
             inline tag: Tag[E],
             v: A < (E & S)
         )(
-            inline handle: Safepoint ?=> [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
+            inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2),
             inline done: A => B < S3 = (v: A) => v,
             inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
@@ -86,8 +88,8 @@ object Effect:
             inline tag2: Tag[E2],
             v: A < (E1 & E2 & S)
         )(
-            inline handle1: Safepoint ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2),
-            inline handle2: Safepoint ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2)
+            inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2),
+            inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2)
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): A < (S & S2) =
             def handle2Loop(kyo: A < (E1 & E2 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
                 kyo match
@@ -125,9 +127,9 @@ object Effect:
             inline tag3: Tag[E3],
             v: A < (E1 & E2 & E3 & S)
         )(
-            inline handle1: Safepoint ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
-            inline handle2: Safepoint ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
-            inline handle3: Safepoint ?=> [C] => (I3[C], O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
+            inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle3: [C] => (I3[C], Safepoint ?=> O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): A < (S & S2) =
             def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
                 v match
@@ -173,9 +175,9 @@ object Effect:
             context: Context
         )(
             inline stop: => Boolean,
-            inline handle1: Safepoint ?=> [C] => (I1[C], O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
-            inline handle2: Safepoint ?=> [C] => (I2[C], O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
-            inline handle3: Safepoint ?=> [C] => (I3[C], O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
+            inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
+            inline handle3: [C] => (I3[C], Safepoint ?=> O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
             def partialLoop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
                 if stop then v
@@ -213,7 +215,7 @@ object Effect:
             inline state: State,
             v: A < (E & S)
         )(
-            inline handle: Safepoint ?=> [C] => (I[C], State, O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)) < S3,
+            inline handle: [C] => (I[C], State, Safepoint ?=> O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)) < S3,
             inline done: (State, A) => B < (S & S2 & S3) = (_: State, v: A) => v,
             inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
@@ -241,7 +243,7 @@ object Effect:
             inline tag: Tag[E],
             inline v: => A < (E & S)
         )(
-            inline handle: Safepoint ?=> [C] => (I[C], O[C] => A < (E & S & S2)) => A < (E & S & S2),
+            inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2),
             inline done: A => B < S3 = (v: A) => v,
             inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true,
             inline recover: Throwable => B < (S & S2 & S3)

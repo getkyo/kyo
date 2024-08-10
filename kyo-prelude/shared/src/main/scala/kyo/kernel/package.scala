@@ -46,6 +46,7 @@ package object kernel:
         abstract class KyoDefer[A, S] extends KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, S]:
             final def tag   = Tag[Defer]
             final def input = ()
+        end KyoDefer
 
     end internal
 end kernel

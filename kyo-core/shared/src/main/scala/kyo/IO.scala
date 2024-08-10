@@ -14,10 +14,10 @@ object IO:
 
     inline def unit: Unit < IO = ()
 
-    inline def apply[A, S](inline f: => A < S)(using inline frame: Frame): A < (IO & S) =
+    inline def apply[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (IO & S) =
         Effect.suspendMap[Any](Tag[IO], ())(_ => f)
 
-    inline def defer[A](inline f: => A)(using inline frame: Frame): A < IO =
+    inline def defer[A](inline f: Safepoint ?=> A)(using inline frame: Frame): A < IO =
         Effect.suspendMap[Any](Tag[IO], ())(_ => f)
 
     inline def ensure[A, S](inline f: => Unit < IO)(v: A < S)(using inline frame: Frame): A < (IO & S) =

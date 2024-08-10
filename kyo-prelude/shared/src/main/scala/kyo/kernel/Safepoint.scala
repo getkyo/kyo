@@ -3,6 +3,7 @@ package kyo.kernel
 import internal.*
 import java.util.Arrays
 import java.util.concurrent.atomic.AtomicBoolean
+import kyo.bug
 import kyo.isNull
 import kyo.kernel.Safepoint.*
 import scala.annotation.tailrec
@@ -16,8 +17,8 @@ final class Safepoint private () extends Trace.Owner:
     private[kernel] var interceptor: Interceptor = null
 
     private def enter(frame: Frame, value: Any): Int =
-        if (Thread.currentThread eq owner) && depth < maxStackDepth &&
-            (isNull(interceptor) || interceptor.enter(frame, value))
+        bug.require(Thread.currentThread eq owner)
+        if depth < maxStackDepth && (isNull(interceptor) || interceptor.enter(frame, value))
         then
             pushFrame(frame)
             val depth = this.depth
@@ -30,9 +31,7 @@ final class Safepoint private () extends Trace.Owner:
 
     private def exit(depth: Int): Unit =
         this.depth = depth - 1
-        if !isNull(interceptor) then
-            interceptor.exit()
-    end exit
+
 end Safepoint
 
 object Safepoint:
@@ -43,7 +42,6 @@ object Safepoint:
         def addEnsure(f: () => Unit): Unit
         def removeEnsure(f: () => Unit): Unit
         def enter(frame: Frame, value: Any): Boolean
-        def exit(): Unit
     end Interceptor
 
     private[kyo] inline def immediate[A, S](p: Interceptor)(inline v: => A < S)(
@@ -58,9 +56,6 @@ object Safepoint:
                     override def removeEnsure(f: () => Unit): Unit = p.removeEnsure(f)
                     def enter(frame: Frame, value: Any) =
                         p.enter(frame, value) && prev.enter(frame, value)
-                    def exit() =
-                        p.exit()
-                        prev.exit()
         safepoint.interceptor = np
         try v
         finally safepoint.interceptor = prev
