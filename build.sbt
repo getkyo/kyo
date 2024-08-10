@@ -73,7 +73,7 @@ lazy val kyoJVM = project
         `kyo-cache`.jvm,
         `kyo-sttp`.jvm,
         `kyo-tapir`.jvm,
-        // `kyo-caliban`.jvm,
+        `kyo-caliban`.jvm,
         // `kyo-bench`.jvm,
         // `kyo-test`.jvm,
         `kyo-zio`.jvm,
@@ -251,21 +251,21 @@ lazy val `kyo-tapir` =
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.0"
         )
 
-// lazy val `kyo-caliban` =
-//     crossProject(JVMPlatform)
-//         .withoutSuffixFor(JVMPlatform)
-//         .crossType(CrossType.Pure)
-//         .in(file("kyo-caliban"))
-//         .dependsOn(`kyo-core`)
-//         .dependsOn(`kyo-tapir`)
-//         .dependsOn(`kyo-zio`)
-//         .dependsOn(`kyo-sttp`)
-//         .settings(
-//             `kyo-settings`,
-//             libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.8.1",
-//             libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.8.1",
-//             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.0" % Test
-//         )
+lazy val `kyo-caliban` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Pure)
+        .in(file("kyo-caliban"))
+        .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-zio`)
+        .dependsOn(`kyo-sttp`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.8.1",
+            libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.8.1",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.0" % Test
+        )
 
 // lazy val `kyo-test` =
 //     crossProject(JVMPlatform, JSPlatform)

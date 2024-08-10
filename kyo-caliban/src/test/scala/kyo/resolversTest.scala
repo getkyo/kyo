@@ -4,21 +4,21 @@ import caliban.*
 import caliban.render
 import caliban.schema.Schema
 import caliban.schema.SchemaDerivation
-import kyo.*
-import kyoTest.KyoTest
+import scala.concurrent.Future
 import sttp.model.Uri
 import sttp.tapir.*
 import sttp.tapir.json.zio.*
 import sttp.tapir.server.netty.NettyConfig
 import sttp.tapir.server.netty.NettyKyoServer
 import zio.Task
+import zio.ZIO
 import zio.ZLayer
 
-class resolversTest extends KyoTest:
+class resolversTest extends Test:
 
-    def runZIO[T](v: Task[T]): T =
+    def runZIO[T](v: ZIO[Any, Any, T]): Future[T] =
         zio.Unsafe.unsafe(implicit u =>
-            zio.Runtime.default.unsafe.run(v).getOrThrow()
+            Future.successful(zio.Runtime.default.unsafe.run(v).foldExit(f => throw new Exception(f.toString()), v => v))
         )
 
     def testServer(port: Int) =
@@ -26,11 +26,11 @@ class resolversTest extends KyoTest:
         NettyKyoServer(NettyConfig.default.copy(port = port, gracefulShutdownTimeout = Some(5.millis)))
 
     case class Query(
-        k1: Int < Aborts[Throwable],
+        k1: Int < Abort[Throwable],
         k2: Int < ZIOs,
-        k3: Int < (Aborts[Throwable] & ZIOs),
-        k4: Int < IOs,
-        k5: Int < Fibers
+        k3: Int < (Abort[Throwable] & ZIOs),
+        k4: Int < IO,
+        k5: Int < Async
     ) derives Schema.SemiAuto
 
     "schema derivation" in {
@@ -54,20 +54,20 @@ class resolversTest extends KyoTest:
     }
 
     "arbitrary kyo effects" in runZIO {
-        type Env = Vars[Int] & Envs[String]
-        object schema extends SchemaDerivation[Runner[Env]]
+        type Environment = Var[Int] & Env[String]
+        object schema extends SchemaDerivation[Runner[Environment]]
 
-        case class Query(k: Int < Env) derives schema.SemiAuto
+        case class Query(k: Int < Environment) derives schema.SemiAuto
 
         val api = graphQL(RootResolver(Query(
             for
-                _ <- Vars.update[Int](_ + 1)
-                v <- Vars.get[Int]
-                s <- Envs.get[String]
+                _ <- Var.update[Int](_ + 1)
+                v <- Var.get[Int]
+                s <- Env.get[String]
             yield v + s.length
         )))
-        val layer = ZLayer.succeed(new Runner[Env]:
-            def apply[T: Flat](v: T < Env): Task[T] = ZIOs.run(Envs.run("kyo")(Vars.run(0)(v)))
+        val layer = ZLayer.succeed(new Runner[Environment]:
+            def apply[T: Flat](v: T < Environment): Task[T] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
         )
         for
             interpreter <- api.interpreter
@@ -78,17 +78,15 @@ class resolversTest extends KyoTest:
 
     "run server" in runZIO {
         val api = graphQL(RootResolver(Query(42, 42, 42, 42, 42)))
-
         ZIOs.run {
             for
                 server <- Resolvers.run(testServer(8080)) {
                     Resolvers.get(api)
                 }
-                res <- Requests.run {
-                    Requests[String](_
+                res <-
+                    Requests(_
                         .post(Uri.unsafeApply(server.hostName, server.port))
                         .body("""{"query":"{ k1 k2 k3 k4 k5 }"}"""))
-                }
                 _ <- server.stop()
             yield assert(res == """{"data":{"k1":42,"k2":42,"k3":42,"k4":42,"k5":42}}""")
         }
@@ -102,43 +100,44 @@ class resolversTest extends KyoTest:
                 server <- Resolvers.run(testServer(8081)) {
                     Resolvers.get(api).map(_.configure(Configurator.setEnableIntrospection(true)))
                 }
-                res <- Requests.run {
-                    Requests[String](_
+                res <-
+                    Requests(_
                         .post(Uri.unsafeApply(server.hostName, server.port))
                         .body("""{"query":"{ k1 k2 k3 k4 k5 }"}"""))
-                }
                 _ <- server.stop()
             yield assert(res == """{"data":{"k1":42,"k2":42,"k3":42,"k4":42,"k5":42}}""")
         }
     }
 
     "run server with arbitrary kyo effects" in runZIO {
-        type Env = Vars[Int] & Envs[String]
-        object schema extends SchemaDerivation[Runner[Env]]
+        type Environment = Var[Int] & Env[String]
+        object schema extends SchemaDerivation[Runner[Environment]]
 
-        case class Query(k: Int < Env) derives schema.SemiAuto
+        case class Query(k: Int < Environment) derives schema.SemiAuto
 
         val api = graphQL(RootResolver(Query(
             for
-                _ <- Vars.update[Int](_ + 1)
-                v <- Vars.get[Int]
-                s <- Envs.get[String]
+                _ <- Var.update[Int](_ + 1)
+                v <- Var.get[Int]
+                s <- Env.get[String]
             yield v + s.length
         )))
-        val runner = new Runner[Env]:
-            def apply[T: Flat](v: T < Env): Task[T] = ZIOs.run(Envs.run("kyo")(Vars.run(0)(v)))
+        val runner = new Runner[Environment]:
+            def apply[T: Flat](v: T < Environment): Task[T] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
 
         ZIOs.run {
             for
                 server <- Resolvers.run(testServer(8082), runner) { Resolvers.get(api) }
-                res <- Requests.run {
-                    Requests[String](_
+                res <-
+                    Requests(_
                         .post(Uri.unsafeApply(server.hostName, server.port))
                         .body("""{"query":"{ k }"}"""))
-                }
                 _ <- server.stop()
             yield assert(res == """{"data":{"k":4}}""")
         }
     }
 
 end resolversTest
+
+object resolversTest:
+    ???
