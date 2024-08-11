@@ -67,7 +67,7 @@ lazy val kyoJVM = project
         `kyo-tag`.jvm,
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
-        // `kyo-direct`.jvm,
+        `kyo-direct`.jvm,
         `kyo-stats-registry`.jvm,
         `kyo-stats-otel`.jvm,
         `kyo-cache`.jvm,
@@ -91,7 +91,7 @@ lazy val kyoJS = project
         `kyo-tag`.js,
         `kyo-prelude`.js,
         `kyo-core`.js,
-        // `kyo-direct`.js,
+        `kyo-direct`.js,
         `kyo-stats-registry`.js,
         `kyo-sttp`.js,
         // `kyo-test`.js,
@@ -176,17 +176,17 @@ lazy val `kyo-core` =
         )
         .jsSettings(`js-settings`)
 
-// lazy val `kyo-direct` =
-//     crossProject(JSPlatform, JVMPlatform)
-//         .withoutSuffixFor(JVMPlatform)
-//         .crossType(CrossType.Full)
-//         .in(file("kyo-direct"))
-//         .dependsOn(`kyo-core`)
-//         .settings(
-//             `kyo-settings`,
-//             libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.21"
-//         )
-//         .jsSettings(`js-settings`)
+lazy val `kyo-direct` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-direct"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.21"
+        )
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-registry` =
     crossProject(JSPlatform, JVMPlatform)

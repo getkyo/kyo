@@ -1,37 +1,36 @@
-package kyoTest
+package kyo
 
-import kyo.*
 import kyo.TestSupport.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 
-class blockTest extends AnyFreeSpec with Assertions:
+class BlockTest extends AnyFreeSpec with Assertions:
 
     "assigned run" - {
         "only" in {
-            val i = IOs(1)
+            val i = IO(1)
             runLiftTest(1) {
                 val v = await(i)
                 v
             }
         }
         "followed by pure expression" in {
-            val i = IOs(1)
+            val i = IO(1)
             runLiftTest(2) {
                 val v = await(i)
                 v + 1
             }
         }
         "followed by impure expression" in {
-            val i = IOs(1)
-            val j = IOs(2)
+            val i = IO(1)
+            val j = IO(2)
             runLiftTest(3) {
                 val v = await(i)
                 v + await(j)
             }
         }
         "nested" in {
-            val i = IOs(1)
+            val i = IO(1)
             runLiftTest(3) {
                 val v =
                     val r = await(i)
@@ -42,21 +41,21 @@ class blockTest extends AnyFreeSpec with Assertions:
     }
     "unassigned run" - {
         "only" in {
-            val i = IOs(1)
+            val i = IO(1)
             runLiftTest(1) {
                 await(i)
             }
         }
         "followed by pure expression" in {
-            val i = IOs(1)
+            val i = IO(1)
             runLiftTest(2) {
                 await(i)
                 2
             }
         }
         "followed by impure expression" in {
-            val i = IOs(1)
-            val j = IOs(2)
+            val i = IO(1)
+            val j = IO(2)
             runLiftTest(2) {
                 await(i)
                 await(j)
@@ -77,7 +76,7 @@ class blockTest extends AnyFreeSpec with Assertions:
             }
         }
         "followed by impure expression" in {
-            val i = IOs(1)
+            val i = IO(1)
             def a = 2
             runLiftTest(1) {
                 a
@@ -85,8 +84,8 @@ class blockTest extends AnyFreeSpec with Assertions:
             }
         }
         "using previous defers" in {
-            val i = IOs(1)
-            val j = IOs(2)
+            val i = IO(1)
+            val j = IO(2)
             runLiftTest(3) {
                 val v = await(i)
                 v + await(j)
@@ -95,14 +94,14 @@ class blockTest extends AnyFreeSpec with Assertions:
         "using external function" in {
             def a(i: Int, s: String) = i + s.toInt
             runLiftTest(4) {
-                await(IOs(a(1, "2"))) + a(0, "1")
+                await(IO(a(1, "2"))) + a(0, "1")
             }
         }
     }
     "complex" - {
         "tuple val pattern" in {
             runLiftTest(3) {
-                val (a, b) = (await(IOs(1)), await(IOs(2)))
+                val (a, b) = (await(IO(1)), await(IO(2)))
                 a + b
             }
         }
@@ -110,13 +109,13 @@ class blockTest extends AnyFreeSpec with Assertions:
             runLiftTest((1, 2, 3)) {
                 val x = 1
                 (
-                    await(IOs(x)), {
-                        val a = await(IOs(2))
+                    await(IO(x)), {
+                        val a = await(IO(2))
                         a
                     },
-                    await(IOs(3))
+                    await(IO(3))
                 )
             }
         }
     }
-end blockTest
+end BlockTest
