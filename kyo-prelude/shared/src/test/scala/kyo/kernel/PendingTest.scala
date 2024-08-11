@@ -1,8 +1,6 @@
 package kyo.kernel
 
-import kyo.Maybe
-import kyo.Tag
-import kyo.Test
+import kyo.*
 import kyo.kernel.*
 
 class PendingTest extends Test:
@@ -158,6 +156,57 @@ class PendingTest extends Test:
 
         "doesn't accept nested computations" in {
             assertDoesNotCompile("def test(x: Int < Any < Any) = x.evalNow")
+        }
+    }
+
+    "pipe" - {
+        "applies a function to a pure value" in {
+            val result = (5: Int < Any).pipe(_.map(_ + 1))
+            assert(result.eval == 6)
+        }
+
+        "applies a function to an effectful value" in {
+            val effect: Int < Env[Int] = Env.get[Int]
+            val result                 = effect.pipe(v => Env.run(10)(v))
+            assert(result.eval == 10)
+        }
+
+        "allows chaining of operations" in {
+            val effect: Int < Env[Int] = Env.get[Int]
+            val result = effect
+                .pipe(v => v.map(_ * 2))
+                .pipe(v => Env.run(5)(v))
+            assert(result.eval == 10)
+        }
+
+        "works with functions that return effects" in {
+            val effect: Int < Env[Int] = Env.get[Int]
+            val result = effect.pipe { v =>
+                Env.run(5)(v).flatMap { x =>
+                    Env.run(10)(Env.get[Int].map(_ + x))
+                }
+            }
+            assert(result.eval == 15)
+        }
+
+        "preserves the effect type" in {
+            val effect: Int < (Env[Int] & Abort[String]) =
+                Env.get[Int].flatMap(x => if x > 5 then Abort.fail("Too big") else x)
+            val result = effect.pipe { v =>
+                Abort.run(Env.run(10)(v))
+            }
+            assert(result.eval == Result.fail("Too big"))
+        }
+
+        "works with identity function" in {
+            val effect: Int < Env[Int] = Env.get[Int]
+            val result                 = effect.pipe(identity)
+            assert(Env.run(5)(result).eval == 5)
+        }
+
+        "can produce a value instead of a computation" in {
+            val result: Int = Env.get[Int].pipe(Env.run(5)).pipe(_.eval)
+            assert(result == 5)
         }
     }
 

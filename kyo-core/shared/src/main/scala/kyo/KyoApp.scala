@@ -9,15 +9,11 @@ abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
     def clock: Clock    = Clock.live
 
     override protected def handle[T: Flat](v: T < KyoApp.Effects)(using Frame): Unit =
-        KyoApp.run {
-            Log.let(log) {
-                Random.let(random) {
-                    Clock.let(clock) {
-                        v.map(Console.println)
-                    }
-                }
-            }
-        }
+        v.map(Console.println)
+            .pipe(Clock.let(clock))
+            .pipe(Random.let(random))
+            .pipe(Log.let(log))
+            .pipe(KyoApp.run)
 end KyoApp
 
 object KyoApp:
