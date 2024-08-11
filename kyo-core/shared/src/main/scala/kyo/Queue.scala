@@ -8,21 +8,21 @@ import scala.util.control.NoStackTrace
 
 class Queue[T] private[kyo] (initFrame: Frame, private[kyo] val unsafe: Queue.Unsafe[T]):
 
-    def capacity(using Frame): Int                           = unsafe.capacity
-    def size(using Frame): Int < (Abort[Closed] & IO)        = op(unsafe.size())
-    def isEmpty(using Frame): Boolean < (Abort[Closed] & IO) = op(unsafe.isEmpty())
-    def isFull(using Frame): Boolean < (Abort[Closed] & IO)  = op(unsafe.isFull())
-    def offer(v: T)(using Frame): Boolean < IO               = IO(!unsafe.isClosed() && unsafe.offer(v))
-    def poll(using Frame): Maybe[T] < (Abort[Closed] & IO)   = op(Maybe(unsafe.poll()))
-    def peek(using Frame): Maybe[T] < (Abort[Closed] & IO)   = op(Maybe(unsafe.peek()))
-    def drain(using Frame): Seq[T] < (Abort[Closed] & IO)    = op(unsafe.drain())
-    def isClosed(using Frame): Boolean < IO                  = IO(unsafe.isClosed())
-    def close(using Frame): Maybe[Seq[T]] < IO               = IO(unsafe.close())
+    def capacity(using Frame): Int             = unsafe.capacity
+    def size(using Frame): Int < IO            = op(unsafe.size())
+    def isEmpty(using Frame): Boolean < IO     = op(unsafe.isEmpty())
+    def isFull(using Frame): Boolean < IO      = op(unsafe.isFull())
+    def offer(v: T)(using Frame): Boolean < IO = IO(!unsafe.isClosed() && unsafe.offer(v))
+    def poll(using Frame): Maybe[T] < IO       = op(Maybe(unsafe.poll()))
+    def peek(using Frame): Maybe[T] < IO       = op(Maybe(unsafe.peek()))
+    def drain(using Frame): Seq[T] < IO        = op(unsafe.drain())
+    def isClosed(using Frame): Boolean < IO    = IO(unsafe.isClosed())
+    def close(using Frame): Maybe[Seq[T]] < IO = IO(unsafe.close())
 
-    protected inline def op[T, S](inline v: => T < (IO & S))(using frame: Frame): T < (Abort[Closed] & IO & S) =
+    protected inline def op[T, S](inline v: => T < (IO & S))(using frame: Frame): T < (IO & S) =
         IO {
             if unsafe.isClosed() then
-                Abort.fail(Closed("Queue", initFrame, frame))
+                throw Closed("Queue", initFrame, frame)
             else
                 v
         }
@@ -65,7 +65,7 @@ object Queue:
     end Unsafe
 
     class Unbounded[T] private[kyo] (initFrame: Frame, unsafe: Queue.Unsafe[T]) extends Queue[T](initFrame, unsafe):
-        def add[S](v: T < S)(using Frame): Unit < (Abort[Closed] & IO & S) =
+        def add[S](v: T < S)(using Frame): Unit < (IO & S) =
             op(v.map(offer).unit)
 
     def init[T](capacity: Int, access: Access = Access.Mpmc)(using frame: Frame): Queue[T] < IO =

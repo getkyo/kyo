@@ -57,7 +57,7 @@ class HubTest extends Test:
             _  <- untilTrue(h.isEmpty) // wait transfer
             l  <- h.listen
             c1 <- h.close
-            v1 <- Abort.run(h.listen)
+            v1 <- Abort.run[Throwable](h.listen)
             v2 <- h.offer(2)
             v3 <- l.poll
             c2 <- l.close

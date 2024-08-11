@@ -142,7 +142,7 @@ case class NettyKyoServer(
                 channelGroup,
                 startNanos,
                 gracefulShutdownTimeoutNanos
-            ): Unit < (Async & Abort[Closed]))
+            ): Unit < Async)
         else
             nettyFutureToScala(channelGroup.close()).unit
 

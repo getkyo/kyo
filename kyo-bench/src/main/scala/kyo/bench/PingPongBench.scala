@@ -52,7 +52,7 @@ class PingPongBench extends Bench.ForkOnly(()):
                         n <- ref.decrementAndGet
                         _ <- if n == 0 then promise.complete(Result.unit).unit else IO.unit
                     yield ()
-                _ <- repeat(depth)(Async.run[Closed, Unit, Any](effect))
+                _ <- repeat(depth)(Async.run[Nothing, Unit, Any](effect))
             yield ()
 
         for

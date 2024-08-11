@@ -11,7 +11,7 @@ trait Log:
         account: Int,
         amount: Int,
         desc: String
-    ): Unit < (IO & Abort[Closed])
+    ): Unit < IO
 
 end Log
 
@@ -36,7 +36,7 @@ object Log:
             account: Int,
             amount: Int,
             desc: String
-        ): Unit < (IO & Abort[Closed]) =
+        ): Unit < IO =
             q.add(Entry(balance, account, amount, desc))
 
         private[Log] def flushLoop(interval: Duration): Unit < Async = defer {

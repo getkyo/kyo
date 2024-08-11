@@ -9,7 +9,7 @@ trait DB:
         account: Int,
         amount: Int,
         desc: String
-    ): Result < (IO & Abort[Closed])
+    ): Result < IO
 
     def statement(
         account: Int

@@ -61,13 +61,13 @@ class QueueTest extends Test:
             q  <- Queue.init[Int](2)
             b  <- q.offer(1)
             c1 <- q.close
-            v1 <- Abort.run(q.size)
-            v2 <- Abort.run(q.isEmpty)
-            v3 <- Abort.run(q.isFull)
+            v1 <- Abort.run[Throwable](q.size)
+            v2 <- Abort.run[Throwable](q.isEmpty)
+            v3 <- Abort.run[Throwable](q.isFull)
             v4 <- q.offer(2)
-            v5 <- Abort.run(q.poll)
-            v6 <- Abort.run(q.peek)
-            v7 <- Abort.run(q.drain)
+            v5 <- Abort.run[Throwable](q.poll)
+            v6 <- Abort.run[Throwable](q.peek)
+            v7 <- Abort.run[Throwable](q.drain)
             c2 <- q.close
         yield assert(
             b && c1 == Maybe(Seq(1)) &&

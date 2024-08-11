@@ -16,12 +16,12 @@ object Routes:
 
     type Effects = Emit[Route] & Async
 
-    def run[T, S](v: Unit < (Routes & S))(using Frame): NettyKyoServerBinding < (Async & Abort[Closed] & S) =
+    def run[T, S](v: Unit < (Routes & S))(using Frame): NettyKyoServerBinding < (Async & S) =
         run[T, S](NettyKyoServer())(v)
 
-    def run[T, S](server: NettyKyoServer)(v: Unit < (Routes & S))(using Frame): NettyKyoServerBinding < (Async & Abort[Closed] & S) =
+    def run[T, S](server: NettyKyoServer)(v: Unit < (Routes & S))(using Frame): NettyKyoServerBinding < (Async & S) =
         Emit.run[Route].apply[Unit, Async & S](v).map { (routes, _) =>
-            IO(server.addEndpoints(routes.toSeq.map(_.endpoint).toList).start()): NettyKyoServerBinding < (Async & Abort[Closed] & S)
+            IO(server.addEndpoints(routes.toSeq.map(_.endpoint).toList).start()): NettyKyoServerBinding < (Async & S)
         }
     end run
 

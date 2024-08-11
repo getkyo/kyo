@@ -104,7 +104,7 @@ class ChannelTest extends Test:
                 _ <- c.put(1)
                 _ <- c.put(2)
                 r <- c.close
-                t <- Abort.run(c.isEmpty)
+                t <- Abort.run[Throwable](c.isEmpty)
             yield assert(r == Maybe(Seq(1, 2)) && t.isFail)
         }
         "pending take" in runJVM {
@@ -113,8 +113,8 @@ class ChannelTest extends Test:
                 f <- c.takeFiber
                 r <- c.close
                 d <- f.getResult
-                t <- Abort.run(c.isFull)
-            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
+                t <- Abort.run[Throwable](c.isFull)
+            yield assert(r == Maybe(Seq()) && d.isPanic && t.isFail)
         }
         "pending put" in runJVM {
             for
@@ -125,7 +125,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 _ <- c.offerUnit(1)
-            yield assert(r == Maybe(Seq(1, 2)) && d.isFail)
+            yield assert(r == Maybe(Seq(1, 2)) && d.isPanic)
         }
         "no buffer w/ pending put" in runJVM {
             for
@@ -134,7 +134,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 t <- c.poll
-            yield assert(r == Maybe(Seq()) && d.isFail && t.isEmpty)
+            yield assert(r == Maybe(Seq()) && d.isPanic && t.isEmpty)
         }
         "no buffer w/ pending take" in runJVM {
             for
@@ -142,8 +142,8 @@ class ChannelTest extends Test:
                 f <- c.takeFiber
                 r <- c.close
                 d <- f.getResult
-                t <- Abort.run(c.put(1))
-            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
+                t <- Abort.run[Throwable](c.put(1))
+            yield assert(r == Maybe(Seq()) && d.isPanic && t.isFail)
         }
     }
     "no buffer" in runJVM {

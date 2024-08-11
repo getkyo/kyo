@@ -15,7 +15,7 @@ object Hubs:
                                 val puts =
                                     listeners.toArray
                                         .toList.asInstanceOf[List[Channel[T]]]
-                                        .map(child => Abort.run(child.put(v)))
+                                        .map(child => Abort.run[Throwable](child.put(v)))
                                 Async.parallel(puts).map(_ => Loop.continue)
                             }
                         }
@@ -28,17 +28,17 @@ object Hubs:
 
     class Listener[T] private[kyo] (hub: Hub[T], child: Channel[T]):
 
-        def size(using Frame): Int < (Abort[Closed] & IO) = child.size
+        def size(using Frame): Int < IO = child.size
 
-        def isEmpty(using Frame): Boolean < (Abort[Closed] & IO) = child.isEmpty
+        def isEmpty(using Frame): Boolean < IO = child.isEmpty
 
-        def isFull(using Frame): Boolean < (Abort[Closed] & IO) = child.isFull
+        def isFull(using Frame): Boolean < IO = child.isFull
 
-        def poll(using Frame): Maybe[T] < (Abort[Closed] & IO) = child.poll
+        def poll(using Frame): Maybe[T] < IO = child.poll
 
-        def takeFiber(using Frame): Fiber[Closed, T] < IO = child.takeFiber
+        def takeFiber(using Frame): Fiber[Nothing, T] < IO = child.takeFiber
 
-        def take(using Frame): T < (Abort[Closed] & Async) = child.take
+        def take(using Frame): T < Async = child.take
 
         def isClosed(using Frame): Boolean < IO = child.isClosed
 
@@ -52,23 +52,23 @@ import Hubs.*
 
 class Hub[T] private[kyo] (
     ch: Channel[T],
-    fiber: Fiber[Closed, Unit],
+    fiber: Fiber[Nothing, Unit],
     listeners: CopyOnWriteArraySet[Channel[T]]
 )(using initFrame: Frame):
 
-    def size(using Frame): Int < (Abort[Closed] & IO) = ch.size
+    def size(using Frame): Int < IO = ch.size
 
-    def offer(v: T)(using Frame): Boolean < (Abort[Closed] & IO) = ch.offer(v)
+    def offer(v: T)(using Frame): Boolean < IO = ch.offer(v)
 
-    def offerUnit(v: T)(using Frame): Unit < (Abort[Closed] & IO) = ch.offerUnit(v)
+    def offerUnit(v: T)(using Frame): Unit < IO = ch.offerUnit(v)
 
-    def isEmpty(using Frame): Boolean < (Abort[Closed] & IO) = ch.isEmpty
+    def isEmpty(using Frame): Boolean < IO = ch.isEmpty
 
-    def isFull(using Frame): Boolean < (Abort[Closed] & IO) = ch.isFull
+    def isFull(using Frame): Boolean < IO = ch.isFull
 
-    def putFiber(v: T)(using Frame): Fiber[Closed, Unit] < IO = ch.putFiber(v)
+    def putFiber(v: T)(using Frame): Fiber[Nothing, Unit] < IO = ch.putFiber(v)
 
-    def put(v: T)(using Frame): Unit < (Abort[Closed] & Async) = ch.put(v)
+    def put(v: T)(using Frame): Unit < Async = ch.put(v)
 
     def isClosed(using Frame): Boolean < IO = ch.isClosed
 
@@ -88,11 +88,11 @@ class Hub[T] private[kyo] (
             }
         }
 
-    def listen(using Frame): Listener[T] < (Abort[Closed] & IO) =
+    def listen(using Frame): Listener[T] < IO =
         listen(0)
 
-    def listen(bufferSize: Int)(using frame: Frame): Listener[T] < (Abort[Closed] & IO) =
-        def closed = Abort.fail(Closed("Hub", initFrame, frame))
+    def listen(bufferSize: Int)(using frame: Frame): Listener[T] < IO =
+        def closed = IO(throw Closed("Hub", initFrame, frame))
         isClosed.map {
             case true => closed
             case false =>

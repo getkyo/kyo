@@ -8,7 +8,7 @@ import scala.util.control.NoStackTrace
 abstract class Channel[T]:
     self =>
 
-    def size(using Frame): Int < (Abort[Closed] & IO)
+    def size(using Frame): Int < IO
 
     def offer(v: T)(using Frame): Boolean < IO
 
@@ -18,21 +18,21 @@ abstract class Channel[T]:
 
     private[kyo] def unsafePoll: Maybe[T]
 
-    def isEmpty(using Frame): Boolean < (Abort[Closed] & IO)
+    def isEmpty(using Frame): Boolean < IO
 
-    def isFull(using Frame): Boolean < (Abort[Closed] & IO)
+    def isFull(using Frame): Boolean < IO
 
-    def putFiber(v: T)(using Frame): Fiber[Closed, Unit] < IO
+    def putFiber(v: T)(using Frame): Fiber[Nothing, Unit] < IO
 
-    def takeFiber(using Frame): Fiber[Closed, T] < IO
+    def takeFiber(using Frame): Fiber[Nothing, T] < IO
 
-    def put(v: T)(using Frame): Unit < (Abort[Closed] & Async)
+    def put(v: T)(using Frame): Unit < Async
 
-    def take(using Frame): T < (Abort[Closed] & Async)
+    def take(using Frame): T < Async
 
     def isClosed(using Frame): Boolean < IO
 
-    def drain(using Frame): Seq[T] < (Abort[Closed] & IO)
+    def drain(using Frame): Seq[T] < IO
 
     def close(using Frame): Maybe[Seq[T]] < IO
 end Channel
@@ -48,8 +48,8 @@ object Channel:
                 new Channel[T]:
 
                     def u     = queue.unsafe
-                    val takes = new MpmcUnboundedXaddArrayQueue[IOPromise[Closed, T]](8)
-                    val puts  = new MpmcUnboundedXaddArrayQueue[(T, IOPromise[Closed, Unit])](8)
+                    val takes = new MpmcUnboundedXaddArrayQueue[IOPromise[Nothing, T]](8)
+                    val puts  = new MpmcUnboundedXaddArrayQueue[(T, IOPromise[Nothing, Unit])](8)
 
                     def size(using Frame)    = op(u.size())
                     def isEmpty(using Frame) = op(u.isEmpty())
@@ -84,11 +84,11 @@ object Channel:
                         IO {
                             try
                                 if u.isClosed() then
-                                    Abort.fail(closed)
+                                    throw closed
                                 else if u.offer(v) then
                                     ()
                                 else
-                                    val p = IOPromise[Closed, Unit]
+                                    val p = IOPromise[Nothing, Unit]
                                     puts.add((v, p))
                                     Async.get(p)
                                 end if
@@ -100,11 +100,11 @@ object Channel:
                         IO {
                             try
                                 if u.isClosed() then
-                                    Fiber.fail(closed)
+                                    throw closed
                                 else if u.offer(v) then
                                     Fiber.unit
                                 else
-                                    val p = IOPromise[Closed, Unit]
+                                    val p = IOPromise[Nothing, Unit]
                                     puts.add((v, p))
                                     Fiber.initUnsafe(p)
                                 end if
@@ -116,11 +116,11 @@ object Channel:
                         IO {
                             try
                                 if u.isClosed() then
-                                    Abort.fail(closed)
+                                    throw closed
                                 else
                                     val v = u.poll()
                                     if isNull(v) then
-                                        val p = IOPromise[Closed, T]
+                                        val p = IOPromise[Nothing, T]
                                         takes.add(p)
                                         Async.get(p)
                                     else
@@ -134,11 +134,11 @@ object Channel:
                         IO {
                             try
                                 if u.isClosed() then
-                                    Fiber.fail(closed)
+                                    throw closed
                                 else
                                     val v = u.poll()
                                     if isNull(v) then
-                                        val p = IOPromise[Closed, T]
+                                        val p = IOPromise[Nothing, T]
                                         takes.add(p)
                                         Fiber.initUnsafe(p)
                                     else
@@ -150,10 +150,10 @@ object Channel:
 
                     def closed(using frame: Frame): Closed = Closed("Channel", initFrame, frame)
 
-                    inline def op[T](inline v: => T)(using inline frame: Frame): T < (Abort[Closed] & IO) =
+                    inline def op[T](inline v: => T)(using inline frame: Frame): T < IO =
                         IO {
                             if u.isClosed() then
-                                Abort.fail(closed)
+                                throw closed
                             else
                                 v
                         }
@@ -167,7 +167,7 @@ object Channel:
                             u.close() match
                                 case Maybe.Empty => Maybe.empty
                                 case r =>
-                                    val c = Result.fail(closed)
+                                    val c = Result.panic(closed)
                                     def dropTakes(): Unit =
                                         takes.poll() match
                                             case null =>
@@ -206,7 +206,7 @@ object Channel:
                                     // If completing the take fails and the queue
                                     // cannot accept the value back, enqueue a
                                     // placeholder put operation to preserve the value.
-                                    val placeholder = IOPromise[Closed, Unit]
+                                    val placeholder = IOPromise[Nothing, Unit]
                                     discard(puts.add((v, placeholder)))
                                 end if
                             end if

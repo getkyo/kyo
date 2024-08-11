@@ -3,12 +3,12 @@ package kyo
 abstract class Meter:
     self =>
 
-    def available(using Frame): Int < (Abort[Closed] & IO)
+    def available(using Frame): Int < IO
 
-    def isAvailable(using Frame): Boolean < (Abort[Closed] & IO) =
+    def isAvailable(using Frame): Boolean < IO =
         available.map(_ > 0)
 
-    def run[T, S](v: => T < S)(using Frame): T < (S & Async & Abort[Closed])
+    def run[T, S](v: => T < S)(using Frame): T < (S & Async)
 
     def tryRun[T, S](v: => T < S)(using Frame): Maybe[T] < (IO & S)
 
@@ -105,7 +105,7 @@ object Meter:
                     }
 
                 def run[T, S](v: => T < S)(using Frame) =
-                    def loop(idx: Int = 0): T < (S & Abort[Closed] & Async) =
+                    def loop(idx: Int = 0): T < (S & Async) =
                         if idx == meters.length then v
                         else meters(idx).run(loop(idx + 1))
                     loop()

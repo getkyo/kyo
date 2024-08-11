@@ -7,7 +7,7 @@ object Requests:
     abstract class Backend:
         self =>
 
-        def send[T](r: Request[T, Any]): Response[T] < (Async & Abort[Closed])
+        def send[T](r: Request[T, Any]): Response[T] < Async
 
         def withMeter(m: Meter)(using Frame): Backend =
             new Backend:
@@ -24,10 +24,10 @@ object Requests:
 
     val basicRequest: BasicRequest = sttp.client3.basicRequest
 
-    def apply[E, T](f: BasicRequest => Request[Either[E, T], Any])(using Frame): T < (Async & Abort[E | Closed]) =
+    def apply[E, T](f: BasicRequest => Request[Either[E, T], Any])(using Frame): T < (Async & Abort[E]) =
         request(f(basicRequest))
 
-    def request[E, T](req: Request[Either[E, T], Any])(using Frame): T < (Async & Abort[E | Closed]) =
+    def request[E, T](req: Request[Either[E, T], Any])(using Frame): T < (Async & Abort[E]) =
         local.use(_.send(req)).map {
             _.body match
                 case Left(ex) =>

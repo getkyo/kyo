@@ -35,7 +35,7 @@ class KyoSttpMonadTest extends Test:
 
     "error" in run {
         val ex = new Exception
-        Abort.run(KyoSttpMonad.error(ex)).map(r => assert(r == Result.panic(ex)))
+        Abort.run[Throwable](KyoSttpMonad.error(ex)).map(r => assert(r == Result.fail(ex)))
     }
 
     "unit" in {
@@ -49,7 +49,7 @@ class KyoSttpMonadTest extends Test:
         }
         "nok" in run {
             val ex = new Exception
-            Abort.run(KyoSttpMonad.eval(throw ex)).map(r => assert(r == Result.panic(ex)))
+            Abort.run[Throwable](KyoSttpMonad.eval(throw ex)).map(r => assert(r == Result.fail(ex)))
         }
     }
 
@@ -59,7 +59,7 @@ class KyoSttpMonadTest extends Test:
         }
         "nok" in run {
             val ex = new Exception
-            Abort.run(KyoSttpMonad.suspend(throw ex)).map(r => assert(r == Result.panic(ex)))
+            Abort.run[Throwable](KyoSttpMonad.suspend(throw ex)).map(r => assert(r == Result.fail(ex)))
         }
     }
 
@@ -78,7 +78,7 @@ class KyoSttpMonadTest extends Test:
                 cb(Left(ex))
                 Canceler(() => {})
             }
-            Abort.run(result).map(r => assert(r == Result.panic(ex)))
+            Abort.run[Throwable](result).map(r => assert(r == Result.panic(ex)))
         }
 
         "cancel" in run {

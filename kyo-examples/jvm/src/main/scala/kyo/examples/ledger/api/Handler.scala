@@ -54,7 +54,7 @@ object Handler:
                 case Denied         => await(unprocessableEntity)
                 case res: Processed => res
             end match
-        }.pipe(Abort.run[Closed]())
+        }
 
         def statement(account: Int) = defer {
             // validations

@@ -101,7 +101,7 @@ class MeterTest extends Test:
         }
     }
 
-    def loop(meter: Meter, counter: AtomicInt): Unit < (Async & Abort[Closed]) =
+    def loop(meter: Meter, counter: AtomicInt): Unit < Async =
         meter.run(counter.incrementAndGet).map(_ => loop(meter, counter))
 
     val panic = Result.Panic(new Exception)
