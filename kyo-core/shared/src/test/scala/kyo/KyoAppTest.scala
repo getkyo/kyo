@@ -72,9 +72,9 @@ class KyoAppTest extends Test:
         for
             instantRef <- AtomicRef.init(Instant.MAX)
             randomRef  <- AtomicRef.init("")
-            testClock = new Clock.Service:
+            testClock = new Clock:
                 override def now(using Frame): Instant < IO = Instant.EPOCH
-            testRandom = new Random.Service:
+            testRandom = new Random:
                 override def nextInt(using Frame): Int < IO = ???
 
                 override def nextInt(exclusiveBound: Int)(using Frame): Int < IO = ???
@@ -103,9 +103,9 @@ class KyoAppTest extends Test:
                 override def unsafe = ???
 
             app = new KyoApp:
-                override val log: Log.Unsafe        = Log.Unsafe.ConsoleLogger("ConsoleLogger")
-                override val clock: Clock.Service   = testClock
-                override val random: Random.Service = testRandom
+                override val log: Log.Unsafe = Log.Unsafe.ConsoleLogger("ConsoleLogger")
+                override val clock: Clock    = testClock
+                override val random: Random  = testRandom
                 run {
                     for
                         _ <- Clock.now.map(i => instantRef.update(_ => i))

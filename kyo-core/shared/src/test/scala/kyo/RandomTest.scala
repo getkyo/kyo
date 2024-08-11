@@ -3,7 +3,7 @@ package kyo
 class RandomTest extends Test:
 
     "mocked" - {
-        val testRandom: Random.Service = new Random.Service:
+        val testRandom: Random = new Random:
             def nextInt(using Frame)                                   = 10
             def nextInt(n: Int)(using Frame)                           = Math.min(55, n - 1)
             def nextLong(using Frame)                                  = 20L

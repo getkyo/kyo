@@ -2,17 +2,18 @@ package kyo
 
 import java.time.Instant
 
-object Clock:
-    abstract class Service:
-        def now(using Frame): Instant < IO
+abstract class Clock:
+    def now(using Frame): Instant < IO
 
-    val live: Service =
-        new Service:
+object Clock:
+
+    val live: Clock =
+        new Clock:
             def now(using Frame) = IO(Instant.now())
 
     private val local = Local.init(live)
 
-    def let[T, S](c: Service)(f: => T < (IO & S))(using Frame): T < (IO & S) =
+    def let[T, S](c: Clock)(f: => T < (IO & S))(using Frame): T < (IO & S) =
         local.let(c)(f)
 
     def now(using Frame): Instant < IO =

@@ -2,18 +2,18 @@ package kyo
 
 import java.io.EOFException
 
+abstract class Console:
+    def readln(using Frame): String < IO
+    def print(s: String)(using Frame): Unit < IO
+    def printErr(s: String)(using Frame): Unit < IO
+    def println(s: String)(using Frame): Unit < IO
+    def printlnErr(s: String)(using Frame): Unit < IO
+end Console
+
 object Console:
 
-    abstract class Service:
-        def readln(using Frame): String < IO
-        def print(s: String)(using Frame): Unit < IO
-        def printErr(s: String)(using Frame): Unit < IO
-        def println(s: String)(using Frame): Unit < IO
-        def printlnErr(s: String)(using Frame): Unit < IO
-    end Service
-
-    val live: Service =
-        new Service:
+    val live: Console =
+        new Console:
             def readln(using Frame) =
                 IO {
                     val line = scala.Console.in.readLine()
@@ -30,7 +30,7 @@ object Console:
 
     private val local = Local.init(live)
 
-    def let[T, S](c: Service)(v: T < S)(using Frame): T < S =
+    def let[T, S](c: Console)(v: T < S)(using Frame): T < S =
         local.let(c)(v)
 
     def readln(using Frame): String < IO =

@@ -33,7 +33,7 @@ class ConsoleTest extends Test:
         assert(testConsole.printlnErrs == List("printlnErr"))
     }
 
-    class TestConsole extends Console.Service:
+    class TestConsole extends Console:
         var readlns     = List.empty[String]
         var prints      = List.empty[String]
         var printErrs   = List.empty[String]

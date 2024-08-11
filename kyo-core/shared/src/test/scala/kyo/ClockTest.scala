@@ -4,7 +4,7 @@ import java.time.Instant
 
 class clocksTest extends Test:
 
-    object testClock extends Clock.Service:
+    object testClock extends Clock:
 
         var nows = List.empty[Instant]
 

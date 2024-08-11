@@ -98,7 +98,7 @@ class DirectTest extends Test:
         test(None)
     }
     "consoles" in {
-        object console extends Console.Service:
+        object console extends Console:
 
             def printErr(s: String)(using Frame): Unit < IO = ???
 

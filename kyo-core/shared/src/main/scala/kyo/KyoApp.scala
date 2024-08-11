@@ -4,9 +4,9 @@ import scala.collection.mutable.ListBuffer
 import scala.util.Try
 
 abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
-    def log: Log.Unsafe        = Log.unsafe
-    def random: Random.Service = Random.live
-    def clock: Clock.Service   = Clock.live
+    def log: Log.Unsafe = Log.unsafe
+    def random: Random  = Random.live
+    def clock: Clock    = Clock.live
 
     override protected def handle[T: Flat](v: T < KyoApp.Effects)(using Frame): Unit =
         KyoApp.run {
