@@ -36,10 +36,10 @@ object `<`:
 
     extension [A, S](inline v: A < S)
 
-        inline def andThen[B, S2](inline f: => B < S2)(using inline ev: A => Unit, inline frame: Frame): B < (S & S2) =
+        inline def andThen[B, S2](inline f: Safepoint ?=> B < S2)(using inline ev: A => Unit, inline frame: Frame): B < (S & S2) =
             map(_ => f)
 
-        inline def flatMap[B, S2](inline f: A => B < S2)(using inline frame: Frame): B < (S & S2) =
+        inline def flatMap[B, S2](inline f: Safepoint ?=> A => B < S2)(using inline frame: Frame): B < (S & S2) =
             map(v => f(v))
 
         inline def pipe[B, S2](inline f: A < S => B < S2)(using inline frame: Frame): B < S2 =

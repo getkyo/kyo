@@ -10,7 +10,6 @@ import zio.ZLayer
 @Fork(
     value = 1,
     jvmArgs = Array(
-        "-Dcats.effect.tracing.mode=DISABLED",
         "-XX:+UnlockExperimentalVMOptions",
         "-XX:-DoJVMTIVirtualThreadTransitions",
         "-Dcom.sun.management.jmxremote",
