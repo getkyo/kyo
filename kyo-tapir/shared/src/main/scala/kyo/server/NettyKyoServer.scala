@@ -142,9 +142,9 @@ case class NettyKyoServer(
                 channelGroup,
                 startNanos,
                 gracefulShutdownTimeoutNanos
-            ))
+            ): Unit < (Async & Abort[Closed]))
         else
-            nettyFutureToScala(channelGroup.close()).map(_ => ())
+            nettyFutureToScala(channelGroup.close()).unit
 
     private def stop(
         ch: Channel,
