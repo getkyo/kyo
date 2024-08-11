@@ -17,20 +17,20 @@ trait Index:
         account: Int,
         amount: Int,
         desc: String
-    ): Result < IOs
+    ): Result < IO
 
     def statement(
         account: Int
-    ): Statement < IOs
+    ): Statement < IO
 
 end Index
 
 object Index:
 
-    val init: Index < (Envs[DB.Config] & IOs) = defer {
-        val cfg  = await(Envs.get[DB.Config])
+    val init: Index < (Env[DB.Config] & IO) = defer {
+        val cfg  = await(Env.get[DB.Config])
         val file = await(open(cfg.workingDir + "/index.dat"))
-        await(IOs(Live(file)))
+        await(IO(Live(file)))
     }
 
     final class Live(file: FileChannel) extends Index:
@@ -55,7 +55,7 @@ object Index:
         private val buffers = ThreadLocal.withInitial(() => Buffers())
 
         def transaction(account: Int, amount: Int, desc: String) =
-            IOs {
+            IO {
                 val descChars  = this.descChars(desc)
                 val limit      = limits(account)
                 val offset     = address + (account * paddedEntrySize)
@@ -104,7 +104,7 @@ object Index:
         end descChars
 
         def statement(account: Int) =
-            IOs {
+            IO {
                 val limit     = limits(account)
                 val offset    = address + (account * paddedEntrySize)
                 val statement = this.buffers.get().statement
@@ -171,7 +171,7 @@ object Index:
     end Live
 
     private def open(filePath: String) =
-        IOs {
+        IO {
             FileChannel
                 .open(
                     Paths.get(filePath),

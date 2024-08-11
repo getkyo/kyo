@@ -9,11 +9,11 @@ trait DB:
         account: Int,
         amount: Int,
         desc: String
-    ): Result < IOs
+    ): Result < (IO & Abort[Closed])
 
     def statement(
         account: Int
-    ): Statement < IOs
+    ): Statement < IO
 
 end DB
 
@@ -24,22 +24,22 @@ object DB:
         flushInterval: Duration
     )
 
-    val init: DB < (Envs[Config] & IOs) = defer {
+    val init: DB < (Env[Config] & IO) = defer {
         val index = await(Index.init)
-        val log   = await(Log.init)
+        val log   = await(db.Log.init)
         Live(index, log)
     }
 
     class Live(index: Index, log: Log) extends DB:
 
-        def transaction(account: Int, amount: Int, desc: String): Result < IOs =
+        def transaction(account: Int, amount: Int, desc: String): Result < IO =
             index.transaction(account, amount, desc).map {
                 case Denied => Denied
                 case result: Processed =>
                     log.transaction(result.balance, account, amount, desc).andThen(result)
             }
 
-        def statement(account: Int): Statement < IOs =
+        def statement(account: Int): Statement < IO =
             index.statement(account)
 
     end Live
