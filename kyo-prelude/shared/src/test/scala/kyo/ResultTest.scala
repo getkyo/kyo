@@ -592,4 +592,44 @@ class ResultTest extends Test:
         }
     }
 
+    "swap" - {
+        "Success to Fail" in {
+            val result = Result.success[String, Int](42)
+            assert(result.swap == Result.fail(42))
+        }
+
+        "Fail to Success" in {
+            val result = Result.fail[String, Int]("error")
+            assert(result.swap == Result.success("error"))
+        }
+
+        "Panic remains Panic" in {
+            val ex     = new Exception("test")
+            val result = Result.panic[Int, String](ex)
+            assert(result.swap == Result.panic(ex))
+        }
+
+        "nested Results" in {
+            val nested = Result.success[Int, Result[String, Boolean]](Result.fail("inner"))
+            assert(nested.swap == Result.fail(Result.fail("inner")))
+        }
+
+        "type inference" in {
+            val result: Result[Int, String]  = Result.success("hello")
+            val swapped: Result[String, Int] = result.swap
+            assert(swapped == Result.fail("hello"))
+        }
+
+        "idempotence" in {
+            val success = Result.success[String, Int](42)
+            assert(success.swap.swap == success)
+
+            val failure = Result.fail[String, Int]("error")
+            assert(failure.swap.swap == failure)
+
+            val panic = Result.panic[Int, String](new Exception("test"))
+            assert(panic.swap.swap == panic)
+        }
+    }
+
 end ResultTest

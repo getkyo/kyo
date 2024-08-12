@@ -209,6 +209,12 @@ object Result:
         ): Try[A] =
             fold(e => scala.util.Failure(e.getFailure.asInstanceOf[Throwable]))(scala.util.Success(_))
 
+        def swap: Result[A, E] =
+            self match
+                case Fail(e)    => Result.success(e)
+                case Success(v) => Result.fail(v)
+                case _          => self.asInstanceOf[Result[A, E]]
+
     end extension
 
     private object internal:
