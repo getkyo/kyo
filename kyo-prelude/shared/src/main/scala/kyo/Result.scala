@@ -15,13 +15,13 @@ object Result:
     given [E, A]: CanEqual[Result[E, A], Panic]                                                = CanEqual.derived
     inline given [E, A]: Flat[Result[E, A]]                                                    = Flat.unsafe.bypass
 
-    inline def apply[A](expr: => A): Result[Nothing, A] =
+    inline def apply[A](inline expr: => A): Result[Nothing, A] =
         try
             Success(expr)
         catch
             case ex => Panic(ex)
 
-    inline def attempt[A](expr: => A): Result[Throwable, A] =
+    inline def attempt[A](inline expr: => A): Result[Throwable, A] =
         try
             Success(expr)
         catch
