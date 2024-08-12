@@ -14,7 +14,7 @@ import zio.Task
 import zio.ZIO
 import zio.ZLayer
 
-class ResolversTest extends Test:
+class ResolverTest extends Test:
 
     def runZIO[T](v: ZIO[Any, Any, T]): Future[T] =
         zio.Unsafe.unsafe(implicit u =>
@@ -80,8 +80,8 @@ class ResolversTest extends Test:
         val api = graphQL(RootResolver(Query(42, 42, 42, 42, 42)))
         ZIOs.run {
             for
-                server <- Resolvers.run(testServer(8080)) {
-                    Resolvers.get(api)
+                server <- Resolver.run(testServer(8080)) {
+                    Resolver.get(api)
                 }
                 res <-
                     Request(_
@@ -97,8 +97,8 @@ class ResolversTest extends Test:
 
         ZIOs.run {
             for
-                server <- Resolvers.run(testServer(8081)) {
-                    Resolvers.get(api).map(_.configure(Configurator.setEnableIntrospection(true)))
+                server <- Resolver.run(testServer(8081)) {
+                    Resolver.get(api).map(_.configure(Configurator.setEnableIntrospection(true)))
                 }
                 res <-
                     Request(_
@@ -127,7 +127,7 @@ class ResolversTest extends Test:
 
         ZIOs.run {
             for
-                server <- Resolvers.run(testServer(8082), runner) { Resolvers.get(api) }
+                server <- Resolver.run(testServer(8082), runner) { Resolver.get(api) }
                 res <-
                     Request(_
                         .post(Uri.unsafeApply(server.hostName, server.port))
@@ -136,4 +136,4 @@ class ResolversTest extends Test:
             yield assert(res == """{"data":{"k":4}}""")
         }
     }
-end ResolversTest
+end ResolverTest
