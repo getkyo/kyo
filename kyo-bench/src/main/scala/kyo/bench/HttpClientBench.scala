@@ -35,7 +35,7 @@
 //     override def kyoBenchFiber() =
 //         import kyo.*
 
-//         Abort.run(Requests(_.get(kyoUrl))).map(_.getOrThrow)
+//         Abort.run(Request(_.get(kyoUrl))).map(_.getOrThrow)
 //     end kyoBenchFiber
 
 //     val zioUrl =

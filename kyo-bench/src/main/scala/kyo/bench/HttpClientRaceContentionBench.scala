@@ -47,7 +47,7 @@
 
 //     lazy val kyoClient =
 //         import kyo.*
-//         IO.run(Meter.initSemaphore(5).map(PlatformBackend.default.withMeter))
+//         IO.run(Meter.initSemaphore(5).map(PlatformBackend.default.withMeter)).eval
 
 //     val kyoUrl =
 //         import sttp.client3.*
@@ -56,7 +56,7 @@
 //     override def kyoBenchFiber() =
 //         import kyo.*
 
-//         Async.race(Seq.fill(concurrency)(Requests.run(kyoClient)(Requests[String](_.get(kyoUrl)))))
+//         Async.race(Seq.fill(concurrency)(Request.let(kyoClient)(Request(_.get(kyoUrl)))))
 //     end kyoBenchFiber
 
 //     val zioUrl =

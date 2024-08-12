@@ -3,20 +3,20 @@ package kyo
 import scala.util.*
 import sttp.client3.*
 
-class RequestsLiveTest extends Test:
+class RequestLiveTest extends Test:
 
-    "requests" - {
+    "Request" - {
         "live" - {
             "success" in run {
                 for
                     port <- startTestServer("/ping", Success("pong"))
-                    r    <- Requests(_.get(uri"http://localhost:$port/ping"))
+                    r    <- Request(_.get(uri"http://localhost:$port/ping"))
                 yield assert(r == "pong")
             }
             "failure" in run {
                 for
                     port <- startTestServer("/ping", Failure(new Exception))
-                    r    <- Abort.run[Any](Requests(_.get(uri"http://localhost:$port/ping")))
+                    r    <- Abort.run[Any](Request(_.get(uri"http://localhost:$port/ping")))
                 yield assert(r.isFail)
             }
             "race" in run {
@@ -24,8 +24,8 @@ class RequestsLiveTest extends Test:
                 for
                     port <- startTestServer("/ping", Success("pong"))
                     r <- Async.race(
-                        Requests(_.get(uri"http://localhost:$port/ping")),
-                        Seq.fill(n)(Requests(_.get(uri"http://localhost:$port/ping")))*
+                        Request(_.get(uri"http://localhost:$port/ping")),
+                        Seq.fill(n)(Request(_.get(uri"http://localhost:$port/ping")))*
                     )
                 yield assert(r == "pong")
                 end for
@@ -69,4 +69,4 @@ class RequestsLiveTest extends Test:
             Resource.ensure(server.stop(0))
                 .andThen(IO(server.getAddress.getPort()))
         }
-end RequestsLiveTest
+end RequestLiveTest

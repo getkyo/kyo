@@ -14,7 +14,7 @@ import zio.Task
 import zio.ZIO
 import zio.ZLayer
 
-class resolversTest extends Test:
+class ResolversTest extends Test:
 
     def runZIO[T](v: ZIO[Any, Any, T]): Future[T] =
         zio.Unsafe.unsafe(implicit u =>
@@ -84,7 +84,7 @@ class resolversTest extends Test:
                     Resolvers.get(api)
                 }
                 res <-
-                    Requests(_
+                    Request(_
                         .post(Uri.unsafeApply(server.hostName, server.port))
                         .body("""{"query":"{ k1 k2 k3 k4 k5 }"}"""))
                 _ <- server.stop()
@@ -101,7 +101,7 @@ class resolversTest extends Test:
                     Resolvers.get(api).map(_.configure(Configurator.setEnableIntrospection(true)))
                 }
                 res <-
-                    Requests(_
+                    Request(_
                         .post(Uri.unsafeApply(server.hostName, server.port))
                         .body("""{"query":"{ k1 k2 k3 k4 k5 }"}"""))
                 _ <- server.stop()
@@ -129,15 +129,11 @@ class resolversTest extends Test:
             for
                 server <- Resolvers.run(testServer(8082), runner) { Resolvers.get(api) }
                 res <-
-                    Requests(_
+                    Request(_
                         .post(Uri.unsafeApply(server.hostName, server.port))
                         .body("""{"query":"{ k }"}"""))
                 _ <- server.stop()
             yield assert(res == """{"data":{"k":4}}""")
         }
     }
-
-end resolversTest
-
-object resolversTest:
-    ???
+end ResolversTest

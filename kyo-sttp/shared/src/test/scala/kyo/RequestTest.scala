@@ -3,9 +3,9 @@ package kyo
 import scala.util.*
 import sttp.client3.*
 
-class RequestsTest extends Test:
+class RequestTest extends Test:
 
-    class TestBackend extends Requests.Backend:
+    class TestBackend extends Request.Backend:
         var calls = 0
         def send[T](r: Request[T, Any]) =
             calls += 1
@@ -14,9 +14,9 @@ class RequestsTest extends Test:
 
     "apply" in run {
         val backend = new TestBackend
-        Requests.let(backend) {
+        Request.let(backend) {
             for
-                r <- Requests(_.get(uri"https://httpbin.org/get"))
+                r <- Request(_.get(uri"https://httpbin.org/get"))
             yield
                 assert(r == "mocked")
                 assert(backend.calls == 1)
@@ -24,10 +24,10 @@ class RequestsTest extends Test:
     }
     "request" in run {
         val backend = new TestBackend
-        Requests.let(backend) {
+        Request.let(backend) {
             for
-                r <- Requests.request(
-                    Requests.basicRequest.get(uri"https://httpbin.org/get")
+                r <- Request.request(
+                    Request.basicRequest.get(uri"https://httpbin.org/get")
                 )
             yield
                 assert(r == "mocked")
@@ -36,10 +36,10 @@ class RequestsTest extends Test:
     }
     "with fiber" in run {
         val backend = new TestBackend
-        Requests.let(backend) {
+        Request.let(backend) {
             Async.run {
                 for
-                    r <- Requests(_.get(uri"https://httpbin.org/get"))
+                    r <- Request(_.get(uri"https://httpbin.org/get"))
                 yield
                     assert(r == "mocked")
                     assert(backend.calls == 1)
@@ -56,14 +56,14 @@ class RequestsTest extends Test:
                 v
             def close(using Frame) = ???
         val backend = (new TestBackend).withMeter(meter)
-        Requests.let(backend) {
+        Request.let(backend) {
             Async.run {
                 for
-                    r <- Requests(_.get(uri"https://httpbin.org/get"))
+                    r <- Request(_.get(uri"https://httpbin.org/get"))
                 yield
                     assert(r == "mocked")
                     assert(calls == 1)
             }.map(_.get)
         }
     }
-end RequestsTest
+end RequestTest

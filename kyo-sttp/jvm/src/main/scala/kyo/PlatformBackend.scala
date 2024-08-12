@@ -1,7 +1,7 @@
 package kyo
 
 import java.net.http.HttpClient
-import kyo.Requests.Backend
+import kyo.Request.Backend
 import kyo.internal.KyoSttpMonad
 import sttp.capabilities.WebSockets
 import sttp.client3.*
