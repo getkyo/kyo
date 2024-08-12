@@ -319,7 +319,7 @@ lazy val `kyo-examples` =
         .settings(
             `kyo-settings`,
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.8"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.15"
         )
 
 lazy val `kyo-bench` =
