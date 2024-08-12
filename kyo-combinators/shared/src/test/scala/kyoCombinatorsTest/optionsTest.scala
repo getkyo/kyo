@@ -35,37 +35,37 @@ class optionsTest extends KyoTest:
         "convert" - {
             "should convert options to aborts" in {
                 val failure: Int < Options              = Options.empty
-                val failureAborts: Int < Aborts[String] = failure.optionsToAborts("failure")
-                val handledFailureAborts                = Aborts.run[String](failureAborts)
+                val failureAborts: Int < Abort[String] = failure.optionsToAborts("failure")
+                val handledFailureAborts                = Abort.run[String](failureAborts)
                 assert(handledFailureAborts.pure == Left("failure"))
                 val success: Int < Options              = 23
-                val successAborts: Int < Aborts[String] = success.optionsToAborts("failure")
-                val handledSuccessAborts                = Aborts.run[String](successAborts)
+                val successAborts: Int < Abort[String] = success.optionsToAborts("failure")
+                val handledSuccessAborts                = Abort.run[String](successAborts)
                 assert(handledSuccessAborts.pure == Right(23))
             }
 
             "should convert options to throwable aborts" in {
                 val failure: Int < Options                 = Options.empty
-                val failureAborts: Int < Aborts[Throwable] = failure.optionsToThrowable
-                val handledFailureAborts                   = Aborts.run[Throwable](failureAborts)
+                val failureAborts: Int < Abort[Throwable] = failure.optionsToThrowable
+                val handledFailureAborts                   = Abort.run[Throwable](failureAborts)
                 assert(handledFailureAborts.pure match
                     case Left(e: NoSuchElementException) => e.getMessage.contains("None.get")
                     case _                               => false
                 )
                 val success: Int < Options                 = 23
-                val successAborts: Int < Aborts[Throwable] = success.optionsToThrowable
-                val handledSuccessAborts                   = Aborts.run[Throwable](successAborts)
+                val successAborts: Int < Abort[Throwable] = success.optionsToThrowable
+                val handledSuccessAborts                   = Abort.run[Throwable](successAborts)
                 assert(handledSuccessAborts.pure == Right(23))
             }
 
             "should convert options to unit aborts" in {
                 val failure: Int < Options            = Options.empty
-                val failureAborts: Int < Aborts[Unit] = failure.optionsToUnit
-                val handledFailureAborts              = Aborts.run[Unit](failureAborts)
+                val failureAborts: Int < Abort[Unit] = failure.optionsToUnit
+                val handledFailureAborts              = Abort.run[Unit](failureAborts)
                 assert(handledFailureAborts.pure == Left(()))
                 val success: Int < Options            = 23
-                val successAborts: Int < Aborts[Unit] = success.optionsToUnit
-                val handledSuccessAborts              = Aborts.run[Unit](successAborts)
+                val successAborts: Int < Abort[Unit] = success.optionsToUnit
+                val handledSuccessAborts              = Abort.run[Unit](successAborts)
                 assert(handledSuccessAborts.pure == Right(23))
             }
 

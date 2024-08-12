@@ -42,36 +42,36 @@ class choicesTest extends KyoTest:
 
             "should convert choices to aborts, constructing Right from Seq#head" in {
                 val failure: Int < Choices              = Choices.get(Nil)
-                val failureAborts: Int < Aborts[String] = failure.choicesToAborts("failure")
-                val handledFailureAborts                = Aborts.run[String](failureAborts)
+                val failureAborts: Int < Abort[String] = failure.choicesToAborts("failure")
+                val handledFailureAborts                = Abort.run[String](failureAborts)
                 assert(handledFailureAborts.pure == Left("failure"))
                 val success: Int < Choices              = Choices.get(Seq(1, 2, 3))
-                val successAborts: Int < Aborts[String] = success.choicesToAborts("failure")
-                val handledSuccessAborts                = Aborts.run[String](successAborts)
+                val successAborts: Int < Abort[String] = success.choicesToAborts("failure")
+                val handledSuccessAborts                = Abort.run[String](successAborts)
                 assert(handledSuccessAborts.pure == Right(1))
             }
 
             "should convert choices to throwable aborts, constructing Right from Seq#head" in {
                 val failure: Int < Choices                 = Choices.get(Nil)
-                val failureAborts: Int < Aborts[Throwable] = failure.choicesToThrowable
-                val handledFailureAborts                   = Aborts.run[Throwable](failureAborts)
+                val failureAborts: Int < Abort[Throwable] = failure.choicesToThrowable
+                val handledFailureAborts                   = Abort.run[Throwable](failureAborts)
                 assert(handledFailureAborts.pure.left.toOption.get.getMessage.contains(
                     "head of empty list"
                 ))
                 val success: Int < Choices                 = Choices.get(Seq(1, 2, 3))
-                val successAborts: Int < Aborts[Throwable] = success.choicesToThrowable
-                val handledSuccessAborts                   = Aborts.run[Throwable](successAborts)
+                val successAborts: Int < Abort[Throwable] = success.choicesToThrowable
+                val handledSuccessAborts                   = Abort.run[Throwable](successAborts)
                 assert(handledSuccessAborts.pure == Right(1))
             }
 
             "should convert choices to unit aborts, constructing Right from Seq#head" in {
                 val failure: Int < Choices            = Choices.get(Nil)
-                val failureAborts: Int < Aborts[Unit] = failure.choicesToUnit
-                val handledFailureAborts              = Aborts.run[Unit](failureAborts)
+                val failureAborts: Int < Abort[Unit] = failure.choicesToUnit
+                val handledFailureAborts              = Abort.run[Unit](failureAborts)
                 assert(handledFailureAborts.pure == Left(()))
                 val success: Int < Choices            = Choices.get(Seq(1, 2, 3))
-                val successAborts: Int < Aborts[Unit] = success.choicesToUnit
-                val handledSuccessAborts              = Aborts.run[Unit](successAborts)
+                val successAborts: Int < Abort[Unit] = success.choicesToUnit
+                val handledSuccessAborts              = Abort.run[Unit](successAborts)
                 assert(handledSuccessAborts.pure == Right(1))
             }
         }
@@ -113,10 +113,10 @@ class choicesTest extends KyoTest:
         "iteration" - {
             "should iterate using foreach" in {
                 var state             = 0
-                def effectFor(i: Int) = IOs { state += i; state }
+                def effectFor(i: Int) = IO { state += i; state }
                 val effect            = Kyo.foreach(1 to 10)(effectFor)
                 assert(state == 0)
-                val result = IOs.run(effect).pure
+                val result = IO.run(effect).pure
                 //                   1, 2, 3,  4,  5,  6,  7,  8,  9, 10
                 assert(result == Seq(1, 3, 6, 10, 15, 21, 28, 36, 45, 55))
                 assert(state == 55)
@@ -125,30 +125,30 @@ class choicesTest extends KyoTest:
             "should iterate using collect" in {
                 var state = 0
                 val effect = Kyo.collect(1 to 10) {
-                    case i if i % 2 == 0 => IOs { state += i; i * 2 }
+                    case i if i % 2 == 0 => IO { state += i; i * 2 }
                 }
                 assert(state == 0)
-                val result = IOs.run(effect).pure
+                val result = IO.run(effect).pure
                 assert(result == Seq(4, 8, 12, 16, 20))
                 assert(state == 30)
             }
 
             "should iterate using traverse" in {
                 var state   = 0
-                val effects = (1 to 10).map(i => IOs { state += i; state })
+                val effects = (1 to 10).map(i => IO { state += i; state })
                 val effect  = Kyo.traverse(effects)
                 assert(state == 0)
-                val result = IOs.run(effect).pure
+                val result = IO.run(effect).pure
                 assert(result == Seq(1, 3, 6, 10, 15, 21, 28, 36, 45, 55))
                 assert(state == 55)
             }
 
             "should iterate using traverseDiscard" in {
                 var state   = 0
-                val effects = (1 to 10).map(i => IOs { state += i; state })
+                val effects = (1 to 10).map(i => IO { state += i; state })
                 val effect  = Kyo.traverseDiscard(effects)
                 assert(state == 0)
-                val result = IOs.run(effect).pure
+                val result = IO.run(effect).pure
                 assert(result == ())
                 assert(state == 55)
             }

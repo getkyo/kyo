@@ -200,6 +200,9 @@ object Result:
         def toEither: Either[E | Throwable, A] =
             fold(e => Left(e.getFailure))(Right(_))
 
+        def toMaybe: Maybe[A] =
+            fold(_ => Maybe.empty)(Maybe(_))
+
         def toTry(using
             @implicitNotFound("Fail type must be a 'Throwable' to invoke 'toTry'. Found: '${E}'")
             ev: E <:< Throwable

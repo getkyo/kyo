@@ -1,7 +1,7 @@
 package kyo
 
 import kyo.*
-import kyo.Envs.HasEnvs
+import kyo.kernel.Reducible
 import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -25,17 +25,17 @@ extension [A, S](effect: A < S)
     inline def as[A1, S1](value: => A1 < S1): A1 < (S & S1) =
         effect.map(_ => value)
 
-    def debug: A < (S & IOs) =
-        effect.tap(value => Console.default.println(value.toString))
+    def debug: A < (S & IO) =
+        effect.tap(value => Console.println(value.toString))
 
-    def debug(prefix: => String): A < (S & IOs) =
-        effect.tap(value => Console.default.println(s"$prefix: $value"))
+    def debug(prefix: => String): A < (S & IO) =
+        effect.tap(value => Console.println(s"$prefix: $value"))
 
-    def delayed[S1](duration: Duration < S1): A < (S & S1 & Fibers) =
+    def delayed[S1](duration: Duration < S1): A < (S & S1 & Async) =
         Kyo.sleep(duration) *> effect
 
-    def repeat(policy: Retries.Policy)(using Flat[A < S]): A < (S & Fibers) =
-        def loop(i: Int): A < (S & Fibers) =
+    def repeat(policy: Retry.Policy)(using Flat[A < S]): A < (S & Async) =
+        def loop(i: Int): A < (S & Async) =
             if i <= 0 then effect
             else loop(i - 1).delayed(policy.backoff(i))
 
@@ -53,16 +53,16 @@ extension [A, S](effect: A < S)
 
     def repeat[S1](backoff: Int => Duration, limit: => Int < S1)(using
         Flat[A < S]
-    ): A < (S & S1 & Fibers) =
-        def loop(i: Int): A < (S & Fibers) =
+    ): A < (S & S1 & Async) =
+        def loop(i: Int): A < (S & Async) =
             if i <= 0 then effect
             else loop(i - 1).delayed(backoff(i))
 
         limit.map(l => loop(l))
     end repeat
 
-    def repeatWhile[S1](fn: A => Boolean < S1)(using Flat[A < S]): A < (S & S1 & Fibers) =
-        def loop(last: A): A < (S & S1 & Fibers) =
+    def repeatWhile[S1](fn: A => Boolean < S1)(using Flat[A < S]): A < (S & S1 & Async) =
+        def loop(last: A): A < (S & S1 & Async) =
             fn(last).map { cont =>
                 if cont then effect.map(v => loop(v))
                 else last
@@ -73,8 +73,8 @@ extension [A, S](effect: A < S)
 
     def repeatWhile[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using
         Flat[A < S]
-    ): A < (S & S1 & Fibers) =
-        def loop(last: A, i: Int): A < (S & S1 & Fibers) =
+    ): A < (S & S1 & Async) =
+        def loop(last: A, i: Int): A < (S & S1 & Async) =
             fn(last, i).map { case (cont, duration) =>
                 if cont then Kyo.sleep(duration) *> effect.map(v => loop(v, i + 1))
                 else last
@@ -83,8 +83,8 @@ extension [A, S](effect: A < S)
         effect.map(v => loop(v, 0))
     end repeatWhile
 
-    def repeatUntil[S1](fn: A => Boolean < S1)(using Flat[A < S]): A < (S & S1 & Fibers) =
-        def loop(last: A): A < (S & S1 & Fibers) =
+    def repeatUntil[S1](fn: A => Boolean < S1)(using Flat[A < S]): A < (S & S1 & Async) =
+        def loop(last: A): A < (S & S1 & Async) =
             fn(last).map { cont =>
                 if cont then last
                 else effect.map(v => loop(v))
@@ -95,8 +95,8 @@ extension [A, S](effect: A < S)
 
     def repeatUntil[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using
         Flat[A < S]
-    ): A < (S & S1 & Fibers) =
-        def loop(last: A, i: Int): A < (S & S1 & Fibers) =
+    ): A < (S & S1 & Async) =
+        def loop(last: A, i: Int): A < (S & S1 & Async) =
             fn(last, i).map { case (cont, duration) =>
                 if cont then last
                 else Kyo.sleep(duration) *> effect.map(v => loop(v, i + 1))
@@ -105,83 +105,71 @@ extension [A, S](effect: A < S)
         effect.map(v => loop(v, 0))
     end repeatUntil
 
-    def retry(policy: Retries.Policy)(using Flat[A]): A < (S & Fibers) =
-        Retries(policy)(effect)
+    def retry(policy: Retry.Policy)(using Flat[A]): A < (S & Async & Abort[Throwable]) =
+        Retry[Throwable](policy)(effect)
 
-    def retry[S1](n: => Int < S1)(using Flat[A]): A < (S & S1 & Fibers) =
-        n.map(nPure => Retries(Retries.Policy(_ => Duration.Zero, nPure))(effect))
+    def retry[S1](n: => Int < S1)(using Flat[A]): A < (S & S1 & Async & Abort[Throwable]) =
+        n.map(nPure => Retry[Throwable](Retry.Policy(_ => Duration.Zero, nPure))(effect))
 
     def retry[S1](backoff: Int => Duration, n: => Int < S1)(using
         Flat[A]
-    ): A < (S & S1 & Fibers) =
-        n.map(nPure => Retries(Retries.Policy(backoff, nPure))(effect))
+    ): A < (S & S1 & Async & Abort[Throwable]) =
+        n.map(nPure => Retry[Throwable](Retry.Policy(backoff, nPure))(effect))
 
     def forever: Nothing < S =
         (effect *> effect.forever) *> (throw new IllegalStateException("infinite loop ended"))
 
-    def when[S1](condition: => Boolean < S1): A < (S & S1 & Options) =
-        condition.map(c => if c then effect else Options.empty)
+    def when[S1](condition: => Boolean < S1): A < (S & S1 & Abort[Maybe.Empty]) =
+        condition.map(c => if c then effect else Abort.fail(Maybe.Empty))
 
-    def explicitThrowable(using Flat[A]): A < (S & Aborts[Throwable]) =
-        Aborts.catching[Throwable](effect)
+    def explicitThrowable(using Flat[A]): A < (S & Abort[Throwable]) =
+        Abort.catching[Throwable](effect)
 
     def tap[S1](f: A => Any < S1): A < (S & S1) =
         effect.map(a => f(a).as(a))
 
-    def unless[S1](condition: Boolean < S1): A < (S & S1 & Options) =
-        condition.map(c => if c then Options.empty else effect)
+    def unless[S1](condition: Boolean < S1): A < (S & S1 & Abort[Maybe.Empty]) =
+        condition.map(c => if c then Abort.fail(Maybe.Empty) else effect)
 
 end extension
 
-extension [A, S, E](effect: A < (Aborts[E] & S))
+extension [A, S, E, ER](effect: A < (Abort[E | ER] & S))
     def handleAborts(
         using
-        ClassTag[E],
-        Flat[A]
-    ): Either[E, A] < S =
-        Aborts.run(effect)
-
-    def abortsToOptions(
-        using
-        ClassTag[E],
-        Flat[A]
-    ): A < (S & Options) =
-        Aborts.run(effect).map(e => Options.get(e.toOption))
-
-    def someAbortsToOptions[E1: ClassTag](
-        using
-        ha: Aborts.HasAborts[E1, E],
-        f: Flat[A]
-    ): A < (S & ha.Remainder & Options) =
-        Aborts.run[E1](effect).map(e => Options.get(e.toOption))
+        ct: ClassTag[E],
+        reduce: Reducible[Abort[ER]],
+        flat: Flat[A]
+    ): Result[E, A] < (S & reduce.SReduced) =
+        reduce(Abort.run(effect))
 
     def abortsToChoices(
         using
-        ClassTag[E],
-        Flat[A]
-    ): A < (S & Choices) =
-        Aborts.run[E](effect).map(e => Choices.get(e.toOption.toList))
+        ct: ClassTag[E],
+        reduce: Reducible[Abort[ER]],
+        flat: Flat[A]
+    ): A < (S & reduce.SReduced & Choice) =
+        reduce(Abort.run[E](effect).map(e => Choice.get(e.fold(_ => Nil)(List(_)))))
 
-    def someAbortsToChoices[E1: Tag: ClassTag](
+    def someAbortsToChoices[E1 <: E: Tag: ClassTag](
         using
-        ha: Aborts.HasAborts[E1, E],
+        reduce: Reducible[Abort[ER]],
         f: Flat[A]
-    ): A < (S & ha.Remainder & Choices) =
-        Aborts.run[E1](effect).map(e => Choices.get(e.toOption.toList))
+    ): A < (S & reduce.SReduced & Choice) =
+        reduce(Abort.run[E1](effect).map(e => Choice.get(e.fold(_ => Nil)(List(_)))))
 
     def handleSomeAborts[E1: ClassTag](
         using
-        ha: Aborts.HasAborts[E1, E],
+        ha: Abort.HasAborts[E1, E],
         f: Flat[A]
     ): Either[E1, A] < (S & ha.Remainder) =
-        Aborts.run[E1](effect)
+        Abort.run[E1](effect)
 
     def catchAborts[A1 >: A, S1](fn: E => A1 < S1)(
         using
         ClassTag[E],
         Flat[A]
     ): A1 < (S & S1) =
-        Aborts.run[E](effect).map {
+        Abort.run[E](effect).map {
             case Left(e)  => fn(e)
             case Right(a) => a
         }
@@ -190,122 +178,80 @@ extension [A, S, E](effect: A < (Aborts[E] & S))
         using
         ClassTag[E],
         Flat[A]
-    ): A1 < (S & S1 & Aborts[E]) =
-        Aborts.run[E](effect).map {
+    ): A1 < (S & S1 & Abort[E]) =
+        Abort.run[E](effect).map {
             case Left(e) if fn.isDefinedAt(e) => fn(e)
-            case Left(e)                      => Aborts.fail(e)
+            case Left(e)                      => Abort.fail(e)
             case Right(a)                     => a
         }
 
     def catchSomeAborts[E1](using
         ct: ClassTag[E1],
-        ha: Aborts.HasAborts[E1, E],
+        ha: Abort.HasAborts[E1, E],
         f: Flat[A]
     ): [A1 >: A, S1] => (E1 => A1 < S1) => A1 < (S & S1 & ha.Remainder) =
         [A1 >: A, S1] =>
             (fn: E1 => A1 < S1) =>
-                Aborts.run[E1](effect).map {
+                Abort.run[E1](effect).map {
                     case Left(e1) => fn(e1)
                     case Right(a) => a
             }
 
     def catchSomeAbortsPartial[E1](using
         ct: ClassTag[E1],
-        ha: Aborts.HasAborts[E1, E],
+        ha: Abort.HasAborts[E1, E],
         f: Flat[A]
-    ): [A1 >: A, S1] => PartialFunction[E1, A1 < S1] => A1 < (S & S1 & Aborts[E]) =
+    ): [A1 >: A, S1] => PartialFunction[E1, A1 < S1] => A1 < (S & S1 & Abort[E]) =
         [A1 >: A, S1] =>
             (fn: PartialFunction[E1, A1 < S1]) =>
-                Aborts.run[E1](effect).map {
+                Abort.run[E1](effect).map {
                     case Left(e1) if fn.isDefinedAt(e1) => fn(e1)
-                    case Left(e1)                       => Aborts.fail[E1](e1)
+                    case Left(e1)                       => Abort.fail[E1](e1)
                     case Right(a)                       => a
-                    // Need asInstanceOf because compiler doesn't know ha.Remainder & Aborts[E1]
-                    // is the same as Aborts[E]
-                }.asInstanceOf[A1 < (S & S1 & Aborts[E])]
+                    // Need asInstanceOf because compiler doesn't know ha.Remainder & Abort[E1]
+                    // is the same as Abort[E]
+                }.asInstanceOf[A1 < (S & S1 & Abort[E])]
 
     def swapAborts(
         using
         cte: ClassTag[E],
         cta: ClassTag[A],
         fl: Flat[A]
-    ): E < (S & Aborts[A]) =
-        val handled: Either[E, A] < S = Aborts.run[E](effect)
-        handled.map((v: Either[E, A]) => Aborts.get(v.swap))
+    ): E < (S & Abort[A]) =
+        val handled: Either[E, A] < S = Abort.run[E](effect)
+        handled.map((v: Either[E, A]) => Abort.get(v.swap))
     end swapAborts
 
     def swapSomeAborts[E1: ClassTag](
         using
-        ha: Aborts.HasAborts[E1, E],
+        ha: Abort.HasAborts[E1, E],
         cte: ClassTag[E],
         cta: ClassTag[A],
         f: Flat[A]
-    ): E1 < (S & ha.Remainder & Aborts[A]) =
-        val handled = Aborts.run[E1](effect)
-        handled.map((v: Either[E1, A]) => Aborts.get(v.swap))
+    ): E1 < (S & ha.Remainder & Abort[A]) =
+        val handled = Abort.run[E1](effect)
+        handled.map((v: Either[E1, A]) => Abort.get(v.swap))
     end swapSomeAborts
 
     def implicitThrowable(
         using
         f: Flat[A],
-        ha: Aborts.HasAborts[Throwable, E]
+        ha: Abort.HasAborts[Throwable, E]
     ): A < (S & ha.Remainder) =
-        Aborts.run[Throwable](effect).map {
+        Abort.run[Throwable](effect).map {
             case Right(a) => a
             case Left(e)  => throw e
         }
 end extension
 
-extension [A, S](effect: A < (S & Options))
-    def handleOptions(
-        using Flat[A]
-    ): Option[A] < S = Options.run(effect)
-
-    def catchOptions[A1 >: A, S1](orElse: => A1 < S1)(
-        using Flat[A]
-    ): A1 < (S & S1) =
-        Options.run(effect).map {
-            case None    => orElse
-            case Some(a) => a
-        }
-
-    def swapOptionsAs[A1, S1](value: => A1 < S1)(
-        using Flat[A]
-    ): A1 < (S & S1 & Options) =
-        Options.run(effect).map {
-            case None    => value
-            case Some(a) => Options.empty
-        }
-
-    def swapOptions(using Flat[A]): Unit < (S & Options) =
-        swapOptionsAs(())
-
-    def optionsToAborts[E, S1](failure: => E < S1)(
-        using Flat[A]
-    ): A < (S & S1 & Aborts[E]) =
-        Options.run(effect).map {
-            case None    => Kyo.fail(failure)
-            case Some(a) => a
-        }
-
-    def optionsToThrowable(using Flat[A]): A < (S & Aborts[Throwable]) =
-        effect.optionsToAborts[Throwable, Any](new NoSuchElementException("None.get"))
-
-    def optionsToUnit(using Flat[A]): A < (S & Aborts[Unit]) =
-        effect.optionsToAborts(())
-
-    def optionsToChoices(using Flat[A]): A < (S & Choices) =
-        Options.run(effect).map(aOpt => Choices.get(aOpt.toSeq))
-end extension
-
-extension [A, S, E](effect: A < (S & Envs[E]))
+extension [A, S, E](effect: A < (S & Env[E]))
     def provide[E1, S1, SR](dependency: E1 < S1)(
         using
         fl: Flat[A],
         he: HasEnvs[E1, E] { type Remainder = SR },
         t: Tag[E1]
     ): A < (S & S1 & SR) =
-        dependency.map(d => Envs.run[E1, A, S, E, SR](d)(effect))
+        dependency.map(d => Env.run[E1, A, S, E, SR](d)(effect))
 
     def provideAs[E1](
         using
@@ -327,53 +273,53 @@ extension [A, S](effect: A < (S & Choices))
 
     def choicesToAborts[E, S1](error: => E < S1)(
         using Flat[A]
-    ): A < (S & S1 & Aborts[E]) =
+    ): A < (S & S1 & Abort[E]) =
         Choices.run(effect).map {
             case s if s.isEmpty => Kyo.fail[E, S1](error)
             case s              => s.head
         }
 
-    def choicesToThrowable(using Flat[A]): A < (S & Aborts[Throwable]) =
+    def choicesToThrowable(using Flat[A]): A < (S & Abort[Throwable]) =
         choicesToAborts[Throwable, Any](new NoSuchElementException("head of empty list"))
 
-    def choicesToUnit(using Flat[A]): A < (S & Aborts[Unit]) =
+    def choicesToUnit(using Flat[A]): A < (S & Abort[Unit]) =
         choicesToAborts(())
 end extension
 
-extension [A, S](effect: A < (S & Fibers))
+extension [A, S](effect: A < (S & Async))
     def fork(
         using
         @implicitNotFound(
-            "Only Fibers- and IOs-based effects can be forked. Found: ${S}"
-        ) ev: S => IOs,
+            "Only Async- and IO-based effects can be forked. Found: ${S}"
+        ) ev: S => IO,
         f: Flat[A]
-    ): Fiber[A] < (S & IOs) = Fibers.init(effect)
+    ): Fiber[A] < (S & IO) = Async.run(effect)
 
     def forkScoped(
         using
         @implicitNotFound(
-            "Only Fibers- and IOs-based effects can be forked. Found: ${S}"
-        ) ev: S => IOs,
+            "Only Async- and IO-based effects can be forked. Found: ${S}"
+        ) ev: S => IO,
         f: Flat[A]
-    ): Fiber[A] < (S & IOs & Resources) =
-        Kyo.acquireRelease(Fibers.init(effect))(_.interrupt.unit)
+    ): Fiber[A] < (S & IO & Resource) =
+        Kyo.acquireRelease(Async.run(effect))(_.interrupt.unit)
 end extension
 
 extension [A, S](fiber: Fiber[A] < S)
-    def join: A < (S & Fibers) = Fibers.get(fiber)
-    def awaitCompletion(using Flat[A]): Unit < (S & Fibers) =
-        Kyo.attempt(Fibers.get(fiber))
+    def join: A < (S & Async) = Async.get(fiber)
+    def awaitCompletion(using Flat[A]): Unit < (S & Async) =
+        Kyo.attempt(Async.get(fiber))
             .handleAborts
             .unit
 end extension
 
-extension [A](effect: A < Fibers)
+extension [A](effect: A < Async)
     @targetName("zipRightPar")
-    def &>[A1](next: A1 < Fibers)(
+    def &>[A1](next: A1 < Async)(
         using
         Flat[A],
         Flat[A1]
-    ): A1 < Fibers =
+    ): A1 < Async =
         for
             fiberA  <- effect.fork
             fiberA1 <- next.fork
@@ -382,11 +328,11 @@ extension [A](effect: A < Fibers)
         yield a1
 
     @targetName("zipLeftPar")
-    def <&[A1](next: A1 < Fibers)(
+    def <&[A1](next: A1 < Async)(
         using
         Flat[A],
         Flat[A1]
-    ): A < Fibers =
+    ): A < Async =
         for
             fiberA  <- effect.fork
             fiberA1 <- next.fork
@@ -395,11 +341,11 @@ extension [A](effect: A < Fibers)
         yield a
 
     @targetName("zipPar")
-    def <&>[A1](next: A1 < Fibers)(
+    def <&>[A1](next: A1 < Async)(
         using
         Flat[A],
         Flat[A1]
-    ): (A, A1) < Fibers =
+    ): (A, A1) < Async =
         for
             fiberA  <- effect.fork
             fiberA1 <- next.fork
@@ -408,11 +354,8 @@ extension [A](effect: A < Fibers)
         yield (a, a1)
 end extension
 
-extension [A, S](effect: A < (S & Consoles))
-    def provideDefaultConsole: A < (S & IOs) = Consoles.run(effect)
-
 final class ProvideAsPartiallyApplied[A, S, E, E1, ER](
-    effect: A < (S & Envs[E])
+    effect: A < (S & Env[E])
 )(
     using
     t: Tag[E1],
@@ -420,5 +363,5 @@ final class ProvideAsPartiallyApplied[A, S, E, E1, ER](
     f: Flat[A]
 ):
     def apply[S1](dependency: E1 < S1): A < (S & S1 & ER) =
-        dependency.map(d => Envs.run(d)(effect))
+        dependency.map(d => Env.run(d)(effect))
 end ProvideAsPartiallyApplied
