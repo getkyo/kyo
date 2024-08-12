@@ -77,7 +77,7 @@ lazy val kyoJVM = project
         `kyo-bench`.jvm,
         // `kyo-test`.jvm,
         `kyo-zio`.jvm,
-        // `kyo-examples`.jvm
+        `kyo-examples`.jvm
     )
 
 lazy val kyoJS = project
@@ -163,7 +163,7 @@ lazy val `kyo-core` =
         .crossType(CrossType.Full)
         .dependsOn(`kyo-scheduler`)
         .dependsOn(`kyo-prelude`)
-        .in(file("kyo-core")) 
+        .in(file("kyo-core"))
         .settings(
             `kyo-settings`,
             libraryDependencies += "com.lihaoyi"  %%% "pprint"          % "0.9.0",
@@ -308,19 +308,26 @@ lazy val `kyo-zio` =
 //         )
 //         .jsSettings(`js-settings`)
 
-// lazy val `kyo-examples` =
-//     crossProject(JVMPlatform)
-//         .withoutSuffixFor(JVMPlatform)
-//         .crossType(CrossType.Full)
-//         .in(file("kyo-examples"))
-//         .dependsOn(`kyo-tapir`)
-//         .dependsOn(`kyo-direct`)
-//         .dependsOn(`kyo-core`)
-//         .settings(
-//             `kyo-settings`,
-//             Compile / doc / sources                              := Seq.empty,
-//             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.8"
-//         )
+lazy val `kyo-examples` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-examples"))
+        .dependsOn(`kyo-tapir`)
+        .dependsOn(`kyo-direct`)
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            fork := true,
+            javaOptions ++= Seq(
+                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
+            ),
+            Compile / doc / sources                              := Seq.empty,
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.8"
+        )
 
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)

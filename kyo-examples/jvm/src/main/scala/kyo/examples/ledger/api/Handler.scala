@@ -28,7 +28,6 @@ object Handler:
 
         private val notFound            = Abort.fail[StatusCode](StatusCode.NotFound)
         private val unprocessableEntity = Abort.fail[StatusCode](StatusCode.UnprocessableEntity)
-        private val serviceUnavailable = Abort.fail[StatusCode](StatusCode.ServiceUnavailable)
 
         def transaction(account: Int, request: Transaction) = defer {
             import request.*

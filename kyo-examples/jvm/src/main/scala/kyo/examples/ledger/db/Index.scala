@@ -44,6 +44,7 @@ object Index:
         private val address: Long =
             val buffer       = file.map(READ_WRITE, 0, fileSize)
             val addressField = buffer.getClass().getDeclaredMethod("address");
+            addressField.setAccessible(true)
             addressField.invoke(buffer).asInstanceOf[Long];
         end address
 
