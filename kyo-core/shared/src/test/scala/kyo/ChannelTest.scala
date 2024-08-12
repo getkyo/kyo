@@ -159,8 +159,8 @@ class ChannelTest extends Test:
         "with buffer" in runJVM {
             for
                 c  <- Channel.init[Int](10)
-                f1 <- Async.parallelFiber(List.fill(1000)(c.put(1)))
-                f2 <- Async.parallelFiber(List.fill(1000)(c.take))
+                f1 <- Fiber.parallel(List.fill(1000)(c.put(1)))
+                f2 <- Fiber.parallel(List.fill(1000)(c.take))
                 _  <- f1.get
                 _  <- f2.get
                 b  <- c.isEmpty
@@ -170,8 +170,8 @@ class ChannelTest extends Test:
         "no buffer" in runJVM {
             for
                 c  <- Channel.init[Int](10)
-                f1 <- Async.parallelFiber(List.fill(1000)(c.put(1)))
-                f2 <- Async.parallelFiber(List.fill(1000)(c.take))
+                f1 <- Fiber.parallel(List.fill(1000)(c.put(1)))
+                f2 <- Fiber.parallel(List.fill(1000)(c.take))
                 _  <- f1.get
                 _  <- f2.get
                 b  <- c.isEmpty

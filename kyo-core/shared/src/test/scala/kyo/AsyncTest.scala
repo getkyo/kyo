@@ -273,12 +273,12 @@ class AsyncTest extends Test:
         }
     }
 
-    "raceFiber" - {
+    "Fiber.race" - {
         "zero" in runJVM {
             assertDoesNotCompile("Async.raceFiber()")
         }
         "one" in runJVM {
-            Async.raceFiber(1).map(_.get).map { r =>
+            Fiber.race(Seq(1)).map(_.get).map { r =>
                 assert(r == 1)
             }
         }
@@ -294,7 +294,7 @@ class AsyncTest extends Test:
                     else
                         s
                 }
-            Async.raceFiber(loop(10, "a"), loop(Int.MaxValue, "b")).map(_.get).map { r =>
+            Fiber.race(Seq(loop(10, "a"), loop(Int.MaxValue, "b"))).map(_.get).map { r =>
                 assert(r == "a")
                 assert(ac.get() == 10)
                 assert(bc.get() <= Int.MaxValue)
@@ -333,14 +333,14 @@ class AsyncTest extends Test:
         }
     }
 
-    "parallelFiber" - {
+    "Fiber.parallel" - {
         "zero" in run {
-            Async.parallelFiber(Seq.empty[Int < Async]).map(_.get).map { r =>
+            Fiber.parallel(Seq.empty[Int < Async]).map(_.get).map { r =>
                 assert(r == Seq())
             }
         }
         "one" in run {
-            Async.parallelFiber(Seq(1)).map(_.get).map { r =>
+            Fiber.parallel(Seq(1)).map(_.get).map { r =>
                 assert(r == Seq(1))
             }
         }
@@ -356,7 +356,7 @@ class AsyncTest extends Test:
                     else
                         s
                 }
-            Async.parallelFiber(List(loop(1, "a"), loop(5, "b"))).map(_.get).map { r =>
+            Fiber.parallel(List(loop(1, "a"), loop(5, "b"))).map(_.get).map { r =>
                 assert(r == List("a", "b"))
                 assert(ac.get() == 1)
                 assert(bc.get() == 5)

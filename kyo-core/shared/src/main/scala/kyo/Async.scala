@@ -146,6 +146,79 @@ object Async:
 
         case class Interrupted(at: Frame) extends NoStackTrace
 
+        def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+            using
+            boundary: Boundary[Ctx, IO],
+            reduce: Reducible[Abort[E]],
+            frame: Frame,
+            safepoint: Safepoint
+        ): Fiber[E, A] < (IO & Ctx) =
+            IO {
+                class State extends IOPromise[E, A] with Function1[Result[E, A], Unit]:
+                    val pending = new AtomicInteger(seq.size)
+                    def apply(result: Result[E, A]): Unit =
+                        val last = pending.decrementAndGet() == 0
+                        result.fold(e => if last then completeUnit(e))(v => completeUnit(Result.success(v)))
+                    end apply
+                end State
+                val state = new State
+                import state.*
+                foreach(seq)((idx, io) => io.evalNow.foreach(v => state(Result.success(v))))
+                if state.isDone() then
+                    state
+                else
+                    boundary { (trace, context) =>
+                        IO {
+                            foreach(seq) { (_, v) =>
+                                val fiber = IOTask(v, safepoint.copyTrace(trace), context)
+                                state.interrupts(fiber)
+                                fiber.onComplete(state)
+                            }
+                            state
+                        }
+                    }
+                end if
+            }
+
+        def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+            using
+            boundary: Boundary[Ctx, IO],
+            reduce: Reducible[Abort[E]],
+            frame: Frame,
+            safepoint: Safepoint
+        ): Fiber[E, Seq[A]] < (IO & Ctx) =
+            seq.size match
+                case 0 => Fiber.success(Seq.empty)
+                case _ =>
+                    IO {
+                        class State extends IOPromise[E, Seq[A]]:
+                            val results = (new Array[Any](seq.size)).asInstanceOf[Array[A]]
+                            val pending = new AtomicInteger(seq.size)
+                            def done(idx: Int, value: A) =
+                                results(idx) = value
+                                if pending.decrementAndGet() == 0 then
+                                    this.completeUnit(Result.success(ArraySeq.unsafeWrapArray(results)))
+                            end done
+                        end State
+                        val state = new State
+                        import state.*
+                        foreach(seq)((idx, io) => io.evalNow.foreach(done(idx, _)))
+                        if state.isDone() then state
+                        else
+                            boundary { (trace, context) =>
+                                IO {
+                                    foreach(seq) { (idx, v) =>
+                                        if isNull(results(idx)) then
+                                            val fiber = IOTask(v, safepoint.copyTrace(trace), context)
+                                            state.interrupts(fiber)
+                                            fiber.onComplete(_.fold(state.completeUnit)(done(idx, _)))
+                                    }
+                                    state
+                                }
+                            }
+                        end if
+                    }
+
     end Fiber
 
     def delay[T, S](d: Duration)(v: => T < S)(using Frame): T < (S & Async) =
@@ -176,50 +249,25 @@ object Async:
         }
     end timeout
 
-    def race[E, A: Flat, Ctx](first: A < (Abort[E] & Async & Ctx), rest: (A < (Abort[E] & Async & Ctx))*)(
+    def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, Async],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): A < (reduce.SReduced & Async & Ctx) =
-        if rest.isEmpty then reduce(first)
-        else raceFiber(first, rest*).map(get)
+        if seq.isEmpty then reduce(seq(0))
+        else Fiber.race(seq).map(get)
 
-    def raceFiber[E, A: Flat, Ctx](first: A < (Abort[E] & Async & Ctx), rest: (A < (Abort[E] & Async & Ctx))*)(
+    def race[E, A: Flat, Ctx](
+        first: A < (Abort[E] & Async & Ctx),
+        rest: A < (Abort[E] & Async & Ctx)*
+    )(
         using
-        boundary: Boundary[Ctx, IO],
+        boundary: Boundary[Ctx, Async],
         reduce: Reducible[Abort[E]],
-        frame: Frame,
-        safepoint: Safepoint
-    ): Fiber[E, A] < (IO & Ctx) =
-        IO {
-            val seq = first +: rest
-            class State extends IOPromise[E, A] with Function1[Result[E, A], Unit]:
-                val pending = new AtomicInteger(seq.size)
-                def apply(result: Result[E, A]): Unit =
-                    val last = pending.decrementAndGet() == 0
-                    result.fold(e => if last then completeUnit(e))(v => completeUnit(Result.success(v)))
-                end apply
-            end State
-            val state = new State
-            import state.*
-            foreach(seq)((idx, io) => io.evalNow.foreach(v => state(Result.success(v))))
-            if state.isDone() then
-                state
-            else
-                boundary { (trace, context) =>
-                    IO {
-                        foreach(seq) { (_, v) =>
-                            val fiber = IOTask(v, safepoint.copyTrace(trace), context)
-                            state.interrupts(fiber)
-                            fiber.onComplete(state)
-                        }
-                        state
-                    }
-                }
-            end if
-        }
-    end raceFiber
+        frame: Frame
+    ): A < (reduce.SReduced & Async & Ctx) =
+        race[E, A, Ctx](first +: rest)
 
     def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
@@ -230,49 +278,9 @@ object Async:
         seq.size match
             case 0 => Seq.empty
             case 1 => reduce(seq(0).map(Seq(_)))
-            case _ => parallelFiber(seq).map(get)
+            case _ => Fiber.parallel(seq).map(get)
         end match
     end parallel
-
-    def parallelFiber[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
-        using
-        boundary: Boundary[Ctx, IO],
-        reduce: Reducible[Abort[E]],
-        frame: Frame,
-        safepoint: Safepoint
-    ): Fiber[E, Seq[A]] < (IO & Ctx) =
-        seq.size match
-            case 0 => Fiber.success(Seq.empty)
-            case _ =>
-                IO {
-                    class State extends IOPromise[E, Seq[A]]:
-                        val results = (new Array[Any](seq.size)).asInstanceOf[Array[A]]
-                        val pending = new AtomicInteger(seq.size)
-                        def done(idx: Int, value: A) =
-                            results(idx) = value
-                            if pending.decrementAndGet() == 0 then
-                                this.completeUnit(Result.success(ArraySeq.unsafeWrapArray(results)))
-                        end done
-                    end State
-                    val state = new State
-                    import state.*
-                    foreach(seq)((idx, io) => io.evalNow.foreach(done(idx, _)))
-                    if state.isDone() then state
-                    else
-                        boundary { (trace, context) =>
-                            IO {
-                                foreach(seq) { (idx, v) =>
-                                    if isNull(results(idx)) then
-                                        val fiber = IOTask(v, safepoint.copyTrace(trace), context)
-                                        state.interrupts(fiber)
-                                        fiber.onComplete(_.fold(state.completeUnit)(done(idx, _)))
-                                }
-                                state
-                            }
-                        }
-                    end if
-                }
-    end parallelFiber
 
     def parallel[E, A1: Flat, A2: Flat, Ctx](
         v1: A1 < (Abort[E] & Async & Ctx),
