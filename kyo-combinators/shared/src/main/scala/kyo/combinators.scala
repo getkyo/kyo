@@ -143,7 +143,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     ): Result[E, A] < S =
         Abort.run[E](effect)
 
-    def abortsToChoices(
+    def abortToChoice(
         using
         ct: ClassTag[E],
         tag: Tag[E],
@@ -151,15 +151,9 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     ): A < (S & Choice) =
         Abort.run[E](effect).map(e => Choice.get(e.fold(_ => Nil)(List(_))))
 
-    def handleSomeAbort[E1 <: E](
-        using
-        ct: ClassTag[E1],
-        tag: Tag[E1],
-        reduce: Reducible[Abort[E | E1]],
-        flat: Flat[A],
-        frame: Frame
-    ): Result[E1, A] < (S & reduce.SReduced) =
-        Abort.run[E1](effect)
+    def someAbortToChoice[E1 <: E]: SomeAbortToChoiceOps[A, S, E, E1] = SomeAbortToChoiceOps(effect)
+
+    def handleSomeAbort[E1 <: E]: HandleSomeAbort[A, S, E, E1] = HandleSomeAbort(effect)
 
     def catchAbort[A1 >: A, S1](fn: E => A1 < S1)(
         using
@@ -187,32 +181,9 @@ extension [A, S, E](effect: A < (Abort[E] & S))
             case Result.Success(v) => v
         }
 
-    // def catchSomeAbort[E1](using
-    //     ct: ClassTag[E1],
-    //     reduce: Abort.HasAbort[E1, E],
-    //     f: Flat[A]
-    // ): [A1 >: A, S1] => (E1 => A1 < S1) => A1 < (S & S1 & ha.Remainder) =
-    //     [A1 >: A, S1] =>
-    //         (fn: E1 => A1 < S1) =>
-    //             Abort.run[E1](effect).map {
-    //                 case Left(e1) => fn(e1)
-    //                 case Right(a) => a
-    //         }
+    def catchSomeAbort[E1 <: E]: CatchSomeAbort[A, S, E, E1] = CatchSomeAbort(effect)
 
-    // def catchSomeAbortPartial[E1](using
-    //     ct: ClassTag[E1],
-    //     ha: Abort.HasAbort[E1, E],
-    //     f: Flat[A]
-    // ): [A1 >: A, S1] => PartialFunction[E1, A1 < S1] => A1 < (S & S1 & Abort[E]) =
-    //     [A1 >: A, S1] =>
-    //         (fn: PartialFunction[E1, A1 < S1]) =>
-    //             Abort.run[E1](effect).map {
-    //                 case Left(e1) if fn.isDefinedAt(e1) => fn(e1)
-    //                 case Left(e1)                       => Abort.fail[E1](e1)
-    //                 case Right(a)                       => a
-    //                 // Need asInstanceOf because compiler doesn't know ha.Remainder & Abort[E1]
-    //                 // is the same as Abort[E]
-    //             }.asInstanceOf[A1 < (S & S1 & Abort[E])]
+    def catchSomeAbortPartial[E1 <: E]: CatchSomeAbortPartialOps[A, S, E, E1] = CatchSomeAbortPartialOps(effect)
 
     def swapAbort(
         using
@@ -225,32 +196,100 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         handled.map((v: Result[E, A]) => Abort.get(v.swap))
     end swapAbort
 
-    // def swapSomeAbort[E1: ClassTag](
-    //     using
-    //     ha: Abort.HasAbort[E1, E],
-    //     cte: ClassTag[E],
-    //     cta: ClassTag[A],
-    //     f: Flat[A]
-    // ): E1 < (S & ha.Remainder & Abort[A]) =
-    //     val handled = Abort.run[E1](effect)
-    //     handled.map((v: Either[E1, A]) => Abort.get(v.swap))
-    // end swapSomeAbort
+    def swapSomeAbort[E1 <: E]: SwapSomeAbortOps[A, S, E, E1] = SwapSomeAbortOps(effect)
 
-    // def implicitThrowable(
-    //     using
-    //     f: Flat[A],
-    //     ha: Abort.HasAbort[Throwable, E]
-    // ): A < (S & ha.Remainder) =
-    //     Abort.run[Throwable](effect).map {
-    //         case Right(a) => a
-    //         case Left(e)  => throw e
-    //     }
+    def implicitThrowable[ER](
+        using
+        ev: E => Throwable | ER,
+        f: Flat[A],
+        reduce: Reducible[Abort[ER]]
+    ): A < (S & reduce.SReduced) =
+        Abort.run[Throwable](effect.asInstanceOf[A < (Abort[Throwable | ER] & S)])
+            .map(_.fold(e => throw e.getFailure)(identity))
 end extension
+
+class SomeAbortToChoiceOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
+    def apply[ER]()(
+        using
+        ev: E => E1 | ER,
+        ct: ClassTag[E1],
+        tag: Tag[E1],
+        reduce: Reducible[Abort[ER]],
+        flat: Flat[A],
+        frame: Frame
+    ): A < (S & reduce.SReduced & Choice) =
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.get(e.fold(_ => Nil)(List(_))))
+
+end SomeAbortToChoiceOps
+
+class HandleSomeAbort[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
+    def apply[ER]()(
+        using
+        ev: E => E1 | ER,
+        ct: ClassTag[E1],
+        tag: Tag[E1],
+        reduce: Reducible[Abort[ER]],
+        flat: Flat[A],
+        frame: Frame
+    ): Result[E1, A] < (S & reduce.SReduced) =
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
+
+end HandleSomeAbort
+
+class CatchSomeAbort[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
+    def apply[ER]()(
+        using
+        ev: E => E1 | ER,
+        reduce: Reducible[Abort[ER]],
+        ct: ClassTag[E1],
+        tag: Tag[E1],
+        f: Flat[A]
+    ): [A1 >: A, S1] => (E1 => A1 < S1) => A1 < (S & S1 & reduce.SReduced) =
+        [A1 >: A, S1] =>
+            (fn: E1 => A1 < S1) =>
+                reduce(Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
+                    case Result.Fail(e1)   => fn(e1)
+                    case Result.Success(v) => v
+                    case Result.Panic(ex)  => throw ex
+                })
+end CatchSomeAbort
+
+class CatchSomeAbortPartialOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
+    def apply[ER]()(
+        using
+        ev: E => E1 | ER,
+        ct: ClassTag[E1],
+        tag: Tag[E1],
+        f: Flat[A]
+    ): [A1 >: A, S1] => PartialFunction[E1, A1 < S1] => A1 < (S & S1 & Abort[E]) =
+        [A1 >: A, S1] =>
+            (fn: PartialFunction[E1, A1 < S1]) =>
+                Abort.run[E1](effect).map {
+                    case Result.Fail(e1) if fn.isDefinedAt(e1) => fn(e1)
+                    case e1: Result.Error[?]                   => Abort.get(e1)
+                    case Result.Success(a)                     => a
+            }
+    end apply
+end CatchSomeAbortPartialOps
+
+class SwapSomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
+    def apply[ER]()(
+        using
+        ev: E => E1 | ER,
+        reduce: Reducible[Abort[ER]],
+        ct: ClassTag[E1],
+        tag: Tag[E1],
+        f: Flat[A]
+    ): E1 < (S & reduce.SReduced & Abort[A]) =
+        val handled = Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
+        handled.map((v: Result[E1, A]) => Abort.get(v.swap))
+    end apply
+end SwapSomeAbortOps
 
 extension [A, S, E](effect: A < (S & Env[E]))
     def provide[S1, E1 >: E, ER](dependency: E1 < S1)(
         using
-        ev: E => E1 | ER,
+        ev: E => E1 & ER,
         flat: Flat[A],
         reduce: Reducible[Env[ER]],
         tag: Tag[E1]
@@ -265,7 +304,7 @@ extension [A, S](effect: A < (S & Choice))
 
     def handleChoice(using Flat[A]): Seq[A] < S = Choice.run(effect)
 
-    def choicesToAbort[E, S1](error: => E < S1)(
+    def choiceToAbort[E, S1](error: => E < S1)(
         using Flat[A]
     ): A < (S & S1 & Abort[E]) =
         Choice.run(effect).map {
@@ -273,11 +312,11 @@ extension [A, S](effect: A < (S & Choice))
             case s              => s.head
         }
 
-    def choicesToThrowable(using Flat[A]): A < (S & Abort[Throwable]) =
-        choicesToAbort[Throwable, Any](new NoSuchElementException("head of empty list"))
+    def choiceToThrowable(using Flat[A]): A < (S & Abort[Throwable]) =
+        choiceToAbort[Throwable, Any](new NoSuchElementException("head of empty list"))
 
-    def choicesToUnit(using Flat[A]): A < (S & Abort[Unit]) =
-        choicesToAbort(())
+    def choiceToUnit(using Flat[A]): A < (S & Abort[Unit]) =
+        choiceToAbort(())
 end extension
 
 extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))

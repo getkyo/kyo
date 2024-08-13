@@ -82,6 +82,9 @@ extension (kyoObject: Kyo.type)
     def fromEither[E, A](either: => Either[E, A]): A < Abort[E] =
         Abort.get(either)
 
+    def fromResult[E, A](result: => Result[E, A]): A < Abort[E] =
+        Abort.get(result)
+
     def fromFuture[A: Flat, S](future: => Future[A] < S): A < (S & Async) =
         future.map(f => Fiber.fromFuture(f).map(_.get))
 

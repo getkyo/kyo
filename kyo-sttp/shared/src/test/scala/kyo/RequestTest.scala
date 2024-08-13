@@ -9,7 +9,7 @@ class RequestTest extends Test:
         var calls = 0
         def send[T](r: Request[T, Any]) =
             calls += 1
-            Response.ok(Result.success("mocked")).asInstanceOf[Response[T]]
+            Response.ok(Right("mocked")).asInstanceOf[Response[T]]
     end TestBackend
 
     "apply" in run {

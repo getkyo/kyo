@@ -2,9 +2,9 @@ package kyo
 
 class ChoiceCombinatorTest extends Test:
 
-    "choices" - {
+    "choice" - {
         "construct" - {
-            "should construct choices from a sequence" in {
+            "should construct choice from a sequence" in {
                 val effect = Kyo.fromSeq(Seq(1, 2, 3))
                 assert(Choice.run(effect).eval == Seq(1, 2, 3))
             }
@@ -27,37 +27,37 @@ class ChoiceCombinatorTest extends Test:
 
         "convert" - {
 
-            "should convert choices to aborts, constructing Right from Seq#head" in {
+            "should convert choice to abort, constructing Right from Seq#head" in {
                 val failure: Int < Choice             = Choice.get(Nil)
-                val failureAbort: Int < Abort[String] = failure.choicesToAbort("failure")
+                val failureAbort: Int < Abort[String] = failure.choiceToAbort("failure")
                 val handledFailureAbort               = Abort.run[String](failureAbort)
                 assert(handledFailureAbort.eval == Result.fail("failure"))
                 val success: Int < Choice             = Choice.get(Seq(1, 2, 3))
-                val successAbort: Int < Abort[String] = success.choicesToAbort("failure")
+                val successAbort: Int < Abort[String] = success.choiceToAbort("failure")
                 val handledSuccessAbort               = Abort.run[String](successAbort)
                 assert(handledSuccessAbort.eval == Result.success(1))
             }
 
-            "should convert choices to throwable aborts, constructing Right from Seq#head" in {
+            "should convert choice to throwable abort, constructing Right from Seq#head" in {
                 val failure: Int < Choice                = Choice.get(Nil)
-                val failureAbort: Int < Abort[Throwable] = failure.choicesToThrowable
+                val failureAbort: Int < Abort[Throwable] = failure.choiceToThrowable
                 val handledFailureAbort                  = Abort.run[Throwable](failureAbort)
                 assert(handledFailureAbort.eval.failure.get.getMessage.contains(
                     "head of empty list"
                 ))
                 val success: Int < Choice                = Choice.get(Seq(1, 2, 3))
-                val successAbort: Int < Abort[Throwable] = success.choicesToThrowable
+                val successAbort: Int < Abort[Throwable] = success.choiceToThrowable
                 val handledSuccessAbort                  = Abort.run[Throwable](successAbort)
                 assert(handledSuccessAbort.eval == Result.success(1))
             }
 
-            "should convert choices to unit aborts, constructing Right from Seq#head" in {
+            "should convert choice to unit abort, constructing Right from Seq#head" in {
                 val failure: Int < Choice           = Choice.get(Nil)
-                val failureAbort: Int < Abort[Unit] = failure.choicesToUnit
+                val failureAbort: Int < Abort[Unit] = failure.choiceToUnit
                 val handledFailureAbort             = Abort.run[Unit](failureAbort)
                 assert(handledFailureAbort.eval == Result.fail(()))
                 val success: Int < Choice           = Choice.get(Seq(1, 2, 3))
-                val successAbort: Int < Abort[Unit] = success.choicesToUnit
+                val successAbort: Int < Abort[Unit] = success.choiceToUnit
                 val handledSuccessAbort             = Abort.run[Unit](successAbort)
                 assert(handledSuccessAbort.eval == Result.success(1))
             }
