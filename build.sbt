@@ -95,8 +95,8 @@ lazy val kyoJS = project
         `kyo-direct`.js,
         `kyo-stats-registry`.js,
         `kyo-sttp`.js,
-        `kyo-test`.js,
-        `kyo-zio`.js,
+        // `kyo-test`.js,
+        // `kyo-zio`.js,
         `kyo-combinators`.js
     )
 
