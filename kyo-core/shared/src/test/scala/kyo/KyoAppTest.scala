@@ -89,16 +89,16 @@ class KyoAppTest extends Test:
 
                 override def nextGaussian(using Frame): Double < IO = ???
 
-                override def nextValue[T](seq: Seq[T])(using Frame): T < IO = ???
+                override def nextValue[A](seq: Seq[A])(using Frame): A < IO = ???
 
-                override def nextValues[T](length: Int, seq: Seq[T])(using Frame): Seq[T] < IO = ???
+                override def nextValues[A](length: Int, seq: Seq[A])(using Frame): Seq[A] < IO = ???
 
                 override def nextStringAlphanumeric(length: Int)(using Frame): String < IO = "FooBar"
 
                 override def nextString(length: Int, chars: Seq[Char])(using Frame): String < IO = ???
                 override def nextBytes(length: Int)(using Frame): Seq[Byte] < IO                 = ???
 
-                override def shuffle[T](seq: Seq[T])(using Frame): Seq[T] < IO = ???
+                override def shuffle[A](seq: Seq[A])(using Frame): Seq[A] < IO = ???
 
                 override def unsafe = ???
 

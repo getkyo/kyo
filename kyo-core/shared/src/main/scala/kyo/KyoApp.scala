@@ -8,7 +8,7 @@ abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
     def random: Random  = Random.live
     def clock: Clock    = Clock.live
 
-    override protected def handle[T: Flat](v: T < KyoApp.Effects)(using Frame): Unit =
+    override protected def handle[A: Flat](v: A < KyoApp.Effects)(using Frame): Unit =
         v.map(Console.println)
             .pipe(Clock.let(clock))
             .pipe(Random.let(random))
@@ -20,7 +20,7 @@ object KyoApp:
 
     abstract class Base[S]:
 
-        protected def handle[T: Flat](v: T < S)(using Frame): Unit
+        protected def handle[A: Flat](v: A < S)(using Frame): Unit
 
         final protected def args: Array[String] = _args
 
@@ -32,24 +32,24 @@ object KyoApp:
             this._args = args
             for proc <- initCode do proc()
 
-        protected def run[T: Flat](v: => T < S)(using Frame): Unit =
+        protected def run[A: Flat](v: => A < S)(using Frame): Unit =
             initCode += (() => handle(v))
     end Base
 
     type Effects = Async & Resource & Abort[Throwable]
 
-    def attempt[T: Flat](timeout: Duration)(v: T < Effects)(using Frame): Result[Throwable, T] =
+    def attempt[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): Result[Throwable, A] =
         IO.run(runFiber(timeout)(v).block(timeout)).eval
 
-    def run[T: Flat](timeout: Duration)(v: T < Effects)(using Frame): T =
+    def run[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): A =
         attempt(timeout)(v).getOrThrow
 
-    def run[T: Flat](v: T < Effects)(using Frame): T =
+    def run[A: Flat](v: A < Effects)(using Frame): A =
         run(Duration.Infinity)(v)
 
-    def runFiber[T: Flat](v: T < Effects)(using Frame): Fiber[Throwable, T] =
+    def runFiber[A: Flat](v: A < Effects)(using Frame): Fiber[Throwable, A] =
         runFiber(Duration.Infinity)(v)
 
-    def runFiber[T: Flat](timeout: Duration)(v: T < Effects)(using Frame): Fiber[Throwable, T] =
+    def runFiber[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): Fiber[Throwable, A] =
         v.pipe(Resource.run).pipe(Async.run).pipe(IO.run).eval
 end KyoApp

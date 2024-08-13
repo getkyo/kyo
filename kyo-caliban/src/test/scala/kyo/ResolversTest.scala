@@ -16,7 +16,7 @@ import zio.ZLayer
 
 class ResolverTest extends Test:
 
-    def runZIO[T](v: ZIO[Any, Any, T]): Future[T] =
+    def runZIO[A](v: ZIO[Any, Any, A]): Future[A] =
         zio.Unsafe.unsafe(implicit u =>
             Future.successful(zio.Runtime.default.unsafe.run(v).foldExit(f => throw new Exception(f.toString()), v => v))
         )
@@ -67,7 +67,7 @@ class ResolverTest extends Test:
             yield v + s.length
         )))
         val layer = ZLayer.succeed(new Runner[Environment]:
-            def apply[T: Flat](v: T < Environment): Task[T] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
+            def apply[A: Flat](v: A < Environment): Task[A] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
         )
         for
             interpreter <- api.interpreter
@@ -123,7 +123,7 @@ class ResolverTest extends Test:
             yield v + s.length
         )))
         val runner = new Runner[Environment]:
-            def apply[T: Flat](v: T < Environment): Task[T] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
+            def apply[A: Flat](v: A < Environment): Task[A] = ZIOs.run(Env.run("kyo")(Var.run(0)(v)))
 
         ZIOs.run {
             for

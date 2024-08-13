@@ -3,24 +3,24 @@ package kyo.kernel
 import kyo.Tag
 import scala.quoted.*
 
-opaque type Flat[T] = Null
+opaque type Flat[A] = Null
 
 object Flat:
     object unsafe:
-        inline given bypass[T]: Flat[T] = null
+        inline given bypass[A]: Flat[A] = null
     end unsafe
 
-    inline given infer[T]: Flat[T] = FlatMacro.infer
+    inline given infer[A]: Flat[A] = FlatMacro.infer
 end Flat
 
 private object FlatMacro:
 
-    inline def infer[T]: Flat[T] = ${ macroImpl[T] }
+    inline def infer[A]: Flat[A] = ${ macroImpl[A] }
 
-    def macroImpl[T: Type](using Quotes): Expr[Flat[T]] =
+    def macroImpl[A: Type](using Quotes): Expr[Flat[A]] =
         import quotes.reflect.*
 
-        val t = TypeRepr.of[T].dealias
+        val t = TypeRepr.of[A].dealias
 
         object Kyo:
             def unapply(tpe: TypeRepr): Option[(TypeRepr, TypeRepr)] =
@@ -83,6 +83,6 @@ private object FlatMacro:
             case t =>
                 check(t)
         end match
-        '{ Flat.unsafe.bypass[T] }
+        '{ Flat.unsafe.bypass[A] }
     end macroImpl
 end FlatMacro

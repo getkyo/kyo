@@ -7,9 +7,9 @@ class RequestTest extends Test:
 
     class TestBackend extends Request.Backend:
         var calls = 0
-        def send[T](r: Request[T, Any]) =
+        def send[A](r: Request[A, Any]) =
             calls += 1
-            Response.ok(Right("mocked")).asInstanceOf[Response[T]]
+            Response.ok(Right("mocked")).asInstanceOf[Response[A]]
     end TestBackend
 
     "apply" in run {
@@ -50,8 +50,8 @@ class RequestTest extends Test:
         var calls = 0
         val meter = new Meter:
             def available(using Frame)                 = ???
-            def tryRun[T, S](v: => T < S)(using Frame) = ???
-            def run[T, S](v: => T < S)(using Frame) =
+            def tryRun[A, S](v: => A < S)(using Frame) = ???
+            def run[A, S](v: => A < S)(using Frame) =
                 calls += 1
                 v
             def close(using Frame) = ???

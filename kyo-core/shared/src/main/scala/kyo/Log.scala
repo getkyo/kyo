@@ -6,7 +6,7 @@ object Log extends LogPlatformSpecific:
 
     private val local = Local.init[Unsafe](unsafe)
 
-    def let[T, S](u: Unsafe)(f: => T < (IO & S))(using Frame): T < (IO & S) =
+    def let[A, S](u: Unsafe)(f: => A < (IO & S))(using Frame): A < (IO & S) =
         local.let(u)(f)
 
     abstract class Unsafe:

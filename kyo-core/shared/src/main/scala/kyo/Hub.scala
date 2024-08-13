@@ -4,17 +4,17 @@ import java.util.concurrent.CopyOnWriteArraySet
 
 object Hubs:
 
-    def init[T](capacity: Int)(using Frame): Hub[T] < IO =
-        Channel.init[T](capacity).map { ch =>
+    def init[A](capacity: Int)(using Frame): Hub[A] < IO =
+        Channel.init[A](capacity).map { ch =>
             IO {
-                val listeners = new CopyOnWriteArraySet[Channel[T]]
+                val listeners = new CopyOnWriteArraySet[Channel[A]]
                 Async.run {
                     Loop.foreach {
                         ch.take.map { v =>
                             IO {
                                 val puts =
                                     listeners.toArray
-                                        .toList.asInstanceOf[List[Channel[T]]]
+                                        .toList.asInstanceOf[List[Channel[A]]]
                                         .map(child => Abort.run[Throwable](child.put(v)))
                                 Async.parallel(puts).map(_ => Loop.continue)
                             }
@@ -26,7 +26,7 @@ object Hubs:
             }
         }
 
-    class Listener[T] private[kyo] (hub: Hub[T], child: Channel[T]):
+    class Listener[A] private[kyo] (hub: Hub[A], child: Channel[A]):
 
         def size(using Frame): Int < IO = child.size
 
@@ -34,15 +34,15 @@ object Hubs:
 
         def isFull(using Frame): Boolean < IO = child.isFull
 
-        def poll(using Frame): Maybe[T] < IO = child.poll
+        def poll(using Frame): Maybe[A] < IO = child.poll
 
-        def takeFiber(using Frame): Fiber[Nothing, T] < IO = child.takeFiber
+        def takeFiber(using Frame): Fiber[Nothing, A] < IO = child.takeFiber
 
-        def take(using Frame): T < Async = child.take
+        def take(using Frame): A < Async = child.take
 
         def isClosed(using Frame): Boolean < IO = child.isClosed
 
-        def close(using Frame): Maybe[Seq[T]] < IO =
+        def close(using Frame): Maybe[Seq[A]] < IO =
             hub.remove(child).andThen(child.close)
 
     end Listener
@@ -50,29 +50,29 @@ end Hubs
 
 import Hubs.*
 
-class Hub[T] private[kyo] (
-    ch: Channel[T],
+class Hub[A] private[kyo] (
+    ch: Channel[A],
     fiber: Fiber[Nothing, Unit],
-    listeners: CopyOnWriteArraySet[Channel[T]]
+    listeners: CopyOnWriteArraySet[Channel[A]]
 )(using initFrame: Frame):
 
     def size(using Frame): Int < IO = ch.size
 
-    def offer(v: T)(using Frame): Boolean < IO = ch.offer(v)
+    def offer(v: A)(using Frame): Boolean < IO = ch.offer(v)
 
-    def offerUnit(v: T)(using Frame): Unit < IO = ch.offerUnit(v)
+    def offerUnit(v: A)(using Frame): Unit < IO = ch.offerUnit(v)
 
     def isEmpty(using Frame): Boolean < IO = ch.isEmpty
 
     def isFull(using Frame): Boolean < IO = ch.isFull
 
-    def putFiber(v: T)(using Frame): Fiber[Nothing, Unit] < IO = ch.putFiber(v)
+    def putFiber(v: A)(using Frame): Fiber[Nothing, Unit] < IO = ch.putFiber(v)
 
-    def put(v: T)(using Frame): Unit < Async = ch.put(v)
+    def put(v: A)(using Frame): Unit < Async = ch.put(v)
 
     def isClosed(using Frame): Boolean < IO = ch.isClosed
 
-    def close(using frame: Frame): Maybe[Seq[T]] < IO =
+    def close(using frame: Frame): Maybe[Seq[A]] < IO =
         fiber.interruptUnit(Result.Panic(Closed("Hub", initFrame, frame))).andThen {
             ch.close.map { r =>
                 IO {
@@ -81,22 +81,22 @@ class Hub[T] private[kyo] (
                     Loop.indexed { idx =>
                         if idx == array.length then Loop.done
                         else
-                            array(idx).asInstanceOf[Channel[T]].close
+                            array(idx).asInstanceOf[Channel[A]].close
                                 .map(_ => Loop.continue)
                     }.andThen(r)
                 }
             }
         }
 
-    def listen(using Frame): Listener[T] < IO =
+    def listen(using Frame): Listener[A] < IO =
         listen(0)
 
-    def listen(bufferSize: Int)(using frame: Frame): Listener[T] < IO =
+    def listen(bufferSize: Int)(using frame: Frame): Listener[A] < IO =
         def closed = IO(throw Closed("Hub", initFrame, frame))
         isClosed.map {
             case true => closed
             case false =>
-                Channel.init[T](bufferSize).map { child =>
+                Channel.init[A](bufferSize).map { child =>
                     IO {
                         listeners.add(child)
                         isClosed.map {
@@ -107,14 +107,14 @@ class Hub[T] private[kyo] (
                                     closed
                                 }
                             case false =>
-                                new Listener[T](this, child)
+                                new Listener[A](this, child)
                         }
                     }
                 }
         }
     end listen
 
-    private[kyo] def remove(child: Channel[T])(using Frame): Unit < IO =
+    private[kyo] def remove(child: Channel[A])(using Frame): Unit < IO =
         IO {
             listeners.remove(child)
             ()

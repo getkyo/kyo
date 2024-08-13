@@ -24,7 +24,7 @@ class InternalClockTest extends AnyFreeSpec with NonImplicitAssertions {
         assert(elapsedMillis <= 150)
     }
 
-    private def withClock[T](testCode: InternalClock => T): T = {
+    private def withClock[A](testCode: InternalClock => A): A = {
         val executor = Executors.newSingleThreadExecutor(Threads("test-clock"))
         val clock    = new InternalClock(executor)
         try testCode(clock)

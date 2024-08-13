@@ -1,9 +1,9 @@
 package java.util
 
-class ServiceLoader[T]:
-    def iterator(): Iterator[T] =
-        (new ArrayList[T](0)).iterator()
+class ServiceLoader[A]:
+    def iterator(): Iterator[A] =
+        (new ArrayList[A](0)).iterator()
 
 object ServiceLoader:
-    def load[T](cls: Class[T]): ServiceLoader[T] =
-        new ServiceLoader[T]
+    def load[A](cls: Class[A]): ServiceLoader[A] =
+        new ServiceLoader[A]

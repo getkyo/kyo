@@ -50,16 +50,16 @@ end AtomicBoolean
 object AtomicBoolean:
     def init(v: Boolean)(using Frame): AtomicBoolean < IO = IO(AtomicBoolean(new j.AtomicBoolean(v)))
 
-class AtomicRef[T] private[kyo] (private val ref: j.AtomicReference[T]) extends AnyVal:
-    def get(using Frame): T < IO                         = IO(ref.get())
-    def set(v: T)(using Frame): Unit < IO                = IO(ref.set(v))
-    def lazySet(v: T)(using Frame): Unit < IO            = IO(ref.lazySet(v))
-    def getAndSet(v: T)(using Frame): T < IO             = IO(ref.getAndSet(v))
-    def cas(curr: T, next: T)(using Frame): Boolean < IO = IO(ref.compareAndSet(curr, next))
-    def update[S](f: T => T)(using Frame): Unit < IO     = updateAndGet(f).unit
-    def updateAndGet[S](f: T => T)(using Frame): T < IO  = IO(ref.updateAndGet(f(_)))
+class AtomicRef[A] private[kyo] (private val ref: j.AtomicReference[A]) extends AnyVal:
+    def get(using Frame): A < IO                         = IO(ref.get())
+    def set(v: A)(using Frame): Unit < IO                = IO(ref.set(v))
+    def lazySet(v: A)(using Frame): Unit < IO            = IO(ref.lazySet(v))
+    def getAndSet(v: A)(using Frame): A < IO             = IO(ref.getAndSet(v))
+    def cas(curr: A, next: A)(using Frame): Boolean < IO = IO(ref.compareAndSet(curr, next))
+    def update[S](f: A => A)(using Frame): Unit < IO     = updateAndGet(f).unit
+    def updateAndGet[S](f: A => A)(using Frame): A < IO  = IO(ref.updateAndGet(f(_)))
     override def toString                                = ref.toString()
 end AtomicRef
 
 object AtomicRef:
-    def init[T](v: T)(using Frame): AtomicRef[T] < IO = IO(AtomicRef(new j.AtomicReference(v)))
+    def init[A](v: A)(using Frame): AtomicRef[A] < IO = IO(AtomicRef(new j.AtomicReference(v)))

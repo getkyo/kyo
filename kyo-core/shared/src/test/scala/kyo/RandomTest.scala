@@ -11,12 +11,12 @@ class RandomTest extends Test:
             def nextDouble(using Frame)                                = 30d
             def nextFloat(using Frame)                                 = 40f
             def nextGaussian(using Frame)                              = 50d
-            def nextValue[T](seq: Seq[T])(using Frame)                 = seq.last
-            def nextValues[T](length: Int, seq: Seq[T])(using Frame)   = Seq.fill(length)(seq.last)
+            def nextValue[A](seq: Seq[A])(using Frame)                 = seq.last
+            def nextValues[A](length: Int, seq: Seq[A])(using Frame)   = Seq.fill(length)(seq.last)
             def nextStringAlphanumeric(length: Int)(using Frame)       = "a" * length
             def nextString(length: Int, chars: Seq[Char])(using Frame) = chars.last.toString * length
             def nextBytes(length: Int)(using Frame)                    = Seq.fill(length)(1.toByte)
-            def shuffle[T](seq: Seq[T])(using Frame)                   = seq.reverse
+            def shuffle[A](seq: Seq[A])(using Frame)                   = seq.reverse
             def unsafe                                                 = ???
 
         "nextInt" in {

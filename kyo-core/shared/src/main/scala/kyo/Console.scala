@@ -30,7 +30,7 @@ object Console:
 
     private val local = Local.init(live)
 
-    def let[T, S](c: Console)(v: T < S)(using Frame): T < S =
+    def let[A, S](c: Console)(v: A < S)(using Frame): A < S =
         local.let(c)(v)
 
     def readln(using Frame): String < IO =
@@ -43,16 +43,16 @@ object Console:
             case v =>
                 pprint.apply(v).plainText
 
-    def print[T](v: T)(using Frame): Unit < IO =
+    def print[A](v: A)(using Frame): Unit < IO =
         local.use(_.print(toString(v)))
 
-    def printErr[T](v: T)(using Frame): Unit < IO =
+    def printErr[A](v: A)(using Frame): Unit < IO =
         local.use(_.printErr(toString(v)))
 
-    def println[T](v: T)(using Frame): Unit < IO =
+    def println[A](v: A)(using Frame): Unit < IO =
         local.use(_.println(toString(v)))
 
-    def printlnErr[T](v: T)(using Frame): Unit < IO =
+    def printlnErr[A](v: A)(using Frame): Unit < IO =
         local.use(_.printlnErr(toString(v)))
 
 end Console

@@ -5,7 +5,7 @@ import kyo.bench.*
 class CatsBenchTest extends BenchTest:
 
     def target                                 = Target.Cats
-    def runFork[T](b: Bench.Fork[T]): T        = b.forkCats()
-    def runSync[T](b: Bench.SyncAndFork[T]): T = b.syncCats()
+    def runFork[A](b: Bench.Fork[A]): A        = b.forkCats()
+    def runSync[A](b: Bench.SyncAndFork[A]): A = b.syncCats()
 
 end CatsBenchTest

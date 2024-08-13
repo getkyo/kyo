@@ -20,10 +20,10 @@ object KyoUtil:
             }
         }
 
-    def nettyFutureToScala[T](f: io.netty.util.concurrent.Future[T]): T < Async =
-        Promise.init[Nothing, T].map { p =>
+    def nettyFutureToScala[A](f: io.netty.util.concurrent.Future[A]): A < Async =
+        Promise.init[Nothing, A].map { p =>
             p.onComplete(_ => IO(f.cancel(true)).unit).andThen {
-                f.addListener((future: io.netty.util.concurrent.Future[T]) =>
+                f.addListener((future: io.netty.util.concurrent.Future[A]) =>
                     discard {
                         IO.run {
                             if future.isSuccess then p.unsafe.complete(Result.success(future.getNow))

@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations.*
 
 class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
 
-    given canEqualNull[T]: CanEqual[T, T | Null] = CanEqual.derived
+    given canEqualNull[A]: CanEqual[A, A | Null] = CanEqual.derived
 
     val depth = 10000
 

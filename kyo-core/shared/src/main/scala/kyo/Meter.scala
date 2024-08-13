@@ -8,9 +8,9 @@ abstract class Meter:
     def isAvailable(using Frame): Boolean < IO =
         available.map(_ > 0)
 
-    def run[T, S](v: => T < S)(using Frame): T < (S & Async)
+    def run[A, S](v: => A < S)(using Frame): A < (S & Async)
 
-    def tryRun[T, S](v: => T < S)(using Frame): Maybe[T] < (IO & S)
+    def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (IO & S)
 
     def close(using Frame): Boolean < IO
 end Meter
@@ -20,8 +20,8 @@ object Meter:
     def initNoop: Meter =
         new Meter:
             def available(using Frame)                 = Int.MaxValue
-            def run[T, S](v: => T < S)(using Frame)    = v
-            def tryRun[T, S](v: => T < S)(using Frame) = v.map(Maybe(_))
+            def run[A, S](v: => A < S)(using Frame)    = v
+            def tryRun[A, S](v: => A < S)(using Frame) = v.map(Maybe(_))
             def close(using Frame)                     = false
 
     def initMutex(using Frame): Meter < IO =
@@ -34,12 +34,12 @@ object Meter:
                     def available(using Frame) = chan.size
                     def release(using Frame)   = chan.offerUnit(())
 
-                    def run[T, S](v: => T < S)(using Frame) =
+                    def run[A, S](v: => A < S)(using Frame) =
                         IO.ensure(release) {
                             chan.take.andThen(v)
                         }
 
-                    def tryRun[T, S](v: => T < S)(using Frame) =
+                    def tryRun[A, S](v: => A < S)(using Frame) =
                         IO {
                             chan.unsafePoll match
                                 case Maybe.Empty => Maybe.empty
@@ -60,9 +60,9 @@ object Meter:
                 new Meter:
 
                     def available(using Frame)              = chan.size
-                    def run[T, S](v: => T < S)(using Frame) = chan.take.map(_ => v)
+                    def run[A, S](v: => A < S)(using Frame) = chan.take.map(_ => v)
 
-                    def tryRun[T, S](v: => T < S)(using Frame) =
+                    def tryRun[A, S](v: => A < S)(using Frame) =
                         chan.poll.map {
                             case Maybe.Empty =>
                                 Maybe.empty
@@ -104,15 +104,15 @@ object Meter:
                         else meters(idx).available.map(v => Loop.continue(acc + v))
                     }
 
-                def run[T, S](v: => T < S)(using Frame) =
-                    def loop(idx: Int = 0): T < (S & Async) =
+                def run[A, S](v: => A < S)(using Frame) =
+                    def loop(idx: Int = 0): A < (S & Async) =
                         if idx == meters.length then v
                         else meters(idx).run(loop(idx + 1))
                     loop()
                 end run
 
-                def tryRun[T, S](v: => T < S)(using Frame) =
-                    def loop(idx: Int = 0): Maybe[T] < (S & IO) =
+                def tryRun[A, S](v: => A < S)(using Frame) =
+                    def loop(idx: Int = 0): Maybe[A] < (S & IO) =
                         if idx == meters.length then v.map(Maybe(_))
                         else
                             meters(idx).tryRun(loop(idx + 1)).map {
@@ -127,7 +127,7 @@ object Meter:
             end new
         }
 
-    private def offer[T](n: Int, chan: Channel[T], v: T)(using Frame): Unit < IO =
+    private def offer[A](n: Int, chan: Channel[A], v: A)(using Frame): Unit < IO =
         Loop.indexed { idx =>
             if idx == n then Loop.done
             else

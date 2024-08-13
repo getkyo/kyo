@@ -76,10 +76,10 @@ object Async:
         def fail[E, A](ex: E): Fiber[E, A]          = result(Result.fail(ex))
         def panic[E, A](ex: Throwable): Fiber[E, A] = result(Result.panic(ex))
 
-        def fromFuture[T: Flat](f: Future[T])(using Frame): Fiber[Nothing, T] < IO =
+        def fromFuture[A: Flat](f: Future[A])(using Frame): Fiber[Nothing, A] < IO =
             import scala.util.*
             IO {
-                val p = new IOPromise[Nothing, T]()
+                val p = new IOPromise[Nothing, A]()
                 f.onComplete {
                     case Success(v) =>
                         p.complete(Result.success(v))
@@ -221,7 +221,7 @@ object Async:
 
     end Fiber
 
-    def delay[T, S](d: Duration)(v: => T < S)(using Frame): T < (S & Async) =
+    def delay[A, S](d: Duration)(v: => A < S)(using Frame): A < (S & Async) =
         sleep(d).andThen(v)
 
     def sleep(d: Duration)(using Frame): Unit < Async =
@@ -348,7 +348,7 @@ object Async:
         else
             Long.MaxValue
 
-    private inline def foreach[T, U](l: Seq[T])(inline f: (Int, T) => Unit): Unit =
+    private inline def foreach[A](l: Seq[A])(inline f: (Int, A) => Unit): Unit =
         l match
             case l: IndexedSeq[?] =>
                 val s = l.size

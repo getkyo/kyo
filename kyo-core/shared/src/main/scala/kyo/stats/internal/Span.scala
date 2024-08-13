@@ -56,12 +56,12 @@ object Span:
 
     private val currentSpan = Local.init(Maybe.empty[Span])
 
-    def trace[T, S](
+    def trace[A, S](
         receiver: TraceReceiver,
         scope: List[String],
         name: String,
         attributes: Attributes = Attributes.empty
-    )(v: => T < S): T < (IO & S) =
+    )(v: => A < S): A < (IO & S) =
         currentSpan.use { parent =>
             receiver
                 .startSpan(scope, name, parent, attributes)

@@ -80,7 +80,7 @@ class PendingTest extends Test:
 
         "nested computation" - {
             "generic method effect mismatch" in {
-                def test1[T](v: T < Any) = v
+                def test1[A](v: A < Any) = v
                 assertDoesNotCompile("test1(effect)")
             }
             "inference widening" in {

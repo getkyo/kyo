@@ -26,24 +26,24 @@ object Resolvers:
     private given StreamConstructor[Nothing] =
         (_: ZStream[Any, Throwable, Byte]) => throw new Throwable("Streaming is not supported")
 
-    def run[T, S](v: HttpInterpreter[Any, CalibanError] < (Resolvers & S)): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
-        run[T, S](NettyKyoServer())(v)
+    def run[A, S](v: HttpInterpreter[Any, CalibanError] < (Resolvers & S)): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
+        run[A, S](NettyKyoServer())(v)
 
-    def run[T, S](server: NettyKyoServer)(v: HttpInterpreter[Any, CalibanError] < (Resolvers & S))
+    def run[A, S](server: NettyKyoServer)(v: HttpInterpreter[Any, CalibanError] < (Resolvers & S))
         : NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         ZIOs.get(ZIO.runtime[Any]).map(runtime => run(server, runtime)(v))
 
-    def run[R, T, S](runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolvers & S))(using
+    def run[R, A, S](runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolvers & S))(using
         tag: Tag[Runner[R]]
     ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
-        run[R, T, S](NettyKyoServer(), runner)(v)
+        run[R, A, S](NettyKyoServer(), runner)(v)
 
-    def run[R, T, S](server: NettyKyoServer, runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolvers & S))(using
+    def run[R, A, S](server: NettyKyoServer, runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolvers & S))(using
         tag: Tag[Runner[R]]
     ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         ZIOs.get(ZIO.runtime[Any]).map(runtime => run(server, runtime.withEnvironment(ZEnvironment(runner)))(v))
 
-    def run[R, T, S](
+    def run[R, A, S](
         server: NettyKyoServer,
         runtime: Runtime[R]
     )(v: HttpInterpreter[R, CalibanError] < (Resolvers & S)): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =

@@ -289,10 +289,10 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions {
 
     "concurrency" - {
         class TestExecutor(exec: ExecutorService) {
-            def apply[T](v: => T): Future[T] =
+            def apply[A](v: => A): Future[A] =
                 exec.submit(() => v)
         }
-        def withExecutor[T](f: TestExecutor => T): T = {
+        def withExecutor[A](f: TestExecutor => A): A = {
             val executor = Executors.newFixedThreadPool(4)
             try f(new TestExecutor(executor))
             finally executor.shutdown()

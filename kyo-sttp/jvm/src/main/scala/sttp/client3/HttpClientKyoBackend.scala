@@ -56,8 +56,8 @@ class HttpClientKyoBackend private (
                 pipe: streams.Pipe[WebSocketFrame.Data[?], WebSocketFrame]
             ) = pipe
 
-    override protected def createSimpleQueue[T] =
-        Channel.init[T](Int.MaxValue).map(new KyoSimpleQueue[T](_))
+    override protected def createSimpleQueue[A] =
+        Channel.init[A](Int.MaxValue).map(new KyoSimpleQueue[A](_))
 
     override protected def createSequencer =
         Meter.initMutex.map(new KyoSequencer(_))

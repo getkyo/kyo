@@ -26,7 +26,7 @@ object Timer:
 
     private val local = Local.init(Timer.default)
 
-    def let[T, S](timer: Timer)(v: T < S)(using Frame): T < (IO & S) =
+    def let[A, S](timer: Timer)(v: A < S)(using Frame): A < (IO & S) =
         local.let(timer)(v)
 
     def schedule(delay: Duration)(f: => Unit < Async)(using Frame): TimerTask < IO =

@@ -209,7 +209,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     "live" - {
-        def withExecutor[T](f: Executor => T): T = {
+        def withExecutor[A](f: Executor => A): A = {
             val exec = Executors.newCachedThreadPool(Threads("test"))
             try f(exec)
             finally {
@@ -395,7 +395,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
 
         val scheduled = new AtomicInteger
 
-        def withWorker[T](testCode: Worker => T): T = {
+        def withWorker[A](testCode: Worker => A): A = {
             val executor = Executors.newCachedThreadPool(Threads("test-worker"))
             val clock    = InternalClock(executor)
             val worker = new Worker(0, executor, (_, _) => { scheduled.incrementAndGet(); () }, _ => null, clock, 10) {

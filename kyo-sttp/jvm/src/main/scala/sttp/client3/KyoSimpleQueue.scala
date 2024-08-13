@@ -5,9 +5,9 @@ import kyo.internal.KyoSttpMonad
 import sttp.client3.internal.ws.SimpleQueue
 import sttp.ws.WebSocketBufferFull
 
-class KyoSimpleQueue[T](ch: Channel[T]) extends SimpleQueue[KyoSttpMonad.M, T]:
+class KyoSimpleQueue[A](ch: Channel[A]) extends SimpleQueue[KyoSttpMonad.M, A]:
 
-    def offer(t: T): Unit =
+    def offer(t: A): Unit =
         if !IO.run(ch.offer(t)).eval then
             throw WebSocketBufferFull(Int.MaxValue)
 

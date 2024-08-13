@@ -8,12 +8,12 @@ import directInternal.*
 import scala.annotation.tailrec
 import scala.quoted.*
 
-transparent inline def defer[T](inline f: T) = ${ impl[T]('f) }
+transparent inline def defer[A](inline f: A) = ${ impl[A]('f) }
 
-inline def await[T, S](v: T < S): T =
+inline def await[A, S](v: A < S): A =
     compiletime.error("`await` must be used within a `defer` block")
 
-private def impl[T: Type](body: Expr[T])(using Quotes): Expr[Any] =
+private def impl[A: Type](body: Expr[A])(using Quotes): Expr[Any] =
     import quotes.reflect.*
 
     Validate(body)
@@ -54,7 +54,7 @@ private def impl[T: Type](body: Expr[T])(using Quotes): Expr[Any] =
                             case ('[t], '[s2]) =>
                                 '{
                                     given KyoCpsMonad[s2] = KyoCpsMonad[s2]
-                                    cps.await[[T] =>> T < s2, t, [T] =>> T < s2](${
+                                    cps.await[[A] =>> A < s2, t, [A] =>> A < s2](${
                                         v.asExprOf[t < s2]
                                     })
                                 }.asTerm
@@ -63,24 +63,24 @@ private def impl[T: Type](body: Expr[T])(using Quotes): Expr[Any] =
             '{
                 given KyoCpsMonad[s] = KyoCpsMonad[s]
                 async {
-                    ${ transformedBody.asExprOf[T] }
-                }.asInstanceOf[T < s]
+                    ${ transformedBody.asExprOf[A] }
+                }.asInstanceOf[A < s]
             }
     end match
 end impl
 
 object directInternal:
     class KyoCpsMonad[S]
-        extends CpsMonadContext[[T] =>> T < S]
-        with CpsMonad[[T] =>> T < S]:
+        extends CpsMonadContext[[A] =>> A < S]
+        with CpsMonad[[A] =>> A < S]:
 
         type Context = KyoCpsMonad[S]
 
-        override def monad: CpsMonad[[T] =>> T < S] = this
+        override def monad: CpsMonad[[A] =>> A < S] = this
 
-        override def apply[T](op: Context => T < S): T < S = op(this)
+        override def apply[A](op: Context => A < S): A < S = op(this)
 
-        override def pure[T](t: T): T < S = t
+        override def pure[A](t: A): A < S = t
 
         override def map[A, B](fa: A < S)(f: A => B): B < S = flatMap(fa)(f)
 

@@ -25,15 +25,15 @@ object Resource:
             }
         }
 
-    def acquireRelease[T, S](acquire: T < S)(release: T => Unit < Async)(using Frame): T < (Resource & IO & S) =
+    def acquireRelease[A, S](acquire: A < S)(release: A => Unit < Async)(using Frame): A < (Resource & IO & S) =
         acquire.map { resource =>
             ensure(release(resource)).andThen(resource)
         }
 
-    def acquire[T <: Closeable, S](resource: T < S)(using Frame): T < (Resource & IO & S) =
+    def acquire[A <: Closeable, S](resource: A < S)(using Frame): A < (Resource & IO & S) =
         acquireRelease(resource)(r => IO(r.close()))
 
-    def run[T, S](v: T < (Resource & S))(using frame: Frame): T < (Async & S) =
+    def run[A, S](v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
         Queue.initUnbounded[Unit < Async](Access.Mpsc).map { q =>
             Promise.init[Nothing, Unit].map { p =>
                 val finalizer = Finalizer(frame, q)

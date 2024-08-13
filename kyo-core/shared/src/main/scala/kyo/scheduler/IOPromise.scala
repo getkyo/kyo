@@ -200,9 +200,9 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
 
     case class Interrupt(origin: Frame) extends Exception with NoStackTrace
 
-    type State[E, T] = Result[E, T] | Pending[E, T] | Linked[E, T]
+    type State[E, A] = Result[E, A] | Pending[E, A] | Linked[E, A]
 
-    case class Linked[E, T](p: IOPromise[E, T])
+    case class Linked[E, A](p: IOPromise[E, A])
 
     abstract class Pending[E, A]:
         self =>

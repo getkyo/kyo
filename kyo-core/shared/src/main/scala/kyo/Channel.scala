@@ -5,57 +5,57 @@ import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 import scala.util.control.NoStackTrace
 
-abstract class Channel[T]:
+abstract class Channel[A]:
     self =>
 
     def size(using Frame): Int < IO
 
-    def offer(v: T)(using Frame): Boolean < IO
+    def offer(v: A)(using Frame): Boolean < IO
 
-    def offerUnit(v: T)(using Frame): Unit < IO
+    def offerUnit(v: A)(using Frame): Unit < IO
 
-    def poll(using Frame): Maybe[T] < IO
+    def poll(using Frame): Maybe[A] < IO
 
-    private[kyo] def unsafePoll: Maybe[T]
+    private[kyo] def unsafePoll: Maybe[A]
 
     def isEmpty(using Frame): Boolean < IO
 
     def isFull(using Frame): Boolean < IO
 
-    def putFiber(v: T)(using Frame): Fiber[Nothing, Unit] < IO
+    def putFiber(v: A)(using Frame): Fiber[Nothing, Unit] < IO
 
-    def takeFiber(using Frame): Fiber[Nothing, T] < IO
+    def takeFiber(using Frame): Fiber[Nothing, A] < IO
 
-    def put(v: T)(using Frame): Unit < Async
+    def put(v: A)(using Frame): Unit < Async
 
-    def take(using Frame): T < Async
+    def take(using Frame): A < Async
 
     def isClosed(using Frame): Boolean < IO
 
-    def drain(using Frame): Seq[T] < IO
+    def drain(using Frame): Seq[A] < IO
 
-    def close(using Frame): Maybe[Seq[T]] < IO
+    def close(using Frame): Maybe[Seq[A]] < IO
 end Channel
 
 object Channel:
 
-    def init[T](
+    def init[A](
         capacity: Int,
         access: Access = Access.Mpmc
-    )(using initFrame: Frame): Channel[T] < IO =
-        Queue.init[T](capacity, access).map { queue =>
+    )(using initFrame: Frame): Channel[A] < IO =
+        Queue.init[A](capacity, access).map { queue =>
             IO {
-                new Channel[T]:
+                new Channel[A]:
 
                     def u     = queue.unsafe
-                    val takes = new MpmcUnboundedXaddArrayQueue[IOPromise[Nothing, T]](8)
-                    val puts  = new MpmcUnboundedXaddArrayQueue[(T, IOPromise[Nothing, Unit])](8)
+                    val takes = new MpmcUnboundedXaddArrayQueue[IOPromise[Nothing, A]](8)
+                    val puts  = new MpmcUnboundedXaddArrayQueue[(A, IOPromise[Nothing, Unit])](8)
 
                     def size(using Frame)    = op(u.size())
                     def isEmpty(using Frame) = op(u.isEmpty())
                     def isFull(using Frame)  = op(u.isFull())
 
-                    def offer(v: T)(using Frame) =
+                    def offer(v: A)(using Frame) =
                         IO {
                             !u.isClosed() && {
                                 try u.offer(v)
@@ -63,14 +63,14 @@ object Channel:
                             }
                         }
 
-                    def offerUnit(v: T)(using Frame) =
+                    def offerUnit(v: A)(using Frame) =
                         IO {
                             if !u.isClosed() then
                                 try discard(u.offer(v))
                                 finally flush()
                         }
 
-                    def unsafePoll: Maybe[T] =
+                    def unsafePoll: Maybe[A] =
                         if u.isClosed() then
                             Maybe.empty
                         else
@@ -80,7 +80,7 @@ object Channel:
                     def poll(using Frame) =
                         IO(unsafePoll)
 
-                    def put(v: T)(using Frame) =
+                    def put(v: A)(using Frame) =
                         IO {
                             try
                                 if u.isClosed() then
@@ -96,7 +96,7 @@ object Channel:
                                 flush()
                         }
 
-                    def putFiber(v: T)(using frame: Frame) =
+                    def putFiber(v: A)(using frame: Frame) =
                         IO {
                             try
                                 if u.isClosed() then
@@ -120,7 +120,7 @@ object Channel:
                                 else
                                     val v = u.poll()
                                     if isNull(v) then
-                                        val p = IOPromise[Nothing, T]
+                                        val p = IOPromise[Nothing, A]
                                         takes.add(p)
                                         Async.get(p)
                                     else
@@ -138,7 +138,7 @@ object Channel:
                                 else
                                     val v = u.poll()
                                     if isNull(v) then
-                                        val p = IOPromise[Nothing, T]
+                                        val p = IOPromise[Nothing, A]
                                         takes.add(p)
                                         Fiber.initUnsafe(p)
                                     else
@@ -150,7 +150,7 @@ object Channel:
 
                     def closed(using frame: Frame): Closed = Closed("Channel", initFrame, frame)
 
-                    inline def op[T](inline v: => T)(using inline frame: Frame): T < IO =
+                    inline def op[A](inline v: => A)(using inline frame: Frame): A < IO =
                         IO {
                             if u.isClosed() then
                                 throw closed

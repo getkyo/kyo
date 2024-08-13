@@ -69,10 +69,10 @@ class Stat(private val registryScope: StatsRegistry.Scope) extends AnyVal:
             val unsafe               = registryScope.counterGauge(name, description)(f)
             def collect(using Frame) = IO(f)
 
-    def traceSpan[T, S](
+    def traceSpan[A, S](
         name: String,
         attributes: Attributes = Attributes.empty
-    )(v: => T < S)(using Frame): T < (IO & S) =
+    )(v: => A < S)(using Frame): A < (IO & S) =
         Stat.traceReceiver.use(internal.Span.trace(_, registryScope.path, name, attributes)(v))
 end Stat
 
@@ -80,7 +80,7 @@ object Stat:
 
     private[Stat] val traceReceiver = Local.init[TraceReceiver](TraceReceiver.get)
 
-    def traceListen[T, S](receiver: TraceReceiver)(v: T < S)(using Frame): T < (IO & S) =
+    def traceListen[A, S](receiver: TraceReceiver)(v: A < S)(using Frame): A < (IO & S) =
         traceReceiver.use { curr =>
             traceReceiver.let(TraceReceiver.all(List(curr, receiver)))(v)
         }

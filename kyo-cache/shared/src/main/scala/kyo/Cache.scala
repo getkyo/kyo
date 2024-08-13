@@ -9,13 +9,13 @@ import scala.util.Failure
 import scala.util.Success
 
 class Cache(private[kyo] val store: Store):
-    def memo[T, U: Flat, S](
-        f: T => U < S
-    ): T => U < (Async & S) =
-        (v: T) =>
-            Promise.init[Throwable, U].map { p =>
+    def memo[A, B: Flat, S](
+        f: A => B < S
+    ): A => B < (Async & S) =
+        (v: A) =>
+            Promise.init[Throwable, B].map { p =>
                 val key = (this, v)
-                IO[U, Async & S] {
+                IO[B, Async & S] {
                     val p2 = store.get(key, _ => p.asInstanceOf[Promise[Nothing, Any]])
                     if p.equals(p2) then
                         IO.ensure {
@@ -37,29 +37,29 @@ class Cache(private[kyo] val store: Store):
                             }
                         }
                     else
-                        p2.asInstanceOf[Promise[Nothing, U]].get
+                        p2.asInstanceOf[Promise[Nothing, B]].get
                     end if
                 }
             }
 
-    def memo2[T1, T2, S, U: Flat](
-        f: (T1, T2) => U < S
-    ): (T1, T2) => U < (Async & S) =
-        val m = memo[(T1, T2), U, S](f.tupled)
+    def memo2[T1, T2, S, B: Flat](
+        f: (T1, T2) => B < S
+    ): (T1, T2) => B < (Async & S) =
+        val m = memo[(T1, T2), B, S](f.tupled)
         (t1, t2) => m((t1, t2))
     end memo2
 
-    def memo3[T1, T2, T3, S, U: Flat](
-        f: (T1, T2, T3) => U < S
-    ): (T1, T2, T3) => U < (Async & S) =
-        val m = memo[(T1, T2, T3), U, S](f.tupled)
+    def memo3[T1, T2, T3, S, B: Flat](
+        f: (T1, T2, T3) => B < S
+    ): (T1, T2, T3) => B < (Async & S) =
+        val m = memo[(T1, T2, T3), B, S](f.tupled)
         (t1, t2, t3) => m((t1, t2, t3))
     end memo3
 
-    def memo4[T1, T2, T3, T4, S, U: Flat](
-        f: (T1, T2, T3, T4) => U < S
-    ): (T1, T2, T3, T4) => U < (Async & S) =
-        val m = memo[(T1, T2, T3, T4), U, S](f.tupled)
+    def memo4[T1, T2, T3, T4, S, B: Flat](
+        f: (T1, T2, T3, T4) => B < S
+    ): (T1, T2, T3, T4) => B < (Async & S) =
+        val m = memo[(T1, T2, T3, T4), B, S](f.tupled)
         (t1, t2, t3, t4) => m((t1, t2, t3, t4))
     end memo4
 end Cache

@@ -9,14 +9,14 @@ import sttp.monad.MonadAsyncError
 
 class KyoSttpMonad extends MonadAsyncError[M]:
 
-    def map[T, T2](fa: M[T])(f: T => T2): M[T2] =
+    def map[A, T2](fa: M[A])(f: A => T2): M[T2] =
         fa.map(v => f(v))
 
-    def flatMap[T, T2](fa: M[T])(f: T => M[T2]): M[T2] =
+    def flatMap[A, T2](fa: M[A])(f: A => M[T2]): M[T2] =
         fa.map(v => f(v))
 
-    protected def handleWrappedError[T](rt: M[T])(
-        h: PartialFunction[Throwable, M[T]]
+    protected def handleWrappedError[A](rt: M[A])(
+        h: PartialFunction[Throwable, M[A]]
     ) =
         Effect.catching(rt) {
             case ex if h.isDefinedAt(ex) =>
@@ -25,31 +25,31 @@ class KyoSttpMonad extends MonadAsyncError[M]:
                 throw r
         }
 
-    override def handleError[T](rt: => M[T])(h: PartialFunction[Throwable, M[T]]) =
+    override def handleError[A](rt: => M[A])(h: PartialFunction[Throwable, M[A]]) =
         handleWrappedError(rt)(h)
 
-    def ensure[T](f: M[T], e: => M[Unit]) =
+    def ensure[A](f: M[A], e: => M[Unit]) =
         Promise.init[Nothing, Unit].map { p =>
             def run =
                 Async.run(e).map(p.become).unit
             IO.ensure(run)(f).map(r => p.get.andThen(r))
         }
 
-    def error[T](t: Throwable) =
+    def error[A](t: Throwable) =
         IO(throw t)
 
-    def unit[T](t: T) =
+    def unit[A](t: A) =
         t
 
-    override def eval[T](t: => T) =
+    override def eval[A](t: => A) =
         IO(t)
 
-    override def suspend[T](t: => M[T]) =
+    override def suspend[A](t: => M[A]) =
         IO(t)
 
-    def async[T](register: (Either[Throwable, T] => Unit) => Canceler): M[T] =
+    def async[A](register: (Either[Throwable, A] => Unit) => Canceler): M[A] =
         IO {
-            val p = IOPromise[Nothing, T]()
+            val p = IOPromise[Nothing, A]()
             val canceller =
                 register {
                     case Left(t)  => discard(p.complete(Result.panic(t)))
@@ -65,7 +65,7 @@ class KyoSttpMonad extends MonadAsyncError[M]:
 end KyoSttpMonad
 
 object KyoSttpMonad extends KyoSttpMonad:
-    type M[T] = T < Async
+    type M[A] = A < Async
 
     inline given KyoSttpMonad = this
 end KyoSttpMonad

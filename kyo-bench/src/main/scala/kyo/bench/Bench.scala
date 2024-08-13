@@ -18,7 +18,7 @@ import org.openjdk.jmh.annotations.*
     )
 )
 @BenchmarkMode(Array(Mode.Throughput))
-abstract class Bench[T](val expectedResult: T):
+abstract class Bench[A](val expectedResult: A):
     private var finalizers: List[() => Unit] = Nil
 
     @TearDown
@@ -42,49 +42,49 @@ end Bench
 
 object Bench:
 
-    abstract class Base[T](expectedResult: T) extends Bench[T](expectedResult):
-        def zioBench(): zio.UIO[T]
-        def kyoBenchFiber(): kyo.<[T, kyo.Async] = kyoBench()
-        def kyoBench(): kyo.<[T, kyo.IO]
-        def catsBench(): cats.effect.IO[T]
+    abstract class Base[A](expectedResult: A) extends Bench[A](expectedResult):
+        def zioBench(): zio.UIO[A]
+        def kyoBenchFiber(): kyo.<[A, kyo.Async] = kyoBench()
+        def kyoBench(): kyo.<[A, kyo.IO]
+        def catsBench(): cats.effect.IO[A]
     end Base
 
-    abstract class Fork[T: kyo.Flat](expectedResult: T) extends Base[T](expectedResult):
+    abstract class Fork[A: kyo.Flat](expectedResult: A) extends Base[A](expectedResult):
 
         @Benchmark
-        def forkKyo(): T =
+        def forkKyo(): A =
             import kyo.*
             IO.run(Async.run(kyoBenchFiber()).flatMap(_.block(Duration.Infinity))).eval.getOrThrow
         end forkKyo
 
         @Benchmark
-        def forkCats(): T =
+        def forkCats(): A =
             import cats.effect.unsafe.implicits.global
             cats.effect.IO.cede.flatMap(_ => catsBench()).unsafeRunSync()
         end forkCats
 
         @Benchmark
-        def forkZIO(): T = zio.Unsafe.unsafe(implicit u =>
+        def forkZIO(): A = zio.Unsafe.unsafe(implicit u =>
             zioRuntime.run(zio.ZIO.yieldNow.flatMap(_ => zioBench())).getOrThrow()
         )
     end Fork
 
-    abstract class ForkOnly[T: kyo.Flat](expectedResult: T) extends Fork[T](expectedResult):
+    abstract class ForkOnly[A: kyo.Flat](expectedResult: A) extends Fork[A](expectedResult):
         def kyoBench() = ???
 
-    abstract class SyncAndFork[T: kyo.Flat](expectedResult: T) extends Fork[T](expectedResult):
+    abstract class SyncAndFork[A: kyo.Flat](expectedResult: A) extends Fork[A](expectedResult):
 
         @Benchmark
-        def syncKyo(): T = kyo.IO.run(kyoBench()).eval
+        def syncKyo(): A = kyo.IO.run(kyoBench()).eval
 
         @Benchmark
-        def syncCats(): T =
+        def syncCats(): A =
             import cats.effect.unsafe.implicits.global
             catsBench().unsafeRunSync()
         end syncCats
 
         @Benchmark
-        def syncZIO(): T = zio.Unsafe.unsafe(implicit u =>
+        def syncZIO(): A = zio.Unsafe.unsafe(implicit u =>
             zioRuntime.run(zioBench()).getOrThrow()
         )
     end SyncAndFork

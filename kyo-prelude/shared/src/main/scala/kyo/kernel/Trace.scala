@@ -53,7 +53,7 @@ object Trace:
         final private[kyo] def releaseTrace(trace: Trace): Unit =
             release(trace)
 
-        private[kernel] inline def withTrace[T](trace: Trace)(inline f: => T)(using frame: Frame): T =
+        private[kernel] inline def withTrace[A](trace: Trace)(inline f: => A)(using frame: Frame): A =
             val prevFrames = frames
             val prevIdx    = index
             frames = trace.frames
@@ -70,7 +70,7 @@ object Trace:
             end try
         end withTrace
 
-        private[kernel] inline def withNewTrace[T](inline f: => T)(using Frame): T =
+        private[kernel] inline def withNewTrace[A](inline f: => A)(using Frame): A =
             val trace: Trace = borrow()
             try
                 withTrace(trace)(f)

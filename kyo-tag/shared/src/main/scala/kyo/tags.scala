@@ -6,26 +6,26 @@ import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.quoted.*
 
-opaque type Tag[T] = String
+opaque type Tag[A] = String
 
 object Tag:
 
-    type Full[T] = Tag[T] | Set[T]
+    type Full[A] = Tag[A] | Set[A]
 
-    given [T, U]: CanEqual[Full[T], Full[U]] = CanEqual.derived
+    given [A, B]: CanEqual[Full[A], Full[B]] = CanEqual.derived
 
     import internal.*
 
-    inline given apply[T]: Tag[T] = ${ tagImpl[T] }
+    inline given apply[A]: Tag[A] = ${ tagImpl[A] }
 
-    extension [T](t1: Tag[T])
+    extension [A](t1: Tag[A])
         inline def erased: Tag[Any] = t1.asInstanceOf[Tag[Any]]
         def showTpe: String =
             val decoded = t1.drop(2).takeWhile(_ != ';')
             fromCompact.getOrElse(decoded, decoded)
     end extension
 
-    extension [T](t1: Full[T])
+    extension [A](t1: Full[A])
 
         def showType: String =
             t1 match
@@ -33,57 +33,57 @@ object Tag:
                 case s: Set[?] => s.showTpe
         def show: String = s"Tag[${t1.showType}]"
 
-        infix def <:<[U](t2: Full[U]): Boolean =
+        infix def <:<[B](t2: Full[B]): Boolean =
             t1 match
                 case t1: String =>
                     t2 match
                         case t2: String => isSubtype(t1, t2)
                         case t2: Set[?] => t2 >:> t1
-                case t1: Set[T] =>
+                case t1: Set[A] =>
                     t1 <:< t2
 
-        infix def =:=[U](t2: Full[U]): Boolean =
+        infix def =:=[B](t2: Full[B]): Boolean =
             (t1.asInstanceOf[AnyRef] eq t2.asInstanceOf[AnyRef]) || t1 == t2
 
-        infix def =!=[U](t2: Full[U]): Boolean =
+        infix def =!=[B](t2: Full[B]): Boolean =
             !(t1 =:= t2)
 
-        infix def >:>[U](t2: Full[U]): Boolean =
+        infix def >:>[B](t2: Full[B]): Boolean =
             t2 <:< t1
 
         def erased: Full[Any] = t1.asInstanceOf[Full[Any]]
 
     end extension
 
-    sealed trait Set[T] extends Any:
-        infix def <:<[U](t2: Full[U]): Boolean
-        infix def =:=[U](t2: Full[U]): Boolean
-        infix def =!=[U](t2: Full[U]): Boolean =
+    sealed trait Set[A] extends Any:
+        infix def <:<[B](t2: Full[B]): Boolean
+        infix def =:=[B](t2: Full[B]): Boolean
+        infix def =!=[B](t2: Full[B]): Boolean =
             !(this =:= t2)
-        infix def >:>[U](t2: Full[U]): Boolean
+        infix def >:>[B](t2: Full[B]): Boolean
         def erased: Set[Any] = this.asInstanceOf[Set[Any]]
         def showTpe: String
     end Set
 
     object Set:
-        inline given apply[T]: Set[T] = ${ setImpl[T] }
+        inline given apply[A]: Set[A] = ${ setImpl[A] }
 
-    case class Union[T](tags: Seq[Tag[Any]]) extends AnyVal with Set[T]:
-        infix def <:<[U](t2: Full[U]): Boolean =
+    case class Union[A](tags: Seq[Tag[Any]]) extends AnyVal with Set[A]:
+        infix def <:<[B](t2: Full[B]): Boolean =
             t2 match
                 case t2: Union[?] =>
                     tags.forall(tag1 => t2.tags.exists(tag1 <:< _))
                 case _ =>
                     tags.forall(_ <:< t2)
 
-        infix def >:>[U](t2: Full[U]): Boolean =
+        infix def >:>[B](t2: Full[B]): Boolean =
             t2 match
                 case t2: Union[?] =>
                     t2.tags.forall(tag2 => tags.exists(_ >:> tag2))
                 case _ =>
                     tags.exists(t2 <:< _)
 
-        infix def =:=[U](t2: Full[U]): Boolean =
+        infix def =:=[B](t2: Full[B]): Boolean =
             t2 match
                 case t2: Union[?] =>
                     tags.forall(tag1 => t2.tags.exists(tag1 =:= _)) &&
@@ -94,26 +94,26 @@ object Tag:
     end Union
 
     object Union:
-        private[Tag] def raw[T](tags: Seq[String]) = new Union[T](tags.asInstanceOf[Seq[Tag[Any]]])
-        inline given apply[T]: Union[T]            = ${ unionImpl[T] }
+        private[Tag] def raw[A](tags: Seq[String]) = new Union[A](tags.asInstanceOf[Seq[Tag[Any]]])
+        inline given apply[A]: Union[A]            = ${ unionImpl[A] }
 
-    case class Intersection[T](tags: Seq[Tag[Any]]) extends AnyVal with Set[T]:
+    case class Intersection[A](tags: Seq[Tag[Any]]) extends AnyVal with Set[A]:
 
-        infix def <:<[U](t2: Full[U]): Boolean =
+        infix def <:<[B](t2: Full[B]): Boolean =
             t2 match
                 case t2: Intersection[?] =>
                     t2.tags.forall(tag2 => tags.exists(_ <:< tag2))
                 case _ =>
                     tags.exists(_ <:< t2)
 
-        infix def >:>[U](t2: Full[U]): Boolean =
+        infix def >:>[B](t2: Full[B]): Boolean =
             t2 match
                 case t2: Intersection[?] =>
                     tags.forall(tag1 => t2.tags.exists(tag1 >:> _))
                 case _ =>
                     tags.forall(t2 >:> _)
 
-        infix def =:=[U](t2: Full[U]): Boolean =
+        infix def =:=[B](t2: Full[B]): Boolean =
             t2 match
                 case t2: Intersection[?] =>
                     tags.forall(tag1 => t2.tags.exists(tag1 =:= _)) &&
@@ -127,8 +127,8 @@ object Tag:
     end Intersection
 
     object Intersection:
-        private[Tag] def raw[T](tags: Seq[String]) = new Intersection[T](tags.asInstanceOf[Seq[Tag[Any]]])
-        inline given apply[T]: Intersection[T]     = ${ intersectionImpl[T] }
+        private[Tag] def raw[A](tags: Seq[String]) = new Intersection[A](tags.asInstanceOf[Seq[Tag[Any]]])
+        inline given apply[A]: Intersection[A]     = ${ intersectionImpl[A] }
 
     private[Tag] object internal:
 
@@ -137,7 +137,7 @@ object Tag:
         // class Super
         // class Param1 extends Super
         // class Param2 extends Super
-        // class Test[-T, +U]
+        // class Test[-A, +B]
         //
         // Tag[Test[Param1, Param2]]
         //
@@ -226,31 +226,31 @@ object Tag:
 
         // Macro methods
 
-        def tagImpl[T: Type](using Quotes): Expr[Tag[T]] =
+        def tagImpl[A: Type](using Quotes): Expr[Tag[A]] =
             import quotes.reflect.*
 
-            encodeType(TypeRepr.of[T])
+            encodeType(TypeRepr.of[A])
         end tagImpl
 
-        def tags[T: Type](using q: Quotes)(flatten: q.reflect.TypeRepr => Seq[q.reflect.TypeRepr]): Expr[Seq[String]] =
+        def tags[A: Type](using q: Quotes)(flatten: q.reflect.TypeRepr => Seq[q.reflect.TypeRepr]): Expr[Seq[String]] =
             import quotes.reflect.*
             Expr.ofSeq {
-                flatten(TypeRepr.of[T]).foldLeft(Seq.empty[Expr[Tag[Any]]]) {
+                flatten(TypeRepr.of[A]).foldLeft(Seq.empty[Expr[Tag[Any]]]) {
                     (acc, repr) =>
                         acc :+ encodeType(repr)
                 }
             }
         end tags
 
-        def setImpl[T: Type](using q: Quotes): Expr[Set[T]] =
+        def setImpl[A: Type](using q: Quotes): Expr[Set[A]] =
             import quotes.reflect.*
-            TypeRepr.of[T] match
-                case AndType(_, _) => intersectionImpl[T]
-                case _             => unionImpl[T]
+            TypeRepr.of[A] match
+                case AndType(_, _) => intersectionImpl[A]
+                case _             => unionImpl[A]
             end match
         end setImpl
 
-        def unionImpl[T: Type](using q: Quotes): Expr[Union[T]] =
+        def unionImpl[A: Type](using q: Quotes): Expr[Union[A]] =
             import quotes.reflect.*
 
             def flatten(tpe: TypeRepr): Seq[TypeRepr] =
@@ -259,10 +259,10 @@ object Tag:
                     case tpe: AndType => report.errorAndAbort(s"Union tags don't support type intersections. Found: ${tpe.show}")
                     case tpe          => Seq(tpe)
 
-            '{ Union.raw[T](${ tags(using q)(flatten) }) }
+            '{ Union.raw[A](${ tags(using q)(flatten) }) }
         end unionImpl
 
-        def intersectionImpl[T: Type](using q: Quotes): Expr[Intersection[T]] =
+        def intersectionImpl[A: Type](using q: Quotes): Expr[Intersection[A]] =
             import quotes.reflect.*
 
             def flatten(tpe: TypeRepr): Seq[TypeRepr] =
@@ -271,7 +271,7 @@ object Tag:
                     case tpe: OrType   => report.errorAndAbort(s"Intersection tags don't support type unions. Found: ${tpe.show}")
                     case tpe           => Seq(tpe)
 
-            '{ Intersection.raw[T](${ tags(using q)(flatten) }) }
+            '{ Intersection.raw[A](${ tags(using q)(flatten) }) }
         end intersectionImpl
 
         def encodeType(using Quotes)(tpe: quotes.reflect.TypeRepr): Expr[String] =
