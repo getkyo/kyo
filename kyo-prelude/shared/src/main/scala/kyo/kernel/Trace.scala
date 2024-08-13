@@ -20,7 +20,7 @@ object Trace:
         final private var frames = new Array[Frame](maxTraceFrames)
         final private var index  = 0
 
-        final private[kernel] def pushFrame(frame: Frame): Unit =
+        private[kernel] inline def pushFrame(frame: Frame): Unit =
             val idx = this.index
             frames(idx & (maxTraceFrames - 1)) = frame
             this.index = idx + 1

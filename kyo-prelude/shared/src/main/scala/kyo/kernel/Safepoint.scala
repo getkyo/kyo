@@ -12,14 +12,14 @@ import scala.util.control.NoStackTrace
 
 final class Safepoint private () extends Trace.Owner:
 
-    private val owner                            = Thread.currentThread()
     private var depth                            = 0
     private[kernel] var interceptor: Interceptor = null
+    private val owner                            = Thread.currentThread()
 
     private def enter(frame: Frame, value: Any): Int =
-        bug.check(Thread.currentThread eq owner)
         if depth < maxStackDepth && (isNull(interceptor) || interceptor.enter(frame, value))
         then
+            bug.check(Thread.currentThread eq owner)
             pushFrame(frame)
             val depth = this.depth
             this.depth = depth + 1
