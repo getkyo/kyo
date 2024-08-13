@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.*
 import scala.util.Try
 
 class AbortCombinatorTest extends Test:
