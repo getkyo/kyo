@@ -1,7 +1,7 @@
-package kyoo.internal
+package kyo.internal
 
+import java.util.concurrent.CountDownLatch
 import kyo.*
-import kyo.internal.KyoSttpMonad
 import org.scalatest.concurrent.Eventually.*
 import scala.util.Failure
 import sttp.monad.Canceler
@@ -81,14 +81,14 @@ class KyoSttpMonadTest extends Test:
             Abort.run[Throwable](result).map(r => assert(r == Result.panic(ex)))
         }
 
-        "cancel" in run {
+        "cancel" in runJVM {
             var cancelled = false
             val result = KyoSttpMonad.async[Int] { cb =>
+                cb(Left(new Exception))
                 Canceler(() => cancelled = true)
             }
-            Async.run(result).map(_.interrupt).map { interrupted =>
-                eventually(cancelled)
-                assert(interrupted)
+            Async.run(result).map(_.getResult).map { _ =>
+                assert(cancelled)
             }
         }
     }

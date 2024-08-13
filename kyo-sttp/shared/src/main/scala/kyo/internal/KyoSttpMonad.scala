@@ -3,6 +3,7 @@ package kyo.internal
 import KyoSttpMonad.M
 import kyo.*
 import kyo.kernel.Effect
+import kyo.scheduler.IOPromise
 import sttp.monad.Canceler
 import sttp.monad.MonadAsyncError
 
@@ -47,17 +48,20 @@ class KyoSttpMonad extends MonadAsyncError[M]:
         IO(t)
 
     def async[T](register: (Either[Throwable, T] => Unit) => Canceler): M[T] =
-        Promise.init[Nothing, T].map { p =>
+        IO {
+            val p = IOPromise[Nothing, T]()
             val canceller =
                 register {
-                    case Left(t)  => discard(p.unsafe.complete(Result.panic(t)))
-                    case Right(t) => discard(p.unsafe.complete(Result.success(t)))
+                    case Left(t)  => discard(p.complete(Result.panic(t)))
+                    case Right(t) => discard(p.complete(Result.success(t)))
                 }
             p.onComplete { r =>
                 if r.isPanic then
                     canceller.cancel()
-            }.andThen(p.get)
+            }
+            Fiber.initUnsafe(p).get
         }
+
 end KyoSttpMonad
 
 object KyoSttpMonad extends KyoSttpMonad:
