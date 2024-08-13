@@ -80,8 +80,8 @@ class ResolverTest extends Test:
         val api = graphQL(RootResolver(Query(42, 42, 42, 42, 42)))
         ZIOs.run {
             for
-                server <- Resolver.run(testServer(8080)) {
-                    Resolver.get(api)
+                server <- Resolvers.run(testServer(8080)) {
+                    Resolvers.get(api)
                 }
                 res <-
                     Request(_
@@ -97,8 +97,8 @@ class ResolverTest extends Test:
 
         ZIOs.run {
             for
-                server <- Resolver.run(testServer(8081)) {
-                    Resolver.get(api).map(_.configure(Configurator.setEnableIntrospection(true)))
+                server <- Resolvers.run(testServer(8081)) {
+                    Resolvers.get(api).map(_.configure(Configurator.setEnableIntrospection(true)))
                 }
                 res <-
                     Request(_
@@ -127,7 +127,7 @@ class ResolverTest extends Test:
 
         ZIOs.run {
             for
-                server <- Resolver.run(testServer(8082), runner) { Resolver.get(api) }
+                server <- Resolvers.run(testServer(8082), runner) { Resolvers.get(api) }
                 res <-
                     Request(_
                         .post(Uri.unsafeApply(server.hostName, server.port))

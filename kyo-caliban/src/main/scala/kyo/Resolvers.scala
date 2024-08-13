@@ -19,26 +19,26 @@ import zio.ZEnvironment
 import zio.ZIO
 import zio.stream.ZStream
 
-opaque type Resolver = Abort[CalibanError] & ZIOs
+opaque type Resolvers = Abort[CalibanError] & ZIOs
 
-object Resolver:
+object Resolvers:
 
     private given StreamConstructor[Nothing] =
         (_: ZStream[Any, Throwable, Byte]) => throw new Throwable("Streaming is not supported")
 
-    def run[T, S](v: HttpInterpreter[Any, CalibanError] < (Resolver & S)): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
+    def run[T, S](v: HttpInterpreter[Any, CalibanError] < (Resolvers & S)): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         run[T, S](NettyKyoServer())(v)
 
-    def run[T, S](server: NettyKyoServer)(v: HttpInterpreter[Any, CalibanError] < (Resolver & S))
+    def run[T, S](server: NettyKyoServer)(v: HttpInterpreter[Any, CalibanError] < (Resolvers & S))
         : NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         ZIOs.get(ZIO.runtime[Any]).map(runtime => run(server, runtime)(v))
 
-    def run[R, T, S](runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolver & S))(using
+    def run[R, T, S](runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolvers & S))(using
         tag: Tag[Runner[R]]
     ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         run[R, T, S](NettyKyoServer(), runner)(v)
 
-    def run[R, T, S](server: NettyKyoServer, runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolver & S))(using
+    def run[R, T, S](server: NettyKyoServer, runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolvers & S))(using
         tag: Tag[Runner[R]]
     ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         ZIOs.get(ZIO.runtime[Any]).map(runtime => run(server, runtime.withEnvironment(ZEnvironment(runner)))(v))
@@ -46,7 +46,7 @@ object Resolver:
     def run[R, T, S](
         server: NettyKyoServer,
         runtime: Runtime[R]
-    )(v: HttpInterpreter[R, CalibanError] < (Resolver & S)): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
+    )(v: HttpInterpreter[R, CalibanError] < (Resolvers & S)): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         for
             interpreter <- v
             endpoints = interpreter.serverEndpoints[R, NoStreams](NoStreams).map(convertEndpoint(_, runtime))
@@ -56,7 +56,7 @@ object Resolver:
     def get[R](api: GraphQL[R])(using
         requestCodec: JsonCodec[GraphQLRequest],
         responseValueCodec: JsonCodec[ResponseValue]
-    ): HttpInterpreter[R, CalibanError] < Resolver =
+    ): HttpInterpreter[R, CalibanError] < Resolvers =
         ZIOs.get(api.interpreter.map(HttpInterpreter(_)))
 
     private val rightUnit: Right[Nothing, Unit] = Right(())
@@ -81,4 +81,4 @@ object Resolver:
                         }
         )
 
-end Resolver
+end Resolvers
