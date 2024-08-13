@@ -27,19 +27,19 @@ object Trace:
         end pushFrame
 
         final private[kernel] def saveTrace(): Trace =
-            val newTrace   = borrow()
-            val newFrames  = newTrace.frames
-            val copyLength = math.min(index, maxTraceFrames)
+            val newTrace  = borrow()
+            val newFrames = newTrace.frames
+            val newIndex  = math.min(index, maxTraceFrames)
 
             if index <= maxTraceFrames then
-                System.arraycopy(frames, 0, newFrames, 0, copyLength)
+                System.arraycopy(frames, 0, newFrames, 0, newIndex)
             else
                 val splitIndex      = index & (maxTraceFrames - 1)
                 val firstPartLength = maxTraceFrames - splitIndex
                 System.arraycopy(frames, splitIndex, newFrames, 0, firstPartLength)
                 System.arraycopy(frames, 0, newFrames, firstPartLength, splitIndex)
             end if
-            newTrace.index = Math.min(maxTraceFrames, index)
+            newTrace.index = newIndex
             newTrace
         end saveTrace
 

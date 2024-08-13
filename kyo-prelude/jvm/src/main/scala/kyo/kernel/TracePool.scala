@@ -46,11 +46,8 @@ private[kernel] object TracePool:
 
         final private def clear(trace: Trace) =
             val arr = trace.frames
-            var i   = 0
-            while i < maxTraceFrames && (arr(i) ne null) do
-                arr(i) = null.asInstanceOf[Frame]
-                i += 1
-            end while
+            val len = math.min(trace.index, maxTraceFrames)
+            Arrays.fill(arr.asInstanceOf[Array[AnyRef]], 0, len, null)
             trace.index = 0
         end clear
     end Local

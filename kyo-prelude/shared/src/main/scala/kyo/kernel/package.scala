@@ -14,7 +14,7 @@ package object kernel:
     private object internal:
 
         inline def maxStackDepth  = 512
-        inline def maxTraceFrames = 32
+        inline def maxTraceFrames = 16
 
         type IX[_]
         type OX[_]
