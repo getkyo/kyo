@@ -1,9 +1,6 @@
-package KyoTest
+package kyo
 
-import kyo.*
-import kyoTest.KyoTest
-
-class fibersTest extends KyoTest:
+class FiberCombinatorTest extends Test:
 
     "fibers" - {
         "construct" - {
@@ -13,7 +10,7 @@ class fibersTest extends KyoTest:
                     state = state + 1
                     continuation(state)
                 )
-                val handledEffect = IO.run(Async.run(effect).map(_.toFuture)).pure
+                val handledEffect = IO.run(Async.run(effect).map(_.toFuture)).eval
                 handledEffect.map(v =>
                     assert(state == 1)
                     assert(v == 1)
@@ -23,7 +20,7 @@ class fibersTest extends KyoTest:
             "should construct from Future" in {
                 val future        = scala.concurrent.Future(100)
                 val effect        = Kyo.fromFuture(future)
-                val handledEffect = IO.run(Async.run(effect).map(_.toFuture)).pure
+                val handledEffect = IO.run(Async.run(effect).map(_.toFuture)).eval
                 handledEffect.map(v =>
                     assert(v == 100)
                 )
@@ -36,30 +33,31 @@ class fibersTest extends KyoTest:
                     promise.complete(scala.util.Success(100))
                 }
                 val handledEffect = IO.run(Async.run(effect).map(_.toFuture))
-                handledEffect.pure.map(v => assert(v == 100))
+                handledEffect.eval.map(v => assert(v == 100))
             }
 
             "should construct from foreachPar" in {
                 val effect        = Kyo.foreachPar(Seq(1, 2, 3))(v => v * 2)
-                val handledEffect = IO.run(Async.run(effect).map(_.toFuture)).pure
+                val handledEffect = IO.run(Async.run(effect).map(_.toFuture)).eval
                 handledEffect.map(v => assert(v == Seq(2, 4, 6)))
             }
 
             "should construct from traversePar" in {
                 val effect        = Kyo.traversePar(Seq(IO(1), IO(2), IO(3)))
-                val handledEffect = IO.run(Async.run(effect).map(_.toFuture)).pure
+                val handledEffect = IO.run(Async.run(effect).map(_.toFuture)).eval
                 handledEffect.map(v => assert(v == Seq(1, 2, 3)))
             }
 
             "should generate a fiber that doesn't complete using never" in {
                 val effect = Kyo.never
                 runJVM {
-                    val handledEffect = IO.run(Abort.run[Throwable](
-                        Abort.catching[Throwable](Async.runAndBlock(1.seconds)(effect))
-                    ))
-                    assert(handledEffect.pure match
-                        case Left(Async.Interrupted) => true
-                        case _                        => false
+                    val handledEffect = IO.run(Abort.run[Throwable] {
+                        val r = Async.runAndBlock(5.millis)(effect)
+                        Abort.catching[Throwable](r)
+                    })
+                    assert(handledEffect.eval match
+                        case Result.Fail(_: Timeout) => true
+                        case _                       => false
                     )
                 }
             }
@@ -69,8 +67,8 @@ class fibersTest extends KyoTest:
             "should fork a fibers effect" in {
                 val effect       = Async.sleep(100.millis) *> 10
                 val forkedEffect = effect.fork
-                val joinedEffect = Async.get(forkedEffect)
-                val handled      = IO.run(Async.run(joinedEffect).map(_.toFuture)).pure
+                val joinedEffect = forkedEffect.map(_.get)
+                val handled      = IO.run(Async.run(joinedEffect).map(_.toFuture)).eval
                 handled.map(v => assert(v == 10))
             }
 
@@ -78,20 +76,20 @@ class fibersTest extends KyoTest:
                 val effect       = Async.sleep(100.millis) *> 10
                 val forkedEffect = Async.run(effect)
                 val joinedEffect = forkedEffect.join
-                val handled      = IO.run(Async.run(joinedEffect).map(_.toFuture)).pure
+                val handled      = IO.run(Async.run(joinedEffect).map(_.toFuture)).eval
                 handled.map(v => assert(v == 10))
             }
 
             "should construct from type and use" in {
                 val effect = Kyo.serviceWith[String](_.length)
-                assert(Env.run("value")(effect).pure == 5)
+                assert(Env.run("value")(effect).eval == 5)
             }
         }
 
         "handle" - {
             "should provide" in {
                 val effect: Int < Env[String] = Env.get[String].map(_.length)
-                assert(effect.provide("value").pure == 5)
+                assert(effect.provide("value").eval == 5)
             }
 
             "should provide incrementally" in {
@@ -103,7 +101,7 @@ class fibersTest extends KyoTest:
                         .provide("value")
                         .provide(1)
                         .provide(false)
-                assert(handled.pure == 23)
+                assert(handled.eval == 23)
             }
         }
 
@@ -112,7 +110,7 @@ class fibersTest extends KyoTest:
                 val e1      = IO(1)
                 val e2      = IO(2)
                 val effect  = e1 &> e2
-                val handled = IO.run(Async.run(effect).map(_.toFuture)).pure
+                val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
                 handled.map(v =>
                     assert(v == 2)
                 )
@@ -122,7 +120,7 @@ class fibersTest extends KyoTest:
                 val e1      = IO(1)
                 val e2      = IO(2)
                 val effect  = e1 <& e2
-                val handled = IO.run(Async.run(effect).map(_.toFuture)).pure
+                val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
                 handled.map(v =>
                     assert(v == 1)
                 )
@@ -132,12 +130,11 @@ class fibersTest extends KyoTest:
                 val e1      = IO(1)
                 val e2      = IO(2)
                 val effect  = e1 <&> e2
-                val handled = IO.run(Async.run(effect).map(_.toFuture)).pure
+                val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
                 handled.map(v =>
                     assert(v == (1, 2))
                 )
             }
         }
     }
-
-end fibersTest
+end FiberCombinatorTest

@@ -1,35 +1,32 @@
-package KyoTest
+package kyo
 
-import kyo.*
-import kyoTest.KyoTest
-
-class effectsTest extends KyoTest:
+class EffectCombinatorTest extends Test:
 
     "all effects" - {
         "as" in {
             val effect         = IO(23)
             val effectAsString = effect.as("hello")
             val handled        = IO.run(effectAsString)
-            assert(handled.pure == "hello")
+            assert(handled.eval == "hello")
         }
 
         "debug" in {
             val effect  = IO("Hello World").debug
             val handled = IO.run(effect)
-            assert(handled.pure == "Hello World")
+            assert(handled.eval == "Hello World")
         }
 
         "debug(prefix)" in {
             val effect  = IO(true).debug("boolean")
             val handled = IO.run(effect)
-            assert(handled.pure == true)
+            assert(handled.eval == true)
         }
 
         "discard" in {
             val effect          = IO(23)
             val effectDiscarded = effect.unit
             val handled         = IO.run(effectDiscarded)
-            assert(handled.pure == ())
+            assert(handled.eval == ())
         }
 
         "*>" in {
@@ -37,7 +34,7 @@ class effectsTest extends KyoTest:
             val eff2    = IO("world")
             val zipped  = eff1 *> eff2
             val handled = IO.run(zipped)
-            assert(handled.pure == "world")
+            assert(handled.eval == "world")
         }
 
         "<*" in {
@@ -45,7 +42,7 @@ class effectsTest extends KyoTest:
             val eff2    = IO("world")
             val zipped  = eff1 <* eff2
             val handled = IO.run(zipped)
-            assert(handled.pure == "hello")
+            assert(handled.eval == "hello")
         }
 
         "<*>" in {
@@ -53,7 +50,7 @@ class effectsTest extends KyoTest:
             val eff2    = IO("world")
             val zipped  = eff1 <*> eff2
             val handled = IO.run(zipped)
-            assert(handled.pure == ("hello", "world"))
+            assert(handled.eval == ("hello", "world"))
         }
 
         "when" in {
@@ -63,11 +60,11 @@ class effectsTest extends KyoTest:
             }
             val getState          = IO(state)
             val effectWhen        = (toggleState *> getState).when(getState)
-            val handledEffectWhen = IO.run(Options.run(effectWhen))
-            assert(handledEffectWhen.pure == None)
+            val handledEffectWhen = IO.run(Abort.run(effectWhen))
+            assert(handledEffectWhen.eval == Result.fail(Maybe.Empty))
             state = true
-            val handledEffectWhen2 = IO.run(Options.run(effectWhen))
-            assert(handledEffectWhen2.pure == Some(false))
+            val handledEffectWhen2 = IO.run(Abort.run(effectWhen))
+            assert(handledEffectWhen2.eval == Result.success(false))
         }
 
         "unless" in {
@@ -76,20 +73,20 @@ class effectsTest extends KyoTest:
             def runEffect(b: Boolean) =
                 IO.run {
                     Env.run(b) {
-                        Options.run {
+                        Abort.run {
                             effect
                         }
                     }
-                }.pure
+                }.eval
 
-            assert(runEffect(true) == None)
-            assert(runEffect(false) == Some("value"))
+            assert(runEffect(true) == Result.fail(Maybe.Empty))
+            assert(runEffect(false) == Result.success("value"))
         }
 
         "tap" in {
             val effect: Int < IO = IO(42).tap(v => assert(42 == v))
-            val handled           = IO.run(effect)
-            assert(handled.pure == 42)
+            val handled          = IO.run(effect)
+            assert(handled.eval == 42)
         }
     }
-end effectsTest
+end EffectCombinatorTest

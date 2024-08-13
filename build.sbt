@@ -77,6 +77,7 @@ lazy val kyoJVM = project
         `kyo-bench`.jvm,
         `kyo-test`.jvm,
         `kyo-zio`.jvm,
+        `kyo-combinators`.jvm,
         `kyo-examples`.jvm
     )
 
@@ -95,7 +96,8 @@ lazy val kyoJS = project
         `kyo-stats-registry`.js,
         `kyo-sttp`.js,
         `kyo-test`.js,
-        `kyo-zio`.js
+        `kyo-zio`.js,
+        `kyo-combinators`.js
     )
 
 lazy val `kyo-scheduler` =
@@ -298,16 +300,16 @@ lazy val `kyo-zio` =
             `js-settings`
         )
 
-// lazy val `kyo-combinators` =
-//     crossProject(JSPlatform, JVMPlatform)
-//         .withoutSuffixFor(JVMPlatform)
-//         .crossType(CrossType.Full)
-//         .in(file("kyo-combinators"))
-//         .dependsOn(`kyo-core` % "compile->compile;test->test")
-//         .settings(
-//             `kyo-settings`
-//         )
-//         .jsSettings(`js-settings`)
+lazy val `kyo-combinators` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-combinators"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`
+        )
+        .jsSettings(`js-settings`)
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)

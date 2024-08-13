@@ -1,9 +1,6 @@
-package KyoTest
+package kyo
 
-import kyo.*
-import kyoTest.KyoTest
-
-class envsTest extends KyoTest:
+class EnvCombinatorTest extends Test:
 
     class Dep(val value: Int)
     object DepImpl extends Dep(1)
@@ -12,24 +9,19 @@ class envsTest extends KyoTest:
         "construct" - {
             "should construct from type" in {
                 val effect = Kyo.service[String]
-                assert(Env.run("value")(effect).pure == "value")
+                assert(Env.run("value")(effect).eval == "value")
             }
 
             "should construct from type and use" in {
                 val effect = Kyo.serviceWith[String](_.length)
-                assert(Env.run("value")(effect).pure == 5)
+                assert(Env.run("value")(effect).eval == 5)
             }
         }
 
         "handle" - {
             "should provide" in {
                 val effect: Int < Env[String] = Env.get[String].map(_.length)
-                assert(effect.provide("value").pure == 5)
-            }
-
-            "should provide as" in {
-                val effect: Int < Env[Dep] = Env.get[Dep].map(_.value)
-                assert(effect.provideAs[Dep](DepImpl).pure == 1)
+                assert(effect.provide("value").eval == 5)
             }
 
             "should provide incrementally" in {
@@ -41,9 +33,9 @@ class envsTest extends KyoTest:
                         .provide("value")
                         .provide(1)
                         .provide(false)
-                assert(handled.pure == 23)
+                assert(handled.eval == 23)
             }
         }
     }
 
-end envsTest
+end EnvCombinatorTest
