@@ -1,7 +1,7 @@
-package kyo2.kernel
+package kyo.kernel
 
 import kyo.Tag
-import kyo2.bug
+import kyo.bug
 
 opaque type Context = Map[Tag[Any], AnyRef]
 

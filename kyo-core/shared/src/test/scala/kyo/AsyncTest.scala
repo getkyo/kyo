@@ -1,56 +1,55 @@
-package kyoTest
+package kyo
 
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
-import kyo.*
 import org.scalatest.compatible.Assertion
 import scala.util.Failure
 import scala.util.Try
 
-class fibersTest extends KyoTest:
+class AsyncTest extends Test:
 
     "promise" - {
         "complete" in run {
             for
-                p <- Fibers.initPromise[Int]
-                a <- p.completeSuccess(1)
+                p <- Promise.init[Nothing, Int]
+                a <- p.complete(Result.success(1))
                 b <- p.isDone
                 c <- p.get
             yield assert(a && b && c == 1)
         }
         "complete twice" in run {
             for
-                p <- Fibers.initPromise[Int]
-                a <- p.completeSuccess(1)
-                b <- p.completeSuccess(2)
+                p <- Promise.init[Nothing, Int]
+                a <- p.complete(Result.success(1))
+                b <- p.complete(Result.success(2))
                 c <- p.isDone
                 d <- p.get
             yield assert(a && !b && c && d == 1)
         }
         "complete null" in run {
             for
-                p <- Fibers.initPromise[AnyRef]
-                b <- p.completeSuccess(null)
+                p <- Promise.init[Nothing, AnyRef]
+                b <- p.complete(null)
                 r <- p.get
             yield assert(b && r == null)
         }
         "failure" in run {
             val ex = new Exception
             for
-                p <- Fibers.initPromise[Int]
-                a <- p.completeFailure(ex)
+                p <- Promise.init[Exception, Int]
+                a <- p.complete(Result.fail(ex))
                 b <- p.isDone
                 c <- p.getResult
-            yield assert(a && b && c == Result.Failure[Int](ex))
+            yield assert(a && b && c == Result.fail(ex))
             end for
         }
 
         "become" - {
             "succeed" in run {
                 for
-                    p1 <- Fibers.initPromise[Int]
-                    p2 <- Fibers.initPromise[Int]
-                    a  <- p2.completeSuccess(42)
+                    p1 <- Promise.init[Nothing, Int]
+                    p2 <- Promise.init[Nothing, Int]
+                    a  <- p2.complete(Result.success(42))
                     b  <- p1.become(p2)
                     c  <- p1.isDone
                     d  <- p1.get
@@ -60,22 +59,22 @@ class fibersTest extends KyoTest:
             "fail" in run {
                 val ex = new Exception("fail")
                 for
-                    p1 <- Fibers.initPromise[Int]
-                    p2 <- Fibers.initPromise[Int]
-                    a  <- p2.completeFailure(ex)
+                    p1 <- Promise.init[Exception, Int]
+                    p2 <- Promise.init[Exception, Int]
+                    a  <- p2.complete(Result.fail(ex))
                     b  <- p1.become(p2)
                     c  <- p1.isDone
                     d  <- p1.getResult
-                yield assert(a && b && c && d == Result.Failure(ex))
+                yield assert(a && b && c && d == Result.fail(ex))
                 end for
             }
 
             "already completed" in run {
                 for
-                    p1 <- Fibers.initPromise[Int]
-                    p2 <- Fibers.initPromise[Int]
-                    a  <- p1.completeSuccess(42)
-                    b  <- p2.completeSuccess(99)
+                    p1 <- Promise.init[Nothing, Int]
+                    p2 <- Promise.init[Nothing, Int]
+                    a  <- p1.complete(Result.success(42))
+                    b  <- p2.complete(Result.success(99))
                     c  <- p1.become(p2)
                     d  <- p1.get
                 yield assert(a && b && !c && d == 42)
@@ -83,8 +82,8 @@ class fibersTest extends KyoTest:
 
             "done fiber" in run {
                 for
-                    p <- Fibers.initPromise[Int]
-                    a <- p.become(Fiber.value(42))
+                    p <- Promise.init[Nothing, Int]
+                    a <- p.become(Fiber.success(42))
                     b <- p.isDone
                     c <- p.get
                 yield assert(a && b && c == 42)
@@ -92,121 +91,133 @@ class fibersTest extends KyoTest:
         }
     }
 
-    "init" - {
+    "run" - {
         "value" in run {
             for
-                v <- Fibers.init(1).map(_.get)
+                v <- Async.run(1).map(_.get)
             yield assert(v == 1)
         }
         "executes in a different thread" in runJVM {
             val t1 = Thread.currentThread()
             for
-                t2 <- Fibers.init(Thread.currentThread()).map(_.get)
+                t2 <- Async.run(Thread.currentThread()).map(_.get)
             yield assert(t1 ne t2)
         }
-        // "uses a virtual thread" in runJVM {
-        //     Fibers.init(Thread.currentThread().isVirtual())
-        //         .map(_.get).map(assert(_))
-        // }
         "multiple" in run {
             for
-                v0               <- Fibers.init(0).map(_.get)
-                (v1, v2)         <- Fibers.parallel(1, 2)
-                (v3, v4, v5)     <- Fibers.parallel(3, 4, 5)
-                (v6, v7, v8, v9) <- Fibers.parallel(6, 7, 8, 9)
+                v0               <- Async.run(0).map(_.get)
+                (v1, v2)         <- Async.parallel(1, 2)
+                (v3, v4, v5)     <- Async.parallel(3, 4, 5)
+                (v6, v7, v8, v9) <- Async.parallel(6, 7, 8, 9)
             yield assert(v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 == 45)
         }
         "nested" in runJVM {
             val t1 = Thread.currentThread()
             for
-                t2 <- Fibers.init(IOs(Fibers.init(Thread.currentThread()).map(_.get))).map(_.get)
+                t2 <- Async.run(IO(Async.run(Thread.currentThread()).map(_.get))).map(_.get)
             yield assert(t1 ne t2)
         }
 
-        "with IOs-based effects" - {
-            "Resources" in run {
-                var closes                    = 0
-                val a: Int < Resources        = Resources.ensure(closes += 1).andThen(42)
-                val b: Fiber[Int] < Resources = Fibers.init(a)
-                b.map(_.get.map(v => assert(v == 42)))
+        "with IO-based effects" - {
+            "Resource" in run {
+                var closes = 0
+                val a      = Resource.ensure(closes += 1).andThen(42)
+                val b      = Async.run(a)
+                Resource.run(b.map(_.get.map(v => assert(v == 42))))
             }
         }
-        "non IOs-based effect" in run {
-            assertDoesNotCompile("Fibers.init(Vars[Int].get)")
+        "non IO-based effect" in run {
+            assertDoesNotCompile("Async.run(Vars[Int].get)")
         }
     }
 
     "sleep" in run {
         for
-            start <- IOs(System.currentTimeMillis())
-            _     <- Fibers.sleep(10.millis)
-            end   <- IOs(System.currentTimeMillis())
+            start <- IO(System.currentTimeMillis())
+            _     <- Async.sleep(10.millis)
+            end   <- IO(System.currentTimeMillis())
         yield assert(end - start >= 10)
+    }
+
+    "delay" in run {
+        for
+            start <- IO(System.currentTimeMillis())
+            res   <- Async.delay(10.millis)(42)
+            end   <- IO(System.currentTimeMillis())
+        yield
+            assert(end - start >= 10)
+            assert(res == 42)
     }
 
     "runAndBlock" - {
 
         "timeout" in runJVM {
-            IOs.toTry(Fibers.runAndBlock(Duration.Infinity)(
-                Fibers.timeout(10.millis)(Fibers.sleep(1.day).andThen(1))
-            )).map {
-                case Failure(Fibers.Interrupted) => succeed
-                case v                           => fail(v.toString())
-            }
+            Async.sleep(1.day).andThen(1)
+                .pipe(Async.timeout(10.millis))
+                .pipe(Async.runAndBlock(Duration.Infinity))
+                .pipe(Abort.run[Timeout](_))
+                .map {
+                    case Result.Fail(Timeout(_)) => succeed
+                    case v                       => fail(v.toString())
+                }
         }
 
         "block timeout" in runJVM {
-            IOs.toTry(Fibers.runAndBlock(10.millis)(
-                Fibers.sleep(1.day).andThen(1)
-            )).map {
-                case Failure(Fibers.Interrupted) => succeed
-                case v                           => fail(v.toString())
-            }
+            Async.sleep(1.day).andThen(1)
+                .pipe(Async.runAndBlock(10.millis))
+                .pipe(Abort.run[Timeout](_))
+                .map {
+                    case Result.Fail(Timeout(_)) => succeed
+                    case v                       => fail(v.toString())
+                }
         }
 
         "multiple fibers timeout" in runJVM {
-            IOs.toTry(Fibers.runAndBlock(10.millis)(
-                Seqs.fill(100)(Fibers.sleep(1.milli)).unit.andThen(1)
-            )).map {
-                case Failure(Fibers.Interrupted) => succeed
-                case v                           => fail(v.toString())
-            }
+            Kyo.seq.fill(100)(Async.sleep(1.milli)).unit.andThen(1)
+                .pipe(Async.runAndBlock(10.millis))
+                .pipe(Abort.run[Timeout](_))
+                .map {
+                    case Result.Fail(Timeout(_)) => succeed
+                    case v                       => fail(v.toString())
+                }
         }
     }
 
+    val panic = Result.Panic(new Exception)
+
     "interrupt" - {
 
-        def loop(ref: AtomicInt): Unit < IOs =
+        def loop(ref: AtomicInt): Unit < IO =
             ref.incrementAndGet.map(_ => loop(ref))
 
         def runLoop(started: Latch, done: Latch) =
-            Resources.run[Unit, IOs] {
-                Resources.ensure(done.release).map { _ =>
-                    started.release.map(_ => Atomics.initInt(0).map(loop))
+            Resource.run {
+                Resource.ensure(done.release).map { _ =>
+                    started.release.map(_ => AtomicInt.init(0).map(loop))
                 }
             }
 
         "one fiber" in runJVM {
             for
-                started     <- Latches.init(1)
-                done        <- Latches.init(1)
-                fiber       <- Fibers.init(runLoop(started, done))
+                started     <- Latch.init(1)
+                done        <- Latch.init(1)
+                fiber       <- Async.run(runLoop(started, done))
                 _           <- started.await
-                interrupted <- fiber.interrupt
+                interrupted <- fiber.interrupt(panic)
                 _           <- done.await
             yield assert(interrupted)
         }
         "multiple fibers" in runJVM {
             for
-                started      <- Latches.init(3)
-                done         <- Latches.init(3)
-                fiber1       <- Fibers.init(runLoop(started, done))
-                fiber2       <- Fibers.init(runLoop(started, done))
-                fiber3       <- Fibers.init(runLoop(started, done))
+                started      <- Latch.init(3)
+                done         <- Latch.init(3)
+                fiber1       <- Async.run(runLoop(started, done))
+                fiber2       <- Async.run(runLoop(started, done))
+                fiber3       <- Async.run(runLoop(started, done))
                 _            <- started.await
-                interrupted1 <- fiber1.interrupt
-                interrupted2 <- fiber2.interrupt
-                interrupted3 <- fiber3.interrupt
+                interrupted1 <- fiber1.interrupt(panic)
+                interrupted2 <- fiber2.interrupt(panic)
+                interrupted3 <- fiber3.interrupt(panic)
                 _            <- done.await
             yield assert(interrupted1 && interrupted2 && interrupted3)
         }
@@ -214,20 +225,18 @@ class fibersTest extends KyoTest:
 
     "race" - {
         "zero" in runJVM {
-            IOs.toTry(Fibers.race(Seq())).map { r =>
-                assert(r.isFailure)
-            }
+            assertDoesNotCompile("Async.race()")
         }
         "one" in runJVM {
-            Fibers.race(Seq(1)).map { r =>
+            Async.race(1).map { r =>
                 assert(r == 1)
             }
         }
         "multiple" in runJVM {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
-            def loop(i: Int, s: String): String < IOs =
-                IOs {
+            def loop(i: Int, s: String): String < IO =
+                IO {
                     if i > 0 then
                         if s.equals("a") then ac.incrementAndGet()
                         else bc.incrementAndGet()
@@ -235,7 +244,7 @@ class fibersTest extends KyoTest:
                     else
                         s
                 }
-            Fibers.race(loop(10, "a"), loop(Int.MaxValue, "b")).map { r =>
+            Async.race(loop(10, "a"), loop(Int.MaxValue, "b")).map { r =>
                 assert(r == "a")
                 assert(ac.get() == 10)
                 assert(bc.get() <= Int.MaxValue)
@@ -243,9 +252,9 @@ class fibersTest extends KyoTest:
         }
         "waits for the first success" in runJVM {
             val ex = new Exception
-            Fibers.race(
-                Fibers.sleep(1.milli).andThen(42),
-                IOs.fail[Int](ex)
+            Async.race(
+                Async.sleep(1.milli).andThen(42),
+                Abort.panic[Exception](ex)
             ).map { r =>
                 assert(r == 42)
             }
@@ -253,34 +262,31 @@ class fibersTest extends KyoTest:
         "returns the last failure if all fibers fail" in runJVM {
             val ex1 = new Exception
             val ex2 = new Exception
-            IOs.toTry(
-                Fibers.race(
-                    Fibers.sleep(1.milli).andThen(IOs.fail[Int](ex1)),
-                    IOs.fail[Int](ex2)
+            val race =
+                Async.race(
+                    Async.sleep(1.milli).andThen(Abort.panic[Int](ex1)),
+                    Abort.panic[Int](ex2)
                 )
-            ).map {
-                r =>
-                    assert(r == Failure(ex1))
+            Abort.run(race).map {
+                r => assert(r == Result.panic(ex1))
             }
         }
     }
 
-    "raceFiber" - {
+    "Fiber.race" - {
         "zero" in runJVM {
-            IOs.toTry(Fibers.raceFiber(Seq()).map(_.get)).map { r =>
-                assert(r.isFailure)
-            }
+            assertDoesNotCompile("Async.raceFiber()")
         }
         "one" in runJVM {
-            Fibers.raceFiber(Seq(1)).map(_.get).map { r =>
+            Fiber.race(Seq(1)).map(_.get).map { r =>
                 assert(r == 1)
             }
         }
         "n" in runJVM {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
-            def loop(i: Int, s: String): String < IOs =
-                IOs {
+            def loop(i: Int, s: String): String < IO =
+                IO {
                     if i > 0 then
                         if s.equals("a") then ac.incrementAndGet()
                         else bc.incrementAndGet()
@@ -288,7 +294,7 @@ class fibersTest extends KyoTest:
                     else
                         s
                 }
-            Fibers.raceFiber(List(loop(10, "a"), loop(Int.MaxValue, "b"))).map(_.get).map { r =>
+            Fiber.race(Seq(loop(10, "a"), loop(Int.MaxValue, "b"))).map(_.get).map { r =>
                 assert(r == "a")
                 assert(ac.get() == 10)
                 assert(bc.get() <= Int.MaxValue)
@@ -298,20 +304,20 @@ class fibersTest extends KyoTest:
 
     "parallel" - {
         "zero" in run {
-            Fibers.parallel(Seq()).map { r =>
+            Async.parallel(Seq()).map { r =>
                 assert(r == Seq())
             }
         }
         "one" in run {
-            Fibers.parallel(Seq(1)).map { r =>
+            Async.parallel(Seq(1)).map { r =>
                 assert(r == Seq(1))
             }
         }
         "n" in run {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
-            def loop(i: Int, s: String): String < IOs =
-                IOs {
+            def loop(i: Int, s: String): String < IO =
+                IO {
                     if i > 0 then
                         if s.equals("a") then ac.incrementAndGet()
                         else bc.incrementAndGet()
@@ -319,7 +325,7 @@ class fibersTest extends KyoTest:
                     else
                         s
                 }
-            Fibers.parallel(List(loop(1, "a"), loop(5, "b"))).map { r =>
+            Async.parallel(List(loop(1, "a"), loop(5, "b"))).map { r =>
                 assert(r == List("a", "b"))
                 assert(ac.get() == 1)
                 assert(bc.get() == 5)
@@ -327,28 +333,22 @@ class fibersTest extends KyoTest:
         }
     }
 
-    "parallelTraverse" in run {
-        Fibers.parallelTraverse(Seq(1, 2))(_ + 1).map { r =>
-            assert(r == Seq(2, 3))
-        }
-    }
-
-    "parallelFiber" - {
+    "Fiber.parallel" - {
         "zero" in run {
-            Fibers.parallelFiber(Seq()).map(_.get).map { r =>
+            Fiber.parallel(Seq.empty[Int < Async]).map(_.get).map { r =>
                 assert(r == Seq())
             }
         }
         "one" in run {
-            Fibers.parallelFiber(Seq(1)).map(_.get).map { r =>
+            Fiber.parallel(Seq(1)).map(_.get).map { r =>
                 assert(r == Seq(1))
             }
         }
         "n" in run {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
-            def loop(i: Int, s: String): String < IOs =
-                IOs {
+            def loop(i: Int, s: String): String < IO =
+                IO {
                     if i > 0 then
                         if s.equals("a") then ac.incrementAndGet()
                         else bc.incrementAndGet()
@@ -356,7 +356,7 @@ class fibersTest extends KyoTest:
                     else
                         s
                 }
-            Fibers.parallelFiber(List(loop(1, "a"), loop(5, "b"))).map(_.get).map { r =>
+            Fiber.parallel(List(loop(1, "a"), loop(5, "b"))).map(_.get).map { r =>
                 assert(r == List("a", "b"))
                 assert(ac.get() == 1)
                 assert(bc.get() == 5)
@@ -364,68 +364,67 @@ class fibersTest extends KyoTest:
         }
     }
 
-    "deep handler" - {
-        "transform" in run {
-            for
-                v1       <- Fibers.init(1).map(_.get)
-                (v2, v3) <- Fibers.parallel(2, 3)
-                l        <- Fibers.parallel(List[Int < Any](4, 5))
-            yield assert(v1 + v2 + v3 + l.sum == 15)
-        }
-        "interrupt" in runJVM {
-            def loop(ref: AtomicInt): Unit < IOs =
-                ref.incrementAndGet.map(_ => loop(ref))
-
-            def task(l: Latch): Unit < Fibers =
-                Resources.run[Unit, IOs] {
-                    Resources.ensure(l.release).map { _ =>
-                        Atomics.initInt(0).map(loop)
-                    }
-                }
-
-            for
-                l           <- Latches.init(1)
-                fiber       <- Fibers.init(task(l))
-                _           <- Fibers.sleep(10.millis)
-                interrupted <- fiber.interrupt
-                _           <- l.await
-            yield assert(interrupted)
-            end for
-        }
+    "transform" in run {
+        for
+            v1       <- Async.run(1).map(_.get)
+            (v2, v3) <- Async.parallel(2, 3)
+            l        <- Async.parallel(List[Int < Any](4, 5))
+        yield assert(v1 + v2 + v3 + l.sum == 15)
     }
 
-    "with resources" - {
-        class Resource extends JAtomicInteger with Closeable:
+    "interrupt" in runJVM {
+        def loop(ref: AtomicInt): Unit < IO =
+            ref.incrementAndGet.map(_ => loop(ref))
+
+        def task(l: Latch): Unit < Async =
+            Resource.run[Unit, IO] {
+                Resource.ensure(l.release).map { _ =>
+                    AtomicInt.init(0).map(loop)
+                }
+            }
+
+        for
+            l           <- Latch.init(1)
+            fiber       <- Async.run(task(l))
+            _           <- Async.sleep(10.millis)
+            interrupted <- fiber.interrupt(panic)
+            _           <- l.await
+        yield assert(interrupted)
+        end for
+    }
+
+    "with Resource" - {
+        class TestResource extends JAtomicInteger with Closeable:
             def close(): Unit =
                 set(-1)
         "outer" in run {
-            val resource1 = new Resource
-            val io1: (JAtomicInteger & Closeable, Set[Int]) < (Resources & Fibers) =
+            val resource1 = new TestResource
+            val io1: (JAtomicInteger & Closeable, Set[Int]) < (Resource & Async) =
                 for
-                    r  <- Resources.acquire(resource1)
-                    v1 <- IOs(r.incrementAndGet())
-                    v2 <- Fibers.init(r.incrementAndGet()).map(_.get)
+                    r  <- Resource.acquire(resource1)
+                    v1 <- IO(r.incrementAndGet())
+                    v2 <- Async.run(r.incrementAndGet()).map(_.get)
                 yield (r, Set(v1, v2))
-            Resources.run(io1).map {
+            Resource.run(io1).map {
                 case (r, v) =>
                     assert(v == Set(1, 2))
                     assert(r.get() == -1)
             }
         }
         "inner" in run {
-            val resource1 = new Resource
-            Fibers.init(Resources.run(Resources.acquire(resource1).map(_.incrementAndGet())))
+            val resource1 = new TestResource
+            Async.run(Resource.run(Resource.acquire(resource1).map(_.incrementAndGet())))
                 .map(_.get).map { r =>
                     assert(r == 1)
                     assert(resource1.get() == -1)
                 }
         }
         "multiple" in run {
-            val resource1 = new Resource
-            val resource2 = new Resource
-            Fibers.parallel(
-                Resources.run(Resources.acquire(resource1).map(_.incrementAndGet())),
-                Resources.run(Resources.acquire(resource2).map(_.incrementAndGet()))
+            val resource1 = new TestResource
+            val resource2 = new TestResource
+            Async.parallel(
+                Resource.run(Resource.acquire(resource1).map(_.incrementAndGet())),
+                Resource.run(Resource.acquire(resource2).map(_.incrementAndGet()))
             ).map { r =>
                 assert(r == (1, 1))
                 assert(resource1.get() == -1)
@@ -433,16 +432,16 @@ class fibersTest extends KyoTest:
             }
         }
         "mixed" in run {
-            val resource1 = new Resource
-            val resource2 = new Resource
-            val io1: Set[Int] < (Resources & (Fibers)) =
+            val resource1 = new TestResource
+            val resource2 = new TestResource
+            val io1: Set[Int] < (Resource & Async) =
                 for
-                    r  <- Resources.acquire(resource1)
-                    v1 <- IOs(r.incrementAndGet())
-                    v2 <- Fibers.init(r.incrementAndGet()).map(_.get)
-                    v3 <- Resources.run(Resources.acquire(resource2).map(_.incrementAndGet()))
+                    r  <- Resource.acquire(resource1)
+                    v1 <- IO(r.incrementAndGet())
+                    v2 <- Async.run(r.incrementAndGet()).map(_.get)
+                    v3 <- Resource.run(Resource.acquire(resource2).map(_.incrementAndGet()))
                 yield Set(v1, v2, v3)
-            Resources.run[Set[Int], Fibers](io1).map { r =>
+            Resource.run(io1).map { r =>
                 assert(r == Set(1, 2))
                 assert(resource1.get() == -1)
                 assert(resource2.get() == -1)
@@ -451,39 +450,39 @@ class fibersTest extends KyoTest:
     }
 
     "locals" - {
-        val l = Locals.init(10)
+        val l = Local.init(10)
         "fork" - {
             "default" in run {
-                Fibers.init(l.get).map(_.get).map(v => assert(v == 10))
+                Async.run(l.get).map(_.get).map(v => assert(v == 10))
             }
             "let" in run {
-                l.let(20)(Fibers.init(l.get).map(_.get)).map(v => assert(v == 20))
+                l.let(20)(Async.run(l.get).map(_.get)).map(v => assert(v == 20))
             }
         }
         "race" - {
             "default" in run {
-                Fibers.race(l.get, l.get).map(v => assert(v == 10))
+                Async.race(l.get, l.get).map(v => assert(v == 10))
             }
             "let" in run {
-                l.let(20)(Fibers.race(l.get, l.get)).map(v => assert(v == 20))
+                l.let(20)(Async.race(l.get, l.get)).map(v => assert(v == 20))
             }
         }
         "collect" - {
             "default" in run {
-                Fibers.parallel(List(l.get, l.get)).map(v => assert(v == List(10, 10)))
+                Async.parallel(List(l.get, l.get)).map(v => assert(v == List(10, 10)))
             }
             "let" in run {
-                l.let(20)(Fibers.parallel(List(l.get, l.get)).map(v => assert(v == List(20, 20))))
+                l.let(20)(Async.parallel(List(l.get, l.get)).map(v => assert(v == List(20, 20))))
             }
         }
     }
 
     "stack safety" in run {
-        def loop(i: Int): Assertion < Fibers =
+        def loop(i: Int): Assertion < Async =
             if i > 0 then
-                Fibers.init(()).map(_ => loop(i - 1))
+                Async.run(()).map(_ => loop(i - 1))
             else
                 succeed
-        loop(1000)
+        loop(10000)
     }
-end fibersTest
+end AsyncTest

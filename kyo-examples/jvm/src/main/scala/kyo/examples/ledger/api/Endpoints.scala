@@ -11,9 +11,9 @@ import zio.json.JsonEncoder
 
 object Endpoints:
 
-    val init: Unit < (Envs[Handler] & Routes) = defer {
+    val init: Unit < (Env[Handler] & Routes) = defer {
 
-        val handler = await(Envs.get[Handler])
+        val handler = await(Env.get[Handler])
 
         await {
             Routes.add(

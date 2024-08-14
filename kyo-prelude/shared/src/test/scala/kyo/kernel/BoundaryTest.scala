@@ -1,8 +1,8 @@
-package kyo2.kernel
+package kyo.kernel
 
+import kyo.*
 import kyo.Tag
-import kyo2.*
-import kyo2.Test
+import kyo.Test
 
 class BoundaryTest extends Test:
 

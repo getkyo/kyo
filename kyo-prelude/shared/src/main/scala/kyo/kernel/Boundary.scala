@@ -1,4 +1,4 @@
-package kyo2.kernel
+package kyo.kernel
 
 import internal.*
 import kyo.Tag
@@ -9,10 +9,10 @@ final class Boundary[Ctx, +S] private (dummy: Unit) extends AnyVal:
 
 end Boundary
 
-private[kyo2] object Boundary:
+private[kyo] object Boundary:
 
     extension [Ctx, S](boundary: Boundary[Ctx, S])
-        private[kyo2] inline def apply[A, S2](inline f: (Trace, Context) => A < S2)(using inline _frame: Frame): A < (S & S2) =
+        private[kyo] inline def apply[A, S2](inline f: (Trace, Context) => A < S2)(using inline _frame: Frame): A < (S & S2) =
             new KyoDefer[A, S & S2]:
                 def frame = _frame
                 def apply(v: Unit, context: Context)(using safepoint: Safepoint) =
@@ -20,7 +20,7 @@ private[kyo2] object Boundary:
 
     inline given derive[Ctx, S]: Boundary[Ctx, S] = ${ boundaryImpl[Ctx, S] }
 
-    private[kyo2] inline def restoring[Ctx, A, S](trace: Trace, interceptor: Safepoint.Interceptor)(
+    private[kyo] inline def restoring[Ctx, A, S](trace: Trace, interceptor: Safepoint.Interceptor)(
         inline v: => A < (Ctx & S)
     )(using frame: Frame, safepoint: Safepoint): A < (Ctx & S) =
         Safepoint.immediate(interceptor)(safepoint.withTrace(trace)(v))

@@ -1,11 +1,10 @@
-package kyoTest.server
+package kyo.server
 
 import kyo.*
-import kyoTest.KyoTest
 import sttp.tapir.server.netty.NettyConfig
 import sttp.tapir.server.netty.NettyKyoServer
 
-class NettyKyoServerTest extends KyoTest:
+class NettyKyoServerTest extends Test:
 
     def testServer() =
         import scala.concurrent.duration.*

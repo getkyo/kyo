@@ -1,31 +1,26 @@
 package kyo
 
-import kyo.internal.Trace
 import scala.collection.mutable.ListBuffer
 import scala.util.Try
 
 abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
-    def log: Logs.Unsafe = Logs.unsafe
-    def random: Random   = Random.default
-    def clock: Clock     = Clock.default
+    def log: Log.Unsafe = Log.unsafe
+    def random: Random  = Random.live
+    def clock: Clock    = Clock.live
 
-    override protected def handle[T: Flat](v: T < KyoApp.Effects)(using Trace): Unit =
-        KyoApp.run {
-            Logs.let(log) {
-                Randoms.let(random) {
-                    Clocks.let(clock) {
-                        v.map(Consoles.println)
-                    }
-                }
-            }
-        }
+    override protected def handle[A: Flat](v: A < KyoApp.Effects)(using Frame): Unit =
+        v.map(Console.println)
+            .pipe(Clock.let(clock))
+            .pipe(Random.let(random))
+            .pipe(Log.let(log))
+            .pipe(KyoApp.run)
 end KyoApp
 
 object KyoApp:
 
     abstract class Base[S]:
 
-        protected def handle[T: Flat](v: T < S)(using Trace): Unit
+        protected def handle[A: Flat](v: A < S)(using Frame): Unit
 
         final protected def args: Array[String] = _args
 
@@ -37,33 +32,24 @@ object KyoApp:
             this._args = args
             for proc <- initCode do proc()
 
-        protected def run[T: Flat](v: => T < S)(using Trace): Unit =
+        protected def run[A: Flat](v: => A < S)(using Frame): Unit =
             initCode += (() => handle(v))
     end Base
 
-    type Effects = Fibers & Resources & Aborts[Throwable] & Consoles
+    type Effects = Async & Resource & Abort[Throwable]
 
-    def attempt[T: Flat](timeout: Duration)(v: T < Effects)(using Trace): Try[T] =
-        IOs.run(runFiber(timeout)(v).block(timeout))
+    def attempt[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): Result[Throwable, A] =
+        IO.run(runFiber(timeout)(v).block(timeout)).eval
 
-    def run[T: Flat](timeout: Duration)(v: T < Effects)(using Trace): T =
-        attempt(timeout)(v).get
+    def run[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): A =
+        attempt(timeout)(v).getOrThrow
 
-    def run[T: Flat](v: T < Effects)(using Trace): T =
+    def run[A: Flat](v: A < Effects)(using Frame): A =
         run(Duration.Infinity)(v)
 
-    def runFiber[T: Flat](v: T < Effects)(using Trace): Fiber[Try[T]] =
+    def runFiber[A: Flat](v: A < Effects)(using Frame): Fiber[Throwable, A] =
         runFiber(Duration.Infinity)(v)
 
-    def runFiber[T: Flat](timeout: Duration)(v: T < Effects)(using Trace): Fiber[Try[T]] =
-        def v0: Try[T] < (Fibers & Resources & Consoles) = Aborts.run[Throwable](v).map(_.toTry)
-        def v1: Try[T] < (Fibers & Resources)            = Consoles.run(v0)
-        def v2: Try[T] < Fibers                          = Resources.run(v1)
-        def v3: Try[T] < Fibers                          = IOs.toTry(v2).map(_.flatten)
-        def v4: Try[T] < Fibers                          = Fibers.timeout(timeout)(v3)
-        def v5: Try[T] < Fibers                          = IOs.toTry(v4).map(_.flatten)
-        def v6: Try[T] < Fibers                          = Fibers.init(v5).map(_.get)
-        def v7: Fiber[Try[T]] < IOs                      = Fibers.run(v6)
-        IOs.run(v7)
-    end runFiber
+    def runFiber[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): Fiber[Throwable, A] =
+        v.pipe(Resource.run).pipe(Async.run).pipe(IO.run).eval
 end KyoApp

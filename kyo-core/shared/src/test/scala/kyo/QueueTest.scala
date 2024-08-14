@@ -1,46 +1,43 @@
-package kyoTest
+package kyo
 
-import kyo.*
-import kyo.Access
-
-class queuesTest extends KyoTest:
+class QueueTest extends Test:
 
     val access = List(Access.Mpmc, Access.Mpsc, Access.Spmc, Access.Spsc)
 
     "bounded" - {
         access.foreach { access =>
             access.toString() - {
-                "isEmpty" in IOs.run {
+                "isEmpty" in run {
                     for
-                        q <- Queues.init[Int](2, access)
+                        q <- Queue.init[Int](2, access)
                         b <- q.isEmpty
                     yield assert(b && q.capacity == 2)
                 }
-                "offer and poll" in IOs.run {
+                "offer and poll" in run {
                     for
-                        q <- Queues.init[Int](2, access)
+                        q <- Queue.init[Int](2, access)
                         b <- q.offer(1)
                         v <- q.poll
-                    yield assert(b && v == Some(1))
+                    yield assert(b && v == Maybe(1))
                 }
-                "peek" in IOs.run {
+                "peek" in run {
                     for
-                        q <- Queues.init[Int](2, access)
+                        q <- Queue.init[Int](2, access)
                         _ <- q.offer(1)
                         v <- q.peek
-                    yield assert(v == Some(1))
+                    yield assert(v == Maybe(1))
                 }
-                "full" in IOs.run {
+                "full" in run {
                     for
-                        q <- Queues.init[Int](2, access)
+                        q <- Queue.init[Int](2, access)
                         _ <- q.offer(1)
                         _ <- q.offer(2)
                         b <- q.offer(3)
                     yield assert(!b)
                 }
-                "full 4" in IOs.run {
+                "full 4" in run {
                     for
-                        q <- Queues.init[Int](4, access)
+                        q <- Queue.init[Int](4, access)
                         _ <- q.offer(1)
                         _ <- q.offer(2)
                         _ <- q.offer(3)
@@ -48,46 +45,46 @@ class queuesTest extends KyoTest:
                         b <- q.offer(5)
                     yield assert(!b)
                 }
-                "zero capacity" in IOs.run {
+                "zero capacity" in run {
                     for
-                        q <- Queues.init[Int](0, access)
+                        q <- Queue.init[Int](0, access)
                         b <- q.offer(1)
                         v <- q.poll
-                    yield assert(!b && v == None)
+                    yield assert(!b && v.isEmpty)
                 }
             }
         }
     }
 
-    "close" in IOs.run {
+    "close" in run {
         for
-            q  <- Queues.init[Int](2)
+            q  <- Queue.init[Int](2)
             b  <- q.offer(1)
             c1 <- q.close
-            v1 <- IOs.toTry(q.size)
-            v2 <- IOs.toTry(q.isEmpty)
-            v3 <- IOs.toTry(q.isFull)
-            v4 <- IOs.toTry(q.offer(2))
-            v5 <- IOs.toTry(q.poll)
-            v6 <- IOs.toTry(q.peek)
-            v7 <- IOs.toTry(q.drain)
+            v1 <- Abort.run[Throwable](q.size)
+            v2 <- Abort.run[Throwable](q.isEmpty)
+            v3 <- Abort.run[Throwable](q.isFull)
+            v4 <- q.offer(2)
+            v5 <- Abort.run[Throwable](q.poll)
+            v6 <- Abort.run[Throwable](q.peek)
+            v7 <- Abort.run[Throwable](q.drain)
             c2 <- q.close
         yield assert(
-            b && c1 == Some(Seq(1)) &&
-                v1.isFailure &&
-                v2.isFailure &&
-                v3.isFailure &&
-                v4.isFailure &&
-                v5.isFailure &&
-                v6.isFailure &&
-                v7.isFailure &&
+            b && c1 == Maybe(Seq(1)) &&
+                v1.isFail &&
+                v2.isFail &&
+                v3.isFail &&
+                !v4 &&
+                v5.isFail &&
+                v6.isFail &&
+                v7.isFail &&
                 c2.isEmpty
         )
     }
 
-    "drain" in IOs.run {
+    "drain" in run {
         for
-            q <- Queues.init[Int](2)
+            q <- Queue.init[Int](2)
             _ <- q.offer(1)
             _ <- q.offer(2)
             v <- q.drain
@@ -97,32 +94,32 @@ class queuesTest extends KyoTest:
     "unbounded" - {
         access.foreach { access =>
             access.toString() - {
-                "isEmpty" in IOs.run {
+                "isEmpty" in run {
                     for
-                        q <- Queues.initUnbounded[Int](access)
+                        q <- Queue.initUnbounded[Int](access)
                         b <- q.isEmpty
                     yield assert(b)
                 }
-                "offer and poll" in IOs.run {
+                "offer and poll" in run {
                     for
-                        q <- Queues.initUnbounded[Int](access)
+                        q <- Queue.initUnbounded[Int](access)
                         b <- q.offer(1)
                         v <- q.poll
-                    yield assert(b && v == Some(1))
+                    yield assert(b && v == Maybe(1))
                 }
-                "peek" in IOs.run {
+                "peek" in run {
                     for
-                        q <- Queues.initUnbounded[Int](access)
+                        q <- Queue.initUnbounded[Int](access)
                         _ <- q.offer(1)
                         v <- q.peek
-                    yield assert(v == Some(1))
+                    yield assert(v == Maybe(1))
                 }
-                "add and poll" in IOs.run {
+                "add and poll" in run {
                     for
-                        q <- Queues.initUnbounded[Int](access)
+                        q <- Queue.initUnbounded[Int](access)
                         _ <- q.add(1)
                         v <- q.poll
-                    yield assert(v == Some(1))
+                    yield assert(v == Maybe(1))
                 }
             }
         }
@@ -130,33 +127,33 @@ class queuesTest extends KyoTest:
 
     "dropping" - {
         access.foreach { access =>
-            access.toString() in IOs.run {
+            access.toString() in run {
                 for
-                    q <- Queues.initDropping[Int](2)
+                    q <- Queue.initDropping[Int](2)
                     _ <- q.add(1)
                     _ <- q.add(2)
                     _ <- q.add(3)
                     a <- q.poll
                     b <- q.poll
                     c <- q.poll
-                yield assert(a == Some(1) && b == Some(2) && c == None)
+                yield assert(a == Maybe(1) && b == Maybe(2) && c.isEmpty)
             }
         }
     }
 
     "sliding" - {
         access.foreach { access =>
-            access.toString() in IOs.run {
+            access.toString() in run {
                 for
-                    q <- Queues.initSliding[Int](2)
+                    q <- Queue.initSliding[Int](2)
                     _ <- q.add(1)
                     _ <- q.add(2)
                     _ <- q.add(3)
                     a <- q.poll
                     b <- q.poll
                     c <- q.poll
-                yield assert(a == Some(2) && b == Some(3) && c == None)
+                yield assert(a == Maybe(2) && b == Maybe(3) && c.isEmpty)
             }
         }
     }
-end queuesTest
+end QueueTest

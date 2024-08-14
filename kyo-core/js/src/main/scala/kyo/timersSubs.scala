@@ -3,7 +3,7 @@ package java.util.concurrent
 import java.util.Timer
 import java.util.TimerTask
 
-class ScheduledFuture[T](r: => T) extends TimerTask:
+class ScheduledFuture[A](r: => A) extends TimerTask:
     private var cancelled = false
     private var done      = false
     def cancel(b: Boolean) =
@@ -27,7 +27,7 @@ class ScheduledExecutorService():
 
     val timer = new Timer()
 
-    def schedule[T](r: Callable[T], delay: Long, unit: TimeUnit): ScheduledFuture[T] =
+    def schedule[A](r: Callable[A], delay: Long, unit: TimeUnit): ScheduledFuture[A] =
         val task = new ScheduledFuture(r.call())
         timer.schedule(task, unit.toMillis(delay))
         task

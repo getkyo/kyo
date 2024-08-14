@@ -1,9 +1,9 @@
-package kyo2.kernel
+package kyo.kernel
 
-import kyo2.Test
-import kyo2.kernel.Frame
-import kyo2.kernel.Trace
-import kyo2.kernel.TracePool
+import kyo.Test
+import kyo.kernel.Frame
+import kyo.kernel.Trace
+import kyo.kernel.TracePool
 
 class TracePoolTest extends Test:
 

@@ -1,49 +1,46 @@
-package kyoTest
+package kyo.kernel
 
 import kyo.*
+import kyo.Tag
 import scala.reflect.ClassTag
 
-class coreBytecodeSizeTest extends KyoTest:
+class BytecodeTest extends Test:
 
-    import kyo.core.*
-
-    object TestEffect extends Effect[TestEffect.type]:
-        type Command[T] = T
-
-    object TestHandler extends Handler[Id, TestEffect.type, Any]:
-        def resume[T, U: Flat, S](command: T, k: T => U < (TestEffect.type & S))(using Tag[TestEffect.type]) =
-            Resume((), k(command))
+    object TestEffect extends Effect[Id, Id]
 
     class TestSuspend:
-        def test(e: TestEffect.type) = suspend(e)(42)
+        def test() = Effect.suspend[Int](Tag[TestEffect.type], 42)
 
-    class TestTransform:
-        def test(v: Int < TestEffect.type) = transform(v)(_ + 1)
+    class TestSuspendMap:
+        def test() = Effect.suspendMap[Int](Tag[TestEffect.type], 42)(_ + 1)
+
+    class TestMap:
+        def test(v: Int < TestEffect.type) = v.map(_ + 1)
 
     class TestHandle:
-        def test(h: TestHandler.type, v: Int < TestEffect.type) = TestEffect.handle(h)((), v)
+        def test(v: Int < TestEffect.type) = Effect.handle(Tag[TestEffect.type], v)([C] => (input, cont) => cont(input))
 
-    "suspend" in runJVM {
+    "suspend" in {
         val map = methodBytecodeSize[TestSuspend]
-        assert(map == Map("test" -> 14))
+        assert(map == Map("test" -> 16))
     }
 
-    "transform" in runJVM {
-        val map = methodBytecodeSize[TestTransform]
-        assert(map == Map("test" -> 16, "anonfun" -> 6, "transformLoop" -> 42))
+    "suspendMap" in {
+        val map = methodBytecodeSize[TestSuspendMap]
+        assert(map == Map("test" -> 16))
     }
 
-    "handle" in runJVM {
+    "map" in {
+        val map = methodBytecodeSize[TestMap]
+        assert(map == Map("test" -> 22, "anonfun" -> 10, "mapLoop" -> 154))
+    }
+
+    "handle" in {
         val map = methodBytecodeSize[TestHandle]
-        assert(map == Map(
-            "test"        -> 27,
-            "resultLoop"  -> 91,
-            "handleLoop"  -> 292,
-            "_handleLoop" -> 10
-        ))
+        assert(map == Map("test" -> 20, "anonfun" -> 8, "handleLoop" -> 269))
     }
 
-    def methodBytecodeSize[T](using ct: ClassTag[T]): Map[String, Int] =
+    def methodBytecodeSize[A](using ct: ClassTag[A]): Map[String, Int] =
         import javassist.*
         val classpath = System.getProperty("java.class.path")
         val classPool = ClassPool.getDefault
@@ -62,4 +59,5 @@ class coreBytecodeSizeTest extends KyoTest:
         val normalizedName   = simpleMethodName.stripPrefix("_$")
         normalizedName.split("\\$").head
     end normalizeMethodName
-end coreBytecodeSizeTest
+
+end BytecodeTest

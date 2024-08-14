@@ -1,25 +1,24 @@
-package kyoTest
+package kyo
 
 import java.util.concurrent.Executors
-import kyo.*
 import org.scalatest.compatible.Assertion
 
-class timersTest extends KyoTest:
+class TimerTest extends Test:
 
     "schedule" in run {
         for
-            p     <- Fibers.initPromise[String]
-            _     <- Timers.schedule(1.milli)(p.completeSuccess("hello").map(require(_)))
+            p     <- Promise.init[Nothing, String]
+            _     <- Timer.schedule(1.milli)(p.complete(Result.success("hello")).map(require(_)))
             hello <- p.get
         yield assert(hello == "hello")
     }
 
     "custom executor" in runJVM {
         val exec = Executors.newSingleThreadScheduledExecutor()
-        Timers.let(Timer(exec)) {
+        Timer.let(Timer(exec)) {
             for
-                p     <- Fibers.initPromise[String]
-                _     <- Timers.schedule(1.milli)(p.completeSuccess("hello").map(require(_)))
+                p     <- Promise.init[Nothing, String]
+                _     <- Timer.schedule(1.milli)(p.complete(Result.success("hello")).map(require(_)))
                 hello <- p.get
             yield assert(hello == "hello")
         }
@@ -27,24 +26,24 @@ class timersTest extends KyoTest:
 
     "cancel" in runJVM {
         for
-            p         <- Fibers.initPromise[String]
-            task      <- Timers.schedule(5.seconds)(p.completeSuccess("hello").map(require(_)))
+            p         <- Promise.init[Nothing, String]
+            task      <- Timer.schedule(5.seconds)(p.complete(Result.success("hello")).map(require(_)))
             _         <- task.cancel
-            cancelled <- retry(task.isCancelled)
+            cancelled <- untilTrue(task.isCancelled)
             done1     <- p.isDone
-            _         <- Fibers.sleep(5.millis)
+            _         <- Async.sleep(5.millis)
             done2     <- p.isDone
         yield assert(cancelled && !done1 && !done2)
     }
 
     "scheduleAtFixedRate" in run {
         for
-            ref <- Atomics.initInt(0)
-            task <- Timers.scheduleAtFixedRate(
+            ref <- AtomicInt.init(0)
+            task <- Timer.scheduleAtFixedRate(
                 1.milli,
                 1.milli
             )(ref.incrementAndGet.unit)
-            _         <- Fibers.sleep(5.millis)
+            _         <- Async.sleep(5.millis)
             n         <- ref.get
             cancelled <- task.cancel
         yield assert(n > 0 && cancelled)
@@ -52,12 +51,12 @@ class timersTest extends KyoTest:
 
     "scheduleWithFixedDelay" in runJVM {
         for
-            ref <- Atomics.initInt(0)
-            task <- Timers.scheduleWithFixedDelay(
+            ref <- AtomicInt.init(0)
+            task <- Timer.scheduleWithFixedDelay(
                 1.milli,
                 1.milli
             )(ref.incrementAndGet.unit)
-            _         <- Fibers.sleep(5.millis)
+            _         <- Async.sleep(5.millis)
             n         <- ref.get
             cancelled <- task.cancel
         yield assert(n > 0 && cancelled)
@@ -65,13 +64,13 @@ class timersTest extends KyoTest:
 
     "scheduleWithFixedDelay 2" in runJVM {
         for
-            ref <- Atomics.initInt(0)
-            task <- Timers.scheduleWithFixedDelay(
+            ref <- AtomicInt.init(0)
+            task <- Timer.scheduleWithFixedDelay(
                 1.milli
             )(ref.incrementAndGet.unit)
-            _         <- Fibers.sleep(5.millis)
+            _         <- Async.sleep(5.millis)
             n         <- ref.get
             cancelled <- task.cancel
         yield assert(n > 0 && cancelled)
     }
-end timersTest
+end TimerTest

@@ -1,74 +1,78 @@
-package kyoTest
+package kyo
 
 import kyo.*
 
-class localsTest extends KyoTest:
+class LocalTest extends Test:
 
     "default" - {
         "method" in {
-            val l = Locals.init(10)
+            val l = Local.init(10)
             assert(l.default == 10)
         }
         "get" in {
-            val l = Locals.init(10)
+            val l = Local.init(10)
             assert(
-                IOs.run[Int](l.get) ==
-                    10
+                l.get.eval == 10
             )
         }
         "effect + get" in {
-            val l = Locals.init(10)
+            val l = Local.init(10)
             assert(
-                IOs.run[Option[Int]](Options.run(Options(1).map(_ => l.get))) ==
-                    Some(10)
+                Env.run(1)(Env.use[Int](_ => l.get)).eval == 10
             )
         }
         "effect + get + effect" in {
-            val l = Locals.init(10)
+            val l = Local.init(10)
             assert(
-                IOs.run[Option[Int]](Options.run(Options(1).map(_ => l.get).map(Options(_)))) ==
-                    Some(10)
+                Env.run(42)(Env.use(_ => l.get).map(i => Env.use[Int](_ + i))).eval ==
+                    52
             )
         }
         "multiple" in {
-            val l1 = Locals.init(10)
-            val l2 = Locals.init(20)
+            val l1 = Local.init(10)
+            val l2 = Local.init(20)
             assert(
-                IOs.run[(Int, Int)](zip(l1.get, l2.get)) ==
-                    (10, 20)
+                Kyo.zip(l1.get, l2.get).eval == (10, 20)
             )
+        }
+        "lazy" in {
+            var invoked = 0
+            def default =
+                invoked += 1
+                10
+            val l = Local.init(default)
+            assert(invoked == 0)
+            assert(l.default == 10)
+            assert(l.default == 10)
+            assert(invoked == 1)
         }
     }
 
     "let" - {
         "get" in {
-            val l = Locals.init(10)
+            val l = Local.init(10)
             assert(
-                IOs.run[Int](l.let(20)(l.get)) ==
+                l.let(20)(l.get).eval ==
                     20
             )
         }
         "effect + get" in {
-            val l = Locals.init(10)
+            val l = Local.init(10)
             assert(
-                IOs.run[Option[Int]](Options.run(Options(1).map(_ => l.let(20)(l.get)))) ==
-                    Some(20)
+                Env.run(1)(Env.use(_ => l.let(20)(l.get))).eval == 20
             )
         }
         "effect + get + effect" in {
-            val l = Locals.init(10)
+            val l = Local.init(10)
             assert(
-                IOs.run[Option[Int]](
-                    Options.run(Options(1).map(_ => l.let(20)(l.get).map(Options(_))))
-                ) ==
-                    Some(20)
+                Env.run(1)(Env.use(_ => l.let(20)(l.get).map(i => Env.use[Int](_ + i)))).eval == 21
             )
         }
         "multiple" in {
-            val l1 = Locals.init(10)
-            val l2 = Locals.init(20)
+            val l1 = Local.init(10)
+            val l2 = Local.init(20)
             assert(
-                IOs.run[(Int, Int)](zip(l1.let(30)(l1.get), l2.let(40)(l2.get))) ==
+                Kyo.zip(l1.let(30)(l1.get), l2.let(40)(l2.get)).eval ==
                     (30, 40)
             )
         }
@@ -76,224 +80,30 @@ class localsTest extends KyoTest:
 
     "update" - {
         "get" in {
-            val l = Locals.init(10)
+            val l = Local.init(10)
             assert(
-                IOs.run[Int](l.update(_ + 10)(l.get)) ==
-                    20
+                l.update(_ + 10)(l.get).eval == 20
             )
         }
         "effect + get" in {
-            val l = Locals.init(10)
+            val l = Local.init(10)
             assert(
-                IOs.run[Option[Int]](Options.run(Options(1).map(_ => l.update(_ + 10)(l.get)))) ==
-                    Some(20)
+                Env.run(1)(Env.use(_ => l.update(_ + 20)(l.get))).eval == 30
             )
         }
         "effect + get + effect" in {
-            val l = Locals.init(10)
+            val l = Local.init(10)
             assert(
-                IOs.run[Option[Int]](
-                    Options.run(Options(1).map(_ => l.update(_ + 10)(l.get).map(Options(_))))
-                ) ==
-                    Some(20)
+                Env.run(1)(Env.use(_ => l.update(_ + 20)(l.get).map(i => Env.use[Int](_ + i)))).eval == 31
             )
         }
         "multiple" in {
-            val l1 = Locals.init(10)
-            val l2 = Locals.init(20)
+            val l1 = Local.init(10)
+            val l2 = Local.init(20)
             assert(
-                IOs.run[(Int, Int)](zip(l1.update(_ + 10)(l1.get), l2.update(_ + 10)(l2.get))) ==
+                Kyo.zip(l1.update(_ + 10)(l1.get), l2.update(_ + 10)(l2.get)).eval ==
                     (20, 30)
             )
         }
     }
-
-    given CanEqual[Locals.State, Map[Local[Int], Int]] = CanEqual.derived
-
-    "save" - {
-        "let + save" in {
-            val l = Locals.init(10)
-            assert(
-                IOs.run[Locals.State](l.let(20)(Locals.save)) ==
-                    Map(l -> 20)
-            )
-        }
-        "let + effect + save" in {
-            val l = Locals.init(10)
-            assert(
-                IOs.run(Options.run(l.let(20)(Options(1).map(_ =>
-                    Locals.save
-                )))) ==
-                    Some(Map(l -> 20))
-            )
-        }
-        "effect + let + save" in {
-            val l = Locals.init(10)
-            assert(
-                IOs.run(Options.run(Options(1).map(_ =>
-                    l.let(20)(Locals.save)
-                ))) ==
-                    Some(Map(l -> 20))
-            )
-        }
-        "effect + let + save + effect" in {
-            val l = Locals.init(10)
-            assert(
-                IOs.run(Options.run(Options(1).map(_ =>
-                    l.let(20)(Locals.save).map(Options(_))
-                ))) ==
-                    Some(Map(l -> 20))
-            )
-        }
-        "nested" in {
-            val l1 = Locals.init(10)
-            val l2 = Locals.init(20)
-            assert(
-                IOs.run(
-                    l1.let(30)(
-                        l2.let(40)(
-                            Locals.save
-                        )
-                    )
-                ) ==
-                    Map(l1 -> 30, l2 -> 40)
-            )
-        }
-        "nested + effect" in {
-            val l1 = Locals.init(10)
-            val l2 = Locals.init(20)
-            assert(
-                IOs.run(
-                    Options.run(
-                        l1.let(30)(
-                            l2.let(40)(
-                                Options(1).map(_ => Locals.save)
-                            )
-                        )
-                    )
-                ) ==
-                    Some(Map(l1 -> 30, l2 -> 40))
-            )
-        }
-        "nested + effects" in {
-            val l1 = Locals.init(10)
-            val l2 = Locals.init(20)
-            assert(
-                IOs.run(
-                    Options.run(
-                        l1.let(30)(
-                            l2.let(40)(
-                                Options(1).map(_ => Locals.save).map(Options(_))
-                            ).map(Options(_))
-                        ).map(Options(_))
-                    )
-                ) ==
-                    Some(Map(l1 -> 30, l2 -> 40))
-            )
-        }
-        "multiple" in {
-            val l1 = Locals.init(0)
-            val l2 = Locals.init(0)
-            val l3 = Locals.init(0)
-            assert(
-                IOs.run[(Locals.State, Locals.State)](
-                    l3.let(20) {
-                        zip(
-                            l1.let(30)(Locals.save),
-                            l2.let(40)(Locals.save)
-                        )
-                    }
-                ) ==
-                    (Map(l3 -> 20, l1 -> 30), Map(l3 -> 20, l2 -> 40))
-            )
-        }
-        "multiple + effect" in {
-            val l1 = Locals.init(0)
-            val l2 = Locals.init(0)
-            val l3 = Locals.init(0)
-            assert(
-                IOs.run(
-                    Options.run(
-                        l3.let(20) {
-                            Options(1).map(_ =>
-                                zip(
-                                    l1.let(30)(Locals.save).map(Options(_)),
-                                    l2.let(40)(Locals.save)
-                                )
-                            )
-                        }
-                    )
-                ) ==
-                    Some((Map(l3 -> 20, l1 -> 30), Map(l3 -> 20, l2 -> 40)))
-            )
-        }
-    }
-
-    "restore" - {
-        val l1 = Locals.init(0)
-        val l2 = Locals.init(0)
-        val l3 = Locals.init(0)
-        val state: Locals.State =
-            IOs.run {
-                l1.let(10) {
-                    l2.let(20) {
-                        l3.let(30) {
-                            Locals.save
-                        }
-                    }
-                }
-            }
-        "get" in {
-            assert(
-                IOs.run(Locals.restore(state)(l1.get)) ==
-                    10
-            )
-        }
-        "effect + get" in {
-            assert(
-                IOs.run[Option[Int]](
-                    Options.run(Locals.restore[Int, Options & IOs](state)(Options(1).map(_ =>
-                        l1.get
-                    )))
-                ) ==
-                    Some(10)
-            )
-        }
-        "effect + get + effect" in {
-            assert(
-                IOs.run[Option[Int]](
-                    Options.run(Locals.restore[Int, Options & IOs](state)(
-                        Options(1).map(_ => l1.get).map(Options(_))
-                    ))
-                ) ==
-                    Some(10)
-            )
-        }
-        "multiple" in {
-            assert(
-                IOs.run[(Int, Int)](Locals.restore(state)(zip(l1.get, l2.get))) ==
-                    (10, 20)
-            )
-        }
-        "multiple + effect" in {
-            assert(
-                IOs.run[Option[(Int, Int)]](
-                    Options.run(Locals.restore[(Int, Int), Options & IOs](state)(Options(1).map(_ =>
-                        zip(l1.get, l2.get)
-                    )))
-                ) ==
-                    Some((10, 20))
-            )
-        }
-        "nested" in {
-            assert(
-                IOs.run[(Int, Int)](
-                    l1.let(30) {
-                        Locals.restore(state)(zip(l1.get, l2.get))
-                    }
-                ) ==
-                    (10, 20)
-            )
-        }
-    }
-end localsTest
+end LocalTest

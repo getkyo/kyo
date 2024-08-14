@@ -1,7 +1,7 @@
-package kyo2
+package kyo
 
 import kyo.Tag
-import kyo2.kernel.*
+import kyo.kernel.*
 
 opaque type Memo = Var[Memo.Cache]
 
@@ -9,9 +9,9 @@ object Memo:
 
     // Used to ensure each memoized function
     // has a different key space
-    private[kyo2] class MemoIdentity
+    private[kyo] class MemoIdentity
 
-    private[kyo2] class Cache(map: Map[(Any, Any), Any]):
+    private[kyo] class Cache(map: Map[(Any, Any), Any]):
         def get[A](input: A, id: MemoIdentity): Maybe[Any] =
             val key = (input, id)
             if map.contains(key) then

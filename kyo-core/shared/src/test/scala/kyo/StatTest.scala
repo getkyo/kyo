@@ -1,23 +1,20 @@
-package kyoTest.stats
+package kyo
 
-import kyo.*
-import kyoTest.KyoTest
-
-class StatsTest extends KyoTest:
+class StatTest extends Test:
 
     "scope" in runJVM {
-        val stats        = Stats.initScope("test1")
-        val counter      = stats.initCounter("a")
-        val histogram    = stats.initHistogram("a")
-        val gauge        = stats.initGauge("a")(1)
-        val counterGauge = stats.initCounterGauge("a")(1)
-        IOs.run(counter.add(1))
-        IOs.run(histogram.observe(1))
-        assert(IOs.run(counter.get) == 1)
-        assert(IOs.run(histogram.count) == 1)
-        assert(IOs.run(gauge.collect) == 1)
-        assert(IOs.run(counterGauge.collect) == 1)
+        val stat         = Stat.initScope("test1")
+        val counter      = stat.initCounter("a")
+        val histogram    = stat.initHistogram("a")
+        val gauge        = stat.initGauge("a")(1)
+        val counterGauge = stat.initCounterGauge("a")(1)
+        IO.run(counter.add(1))
+        IO.run(histogram.observe(1))
+        assert(IO.run(counter.get).eval == 1)
+        assert(IO.run(histogram.count).eval == 1)
+        assert(IO.run(gauge.collect).eval == 1)
+        assert(IO.run(counterGauge.collect).eval == 1)
         val v = new Object
-        assert(IOs.run(stats.traceSpan("a")(v)) eq v)
+        assert(IO.run(stat.traceSpan("a")(v)).eval eq v)
     }
-end StatsTest
+end StatTest

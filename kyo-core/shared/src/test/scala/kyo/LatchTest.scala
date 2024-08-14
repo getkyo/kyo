@@ -1,12 +1,12 @@
-package kyoTest
+package kyo
 
 import kyo.*
 
-class latchesTest extends KyoTest:
+class LatchTest extends Test:
 
     "zero" in run {
         for
-            latch <- Latches.init(0)
+            latch <- Latch.init(0)
             _     <- latch.release
             _     <- latch.await
         yield succeed
@@ -14,7 +14,7 @@ class latchesTest extends KyoTest:
 
     "countDown + await" in run {
         for
-            latch <- Latches.init(1)
+            latch <- Latch.init(1)
             _     <- latch.release
             _     <- latch.await
         yield succeed
@@ -22,7 +22,7 @@ class latchesTest extends KyoTest:
 
     "countDown(2) + await" in run {
         for
-            latch <- Latches.init(2)
+            latch <- Latch.init(2)
             _     <- latch.release
             _     <- latch.release
             _     <- latch.await
@@ -31,25 +31,25 @@ class latchesTest extends KyoTest:
 
     "countDown + fibers + await" in runJVM {
         for
-            latch <- Latches.init(1)
-            _     <- Fibers.init(latch.release)
+            latch <- Latch.init(1)
+            _     <- Async.run(latch.release)
             _     <- latch.await
         yield succeed
     }
 
     "countDown(2) + fibers + await" in runJVM {
         for
-            latch <- Latches.init(2)
-            _     <- Fibers.parallel(latch.release, latch.release)
+            latch <- Latch.init(2)
+            _     <- Async.parallel(latch.release, latch.release)
             _     <- latch.await
         yield succeed
     }
 
     "contention" in runJVM {
         for
-            latch <- Latches.init(1000)
-            _     <- Fibers.parallelFiber(List.fill(1000)(latch.release))
+            latch <- Latch.init(1000)
+            _     <- Async.parallel(List.fill(1000)(latch.release))
             _     <- latch.await
         yield succeed
     }
-end latchesTest
+end LatchTest

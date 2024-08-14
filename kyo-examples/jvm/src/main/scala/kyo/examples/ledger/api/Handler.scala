@@ -10,24 +10,24 @@ trait Handler:
     def transaction(
         account: Int,
         request: Transaction
-    ): Processed < (Aborts[StatusCode] & Fibers)
+    ): Processed < (Abort[StatusCode] & Async)
 
     def statement(
         account: Int
-    ): Statement < (Aborts[StatusCode] & IOs)
+    ): Statement < (Abort[StatusCode] & IO)
 
 end Handler
 
 object Handler:
 
-    val init: Handler < Envs[DB] = defer {
-        Live(await(Envs.get[DB]))
+    val init: Handler < Env[DB] = defer {
+        Live(await(Env.get[DB]))
     }
 
     final class Live(db: DB) extends Handler:
 
-        private val notFound            = Aborts.fail[StatusCode](StatusCode.NotFound)
-        private val unprocessableEntity = Aborts.fail[StatusCode](StatusCode.UnprocessableEntity)
+        private val notFound            = Abort.fail[StatusCode](StatusCode.NotFound)
+        private val unprocessableEntity = Abort.fail[StatusCode](StatusCode.UnprocessableEntity)
 
         def transaction(account: Int, request: Transaction) = defer {
             import request.*

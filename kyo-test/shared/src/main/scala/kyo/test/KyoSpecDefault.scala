@@ -1,13 +1,12 @@
 package kyo.test
 
 import kyo.*
-import kyo.test.interop.*
 import zio.ZIO
 import zio.test.Spec
 
 abstract class KyoSpecDefault extends KyoSpecAbstract[KyoApp.Effects]:
     final override def run[In: Flat](v: => In < KyoApp.Effects): ZIO[Environment, Throwable, In] =
-        ZIO.fromKyoFiber(KyoApp.runFiber(timeout)(v)).flatMap(ZIO.fromTry)
+        ZIOs.run(Resource.run(v))
 
     def timeout: Duration = Duration.Infinity
 

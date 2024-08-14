@@ -1,26 +1,21 @@
-package kyo
+package kyo.internal
 
 import java.util.concurrent.CompletionStage
+import kyo.*
 import kyo.scheduler.IOPromise
 import kyo.scheduler.IOTask
 
-trait fibersPlatformSpecific:
-    def fromCompletionStage[T: Flat](cs: CompletionStage[T]): T < Fibers =
-        Fibers.get(fromCompletionStageFiber(cs))
+trait FiberPlatformSpecific:
+    def fromCompletionStage[A](cs: CompletionStage[A]): A < Async =
+        fromCompletionStageFiber(cs).map(_.get)
 
-    def fromCompletionStageFiber[T: Flat](cs: CompletionStage[T]): Fiber[T] < IOs =
-        Locals.save { st =>
-            IOs {
-                val p = new IOPromise[T]()
-                cs.whenComplete { (success, error) =>
-                    val io = IOs {
-                        if error == null then p.complete(Result.success(success))
-                        else p.complete(Result.failure(error))
-                    }
-                    IOTask(io, st)
-                    ()
-                }
-                Promise(p)
+    def fromCompletionStageFiber[A](cs: CompletionStage[A]): Fiber[Nothing, A] < IO =
+        IO {
+            val p = new IOPromise[Nothing, A]()
+            cs.whenComplete { (success, error) =>
+                if error == null then p.completeUnit(Result.success(success))
+                else p.completeUnit(Result.panic(error))
             }
+            Fiber.initUnsafe(p)
         }
-end fibersPlatformSpecific
+end FiberPlatformSpecific

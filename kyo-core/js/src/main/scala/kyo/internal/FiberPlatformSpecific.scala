@@ -1,4 +1,3 @@
-package kyo
+package kyo.internal
 
-trait fibersPlatformSpecific
-end fibersPlatformSpecific
+trait FiberPlatformSpecific

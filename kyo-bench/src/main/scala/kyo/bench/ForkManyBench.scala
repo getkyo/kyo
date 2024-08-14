@@ -28,20 +28,20 @@ class ForkManyBench extends Bench.ForkOnly(0):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def repeat[A](n: Int)(io: A < IOs): A < IOs =
+        def repeat[A](n: Int)(io: A < IO): A < IO =
             if n <= 1 then io
             else io.flatMap(_ => repeat(n - 1)(io))
 
         for
-            promise <- Fibers.initPromise[Unit]
-            ref     <- Atomics.initInt(depth)
+            promise <- Promise.init[Nothing, Unit]
+            ref     <- AtomicInt.init(depth)
             effect = ref.decrementAndGet.flatMap {
                 case 1 =>
-                    promise.completeSuccess(())
+                    promise.complete(Result.unit)
                 case _ =>
                     false
             }
-            _ <- repeat(depth)(Fibers.init(effect))
+            _ <- repeat(depth)(Async.run(effect))
             _ <- promise.get
         yield 0
         end for

@@ -1,4 +1,4 @@
-package kyo2.kernel
+package kyo.kernel
 
 sealed trait Reducible[S]:
     type SReduced

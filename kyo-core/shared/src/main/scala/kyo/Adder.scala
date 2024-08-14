@@ -1,26 +1,25 @@
 package kyo
 
-import java.util.concurrent.atomic.DoubleAdder as JDoubleAdder
-import java.util.concurrent.atomic.LongAdder as JLongAdder
-import kyo.internal.Trace
+import java.util.concurrent.atomic as j
 
-object Adders:
-    val initLong: LongAdder < IOs     = IOs(new LongAdder(new JLongAdder()))
-    val initDouble: DoubleAdder < IOs = IOs(new DoubleAdder(new JDoubleAdder()))
-
-class LongAdder private[kyo] (private val ref: JLongAdder) extends AnyVal:
-
-    def add(v: Long)(using Trace): Unit < IOs = IOs(ref.add(v))
-    def decrement(using Trace): Unit < IOs    = IOs(ref.decrement())
-    def increment(using Trace): Unit < IOs    = IOs(ref.increment())
-    def get(using Trace): Long < IOs          = IOs(ref.sum())
-    def reset(using Trace): Unit < IOs        = IOs(ref.reset())
-    def sumThenReset(using Trace): Long < IOs = IOs(ref.sumThenReset())
+class LongAdder private[kyo] (private val ref: j.LongAdder) extends AnyVal:
+    inline def add(v: Long)(using Frame): Unit < IO = IO(ref.add(v))
+    inline def decrement(using Frame): Unit < IO    = IO(ref.decrement())
+    inline def increment(using Frame): Unit < IO    = IO(ref.increment())
+    inline def get(using Frame): Long < IO          = IO(ref.sum())
+    inline def reset(using Frame): Unit < IO        = IO(ref.reset())
+    inline def sumThenReset(using Frame): Long < IO = IO(ref.sumThenReset())
 end LongAdder
 
-class DoubleAdder private[kyo] (private val ref: JDoubleAdder) extends AnyVal:
+object LongAdder:
+    def init(using Frame): LongAdder < IO = IO(LongAdder(new j.LongAdder))
 
-    def add(v: Double)(using Trace): Unit < IOs = IOs(ref.add(v))
-    def get(using Trace): Double < IOs          = IOs(ref.sum())
-    def reset(using Trace): Unit < IOs          = IOs(ref.reset())
+class DoubleAdder private[kyo] (private val ref: j.DoubleAdder) extends AnyVal:
+    inline def add(v: Double)(using Frame): Unit < IO = IO(ref.add(v))
+    inline def get(using Frame): Double < IO          = IO(ref.sum())
+    inline def reset(using Frame): Unit < IO          = IO(ref.reset())
+    inline def sumThenReset(using Frame): Double < IO = IO(ref.sumThenReset())
 end DoubleAdder
+
+object DoubleAdder:
+    def init(using Frame): DoubleAdder < IO = IO(DoubleAdder(new j.DoubleAdder))

@@ -1,112 +1,113 @@
 package kyo
 
-import kyo.core.*
-import kyo.internal.Trace
+import kernel.Const
+import kernel.Effect
+import kernel.Frame
+import kyo.Result.*
+import kyo.Tag
+import kyo.kernel.Reducible
+import scala.annotation.targetName
 import scala.reflect.ClassTag
-import scala.util.Failure
-import scala.util.Success
-import scala.util.Try
-import scala.util.control.NonFatal
 
-type Aborts[-V] >: Aborts.Effects[V] <: Aborts.Effects[V]
+sealed trait Abort[-E] extends Effect[Const[Error[E]], Const[Unit]]
 
-object Aborts:
+object Abort:
 
-    import internal.*
+    given eliminateAbort: Reducible.Eliminable[Abort[Nothing]] with {}
+    private inline def erasedTag[E]: Tag[Abort[E]] = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
-    opaque type Effects[-V] = DoAbort
+    inline def fail[E](inline value: E)(using inline frame: Frame): Nothing < Abort[E] = error(Fail(value))
 
-    def fail[V](v: V)(using Trace): Nothing < Aborts[V] =
-        DoAbort.suspend(v).asInstanceOf[Nothing < Aborts[V]]
+    inline def panic[E](inline ex: Throwable)(using inline frame: Frame): Nothing < Abort[E] = error(Panic(ex))
 
-    def when[V](b: Boolean)(value: => V)(using Trace): Unit < Aborts[V] =
+    private[kyo] inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
+        Effect.suspendMap[Any](erasedTag[E], e)(_ => ???)
+
+    inline def when[E](b: Boolean)(inline value: => E)(using inline frame: Frame): Unit < Abort[E] =
         if b then fail(value)
         else ()
 
-    def get[V, T](e: Either[V, T])(using Trace): T < Aborts[V] =
-        e match
-            case Right(t) => t
-            case Left(v)  => fail(v)
+    final class GetOps[E >: Nothing](dummy: Unit) extends AnyVal:
+        inline def apply[A](either: Either[E, A])(using inline frame: Frame): A < Abort[E] =
+            either match
+                case Right(value) => value
+                case Left(value)  => fail(value)
 
-    def get[T](e: Try[T])(using Trace): T < Aborts[Throwable] =
-        e match
-            case Success(t) => t
-            case Failure(v) => fail(v)
+        inline def apply[A](opt: Option[A])(using inline frame: Frame): A < Abort[Maybe.Empty] =
+            opt match
+                case None    => fail(Maybe.Empty)
+                case Some(v) => v
 
-    class RunDsl[V]:
-        def apply[V0 <: V, T: Flat, S, VS, VR](v: T < (Aborts[VS] & S))(
+        inline def apply[A](e: scala.util.Try[A])(using inline frame: Frame): A < Abort[Throwable] =
+            e match
+                case scala.util.Success(t) => t
+                case scala.util.Failure(v) => fail(v)
+
+        inline def apply[E, A](r: Result[E, A])(using inline frame: Frame): A < Abort[E] =
+            r.fold {
+                case e: Fail[E] => fail(e.error)
+                case Panic(ex)  => Abort.panic(ex)
+            }(identity)
+
+        @targetName("maybe")
+        inline def apply[A](m: Maybe[A])(using inline frame: Frame): A < Abort[Maybe.Empty] =
+            m.fold(fail(Maybe.Empty))(identity)
+    end GetOps
+
+    inline def get[E >: Nothing]: GetOps[E] = GetOps(())
+
+    final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
+        def apply[A: Flat, S, ES, ER](v: => A < (Abort[E | ER] & S))(
             using
-            h: HasAborts[V0, VS] { type Remainder = VR },
-            ct: ClassTag[V0],
-            trace: Trace
-        ): Either[V, T] < (VR & S) =
-            DoAbort.handle(handler)(ct, v).asInstanceOf[Either[V, T] < (VR & S)]
-    end RunDsl
-
-    def run[V]: RunDsl[V] = RunDsl[V]
-
-    class CatchingDsl[V <: Throwable]:
-        def apply[T: Flat, S](v: => T < S)(
-            using
-            ct: ClassTag[V],
-            trace: Trace
-        ): T < (Aborts[V] & S) =
-            IOs.catching(v) {
-                case ex: V => Aborts.fail(ex)
+            ct: ClassTag[E],
+            tag: Tag[E], // TODO Used only to ensure E isn't a type union. There should be a more lightweight solution for this.
+            frame: Frame,
+            reduce: Reducible[Abort[ER]]
+        ): Result[E, A] < (S & reduce.SReduced) =
+            reduce {
+                Effect.handle.catching[
+                    Const[Error[E]],
+                    Const[Unit],
+                    Abort[E],
+                    Result[E, A],
+                    Result[E, A],
+                    Abort[ER] & S,
+                    Abort[ER] & S,
+                    Any
+                ](
+                    erasedTag[E],
+                    v.map(Result.success[E, A](_))
+                )(
+                    accept = [C] =>
+                        input =>
+                            input.isPanic ||
+                                input.asInstanceOf[Error[Any]].failure.exists {
+                                    case e: E => true
+                                    case _    => false
+                            },
+                    handle = [C] => (input, _) => input,
+                    recover =
+                        case fail: E if classOf[Throwable].isAssignableFrom(ct.runtimeClass) =>
+                            Result.fail(fail)
+                        case fail => Result.panic(fail)
+                )
             }
-    end CatchingDsl
+    end RunOps
 
-    def catching[V <: Throwable]: CatchingDsl[V] = CatchingDsl[V]
+    inline def run[E >: Nothing]: RunOps[E] = RunOps(())
 
-    private object internal:
+    final class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
+        def apply[A, S](v: => A < S)(
+            using
+            ct: ClassTag[E],
+            frame: Frame
+        ): A < (Abort[E] & S) =
+            Effect.catching(v) {
+                case ex: E => Abort.fail(ex)
+                case ex    => Abort.panic(ex)
+            }
+    end CatchingOps
 
-        val handler =
-            new ResultHandler[ClassTag[?], Const[Any], DoAbort, [T] =>> Either[Any, T], Any]:
-                def done[T](st: ClassTag[?], v: T)(using Tag[DoAbort]) = Right(v)
+    inline def catching[E <: Throwable]: CatchingOps[E] = CatchingOps(())
 
-                override def failed(st: ClassTag[?], ex: Throwable)(using Tag[DoAbort]) =
-                    type V
-                    given ClassTag[V] = st.asInstanceOf[ClassTag[V]]
-                    ex match
-                        case ex: V => DoAbort.suspend(ex)
-                        case _     => throw ex
-                end failed
-
-                override def accepts[T](st: ClassTag[?], command: Any) =
-                    type V
-                    given ClassTag[V] = st.asInstanceOf[ClassTag[V]]
-                    command match
-                        case v: V => true
-                        case _    => false
-                end accepts
-
-                def resume[T, U: Flat, S2](st: ClassTag[?], command: Any, k: T => U < (DoAbort & S2))(using Tag[DoAbort]) =
-                    Left(command)
-        end handler
-
-        class DoAbort extends Effect[DoAbort]:
-            type Command[T] = Any
-        object DoAbort extends DoAbort
-    end internal
-
-    /** An effect `Aborts[VS]` includes a failure type `V`, and once `V` has been handled, `Aborts[VS]` should be replaced by `Out`
-      *
-      * @tparam V
-      *   the failure type included in `VS`
-      * @tparam VS
-      *   all of the `Aborts` failure types represented by type union
-      */
-    sealed trait HasAborts[V, VS]:
-        /** Remaining effect type, once failures of type `V` have been handled
-          */
-        type Remainder
-    end HasAborts
-
-    trait LowPriorityHasAborts:
-        given hasAborts[V, VR]: HasAborts[V, V | VR] with
-            type Remainder = Aborts[VR]
-
-    object HasAborts extends LowPriorityHasAborts:
-        given isAborts[V]: HasAborts[V, V] with
-            type Remainder = Any
-end Aborts
+end Abort

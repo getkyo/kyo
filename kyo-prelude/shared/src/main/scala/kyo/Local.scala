@@ -1,105 +1,36 @@
 package kyo
 
-import core.*
-import core.internal.*
-import kyo.internal.Trace
-import kyo.iosInternal.*
+import kyo.Tag
+import kyo.kernel.*
 
-abstract class Local[T]:
+abstract class Local[A]:
 
-    import Locals.*
+    import Local.State
 
-    def default: T
+    lazy val default: A
 
-    val get: T < IOs =
-        fromKyo {
-            new KyoIO[T, Any]:
-                def trace = Trace.derive
-                def apply(v: Unit, s: Safepoint[IOs], l: State) =
-                    get(l)
-        }
+    final def get(using Frame): A < Any =
+        ContextEffect.suspendMap(Tag[Local.State], Map.empty)(_.getOrElse(this, default).asInstanceOf[A])
 
-    def let[U, S](f: T)(v: U < S)(using _trace: Trace): U < (S & IOs) =
-        def letLoop(f: T, v: U < S): U < S =
-            v match
-                case kyo: Suspend[MX, Any, U, S] @unchecked =>
-                    fromKyo {
-                        new Continue[MX, Any, U, S](kyo):
-                            def trace = _trace
-                            def apply(v2: Any < S, s: Safepoint[S], l: Locals.State) =
-                                letLoop(f, kyo(v2, s, l.updated(Local.this, f)))
-                    }
-                case _ =>
-                    v
-        letLoop(f, v)
-    end let
+    final def use[B, S](f: A => B < S)(using Frame): B < S =
+        ContextEffect.suspendMap(Tag[Local.State], Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[A]))
 
-    inline def use[U, S](inline f: T => U < S)(using inline _trace: Trace): U < (S & IOs) =
-        fromKyo {
-            new KyoIO[U, S]:
-                def trace = _trace
-                def apply(v: Unit, s: Safepoint[S & IOs], l: State) =
-                    f(get(l))
-        }
+    final def let[B, S](value: A)(v: B < S)(using Frame): B < S =
+        ContextEffect.handle(Tag[Local.State], Map(this -> value), _.updated(this, value.asInstanceOf[AnyRef]))(v)
 
-    def update[U, S](f: T => T)(v: U < S)(using _trace: Trace): U < (S & IOs) =
-        def updateLoop(f: T => T, v: U < S): U < S =
-            v match
-                case kyo: Suspend[MX, Any, U, S] @unchecked =>
-                    fromKyo {
-                        new Continue[MX, Any, U, S](kyo):
-                            def trace = _trace
-                            def apply(v2: Any < S, s: Safepoint[S], l: Locals.State) =
-                                updateLoop(f, kyo(v2, s, l.updated(Local.this, f(get(l)))))
-                    }
-                case _ =>
-                    v
-        updateLoop(f, v)
-    end update
-
-    private def get(l: Locals.State) =
-        l.getOrElse(Local.this, default).asInstanceOf[T]
+    final def update[B, S](f: A => A)(v: B < S)(using Frame): B < S =
+        ContextEffect.handle(
+            Tag[Local.State],
+            Map(this -> f(default)),
+            map => map.updated(this, f(map.getOrElse(this, default).asInstanceOf[A]).asInstanceOf[AnyRef])
+        )(v)
 end Local
 
-object Locals:
+object Local:
 
-    type State = Map[Local[?], Any]
+    inline def init[A](inline defaultValue: A): Local[A] =
+        new Local[A]:
+            lazy val default: A = defaultValue
 
-    object State:
-        inline def empty: State = Map.empty
-
-    def init[T](defaultValue: => T): Local[T] =
-        new Local[T]:
-            def default = defaultValue
-
-    val save: State < IOs =
-        fromKyo {
-            new KyoIO[State, Any]:
-                def trace = Trace.derive
-                def apply(v: Unit, s: Safepoint[IOs], l: Locals.State) =
-                    l
-        }
-
-    inline def save[U, S](inline f: State => U < S)(using inline _trace: Trace): U < (IOs & S) =
-        fromKyo {
-            new KyoIO[U, S]:
-                def trace = _trace
-                def apply(v: Unit, s: Safepoint[IOs & S], l: Locals.State) =
-                    f(l)
-        }
-
-    def restore[T, S](st: State)(f: T < S)(using _trace: Trace): T < (IOs & S) =
-        def loop(f: T < S): T < S =
-            f match
-                case kyo: Suspend[MX, Any, T, S] @unchecked =>
-                    fromKyo {
-                        new Continue[MX, Any, T, S](kyo):
-                            def trace = _trace
-                            def apply(v2: Any < S, s: Safepoint[S], l: Locals.State) =
-                                loop(kyo(v2, s, l ++ st))
-                    }
-                case _ =>
-                    f
-        loop(f)
-    end restore
-end Locals
+    sealed private trait State extends ContextEffect[Map[Local[?], AnyRef]]
+end Local

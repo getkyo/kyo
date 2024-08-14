@@ -1,131 +1,121 @@
 package kyo.scheduler
 
-import kyo.{Clock as _, *}
-import kyo.Locals.State
-import kyo.core.*
-import kyo.core.internal.*
-import kyo.fibersInternal.*
-import kyo.iosInternal.*
+import kyo.*
+import kyo.Tag
+import kyo.kernel.*
+import kyo.kernel.Effect
+import kyo.scheduler.InternalClock
+import kyo.scheduler.IOTask.*
+import kyo.scheduler.Scheduler
+import kyo.scheduler.Task
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-private[kyo] class IOTask[T](
-    private var curr: T < Fibers,
+private[kyo] class IOTask[Ctx, E, A] private (
+    private var curr: A < (Ctx & Async & Abort[E]),
+    private var trace: Trace,
     private var ensures: Ensures
-) extends IOPromise[T] with Task
-    with Preempt:
-    import IOTask.*
+) extends IOPromise[E, A] with Task:
 
-    def locals: Locals.State = Locals.State.empty
+    inline given Flat[A] = Flat.unsafe.bypass
 
-    override def preempt(): Boolean =
-        shouldPreempt()
+    import IOTask.frame
 
-    override protected def onComplete(): Unit =
+    def context: Context = Context.empty
+
+    final override def enter(frame: Frame, value: Any) =
+        !shouldPreempt()
+
+    final override def onComplete() =
         doPreempt()
 
-    @tailrec private def eval(
-        curr: T < Fibers,
-        scheduler: Scheduler,
-        startMillis: Long,
-        clock: InternalClock
-    ): T < Fibers =
+    final override def addEnsure(f: () => Unit) =
+        ensures = ensures.add(f)
 
-        if preempt() then
-            if isDone() then
-                ensures.finalize()
-                ensures = Ensures.empty
-                nullIO
-            else
-                curr
-        else
-            curr match
-                case kyo: Suspend[?, ?, ?, ?] =>
-                    if kyo.tag =:= Tag[IOs] then
-                        val k = kyo.asInstanceOf[Suspend[IO, Unit, T, Fibers]]
-                        eval(k((), this, locals), scheduler, startMillis, clock)
-                    else if kyo.tag =:= Tag[FiberGets] then
-                        val k = kyo.asInstanceOf[Suspend[Fiber, Any, T, Fibers]]
-                        k.command match
-                            case Promise(p) =>
-                                this.interrupts(p)
+    final override def removeEnsure(f: () => Unit) =
+        ensures = ensures.remove(f)
+
+    private inline def erasedAbortTag = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
+
+    final private def eval(startMillis: Long, clock: InternalClock)(using Safepoint) =
+        try
+            curr = Boundary.restoring(trace, this) {
+                Effect.handle.partial(Tag[IO], erasedAbortTag, Tag[Async.Join], curr, context)(
+                    stop = shouldPreempt(),
+                    [C] => (input, cont) => cont(()),
+                    [C] =>
+                        (input, cont) =>
+                            locally {
+                                completeUnit(input.asInstanceOf[Result[E, A]])
+                                nullResult
+                        },
+                    [C] =>
+                        (input, cont) =>
+                            locally {
                                 val runtime = (clock.currentMillis() - startMillis + this.runtime()).toInt
-                                p.onComplete { r =>
-                                    val io = IOs(k(
-                                        IOs(r.get),
-                                        this.asInstanceOf[Safepoint[FiberGets]],
-                                        locals
-                                    ))
-                                    this.become(IOTask(io, locals, ensures, runtime))
-                                    ()
+                                this.interrupts(input)
+                                val ensures = this.ensures
+                                this.ensures = Ensures.empty
+                                val trace = this.trace
+                                this.trace = null.asInstanceOf[Trace]
+                                input.onComplete { r =>
+                                    val task = IOTask(IO(cont(r.asInstanceOf[Result[Nothing, C]])), trace, context, ensures, runtime)
+                                    this.becomeUnit(task)
                                 }
-                                nullIO
-                            case Done(v) =>
-                                eval(
-                                    k(IOs(v.get), this.asInstanceOf[Safepoint[FiberGets]], locals),
-                                    scheduler,
-                                    startMillis,
-                                    clock
-                                )
-                        end match
-                    else
-                        IOs(bug.failTag(kyo, Tag.Intersection[FiberGets & IOs]))
-                case _ =>
-                    complete(Result.success(curr.asInstanceOf[T]))
-                    finalize()
-                    nullIO
-        end if
+                                nullResult
+                        }
+                )
+            }
+            if !isNull(curr) then
+                curr.evalNow.foreach(a => completeUnit(Result.success(a)))
+        catch
+            case ex =>
+                completeUnit(Result.panic(ex))
+        end try
     end eval
 
-    def run(startMillis: Long, clock: InternalClock) =
-        val scheduler = Scheduler.get
-        try
-            curr = eval(curr, scheduler, startMillis, clock)
-        catch
-            case ex if (NonFatal(ex)) =>
-                complete(Result.failure(ex))
-                curr = nullIO
-        end try
-        if !isNull(curr) then
-            Task.Preempted
-        else
+    final def run(startMillis: Long, clock: InternalClock): Task.Result =
+        val safepoint = Safepoint.get
+        eval(startMillis, clock)(using safepoint)
+        if isNull(curr) || !isPending() then
+            ensures.run()
+            ensures = Ensures.empty
+            if !isNull(trace) then
+                safepoint.releaseTrace(trace)
+                trace = null.asInstanceOf[Trace]
+            curr = nullResult
             Task.Done
+        else
+            Task.Preempted
         end if
     end run
 
-    def ensure(f: () => Unit): Unit =
-        if !isNull(curr) then
-            ensures = ensures.add(f)
-
-    def remove(f: () => Unit): Unit =
-        ensures = ensures.remove(f)
+    private inline def nullResult = null.asInstanceOf[A < Ctx & Async & Abort[E]]
 
 end IOTask
 
-private[kyo] object IOTask:
+object IOTask:
 
-    private def nullIO[T] = null.asInstanceOf[T < IOs]
+    private val _frame                = Frame.derive
+    private inline given frame: Frame = _frame
 
-    def apply[T](
-        v: T < Fibers,
-        st: Locals.State
-    ): IOTask[T] =
-        apply(v, st, Ensures.empty, 1)
-
-    def apply[T](
-        v: T < Fibers,
-        st: Locals.State,
-        ensures: Ensures,
-        runtime: Int
-    ): IOTask[T] =
-        val f =
-            if st eq Locals.State.empty then
-                new IOTask[T](v, ensures)
+    def apply[Ctx, E, A](
+        curr: A < (Ctx & Async & Abort[E]),
+        trace: Trace,
+        context: Context,
+        ensures: Ensures = Ensures.empty,
+        runtime: Int = 0
+    )(using Frame, Flat[A]): IOTask[Ctx, E, A] =
+        val ctx = context
+        val task =
+            if ctx.isEmpty then
+                new IOTask(curr, trace, ensures)
             else
-                new IOTask[T](v, ensures):
-                    override def locals: State = st
-        f.addRuntime(runtime)
-        Scheduler.get.schedule(f)
-        f
+                new IOTask(curr, trace, ensures):
+                    override def context = ctx
+        task.addRuntime(runtime)
+        Scheduler.get.schedule(task)
+        task
     end apply
+
 end IOTask

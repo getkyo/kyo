@@ -16,10 +16,10 @@ class OTelTraceReceiver extends TraceReceiver {
     def startSpan(
         scope: List[String],
         name: String,
-        parent: Option[Span],
+        parent: Maybe[Span],
         attributes: Attributes
-    ): Span < IOs =
-        IOs {
+    ): Span < IO =
+        IO {
             val b =
                 otel.getTracer(scope.mkString("_"))
                     .spanBuilder(name)

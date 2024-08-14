@@ -11,9 +11,9 @@ trait TraceReceiver:
     def startSpan(
         scope: List[String],
         name: String,
-        parent: Option[Span] = None,
+        parent: Maybe[Span] = Maybe.empty,
         attributes: Attributes = Attributes.empty
-    ): Span < IOs
+    ): Span < IO
 end TraceReceiver
 
 object TraceReceiver:
@@ -32,7 +32,7 @@ object TraceReceiver:
             def startSpan(
                 scope: List[String],
                 name: String,
-                parent: Option[Span] = None,
+                parent: Maybe[Span] = Maybe.empty,
                 attributes: Attributes = Attributes.empty
             ) =
                 Span.noop
@@ -42,9 +42,9 @@ object TraceReceiver:
             def startSpan(
                 scope: List[String],
                 name: String,
-                parent: Option[Span] = None,
+                parent: Maybe[Span] = Maybe.empty,
                 a: Attributes = Attributes.empty
             ) =
-                Seqs.map(receivers)(_.startSpan(scope, name, None, a))
+                Kyo.seq.map(receivers)(_.startSpan(scope, name, Maybe.empty, a))
                     .map(Span.all)
 end TraceReceiver

@@ -1,6 +1,5 @@
-package kyoTest
+package kyo
 
-import kyo.*
 import scala.concurrent.duration.Duration as ScalaDuration
 import zio.Duration as ZDuration
 import zio.test.*

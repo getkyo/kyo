@@ -1,4 +1,4 @@
-package kyo2
+package kyo
 
 import kyo.Tag
 import scala.collection.immutable
@@ -13,8 +13,8 @@ package object kernel:
 
     private object internal:
 
-        inline def maxStackDepth  = 300
-        inline def maxTraceFrames = 32
+        inline def maxStackDepth  = 512
+        inline def maxTraceFrames = 16
 
         type IX[_]
         type OX[_]
@@ -46,6 +46,7 @@ package object kernel:
         abstract class KyoDefer[A, S] extends KyoSuspend[Const[Unit], Const[Unit], Defer, Any, A, S]:
             final def tag   = Tag[Defer]
             final def input = ()
+        end KyoDefer
 
     end internal
 end kernel

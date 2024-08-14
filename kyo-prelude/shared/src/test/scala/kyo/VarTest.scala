@@ -1,78 +1,111 @@
-package kyoTest
+package kyo
 
-import kyo.*
-
-class varsTest extends KyoTest:
+class VarTest extends Test:
 
     "get" in {
-        val r = Vars.run(1)(Vars.get[Int].map(_ + 1)).pure
+        val r = Var.run(1)(Var.get[Int].map(_ + 1)).eval
         assert(r == 2)
     }
 
     "use" in {
-        val r = Vars.run(1)(Vars.use[Int](_ + 1)).pure
+        val r = Var.run(1)(Var.use[Int](_ + 1)).eval
+        assert(r == 2)
+    }
+
+    "setUnit, get" in {
+        val r = Var.run(1)(Var.setDiscard(2).andThen(Var.get[Int])).eval
         assert(r == 2)
     }
 
     "set, get" in {
-        val r = Vars.run(1)(Vars.set(2).andThen(Vars.get[Int])).pure
+        val r = Var.run(1)(Var.set(2)).eval
+        assert(r == 1)
+    }
+
+    "get, setUnit, get" in {
+        val r = Var.run(1)(
+            Var.get[Int].map(i => Var.setDiscard[Int](i + 1)).andThen(Var.get[Int])
+        ).eval
         assert(r == 2)
     }
 
-    "get, set, get" in {
-        val r = Vars.run(1)(
-            Vars.get[Int].map(i => Vars.set[Int](i + 1)).andThen(Vars.get[Int])
-        ).pure
-        assert(r == 2)
+    "get, set" in {
+        val r = Var.run(1)(
+            Var.get[Int].map(i => Var.set[Int](i + 1))
+        ).eval
+        assert(r == 1)
     }
 
     "update" in {
-        val r = Vars.run(1)(Vars.update[Int](_ + 1).andThen(Vars.get[Int])).pure
+        val r = Var.run(1)(Var.update[Int](_ + 1)).eval
         assert(r == 2)
     }
 
+    "updateUnit" in {
+        val r = Var.run(1)(Var.updateDiscard[Int](_ + 1).andThen(Var.get[Int])).eval
+        assert(r == 2)
+    }
+
+    "runTuple" in {
+        val r = Var.runTuple(1)(Var.update[Int](_ + 1).unit.andThen(Var.get[Int]).map(_ + 1)).eval
+        assert(r == (2, 3))
+    }
+
+    "scope" - {
+        "should not affect the outer state" in {
+            val result = Var.run(42)(
+                Var.run(24)(Var.get[Int]).map(_ => Var.get[Int])
+            )
+            assert(result.eval == 42)
+        }
+
+        "should allow updating the local state" in {
+            val result = Var.run(42)(
+                Var.run(24)(Var.update[Int](_ + 1).map(_ => Var.get[Int]))
+            )
+            assert(result.eval == 25)
+        }
+    }
+
     "nested let" in {
-        IOs.run {
-            Vars.run[Int](1) {
-                IOs {
-                    Vars.run[Int](2) {
-                        Vars.get[Int].map { innerValue =>
-                            assert(innerValue == 2)
-                        }
-                    }
-                }.unit.andThen(Vars.get[Int])
-                    .map { outerValue =>
-                        assert(outerValue == 1)
-                    }
-            }
-        }.pure
+        Var.run(1) {
+            Var.run(2) {
+                Var.get[Int].map { innerValue =>
+                    assert(innerValue == 2)
+                }
+            }.unit.andThen(Var.get[Int])
+                .map { outerValue =>
+                    assert(outerValue == 1)
+                }
+        }.eval
     }
 
     "string value" in {
-        val result = Vars.run("a")(Vars.set("b").andThen(Vars.get[String])).pure
+        val result = Var.run("a")(Var.setDiscard("b").andThen(Var.get[String])).eval
         assert(result == "b")
     }
 
     "side effect" in {
         var calls = 0
         val result =
-            Vars.run(1) {
+            Var.run(1) {
                 for
-                    _ <- Vars.update[Int] { value =>
+                    u <- Var.update[Int] { value =>
                         calls += 1
                         value + 1
                     }
-                    result <- Vars.get[Int]
-                yield result
-            }.pure
-        assert(result == 2 && calls == 1)
+                    result <- Var.get[Int]
+                yield (u, result)
+            }.eval
+        assert(result == (2, 2) && calls == 1)
     }
 
     "inference" in {
-        val a: Int < Vars[Int]                   = Vars.get[Int]
-        val b: Unit < (Vars[Int] & Vars[String]) = a.map(i => Vars.set(i.toString()))
-        val c: Unit < Vars[String]               = Vars.run(1)(b)
-        val d: Unit < Any                        = Vars.run("t")(c)
-        assert(d.pure == ())
+        val a: Int < Var[Int]                    = Var.get[Int]
+        val b: Unit < (Var[Int] & Var[String])   = a.map(i => Var.setDiscard(i.toString()))
+        val c: String < (Var[Int] & Var[String]) = b.andThen(Var.set("c"))
+        val d: String < Var[String]              = Var.run(1)(c)
+        val e: String < Any                      = Var.run("t")(d)
+        assert(e.eval == "1")
     }
-end varsTest
+end VarTest

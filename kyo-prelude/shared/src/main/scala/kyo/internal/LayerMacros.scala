@@ -60,7 +60,7 @@ private[kyo] object LayerMacros:
                     },
                     { case ('{ $left: Layer[out1, s1] }, right) =>
                         right match
-                            case '{ $right: Layer[out2, Envs[`out1`] & s2] } =>
+                            case '{ $right: Layer[out2, Env[`out1`] & s2] } =>
                                 '{ $left.to($right) }
                     },
                     _.value, {
@@ -103,8 +103,8 @@ private[kyo] object LayerMacros:
     def extractEnvs(using Quotes)(typeRepr: reflect.TypeRepr): Set[reflect.TypeRepr] =
         import reflect.*
         typeRepr.asType match
-            case '[Envs[tpe]] => flattenAnd(TypeRepr.of[tpe])
-            case _            => Set.empty
+            case '[Env[tpe]] => flattenAnd(TypeRepr.of[tpe])
+            case _           => Set.empty
     end extractEnvs
 
     def flattenAnd(using Quotes)(typeRepr: reflect.TypeRepr): Set[reflect.TypeRepr] =

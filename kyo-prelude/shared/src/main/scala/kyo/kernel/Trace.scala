@@ -1,4 +1,4 @@
-package kyo2.kernel
+package kyo.kernel
 
 import internal.*
 import java.util.Arrays
@@ -20,40 +20,40 @@ object Trace:
         final private var frames = new Array[Frame](maxTraceFrames)
         final private var index  = 0
 
-        final private[kernel] def pushFrame(frame: Frame): Unit =
+        private[kernel] inline def pushFrame(frame: Frame): Unit =
             val idx = this.index
             frames(idx & (maxTraceFrames - 1)) = frame
             this.index = idx + 1
         end pushFrame
 
         final private[kernel] def saveTrace(): Trace =
-            val newTrace   = borrow()
-            val newFrames  = newTrace.frames
-            val copyLength = math.min(index, maxTraceFrames)
+            val newTrace  = borrow()
+            val newFrames = newTrace.frames
+            val newIndex  = math.min(index, maxTraceFrames)
 
             if index <= maxTraceFrames then
-                System.arraycopy(frames, 0, newFrames, 0, copyLength)
+                System.arraycopy(frames, 0, newFrames, 0, newIndex)
             else
                 val splitIndex      = index & (maxTraceFrames - 1)
                 val firstPartLength = maxTraceFrames - splitIndex
                 System.arraycopy(frames, splitIndex, newFrames, 0, firstPartLength)
                 System.arraycopy(frames, 0, newFrames, firstPartLength, splitIndex)
             end if
-            newTrace.index = Math.min(maxTraceFrames, index)
+            newTrace.index = newIndex
             newTrace
         end saveTrace
 
-        final private[kyo2] def copyTrace(trace: Trace): Trace =
+        final private[kyo] def copyTrace(trace: Trace): Trace =
             val newTrace = borrow()
             System.arraycopy(trace.frames, 0, newTrace.frames, 0, Math.min(trace.index, maxTraceFrames - 1))
             newTrace.index = trace.index
             newTrace
         end copyTrace
 
-        final private[kyo2] def releaseTrace(trace: Trace): Unit =
+        final private[kyo] def releaseTrace(trace: Trace): Unit =
             release(trace)
 
-        private[kernel] inline def withTrace[T](trace: Trace)(inline f: => T)(using frame: Frame): T =
+        private[kernel] inline def withTrace[A](trace: Trace)(inline f: => A)(using frame: Frame): A =
             val prevFrames = frames
             val prevIdx    = index
             frames = trace.frames
@@ -70,7 +70,7 @@ object Trace:
             end try
         end withTrace
 
-        private[kernel] inline def withNewTrace[T](inline f: => T)(using Frame): T =
+        private[kernel] inline def withNewTrace[A](inline f: => A)(using Frame): A =
             val trace: Trace = borrow()
             try
                 withTrace(trace)(f)

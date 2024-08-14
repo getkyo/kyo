@@ -1,4 +1,4 @@
-package kyo2
+package kyo
 
 object Ansi:
 

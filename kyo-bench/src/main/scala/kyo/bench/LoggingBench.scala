@@ -7,11 +7,11 @@ class LoggingBench extends Bench.SyncAndFork(()):
     def kyoBench() =
         import kyo.*
 
-        def loop(i: Int): Unit < IOs =
+        def loop(i: Int): Unit < IO =
             if i > depth then
                 ()
             else
-                Logs.error("test").flatMap { _ =>
+                Log.error("test").flatMap { _ =>
                     loop(i + 1)
                 }
         loop(0)

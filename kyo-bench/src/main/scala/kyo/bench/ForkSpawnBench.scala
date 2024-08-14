@@ -33,18 +33,18 @@ class ForkSpawnBench extends Bench.ForkOnly(()):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def repeat[A](n: Int)(io: A < IOs): A < IOs =
+        def repeat[A](n: Int)(io: A < IO): A < IO =
             if n <= 1 then io
             else io.flatMap(_ => repeat(n - 1)(io))
 
-        def loop(cdl: Latch, level: Int): Unit < Fibers =
+        def loop(cdl: Latch, level: Int): Unit < Async =
             if level == depth then
                 cdl.release
             else
-                repeat(width)(Fibers.init(loop(cdl, level + 1)).map(_ => ()))
+                repeat(width)(Async.run(loop(cdl, level + 1)).map(_ => ()))
 
         for
-            cdl <- Latches.init(total)
+            cdl <- Latch.init(total)
             _   <- loop(cdl, 0)
             _   <- cdl.await
         yield {}

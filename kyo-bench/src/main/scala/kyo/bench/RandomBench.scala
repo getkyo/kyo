@@ -9,13 +9,13 @@ class RandomBench extends Bench.SyncAndFork(()):
 
         def rand() =
             for
-                _ <- Randoms.nextInt
-                _ <- Randoms.nextLong
-                _ <- Randoms.nextBoolean
-                _ <- Randoms.nextFloat
+                _ <- Random.nextInt
+                _ <- Random.nextLong
+                _ <- Random.nextBoolean
+                _ <- Random.nextFloat
             yield ()
 
-        def loop(i: Int): Unit < IOs =
+        def loop(i: Int): Unit < IO =
             if i > depth then
                 ()
             else

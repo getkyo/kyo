@@ -37,7 +37,7 @@ class HttpClientContentionBench
     override def kyoBenchFiber() =
         import kyo.*
 
-        Fibers.parallel(Seq.fill(concurrency)(Requests.run(Requests[String](_.get(kyoUrl)))))
+        Async.parallel(Seq.fill(concurrency)(Abort.run(Request(_.get(kyoUrl))).map(_.getOrThrow)))
     end kyoBenchFiber
 
     val zioUrl =

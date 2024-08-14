@@ -1,250 +1,253 @@
-package kyo
+package kyo.kernel
 
-import kyo.core.internal.Kyo
-import kyo.internal.Trace
+import internal.*
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.util.NotGiven
 
-object Loops:
+object Loop:
 
-    private case class Continue[Input](input: Input)
-    private case class Continue2[Input1, Input2](input1: Input1, input2: Input2)
-    private case class Continue3[Input1, Input2, Input3](input1: Input1, input2: Input2, input3: Input3)
+    abstract class Continue[A]:
+        private[Loop] def _1: A
+    abstract class Continue2[A, B]:
+        private[Loop] def _1: A
+        private[Loop] def _2: B
+    abstract class Continue3[A, B, C]:
+        private[Loop] def _1: A
+        private[Loop] def _2: B
+        private[Loop] def _3: C
+    end Continue3
+    abstract class Continue4[A, B, C, D]:
+        private[Loop] def _1: A
+        private[Loop] def _2: B
+        private[Loop] def _3: C
+        private[Loop] def _4: D
+    end Continue4
 
-    opaque type Result[Input, Output]                   = Output | Continue[Input]
-    opaque type Result2[Input1, Input2, Output]         = Output | Continue2[Input1, Input2]
-    opaque type Result3[Input1, Input2, Input3, Output] = Output | Continue3[Input1, Input2, Input3]
+    opaque type Result[A, O]           = O | Continue[A]
+    opaque type Result2[A, B, O]       = O | Continue2[A, B]
+    opaque type Result3[A, B, C, O]    = O | Continue3[A, B, C]
+    opaque type Result4[A, B, C, D, O] = O | Continue4[A, B, C, D]
 
-    private val _continueUnit = Continue[Unit](())
+    private val _continueUnit: Continue[Unit] =
+        new Continue:
+            def _1 = ()
 
-    inline def continue[T]: Result[Unit, T] = _continueUnit
+    inline def continue[A]: Result[Unit, A] = _continueUnit
 
     @targetName("done0")
-    def done[T]: Result[T, Unit] = ()
+    def done[A]: Result[A, Unit] = ()
     @targetName("done1")
-    def done[Input, Output](v: Output): Result[Input, Output] = v
+    def done[A, O](v: O): Result[A, O] = v
     @targetName("done2")
-    def done[Input1, Input2, Output](v: Output): Result2[Input1, Input2, Output] = v
+    def done[A, B, O](v: O): Result2[A, B, O] = v
     @targetName("done3")
-    def done[Input1, Input2, Input3, Output](v: Output): Result3[Input1, Input2, Input3, Output] = v
+    def done[A, B, C, O](v: O): Result3[A, B, C, O] = v
+    @targetName("done4")
+    def done[A, B, C, D, O](v: O): Result4[A, B, C, D, O] = v
 
-    inline def continue[Input, Output, S](v: Input): Result[Input, Output] = Continue(v)
+    inline def continue[A, O, S](inline v: A): Result[A, O] =
+        new Continue:
+            def _1 = v
 
-    inline def continue[Input1, Input2, Output](
-        v1: Input1,
-        v2: Input2
-    ): Result2[Input1, Input2, Output] = Continue2(v1, v2)
+    inline def continue[A, B, o](inline v1: A, inline v2: B): Result2[A, B, o] =
+        new Continue2:
+            def _1 = v1
+            def _2 = v2
 
-    inline def continue[Input1, Input2, Input3, Output](
-        v1: Input1,
-        v2: Input2,
-        v3: Input3
-    ): Result3[Input1, Input2, Input3, Output] = Continue3(v1, v2, v3)
+    inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Result3[A, B, C, O] =
+        new Continue3:
+            def _1 = v1
+            def _2 = v2
+            def _3 = v3
 
-    inline def transform[Input, Output: Flat, S](
-        input: Input
-    )(
-        inline run: Input => Result[Input, Output] < S
-    )(using Trace): Output < S =
-        def _loop(input: Input): Output < S =
-            loop(input)
-        @tailrec def loop(input: Input): Output < S =
-            run(input) match
-                case next: Continue[Input] @unchecked =>
-                    loop(next.input)
-                case kyo: Kyo[Output | Continue[Input], S] @unchecked =>
-                    kyo.map {
-                        case next: Continue[Input] =>
-                            _loop(next.input)
-                        case res =>
-                            res.asInstanceOf[Output]
-                    }
+    inline def continue[A, B, C, D, O](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Result4[A, B, C, D, O] =
+        new Continue4:
+            def _1 = v1
+            def _2 = v2
+            def _3 = v3
+            def _4 = v4
+
+    inline def apply[A, O, S](inline input: A)(inline run: A => Result[A, O] < S)(using inline _frame: Frame): O < S =
+        @tailrec def loop(i1: A)(v: Result[A, O] < S = run(i1)): O < S =
+            v match
+                case next: Continue[A] @unchecked =>
+                    loop(next._1)()
+                case kyo: KyoSuspend[IX, OX, EX, Any, Result[A, O], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(i1)(kyo(v, context))
                 case res =>
-                    res.asInstanceOf[Output]
-        loop(input)
-    end transform
+                    res.asInstanceOf[O]
+        loop(input)()
+    end apply
 
-    inline def transform[Input1, Input2, Output: Flat, S](
-        input1: Input1,
-        input2: Input2
-    )(
-        inline run: (Input1, Input2) => Result2[Input1, Input2, Output] < S
-    )(using Trace): Output < S =
-        def _loop(input1: Input1, input2: Input2): Output < S =
-            loop(input1, input2)
-        @tailrec def loop(input1: Input1, input2: Input2): Output < S =
-            run(input1, input2) match
-                case next: Continue2[Input1, Input2] @unchecked =>
-                    loop(next.input1, next.input2)
-                case kyo: Kyo[Output | Continue2[Input1, Input2], S] @unchecked =>
-                    kyo.map {
-                        case next: Continue2[Input1, Input2] @unchecked =>
-                            _loop(next.input1, next.input2)
-                        case res =>
-                            res.asInstanceOf[Output]
-                    }
+    inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Result2[A, B, O] < S)(using inline _frame: Frame): O < S =
+        @tailrec def loop(i1: A, i2: B)(v: Result2[A, B, O] < S = run(i1, i2)): O < S =
+            v match
+                case next: Continue2[A, B] @unchecked =>
+                    loop(next._1, next._2)()
+                case kyo: KyoSuspend[IX, OX, EX, Any, Result2[A, B, O], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(i1, i2)(kyo(v, context))
                 case res =>
-                    res.asInstanceOf[Output]
-        loop(input1, input2)
-    end transform
+                    res.asInstanceOf[O]
+        loop(input1, input2)()
+    end apply
 
-    inline def transform[Input1, Input2, Input3, Output: Flat, S](
-        input1: Input1,
-        input2: Input2,
-        input3: Input3
-    )(
-        inline run: (Input1, Input2, Input3) => Result3[Input1, Input2, Input3, Output] < S
-    )(using Trace): Output < S =
-        def _loop(input1: Input1, input2: Input2, input3: Input3): Output < S =
-            loop(input1, input2, input3)
-        @tailrec def loop(input1: Input1, input2: Input2, input3: Input3): Output < S =
-            run(input1, input2, input3) match
-                case next: Continue3[Input1, Input2, Input3] @unchecked =>
-                    loop(next.input1, next.input2, next.input3)
-                case kyo: Kyo[Output | Continue3[Input1, Input2, Input3], S] @unchecked =>
-                    kyo.map {
-                        case next: Continue3[Input1, Input2, Input3] =>
-                            _loop(next.input1, next.input2, next.input3)
-                        case res =>
-                            res.asInstanceOf[Output]
-                    }
+    inline def apply[A, B, C, O, S](input1: A, input2: B, input3: C)(
+        inline run: (A, B, C) => Result3[A, B, C, O] < S
+    )(using inline _frame: Frame): O < S =
+        @tailrec def loop(i1: A, i2: B, i3: C)(v: Result3[A, B, C, O] < S = run(i1, i2, i3)): O < S =
+            v match
+                case next: Continue3[A, B, C] @unchecked =>
+                    loop(next._1, next._2, next._3)()
+                case kyo: KyoSuspend[IX, OX, EX, Any, Result3[A, B, C, O], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(i1, i2, i3)(kyo(v, context))
                 case res =>
-                    res.asInstanceOf[Output]
-        loop(input1, input2, input3)
-    end transform
+                    res.asInstanceOf[O]
+        loop(input1, input2, input3)()
+    end apply
 
-    inline def indexed[Output: Flat, S](
-        inline run: Int => Result[Unit, Output] < S
-    )(using Trace): Output < S =
-        def _loop(idx: Int): Output < S =
-            loop(idx)
-        @tailrec def loop(idx: Int): Output < S =
-            run(idx) match
+    inline def apply[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
+        inline run: (A, B, C, D) => Result4[A, B, C, D, O] < S
+    )(using inline _frame: Frame): O < S =
+        @tailrec def loop(i1: A, i2: B, i3: C, i4: D)(v: Result4[A, B, C, D, O] < S = run(i1, i2, i3, i4)): O < S =
+            v match
+                case next: Continue4[A, B, C, D] @unchecked =>
+                    loop(next._1, next._2, next._3, next._4)()
+                case kyo: KyoSuspend[IX, OX, EX, Any, Result4[A, B, C, D, O], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(i1, i2, i3, i4)(kyo(v, context))
+                case res =>
+                    res.asInstanceOf[O]
+        loop(input1, input2, input3, input4)()
+    end apply
+
+    inline def indexed[O, S](inline run: Int => Result[Unit, O] < S)(using inline _frame: Frame): O < S =
+        @tailrec def loop(idx: Int)(v: Result[Unit, O] < S = run(idx)): O < S =
+            v match
                 case next: Continue[Unit] @unchecked =>
-                    loop(idx + 1)
-                case kyo: Kyo[Output | Continue[Unit], S] @unchecked =>
-                    kyo.map {
-                        case next: Continue[Unit] @unchecked =>
-                            _loop(idx + 1)
-                        case res =>
-                            res.asInstanceOf[Output]
-                    }
+                    loop(idx + 1)()
+                case kyo: KyoSuspend[IX, OX, EX, Any, Result[Unit, O], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(idx)(kyo(v, context))
                 case res =>
-                    res.asInstanceOf[Output]
-        loop(0)
+                    res.asInstanceOf[O]
+        loop(0)()
     end indexed
 
-    inline def indexed[Input, Output: Flat, S](
-        input: Input
-    )(
-        inline run: (Int, Input) => Result[Input, Output] < S
-    )(using Trace): Output < S =
-        def _loop(idx: Int, input: Input): Output < S =
-            loop(idx, input)
-        @tailrec def loop(idx: Int, input: Input): Output < S =
-            run(idx, input) match
-                case next: Continue[Input] @unchecked =>
-                    loop(idx + 1, next.input)
-                case kyo: Kyo[Output | Continue[Input], S] @unchecked =>
-                    kyo.map {
-                        case next: Continue[Input] @unchecked =>
-                            _loop(idx + 1, next.input)
-                        case res =>
-                            res.asInstanceOf[Output]
-                    }
+    inline def indexed[A, O, S](input: A)(inline run: (Int, A) => Result[A, O] < S)(using inline _frame: Frame): O < S =
+        @tailrec def loop(idx: Int, i1: A)(v: Result[A, O] < S = run(idx, i1)): O < S =
+            v match
+                case next: Continue[A] @unchecked =>
+                    loop(idx + 1, next._1)()
+                case kyo: KyoSuspend[IX, OX, EX, Any, Result[A, O], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(idx, i1)(kyo(v, context))
                 case res =>
-                    res.asInstanceOf[Output]
-        loop(0, input)
+                    res.asInstanceOf[O]
+        loop(0, input)()
     end indexed
 
-    inline def indexed[Input1, Input2, Output: Flat, S](
-        input1: Input1,
-        input2: Input2
-    )(
-        inline run: (Int, Input1, Input2) => Result2[Input1, Input2, Output] < S
-    )(using Trace): Output < S =
-        def _loop(idx: Int, input1: Input1, input2: Input2): Output < S =
-            loop(idx, input1, input2)
-        @tailrec def loop(idx: Int, input1: Input1, input2: Input2): Output < S =
-            run(idx, input1, input2) match
-                case next: Continue2[Input1, Input2] @unchecked =>
-                    loop(idx + 1, next.input1, next.input2)
-                case kyo: Kyo[Output | Continue2[Input1, Input2], S] @unchecked =>
-                    kyo.map {
-                        case next: Continue2[Input1, Input2] =>
-                            _loop(idx + 1, next.input1, next.input2)
-                        case res =>
-                            res.asInstanceOf[Output]
-                    }
+    inline def indexed[A, B, O, S](input1: A, input2: B)(
+        inline run: (Int, A, B) => Result2[A, B, O] < S
+    )(using inline _frame: Frame): O < S =
+        @tailrec def loop(idx: Int, i1: A, i2: B)(v: Result2[A, B, O] < S = run(idx, i1, i2)): O < S =
+            v match
+                case next: Continue2[A, B] @unchecked =>
+                    loop(idx + 1, next._1, next._2)()
+                case kyo: KyoSuspend[IX, OX, EX, Any, Result2[A, B, O], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(idx, i1, i2)(kyo(v, context))
                 case res =>
-                    res.asInstanceOf[Output]
-        loop(0, input1, input2)
+                    res.asInstanceOf[O]
+        loop(0, input1, input2)()
     end indexed
 
-    inline def indexed[Input1, Input2, Input3, Output: Flat, S](
-        input1: Input1,
-        input2: Input2,
-        input3: Input3
-    )(
-        inline run: (Int, Input1, Input2, Input3) => Result3[Input1, Input2, Input3, Output] < S
-    )(using Trace): Output < S =
-        def _loop(idx: Int, input1: Input1, input2: Input2, input3: Input3): Output < S =
-            loop(idx, input1, input2, input3)
-        @tailrec def loop(idx: Int, input1: Input1, input2: Input2, input3: Input3): Output < S =
-            run(idx, input1, input2, input3) match
-                case next: Continue3[Input1, Input2, Input3] @unchecked =>
-                    loop(idx + 1, next.input1, next.input2, next.input3)
-                case kyo: Kyo[Output | Continue3[Input1, Input2, Input3], S] @unchecked =>
-                    kyo.map {
-                        case next: Continue3[Input1, Input2, Input3] =>
-                            _loop(idx + 1, next.input1, next.input2, next.input3)
-                        case res =>
-                            res.asInstanceOf[Output]
-                    }
+    inline def indexed[A, B, C, O, S](input1: A, input2: B, input3: C)(
+        inline run: (Int, A, B, C) => Result3[A, B, C, O] < S
+    )(using inline _frame: Frame): O < S =
+        @tailrec def loop(idx: Int, i1: A, i2: B, i3: C)(v: Result3[A, B, C, O] < S = run(idx, i1, i2, i3)): O < S =
+            v match
+                case next: Continue3[A, B, C] @unchecked =>
+                    loop(idx + 1, next._1, next._2, next._3)()
+                case kyo: KyoSuspend[IX, OX, EX, Any, Result3[A, B, C, O], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(idx, i1, i2, i3)(kyo(v, context))
                 case res =>
-                    res.asInstanceOf[Output]
-        loop(0, input1, input2, input3)
+                    res.asInstanceOf[O]
+        loop(0, input1, input2, input3)()
     end indexed
 
-    inline def foreach[S](
-        inline run: => Result[Unit, Unit] < S
-    )(using Trace): Unit < S =
-        def _loop(): Unit < S =
-            loop()
-        @tailrec def loop(): Unit < S =
-            run match
+    inline def indexed[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
+        inline run: (Int, A, B, C, D) => Result4[A, B, C, D, O] < S
+    )(using inline _frame: Frame): O < S =
+        @tailrec def loop(idx: Int, i1: A, i2: B, i3: C, i4: D)(v: Result4[A, B, C, D, O] < S = run(idx, i1, i2, i3, i4)): O < S =
+            v match
+                case next: Continue4[A, B, C, D] @unchecked =>
+                    loop(idx + 1, next._1, next._2, next._3, next._4)()
+                case kyo: KyoSuspend[IX, OX, EX, Any, Result4[A, B, C, D, O], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, O, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(idx, i1, i2, i3, i4)(kyo(v, context))
+                case res =>
+                    res.asInstanceOf[O]
+        loop(0, input1, input2, input3, input4)()
+    end indexed
+
+    inline def foreach[S](inline run: => Result[Unit, Unit] < S)(using inline _frame: Frame): Unit < S =
+        @tailrec def loop(v: Result[Unit, Unit] < S = run): Unit < S =
+            v match
                 case next: Continue[Unit] @unchecked =>
                     loop()
-                case kyo: Kyo[Unit | Continue[Unit], S] @unchecked =>
-                    kyo.map {
-                        case next: Continue[Unit] =>
-                            _loop()
-                        case res =>
-                            ()
-                    }
+                case kyo: KyoSuspend[IX, OX, EX, Any, Result[Unit, Unit], S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            loop(kyo(v, context))
                 case res =>
                     ()
         loop()
     end foreach
 
-    inline def repeat[S](n: Int)(inline run: => Unit < S)(using Trace): Unit < S =
-        def _loop(i: Int): Unit < S =
-            loop(i)
-        @tailrec def loop(i: Int = 0): Unit < S =
+    inline def repeat[S](n: Int)(inline run: => Unit < S)(using inline _frame: Frame): Unit < S =
+        @tailrec def loop(i: Int)(v: Result[Unit, Unit] < S = run): Unit < S =
             if i == n then ()
             else
-                run match
-                    case kyo: Kyo[Unit, S] @unchecked =>
-                        kyo.andThen(_loop(i + 1))
+                v match
+                    case kyo: KyoSuspend[IX, OX, EX, Any, Result[Unit, Unit], S] @unchecked =>
+                        new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
+                            def frame = _frame
+                            def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                loop(i)(kyo(v, context))
+                        end new
                     case _ =>
-                        loop(i + 1)
-        loop()
+                        loop(i + 1)()
+            end if
+        end loop
+        loop(0)()
     end repeat
 
-    inline def forever[S](inline run: Unit < S)(using Trace): Unit < S =
-        def _loop(): Unit < S =
-            loop()
+    inline def forever[S](inline run: Unit < S)(using Frame): Unit < S =
+        def _loop(): Unit < S = loop()
         @tailrec def loop(): Unit < S =
             run match
                 case kyo: Kyo[Unit, S] @unchecked =>
@@ -253,4 +256,4 @@ object Loops:
                     loop()
         loop()
     end forever
-end Loops
+end Loop

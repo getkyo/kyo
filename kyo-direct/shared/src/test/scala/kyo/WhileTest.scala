@@ -1,16 +1,15 @@
-package kyoTest
+package kyo
 
-import kyo.*
 import kyo.TestSupport.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 import scala.collection.mutable.ArrayBuffer
 
-class whileTest extends AnyFreeSpec with Assertions:
+class WhileTest extends AnyFreeSpec with Assertions:
 
     "with atomic" in {
         runLiftTest(3) {
-            val i = await(Atomics.initInt(0))
+            val i = await(AtomicInt.init(0))
             while await(i.get) < 3 do
                 await(i.incrementAndGet)
                 ()
@@ -34,8 +33,8 @@ class whileTest extends AnyFreeSpec with Assertions:
         val out =
             defer {
                 while i < 3 do
-                    await(IOs(incrementA()))
-                    await(IOs(incrementB()))
+                    await(IO(incrementA()))
+                    await(IO(incrementB()))
                     ()
                 end while
                 i
@@ -46,4 +45,4 @@ class whileTest extends AnyFreeSpec with Assertions:
             assert(a == 4 && buff1.toList == List(1, 3) && buff2.toList == List(2, 4))
         )
     }
-end whileTest
+end WhileTest

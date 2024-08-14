@@ -1,8 +1,9 @@
-package kyoTest
+package kyo.kernel
 
 import kyo.*
+import kyo.Tag
 
-class FlatTest extends KyoTest:
+class FlatTest extends Test:
 
     "ok" - {
         "concrete" in {
@@ -11,13 +12,9 @@ class FlatTest extends KyoTest:
             implicitly[Flat[Thread]]
             succeed
         }
-        "fiber" in {
-            implicitly[Flat[Fiber[Int]]]
-            succeed
-        }
         "derived from Tag" in {
-            def test[T: Tag] =
-                implicitly[Flat[T]]
+            def test[A: Tag] =
+                implicitly[Flat[A]]
                 succeed
             test[Int]
         }
@@ -42,28 +39,28 @@ class FlatTest extends KyoTest:
         }
 
         "generic" in {
-            def test1[T] =
-                assertDoesNotCompile("implicitly[Flat[T]]")
-                assertDoesNotCompile("implicitly[Flat[T | Int]]")
-                assertDoesNotCompile("implicitly[Flat[T < Options]]")
-                assertDoesNotCompile("implicitly[Flat[T < Any]]")
+            def test1[A] =
+                assertDoesNotCompile("implicitly[Flat[A]]")
+                assertDoesNotCompile("implicitly[Flat[A | Int]]")
+                assertDoesNotCompile("implicitly[Flat[A < Options]]")
+                assertDoesNotCompile("implicitly[Flat[A < Any]]")
             end test1
             test1[Int]
             succeed
         }
 
         "effect mismatch" in {
-            def test[T: Flat](v: T < Fibers): T < Fibers = v
+            def test[A: Flat](v: A < Abort[Int]): A < Abort[Int] = v
             test(1)
-            test(1: Int < Fibers)
-            assertDoesNotCompile("test(1: Int < Options)")
+            test(1: Int < Abort[Int])
+            assertDoesNotCompile("test(1: Int < Memo)")
         }
 
         "flat flat" in {
-            def test[T](v: T < Fibers)(using Flat[T]): T < Fibers = v
+            def test[A](v: A < Memo)(using Flat[A]): A < Memo = v
             test(1)
-            test(1: Int < Fibers)
-            assertDoesNotCompile("test(1: Int < Options)")
+            test(1: Int < Memo)
+            assertDoesNotCompile("test(1: Int < Abort[Int])")
         }
 
         "any" in {

@@ -1,24 +1,25 @@
-package kyo2.kernel
+package kyo.kernel
 
 import internal.*
 import java.util.Arrays
 import java.util.concurrent.atomic.AtomicBoolean
-import kyo2.isNull
-import kyo2.kernel.Safepoint.*
+import kyo.bug
+import kyo.isNull
+import kyo.kernel.Safepoint.*
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 
 final class Safepoint private () extends Trace.Owner:
 
-    private val owner                            = Thread.currentThread()
     private var depth                            = 0
     private[kernel] var interceptor: Interceptor = null
+    private val owner                            = Thread.currentThread()
 
     private def enter(frame: Frame, value: Any): Int =
-        if (Thread.currentThread eq owner) && depth < maxStackDepth &&
-            (isNull(interceptor) || interceptor.enter(frame, value))
+        if depth < maxStackDepth && (isNull(interceptor) || interceptor.enter(frame, value))
         then
+            bug.check(Thread.currentThread eq owner)
             pushFrame(frame)
             val depth = this.depth
             this.depth = depth + 1
@@ -30,23 +31,20 @@ final class Safepoint private () extends Trace.Owner:
 
     private def exit(depth: Int): Unit =
         this.depth = depth - 1
-        if !isNull(interceptor) then
-            interceptor.exit()
-    end exit
+
 end Safepoint
 
 object Safepoint:
 
     implicit def get: Safepoint = local.get()
 
-    abstract private[kyo2] class Interceptor:
+    abstract private[kyo] class Interceptor:
         def addEnsure(f: () => Unit): Unit
         def removeEnsure(f: () => Unit): Unit
         def enter(frame: Frame, value: Any): Boolean
-        def exit(): Unit
     end Interceptor
 
-    private[kyo2] inline def immediate[A, S](p: Interceptor)(inline v: => A < S)(
+    private[kyo] inline def immediate[A, S](p: Interceptor)(inline v: => A < S)(
         using safepoint: Safepoint
     ): A < S =
         val prev = safepoint.interceptor
@@ -58,15 +56,12 @@ object Safepoint:
                     override def removeEnsure(f: () => Unit): Unit = p.removeEnsure(f)
                     def enter(frame: Frame, value: Any) =
                         p.enter(frame, value) && prev.enter(frame, value)
-                    def exit() =
-                        p.exit()
-                        prev.exit()
         safepoint.interceptor = np
         try v
         finally safepoint.interceptor = prev
     end immediate
 
-    private[kyo2] inline def propagating[A, S](p: Interceptor)(inline v: => A < S)(
+    private[kyo] inline def propagating[A, S](p: Interceptor)(inline v: => A < S)(
         using
         inline safepoint: Safepoint,
         inline _frame: Frame
@@ -83,7 +78,7 @@ object Safepoint:
         immediate(p)(loop(v))
     end propagating
 
-    abstract private[kyo2] class Ensure extends AtomicBoolean with Function0[Unit]:
+    abstract private[kyo] class Ensure extends AtomicBoolean with Function0[Unit]:
         def run: Unit
         final def apply(): Unit =
             if compareAndSet(false, true) then
@@ -105,7 +100,7 @@ object Safepoint:
         end try
     end ensuring
 
-    private[kyo2] inline def ensure[A, S](inline f: => Unit)(inline v: => A < S)(using safepoint: Safepoint, inline _frame: Frame): A < S =
+    private[kyo] inline def ensure[A, S](inline f: => Unit)(inline v: => A < S)(using safepoint: Safepoint, inline _frame: Frame): A < S =
         // ensures the function is called once even if an
         // interceptor executes it multiple times
         val ensure = new Ensure:

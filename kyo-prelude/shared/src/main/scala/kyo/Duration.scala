@@ -1,9 +1,9 @@
-package kyo2
+package kyo
 
 import java.time.Duration as JavaDuration
 import java.time.temporal.ChronoUnit.*
-import kyo2.Duration.Units
-import kyo2.Duration.Units.*
+import kyo.Duration.Units
+import kyo.Duration.Units.*
 import scala.concurrent.duration.Duration as ScalaDuration
 
 type Duration = Duration.Value
@@ -95,22 +95,22 @@ object Duration:
         inline def render: String = s"Duration($self ns)"
 
         // Is this Robust enough?
-        private[kyo2] inline def isFinite: Boolean = self < Duration.Infinity
+        private[kyo] inline def isFinite: Boolean = self < Duration.Infinity
     end extension
 
 end Duration
 
 extension (value: Long)
     inline def nanos: Duration   = Duration.fromNanos(value)
-    inline def micros: Duration  = value.as(Micros)
-    inline def millis: Duration  = value.as(Millis)
-    inline def seconds: Duration = value.as(Seconds)
-    inline def minutes: Duration = value.as(Minutes)
-    inline def hours: Duration   = value.as(Hours)
-    inline def days: Duration    = value.as(Days)
-    inline def weeks: Duration   = value.as(Weeks)
-    inline def months: Duration  = value.as(Months)
-    inline def years: Duration   = value.as(Years)
+    inline def micros: Duration  = value.asUnit(Micros)
+    inline def millis: Duration  = value.asUnit(Millis)
+    inline def seconds: Duration = value.asUnit(Seconds)
+    inline def minutes: Duration = value.asUnit(Minutes)
+    inline def hours: Duration   = value.asUnit(Hours)
+    inline def days: Duration    = value.asUnit(Days)
+    inline def weeks: Duration   = value.asUnit(Weeks)
+    inline def months: Duration  = value.asUnit(Months)
+    inline def years: Duration   = value.asUnit(Years)
     inline def nano: Duration    = compiletime.error("please use `.nanos`")
     inline def micro: Duration   = compiletime.error("please use `.micros`")
     inline def milli: Duration   = compiletime.error("please use `.millis`")
@@ -122,19 +122,19 @@ extension (value: Long)
     inline def month: Duration   = compiletime.error("please use `.months`")
     inline def year: Duration    = compiletime.error("please use `.years`")
 
-    inline def as(unit: Units): Duration =
+    inline def asUnit(unit: Units): Duration =
         Duration.fromUnits(value, unit)
 end extension
 
 extension (value: 1)
     inline def nano: Duration   = Duration.fromNanos(value)
-    inline def micro: Duration  = value.as(Micros)
-    inline def milli: Duration  = value.as(Millis)
-    inline def second: Duration = value.as(Seconds)
-    inline def minute: Duration = value.as(Minutes)
-    inline def hour: Duration   = value.as(Hours)
-    inline def day: Duration    = value.as(Days)
-    inline def week: Duration   = value.as(Weeks)
-    inline def month: Duration  = value.as(Months)
-    inline def year: Duration   = value.as(Years)
+    inline def micro: Duration  = value.asUnit(Micros)
+    inline def milli: Duration  = value.asUnit(Millis)
+    inline def second: Duration = value.asUnit(Seconds)
+    inline def minute: Duration = value.asUnit(Minutes)
+    inline def hour: Duration   = value.asUnit(Hours)
+    inline def day: Duration    = value.asUnit(Days)
+    inline def week: Duration   = value.asUnit(Weeks)
+    inline def month: Duration  = value.asUnit(Months)
+    inline def year: Duration   = value.asUnit(Years)
 end extension

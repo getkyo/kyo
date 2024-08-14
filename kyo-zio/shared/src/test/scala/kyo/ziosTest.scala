@@ -1,42 +1,44 @@
-package kyoTest
+package kyo
 
 import kyo.*
+import kyo.kernel.Platform
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.Eventually.*
 import scala.concurrent.Future
-import zio.*
+import zio.Task
+import zio.ZIO
 
-class ziosTest extends KyoTest:
+class ZIOsTest extends Test:
 
     def runZIO[T](v: Task[T]): T =
         zio.Unsafe.unsafe(implicit u =>
             zio.Runtime.default.unsafe.run(v).getOrThrow()
         )
 
-    def runKyo(v: => Assertion < (Aborts[Throwable] & ZIOs)): Future[Assertion] =
+    def runKyo(v: => Assertion < (Abort[Throwable] & ZIOs)): Future[Assertion] =
         zio.Unsafe.unsafe(implicit u =>
             zio.Runtime.default.unsafe.runToFuture(
                 ZIOs.run(v)
             )
         )
 
-    "Aborts[String]" in runKyo {
-        val a: Nothing < (Aborts[String] & ZIOs) = ZIOs.get(ZIO.fail("error"))
-        Aborts.run(a).map(e => assert(e.isLeft))
+    "Abort[String]" in runKyo {
+        val a: Nothing < (Abort[String] & ZIOs) = ZIOs.get(ZIO.fail("error"))
+        Abort.run(a).map(e => assert(e.isFail))
     }
-    "Aborts[Throwable]" in runKyo {
-        val a: Boolean < (Aborts[Throwable] & ZIOs) = ZIOs.get(ZIO.fail(new RuntimeException).when(false).as(true))
-        Aborts.run(a).map(e => assert(e.isRight))
+    "Abort[Throwable]" in runKyo {
+        val a: Boolean < (Abort[Throwable] & ZIOs) = ZIOs.get(ZIO.fail(new RuntimeException).when(false).as(true))
+        Abort.run(a).map(e => assert(e.isSuccess))
     }
 
-    "Aborts ordering" - {
+    "Abort ordering" - {
         "kyo then zio" in runKyo {
             object zioFailure extends RuntimeException
             object kyoFailure extends RuntimeException
-            val a = Aborts.fail(kyoFailure)
+            val a = Abort.fail(kyoFailure)
             val b = ZIOs.get(ZIO.fail(zioFailure))
-            Aborts.run(a.map(_ => b)).map {
-                case Left(ex) =>
+            Abort.run(a.map(_ => b)).map {
+                case Result.Fail(ex) =>
                     assert(ex == kyoFailure)
                 case _ =>
                     fail()
@@ -46,9 +48,9 @@ class ziosTest extends KyoTest:
             object zioFailure extends RuntimeException
             object kyoFailure extends RuntimeException
             val a = ZIOs.get(ZIO.fail(zioFailure))
-            val b = Aborts.fail(kyoFailure)
-            Aborts.run(a.map(_ => b)).map {
-                case Left(ex) =>
+            val b = Abort.fail(kyoFailure)
+            Abort.run(a.map(_ => b)).map {
+                case Result.Fail(ex) =>
                     assert(ex == zioFailure)
                 case _ =>
                     fail()
@@ -58,8 +60,8 @@ class ziosTest extends KyoTest:
 
     "Envs[Int]" in pendingUntilFixed {
         assertCompiles("""
-            val a: Int < (Envs[Int] & ZIOs) = ZIOs.get(ZIO.service[Int])
-            val b: Int < ZIOs               = Envs.run(10)(a)
+            val a: Int < (Env[Int] & ZIOs) = ZIOs.get(ZIO.service[Int])
+            val b: Int < ZIOs              = Env.run(10)(a)
             b.map(v => assert(v == 10))
         """)
     }
@@ -84,7 +86,7 @@ class ziosTest extends KyoTest:
     "fibers" in runKyo {
         for
             v1 <- ZIOs.get(ZIO.succeed(1))
-            v2 <- Fibers.init(2).map(_.get)
+            v2 <- Async.run(2).map(_.get)
             v3 <- ZIOs.get(ZIO.succeed(3))
         yield assert(v1 == 1 && v2 == 2 && v3 == 3)
     }
@@ -93,13 +95,13 @@ class ziosTest extends KyoTest:
 
         import java.util.concurrent.atomic.LongAdder
 
-        def kyoLoop(a: LongAdder = new LongAdder): Unit < IOs =
-            IOs(a.increment()).map(_ => kyoLoop(a))
+        def kyoLoop(a: LongAdder = new LongAdder): Unit < IO =
+            IO(a.increment()).map(_ => kyoLoop(a))
 
         def zioLoop(a: LongAdder = new LongAdder): Task[Unit] =
             ZIO.attempt(a.increment()).flatMap(_ => zioLoop(a))
 
-        if kyo.internal.Platform.isJVM then
+        if Platform.isJVM then
 
             "zio to kyo" in runZIO {
                 for
@@ -111,17 +113,17 @@ class ziosTest extends KyoTest:
             }
             "kyo to zio" in runKyo {
                 for
-                    f <- Fibers.init(ZIOs.get(zioLoop()))
-                    _ <- f.interrupt
+                    f <- Async.run(ZIOs.run(zioLoop()))
+                    _ <- f.interrupt(Result.Panic(new Exception))
                     r <- f.getResult
-                yield assert(r.isFailure)
+                yield assert(r.isPanic)
                 end for
             }
             "both" in runZIO {
                 val v =
                     for
                         _ <- ZIOs.get(zioLoop())
-                        _ <- Fibers.init(kyoLoop())
+                        _ <- Async.run(kyoLoop())
                     yield ()
                 for
                     f <- ZIOs.run(v).fork
@@ -132,4 +134,4 @@ class ziosTest extends KyoTest:
             }
         end if
     }
-end ziosTest
+end ZIOsTest

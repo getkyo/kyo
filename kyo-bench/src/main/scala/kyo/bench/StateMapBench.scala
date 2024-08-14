@@ -26,14 +26,14 @@ class StateMapBench extends Bench.SyncAndFork(1000):
     def kyoBench() =
         import kyo.*
 
-        def program: Int < Vars[Int] =
-            Vars.use[Int] { n =>
+        def program: Int < Var[Int] =
+            Var.use[Int] { n =>
                 if n <= 0
                 then n
-                else Vars.set(n - 1).flatMap(_ => program).map(_ + 1)
+                else Var.set(n - 1).flatMap(_ => program).map(_ + 1)
             }
 
-        Vars.run(n)(program)
+        Var.run(n)(program)
     end kyoBench
 
     def zioBench() =

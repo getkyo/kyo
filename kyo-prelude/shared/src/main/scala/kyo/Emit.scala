@@ -1,34 +1,87 @@
 package kyo
 
-import kyo.core.*
-import kyo.internal.Trace
+import kyo.Tag
+import kyo.kernel.*
 
-class Sums[V] extends Effect[Sums[V]]:
-    type Command[T] = V
+sealed trait Emit[V] extends Effect[Const[V], Const[Emit.Ack]]
 
-    private val handler =
-        new ResultHandler[Chunk[V], Const[V], Sums[V], [T] =>> (Chunk[V], T), Any]:
-            def done[T](st: Chunk[V], v: T)(using Tag[Sums[V]]) = (st, v)
-            def resume[T, U: Flat, S](st: Chunk[V], command: V, k: T => U < (Sums[V] & S))(using Tag[Sums[V]]) =
-                Resume(st.append(command), k(().asInstanceOf[T]))
-end Sums
+object Emit:
 
-object Sums:
-    private object sums extends Sums[Any]
-    private def sums[V]: Sums[V] = sums.asInstanceOf[Sums[V]]
+    opaque type Ack = Int
+    object Ack:
+        given CanEqual[Ack, Ack] = CanEqual.derived
+        inline given Flat[Ack]   = Flat.unsafe.bypass
 
-    def add[V](v: V)(using Tag[Sums[V]], Trace): Unit < Sums[V] =
-        sums[V].suspend[Unit](v)
+        extension (ack: Ack)
+            def maxItems(n: Int): Ack =
+                ack match
+                    case Stop         => Stop
+                    case Continue(n0) => Math.max(n0, n)
 
-    class RunDsl[V]:
-        def apply[T: Flat, S](v: T < (Sums[V] & S))(
+        opaque type Continue <: Ack = Int
+        object Continue:
+            def apply(): Continue              = Int.MaxValue
+            def apply(maxItems: Int): Continue = Math.max(0, maxItems)
+            def unapply(ack: Ack): Maybe.Ops[Int] =
+                if ack < 0 then Maybe.empty
+                else Maybe(ack)
+        end Continue
+
+        val Stop: Ack = -1
+    end Ack
+
+    inline def apply[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Ack < Emit[V] =
+        Effect.suspend[Any](tag, value)
+
+    inline def andMap[V, A, S](inline value: V)(inline f: Ack => A < S)(
+        using
+        inline tag: Tag[Emit[V]],
+        inline frame: Frame
+    ): A < (S & Emit[V]) =
+        Effect.suspendMap[Any](tag, value)(f(_))
+
+    final class RunOps[V](dummy: Unit) extends AnyVal:
+        def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Chunk[V], A) < S =
+            Effect.handle.state(tag, Chunk.empty[V], v)(
+                handle = [C] => (input, state, cont) => (state.append(input), cont(Ack.Continue())),
+                done = (state, res) => (state, res)
+            )
+    end RunOps
+
+    inline def run[V >: Nothing]: RunOps[V] = RunOps(())
+
+    final class RunFoldOps[V](dummy: Unit) extends AnyVal:
+        def apply[A, S, B: Flat, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(
             using
-            Tag[Sums[V]],
-            Trace
-        ): (Chunk[V], T) < S =
-            sums[V].handle(sums[V].handler)(Chunks.init, v)
-    end RunDsl
+            tag: Tag[Emit[V]],
+            frame: Frame
+        ): (A, B) < (S & S2) =
+            Effect.handle.state(tag, acc, v)(
+                handle = [C] =>
+                    (input, state, cont) =>
+                        f(state, input).map((_, cont(Ack.Continue()))),
+                done = (state, res) => (state, res)
+            )
+    end RunFoldOps
 
-    def run[V >: Nothing]: RunDsl[V] = new RunDsl[V]
+    inline def runFold[V >: Nothing]: RunFoldOps[V] = RunFoldOps(())
 
-end Sums
+    final class RunDiscardOps[V](dummy: Unit) extends AnyVal:
+        def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): A < S =
+            Effect.handle(tag, v)(
+                handle = [C] => (input, cont) => cont(Ack.Stop)
+            )
+    end RunDiscardOps
+
+    inline def runDiscard[V >: Nothing]: RunDiscardOps[V] = RunDiscardOps(())
+
+    final class RunAckOps[V](dummy: Unit) extends AnyVal:
+        def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Ack < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
+            Effect.handle(tag, v)(
+                [C] => (input, cont) => f(input).map(cont)
+            )
+    end RunAckOps
+
+    inline def runAck[V >: Nothing]: RunAckOps[V] = RunAckOps(())
+
+end Emit

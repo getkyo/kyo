@@ -1,61 +1,90 @@
-package kyo.internal
+package kyo.kernel
 
+import kyo.Ansi
 import scala.annotation.tailrec
 import scala.quoted.*
 
-opaque type Trace = String
+opaque type Frame <: AnyRef = String
 
-object Trace:
+object Frame:
 
-    private val maxSnippetLines = 3
+    private val snippetShortMaxChars = 50
 
-    extension (t: Trace)
-        def show: String       = s"Trace(${position},method=${method},snippet=${snippet})"
-        def position: Position = Position(t.takeWhile(_ != '\n'))
-        def method: String     = t.drop(position.show.length + 1).takeWhile(isIdentifierPart)
-        def snippet: String    = t.drop(position.show.length + 1)
-    end extension
+    given CanEqual[Frame, Frame] = CanEqual.derived
 
-    implicit inline def derive: Trace =
-        ${ traceImpl }
+    case class Parsed(
+        declaringClass: String,
+        methodName: String,
+        position: Position,
+        snippetShort: String,
+        snippetLong: String
+    ) derives CanEqual:
 
-    private def traceImpl(using Quotes): Expr[Trace] =
-        val position = Position.infer
+        def show: String =
+            Ansi.highlight(s"// $declaringClass $methodName", snippetLong, s"// $position", position.lineNumber)
 
-        import quotes.reflect.*
+        override def toString = s"Frame($declaringClass, $methodName, $position, $snippetShort)"
+    end Parsed
 
-        val source =
-            Position.ofMacroExpansion.sourceFile.content
-                .getOrElse(report.errorAndAbort("Can't locate source code to generate trace."))
+    case class Position(
+        fileName: String,
+        lineNumber: Int,
+        columnNumber: Int
+    ) derives CanEqual:
+        override def toString = s"$fileName:$lineNumber:$columnNumber"
+    end Position
 
-        @tailrec
-        def parse(source: List[Char], acc: List[Char] = Nil, closes: Int = 0): String =
-            source match
-                case (head @ (')' | ']' | '}')) :: tail => parse(tail, head :: acc, closes + 1)
-                case (head @ ('(' | '[' | '{')) :: tail => parse(tail, head :: acc, closes - 1)
-                case ' ' :: tail                        => parse(tail, ' ' :: acc, closes)
-                case head :: tail if closes > 0 =>
-                    parse(tail, head :: acc, closes)
-                case '`' :: tail if closes == 0 =>
-                    s"`${tail.takeWhile(_ != '`').reverse.mkString}`${acc.mkString}"
-                case source =>
-                    val method = source.takeWhile(isIdentifierPart).reverse
-                    (method ::: acc).mkString
+    extension (t: Frame)
+        def parse: Parsed =
+            val arr = t.split('£')
+            Parsed(
+                arr(0),
+                arr(1),
+                Position(arr(2), arr(3).toInt, arr(4).toInt),
+                arr(5).split("📍")(0).reverse.take(snippetShortMaxChars).takeWhile(_ != '\n').trim.reverse,
+                arr(5)
+            )
         end parse
 
-        def print(code: String): String =
-            code.split('\n').take(maxSnippetLines).toList match
-                case Nil         => ""
-                case head :: Nil => head
-                case head :: tail =>
-                    val spaces = tail.map(_.takeWhile(_ == ' ').length).minOption.getOrElse(0)
-                    (head :: tail.map(_.drop(spaces))).mkString("\n")
+        def show: String = parse.show
+    end extension
 
-        val code = print(parse(source.reverse.drop(source.length() - Position.ofMacroExpansion.start).toList))
-        Expr(s"$position\n$code")
-    end traceImpl
+    implicit inline def derive: Frame = ${ frameImpl }
 
-    private def isIdentifierPart(c: Char) =
-        (c == '_') || (c == '$') || Character.isUnicodeIdentifierStart(c) || "!#%&*+-/:<=>?@\\^|~".contains(c)
+    private def frameImpl(using Quotes): Expr[String] =
+        import quotes.reflect.*
 
-end Trace
+        val pos                      = quotes.reflect.Position.ofMacroExpansion
+        val (startLine, startColumn) = (pos.startLine, pos.startColumn)
+        val endLine                  = pos.endLine
+
+        val fileContent =
+            pos.sourceFile.content
+                .getOrElse(report.errorAndAbort("Can't locate source code to generate frame."))
+
+        val markedContent = fileContent.take(pos.end) + "📍" + fileContent.drop(pos.end)
+        val lines         = markedContent.linesIterator.toList
+        val snippetLines  = lines.slice(startLine - 1, endLine + 2).filter(_.exists(_ != ' '))
+        val toDrop        = snippetLines.map(_.takeWhile(_ == ' ').size).minOption.getOrElse(0)
+        val snippet       = snippetLines.map(_.drop(toDrop)).mkString("\n")
+        val cls           = findEnclosing(_.isClassDef)
+        val method        = findEnclosing(_.isDefDef)
+
+        Expr(s"$cls£$method£${pos.sourceFile.name}£${startLine + 1}£${startColumn + 1}£$snippet")
+    end frameImpl
+
+    private def findEnclosing(using Quotes)(predicate: quotes.reflect.Symbol => Boolean): String =
+        import quotes.reflect.*
+
+        @tailrec
+        def findSymbol(sym: Symbol): Symbol =
+            if predicate(sym) then sym
+            else if sym.isNoSymbol then Symbol.noSymbol
+            else findSymbol(sym.owner)
+
+        val symbol = findSymbol(Symbol.spliceOwner)
+        if symbol.isClassDef then symbol.fullName
+        else if symbol.isDefDef then symbol.name
+        else "Unknown"
+    end findEnclosing
+end Frame

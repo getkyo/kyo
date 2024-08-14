@@ -1,38 +1,35 @@
-package kyoTest
+package kyo
 
-import kyo.*
-import kyo.internal.Trace
-
-class consolesTest extends KyoTest:
+class ConsoleTest extends Test:
 
     case class Obj(a: String)
     val obj       = Obj("a")
     val pprintObj = pprint.apply(obj).toString
 
-    "readln" in IOs.run {
+    "readln" in {
         val testConsole = new TestConsole
         testConsole.readlns = List("readln")
-        val io: String < IOs = Consoles.run(testConsole)(Consoles.readln)
-        assert(IOs.run(io) == "readln")
+        val io: String < IO = Console.let(testConsole)(Console.readln)
+        assert(IO.run(io).eval == "readln")
     }
-    "print" in IOs.run {
+    "print" in {
         val testConsole = new TestConsole
-        IOs.run(Consoles.run(testConsole)(Consoles.print("print")))
+        IO.run(Console.let(testConsole)(Console.print("print"))).eval
         assert(testConsole.prints == List("print"))
     }
-    "printErr" in IOs.run {
+    "printErr" in {
         val testConsole = new TestConsole
-        IOs.run(Consoles.run(testConsole)(Consoles.printErr("printErr")))
+        IO.run(Console.let(testConsole)(Console.printErr("printErr"))).eval
         assert(testConsole.printErrs == List("printErr"))
     }
-    "println" in IOs.run {
+    "println" in {
         val testConsole = new TestConsole
-        IOs.run(Consoles.run(testConsole)(Consoles.println("println")))
+        IO.run(Console.let(testConsole)(Console.println("println"))).eval
         assert(testConsole.printlns == List("println"))
     }
-    "printlnErr" in IOs.run {
+    "printlnErr" in {
         val testConsole = new TestConsole
-        IOs.run(Consoles.run(testConsole)(Consoles.printlnErr("printlnErr")))
+        IO.run(Console.let(testConsole)(Console.printlnErr("printlnErr"))).eval
         assert(testConsole.printlnErrs == List("printlnErr"))
     }
 
@@ -43,27 +40,28 @@ class consolesTest extends KyoTest:
         var printlns    = List.empty[String]
         var printlnErrs = List.empty[String]
 
-        def readln(using Trace): String < IOs =
-            IOs {
+        def readln(using Frame): String < IO =
+            IO {
                 val v = readlns.head
                 readlns = readlns.tail
                 v
             }
-        def print(s: String)(using Trace): Unit < IOs =
-            IOs {
+        def print(s: String)(using Frame): Unit < IO =
+            IO {
                 prints ::= s
             }
-        def printErr(s: String)(using Trace): Unit < IOs =
-            IOs {
+        def printErr(s: String)(using Frame): Unit < IO =
+            IO {
                 printErrs ::= s
             }
-        def println(s: String)(using Trace): Unit < IOs =
-            IOs {
+        def println(s: String)(using Frame): Unit < IO =
+            IO {
                 printlns ::= s
             }
-        def printlnErr(s: String)(using Trace): Unit < IOs =
-            IOs {
+        def printlnErr(s: String)(using Frame): Unit < IO =
+            IO {
                 printlnErrs ::= s
             }
     end TestConsole
-end consolesTest
+
+end ConsoleTest

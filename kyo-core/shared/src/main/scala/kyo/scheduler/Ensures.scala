@@ -44,7 +44,7 @@ private[kyo] object Ensures:
                     loop()
                     arr
 
-        def finalize(): Unit =
+        def run(): Unit =
             (e: @unchecked) match
                 case e if e.equals(Empty) =>
                 case f: (() => Unit) @unchecked =>

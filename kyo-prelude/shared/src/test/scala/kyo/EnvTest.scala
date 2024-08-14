@@ -1,26 +1,23 @@
-package kyoTest
+package kyo
 
-import kyo.*
-import scala.util.NotGiven
-
-class envsTest extends KyoTest:
+class EnvTest extends Test:
 
     "value" in {
         val v1 =
-            Envs.get[Int].map(_ + 1)
-        val v2: Int < Envs[Int] = v1
+            Env.get[Int].map(_ + 1)
+        val v2: Int < Env[Int] = v1
         assert(
-            Envs.run(1)(v2).pure ==
+            Env.run(1)(v2).eval ==
                 2
         )
     }
 
     "use" in {
         val v1 =
-            Envs.use[Int](_ + 1)
-        val v2: Int < Envs[Int] = v1
+            Env.use[Int](_ + 1)
+        val v2: Int < Env[Int] = v1
         assert(
-            Envs.run(1)(v2).pure ==
+            Env.run(1)(v2).eval ==
                 2
         )
     }
@@ -29,68 +26,68 @@ class envsTest extends KyoTest:
         trait Super:
             def i = 42
         case class Sub() extends Super
-        assert(Envs.run(Sub())(Envs.use[Super](_.i)).pure == 42)
+        assert(Env.run(Sub())(Env.use[Super](_.i)).eval == 42)
     }
 
     "inference" in {
-        def t1(v: Int < Envs[Int & String]) =
-            Envs.run(1)(v)
-        val _: Int < Envs[String] =
+        def t1(v: Int < Env[Int & String]) =
+            Env.run(1)(v)
+        val _: Int < Env[String] =
             t1(42)
-        def t2(v: Int < (Envs[Int] & Envs[String])) =
-            Envs.run("s")(v)
-        val _: Int < Envs[Int] =
+        def t2(v: Int < (Env[Int] & Env[String])) =
+            Env.run("s")(v)
+        val _: Int < Env[Int] =
             t2(42)
-        def t3(v: Int < Envs[String]) =
-            Envs.run("a")(v)
+        def t3(v: Int < Env[String]) =
+            Env.run("a")(v)
         val _: Int < Any =
             t3(42)
         succeed
     }
 
     "intersection type env" in {
-        assertDoesNotCompile("Envs.get[Int & Double]")
+        assertDoesNotCompile("Env.get[Int & Double]")
     }
 
     "reduce large intersection incrementally" in {
-        val t1: Int < Envs[Int & String & Boolean & Float & Char & Double] = 18
-        val t2                                                             = Envs.run(42)(t1)
-        val t3                                                             = Envs.run("a")(t2)
-        val t4                                                             = Envs.run(false)(t3)
-        val t5                                                             = Envs.run(0.23f)(t4)
-        val t6                                                             = Envs.run('a')(t5)
-        val t7                                                             = Envs.run(0.23d)(t6)
-        assert(t7.pure == 18)
+        val t1: Int < Env[Int & String & Boolean & Float & Char & Double] = 18
+        val t2                                                            = Env.run(42)(t1)
+        val t3                                                            = Env.run("a")(t2)
+        val t4                                                            = Env.run(false)(t3)
+        val t5                                                            = Env.run(0.23f)(t4)
+        val t6                                                            = Env.run('a')(t5)
+        val t7                                                            = Env.run(0.23d)(t6)
+        assert(t7.eval == 18)
     }
 
     "reduce large intersection in single expression" in {
-        val t: Int < Envs[Int & String & Boolean & Float & Char & Double] = 18
+        val t: Int < Env[Int & String & Boolean & Float & Char & Double] = 18
         // NB: Adding a type annotation here leads to compilation error!
         val res =
-            Envs.run(0.23d)(
-                Envs.run('a')(
-                    Envs.run(0.23f)(
-                        Envs.run(false)(
-                            Envs.run("a")(
-                                Envs.run(42)(t)
+            Env.run(0.23d)(
+                Env.run('a')(
+                    Env.run(0.23f)(
+                        Env.run(false)(
+                            Env.run("a")(
+                                Env.run(42)(t)
                             )
                         )
                     )
                 )
             )
-        assert(res.pure == 18)
+        assert(res.eval == 18)
     }
 
     "invalid inference" in {
         assertDoesNotCompile("""
-            def t1(v: Int < Envs[Int & String]) =
-                Envs[Int].run[Int, Any, Nothing](1)(v)
-            val _: Int < Any = t1(42)
+        def t1(v: Int < Env[Int & String]) =
+            Env.run(1)(v)
+        val _: Int < Any = t1(42)
         """)
     }
 
     "no transformations" in {
-        assert(Envs.run(1)(Envs.get[Int]).pure == 1)
+        assert(Env.run(1)(Env.get[Int]).eval == 1)
     }
 
     "pure services" - {
@@ -107,35 +104,35 @@ class envsTest extends KyoTest:
 
         "one service" in {
             val a =
-                Envs.get[Service1].map(_(1))
+                Env.get[Service1].map(_(1))
             assert(
-                Envs.run(service1)(a).pure ==
+                Env.run(service1)(a).eval ==
                     2
             )
         }
         "two services" - {
             val a =
-                Envs.get[Service1].map(_(1)).map { i =>
-                    Envs.get[Service2].map(_(i))
+                Env.get[Service1].map(_(1)).map { i =>
+                    Env.get[Service2].map(_(i))
                 }
-            val v: Int < (Envs[Service1] & Envs[Service2]) = a
+            val v: Int < (Env[Service1] & Env[Service2]) = a
             "same handling order" in {
                 assert(
-                    Envs.run(service1)(Envs.run(service2)(v)).pure ==
+                    Env.run(service1)(Env.run(service2)(v)).eval ==
                         4
                 )
             }
             "reverse handling order" in {
                 assert(
-                    Envs.run(service2)(Envs.run(service1)(v)).pure ==
+                    Env.run(service2)(Env.run(service1)(v)).eval ==
                         4
                 )
             }
             "dependent services" in {
                 val v1 =
-                    Envs.run(service1)(v)
+                    Env.run(service1)(v)
                 assert(
-                    Envs.run(service2)(v1).pure ==
+                    Env.run(service2)(v1).eval ==
                         4
                 )
             }
@@ -145,63 +142,63 @@ class envsTest extends KyoTest:
     "effectful services" - {
 
         trait Service1:
-            def apply(i: Int): Int < Options
+            def apply(i: Int): Int < Abort[Maybe.Empty]
         trait Service2:
-            def apply(i: Int): Int < Options
+            def apply(i: Int): Int < Abort[Maybe.Empty]
 
         val service1 = new Service1:
             def apply(i: Int) = i match
-                case 0 => Options.get(Option.empty[Int])
+                case 0 => kyo.Abort.get(Option.empty[Int])
                 case i => i + 1
         val service2 = new Service2:
             def apply(i: Int) = i match
-                case 0 => Options.get(Some(1))
+                case 0 => kyo.Abort.get(Some(1))
                 case i => i + 1
 
         "one service" - {
             "continue" in {
                 val a =
-                    Envs.get[Service1].map(_(1))
+                    Env.get[Service1].map(_(1))
                 assert(
-                    Options.run(Envs.run(service1)(a)).pure ==
-                        Some(2)
+                    kyo.Abort.run(Env.run(service1)(a)).eval ==
+                        Result.success(2)
                 )
             }
             "short circuit" in {
                 val a =
-                    Envs.get[Service1].map(_(0))
+                    Env.get[Service1].map(_(0))
                 assert(
-                    Options.run(Envs.run(service1)(a)).pure ==
-                        None
+                    kyo.Abort.run(Env.run(service1)(a)).eval ==
+                        Result.fail(Maybe.empty)
                 )
             }
         }
         "two services" - {
             "continue" - {
                 val a =
-                    Envs.get[Service1].map(_(1)).map { i =>
-                        Envs.get[Service2].map(_(i))
+                    Env.get[Service1].map(_(1)).map { i =>
+                        Env.get[Service2].map(_(i))
                     }
-                val v: Int < (Envs[Service1] & Envs[Service2] & Options) = a
+                val v: Int < (Env[Service1] & Env[Service2] & Abort[Maybe.Empty]) = a
                 "same handling order" in {
-                    val b = Envs.run(service2)(v)
-                    val c = Envs.run(service1)(b)
+                    val b = Env.run(service2)(v)
+                    val c = Env.run(service1)(b)
                     assert(
-                        Options.run(c).pure == Option(3)
+                        kyo.Abort.run(c).eval == Result.success(3)
                     )
                 }
                 "reverse handling order" in {
-                    val b = Envs.run(service1)(v)
-                    val c = Envs.run(service2)(b)
+                    val b = Env.run(service1)(v)
+                    val c = Env.run(service2)(b)
                     assert(
-                        Options.run(c).pure == Option(3)
+                        kyo.Abort.run(c).eval == Result.success(3)
                     )
                 }
                 "dependent services" in {
-                    val v2: Int < (Envs[Service2] & Options) = Envs.run(service1)(v)
+                    val v2: Int < (Env[Service2] & Abort[Maybe.Empty]) = Env.run(service1)(v)
                     assert(
-                        Options.run(Envs.run(service2)(v2)).pure ==
-                            Some(3)
+                        kyo.Abort.run(Env.run(service2)(v2)).eval ==
+                            Result.success(3)
                     )
                 }
             }
@@ -212,91 +209,103 @@ class envsTest extends KyoTest:
         "providing env maps" in {
             val kyo =
                 for
-                    string <- Envs.get[String]
-                    int    <- Envs.get[Int]
-                    bool   <- Envs.get[Boolean]
+                    string <- Env.get[String]
+                    int    <- Env.get[Int]
+                    bool   <- Env.get[Boolean]
                 yield (string, int, bool)
 
             val envMap = TypeMap("Hello", 123, true)
             assert(
-                Envs.runTypeMap(envMap)(kyo).pure == ("Hello", 123, true)
+                Env.runTypeMap(envMap)(kyo).eval == ("Hello", 123, true)
             )
         }
 
         "leaving off one service" in {
             val kyo =
                 for
-                    string <- Envs.get[String]
-                    int    <- Envs.get[Int]
-                    bool   <- Envs.get[Boolean]
+                    string <- Env.get[String]
+                    int    <- Env.get[Int]
+                    bool   <- Env.get[Boolean]
                 yield (string, int, bool)
 
-            val envMap: TypeMap[String & Int]                       = TypeMap("Hello", 123)
-            val withTypeMap: (String, Int, Boolean) < Envs[Boolean] = Envs.runTypeMap(envMap)(kyo)
-            val withBool: (String, Int, Boolean) < Any              = Envs.run(true)(withTypeMap)
+            val envMap: TypeMap[String & Int]                      = TypeMap("Hello", 123)
+            val withTypeMap: (String, Int, Boolean) < Env[Boolean] = Env.runTypeMap(envMap)(kyo)
+            val withBool: (String, Int, Boolean) < Any             = Env.run(true)(withTypeMap)
             assert(
-                withBool.pure == ("Hello", 123, true)
+                withBool.eval == ("Hello", 123, true)
             )
         }
 
         "multiple provide calls" in {
             val kyo =
                 for
-                    string <- Envs.get[String]
-                    int    <- Envs.get[Int]
-                    bool   <- Envs.get[Boolean]
+                    string <- Env.get[String]
+                    int    <- Env.get[Int]
+                    bool   <- Env.get[Boolean]
                 yield (string, int, bool)
 
             val stringTypeMap = TypeMap("Hello")
             val intTypeMap    = TypeMap(123)
             val boolTypeMap   = TypeMap(true)
             assert(
-                Envs.run(true)(
-                    Envs.runTypeMap(stringTypeMap)(Envs.runTypeMap(intTypeMap)(Envs.runTypeMap(boolTypeMap)(kyo)))
-                ).pure == ("Hello", 123, true)
+                Env.run(true)(
+                    Env.runTypeMap(stringTypeMap)(Env.runTypeMap(intTypeMap)(Env.runTypeMap(boolTypeMap)(kyo)))
+                ).eval == ("Hello", 123, true)
             )
         }
 
         "providing the wrong env map" in {
-            assertDoesNotCompile("""
-                val kyo: String < Envs[String] = Envs.get[String]
-                val envMap: TypeMap[Int]       = TypeMap(12)
-                Envs.runTypeMap(envMap)(kyo).pure
-            """)
+            val kyo: String < Env[String]    = Env.get[String]
+            val envMap: TypeMap[Int]         = TypeMap(12)
+            val result: String < Env[String] = Env.runTypeMap(envMap)(kyo)
+            assert(Env.run("a")(result).eval == "a")
         }
 
         "providing an empty env map" in {
-            assertDoesNotCompile("""
-                val kyo    = Envs.get[String]
-                val envMap = TypeMap.empty
-                Envs.runTypeMap(envMap)(kyo).pure
-            """)
+            val kyo    = Env.get[String]
+            val envMap = TypeMap.empty
+            val result = Env.runTypeMap(envMap)(kyo)
+            assert(Env.run("a")(result).eval == "a")
         }
 
         "providing only a subset of the required services" in {
-            assertDoesNotCompile("""
-                val kyo =
-                    for
-                        string <- Envs.get[String]
-                        int    <- Envs.get[Int]
-                    yield (string, int)
-                val envMap = TypeMap("Hello")
-                Envs.runTypeMap(envMap)(kyo).pure
-            """)
+            val kyo =
+                for
+                    string <- Env.get[String]
+                    int    <- Env.get[Int]
+                yield (string, int)
+            val envMap = TypeMap("Hello")
+            val result: (String, Int) < Env[Int] =
+                Env.runTypeMap(envMap)(kyo)
+            assert(Env.run(42)(result).eval == ("Hello", 42))
         }
 
         "providing a superset of the required services" in {
             val kyo =
                 for
-                    string <- Envs.get[String]
-                    int    <- Envs.get[Int]
+                    string <- Env.get[String]
+                    int    <- Env.get[Int]
                 yield (string, int)
 
             val envMap = TypeMap("Hello", 123, true)
             assert(
-                Envs.runTypeMap(envMap)(kyo).pure == ("Hello", 123)
+                Env.runTypeMap(envMap)(kyo).eval == ("Hello", 123)
             )
         }
 
     }
-end envsTest
+
+    "interactions with Abort" - {
+        "should propagate Abort failures within Env" in {
+            val result = Env.run("test")(kyo.Abort.run[String](kyo.Abort.fail("failure")))
+            assert(result.eval == Result.fail("failure"))
+        }
+
+        "should have access to the environment within Abort" in {
+            val env    = "test"
+            val result = Env.run(env)(kyo.Abort.run[String](Env.get[String]))
+            assert(result.eval == Result.success(env))
+        }
+    }
+
+end EnvTest

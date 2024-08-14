@@ -6,14 +6,14 @@ import scala.annotation.implicitNotFound
 case class Attributes(get: List[Attributes.Attribute]) extends AnyVal:
     def add(a: Attributes): Attributes =
         Attributes(get ++ a.get)
-    def add[T](name: String, value: T)(implicit a: AsAttribute[T]): Attributes =
+    def add[A](name: String, value: A)(implicit a: AsAttribute[A]): Attributes =
         add(Attributes.add(name, value))
 end Attributes
 
 object Attributes:
     val empty: Attributes = Attributes(Nil)
 
-    def add[T](name: String, value: T)(implicit a: AsAttribute[T]) =
+    def add[A](name: String, value: A)(implicit a: AsAttribute[A]) =
         Attributes(a.f(name, value) :: Nil)
 
     def all(l: List[Attributes]): Attributes =
@@ -32,10 +32,10 @@ object Attributes:
     end Attribute
 
     @implicitNotFound(
-        "Invalid attribute type: '${T}'. Supported: 'Boolean', " +
+        "Invalid attribute type: '${A}'. Supported: 'Boolean', " +
             "'Double', 'Long', 'String', and 'List's of these types."
     )
-    case class AsAttribute[T](f: (String, T) => Attribute)
+    case class AsAttribute[A](f: (String, A) => Attribute)
 
     object AsAttribute:
         implicit val booleanList: AsAttribute[List[Boolean]] =

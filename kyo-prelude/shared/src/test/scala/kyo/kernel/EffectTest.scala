@@ -1,9 +1,9 @@
-package kyo2.kernel
+package kyo.kernel
 
+import kyo.Maybe
 import kyo.Tag
-import kyo2.Maybe
-import kyo2.Test
-import kyo2.kernel.*
+import kyo.Test
+import kyo.kernel.*
 
 class EffectTest extends Test:
 

@@ -1,15 +1,13 @@
-package kyoTest
+package kyo
 
-import kyo.*
-
-class retriesTest extends KyoTest:
+class RetryTest extends Test:
 
     val ex = new Exception
 
     "no retries" - {
         "ok" in run {
             var calls = 0
-            Retries(_.limit(0)) {
+            Retry[Any](_.limit(0)) {
                 calls += 1
                 42
             }.map { v =>
@@ -18,13 +16,13 @@ class retriesTest extends KyoTest:
         }
         "nok" in run {
             var calls = 0
-            IOs.toTry {
-                Retries(_.limit(0)) {
+            Abort.run[Exception] {
+                Retry[Exception](_.limit(0)) {
                     calls += 1
                     throw ex
                 }
             }.map { v =>
-                assert(v.isFailure && calls == 1)
+                assert(v.isFail && calls == 1)
             }
         }
     }
@@ -32,7 +30,7 @@ class retriesTest extends KyoTest:
     "retries" - {
         "ok" in run {
             var calls = 0
-            Retries(_.limit(3)) {
+            Retry[Any](_.limit(3)) {
                 calls += 1
                 42
             }.map { v =>
@@ -41,13 +39,13 @@ class retriesTest extends KyoTest:
         }
         "nok" in run {
             var calls = 0
-            IOs.toTry {
-                Retries(_.limit(3)) {
+            Abort.run[Exception] {
+                Retry[Exception](_.limit(3)) {
                     calls += 1
                     throw ex
                 }
             }.map { v =>
-                assert(v.isFailure && calls == 4)
+                assert(v.isFail && calls == 4)
             }
         }
     }
@@ -55,13 +53,13 @@ class retriesTest extends KyoTest:
     "backoff" in run {
         var calls = 0
         val start = System.currentTimeMillis()
-        IOs.toTry {
-            Retries(_.limit(4).exponential(1.milli)) {
+        Abort.run[Exception] {
+            Retry[Exception](_.limit(4).exponential(1.milli)) {
                 calls += 1
                 throw ex
             }
         }.map { v =>
-            assert(v.isFailure && calls == 5 && (System.currentTimeMillis() - start) >= 15)
+            assert(v.isFail && calls == 5 && (System.currentTimeMillis() - start) >= 15)
         }
     }
-end retriesTest
+end RetryTest

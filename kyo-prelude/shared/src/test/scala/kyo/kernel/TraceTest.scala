@@ -1,9 +1,9 @@
-package kyo2.kernel
+package kyo.kernel
 
 import java.io.PrintWriter
 import java.io.StringWriter
-import kyo2.*
-import kyo2.Tagged.*
+import kyo.*
+import kyo.Tagged.*
 
 class TraceTest extends Test:
 
@@ -32,9 +32,9 @@ class TraceTest extends Test:
                 evalOnly,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
-                |	at                        def evalOnly = boom(10).eval @ kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
+                |	at kyo.kernel.TraceTest.ex(TraceTest.scala:10)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at                        def evalOnly = boom(10).eval @ kyo.kernel.TraceTest.evalOnly(TraceTest.scala:14)
                 """
             )
         }
@@ -44,15 +44,15 @@ class TraceTest extends Test:
                 withEffects,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
-                |	at          val z = Kyo.zip(x, y).map(_ + _).map(boom) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at                    val z = Kyo.zip(x, y).map(_ + _) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at                         val y = Env.use[Int](_ * 2) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:18)
-                |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at                         val x = Env.use[Int](_ + 1) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:17)
-                |	at                                  Env.run(1)(z).eval @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
+                |	at kyo.kernel.TraceTest.ex(TraceTest.scala:10)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at          val z = Kyo.zip(x, y).map(_ + _).map(boom) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                    val z = Kyo.zip(x, y).map(_ + _) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                         val y = Env.use[Int](_ * 2) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:18)
+                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                         val x = Env.use[Int](_ + 1) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:17)
+                |	at                                  Env.run(1)(z).eval @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:20)
                 """
             )
         }
@@ -62,9 +62,9 @@ class TraceTest extends Test:
                 repeatedFrames,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
-                |	at          else ((depth - 1): Int < Any).map(loop(_)) @ kyo2.kernel.TraceTest.loop(TraceTest.scala:25)                
+                |	at kyo.kernel.TraceTest.ex(TraceTest.scala:10)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at          else ((depth - 1): Int < Any).map(loop(_)) @ kyo.kernel.TraceTest.loop(TraceTest.scala:25)                
                 """
             )
         }
@@ -80,9 +80,9 @@ class TraceTest extends Test:
                 evalOnly,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
-                |	at                        def evalOnly = boom(10).eval @ kyo2.kernel.TraceTest.evalOnly(TraceTest.scala:14)
+                |	at kyo.kernel.TraceTest.ex(TraceTest.scala:10)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at                        def evalOnly = boom(10).eval @ kyo.kernel.TraceTest.evalOnly(TraceTest.scala:14)
                 """
             )
             ()
@@ -93,15 +93,15 @@ class TraceTest extends Test:
                 withEffects,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
-                |	at          val z = Kyo.zip(x, y).map(_ + _).map(boom) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at                    val z = Kyo.zip(x, y).map(_ + _) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at                         val y = Env.use[Int](_ * 2) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:18)
-                |	at                               val z = Kyo.zip(x, y) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:19)
-                |	at                         val x = Env.use[Int](_ + 1) @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:17)
-                |	at                                  Env.run(1)(z).eval @ kyo2.kernel.TraceTest.withEffects(TraceTest.scala:20)
+                |	at kyo.kernel.TraceTest.ex(TraceTest.scala:10)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at          val z = Kyo.zip(x, y).map(_ + _).map(boom) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                    val z = Kyo.zip(x, y).map(_ + _) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                         val y = Env.use[Int](_ * 2) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:18)
+                |	at                               val z = Kyo.zip(x, y) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:19)
+                |	at                         val x = Env.use[Int](_ + 1) @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:17)
+                |	at                                  Env.run(1)(z).eval @ kyo.kernel.TraceTest.withEffects(TraceTest.scala:20)
                 """
             )
             ()
@@ -112,9 +112,9 @@ class TraceTest extends Test:
                 repeatedFrames,
                 """
                 |java.lang.Exception: test exception
-                |	at kyo2.kernel.TraceTest.ex(TraceTest.scala:10)
-                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo2.kernel.TraceTest.boom(TraceTest.scala:12)
-                |	at          else ((depth - 1): Int < Any).map(loop(_)) @ kyo2.kernel.TraceTest.loop(TraceTest.scala:25)                
+                |	at kyo.kernel.TraceTest.ex(TraceTest.scala:10)
+                |	at  oom[S](x: Int < S): Int < S = x.map(_ => throw ex) @ kyo.kernel.TraceTest.boom(TraceTest.scala:12)
+                |	at          else ((depth - 1): Int < Any).map(loop(_)) @ kyo.kernel.TraceTest.loop(TraceTest.scala:25)                
                 """
             )
         }
@@ -125,7 +125,7 @@ class TraceTest extends Test:
             import scala.util.control.NoStackTrace
             assertTrace(
                 throw new NoStackTrace {},
-                "kyo2.kernel.TraceTest$$anon$1"
+                "kyo.kernel.TraceTest$$anon$1"
             )
         }
         "js" taggedAs jsOnly in {
@@ -133,7 +133,7 @@ class TraceTest extends Test:
             assertTrace(
                 throw new NoStackTrace {},
                 """
-                |kyo2.kernel.TraceTest$$anon$2
+                |kyo.kernel.TraceTest$$anon$2
                 |  <no stack trace available>                
                 """
             )

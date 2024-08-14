@@ -30,14 +30,14 @@ class ProducerConsumerBench extends Bench.ForkOnly(()):
 
         import kyo.Access
 
-        def repeat[A](n: Int)(io: A < Fibers): A < Fibers =
+        def repeat[A](n: Int)(io: A < Async): A < Async =
             if n <= 1 then io
             else io.flatMap(_ => repeat(n - 1)(io))
 
-        Channels.init[Unit](depth / 2, Access.Spsc).flatMap { q =>
+        Channel.init[Unit](depth / 2, Access.Spsc).flatMap { q =>
             for
-                producer <- Fibers.init(repeat(depth)(q.put(())))
-                consumer <- Fibers.init(repeat(depth)(q.take))
+                producer <- Async.run(repeat(depth)(q.put(())))
+                consumer <- Async.run(repeat(depth)(q.take))
                 _        <- producer.get
                 _        <- consumer.get
             yield {}

@@ -1,11 +1,10 @@
-package kyoTest
+package kyo
 
-import kyo.*
 import kyo.TestSupport.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 
-class booleanTest extends AnyFreeSpec with Assertions:
+class BooleanTest extends AnyFreeSpec with Assertions:
 
     def True                 = "1".toInt == 1
     def False                = "1".toInt == 0
@@ -20,51 +19,51 @@ class booleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    True && await(IOs(True))
+                    True && await(IO(True))
                 }
             }
             "True/False" - {
                 runLiftTest(False) {
-                    True && await(IOs(False))
+                    True && await(IO(False))
                 }
             }
             "False/NotExpected" - {
                 runLiftTest(False) {
-                    False && await(IOs(NotExpected))
+                    False && await(IO(NotExpected))
                 }
             }
         }
         "impure/pure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    await(IOs(True)) && True
+                    await(IO(True)) && True
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    await(IOs(True)) && False
+                    await(IO(True)) && False
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    await(IOs(False)) && NotExpected
+                    await(IO(False)) && NotExpected
                 }
             }
         }
         "impure/impure" - {
             "True/True" in {
                 runLiftTest(True) {
-                    await(IOs(True)) && await(IOs(True))
+                    await(IO(True)) && await(IO(True))
                 }
             }
             "True/False" in {
                 runLiftTest(False) {
-                    await(IOs(True)) && await(IOs(False))
+                    await(IO(True)) && await(IO(False))
                 }
             }
             "False/NotExpected" in {
                 runLiftTest(False) {
-                    await(IOs(False)) && await(IOs(NotExpected))
+                    await(IO(False)) && await(IO(NotExpected))
                 }
             }
         }
@@ -78,53 +77,53 @@ class booleanTest extends AnyFreeSpec with Assertions:
         "pure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    False || await(IOs(False))
+                    False || await(IO(False))
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    False || await(IOs(True))
+                    False || await(IO(True))
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    True || await(IOs(NotExpected))
+                    True || await(IO(NotExpected))
                 }
             }
         }
         "impure/pure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    await(IOs(False)) || False
+                    await(IO(False)) || False
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    await(IOs(False)) || True
+                    await(IO(False)) || True
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    await(IOs(True)) || NotExpected
+                    await(IO(True)) || NotExpected
                 }
             }
         }
         "impure/impure" - {
             "False/False" in {
                 runLiftTest(False) {
-                    await(IOs(False)) || await(IOs(False))
+                    await(IO(False)) || await(IO(False))
                 }
             }
             "False/True" in {
                 runLiftTest(True) {
-                    await(IOs(False)) || await(IOs(True))
+                    await(IO(False)) || await(IO(True))
                 }
             }
             "True/NotExpected" in {
                 runLiftTest(True) {
-                    await(IOs(True)) || await(IOs(NotExpected))
+                    await(IO(True)) || await(IO(NotExpected))
                 }
             }
         }
     }
-end booleanTest
+end BooleanTest

@@ -1,8 +1,8 @@
-package kyo2.kernel
+package kyo.kernel
 
 import internal.*
 import kyo.*
-import kyo2.Maybe
+import kyo.Maybe
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 import scala.util.NotGiven
@@ -36,13 +36,13 @@ object `<`:
 
     extension [A, S](inline v: A < S)
 
-        inline def andThen[B, S2](inline f: => B < S2)(using inline ev: A => Unit, inline frame: Frame): B < (S & S2) =
+        inline def andThen[B, S2](inline f: Safepoint ?=> B < S2)(using inline ev: A => Unit, inline frame: Frame): B < (S & S2) =
             map(_ => f)
 
-        inline def flatMap[B, S2](inline f: A => B < S2)(using inline frame: Frame): B < (S & S2) =
+        inline def flatMap[B, S2](inline f: Safepoint ?=> A => B < S2)(using inline frame: Frame): B < (S & S2) =
             map(v => f(v))
 
-        inline def pipe[B, S2](inline f: A < S => B < S2)(using inline frame: Frame): B < S2 =
+        inline def pipe[B](inline f: A < S => B): B =
             f(v)
 
         inline def map[B, S2](inline f: Safepoint ?=> A => B < S2)(
@@ -93,7 +93,7 @@ object `<`:
                         if kyo.tag =:= Tag[Defer] =>
                         evalLoop(kyo((), Context.empty))
                     case kyo: Kyo[A, Any] @unchecked =>
-                        kyo2.bug.failTag(kyo, Tag[Any])
+                        bug.failTag(kyo, Tag[Any])
                     case v =>
                         v.asInstanceOf[A]
                 end match

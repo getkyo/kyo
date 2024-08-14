@@ -1,9 +1,9 @@
-package kyoTest
+package kyo
 
 import kyo.Tag
 import kyo.TypeMap
 
-class typeMapTest extends KyoTest:
+class TypeMapTest extends Test:
     "empty" - {
         "TypeMap.empty" in {
             assert(TypeMap.empty.isEmpty)
@@ -106,87 +106,6 @@ class typeMapTest extends KyoTest:
             val e: TypeMap[A & B] = TypeMap(b)
 
             assert(e.get[A] eq b)
-        }
-        "deterministic" in {
-            trait A
-            trait B extends A
-            val b = new B {}
-            trait C extends A
-            val c = new C {}
-            trait D extends C
-            val d = new D {}
-            trait E extends F
-            val e = new E {}
-            trait F extends A
-            val f = new F {}
-            trait G extends A
-            val g = new G {}
-            trait H extends J
-            val h = new H {}
-            trait I extends G
-            val i = new I {}
-            trait J extends A
-            val j = new J {}
-            trait K extends A
-            val k = new K {}
-
-            var map: TypeMap[A] = TypeMap(b)
-
-            // The first entry is always first.
-            assert(map.get[A] eq b)
-            map = map.add(c)
-            assert(map.get[A] eq b)
-            map = map.add(d)
-            assert(map.get[A] eq b)
-            map = map.add(e)
-            assert(map.get[A] eq b)
-            map = map.add(f)
-            assert(map.get[A] eq b)
-            map = map.add(g)
-            assert(map.get[A] eq b)
-            map = map.add(h)
-            assert(map.get[A] eq b)
-            map = map.add(i)
-            assert(map.get[A] eq b)
-            map = map.add(j)
-            assert(map.get[A] eq b)
-            map = map.add(k)
-            assert(map.get[A] eq b)
-
-            // Moving the entries to the end shifts them all forwards one place.
-            map = map.add(b)
-            assert(map.get[A] eq c)
-            map = map.add(c)
-            assert(map.get[A] eq d)
-            map = map.add(d)
-            assert(map.get[A] eq e)
-            map = map.add(e)
-            assert(map.get[A] eq f)
-            map = map.add(f)
-            assert(map.get[A] eq g)
-            map = map.add(g)
-            assert(map.get[A] eq h)
-            map = map.add(h)
-            assert(map.get[A] eq i)
-            map = map.add(i)
-            assert(map.get[A] eq j)
-            map = map.add(j)
-            assert(map.get[A] eq k)
-            map = map.add(k)
-            assert(map.get[A] eq b)
-
-            // Getting an exact type returns it regardless of its place.
-            val map2 = map.asInstanceOf[TypeMap[B & C & D & E & F & G & H & I & J & K]]
-            assert(map2.get[B] eq b)
-            assert(map2.get[C] eq c)
-            assert(map2.get[D] eq d)
-            assert(map2.get[E] eq e)
-            assert(map2.get[F] eq f)
-            assert(map2.get[G] eq g)
-            assert(map2.get[H] eq h)
-            assert(map2.get[I] eq i)
-            assert(map2.get[J] eq j)
-            assert(map2.get[K] eq k)
         }
     }
 
@@ -299,4 +218,4 @@ class typeMapTest extends KyoTest:
         }
     }
 
-end typeMapTest
+end TypeMapTest

@@ -1,8 +1,10 @@
-package kyo.internal
+package kyo.kernel
+
+import scala.concurrent.ExecutionContext
 
 object Platform:
-    def executionContext        = org.scalajs.macrotaskexecutor.MacrotaskExecutor
-    def isJVM: Boolean          = false
-    def isJS: Boolean           = true
-    def isDebugEnabled: Boolean = false
+    val executionContext: ExecutionContext = scala.concurrent.ExecutionContext.global
+    val isJVM: Boolean                     = false
+    val isJS: Boolean                      = true
+    val isDebugEnabled: Boolean            = false
 end Platform

@@ -48,33 +48,33 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "without variance" - {
         "equal tags" - {
-            class Test[T]
+            class Test[A]
             test[Test[Int], Test[Int]]
         }
 
         "not equal tags (different type parameters)" - {
-            class Test[T]
+            class Test[A]
             test[Test[String], Test[Int]]
         }
 
         "not equal tags (different classes)" - {
-            class Test1[T]
-            class Test2[T]
+            class Test1[A]
+            class Test2[A]
             test[Test1[Int], Test2[Int]]
         }
 
         "not subtype (invariant)" - {
-            class Test[T]
+            class Test[A]
             test[Test[String], Test[Any]]
         }
 
         "not supertype (invariant)" - {
-            class Test[T]
+            class Test[A]
             test[Test[Any], Test[String]]
         }
 
         "not subtype or supertype (unrelated types)" - {
-            class Test[T]
+            class Test[A]
             test[Test[String], Test[Int]]
         }
 
@@ -87,39 +87,39 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     "with variance" - {
         "contravariance" - {
-            class Test[-T]
+            class Test[-A]
             test[Test[String], Test[Any]]
         }
 
         "covariance" - {
-            class Test[+T]
+            class Test[+A]
             test[Test[String], Test[Any]]
         }
 
         "nested contravariance" - {
-            class Test[-T]
-            class NestedTest[-U]
+            class Test[-A]
+            class NestedTest[-B]
             test[Test[NestedTest[Any]], Test[NestedTest[String]]]
         }
 
         "nested covariance" - {
-            class Test[+T]
-            class NestedTest[+U]
+            class Test[+A]
+            class NestedTest[+B]
             test[Test[NestedTest[String]], Test[NestedTest[Any]]]
         }
 
         "mixed variances" - {
-            class Test[+T, -U]
+            class Test[+A, -B]
             test[Test[String, Any], Test[Any, String]]
         }
 
         "invariant type parameter" - {
-            class Test[T, +U]
+            class Test[A, +B]
             test[Test[String, String], Test[String, Any]]
         }
 
         "complex variance scenario" - {
-            class Test[-T, +U]
+            class Test[-A, +B]
             class NestedTest[+V, -W]
             test[Test[NestedTest[String, Any], Any], Test[NestedTest[Any, String], String]]
         }
@@ -130,39 +130,39 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
         class Sub extends Super
 
         "contravariance with inheritance" - {
-            class Test[-T]
+            class Test[-A]
             test[Test[Sub], Test[Super]]
         }
 
         "covariance with inheritance" - {
-            class Test[+T]
+            class Test[+A]
             test[Test[Sub], Test[Super]]
         }
 
         "nested contravariance with inheritance" - {
-            class Test[-T]
-            class NestedTest[-U]
+            class Test[-A]
+            class NestedTest[-B]
             test[Test[NestedTest[Super]], Test[NestedTest[Sub]]]
         }
 
         "nested covariance with inheritance" - {
-            class Test[+T]
-            class NestedTest[+U]
+            class Test[+A]
+            class NestedTest[+B]
             test[Test[NestedTest[Sub]], Test[NestedTest[Super]]]
         }
 
         "mixed variances with inheritance" - {
-            class Test[+T, -U]
+            class Test[+A, -B]
             test[Test[Sub, Super], Test[Super, Sub]]
         }
 
         "invariant type parameter with inheritance" - {
-            class Test[T, +U]
+            class Test[A, +B]
             test[Test[Sub, Sub], Test[Sub, Super]]
         }
 
         "complex variance scenario with inheritance" - {
-            class Test[-T, +U]
+            class Test[-A, +B]
             class NestedTest[+V, -W]
             test[Test[NestedTest[Sub, Super], Super], Test[NestedTest[Super, Sub], Sub]]
         }
@@ -177,13 +177,13 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
     opaque type OpaqueSub   = Sub
     opaque type OpaqueSuper = Super
 
-    class Test3[+T]
+    class Test3[+A]
     opaque type OpaqueString = String
     opaque type OpaqueAny    = Any
 
-    class TestContra[-T]
+    class TestContra[-A]
 
-    class TestNested[T]
+    class TestNested[A]
     opaque type OpaqueTest = TestNested[OpaqueString]
 
     "with opaque types" - {
@@ -217,13 +217,13 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
     }
 
     trait UnsupportedTest:
-        type T
+        type A
     val test = new UnsupportedTest {}
 
     "unsupported types" in {
         assertDoesNotCompile("Tag[Nothing]")
-        assertDoesNotCompile("Tag[UnsupportedTest#T]")
-        assertDoesNotCompile("Tag[UnsupportedTest.T]")
+        assertDoesNotCompile("Tag[UnsupportedTest#A]")
+        assertDoesNotCompile("Tag[UnsupportedTest.A]")
         assertDoesNotCompile("Tag[String & Int]")
         assertDoesNotCompile("Tag[String | Int]")
     }
@@ -243,7 +243,7 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
 
         "type params" in pendingUntilFixed {
-            class Test[T]
+            class Test[A]
             assert(Tag[Test[Int]].show == s"Tag[${classOf[Test[?]].getName}[scala.Int]]")
             ()
         }

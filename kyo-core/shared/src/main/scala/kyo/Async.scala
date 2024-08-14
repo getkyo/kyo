@@ -1,293 +1,354 @@
 package kyo
 
-import fibersInternal.*
+export Async.Fiber
+export Async.Promise
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.core.*
-import kyo.core.internal.*
-import kyo.internal.Trace
-import kyo.scheduler.IOPromise
-import kyo.scheduler.IOTask
+import java.util.concurrent.locks.LockSupport
+import kyo.Maybe.Empty
+import kyo.Result.Panic
+import kyo.Tag
+import kyo.internal.FiberPlatformSpecific
+import kyo.kernel.*
+import kyo.scheduler.*
 import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
+import scala.annotation.targetName
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.util.*
+import scala.reflect.ClassTag
+import scala.util.NotGiven
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 
-sealed abstract class Fiber[+T]:
-    def isDone(using Trace): Boolean < IOs
-    def get(using Trace): T < Fibers
-    def getResult(using Trace): Result[T] < Fibers
-    def onComplete(f: Result[T] => Unit < IOs)(using Trace): Unit < IOs
-    def block(timeout: Duration)(using Trace): T < IOs
-    def interrupt(using Trace): Boolean < IOs
-    def toFuture(using Trace): Future[T] < IOs
-    def transform[U: Flat](t: T => Fiber[U] < IOs)(using Trace): Fiber[U] < IOs
-end Fiber
+opaque type Async <: (IO & Async.Join) = Async.Join & IO
 
-object Fiber:
+object Async:
 
-    val unit: Fiber[Unit] = value(())
+    sealed trait Join extends Effect[IOPromise[?, *], Result[Nothing, *]]
 
-    def value[T: Flat](v: T): Fiber[T] =
-        Done(Result.success(v))
-
-    def fail[T: Flat](ex: Throwable): Fiber[T] =
-        Done(Result.failure(ex))
-
-end Fiber
-
-object Promise:
-    def apply[T: Flat](p: IOPromise[T]): Promise[T] =
-        new Promise(p)
-
-case class Promise[T] private (private val p: IOPromise[T]) extends Fiber[T]:
-
-    import Flat.unsafe.bypass // avoid capturing
-
-    def isDone(using Trace) = IOs(p.isDone())
-
-    def get(using Trace) = FiberGets(this)
-
-    def getResult(using Trace) =
-        IOs {
-            val r = new IOPromise[Result[T]]
-            r.interrupts(p)
-            p.onComplete { t =>
-                discard(r.complete(Result.success(t)))
-            }
-            new Promise(r).get
-        }
-
-    def onComplete(f: Result[T] => Unit < IOs)(using Trace) =
-        IOs(p.onComplete(r => IOs.run(f(r))))
-
-    def block(timeout: Duration)(using Trace) =
-        IOs {
-            val deadline =
-                if timeout.isFinite then
-                    System.currentTimeMillis() + timeout.toMillis
-                else
-                    Long.MaxValue
-            p.block(deadline).get
-        }
-
-    def interrupt(using Trace) =
-        IOs(p.interrupt())
-
-    def toFuture(using Trace) =
-        IOs {
-            val r = scala.concurrent.Promise[T]()
-            p.onComplete { v =>
-                r.complete(v.toTry)
-            }
-            r.future
-        }
-
-    def transform[U: Flat](t: T => Fiber[U] < IOs)(using Trace) =
-        IOs {
-            val r = new IOPromise[U]()
-            r.interrupts(p)
-            p.onComplete { v =>
-                try
-                    IOs.run(t(v.get)) match
-                        case Promise(v: IOPromise[U]) =>
-                            discard(r.become(v))
-                        case Done(v) =>
-                            discard(r.complete(v))
-                catch
-                    case ex if (NonFatal(ex)) =>
-                        discard(r.complete(Result.failure(ex)))
-            }
-            new Promise(r)
-        }
-
-    def completeSuccess(v: T)(using Trace): Boolean < IOs =
-        IOs(p.complete(Result.success(v)))
-
-    def completeFailure(ex: Throwable)(using Trace): Boolean < IOs =
-        IOs(p.complete(Result.failure(ex)))
-
-    def completeResult(v: Result[T])(using Trace): Boolean < IOs =
-        IOs(p.complete(v))
-
-    def become(other: Fiber[T])(using Trace): Boolean < IOs =
-        other match
-            case Done(v) =>
-                completeResult(v)
-            case Promise(p2: IOPromise[T]) =>
-                IOs(p.become(p2))
-
-    private[kyo] def unsafeComplete(v: Result[T]): Boolean =
-        p.complete(v)
-end Promise
-
-type Fibers >: Fibers.Effects <: Fibers.Effects
-
-object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
-
-    type Effects = FiberGets & IOs
-
-    case object Interrupted
-        extends RuntimeException("Fiber Interrupted")
-        with NoStackTrace:
-        override def getCause() = null
-    end Interrupted
-
-    private[kyo] val interruptedResult = Result.failure(Interrupted)
-    private[kyo] val interruptedIOs    = IOs.fail(Interrupted)
-
-    def run[T: Flat](v: T < Fibers)(using Trace): Fiber[T] < IOs =
-        FiberGets.run(v)
-
-    def runAndBlock[T: Flat, S](timeout: Duration)(v: T < (Fibers & S))(using Trace): T < (IOs & S) =
-        FiberGets.runAndBlock(timeout)(v)
-
-    def get[T, S](v: Fiber[T] < S)(using Trace): T < (Fibers & S) =
-        v.map(_.get)
-
-    private val _promise = IOs(unsafeInitPromise[Object])
-
-    def initPromise[T]: Promise[T] < IOs =
-        _promise.asInstanceOf[Promise[T] < IOs]
-
-    private[kyo] def unsafeInitPromise[T: Flat]: Promise[T] =
-        Promise(new IOPromise[T]())
-
-    def init[T: Flat, S](v: => T < (Fibers & S))(
+    inline def run[E, A: Flat, Ctx](inline v: => A < (Abort[E] & Async & Ctx))(
         using
-        @implicitNotFound(
-            "Fibers.init only accepts Fibers and IOs-based effects. Found: ${S}"
-        ) ev: S => IOs,
-        trace: Trace
-    ): Fiber[T] < (IOs & S) =
-        Locals.save { st =>
-            Promise(IOTask(IOs(v.asInstanceOf[T < Fibers]), st))(
-                using Flat.unsafe.bypass // avoid capturing
-            )
+        boundary: Boundary[Ctx, IO],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): Fiber[E, A] < (IO & Ctx) =
+        boundary((trace, context) => IOTask(v, trace, context))
+
+    def runAndBlock[E, A: Flat, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
+        using
+        boundary: Boundary[Ctx, IO],
+        frame: Frame
+    ): A < (Abort[E | Timeout] & IO & Ctx) =
+        run(v).map { fiber =>
+            IO(Abort.get(fiber.block(deadline(timeout))))
         }
+    end runAndBlock
 
-    def parallel[T: Flat](l: Seq[T < Fibers])(using Trace): Seq[T] < Fibers =
-        l.size match
-            case 0 => Seq.empty
-            case 1 => l(0).map(Seq(_))
-            case _ =>
-                Fibers.get(parallelFiber[T](l))
+    opaque type Promise[E, A] <: Fiber[E, A] = IOPromise[E, A]
 
-    def parallelFiber[T: Flat](l: Seq[T < Fibers])(using Trace): Fiber[Seq[T]] < IOs =
-        l.size match
-            case 0 => Fiber.value(Seq.empty)
-            case 1 => Fibers.run(l(0).map(Seq(_)))
-            case _ =>
-                Locals.save { st =>
-                    IOs {
-                        class State extends IOPromise[Seq[T]]:
-                            val results = (new Array[Any](l.size)).asInstanceOf[Array[T]]
-                            val pending = new AtomicInteger(l.size)
-                        end State
-                        val state = new State
-                        import state.*
-                        foreach(l) { (i, io) =>
-                            val fiber = IOTask(IOs(io), st)
-                            state.interrupts(fiber)
-                            fiber.onComplete { r =>
-                                try
-                                    results(i) = r.get
-                                    if pending.decrementAndGet() == 0 then
-                                        discard(state.complete(Result.success(ArraySeq.unsafeWrapArray(results))))
-                                catch
-                                    case ex if (NonFatal(ex)) =>
-                                        discard(state.complete(Result.failure(ex)))
+    object Promise:
+        inline given [E, A]: Flat[Promise[E, A]] = Flat.unsafe.bypass
+
+        def init[E, A](using Frame): Promise[E, A] < IO = IO(IOPromise())
+
+        extension [E, A](self: Promise[E, A])
+            def complete[E2 <: E, A2 <: A](v: Result[E, A])(using Frame): Boolean < IO     = IO(self.complete(v))
+            def completeUnit[E2 <: E, A2 <: A](v: Result[E, A])(using Frame): Unit < IO    = IO(discard(self.complete(v)))
+            def become[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using Frame): Boolean < IO  = IO(self.become(other))
+            def becomeUnit[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using Frame): Unit < IO = IO(discard(self.become(other)))
+        end extension
+    end Promise
+
+    opaque type Fiber[E, A] = IOPromise[E, A]
+
+    object Fiber extends FiberPlatformSpecific:
+
+        inline given [E, A]: Flat[Fiber[E, A]] = Flat.unsafe.bypass
+
+        private val _unit = success(())
+
+        def unit[E]: Fiber[E, Unit] = _unit.asInstanceOf[Fiber[E, Unit]]
+
+        def never: Fiber[Nothing, Unit] = IOPromise[Nothing, Unit]()
+
+        def success[E, A](v: A): Fiber[E, A]        = result(Result.success(v))
+        def fail[E, A](ex: E): Fiber[E, A]          = result(Result.fail(ex))
+        def panic[E, A](ex: Throwable): Fiber[E, A] = result(Result.panic(ex))
+
+        def fromFuture[A: Flat](f: Future[A])(using Frame): Fiber[Nothing, A] < IO =
+            import scala.util.*
+            IO {
+                val p = new IOPromise[Nothing, A]()
+                f.onComplete {
+                    case Success(v) =>
+                        p.complete(Result.success(v))
+                    case Failure(ex) =>
+                        p.complete(Result.panic(ex))
+                }(ExecutionContext.parasitic)
+                p
+            }
+        end fromFuture
+
+        private def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
+
+        private[kyo] inline def initUnsafe[E, A](p: IOPromise[E, A]): Fiber[E, A] = p
+
+        extension [E, A](self: Fiber[E, A])
+
+            def get(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async) =
+                Async.get(self)
+
+            def use[B, S](f: A => B < S)(using reduce: Reducible[Abort[E]], frame: Frame): B < (reduce.SReduced & Async & S) =
+                Async.use(self)(f)
+
+            def getResult(using Frame): Result[E, A] < Async                            = Async.getResult(self)
+            def useResult[B, S](f: Result[E, A] => B < S)(using Frame): B < (Async & S) = Async.useResult(self)(f)
+            def isDone(using Frame): Boolean < IO                                       = IO(self.isDone())
+            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO        = IO(self.onComplete(r => IO.run(f(r)).eval))
+            def block(timeout: Duration)(using Frame): Result[E | Timeout, A] < IO      = IO(self.block(deadline(timeout)))
+
+            def toFuture(using E <:< Throwable, Frame): Future[A] < IO =
+                IO {
+                    val r = scala.concurrent.Promise[A]()
+                    self.onComplete { v =>
+                        r.complete(v.toTry)
+                    }
+                    r.future
+                }
+
+            def map[B](f: A => B)(using Frame): Fiber[E, B] < IO =
+                IO {
+                    val p = IOPromise[E, B](interrupts = self)
+                    self.onComplete(v => p.completeUnit(v.map(f)))
+                    p
+                }
+
+            def flatMap[E2, B](f: A => Fiber[E2, B])(using Frame): Fiber[E | E2, B] < IO =
+                IO {
+                    val p = IOPromise[E | E2, B](interrupts = self)
+                    self.onComplete(_.fold(p.completeUnit)(v => p.becomeUnit(f(v))))
+                    p
+                }
+
+            def interrupt(using frame: Frame): Boolean < IO =
+                interrupt(Result.Panic(Interrupted(frame)))
+
+            def interrupt(error: Panic)(using Frame): Boolean < IO =
+                IO(self.interrupt(error))
+
+            def interruptUnit(error: Panic)(using Frame): Unit < IO =
+                IO(discard(self.interrupt(error)))
+
+            private[kyo] inline def unsafe: IOPromise[E, A] = self
+
+        end extension
+
+        case class Interrupted(at: Frame) extends NoStackTrace
+
+        def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+            using
+            boundary: Boundary[Ctx, IO],
+            reduce: Reducible[Abort[E]],
+            frame: Frame,
+            safepoint: Safepoint
+        ): Fiber[E, A] < (IO & Ctx) =
+            IO {
+                class State extends IOPromise[E, A] with Function1[Result[E, A], Unit]:
+                    val pending = new AtomicInteger(seq.size)
+                    def apply(result: Result[E, A]): Unit =
+                        val last = pending.decrementAndGet() == 0
+                        result.fold(e => if last then completeUnit(e))(v => completeUnit(Result.success(v)))
+                    end apply
+                end State
+                val state = new State
+                import state.*
+                foreach(seq)((idx, io) => io.evalNow.foreach(v => state(Result.success(v))))
+                if state.isDone() then
+                    state
+                else
+                    boundary { (trace, context) =>
+                        IO {
+                            foreach(seq) { (_, v) =>
+                                val fiber = IOTask(v, safepoint.copyTrace(trace), context)
+                                state.interrupts(fiber)
+                                fiber.onComplete(state)
                             }
+                            state
                         }
-                        Promise(state)
                     }
-                }
+                end if
+            }
 
-    def race[T: Flat](l: Seq[T < Fibers])(using Trace): T < Fibers =
-        Fibers.get(raceFiber[T](l))
-
-    def raceFiber[T: Flat](l: Seq[T < Fibers])(using Trace): Fiber[T] < IOs =
-        l.size match
-            case 0 => IOs.fail("Can't race an empty list.")
-            case 1 => Fibers.run(l(0))
-            case size =>
-                Locals.save { st =>
-                    IOs {
-                        class State extends IOPromise[T] with Function1[Result[T], Unit]:
-                            val pending = new AtomicInteger(size)
-                            def apply(v: Result[T]): Unit =
-                                val last = pending.decrementAndGet() == 0
-                                try discard(complete(Result.success(v.get)))
-                                catch
-                                    case ex if (NonFatal(ex)) =>
-                                        if last then discard(complete(Result.failure(ex)))
-                                end try
-                            end apply
+        def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+            using
+            boundary: Boundary[Ctx, IO],
+            reduce: Reducible[Abort[E]],
+            frame: Frame,
+            safepoint: Safepoint
+        ): Fiber[E, Seq[A]] < (IO & Ctx) =
+            seq.size match
+                case 0 => Fiber.success(Seq.empty)
+                case _ =>
+                    IO {
+                        class State extends IOPromise[E, Seq[A]]:
+                            val results = (new Array[Any](seq.size)).asInstanceOf[Array[A]]
+                            val pending = new AtomicInteger(seq.size)
+                            def done(idx: Int, value: A) =
+                                results(idx) = value
+                                if pending.decrementAndGet() == 0 then
+                                    this.completeUnit(Result.success(ArraySeq.unsafeWrapArray(results)))
+                            end done
                         end State
                         val state = new State
                         import state.*
-                        foreach(l) { (i, io) =>
-                            val f = IOTask(IOs(io), st)
-                            state.interrupts(f)
-                            f.onComplete(state)
-                        }
-                        Promise(state)
+                        foreach(seq)((idx, io) => io.evalNow.foreach(done(idx, _)))
+                        if state.isDone() then state
+                        else
+                            boundary { (trace, context) =>
+                                IO {
+                                    foreach(seq) { (idx, v) =>
+                                        if isNull(results(idx)) then
+                                            val fiber = IOTask(v, safepoint.copyTrace(trace), context)
+                                            state.interrupts(fiber)
+                                            fiber.onComplete(_.fold(state.completeUnit)(done(idx, _)))
+                                    }
+                                    state
+                                }
+                            }
+                        end if
                     }
-                }
 
-    def never(using Trace): Fiber[Unit] < IOs =
-        IOs(Promise(new IOPromise[Unit]))
+    end Fiber
 
-    def delay[T, S](d: Duration)(v: => T < S)(using Trace): T < (S & Fibers) =
+    def delay[A, S](d: Duration)(v: => A < S)(using Frame): A < (S & Async) =
         sleep(d).andThen(v)
 
-    def sleep(d: Duration)(using Trace): Unit < Fibers =
-        initPromise[Unit].map { p =>
+    def sleep(d: Duration)(using Frame): Unit < Async =
+        IO {
+            val p = IOPromise[Nothing, Unit]()
             if d.isFinite then
-                val run: Unit < IOs =
-                    IOs(discard(IOTask(IOs(p.completeSuccess(())), Locals.State.empty)))
-                Timers.schedule(d)(run).map { t =>
-                    IOs.ensure(t.cancel.unit)(p.get)
+                Timer.schedule(d)(p.completeUnit(Result.success(()))).map { t =>
+                    IO.ensure(t.cancel.unit)(get(p))
                 }
             else
-                p.get
+                get(p)
+            end if
         }
 
-    def timeout[T: Flat](d: Duration)(v: => T < Fibers)(using Trace): T < Fibers =
-        init(v).map { f =>
-            val timeout: Unit < IOs =
-                IOs(discard(IOTask(IOs(f.interrupt), Locals.State.empty)))
-            Timers.schedule(d)(timeout).map { t =>
-                IOs.ensure(t.cancel.unit)(f.get)
+    def timeout[E, A: Flat, Ctx](d: Duration)(v: => A < (Abort[E | Timeout] & Async & Ctx))(
+        using
+        boundary: Boundary[Ctx, Async],
+        frame: Frame
+    ): A < (Abort[E | Timeout] & Async & Ctx) =
+        boundary { (trace, context) =>
+            val task = IOTask(v, trace, context)
+            Timer.schedule(d)(task.completeUnit(Result.fail(Timeout(frame)))).map { t =>
+                IO.ensure(t.cancel.unit)(Async.get(task))
             }
         }
+    end timeout
 
-    def fromFuture[T: Flat, S](f: Future[T])(using Trace): T < Fibers =
-        Fibers.get(fromFutureFiber(f))
+    def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using
+        boundary: Boundary[Ctx, Async],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): A < (reduce.SReduced & Async & Ctx) =
+        if seq.isEmpty then reduce(seq(0))
+        else Fiber.race(seq).map(get)
 
-    def fromFutureFiber[T: Flat](f: Future[T])(using Trace): Fiber[T] < IOs =
-        Locals.save { st =>
-            IOs {
-                val p = new IOPromise[T]()
-                f.onComplete { r =>
-                    val io =
-                        IOs {
-                            r match
-                                case Success(v) =>
-                                    p.complete(Result.success(v))
-                                case Failure(ex) =>
-                                    p.complete(Result.failure(ex))
-                        }
-                    IOTask(io, st)
-                }(ExecutionContext.parasitic)
-                Promise(p)
-            }
+    def race[E, A: Flat, Ctx](
+        first: A < (Abort[E] & Async & Ctx),
+        rest: A < (Abort[E] & Async & Ctx)*
+    )(
+        using
+        boundary: Boundary[Ctx, Async],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): A < (reduce.SReduced & Async & Ctx) =
+        race[E, A, Ctx](first +: rest)
+
+    def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using
+        boundary: Boundary[Ctx, Async],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): Seq[A] < (reduce.SReduced & Async & Ctx) =
+        seq.size match
+            case 0 => Seq.empty
+            case 1 => reduce(seq(0).map(Seq(_)))
+            case _ => Fiber.parallel(seq).map(get)
+        end match
+    end parallel
+
+    def parallel[E, A1: Flat, A2: Flat, Ctx](
+        v1: A1 < (Abort[E] & Async & Ctx),
+        v2: A2 < (Abort[E] & Async & Ctx)
+    )(
+        using
+        boundary: Boundary[Ctx, Async],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): (A1, A2) < (reduce.SReduced & Async & Ctx) =
+        parallel(Seq(v1, v2))(using Flat.unsafe.bypass).map { s =>
+            (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2])
         }
 
-    private inline def foreach[T, U](l: Seq[T])(inline f: (Int, T) => Unit)(using Trace): Unit =
+    def parallel[E, A1: Flat, A2: Flat, A3: Flat, Ctx](
+        v1: A1 < (Abort[E] & Async & Ctx),
+        v2: A2 < (Abort[E] & Async & Ctx),
+        v3: A3 < (Abort[E] & Async & Ctx)
+    )(
+        using
+        boundary: Boundary[Ctx, Async],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): (A1, A2, A3) < (reduce.SReduced & Async & Ctx) =
+        parallel(Seq(v1, v2, v3))(using Flat.unsafe.bypass).map { s =>
+            (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3])
+        }
+
+    def parallel[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, Ctx](
+        v1: A1 < (Abort[E] & Async & Ctx),
+        v2: A2 < (Abort[E] & Async & Ctx),
+        v3: A3 < (Abort[E] & Async & Ctx),
+        v4: A4 < (Abort[E] & Async & Ctx)
+    )(
+        using
+        boundary: Boundary[Ctx, Async],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): (A1, A2, A3, A4) < (reduce.SReduced & Async & Ctx) =
+        parallel(Seq(v1, v2, v3, v4))(using Flat.unsafe.bypass).map { s =>
+            (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
+        }
+
+    private[kyo] def get[E, A](v: IOPromise[E, A])(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async) =
+        reduce(use(v)(identity))
+
+    private[kyo] def use[E, A, B, S](v: IOPromise[E, A])(f: A => B < S)(
+        using
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): B < (S & reduce.SReduced & Async) =
+        val x = useResult(v)(_.fold(Abort.error)(f))
+        reduce(x)
+    end use
+
+    private[kyo] def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
+        Effect.suspend[A](Tag[Join], v).asInstanceOf[Result[E, A] < Async]
+
+    private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
+        Effect.suspendMap[A](Tag[Join], v)(f)
+
+    private def deadline(timeout: Duration): Long =
+        if timeout.isFinite then
+            System.currentTimeMillis() + timeout.toMillis
+        else
+            Long.MaxValue
+
+    private inline def foreach[A](l: Seq[A])(inline f: (Int, A) => Unit): Unit =
         l match
             case l: IndexedSeq[?] =>
                 val s = l.size
@@ -303,64 +364,5 @@ object Fibers extends Joins[Fibers] with fibersPlatformSpecific:
                         f(i, it.next())
                         loop(i + 1)
                 loop(0)
-end Fibers
 
-object fibersInternal:
-
-    case class Done[T: Flat](result: Result[T]) extends Fiber[T]:
-        def isDone(using Trace)                                 = true
-        def get(using Trace)                                    = result.get
-        def getResult(using Trace)                              = result
-        def onComplete(f: Result[T] => Unit < IOs)(using Trace) = f(result)
-        def block(timeout: Duration)(using Trace)               = result.get
-        def interrupt(using Trace)                              = false
-
-        def toFuture(using Trace) = Future.fromTry(result.toTry)
-
-        def transform[U: Flat](f: T => Fiber[U] < IOs)(using Trace) =
-            result match
-                case Result.Success(v) => f(v)
-                case _                 => this.asInstanceOf[Fiber[U]]
-    end Done
-
-    class FiberGets extends Effect[FiberGets]:
-        type Command[T] = Fiber[T]
-
-    object FiberGets extends FiberGets:
-        type Command[T] = Fiber[T]
-
-        def apply[T, S](f: Fiber[T])(using Trace): T < (FiberGets & S) =
-            suspend(this)(f)
-
-        private val deepHandler =
-            new DeepHandler[Fiber, FiberGets, IOs]:
-                def done[T: Flat](v: T) = Fiber.value(v)
-                def resume[T, U: Flat](m: Fiber[T], f: T => Fiber[U] < IOs) =
-                    m.transform(f)
-
-        def run[T: Flat](v: T < Fibers)(using Trace): Fiber[T] < IOs =
-            IOs(deepHandle(deepHandler, IOs.runLazy(v)))
-
-        def runAndBlock[T: Flat, S](timeout: Duration)(
-            v: T < (IOs & FiberGets & S)
-        )(using Trace): T < (IOs & S) =
-            IOs {
-                val deadline =
-                    if timeout.isFinite then
-                        System.currentTimeMillis() + timeout.toMillis
-                    else
-                        Long.MaxValue
-                val handler =
-                    new Handler[Fiber, FiberGets, IOs]:
-                        def resume[T, U: Flat, S](m: Fiber[T], f: T => U < (FiberGets & S))(using Tag[FiberGets]) =
-                            val result =
-                                m match
-                                    case Promise(p) => p.block(deadline)
-                                    case Done(v)    => v
-                            Resume((), IOs(f(result.get)))
-                        end resume
-                FiberGets.handle(handler)((), v)
-            }
-
-    end FiberGets
-end fibersInternal
+end Async

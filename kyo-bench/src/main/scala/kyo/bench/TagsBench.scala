@@ -7,11 +7,11 @@ class TagsBench extends Bench(()):
     class Super
     class Sub1 extends Super
     class Sub2 extends Super
-    class Test1[+T]
-    class Test2[-T]
-    class Test3[T, U]
-    class Test4[-T, -U]
-    class Test5[+T, U]
+    class Test1[+A]
+    class Test2[-A]
+    class Test3[A, B]
+    class Test4[-A, -B]
+    class Test5[+A, B]
     class Test6[T1, T2, T3, T4, T5]
 
     @Benchmark

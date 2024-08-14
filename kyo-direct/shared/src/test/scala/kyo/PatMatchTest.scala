@@ -1,11 +1,10 @@
-package kyoTest
+package kyo
 
-import kyo.*
 import kyo.TestSupport.*
 import org.scalatest.Assertions
 import org.scalatest.freespec.AnyFreeSpec
 
-class patMatchTest extends AnyFreeSpec with Assertions:
+class PatMatchTest extends AnyFreeSpec with Assertions:
     "unlifted scrutinee" - {
         "without guards" - {
             "pure cases" in {
@@ -113,7 +112,7 @@ class patMatchTest extends AnyFreeSpec with Assertions:
     "misc" - {
         "val patmatch" in {
             runLiftTest(1) {
-                val Some(a) = await(IOs(Some(1)))
+                val Some(a) = await(IO(Some(1)))
                 a
             }
         }
@@ -127,4 +126,4 @@ class patMatchTest extends AnyFreeSpec with Assertions:
         //   }
         // }
     }
-end patMatchTest
+end PatMatchTest

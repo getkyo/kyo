@@ -1,50 +1,48 @@
-package kyoTest
+package kyo
 
-import kyo.*
+class AdderTest extends Test:
 
-class addersTest extends KyoTest:
-
-    "LongAdder" - {
-        "should initialize to 0" in IOs.run {
+    "long" - {
+        "should initialize to 0" in run {
             for
-                ref <- Adders.initLong
+                ref <- LongAdder.init
                 v   <- ref.get
             yield assert(v == 0)
         }
-        "should add value" in IOs.run {
+        "should add value" in run {
             for
-                ref <- Adders.initLong
+                ref <- LongAdder.init
                 _   <- ref.add(5)
                 v   <- ref.get
             yield assert(v == 5)
         }
-        "should increment the value" in IOs.run {
+        "should increment the value" in run {
             for
-                ref <- Adders.initLong
+                ref <- LongAdder.init
                 _   <- ref.add(5)
                 _   <- ref.increment
                 v   <- ref.get
             yield assert(v == 6)
         }
-        "should decrement the value" in IOs.run {
+        "should decrement the value" in run {
             for
-                ref <- Adders.initLong
+                ref <- LongAdder.init
                 _   <- ref.add(5)
                 _   <- ref.decrement
                 v   <- ref.get
             yield assert(v == 4)
         }
-        "should reset the value" in IOs.run {
+        "should reset the value" in run {
             for
-                ref <- Adders.initLong
+                ref <- LongAdder.init
                 _   <- ref.add(5)
                 _   <- ref.reset
                 v   <- ref.get
             yield assert(v == 0)
         }
-        "should sum and reset the value" in IOs.run {
+        "should sum and reset the value" in run {
             for
-                ref <- Adders.initLong
+                ref <- LongAdder.init
                 _   <- ref.add(5)
                 v1  <- ref.sumThenReset
                 v2  <- ref.get
@@ -52,27 +50,35 @@ class addersTest extends KyoTest:
         }
     }
 
-    "DoubleAdder" - {
-        "should initialize to 0" in IOs.run {
+    "double" - {
+        "should initialize to 0" in run {
             for
-                ref <- Adders.initDouble
+                ref <- DoubleAdder.init
                 v   <- ref.get
             yield assert(v == 0.0)
         }
-        "should add value" in IOs.run {
+        "should add value" in run {
             for
-                ref <- Adders.initDouble
+                ref <- DoubleAdder.init
                 _   <- ref.add(5.0)
                 v   <- ref.get
             yield assert(v == 5.0)
         }
-        "should reset the value" in IOs.run {
+        "should reset the value" in run {
             for
-                ref <- Adders.initDouble
+                ref <- DoubleAdder.init
                 _   <- ref.add(5.0)
                 _   <- ref.reset
                 v   <- ref.get
             yield assert(v == 0.0)
         }
+        "should sum and reset the value" in run {
+            for
+                ref <- DoubleAdder.init
+                _   <- ref.add(5)
+                v1  <- ref.sumThenReset
+                v2  <- ref.get
+            yield assert(v1 == 5 && v2 == 0)
+        }
     }
-end addersTest
+end AdderTest

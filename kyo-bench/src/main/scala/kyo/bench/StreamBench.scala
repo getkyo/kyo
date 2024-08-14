@@ -17,11 +17,11 @@ class StreamBench extends Bench.SyncAndFork(25000000):
 
     def kyoBench() =
         import kyo.*
-        Streams.initSeq(seq)
+        Stream.init(seq)
             .filter(_ % 2 == 0)
-            .transform(_ + 1)
+            .map(_ + 1)
             .runFold(0)(_ + _)
-            .pure._1
+            .eval
     end kyoBench
 
     def zioBench() =

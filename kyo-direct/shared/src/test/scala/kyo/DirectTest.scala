@@ -1,14 +1,12 @@
-package kyoTest
+package kyo
 
-import kyo.*
-import kyo.internal.Trace
 import scala.util.Try
 
-class directTest extends KyoTest:
+class DirectTest extends Test:
 
     // "match" in {
-    //   val a = IOs(1)
-    //   val b = IOs(2)
+    //   val a = IO(1)
+    //   val b = IO(2)
     //   val c =
     //     defer {
     //       await(a) match {
@@ -16,67 +14,67 @@ class directTest extends KyoTest:
     //         case 2                   => 99
     //       }
     //     }
-    //   assert(IOs.run(c) == 1)
+    //   assert(IO.run(c) == 1)
     // }
 
     "one run" in {
         val io = defer {
-            val a = await(IOs("hello"))
+            val a = await(IO("hello"))
             a + " world"
         }
-        assert(IOs.run(io) == "hello world")
+        assert(IO.run(io).eval == "hello world")
     }
 
     "two runs" in {
         val io =
             defer {
-                val a = await(IOs("hello"))
-                val b = await(IOs("world"))
+                val a = await(IO("hello"))
+                val b = await(IO("world"))
                 a + " " + b
             }
-        assert(IOs.run(io) == "hello world")
+        assert(IO.run(io).eval == "hello world")
     }
 
     "two effects" in {
-        val io: String < (IOs & Options) =
+        val io: String < (IO & Abort[Maybe.Empty]) =
             defer {
-                val a = await(Options.get(Some("hello")))
-                val b = await(IOs("world"))
+                val a = await(Abort.get(Some("hello")))
+                val b = await(IO("world"))
                 a + " " + b
             }
-        assert(IOs.run(Options.run(io)) == Some("hello world"))
+        assert(IO.run(Abort.run(io)).eval == Result.success("hello world"))
     }
 
     "if" in {
         var calls = Seq.empty[Int]
-        val io: Boolean < IOs =
+        val io: Boolean < IO =
             defer {
-                if await(IOs { calls :+= 1; true }) then
-                    await(IOs { calls :+= 2; true })
+                if await(IO { calls :+= 1; true }) then
+                    await(IO { calls :+= 2; true })
                 else
-                    await(IOs { calls :+= 3; true })
+                    await(IO { calls :+= 3; true })
             }
-        assert(IOs.run(io))
+        assert(IO.run(io).eval)
         assert(calls == Seq(1, 2))
     }
 
     "booleans" - {
         "&&" in {
             var calls = Seq.empty[Int]
-            val io: Boolean < IOs =
+            val io: Boolean < IO =
                 defer {
-                    (await(IOs { calls :+= 1; true }) && await(IOs { calls :+= 2; true }))
+                    (await(IO { calls :+= 1; true }) && await(IO { calls :+= 2; true }))
                 }
-            assert(IOs.run(io))
+            assert(IO.run(io).eval)
             assert(calls == Seq(1, 2))
         }
         "||" in {
             var calls = Seq.empty[Int]
-            val io: Boolean < IOs =
+            val io: Boolean < IO =
                 defer {
-                    (await(IOs { calls :+= 1; true }) || await(IOs { calls :+= 2; true }))
+                    (await(IO { calls :+= 1; true }) || await(IO { calls :+= 2; true }))
                 }
-            assert(IOs.run(io))
+            assert(IO.run(io).eval)
             assert(calls == Seq(1))
         }
     }
@@ -84,56 +82,50 @@ class directTest extends KyoTest:
     "while" in {
         val io =
             defer {
-                val c = await(Atomics.initInt(1))
+                val c = await(AtomicInt.init(1))
                 while await(c.get) < 100 do
                     await(c.incrementAndGet)
                     ()
                 await(c.get)
             }
-        assert(IOs.run(io) == 100)
+        assert(IO.run(io).eval == 100)
     }
 
     "options" in {
         def test(opt: Option[Int]) =
-            assert(opt == Options.run(defer(await(Options.get(opt)))).pure)
+            assert(opt == Abort.run(defer(await(Abort.get(opt)))).eval.fold(_ => None)(Some(_)))
         test(Some(1))
         test(None)
-    }
-    "tries" in {
-        def test(t: Try[Int]) =
-            assert(t == IOs.run(IOs.toTry(defer(await(IOs.fromTry(t))))))
-        test(Try(1))
-        test(Try(throw new Exception("a")))
     }
     "consoles" in {
         object console extends Console:
 
-            def printErr(s: String)(using Trace): Unit < IOs = ???
+            def printErr(s: String)(using Frame): Unit < IO = ???
 
-            def println(s: String)(using Trace): Unit < IOs = ???
+            def println(s: String)(using Frame): Unit < IO = ???
 
-            def print(s: String)(using Trace): Unit < IOs = ???
+            def print(s: String)(using Frame): Unit < IO = ???
 
-            def readln(using Trace): String < IOs = "hello"
+            def readln(using Frame): String < IO = "hello"
 
-            def printlnErr(s: String)(using Trace): Unit < IOs = ???
+            def printlnErr(s: String)(using Frame): Unit < IO = ???
         end console
-        val io: String < IOs = Consoles.run(console)(defer(await(Consoles.readln)))
-        assert(IOs.run(io) == "hello")
+        val io: String < IO = Console.let(console)(defer(await(Console.readln)))
+        assert(IO.run(io).eval == "hello")
     }
 
     "kyo computations must be within a run block" in {
-        assertDoesNotCompile("defer(IOs(1))")
+        assertDoesNotCompile("defer(IO(1))")
         assertDoesNotCompile("""
             defer {
-                val a = IOs(1)
+                val a = IO(1)
                 10
             }
         """)
         assertDoesNotCompile("""
             defer {
                 val a = {
-                val b = IOs(1)
+                val b = IO(1)
                 10
                 }
                 10
@@ -141,12 +133,12 @@ class directTest extends KyoTest:
         """)
     }
 
-    "choices" in {
+    "Choice" in {
 
-        val x = Choices.get(Seq(1, -2, -3))
-        val y = Choices.get(Seq("ab", "cde"))
+        val x = Choice.get(Seq(1, -2, -3))
+        val y = Choice.get(Seq("ab", "cde"))
 
-        val v: Int < Choices =
+        val v: Int < Choice =
             defer {
                 val xx = await(x)
                 xx + (
@@ -155,16 +147,16 @@ class directTest extends KyoTest:
                 )
             }
 
-        val a: Seq[Int] = Choices.run(v).pure
+        val a: Seq[Int] = Choice.run(v).eval
         assert(a == Seq(3, -3, -5, 4, -5, -8, 0, 1, -1, 0))
     }
 
-    "choices + filter" in {
+    "Choice + filter" in {
 
-        val x = Choices.get(Seq(1, -2, -3))
-        val y = Choices.get(Seq("ab", "cde"))
+        val x = Choice.get(Seq(1, -2, -3))
+        val y = Choice.get(Seq("ab", "cde"))
 
-        val v: Int < Choices =
+        val v: Int < Choice =
             defer {
                 val xx = await(x)
                 val r =
@@ -172,10 +164,10 @@ class directTest extends KyoTest:
                         if xx > 0 then await(y).length * await(x)
                         else await(y).length
                     )
-                await(Choices.filter(r > 0))
+                await(Choice.dropIf(r <= 0))
                 r
             }
 
-        assert(Choices.run(v).pure == Seq(3, 4, 1))
+        assert(Choice.run(v).eval == Seq(3, 4, 1))
     }
-end directTest
+end DirectTest

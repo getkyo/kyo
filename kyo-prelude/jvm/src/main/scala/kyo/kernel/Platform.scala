@@ -1,10 +1,18 @@
-package kyo.internal
+package kyo.kernel
+
+import kyo.kernel.Mode
+import scala.concurrent.ExecutionContext
 
 object Platform:
-    def executionContext = scala.concurrent.ExecutionContext.global
-    def isJVM: Boolean   = true
-    def isJS: Boolean    = false
-    def isDebugEnabled: Boolean =
+
+    val mode: Mode =
+        Option(System.getProperty("kyo.kernel.Platform.mode"))
+            .map(Mode.valueOf).getOrElse(Mode.Development)
+
+    val executionContext: ExecutionContext = scala.concurrent.ExecutionContext.global
+    val isJVM: Boolean                     = true
+    val isJS: Boolean                      = false
+    val isDebugEnabled: Boolean =
         java.lang.management.ManagementFactory
             .getRuntimeMXBean()
             .getInputArguments()

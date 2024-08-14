@@ -1,9 +1,10 @@
 package kyo
 
-import kyo.internal.Trace
+import kyo.Tag
+import scala.reflect.ClassTag
 import scala.util.*
 
-object Retries:
+object Retry:
 
     case class Policy(backoff: Int => Duration, limit: Int):
         def exponential(
@@ -23,23 +24,35 @@ object Retries:
     object Policy:
         val default = Policy(_ => Duration.Zero, 3)
 
-    def apply[T: Flat, S](policy: Policy)(v: => T < S)(using Trace): T < (Fibers & S) =
-        apply(_ => policy)(v)
+    final class RetryOps[E >: Nothing](dummy: Unit) extends AnyVal:
+        def apply[A: Flat, S](policy: Policy)(v: => A < S)(
+            using
+            ClassTag[E],
+            Tag[E],
+            Frame
+        ): A < (Async & Abort[E] & S) =
+            apply(_ => policy)(v)
 
-    def apply[T: Flat, S](builder: Policy => Policy)(v: => T < S)(using Trace): T < (Fibers & S) =
-        val b = builder(Policy.default)
-        Loops.indexed { attempt =>
-            IOs.toTry(v).map {
-                case Failure(ex) =>
+        def apply[A: Flat, S](builder: Policy => Policy)(v: => A < (Abort[E] & S))(
+            using
+            ClassTag[E],
+            Tag[E],
+            Frame
+        ): A < (Async & Abort[E] & S) =
+            val b = builder(Policy.default)
+            Loop.indexed { attempt =>
+                Abort.run[E](v).map(_.fold { r =>
                     if attempt < b.limit then
-                        Fibers.sleep(b.backoff(attempt)).andThen {
-                            Loops.continue
+                        Async.sleep(b.backoff(attempt)).andThen {
+                            Loop.continue
                         }
                     else
-                        IOs.fail(ex)
-                case Success(value: T) =>
-                    Loops.done(value)
+                        Abort.get(r)
+                }(Loop.done(_)))
             }
-        }
-    end apply
-end Retries
+        end apply
+    end RetryOps
+
+    inline def apply[E >: Nothing]: RetryOps[E] = RetryOps(())
+
+end Retry
