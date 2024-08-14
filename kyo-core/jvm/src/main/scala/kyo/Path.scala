@@ -191,9 +191,9 @@ class Path(val path: List[String]):
     /** List contents of path with given extension
       */
     def list(extension: String)(using Frame): IndexedSeq[Path] < IO =
-        IO.defer(JFiles.list(toJava).toScala(LazyList)).map(_.filter(path =>
+        IO(JFiles.list(toJava).toScala(LazyList).filter(path =>
             path.getFileName().toString().split('.').toList.lastOption.getOrElse("") == extension
-        )).map(_.toIndexedSeq).map(_.map(path => Path(path.toString)))
+        ).toIndexedSeq.map(path => Path(path.toString)))
 
     /** Returns if the path exists
       */
@@ -328,8 +328,7 @@ class Path(val path: List[String]):
     /** Creates a stream of the contents of this path with given depth
       */
     def walk(maxDepth: Int)(using Frame): Stream[Path, IO] =
-        Stream.init(IO.defer(Files.walk(toJava).toScala(LazyList)))
-            .map(path => Path(path.toString))
+        Stream.init(IO(JFiles.walk(toJava).toScala(LazyList).map(path => Path(path.toString))))
 
     override def toString = s"Path(\"${path.mkString("/")}\")"
 
