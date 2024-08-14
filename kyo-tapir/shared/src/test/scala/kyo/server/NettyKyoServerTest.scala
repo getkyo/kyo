@@ -8,7 +8,7 @@ class NettyKyoServerTest extends Test:
 
     def testServer() =
         import scala.concurrent.duration.*
-        NettyKyoServer(NettyConfig.default.copy(gracefulShutdownTimeout = Some(5.millis)))
+        NettyKyoServer(NettyConfig.default.copy(gracefulShutdownTimeout = Some(5.millis))).port(9999)
 
     "start stop" in run {
         for

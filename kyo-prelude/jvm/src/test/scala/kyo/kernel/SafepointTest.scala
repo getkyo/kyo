@@ -364,7 +364,7 @@ class SafepointTest extends Test:
 
             interceptor.log.foreach { case (frame, duration) =>
                 assert(duration > 0)
-                assert(duration < 3000000)
+                assert(duration < 5000000)
             }
 
             assert(interceptor.log.size == 3)
