@@ -17,9 +17,10 @@ final class Safepoint private () extends Trace.Owner:
     private val owner                            = Thread.currentThread()
 
     private def enter(frame: Frame, value: Any): Int =
-        if depth < maxStackDepth && (isNull(interceptor) || interceptor.enter(frame, value))
+        if (Thread.currentThread eq owner) &&
+            depth < maxStackDepth &&
+            (isNull(interceptor) || interceptor.enter(frame, value))
         then
-            bug.check(Thread.currentThread eq owner)
             pushFrame(frame)
             val depth = this.depth
             this.depth = depth + 1

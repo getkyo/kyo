@@ -166,7 +166,7 @@ class SafepointTest extends Test:
                 (1: Int < Any).map(_ + 1).map(_ + 2)
             }
 
-        assertThrows[KyoBugException](res.eval)
+        assert(res.eval == 4)
     }
 
     "forced runtime leak + eval" in {
@@ -178,7 +178,7 @@ class SafepointTest extends Test:
                 (1: Int < Any).map(_ + 1).map(_ + 2).eval
             }
 
-        assertThrows[KyoBugException](res.eval)
+        assert(res.eval == 4)
     }
 
     "interceptors" - {
