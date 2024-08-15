@@ -208,6 +208,12 @@ class PendingTest extends Test:
             val result: Int = Env.get[Int].pipe(Env.run(5)).pipe(_.eval)
             assert(result == 5)
         }
+
+        "piped computation is by-name" in {
+            val ex     = new Exception
+            val result = (1: Int < Any).map(_ => (throw ex): Int).pipe(Abort.run[Exception](_)).eval
+            assert(result.failure == Maybe(ex))
+        }
     }
 
 end PendingTest

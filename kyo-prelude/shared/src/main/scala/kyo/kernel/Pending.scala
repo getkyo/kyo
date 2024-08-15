@@ -42,7 +42,7 @@ object `<`:
         inline def flatMap[B, S2](inline f: Safepoint ?=> A => B < S2)(using inline frame: Frame): B < (S & S2) =
             map(v => f(v))
 
-        inline def pipe[B](inline f: A < S => B): B =
+        inline def pipe[B](f: (=> A < S) => B): B =
             f(v)
 
         inline def map[B, S2](inline f: Safepoint ?=> A => B < S2)(
