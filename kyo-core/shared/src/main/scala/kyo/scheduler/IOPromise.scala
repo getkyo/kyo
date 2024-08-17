@@ -195,6 +195,15 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                     v.asInstanceOf[Result[E | Timeout, A]]
         blockLoop(this)
     end block
+
+    override def toString =
+        val stateString =
+            state match
+                case p: Pending[?, ?] => s"Pending(waiters = ${p.waiters})"
+                case l: Linked[?, ?]  => s"Linked(promise = ${l.p})"
+                case r                => s"Done(result = ${r.asInstanceOf[Result[Any, Any]].show})"
+        s"IOPromise(state = ${stateString})"
+    end toString
 end IOPromise
 
 private[kyo] object IOPromise extends IOPromisePlatformSpecific:
@@ -208,10 +217,12 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
     abstract class Pending[E, A]:
         self =>
 
+        def waiters: Int
         def run(v: Result[E, A]): Pending[E, A]
 
         def add(f: Result[E, A] => Unit): Pending[E, A] =
             new Pending[E, A]:
+                def waiters: Int = self.waiters + 1
                 def run(v: Result[E, A]) =
                     try f(v)
                     catch
@@ -224,6 +235,7 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
 
         final def interrupts(p: IOPromise[?, ?]): Pending[E, A] =
             new Pending[E, A]:
+                def waiters: Int = self.waiters + 1
                 def run(v: Result[E, A]) =
                     self
 
@@ -236,6 +248,7 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
                         runLoop(p.run(v), v)
 
             new Pending[E, A]:
+                def waiters: Int         = self.waiters + 1
                 def run(v: Result[E, A]) = runLoop(self, v)
         end merge
 
@@ -253,6 +266,7 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
     object Pending:
         def apply[E, A](): Pending[E, A] = Empty.asInstanceOf[Pending[E, A]]
         case object Empty extends Pending[Nothing, Nothing]:
+            def waiters: Int                     = 0
             def run(v: Result[Nothing, Nothing]) = this
     end Pending
 end IOPromise

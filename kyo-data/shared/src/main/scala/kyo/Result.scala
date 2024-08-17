@@ -214,6 +214,12 @@ object Result:
                 case Success(v) => Result.fail(v)
                 case _          => self.asInstanceOf[Result[A, E]]
 
+        def show: String =
+            self match
+                case Panic(ex) => s"Panic($ex)"
+                case Fail(ex)  => s"Fail($ex)"
+                case v         => s"Success($v)"
+
     end extension
 
     private object internal:

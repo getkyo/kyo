@@ -166,6 +166,7 @@ lazy val `kyo-prelude` =
         .in(file("kyo-prelude"))
         .settings(
             `kyo-settings`,
+            libraryDependencies += "com.lihaoyi" %%% "pprint"        % "0.9.0",
             libraryDependencies += "org.jctools"   % "jctools-core"  % "4.0.5",
             libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC27" % Test,
             libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % "2.1.2"      % Test,
@@ -182,7 +183,6 @@ lazy val `kyo-core` =
         .in(file("kyo-core"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.lihaoyi"  %%% "pprint"          % "0.9.0",
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC27" % Test,
