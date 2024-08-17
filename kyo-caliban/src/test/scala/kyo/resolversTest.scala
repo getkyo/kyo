@@ -84,7 +84,7 @@ class ResolverTest extends Test:
                     Resolvers.get(api)
                 }
                 res <-
-                    Request(_
+                    Requests(_
                         .post(Uri.unsafeApply(server.hostName, server.port))
                         .body("""{"query":"{ k1 k2 k3 k4 k5 }"}"""))
                 _ <- server.stop()
@@ -101,7 +101,7 @@ class ResolverTest extends Test:
                     Resolvers.get(api).map(_.configure(Configurator.setEnableIntrospection(true)))
                 }
                 res <-
-                    Request(_
+                    Requests(_
                         .post(Uri.unsafeApply(server.hostName, server.port))
                         .body("""{"query":"{ k1 k2 k3 k4 k5 }"}"""))
                 _ <- server.stop()
@@ -129,7 +129,7 @@ class ResolverTest extends Test:
             for
                 server <- Resolvers.run(testServer(8082), runner) { Resolvers.get(api) }
                 res <-
-                    Request(_
+                    Requests(_
                         .post(Uri.unsafeApply(server.hostName, server.port))
                         .body("""{"query":"{ k }"}"""))
                 _ <- server.stop()

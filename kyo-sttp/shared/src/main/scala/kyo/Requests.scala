@@ -4,7 +4,7 @@ import sttp.client3.*
 
 case class FailedRequest(cause: String) extends Exception
 
-object Request:
+object Requests:
 
     abstract class Backend:
         self =>
@@ -17,7 +17,9 @@ object Request:
                     m.run(self.send(r))
     end Backend
 
-    private val local = Local.init[Backend](PlatformBackend.default)
+    val live: Backend = PlatformBackend.default
+
+    private val local = Local.init[Backend](live)
 
     def let[A, S](b: Backend)(v: A < S)(using Frame): A < (Async & S) =
         local.let(b)(v)
@@ -36,4 +38,4 @@ object Request:
         local.use(_.send(req)).map { r =>
             Abort.get(r.body)
         }
-end Request
+end Requests
