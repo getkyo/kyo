@@ -21,10 +21,10 @@ end Timer
 
 object Timer:
 
-    val default: Timer =
+    val live: Timer =
         Timer(Executors.newScheduledThreadPool(2, Threads("kyo-timer-default")))
 
-    private val local = Local.init(Timer.default)
+    private val local = Local.init(Timer.live)
 
     def let[A, S](timer: Timer)(v: A < S)(using Frame): A < (IO & S) =
         local.let(timer)(v)
