@@ -4,7 +4,7 @@ class HubTest extends Test:
 
     "listen/offer/take" in runJVM {
         for
-            h <- Hubs.init[Int](2)
+            h <- Hub.init[Int](2)
             l <- h.listen
             b <- h.offer(1)
             v <- l.take
@@ -12,7 +12,7 @@ class HubTest extends Test:
     }
     "listen/listen/offer/take" in runJVM {
         for
-            h  <- Hubs.init[Int](2)
+            h  <- Hub.init[Int](2)
             l1 <- h.listen
             l2 <- h.listen
             b  <- h.offer(1)
@@ -22,7 +22,7 @@ class HubTest extends Test:
     }
     "listen/offer/listen/take/poll" in runJVM {
         for
-            h  <- Hubs.init[Int](2)
+            h  <- Hub.init[Int](2)
             l1 <- h.listen
             b  <- h.offer(1)
             _  <- untilTrue(h.isEmpty) // wait transfer
@@ -33,7 +33,7 @@ class HubTest extends Test:
     }
     "listen/offer/take/listen/poll" in runJVM {
         for
-            h  <- Hubs.init[Int](2)
+            h  <- Hub.init[Int](2)
             l1 <- h.listen
             b  <- h.offer(1)
             v1 <- l1.take
@@ -43,7 +43,7 @@ class HubTest extends Test:
     }
     "offer/listen/poll" in runJVM {
         for
-            h <- Hubs.init[Int](2)
+            h <- Hub.init[Int](2)
             b <- h.offer(1)
             _ <- untilTrue(h.isEmpty) // wait transfer
             l <- h.listen
@@ -52,7 +52,7 @@ class HubTest extends Test:
     }
     "close hub" in runJVM {
         for
-            h  <- Hubs.init[Int](2)
+            h  <- Hub.init[Int](2)
             b  <- h.offer(1)
             _  <- untilTrue(h.isEmpty) // wait transfer
             l  <- h.listen
@@ -67,7 +67,7 @@ class HubTest extends Test:
     }
     "close listener w/ buffer" in runJVM {
         for
-            h  <- Hubs.init[Int](2)
+            h  <- Hub.init[Int](2)
             l1 <- h.listen(2)
             b1 <- h.offer(1)
             _  <- untilTrue(l1.isEmpty.map(!_))
@@ -83,7 +83,7 @@ class HubTest extends Test:
     }
     "offer beyond capacity" in runJVM {
         for
-            h  <- Hubs.init[Int](2)
+            h  <- Hub.init[Int](2)
             l  <- h.listen
             _  <- h.put(1)
             _  <- h.put(2)
@@ -97,7 +97,7 @@ class HubTest extends Test:
     }
     "concurrent listeners taking values" in runJVM {
         for
-            h  <- Hubs.init[Int](10)
+            h  <- Hub.init[Int](10)
             l1 <- h.listen
             l2 <- h.listen
             _  <- h.offer(1)
@@ -107,7 +107,7 @@ class HubTest extends Test:
     }
     "listener removal" in runJVM {
         for
-            h <- Hubs.init[Int](2)
+            h <- Hub.init[Int](2)
             l <- h.listen
             _ <- h.offer(1)
             _ <- untilTrue(h.isEmpty)
@@ -118,7 +118,7 @@ class HubTest extends Test:
     }
     "hub closure with pending offers" in runJVM {
         for
-            h <- Hubs.init[Int](2)
+            h <- Hub.init[Int](2)
             _ <- h.offer(1)
             _ <- h.close
             v <- h.offer(2)
@@ -126,7 +126,7 @@ class HubTest extends Test:
     }
     "create listener on empty hub" in runJVM {
         for
-            h <- Hubs.init[Int](2)
+            h <- Hub.init[Int](2)
             l <- h.listen
             v <- l.poll
         yield assert(v.isEmpty)
@@ -134,7 +134,7 @@ class HubTest extends Test:
     "contention" - {
         "writes" in runJVM {
             for
-                h  <- Hubs.init[Int](2)
+                h  <- Hub.init[Int](2)
                 l  <- h.listen
                 _  <- Kyo.seq.fill(100)(Async.run(h.put(1)))
                 t  <- Kyo.seq.fill(100)(l.take)
@@ -144,7 +144,7 @@ class HubTest extends Test:
         }
         "reads + writes" in runJVM {
             for
-                h  <- Hubs.init[Int](2)
+                h  <- Hub.init[Int](2)
                 l  <- h.listen
                 _  <- Kyo.seq.fill(100)(Async.run(h.put(1)))
                 t  <- Kyo.seq.fill(100)(Async.run(l.take).map(_.get))
@@ -154,7 +154,7 @@ class HubTest extends Test:
         }
         "listeners" in runJVM {
             for
-                h  <- Hubs.init[Int](2)
+                h  <- Hub.init[Int](2)
                 l  <- Kyo.seq.fill(100)(Async.run(h.listen).map(_.get))
                 _  <- Async.run(h.put(1))
                 t  <- Kyo.seq.map(l)(l => Async.run(l.take).map(_.get))

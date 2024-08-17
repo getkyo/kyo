@@ -1,54 +1,7 @@
 package kyo
 
+import Hub.*
 import java.util.concurrent.CopyOnWriteArraySet
-
-object Hubs:
-
-    def init[A](capacity: Int)(using Frame): Hub[A] < IO =
-        Channel.init[A](capacity).map { ch =>
-            IO {
-                val listeners = new CopyOnWriteArraySet[Channel[A]]
-                Async.run {
-                    Loop.foreach {
-                        ch.take.map { v =>
-                            IO {
-                                val puts =
-                                    listeners.toArray
-                                        .toList.asInstanceOf[List[Channel[A]]]
-                                        .map(child => Abort.run[Throwable](child.put(v)))
-                                Async.parallel(puts).map(_ => Loop.continue)
-                            }
-                        }
-                    }
-                }.map { fiber =>
-                    new Hub(ch, fiber, listeners)
-                }
-            }
-        }
-
-    class Listener[A] private[kyo] (hub: Hub[A], child: Channel[A]):
-
-        def size(using Frame): Int < IO = child.size
-
-        def isEmpty(using Frame): Boolean < IO = child.isEmpty
-
-        def isFull(using Frame): Boolean < IO = child.isFull
-
-        def poll(using Frame): Maybe[A] < IO = child.poll
-
-        def takeFiber(using Frame): Fiber[Nothing, A] < IO = child.takeFiber
-
-        def take(using Frame): A < Async = child.take
-
-        def isClosed(using Frame): Boolean < IO = child.isClosed
-
-        def close(using Frame): Maybe[Seq[A]] < IO =
-            hub.remove(child).andThen(child.close)
-
-    end Listener
-end Hubs
-
-import Hubs.*
 
 class Hub[A] private[kyo] (
     ch: Channel[A],
@@ -119,4 +72,50 @@ class Hub[A] private[kyo] (
             listeners.remove(child)
             ()
         }
+end Hub
+
+object Hub:
+
+    def init[A](capacity: Int)(using Frame): Hub[A] < IO =
+        Channel.init[A](capacity).map { ch =>
+            IO {
+                val listeners = new CopyOnWriteArraySet[Channel[A]]
+                Async.run {
+                    Loop.foreach {
+                        ch.take.map { v =>
+                            IO {
+                                val puts =
+                                    listeners.toArray
+                                        .toList.asInstanceOf[List[Channel[A]]]
+                                        .map(child => Abort.run[Throwable](child.put(v)))
+                                Async.parallel(puts).map(_ => Loop.continue)
+                            }
+                        }
+                    }
+                }.map { fiber =>
+                    new Hub(ch, fiber, listeners)
+                }
+            }
+        }
+
+    class Listener[A] private[kyo] (hub: Hub[A], child: Channel[A]):
+
+        def size(using Frame): Int < IO = child.size
+
+        def isEmpty(using Frame): Boolean < IO = child.isEmpty
+
+        def isFull(using Frame): Boolean < IO = child.isFull
+
+        def poll(using Frame): Maybe[A] < IO = child.poll
+
+        def takeFiber(using Frame): Fiber[Nothing, A] < IO = child.takeFiber
+
+        def take(using Frame): A < Async = child.take
+
+        def isClosed(using Frame): Boolean < IO = child.isClosed
+
+        def close(using Frame): Maybe[Seq[A]] < IO =
+            hub.remove(child).andThen(child.close)
+
+    end Listener
 end Hub
