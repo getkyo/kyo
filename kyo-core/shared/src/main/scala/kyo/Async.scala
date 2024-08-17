@@ -37,7 +37,7 @@ object Async:
 
     def runAndBlock[E, A: Flat, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
         using
-        boundary: Boundary[Ctx, IO],
+        boundary: Boundary[Ctx, IO & Abort[E]],
         frame: Frame
     ): A < (Abort[E | Timeout] & IO & Ctx) =
         run(v).map { fiber =>
@@ -236,13 +236,13 @@ object Async:
             end if
         }
 
-    def timeout[E, A: Flat, Ctx](d: Duration)(v: => A < (Abort[E | Timeout] & Async & Ctx))(
+    def timeout[E, A: Flat, Ctx](d: Duration)(v: => A < (Abort[E] & Async & Ctx))(
         using
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
     ): A < (Abort[E | Timeout] & Async & Ctx) =
         boundary { (trace, context) =>
-            val task = IOTask(v, trace, context)
+            val task = IOTask[Ctx, E | Timeout, A](v, trace, context)
             Timer.schedule(d)(task.completeUnit(Result.fail(Timeout(frame)))).map { t =>
                 IO.ensure(t.cancel.unit)(Async.get(task))
             }
