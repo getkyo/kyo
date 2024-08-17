@@ -67,8 +67,6 @@ end Cache
 object Cache:
     type Store = caffeine.cache.Cache[Any, Promise[Nothing, Any]]
 
-object Caches:
-
     case class Builder(private[kyo] val b: Caffeine[Any, Any]) extends AnyVal:
         def maxSize(v: Int): Builder =
             copy(b.maximumSize(v))
@@ -93,4 +91,4 @@ object Caches:
                     .build[Any, Promise[Nothing, Any]]()
             )
         }
-end Caches
+end Cache

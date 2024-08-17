@@ -7,7 +7,7 @@ class CacheTest extends Test:
     "sync" in run {
         var calls = 0
         for
-            c <- Caches.init(_.maxSize(4))
+            c <- Cache.init(_.maxSize(4))
             m = c.memo { (v: Int) =>
                 calls += 1
                 v + 1
@@ -21,7 +21,7 @@ class CacheTest extends Test:
     "async" in run {
         var calls = 0
         for
-            c <- Caches.init(_.maxSize(4))
+            c <- Cache.init(_.maxSize(4))
             m = c.memo { (v: Int) =>
                 Async.run {
                     calls += 1
@@ -38,7 +38,7 @@ class CacheTest extends Test:
         val ex    = new Exception
         var calls = 0
         for
-            c <- Caches.init(_.maxSize(4))
+            c <- Cache.init(_.maxSize(4))
             m = c.memo { (v: Int) =>
                 Async.run {
                     calls += 1
