@@ -632,4 +632,61 @@ class ResultTest extends Test:
         }
     }
 
+    "for comprehensions" - {
+        "yield a Success result" in {
+            val result =
+                for
+                    x <- Result.success(1)
+                    y <- Result.success(2)
+                    z <- Result.success(3)
+                yield x + y + z
+
+            assert(result == Result.success(6))
+        }
+
+        "short-circuit on Failure" in {
+            val result =
+                for
+                    x <- Result.success(1)
+                    y <- Result.fail[Exception, Int](new Exception("error"))
+                    z <- Result.success(3)
+                yield x + y + z
+
+            assert(result.isFail)
+        }
+
+        "handle exceptions in the yield" in {
+            val result =
+                for
+                    x <- Result.success(1)
+                    y <- Result.success(2)
+                yield throw new Exception("error")
+
+            assert(result.isPanic)
+        }
+
+        "sequence operations with flatMap" in {
+            val result =
+                for
+                    x <- Result.success(1)
+                    y <- Result.success(2)
+                    if y > 0
+                    z <- Result.success(3)
+                yield x + y + z
+
+            assert(result == Result.success(6))
+        }
+
+        "fail the comprehension with a guard" in {
+            val result =
+                for
+                    x <- Result.success(1)
+                    y <- Result.success(-1)
+                    if y > 0
+                yield x + y
+
+            assert(result.isFail)
+        }
+    }
+
 end ResultTest

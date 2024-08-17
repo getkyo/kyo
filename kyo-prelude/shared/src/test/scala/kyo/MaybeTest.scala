@@ -396,4 +396,114 @@ class MaybeTest extends Test:
         }
     }
 
+    "for comprehensions" - {
+        "with single Defined" - {
+            "should return Defined with value" in {
+                val result =
+                    for
+                        x <- Defined(1)
+                    yield x
+                assert(result == Defined(1))
+            }
+        }
+
+        "with single Empty" - {
+            "should return Empty" in {
+                val result =
+                    for
+                        x <- Empty
+                    yield x
+                assert(result == Empty)
+            }
+        }
+
+        "with multiple Defined" - {
+            "should return Defined with result of yield" in {
+                val result =
+                    for
+                        x <- Defined(1)
+                        y <- Defined(2)
+                    yield x + y
+                assert(result == Defined(3))
+            }
+        }
+
+        "with multiple Defined and Empty" - {
+            "should return Empty if any are Empty" in {
+                val result1 =
+                    for
+                        x <- Defined(1)
+                        y <- Empty
+                        z <- Defined(3)
+                    yield ()
+                assert(result1 == Empty)
+
+                val result2 =
+                    for
+                        x <- Empty
+                        y <- Defined(2)
+                        z <- Defined(3)
+                    yield ()
+                assert(result2 == Empty)
+
+                val result3 =
+                    for
+                        x <- Defined(1)
+                        y <- Defined(2)
+                        z <- Empty
+                    yield ()
+                assert(result3 == Empty)
+            }
+        }
+
+        "with if guards" - {
+            "should return Defined if guard passes" in {
+                val result =
+                    for
+                        x <- Defined(2)
+                        if x % 2 == 0
+                    yield x
+                assert(result == Defined(2))
+            }
+
+            "should return Empty if guard fails" in {
+                val result =
+                    for
+                        x <- Defined(3)
+                        if x % 2 == 0
+                    yield x
+                assert(result == Empty)
+            }
+        }
+
+        "with nested for comprehensions" - {
+            "should return flat Defined if all succeed" in {
+                val result =
+                    for
+                        x <- Defined(1)
+                        y <-
+                            for
+                                a <- Defined(2)
+                                b <- Defined(3)
+                            yield a + b
+                    yield x + y
+                assert(result == Defined(6))
+            }
+
+            "should return Empty if any inner comprehension is Empty" in {
+                val result =
+                    for
+                        x <- Defined(1)
+                        y <-
+                            for
+                                a <- Empty
+                                b <- Defined(3)
+                            yield ()
+                    yield ()
+                assert(result == Empty)
+            }
+        }
+
+    }
+
 end MaybeTest

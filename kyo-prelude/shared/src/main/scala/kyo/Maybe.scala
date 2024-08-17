@@ -82,6 +82,9 @@ object Maybe:
         inline def flatten[B](using inline ev: A <:< Maybe[B]): Maybe[B] =
             if isEmpty then Empty else ev(get)
 
+        inline def withFilter(inline f: A => Boolean): Maybe[A] =
+            filter(f)
+
         inline def filter(inline f: A => Boolean): Maybe[A] =
             if isEmpty || f(get) then self else Empty
 
