@@ -10,11 +10,9 @@ import sttp.tapir.server.netty.NettyKyoServerBinding
 
 case class Route(endpoint: ServerEndpoint[Any, KyoSttpMonad.M]) extends AnyVal
 
-type Routes >: Routes.Effects <: Routes.Effects
+opaque type Routes <: (Emit[Route] & Async) = Emit[Route] & Async
 
 object Routes:
-
-    type Effects = Emit[Route] & Async
 
     def run[A, S](v: Unit < (Routes & S))(using Frame): NettyKyoServerBinding < (Async & S) =
         run[A, S](NettyKyoServer())(v)

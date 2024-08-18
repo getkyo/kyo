@@ -3,7 +3,7 @@ package kyo
 import kyo.Tag
 import kyo.kernel.*
 
-opaque type Memo = Var[Memo.Cache]
+opaque type Memo <: Var[Memo.Cache] = Var[Memo.Cache]
 
 object Memo:
 

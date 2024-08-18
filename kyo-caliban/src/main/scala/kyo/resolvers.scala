@@ -19,7 +19,7 @@ import zio.ZEnvironment
 import zio.ZIO
 import zio.stream.ZStream
 
-opaque type Resolvers = Abort[CalibanError] & ZIOs
+opaque type Resolvers <: (Abort[CalibanError] & ZIOs) = Abort[CalibanError] & ZIOs
 
 object Resolvers:
 
