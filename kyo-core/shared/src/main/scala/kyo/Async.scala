@@ -324,7 +324,7 @@ object Async:
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }
 
-    private[kyo] def get[E, A](v: IOPromise[E, A])(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async) =
+    def get[E, A](v: IOPromise[E, A])(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async) =
         reduce(use(v)(identity))
 
     private[kyo] def use[E, A, B, S](v: IOPromise[E, A])(f: A => B < S)(
