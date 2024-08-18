@@ -1,7 +1,9 @@
 package kyo.kernel
 
 import kyo.Tag
+import scala.annotation.implicitNotFound
 import scala.quoted.*
+import scala.util.NotGiven
 
 opaque type Flat[A] = Null
 
@@ -11,6 +13,21 @@ object Flat:
     end unsafe
 
     inline given infer[A]: Flat[A] = FlatMacro.infer
+
+    @implicitNotFound("Detected nested Kyo computation '${A}', please call '.flatten' first.")
+    case class Weak[A](dummy: Null) extends AnyVal
+
+    trait WeakLowPriority:
+        inline given Weak[Nothing] = Weak.unsafe.bypass
+
+    object Weak extends WeakLowPriority:
+        inline given Weak[Unit] = unsafe.bypass
+
+        inline given [A](using inline ng: NotGiven[A <:< (Any < Nothing)]): Weak[A] = unsafe.bypass
+
+        object unsafe:
+            inline given bypass[A]: Weak[A] = Weak(null)
+    end Weak
 end Flat
 
 private object FlatMacro:

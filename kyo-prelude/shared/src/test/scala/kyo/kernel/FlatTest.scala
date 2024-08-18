@@ -68,4 +68,85 @@ class FlatTest extends Test:
             assertDoesNotCompile("implicitly[Flat[Any < IOs]]")
         }
     }
+
+    "weak" - {
+        "compile for non-Kyo types" in {
+            implicitly[Flat.Weak[Int]]
+            implicitly[Flat.Weak[String]]
+            implicitly[Flat.Weak[List[Int]]]
+            succeed
+        }
+
+        "compile for Kyo types in generic contexts" in {
+            def genericContext[A]: Flat.Weak[A] = implicitly[Flat.Weak[A]]
+            genericContext[Int < Any]
+            genericContext[String < Env[Int]]
+            succeed
+        }
+
+        "not compile for known Kyo types" in {
+            assertDoesNotCompile("implicitly[Flat.Weak[Int < Any]]")
+            assertDoesNotCompile("implicitly[Flat.Weak[String < Env[Int]]]")
+        }
+
+        "compile for Unit and Nothing" in {
+            implicitly[Flat.Weak[Unit]]
+            implicitly[Flat.Weak[Nothing]]
+            succeed
+        }
+
+        "work with type aliases" in {
+            type MyAlias[A] = A
+            implicitly[Flat.Weak[MyAlias[Int]]]
+            assertDoesNotCompile("implicitly[Flat.Weak[MyAlias[Int < Any]]]")
+            succeed
+        }
+
+        "work with higher-kinded types" in {
+            trait HigherKinded[F[_]]
+            implicitly[Flat.Weak[HigherKinded[List]]]
+            implicitly[Flat.Weak[HigherKinded[λ[A => A < Any]]]]
+            succeed
+        }
+
+        "work in complex type scenarios" in {
+            trait Complex[A, B, C[_]]
+            implicitly[Flat.Weak[Complex[Int, String, List]]]
+            implicitly[Flat.Weak[Complex[Int < Any, String, λ[A => A < Env[Int]]]]]
+            succeed
+        }
+
+        "be usable in extension methods" in {
+            extension [A](a: A)(using Flat.Weak[A])
+                def weakMethod: String = "Weak method called"
+
+            42.weakMethod
+            "hello".weakMethod
+            assertDoesNotCompile("(42: Int < Any).weakMethod")
+            succeed
+        }
+
+        "work with type bounds" in {
+            def boundedMethod[A <: AnyVal: Flat.Weak](a: A): String = "Bounded method called"
+            boundedMethod(42)
+            boundedMethod("hello")
+            succeed
+        }
+
+        "work with union types" in {
+            type Union = Int | String
+            implicitly[Flat.Weak[Union]]
+            implicitly[Flat.Weak[Int | (String < Any)]]
+            succeed
+        }
+
+        "work with intersection types" in {
+            trait A
+            trait B
+            type Intersection = A & B
+            implicitly[Flat.Weak[Intersection]]
+            assertDoesNotCompile("implicitly[Flat.Weak[A & (B < Any)]]")
+            succeed
+        }
+    }
 end FlatTest

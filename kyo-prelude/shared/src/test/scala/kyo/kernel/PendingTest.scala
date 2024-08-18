@@ -5,11 +5,6 @@ import kyo.kernel.*
 
 class PendingTest extends Test:
 
-    "lift" in {
-        val x: Int < Any = 5
-        assert(x.eval == 5)
-    }
-
     "map" in {
         val x: Int < Any    = 5
         val y: String < Any = x.map(_.toString)
@@ -214,6 +209,22 @@ class PendingTest extends Test:
             val result = (1: Int < Any).map(_ => (throw ex): Int).pipe(Abort.run[Exception](_)).eval
             assert(result.failure == Maybe(ex))
         }
+    }
+
+    "only 'flatten' is available for nested computations" in {
+        def test[S](effect: Unit < S < S) =
+            assertDoesNotCompile("effect.map(_ => 1))")
+            assertDoesNotCompile("effect.andThen(1)")
+            assertDoesNotCompile("effect.flatMap(_ => 1)")
+            assertDoesNotCompile("effect.pipe(_ => 1)")
+            assertDoesNotCompile("effect.evalNow")
+            assertDoesNotCompile("effect.repeat(10)")
+            assertDoesNotCompile("effect.unit")
+            effect.flatten
+        end test
+        def nest[T](v: T): T < Any =
+            v
+        assert(test(nest((): Unit < Any)).eval == ())
     }
 
 end PendingTest

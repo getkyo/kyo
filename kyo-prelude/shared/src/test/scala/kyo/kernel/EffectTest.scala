@@ -159,7 +159,7 @@ class EffectTest extends Test:
 
         "failure in map" in {
             val effect = Effect.catching {
-                testEffect1(42).map(_ => throw new RuntimeException("Test exception"))
+                testEffect1(42).map(_ => (throw new RuntimeException("Test exception")): String)
             } {
                 case _: RuntimeException => "caught"
             }
