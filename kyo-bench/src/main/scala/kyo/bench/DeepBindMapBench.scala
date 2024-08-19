@@ -7,11 +7,11 @@ class DeepBindMapBench extends Bench.SyncAndFork(10001):
     def kyoBench() =
         import kyo.*
 
-        def loop(i: Int): Int < IOs =
-            IOs {
+        def loop(i: Int): Int < IO =
+            IO {
                 if i > depth then i
                 else
-                    IOs(i + 11)
+                    IO(i + 11)
                         .map(_ - 1)
                         .map(_ - 1)
                         .map(_ - 1)

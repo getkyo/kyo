@@ -39,15 +39,15 @@ object Server extends KyoApp:
         val timer = Timer(Executors.newSingleThreadScheduledExecutor())
 
         val init = defer {
-            val db      = await(Envs.run(dbConfig)(DB.init))
-            val handler = await(Envs.run(db)(Handler.init))
-            await(Envs.run(handler)(Endpoints.init))
+            val db      = await(Env.run(dbConfig)(DB.init))
+            val handler = await(Env.run(db)(Handler.init))
+            await(Env.run(handler)(Endpoints.init))
         }
 
         defer {
-            await(Consoles.println(s"Server starting on port $port..."))
-            val binding = await(Routes.run(server)(Timers.let(timer)(init)))
-            await(Consoles.println(s"Server started: ${binding.localSocket}"))
+            await(Console.println(s"Server starting on port $port..."))
+            val binding = await(Routes.run(server)(Timer.let(timer)(init)))
+            await(Console.println(s"Server started: ${binding.localSocket}"))
         }
     }
 

@@ -147,7 +147,7 @@ class SchedulerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
-    private def withScheduler[T](testCode: Scheduler => T): T = {
+    private def withScheduler[A](testCode: Scheduler => A): A = {
         val executor          = Executors.newCachedThreadPool(Threads("test-scheduler-worker"))
         val scheduledExecutor = Executors.newSingleThreadScheduledExecutor(Threads("test-scheduler-timer"))
         val scheduler         = new Scheduler(executor, scheduledExecutor)

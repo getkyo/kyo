@@ -80,12 +80,12 @@ case class NettyKyoServer(
     ): (Future[ServerResponse[NettyResponse]], () => Future[Unit]) =
         val fiber =
             if forkExecution then
-                IOs.run(Fibers.init(block()))
+                IO.run(Async.run(block())).eval
             else
-                IOs.run(Fibers.run(block()))
-        val future = IOs.run(fiber.toFuture)
+                IO.run(Async.run(block())).eval
+        val future = IO.run(fiber.toFuture).eval
         val cancel = () =>
-            IOs.run(fiber.interrupt)
+            IO.run(fiber.interrupt).eval
             Future.unit
         (future, cancel)
     end unsafeRunAsync
@@ -138,13 +138,13 @@ case class NettyKyoServer(
                 _ >= System.nanoTime() - startNanos
             )
         then
-            Fibers.sleep(100.millis).andThen(waitForClosedChannels(
+            Async.sleep(100.millis).andThen(waitForClosedChannels(
                 channelGroup,
                 startNanos,
                 gracefulShutdownTimeoutNanos
-            ): Unit < Fibers)
+            ): Unit < Async)
         else
-            nettyFutureToScala(channelGroup.close()).map(_ => ())
+            nettyFutureToScala(channelGroup.close()).unit
 
     private def stop(
         ch: Channel,
@@ -162,10 +162,9 @@ case class NettyKyoServer(
         ).flatMap { _ =>
             nettyFutureToScala(ch.close()).flatMap { _ =>
                 if config.shutdownEventLoopGroupOnClose then
-                    nettyFutureToScala(eventLoopGroup.shutdownGracefully())
-                        .flatMap(_ =>
-                            nettyFutureToScala(eventExecutor.shutdownGracefully()).map(_ => ())
-                        )
+                    nettyFutureToScala(eventLoopGroup.shutdownGracefully()).unit.andThen {
+                        nettyFutureToScala(eventExecutor.shutdownGracefully()).unit
+                    }
                 else ()
             }
         }

@@ -7,13 +7,13 @@ class NarrowBindMapBench extends Bench.SyncAndFork(10000):
     def kyoBench() =
         import kyo.*
 
-        def loop(i: Int): Int < IOs =
+        def loop(i: Int): Int < IO =
             if i < depth then
-                IOs(i + 11).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
+                IO(i + 11).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1)
                     .map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(_ - 1).map(loop)
-            else IOs(i)
+            else IO(i)
 
-        IOs(0).flatMap(loop)
+        IO(0).flatMap(loop)
     end kyoBench
 
     def catsBench() =

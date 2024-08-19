@@ -14,8 +14,8 @@ abstract class BenchTest extends AsyncFreeSpec with Assertions:
     end Target
 
     def target: Target
-    def runSync[T](b: Bench.SyncAndFork[T]): T
-    def runFork[T](b: Bench.Fork[T]): T
+    def runSync[A](b: Bench.SyncAndFork[A]): A
+    def runFork[A](b: Bench.Fork[A]): A
 
     val targets = Seq("cats", "kyo", "zio")
 
@@ -28,11 +28,11 @@ abstract class BenchTest extends AsyncFreeSpec with Assertions:
         succeed
     end detectRuntimeLeak
 
-    inline given [T]: CanEqual[T, T] = CanEqual.derived
+    inline given [A]: CanEqual[A, A] = CanEqual.derived
 
-    def test[T](b: Bench[T]): Unit =
+    def test[A](b: Bench[A]): Unit =
         b match
-            case b: SyncAndFork[T] =>
+            case b: SyncAndFork[A] =>
                 s"sync$target" in {
                     assert(runSync(b) == b.expectedResult)
                     detectRuntimeLeak()
@@ -40,7 +40,7 @@ abstract class BenchTest extends AsyncFreeSpec with Assertions:
             case _ =>
         end match
         b match
-            case b: Fork[T] =>
+            case b: Fork[A] =>
                 s"fork$target" in {
                     assert(runFork(b) == b.expectedResult)
                     detectRuntimeLeak()

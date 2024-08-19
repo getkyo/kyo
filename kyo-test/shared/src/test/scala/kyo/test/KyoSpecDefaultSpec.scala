@@ -11,18 +11,18 @@ object KyoSpecDefaultSpec extends KyoSpecDefault:
                     assertCompletes
                 },
                 test("IOs Succeed") {
-                    IOs(assertCompletes)
+                    IO(assertCompletes)
                 }
             ),
             suite("failing!")(
-                test("IOs.fail") {
-                    IOs.fail("Fail!").map(_ => assertCompletes)
+                test("IO fail") {
+                    IO(throw new Exception("Fail!")).map(_ => assertCompletes)
                 },
-                test("IOs Succeed") {
-                    Aborts.fail[Throwable](new RuntimeException("Abort!")).map(_ => assertCompletes)
+                test("IO Succeed") {
+                    Abort.fail[Throwable](new RuntimeException("Abort!")).map(_ => assertCompletes)
                 },
-                test("Fibers.delay") {
-                    Fibers.delay(Duration.Infinity)(assertCompletes)
+                test("Async.delay") {
+                    Async.delay(Duration.Infinity)(assertCompletes)
                 } @@ TestAspect.timeout(Duration.Zero.toJava)
             ) @@ TestAspect.failing
         ) @@ TestAspect.timed

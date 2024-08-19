@@ -77,6 +77,7 @@ lazy val kyoJVM = project
         `kyo-bench`.jvm,
         `kyo-test`.jvm,
         `kyo-zio`.jvm,
+        `kyo-combinators`.jvm,
         `kyo-examples`.jvm
     )
 
@@ -94,8 +95,9 @@ lazy val kyoJS = project
         `kyo-direct`.js,
         `kyo-stats-registry`.js,
         `kyo-sttp`.js,
-        `kyo-test`.js,
-        `kyo-zio`.js
+        // `kyo-test`.js,
+        // `kyo-zio`.js,
+        `kyo-combinators`.js
     )
 
 lazy val `kyo-scheduler` =
@@ -162,7 +164,7 @@ lazy val `kyo-core` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-scheduler`)
-        .dependsOn(`kyo-tag`)
+        .dependsOn(`kyo-prelude`)
         .in(file("kyo-core"))
         .settings(
             `kyo-settings`,
@@ -273,6 +275,7 @@ lazy val `kyo-test` =
         .crossType(CrossType.Full)
         .in(file("kyo-test"))
         .dependsOn(`kyo-core`)
+        .dependsOn(`kyo-zio`)
         .settings(
             `kyo-settings`,
             libraryDependencies += "dev.zio" %%% "zio"          % zioVersion,
@@ -302,7 +305,7 @@ lazy val `kyo-combinators` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-combinators"))
-        .dependsOn(`kyo-core` % "compile->compile;test->test")
+        .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`
         )
@@ -318,6 +321,13 @@ lazy val `kyo-examples` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
+            fork := true,
+            javaOptions ++= Seq(
+                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED",
+                "--add-opens=java.base/java.lang=ALL-UNNAMED",
+                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
+            ),
             Compile / doc / sources                              := Seq.empty,
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.8"
         )
@@ -329,7 +339,6 @@ lazy val `kyo-bench` =
         .in(file("kyo-bench"))
         .enablePlugins(JmhPlugin)
         .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-prelude`)
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-scheduler-zio`)
         .settings(
@@ -377,41 +386,41 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
         )
 
-lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
+// lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
 
-addCommandAlias("checkReadme", ";readme/rewriteReadmeFile; readme/mdoc")
+// addCommandAlias("checkReadme", ";readme/rewriteReadmeFile; readme/mdoc")
 
-lazy val readme =
-    crossProject(JVMPlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("target/readme"))
-        .enablePlugins(MdocPlugin)
-        .settings(
-            `kyo-settings`,
-            mdocIn  := new File("./../../README-in.md"),
-            mdocOut := new File("./../../README-out.md"),
-            rewriteReadmeFile := {
-                val readmeFile       = new File("README.md")
-                val targetReadmeFile = new File("target/README-in.md")
-                val contents         = IO.read(readmeFile)
-                val newContents      = contents.replaceAll("```scala\n", "```scala mdoc:reset\n")
-                IO.write(targetReadmeFile, newContents)
-            }
-        )
-        .dependsOn(
-            `kyo-core`,
-            `kyo-direct`,
-            `kyo-cache`,
-            `kyo-sttp`,
-            `kyo-tapir`,
-            `kyo-bench`,
-            `kyo-zio`,
-            `kyo-caliban`
-        )
-        .settings(
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
-        )
+// lazy val readme =
+//     crossProject(JVMPlatform)
+//         .withoutSuffixFor(JVMPlatform)
+//         .crossType(CrossType.Full)
+//         .in(file("target/readme"))
+//         .enablePlugins(MdocPlugin)
+//         .settings(
+//             `kyo-settings`,
+//             mdocIn  := new File("./../../README-in.md"),
+//             mdocOut := new File("./../../README-out.md"),
+//             rewriteReadmeFile := {
+//                 val readmeFile       = new File("README.md")
+//                 val targetReadmeFile = new File("target/README-in.md")
+//                 val contents         = IO.read(readmeFile)
+//                 val newContents      = contents.replaceAll("```scala\n", "```scala mdoc:reset\n")
+//                 IO.write(targetReadmeFile, newContents)
+//             }
+//         )
+//         .dependsOn(
+//             `kyo-core`,
+//             `kyo-direct`,
+//             `kyo-cache`,
+//             `kyo-sttp`,
+//             `kyo-tapir`,
+//             `kyo-bench`,
+//             `kyo-zio`,
+//             `kyo-caliban`
+//         )
+//         .settings(
+//             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
+//         )
 
 lazy val `js-settings` = Seq(
     Compile / doc / sources                     := Seq.empty,

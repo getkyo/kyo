@@ -5,9 +5,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kyo.*
 import scala.collection.mutable.PriorityQueue
 
-final private class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
+final private class Queue[A](implicit ord: Ordering[A]) extends AtomicBoolean {
 
-    private val queue = PriorityQueue[T]()
+    private val queue = PriorityQueue[A]()
 
     private var items = 0
 
@@ -19,7 +19,7 @@ final private class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
         items
     }
 
-    def add(value: T): Unit = {
+    def add(value: A): Unit = {
         lock()
         try {
             items += 1
@@ -29,7 +29,7 @@ final private class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
             unlock()
     }
 
-    def offer(value: T): Boolean =
+    def offer(value: A): Boolean =
         tryLock() && {
             try {
                 items += 1
@@ -39,14 +39,14 @@ final private class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
                 unlock()
         }
 
-    def poll(): T =
+    def poll(): A =
         if (isEmpty())
-            null.asInstanceOf[T]
+            null.asInstanceOf[A]
         else {
             lock()
             try {
                 if (isEmpty())
-                    null.asInstanceOf[T]
+                    null.asInstanceOf[A]
                 else {
                     items -= 1
                     queue.dequeue()
@@ -55,7 +55,7 @@ final private class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
                 unlock()
         }
 
-    def addAndPoll(value: T): T =
+    def addAndPoll(value: A): A =
         if (isEmpty())
             value
         else {
@@ -71,8 +71,8 @@ final private class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
                 unlock()
         }
 
-    def stealingBy(to: Queue[T]): T = {
-        var t: T = null.asInstanceOf[T]
+    def stealingBy(to: Queue[A]): A = {
+        var t: A = null.asInstanceOf[A]
         !isEmpty() && tryLock() && {
             try {
                 !isEmpty() && to.isEmpty() && to.tryLock() && {
@@ -96,7 +96,7 @@ final private class Queue[T](implicit ord: Ordering[T]) extends AtomicBoolean {
         t
     }
 
-    def drain(f: T => Unit): Unit =
+    def drain(f: A => Unit): Unit =
         if (!isEmpty()) {
             val tasks = {
                 lock()
