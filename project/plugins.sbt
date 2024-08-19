@@ -14,5 +14,5 @@ addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.1.0")
 // addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
 
 libraryDependencies ++= Seq(
-    "org.typelevel" %% "scalac-options" % "0.1.5"
+    "org.typelevel" %% "scalac-options" % "0.1.7"
 )
