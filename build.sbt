@@ -386,41 +386,42 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
         )
 
-// lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
+lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
 
-// addCommandAlias("checkReadme", ";readme/rewriteReadmeFile; readme/mdoc")
+addCommandAlias("checkReadme", ";readme/rewriteReadmeFile; readme/mdoc")
 
-// lazy val readme =
-//     crossProject(JVMPlatform)
-//         .withoutSuffixFor(JVMPlatform)
-//         .crossType(CrossType.Full)
-//         .in(file("target/readme"))
-//         .enablePlugins(MdocPlugin)
-//         .settings(
-//             `kyo-settings`,
-//             mdocIn  := new File("./../../README-in.md"),
-//             mdocOut := new File("./../../README-out.md"),
-//             rewriteReadmeFile := {
-//                 val readmeFile       = new File("README.md")
-//                 val targetReadmeFile = new File("target/README-in.md")
-//                 val contents         = IO.read(readmeFile)
-//                 val newContents      = contents.replaceAll("```scala\n", "```scala mdoc:reset\n")
-//                 IO.write(targetReadmeFile, newContents)
-//             }
-//         )
-//         .dependsOn(
-//             `kyo-core`,
-//             `kyo-direct`,
-//             `kyo-cache`,
-//             `kyo-sttp`,
-//             `kyo-tapir`,
-//             `kyo-bench`,
-//             `kyo-zio`,
-//             `kyo-caliban`
-//         )
-//         .settings(
-//             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
-//         )
+lazy val readme =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("target/readme"))
+        .enablePlugins(MdocPlugin)
+        .settings(
+            `kyo-settings`,
+            mdocIn  := new File("./../../README-in.md"),
+            mdocOut := new File("./../../README-out.md"),
+            rewriteReadmeFile := {
+                val readmeFile       = new File("README.md")
+                val targetReadmeFile = new File("target/README-in.md")
+                val contents         = IO.read(readmeFile)
+                val newContents      = contents.replaceAll("```scala\n", "```scala mdoc:reset\n")
+                IO.write(targetReadmeFile, newContents)
+            }
+        )
+        .dependsOn(
+            `kyo-core`,
+            `kyo-direct`,
+            `kyo-cache`,
+            `kyo-sttp`,
+            `kyo-tapir`,
+            `kyo-bench`,
+            `kyo-zio`,
+            `kyo-caliban`,
+            `kyo-combinators`
+        )
+        .settings(
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
+        )
 
 lazy val `js-settings` = Seq(
     Compile / doc / sources                     := Seq.empty,
