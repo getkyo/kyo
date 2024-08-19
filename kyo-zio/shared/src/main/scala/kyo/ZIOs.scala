@@ -41,8 +41,11 @@ object ZIOs:
                     }
                 }.pipe(IO.run).eval
             catch
-                case ex if NonFatal(ex) =>
-                    ZIO.die(ex)
+                case ex =>
+                    ZIO.isFatalWith { isFatal =>
+                        if !isFatal(ex) then Exit.Failure(Cause.die(ex))
+                        else throw ex
+                    }
         }
     end run
 
