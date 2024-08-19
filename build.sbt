@@ -329,7 +329,7 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.8"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.15"
         )
 
 lazy val `kyo-bench` =
