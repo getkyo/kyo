@@ -17,12 +17,12 @@ end Meter
 
 object Meter:
 
-    def initNoop: Meter =
-        new Meter:
-            def available(using Frame)                 = Int.MaxValue
-            def run[A, S](v: => A < S)(using Frame)    = v
-            def tryRun[A, S](v: => A < S)(using Frame) = v.map(Maybe(_))
-            def close(using Frame)                     = false
+    case object Noop extends Meter:
+        def available(using Frame)                 = Int.MaxValue
+        def run[A, S](v: => A < S)(using Frame)    = v
+        def tryRun[A, S](v: => A < S)(using Frame) = v.map(Maybe(_))
+        def close(using Frame)                     = false
+    end Noop
 
     def initMutex(using Frame): Meter < IO =
         initSemaphore(1)

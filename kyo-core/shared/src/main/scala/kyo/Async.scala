@@ -144,7 +144,11 @@ object Async:
 
         end extension
 
-        case class Interrupted(at: Frame) extends NoStackTrace
+        case class Interrupted(at: Frame)
+            extends RuntimeException("Fiber interrupted at " + at.parse.position)
+            with NoStackTrace:
+            override def getCause() = null
+        end Interrupted
 
         def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
             using

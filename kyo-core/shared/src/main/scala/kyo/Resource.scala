@@ -13,9 +13,8 @@ object Resource:
     def ensure(v: => Unit < Async)(using frame: Frame): Unit < (Resource & IO) =
         ContextEffect.suspendMap(Tag[Resource]) { finalizer =>
             finalizer.queue.offer(IO(v)).map {
-                case true  => ()
+                case true => ()
                 case false =>
-                    // TODO should this error be tracked?
                     throw new Closed(
                         "Resource finalizer queue already closed. This may happen if " +
                             "a background fiber escapes the scope of a 'Resource.run' call.",

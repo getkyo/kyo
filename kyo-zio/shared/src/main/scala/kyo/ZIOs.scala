@@ -5,6 +5,7 @@ import kyo.kernel.*
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 import zio.Cause
+import zio.Exit
 import zio.Task
 import zio.ZIO
 
@@ -22,7 +23,7 @@ object ZIOs:
     inline def get[R: zio.Tag, E, A](v: ZIO[R, E, A])(using Tag[Env[R]], Frame): A < (Env[R] & ZIOs) =
         compiletime.error("ZIO environments are not supported yet. Please handle them before calling this method.")
 
-    def run[E, A](v: A < (Abort[E] & ZIOs))(using Frame): ZIO[Any, E, A] =
+    def run[E, A](v: => A < (Abort[E] & ZIOs))(using Frame): ZIO[Any, E, A] =
         ZIO.suspendSucceed {
             try
                 Effect.handle(Tag[GetZIO], v.map(r => ZIO.succeed(r): ZIO[Any, E, A]))(
@@ -30,8 +31,8 @@ object ZIOs:
                 ).pipe(Async.run).map { fiber =>
                     ZIO.asyncInterrupt[Any, E, A] { cb =>
                         fiber.unsafe.onComplete {
-                            case Result.Fail(ex)   => cb(ZIO.fail(ex))
-                            case Result.Panic(ex)  => cb(ZIO.die(ex))
+                            case Result.Fail(ex)   => cb(Exit.fail(ex))
+                            case Result.Panic(ex)  => cb(Exit.die(ex))
                             case Result.Success(v) => cb(v)
                         }
                         Left(ZIO.succeed {

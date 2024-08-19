@@ -18,7 +18,7 @@ class ResolverTest extends Test:
 
     def runZIO[A](v: ZIO[Any, Any, A]): Future[A] =
         zio.Unsafe.unsafe(implicit u =>
-            Future.successful(zio.Runtime.default.unsafe.run(v).foldExit(f => throw new Exception(f.toString()), v => v))
+            Future.successful(zio.Runtime.default.unsafe.run(v).getOrThrowFiberFailure())
         )
 
     def testServer(port: Int) =
