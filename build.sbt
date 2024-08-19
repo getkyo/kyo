@@ -4,7 +4,7 @@ import org.typelevel.scalacoptions.ScalacOption
 import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 
-val scala3Version   = "3.4.2"
+val scala3Version   = "3.4.3"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
 
