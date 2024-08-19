@@ -1,6 +1,6 @@
 package kyo
 
-import ZIOs.internal.*
+import ZIOs.GetZIO
 import kyo.kernel.*
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
@@ -23,7 +23,7 @@ object ZIOs:
     inline def get[R: zio.Tag, E, A](v: ZIO[R, E, A])(using Tag[Env[R]], Frame): A < (Env[R] & ZIOs) =
         compiletime.error("ZIO environments are not supported yet. Please handle them before calling this method.")
 
-    def run[E, A](v: => A < (Abort[E] & ZIOs))(using Frame): ZIO[Any, E, A] =
+    def run[E, A](v: => A < (Abort[E] & ZIOs))(using frame: Frame): ZIO[Any, E, A] =
         ZIO.suspendSucceed {
             try
                 Effect.handle(Tag[GetZIO], v.map(r => ZIO.succeed(r): ZIO[Any, E, A]))(
@@ -36,22 +36,18 @@ object ZIOs:
                             case Result.Success(v) => cb(v)
                         }
                         Left(ZIO.succeed {
-                            fiber.unsafe.interrupt(interrupt)
+                            fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))
                         })
                     }
                 }.pipe(IO.run).eval
             catch
                 case ex =>
                     ZIO.isFatalWith { isFatal =>
-                        if !isFatal(ex) then Exit.Failure(Cause.die(ex))
+                        if !isFatal(ex) then Exit.die(ex)
                         else throw ex
                     }
         }
     end run
 
-    private[kyo] object internal:
-        class ZIOsInterrupt extends NoStackTrace
-        val interrupt = Result.Panic(new ZIOsInterrupt)
-        sealed trait GetZIO extends Effect[ZIO[Any, Nothing, *], Id]
-    end internal
+    sealed private[kyo] trait GetZIO extends Effect[ZIO[Any, Nothing, *], Id]
 end ZIOs
