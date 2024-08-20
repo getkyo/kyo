@@ -30,7 +30,7 @@ class Path(val path: List[String]):
 
     def readAll(extension: String)(using Frame): Seq[(String, String)] < IO =
         list(extension).map { paths =>
-            Kyo.seq.map(paths) { p =>
+            Kyo.foreach(paths) { p =>
                 p.read.map(content => p.toJava.getName(0).toString() -> content)
             }
         }

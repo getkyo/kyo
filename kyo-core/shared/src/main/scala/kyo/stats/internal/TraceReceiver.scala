@@ -45,6 +45,6 @@ object TraceReceiver:
                 parent: Maybe[Span] = Maybe.empty,
                 a: Attributes = Attributes.empty
             ) =
-                Kyo.seq.map(receivers)(_.startSpan(scope, name, Maybe.empty, a))
+                Kyo.foreach(receivers)(_.startSpan(scope, name, Maybe.empty, a))
                     .map(Span.all)
 end TraceReceiver

@@ -47,6 +47,6 @@ object Routes:
         add(e(endpoint))(f)
 
     def collect(init: (Unit < Routes)*)(using Frame): Unit < Routes =
-        Kyo.seq.collect(init).unit
+        Kyo.collect(init).unit
 
 end Routes

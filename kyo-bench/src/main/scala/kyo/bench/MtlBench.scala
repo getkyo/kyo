@@ -14,7 +14,7 @@ class MtlBench extends Bench(()):
     def syncKyo() =
         import kyo.*
         def testKyo: Unit < (Abort[Throwable] & Env[EnvValue] & Var[State] & Emit[Event]) =
-            Kyo.seq.foreach(loops)(_ =>
+            Kyo.foreachDiscard(loops)(_ =>
                 for
                     conf <- Env.use[EnvValue](_.config)
                     _    <- Emit(Event(s"Env = $conf"))

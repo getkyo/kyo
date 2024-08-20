@@ -7,7 +7,8 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.reflect.ClassTag
 
-sealed abstract class Chunk[A] derives CanEqual:
+sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
+    self =>
 
     import Chunk.internal.*
 
@@ -17,20 +18,21 @@ sealed abstract class Chunk[A] derives CanEqual:
     // O(1) methods //
     //////////////////
 
-    def size: Int
+    final override def isEmpty: Boolean = size == 0
 
-    final def isEmpty: Boolean = size == 0
-
-    final def take(n: Int): Chunk[A] =
+    override def take(n: Int): Chunk[A] =
         dropLeftAndRight(0, size - Math.min(Math.max(0, n), size))
+
+    override def drop(n: Int): Seq[A] =
+        dropLeft(n)
 
     final def dropLeft(n: Int): Chunk[A] =
         dropLeftAndRight(Math.min(size, Math.max(0, n)), 0)
 
-    final def dropRight(n: Int): Chunk[A] =
+    override def dropRight(n: Int): Chunk[A] =
         dropLeftAndRight(0, Math.min(size, Math.max(0, n)))
 
-    final def slice(from: Int, until: Int): Chunk[A] =
+    override def slice(from: Int, until: Int): Chunk[A] =
         dropLeftAndRight(Math.max(0, from), size - Math.min(size, until))
 
     final def dropLeftAndRight(left: Int, right: Int): Chunk[A] =
@@ -53,7 +55,7 @@ sealed abstract class Chunk[A] derives CanEqual:
     final def append(v: A): Chunk[A] =
         Append(this, v, size + 1)
 
-    final def last: A =
+    override def last: A =
         @tailrec def loop(c: Chunk[A], index: Int): A =
             c match
                 case c if index >= c.size || index < 0 =>
@@ -74,6 +76,26 @@ sealed abstract class Chunk[A] derives CanEqual:
     // O(n) methods //
     //////////////////
 
+    def apply(index: Int): A =
+        def outOfBounds = throw new IndexOutOfBoundsException(s"Index out of range: $index")
+        @tailrec
+        def loop(chunk: Chunk[A], index: Int): A =
+            chunk match
+                case c: Indexed[A] =>
+                    if index < 0 || index >= c.length then outOfBounds
+                    c(index)
+                case Drop(c, left, right, len) =>
+                    if index < 0 || index >= len then outOfBounds
+                    loop(c, index + left)
+                case Append(c, value, len) =>
+                    if index < 0 || index >= len then outOfBounds
+                    if index == len - 1 then value else loop(c, index)
+        if index < 0 then outOfBounds
+        else loop(this, index)
+    end apply
+
+    def iterator: Iterator[A] = toArray.iterator
+
     final def concat(other: Chunk[A]): Chunk[A] =
         if isEmpty then other
         else if other.isEmpty then this
@@ -86,73 +108,8 @@ sealed abstract class Chunk[A] derives CanEqual:
         end if
     end concat
 
-    final def map[B, S](f: A => B < S)(using Frame): Chunk[B] < S =
-        if isEmpty then Chunk.empty
-        else
-            val size    = this.size
-            val indexed = this.toIndexed
-            Loop.indexed(Chunk.empty[B]) { (idx, acc) =>
-                if idx < size then
-                    f(indexed(idx)).map(u => Loop.continue(acc.append(u)))
-                else
-                    Loop.done(acc)
-            }
-    end map
-
-    final def filter[S](f: A => Boolean < S)(using Frame): Chunk[A] < S =
-        if isEmpty then Chunk.empty
-        else
-            val size    = this.size
-            val indexed = this.toIndexed
-            Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
-                if idx < size then
-                    val v = indexed(idx)
-                    f(v).map {
-                        case true  => Loop.continue(acc.append(v))
-                        case false => Loop.continue(acc)
-                    }
-                else
-                    Loop.done(acc)
-            }
-    end filter
-
-    final def takeWhile[S](f: A => Boolean < S)(using Frame): Chunk[A] < S =
-        if isEmpty then Chunk.empty
-        else
-            val size    = this.size
-            val indexed = this.toIndexed
-            Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
-                if idx < size then
-                    val v = indexed(idx)
-                    f(v).map {
-                        case true  => Loop.continue(acc.append(v))
-                        case false => Loop.done(acc)
-                    }
-                else
-                    Loop.done(acc)
-            }
-
-    final def dropWhile[S](f: A => Boolean < S)(using Frame): Chunk[A] < S =
-        if isEmpty then Chunk.empty
-        else
-            val size    = this.size
-            val indexed = this.toIndexed
-            Loop.indexed(()) { (idx, _) =>
-                if idx < size then
-                    val v = indexed(idx)
-                    f(v).map {
-                        case true  => Loop.continue
-                        case false => Loop.done(indexed.dropLeft(idx))
-                    }
-                else
-                    Loop.done(Chunk.empty)
-            }
-
     final def changes(using CanEqual[A, A]): Chunk[A] =
         changes(Maybe.empty)
-
-    final def changes(first: A)(using CanEqual[A, A]): Chunk[A] =
-        changes(Maybe(first))
 
     @targetName("changesMaybe")
     final def changes(first: Maybe[A])(using CanEqual[A, A]): Chunk[A] =
@@ -172,78 +129,6 @@ sealed abstract class Chunk[A] derives CanEqual:
                     acc
             loop(0, first, Chunk.empty)
     end changes
-
-    final def collect[B, S](pf: PartialFunction[A, B < S])(using Frame): Chunk[B] < S =
-        if isEmpty then Chunk.empty
-        else
-            val size    = this.size
-            val indexed = this.toIndexed
-            Loop.indexed(Chunk.empty[B]) { (idx, acc) =>
-                if idx < size then
-                    val v = indexed(idx)
-                    if pf.isDefinedAt(v) then
-                        pf(v).map { u =>
-                            Loop.continue(acc.append(u))
-                        }
-                    else
-                        Loop.continue(acc)
-                    end if
-                else
-                    Loop.done(acc)
-            }
-
-    final def collectUnit[B, S](pf: PartialFunction[A, Unit < S])(using Frame): Unit < S =
-        if isEmpty then ()
-        else
-            val size    = this.size
-            val indexed = this.toIndexed
-            Loop.indexed(()) { (idx, _) =>
-                if idx < size then
-                    val v = indexed(idx)
-                    if pf.isDefinedAt(v) then
-                        pf(v).andThen {
-                            Loop.continue
-                        }
-                    else
-                        Loop.continue
-                    end if
-                else
-                    Loop.done
-            }
-
-    final def foreach[S](f: A => Unit < S)(using Frame): Unit < S =
-        if isEmpty then ()
-        else
-            val size    = this.size
-            val indexed = this.toIndexed
-            Loop.indexed(()) { (idx, _) =>
-                if idx < size then
-                    val v = indexed(idx)
-                    f(v).andThen(Loop.continue)
-                else
-                    Loop.done
-            }
-    end foreach
-
-    final def foldLeft[S, B](init: B)(f: (B, A) => B < S)(using Frame): B < S =
-        if isEmpty then init
-        else
-            val size    = this.size
-            val indexed = this.toIndexed
-            Loop.indexed(init) { (idx, acc) =>
-                if idx < size then
-                    f(acc, indexed(idx)).map(nacc => Loop.continue(nacc))
-                else
-                    Loop.done(acc)
-            }
-    end foldLeft
-
-    final def toSeq: IndexedSeq[A] =
-        if isEmpty then IndexedSeq.empty
-        else
-            this match
-                case c: FromSeq[A] => c.seq
-                case _             => toArrayInternal.toIndexedSeq
 
     final def toIndexed: Indexed[A] =
         if isEmpty then cachedEmpty.asInstanceOf[Indexed[A]]
@@ -276,10 +161,10 @@ sealed abstract class Chunk[A] derives CanEqual:
             Compact(unnested)
     end flatten
 
-    final def copyTo(array: Array[A], start: Int): Unit =
+    final def copyTo[B >: A](array: Array[B], start: Int): Unit =
         copyTo(array, start, size)
 
-    final def copyTo(array: Array[A], start: Int, elements: Int): Unit =
+    final def copyTo[B >: A](array: Array[B], start: Int, elements: Int): Unit =
         @tailrec def loop(c: Chunk[A], end: Int, dropLeft: Int, dropRight: Int): Unit =
             c match
                 case c: Append[A] =>
@@ -297,8 +182,8 @@ sealed abstract class Chunk[A] derives CanEqual:
                     if l > 0 then
                         System.arraycopy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
                 case c: FromSeq[A] =>
-                    val seq  = c.seq
-                    val size = Math.min(end, c.seq.size - dropLeft - dropRight)
+                    val seq  = c.value
+                    val size = Math.min(end, c.value.size - dropLeft - dropRight)
                     @tailrec def loop(index: Int): Unit =
                         if index < size then
                             array(start + index) = seq(index + dropLeft)
@@ -308,8 +193,8 @@ sealed abstract class Chunk[A] derives CanEqual:
             loop(this, elements, 0, 0)
     end copyTo
 
-    final def toArray(using ClassTag[A]): Array[A] =
-        val array = new Array[A](size)
+    override def toArray[B >: A: ClassTag]: Array[B] =
+        val array = new Array[B](size)
         copyTo(array, 0)
         array
     end toArray
@@ -323,39 +208,6 @@ sealed abstract class Chunk[A] derives CanEqual:
             case c =>
                 c.toArray
 
-    override def equals(other: Any) =
-        (this eq other.asInstanceOf[Object]) || {
-            other match
-                case other: Chunk[?] =>
-                    (this.isEmpty && other.isEmpty) ||
-                    (this.size == other.size && {
-                        val s = this.size
-                        val a = this.toIndexed
-                        val b = other.toIndexed
-                        @tailrec def loop(idx: Int = 0): Boolean =
-                            if idx < s then
-                                inline given CanEqual[Any, Any] = CanEqual.derived
-                                a(idx) == b(idx) && loop(idx + 1)
-                            else
-                                true
-                        loop()
-                    })
-                case _ =>
-                    false
-        }
-
-    override def hashCode(): Int =
-        if isEmpty then
-            1
-        else
-            val s = this.size
-            val a = this.toIndexed
-            @tailrec def loop(idx: Int = 0, acc: Int = 1): Int =
-                if idx < s then
-                    loop(idx + 1, 31 * acc + a(idx).hashCode())
-                else
-                    acc
-            loop()
 end Chunk
 
 object Chunk:
@@ -370,13 +222,13 @@ object Chunk:
 
         def apply(i: Int): A
 
-        final def head: A =
+        final override def head: A =
             if isEmpty then
                 throw new NoSuchElementException
             else
                 apply(0)
 
-        final def tail: Indexed[A] =
+        final override def tail: Indexed[A] =
             if size <= 1 then cachedEmpty.asInstanceOf[Indexed[A]]
             else
                 this match
@@ -392,12 +244,13 @@ object Chunk:
     def apply[A](values: A*): Chunk[A] =
         from(values)
 
-    def from[A](values: Seq[A]): Chunk[A] =
-        if values.isEmpty then empty
+    def from[A](values: Seq[A]): Chunk.Indexed[A] =
+        if values.isEmpty then cachedEmpty.asInstanceOf[Chunk.Indexed[A]]
         else
             values match
-                case seq: IndexedSeq[A] => FromSeq(seq)
-                case _                  => Compact(values.toArray(using ClassTag.Any.asInstanceOf[ClassTag[A]]))
+                case seq: Chunk.Indexed[A] @unchecked => seq
+                case seq: IndexedSeq[A]               => FromSeq(seq)
+                case _                                => Compact(values.toArray(using ClassTag.Any.asInstanceOf[ClassTag[A]]))
 
     def fill[A](n: Int)(v: A): Chunk[A] =
         if n <= 0 then empty
@@ -411,61 +264,58 @@ object Chunk:
             Compact(array)
     end fill
 
-    def collect[A, S](c: Chunk[A < S]): Chunk[A] < S =
-        c.map(identity)
-
     private[kyo] object internal:
 
         val cachedEmpty = Compact(new Array[Any](0))
 
-        case class FromSeq[A](
-            seq: IndexedSeq[A]
+        final case class FromSeq[A](
+            value: IndexedSeq[A]
         ) extends Indexed[A]:
-            def size = seq.size
-            def apply(i: Int) =
+            def length = value.size
+            override def apply(i: Int) =
                 if i >= size || i < 0 then
-                    throw new NoSuchElementException
+                    throw new IndexOutOfBoundsException(s"Index out of range: $i")
                 else
-                    seq(i)
+                    value(i)
 
-            override def toString = s"Chunk.Indexed(${seq.mkString(", ")})"
+            override def toString = s"Chunk.Indexed(${value.mkString(", ")})"
         end FromSeq
 
-        case class Compact[A](
+        final case class Compact[A](
             array: Array[A]
         ) extends Indexed[A]:
-            def size = array.length
-            def apply(i: Int) =
+            def length = array.length
+            override def apply(i: Int) =
                 if i >= size || i < 0 then
-                    throw new NoSuchElementException
+                    throw new IndexOutOfBoundsException(s"Index out of range: $i")
                 else
                     array(i)
 
             override def toString = s"Chunk.Indexed(${array.mkString(", ")})"
         end Compact
 
-        case class Tail[A](
+        final case class Tail[A](
             chunk: Indexed[A],
             offset: Int,
-            size: Int
+            length: Int
         ) extends Indexed[A]:
-            def apply(i: Int): A  = chunk(i + offset)
-            override def toString = s"Chunk(${toSeq.mkString(", ")})"
+            override def apply(i: Int): A = chunk(i + offset)
+            override def toString         = s"Chunk(${toSeq.mkString(", ")})"
         end Tail
 
-        case class Drop[A](
+        final case class Drop[A](
             chunk: Chunk[A],
             dropLeft: Int,
             dropRight: Int,
-            size: Int
+            length: Int
         ) extends Chunk[A]:
             override def toString = s"Chunk(${toSeq.mkString(", ")})"
         end Drop
 
-        case class Append[A](
+        final case class Append[A](
             chunk: Chunk[A],
             value: A,
-            size: Int
+            length: Int
         ) extends Chunk[A]:
             override def toString = s"Chunk(${toSeq.mkString(", ")})"
         end Append

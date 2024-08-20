@@ -50,8 +50,8 @@ class PathTest extends Test:
             for
                 v <- useFile(name, text).map { _ =>
                     Path(name).readStream()
-                }.map(_.runSeq)
-            yield assert(v == IndexedSeq("some text"))
+                }.map(_.run)
+            yield assert(v == Chunk("some text"))
             end for
         }
         "read file as bytes stream" in run {
@@ -60,8 +60,8 @@ class PathTest extends Test:
             for
                 v <- useFile(name, text).map { _ =>
                     Path(name).readBytesStream
-                }.map(_.runSeq)
-            yield assert(v == IndexedSeq[Byte](115, 111, 109, 101, 32, 116, 101, 120, 116))
+                }.map(_.run)
+            yield assert(v == Chunk[Byte](115, 111, 109, 101, 32, 116, 101, 120, 116))
         }
         "read file as lines stream" in run {
             val name = "read-file-string.txt"
@@ -69,8 +69,8 @@ class PathTest extends Test:
             for
                 v <- useFile(name, text).map { _ =>
                     Path(name).readLinesStream()
-                }.map(_.runSeq)
-            yield assert(v == IndexedSeq("some text", "more text"))
+                }.map(_.run)
+            yield assert(v == Chunk("some text", "more text"))
         }
         "readLinesStream defers side effects" in {
             Path("inexistent").readLinesStream()
@@ -255,7 +255,7 @@ class PathTest extends Test:
                 _ <- folder.mkDir
                 _ <- path1.mkFile
                 _ <- path2.mkFile
-                v <- folder.walk.runSeq
+                v <- folder.walk.run
                 _ <- folder.removeAll
             yield assert(v.toSet.map(_.toString) == Set(
                 """Path("folder")""",

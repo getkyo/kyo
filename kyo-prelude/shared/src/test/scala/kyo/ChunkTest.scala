@@ -56,6 +56,57 @@ class ChunkTest extends Test:
         }
     }
 
+    "apply" - {
+        "returns correct elements for Chunk.Compact" in {
+            val chunk = Chunk(1, 2, 3, 4, 5)
+            assert(chunk(0) == 1)
+            assert(chunk(2) == 3)
+            assert(chunk(4) == 5)
+        }
+
+        "returns correct elements for Chunk.FromSeq" in {
+            val chunk = Chunk.from(Vector(1, 2, 3, 4, 5))
+            assert(chunk(0) == 1)
+            assert(chunk(2) == 3)
+            assert(chunk(4) == 5)
+        }
+
+        "returns correct elements for Chunk.Drop" in {
+            val chunk = Chunk(1, 2, 3, 4, 5).dropLeft(2)
+            assert(chunk(0) == 3)
+            assert(chunk(1) == 4)
+            assert(chunk(2) == 5)
+        }
+
+        "returns correct elements for Chunk.Append" in {
+            val chunk = Chunk(1, 2, 3).append(4).append(5)
+            assert(chunk(0) == 1)
+            assert(chunk(3) == 4)
+            assert(chunk(4) == 5)
+        }
+
+        "throws IndexOutOfBoundsException for negative index" in {
+            val chunk = Chunk(1, 2, 3)
+            assertThrows[IndexOutOfBoundsException] {
+                chunk(-1)
+            }
+        }
+
+        "throws IndexOutOfBoundsException for index >= size" in {
+            val chunk = Chunk(1, 2, 3)
+            assertThrows[IndexOutOfBoundsException] {
+                chunk(3)
+            }
+        }
+
+        "works with nested Drop chunks" in {
+            val chunk = Chunk(1, 2, 3, 4, 5).dropLeft(1).dropLeft(1)
+            assert(chunk(0) == 3)
+            assert(chunk(1) == 4)
+            assert(chunk(2) == 5)
+        }
+    }
+
     "take" - {
         "returns the first n elements of a chunk" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
@@ -150,13 +201,13 @@ class ChunkTest extends Test:
         "with a pure function" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
             val result = chunk.map(_ * 2)
-            assert(result.eval == Chunk(2, 4, 6, 8, 10))
+            assert(result == Chunk(2, 4, 6, 8, 10))
         }
         "with a function using Env and Abort" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
             val result = kyo.Env.run(3) {
                 kyo.Abort.run[String] {
-                    chunk.map { n =>
+                    Kyo.foreach(chunk) { n =>
                         kyo.Env.get[Int].map { factor =>
                             if n % factor == 0 then n * factor
                             else kyo.Abort.fail(s"$n is not divisible by $factor")
@@ -170,7 +221,7 @@ class ChunkTest extends Test:
             val chunk = Chunk(1, 2, 3, 4, 5)
             val result = kyo.Var.run(1) {
                 kyo.Abort.run[String] {
-                    chunk.map { n =>
+                    Kyo.foreach(chunk) { n =>
                         kyo.Var.get[Int].map { multiplier =>
                             if n % 2 == 0 then kyo.Var.setDiscard(multiplier * n).andThen(n * multiplier)
                             else kyo.Abort.fail("Odd number encountered")
@@ -183,7 +234,7 @@ class ChunkTest extends Test:
         "with an empty chunk" in {
             val chunk  = Chunk.empty[Int]
             val result = chunk.map(_ * 2)
-            assert(result.eval.isEmpty)
+            assert(result.isEmpty)
         }
     }
 
@@ -191,14 +242,14 @@ class ChunkTest extends Test:
         "with a pure predicate" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
             val result = chunk.filter(_ % 2 == 0)
-            assert(result.eval == Chunk(2, 4))
+            assert(result == Chunk(2, 4))
         }
 
         "with a predicate using Env and Var" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
             val result = kyo.Var.run(0) {
                 kyo.Env.run(2) {
-                    chunk.filter { n =>
+                    Kyo.filter(chunk) { n =>
                         kyo.Var.update[Int](_ + 1).unit.andThen {
                             kyo.Env.get[Int].map(_ == n)
                         }
@@ -212,7 +263,7 @@ class ChunkTest extends Test:
             val chunk = Chunk(1, 2, 3, 4, 5)
             val result = kyo.Var.run(true) {
                 kyo.Abort.run[Unit] {
-                    chunk.filter { n =>
+                    Kyo.filter(chunk) { n =>
                         kyo.Var.get[Boolean].map { b =>
                             if b then
                                 if n % 2 == 0 then kyo.Var.setDiscard(false).andThen(true)
@@ -228,7 +279,7 @@ class ChunkTest extends Test:
         "with a predicate that filters out all elements" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
             val result = chunk.filter(_ => false)
-            assert(result.eval.isEmpty)
+            assert(result.isEmpty)
         }
     }
 
@@ -236,14 +287,14 @@ class ChunkTest extends Test:
         "with a pure function" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
             val result = chunk.foldLeft(0)(_ + _)
-            assert(result.eval == 15)
+            assert(result == 15)
         }
 
         "with a function using Env and Abort" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
             val result = kyo.Env.run(10) {
                 kyo.Abort.run[String] {
-                    chunk.foldLeft(0) { (acc, n) =>
+                    Kyo.foldLeft(chunk)(0) { (acc, n) =>
                         kyo.Env.get[Int].map { max =>
                             if acc + n <= max then acc + n
                             else kyo.Abort.fail(s"Sum exceeded max value of $max")
@@ -258,7 +309,7 @@ class ChunkTest extends Test:
             val chunk = Chunk(1, 2, 3, 4, 5)
             val result = kyo.Var.run(1) {
                 kyo.Env.run("*") {
-                    chunk.foldLeft(1) { (acc, n) =>
+                    Kyo.foldLeft(chunk)(1) { (acc, n) =>
                         kyo.Var.get[Int].map { multiplier =>
                             kyo.Env.get[String].map { op =>
                                 if op == "*" then kyo.Var.setDiscard(multiplier * n).andThen(acc * n)
@@ -274,14 +325,14 @@ class ChunkTest extends Test:
         "with an empty chunk" in {
             val chunk  = Chunk.empty[Int]
             val result = chunk.foldLeft(0)(_ + _)
-            assert(result.eval == 0)
+            assert(result == 0)
         }
     }
 
     "toSeq" - {
         "converts a Chunk to an IndexedSeq" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            assert(chunk.toSeq == IndexedSeq(1, 2, 3, 4, 5))
+            assert(chunk.toSeq == Chunk(1, 2, 3, 4, 5))
         }
 
         "converts an empty Chunk to an empty IndexedSeq" in {
@@ -350,16 +401,16 @@ class ChunkTest extends Test:
         "mapping and filtering an empty chunk" in {
             val chunk = Chunk.empty[Int]
             val result = chunk
-                .map(_ * 2).eval
+                .map(_ * 2)
                 .filter(_ % 2 == 0)
-            assert(result.eval.isEmpty)
+            assert(result.isEmpty)
         }
 
         "filter and map" in {
             val chunk = Chunk(1, 2, 3, 4, 5, 6)
             val result = chunk
-                .filter(_ % 2 == 0).eval
-                .map(_ + 1).eval
+                .filter(_ % 2 == 0)
+                .map(_ + 1)
             assert(result == Chunk(3, 5, 7))
         }
 
@@ -689,19 +740,19 @@ class ChunkTest extends Test:
     "takeWhile" - {
         "returns elements while the predicate is true" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
-            val result = chunk.takeWhile(_ < 4).eval
+            val result = chunk.takeWhile(_ < 4)
             assert(result == Chunk(1, 2, 3))
         }
 
         "returns all elements if the predicate is always true" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
-            val result = chunk.takeWhile(_ => true).eval
+            val result = chunk.takeWhile(_ => true)
             assert(result == Chunk(1, 2, 3, 4, 5))
         }
 
         "returns an empty chunk if the predicate is always false" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
-            val result = chunk.takeWhile(_ => false).eval
+            val result = chunk.takeWhile(_ => false)
             assert(result.isEmpty)
         }
 
@@ -709,7 +760,7 @@ class ChunkTest extends Test:
             val chunk = Chunk(1, 2, 3, 4, 5)
             val result = kyo.Env.run(4) {
                 kyo.Var.run(0) {
-                    chunk.takeWhile { n =>
+                    Kyo.takeWhile(chunk) { n =>
                         kyo.Var.update[Int](_ + 1).unit.andThen(kyo.Var.get[Int]).map { count =>
                             kyo.Env.get[Int].map(_ > count)
                         }
@@ -723,19 +774,19 @@ class ChunkTest extends Test:
     "dropWhile" - {
         "drops elements while the predicate is true" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
-            val result = chunk.dropWhile(_ < 3).eval
+            val result = chunk.dropWhile(_ < 3)
             assert(result == Chunk(3, 4, 5))
         }
 
         "drops all elements if the predicate is always true" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
-            val result = chunk.dropWhile(_ => true).eval
+            val result = chunk.dropWhile(_ => true)
             assert(result.isEmpty)
         }
 
         "drops no elements if the predicate is always false" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
-            val result = chunk.dropWhile(_ => false).eval
+            val result = chunk.dropWhile(_ => false)
             assert(result == Chunk(1, 2, 3, 4, 5))
         }
 
@@ -743,7 +794,7 @@ class ChunkTest extends Test:
             val chunk = Chunk(1, 2, 3, 4, 5)
             val result = kyo.Env.run(3) {
                 kyo.Var.run(0) {
-                    chunk.dropWhile { n =>
+                    Kyo.dropWhile(chunk) { n =>
                         kyo.Var.update[Int](_ + 1).unit.andThen(kyo.Var.get[Int]).map { count =>
                             kyo.Env.get[Int].map(_ > count)
                         }
@@ -782,8 +833,6 @@ class ChunkTest extends Test:
 
         "with initial values" in {
             val chunk = Chunk(1, 1, 1, 1, 1)
-            assert(chunk.changes(0) == Chunk(1))
-            assert(chunk.changes(1) == Chunk.empty[Int])
             assert(chunk.changes(Maybe(0)) == Chunk(1))
             assert(chunk.changes(Maybe(1)) == Chunk.empty[Int])
         }
@@ -792,39 +841,14 @@ class ChunkTest extends Test:
     "collect" - {
         "with a partial function" in {
             val chunk  = Chunk(1, 2, 3, 4, 5)
-            val result = chunk.collect { case x if x % 2 == 0 => x * 2 }.eval
+            val result = chunk.collect { case x if x % 2 == 0 => x * 2 }
             assert(result == Chunk(4, 8))
         }
 
         "with an empty chunk" in {
             val chunk  = Chunk.empty[Int]
-            val result = chunk.collect { case x if x % 2 == 0 => x * 2 }.eval
+            val result = chunk.collect { case x if x % 2 == 0 => x * 2 }
             assert(result.isEmpty)
-        }
-    }
-
-    "collectUnit" - {
-        "with a function using Env, Abort and Var" in {
-            val chunk = Chunk(1, 2, 3, 4, 5)
-            var sum   = 0
-            val result = kyo.Var.run(2) {
-                kyo.Env.run(10) {
-                    kyo.Abort.run[String] {
-                        chunk.collectUnit {
-                            case n if n % 2 == 0 =>
-                                kyo.Var.get[Int].map { multiplier =>
-                                    kyo.Env.get[Int].map { max =>
-                                        if sum + n * multiplier <= max then
-                                            kyo.Var.setDiscard(multiplier * n).andThen(sum += n * multiplier)
-                                        else kyo.Abort.fail(s"Sum exceeded max value of $max")
-                                    }
-                                }
-                        }
-                    }
-                }
-            }
-            assert(result.eval == Result.fail("Sum exceeded max value of 10"))
-            assert(sum == 4)
         }
     }
 
@@ -832,7 +856,7 @@ class ChunkTest extends Test:
         "with a pure function" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
             var sum   = 0
-            chunk.foreach(x => sum += x).eval
+            chunk.foreach(x => sum += x)
             assert(sum == 15)
         }
 
@@ -840,7 +864,7 @@ class ChunkTest extends Test:
             val chunk = Chunk(1, 2, 3, 4, 5)
             var sum   = 0
             val result = kyo.Env.run(0) {
-                chunk.foreach { x =>
+                Kyo.foreachDiscard(chunk) { x =>
                     kyo.Env.use[Int](_ + x).map(sum += _)
                 }
             }
@@ -851,7 +875,7 @@ class ChunkTest extends Test:
         "with an empty chunk" in {
             val chunk = Chunk.empty[Int]
             var sum   = 0
-            chunk.foreach(x => sum += x).eval
+            chunk.foreach(x => sum += x)
             assert(sum == 0)
         }
     }
@@ -898,16 +922,16 @@ class ChunkTest extends Test:
         assert(Chunk.empty[Int].toSeq.isEmpty)
     }
 
-    "Chunks.collect" - {
+    "Kyo.collect" - {
         "collects elements from a chunk of effectful computations" in {
             val chunk  = Chunk[Int < Env[Int]](kyo.Env.use[Int](_ + 1), kyo.Env.use[Int](_ + 2))
-            val result = kyo.Env.run(1)(Chunk.collect(chunk))
+            val result = kyo.Env.run(1)(Kyo.collect(chunk))
             assert(result.eval == Chunk(2, 3))
         }
 
         "collects elements from a chunk of effectful computations with different effect types" in {
             val chunk  = Chunk[Int < (Env[Int] & Var[Int])](kyo.Env.use[Int](_ + 1), kyo.Var.use[Int](_ + 2))
-            val result = kyo.Var.run(2)(kyo.Env.run(1)(Chunk.collect(chunk)))
+            val result = kyo.Var.run(2)(kyo.Env.run(1)(Kyo.collect(chunk)))
             assert(result.eval == Chunk(2, 4))
         }
     }
