@@ -7,13 +7,13 @@ class StreamTest extends Test:
     "init" - {
         "empty" in {
             assert(
-                Stream.init(Seq[Int]()).runSeq.eval == Seq.empty
+                Stream.init(Seq[Int]()).run.eval == Seq.empty
             )
         }
 
         "non-empty" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).runSeq.eval == Seq(1, 2, 3)
+                Stream.init(Seq(1, 2, 3)).run.eval == Seq(1, 2, 3)
             )
         }
     }
@@ -21,13 +21,13 @@ class StreamTest extends Test:
     "initChunk" - {
         "empty" in {
             assert(
-                Stream.init(Chunk.empty[Int]).runSeq.eval == Seq.empty
+                Stream.init(Chunk.empty[Int]).run.eval == Seq.empty
             )
         }
 
         "non-empty" in {
             assert(
-                Stream.init(Chunk(1, 2, 3)).runSeq.eval == Seq(1, 2, 3)
+                Stream.init(Chunk(1, 2, 3)).run.eval == Seq(1, 2, 3)
             )
         }
     }
@@ -35,31 +35,31 @@ class StreamTest extends Test:
     "take" - {
         "zero" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).take(0).runSeq.eval == Seq.empty
+                Stream.init(Seq(1, 2, 3)).take(0).run.eval == Seq.empty
             )
         }
 
         "negative" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).take(-1).runSeq.eval == Seq.empty
+                Stream.init(Seq(1, 2, 3)).take(-1).run.eval == Seq.empty
             )
         }
 
         "two" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).take(2).runSeq.eval == Seq(1, 2)
+                Stream.init(Seq(1, 2, 3)).take(2).run.eval == Seq(1, 2)
             )
         }
 
         "more than available" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).take(5).runSeq.eval == Seq(1, 2, 3)
+                Stream.init(Seq(1, 2, 3)).take(5).run.eval == Seq(1, 2, 3)
             )
         }
 
         "stack safety" in {
             assert(
-                Stream.init(Seq.fill(100000)(1)).take(5).runSeq.eval ==
+                Stream.init(Seq.fill(100000)(1)).take(5).run.eval ==
                     Seq.fill(5)(1)
             )
         }
@@ -68,31 +68,31 @@ class StreamTest extends Test:
     "drop" - {
         "zero" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).drop(0).runSeq.eval == Seq(1, 2, 3)
+                Stream.init(Seq(1, 2, 3)).drop(0).run.eval == Seq(1, 2, 3)
             )
         }
 
         "negative" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).drop(-1).runSeq.eval == Seq(1, 2, 3)
+                Stream.init(Seq(1, 2, 3)).drop(-1).run.eval == Seq(1, 2, 3)
             )
         }
 
         "two" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).drop(2).runSeq.eval == Seq(3)
+                Stream.init(Seq(1, 2, 3)).drop(2).run.eval == Seq(3)
             )
         }
 
         "more than available" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).drop(5).runSeq.eval == Seq.empty
+                Stream.init(Seq(1, 2, 3)).drop(5).run.eval == Seq.empty
             )
         }
 
         "stack safety" in {
             assert(
-                Stream.init(Seq.fill(n)(1)).drop(5).runSeq.eval.size == n - 5
+                Stream.init(Seq.fill(n)(1)).drop(5).run.eval.size == n - 5
             )
         }
     }
@@ -100,27 +100,27 @@ class StreamTest extends Test:
     "takeWhile" - {
         "take none" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).takeWhile(_ < 0).runSeq.eval == Seq.empty
+                Stream.init(Seq(1, 2, 3)).takeWhile(_ < 0).run.eval == Seq.empty
             )
         }
 
         "take some" in {
             assert(
-                Stream.init(Seq(1, 2, 3, 4, 5)).takeWhile(_ < 4).runSeq.eval ==
+                Stream.init(Seq(1, 2, 3, 4, 5)).takeWhile(_ < 4).run.eval ==
                     Seq(1, 2, 3)
             )
         }
 
         "take all" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).takeWhile(_ < 10).runSeq.eval ==
+                Stream.init(Seq(1, 2, 3)).takeWhile(_ < 10).run.eval ==
                     Seq(1, 2, 3)
             )
         }
 
         "empty stream" in {
             assert(
-                Stream.init(Seq.empty[Int]).takeWhile(_ => true).runSeq.eval ==
+                Stream.init(Seq.empty[Int]).takeWhile(_ => true).run.eval ==
                     Seq.empty
             )
         }
@@ -129,13 +129,13 @@ class StreamTest extends Test:
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
             val taken = stream.takeWhile { v =>
                 Var.update[Int](_ + 1).map(_ < 4)
-            }.runSeq
+            }.run
             assert(Var.runTuple(0)(taken).eval == (4, Seq(1, 2, 3)))
         }
 
         "stack safety" in {
             assert(
-                Stream.init(Seq.fill(n)(1)).takeWhile(_ == 1).runSeq.eval ==
+                Stream.init(Seq.fill(n)(1)).takeWhile(_ == 1).run.eval ==
                     Seq.fill(n)(1)
             )
         }
@@ -144,28 +144,28 @@ class StreamTest extends Test:
     "dropWhile" - {
         "drop none" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).dropWhile(_ < 0).runSeq.eval ==
+                Stream.init(Seq(1, 2, 3)).dropWhile(_ < 0).run.eval ==
                     Seq(1, 2, 3)
             )
         }
 
         "drop some" in {
             assert(
-                Stream.init(Seq(1, 2, 3, 4, 5)).dropWhile(_ < 4).runSeq.eval ==
+                Stream.init(Seq(1, 2, 3, 4, 5)).dropWhile(_ < 4).run.eval ==
                     Seq(4, 5)
             )
         }
 
         "drop all" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).dropWhile(_ < 10).runSeq.eval ==
+                Stream.init(Seq(1, 2, 3)).dropWhile(_ < 10).run.eval ==
                     Seq.empty
             )
         }
 
         "empty stream" in {
             assert(
-                Stream.init(Seq.empty[Int]).dropWhile(_ => false).runSeq.eval ==
+                Stream.init(Seq.empty[Int]).dropWhile(_ => false).run.eval ==
                     Seq.empty
             )
         }
@@ -175,13 +175,13 @@ class StreamTest extends Test:
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
             val dropped = stream.dropWhile { v =>
                 Var.update[Int](_ + 1).map(_ < 3)
-            }.runSeq
+            }.run
             assert(Var.runTuple(0)(dropped).eval == (3, Seq(3, 4, 5)))
         }
 
         "stack safety" in {
             assert(
-                Stream.init(Seq.fill(n)(1) ++ Seq(2)).dropWhile(_ == 1).runSeq.eval ==
+                Stream.init(Seq.fill(n)(1) ++ Seq(2)).dropWhile(_ == 1).run.eval ==
                     Seq(2)
             )
         }
@@ -190,28 +190,28 @@ class StreamTest extends Test:
     "filter" - {
         "non-empty" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).filter(_ % 2 == 0).runSeq.eval ==
+                Stream.init(Seq(1, 2, 3)).filter(_ % 2 == 0).run.eval ==
                     Seq(2)
             )
         }
 
         "all in" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).filter(_ => true).runSeq.eval ==
+                Stream.init(Seq(1, 2, 3)).filter(_ => true).run.eval ==
                     Seq(1, 2, 3)
             )
         }
 
         "all out" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).filter(_ => false).runSeq.eval ==
+                Stream.init(Seq(1, 2, 3)).filter(_ => false).run.eval ==
                     Seq.empty
             )
         }
 
         "stack safety" in {
             assert(
-                Stream.init(1 to n).filter(_ % 2 == 0).runSeq.eval.size ==
+                Stream.init(1 to n).filter(_ % 2 == 0).run.eval.size ==
                     n / 2
             )
         }
@@ -220,35 +220,35 @@ class StreamTest extends Test:
     "changes" - {
         "no duplicates" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).changes.runSeq.eval ==
+                Stream.init(Seq(1, 2, 3)).changes.run.eval ==
                     Seq(1, 2, 3)
             )
         }
 
         "with duplicates" in {
             assert(
-                Stream.init(Seq(1, 2, 2, 3, 2, 3, 3)).changes.runSeq.eval ==
+                Stream.init(Seq(1, 2, 2, 3, 2, 3, 3)).changes.run.eval ==
                     Seq(1, 2, 3, 2, 3)
             )
         }
 
         "with initial value" in {
             assert(
-                Stream.init(Seq(1, 2, 2, 3, 2, 3, 3)).changes(1).runSeq.eval ==
+                Stream.init(Seq(1, 2, 2, 3, 2, 3, 3)).changes(1).run.eval ==
                     Seq(2, 3, 2, 3)
             )
         }
 
         "empty stream" in {
             assert(
-                Stream.init(Seq.empty[Int]).changes.runSeq.eval ==
+                Stream.init(Seq.empty[Int]).changes.run.eval ==
                     Seq.empty
             )
         }
 
         "stack safety" in {
             assert(
-                Stream.init(Seq.fill(n)(1)).changes.runSeq.eval ==
+                Stream.init(Seq.fill(n)(1)).changes.run.eval ==
                     Seq(1)
             )
         }
@@ -257,32 +257,32 @@ class StreamTest extends Test:
     "map" - {
         "double" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).map(_ * 2).runSeq.eval == Seq(2, 4, 6)
+                Stream.init(Seq(1, 2, 3)).map(_ * 2).run.eval == Seq(2, 4, 6)
             )
         }
 
         "to string" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).map(_.toString).runSeq.eval ==
+                Stream.init(Seq(1, 2, 3)).map(_.toString).run.eval ==
                     Seq("1", "2", "3")
             )
         }
 
         "with effects" in {
             val stream      = Stream.init(Seq(1, 2, 3))
-            val transformed = stream.map(v => Env.use[Int](v * _)).runSeq
+            val transformed = stream.map(v => Env.use[Int](v * _)).run
             assert(Env.run(2)(transformed).eval == Seq(2, 4, 6))
         }
 
         "with failures" in {
             val stream      = Stream.init(Seq("1", "2", "abc", "3"))
-            val transformed = stream.map(v => Abort.catching[NumberFormatException](v.toInt)).runSeq
+            val transformed = stream.map(v => Abort.catching[NumberFormatException](v.toInt)).run
             assert(Abort.run(transformed).eval.isFail)
         }
 
         "stack safety" in {
             assert(
-                Stream.init(Seq.fill(n)(1)).map(_ + 1).runSeq.eval ==
+                Stream.init(Seq.fill(n)(1)).map(_ + 1).run.eval ==
                     Seq.fill(n)(2)
             )
         }
@@ -293,7 +293,7 @@ class StreamTest extends Test:
                     .init(0 until 100)
                     .map(_ => counter += 1)
                     .take(0)
-                    .runSeq
+                    .run
                     .eval
             assert(counter == 0)
             assert(result.isEmpty)
@@ -303,32 +303,32 @@ class StreamTest extends Test:
     "mapChunk" - {
         "double" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).mapChunk(_.take(2).map(_ * 2)).runSeq.eval == Seq(2, 4)
+                Stream.init(Seq(1, 2, 3)).mapChunk(_.take(2).map(_ * 2)).run.eval == Seq(2, 4)
             )
         }
 
         "to string" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).mapChunk(_.append(4).map(_.toString)).runSeq.eval ==
+                Stream.init(Seq(1, 2, 3)).mapChunk(_.append(4).map(_.toString)).run.eval ==
                     Seq("1", "2", "3", "4")
             )
         }
 
         "with effects" in {
             val stream      = Stream.init(Seq(1, 2, 3))
-            val transformed = stream.mapChunk(v => Env.use[Int](i => v.map(_ * i))).runSeq
+            val transformed = stream.mapChunk(v => Env.use[Int](i => v.map(_ * i))).run
             assert(Env.run(2)(transformed).eval == Seq(2, 4, 6))
         }
 
         "with failures" in {
             val stream      = Stream.init(Seq("1", "2", "abc", "3"))
-            val transformed = stream.mapChunk(c => Abort.catching[NumberFormatException](c.map(_.toInt))).runSeq
+            val transformed = stream.mapChunk(c => Abort.catching[NumberFormatException](c.map(_.toInt))).run
             assert(Abort.run(transformed).eval.isFail)
         }
 
         "stack safety" in {
             assert(
-                Stream.init(Seq.fill(n)(1)).mapChunk(_.map(_ + 1)).runSeq.eval ==
+                Stream.init(Seq.fill(n)(1)).mapChunk(_.map(_ + 1)).run.eval ==
                     Seq.fill(n)(2)
             )
         }
@@ -339,7 +339,7 @@ class StreamTest extends Test:
                     .init(0 until 100)
                     .mapChunk(_.map(_ => counter += 1))
                     .take(0)
-                    .runSeq
+                    .run
                     .eval
             assert(counter == 0)
             assert(result.isEmpty)
@@ -349,13 +349,13 @@ class StreamTest extends Test:
     "flatMap" - {
         "empty stream" in {
             assert(
-                Stream.init(Seq.empty[Int]).flatMap(i => Stream.init(Seq(i, i + 1))).runSeq.eval == Seq.empty
+                Stream.init(Seq.empty[Int]).flatMap(i => Stream.init(Seq(i, i + 1))).run.eval == Seq.empty
             )
         }
 
         "one-to-many transformation" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).flatMap(i => Stream.init(Seq(i, i + 1))).runSeq.eval == Seq(1, 2, 2, 3, 3, 4)
+                Stream.init(Seq(1, 2, 3)).flatMap(i => Stream.init(Seq(i, i + 1))).run.eval == Seq(1, 2, 2, 3, 3, 4)
             )
         }
 
@@ -363,7 +363,7 @@ class StreamTest extends Test:
             val result = Env.run(10) {
                 Stream.init(Seq(1, 2, 3))
                     .flatMap(i => Stream.init(Seq(i, i + 1)).map(j => Env.use[Int](_ + j)))
-                    .runSeq
+                    .run
             }
             assert(result.eval == Seq(11, 12, 12, 13, 13, 14))
         }
@@ -375,14 +375,14 @@ class StreamTest extends Test:
                         if i > 2 then Abort.fail("Too large")
                         else Stream.init(Seq(i, i + 1))
                     )
-                    .runSeq
+                    .run
             }
             assert(result.eval == Result.fail("Too large"))
         }
 
         "chunked input" in {
             val input  = Stream.init(Chunk(1, 2, 3))
-            val result = input.flatMap(i => Stream.init(Seq(i, i * 10))).runSeq
+            val result = input.flatMap(i => Stream.init(Seq(i, i * 10))).run
             assert(result.eval == Seq(1, 10, 2, 20, 3, 30))
         }
     }
@@ -390,22 +390,22 @@ class StreamTest extends Test:
     "flatMapChunk" - {
         "empty stream" in {
             assert(
-                Stream.init(Seq.empty[Int]).flatMapChunk(c => Stream.init(c.map(_ + 1).eval)).runSeq.eval == Seq.empty
+                Stream.init(Seq.empty[Int]).flatMapChunk(c => Stream.init(c.map(_ + 1))).run.eval == Seq.empty
             )
         }
 
         "chunk transformation" in {
             val result = Stream.init(Seq(1, 2, 3))
-                .flatMapChunk(c => Stream.init(c.map(_ * 2).eval.append(0)))
-                .runSeq
+                .flatMapChunk(c => Stream.init(c.map(_ * 2) :+ 0))
+                .run
             assert(result.eval == Seq(2, 4, 6, 0))
         }
 
         "nested effects" in {
             val result = Env.run(10) {
                 Stream.init(Seq(1, 2, 3))
-                    .flatMapChunk(c => Env.use[Int](i => Stream.init(c.map(_ + i).eval)))
-                    .runSeq
+                    .flatMapChunk(c => Env.use[Int](i => Stream.init(c.map(_ + i))))
+                    .run
             }
             assert(result.eval == Seq(11, 12, 13))
         }
@@ -414,10 +414,10 @@ class StreamTest extends Test:
             val result = Abort.run[String] {
                 Stream.init(Seq(1, 2, 3))
                     .flatMapChunk(c =>
-                        if !c.filter(_ > 2).eval.isEmpty then Abort.fail("Too large")
-                        else Stream.init(c.map(_ * 2).eval)
+                        if !c.filter(_ > 2).isEmpty then Abort.fail("Too large")
+                        else Stream.init(c.map(_ * 2))
                     )
-                    .runSeq
+                    .run
             }
             assert(result.eval == Result.fail("Too large"))
         }
@@ -428,7 +428,7 @@ class StreamTest extends Test:
                 Stream.init(Chunk(4, 5, 6)).flatMapChunk(c2 =>
                     Stream.init(c1.concat(c2))
                 )
-            ).runSeq
+            ).run
             assert(result.eval == Seq(1, 2, 3, 4, 5, 6))
         }
     }
@@ -438,7 +438,7 @@ class StreamTest extends Test:
             assert(
                 Stream.init(Seq(1, 2, 3))
                     .concat(Stream.init(Seq(4, 5, 6)))
-                    .runSeq.eval == Seq(1, 2, 3, 4, 5, 6)
+                    .run.eval == Seq(1, 2, 3, 4, 5, 6)
             )
         }
 
@@ -446,7 +446,7 @@ class StreamTest extends Test:
             assert(
                 Stream.init(Seq.empty[Int])
                     .concat(Stream.init(Seq(1, 2, 3)))
-                    .runSeq.eval == Seq(1, 2, 3)
+                    .run.eval == Seq(1, 2, 3)
             )
         }
 
@@ -454,7 +454,7 @@ class StreamTest extends Test:
             assert(
                 Stream.init(Seq(1, 2, 3))
                     .concat(Stream.init(Seq.empty[Int]))
-                    .runSeq.eval == Seq(1, 2, 3)
+                    .run.eval == Seq(1, 2, 3)
             )
         }
 
@@ -462,7 +462,7 @@ class StreamTest extends Test:
             assert(
                 Stream.init(Seq.empty[Int])
                     .concat(Stream.init(Seq.empty[Int]))
-                    .runSeq.eval == Seq.empty
+                    .run.eval == Seq.empty
             )
         }
 
@@ -470,7 +470,7 @@ class StreamTest extends Test:
             assert(
                 Stream.init(1 to n)
                     .concat(Stream.init(n + 1 to 2 * n))
-                    .runSeq.eval == (1 to (2 * n)).toSeq
+                    .run.eval == (1 to (2 * n)).toSeq
             )
         }
     }
@@ -535,7 +535,7 @@ class StreamTest extends Test:
         "executes the function for each chunk" in run {
             var sum = 0
             Stream.init(Chunk(1, 2, 3, 4, 5)).runForeachChunk(chunk =>
-                sum += chunk.foldLeft(0)(_ + _).eval
+                sum += chunk.foldLeft(0)(_ + _)
             ).map { _ =>
                 assert(sum == 15)
             }
@@ -552,7 +552,7 @@ class StreamTest extends Test:
             var sum = 0
             Stream.init(Chunk(1, 2, 3, 4, 5)).runForeachChunk { chunk =>
                 Env.use[Int] { multiplier =>
-                    sum += chunk.foldLeft(0)(_ + _).eval * multiplier
+                    sum += chunk.foldLeft(0)(_ + _) * multiplier
                 }
             }.pipe(Env.run(2)).map { _ =>
                 assert(sum == 30)
@@ -591,7 +591,7 @@ class StreamTest extends Test:
     "nesting with other effect" in {
         val stream: Stream[Int, Any] < Env[Seq[Int]] =
             Env.use[Seq[Int]](seq => Stream.init(seq))
-        Env.run(Seq(1, 2, 3))(stream.map(_.runSeq)).eval
+        Env.run(Seq(1, 2, 3))(stream.map(_.run)).eval
         succeed
     }
 
@@ -606,7 +606,7 @@ class StreamTest extends Test:
                             else Stream.init(Seq(j, j * 10))
                         )
                     )
-                    .runSeq
+                    .run
             }
             assert(result.eval == Result.fail("Value too large: 4"))
         }
@@ -618,12 +618,12 @@ class StreamTest extends Test:
                     .flatMapChunk(c =>
                         if abortCounter % 2 == 0 then
                             abortCounter += 1
-                            Stream.init(c.map(i => if i > 3 then Abort.fail(s"Odd abort: $i") else i))
+                            Stream.init(Kyo.foreach(c)(i => if i > 3 then Abort.fail(s"Odd abort: $i") else i))
                         else
                             abortCounter += 1
                             Stream.init(c)
                     )
-                    .runSeq
+                    .run
             }
             assert(result.eval == Result.fail("Odd abort: 4"))
         }
@@ -640,7 +640,7 @@ class StreamTest extends Test:
                                 )
                             )
                         )
-                        .runSeq
+                        .run
                 }
             }
             assert(result.eval == Result.fail("Exceeded threshold 3: 4"))
@@ -656,7 +656,7 @@ class StreamTest extends Test:
                             Env.use[Int](env => if sum > env then Abort.fail("Sum too large") else j)
                         }
                     )
-                    .runSeq
+                    .run
             }
             assert(Abort.run(result).eval == Result.fail("Sum too large"))
         }
@@ -675,7 +675,7 @@ class StreamTest extends Test:
                             else Env.use[Int](_ + m)
                         }
                     end if
-                }.runSeq
+                }.run
             }
             assert(Env.run(0)(result).eval == Result.fail("Even counter: 2"))
             assert(counter == 2)
@@ -691,7 +691,7 @@ class StreamTest extends Test:
                             if newState > 3 then Abort.fail(s"State too high: $newState")
                             else chunk.map(_ * newState)
                         }
-                    }.runSeq
+                    }.run
                 }
             }
             assert(result.eval == Result.fail("State too high: 5"))
@@ -704,7 +704,7 @@ class StreamTest extends Test:
                     Env.use[Int] { chunkSize =>
                         Stream.init(Chunk.fill(chunkSize)(n))
                     }
-                }.runSeq
+                }.run
             }
             assert(result.eval == Seq(1, 1, 2, 2, 3, 3, 4, 4, 5, 5))
         }
@@ -718,7 +718,7 @@ class StreamTest extends Test:
                             if n > limit then Abort.fail(s"Value $n exceeds limit $limit")
                             else Stream.init(Seq(n, n * 10))
                         }
-                    }.runSeq
+                    }.run
                 }
             }
             assert(result.eval == Result.fail("Value 4 exceeds limit 3"))

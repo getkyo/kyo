@@ -41,7 +41,7 @@ object Resource:
                         case Maybe.Empty =>
                             bug("Resource finalizer queue already closed.")
                         case Maybe.Defined(l) =>
-                            Kyo.seq.foreach(l)(task =>
+                            Kyo.foreachDiscard(l)(task =>
                                 Abort.run[Throwable](task)
                                     .map(_.fold(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))
                             )

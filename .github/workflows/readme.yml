@@ -1,12 +1,11 @@
 name: readme
-on: workflow_dispatch
-# on:
-#   push:
-#     branches:
-#       - main
-#   pull_request:
-#     branches:
-#       - main
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 jobs:
   readme:
     runs-on: ubuntu-20.04

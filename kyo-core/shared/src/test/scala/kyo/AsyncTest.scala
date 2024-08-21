@@ -173,7 +173,7 @@ class AsyncTest extends Test:
         }
 
         "multiple fibers timeout" in runJVM {
-            Kyo.seq.fill(100)(Async.sleep(1.milli)).unit.andThen(1)
+            Kyo.fill(100)(Async.sleep(1.milli)).unit.andThen(1)
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {

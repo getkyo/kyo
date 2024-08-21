@@ -94,7 +94,7 @@ object Meter:
         pipeline[S1 & S2 & S3 & S4](List(m1, m2, m3, m4))
 
     def pipeline[S](meters: Seq[Meter < (IO & S)])(using Frame): Meter < (IO & S) =
-        Kyo.seq.collect(meters).map { seq =>
+        Kyo.collect(meters).map { seq =>
             val meters = seq.toIndexedSeq
             new Meter:
 
@@ -123,7 +123,7 @@ object Meter:
                 end tryRun
 
                 def close(using Frame): Boolean < IO =
-                    Kyo.seq.map(meters)(_.close).map(_.exists(identity))
+                    Kyo.foreach(meters)(_.close).map(_.exists(identity))
             end new
         }
 

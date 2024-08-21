@@ -136,8 +136,8 @@ class HubTest extends Test:
             for
                 h  <- Hub.init[Int](2)
                 l  <- h.listen
-                _  <- Kyo.seq.fill(100)(Async.run(h.put(1)))
-                t  <- Kyo.seq.fill(100)(l.take)
+                _  <- Kyo.fill(100)(Async.run(h.put(1)))
+                t  <- Kyo.fill(100)(l.take)
                 e1 <- h.isEmpty
                 e2 <- l.isEmpty
             yield assert(t == List.fill(100)(1) && e1 && e2)
@@ -146,8 +146,8 @@ class HubTest extends Test:
             for
                 h  <- Hub.init[Int](2)
                 l  <- h.listen
-                _  <- Kyo.seq.fill(100)(Async.run(h.put(1)))
-                t  <- Kyo.seq.fill(100)(Async.run(l.take).map(_.get))
+                _  <- Kyo.fill(100)(Async.run(h.put(1)))
+                t  <- Kyo.fill(100)(Async.run(l.take).map(_.get))
                 e1 <- h.isEmpty
                 e2 <- l.isEmpty
             yield assert(t == List.fill(100)(1) && e1 && e2)
@@ -155,12 +155,12 @@ class HubTest extends Test:
         "listeners" in runJVM {
             for
                 h  <- Hub.init[Int](2)
-                l  <- Kyo.seq.fill(100)(Async.run(h.listen).map(_.get))
+                l  <- Kyo.fill(100)(Async.run(h.listen).map(_.get))
                 _  <- Async.run(h.put(1))
-                t  <- Kyo.seq.map(l)(l => Async.run(l.take).map(_.get))
+                t  <- Kyo.foreach(l)(l => Async.run(l.take).map(_.get))
                 e1 <- h.isEmpty
-                e2 <- Kyo.seq.map(l)(_.isEmpty)
-            yield assert(t == List.fill(100)(1) && e1 && e2 == Seq.fill(100)(true))
+                e2 <- Kyo.foreach(l)(_.isEmpty)
+            yield assert(t == Chunk.fill(100)(1) && e1 && e2 == Chunk.fill(100)(true))
         }
     }
 end HubTest
