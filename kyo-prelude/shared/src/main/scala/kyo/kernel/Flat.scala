@@ -1,6 +1,10 @@
 package kyo.kernel
 
+import kyo.Duration
+import kyo.Maybe
+import kyo.Result
 import kyo.Tag
+import kyo.TypeMap
 import scala.annotation.implicitNotFound
 import scala.quoted.*
 import scala.util.NotGiven
@@ -66,6 +70,15 @@ private object FlatMacro:
         def isConcrete(t: TypeRepr) =
             t.typeSymbol.isClassDef
 
+        def isKyoData(t: TypeRepr): Boolean =
+            t match
+                case AppliedType(base, _) =>
+                    base =:= TypeRepr.of[Maybe] ||
+                    base =:= TypeRepr.of[Result] ||
+                    base =:= TypeRepr.of[TypeMap] ||
+                    base =:= TypeRepr.of[Duration]
+                case _ => false
+
         def hasTag(t: TypeRepr): Boolean =
             t.asType match
                 case '[t] =>
@@ -80,7 +93,7 @@ private object FlatMacro:
                     check(a)
                     check(b)
                 case _ =>
-                    if isAny(t) || (!isConcrete(t.dealias) && !hasTag(t)) then
+                    if isAny(t) || (!isConcrete(t.dealias) && !hasTag(t) && !isKyoData(t)) then
                         fail(
                             s"Cannot prove ${code(print(t))} isn't nested. " +
                                 s"This error can be reported an unsupported pending effect is passed to a method. " +
