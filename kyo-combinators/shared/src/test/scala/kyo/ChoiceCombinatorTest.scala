@@ -51,14 +51,14 @@ class ChoiceCombinatorTest extends Test:
                 assert(handledSuccessAbort.eval == Result.success(1))
             }
 
-            "should convert choice to unit abort, constructing Right from Seq#head" in {
-                val failure: Int < Choice           = Choice.get(Nil)
-                val failureAbort: Int < Abort[Unit] = failure.choiceToUnit
-                val handledFailureAbort             = Abort.run[Unit](failureAbort)
-                assert(handledFailureAbort.eval == Result.fail(()))
-                val success: Int < Choice           = Choice.get(Seq(1, 2, 3))
-                val successAbort: Int < Abort[Unit] = success.choiceToUnit
-                val handledSuccessAbort             = Abort.run[Unit](successAbort)
+            "should convert choice to empty abort, constructing Right from Seq#head" in {
+                val failure: Int < Choice                  = Choice.get(Nil)
+                val failureAbort: Int < Abort[Maybe.Empty] = failure.choiceToEmpty
+                val handledFailureAbort                    = Abort.run[Maybe.Empty](failureAbort)
+                assert(handledFailureAbort.eval == Result.fail(Maybe.Empty))
+                val success: Int < Choice                  = Choice.get(Seq(1, 2, 3))
+                val successAbort: Int < Abort[Maybe.Empty] = success.choiceToEmpty
+                val handledSuccessAbort                    = Abort.run[Maybe.Empty](successAbort)
                 assert(handledSuccessAbort.eval == Result.success(1))
             }
         }

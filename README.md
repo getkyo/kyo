@@ -2696,7 +2696,7 @@ val keepTicking: Nothing < (Consoles & Fibers) =
 val effect: Unit < (Consoles & Fibers & Resources & Aborts[Throwable] & Envs[NameService]) =
     for
         nameService <- Kyo.service[NameService]       // Adds Envs[NameService] effect
-        _           <- keepTicking.forkScoped         // Adds Consoles, Fibers, and Resources effects
+        _           <- keepTicking.forkAsResource     // Adds Consoles, Fibers, and Resources effects
         saluee      <- Consoles.readln                // Uses Consoles effect
         _           <- Kyo.sleep(2.seconds)           // Uses Fibers (semantic blocking)
         _           <- nameService.sayHelloTo(saluee) // Adds Aborts[Throwable] effect
@@ -2720,27 +2720,30 @@ IOs.run {                              // Handles IOs
 
 ### Failure conversions
 
-One notable departure from the ZIO API worth calling out is a set of combinators for converting between failure effects. Whereas ZIO has a single channel for describing errors, Kyo has at least three different effect types that can describe failure in the basic sense of "short-circuiting": `Aborts`, `Options`, and `Choices` (an empty `Seq` being equivalent to a short-circuit). It's useful to be able to move between these effects easily, so `kyo-combinators` provides a number of extension methods, usually in the form of `def effect1ToEffect2`.
+One notable departure from the ZIO API worth calling out is a set of combinators for converting between failure effects. Whereas ZIO has a single channel for describing errors, Kyo has two different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). Additionally, we can model an `Option` effect as `Abort[Maybe.Empty]` (`Maybe` is a high-performance alternative to `Option`). It's useful to be able to move between these effects easily, so `kyo-combinators` provides a number of extension methods, usually in the form of `def effect1ToEffect2`.
 
 Some examples:
 
 ```scala 3
-val abortsEffect: Int < Aborts[String] = ???
+val abortsEffect: Int < Abort[String] = ???
 
-// Converts failures to Options.empty
-val optionsEffect: Int < Options = abortsEffect.abortsToOptions
+// Converts failures of any type to Abort[Maybe.Empty]
+val emptyEffect: Int < Abort[Maybe.Empty] = abortsEffect.abortToEmpty
 
-// Converts option to a single "choice" (or Seq)
-val choicesEffect: Int < Choices = optionsEffect.optionsToChoices
+// handle an Abort[Maybe.Empty] as a Maybe (high-performance Option)
+val runEmpty: Maybe[Int] < Any = emptyEffect.handleEmptyAbort
+
+// Converts failure of any kind to a "choice": a Seq of length 1 or 0
+val choiceEffect: Int < Choice = emptyEffect.abortToChoice
 
 // Fails with Nil#head exception if empty and succeeds with Seq.head if non-empty
-val newAbortsEffect: Int < Aborts[Throwable] = choicesEffect.choicesToThrowable
+val newAbortEffect: Int < Aborts[Throwable] = choiceEffect.choiceToThrowable
 
 // Throws a throwable Aborts failure (will actually throw unless suspended)
-val unsafeEffect: Int < Any = newAbortsEffect.implicitAborts
+val unsafeEffect: Int < Any = newAbortsEffect.implicitThrowable
 
 // Catch any suspended throws
-val safeEffect: Int < Aborts[Throwable] = unsafeEffect.explicitAborts
+val safeEffect: Int < Aborts[Throwable] = unsafeEffect.explicitThrowable
 ```
 
 ## Acknowledgements

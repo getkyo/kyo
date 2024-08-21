@@ -136,44 +136,43 @@ end extension
 
 extension [A, S, E](effect: A < (Abort[E] & S))
     def handleAbort(
-        using
-        ct: ClassTag[E],
-        tag: Tag[E],
-        flat: Flat[A]
+        using flat: Flat[A]
     ): Result[E, A] < S =
-        Abort.run[E](effect)
-
-    def abortToChoice(
-        using
-        ct: ClassTag[E],
-        tag: Tag[E],
-        flat: Flat[A]
-    ): A < (S & Choice) =
-        Abort.run[E](effect).map(e => Choice.get(e.fold(_ => Nil)(List(_))))
-
-    def someAbortToChoice[E1 <: E]: SomeAbortToChoiceOps[A, S, E, E1] = SomeAbortToChoiceOps(effect)
+        Abort.run[Any](effect).asInstanceOf[Result[E, A] < S]
 
     def handleSomeAbort[E1 <: E]: HandleSomeAbort[A, S, E, E1] = HandleSomeAbort(effect)
 
+    def abortToChoice(
+        using flat: Flat[A]
+    ): A < (S & Choice) =
+        effect.handleAbort.map(e => Choice.get(e.fold(_ => Nil)(List(_))))
+
+    def someAbortToChoice[E1 <: E]: SomeAbortToChoiceOps[A, S, E, E1] = SomeAbortToChoiceOps(effect)
+
+    def abortToEmpty(
+        using flat: Flat[A]
+    ): A < (S & Abort[Maybe.Empty]) =
+        effect.handleAbort.map {
+            case Result.Fail(_)    => Abort.fail(Maybe.Empty)
+            case Result.Panic(e)   => throw e
+            case Result.Success(a) => a
+        }
+
+    def someAbortToEmpty[E1 <: E]: SomeAbortToEmptyOps[A, S, E, E1] = SomeAbortToEmptyOps(effect)
+
     def catchAbort[A1 >: A, S1](fn: E => A1 < S1)(
-        using
-        ClassTag[E],
-        Tag[E],
-        Flat[A]
+        using Flat[A]
     ): A1 < (S & S1) =
-        Abort.run[E](effect).map {
+        effect.handleAbort.map {
             case Result.Fail(e)    => fn(e)
             case Result.Panic(e)   => throw e
             case Result.Success(v) => v
         }
 
     def catchAbortPartial[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
-        using
-        ClassTag[E],
-        Tag[E],
-        Flat[A]
+        using Flat[A]
     ): A1 < (S & S1 & Abort[E]) =
-        Abort.run[E](effect).map {
+        effect.handleAbort.map {
             case Result.Fail(e) =>
                 if fn.isDefinedAt(e) then fn(e)
                 else Abort.fail(e)
@@ -187,12 +186,10 @@ extension [A, S, E](effect: A < (Abort[E] & S))
 
     def swapAbort(
         using
-        cte: ClassTag[E],
         cta: ClassTag[A],
-        tagE: Tag[E],
         fl: Flat[A]
     ): E < (S & Abort[A]) =
-        val handled: Result[E, A] < S = Abort.run[E](effect)
+        val handled: Result[E, A] < S = effect.handleAbort
         handled.map((v: Result[E, A]) => Abort.get(v.swap))
     end swapAbort
 
@@ -208,6 +205,18 @@ extension [A, S, E](effect: A < (Abort[E] & S))
             .map(_.fold(e => throw e.getFailure)(identity))
 end extension
 
+extension [A, S, E](effect: A < (Abort[Maybe.Empty] & S))
+    def handleEmptyAbort(using f: Flat[A]): Maybe[A] < S =
+        Abort.run[Maybe.Empty](effect).map {
+            case Result.Fail(_)    => Maybe.Empty
+            case Result.Panic(e)   => throw e
+            case Result.Success(a) => Maybe.Defined(a)
+        }
+
+    def emptyAbortToChoice(using f: Flat[A]): A < (S & Choice) =
+        effect.someAbortToChoice[Maybe.Empty]()
+end extension
+
 class SomeAbortToChoiceOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     def apply[ER]()(
         using
@@ -221,6 +230,23 @@ class SomeAbortToChoiceOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.get(e.fold(_ => Nil)(List(_))))
 
 end SomeAbortToChoiceOps
+
+class SomeAbortToEmptyOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
+    def apply[ER]()(
+        using
+        ev: E => E1 | ER,
+        ct: ClassTag[E1],
+        tag: Tag[E1],
+        reduce: Reducible[Abort[ER]],
+        flat: Flat[A],
+        frame: Frame
+    ): A < (S & reduce.SReduced & Abort[Maybe.Empty]) =
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
+            case Result.Fail(_)        => Abort.get(Result.Fail(Maybe.Empty))
+            case p @ Result.Panic(e)   => Abort.get(p.asInstanceOf[Result[Nothing, Nothing]])
+            case s @ Result.Success(a) => Abort.get(s.asInstanceOf[Result[Nothing, A]])
+        }
+end SomeAbortToEmptyOps
 
 class HandleSomeAbort[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     def apply[ER]()(
@@ -296,6 +322,19 @@ extension [A, S, E](effect: A < (S & Env[E]))
     ): A < (S & S1 & reduce.SReduced) =
         dependency.map(d => Env.run[E1, A, S, ER](d)(effect.asInstanceOf[A < (S & Env[E1 | ER])]))
 
+    def provideLayer[S1, S2, E1 >: E, ER](layer: Layer[E1, S1] < S2)(
+        using
+        ev: E => E1 & ER,
+        flat: Flat[A],
+        reduce: Reducible[Env[ER]],
+        tag: Tag[E1]
+    ): A < (S & S1 & S2 & Memo & reduce.SReduced) =
+        for
+            l  <- layer
+            tm <- l.run
+            e1 = tm.get[E1]
+        yield effect.provide(e1)
+
 end extension
 
 extension [A, S](effect: A < (S & Choice))
@@ -315,8 +354,8 @@ extension [A, S](effect: A < (S & Choice))
     def choiceToThrowable(using Flat[A]): A < (S & Abort[Throwable]) =
         choiceToAbort[Throwable, Any](new NoSuchElementException("head of empty list"))
 
-    def choiceToUnit(using Flat[A]): A < (S & Abort[Unit]) =
-        choiceToAbort(())
+    def choiceToEmpty(using Flat[A]): A < (S & Abort[Maybe.Empty]) =
+        choiceToAbort(Maybe.Empty)
 end extension
 
 extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
@@ -350,13 +389,18 @@ extension [A, E, S](fiber: Fiber[E, A] < S)
         fiber.map(_.getResult.unit)
 end extension
 
-extension [A](effect: A < Async)
+extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     @targetName("zipRightPar")
-    def &>[A1](next: A1 < Async)(
+    def &>[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
         using
-        Flat[A],
-        Flat[A1]
-    ): A1 < Async =
+        f: Flat[A],
+        f1: Flat[A1],
+        b: Boundary[Ctx, IO],
+        b1: Boundary[Ctx1, IO],
+        r: Reducible[Abort[E]],
+        r1: Reducible[Abort[E1]],
+        fr: Frame
+    ): A1 < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
             fiberA  <- effect.fork
             fiberA1 <- next.fork
@@ -365,11 +409,16 @@ extension [A](effect: A < Async)
         yield a1
 
     @targetName("zipLeftPar")
-    def <&[A1](next: A1 < Async)(
+    def <&[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
         using
-        Flat[A],
-        Flat[A1]
-    ): A < Async =
+        f: Flat[A],
+        f1: Flat[A1],
+        b: Boundary[Ctx, IO],
+        b1: Boundary[Ctx1, IO],
+        r: Reducible[Abort[E]],
+        r1: Reducible[Abort[E1]],
+        fr: Frame
+    ): A < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
             fiberA  <- effect.fork
             fiberA1 <- next.fork
@@ -378,11 +427,16 @@ extension [A](effect: A < Async)
         yield a
 
     @targetName("zipPar")
-    def <&>[A1](next: A1 < Async)(
+    def <&>[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
         using
-        Flat[A],
-        Flat[A1]
-    ): (A, A1) < Async =
+        f: Flat[A],
+        f1: Flat[A1],
+        b: Boundary[Ctx, IO],
+        b1: Boundary[Ctx1, IO],
+        r: Reducible[Abort[E]],
+        r1: Reducible[Abort[E1]],
+        fr: Frame
+    ): (A, A1) < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
             fiberA  <- effect.fork
             fiberA1 <- next.fork

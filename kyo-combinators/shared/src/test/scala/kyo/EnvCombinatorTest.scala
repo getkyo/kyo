@@ -35,6 +35,28 @@ class EnvCombinatorTest extends Test:
                         .provide(false)
                 assert(handled.eval == 23)
             }
+
+            "should provide layer" in {
+                val effect: Int < Env[String] = Env.get[String].map(_.length)
+                val layer                     = Layer[String, Any]("value")
+                assert(Memo.run(effect.provideLayer(layer)).eval == 5)
+            }
+
+            "should provide layer incrementally" in {
+                val effect: Int < Env[String & Int & Boolean & Char] =
+                    Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].as(23)
+                val layerChar   = Layer('c')
+                val layerString = Layer("value")
+                val layerInt    = Layer(1)
+                val layerBool   = Layer(false)
+                val handled =
+                    effect
+                        .provideLayer(layerChar)
+                        .provideLayer(layerString)
+                        .provideLayer(layerInt)
+                        .provideLayer(layerBool)
+                assert(Memo.run(handled).eval == 23)
+            }
         }
     }
 
