@@ -40,27 +40,13 @@ extension (kyoObject: Kyo.type)
     )(
         useElement: PartialFunction[A, A1 < S1]
     ): Seq[A1] < (S & S1) =
-        sequence.flatMap((seq: Seq[A]) => Kyo.seq.collect(seq.collect(useElement)))
+        sequence.flatMap((seq: Seq[A]) => Kyo.collect(seq.collect(useElement)))
 
     def debugln[S](message: => String < S): Unit < (S & IO) =
         message.map(m => Console.println(m))
 
     def fail[E, S](error: => E < S): Nothing < (S & Abort[E]) =
         error.map(e => Abort.fail(e))
-
-    def foreach[A, S, A1, S1](
-        sequence: => Seq[A] < S
-    )(
-        useElement: A => A1 < S1
-    ): Seq[A1] < (S & S1) =
-        collect(sequence)(a => useElement(a))
-
-    def foreachDiscard[A, S, S1](
-        sequence: => Seq[A] < S
-    )(
-        useElement: A => Any < S1
-    ): Unit < (S & S1) =
-        foreach(sequence)(useElement).unit
 
     def foreachPar[A, S, A1](
         sequence: => Seq[A] < S
@@ -181,15 +167,12 @@ extension (kyoObject: Kyo.type)
     def traverse[A, S, S1](
         sequence: => Seq[A < S] < S1
     ): Seq[A] < (S & S1) =
-        sequence.flatMap((seq: Seq[A < S]) => Kyo.seq.collect(seq))
+        sequence.flatMap((seq: Seq[A < S]) => Kyo.collect(seq))
 
     def traverseDiscard[A, S, S1](
         sequence: => Seq[A < S] < S1
     ): Unit < (S & S1) =
-        sequence.flatMap { (seq: Seq[A < S]) =>
-            Kyo.seq.collect(seq.map(_.map(_ => ()))).unit
-        }
-    end traverseDiscard
+        sequence.flatMap(Kyo.collectDiscard)
 
     def traversePar[A, S](
         sequence: => Seq[A < Async] < S

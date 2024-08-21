@@ -157,105 +157,105 @@ class KyoTest extends Test:
     "seq" - {
 
         "collect" in {
-            assert(kyo.Kyo.seq.collect(Seq.empty).eval == Seq.empty)
-            assert(kyo.Kyo.seq.collect(Seq(1)).eval == Seq(1))
-            assert(kyo.Kyo.seq.collect(Seq(1, 2)).eval == Seq(1, 2))
-            assert(kyo.Kyo.seq.collect(Seq.fill(100)(1)).eval == Seq.fill(100)(1))
-            assert(kyo.Kyo.seq.collect(List(1, 2, 3)).eval == List(1, 2, 3))
-            assert(kyo.Kyo.seq.collect(Vector(1, 2, 3)).eval == Vector(1, 2, 3))
+            assert(Kyo.collect(Seq.empty).eval == Chunk.empty)
+            assert(Kyo.collect(Seq(1)).eval == Chunk(1))
+            assert(Kyo.collect(Seq(1, 2)).eval == Chunk(1, 2))
+            assert(Kyo.collect(Seq.fill(100)(1)).eval == Chunk.fill(100)(1))
+            assert(Kyo.collect(List(1, 2, 3)).eval == Chunk(1, 2, 3))
+            assert(Kyo.collect(Vector(1, 2, 3)).eval == Chunk(1, 2, 3))
         }
 
         "collectUnit" in {
             var count = 0
             val io    = kyo.Env.use[Unit](_ => count += 1)
-            kyo.Env.run(())(kyo.Kyo.seq.collectUnit(Seq.empty)).eval
+            kyo.Env.run(())(Kyo.collectDiscard(Seq.empty)).eval
             assert(count == 0)
-            kyo.Env.run(())(kyo.Kyo.seq.collectUnit(Seq(io))).eval
+            kyo.Env.run(())(Kyo.collectDiscard(Seq(io))).eval
             assert(count == 1)
-            kyo.Env.run(())(kyo.Kyo.seq.collectUnit(List.fill(42)(io))).eval
+            kyo.Env.run(())(Kyo.collectDiscard(List.fill(42)(io))).eval
             assert(count == 43)
-            kyo.Env.run(())(kyo.Kyo.seq.collectUnit(Vector.fill(10)(io))).eval
+            kyo.Env.run(())(Kyo.collectDiscard(Vector.fill(10)(io))).eval
             assert(count == 53)
         }
 
         "map" in {
-            assert(kyo.Kyo.seq.map(Seq.empty[Int])(_ + 1).eval == Seq.empty)
-            assert(kyo.Kyo.seq.map(Seq(1))(_ + 1).eval == Seq(2))
-            assert(kyo.Kyo.seq.map(Seq(1, 2))(_ + 1).eval == Seq(2, 3))
-            assert(kyo.Kyo.seq.map(Seq.fill(100)(1))(_ + 1).eval == Seq.fill(100)(2))
-            assert(kyo.Kyo.seq.map(List(1, 2, 3))(_ + 1).eval == List(2, 3, 4))
-            assert(kyo.Kyo.seq.map(Vector(1, 2, 3))(_ + 1).eval == Vector(2, 3, 4))
+            assert(Kyo.foreach(Seq.empty[Int])(_ + 1).eval == Chunk.empty)
+            assert(Kyo.foreach(Seq(1))(_ + 1).eval == Chunk(2))
+            assert(Kyo.foreach(Seq(1, 2))(_ + 1).eval == Chunk(2, 3))
+            assert(Kyo.foreach(Seq.fill(100)(1))(_ + 1).eval == Chunk.fill(100)(2))
+            assert(Kyo.foreach(List(1, 2, 3))(_ + 1).eval == Chunk(2, 3, 4))
+            assert(Kyo.foreach(Vector(1, 2, 3))(_ + 1).eval == Chunk(2, 3, 4))
         }
 
         "foreach" in {
             var acc = Seq.empty[Int]
-            kyo.Kyo.seq.foreach(Seq.empty[Int])(v => acc :+= v).eval
-            assert(acc == Seq.empty)
+            Kyo.foreachDiscard(Seq.empty[Int])(v => acc :+= v).eval
+            assert(acc == Chunk.empty)
             acc = Seq.empty[Int]
-            kyo.Kyo.seq.foreach(Seq(1))(v => acc :+= v).eval
-            assert(acc == Seq(1))
+            Kyo.foreachDiscard(Seq(1))(v => acc :+= v).eval
+            assert(acc == Chunk(1))
             acc = Seq.empty[Int]
-            kyo.Kyo.seq.foreach(Seq(1, 2))(v => acc :+= v).eval
-            assert(acc == Seq(1, 2))
+            Kyo.foreachDiscard(Seq(1, 2))(v => acc :+= v).eval
+            assert(acc == Chunk(1, 2))
             acc = Seq.empty[Int]
-            kyo.Kyo.seq.foreach(Seq.fill(100)(1))(v => acc :+= v).eval
-            assert(acc == Seq.fill(100)(1))
+            Kyo.foreachDiscard(Seq.fill(100)(1))(v => acc :+= v).eval
+            assert(acc == Chunk.fill(100)(1))
             acc = Seq.empty[Int]
-            kyo.Kyo.seq.foreach(List(1, 2, 3))(v => acc :+= v).eval
-            assert(acc == List(1, 2, 3))
+            Kyo.foreachDiscard(List(1, 2, 3))(v => acc :+= v).eval
+            assert(acc == Chunk(1, 2, 3))
             acc = Seq.empty[Int]
-            kyo.Kyo.seq.foreach(Vector(1, 2, 3))(v => acc :+= v).eval
-            assert(acc == Vector(1, 2, 3))
+            Kyo.foreachDiscard(Vector(1, 2, 3))(v => acc :+= v).eval
+            assert(acc == Chunk(1, 2, 3))
         }
 
         "foldLeft" in {
-            assert(kyo.Kyo.seq.foldLeft(Seq.empty[Int])(0)(_ + _).eval == 0)
-            assert(kyo.Kyo.seq.foldLeft(Seq(1))(0)(_ + _).eval == 1)
-            assert(kyo.Kyo.seq.foldLeft(Seq(1, 2, 3))(0)(_ + _).eval == 6)
-            assert(kyo.Kyo.seq.foldLeft(Seq.fill(100)(1))(0)(_ + _).eval == 100)
-            assert(kyo.Kyo.seq.foldLeft(List(1, 2, 3))(0)(_ + _).eval == 6)
-            assert(kyo.Kyo.seq.foldLeft(Vector(1, 2, 3))(0)(_ + _).eval == 6)
+            assert(Kyo.foldLeft(Seq.empty[Int])(0)(_ + _).eval == 0)
+            assert(Kyo.foldLeft(Seq(1))(0)(_ + _).eval == 1)
+            assert(Kyo.foldLeft(Seq(1, 2, 3))(0)(_ + _).eval == 6)
+            assert(Kyo.foldLeft(Seq.fill(100)(1))(0)(_ + _).eval == 100)
+            assert(Kyo.foldLeft(List(1, 2, 3))(0)(_ + _).eval == 6)
+            assert(Kyo.foldLeft(Vector(1, 2, 3))(0)(_ + _).eval == 6)
         }
 
         "fill" in {
-            assert(kyo.Kyo.seq.fill(0)(1).eval == Seq.empty)
-            assert(kyo.Kyo.seq.fill(1)(1).eval == Seq(1))
-            assert(kyo.Kyo.seq.fill(3)(1).eval == Seq(1, 1, 1))
-            assert(kyo.Kyo.seq.fill(100)(1).eval == Seq.fill(100)(1))
+            assert(Kyo.fill(0)(1).eval == Chunk.empty)
+            assert(Kyo.fill(1)(1).eval == Chunk(1))
+            assert(Kyo.fill(3)(1).eval == Chunk(1, 1, 1))
+            assert(Kyo.fill(100)(1).eval == Chunk.fill(100)(1))
         }
 
         "stack safety" - {
             val n = 1000
 
             "collect" in {
-                assert(kyo.Kyo.seq.collect(Seq.fill(n)(1)).eval == Seq.fill(n)(1))
+                assert(Kyo.collect(Seq.fill(n)(1)).eval == Chunk.fill(n)(1))
             }
 
             "collectUnit" in {
                 var count = 0
                 val io    = kyo.Env.use[Unit](_ => count += 1)
-                kyo.Env.run(())(kyo.Kyo.seq.collectUnit(Seq.fill(n)(io))).eval
+                kyo.Env.run(())(Kyo.collectDiscard(Seq.fill(n)(io))).eval
                 assert(count == n)
             }
 
             "map" in {
                 val largeSeq = Seq.fill(n)(1)
-                assert(kyo.Kyo.seq.map(largeSeq)(_ + 1).eval == Seq.fill(n)(2))
+                assert(Kyo.foreach(largeSeq)(_ + 1).eval == Chunk.fill(n)(2))
             }
 
             "foreach" in {
                 var acc = Seq.empty[Int]
-                kyo.Kyo.seq.foreach(Seq.fill(n)(1))(v => acc :+= v).eval
-                assert(acc == Seq.fill(n)(1))
+                Kyo.foreachDiscard(Seq.fill(n)(1))(v => acc :+= v).eval
+                assert(acc == Chunk.fill(n)(1))
             }
 
             "foldLeft" in {
                 val largeSeq = Seq.fill(n)(1)
-                assert(kyo.Kyo.seq.foldLeft(largeSeq)(0)(_ + _).eval == n)
+                assert(Kyo.foldLeft(largeSeq)(0)(_ + _).eval == n)
             }
 
             "fill" in {
-                assert(kyo.Kyo.seq.fill(n)(1).eval == Seq.fill(n)(1))
+                assert(Kyo.fill(n)(1).eval == Chunk.fill(n)(1))
             }
         }
     }

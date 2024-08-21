@@ -22,11 +22,11 @@ object Choice:
     inline def drop(using inline frame: Frame): Nothing < Choice =
         Effect.suspend[Nothing](Tag[Choice], Seq.empty)
 
-    def run[A, S](v: A < (Choice & S))(using Frame): Seq[A] < S =
-        Effect.handle(Tag[Choice], v.map(Seq[A](_))) {
+    def run[A, S](v: A < (Choice & S))(using Frame): Chunk[A] < S =
+        Effect.handle(Tag[Choice], v.map(Chunk[A](_))) {
             [C] =>
                 (input, cont) =>
-                    Kyo.seq.map(input)(v => Choice.run(cont(v))).map(_.flatten.flatten)
+                    Kyo.foreach(input)(v => Choice.run(cont(v))).map(_.flatten.flatten)
         }
 
 end Choice

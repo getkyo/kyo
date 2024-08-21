@@ -41,10 +41,10 @@ class SchedulingBench extends Bench.ForkOnly(1001000):
                 }
             }
 
-        Kyo.seq.map(range) { i =>
+        Kyo.foreach(range) { i =>
             Async.run(fiber(i))
         }.map { fibers =>
-            Kyo.seq.map(fibers)(_.get)
+            Kyo.foreach(fibers)(_.get)
         }.map(_.sum)
     end kyoBenchFiber
 

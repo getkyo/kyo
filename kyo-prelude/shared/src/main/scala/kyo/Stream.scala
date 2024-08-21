@@ -20,9 +20,9 @@ case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
         continue(_ => other.emit)
 
     def map[V2, S2](f: V => V2 < S2)(using Tag[Emit[Chunk[V]]], Tag[Emit[Chunk[V2]]], Frame): Stream[V2, S & S2] =
-        mapChunk(_.map(f))
+        mapChunk(c => Kyo.foreach(c)(f))
 
-    def mapChunk[V2, S2](f: Chunk[V] => Chunk[V2] < S2)(
+    def mapChunk[V2, S2](f: Chunk[V] => Seq[V2] < S2)(
         using
         tagV: Tag[Emit[Chunk[V]]],
         tagV2: Tag[Emit[Chunk[V2]]],
@@ -34,7 +34,7 @@ case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
                     if input.isEmpty then
                         Emit.andMap(Chunk.empty[V2])(ack => ((), cont(ack)))
                     else
-                        f(input).map(c => Emit.andMap(c)(ack => ((), cont(ack))))
+                        f(input).map(c => Emit.andMap(Chunk.from(c))(ack => ((), cont(ack))))
         ))
 
     def flatMap[S2, V2, S3](f: V => Stream[V2, S2] < S3)(
@@ -46,7 +46,7 @@ case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
         Stream[V2, S & S2 & S3](Effect.handle.state(tagV, (), v)(
             [C] =>
                 (input, _, cont) =>
-                    input.foldLeft(Continue(): Ack) { (ack, v) =>
+                    Kyo.foldLeft(input)(Continue(): Ack) { (ack, v) =>
                         ack match
                             case Stop        => Stop
                             case Continue(_) => f(v).map(_.emit)
@@ -107,7 +107,7 @@ case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
                 (input, state, cont) =>
                     if !state then (false, cont(Stop))
                     else
-                        input.takeWhile(f).map { c =>
+                        Kyo.takeWhile(input)(f).map { c =>
                             Emit.andMap(c)(ack => (c.size == input.size, cont(ack)))
                     }
         ))
@@ -118,7 +118,7 @@ case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
             [C] =>
                 (input, state, cont) =>
                     if state then
-                        input.dropWhile(f).map { c =>
+                        Kyo.dropWhile(input)(f).map { c =>
                             if c.isEmpty then (true, cont(Continue()))
                             else Emit.andMap(c)(ack => (false, cont(ack)))
                         }
@@ -130,7 +130,7 @@ case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
         Stream[V, S & S2](Effect.handle.state(tag, (), v)(
             [C] =>
                 (input, _, cont) =>
-                    input.filter(f).map { c =>
+                    Kyo.filter(input)(f).map { c =>
                         if c.isEmpty then ((), cont(Continue()))
                         else Emit.andMap(c)(ack => ((), cont(ack)))
                 }
@@ -161,7 +161,7 @@ case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
         )
 
     def runForeach[S2](f: V => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
-        runForeachChunk(_.foreach(f))
+        runForeachChunk(c => Kyo.foreachDiscard(c)(f))
 
     def runForeachChunk[S2](f: Chunk[V] => Unit < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < (S & S2) =
         Effect.handle(tag, v.unit)(
@@ -177,14 +177,11 @@ case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
         Effect.handle.state(tag, acc, v)(
             handle = [C] =>
                 (input, state, cont) =>
-                    input.foldLeft(state)(f).map((_, cont(Continue()))),
+                    Kyo.foldLeft(input)(state)(f).map((_, cont(Continue()))),
             done = (state, _) => state
         )
 
-    def runSeq(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Seq[V] < S =
-        runChunk.map(_.toSeq)
-
-    def runChunk(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Chunk[V] < S =
+    def run(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Chunk[V] < S =
         Effect.handle.state(tag, Chunk.empty[Chunk[V]], v)(
             handle = [C] =>
                 (input, state, cont) =>
@@ -199,9 +196,10 @@ object Stream:
     private val _empty           = Stream(Stop)
     def empty[V]: Stream[Any, V] = _empty.asInstanceOf[Stream[Any, V]]
 
-    def init[V, S](chunk: Chunk[V] < S)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+    def init[V, S](seq: Seq[V] < S)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
         Stream[V, S](
-            chunk.map { chunk =>
+            seq.map { seq =>
+                val chunk: Chunk[V] = Chunk.from(seq)
                 Emit.andMap(Chunk.empty[V]) { ack =>
                     Loop(chunk, ack) { (c, ack) =>
                         ack match
@@ -214,9 +212,5 @@ object Stream:
                 }
             }
         )
-
-    @targetName("initSeq")
-    def init[V, S](seq: Seq[V] < S)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
-        init(seq.map(Chunk.from))
 
 end Stream

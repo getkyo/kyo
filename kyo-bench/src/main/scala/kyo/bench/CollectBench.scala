@@ -11,7 +11,7 @@ class CollectBench extends Bench.SyncAndFork(Seq.fill(1000)(1)):
     def kyoBench() =
         import kyo.*
 
-        Kyo.seq.collect(kyoTasks)
+        Kyo.collect(kyoTasks)
     end kyoBench
 
     def catsBench() =

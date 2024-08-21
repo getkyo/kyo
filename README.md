@@ -740,13 +740,13 @@ val a: Chunk[Int] = Chunk(1, 2, 3)
 val b: Chunk[Int] = Chunk.from(Seq(4, 5, 6))
 
 // Perform O(1) operations
-val c: Chunk[Int] = a.append(4)
-val d: Chunk[Int] = b.take(2)
-val e: Chunk[Int] = c.dropLeft(1)
+val c = a.append(4)
+val d = b.take(2)
+val e = c.dropLeft(1)
 
 // Perform O(n) operations
-val f: Chunk[String] = d.map(_.toString).eval
-val g: Chunk[Int]    = e.filter(_ % 2 == 0).eval
+val f = d.map(_.toString)
+val g = e.filter(_ % 2 == 0)
 ```
 
 `Chunk` provides two main subtypes: `Chunk` for regular chunks and `Chunk.Indexed` for indexed chunks. The table below summarizes the time complexity of various operations for each type:
@@ -817,17 +817,6 @@ val h: Int        = a.last
 
 // Concatenation
 val i: Chunk[Int] = a.concat(b)
-
-// Effectful map and filter
-val j: Chunk[String] < Any = a.map(_.toString)
-val k: Chunk[Int] < Any    = a.filter(_ % 2 == 0)
-
-// Effectful side effects
-val l: Unit < IO =
-    a.foreach(v => Console.println(v))
-
-// Effectful fold
-val m: Int < Any = a.foldLeft(0)(_ + _)
 
 // Copying to arrays
 val n: Array[Int] = a.toArray
