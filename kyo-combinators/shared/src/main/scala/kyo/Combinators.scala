@@ -215,6 +215,15 @@ extension [A, S, E](effect: A < (Abort[Maybe.Empty] & S))
 
     def emptyAbortToChoice(using f: Flat[A]): A < (S & Choice) =
         effect.someAbortToChoice[Maybe.Empty]()
+
+    def emptyAbortToFailure[S1](failure: => E < S1)(using f: Flat[A]): A < (S & S1 & Abort[E]) =
+        for
+            f   <- failure
+            res <- effect.handleSomeAbort[Maybe.Empty]()
+        yield res match
+            case Result.Fail(_)    => Abort.get(Result.Fail(f))
+            case Result.Panic(e)   => Abort.get(Result.Panic(e))
+            case Result.Success(a) => Abort.get(Result.success(a))
 end extension
 
 class SomeAbortToChoiceOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:

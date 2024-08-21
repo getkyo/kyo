@@ -2696,7 +2696,7 @@ val keepTicking: Nothing < (Consoles & Fibers) =
 val effect: Unit < (Consoles & Fibers & Resources & Aborts[Throwable] & Envs[NameService]) =
     for
         nameService <- Kyo.service[NameService]       // Adds Envs[NameService] effect
-        _           <- keepTicking.forkAsResource     // Adds Consoles, Fibers, and Resources effects
+        _           <- keepTicking.forkScoped         // Adds Consoles, Fibers, and Resources effects
         saluee      <- Consoles.readln                // Uses Consoles effect
         _           <- Kyo.sleep(2.seconds)           // Uses Fibers (semantic blocking)
         _           <- nameService.sayHelloTo(saluee) // Adds Aborts[Throwable] effect
