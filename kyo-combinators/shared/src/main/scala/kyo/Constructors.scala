@@ -172,10 +172,7 @@ extension (kyoObject: Kyo.type)
     def traverseDiscard[A, S, S1](
         sequence: => Seq[A < S] < S1
     ): Unit < (S & S1) =
-        sequence.flatMap { (seq: Seq[A < S]) =>
-            Kyo.collect(seq.map(_.map(_ => ()))).unit
-        }
-    end traverseDiscard
+        sequence.flatMap(Kyo.collectDiscard)
 
     def traversePar[A, S](
         sequence: => Seq[A < Async] < S

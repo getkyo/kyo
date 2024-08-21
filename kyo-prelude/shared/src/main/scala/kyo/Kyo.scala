@@ -16,10 +16,10 @@ object Kyo:
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
 
     def foreach[A, B, S, S2](seq: Seq[A])(f: A => B < S2)(using Frame): Chunk[B] < (S & S2) =
-        seq.size match
+        seq.knownSize match
             case 0 => Chunk.empty
             case 1 => f(seq(0)).map(Chunk(_))
-            case size =>
+            case _ =>
                 seq match
                     case seq: List[A] =>
                         Loop(seq, Chunk.empty[B]) { (seq, acc) =>
@@ -29,6 +29,7 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
+                        val size    = indexed.size
                         Loop.indexed(Chunk.empty[B]) { (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else f(indexed(idx)).map(u => Loop.continue(acc.append(u)))
@@ -36,10 +37,10 @@ object Kyo:
                 end match
 
     def foreachDiscard[A, B, S](seq: Seq[A])(f: A => Unit < S)(using Frame): Unit < S =
-        seq.size match
+        seq.knownSize match
             case 0 =>
             case 1 => f(seq(0))
-            case size =>
+            case _ =>
                 seq match
                     case seq: List[A] =>
                         Loop(seq) {
@@ -48,6 +49,7 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
+                        val size    = indexed.size
                         Loop.indexed { idx =>
                             if idx == size then Loop.done
                             else f(indexed(idx)).andThen(Loop.continue)
@@ -57,9 +59,9 @@ object Kyo:
     end foreachDiscard
 
     def filter[A, S, S2](seq: Seq[A])(f: A => Boolean < S2)(using Frame): Chunk[A] < (S & S2) =
-        seq.size match
+        seq.knownSize match
             case 0 => Chunk.empty
-            case size =>
+            case _ =>
                 seq match
                     case seq: List[A] =>
                         Loop(seq, Chunk.empty[A]) { (seq, acc) =>
@@ -73,6 +75,7 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
+                        val size    = indexed.size
                         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else
@@ -85,10 +88,10 @@ object Kyo:
                 end match
 
     def foldLeft[A, B, S](seq: Seq[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
-        seq.size match
+        seq.knownSize match
             case 0 => acc
             case 1 => f(acc, seq(0))
-            case size =>
+            case _ =>
                 seq match
                     case seq: List[A] =>
                         Loop(seq, acc) { (seq, acc) =>
@@ -98,6 +101,7 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
+                        val size    = indexed.size
                         Loop.indexed(acc) { (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else f(acc, indexed(idx)).map(Loop.continue(_))
@@ -107,10 +111,10 @@ object Kyo:
     end foldLeft
 
     def collect[A, S](seq: Seq[A < S])(using Frame): Chunk[A] < S =
-        seq.size match
+        seq.knownSize match
             case 0 => Chunk.empty
             case 1 => seq(0).map(Chunk(_))
-            case size =>
+            case _ =>
                 seq match
                     case seq: List[A < S] =>
                         Loop(seq, Chunk.empty[A]) { (seq, acc) =>
@@ -120,6 +124,7 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
+                        val size    = indexed.size
                         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else indexed(idx).map(u => Loop.continue(acc.append(u)))
@@ -127,10 +132,10 @@ object Kyo:
                 end match
 
     def collectDiscard[A, S](seq: Seq[A < S])(using Frame): Unit < S =
-        seq.size match
+        seq.knownSize match
             case 0 =>
             case 1 => seq(0).unit
-            case size =>
+            case _ =>
                 seq match
                     case seq: List[A < S] =>
                         Loop(seq) { seq =>
@@ -140,16 +145,17 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
+                        val size    = indexed.size
                         Loop.indexed { idx =>
                             if idx == size then Loop.done
-                            else indexed(idx).map(u => Loop.continue)
+                            else indexed(idx).map(_ => Loop.continue)
                         }
                 end match
 
     def takeWhile[A, S](seq: Seq[A])(f: A => Boolean < S)(using Frame): Chunk[A] < S =
-        seq.size match
+        seq.knownSize match
             case 0 => Chunk.empty
-            case size =>
+            case _ =>
                 seq match
                     case seq: List[A] =>
                         Loop(seq, Chunk.empty[A]) { (seq, acc) =>
@@ -163,6 +169,7 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
+                        val size    = indexed.size
                         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
                             if idx == size then Loop.done(acc)
                             else
@@ -175,9 +182,9 @@ object Kyo:
                 end match
 
     def dropWhile[A, S](seq: Seq[A])(f: A => Boolean < S)(using Frame): Chunk[A] < S =
-        seq.size match
+        seq.knownSize match
             case 0 => Chunk.empty
-            case size =>
+            case _ =>
                 seq match
                     case seq: List[A] =>
                         Loop(seq) { seq =>
@@ -191,6 +198,7 @@ object Kyo:
                         }
                     case seq =>
                         val indexed = toIndexed(seq)
+                        val size    = indexed.size
                         Loop.indexed { idx =>
                             if idx == size then Loop.done(Chunk.empty)
                             else
