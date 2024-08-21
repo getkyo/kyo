@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Result
 import kyo.Result.*
-import kyo.Tagged.*
 import scala.util.Try
 
 class ResultTest extends Test:
@@ -372,18 +371,18 @@ class ResultTest extends Test:
             assert(flatMapped == Success("mapped: null"))
         }
 
-        "Fail with null error" taggedAs jvmOnly in {
+        "Fail with null error" in {
             val result: Result[String, Int] = Fail(null)
             assert(result == Fail(null))
         }
 
-        "Fail with null exception flatMap" taggedAs jvmOnly in {
+        "Fail with null exception flatMap" in {
             val result: Result[String, Int] = Fail(null)
             val flatMapped                  = result.flatMap(num => Success(num + 1))
             assert(flatMapped == Fail(null))
         }
 
-        "Fail with null exception map" taggedAs jvmOnly in {
+        "Fail with null exception map" in {
             val result: Result[String, Int] = Fail(null)
             val mapped                      = result.map(num => num + 1)
             assert(mapped == Fail(null))

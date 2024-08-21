@@ -65,6 +65,7 @@ lazy val kyoJVM = project
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
         `kyo-tag`.jvm,
+        `kyo-data`.jvm,
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
         `kyo-direct`.jvm,
@@ -90,6 +91,7 @@ lazy val kyoJS = project
     .aggregate(
         `kyo-scheduler`.js,
         `kyo-tag`.js,
+        `kyo-data`.js,
         `kyo-prelude`.js,
         `kyo-core`.js,
         `kyo-direct`.js,
@@ -144,11 +146,23 @@ lazy val `kyo-tag` =
         )
         .jsSettings(`js-settings`)
 
-lazy val `kyo-prelude` =
+lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-tag`)
+        .in(file("kyo-data"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % "2.1.2" % Test
+        )
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-prelude` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-data`)
         .in(file("kyo-prelude"))
         .settings(
             `kyo-settings`,
