@@ -2036,6 +2036,55 @@ val nested: Maybe[Maybe[Int]] = Maybe(Maybe(42))
 val flattened: Maybe[Int] = nested.flatten
 ```
 
+### Duration: Time Representation
+
+`Duration` provides a convenient and efficient way to represent and manipulate time durations. It offers a wide range of operations and conversions, making it easy to work with time intervals in various units.
+
+```scala
+import kyo.*
+import kyo.Duration.Units.*
+
+// Create durations using convenient extension methods
+val a: Duration = 5.seconds
+val b: Duration = 100.millis
+val c: Duration = 1.hour
+
+// Perform arithmetic operations
+val d: Duration = a + b
+val e: Duration = c * 2
+
+// Compare durations
+val f: Boolean = a > b
+val g: Boolean = c <= 60.minutes
+
+// Convert to different time units
+val h: Long = c.toMinutes // 60
+val i: Long = a.toMillis  // 5000
+
+// Create durations from various units
+val j: Duration = Duration.fromNanos(1000000)
+val k: Duration = Duration.fromUnits(2, Weeks)
+
+// Convert to and from Java and Scala durations
+import java.time.Duration as JavaDuration
+import scala.concurrent.duration.Duration as ScalaDuration
+
+val l: Duration = Duration.fromJava(JavaDuration.ofSeconds(30))
+val m: Duration = Duration.fromScala(ScalaDuration(1, "day"))
+
+val n: JavaDuration = c.toJava
+val o: ScalaDuration = b.toScala
+
+// Special durations
+val p: Duration = Duration.Zero
+val q: Duration = Duration.Infinity
+
+// Render duration as a string
+val r: String = a.show // "Duration(5000000000 ns)"
+```
+
+`Duration` is implemented as an `opaque type` alias for `Long`, representing nanoseconds internally. This design ensures type safety while maintaining high performance.
+
 ### Result: Low-allocation Try Alternative
 
 `Result` is a low-allocation alternative to Scala's `Try` type, designed to represent the result of a computation that may either succeed with a value or fail with an exception. It minimizes memory allocation overhead, especially in the case of successful results.

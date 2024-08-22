@@ -92,7 +92,7 @@ object Duration:
                 case Duration.Zero => JavaDuration.ZERO
                 case n             => JavaDuration.of(n.toNanos, NANOS)
 
-        inline def render: String = s"Duration($self ns)"
+        inline def show: String = s"Duration($self ns)"
 
         // Is this Robust enough?
         private[kyo] inline def isFinite: Boolean = self < Duration.Infinity
