@@ -431,10 +431,14 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     @targetName("zipRightPar")
     def &>[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
         using
-        Flat[A],
-        Flat[A1],
-        Frame
-    ): A1 < Async =
+        f: Flat[A],
+        f1: Flat[A1],
+        b: Boundary[Ctx, IO],
+        b1: Boundary[Ctx1, IO],
+        r: Reducible[Abort[E]],
+        r1: Reducible[Abort[E1]],
+        fr: Frame
+    ): A1 < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
             fiberA  <- effect.fork
             fiberA1 <- next.fork
@@ -445,10 +449,14 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     @targetName("zipLeftPar")
     def <&[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
         using
-        Flat[A],
-        Flat[A1],
-        Frame
-    ): A < Async =
+        f: Flat[A],
+        f1: Flat[A1],
+        b: Boundary[Ctx, IO],
+        b1: Boundary[Ctx1, IO],
+        r: Reducible[Abort[E]],
+        r1: Reducible[Abort[E1]],
+        fr: Frame
+    ): A < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
             fiberA  <- effect.fork
             fiberA1 <- next.fork
@@ -459,10 +467,14 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     @targetName("zipPar")
     def <&>[A1, E1, Ctx1](next: A1 < (Abort[E1] & Async & Ctx1))(
         using
-        Flat[A],
-        Flat[A1],
-        Frame
-    ): (A, A1) < Async =
+        f: Flat[A],
+        f1: Flat[A1],
+        b: Boundary[Ctx, IO],
+        b1: Boundary[Ctx1, IO],
+        r: Reducible[Abort[E]],
+        r1: Reducible[Abort[E1]],
+        fr: Frame
+    ): (A, A1) < (r.SReduced & r1.SReduced & Async & Ctx & Ctx1) =
         for
             fiberA  <- effect.fork
             fiberA1 <- next.fork
