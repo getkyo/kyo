@@ -9,7 +9,7 @@
 [![Discord](https://img.shields.io/discord/1087005439859904574)](https://discord.gg/KxxkBbW8bq)
 [![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3)](https://search.maven.org/search?q=g:io.getkyo)
 
-Kyo is a toolkit for Scala development, spanning from browser-based apps in ScalaJS to high-performance backends on the JVM. It introduces a novel approach based on algebraic effects to deliver straightforward APIs in the pure Functional Programming paradigm. Unlike similar solutions, Kyo achieves this without inundating developers with esoteric concepts from Category Theory or using cryptic symbolic operators, resulting in a development experience that is both intuitive and robust.
+Kyo is a toolkit for Scala development, spanning from browser-based apps in ScalaJS to high-performance backends on the JVM. It introduces a novel approach based on algebraic effects to deliver straightforward APIs in the pure Functional Programming paradigm. Unlike similar solutions, Kyo achieves this without inundating developers with concepts from Category Theory and avoiding the use of symbolic operators, resulting in a development experience that is both intuitive and robust.
 
 Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://degoes.net/articles/rotating-effects), Kyo takes a more generalized approach. While ZIO restricts effects to two channels, dependency injection and short-circuiting, Kyo allows for an arbitrary number of effectful channels. This enhancement gives developers greater flexibility in effect management, while also simplifying Kyo's internal codebase through more principled design patterns.
 
@@ -17,37 +17,55 @@ Drawing inspiration from [ZIO](https://zio.dev/)'s [effect rotation](https://deg
 
 Kyo is available on Maven Central in multiple modules:
 
-| Module         | Scala 3 | Scala JS | Description                      |
-| -------------- | ------- | -------- | -------------------------------- |
-| kyo-core       | ✅      | ✅       | Core and concurrent effects      |
-| kyo-direct     | ✅      | ✅       | Direct syntax support            |
-| kyo-combinators| ✅      | ✅       | ZIO-like effect composition      |
-| kyo-sttp       | ✅      | ✅       | Sttp HTTP Client                 |
-| kyo-tapir      | ✅      |          | Tapir HTTP Server                |
-| kyo-caliban    | ✅      |          | Caliban GraphQL Server           |
-| kyo-cache      | ✅      |          | Caffeine caching                 |
-| kyo-stats-otel | ✅      |          | Stats exporter for OpenTelemetry |
+| Module             | Scala 2 | Scala 3 | Scala JS | Standalone | Description                       |
+| ------------------ | ------- | ------- | -------- | ---------- | --------------------------------- |
+| kyo-prelude        |         | ✅      | ✅       |            | Effects without `IO`              |
+| kyo-core           |         | ✅      | ✅       |            | `Async` and `IO`-based effects    |
+| kyo-direct         |         | ✅      | ✅       |            | Direct syntax support             |
+| kyo-combinators    |         | ✅      | ✅       |            | ZIO-like effect composition       |
+| kyo-sttp           |         | ✅      | ✅       |            | Sttp HTTP Client                  |
+| kyo-tapir          |         | ✅      |          |            | Tapir HTTP Server                 |
+| kyo-zio            |         | ✅      |          |            | ZIO integration                   |
+| kyo-caliban        |         | ✅      |          |            | Caliban GraphQL Server            |
+| kyo-cache          |         | ✅      |          |            | Caffeine caching                  |
+| kyo-stats-otel     | ✅      | ✅      |          |            | Stats exporter for OpenTelemetry  |
+| kyo-tag            |         | ✅      | ✅       | ✅         | Allocation-free type tags         |
+| kyo-data           |         | ✅      | ✅       | ✅         | Low-allocation data types         |
+| kyo-scheduler      | ✅      | ✅      |          | ✅         | Reusable adaptive scheduler       |
+| kyo-scheduler-zio  | ✅      | ✅      |          | ✅         | Adaptive scheduler for ZIO apps   |
 
-For Scala 3:
+
+The modules marked as `Standalone` are designed to be used independently, without requiring the full Kyo effect system. These modules provide specific functionalities that can be integrated into any Scala project, regardless of whether it uses Kyo's effect system or not. 
+
+Example sbt configurations:
 
 ```scala 
-libraryDependencies += "io.getkyo" %% "kyo-core"        % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-direct"      % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-combinators" % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-cache"       % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-stats-otel"  % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-sttp"        % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-tapir"       % "<version>"
-libraryDependencies += "io.getkyo" %% "kyo-caliban"     % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-prelude"       % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-core"          % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-direct"        % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-combinators"   % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-sttp"          % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-tapir"         % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-zio"           % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-caliban"       % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-cache"         % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-stats-otel"    % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-tag"           % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-data"          % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-scheduler"     % "<version>"
+libraryDependencies += "io.getkyo" %% "kyo-scheduler-zio" % "<version>"
 ```
 
-For ScalaJS (applicable only to `kyo-core`, `kyo-direct`, `kyo-combinators`, and `kyo-sttp`):
+For ScalaJS (applicable only to to specific modules):
 
 ```scala 
+libraryDependencies += "io.getkyo" %%  "kyo-prelude"     % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-core"        % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-direct"      % "<version>"
 libraryDependencies += "io.getkyo" %%  "kyo-combinators" % "<version>"
 libraryDependencies += "io.getkyo" %%% "kyo-sttp"        % "<version>"
+libraryDependencies += "io.getkyo" %%  "kyo-tag"         % "<version>"
+libraryDependencies += "io.getkyo" %%  "kyo-data"        % "<version>"
 ```
 
 Replace `<version>` with the latest version: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3).
