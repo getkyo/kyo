@@ -530,6 +530,147 @@ val d: Unit < (Env[Database] & Env[Cache] & IO) =
     }
 ```
 
+### Layer: Dependency Management
+
+The Layer effect builds upon `Env` to provide a more structured approach to dependency management. It allows you to define, compose, and provide dependencies in a modular and reusable way.
+
+`Layer` is defined with two type parameters: `Layer[Out, S]`
+
+1. `Out`: This represents the output type of the layer, which is the type of the dependency or service that the layer provides. It can be a single type or a combination of types using `&` as a type intersection.
+2. `S`: This represents the set of effects that the layer requires to build its output. It includes any effects needed to construct the `Out` type.
+
+For example, `Layer[Database, IO]` represents a layer that provides a `Database` service and has the `IO` effect to construct it.
+
+Now, let's look at how to create and use layers:
+
+```scala
+import kyo.*
+
+// Define some services
+trait Database:
+    def query: String < IO
+
+trait Cache:
+    def get: Int < IO
+
+trait Logger:
+    def log(msg: String): Unit < IO
+
+// Create layers for each service
+val dbLayer: Layer[Database, Any] =
+    Layer {
+        new Database:
+            def query = IO("DB result")
+    }
+
+val cacheLayer: Layer[Cache, Any] =
+    Layer {
+        new Cache:
+            def get = IO(42)
+    }
+
+val loggerLayer: Layer[Logger, Any] =
+    Layer {
+        new Logger:
+            def log(msg: String) = IO(println(msg))
+    }
+
+// The `Layer.init` method provides a way to create a layer from multiple sub-layers, automatically 
+// resolving dependencies between them. It can be used for more complex compositions as well
+val appLayer: Layer[Database & Cache & Logger, Any] =
+    Layer.init[Database & Cache & Logger](dbLayer, cacheLayer, loggerLayer)
+
+// Use the composed layer in a computation
+val computation: String < (Env[Database] & Env[Cache] & Env[Logger] & IO) =
+    for
+        db     <- Env.get[Database]
+        cache  <- Env.get[Cache]
+        logger <- Env.get[Logger]
+        _      <- logger.log("Starting query")
+        result <- db.query
+        _      <- logger.log(s"Query result: $result")
+        cached <- cache.get
+        _      <- logger.log(s"Cached value: $cached")
+    yield result
+
+// Run the computation with the composed layer
+val result: String < (IO & Memo) =
+    Env.runLayer(appLayer)(computation)
+
+// The 'Memo' effect is used by Layer to ensure components are initialized only once
+val result2: String < IO =
+    Memo.run(result)
+```
+
+The `Layer` type provides instance methods for manually composing layers:
+
+1. `to`: Combines two layers sequentially, where the output of the first layer is used as input for the second layer.
+2. `and`: Combines two layers in parallel, producing a layer that provides both outputs.
+3. `using`: Combines a layer with another layer that depends on its output, similar to `to` but keeps both outputs.
+
+Here's an example that demonstrates the differences between these methods:
+
+```scala
+import kyo.*
+
+trait Database:
+    def query: String < IO
+
+trait UserService:
+    def getUser(id: Int): String < IO
+
+trait EmailService:
+    def sendEmail(to: String, content: String): Unit < IO
+
+// Define layers
+val dbLayer: Layer[Database, IO] = Layer {
+    new Database:
+        def query = IO("DB result")
+}
+
+val userServiceLayer: Layer[UserService, Env[Database] & IO] =
+    Layer.from { (db: Database) =>
+        new UserService:
+            def getUser(id: Int) = db.query.map(result => s"User $id: $result")
+    }
+
+val emailServiceLayer: Layer[EmailService, IO] = Layer {
+    new EmailService:
+        def sendEmail(to: String, content: String) =
+            IO(println(s"Email sent to $to: $content"))
+}
+
+// Example of `to`: Output of dbLayer is used as input for userServiceLayer
+val dbToUserService: Layer[UserService, IO] =
+    dbLayer.to(userServiceLayer)
+
+// Example of `and`: Combines dbLayer and emailServiceLayer in parallel
+val dbAndEmail: Layer[Database & EmailService, IO] =
+    dbLayer.and(emailServiceLayer)
+
+// Example of `using`: Similar to `to`, but keeps both Database and UserService
+val dbUsingUserService: Layer[Database & UserService, IO] =
+    dbLayer.using(userServiceLayer)
+
+// Complex composition
+val fullAppLayer: Layer[Database & UserService & EmailService, IO] =
+    dbLayer.using(userServiceLayer).and(emailServiceLayer)
+
+// Use the full app layer
+val computation: Unit < (Env[Database] & Env[UserService] & Env[EmailService] & IO) =
+    for
+        db           <- Env.get[Database]
+        userService  <- Env.get[UserService]
+        emailService <- Env.get[EmailService]
+        _            <- db.query
+        user         <- userService.getUser(1)
+        _            <- emailService.sendEmail("user@example.com", s"User data: $user")
+    yield ()
+
+val result: Unit < (IO & Memo) =
+    Env.runLayer(fullAppLayer)(computation)
+```
+
 ### Local: Scoped Values
 
 The `Local` effect operates on top of `IO` and enables the definition of scoped values. This mechanism is typically used to store contextual information of a computation. For example, in request processing, locals can be used to store information about the user who initiated the request. In a library for database access, locals can be used to propagate transactions.
