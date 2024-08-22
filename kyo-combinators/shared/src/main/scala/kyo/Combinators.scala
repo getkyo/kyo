@@ -12,30 +12,30 @@ import scala.util.NotGiven
 extension [A, S](effect: A < S)
 
     @targetName("zipRight")
-    def *>[A1, S1](next: => A1 < S1): A1 < (S & S1) =
+    def *>[A1, S1](next: => A1 < S1)(using Frame): A1 < (S & S1) =
         effect.map(_ => next)
 
     @targetName("zipLeft")
-    def <*[A1, S1](next: => A1 < S1): A < (S & S1) =
+    def <*[A1, S1](next: => A1 < S1)(using Frame): A < (S & S1) =
         effect.map(e => next.as(e))
 
     @targetName("zip")
-    def <*>[A1, S1](next: => A1 < S1): (A, A1) < (S & S1) =
+    def <*>[A1, S1](next: => A1 < S1)(using Frame): (A, A1) < (S & S1) =
         effect.map(e => next.map(n => (e, n)))
 
-    inline def as[A1, S1](value: => A1 < S1): A1 < (S & S1) =
+    inline def as[A1, S1](value: => A1 < S1)(using inline frame: Frame): A1 < (S & S1) =
         effect.map(_ => value)
 
-    def debug: A < (S & IO) =
+    def debug(using Frame): A < (S & IO) =
         effect.tap(value => Console.println(value.toString))
 
-    def debug(prefix: => String): A < (S & IO) =
+    def debug(prefix: => String)(using Frame): A < (S & IO) =
         effect.tap(value => Console.println(s"$prefix: $value"))
 
-    def delayed[S1](duration: Duration < S1): A < (S & S1 & Async) =
+    def delayed[S1](duration: Duration < S1)(using Frame): A < (S & S1 & Async) =
         Kyo.sleep(duration) *> effect
 
-    def repeat(policy: Retry.Policy)(using Flat[A < S]): A < (S & Async) =
+    def repeat(policy: Retry.Policy)(using Flat[A < S], Frame): A < (S & Async) =
         def loop(i: Int): A < (S & Async) =
             if i <= 0 then effect
             else loop(i - 1).delayed(policy.backoff(i))
@@ -43,7 +43,7 @@ extension [A, S](effect: A < S)
         loop(policy.limit)
     end repeat
 
-    def repeat[S1](limit: => Int < S1)(using Flat[A < S]): A < (S & S1) =
+    def repeat[S1](limit: => Int < S1)(using Flat[A < S], Frame): A < (S & S1) =
         @tailrec
         def loop(i: Int): A < (S & S1) =
             if i <= 0 then effect
@@ -53,7 +53,8 @@ extension [A, S](effect: A < S)
     end repeat
 
     def repeat[S1](backoff: Int => Duration, limit: => Int < S1)(using
-        Flat[A < S]
+        Flat[A < S],
+        Frame
     ): A < (S & S1 & Async) =
         def loop(i: Int): A < (S & Async) =
             if i <= 0 then effect
@@ -62,7 +63,7 @@ extension [A, S](effect: A < S)
         limit.map(l => loop(l))
     end repeat
 
-    def repeatWhile[S1](fn: A => Boolean < S1)(using Flat[A < S]): A < (S & S1 & Async) =
+    def repeatWhile[S1](fn: A => Boolean < S1)(using Flat[A < S], Frame): A < (S & S1 & Async) =
         def loop(last: A): A < (S & S1 & Async) =
             fn(last).map { cont =>
                 if cont then effect.map(v => loop(v))
@@ -73,7 +74,8 @@ extension [A, S](effect: A < S)
     end repeatWhile
 
     def repeatWhile[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using
-        Flat[A < S]
+        Flat[A < S],
+        Frame
     ): A < (S & S1 & Async) =
         def loop(last: A, i: Int): A < (S & S1 & Async) =
             fn(last, i).map { case (cont, duration) =>
@@ -84,7 +86,7 @@ extension [A, S](effect: A < S)
         effect.map(v => loop(v, 0))
     end repeatWhile
 
-    def repeatUntil[S1](fn: A => Boolean < S1)(using Flat[A < S]): A < (S & S1 & Async) =
+    def repeatUntil[S1](fn: A => Boolean < S1)(using Flat[A < S], Frame): A < (S & S1 & Async) =
         def loop(last: A): A < (S & S1 & Async) =
             fn(last).map { cont =>
                 if cont then last
@@ -95,7 +97,8 @@ extension [A, S](effect: A < S)
     end repeatUntil
 
     def repeatUntil[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using
-        Flat[A < S]
+        Flat[A < S],
+        Frame
     ): A < (S & S1 & Async) =
         def loop(last: A, i: Int): A < (S & S1 & Async) =
             fn(last, i).map { case (cont, duration) =>
@@ -106,30 +109,31 @@ extension [A, S](effect: A < S)
         effect.map(v => loop(v, 0))
     end repeatUntil
 
-    def retry(policy: Retry.Policy)(using Flat[A]): A < (S & Async & Abort[Throwable]) =
+    def retry(policy: Retry.Policy)(using Flat[A], Frame): A < (S & Async & Abort[Throwable]) =
         Retry[Throwable](policy)(effect)
 
-    def retry[S1](n: => Int < S1)(using Flat[A]): A < (S & S1 & Async & Abort[Throwable]) =
+    def retry[S1](n: => Int < S1)(using Flat[A], Frame): A < (S & S1 & Async & Abort[Throwable]) =
         n.map(nPure => Retry[Throwable](Retry.Policy(_ => Duration.Zero, nPure))(effect))
 
     def retry[S1](backoff: Int => Duration, n: => Int < S1)(using
-        Flat[A]
+        Flat[A],
+        Frame
     ): A < (S & S1 & Async & Abort[Throwable]) =
         n.map(nPure => Retry[Throwable](Retry.Policy(backoff, nPure))(effect))
 
-    def forever: Nothing < S =
+    def forever(using Frame): Nothing < S =
         (effect *> effect.forever) *> (throw new IllegalStateException("infinite loop ended"))
 
-    def when[S1](condition: => Boolean < S1): A < (S & S1 & Abort[Maybe.Empty]) =
+    def when[S1](condition: => Boolean < S1)(using Frame): A < (S & S1 & Abort[Maybe.Empty]) =
         condition.map(c => if c then effect else Abort.fail(Maybe.Empty))
 
-    def explicitThrowable(using Flat[A]): A < (S & Abort[Throwable]) =
+    def explicitThrowable(using Flat[A], Frame): A < (S & Abort[Throwable]) =
         Abort.catching[Throwable](effect)
 
-    def tap[S1](f: A => Any < S1): A < (S & S1) =
+    def tap[S1](f: A => Any < S1)(using Frame): A < (S & S1) =
         effect.map(a => f(a).as(a))
 
-    def unless[S1](condition: Boolean < S1): A < (S & S1 & Abort[Maybe.Empty]) =
+    def unless[S1](condition: Boolean < S1)(using Frame): A < (S & S1 & Abort[Maybe.Empty]) =
         condition.map(c => if c then Abort.fail(Maybe.Empty) else effect)
 
 end extension
@@ -140,7 +144,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         ct: ClassTag[E],
         tag: Tag[E],
         flat: Flat[A]
-    ): Result[E, A] < S =
+    )(using Frame): Result[E, A] < S =
         Abort.run[E](effect)
 
     def abortToChoice(
@@ -148,18 +152,19 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         ct: ClassTag[E],
         tag: Tag[E],
         flat: Flat[A]
-    ): A < (S & Choice) =
+    )(using Frame): A < (S & Choice) =
         Abort.run[E](effect).map(e => Choice.get(e.fold(_ => Nil)(List(_))))
 
-    def someAbortToChoice[E1 <: E]: SomeAbortToChoiceOps[A, S, E, E1] = SomeAbortToChoiceOps(effect)
+    def someAbortToChoice[E1 <: E](using Frame): SomeAbortToChoiceOps[A, S, E, E1] = SomeAbortToChoiceOps(effect)
 
-    def handleSomeAbort[E1 <: E]: HandleSomeAbort[A, S, E, E1] = HandleSomeAbort(effect)
+    def handleSomeAbort[E1 <: E](using Frame): HandleSomeAbort[A, S, E, E1] = HandleSomeAbort(effect)
 
     def catchAbort[A1 >: A, S1](fn: E => A1 < S1)(
         using
         ClassTag[E],
         Tag[E],
-        Flat[A]
+        Flat[A],
+        Frame
     ): A1 < (S & S1) =
         Abort.run[E](effect).map {
             case Result.Fail(e)    => fn(e)
@@ -171,7 +176,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         using
         ClassTag[E],
         Tag[E],
-        Flat[A]
+        Flat[A],
+        Frame
     ): A1 < (S & S1 & Abort[E]) =
         Abort.run[E](effect).map {
             case Result.Fail(e) =>
@@ -181,9 +187,9 @@ extension [A, S, E](effect: A < (Abort[E] & S))
             case Result.Success(v) => v
         }
 
-    def catchSomeAbort[E1 <: E]: CatchSomeAbort[A, S, E, E1] = CatchSomeAbort(effect)
+    def catchSomeAbort[E1 <: E](using Frame): CatchSomeAbort[A, S, E, E1] = CatchSomeAbort(effect)
 
-    def catchSomeAbortPartial[E1 <: E]: CatchSomeAbortPartialOps[A, S, E, E1] = CatchSomeAbortPartialOps(effect)
+    def catchSomeAbortPartial[E1 <: E](using Frame): CatchSomeAbortPartialOps[A, S, E, E1] = CatchSomeAbortPartialOps(effect)
 
     def swapAbort(
         using
@@ -191,18 +197,19 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         cta: ClassTag[A],
         tagE: Tag[E],
         fl: Flat[A]
-    ): E < (S & Abort[A]) =
+    )(using Frame): E < (S & Abort[A]) =
         val handled: Result[E, A] < S = Abort.run[E](effect)
         handled.map((v: Result[E, A]) => Abort.get(v.swap))
     end swapAbort
 
-    def swapSomeAbort[E1 <: E]: SwapSomeAbortOps[A, S, E, E1] = SwapSomeAbortOps(effect)
+    def swapSomeAbort[E1 <: E](using Frame): SwapSomeAbortOps[A, S, E, E1] = SwapSomeAbortOps(effect)
 
     def implicitThrowable[ER](
         using
         ev: E => Throwable | ER,
         f: Flat[A],
-        reduce: Reducible[Abort[ER]]
+        reduce: Reducible[Abort[ER]],
+        frame: Frame
     ): A < (S & reduce.SReduced) =
         Abort.run[Throwable](effect.asInstanceOf[A < (Abort[Throwable | ER] & S)])
             .map(_.fold(e => throw e.getFailure)(identity))
@@ -243,7 +250,8 @@ class CatchSomeAbort[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVa
         reduce: Reducible[Abort[ER]],
         ct: ClassTag[E1],
         tag: Tag[E1],
-        f: Flat[A]
+        f: Flat[A],
+        frame: Frame
     ): [A1 >: A, S1] => (E1 => A1 < S1) => A1 < (S & S1 & reduce.SReduced) =
         [A1 >: A, S1] =>
             (fn: E1 => A1 < S1) =>
@@ -260,7 +268,8 @@ class CatchSomeAbortPartialOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) ext
         ev: E => E1 | ER,
         ct: ClassTag[E1],
         tag: Tag[E1],
-        f: Flat[A]
+        f: Flat[A],
+        frame: Frame
     ): [A1 >: A, S1] => PartialFunction[E1, A1 < S1] => A1 < (S & S1 & Abort[E]) =
         [A1 >: A, S1] =>
             (fn: PartialFunction[E1, A1 < S1]) =>
@@ -279,7 +288,8 @@ class SwapSomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends Any
         reduce: Reducible[Abort[ER]],
         ct: ClassTag[E1],
         tag: Tag[E1],
-        f: Flat[A]
+        f: Flat[A],
+        frame: Frame
     ): E1 < (S & reduce.SReduced & Abort[A]) =
         val handled = Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
         handled.map((v: Result[E1, A]) => Abort.get(v.swap))
@@ -292,30 +302,33 @@ extension [A, S, E](effect: A < (S & Env[E]))
         ev: E => E1 & ER,
         flat: Flat[A],
         reduce: Reducible[Env[ER]],
-        tag: Tag[E1]
+        tag: Tag[E1],
+        frame: Frame
     ): A < (S & S1 & reduce.SReduced) =
         dependency.map(d => Env.run[E1, A, S, ER](d)(effect.asInstanceOf[A < (S & Env[E1 | ER])]))
 
 end extension
 
 extension [A, S](effect: A < (S & Choice))
-    def filterChoice[S1](fn: A => Boolean < S1): A < (S & S1 & Choice) =
+    def filterChoice[S1](fn: A => Boolean < S1)(using Frame): A < (S & S1 & Choice) =
         effect.map(a => fn(a).map(b => Choice.dropIf(!b)).as(a))
 
-    def handleChoice(using Flat[A]): Seq[A] < S = Choice.run(effect)
+    def handleChoice(using Flat[A], Frame): Seq[A] < S = Choice.run(effect)
 
     def choiceToAbort[E, S1](error: => E < S1)(
-        using Flat[A]
+        using
+        Flat[A],
+        Frame
     ): A < (S & S1 & Abort[E]) =
         Choice.run(effect).map {
             case s if s.isEmpty => Kyo.fail[E, S1](error)
             case s              => s.head
         }
 
-    def choiceToThrowable(using Flat[A]): A < (S & Abort[Throwable]) =
+    def choiceToThrowable(using Flat[A], Frame): A < (S & Abort[Throwable]) =
         choiceToAbort[Throwable, Any](new NoSuchElementException("head of empty list"))
 
-    def choiceToUnit(using Flat[A]): A < (S & Abort[Unit]) =
+    def choiceToUnit(using Flat[A], Frame): A < (S & Abort[Unit]) =
         choiceToAbort(())
 end extension
 
@@ -346,7 +359,7 @@ extension [A, E, S](fiber: Fiber[E, A] < S)
     def join(using reduce: Reducible[Abort[E]], frame: Frame): A < (S & reduce.SReduced & Async) =
         fiber.map(_.get)
 
-    def awaitCompletion(using Flat[A]): Unit < (S & Async) =
+    def awaitCompletion(using Flat[A], Frame): Unit < (S & Async) =
         fiber.map(_.getResult.unit)
 end extension
 
@@ -355,7 +368,8 @@ extension [A](effect: A < Async)
     def &>[A1](next: A1 < Async)(
         using
         Flat[A],
-        Flat[A1]
+        Flat[A1],
+        Frame
     ): A1 < Async =
         for
             fiberA  <- effect.fork
@@ -368,7 +382,8 @@ extension [A](effect: A < Async)
     def <&[A1](next: A1 < Async)(
         using
         Flat[A],
-        Flat[A1]
+        Flat[A1],
+        Frame
     ): A < Async =
         for
             fiberA  <- effect.fork
@@ -381,7 +396,8 @@ extension [A](effect: A < Async)
     def <&>[A1](next: A1 < Async)(
         using
         Flat[A],
-        Flat[A1]
+        Flat[A1],
+        Frame
     ): (A, A1) < Async =
         for
             fiberA  <- effect.fork

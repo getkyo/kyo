@@ -315,7 +315,7 @@ class SafepointTest extends Test:
 
             val expectedLogs = Seq(
                 "Entering computation with value: 6",
-                "Entering Unknown with value: 12",
+                "Entering ? with value: 12",
                 "Entering computation with value: 13",
                 "Entering $anonfun with value: 26"
             )

@@ -49,7 +49,7 @@ class Path(val path: List[String]):
     /** Methods to append and write to files
       */
 
-    private inline def append(createFolders: Boolean)(inline f: (JPath, Seq[OpenOption]) => JPath): Unit < IO =
+    private inline def append(createFolders: Boolean)(inline f: (JPath, Seq[OpenOption]) => JPath)(using Frame): Unit < IO =
         IO {
             if createFolders then
                 discard(f(toJava, Seq(StandardOpenOption.APPEND, StandardOpenOption.CREATE)))
@@ -72,7 +72,7 @@ class Path(val path: List[String]):
     def appendLines(value: List[String], createFolders: Boolean = true)(using Frame): Unit < IO =
         append(createFolders)((path, options) => Files.write(toJava, value.asJava, options*))
 
-    private inline def write(createFolders: Boolean)(inline f: (JPath, Seq[OpenOption]) => JPath): Unit < IO =
+    private inline def write(createFolders: Boolean)(inline f: (JPath, Seq[OpenOption]) => JPath)(using Frame): Unit < IO =
         IO {
             if createFolders then
                 discard(f(toJava, Seq(StandardOpenOption.WRITE, StandardOpenOption.CREATE)))
@@ -128,13 +128,13 @@ class Path(val path: List[String]):
             arr => Chunk.from(arr.toSeq)
         )
 
-    private def readOnceLines(reader: BufferedReader) =
+    private def readOnceLines(reader: BufferedReader)(using Frame) =
         IO {
             val line = reader.readLine()
             if line == null then Maybe.empty else Maybe(line)
         }
 
-    private def readOnceBytes(res: (FileChannel, ByteBuffer)) =
+    private def readOnceBytes(res: (FileChannel, ByteBuffer))(using Frame) =
         IO {
             val (fileChannel, buf) = res
             val bytesRead          = fileChannel.read(buf)
@@ -152,7 +152,7 @@ class Path(val path: List[String]):
         release: Res => Unit < Async,
         readOnce: Res => Maybe[ReadTpe] < IO,
         writeOnce: ReadTpe => Chunk[A]
-    )(using Tag[Emit[Chunk[A]]]): Stream[A, Resource & IO] =
+    )(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Resource & IO] =
         Stream[A, Resource & IO] {
             Resource.acquireRelease(acquire)(release).map { res =>
                 readOnce(res).map { state =>

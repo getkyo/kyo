@@ -33,7 +33,7 @@ object Process:
         /** Returns a `Process.Command` representing the execution of the `clazz` Class in a new JVM process. To finally execute the
           * command, use `spawn` or use directly `jvm.spawn`.
           */
-        def command(clazz: Class[?], args: List[String] = Nil): Process.Command < IO =
+        def command(clazz: Class[?], args: List[String] = Nil)(using Frame): Process.Command < IO =
             IO {
                 val javaHome  = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java"
                 val classPath = System.getProperty("java.class.path")

@@ -23,28 +23,28 @@ object Layer:
 
     val empty: Layer[Any, Any] = FromKyo { () => TypeMap.empty }
 
-    def apply[A: Tag, S](kyo: => A < S): Layer[A, S] =
+    def apply[A: Tag, S](kyo: => A < S)(using Frame): Layer[A, S] =
         FromKyo { () =>
             kyo.map { result => TypeMap(result) }
         }
 
-    def from[A: Tag, B: Tag, S](f: A => B < S): Layer[B, Env[A] & S] =
+    def from[A: Tag, B: Tag, S](f: A => B < S)(using Frame): Layer[B, Env[A] & S] =
         apply {
             Env.get[A].map(f)
         }
 
-    def from[A: Tag, B: Tag, C: Tag, S](f: (A, B) => C < S): Layer[C, Env[A & B] & S] =
+    def from[A: Tag, B: Tag, C: Tag, S](f: (A, B) => C < S)(using Frame): Layer[C, Env[A & B] & S] =
         apply {
             Kyo.zip(Env.get[A], Env.get[B]).map { case (a, b) => f(a, b) }
         }
 
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, S](f: (A, B, C) => D < S): Layer[D, Env[A & B & C] & S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, S](f: (A, B, C) => D < S)(using Frame): Layer[D, Env[A & B & C] & S] =
         apply {
             Kyo.zip(Env.get[A], Env.get[B], Env.get[C])
                 .map { case (a, b, c) => f(a, b, c) }
         }
 
-    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, S](f: (A, B, C, D) => E < S): Layer[E, Env[A & B & C & D] & S] =
+    def from[A: Tag, B: Tag, C: Tag, D: Tag, E: Tag, S](f: (A, B, C, D) => E < S)(using Frame): Layer[E, Env[A & B & C & D] & S] =
         apply {
             Kyo.zip(Env.get[A], Env.get[B], Env.get[C], Env.get[D]).map { case (a, b, c, d) => f(a, b, c, d) }
         }
@@ -56,6 +56,8 @@ object Layer:
         case class And[Out1, Out2, S1, S2](lhs: Layer[Out1, S1], rhs: Layer[Out2, S2])                   extends Layer[Out1 & Out2, S1 & S2]
         case class To[Out1, Out2, S1, S2](lhs: Layer[?, ?], rhs: Layer[?, ?])                            extends Layer[Out1 & Out2, S1 & S2]
         case class FromKyo[In, Out, S](kyo: () => TypeMap[Out] < (Env[In] & S))(using val tag: Tag[Out]) extends Layer[Out, S]
+
+        private given Frame = Frame.internal
 
         class DoRun[Out, S]:
             private val memo = Memo[Layer[Out, S], TypeMap[Out], S & Memo] { self =>

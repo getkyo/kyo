@@ -7,10 +7,10 @@ import scala.annotation.tailrec
 
 case class Span(unsafe: Span.Unsafe):
 
-    def end: Unit < IO =
+    def end(using Frame): Unit < IO =
         IO(unsafe.end())
 
-    def event(name: String, a: Attributes): Unit < IO =
+    def event(name: String, a: Attributes)(using Frame): Unit < IO =
         IO(unsafe.event(name, a))
 end Span
 
@@ -61,7 +61,7 @@ object Span:
         scope: List[String],
         name: String,
         attributes: Attributes = Attributes.empty
-    )(v: => A < S): A < (IO & S) =
+    )(v: => A < S)(using Frame): A < (IO & S) =
         currentSpan.use { parent =>
             receiver
                 .startSpan(scope, name, parent, attributes)

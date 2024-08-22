@@ -70,6 +70,7 @@ private def impl[A: Type](body: Expr[A])(using Quotes): Expr[Any] =
 end impl
 
 object directInternal:
+    given Frame = Frame.internal
     class KyoCpsMonad[S]
         extends CpsMonadContext[[A] =>> A < S]
         with CpsMonad[[A] =>> A < S]:

@@ -1,8 +1,8 @@
-package kyo.examples.ledger.api
+package examples.ledger.api
 
+import examples.ledger.db.DB
 import java.util.concurrent.Executors
 import kyo.*
-import kyo.examples.ledger.db.DB
 import sttp.tapir.server.netty.*
 
 object Server extends KyoApp:

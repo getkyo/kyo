@@ -82,7 +82,7 @@ object Log extends LogPlatformSpecific:
         end ConsoleLogger
     end Unsafe
 
-    private inline def logWhen(inline enabled: Unsafe => Boolean)(inline log: Unsafe => Unit): Unit < IO =
+    private inline def logWhen(inline enabled: Unsafe => Boolean)(inline log: Unsafe => Unit)(using inline frame: Frame): Unit < IO =
         local.use { unsafe =>
             if enabled(unsafe) then
                 IO(log(unsafe))

@@ -1,6 +1,7 @@
-package kyo.examples.ledger.db
+package examples.ledger.db
 
 import Index.*
+import examples.ledger.*
 import java.lang.reflect.Field
 import java.nio.channels.FileChannel
 import java.nio.channels.FileChannel.MapMode.READ_WRITE
@@ -8,7 +9,6 @@ import java.nio.file.Paths
 import java.nio.file.StandardOpenOption
 import java.time.Instant
 import kyo.{Result as _, *}
-import kyo.examples.ledger.*
 import sun.misc.Unsafe
 
 trait Index:

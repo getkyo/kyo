@@ -1,8 +1,8 @@
-package kyo.examples.ledger.api
+package examples.ledger.api
 
+import examples.ledger.*
+import examples.ledger.db.DB
 import kyo.*
-import kyo.examples.ledger.*
-import kyo.examples.ledger.db.DB
 import sttp.model.StatusCode
 
 trait Handler:
