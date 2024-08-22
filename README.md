@@ -831,6 +831,97 @@ val p: Chunk[Int] =
     Chunk(1, 1, 2, 3, 3, 1, 1).changes
 ```
 
+### Stream: Composable Data Processing
+
+The Stream effect provides a powerful mechanism for processing sequences of data in a memory-conscious and composable manner. It offers a rich set of operations for transforming, filtering, and combining streams of data, all while maintaining laziness and ensuring stack safety.
+
+```scala
+import kyo.*
+
+// Create a stream from a sequence
+val a: Stream[Int, Any] =
+    Stream.init(Seq(1, 2, 3, 4, 5))
+
+// Map over stream elements
+val b: Stream[String, Any] =
+    a.map(_.toString)
+
+// Filter stream elements
+val c: Stream[Int, Any] =
+    a.filter(_ % 2 == 0)
+
+// Take a limited number of elements
+val d: Stream[Int, Any] =
+    a.take(3)
+
+// Drop elements from the beginning
+val e: Stream[Int, Any] =
+    a.drop(2)
+
+// Concatenate streams
+val f: Stream[Int, Any] =
+    a.concat(Stream.init(Seq(6, 7, 8)))
+
+// FlatMap over stream elements
+val g: Stream[Int, Any] =
+    a.flatMap(x => Stream.init(Seq(x, x * 2)))
+
+// Collect stream results into a Chunk
+val h: Chunk[Int] < Any =
+    a.run
+
+// Process stream elements without collecting results
+val i: Unit < Any =
+    a.runDiscard
+
+// Fold over stream elements
+val j: Int < Any =
+    a.runFold(0)(_ + _)
+
+// Process each element with side effects
+val k: Unit < IO =
+    a.runForeach(Console.println(_))
+```
+
+Streams can be combined with other effects, allowing for powerful and flexible data processing pipelines:
+
+```scala
+import kyo.*
+
+case class Config(someConfig: String)
+
+// Stream with IO effect
+val a: Stream[String, IO] =
+    Stream.init(Seq("file1.txt", "file2.txt"))
+        .map(fileName => IO(scala.io.Source.fromFile(fileName).mkString))
+
+// Stream with Abort effect
+val b: Stream[Int, Abort[NumberFormatException]] =
+    Stream.init(Seq("1", "2", "abc", "3"))
+        .map(s => Abort.catching[NumberFormatException](s.toInt))
+
+def fetchUserData(config: Config, username: String): Seq[String] < Async =
+    Seq(s"user data for $username") // mock implementation
+
+// Combining multiple effects
+val c: Stream[String, Env[Config] & Async] =
+    Stream.init(Seq("user1", "user2", "user3"))
+        .flatMap { username =>
+            Stream.init {
+                for
+                    config <- Env.get[Config]
+                    result <- fetchUserData(config, username)
+                yield result
+            }
+        }
+
+// Run the stream and handle effects
+val result: Chunk[String] < (Env[Config] & Async) =
+    c.run
+```
+
+The `Stream` effect is useful for processing large amounts of data in a memory-efficient manner, as it allows for lazy evaluation and only keeps a small portion of the data in memory at any given time. It's also composable, allowing you to build complex data processing pipelines by chaining stream operations.
+
 ### Var: Stateful Computations
 
 The `Var` effect allows for stateful computations, similar to the `State` monad. It enables the management of state within a computation in a purely functional manner.
