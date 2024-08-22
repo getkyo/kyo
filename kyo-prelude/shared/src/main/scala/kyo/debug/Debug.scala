@@ -4,6 +4,9 @@ import kyo.*
 import kyo.Ansi.*
 import kyo.kernel.Effect
 import kyo.kernel.Safepoint
+import scala.collection.mutable.LinkedHashMap
+import scala.language.implicitConversions
+import scala.quoted.*
 
 object Debug:
 
@@ -45,6 +48,28 @@ object Debug:
             }
         }
     end trace
+
+    def values(params: Param[?]*)(using frame: Frame): Unit =
+        val tuples = LinkedHashMap(params.map(p => (p.code, p.value))*)
+        val string = pprint(tuples).render.replaceFirst("LinkedHashMap", "Params")
+        println(frame.parse.show)
+        println(string)
+    end values
+
+    case class Param[T](code: String, value: T) derives CanEqual
+
+    object Param:
+
+        implicit inline def derive[T](v: => T): Param[T] =
+            ${ paramImpl('v) }
+
+        private def paramImpl[T: Type](v: Expr[T])(using Quotes): Expr[Param[T]] =
+            import quotes.reflect.*
+            val code = Expr(v.asTerm.pos.sourceCode.get)
+            '{ Param($code, $v) }
+        end paramImpl
+
+    end Param
 
     private def printValue(value: Any) =
         println("──────────────────────────────".dim)

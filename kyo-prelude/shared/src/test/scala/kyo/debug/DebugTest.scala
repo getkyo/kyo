@@ -67,6 +67,12 @@ class DebugTest extends Test:
 
     def largeValueComputation = Debug(List.fill(100)("a"))
 
+    def valuesComputation = Debug.values(1, "test")
+
+    def complexValuesComputation = Debug.values(List(1, 2, 3), Env.get[Int])
+
+    def parameterValuesComputation(param1: Int, param2: String) = Debug.values(param1, param2)
+
     def testOutput(fragments: String*)(code: => Any): Assertion =
         import kyo.Ansi.*
         val outContent = new ByteArrayOutputStream()
@@ -171,6 +177,33 @@ class DebugTest extends Test:
                 "Seq(Seq(Seq(7)))"
             ) {
                 choiceComputation.eval
+            }
+    }
+
+    "values" - {
+        "pure values" in
+            testOutput(
+                "DebugTest.scala:70:52",
+                """Params("1" -> 1, "\"test\"" -> "test")"""
+            ) {
+                valuesComputation
+            }
+
+        "complex values" in
+            testOutput(
+                "DebugTest.scala:72:77",
+                """"List(1, 2, 3)" -> List(1, 2, 3)""",
+                """"Env.get[Int]" -> Kyo(Tag"""
+            ) {
+                complexValuesComputation
+            }
+
+        "parameter values" in
+            testOutput(
+                "DebugTest.scala:74:95",
+                """Params("param1" -> 1, "param2" -> "test")"""
+            ) {
+                parameterValuesComputation(1, "test")
             }
     }
 
