@@ -2231,9 +2231,9 @@ val r: String = a.show // "Duration(5000000000 ns)"
 
 `Duration` is implemented as an `opaque type` alias for `Long`, representing nanoseconds internally. This design ensures type safety while maintaining high performance.
 
-### Result: Low-allocation Try Alternative
+### Result: Typed Failure Handling
 
-`Result` is a low-allocation alternative to Scala's `Try` type, designed to represent the result of a computation that may either succeed with a value or fail with an exception. It minimizes memory allocation overhead, especially in the case of successful results.
+`Result` is a type that combines features of Scala's `Try` and `Either` types, designed to represent the result of a computation that may either succeed with a value or fail with an exception. It provides a flexible way to handle both successful outcomes and typed failures.
 
 ```scala
 import kyo._
@@ -2290,6 +2290,45 @@ val q: Try[Int] = a.toTry
 ```
 
 Under the hood, `Result` is defined as an opaque type that is a supertype of `Success[T]` and `Failure[T]`. Success[T] represents a successful result and is encoded as either the value itself (`T`) or a special SuccessFailure[`T`] case class. The `SuccessFailure[T]` case class is used to handle the rare case where a `Failure[T]` needs to be wrapped in a `Success[T]`. On the other hand, a failed `Result` is always represented by a `Failure[T]` case class, which contains the exception that caused the failure. This means that creating a `Failure[T]` does incur an allocation cost. Additionally, some methods on `Result`, such as `fold`, `map`, and `flatMap`, may allocate in certain cases due to the need to catch and handle exceptions.
+
+### TypeMap: Type-Safe Heterogeneous Maps
+
+`TypeMap` provides a type-safe heterogeneous map implementation, allowing you to store and retrieve values of different types using their types as keys. This is particularly useful for managing multiple types of data in a single structure with type safety.
+
+```scala
+import kyo.*
+
+// Create an empty TypeMap
+val empty: TypeMap[Any] = TypeMap.empty
+
+// Constructors for up to 4 elements
+val map1: TypeMap[String] = TypeMap("Hello")
+val map2: TypeMap[String & Int] = TypeMap("Hello", 42)
+val map3: TypeMap[String & Int & Boolean] = TypeMap("Hello", 42, true)
+val map4: TypeMap[String & Int & Boolean & Double] = TypeMap("Hello", 42, true, 3.14)
+
+// Add a value to an existing TypeMap
+val mapWithNewValue: TypeMap[String & Int] = map1.add(42)
+
+// Retrieve a value from the TypeMap
+val str: String = map2.get[String]
+val num: Int = map2.get[Int]
+
+// Combine two TypeMaps
+val combined: TypeMap[String & Int & Boolean] = map2.union(TypeMap(true))
+
+// Filter the TypeMap to only include subtypes of a given type
+val pruned: TypeMap[String] = map2.prune[String]
+
+// Check if the TypeMap is empty and get its size
+val isEmpty: Boolean = map2.isEmpty
+val size: Int = map2.size
+
+// Get a string representation of the TypeMap
+val representation: String = map2.show
+```
+
+The type parameter `A` in `TypeMap[A]` represents the intersection type of all stored values, ensuring type safety when retrieving values.
 
 ### Ansi: Text Color and Formatting
 
