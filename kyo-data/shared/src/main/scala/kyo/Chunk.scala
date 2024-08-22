@@ -1,8 +1,6 @@
 package kyo
 
 import Chunk.Indexed
-import kernel.Frame
-import kernel.Loop
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.reflect.ClassTag
