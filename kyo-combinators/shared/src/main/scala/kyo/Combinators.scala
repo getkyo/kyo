@@ -136,21 +136,30 @@ end extension
 
 extension [A, S, E](effect: A < (Abort[E] & S))
     def handleAbort(
-        using flat: Flat[A]
+        using
+        ct: ClassTag[E],
+        tag: Tag[E],
+        flat: Flat[A]
     ): Result[E, A] < S =
-        Abort.run[Any](effect).asInstanceOf[Result[E, A] < S]
+        Abort.run[E](effect)
 
     def handleSomeAbort[E1 <: E]: HandleSomeAbort[A, S, E, E1] = HandleSomeAbort(effect)
 
     def abortToChoice(
-        using flat: Flat[A]
+        using
+        ct: ClassTag[E],
+        tag: Tag[E],
+        flat: Flat[A]
     ): A < (S & Choice) =
         effect.handleAbort.map(e => Choice.get(e.fold(_ => Nil)(List(_))))
 
     def someAbortToChoice[E1 <: E]: SomeAbortToChoiceOps[A, S, E, E1] = SomeAbortToChoiceOps(effect)
 
     def abortToEmpty(
-        using flat: Flat[A]
+        using
+        ct: ClassTag[E],
+        tag: Tag[E],
+        flat: Flat[A]
     ): A < (S & Abort[Maybe.Empty]) =
         effect.handleAbort.map {
             case Result.Fail(_)    => Abort.fail(Maybe.Empty)
@@ -161,7 +170,10 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def someAbortToEmpty[E1 <: E]: SomeAbortToEmptyOps[A, S, E, E1] = SomeAbortToEmptyOps(effect)
 
     def catchAbort[A1 >: A, S1](fn: E => A1 < S1)(
-        using Flat[A]
+        using
+        ct: ClassTag[E],
+        tag: Tag[E],
+        fl: Flat[A]
     ): A1 < (S & S1) =
         effect.handleAbort.map {
             case Result.Fail(e)    => fn(e)
@@ -170,7 +182,10 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         }
 
     def catchAbortPartial[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
-        using Flat[A]
+        using
+        ct: ClassTag[E],
+        tag: Tag[E],
+        fl: Flat[A]
     ): A1 < (S & S1 & Abort[E]) =
         effect.handleAbort.map {
             case Result.Fail(e) =>
@@ -187,6 +202,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     def swapAbort(
         using
         cta: ClassTag[A],
+        cte: ClassTag[E],
+        te: Tag[E],
         fl: Flat[A]
     ): E < (S & Abort[A]) =
         val handled: Result[E, A] < S = effect.handleAbort

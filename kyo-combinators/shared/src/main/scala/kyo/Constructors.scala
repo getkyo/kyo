@@ -72,7 +72,7 @@ extension (kyoObject: Kyo.type)
         option.map(o => Abort.get(o.toRight[Maybe.Empty](Maybe.Empty)))
 
     def fromMaybe[A, S](maybe: => Maybe[A] < S): A < (S & Abort[Maybe.Empty]) =
-        maybe.map(m => Abort.get(m.toRight[Maybe.Empty](Maybe.Empty)))
+        maybe.map(m => Abort.get(m))
 
     def fromResult[E, A, S](result: => Result[E, A] < S): A < (S & Abort[E]) =
         result.map(Abort.get(_))

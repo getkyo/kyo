@@ -23,5 +23,7 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Async & Abort[Throwab
     type Assertion = org.scalatest.compatible.Assertion
     def success = succeed
 
+    object WipTest extends org.scalatest.Tag("org.scalatest.Ignore")
+
     override given executionContext: ExecutionContext = Platform.executionContext
 end Test
