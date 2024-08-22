@@ -29,7 +29,7 @@ class TraceReceiverTest extends Test:
             name: String,
             parent: Maybe[Span],
             attributes: Attributes
-        ): Span < IO =
+        )(using Frame): Span < IO =
             spanStarted = true
             Span.noop
         end startSpan

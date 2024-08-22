@@ -17,6 +17,7 @@ given zioSchema[R, A: Flat, S](using ev: Schema[R, A], ev2: (A < S) <:< (A < (Ab
             ev.toType_(isInput, isSubscription)
 
         override def resolve(value: A < S): Step[R] =
+            given Frame = Frame.internal
             QueryStep(ZQuery.fromZIONow(ZIOs.run(ev2(value).map(ev.resolve))))
 
 end zioSchema
@@ -33,6 +34,7 @@ given runnerSchema[R, A: Flat, S](using ev: Schema[R, A], tag: zio.Tag[Runner[S]
             ev.toType_(isInput, isSubscription)
 
         override def resolve(value: A < S): Step[R & Runner[S]] =
+            given Frame = Frame.internal
             QueryStep(ZQuery.fromZIONow(ZIO.serviceWithZIO[Runner[S]](_(value.map(ev.resolve)))))
 
 end runnerSchema

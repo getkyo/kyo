@@ -1,8 +1,8 @@
-package kyo.examples.ledger.api
+package examples.ledger.api
 
+import examples.ledger.*
 import java.time.Instant
 import kyo.*
-import kyo.examples.ledger.*
 import sttp.model.StatusCode
 import sttp.tapir.*
 import sttp.tapir.generic.auto.*

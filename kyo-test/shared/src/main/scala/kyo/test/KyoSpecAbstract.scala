@@ -21,11 +21,12 @@ abstract class KyoSpecAbstract[S] extends ZIOSpecAbstract:
 
     def spec: Spec[Environment, Any]
 
-    def run[In: Flat](v: => In < S): ZIO[Environment, Throwable, In]
+    def run[In: Flat](v: => In < S)(using Frame): ZIO[Environment, Throwable, In]
 
     def test[In <: TestResult: Flat](label: String)(assertion: => In < S)(using
         sl: SourceLocation,
-        tr: Trace
+        tr: Trace,
+        fr: Frame
     ): Spec[Any, Throwable] =
         Spec.labeled(
             label,

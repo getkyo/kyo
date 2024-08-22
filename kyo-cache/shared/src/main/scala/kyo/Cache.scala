@@ -11,7 +11,7 @@ import scala.util.Success
 class Cache(private[kyo] val store: Store):
     def memo[A, B: Flat, S](
         f: A => B < S
-    ): A => B < (Async & S) =
+    )(using Frame): A => B < (Async & S) =
         (v: A) =>
             Promise.init[Throwable, B].map { p =>
                 val key = (this, v)
@@ -44,21 +44,21 @@ class Cache(private[kyo] val store: Store):
 
     def memo2[T1, T2, S, B: Flat](
         f: (T1, T2) => B < S
-    ): (T1, T2) => B < (Async & S) =
+    )(using Frame): (T1, T2) => B < (Async & S) =
         val m = memo[(T1, T2), B, S](f.tupled)
         (t1, t2) => m((t1, t2))
     end memo2
 
     def memo3[T1, T2, T3, S, B: Flat](
         f: (T1, T2, T3) => B < S
-    ): (T1, T2, T3) => B < (Async & S) =
+    )(using Frame): (T1, T2, T3) => B < (Async & S) =
         val m = memo[(T1, T2, T3), B, S](f.tupled)
         (t1, t2, t3) => m((t1, t2, t3))
     end memo3
 
     def memo4[T1, T2, T3, T4, S, B: Flat](
         f: (T1, T2, T3, T4) => B < S
-    ): (T1, T2, T3, T4) => B < (Async & S) =
+    )(using Frame): (T1, T2, T3, T4) => B < (Async & S) =
         val m = memo[(T1, T2, T3, T4), B, S](f.tupled)
         (t1, t2, t3, t4) => m((t1, t2, t3, t4))
     end memo4

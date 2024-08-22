@@ -6,10 +6,10 @@ import kyo.scheduler.IOPromise
 import kyo.scheduler.IOTask
 
 trait FiberPlatformSpecific:
-    def fromCompletionStage[A](cs: CompletionStage[A]): A < Async =
+    def fromCompletionStage[A](cs: CompletionStage[A])(using Frame): A < Async =
         fromCompletionStageFiber(cs).map(_.get)
 
-    def fromCompletionStageFiber[A](cs: CompletionStage[A]): Fiber[Nothing, A] < IO =
+    def fromCompletionStageFiber[A](cs: CompletionStage[A])(using Frame): Fiber[Nothing, A] < IO =
         IO {
             val p = new IOPromise[Nothing, A]()
             cs.whenComplete { (success, error) =>

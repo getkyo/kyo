@@ -13,7 +13,7 @@ trait TraceReceiver:
         name: String,
         parent: Maybe[Span] = Maybe.empty,
         attributes: Attributes = Attributes.empty
-    ): Span < IO
+    )(using Frame): Span < IO
 end TraceReceiver
 
 object TraceReceiver:
@@ -34,7 +34,7 @@ object TraceReceiver:
                 name: String,
                 parent: Maybe[Span] = Maybe.empty,
                 attributes: Attributes = Attributes.empty
-            ) =
+            )(using Frame) =
                 Span.noop
 
     def all(receivers: List[TraceReceiver]): TraceReceiver =
@@ -44,7 +44,7 @@ object TraceReceiver:
                 name: String,
                 parent: Maybe[Span] = Maybe.empty,
                 a: Attributes = Attributes.empty
-            ) =
+            )(using Frame) =
                 Kyo.foreach(receivers)(_.startSpan(scope, name, Maybe.empty, a))
                     .map(Span.all)
 end TraceReceiver

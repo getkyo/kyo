@@ -96,7 +96,7 @@ end IOTask
 
 object IOTask:
 
-    private val _frame                = Frame.derive
+    private val _frame                = Frame.internal
     private inline given frame: Frame = _frame
 
     def apply[Ctx, E, A](
