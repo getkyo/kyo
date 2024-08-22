@@ -230,17 +230,17 @@ extension [A, S, E](effect: A < (Abort[E] & S))
 end extension
 
 extension [A, S, E](effect: A < (Abort[Maybe.Empty] & S))
-    def handleEmptyAbort(using f: Flat[A], Frame): Maybe[A] < S =
+    def handleEmptyAbort(using f: Flat[A], frame: Frame): Maybe[A] < S =
         Abort.run[Maybe.Empty](effect).map {
             case Result.Fail(_)    => Maybe.Empty
             case Result.Panic(e)   => throw e
             case Result.Success(a) => Maybe.Defined(a)
         }
 
-    def emptyAbortToChoice(using f: Flat[A], Frame): A < (S & Choice) =
+    def emptyAbortToChoice(using f: Flat[A], frame: Frame): A < (S & Choice) =
         effect.someAbortToChoice[Maybe.Empty]()
 
-    def emptyAbortToFailure[S1](failure: => E < S1)(using f: Flat[A], Frame): A < (S & S1 & Abort[E]) =
+    def emptyAbortToFailure[S1](failure: => E < S1)(using f: Flat[A], frame: Frame): A < (S & S1 & Abort[E]) =
         for
             f   <- failure
             res <- effect.handleSomeAbort[Maybe.Empty]()
