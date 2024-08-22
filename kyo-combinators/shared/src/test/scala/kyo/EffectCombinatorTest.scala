@@ -11,13 +11,13 @@ class EffectCombinatorTest extends Test:
         }
 
         "debug" in {
-            val effect  = IO("Hello World").debug
+            val effect  = IO("Hello World").debugValue
             val handled = IO.run(effect)
             assert(handled.eval == "Hello World")
         }
 
         "debug(prefix)" in {
-            val effect  = IO(true).debug("boolean")
+            val effect  = IO(true).debugTrace
             val handled = IO.run(effect)
             assert(handled.eval == true)
         }

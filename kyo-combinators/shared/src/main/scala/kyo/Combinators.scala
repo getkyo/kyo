@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.debug.Debug
 import kyo.kernel.Boundary
 import kyo.kernel.Reducible
 import scala.annotation.implicitNotFound
@@ -26,11 +27,9 @@ extension [A, S](effect: A < S)
     inline def as[A1, S1](value: => A1 < S1)(using inline frame: Frame): A1 < (S & S1) =
         effect.map(_ => value)
 
-    def debug(using Frame): A < (S & IO) =
-        effect.tap(value => Console.println(value.toString))
+    def debugValue(using Frame): A < S = Debug(effect)
 
-    def debug(prefix: => String)(using Frame): A < (S & IO) =
-        effect.tap(value => Console.println(s"$prefix: $value"))
+    def debugTrace(using Frame): A < S = Debug.trace(effect)
 
     def delayed[S1](duration: Duration < S1)(using Frame): A < (S & S1 & Async) =
         Kyo.sleep(duration) *> effect
