@@ -205,12 +205,12 @@ class ChunkTest extends Test:
         }
         "with a function using Env and Abort" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            val result = kyo.Env.run(3) {
-                kyo.Abort.run[String] {
+            val result = Env.run(3) {
+                Abort.run[String] {
                     Kyo.foreach(chunk) { n =>
-                        kyo.Env.get[Int].map { factor =>
+                        Env.get[Int].map { factor =>
                             if n % factor == 0 then n * factor
-                            else kyo.Abort.fail(s"$n is not divisible by $factor")
+                            else Abort.fail(s"$n is not divisible by $factor")
                         }
                     }
                 }
@@ -219,12 +219,12 @@ class ChunkTest extends Test:
         }
         "with a function using Var and Abort" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            val result = kyo.Var.run(1) {
-                kyo.Abort.run[String] {
+            val result = Var.run(1) {
+                Abort.run[String] {
                     Kyo.foreach(chunk) { n =>
-                        kyo.Var.get[Int].map { multiplier =>
-                            if n % 2 == 0 then kyo.Var.setDiscard(multiplier * n).andThen(n * multiplier)
-                            else kyo.Abort.fail("Odd number encountered")
+                        Var.get[Int].map { multiplier =>
+                            if n % 2 == 0 then Var.setDiscard(multiplier * n).andThen(n * multiplier)
+                            else Abort.fail("Odd number encountered")
                         }
                     }
                 }
@@ -247,11 +247,11 @@ class ChunkTest extends Test:
 
         "with a predicate using Env and Var" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            val result = kyo.Var.run(0) {
-                kyo.Env.run(2) {
+            val result = Var.run(0) {
+                Env.run(2) {
                     Kyo.filter(chunk) { n =>
-                        kyo.Var.update[Int](_ + 1).unit.andThen {
-                            kyo.Env.get[Int].map(_ == n)
+                        Var.update[Int](_ + 1).unit.andThen {
+                            Env.get[Int].map(_ == n)
                         }
                     }
                 }
@@ -261,14 +261,14 @@ class ChunkTest extends Test:
 
         "with a predicate using Abort and Var" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            val result = kyo.Var.run(true) {
-                kyo.Abort.run[Unit] {
+            val result = Var.run(true) {
+                Abort.run[Unit] {
                     Kyo.filter(chunk) { n =>
-                        kyo.Var.get[Boolean].map { b =>
+                        Var.get[Boolean].map { b =>
                             if b then
-                                if n % 2 == 0 then kyo.Var.setDiscard(false).andThen(true)
+                                if n % 2 == 0 then Var.setDiscard(false).andThen(true)
                                 else false
-                            else kyo.Abort.fail(())
+                            else Abort.fail(())
                         }
                     }
                 }
@@ -292,12 +292,12 @@ class ChunkTest extends Test:
 
         "with a function using Env and Abort" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            val result = kyo.Env.run(10) {
-                kyo.Abort.run[String] {
+            val result = Env.run(10) {
+                Abort.run[String] {
                     Kyo.foldLeft(chunk)(0) { (acc, n) =>
-                        kyo.Env.get[Int].map { max =>
+                        Env.get[Int].map { max =>
                             if acc + n <= max then acc + n
-                            else kyo.Abort.fail(s"Sum exceeded max value of $max")
+                            else Abort.fail(s"Sum exceeded max value of $max")
                         }
                     }
                 }
@@ -307,13 +307,13 @@ class ChunkTest extends Test:
 
         "with a function using Var and Env" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            val result = kyo.Var.run(1) {
-                kyo.Env.run("*") {
+            val result = Var.run(1) {
+                Env.run("*") {
                     Kyo.foldLeft(chunk)(1) { (acc, n) =>
-                        kyo.Var.get[Int].map { multiplier =>
-                            kyo.Env.get[String].map { op =>
-                                if op == "*" then kyo.Var.setDiscard(multiplier * n).andThen(acc * n)
-                                else if op == "+" then kyo.Var.setDiscard(multiplier + n).andThen(acc + n)
+                        Var.get[Int].map { multiplier =>
+                            Env.get[String].map { op =>
+                                if op == "*" then Var.setDiscard(multiplier * n).andThen(acc * n)
+                                else if op == "+" then Var.setDiscard(multiplier + n).andThen(acc + n)
                                 else acc
                             }
                         }
@@ -758,11 +758,11 @@ class ChunkTest extends Test:
 
         "handles effectful predicates" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            val result = kyo.Env.run(4) {
-                kyo.Var.run(0) {
+            val result = Env.run(4) {
+                Var.run(0) {
                     Kyo.takeWhile(chunk) { n =>
-                        kyo.Var.update[Int](_ + 1).unit.andThen(kyo.Var.get[Int]).map { count =>
-                            kyo.Env.get[Int].map(_ > count)
+                        Var.update[Int](_ + 1).unit.andThen(Var.get[Int]).map { count =>
+                            Env.get[Int].map(_ > count)
                         }
                     }
                 }
@@ -792,11 +792,11 @@ class ChunkTest extends Test:
 
         "handles effectful predicates" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
-            val result = kyo.Env.run(3) {
-                kyo.Var.run(0) {
+            val result = Env.run(3) {
+                Var.run(0) {
                     Kyo.dropWhile(chunk) { n =>
-                        kyo.Var.update[Int](_ + 1).unit.andThen(kyo.Var.get[Int]).map { count =>
-                            kyo.Env.get[Int].map(_ > count)
+                        Var.update[Int](_ + 1).unit.andThen(Var.get[Int]).map { count =>
+                            Env.get[Int].map(_ > count)
                         }
                     }
                 }
@@ -863,9 +863,9 @@ class ChunkTest extends Test:
         "with a function using Env" in {
             val chunk = Chunk(1, 2, 3, 4, 5)
             var sum   = 0
-            val result = kyo.Env.run(0) {
+            val result = Env.run(0) {
                 Kyo.foreachDiscard(chunk) { x =>
-                    kyo.Env.use[Int](_ + x).map(sum += _)
+                    Env.use[Int](_ + x).map(sum += _)
                 }
             }
             assert(result.eval == ())
@@ -924,14 +924,14 @@ class ChunkTest extends Test:
 
     "Kyo.collect" - {
         "collects elements from a chunk of effectful computations" in {
-            val chunk  = Chunk[Int < Env[Int]](kyo.Env.use[Int](_ + 1), kyo.Env.use[Int](_ + 2))
-            val result = kyo.Env.run(1)(Kyo.collect(chunk))
+            val chunk  = Chunk[Int < Env[Int]](Env.use[Int](_ + 1), Env.use[Int](_ + 2))
+            val result = Env.run(1)(Kyo.collect(chunk))
             assert(result.eval == Chunk(2, 3))
         }
 
         "collects elements from a chunk of effectful computations with different effect types" in {
-            val chunk  = Chunk[Int < (Env[Int] & Var[Int])](kyo.Env.use[Int](_ + 1), kyo.Var.use[Int](_ + 2))
-            val result = kyo.Var.run(2)(kyo.Env.run(1)(Kyo.collect(chunk)))
+            val chunk  = Chunk[Int < (Env[Int] & Var[Int])](Env.use[Int](_ + 1), Var.use[Int](_ + 2))
+            val result = Var.run(2)(Env.run(1)(Kyo.collect(chunk)))
             assert(result.eval == Chunk(2, 4))
         }
     }

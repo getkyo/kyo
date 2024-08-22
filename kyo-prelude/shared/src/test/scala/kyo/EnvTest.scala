@@ -148,11 +148,11 @@ class EnvTest extends Test:
 
         val service1 = new Service1:
             def apply(i: Int) = i match
-                case 0 => kyo.Abort.get(Option.empty[Int])
+                case 0 => Abort.get(Option.empty[Int])
                 case i => i + 1
         val service2 = new Service2:
             def apply(i: Int) = i match
-                case 0 => kyo.Abort.get(Some(1))
+                case 0 => Abort.get(Some(1))
                 case i => i + 1
 
         "one service" - {
@@ -160,7 +160,7 @@ class EnvTest extends Test:
                 val a =
                     Env.get[Service1].map(_(1))
                 assert(
-                    kyo.Abort.run(Env.run(service1)(a)).eval ==
+                    Abort.run(Env.run(service1)(a)).eval ==
                         Result.success(2)
                 )
             }
@@ -168,7 +168,7 @@ class EnvTest extends Test:
                 val a =
                     Env.get[Service1].map(_(0))
                 assert(
-                    kyo.Abort.run(Env.run(service1)(a)).eval ==
+                    Abort.run(Env.run(service1)(a)).eval ==
                         Result.fail(Maybe.empty)
                 )
             }
@@ -184,20 +184,20 @@ class EnvTest extends Test:
                     val b = Env.run(service2)(v)
                     val c = Env.run(service1)(b)
                     assert(
-                        kyo.Abort.run(c).eval == Result.success(3)
+                        Abort.run(c).eval == Result.success(3)
                     )
                 }
                 "reverse handling order" in {
                     val b = Env.run(service1)(v)
                     val c = Env.run(service2)(b)
                     assert(
-                        kyo.Abort.run(c).eval == Result.success(3)
+                        Abort.run(c).eval == Result.success(3)
                     )
                 }
                 "dependent services" in {
                     val v2: Int < (Env[Service2] & Abort[Maybe.Empty]) = Env.run(service1)(v)
                     assert(
-                        kyo.Abort.run(Env.run(service2)(v2)).eval ==
+                        Abort.run(Env.run(service2)(v2)).eval ==
                             Result.success(3)
                     )
                 }
@@ -297,13 +297,13 @@ class EnvTest extends Test:
 
     "interactions with Abort" - {
         "should propagate Abort failures within Env" in {
-            val result = Env.run("test")(kyo.Abort.run[String](kyo.Abort.fail("failure")))
+            val result = Env.run("test")(Abort.run[String](Abort.fail("failure")))
             assert(result.eval == Result.fail("failure"))
         }
 
         "should have access to the environment within Abort" in {
             val env    = "test"
-            val result = Env.run(env)(kyo.Abort.run[String](Env.get[String]))
+            val result = Env.run(env)(Abort.run[String](Env.get[String]))
             assert(result.eval == Result.success(env))
         }
     }
