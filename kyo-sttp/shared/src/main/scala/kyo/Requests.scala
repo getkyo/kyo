@@ -9,11 +9,11 @@ object Requests:
     abstract class Backend:
         self =>
 
-        def send[A](r: Request[A, Any]): Response[A] < Async
+        def send[A](r: Request[A, Any])(using Frame): Response[A] < Async
 
-        def withMeter(m: Meter)(using Frame): Backend =
+        def withMeter(m: Meter): Backend =
             new Backend:
-                def send[A](r: Request[A, Any]) =
+                def send[A](r: Request[A, Any])(using Frame) =
                     m.run(self.send(r))
     end Backend
 

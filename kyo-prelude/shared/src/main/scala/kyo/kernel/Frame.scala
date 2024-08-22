@@ -72,7 +72,7 @@ object Frame:
                     s"""Frame cannot be derived within the kyo package: ${sym.owner.fullName}
                        |
                        |To resolve this issue:
-                       |1. Propagate the Frame from user code using an implicit parameter.
+                       |1. Propagate the Frame from user code via a `using` parameter.
                        |2. If absolutely necessary, you can use Frame.internal, but this is not recommended for general use.
                        |
                        |Example of propagating Frame:
