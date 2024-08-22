@@ -130,6 +130,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                     try f(v.asInstanceOf[Result[E, A]])
                     catch
                         case ex if NonFatal(ex) =>
+                            given Frame = Frame.internal
                             Log.unsafe.error("uncaught exception", ex)
         onCompleteLoop(this)
     end onComplete
@@ -215,6 +216,7 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
                     try f(v)
                     catch
                         case ex if NonFatal(ex) =>
+                            given Frame = Frame.internal
                             Log.unsafe.error("uncaught exception", ex)
                     end try
                     self

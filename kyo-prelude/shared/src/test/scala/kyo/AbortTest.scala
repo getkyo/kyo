@@ -351,16 +351,16 @@ class AbortsTest extends Test:
                     }
                 "success" in {
                     assert(
-                        kyo.Env.run(2)(
-                            Abort.run[Ex1](Abort.catching[Ex1](test(kyo.Env.get)))
+                        Env.run(2)(
+                            Abort.run[Ex1](Abort.catching[Ex1](test(Env.get)))
                         ).eval ==
                             Result.success(5)
                     )
                 }
                 "failure" in {
                     assert(
-                        kyo.Env.run(0)(
-                            Abort.run[Ex1](Abort.catching[Ex1](test(kyo.Env.get)))
+                        Env.run(0)(
+                            Abort.run[Ex1](Abort.catching[Ex1](test(Env.get)))
                         ).eval ==
                             Result.fail(ex1)
                     )
@@ -388,34 +388,34 @@ class AbortsTest extends Test:
             "interactions with Env" - {
                 "should have access to the environment within Abort" in {
                     val env    = "test"
-                    val result = kyo.Env.run(env)(Abort.run[String](kyo.Env.get[String]))
+                    val result = Env.run(env)(Abort.run[String](Env.get[String]))
                     assert(result.eval == Result.success(env))
                 }
 
                 "should propagate Abort failures within Env" in {
-                    val result = kyo.Env.run("test")(Abort.run[String](Abort.fail("failure")))
+                    val result = Env.run("test")(Abort.run[String](Abort.fail("failure")))
                     assert(result.eval == Result.fail("failure"))
                 }
             }
 
             "interactions with Var" - {
                 "should have access to the state within Abort" in {
-                    val result = kyo.Var.run(42)(
+                    val result = Var.run(42)(
                         Abort.run[String](
-                            kyo.Var.get[Int].map(_.toString)
+                            Var.get[Int].map(_.toString)
                         )
                     )
                     assert(result.eval == Result.success("42"))
                 }
 
                 "should not modify state on Abort failures" in {
-                    val result = kyo.Var.run(42)(
+                    val result = Var.run(42)(
                         Abort.run[String](
-                            kyo.Var.set[Int](24).map(_ => Abort.fail("failure"))
+                            Var.set[Int](24).map(_ => Abort.fail("failure"))
                         )
                     )
                     assert(result.eval == Result.fail("failure"))
-                    assert(kyo.Var.run(42)(kyo.Var.get[Int]).eval == 42)
+                    assert(Var.run(42)(Var.get[Int]).eval == 42)
                 }
             }
 

@@ -63,7 +63,7 @@ object Timer:
                 def isDone(using Frame): Boolean < IO      = IO(task.isDone())
             end Task
 
-            private def eval(f: => Unit < Async): Unit =
+            private def eval(f: => Unit < Async)(using Frame): Unit =
                 discard(IO.run(Async.run(f)).eval)
 
             def schedule(delay: Duration)(f: => Unit < Async)(using Frame) =

@@ -39,7 +39,7 @@ object Memo:
             }
     end apply
 
-    def run[A: Flat, S](v: A < (Memo & S)): A < S =
+    def run[A: Flat, S](v: A < (Memo & S))(using Frame): A < S =
         Var.run(empty)(v)
 
 end Memo

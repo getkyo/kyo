@@ -1,6 +1,6 @@
 package kyo
 
-class aspectsTest extends Test:
+class AspectTest extends Test:
 
     "one aspect" - {
         val aspect       = Aspect.init[Int, Int, Any]
@@ -87,4 +87,4 @@ class aspectsTest extends Test:
             }
         }
     }
-end aspectsTest
+end AspectTest

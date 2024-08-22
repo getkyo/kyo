@@ -1,4 +1,4 @@
-package kyo.examples.ledger
+package examples.ledger
 
 import java.time.Instant
 import zio.json.JsonCodec

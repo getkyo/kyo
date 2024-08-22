@@ -15,7 +15,7 @@ end Latch
 
 object Latch:
 
-    def init(n: Int): Latch < IO =
+    def init(n: Int)(using Frame): Latch < IO =
         if n <= 0 then
             new Latch:
                 def await(using Frame)   = ()

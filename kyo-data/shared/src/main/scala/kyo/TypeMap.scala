@@ -45,8 +45,6 @@ object TypeMap:
             self.keySet.exists(_ <:< tag)
     end extension
 
-    given flat[A]: Flat[TypeMap[A]] = Flat.unsafe.bypass
-
     val empty: TypeMap[Any] = TreeSeqMap.empty(TreeSeqMap.OrderBy.Modification)
 
     def apply[A](a: A)(using ta: Tag[A]): TypeMap[A] =

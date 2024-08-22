@@ -1,4 +1,4 @@
-package kyo.examples.ledger.db
+package examples.ledger.db
 
 import java.io.FileWriter
 import kyo.*

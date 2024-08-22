@@ -25,6 +25,13 @@ class RuntimeEffectTest extends Test:
     }
 
     "handle" - {
+
+        "const value" in {
+            val effect = testRuntimeEffect1
+            val result = ContextEffect.handle(Tag[TestRuntimeEffect1], 42)(effect)
+            assert(result.eval == 42)
+        }
+
         "single effect" in {
             val effect = testRuntimeEffect1
             val result = ContextEffect.handle(Tag[TestRuntimeEffect1], 42, _ + 1)(effect)

@@ -1,7 +1,7 @@
-package kyo.examples.ledger.db
+package examples.ledger.db
 
+import examples.ledger.*
 import kyo.{Result as _, *}
-import kyo.examples.ledger.*
 
 trait DB:
 

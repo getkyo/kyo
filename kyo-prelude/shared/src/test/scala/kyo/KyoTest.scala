@@ -167,14 +167,14 @@ class KyoTest extends Test:
 
         "collectUnit" in {
             var count = 0
-            val io    = kyo.Env.use[Unit](_ => count += 1)
-            kyo.Env.run(())(Kyo.collectDiscard(Seq.empty)).eval
+            val io    = Env.use[Unit](_ => count += 1)
+            Env.run(())(Kyo.collectDiscard(Seq.empty)).eval
             assert(count == 0)
-            kyo.Env.run(())(Kyo.collectDiscard(Seq(io))).eval
+            Env.run(())(Kyo.collectDiscard(Seq(io))).eval
             assert(count == 1)
-            kyo.Env.run(())(Kyo.collectDiscard(List.fill(42)(io))).eval
+            Env.run(())(Kyo.collectDiscard(List.fill(42)(io))).eval
             assert(count == 43)
-            kyo.Env.run(())(Kyo.collectDiscard(Vector.fill(10)(io))).eval
+            Env.run(())(Kyo.collectDiscard(Vector.fill(10)(io))).eval
             assert(count == 53)
         }
 
@@ -233,8 +233,8 @@ class KyoTest extends Test:
 
             "collectUnit" in {
                 var count = 0
-                val io    = kyo.Env.use[Unit](_ => count += 1)
-                kyo.Env.run(())(Kyo.collectDiscard(Seq.fill(n)(io))).eval
+                val io    = Env.use[Unit](_ => count += 1)
+                Env.run(())(Kyo.collectDiscard(Seq.fill(n)(io))).eval
                 assert(count == n)
             }
 

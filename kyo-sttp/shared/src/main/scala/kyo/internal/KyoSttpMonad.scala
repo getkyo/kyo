@@ -1,6 +1,7 @@
 package kyo.internal
 
 import KyoSttpMonad.M
+import KyoSttpMonad.given
 import kyo.*
 import kyo.kernel.Effect
 import kyo.scheduler.IOPromise
@@ -68,4 +69,5 @@ object KyoSttpMonad extends KyoSttpMonad:
     type M[A] = A < Async
 
     inline given KyoSttpMonad = this
+    given Frame               = Frame.internal
 end KyoSttpMonad
