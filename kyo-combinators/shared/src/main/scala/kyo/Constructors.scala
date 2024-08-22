@@ -67,11 +67,17 @@ extension (kyoObject: Kyo.type)
     def fromAutoCloseable[A <: AutoCloseable, S](closeable: => A < S)(using Frame): A < (S & Resource & IO) =
         acquireRelease(closeable)(c => IO(c.close()))
 
-    def fromEither[E, A](either: => Either[E, A])(using Frame): A < Abort[E] =
-        Abort.get(either)
+    def fromEither[E, A, S](either: => Either[E, A] < S)(using Frame): A < (S & Abort[E]) =
+        either.map(Abort.get(_))
 
-    def fromResult[E, A](result: => Result[E, A])(using Frame): A < Abort[E] =
-        Abort.get(result)
+    def fromOption[A, S](option: => Option[A] < S)(using Frame): A < (S & Abort[Maybe.Empty]) =
+        option.map(o => Abort.get(o.toRight[Maybe.Empty](Maybe.Empty)))
+
+    def fromMaybe[A, S](maybe: => Maybe[A] < S)(using Frame): A < (S & Abort[Maybe.Empty]) =
+        maybe.map(m => Abort.get(m))
+
+    def fromResult[E, A, S](result: => Result[E, A] < S)(using Frame): A < (S & Abort[E]) =
+        result.map(Abort.get(_))
 
     def fromFuture[A: Flat, S](future: => Future[A] < S)(using Frame): A < (S & Async) =
         future.map(f => Fiber.fromFuture(f).map(_.get))
@@ -80,7 +86,7 @@ extension (kyoObject: Kyo.type)
         promise.map(p => fromFuture(p.future))
 
     def fromSeq[A, S](sequence: => Seq[A] < S)(using Frame): A < (S & Choice) =
-        sequence.flatMap(seq => Choice.get(seq))
+        sequence.map(seq => Choice.get(seq))
 
     def fromTry[A, S](_try: => scala.util.Try[A] < S)(using Frame): A < (S & Abort[Throwable]) =
         _try.map(Abort.get(_))

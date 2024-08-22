@@ -2456,7 +2456,7 @@ val effect: Unit < (Console & Async & Resource & Abort[Throwable] & Env[NameServ
     for
         nameService <- Kyo.service[NameService]       // Adds Env[NameService] effect
         _           <- keepTicking.forkScoped         // Adds Console, Async, and Resource effects
-        saluee      <- Console.readln                // Uses Console effect
+        saluee      <- Console.readln                 // Uses Console effect
         _           <- Kyo.sleep(2.seconds)           // Uses Async (semantic blocking)
         _           <- nameService.sayHelloTo(saluee) // Adds Abort[Throwable] effect
     yield ()
@@ -2468,7 +2468,7 @@ IO.run {                              // Handles IO
         Kyo.scoped {                   // Handles Resource
             effect
                 .provideAs[HelloService](HelloService.Live) // Handles Env[HelloService]
-                .catchAborts((thr: Throwable) =>            // Handles Abort[Throwable]
+                .catchAbort((thr: Throwable) =>             // Handles Abort[Throwable]
                     Kyo.debug(s"Failed printing to console: ${throwable}")
                 )
                 .provideDefaultConsole // Handles Console
@@ -2479,24 +2479,24 @@ IO.run {                              // Handles IO
 
 ### Failure conversions
 
-One notable departure from the ZIO API worth calling out is a set of combinators for converting between failure effects. Whereas ZIO has a single channel for describing errors, Kyo has at least three different effect types that can describe failure in the basic sense of "short-circuiting": `Abort`, `Options`, and `Choice` (an empty `Seq` being equivalent to a short-circuit). It's useful to be able to move between these effects easily, so `kyo-combinators` provides a number of extension methods, usually in the form of `def effect1ToEffect2`.
+One notable departure from the ZIO API worth calling out is a set of combinators for converting between failure effects. Whereas ZIO has a single channel for describing errors, Kyo has different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). `Abort[Maybe.Empty]` can also be used like `Choice` to model short-circuiting an empty result. It's useful to be able to move between these effects easily, so `kyo-combinators` provides a number of extension methods, usually in the form of `def effect1ToEffect2`.
 
 Some examples:
 
 ```scala 
-val abortsEffect: Int < Abort[String] = ???
+val abortEffect: Int < Abort[String] = ???
 
-// Converts failures to Options.empty
-val optionsEffect: Int < Options = abortsEffect.abortsToOptions
+// Converts failures to empty failure
+val maybeEffect: Int < Abort[Maybe.Empty] = abortEffect.abortToEmpty
 
-// Converts option to a single "choice" (or Seq)
-val choicesEffect: Int < Choice = optionsEffect.optionsToChoice
+// Converts empty failure to a single "choice" (or Seq)
+val choiceEffect: Int < Choice = maybeEffect.emptyAbortToChoice
 
 // Fails with Nil#head exception if empty and succeeds with Seq.head if non-empty
-val newAbortsEffect: Int < Abort[Throwable] = choicesEffect.choicesToThrowable
+val newAbortEffect: Int < Abort[Throwable] = choiceEffect.choiceToThrowable
 
 // Throws a throwable Abort failure (will actually throw unless suspended)
-val unsafeEffect: Int < Any = newAbortsEffect.implicitAborts
+val unsafeEffect: Int < Any = newAbortEffect.implicitAborts
 
 // Catch any suspended throws
 val safeEffect: Int < Abort[Throwable] = unsafeEffect.explicitAborts
