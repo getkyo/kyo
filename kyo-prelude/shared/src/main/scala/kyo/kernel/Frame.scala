@@ -22,7 +22,7 @@ object Frame:
     ) derives CanEqual:
 
         def show: String =
-            Ansi.highlight(s"// $declaringClass $methodName", snippetLong, s"// $position", position.lineNumber)
+            Ansi.highlight(s"// $position $declaringClass $methodName", snippetLong, s"", position.lineNumber)
 
         override def toString = s"Frame($declaringClass, $methodName, $position, $snippetShort)"
     end Parsed

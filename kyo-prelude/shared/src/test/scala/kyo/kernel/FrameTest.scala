@@ -21,15 +21,12 @@ class FrameTest extends Test:
     "show" in {
         import kyo.Ansi.*
         assert(test1.show.stripAnsi ==
-            """|  │ // kyo.kernel.FrameTest test1
-               |9 │ def test1 = test(1 + 2)📍
-               |  │ // FrameTest.scala:9:28""".stripMargin)
-
+            """|  │ // FrameTest.scala:9:28 kyo.kernel.FrameTest test1
+               |9 │ def test1 = test(1 + 2)📍""".stripMargin)
         assert(test2.show.stripAnsi ==
-            """|   │ // kyo.kernel.FrameTest test2
+            """|   │ // FrameTest.scala:14:6 kyo.kernel.FrameTest test2
                |14 │     x / x
-               |15 │ }📍
-               |   │ // FrameTest.scala:14:6""".stripMargin)
+               |15 │ }📍""".stripMargin)
     }
 
     "parse" in {
