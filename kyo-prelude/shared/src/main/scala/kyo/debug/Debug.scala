@@ -1,10 +1,13 @@
-package kyo
+package kyo.debug
 
-import Ansi.*
+import kyo.*
+import kyo.Ansi.*
 import kyo.kernel.Effect
 import kyo.kernel.Safepoint
 
 object Debug:
+
+    private inline def maxValueLength = 500
 
     def apply[A, S](v: => A < S)(using frame: Frame): A < S =
         Effect.catching {
@@ -20,7 +23,7 @@ object Debug:
         }
     end apply
 
-    def trace[A, S](v: => A < S): A < S =
+    def trace[A, S](v: => A < S)(using Frame): A < S =
         val interceptor = new Safepoint.Interceptor:
             def enter(frame: Frame, value: Any): Boolean =
                 printValue(value)
@@ -45,7 +48,13 @@ object Debug:
 
     private def printValue(value: Any) =
         println("──────────────────────────────".dim)
-        println(pprint(value).render)
+        val rendered = pprint(value).render
+        val truncated =
+            if rendered.length > maxValueLength then
+                rendered.take(maxValueLength) + " ... (truncated)"
+            else
+                rendered
+        println(truncated)
         println("──────────────────────────────".dim)
     end printValue
 end Debug

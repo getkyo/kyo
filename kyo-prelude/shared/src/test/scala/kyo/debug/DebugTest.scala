@@ -52,7 +52,7 @@ class DebugTest extends Test:
             Stream.init(1 to 5)
                 .map(_ * 2)
                 .filter(_ % 3 == 0)
-                .runSeq
+                .run
         }
 
     def choiceComputation =
@@ -64,6 +64,8 @@ class DebugTest extends Test:
                 yield x + y
             }
         }
+
+    def largeValueComputation = Debug(List.fill(100)("a"))
 
     def testOutput(fragments: String*)(code: => Any): Assertion =
         import kyo.Ansi.*
@@ -111,6 +113,14 @@ class DebugTest extends Test:
             ) {
                 nestedDebugComputation.eval
             }
+
+        "value truncation" in
+            testOutput(
+                "DebugTest.scala:68:59",
+                "... (truncated)"
+            ) {
+                largeValueComputation.eval
+            }
     }
 
     "trace" - {
@@ -146,7 +156,7 @@ class DebugTest extends Test:
                 "DebugTest.scala:53:28",
                 "2",
                 "DebugTest.scala:53:28",
-                "Compact(array = Array(6))"
+                "Seq(6)"
             ) {
                 streamComputation.eval
             }
@@ -158,7 +168,7 @@ class DebugTest extends Test:
                 "DebugTest.scala:64:28",
                 "6",
                 "DebugTest.scala:65:14",
-                "List(List(List(7)))"
+                "Seq(Seq(Seq(7)))"
             ) {
                 choiceComputation.eval
             }
