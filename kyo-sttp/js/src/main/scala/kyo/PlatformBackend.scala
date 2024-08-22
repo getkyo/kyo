@@ -7,6 +7,7 @@ object PlatformBackend:
     val default =
         new Backend:
             val b = FetchBackend()
-            def send[A](r: Request[A, Any])(using Frame) =
+            def send[A](r: Request[A, Any]) =
+                given Frame = Frame.internal
                 Fiber.fromFuture(r.send(b)).map(_.get)
 end PlatformBackend
