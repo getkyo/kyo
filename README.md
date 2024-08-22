@@ -2096,6 +2096,55 @@ val q: Try[Int] = a.toTry
 
 Under the hood, `Result` is defined as an opaque type that is a supertype of `Success[T]` and `Failure[T]`. Success[T] represents a successful result and is encoded as either the value itself (`T`) or a special SuccessFailure[`T`] case class. The `SuccessFailure[T]` case class is used to handle the rare case where a `Failure[T]` needs to be wrapped in a `Success[T]`. On the other hand, a failed `Result` is always represented by a `Failure[T]` case class, which contains the exception that caused the failure. This means that creating a `Failure[T]` does incur an allocation cost. Additionally, some methods on `Result`, such as `fold`, `map`, and `flatMap`, may allocate in certain cases due to the need to catch and handle exceptions.
 
+### Ansi: Text Color and Formatting
+
+The `Ansi` object provides utilities for adding ANSI color and formatting to strings, as well as a code highlighting feature. This can be useful for creating colorful console output or formatting text for better readability.
+
+```scala
+import kyo.*
+
+// The 'String' extension methods require a separate import
+import kyo.Ansi.*
+
+// Add colors to strings
+val redText: String = "Error".red
+val blueText: String = "Info".blue
+
+// Add text formatting
+val boldText: String = "Important".bold
+val underlinedText: String = "Underlined".underline
+
+// Combine colors and formatting
+val importantError: String = "Critical Error".red.bold
+
+// Strip ANSI codes from a string
+val plainText: String = "\u001b[31mColored\u001b[0m".stripAnsi
+
+// Highlight code snippets
+val code = """
+def hello(name: String): Unit =
+println(s"Hello, $name!")
+"""
+lazy val highlightedCode: String = Ansi.highlight(code)
+
+// Highlight code with custom header and trailer
+lazy val customHighlight: String = 
+    Ansi.highlight(
+        header = "// File: example.scala",
+        code = code,
+        trailer = "// End of file",
+        startLine = 1
+    )
+```
+
+The `Ansi` object provides the following color extensions for strings:
+- `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `grey`
+
+And the following formatting extensions:
+- `bold`, `dim`, `italic`, `underline`
+
+The code highlighting feature supports basic syntax highlighting for Scala keywords, string literals, and comments.
+
 ## Integrations
 
 ### Cache: Memoized Functions via Caffeine
