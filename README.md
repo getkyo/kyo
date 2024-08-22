@@ -726,6 +726,45 @@ val c: Int < Any =
     )
 ```
 
+### Memo: Function Memoization
+
+The `Memo` effect in Kyo provides a mechanism for memoizing (caching) the results of function calls. It's implemented as a specialized `Var` effect that manages a cache of function results.
+
+```scala
+import kyo.*
+
+val fibonacci: Int => Int < Memo = 
+    Memo { n =>
+        if (n <= 1) n
+        else
+            for
+                a <- fibonacci(n - 1)
+                b <- fibonacci(n - 2)
+            yield a + b
+    }
+
+val result: (Int, Int) < Memo = 
+    Memo.run {
+        for
+            fib10 <- fibonacci(10)
+            fib11 <- fibonacci(11)
+        yield (fib10, fib11)
+    }
+
+val result2: (Int, Int) < Any =
+    Memo.run(result)
+```
+
+Key points about `Memo`:
+
+- `Memo` memoizes function results based on both the function's input and a unique internal `MemoIdentity` for each memoized function.
+- Memoization is scoped to the `Memo.run` block. A new cache is created at the start of the block and discarded at the end.
+- `Memo` works seamlessly with other Kyo effects, allowing memoization of effectful computations.
+- The memoization cache uses structural equality for keys, making it effective with immutable data structures.
+- Each memoized function has its own cache space, even if created with identical code at different call sites.
+
+For optimizing frequently called functions or computations in performance-critical sections of your code, the Cache effect would be more appropriate. `Memo` is designed for automatic memoization within a specific computation scope, while `Cache` provides more fine-grained control over caching behavior and better performance.
+
 ### Chunk: Efficient Sequences
 
 `Chunk` is an efficient mechanism for processing sequences of data in a purely functional manner. It offers a wide range of operations optimized for different scenarIO, ensuring high performance without compromising functional programming principles.
