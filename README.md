@@ -1496,6 +1496,43 @@ val c: Boolean < IO =
 
 > A `Promise` is basically a `Fiber` with all the regular functionality plus the `complete` and `become` methods to manually fulfill the promise.
 
+## Retry: Automatic Retries
+
+`Retry` provides a mechanism for retrying computations that may fail, with configurable policies for backoff and retry limits. This is particularly useful for operations that might fail due to transient issues, such as network requests or database operations.
+
+```scala
+import kyo.*
+import scala.concurrent.duration.*
+
+// Define a computation that might fail
+val unreliableComputation: Int < Abort[Exception] =
+    Abort.catching[Exception](throw new Exception("Temporary failure"))
+
+// Customize retry policy
+val customPolicy = Retry.Policy.default
+    .limit(5)
+    .exponential(100.millis, maxBackoff = 5.seconds)
+
+val a: Int < (Abort[Exception] & Async) =
+    Retry[Exception](customPolicy)(unreliableComputation)
+
+// Use a custom policy builder
+val b: Int < (Abort[Exception] & Async) =
+    Retry[Exception] { policy =>
+        policy
+            .limit(10)
+            .backoff(attempt => (attempt * 100).millis)
+    }(unreliableComputation)
+```
+
+The `Retry` effect automatically adds the `Async` effect to handle the backoff delays between retry attempts. The `Policy` class allows for fine-tuning of the retry behavior:
+
+- `limit`: Sets the maximum number of retry attempts.
+- `exponential`: Configures exponential backoff with a starting delay and optional maximum delay.
+- `backoff`: Allows for custom backoff strategies based on the attempt number.
+
+`Retry` will continue attempting the computation until it succeeds, the retry limit is reached, or an unhandled exception is thrown. If all retries fail, the last failure is propagated.
+
 ### Queue: Concurrent Queuing
 
 The `Queue` effect operates atop of `IO` and provides thread-safe queue data structures based on the high-performance [JCTools](https://github.com/JCTools/JCTools) library on the JVM. For ScalaJS, a simple `ArrayQueue` is used.
