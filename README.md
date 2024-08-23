@@ -2104,6 +2104,42 @@ val h: Unit < IO =
     doubleAdder.map(_.reset)
 ```
 
+### Debug: Interactive Development
+
+The `Debug` effect is a powerful tool for developers during the development process. Unlike other effects in Kyo, `Debug` intentionally performs side effects (printing to the console) without effect suspensions to provide immediate, visible feedback to developers. This makes it a valuable tool for debugging and understanding code behavior, but it's crucial to use it only in development environments and remove it before moving to production.
+
+```scala
+import kyo.*
+
+// Note that 'Debug' requires a separate import
+import kyo.debug.*
+
+// Wraps a computation, printing the source code location,
+// and the result (or exception) of the computation
+val a: Int < IO =
+    Debug {
+        IO(42)
+    }
+
+// Similar to `apply`, but also prints intermediate steps
+// of the computation, providing a trace of execution
+val b: Int < IO =
+    Debug.trace {
+        IO(41).map(_ + 1)
+    }
+
+// Allows printing of specific values along with their 
+// variable names, useful for inspecting particular states.
+// The return type of 'values' is 'Unit', not an effectful
+// computation.
+val c: Unit < IO =
+    IO {
+        val x = 42
+        val y = "Hello"
+        Debug.values(x, y)
+    }
+```
+
 ## Data Types
 
 ### Maybe: Allocation-free Optional Values
