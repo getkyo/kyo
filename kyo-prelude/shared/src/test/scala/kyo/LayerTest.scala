@@ -249,6 +249,14 @@ class LayerTest extends Test:
 
             Memo.run(Env.runLayer(a, b, c)(Env.get[Boolean].map(assert(_))))
         }
+        "multiple layers with effects" in run {
+            val a = Layer(Var.get[Int])
+            val b = Layer.from((i: Int) => i.toString: String < Abort[Int])
+            val c = Layer.from((s: String) => (s.length % 2 == 0))
+
+            val result = Abort.run(Var.run(42)(Memo.run(Env.runLayer(a, b, c)(Env.get[Boolean])))).eval
+            assert(result == Result.Success(true))
+        }
         "missing layer" in {
             val c = Layer('c')
             val d = Layer.from((c: Char) => c.isDigit)

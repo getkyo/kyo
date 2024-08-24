@@ -86,25 +86,6 @@ class FiberCombinatorTest extends Test:
             }
         }
 
-        "handle" - {
-            "should provide" in {
-                val effect: Int < Env[String] = Env.get[String].map(_.length)
-                assert(effect.provide("value").eval == 5)
-            }
-
-            "should provide incrementally" in {
-                val effect: Int < Env[String & Int & Boolean & Char] =
-                    Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].as(23)
-                val handled =
-                    effect
-                        .provide('c')
-                        .provide("value")
-                        .provide(1)
-                        .provide(false)
-                assert(handled.eval == 23)
-            }
-        }
-
         "zip par" - {
             "should zip right par" in {
                 val e1      = IO(1)

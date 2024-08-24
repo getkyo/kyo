@@ -348,7 +348,7 @@ class SwapSomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends Any
 end SwapSomeAbortOps
 
 extension [A, S, E](effect: A < (S & Env[E]))
-    def provide[S1, E1 >: E, ER](dependency: E1 < S1)(
+    def provideValue[S1, E1 >: E, ER](dependency: E1 < S1)(
         using
         ev: E => E1 & ER,
         flat: Flat[A],
@@ -358,7 +358,7 @@ extension [A, S, E](effect: A < (S & Env[E]))
     ): A < (S & S1 & reduce.SReduced) =
         dependency.map(d => Env.run[E1, A, S, ER](d)(effect.asInstanceOf[A < (S & Env[E1 | ER])]))
 
-    def provideLayer[S1, S2, E1 >: E, ER](layer: Layer[E1, S1] < S2)(
+    inline def provideLayer[S1, S2, E1 >: E, ER](layer: Layer[E1, S1] < S2)(
         using
         ev: E => E1 & ER,
         flat: Flat[A],
@@ -370,7 +370,10 @@ extension [A, S, E](effect: A < (S & Env[E]))
             l  <- layer
             tm <- l.run
             e1 = tm.get[E1]
-        yield effect.provide(e1)
+        yield effect.provideValue(e1)
+
+    transparent inline def provide(inline layers: Layer[?, ?]*): A < (Memo & S & Nothing) =
+        Env.runLayer(layers*)(effect)
 
 end extension
 

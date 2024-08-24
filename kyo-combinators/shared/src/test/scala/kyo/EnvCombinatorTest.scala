@@ -21,7 +21,7 @@ class EnvCombinatorTest extends Test:
         "handle" - {
             "should provide" in {
                 val effect: Int < Env[String] = Env.get[String].map(_.length)
-                assert(effect.provide("value").eval == 5)
+                assert(effect.provideValue("value").eval == 5)
             }
 
             "should provide incrementally" in {
@@ -29,10 +29,10 @@ class EnvCombinatorTest extends Test:
                     Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].as(23)
                 val handled =
                     effect
-                        .provide('c')
-                        .provide("value")
-                        .provide(1)
-                        .provide(false)
+                        .provideValue('c')
+                        .provideValue("value")
+                        .provideValue(1)
+                        .provideValue(false)
                 assert(handled.eval == 23)
             }
 
@@ -56,6 +56,24 @@ class EnvCombinatorTest extends Test:
                         .provideLayer(layerInt)
                         .provideLayer(layerBool)
                 assert(Memo.run(handled).eval == 23)
+            }
+
+            "should provide all layers" in {
+                val effect: Int < Env[String & Int & Boolean & Char] =
+                    Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].as(23)
+                val layerChar   = Layer(Kyo.suspend('c'))
+                val layerString = Layer("value")
+                val layerInt    = Layer(1)
+                val layerBool   = Layer(false)
+                val handled: Int < (IO & Memo) =
+                    effect
+                        .provide(
+                            layerChar,
+                            layerString,
+                            layerInt,
+                            layerBool
+                        )
+                assert(IO.run(Memo.run(handled)).eval == 23)
             }
         }
     }
