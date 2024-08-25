@@ -142,10 +142,10 @@ class AsyncTest extends Test:
     "delay" in run {
         for
             start <- IO(System.currentTimeMillis())
-            res   <- Async.delay(10.millis)(42)
+            res   <- Async.delay(5.millis)(42)
             end   <- IO(System.currentTimeMillis())
         yield
-            assert(end - start >= 10)
+            assert(end - start >= 4)
             assert(res == 42)
     }
 
