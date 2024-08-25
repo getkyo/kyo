@@ -3,7 +3,6 @@ package kyo.internal
 import java.util.concurrent.CompletionStage
 import kyo.*
 import kyo.scheduler.IOPromise
-import kyo.scheduler.IOTask
 
 trait FiberPlatformSpecific:
     def fromCompletionStage[A](cs: CompletionStage[A])(using Frame): A < Async =

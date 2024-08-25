@@ -6,6 +6,7 @@ import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.top.AdmissionStatus
 import kyo.scheduler.util.Flag
+import scala.annotation.nowarn
 import scala.concurrent.duration.*
 import scala.util.hashing.MurmurHash3
 
@@ -52,6 +53,7 @@ final class Admission(
     protected def update(diff: Int): Unit =
         admissionPercent = Math.max(0, Math.min(100, admissionPercent + diff))
 
+    @nowarn("msg=unused")
     private val gauges =
         List(
             statsScope.gauge("percent")(admissionPercent),

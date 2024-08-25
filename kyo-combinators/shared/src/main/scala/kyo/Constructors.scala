@@ -1,9 +1,7 @@
 package kyo
 
 import kyo.kernel.Reducible
-import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
-import scala.annotation.targetName
 import scala.concurrent.Future
 import scala.reflect.ClassTag
 import scala.util.Failure

@@ -3,7 +3,6 @@ package kyo.kernel
 import internal.*
 import kyo.Tag
 import scala.annotation.nowarn
-import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 abstract class Effect[-I[_], +O[_]]
@@ -63,7 +62,7 @@ object Effect:
         )(
             inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2),
             inline done: A => B < S3 = (v: A) => v,
-            inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
+            inline accept: [C] => I[C] => Boolean = [C] => (_: I[C]) => true
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
             @nowarn("msg=anonymous")
             def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
@@ -223,7 +222,7 @@ object Effect:
         )(
             inline handle: [C] => (I[C], State, Safepoint ?=> O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)) < S3,
             inline done: (State, A) => B < (S & S2 & S3) = (_: State, v: A) => v,
-            inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
+            inline accept: [C] => I[C] => Boolean = [C] => (_: I[C]) => true
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
             @nowarn("msg=anonymous")
             def handleLoop(state: State, v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
@@ -252,7 +251,7 @@ object Effect:
         )(
             inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2),
             inline done: A => B < S3 = (v: A) => v,
-            inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true,
+            inline accept: [C] => I[C] => Boolean = [C] => (_: I[C]) => true,
             inline recover: Throwable => B < (S & S2 & S3)
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
             @nowarn("msg=anonymous")

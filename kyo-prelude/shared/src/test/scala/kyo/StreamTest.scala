@@ -171,7 +171,6 @@ class StreamTest extends Test:
         }
 
         "with effects" in {
-            var count  = 0
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
             val dropped = stream.dropWhile { v =>
                 Var.update[Int](_ + 1).map(_ < 3)
@@ -682,7 +681,6 @@ class StreamTest extends Test:
         }
 
         "mapChunk with state-dependent abort" in run {
-            var state  = 0
             val stream = Stream.init(Chunk(1, 2, 3, 4, 5))
             val result = Abort.run[String] {
                 Var.run(0) {

@@ -2,13 +2,7 @@ package kyo.stats.internal
 
 import java.lang.ref.WeakReference
 import java.util.Collections
-import java.util.ServiceLoader
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadFactory
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.LongAdder
-import org.HdrHistogram.ConcurrentDoubleHistogram as HdrHistogram
 import scala.annotation.tailrec
 
 object StatsRegistry {

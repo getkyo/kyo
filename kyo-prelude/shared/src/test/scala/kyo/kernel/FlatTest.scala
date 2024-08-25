@@ -127,7 +127,9 @@ class FlatTest extends Test:
         }
 
         "work with type bounds" in {
-            def boundedMethod[A <: AnyVal: Flat.Weak](a: A): String = "Bounded method called"
+            def boundedMethod[A <: AnyVal: Flat.Weak](a: A): String =
+                discard(a)
+                "Bounded method called"
             boundedMethod(42)
             boundedMethod("hello")
             succeed

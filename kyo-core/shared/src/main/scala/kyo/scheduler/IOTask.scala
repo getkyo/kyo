@@ -4,11 +4,7 @@ import kyo.*
 import kyo.Tag
 import kyo.kernel.*
 import kyo.kernel.Effect
-import kyo.scheduler.InternalClock
 import kyo.scheduler.IOTask.*
-import kyo.scheduler.Scheduler
-import kyo.scheduler.Task
-import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 private[kyo] class IOTask[Ctx, E, A] private (

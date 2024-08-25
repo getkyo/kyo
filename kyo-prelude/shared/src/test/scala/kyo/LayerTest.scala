@@ -153,39 +153,40 @@ class LayerTest extends Test:
         }
         "missing Target" in {
             val a = Layer(true)
+            discard(a)
             assertDoesNotCompile("""Layer.init(a)""")
         }
         "circular dependency" in {
             val a = Layer.from((s: String) => s.size)
             val b = Layer.from((i: Int) => (i % 2 == 0))
             val c = Layer.from((b: Boolean) => b.toString)
-
+            discard(a, b, c)
             assertDoesNotCompile("""Layer.init[String](a, b, c)""")
         }
         "missing input" in {
             val a = Layer.from((s: String) => s.size)
             val b = Layer.from((i: Int) => i % 2 == 0)
-
+            discard(a, b)
             assertDoesNotCompile("""Layer.init[Boolean](a, b)""")
         }
         "missing multiple inputs" in {
             val a = Layer.from((s: String) => s.isEmpty)
             val b = Layer.from((i: Int) => i.toDouble)
             val c = Layer.from((_: Boolean, _: Double) => 'c')
-
+            discard(a, b, c)
             assertDoesNotCompile("""Layer.init[Char](a, b, c)""")
         }
         "missing output" in {
             val a = Layer(42)
             val b = Layer.from((i: Int) => i.toDouble)
             val c = Layer.from((d: Double) => d.toLong)
-
+            discard(a, b, c)
             assertDoesNotCompile("""Layer.init[String](a, b, c)""")
         }
         "ambigious input" in {
             val a = Layer(42)
             val b = Layer(42)
-
+            discard(a, b)
             assertDoesNotCompile("""Layer.init[Int](a, b)""")
         }
         "complex layer" in run {
@@ -221,14 +222,14 @@ class LayerTest extends Test:
             val a = Layer(new A)
             val b = Layer.from((a: A) => Abort.when(false)("").andThen(B(a)))
             val c = Layer.from((b: B) => Var.get[Unit].andThen(C(b)))
-
+            discard(a, b, c)
             assertCompiles("""Layer.init[C](a, b, c)""")
         }
         "pruneable inputs" in pendingUntilFixed {
             val a = Layer("")
             val b = Layer(true)
             val c = Layer(0)
-
+            discard(a, b, c)
             assertDoesNotCompile("""Layer.init[String](a, b, c)""")
         }
     }
@@ -252,7 +253,7 @@ class LayerTest extends Test:
         "missing layer" in {
             val c = Layer('c')
             val d = Layer.from((c: Char) => c.isDigit)
-
+            discard(c, d)
             assertDoesNotCompile("""Env.runLayer(c, d)(Env.get[String])""")
         }
         "intersection" in run {

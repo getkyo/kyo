@@ -1,17 +1,11 @@
 package kyo.scheduler.top
 
 import java.lang.management.ManagementFactory
-import javax.management.Attribute
 import javax.management.MBeanServer
 import javax.management.ObjectName
 import javax.management.StandardMBean
-import javax.management.remote.JMXConnectorFactory
-import javax.management.remote.JMXServiceURL
 import kyo.scheduler.InternalTimer
-import kyo.scheduler.Scheduler
-import scala.annotation.nowarn
 import scala.concurrent.duration.*
-import scala.io.StdIn
 
 class Reporter(
     status: () => Status,

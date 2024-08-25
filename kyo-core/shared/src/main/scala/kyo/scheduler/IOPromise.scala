@@ -1,16 +1,10 @@
 package kyo.scheduler
 
 import IOPromise.*
-import java.lang.invoke.MethodHandles
-import java.lang.invoke.VarHandle
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kyo.*
 import kyo.Result.Panic
-import kyo.kernel.Platform
 import kyo.kernel.Safepoint
-import kyo.scheduler.Scheduler
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
@@ -148,9 +142,6 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         discard(complete(v))
 
     final def complete[E2 <: E, A2 <: A](v: Result[E2, A2]): Boolean =
-        val r =
-            if !isNull(v) then v
-            else Result.success(null)
         @tailrec def completeLoop(): Boolean =
             state match
                 case p: Pending[E, A] @unchecked =>

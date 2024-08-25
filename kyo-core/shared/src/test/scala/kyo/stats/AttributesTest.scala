@@ -2,8 +2,6 @@ package kyo.stats
 
 import kyo.*
 import kyo.stats.Attributes.*
-import org.scalatest.NonImplicitAssertions
-import org.scalatest.freespec.AnyFreeSpec
 
 class AttributesTest extends Test:
 

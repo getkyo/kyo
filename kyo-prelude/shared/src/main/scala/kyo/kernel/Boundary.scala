@@ -1,9 +1,7 @@
 package kyo.kernel
 
 import internal.*
-import kyo.Tag
 import scala.annotation.nowarn
-import scala.annotation.tailrec
 import scala.quoted.*
 
 final class Boundary[Ctx, +S] private (dummy: Unit) extends AnyVal:

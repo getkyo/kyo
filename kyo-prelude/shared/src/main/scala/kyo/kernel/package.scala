@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tag
-import scala.collection.immutable
 
 package object kernel:
 

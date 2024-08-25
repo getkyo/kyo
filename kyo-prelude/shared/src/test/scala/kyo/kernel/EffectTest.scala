@@ -116,7 +116,7 @@ class EffectTest extends Test:
         "failure" in {
             val effect = Effect.suspend[Int](Tag[TestEffect1], 42)
             val result = Effect.handle.catching(Tag[TestEffect1], effect)(
-                [C] => (input, cont) => throw new RuntimeException("Test exception"),
+                [C] => (_, _) => throw new RuntimeException("Test exception"),
                 recover = {
                     case _: RuntimeException => "recovered"
                 }
@@ -243,9 +243,6 @@ class EffectTest extends Test:
     }
 
     "Effect.partial" - {
-        abstract class TestInterceptor extends Safepoint.Interceptor:
-            def addEnsure(f: () => Unit): Unit    = {}
-            def removeEnsure(f: () => Unit): Unit = {}
 
         "evaluates pure values" in {
             val x: Int < Any = 5

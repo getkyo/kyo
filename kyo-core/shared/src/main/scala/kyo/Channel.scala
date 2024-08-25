@@ -3,7 +3,6 @@ package kyo
 import kyo.scheduler.IOPromise
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
-import scala.util.control.NoStackTrace
 
 abstract class Channel[A]:
     self =>

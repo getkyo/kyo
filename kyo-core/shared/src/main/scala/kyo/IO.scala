@@ -1,12 +1,7 @@
 package kyo
 
-import java.util.concurrent.atomic.AtomicReference
 import kyo.Tag
 import kyo.kernel.*
-import scala.util.Failure
-import scala.util.Success
-import scala.util.Try
-import scala.util.control.NonFatal
 
 sealed trait IO extends Effect[Const[Unit], Const[Unit]]
 

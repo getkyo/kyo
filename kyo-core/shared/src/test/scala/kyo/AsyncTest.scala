@@ -3,8 +3,6 @@ package kyo
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 import org.scalatest.compatible.Assertion
-import scala.util.Failure
-import scala.util.Try
 
 class AsyncTest extends Test:
 

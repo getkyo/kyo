@@ -15,7 +15,6 @@ import kyo.scheduler.util.Threads
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.concurrent.Eventually.*
 import org.scalatest.freespec.AnyFreeSpec
-import scala.concurrent.duration.*
 
 class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
 

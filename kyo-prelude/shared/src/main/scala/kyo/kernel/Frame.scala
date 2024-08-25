@@ -97,7 +97,6 @@ object Frame:
     end frameImpl
 
     private def show(using Quotes)(symbol: quotes.reflect.Symbol): String =
-        import quotes.reflect.*
         if symbol.isClassDef then symbol.fullName
         else if symbol.isDefDef then symbol.name
         else ""

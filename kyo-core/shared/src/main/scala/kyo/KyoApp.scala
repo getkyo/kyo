@@ -1,7 +1,6 @@
 package kyo
 
 import scala.collection.mutable.ListBuffer
-import scala.util.Try
 
 abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
     def log: Log.Unsafe = Log.unsafe

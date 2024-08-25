@@ -237,6 +237,7 @@ class ResultTest extends Test:
     "filter" - {
         "adds NoSuchElementException" in {
             val x = Result.success(2).filter(_ % 2 == 0)
+            discard(x)
             assertCompiles("val _: Result[NoSuchElementException, Int] = x")
         }
         "returns itself if the predicate holds for Success" in {
@@ -345,6 +346,7 @@ class ResultTest extends Test:
             }
             "fails to compile for non-Throwable error" in {
                 val failure: Result[String, Int] = Fail("Something went wrong")
+                val _                            = failure
                 assertDoesNotCompile("failure.toTry")
             }
         }
@@ -657,8 +659,8 @@ class ResultTest extends Test:
         "handle exceptions in the yield" in {
             val result =
                 for
-                    x <- Result.success(1)
-                    y <- Result.success(2)
+                    _ <- Result.success(1)
+                    _ <- Result.success(2)
                 yield throw new Exception("error")
 
             assert(result.isPanic)

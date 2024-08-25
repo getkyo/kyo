@@ -1,6 +1,5 @@
 package kyo
 
-import internal.BaseKyoTest
 import kyo.internal.BaseKyoTest
 import kyo.kernel.Platform
 import org.scalatest.NonImplicitAssertions

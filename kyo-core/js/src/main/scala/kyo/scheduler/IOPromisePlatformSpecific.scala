@@ -1,7 +1,5 @@
 package kyo.scheduler
 
-import java.lang.invoke.MethodHandles
-
 abstract class IOPromisePlatformSpecific:
 
     class VarHandle:

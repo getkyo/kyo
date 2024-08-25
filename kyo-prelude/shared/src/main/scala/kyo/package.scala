@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tag
-import kyo.kernel.Safepoint
 
 private[kyo] type Frame = kernel.Frame
 private[kyo] inline def Frame = kernel.Frame
@@ -16,7 +15,7 @@ val Loop = kernel.Loop
 private[kyo] inline def isNull[A](v: A): Boolean =
     v.asInstanceOf[AnyRef] eq null
 
-private[kyo] inline def discard[A](inline v: => A): Unit =
+private[kyo] inline def discard[A](inline v: => A*): Unit =
     val _ = v
     ()
 

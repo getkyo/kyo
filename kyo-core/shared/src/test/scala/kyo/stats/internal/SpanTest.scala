@@ -2,7 +2,6 @@ package kyo.stats.internal
 
 import kyo.*
 import kyo.stats.*
-import kyo.stats.internal.*
 
 class SpanTest extends Test:
 

@@ -1,7 +1,6 @@
 package kyo.debug
 
 import java.io.ByteArrayOutputStream
-import java.io.PrintStream
 import kyo.*
 
 class DebugTest extends Test:
@@ -89,7 +88,7 @@ class DebugTest extends Test:
     "apply" - {
         "pure value" in
             testOutput(
-                "DebugTest.scala:9:41",
+                "DebugTest.scala:8:41",
                 "42"
             ) {
                 pureValueComputation.eval
@@ -97,7 +96,7 @@ class DebugTest extends Test:
 
         "with effects" in
             testOutput(
-                "DebugTest.scala:15:59",
+                "DebugTest.scala:14:59",
                 "31"
             ) {
                 effectsComputation.eval
@@ -105,7 +104,7 @@ class DebugTest extends Test:
 
         "with pipe" in
             testOutput(
-                "DebugTest.scala:20:60",
+                "DebugTest.scala:19:60",
                 "11"
             ) {
                 pipeComputation.eval
@@ -113,8 +112,8 @@ class DebugTest extends Test:
 
         "nested Debug calls" in
             testOutput(
-                "DebugTest.scala:22:49",
-                "DebugTest.scala:22:50",
+                "DebugTest.scala:21:49",
+                "DebugTest.scala:21:50",
                 "42"
             ) {
                 nestedDebugComputation.eval
@@ -122,7 +121,7 @@ class DebugTest extends Test:
 
         "value truncation" in
             testOutput(
-                "DebugTest.scala:68:59",
+                "DebugTest.scala:67:59",
                 "... (truncated)"
             ) {
                 largeValueComputation.eval
@@ -132,7 +131,7 @@ class DebugTest extends Test:
     "trace" - {
         "simple computation" in
             testOutput(
-                "DebugTest.scala:29:44",
+                "DebugTest.scala:28:44",
                 "Env.get[Int]",
                 "5",
                 "Var.update[Int]",
@@ -145,9 +144,9 @@ class DebugTest extends Test:
 
         "with Memo effect" in
             testOutput(
-                "DebugTest.scala:38:57",
+                "DebugTest.scala:37:57",
                 "10",
-                "DebugTest.scala:38:57",
+                "DebugTest.scala:37:57",
                 "12",
                 "memoizedFn(6)",
                 "(10, 10, 12)"
@@ -157,11 +156,11 @@ class DebugTest extends Test:
 
         "with Stream" in
             testOutput(
-                "DebugTest.scala:54:36",
+                "DebugTest.scala:53:36",
                 "2147483647",
-                "DebugTest.scala:53:28",
+                "DebugTest.scala:52:28",
                 "2",
-                "DebugTest.scala:53:28",
+                "DebugTest.scala:52:28",
                 "Seq(6)"
             ) {
                 streamComputation.eval
@@ -169,11 +168,11 @@ class DebugTest extends Test:
 
         "with Choice" in
             testOutput(
-                "DebugTest.scala:64:28",
+                "DebugTest.scala:63:28",
                 "List(4, 5, 6)",
-                "DebugTest.scala:64:28",
+                "DebugTest.scala:63:28",
                 "6",
-                "DebugTest.scala:65:14",
+                "DebugTest.scala:64:14",
                 "Seq(Seq(Seq(7)))"
             ) {
                 choiceComputation.eval
@@ -183,7 +182,7 @@ class DebugTest extends Test:
     "values" - {
         "pure values" in
             testOutput(
-                "DebugTest.scala:70:52",
+                "DebugTest.scala:69:52",
                 """Params("1" -> 1, "\"test\"" -> "test")"""
             ) {
                 valuesComputation
@@ -191,7 +190,7 @@ class DebugTest extends Test:
 
         "complex values" in
             testOutput(
-                "DebugTest.scala:72:77",
+                "DebugTest.scala:71:77",
                 """"List(1, 2, 3)" -> List(1, 2, 3)""",
                 """"Env.get[Int]" -> Kyo(Tag"""
             ) {
@@ -200,7 +199,7 @@ class DebugTest extends Test:
 
         "parameter values" in
             testOutput(
-                "DebugTest.scala:74:95",
+                "DebugTest.scala:73:95",
                 """Params("param1" -> 1, "param2" -> "test")"""
             ) {
                 parameterValuesComputation(1, "test")
