@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import internal.*
+import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.util.NotGiven
@@ -46,21 +47,25 @@ object Loop:
     @targetName("done4")
     def done[A, B, C, D, O](v: O): Outcome4[A, B, C, D, O] = v
 
+    @nowarn("msg=anonymous")
     inline def continue[A, O, S](inline v: A): Outcome[A, O] =
         new Continue:
             def _1 = v
 
+    @nowarn("msg=anonymous")
     inline def continue[A, B, o](inline v1: A, inline v2: B): Outcome2[A, B, o] =
         new Continue2:
             def _1 = v1
             def _2 = v2
 
+    @nowarn("msg=anonymous")
     inline def continue[A, B, C, O](inline v1: A, inline v2: B, inline v3: C): Outcome3[A, B, C, O] =
         new Continue3:
             def _1 = v1
             def _2 = v2
             def _3 = v3
 
+    @nowarn("msg=anonymous")
     inline def continue[A, B, C, D, O](inline v1: A, inline v2: B, inline v3: C, inline v4: D): Outcome4[A, B, C, D, O] =
         new Continue4:
             def _1 = v1
@@ -69,6 +74,7 @@ object Loop:
             def _4 = v4
 
     inline def apply[A, O, S](inline input: A)(inline run: A => Outcome[A, O] < S)(using inline _frame: Frame): O < S =
+        @nowarn("msg=anonymous")
         @tailrec def loop(i1: A)(v: Outcome[A, O] < S = run(i1)): O < S =
             v match
                 case next: Continue[A] @unchecked =>
@@ -84,6 +90,7 @@ object Loop:
     end apply
 
     inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Outcome2[A, B, O] < S)(using inline _frame: Frame): O < S =
+        @nowarn("msg=anonymous")
         @tailrec def loop(i1: A, i2: B)(v: Outcome2[A, B, O] < S = run(i1, i2)): O < S =
             v match
                 case next: Continue2[A, B] @unchecked =>
@@ -101,6 +108,7 @@ object Loop:
     inline def apply[A, B, C, O, S](input1: A, input2: B, input3: C)(
         inline run: (A, B, C) => Outcome3[A, B, C, O] < S
     )(using inline _frame: Frame): O < S =
+        @nowarn("msg=anonymous")
         @tailrec def loop(i1: A, i2: B, i3: C)(v: Outcome3[A, B, C, O] < S = run(i1, i2, i3)): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked =>
@@ -118,6 +126,7 @@ object Loop:
     inline def apply[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
         inline run: (A, B, C, D) => Outcome4[A, B, C, D, O] < S
     )(using inline _frame: Frame): O < S =
+        @nowarn("msg=anonymous")
         @tailrec def loop(i1: A, i2: B, i3: C, i4: D)(v: Outcome4[A, B, C, D, O] < S = run(i1, i2, i3, i4)): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
@@ -133,6 +142,7 @@ object Loop:
     end apply
 
     inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using inline _frame: Frame): O < S =
+        @nowarn("msg=anonymous")
         @tailrec def loop(idx: Int)(v: Outcome[Unit, O] < S = run(idx)): O < S =
             v match
                 case next: Continue[Unit] @unchecked =>
@@ -148,6 +158,7 @@ object Loop:
     end indexed
 
     inline def indexed[A, O, S](input: A)(inline run: (Int, A) => Outcome[A, O] < S)(using inline _frame: Frame): O < S =
+        @nowarn("msg=anonymous")
         @tailrec def loop(idx: Int, i1: A)(v: Outcome[A, O] < S = run(idx, i1)): O < S =
             v match
                 case next: Continue[A] @unchecked =>
@@ -165,6 +176,7 @@ object Loop:
     inline def indexed[A, B, O, S](input1: A, input2: B)(
         inline run: (Int, A, B) => Outcome2[A, B, O] < S
     )(using inline _frame: Frame): O < S =
+        @nowarn("msg=anonymous")
         @tailrec def loop(idx: Int, i1: A, i2: B)(v: Outcome2[A, B, O] < S = run(idx, i1, i2)): O < S =
             v match
                 case next: Continue2[A, B] @unchecked =>
@@ -182,6 +194,7 @@ object Loop:
     inline def indexed[A, B, C, O, S](input1: A, input2: B, input3: C)(
         inline run: (Int, A, B, C) => Outcome3[A, B, C, O] < S
     )(using inline _frame: Frame): O < S =
+        @nowarn("msg=anonymous")
         @tailrec def loop(idx: Int, i1: A, i2: B, i3: C)(v: Outcome3[A, B, C, O] < S = run(idx, i1, i2, i3)): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked =>
@@ -199,7 +212,9 @@ object Loop:
     inline def indexed[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
         inline run: (Int, A, B, C, D) => Outcome4[A, B, C, D, O] < S
     )(using inline _frame: Frame): O < S =
-        @tailrec def loop(idx: Int, i1: A, i2: B, i3: C, i4: D)(v: Outcome4[A, B, C, D, O] < S = run(idx, i1, i2, i3, i4)): O < S =
+        @nowarn("msg=anonymous")
+        @tailrec def loop(idx: Int, i1: A, i2: B, i3: C, i4: D)(v: Outcome4[A, B, C, D, O] < S =
+            run(idx, i1, i2, i3, i4)): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(idx + 1, next._1, next._2, next._3, next._4)()
@@ -214,6 +229,7 @@ object Loop:
     end indexed
 
     inline def foreach[S](inline run: => Outcome[Unit, Unit] < S)(using inline _frame: Frame): Unit < S =
+        @nowarn("msg=anonymous")
         @tailrec def loop(v: Outcome[Unit, Unit] < S = run): Unit < S =
             v match
                 case next: Continue[Unit] @unchecked =>
@@ -229,6 +245,7 @@ object Loop:
     end foreach
 
     inline def repeat[S](n: Int)(inline run: => Unit < S)(using inline _frame: Frame): Unit < S =
+        @nowarn("msg=anonymous")
         @tailrec def loop(i: Int)(v: Outcome[Unit, Unit] < S = run): Unit < S =
             if i == n then ()
             else

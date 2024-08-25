@@ -3,6 +3,7 @@ package kyo.kernel
 import internal.*
 import kyo.Tag
 import kyo.bug
+import scala.annotation.nowarn
 import scala.util.NotGiven
 
 abstract class ContextEffect[+A]
@@ -25,6 +26,7 @@ object ContextEffect:
     )(using inline frame: Frame): A < Any =
         suspendMap(tag, default)(identity)
 
+    @nowarn("msg=anonymous")
     inline def suspendMap[A, E <: ContextEffect[A], B, S](
         inline _tag: Tag[E],
         inline default: => A
@@ -58,6 +60,7 @@ object ContextEffect:
         inline _frame: Frame,
         inline flat: Flat[A]
     ): B < S =
+        @nowarn("msg=anonymous")
         def handleLoop(v: B < (E & S))(using Safepoint): B < S =
             v match
                 case kyo: KyoSuspend[IX, OX, EX, Any, B, S] @unchecked =>

@@ -3,6 +3,7 @@ package kyo
 import Var.internal.*
 import kyo.Tag
 import kyo.kernel.*
+import scala.annotation.nowarn
 
 sealed trait Var[V] extends Effect[Const[Op[V]], Const[V]]
 
@@ -33,10 +34,12 @@ object Var:
         Effect.suspendMap[Unit](tag, value: Op[V])(_ => ())
 
     /** Applies the update function and returns the new value. */
+    @nowarn("msg=anonymous")
     inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
         Effect.suspend[V](tag, (v => f(v)): Update[V])
 
     /** Applies the update function and returns `Unit`. */
+    @nowarn("msg=anonymous")
     inline def updateDiscard[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
         Effect.suspendMap[Unit](tag, (v => f(v)): Update[V])(_ => ())
 

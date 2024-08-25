@@ -3,6 +3,7 @@ package kyo.kernel
 import internal.*
 import kyo.*
 import kyo.Maybe
+import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.language.implicitConversions
 import scala.util.NotGiven
@@ -65,7 +66,7 @@ object `<`:
             inline flatB: Flat.Weak[B],
             inline safepoint: Safepoint
         ): B < (S & S2) =
-            def mapLoop(v: A < S)(using Safepoint): B < (S & S2) =
+            @nowarn("msg=anonymous") def mapLoop(v: A < S)(using Safepoint): B < (S & S2) =
                 v match
                     case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):

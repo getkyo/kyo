@@ -2,6 +2,7 @@ package kyo.kernel
 
 import internal.*
 import kyo.Tag
+import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
@@ -19,6 +20,7 @@ object Effect:
 
     final class SuspendOps[A](dummy: Unit) extends AnyVal:
 
+        @nowarn("msg=anonymous")
         inline def apply[I[_], O[_], E <: Effect[I, O]](
             inline _tag: Tag[E],
             inline _input: I[A]
@@ -34,6 +36,7 @@ object Effect:
     inline def suspend[A]: SuspendOps[A] = SuspendOps(())
 
     final class SuspendMapOps[A](dummy: Unit) extends AnyVal:
+        @nowarn("msg=anonymous")
         inline def apply[I[_], O[_], E <: Effect[I, O], B, S](
             inline _tag: Tag[E],
             inline _input: I[A]
@@ -62,6 +65,7 @@ object Effect:
             inline done: A => B < S3 = (v: A) => v,
             inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
+            @nowarn("msg=anonymous")
             def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
                 v match
                     case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if tag =:= kyo.tag && accept(kyo.input) =>
@@ -91,6 +95,7 @@ object Effect:
             inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2),
             inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2)
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): A < (S & S2) =
+            @nowarn("msg=anonymous")
             def handle2Loop(kyo: A < (E1 & E2 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
                 kyo match
                     case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & S & S2] @unchecked if tag1 =:= kyo.tag =>
@@ -131,6 +136,7 @@ object Effect:
             inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
             inline handle3: [C] => (I3[C], Safepoint ?=> O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): A < (S & S2) =
+            @nowarn("msg=anonymous")
             def handle3Loop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using Safepoint): A < (S & S2) =
                 v match
                     case kyo: KyoSuspend[I1, O1, E1, Any, A, E1 & E2 & E3 & S & S2] @unchecked if tag1 =:= kyo.tag =>
@@ -219,6 +225,7 @@ object Effect:
             inline done: (State, A) => B < (S & S2 & S3) = (_: State, v: A) => v,
             inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
+            @nowarn("msg=anonymous")
             def handleLoop(state: State, v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
                 v match
                     case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if tag =:= kyo.tag && accept(kyo.input) =>
@@ -248,6 +255,7 @@ object Effect:
             inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true,
             inline recover: Throwable => B < (S & S2 & S3)
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
+            @nowarn("msg=anonymous")
             def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
                 v match
                     case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if tag =:= kyo.tag && accept(kyo.input) =>
@@ -285,6 +293,7 @@ object Effect:
     inline def catching[A, S, B >: A, S2](inline v: => A < S)(
         inline f: Throwable => B < S2
     )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2) =
+        @nowarn("msg=anonymous")
         def catchingLoop(v: B < (S & S2))(using Safepoint): B < (S & S2) =
             (v: @unchecked) match
                 case kyo: KyoSuspend[IX, OX, EX, Any, B, S & S2] @unchecked =>
