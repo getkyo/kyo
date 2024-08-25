@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kyo.bug
 import kyo.isNull
 import kyo.kernel.Safepoint.*
+import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
@@ -45,6 +46,7 @@ object Safepoint:
         def enter(frame: Frame, value: Any): Boolean
     end Interceptor
 
+    @nowarn("msg=anonymous")
     private[kyo] inline def immediate[A, S](p: Interceptor)(inline v: => A < S)(
         using safepoint: Safepoint
     ): A < S =
@@ -67,7 +69,7 @@ object Safepoint:
         inline safepoint: Safepoint,
         inline _frame: Frame
     ): A < S =
-        def loop(v: A < S): A < S =
+        @nowarn("msg=anonymous") def loop(v: A < S): A < S =
             v match
                 case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
                     new KyoContinue[IX, OX, EX, Any, A, S](kyo):
@@ -101,6 +103,7 @@ object Safepoint:
         end try
     end ensuring
 
+    @nowarn("msg=anonymous")
     private[kyo] inline def ensure[A, S](inline f: => Unit)(inline v: => A < S)(using safepoint: Safepoint, inline _frame: Frame): A < S =
         // ensures the function is called once even if an
         // interceptor executes it multiple times

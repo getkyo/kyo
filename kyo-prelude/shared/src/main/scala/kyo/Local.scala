@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Tag
 import kyo.kernel.*
+import scala.annotation.nowarn
 
 abstract class Local[A]:
 
@@ -28,6 +29,7 @@ end Local
 
 object Local:
 
+    @nowarn("msg=anonymous")
     inline def init[A](inline defaultValue: A): Local[A] =
         new Local[A]:
             lazy val default: A = defaultValue

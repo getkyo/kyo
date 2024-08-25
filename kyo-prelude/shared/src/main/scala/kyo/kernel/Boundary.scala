@@ -2,6 +2,7 @@ package kyo.kernel
 
 import internal.*
 import kyo.Tag
+import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.quoted.*
 
@@ -12,6 +13,7 @@ end Boundary
 private[kyo] object Boundary:
 
     extension [Ctx, S](boundary: Boundary[Ctx, S])
+        @nowarn("msg=anonymous")
         private[kyo] inline def apply[A, S2](inline f: (Trace, Context) => A < S2)(using inline _frame: Frame): A < (S & S2) =
             new KyoDefer[A, S & S2]:
                 def frame = _frame
