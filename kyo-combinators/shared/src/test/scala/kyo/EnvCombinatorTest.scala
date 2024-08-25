@@ -58,14 +58,14 @@ class EnvCombinatorTest extends Test:
                 assert(Memo.run(handled).eval == 23)
             }
 
-            "should provide all layers" in {
+            "should provide all layers and infer types correctly" in {
                 val effect: Int < Env[String & Int & Boolean & Char] =
                     Env.get[String] *> Env.get[Int] *> Env.get[Boolean] *> Env.get[Char].as(23)
                 val layerChar   = Layer(Kyo.suspend('c'))
                 val layerString = Layer("value")
                 val layerInt    = Layer(1)
                 val layerBool   = Layer(false)
-                val handled: Int < (IO & Memo) =
+                val handled =
                     effect
                         .provide(
                             layerChar,
@@ -73,6 +73,7 @@ class EnvCombinatorTest extends Test:
                             layerInt,
                             layerBool
                         )
+                val handledTyped: Int < (IO & Memo) = handled
                 assert(IO.run(Memo.run(handled)).eval == 23)
             }
         }

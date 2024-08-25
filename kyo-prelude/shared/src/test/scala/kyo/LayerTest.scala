@@ -249,12 +249,15 @@ class LayerTest extends Test:
 
             Memo.run(Env.runLayer(a, b, c)(Env.get[Boolean].map(assert(_))))
         }
-        "multiple layers with effects" in run {
+        "multiple layers with effects and infer types correctly" in run {
             val a = Layer(Var.get[Int])
-            val b = Layer.from((i: Int) => i.toString: String < Abort[Int])
+            val b = Layer.from((i: Int) => i.toString: String < Abort[String])
             val c = Layer.from((s: String) => (s.length % 2 == 0))
 
-            val result = Abort.run(Var.run(42)(Memo.run(Env.runLayer(a, b, c)(Env.get[Boolean])))).eval
+            val handled                                                   = Env.runLayer(a, b, c)(Env.get[Boolean])
+            val handledTyped: Boolean < (Memo & Var[Int] & Abort[String]) = handled
+
+            val result = Abort.run(Var.run(42)(Memo.run(handled))).eval
             assert(result == Result.Success(true))
         }
         "missing layer" in {
