@@ -29,7 +29,7 @@ object Env:
     ): A < (S & reduce.SReduced) =
         reduce(ContextEffect.handle(erasedTag[R], env, _.union(env))(v): A < (Env[VR] & S))
 
-    transparent inline def runLayer[A, S, V](inline layers: Layer[?, ?]*)(value: A < (Env[V] & S)): A < (S & Memo & Nothing) =
+    transparent inline def runLayer[A, S, V](inline layers: Layer[?, ?]*)(value: A < (Env[V] & S)): A < Nothing =
         inline Layer.init[V](layers*) match
             case layer: Layer[V, s] =>
                 layer.run.map { env =>

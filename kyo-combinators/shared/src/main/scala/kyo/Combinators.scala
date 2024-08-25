@@ -372,7 +372,7 @@ extension [A, S, E](effect: A < (S & Env[E]))
             e1 = tm.get[E1]
         yield effect.provideValue(e1)
 
-    transparent inline def provide(inline layers: Layer[?, ?]*): A < (Memo & S & Nothing) =
+    transparent inline def provide(inline layers: Layer[?, ?]*): A < Nothing =
         Env.runLayer(layers*)(effect)
 
 end extension
