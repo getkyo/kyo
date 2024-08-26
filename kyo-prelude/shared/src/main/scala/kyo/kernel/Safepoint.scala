@@ -163,6 +163,8 @@ object Safepoint:
     def enrich(ex: Throwable)(using safepoint: Safepoint): Unit =
         safepoint.enrich(ex)
 
-    private val local = ThreadLocal.withInitial(() => new Safepoint)
+    private val local =
+        new ThreadLocal[Safepoint]:
+            override def initialValue() = new Safepoint
 
 end Safepoint
