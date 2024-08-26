@@ -1,12 +1,12 @@
 package kyo.scheduler
 
 import Worker.State
-import java.lang.StackWalker.StackFrame
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.top.WorkerStatus
+import scala.annotation.nowarn
 import scala.util.control.NonFatal
 
 abstract private class Worker(
@@ -159,6 +159,7 @@ abstract private class Worker(
         }
     }
 
+    @nowarn("msg=unused")
     private val gauges =
         List(
             statsScope.gauge("queue_size")(queue.size()),

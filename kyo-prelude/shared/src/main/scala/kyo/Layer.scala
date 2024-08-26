@@ -1,10 +1,8 @@
 package kyo
 
 import Layer.internal.*
-import java.util.concurrent.ConcurrentHashMap as JConcurrentHashMap
 import kyo.Tag
 import kyo.kernel.Reducible
-import scala.annotation.targetName
 
 abstract class Layer[+Out, -S]:
     self =>

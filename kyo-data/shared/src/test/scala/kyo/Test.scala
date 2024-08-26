@@ -2,8 +2,6 @@ package kyo
 
 import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec
-import scala.concurrent.ExecutionContext
-import scala.concurrent.Future
 import scala.util.Try
 
 abstract class Test extends AsyncFreeSpec with NonImplicitAssertions:

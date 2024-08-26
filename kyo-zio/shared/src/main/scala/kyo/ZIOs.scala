@@ -3,10 +3,7 @@ package kyo
 import ZIOs.GetZIO
 import kyo.kernel.*
 import scala.util.control.NonFatal
-import scala.util.control.NoStackTrace
-import zio.Cause
 import zio.Exit
-import zio.Task
 import zio.ZIO
 
 opaque type ZIOs <: Async = GetZIO & Async

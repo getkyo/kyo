@@ -1,11 +1,6 @@
 package kyo.kernel
 
 import internal.*
-import java.util.Arrays
-import java.util.concurrent.atomic.AtomicInteger
-import org.jctools.queues.MessagePassingQueue.Consumer
-import org.jctools.queues.MpmcArrayQueue
-import scala.annotation.tailrec
 
 private[kernel] object TracePool:
     inline def globalCapacity: Int = 0

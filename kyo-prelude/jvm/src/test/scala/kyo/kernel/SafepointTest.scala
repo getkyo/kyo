@@ -3,9 +3,6 @@ package kyo.kernel
 import kyo.*
 import kyo.Tag
 import kyo.Tagged.*
-import kyo.bug.KyoBugException
-import scala.collection.mutable.Queue
-import scala.collection.mutable.Stack
 import scala.concurrent.Await
 import scala.concurrent.Future
 
@@ -374,7 +371,7 @@ class SafepointTest extends Test:
 
     "ensure" - {
         sealed trait TestEffect1 extends Effect[Const[Int], Const[Int]]
-        sealed trait TestEffect2 extends Effect[Const[String], Const[String]]
+
         "executes cleanup after successful completion" in {
             var cleaned = false
             val result = Safepoint.ensure { cleaned = true } {

@@ -1,7 +1,5 @@
 package kyo.bench
 
-import org.openjdk.jmh.annotations.Benchmark
-
 class StateMapBench extends Bench.SyncAndFork(1000):
 
     val n = 1000

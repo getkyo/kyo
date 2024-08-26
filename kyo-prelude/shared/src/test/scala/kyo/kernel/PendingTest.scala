@@ -2,6 +2,7 @@ package kyo.kernel
 
 import kyo.*
 import kyo.kernel.*
+import scala.annotation.nowarn
 
 class PendingTest extends Test:
 
@@ -59,14 +60,11 @@ class PendingTest extends Test:
     }
 
     "eval should not compile for pending effects" in {
-        trait CustomEffect extends Effect[Const[Unit], Const[Unit]]
+        @nowarn("msg=unused") trait CustomEffect extends Effect[Const[Unit], Const[Unit]]
         assertDoesNotCompile("val x: Int < CustomEffect = 5; x.eval")
     }
 
     "lift" - {
-
-        sealed trait TestEffect extends Effect[Const[Unit], Const[Unit]]
-        val effect: Unit < TestEffect = Effect.suspend[Any](Tag[TestEffect], ())
 
         "allows lifting pure values" in {
             val x: Int < Any = 5
@@ -75,7 +73,7 @@ class PendingTest extends Test:
 
         "nested computation" - {
             "generic method effect mismatch" in {
-                def test1[A](v: A < Any) = v
+                @nowarn("msg=unused") def test1[A](v: A < Any) = v
                 assertDoesNotCompile("test1(effect)")
             }
             "inference widening" in {
@@ -117,6 +115,7 @@ class PendingTest extends Test:
                 val f2: (Int, Int) => String < Any           = (_, _) => "test"
                 val f3: (Int, Int, Int) => String < Any      = (_, _, _) => "test"
                 val f4: (Int, Int, Int, Int) => String < Any = (_, _, _, _) => "test"
+                discard(f1, f2, f3, f4)
                 assertDoesNotCompile("""
                     val _: Int => String < Any < Any = f1
                 """)

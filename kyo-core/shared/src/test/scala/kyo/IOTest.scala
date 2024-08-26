@@ -1,8 +1,6 @@
 package kyo
 
 import org.scalatest.compatible.Assertion
-import scala.util.Failure
-import scala.util.Success
 import scala.util.Try
 
 class IOTest extends Test:

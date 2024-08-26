@@ -15,6 +15,7 @@ import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
+import scala.annotation.nowarn
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 
@@ -103,7 +104,6 @@ final class Scheduler(
     }
 
     private def steal(thief: Worker): Task = {
-        val nowMs          = clock.currentMillis()
         val currentWorkers = this.currentWorkers
         var worker: Worker = null
         var maxLoad        = 1
@@ -202,6 +202,7 @@ final class Scheduler(
         }
     }
 
+    @nowarn("msg=unused")
     private val gauges =
         List(
             statsScope.gauge("current_workers")(currentWorkers),

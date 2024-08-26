@@ -1,8 +1,8 @@
 package kyo.stats.internal
 
-import org.HdrHistogram.ConcurrentDoubleHistogram as HdrHistogram
-
 class UnsafeHistogram(numberOfSignificantValueDigits: Int, highestToLowestValueRatio: Long) {
+
+    val _ = (numberOfSignificantValueDigits, highestToLowestValueRatio)
 
     def observe(v: Long): Unit = {}
 

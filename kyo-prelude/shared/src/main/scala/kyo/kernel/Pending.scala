@@ -6,7 +6,6 @@ import kyo.Maybe
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.language.implicitConversions
-import scala.util.NotGiven
 
 opaque type <[+A, -S] = A | Kyo[A, S]
 

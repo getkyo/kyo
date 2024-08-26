@@ -1,7 +1,5 @@
 package kyo
 
-import scala.util.Try
-
 class DirectTest extends Test:
 
     // "match" in {

@@ -2,7 +2,6 @@ package kyo.stats.internal
 
 import kyo.stats.internal.*
 import org.scalatest.freespec.AnyFreeSpec
-import scala.util.Random
 
 class StatsRegistryTest extends AnyFreeSpec {
 
@@ -35,8 +34,8 @@ class StatsRegistryTest extends AnyFreeSpec {
 
         var gaugeValue = 100.0
         val gauge      = scope.gauge("my_gauge", "A test gauge")(gaugeValue)
-
-        val exporter = new TestExporter
+        val _          = gauge
+        val exporter   = new TestExporter
         StatsRegistry.addExporter(exporter)
 
         StatsRegistry.internal.refresh()

@@ -1,7 +1,5 @@
 package kyo
 
-import java.io.PrintWriter
-import java.io.StringWriter
 import java.util.logging.*
 import kyo.stats.internal.StatsRegistry
 

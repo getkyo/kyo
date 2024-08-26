@@ -1,15 +1,11 @@
 package kyo.kernel
 
 import internal.*
-import java.util.Arrays
 import java.util.concurrent.atomic.AtomicBoolean
-import kyo.bug
 import kyo.isNull
 import kyo.kernel.Safepoint.*
 import scala.annotation.nowarn
-import scala.annotation.tailrec
 import scala.util.control.NonFatal
-import scala.util.control.NoStackTrace
 
 final class Safepoint private () extends Trace.Owner:
 

@@ -3,7 +3,6 @@ package kyo
 import cps.CpsMonad
 import cps.CpsMonadContext
 import cps.async
-import cps.await
 import directInternal.*
 import scala.annotation.tailrec
 import scala.quoted.*

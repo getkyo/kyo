@@ -1,8 +1,6 @@
 package kyo.kernel
 
 import internal.*
-import java.util.Arrays
-import java.util.concurrent.atomic.AtomicInteger
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace

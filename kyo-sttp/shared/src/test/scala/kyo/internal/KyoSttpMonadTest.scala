@@ -1,9 +1,7 @@
 package kyo.internal
 
-import java.util.concurrent.CountDownLatch
 import kyo.*
 import org.scalatest.concurrent.Eventually.*
-import scala.util.Failure
 import sttp.monad.Canceler
 
 class KyoSttpMonadTest extends Test:

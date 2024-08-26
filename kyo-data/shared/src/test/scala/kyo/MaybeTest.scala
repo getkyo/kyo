@@ -432,25 +432,25 @@ class MaybeTest extends Test:
             "should return Empty if any are Empty" in {
                 val result1 =
                     for
-                        x <- Defined(1)
-                        y <- Empty
-                        z <- Defined(3)
+                        _ <- Defined(1)
+                        _ <- Empty
+                        _ <- Defined(3)
                     yield ()
                 assert(result1 == Empty)
 
                 val result2 =
                     for
-                        x <- Empty
-                        y <- Defined(2)
-                        z <- Defined(3)
+                        _ <- Empty
+                        _ <- Defined(2)
+                        _ <- Defined(3)
                     yield ()
                 assert(result2 == Empty)
 
                 val result3 =
                     for
-                        x <- Defined(1)
-                        y <- Defined(2)
-                        z <- Empty
+                        _ <- Defined(1)
+                        _ <- Defined(2)
+                        _ <- Empty
                     yield ()
                 assert(result3 == Empty)
             }
@@ -493,11 +493,11 @@ class MaybeTest extends Test:
             "should return Empty if any inner comprehension is Empty" in {
                 val result =
                     for
-                        x <- Defined(1)
-                        y <-
+                        _ <- Defined(1)
+                        _ <-
                             for
-                                a <- Empty
-                                b <- Defined(3)
+                                _ <- Empty
+                                _ <- Defined(3)
                             yield ()
                     yield ()
                 assert(result == Empty)

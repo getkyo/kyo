@@ -68,6 +68,7 @@ class AbortsTest extends Test:
             "in handle" in {
                 val effect: Int < Abort[String | Boolean] =
                     Abort.fail("failure")
+                val _ = effect
                 assertDoesNotCompile("Abort.run[String | Boolean](effect)")
             }
         }
@@ -526,6 +527,7 @@ class AbortsTest extends Test:
             yield x + y
         }
         val finalResult: Result[String, Int] < (Env[Int] & Var[Int]) = result
+        val _                                                        = finalResult
         succeed
     }
 
