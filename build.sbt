@@ -55,6 +55,19 @@ lazy val `kyo-settings` = Seq(
     Test / javaOptions += "--add-opens=java.base/java.lang=ALL-UNNAMED"
 )
 
+Global / onLoad := {
+    val project =
+        System.getProperty("platform", "JVM").toUpperCase match {
+            case "JVM"    => kyoJVM
+            case "JS"     => kyoJS
+            case platform => throw new IllegalArgumentException("Invalid platform: " + platform)
+        }
+
+    (Global / onLoad).value andThen { state =>
+        "project " + project.id :: state
+    }
+}
+
 lazy val kyoJVM = project
     .in(file("."))
     .settings(
