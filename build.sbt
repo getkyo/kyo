@@ -60,6 +60,7 @@ Global / onLoad := {
         System.getProperty("platform", "JVM").toUpperCase match {
             case "JVM"    => kyoJVM
             case "JS"     => kyoJS
+            case "Native" => kyoNative
             case platform => throw new IllegalArgumentException("Invalid platform: " + platform)
         }
 
@@ -115,6 +116,18 @@ lazy val kyoJS = project
         `kyo-combinators`.js
     )
 
+lazy val kyoNative = project
+    .in(file("native"))
+    .settings(
+        name := "kyoNative",
+        `kyo-settings`
+    )
+    .aggregate(
+        `kyo-tag`.native,
+        `kyo-data`.native,
+        `kyo-prelude`.native
+    )
+
 lazy val `kyo-scheduler` =
     crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -148,7 +161,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
     )
 
 lazy val `kyo-tag` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-tag"))
@@ -157,22 +170,24 @@ lazy val `kyo-tag` =
             libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
             libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
         )
+        .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-data` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-tag`)
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % "2.1.2" % Test
+            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
         )
+        .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-prelude` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
@@ -182,9 +197,10 @@ lazy val `kyo-prelude` =
             libraryDependencies += "com.lihaoyi" %%% "pprint"        % "0.9.0",
             libraryDependencies += "org.jctools"   % "jctools-core"  % "4.0.5",
             libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC31" % Test,
-            libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % "2.1.2"      % Test,
+            libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % zioVersion   % Test,
             libraryDependencies += "org.javassist" % "javassist"     % "3.30.2-GA"  % Test
         )
+        .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-core` =
@@ -449,6 +465,10 @@ lazy val readme =
         .settings(
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.7"
         )
+
+lazy val `native-settings` = Seq(
+    fork := false
+)
 
 lazy val `js-settings` = Seq(
     Compile / doc / sources                     := Seq.empty,
