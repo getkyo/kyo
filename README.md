@@ -1593,7 +1593,7 @@ The `kyo.concurrent` package provides utilities for dealing with concurrency in 
 
 ### Async: Green Threads
 
-The `Async` effect allows for the asynchronous execution of computations via a managed thread pool. The core function, `init`, spawns a new "green thread," also known as a fiber, to handle the given computation. This provides a powerful mechanism for parallel execution and efficient use of system resources. Moreover, fibers maintain proper propagation of `Local`, ensuring that context information is carried along during the forking process.
+The `Async` effect allows for the asynchronous execution of computations via a managed thread pool. The core function, `run`, spawns a new "green thread," also known as a fiber, to handle the given computation. This provides a powerful mechanism for parallel execution and efficient use of system resources. Moreover, fibers maintain proper propagation of `Local`, ensuring that context information is carried along during the forking process.
 
 ```scala
 import kyo.*
