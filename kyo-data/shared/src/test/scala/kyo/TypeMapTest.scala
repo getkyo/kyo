@@ -13,6 +13,9 @@ class TypeMapTest extends Test:
                   | TypeMap.empty.get[String]
                   |""".stripMargin)
         }
+        "get[Any]" in {
+            assert(TypeMap.empty.get[Any].isInstanceOf[Unit])
+        }
     }
     "single" - {
         "TypeMap[String]" in {
