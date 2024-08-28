@@ -9,9 +9,15 @@ class TypeMapTest extends Test:
             assert(TypeMap.empty.isEmpty)
         }
         "get[A]" in {
-            assertDoesNotCompile("""
-                  | TypeMap.empty.get[String]
-                  |""".stripMargin)
+            assertDoesNotCompile("TypeMap.empty.get[String]")
+            assertDoesNotCompile("TypeMap.empty.get[AnyVal]")
+            assertDoesNotCompile("TypeMap.empty.get[AnyRef]")
+            assertDoesNotCompile("TypeMap.empty.get[Matchable]")
+            assertDoesNotCompile("TypeMap.empty.get[Object]")
+            assertDoesNotCompile("TypeMap.empty.get[Nothing]")
+        }
+        "get[Any]" in {
+            assert(TypeMap.empty.get[Any].isInstanceOf[Unit])
         }
     }
     "single" - {

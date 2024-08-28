@@ -21,7 +21,8 @@ object TypeMap:
                 end while
                 fatal
             end search
-            self.getOrElse(t.erased, search).asInstanceOf[B]
+            if isEmpty && t =:= Tag[Any] then ().asInstanceOf[B]
+            else self.getOrElse(t.erased, search).asInstanceOf[B]
         end get
 
         inline def add[B](b: B)(using inline t: Tag[B]): TypeMap[A & B] =
