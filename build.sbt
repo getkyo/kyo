@@ -8,7 +8,7 @@ val scala3Version   = "3.5.0"
 val scala212Version = "2.12.19"
 val scala213Version = "2.13.14"
 
-val zioVersion       = "2.1.8"
+val zioVersion       = "2.1.9"
 val scalaTestVersion = "3.2.19"
 
 val compilerOptions = Set(
@@ -199,7 +199,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC30" % Test,
-            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.8"      % Test,
+            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.9"      % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.7"      % Test,
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
