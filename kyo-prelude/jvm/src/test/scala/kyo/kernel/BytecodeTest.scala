@@ -6,19 +6,19 @@ import scala.reflect.ClassTag
 
 class BytecodeTest extends Test:
 
-    object TestEffect extends Effect[Id, Id]
+    object TestEffect extends ArrowEffect[Id, Id]
 
     class TestSuspend:
-        def test() = Effect.suspend[Int](Tag[TestEffect.type], 42)
+        def test() = ArrowEffect.suspend[Int](Tag[TestEffect.type], 42)
 
     class TestSuspendMap:
-        def test() = Effect.suspendMap[Int](Tag[TestEffect.type], 42)(_ + 1)
+        def test() = ArrowEffect.suspendMap[Int](Tag[TestEffect.type], 42)(_ + 1)
 
     class TestMap:
         def test(v: Int < TestEffect.type) = v.map(_ + 1)
 
     class TestHandle:
-        def test(v: Int < TestEffect.type) = Effect.handle(Tag[TestEffect.type], v)([C] => (input, cont) => cont(input))
+        def test(v: Int < TestEffect.type) = ArrowEffect.handle(Tag[TestEffect.type], v)([C] => (input, cont) => cont(input))
 
     "suspend" in {
         val map = methodBytecodeSize[TestSuspend]

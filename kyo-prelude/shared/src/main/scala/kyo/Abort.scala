@@ -1,15 +1,16 @@
 package kyo
 
+import kernel.ArrowEffect
 import kernel.Const
-import kernel.Effect
 import kernel.Frame
 import kyo.Result.*
 import kyo.Tag
+import kyo.kernel.Effect
 import kyo.kernel.Reducible
 import scala.annotation.targetName
 import scala.reflect.ClassTag
 
-sealed trait Abort[-E] extends Effect[Const[Error[E]], Const[Unit]]
+sealed trait Abort[-E] extends ArrowEffect[Const[Error[E]], Const[Unit]]
 
 object Abort:
 
@@ -21,7 +22,7 @@ object Abort:
     inline def panic[E](inline ex: Throwable)(using inline frame: Frame): Nothing < Abort[E] = error(Panic(ex))
 
     private[kyo] inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
-        Effect.suspendMap[Any](erasedTag[E], e)(_ => ???)
+        ArrowEffect.suspendMap[Any](erasedTag[E], e)(_ => ???)
 
     inline def when[E](b: Boolean)(inline value: => E)(using inline frame: Frame): Unit < Abort[E] =
         if b then fail(value)
@@ -65,7 +66,7 @@ object Abort:
             reduce: Reducible[Abort[ER]]
         ): Result[E, A] < (S & reduce.SReduced) =
             reduce {
-                Effect.handle.catching[
+                ArrowEffect.handle.catching[
                     Const[Error[E]],
                     Const[Unit],
                     Abort[E],

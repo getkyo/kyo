@@ -5,7 +5,7 @@ import kyo.Tag
 import kyo.kernel.*
 import scala.annotation.nowarn
 
-sealed trait Var[V] extends Effect[Const[Op[V]], Const[V]]
+sealed trait Var[V] extends ArrowEffect[Const[Op[V]], Const[V]]
 
 object Var:
 
@@ -20,33 +20,33 @@ object Var:
             inline tag: Tag[Var[V]],
             inline frame: Frame
         ): A < (Var[V] & S) =
-            Effect.suspendMap[V](tag, Get: Op[V])(f)
+            ArrowEffect.suspendMap[V](tag, Get: Op[V])(f)
     end UseOps
 
     inline def use[V]: UseOps[V] = UseOps(())
 
     /** Sets a new value and returns the previous one. */
     inline def set[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
-        Effect.suspend[Unit](tag, value: Op[V])
+        ArrowEffect.suspend[Unit](tag, value: Op[V])
 
     /** Sets a new value and returns `Unit`. */
     inline def setDiscard[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
-        Effect.suspendMap[Unit](tag, value: Op[V])(_ => ())
+        ArrowEffect.suspendMap[Unit](tag, value: Op[V])(_ => ())
 
     /** Applies the update function and returns the new value. */
     @nowarn("msg=anonymous")
     inline def update[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
-        Effect.suspend[V](tag, (v => f(v)): Update[V])
+        ArrowEffect.suspend[V](tag, (v => f(v)): Update[V])
 
     /** Applies the update function and returns `Unit`. */
     @nowarn("msg=anonymous")
     inline def updateDiscard[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
-        Effect.suspendMap[Unit](tag, (v => f(v)): Update[V])(_ => ())
+        ArrowEffect.suspendMap[Unit](tag, (v => f(v)): Update[V])(_ => ())
 
     private inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
         inline f: (V, A) => B < S2
     )(using inline tag: Tag[Var[V]], inline frame: Frame): B < (S & S2) =
-        Effect.handle.state(tag, state, v)(
+        ArrowEffect.handle.state(tag, state, v)(
             [C] =>
                 (input, state, cont) =>
                     input match

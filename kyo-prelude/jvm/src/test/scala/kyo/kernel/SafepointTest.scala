@@ -370,7 +370,7 @@ class SafepointTest extends Test:
     }
 
     "ensure" - {
-        sealed trait TestEffect1 extends Effect[Const[Int], Const[Int]]
+        sealed trait TestEffect1 extends ArrowEffect[Const[Int], Const[Int]]
 
         "executes cleanup after successful completion" in {
             var cleaned = false
@@ -421,11 +421,11 @@ class SafepointTest extends Test:
             var cleaned = false
             val result = Safepoint.ensure { cleaned = true } {
                 for
-                    x <- Effect.suspend[Int](Tag[TestEffect1], 5)
-                    y <- Effect.suspend[Int](Tag[TestEffect1], 6)
+                    x <- ArrowEffect.suspend[Int](Tag[TestEffect1], 5)
+                    y <- ArrowEffect.suspend[Int](Tag[TestEffect1], 6)
                 yield x + y
             }
-            val handled = Effect.handle(Tag[TestEffect1], result)([C] => (input, cont) => cont(input))
+            val handled = ArrowEffect.handle(Tag[TestEffect1], result)([C] => (input, cont) => cont(input))
             assert(handled.eval == 11)
             assert(cleaned)
         }
@@ -434,12 +434,12 @@ class SafepointTest extends Test:
             var cleaned = false
             val result = Safepoint.ensure { cleaned = true } {
                 for
-                    _ <- Effect.suspend[Int](Tag[TestEffect1], 5)
-                    _ <- Effect.suspend[Int](Tag[TestEffect1], throw new RuntimeException("Test failure"))
+                    _ <- ArrowEffect.suspend[Int](Tag[TestEffect1], 5)
+                    _ <- ArrowEffect.suspend[Int](Tag[TestEffect1], throw new RuntimeException("Test failure"))
                 yield 42
             }
             assertThrows[RuntimeException] {
-                Effect.handle(Tag[TestEffect1], result)([C] => (input, cont) => cont(input)).eval
+                ArrowEffect.handle(Tag[TestEffect1], result)([C] => (input, cont) => cont(input)).eval
             }
             assert(cleaned)
         }

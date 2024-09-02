@@ -3,7 +3,7 @@ package kyo
 import kyo.Tag
 import kyo.kernel.*
 
-sealed trait Emit[V] extends Effect[Const[V], Const[Emit.Ack]]
+sealed trait Emit[V] extends ArrowEffect[Const[V], Const[Emit.Ack]]
 
 object Emit:
 
@@ -31,18 +31,18 @@ object Emit:
     end Ack
 
     inline def apply[V](inline value: V)(using inline tag: Tag[Emit[V]], inline frame: Frame): Ack < Emit[V] =
-        Effect.suspend[Any](tag, value)
+        ArrowEffect.suspend[Any](tag, value)
 
     inline def andMap[V, A, S](inline value: V)(inline f: Ack => A < S)(
         using
         inline tag: Tag[Emit[V]],
         inline frame: Frame
     ): A < (S & Emit[V]) =
-        Effect.suspendMap[Any](tag, value)(f(_))
+        ArrowEffect.suspendMap[Any](tag, value)(f(_))
 
     final class RunOps[V](dummy: Unit) extends AnyVal:
         def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Chunk[V], A) < S =
-            Effect.handle.state(tag, Chunk.empty[V], v)(
+            ArrowEffect.handle.state(tag, Chunk.empty[V], v)(
                 handle = [C] => (input, state, cont) => (state.append(input), cont(Ack.Continue())),
                 done = (state, res) => (state, res)
             )
@@ -56,7 +56,7 @@ object Emit:
             tag: Tag[Emit[V]],
             frame: Frame
         ): (A, B) < (S & S2) =
-            Effect.handle.state(tag, acc, v)(
+            ArrowEffect.handle.state(tag, acc, v)(
                 handle = [C] =>
                     (input, state, cont) =>
                         f(state, input).map((_, cont(Ack.Continue()))),
@@ -68,7 +68,7 @@ object Emit:
 
     final class RunDiscardOps[V](dummy: Unit) extends AnyVal:
         def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): A < S =
-            Effect.handle(tag, v)(
+            ArrowEffect.handle(tag, v)(
                 handle = [C] => (input, cont) => cont(Ack.Stop)
             )
     end RunDiscardOps
@@ -77,7 +77,7 @@ object Emit:
 
     final class RunAckOps[V](dummy: Unit) extends AnyVal:
         def apply[A: Flat, S, S2](v: A < (Emit[V] & S))(f: V => Ack < S2)(using tag: Tag[Emit[V]], frame: Frame): A < (S & S2) =
-            Effect.handle(tag, v)(
+            ArrowEffect.handle(tag, v)(
                 [C] => (input, cont) => f(input).map(cont)
             )
     end RunAckOps

@@ -3,24 +3,17 @@ package kyo.kernel
 import internal.*
 import kyo.Tag
 import scala.annotation.nowarn
+import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
-abstract class Effect[-I[_], +O[_]]
+abstract class ArrowEffect[-I[_], +O[_]] extends Effect
 
-object Effect:
-
-    def defer[A, S](f: Safepoint ?=> A < S)(using fr: Frame): A < S =
-        new KyoDefer[A, S]:
-            def frame = summon[Frame]
-            def apply(v: Unit, context: Context)(using Safepoint) =
-                f
-        end new
-    end defer
+object ArrowEffect:
 
     final class SuspendOps[A](dummy: Unit) extends AnyVal:
 
         @nowarn("msg=anonymous")
-        inline def apply[I[_], O[_], E <: Effect[I, O]](
+        inline def apply[I[_], O[_], E <: ArrowEffect[I, O]](
             inline _tag: Tag[E],
             inline _input: I[A]
         )(using inline _frame: Frame): O[A] < E =
@@ -34,9 +27,9 @@ object Effect:
 
     inline def suspend[A]: SuspendOps[A] = SuspendOps(())
 
+    @nowarn("msg=anonymous")
     final class SuspendMapOps[A](dummy: Unit) extends AnyVal:
-        @nowarn("msg=anonymous")
-        inline def apply[I[_], O[_], E <: Effect[I, O], B, S](
+        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], B, S](
             inline _tag: Tag[E],
             inline _input: I[A]
         )(
@@ -56,13 +49,13 @@ object Effect:
     inline def suspendMap[A]: SuspendMapOps[A] = SuspendMapOps(())
 
     object handle:
-        inline def apply[I[_], O[_], E <: Effect[I, O], A, B, S, S2, S3](
+        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, S3](
             inline tag: Tag[E],
             v: A < (E & S)
         )(
             inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2),
             inline done: A => B < S3 = (v: A) => v,
-            inline accept: [C] => I[C] => Boolean = [C] => (_: I[C]) => true
+            inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
             @nowarn("msg=anonymous")
             def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
@@ -86,7 +79,7 @@ object Effect:
             handleLoop(v, Context.empty)
         end apply
 
-        inline def apply[I1[_], O1[_], E1 <: Effect[I1, O1], I2[_], O2[_], E2 <: Effect[I2, O2], A, S, S2](
+        inline def apply[I1[_], O1[_], E1 <: ArrowEffect[I1, O1], I2[_], O2[_], E2 <: ArrowEffect[I2, O2], A, S, S2](
             inline tag1: Tag[E1],
             inline tag2: Tag[E2],
             v: A < (E1 & E2 & S)
@@ -122,7 +115,7 @@ object Effect:
             handle2Loop(v, Context.empty)
         end apply
 
-        inline def apply[I1[_], O1[_], E1 <: Effect[I1, O1], I2[_], O2[_], E2 <: Effect[I2, O2], I3[_], O3[_], E3 <: Effect[
+        inline def apply[I1[_], O1[_], E1 <: ArrowEffect[I1, O1], I2[_], O2[_], E2 <: ArrowEffect[I2, O2], I3[_], O3[_], E3 <: ArrowEffect[
             I3,
             O3
         ], A, S, S2](
@@ -169,10 +162,23 @@ object Effect:
             handle3Loop(v, Context.empty)
         end apply
 
-        private[kyo] inline def partial[I1[_], O1[_], E1 <: Effect[I1, O1], I2[_], O2[_], E2 <: Effect[I2, O2], I3[_], O3[_], E3 <: Effect[
-            I3,
-            O3
-        ], A, S, S2](
+        private[kyo] inline def partial[
+            I1[_],
+            O1[_],
+            E1 <: ArrowEffect[I1, O1],
+            I2[_],
+            O2[_],
+            E2 <: ArrowEffect[I2, O2],
+            I3[_],
+            O3[_],
+            E3 <: ArrowEffect[
+                I3,
+                O3
+            ],
+            A,
+            S,
+            S2
+        ](
             inline tag1: Tag[E1],
             inline tag2: Tag[E2],
             inline tag3: Tag[E3],
@@ -189,7 +195,7 @@ object Effect:
                 else
                     v match
                         case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] =>
-                            type Suspend[I[_], O[_], E <: Effect[I, O]] = KyoSuspend[I, O, E, Any, A, E1 & E2 & E3 & S & S2]
+                            type Suspend[I[_], O[_], E <: ArrowEffect[I, O]] = KyoSuspend[I, O, E, Any, A, E1 & E2 & E3 & S & S2]
                             if kyo.tag =:= Tag[Defer] then
                                 val k = kyo.asInstanceOf[Suspend[Const[Unit], Const[Unit], Defer]]
                                 partialLoop(k((), context), context)
@@ -215,14 +221,14 @@ object Effect:
             partialLoop(v, context)
         end partial
 
-        inline def state[I[_], O[_], E <: Effect[I, O], State, A, B, S, S2, S3](
+        inline def state[I[_], O[_], E <: ArrowEffect[I, O], State, A, B, S, S2, S3](
             inline tag: Tag[E],
             inline state: State,
             v: A < (E & S)
         )(
             inline handle: [C] => (I[C], State, Safepoint ?=> O[C] => A < (E & S & S2)) => (State, A < (E & S & S2)) < S3,
             inline done: (State, A) => B < (S & S2 & S3) = (_: State, v: A) => v,
-            inline accept: [C] => I[C] => Boolean = [C] => (_: I[C]) => true
+            inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
             @nowarn("msg=anonymous")
             def handleLoop(state: State, v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
@@ -242,13 +248,13 @@ object Effect:
             handleLoop(state, v, Context.empty)
         end state
 
-        inline def catching[I[_], O[_], E <: Effect[I, O], A, B, S, S2, S3](
+        inline def catching[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, S3](
             inline tag: Tag[E],
             inline v: => A < (E & S)
         )(
             inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2),
             inline done: A => B < S3 = (v: A) => v,
-            inline accept: [C] => I[C] => Boolean = [C] => (_: I[C]) => true,
+            inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true,
             inline recover: Throwable => B < (S & S2 & S3)
         )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): B < (S & S2 & S3) =
             @nowarn("msg=anonymous")
@@ -285,31 +291,4 @@ object Effect:
         end catching
 
     end handle
-
-    inline def catching[A, S, B >: A, S2](inline v: => A < S)(
-        inline f: Throwable => B < S2
-    )(using inline _frame: Frame, safepoint: Safepoint): B < (S & S2) =
-        @nowarn("msg=anonymous")
-        def catchingLoop(v: B < (S & S2))(using Safepoint): B < (S & S2) =
-            (v: @unchecked) match
-                case kyo: KyoSuspend[IX, OX, EX, Any, B, S & S2] @unchecked =>
-                    new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
-                        def frame = _frame
-                        def apply(v: OX[Any], context: Context)(using Safepoint) =
-                            try catchingLoop(kyo(v, context))
-                            catch
-                                case ex: Throwable if NonFatal(ex) =>
-                                    Safepoint.enrich(ex)
-                                    f(ex)
-                            end try
-                        end apply
-                case _ =>
-                    v
-        try catchingLoop(v)
-        catch
-            case ex: Throwable if NonFatal(ex) =>
-                Safepoint.enrich(ex)
-                f(ex)
-        end try
-    end catching
-end Effect
+end ArrowEffect
