@@ -3,6 +3,13 @@ package kyo
 import kyo.Tag
 import kyo.kernel.*
 
+/** Represents a memoization effect.
+  *
+  * Memo is used to cache the results of expensive computations, allowing them to be reused without re-computation.
+  *
+  * This effect is primarily intended for initializing global values or caching results of infrequent, expensive operations. It is not
+  * recommended for use in hot paths or frequently executed code due to potential performance overhead.
+  */
 opaque type Memo <: Var[Memo.Cache] = Var[Memo.Cache]
 
 object Memo:
@@ -24,6 +31,17 @@ object Memo:
 
     private val empty = Cache(Map.empty)
 
+    /** Memoizes a function, caching its results for future use.
+      *
+      * @param f
+      *   The function to memoize
+      * @tparam A
+      *   The input type of the function
+      * @tparam B
+      *   The output type of the function
+      * @return
+      *   A memoized version of the input function
+      */
     def apply[A, B, S](f: A => B < S)(using Frame): A => B < (S & Memo) =
         val id = new MemoIdentity
         input =>

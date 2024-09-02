@@ -1282,7 +1282,7 @@ def count(db: Database): Int < IO =
 
 // To bind an aspect to an implementation, first create a new 'Cut'
 val countPlusOne =
-    new Cut[Database, Int, IO]:
+    new Aspect.Cut[Database, Int, IO]:
         // The first param is the input of the computation and the second is
         // the computation being handled
         def apply[S](v: Database < S)(f: Database => Int < IO) =
@@ -1302,7 +1302,7 @@ def example(db: Database): Int < IO =
 
 // Another 'Cut' implementation
 val countTimesTen =
-    new Cut[Database, Int, IO]:
+    new Aspect.Cut[Database, Int, IO]:
         def apply[S](v: Database < S)(f: Database => Int < IO) =
             v.map(db => f(db).map(_ * 10))
 

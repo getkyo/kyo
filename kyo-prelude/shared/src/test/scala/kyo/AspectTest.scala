@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.Aspect.Cut
+
 class AspectTest extends Test:
 
     "one aspect" - {
