@@ -11,11 +11,12 @@ abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
         v.map { v =>
             if (()).equals(v) then ()
             else Console.println(v)
-        }
-            .pipe(Clock.let(clock))
-            .pipe(Random.let(random))
-            .pipe(Log.let(log))
-            .pipe(KyoApp.run)
+        }.pipe(
+            Clock.let(clock),
+            Random.let(random),
+            Log.let(log),
+            KyoApp.run
+        )
 end KyoApp
 
 object KyoApp:
@@ -53,5 +54,5 @@ object KyoApp:
         runFiber(Duration.Infinity)(v)
 
     def runFiber[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): Fiber[Throwable, A] =
-        v.pipe(Resource.run).pipe(Async.run).pipe(IO.run).eval
+        v.pipe(Resource.run, Async.run, IO.run).eval
 end KyoApp

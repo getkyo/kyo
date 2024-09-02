@@ -147,6 +147,41 @@ val b: String < IO =
     a.andThen("test")
 ```
 
+The `pipe` method allows for chaining effect handlers without nesting parentheses. It's particularly useful when dealing with multiple effects.
+
+```scala
+import kyo.*
+
+val a: Int < (Abort[String] & Env[Int]) =
+    for
+        v <- Abort.get(Right(42))
+        e <- Env.get[Int]
+    yield v + e
+
+// Handle effects using `pipe`
+val b: Result[String, Int] =
+    a.pipe(Abort.run(_))   // Handle Abort
+     .pipe(Env.run(10))    // Handle Env
+     .eval                 // Evaluate the computation
+
+// Equivalent without `pipe`
+val c: Result[String, Int] =
+    Env.run(10)(Abort.run(a)).eval
+
+// `pipe` also supports multiple functions
+val d: Result[String, Int] =
+    a.pipe(Abort.run(_), Env.run(10)).eval
+
+// Mixing effect handling, 'map' transformation, and 'eval'
+val e: Int =
+    a.pipe(
+        Abort.run(_),
+        Env.run(10),
+        _.map(_.getOrElse(24)), // Convert Result to Int
+        _.eval
+    )
+```
+
 ### Effect widening
 
 Kyo's set of pending effects is a contravariant type parameter. This encoding permits computations to be widened to encompass a larger set of effects.

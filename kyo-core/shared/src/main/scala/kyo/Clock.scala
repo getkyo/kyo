@@ -13,7 +13,7 @@ object Clock:
 
     private val local = Local.init(live)
 
-    def let[A, S](c: Clock)(f: => A < (IO & S))(using Frame): A < (IO & S) =
+    def let[A, S](c: Clock)(f: => A < S)(using Frame): A < S =
         local.let(c)(f)
 
     def now(using Frame): Instant < IO =

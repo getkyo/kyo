@@ -53,11 +53,6 @@ object `<`:
         ): B < (S & S2) =
             map(v => f(v))
 
-        inline def pipe[B](f: (=> A < S) => B)(
-            using inline flat: Flat.Weak[A]
-        ): B =
-            f(v)
-
         inline def map[B, S2](inline f: Safepoint ?=> A => B < S2)(
             using
             inline _frame: Frame,
@@ -103,6 +98,63 @@ object `<`:
                         ()
             unitLoop(v)
         end unit
+
+        inline def pipe[B](inline f: (=> A < S) => B)(
+            using inline flat: Flat.Weak[A]
+        ): B =
+            def pipe1 = v
+            f(pipe1)
+        end pipe
+
+        inline def pipe[B, C](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C
+        )(using inline flat: Flat.Weak[A]): C =
+            def pipe2 = v.pipe(f1)
+            f2(pipe2)
+        end pipe
+
+        inline def pipe[B, C, D](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D
+        )(using inline flat: Flat.Weak[A]): D =
+            def pipe3 = v.pipe(f1, f2)
+            f3(pipe3)
+        end pipe
+
+        inline def pipe[B, C, D, E](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E
+        )(using inline flat: Flat.Weak[A]): E =
+            def pipe4 = v.pipe(f1, f2, f3)
+            f4(pipe4)
+        end pipe
+
+        inline def pipe[B, C, D, E, F](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E,
+            inline f5: (=> E) => F
+        )(using inline flat: Flat.Weak[A]): F =
+            def pipe5 = v.pipe(f1, f2, f3, f4)
+            f5(pipe5)
+        end pipe
+
+        inline def pipe[B, C, D, E, F, G](
+            inline f1: A < S => B,
+            inline f2: (=> B) => C,
+            inline f3: (=> C) => D,
+            inline f4: (=> D) => E,
+            inline f5: (=> E) => F,
+            inline f6: (=> F) => G
+        )(using inline flat: Flat.Weak[A]): G =
+            def pipe6 = v.pipe(f1, f2, f3, f4, f5)
+            f6(pipe6)
+        end pipe
 
     end extension
 
