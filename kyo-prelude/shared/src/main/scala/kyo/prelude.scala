@@ -12,13 +12,6 @@ type <[+A, -S] = kernel.<[A, S]
 
 val Loop = kernel.Loop
 
-private[kyo] inline def isNull[A](v: A): Boolean =
-    v.asInstanceOf[AnyRef] eq null
-
-private[kyo] inline def discard[A](inline v: => A*): Unit =
-    val _ = v
-    ()
-
 private[kyo] object bug:
 
     case class KyoBugException(msg: String) extends Exception(msg)
