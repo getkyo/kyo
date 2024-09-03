@@ -1,13 +1,14 @@
 package kyo.scheduler.regulator
 
 import java.util.concurrent.atomic.LongAdder
+import java.util.function.DoubleSupplier
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.top.RegulatorStatus
 import kyo.scheduler.util.*
 import scala.util.control.NonFatal
 
 abstract class Regulator(
-    loadAvg: () => Double,
+    loadAvg: DoubleSupplier,
     timer: InternalTimer,
     config: Config
 ) {
@@ -49,7 +50,7 @@ abstract class Regulator(
         try {
             adjustments.increment()
             val jitter = synchronized(measurements.dev())
-            val load   = loadAvg()
+            val load   = loadAvg.getAsDouble()
             if (jitter > jitterUpperThreshold) {
                 if (step < 0) step -= 1
                 else step = -1

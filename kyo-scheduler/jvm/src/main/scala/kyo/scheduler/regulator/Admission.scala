@@ -2,6 +2,8 @@ package kyo.scheduler.regulator
 
 import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.atomic.LongAdder
+import java.util.function.DoubleSupplier
+import java.util.function.LongSupplier
 import kyo.scheduler.*
 import kyo.scheduler.InternalTimer
 import kyo.scheduler.top.AdmissionStatus
@@ -11,9 +13,9 @@ import scala.concurrent.duration.*
 import scala.util.hashing.MurmurHash3
 
 final class Admission(
-    loadAvg: () => Double,
+    loadAvg: DoubleSupplier,
     schedule: Task => Unit,
-    nowMillis: () => Long,
+    nowMillis: LongSupplier,
     timer: InternalTimer,
     config: Config = Admission.defaultConfig
 ) extends Regulator(loadAvg, timer, config) {
@@ -40,9 +42,9 @@ final class Admission(
     }
 
     final private class ProbeTask extends Task {
-        val start = nowMillis()
+        val start = nowMillis.getAsLong()
         def run(startMillis: Long, clock: InternalClock) = {
-            measure(nowMillis() - start)
+            measure(nowMillis.getAsLong() - start)
             Task.Done
         }
     }
