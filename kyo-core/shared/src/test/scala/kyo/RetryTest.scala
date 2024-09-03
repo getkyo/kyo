@@ -52,14 +52,14 @@ class RetryTest extends Test:
 
     "backoff" in run {
         var calls = 0
-        val start = System.currentTimeMillis()
+        val start = java.lang.System.currentTimeMillis()
         Abort.run[Exception] {
             Retry[Exception](_.limit(4).exponential(1.milli)) {
                 calls += 1
                 throw ex
             }
         }.map { v =>
-            assert(v.isFail && calls == 5 && (System.currentTimeMillis() - start) >= 15)
+            assert(v.isFail && calls == 5 && (java.lang.System.currentTimeMillis() - start) >= 15)
         }
     }
 end RetryTest

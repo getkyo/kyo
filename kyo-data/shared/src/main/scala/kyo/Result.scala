@@ -167,6 +167,15 @@ object Result:
         inline def map[B](inline f: A => B): Result[E, B] =
             flatMap(v => Result.success(f(v)))
 
+        inline def mapFail[E2](inline f: E => E2): Result[E2, A] =
+            self match
+                case Fail(e) =>
+                    try Fail(f(e))
+                    catch
+                        case ex => Panic(ex)
+                case Panic(ex) => Panic(ex)
+                case _         => self.asInstanceOf[Result[E2, A]]
+
         inline def withFilter(inline p: A => Boolean): Result[E | NoSuchElementException, A] =
             filter(p)
 

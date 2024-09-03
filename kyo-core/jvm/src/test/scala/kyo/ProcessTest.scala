@@ -1,6 +1,7 @@
 package kyo
 
 import java.io.*
+import java.lang.System as JSystem
 import java.nio.charset.StandardCharsets
 import kyo.*
 
@@ -66,6 +67,6 @@ end ProcessTest
 
 object TestMainClass:
     def main(args: Array[String]) =
-        if args.isEmpty then System.exit(0)
-        else System.exit(1)
+        if args.isEmpty then JSystem.exit(0)
+        else JSystem.exit(1)
 end TestMainClass

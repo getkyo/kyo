@@ -690,4 +690,48 @@ class ResultTest extends Test:
         }
     }
 
+    "mapFail" - {
+        "should not change Success" in {
+            val result = Result.success[String, Int](5)
+            val mapped = result.mapFail(_ => 42)
+            assert(mapped == Success(5))
+        }
+
+        "should apply the function to Fail" in {
+            val result = Result.fail[String, Int]("error")
+            val mapped = result.mapFail(_.length)
+            assert(mapped == Fail(5))
+        }
+
+        "should not change Panic" in {
+            val ex     = new Exception("test")
+            val result = Result.panic[String, Int](ex)
+            val mapped = result.mapFail(_ => 42)
+            assert(mapped == Panic(ex))
+        }
+
+        "should allow changing the error type" in {
+            val result: Result[String, Int] = Result.fail("error")
+            val mapped: Result[Int, Int]    = result.mapFail(_.length)
+            assert(mapped == Fail(5))
+        }
+
+        "should handle exceptions in the mapping function" in {
+            val result = Result.fail[String, Int]("error")
+            val mapped = result.mapFail(_ => throw new RuntimeException("Mapping error"))
+            assert(mapped.isPanic)
+        }
+
+        "should work with for-comprehensions" in {
+            val result =
+                for
+                    x <- Result.success[String, Int](5)
+                    y <- Result.fail[String, Int]("error")
+                yield x + y
+
+            val mapped = result.mapFail(_.toUpperCase)
+            assert(mapped == Fail("ERROR"))
+        }
+    }
+
 end ResultTest

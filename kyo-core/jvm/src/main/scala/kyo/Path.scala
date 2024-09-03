@@ -2,6 +2,7 @@ package kyo
 
 import java.io.BufferedReader
 import java.io.IOException
+import java.lang.System as JSystem
 import java.nio.*
 import java.nio.channels.FileChannel
 import java.nio.charset.*
@@ -388,7 +389,7 @@ extension [S](stream: Stream[String, S])
             stream.runForeach(line =>
                 IO {
                     fileCh.write(ByteBuffer.wrap(line.getBytes))
-                    fileCh.write(ByteBuffer.wrap(System.lineSeparator().getBytes))
+                    fileCh.write(ByteBuffer.wrap(JSystem.lineSeparator().getBytes))
                     ()
                 }
             )

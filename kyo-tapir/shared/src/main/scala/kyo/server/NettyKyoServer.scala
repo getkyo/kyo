@@ -5,6 +5,7 @@ import io.netty.channel.group.ChannelGroup
 import io.netty.channel.group.DefaultChannelGroup
 import io.netty.channel.unix.DomainSocketAddress
 import io.netty.util.concurrent.DefaultEventExecutor
+import java.lang.System as JSystem
 import java.net.InetSocketAddress
 import java.net.SocketAddress
 import java.nio.file.Path
@@ -64,7 +65,7 @@ case class NettyKyoServer(
 
     def startUsingDomainSocket(path: Option[Path] = None): KyoSttpMonad.M[NettyKyoDomainSocketBinding] =
         startUsingDomainSocket(path.getOrElse(Paths.get(
-            System.getProperty("java.io.tmpdir"),
+            JSystem.getProperty("java.io.tmpdir"),
             UUID.randomUUID().toString
         )))
 
@@ -135,7 +136,7 @@ case class NettyKyoServer(
         gracefulShutdownTimeoutNanos: Option[Long]
     ): KyoSttpMonad.M[Unit] =
         if !channelGroup.isEmpty && gracefulShutdownTimeoutNanos.exists(
-                _ >= System.nanoTime() - startNanos
+                _ >= JSystem.nanoTime() - startNanos
             )
         then
             Async.sleep(100.millis).andThen(waitForClosedChannels(
@@ -157,7 +158,7 @@ case class NettyKyoServer(
         isShuttingDown.set(true)
         waitForClosedChannels(
             channelGroup,
-            startNanos = System.nanoTime(),
+            startNanos = JSystem.nanoTime(),
             gracefulShutdownTimeoutNanos = gracefulShutdownTimeout.map(_.toNanos)
         ).flatMap { _ =>
             nettyFutureToScala(ch.close()).flatMap { _ =>

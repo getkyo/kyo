@@ -14,6 +14,26 @@ object Duration:
 
     given CanEqual[Duration, Duration] = CanEqual.derived
 
+    case class InvalidDuration(message: String) extends Exception(message)
+
+    def parse(s: String): Result[InvalidDuration, Duration] =
+        val pattern = """(\d+)\s*([a-zA-Z]+)""".r
+        s.trim.toLowerCase match
+            case "infinity" | "inf" => Result.success(Infinity)
+            case pattern(value, unit) =>
+                for
+                    longValue <-
+                        Result.attempt(value.toLong)
+                            .mapFail(_ => InvalidDuration(s"Invalid number: $value"))
+                    unitEnum <-
+                        Units.values.find(_.names.exists(_.startsWith(unit)))
+                            .map(Result.success)
+                            .getOrElse(Result.fail(InvalidDuration(s"Invalid unit: $unit")))
+                yield fromUnits(longValue, unitEnum)
+            case _ => Result.fail(InvalidDuration(s"Invalid duration format: $s"))
+        end match
+    end parse
+
     val Zero: Duration     = 0L
     val Infinity: Duration = Long.MaxValue
 
@@ -31,17 +51,17 @@ object Duration:
     def fromScala(value: ScalaDuration): Duration =
         if value.isFinite then value.toNanos.nanos.max(Zero) else Infinity
 
-    enum Units(val factor: Double):
-        case Nanos   extends Units(NANOS.getDuration.toNanos.toDouble)
-        case Micros  extends Units(MICROS.getDuration.toNanos.toDouble)
-        case Millis  extends Units(MILLIS.getDuration.toNanos.toDouble)
-        case Seconds extends Units(SECONDS.getDuration.toNanos.toDouble)
-        case Minutes extends Units(MINUTES.getDuration.toNanos.toDouble)
-        case Hours   extends Units(HOURS.getDuration.toNanos.toDouble)
-        case Days    extends Units(DAYS.getDuration.toNanos.toDouble)
-        case Weeks   extends Units(WEEKS.getDuration.toNanos.toDouble)
-        case Months  extends Units(MONTHS.getDuration.toNanos.toDouble)
-        case Years   extends Units(YEARS.getDuration.toNanos.toDouble)
+    enum Units(val factor: Double, val names: List[String]):
+        case Nanos   extends Units(NANOS.getDuration.toNanos.toDouble, List("ns", "nanos", "nanosecond", "nanoseconds"))
+        case Micros  extends Units(MICROS.getDuration.toNanos.toDouble, List("µs", "micros", "microsecond", "microseconds"))
+        case Millis  extends Units(MILLIS.getDuration.toNanos.toDouble, List("ms", "millis", "millisecond", "milliseconds"))
+        case Seconds extends Units(SECONDS.getDuration.toNanos.toDouble, List("s", "seconds", "second"))
+        case Minutes extends Units(MINUTES.getDuration.toNanos.toDouble, List("m", "minutes", "minute"))
+        case Hours   extends Units(HOURS.getDuration.toNanos.toDouble, List("h", "hours", "hour"))
+        case Days    extends Units(DAYS.getDuration.toNanos.toDouble, List("d", "days", "day"))
+        case Weeks   extends Units(WEEKS.getDuration.toNanos.toDouble, List("w", "weeks", "week"))
+        case Months  extends Units(MONTHS.getDuration.toNanos.toDouble, List("m", "months", "month"))
+        case Years   extends Units(YEARS.getDuration.toNanos.toDouble, List("y", "years", "year"))
     end Units
 
     extension (self: Duration)

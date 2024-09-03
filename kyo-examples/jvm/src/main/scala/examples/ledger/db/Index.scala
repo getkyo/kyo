@@ -2,6 +2,7 @@ package examples.ledger.db
 
 import Index.*
 import examples.ledger.*
+import java.lang.System as JSystem
 import java.lang.reflect.Field
 import java.nio.channels.FileChannel
 import java.nio.channels.FileChannel.MapMode.READ_WRITE
@@ -60,7 +61,7 @@ object Index:
                 val descChars  = this.descChars(desc)
                 val limit      = limits(account)
                 val offset     = address + (account * paddedEntrySize)
-                val timestamp  = System.currentTimeMillis()
+                val timestamp  = JSystem.currentTimeMillis()
                 var newBalance = 0
                 while !unsafe.compareAndSwapInt(null, offset, 0, 1) do {} // busy wait
                 try
