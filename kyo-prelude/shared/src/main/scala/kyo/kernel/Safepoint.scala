@@ -1,5 +1,6 @@
 package kyo.kernel
 
+import Safepoint.State
 import internal.*
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.isNull
@@ -9,30 +10,63 @@ import scala.util.control.NonFatal
 
 final class Safepoint private () extends Trace.Owner:
 
-    private var depth                            = 0
-    private[kernel] var interceptor: Interceptor = null
-    private val owner                            = Thread.currentThread()
+    private var state: State             = State.init()
+    private var interceptor: Interceptor = null
 
-    private def enter(frame: Frame, value: Any): Int =
-        if (Thread.currentThread eq owner) &&
-            depth < maxStackDepth &&
-            (isNull(interceptor) || interceptor.enter(frame, value))
-        then
+    def enter(frame: Frame, value: Any): Boolean =
+        val state    = this.state
+        val threadId = Thread.currentThread().getId()
+        val proceed =
+            state.depth <= maxStackDepth &&
+                state.threadId == threadId &&
+                (!state.hasInterceptor || interceptor.enter(frame, value))
+        if proceed then
+            this.state = state.incrementDepth
             pushFrame(frame)
-            val depth = this.depth
-            this.depth = depth + 1
-            depth + 1
-        else
-            -1
-        end if
+        proceed
     end enter
 
-    private def exit(depth: Int): Unit =
-        this.depth = depth - 1
+    def exit(): Unit =
+        state = state.decrementDepth
+
+    private[kernel] def getInterceptor(): Interceptor = interceptor
+
+    private[kernel] def setInterceptor(newInterceptor: Interceptor): Unit =
+        interceptor = newInterceptor
+        state = state.withInterceptor(newInterceptor != null)
 
 end Safepoint
 
 object Safepoint:
+
+    opaque type State = Long
+
+    object State:
+        // Bit allocation:
+        // Bits 0-15 (16 bits): depth (0-65535)
+        // Bit 16 (1 bit): hasInterceptor flag
+        // Bits 17-63 (47 bits): threadId
+
+        private inline def DepthMask: Long       = 0xffffL
+        private inline def InterceptorMask: Long = 1L << 16
+        private inline def ThreadIdMask: Long    = 0xffffffffffff0000L
+
+        require(maxStackDepth <= 65536)
+
+        inline def init(): State =
+            (Thread.currentThread().getId() << 17) & ThreadIdMask
+
+        extension (state: State)
+            def depth: Int              = (state & DepthMask).toInt
+            def threadId: Long          = (state & ThreadIdMask) >>> 17
+            def hasInterceptor: Boolean = (state & InterceptorMask) != 0
+            def incrementDepth: State   = state + 1
+            def decrementDepth: State   = state - 1
+            def withInterceptor(hasInterceptor: Boolean): State =
+                if hasInterceptor then state | InterceptorMask
+                else state & ~InterceptorMask
+        end extension
+    end State
 
     implicit def get: Safepoint = local.get()
 
@@ -55,9 +89,9 @@ object Safepoint:
                     override def removeEnsure(f: () => Unit): Unit = p.removeEnsure(f)
                     def enter(frame: Frame, value: Any) =
                         p.enter(frame, value) && prev.enter(frame, value)
-        safepoint.interceptor = np
+        safepoint.setInterceptor(np)
         try v
-        finally safepoint.interceptor = prev
+        finally safepoint.setInterceptor(prev)
     end immediate
 
     private[kyo] inline def propagating[A, S](p: Interceptor)(inline v: => A < S)(
@@ -83,9 +117,9 @@ object Safepoint:
             if compareAndSet(false, true) then
                 val safepoint = Safepoint.get
                 val prev      = safepoint.interceptor
-                safepoint.interceptor = null
+                safepoint.setInterceptor(null)
                 try run
-                finally safepoint.interceptor = prev
+                finally safepoint.setInterceptor(prev)
     end Ensure
 
     private inline def ensuring[A](ensure: Ensure)(inline thunk: => A)(using safepoint: Safepoint): A =
@@ -132,12 +166,11 @@ object Safepoint:
         inline suspend: Safepoint ?=> A < S,
         inline continue: => A < S
     )(using inline frame: Frame, self: Safepoint): A < S =
-        self.enter(frame, value) match
-            case -1 =>
-                Effect.defer(suspend)
-            case depth =>
-                try continue
-                finally self.exit(depth)
+        if !self.enter(frame, value) then
+            Effect.defer(suspend)
+        else
+            try continue
+            finally self.exit()
     end handle
 
     private[kernel] inline def handle[A, B, S](value: Any)(
@@ -145,15 +178,13 @@ object Safepoint:
         inline continue: A => B < S,
         inline suspend: Safepoint ?=> B < S
     )(using inline frame: Frame, self: Safepoint): B < S =
-        self.enter(frame, value) match
-            case -1 =>
-                Effect.defer(suspend)
-            case depth =>
-                val a =
-                    try eval
-                    finally self.exit(depth)
-                continue(a)
-        end match
+        if !self.enter(frame, value) then
+            Effect.defer(suspend)
+        else
+            val a =
+                try eval
+                finally self.exit()
+            continue(a)
     end handle
 
     def enrich(ex: Throwable)(using safepoint: Safepoint): Unit =

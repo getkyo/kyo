@@ -639,7 +639,7 @@ class SafepointTest extends Test:
                 val effect = Safepoint.propagating(interceptor) {
                     Safepoint.ensure {
                         ensureExecuted = true
-                        interceptorActive = Safepoint.get.interceptor != null
+                        interceptorActive = Safepoint.get.getInterceptor() != null
                     } {
                         42
                     }
@@ -664,7 +664,7 @@ class SafepointTest extends Test:
                     Safepoint.propagating(interceptor) {
                         Safepoint.ensure {
                             ensureExecuted = true
-                            interceptorActive = Safepoint.get.interceptor != null
+                            interceptorActive = Safepoint.get.getInterceptor() != null
                         } {
                             throw new RuntimeException("Test exception")
                         }
@@ -675,5 +675,145 @@ class SafepointTest extends Test:
             }
         }
     }
+
+    "Safepoint.State" - {
+        "init" - {
+            "creates a state with the current thread id, zero depth, and zero frame index" in {
+                val state    = Safepoint.State.init()
+                val threadId = Thread.currentThread().getId()
+
+                assert(state.threadId == threadId)
+                assert(state.depth == 0)
+                assert(!state.hasInterceptor)
+            }
+        }
+
+        "depth" - {
+            "initial" in {
+                val state = Safepoint.State.init()
+                assert(state.depth == 0)
+            }
+
+            "two increments" in {
+                val state = Safepoint.State.init().incrementDepth.incrementDepth
+                assert(state.depth == 2)
+            }
+
+            "increments and decrements" in {
+                val state = Safepoint.State.init().incrementDepth.incrementDepth.decrementDepth
+                assert(state.depth == 1)
+            }
+        }
+
+        "threadId" - {
+            "returns the correct thread id" in {
+                val state    = Safepoint.State.init()
+                val threadId = Thread.currentThread().getId()
+
+                assert(state.threadId == threadId)
+            }
+        }
+
+        "hasInterceptor" - {
+            "returns false by default" in {
+                val state = Safepoint.State.init()
+                assert(!state.hasInterceptor)
+            }
+
+            "returns true when set" in {
+                val state = Safepoint.State.init().withInterceptor(true)
+                assert(state.hasInterceptor)
+            }
+
+            "does not affect other bits when set" in {
+                val initialState = Safepoint.State.init().incrementDepth.incrementDepth
+                val newState     = initialState.withInterceptor(true)
+
+                assert(newState.hasInterceptor)
+                assert(newState.depth == initialState.depth)
+                assert(newState.threadId == initialState.threadId)
+            }
+        }
+
+        "withDepth" - {
+            "updates the depth correctly" in {
+                val state    = Safepoint.State.init()
+                val newState = state.incrementDepth.incrementDepth
+
+                assert(newState.depth == 2)
+                assert(newState.threadId == state.threadId)
+                assert(newState.hasInterceptor == state.hasInterceptor)
+            }
+
+            "handles depth changes with interceptor set" in {
+                val state    = Safepoint.State.init().withInterceptor(true)
+                val newState = state.incrementDepth.incrementDepth.incrementDepth
+
+                assert(newState.depth == 3)
+                assert(newState.hasInterceptor)
+            }
+        }
+
+        "withInterceptor" - {
+            "sets hasInterceptor to true" in {
+                val state    = Safepoint.State.init()
+                val newState = state.withInterceptor(true)
+
+                assert(newState.hasInterceptor)
+                assert(newState.depth == state.depth)
+                assert(newState.threadId == state.threadId)
+            }
+
+            "sets hasInterceptor to false" in {
+                val state    = Safepoint.State.init().withInterceptor(true)
+                val newState = state.withInterceptor(false)
+
+                assert(!newState.hasInterceptor)
+                assert(newState.depth == state.depth)
+                assert(newState.threadId == state.threadId)
+            }
+
+            "does not affect depth when toggling interceptor" in {
+                val initialState      = Safepoint.State.init().incrementDepth.incrementDepth
+                val intermediateState = initialState.withInterceptor(true)
+                val finalState        = intermediateState.withInterceptor(false)
+
+                assert(finalState.depth == initialState.depth)
+                assert(!finalState.hasInterceptor)
+            }
+        }
+
+        "combined operations" - {
+            "maintains correct state after multiple operations" in {
+                val initialState = Safepoint.State.init()
+                val finalState = initialState
+                    .incrementDepth
+                    .incrementDepth
+                    .withInterceptor(true)
+                    .incrementDepth
+                    .incrementDepth
+                    .withInterceptor(false)
+
+                assert(finalState.depth == 4)
+                assert(!finalState.hasInterceptor)
+                assert(finalState.threadId == initialState.threadId)
+            }
+
+            "handles rapid toggling of interceptor" in {
+                val state = Safepoint.State.init()
+                val finalState = (1 to 1000).foldLeft(state) { (s, i) =>
+                    s.withInterceptor(i % 2 == 0)
+                }
+
+                assert(finalState.hasInterceptor == (1000 % 2 == 0))
+                assert(finalState.depth == state.depth)
+                assert(finalState.threadId == state.threadId)
+            }
+        }
+    }
+
+    private def createStateWithThreadId(threadId: Long): Safepoint.State =
+        val raw = (threadId << 32) | (Safepoint.State.init().depth & 0xffffffffL)
+        raw.asInstanceOf[Safepoint.State]
 
 end SafepointTest
