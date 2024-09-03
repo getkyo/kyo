@@ -43,10 +43,10 @@ final class Scheduler(
     private val timer = InternalTimer(timerExecutor)
 
     private val admissionRegulator =
-        new Admission(loadAvg, schedule, System.currentTimeMillis, timer)
+        new Admission(() => loadAvg(), schedule, () => System.currentTimeMillis, timer)
 
     private val concurrencyRegulator =
-        new Concurrency(loadAvg, updateWorkers, Thread.sleep(_), System.nanoTime, timer)
+        new Concurrency(() => loadAvg(), updateWorkers, Thread.sleep(_), () => System.nanoTime, timer)
 
     private val top = new Reporter(status, enableTopJMX, enableTopConsoleMs, timer)
 
