@@ -228,10 +228,7 @@ object Effect:
             def handleLoop(state: State, v: A < (E & S & S2 & S3), context: Context)(using Safepoint): B < (S & S2 & S3) =
                 v match
                     case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if tag =:= kyo.tag && accept(kyo.input) =>
-                        Safepoint.handle(kyo.input)(
-                            suspend = handleLoop(state, kyo, context),
-                            continue = handle(kyo.input, state, kyo(_, context)).map(handleLoop(_, _, context))
-                        )
+                        handle(kyo.input, state, kyo(_, context)).map(handleLoop(_, _, context))
                     case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked =>
                         new KyoContinue[IX, OX, EX, Any, B, S & S2 & S3](kyo):
                             def frame = _frame
