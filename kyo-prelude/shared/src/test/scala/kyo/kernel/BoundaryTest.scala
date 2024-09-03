@@ -9,7 +9,7 @@ class BoundaryTest extends Test:
     sealed trait TestEffect1      extends ContextEffect[Int]
     sealed trait TestEffect2      extends ContextEffect[String]
     sealed trait TestEffect3      extends ContextEffect[Boolean]
-    sealed trait NotContextEffect extends Effect[Const[Int], Const[Int]]
+    sealed trait NotContextEffect extends ArrowEffect[Const[Int], Const[Int]]
 
     "apply" - {
         "creates a boundary for context effects" in {
@@ -100,12 +100,12 @@ class BoundaryTest extends Test:
         val effect: Int < (TestEffect1 & NotContextEffect) = boundary { (trace, context) =>
             for
                 x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
-                y <- Effect.suspend[Int](Tag[NotContextEffect], 1)
+                y <- ArrowEffect.suspend[Int](Tag[NotContextEffect], 1)
             yield x + y
         }
 
         val result = ContextEffect.handle(Tag[TestEffect1], 10, _ + 1) {
-            Effect.handle(Tag[NotContextEffect], effect) {
+            ArrowEffect.handle(Tag[NotContextEffect], effect) {
                 [C] => (input, cont) => cont(input + 1)
             }
         }

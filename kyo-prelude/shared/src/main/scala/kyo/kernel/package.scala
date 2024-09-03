@@ -17,13 +17,13 @@ package object kernel:
 
         type IX[_]
         type OX[_]
-        type EX <: Effect[IX, OX]
+        type EX <: ArrowEffect[IX, OX]
 
-        sealed trait Defer extends Effect[Const[Unit], Const[Unit]]
+        sealed trait Defer extends ArrowEffect[Const[Unit], Const[Unit]]
 
         sealed abstract class Kyo[+A, -S]
 
-        abstract class KyoSuspend[I[_], O[_], E <: Effect[I, O], A, B, S]
+        abstract class KyoSuspend[I[_], O[_], E <: ArrowEffect[I, O], A, B, S]
             extends Kyo[B, S]:
             def tag: Tag[E]
             def input: I[A]
@@ -36,7 +36,7 @@ package object kernel:
                 s"Kyo(${tag.show}, Input($input), ${parsed.position}, ${parsed.snippetShort})"
         end KyoSuspend
 
-        abstract class KyoContinue[I[_], O[_], E <: Effect[I, O], A, B, S](kyo: KyoSuspend[I, O, E, A, ?, ?])
+        abstract class KyoContinue[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](kyo: KyoSuspend[I, O, E, A, ?, ?])
             extends KyoSuspend[I, O, E, A, B, S]:
             val tag   = kyo.tag
             val input = kyo.input

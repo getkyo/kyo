@@ -21,7 +21,7 @@ opaque type Async <: (IO & Async.Join) = Async.Join & IO
 
 object Async:
 
-    sealed trait Join extends Effect[IOPromise[?, *], Result[Nothing, *]]
+    sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
 
     inline def run[E, A: Flat, Ctx](inline v: => A < (Abort[E] & Async & Ctx))(
         using
@@ -337,10 +337,10 @@ object Async:
     end use
 
     private[kyo] def getResult[E, A](v: IOPromise[E, A])(using Frame): Result[E, A] < Async =
-        Effect.suspend[A](Tag[Join], v).asInstanceOf[Result[E, A] < Async]
+        ArrowEffect.suspend[A](Tag[Join], v).asInstanceOf[Result[E, A] < Async]
 
     private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
-        Effect.suspendMap[A](Tag[Join], v)(f)
+        ArrowEffect.suspendMap[A](Tag[Join], v)(f)
 
     private def deadline(timeout: Duration): Long =
         if timeout.isFinite then

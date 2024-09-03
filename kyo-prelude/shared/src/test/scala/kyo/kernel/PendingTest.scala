@@ -60,7 +60,7 @@ class PendingTest extends Test:
     }
 
     "eval should not compile for pending effects" in {
-        @nowarn("msg=unused") trait CustomEffect extends Effect[Const[Unit], Const[Unit]]
+        @nowarn("msg=unused") trait CustomEffect extends ArrowEffect[Const[Unit], Const[Unit]]
         assertDoesNotCompile("val x: Int < CustomEffect = 5; x.eval")
     }
 
@@ -132,10 +132,10 @@ class PendingTest extends Test:
         }
     }
 
-    sealed trait TestEffect extends Effect[Const[Int], Const[Int]]
+    sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
 
     def testEffect(i: Int): Int < TestEffect =
-        Effect.suspend[Int](Tag[TestEffect], i)
+        ArrowEffect.suspend[Int](Tag[TestEffect], i)
 
     "evalNow" - {
         "returns Defined for pure values" in {

@@ -6,7 +6,7 @@ import kyo.bug
 import scala.annotation.nowarn
 import scala.util.NotGiven
 
-abstract class ContextEffect[+A]
+abstract class ContextEffect[+A] extends Effect
 
 object ContextEffect:
 
