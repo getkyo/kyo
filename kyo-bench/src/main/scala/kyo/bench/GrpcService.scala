@@ -1,12 +1,20 @@
 package kyo.bench
 
-import io.grpc.{ManagedChannelBuilder, ServerBuilder, StatusException}
-import kyo.grpc.helloworld.testservice.*
-import kyo.{size as _, *}
-import scalapb.zio_grpc.{Server, ServerLayer, ZManagedChannel}
-import zio.{UIO, ZIO, ZLayer}
+import io.grpc
+import io.grpc.ManagedChannelBuilder
+import io.grpc.ServerBuilder
+import io.grpc.StatusException
 
-import java.util.concurrent.TimeUnit
+import kyo.{size as _, *}
+import kyo.grpc.helloworld.testservice.*
+
+import scala.language.implicitConversions
+import scalapb.zio_grpc
+import scalapb.zio_grpc.Server
+import scalapb.zio_grpc.ServerLayer
+import scalapb.zio_grpc.ZManagedChannel
+import zio.ZIO
+import zio.ZLayer
 
 object GrpcService:
 
@@ -18,7 +26,7 @@ object GrpcService:
     val request: HelloRequest = HelloRequest(message)
     val reply: HelloReply     = HelloReply(message)
 
-    val serverLayer: ZLayer[Any, Throwable, Server] =
+    val serverLayer: ZLayer[Any, Throwable, zio_grpc.Server] =
         ServerLayer.fromService[ZioTestservice.Greeter](ServerBuilder.forPort(port), new ZIOGreeterImpl(size))
 
     val clientLayer: ZLayer[Any, Nothing, ZioTestservice.GreeterClient] =
@@ -27,39 +35,11 @@ object GrpcService:
             ZioTestservice.GreeterClient.scoped(ZManagedChannel(channel)).orDie
         }
 
-    val createClientAndServer =
-        for
-            _      <- createServer(port)
-            client <- createClient(port)
-        yield client
+    def createServer(port: Int): grpc.Server < Resources =
+        kyo.grpc.Server.start(port)(_.addService(KyoGreeterImpl(size)))
 
-    def createServer(port: Int) =
-        Resources.acquireRelease(
-            IOs(
-                ServerBuilder
-                    .forPort(port)
-                    .addService(Greeter.server(KyoGreeterImpl(size)))
-                    .build()
-                    .start()
-            )
-        ) { server =>
-            IOs(server.shutdown().awaitTermination())
-        }
-
-    def createClient(port: Int) =
-        createChannel(port).map(Greeter.client(_))
-
-    def createChannel(port: Int) =
-        Resources.acquireRelease(
-            IOs(
-                ManagedChannelBuilder
-                    .forAddress(host, port)
-                    .usePlaintext()
-                    .build()
-            )
-        ) { channel =>
-            IOs(channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)).unit
-        }
+    def createClient(port: Int): Greeter.Client < Resources =
+        kyo.grpc.Client.channel(host, port)(_.usePlaintext()).map(Greeter.client(_))
 
 end GrpcService
 

@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit
 object HelloWorldClient extends KyoApp:
 
   private val host = "localhost"
-  private val port = 9001
+  private val port = 50051
 
   run {
     for

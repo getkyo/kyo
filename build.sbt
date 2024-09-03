@@ -14,7 +14,9 @@ val compilerOptions = Set(
     ScalacOptions.unchecked,
     ScalacOptions.deprecation,
     ScalacOptions.warnValueDiscard,
-    ScalacOptions.languageStrictEquality
+    ScalacOptions.languageStrictEquality,
+    ScalacOptions.explain,
+    ScalacOptions.explainTypes
 ) ++ ScalacOptions.warnUnusedOptions
 
 ThisBuild / scalaVersion           := scala3Version

@@ -20,6 +20,8 @@ object Types {
 
     val serverHandler = "_root_.kyo.grpc.ServerHandler"
 
+    val service = "_root_.kyo.grpc.Service"
+
     val javaServiceDescriptor = "_root_.com.google.protobuf.Descriptors.ServiceDescriptor"
 
     val callOptions = "_root_.io.grpc.CallOptions"

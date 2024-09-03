@@ -38,14 +38,27 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
     private def printServiceTrait(fp: FunctionalPrinter): FunctionalPrinter =
         fp.addTrait(name)
             .addAnnotations(Seq(service.deprecatedAnnotation).filter(_.nonEmpty)*)
+            .addParents(Types.service)
             .addBody {
-                _.print(service.getMethods.asScala) { (fp, md) =>
-                    printServiceMethod(fp, md)
-                }
+                _.newline
+                    .call(printServiceDefinitionMethod)
+                    .newline
+                    .print(service.getMethods.asScala) { (fp, md) =>
+                        printServiceMethod(fp, md)
+                    }
             }
 
+    private def printServiceDefinitionMethod(fp: FunctionalPrinter): FunctionalPrinter = {
+        fp.addMethod("definition")
+            .addMods(_.Override)
+            .addReturnType(Types.serverServiceDefinition)
+            .addBody {
+                _.add(s"$name.service(this)")
+            }
+    }
+
     private def printServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
-        def requestParameter          = "request"          :- method.inputType.scalaType
+        def requestParameter          = "request" :- method.inputType.scalaType
         def responseObserverParameter = "responseObserver" :- Types.streamObserver(method.outputType.scalaType)
         // TODO: Only unary has the correct types.
         val parameters = method.streamType match {
@@ -72,7 +85,8 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
         fp.addObject(name)
             .addAnnotations(Seq(service.deprecatedAnnotation).filter(_.nonEmpty)*)
             .addBody {
-                _.call(printServerMethod)
+                _.newline
+                    .call(printServerMethod)
                     .newline
                     .call(printClientMethod)
                     .newline
@@ -83,7 +97,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
 
     private def printServerMethod(fp: FunctionalPrinter): FunctionalPrinter = {
         val methods = service.methods.map(printAddMethod)
-        fp.addMethod("server")
+        fp.addMethod("service")
             .addParameterList("serviceImpl" :- name)
             .addReturnType(Types.serverServiceDefinition)
             .addBody(
@@ -108,7 +122,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
 
     private def printClientMethod(fp: FunctionalPrinter): FunctionalPrinter =
         fp.addMethod("client")
-            .addParameterList(//
+            .addParameterList( //
                 "channel" :- Types.channel,
                 "options" :- Types.callOptions := (Types.callOptions + ".DEFAULT")
             )
@@ -126,7 +140,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             }
 
     private def printClientServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
-        def requestParameter          = "request"          :- method.inputType.scalaType
+        def requestParameter          = "request" :- method.inputType.scalaType
         def responseObserverParameter = "responseObserver" :- Types.streamObserver(method.outputType.scalaType)
         // TODO: Only unary has the correct types.
         val parameters = method.streamType match {
@@ -151,7 +165,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
 
     private def printClientImpl(fp: FunctionalPrinter): FunctionalPrinter =
         fp.addClass("ClientImpl")
-            .addParameterList(//
+            .addParameterList( //
                 "channel" :- Types.channel,
                 "options" :- Types.callOptions
             )
@@ -163,7 +177,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             }
 
     private def printClientImplMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
-        def requestParameter          = "request"          :- method.inputType.scalaType
+        def requestParameter          = "request" :- method.inputType.scalaType
         def responseObserverParameter = "responseObserver" :- Types.streamObserver(method.outputType.scalaType)
         // TODO: Only unary has the correct types.
         val parameters = method.streamType match {

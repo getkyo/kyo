@@ -1,6 +1,6 @@
 package kyo.grpc
 
-import io.grpc.*
+import io.grpc.{Server as _, *}
 import kyo.*
 import kyo.grpc.test.*
 import org.scalactic.Equality
@@ -77,17 +77,7 @@ class ServiceTest extends KyoTest:
         yield client
 
     private def createServer(port: Int) =
-        Resources.acquireRelease(
-            IOs(
-                ServerBuilder
-                    .forPort(port)
-                    .addService(TestService.server(TestServiceImpl))
-                    .build()
-                    .start()
-            )
-        ) { server =>
-            IOs(server.shutdown().awaitTermination())
-        }
+        Server.start(port)(_.addService(TestServiceImpl.definition))
 
     private def createClient(port: Int) =
         createChannel(port).map(TestService.client(_))

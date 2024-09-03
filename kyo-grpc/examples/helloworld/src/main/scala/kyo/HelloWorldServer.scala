@@ -5,32 +5,27 @@ import io.grpc.examples.helloworld.helloworld.*
 import kyo.grpc.*
 
 object GreeterService extends Greeter:
+
   override def sayHello(request: HelloRequest): HelloReply < GrpcResponses =
     for
       _ <- Consoles.run(Consoles.println(s"Got request: $request"))
     yield HelloReply(s"Hello, ${request.name}")
 
-object HelloWorldServer extends KyoGrpServerApp:
+object HelloWorldServer extends KyoApp:
 
-  private val port = 9001
-
-  private val services = Seq(
-    // TODO: This should be:
-    //  GreeterService.define(Greeter)
-    Greeter.server(GreeterService)
-  )
+  private val port = 50051
 
   run {
     for
       _ <- Consoles.println(s"Server is running on port $port. Press Ctrl-C to stop.")
-      server <- Resources.acquireRelease(IOs(buildServer(port, services).start())) { (server: Server) =>
+      server <- Server.start(port)(_.addService(GreeterService), { server =>
         for
           _ <- Consoles.run(Consoles.print("Shutting down..."))
-          _ <- IOs(server.shutdown().awaitTermination())
+          _ <- Server.shutdown(server)
           _ <- Consoles.run(Consoles.println("Done."))
         yield ()
-      }
-      s <- waitForInterrupt
+      })
+      _ <- Server.waitForInterrupt
     yield "Goodbye!"
   }
 

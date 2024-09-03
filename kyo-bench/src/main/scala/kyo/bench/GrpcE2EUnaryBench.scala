@@ -12,7 +12,12 @@ class GrpcE2EUnaryBench extends Bench.ForkOnly(reply):
         ???
 
     override def kyoBenchFiber() =
-        Resources.run(createClientAndServer.map(_.sayHello(request)))
+        Resources.run {
+            for {
+                _ <- createServer(port)
+                client <- createClient(port)
+            } yield client.sayHello(request)
+        }
 
     override val zioRuntimeLayer =
         super.zioRuntimeLayer.merge(serverLayer).merge(clientLayer)
