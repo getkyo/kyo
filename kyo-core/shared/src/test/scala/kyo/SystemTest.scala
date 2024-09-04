@@ -2,6 +2,7 @@ package kyo
 
 import System.Parser
 import java.lang as j
+import kyo.System.OS
 
 class SystemTest extends Test:
 
@@ -74,6 +75,12 @@ class SystemTest extends Test:
         yield assert(name == expected)
     }
 
+    "operatingSystem" in run {
+        for
+            os <- System.operatingSystem
+        yield assert(OS.values.contains(os))
+    }
+
     "custom System implementation" in run {
         val customSystem = new System:
             def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO) =
@@ -83,17 +90,20 @@ class SystemTest extends Test:
             def lineSeparator(using Frame): String < IO = IO("custom_separator")
             def userName(using Frame): String < IO      = IO("custom_user")
             def userHome(using Frame): String < IO      = IO("custom_home")
+            def operatingSystem(using Frame): OS < IO   = IO(OS.AIX)
 
         for
             env       <- System.let(customSystem)(System.env[String]("ANY"))
             prop      <- System.let(customSystem)(System.property[String]("ANY"))
             separator <- System.let(customSystem)(System.lineSeparator)
             user      <- System.let(customSystem)(System.userName)
+            os        <- System.let(customSystem)(System.operatingSystem)
         yield
             assert(env == Maybe("custom_env"))
             assert(prop == Maybe("custom_property"))
             assert(separator == "custom_separator")
             assert(user == "custom_user")
+            assert(os == OS.AIX)
         end for
     }
 

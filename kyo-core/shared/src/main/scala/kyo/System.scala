@@ -9,10 +9,14 @@ abstract class System:
     def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO)
     def lineSeparator(using Frame): String < IO
     def userName(using Frame): String < IO
+    def operatingSystem(using Frame): System.OS < IO
 
 end System
 
 object System:
+
+    enum OS derives CanEqual:
+        case Linux, MacOS, Windows, BSD, Solaris, IBMI, AIX, Unknown
 
     val local = Local.init(live)
 
@@ -35,6 +39,22 @@ object System:
             def lineSeparator(using Frame): String < IO = IO(JSystem.lineSeparator())
 
             def userName(using Frame): String < IO = IO(JSystem.getProperty("user.name"))
+
+            def operatingSystem(using Frame): OS < IO =
+                IO {
+                    Maybe(JSystem.getProperty("os.name")).map { prop =>
+                        val osName = prop.toLowerCase
+                        if osName.contains("linux") then OS.Linux
+                        else if osName.contains("mac") then OS.MacOS
+                        else if osName.contains("windows") then OS.Windows
+                        else if osName.contains("bsd") then OS.BSD
+                        else if osName.contains("sunos") then OS.Solaris
+                        else if osName.contains("os/400") || osName.contains("os400") then OS.IBMI
+                        else if osName.contains("aix") then OS.AIX
+                        else OS.Unknown
+                        end if
+                    }.getOrElse(OS.Unknown)
+                }
 
     def let[A, S](system: System)(f: => A < S)(using Frame): A < S =
         local.let(system)(f)
@@ -83,6 +103,7 @@ object System:
 
     def lineSeparator(using Frame): String < IO = local.use(_.lineSeparator)
     def userName(using Frame): String < IO      = local.use(_.userName)
+    def operatingSystem(using Frame): OS < IO   = local.use(_.operatingSystem)
 
     abstract class Parser[E, A]:
         def apply(s: String): A < Abort[E]
