@@ -9,7 +9,6 @@ abstract class System:
     def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO)
     def lineSeparator(using Frame): String < IO
     def userName(using Frame): String < IO
-    def userHome(using Frame): String < IO
 
 end System
 
@@ -36,19 +35,6 @@ object System:
             def lineSeparator(using Frame): String < IO = IO(JSystem.lineSeparator())
 
             def userName(using Frame): String < IO = IO(JSystem.getProperty("user.name"))
-
-            def userHome(using Frame): String < IO = IO {
-                Maybe(JSystem.getProperty("user.home"))
-                    .orElse(Maybe(JSystem.getenv("HOME")))
-                    .getOrElse {
-                        val osName = JSystem.getProperty("os.name").toLowerCase
-                        if osName.contains("win") then
-                            JSystem.getenv("USERPROFILE")
-                        else
-                            "/home/" + JSystem.getProperty("user.name")
-                        end if
-                    }
-            }
 
     def let[A, S](system: System)(f: => A < S)(using Frame): A < S =
         local.let(system)(f)
@@ -97,7 +83,6 @@ object System:
 
     def lineSeparator(using Frame): String < IO = local.use(_.lineSeparator)
     def userName(using Frame): String < IO      = local.use(_.userName)
-    def userHome(using Frame): String < IO      = local.use(_.userHome)
 
     abstract class Parser[E, A]:
         def apply(s: String): A < Abort[E]

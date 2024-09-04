@@ -74,13 +74,6 @@ class SystemTest extends Test:
         yield assert(name == expected)
     }
 
-    "userHome" in runJVM {
-        for
-            home <- System.userHome
-            expected = j.System.getProperty("user.home")
-        yield assert(home == expected)
-    }
-
     "custom System implementation" in run {
         val customSystem = new System:
             def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO) =
@@ -96,13 +89,11 @@ class SystemTest extends Test:
             prop      <- System.let(customSystem)(System.property[String]("ANY"))
             separator <- System.let(customSystem)(System.lineSeparator)
             user      <- System.let(customSystem)(System.userName)
-            home      <- System.let(customSystem)(System.userHome)
         yield
             assert(env == Maybe("custom_env"))
             assert(prop == Maybe("custom_property"))
             assert(separator == "custom_separator")
             assert(user == "custom_user")
-            assert(home == "custom_home")
         end for
     }
 
