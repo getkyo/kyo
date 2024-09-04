@@ -1436,12 +1436,8 @@ val e: String < IO =
 val f: String < IO =
     System.userName
 
-// Get the current user's home directory
-val g: String < IO =
-    System.userHome
-
 // Use a custom System implementation
-val h: String < IO =
+val g: String < IO =
     System.let(System.live)(System.userName)
 ```
 
