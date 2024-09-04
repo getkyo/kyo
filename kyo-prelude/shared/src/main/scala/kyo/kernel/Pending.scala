@@ -86,16 +86,30 @@ object `<`:
                 case kyo: Kyo[?, ?] => Maybe.empty
                 case v              => Maybe(v.asInstanceOf[A])
 
+        inline def unit(
+            using
+            inline _frame: Frame,
+            inline flat: Flat.Weak[A],
+            inline safepoint: Safepoint
+        ): Unit < S =
+            @nowarn("msg=anonymous") def unitLoop(v: A < S)(using Safepoint): Unit < S =
+                v match
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, S] @unchecked =>
+                        new KyoContinue[IX, OX, EX, Any, Unit, S](kyo):
+                            def frame = _frame
+                            def apply(v: OX[Any], context: Context)(using Safepoint) =
+                                unitLoop(kyo(v, context))
+                    case v =>
+                        ()
+            unitLoop(v)
+        end unit
+
     end extension
 
     // TODO Compiler crash if inlined
     extension [A, S](v: A < S)
         def repeat(i: Int)(using ev: A => Unit, frame: Frame, flat: Flat.Weak[A]): Unit < S =
             if i <= 0 then () else v.andThen(repeat(i - 1))
-
-        def unit(using frame: Frame, flat: Flat.Weak[A]): Unit < S =
-            v.map(_ => ())
-    end extension
 
     // TODO Compiler crash if inlined
     extension [A, S, S2](v: A < S < S2)
