@@ -20,16 +20,18 @@ object System:
     val live: System =
         new System:
             def env[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
-                val value = JSystem.getenv(name)
-                if value == null then Maybe.empty
-                else p(value).map(Maybe(_))
-            end env
+                IO {
+                    val value = JSystem.getenv(name)
+                    if value == null then Maybe.empty
+                    else p(value).map(Maybe(_))
+                }
 
             def property[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
-                val value = JSystem.getProperty(name)
-                if value == null then Maybe.empty
-                else p(value).map(Maybe(_))
-            end property
+                IO {
+                    val value = JSystem.getProperty(name)
+                    if value == null then Maybe.empty
+                    else p(value).map(Maybe(_))
+                }
 
             def lineSeparator(using Frame): String < IO = IO(JSystem.lineSeparator())
 
