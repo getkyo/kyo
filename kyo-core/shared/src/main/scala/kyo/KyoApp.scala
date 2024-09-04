@@ -8,7 +8,10 @@ abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
     def clock: Clock    = Clock.live
 
     override protected def handle[A: Flat](v: A < KyoApp.Effects)(using Frame): Unit =
-        v.map(Console.println)
+        v.map { v =>
+            if (()).equals(v) then ()
+            else Console.println(v)
+        }
             .pipe(Clock.let(clock))
             .pipe(Random.let(random))
             .pipe(Log.let(log))
