@@ -1296,6 +1296,35 @@ def example3(db: Database) =
     }
 ```
 
+### Check: Runtime Assertions
+
+The `Check` effect provides a mechanism for runtime assertions and validations. It allows you to add checks throughout your code that can be handled in different ways, such collecting failures or discarding them.
+
+```scala
+import kyo.*
+
+// Create a simple check
+val a: Unit < Check =
+    Check(1 + 1 == 2, "Basic math works")
+
+// Checks can be composed with other effects
+val b: Int < (Check & IO) =
+    for
+        value <- IO(42)
+        _     <- Check(value > 0, "Value is positive")
+    yield value
+
+// Handle checks by converting the first failed check to Abort
+val c: Int < (Abort[CheckFailed] & IO) =
+    Check.runAbort(b)
+
+// Discard check failures and continue execution
+val e: Int < IO =
+    Check.runDiscard(b)
+```
+
+The `CheckFailed` exception class, which is used to represent failed checks, includes both the failure message and the source code location (via `Frame`) where the check failed, making it easier to locate and debug issues.
+
 ### Console: Console Interaction
 
 ```scala
