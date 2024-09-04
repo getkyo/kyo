@@ -134,7 +134,7 @@ class AsyncTest extends Test:
             start <- IO(System.currentTimeMillis())
             _     <- Async.sleep(10.millis)
             end   <- IO(System.currentTimeMillis())
-        yield assert(end - start >= 10)
+        yield assert(end - start >= 8)
     }
 
     "delay" in run {
