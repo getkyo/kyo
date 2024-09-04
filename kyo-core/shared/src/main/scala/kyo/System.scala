@@ -36,8 +36,8 @@ object System:
             def userName(using Frame): String < IO = IO(JSystem.getProperty("user.name"))
 
             def userHome(using Frame): String < IO = IO {
-                Option(JSystem.getProperty("user.home"))
-                    .orElse(Option(JSystem.getenv("HOME")))
+                Maybe(JSystem.getProperty("user.home"))
+                    .orElse(Maybe(JSystem.getenv("HOME")))
                     .getOrElse {
                         val osName = JSystem.getProperty("os.name").toLowerCase
                         if osName.contains("win") then
@@ -130,7 +130,7 @@ object System:
             v => Abort.catching(new java.net.URL(v))
 
         given [E, A](using p: Parser[E, A], frame: Frame): Parser[E, Seq[A]] =
-            v => Kyo.foreach(v.split(",").toIndexedSeq)(s => p(s.trim()))
+            v => Kyo.foreach(Chunk.from(v.split(",")))(s => p(s.trim()))
 
         given (using Frame): Parser[IllegalArgumentException, Char] =
             v => if v.length == 1 then v.charAt(0) else Abort.fail(new IllegalArgumentException("String must have exactly one character"))

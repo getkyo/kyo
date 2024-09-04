@@ -4,6 +4,77 @@ import scala.util.Try
 
 class ChunkTest extends Test:
 
+    "Chunk.from" - {
+        "from Array" - {
+            "creates a Chunk.Indexed from a non-empty Array" in {
+                val array = Array("a", "b", "c")
+                val chunk = Chunk.from(array)
+                assert(chunk.isInstanceOf[Chunk.Indexed[String]])
+                assert(chunk.toSeq == Seq("a", "b", "c"))
+            }
+
+            "creates an empty Chunk from an empty Array" in {
+                val array = Array.empty[String]
+                val chunk = Chunk.from(array)
+                assert(chunk.isEmpty)
+            }
+
+            "creates a new copy of the Array" in {
+                val array = Array("a", "b", "c")
+                val chunk = Chunk.from(array)
+                array(0) = "x"
+                assert(chunk(0) == "a")
+            }
+        }
+
+        "from Seq" - {
+            "creates a Chunk.Indexed from a non-empty Seq" in {
+                val seq   = Seq("a", "b", "c")
+                val chunk = Chunk.from(seq)
+                assert(chunk.isInstanceOf[Chunk.Indexed[String]])
+                assert(chunk.toSeq == Seq("a", "b", "c"))
+            }
+
+            "creates an empty Chunk from an empty Seq" in {
+                val seq   = Seq.empty[String]
+                val chunk = Chunk.from(seq)
+                assert(chunk.isEmpty)
+            }
+
+            "handles different Seq types" - {
+                "List" in {
+                    val list  = List(1, 2, 3)
+                    val chunk = Chunk.from(list)
+                    assert(chunk.toSeq == Seq(1, 2, 3))
+                }
+
+                "Vector" in {
+                    val vector = Vector(1, 2, 3)
+                    val chunk  = Chunk.from(vector)
+                    assert(chunk.toSeq == Seq(1, 2, 3))
+                }
+            }
+
+            "returns the same instance for Chunk.Indexed input" in {
+                val original = Chunk(1, 2, 3)
+                val result   = Chunk.from(original)
+                assert(result eq original)
+            }
+
+            "creates a Chunk.FromSeq for non-Chunk IndexedSeq input" in {
+                val vector = Vector(1, 2, 3)
+                val chunk  = Chunk.from(vector)
+                assert(chunk.isInstanceOf[Chunk.internal.FromSeq[Int]])
+            }
+
+            "creates a Chunk.Compact for non-IndexedSeq input" in {
+                val list  = List(1, 2, 3)
+                val chunk = Chunk.from(list)
+                assert(chunk.isInstanceOf[Chunk.internal.Compact[Int]])
+            }
+        }
+    }
+
     "append" - {
         "appends a value to an empty chunk" in {
             val chunk = Chunk.empty[Int].append(1)
