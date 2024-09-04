@@ -99,6 +99,7 @@ object `<`:
             unitLoop(v)
         end unit
 
+        // TODO Nested 'pipe*' methods required to work around compiler crash
         inline def pipe[B](inline f: (=> A < S) => B)(
             using inline flat: Flat.Weak[A]
         ): B =
