@@ -3,7 +3,7 @@ package kyo
 import Ansi.*
 import kyo.kernel.*
 
-class CheckFailed(val message: String, val frame: Frame) extends Exception(message):
+class CheckFailed(val message: String, val frame: Frame) extends AssertionError(message):
     override def getMessage() =
         Seq(
             "",
