@@ -4,14 +4,15 @@ import WarmupJITProfile.*
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import kyo.bench.Bench.*
+import kyo.discard
 import org.openjdk.jmh.annotations.Scope
 import org.openjdk.jmh.annotations.State
 import scala.concurrent.duration.*
 
 @State(Scope.Benchmark)
 abstract class WarmupJITProfile:
-    run()
-    def run() =
+    start()
+    def start() =
         if warmupSeconds <= 0 then
             println("JIT profile warmup disabled")
         else
@@ -23,10 +24,7 @@ abstract class WarmupJITProfile:
                 (0 until warmupThreads).foreach { _ =>
                     exec.execute(() =>
                         while System.currentTimeMillis() < deadline do
-                            warmupBenchs.foreach {
-                                case bench: SyncAndFork[?] => sync(bench)
-                                case bench: Fork[?]        => fork(bench)
-                            }
+                            warmupBenchs.foreach(run(_))
                         end while
                         cdl.countDown()
                     )
@@ -36,29 +34,48 @@ abstract class WarmupJITProfile:
             finally
                 exec.shutdown()
             end try
-    end run
 
-    def sync[A](bench: SyncAndFork[A]): A
-
-    def fork[A](bench: Fork[A]): A
+    def run[A](bench: Bench[?]): Unit
 
 end WarmupJITProfile
 
 object WarmupJITProfile:
 
-    class CatsWarmup extends WarmupJITProfile:
-        def sync[A](bench: SyncAndFork[A]) = bench.syncCats(this)
-        def fork[A](bench: Fork[A])        = bench.forkCats(this)
+    abstract class SyncWarmup extends WarmupJITProfile:
+        def run[A](bench: Bench[?]) =
+            bench match
+                case bench: SyncAndFork[?] => discard(runSync(bench))
+                case _                     => ()
+        def runSync[A](bench: SyncAndFork[A]): A
+    end SyncWarmup
 
-    class KyoWarmup extends WarmupJITProfile:
-        def sync[A](bench: SyncAndFork[A]) = bench.syncKyo(this)
-        def fork[A](bench: Fork[A])        = bench.forkKyo(this)
+    abstract class ForkWarmup extends WarmupJITProfile:
+        def run[A](bench: Bench[?]) =
+            bench match
+                case bench: Fork[?] => discard(runFork(bench))
+                case _              => ()
+        def runFork[A](bench: Fork[A]): A
+    end ForkWarmup
 
-    class ZIOWarmup extends WarmupJITProfile:
-        def sync[A](bench: SyncAndFork[A]) = bench.syncZIO(this)
-        def fork[A](bench: Fork[A])        = bench.forkZIO(this)
+    class CatsSyncWarmup extends SyncWarmup:
+        def runSync[A](bench: SyncAndFork[A]) = bench.syncCats(this)
 
-    def warmupSeconds = System.getProperty("warmupJITProfileSeconds", "0").toInt
+    class CatsForkWarmup extends ForkWarmup:
+        def runFork[A](bench: Fork[A]) = bench.forkCats(this)
+
+    class KyoSyncWarmup extends SyncWarmup:
+        def runSync[A](bench: SyncAndFork[A]) = bench.syncKyo(this)
+
+    class KyoForkWarmup extends ForkWarmup:
+        def runFork[A](bench: Fork[A]) = bench.forkKyo(this)
+
+    class ZIOSyncWarmup extends SyncWarmup:
+        def runSync[A](bench: SyncAndFork[A]) = bench.syncZIO(this)
+
+    class ZIOForkWarmup extends ForkWarmup:
+        def runFork[A](bench: Fork[A]) = bench.forkZIO(this)
+
+    def warmupSeconds = System.getProperty("warmupJITProfileSeconds", "5").toInt
 
     val warmupThreads = Runtime.getRuntime().availableProcessors()
 
