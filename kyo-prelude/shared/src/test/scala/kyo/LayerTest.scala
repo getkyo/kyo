@@ -117,7 +117,7 @@ class LayerTest extends Test:
             val shouldSucceed = Layer("A good string")
             val shouldFail    = Layer("")
             val maybeFail: Layer[Int, Env[String] & Abort[String]] =
-                Layer.from { (s: String) => Abort.when(s.length < 6)("Too short!").andThen(s.length) }
+                Layer.from { (s: String) => Abort.ensuring(s.length >= 6)("Too short!").andThen(s.length) }
 
             val s = shouldSucceed to maybeFail
             val f = shouldFail to maybeFail
@@ -220,7 +220,7 @@ class LayerTest extends Test:
             case class C(b: B)
 
             val a = Layer(new A)
-            val b = Layer.from((a: A) => Abort.when(false)("").andThen(B(a)))
+            val b = Layer.from((a: A) => Abort.ensuring(true)("").andThen(B(a)))
             val c = Layer.from((b: B) => Var.get[Unit].andThen(C(b)))
             discard(a, b, c)
             assertCompiles("""Layer.init[C](a, b, c)""")

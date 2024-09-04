@@ -133,7 +133,7 @@ object System:
             v => Kyo.foreach(Chunk.from(v.split(",")))(s => p(s.trim()))
 
         given (using Frame): Parser[IllegalArgumentException, Char] =
-            v => if v.length == 1 then v.charAt(0) else Abort.fail(new IllegalArgumentException("String must have exactly one character"))
+            v => Abort.ensuring(v.length == 1, v.charAt(0))(new IllegalArgumentException("String must have exactly one character"))
 
     end Parser
 

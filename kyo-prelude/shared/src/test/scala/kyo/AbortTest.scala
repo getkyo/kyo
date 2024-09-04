@@ -287,7 +287,7 @@ class AbortsTest extends Test:
             }
         }
         "when" in {
-            def test(b: Boolean) = Abort.run[String](Abort.when(b)("FAIL!")).eval
+            def test(b: Boolean) = Abort.run[String](Abort.ensuring(!b)("FAIL!")).eval
 
             assert(test(true) == Result.fail("FAIL!"))
             assert(test(false) == Result.success(()))
