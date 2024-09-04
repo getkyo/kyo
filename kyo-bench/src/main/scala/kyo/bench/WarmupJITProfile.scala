@@ -75,7 +75,7 @@ object WarmupJITProfile:
     class ZIOForkWarmup extends ForkWarmup:
         def runFork[A](bench: Fork[A]) = bench.forkZIO(this)
 
-    def warmupSeconds = System.getProperty("warmupJITProfileSeconds", "5").toInt
+    def warmupSeconds = System.getProperty("warmupJITProfileSeconds", "0").toInt
 
     val warmupThreads = Runtime.getRuntime().availableProcessors()
 
