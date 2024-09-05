@@ -40,7 +40,7 @@ object Result:
         def loop(remaining: Seq[Result[E, A]], acc: Chunk[A]): Result[E, Chunk[A]] =
             remaining match
                 case (head: Result[E, A]) +: tail =>
-                    head.fold(error => error.asInstanceOf[Result[E, Chunk[A]]])(value => loop(tail, acc.append(value)))
+                    head.fold(error => error)(value => loop(tail, acc.append(value)))
                 case Seq() => Success(acc)
 
         loop(seq, Chunk.empty[A])
