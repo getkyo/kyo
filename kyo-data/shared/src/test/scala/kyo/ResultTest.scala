@@ -17,12 +17,15 @@ class ResultTest extends Test:
         assert(result == "error")
     }
 
-    "attempt" - {
+    "catching" - {
         "success" in {
-            assert(Result.attempt(1) == Success(1))
+            assert(Result.catching[Exception](1) == Success(1))
         }
-        "failure" in {
-            assert(Result.attempt(throw ex) == Fail(ex))
+        "fail" in {
+            assert(Result.catching[Exception](throw ex) == Fail(ex))
+        }
+        "panic" in {
+            assert(Result.catching[IllegalArgumentException](throw ex) == Panic(ex))
         }
     }
 
@@ -182,10 +185,10 @@ class ResultTest extends Test:
             assertDoesNotCompile("Result.fail(1).getOrThrow")
         }
         "throws for Throwable Fail" in {
-            assert(Result.attempt(Result.fail(ex).getOrThrow) == Result.fail(ex))
+            assert(Result.catching[Exception](Result.fail(ex).getOrThrow) == Result.fail(ex))
         }
         "throws for Panic" in {
-            assert(Result.attempt(Result.panic(ex).getOrThrow) == Result.fail(ex))
+            assert(Result.catching[Exception](Result.panic(ex).getOrThrow) == Result.fail(ex))
         }
     }
 
@@ -732,6 +735,72 @@ class ResultTest extends Test:
             val mapped = result.mapFail(_.toUpperCase)
             assert(mapped == Fail("ERROR"))
         }
+    }
+
+    "collect" - {
+        "all Success results" in {
+            val results = Seq(
+                Result.success(1),
+                Result.success(2),
+                Result.success(3)
+            )
+            val collected = Result.collect(results)
+            assert(collected == Success(Seq(1, 2, 3)))
+        }
+
+        "first Fail encountered" in {
+            val results = Seq(
+                Result.success(1),
+                Result.fail("error"),
+                Result.success(3)
+            )
+            val collected = Result.collect(results)
+            assert(collected == Fail("error"))
+        }
+
+        "Panic encountered" in {
+            val ex = new Exception("panic")
+            val results = Seq(
+                Result.success(1),
+                Result.panic(ex),
+                Result.fail("error")
+            )
+            val collected = Result.collect(results)
+            assert(collected == Panic(ex))
+        }
+
+        "empty input sequence" in {
+            val results: Seq[Result[String, Int]] = Seq.empty
+            val collected                         = Result.collect(results)
+            assert(collected == Success(Seq.empty))
+        }
+
+        "mixed error types" in {
+            val results = Seq(
+                Result.success(1),
+                Result.fail("string error"),
+                Result.fail(42),
+                Result.success(3)
+            )
+            val collected: Result[String | Int, Seq[Int]] =
+                Result.collect(results)
+            assert(collected.isFail)
+            assert(collected.failure.get.equals("string error"))
+        }
+
+        "mixed Success and Fail with different error types" in {
+            val results: Seq[Result[Any, Int]] = Seq(
+                Result.success(1),
+                Result.fail("string error"),
+                Result.success(2),
+                Result.fail(42),
+                Result.success(3)
+            )
+            val collected = Result.collect(results)
+            assert(collected.isFail)
+            assert(collected.failure.get.equals("string error"))
+        }
+
     }
 
 end ResultTest

@@ -3,6 +3,7 @@ package kyo
 import Result.*
 import scala.annotation.implicitNotFound
 import scala.annotation.targetName
+import scala.reflect.ClassTag
 import scala.util.Try
 import scala.util.control.NonFatal
 
@@ -20,15 +21,30 @@ object Result:
         catch
             case ex => Panic(ex)
 
-    inline def attempt[A](inline expr: => A): Result[Throwable, A] =
-        try
-            Success(expr)
-        catch
-            case ex if NonFatal(ex) => Fail(ex)
+    class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
+        inline def apply[A](inline expr: => A)(using ClassTag[E]): Result[E, A] =
+            try
+                Success(expr)
+            catch
+                case ex: E => Fail(ex)
+                case ex    => Panic(ex)
+    end CatchingOps
+
+    inline def catching[E <: Throwable]: CatchingOps[E] = CatchingOps(())
 
     inline def success[E, A](inline value: A): Result[E, A]           = Success(value)
     inline def fail[E, A](inline error: E): Result[E, A]              = Fail(error)
     inline def panic[E, A](inline exception: Throwable): Result[E, A] = Panic(exception)
+
+    def collect[E, A](seq: Seq[Result[E, A]]): Result[E, Seq[A]] =
+        def loop(remaining: Seq[Result[E, A]], acc: Chunk[A]): Result[E, Chunk[A]] =
+            remaining match
+                case (head: Result[E, A]) +: tail =>
+                    head.fold(error => error.asInstanceOf[Result[E, Chunk[A]]])(value => loop(tail, acc.append(value)))
+                case Seq() => Success(acc)
+
+        loop(seq, Chunk.empty[A])
+    end collect
 
     private val _unit            = Success(())
     def unit[E]: Result[E, Unit] = _unit

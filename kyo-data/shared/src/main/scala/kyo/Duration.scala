@@ -23,7 +23,7 @@ object Duration:
             case pattern(value, unit) =>
                 for
                     longValue <-
-                        Result.attempt(value.toLong)
+                        Result.catching[NumberFormatException](value.toLong)
                             .mapFail(_ => InvalidDuration(s"Invalid number: $value"))
                     unitEnum <-
                         Units.values.find(_.names.exists(_.startsWith(unit)))

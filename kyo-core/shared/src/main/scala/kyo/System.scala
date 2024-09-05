@@ -18,7 +18,7 @@ object System:
     enum OS derives CanEqual:
         case Linux, MacOS, Windows, BSD, Solaris, IBMI, AIX, Unknown
 
-    val local = Local.init(live)
+    private val local = Local.init(live)
 
     val live: System =
         new System:
@@ -26,14 +26,14 @@ object System:
                 IO {
                     val value = JSystem.getenv(name)
                     if value == null then Maybe.empty
-                    else p(value).map(Maybe(_))
+                    else Abort.get(p(value).map(Maybe(_)))
                 }
 
             def property[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
                 IO {
                     val value = JSystem.getProperty(name)
                     if value == null then Maybe.empty
-                    else p(value).map(Maybe(_))
+                    else Abort.get(p(value).map(Maybe(_)))
                 }
 
             def lineSeparator(using Frame): String < IO = IO(JSystem.lineSeparator())
@@ -106,42 +106,44 @@ object System:
     def operatingSystem(using Frame): OS < IO   = local.use(_.operatingSystem)
 
     abstract class Parser[E, A]:
-        def apply(s: String): A < Abort[E]
+        def apply(s: String): Result[E, A]
 
     object Parser:
-        given (using Frame): Parser[Nothing, String]                    = v => v
-        given (using Frame): Parser[NumberFormatException, Int]         = v => Abort.catching(v.toInt)
-        given (using Frame): Parser[NumberFormatException, Long]        = v => Abort.catching(v.toLong)
-        given (using Frame): Parser[NumberFormatException, Float]       = v => Abort.catching(v.toFloat)
-        given (using Frame): Parser[NumberFormatException, Double]      = v => Abort.catching(v.toDouble)
-        given (using Frame): Parser[IllegalArgumentException, Boolean]  = v => Abort.catching(v.toBoolean)
-        given (using Frame): Parser[NumberFormatException, Byte]        = v => Abort.catching(v.toByte)
-        given (using Frame): Parser[NumberFormatException, Short]       = v => Abort.catching(v.toShort)
-        given (using Frame): Parser[Duration.InvalidDuration, Duration] = v => Abort.get(Duration.parse(v))
+        given Parser[Nothing, String]                    = v => Result.success(v)
+        given Parser[NumberFormatException, Int]         = v => Result.catching(v.toInt)
+        given Parser[NumberFormatException, Long]        = v => Result.catching(v.toLong)
+        given Parser[NumberFormatException, Float]       = v => Result.catching(v.toFloat)
+        given Parser[NumberFormatException, Double]      = v => Result.catching(v.toDouble)
+        given Parser[IllegalArgumentException, Boolean]  = v => Result.catching(v.toBoolean)
+        given Parser[NumberFormatException, Byte]        = v => Result.catching(v.toByte)
+        given Parser[NumberFormatException, Short]       = v => Result.catching(v.toShort)
+        given Parser[Duration.InvalidDuration, Duration] = v => Duration.parse(v)
 
-        given (using Frame): Parser[IllegalArgumentException, java.util.UUID] =
-            v => Abort.catching(java.util.UUID.fromString(v))
+        given Parser[IllegalArgumentException, java.util.UUID] =
+            v => Result.catching(java.util.UUID.fromString(v))
 
-        given (using Frame): Parser[java.time.format.DateTimeParseException, java.time.LocalDate] =
-            v => Abort.catching(java.time.LocalDate.parse(v))
+        given Parser[java.time.format.DateTimeParseException, java.time.LocalDate] =
+            v => Result.catching(java.time.LocalDate.parse(v))
 
-        given (using Frame): Parser[java.time.format.DateTimeParseException, java.time.LocalTime] =
-            v => Abort.catching(java.time.LocalTime.parse(v))
+        given Parser[java.time.format.DateTimeParseException, java.time.LocalTime] =
+            v => Result.catching(java.time.LocalTime.parse(v))
 
-        given (using Frame): Parser[java.time.format.DateTimeParseException, java.time.LocalDateTime] =
-            v => Abort.catching(java.time.LocalDateTime.parse(v))
+        given Parser[java.time.format.DateTimeParseException, java.time.LocalDateTime] =
+            v => Result.catching(java.time.LocalDateTime.parse(v))
 
-        given (using Frame): Parser[java.net.URISyntaxException, java.net.URI] =
-            v => Abort.catching(new java.net.URI(v))
+        given Parser[java.net.URISyntaxException, java.net.URI] =
+            v => Result.catching(new java.net.URI(v))
 
-        given (using Frame): Parser[java.net.MalformedURLException, java.net.URL] =
-            v => Abort.catching(new java.net.URL(v))
+        given Parser[java.net.MalformedURLException, java.net.URL] =
+            v => Result.catching(new java.net.URL(v))
 
         given [E, A](using p: Parser[E, A], frame: Frame): Parser[E, Seq[A]] =
-            v => Kyo.foreach(Chunk.from(v.split(",")))(s => p(s.trim()))
+            v => Result.collect(Chunk.from(v.split(",")).map(v => p(v.trim())))
 
-        given (using Frame): Parser[IllegalArgumentException, Char] =
-            v => Abort.ensuring(v.length == 1, v.charAt(0))(new IllegalArgumentException("String must have exactly one character"))
+        given Parser[IllegalArgumentException, Char] =
+            v =>
+                if v.length() == 1 then Result.success(v(0))
+                else Result.fail(new IllegalArgumentException("String must have exactly one character"))
 
     end Parser
 
