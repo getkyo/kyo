@@ -775,6 +775,78 @@ val d: Int < Async =
     Resource.run(c)
 ```
 
+### Batch: Efficient Data Processing
+
+The `Batch` effect provides a mechanism for efficient processing of data in batches, allowing for optimized handling of datasets. It includes a type parameter `S` that represents the possible effects that can occur in the data sources.
+
+```scala
+import kyo.*
+
+// Create a source that doubles input values. 'Batch.source' takes a 'Seq'-processing
+// function and returns an element-wise function. This allows efficient batching
+// while maintaining a simple interface. The 'Batch' effect automatically
+// accumulates calls and executes them in a single batch operation.
+val source: Int => Int < Batch[IO] = 
+    Batch.source { seq =>
+        IO(seq.map(_ * 2))
+    }
+
+// Use the source in a batch computation
+val a: Int < Batch[IO] =
+    for
+        v <- Batch.eval(Seq(1, 2, 3))
+        r <- source(v)
+    yield r
+
+// Handle the Batch effect
+val b: Seq[Int] < IO =
+    Batch.run(a)
+
+// The result will be Seq(2, 4, 6)
+val c: Seq[Int] =
+    IO.run(b).eval
+```
+
+When creating a source, it's important to note that the returned sequence must have the same number of elements as the input sequence. This restriction ensures consistent behavior and allows for proper batching of operations.
+
+```scala
+import kyo.*
+
+// This is valid
+val validSource = Batch.source[Int, String, Any] { seq =>
+    seq.map(_.toString)
+}
+
+// This would cause a runtime error
+val invalidSource = Batch.source[Int, Int, Any] { seq =>
+    seq.filter(_ % 2 == 0)
+}
+```
+
+It's crucial to understand that the batching is done based on the identity of the provided source function. To ensure proper batching, it's necessary to reuse the function returned by `Batch.source`. Creating a new source for each operation will prevent effective batching. For example:
+
+```scala
+import kyo.*
+
+// Correct usage: reusing the source
+val source = Batch.source[Int, Int, IO] { seq => 
+    IO(seq.map(_ * 2))
+}
+
+val goodBatch = for
+    a <- Batch.eval(1 to 1000)
+    b <- source(a)  // This will be batched
+    c <- source(b)  // This will also be batched
+yield c
+
+// Incorrect usage: creating new sources inline
+val badBatch = for
+    a <- Batch.eval(1 to 1000)
+    b <- Batch.source[Int, Int, IO](seq => IO(seq.map(_ * 2)))(a)  // This won't be batched
+    c <- Batch.source[Int, Int, IO](seq => IO(seq.map(_ * 2)))(b)  // This also won't be batched
+yield c
+```
+
 ### Choice: Exploratory Branching
 
 The `Choice` effect is designed to aid in handling and exploring multiple options, pathways, or outcomes in a computation. This effect is particularly useful in scenario where you're dealing with decision trees, backtracking algorithms, or any situation that involves dynamically exploring multiple options.
@@ -1056,7 +1128,7 @@ val n: Array[Int] = a.toArray
 
 // Flatten a nested chunk
 val o: Chunk[Int] =
-    Chunk(a, b).flatten
+    Chunk(a, b).flattenChunk
 
 // Obtain sequentially distict elements.
 // Outputs: Chunk(1, 2, 3, 1)

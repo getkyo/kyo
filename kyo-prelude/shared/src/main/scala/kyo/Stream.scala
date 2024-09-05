@@ -322,7 +322,7 @@ case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
             handle = [C] =>
                 (input, state, cont) =>
                     (state.append(input), cont(Continue())),
-            done = (state, _) => state.flatten
+            done = (state, _) => state.flattenChunk
         )
 
 end Stream
