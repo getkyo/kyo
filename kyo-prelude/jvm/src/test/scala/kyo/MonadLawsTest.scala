@@ -46,7 +46,7 @@ object MonadLawsTest extends ZIOSpecDefault:
                             s <- Env.get[String]
                             _ <- Var.update[Boolean](!_)
                             i <- Emit(s.length)
-                            _ <- Abort.ensuring(s.length() <= 10)("length exceeded")
+                            _ <- Abort.when(s.length() > 10)("length exceeded")
                         yield v
                     )
                 )
