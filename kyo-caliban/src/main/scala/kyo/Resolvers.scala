@@ -19,6 +19,7 @@ import zio.ZEnvironment
 import zio.ZIO
 import zio.stream.ZStream
 
+/** Effect for interacting with Caliban GraphQL resolvers. */
 opaque type Resolvers <: (Abort[CalibanError] & ZIOs) = Abort[CalibanError] & ZIOs
 
 object Resolvers:
@@ -26,16 +27,49 @@ object Resolvers:
     private given StreamConstructor[Nothing] =
         (_: ZStream[Any, Throwable, Byte]) => throw new Throwable("Streaming is not supported")
 
+    /** Runs a GraphQL server with default NettyKyoServer configuration.
+      *
+      * @param v
+      *   The HttpInterpreter to be used
+      * @param Frame
+      *   Implicit Frame parameter
+      * @return
+      *   A NettyKyoServerBinding wrapped in ZIOs and Abort effects
+      */
     def run[A, S](v: HttpInterpreter[Any, CalibanError] < (Resolvers & S))(
         using Frame
     ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         run[A, S](NettyKyoServer())(v)
 
+    /** Runs a GraphQL server with a custom NettyKyoServer configuration.
+      *
+      * @param server
+      *   The custom NettyKyoServer configuration
+      * @param v
+      *   The HttpInterpreter to be used
+      * @param Frame
+      *   Implicit Frame parameter
+      * @return
+      *   A NettyKyoServerBinding wrapped in ZIOs and Abort effects
+      */
     def run[A, S](server: NettyKyoServer)(v: HttpInterpreter[Any, CalibanError] < (Resolvers & S))(
         using Frame
     ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         ZIOs.get(ZIO.runtime[Any]).map(runtime => run(server, runtime)(v))
 
+    /** Runs a GraphQL server with a custom Runner.
+      *
+      * @param runner
+      *   The custom Runner to be used
+      * @param v
+      *   The HttpInterpreter to be used
+      * @param tag
+      *   Implicit Tag for Runner[R]
+      * @param frame
+      *   Implicit Frame parameter
+      * @return
+      *   A NettyKyoServerBinding wrapped in ZIOs and Abort effects
+      */
     def run[R, A, S](runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolvers & S))(
         using
         tag: Tag[Runner[R]],
@@ -43,6 +77,21 @@ object Resolvers:
     ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         run[R, A, S](NettyKyoServer(), runner)(v)
 
+    /** Runs a GraphQL server with a custom NettyKyoServer configuration and Runner.
+      *
+      * @param server
+      *   The custom NettyKyoServer configuration
+      * @param runner
+      *   The custom Runner to be used
+      * @param v
+      *   The HttpInterpreter to be used
+      * @param tag
+      *   Implicit Tag for Runner[R]
+      * @param frame
+      *   Implicit Frame parameter
+      * @return
+      *   A NettyKyoServerBinding wrapped in ZIOs and Abort effects
+      */
     def run[R, A, S](server: NettyKyoServer, runner: Runner[R])(v: HttpInterpreter[Runner[R], CalibanError] < (Resolvers & S))(
         using
         tag: Tag[Runner[R]],
@@ -50,6 +99,19 @@ object Resolvers:
     ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
         ZIOs.get(ZIO.runtime[Any]).map(runtime => run(server, runtime.withEnvironment(ZEnvironment(runner)))(v))
 
+    /** Runs a GraphQL server with a custom NettyKyoServer configuration and Runtime.
+      *
+      * @param server
+      *   The custom NettyKyoServer configuration
+      * @param runtime
+      *   The custom Runtime to be used
+      * @param v
+      *   The HttpInterpreter to be used
+      * @param Frame
+      *   Implicit Frame parameter
+      * @return
+      *   A NettyKyoServerBinding wrapped in ZIOs and Abort effects
+      */
     def run[R, A, S](
         server: NettyKyoServer,
         runtime: Runtime[R]
@@ -60,6 +122,19 @@ object Resolvers:
             bindings <- IO(server.addEndpoints(endpoints).start())
         yield bindings
 
+    /** Creates an HttpInterpreter from a GraphQL API.
+      *
+      * @param api
+      *   The GraphQL API to be interpreted
+      * @param requestCodec
+      *   Implicit JsonCodec for GraphQLRequest
+      * @param responseValueCodec
+      *   Implicit JsonCodec for ResponseValue
+      * @param Frame
+      *   Implicit Frame parameter
+      * @return
+      *   An HttpInterpreter wrapped in Resolvers effect
+      */
     def get[R](api: GraphQL[R])(using
         requestCodec: JsonCodec[GraphQLRequest],
         responseValueCodec: JsonCodec[ResponseValue]
