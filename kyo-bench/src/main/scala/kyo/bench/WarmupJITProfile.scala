@@ -8,6 +8,7 @@ import kyo.discard
 import org.openjdk.jmh.annotations.Scope
 import org.openjdk.jmh.annotations.State
 import scala.concurrent.duration.*
+import scala.util.control.NonFatal
 
 @State(Scope.Benchmark)
 abstract class WarmupJITProfile:
@@ -23,9 +24,14 @@ abstract class WarmupJITProfile:
                 val cdl = new CountDownLatch(warmupThreads)
                 (0 until warmupThreads).foreach { _ =>
                     exec.execute(() =>
-                        while System.currentTimeMillis() < deadline do
-                            warmupBenchs.foreach(run(_))
-                        end while
+                        try
+                            while System.currentTimeMillis() < deadline do
+                                warmupBenchs.foreach(run(_))
+                            end while
+                        catch
+                            case ex if NonFatal(ex) =>
+                                new Exception("JIT profile warmup failed!", ex).printStackTrace()
+                        end try
                         cdl.countDown()
                     )
                 }
