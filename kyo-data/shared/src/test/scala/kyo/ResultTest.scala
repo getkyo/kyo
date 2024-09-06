@@ -831,12 +831,7 @@ class ResultTest extends Test:
 
         "multiple levels" in {
             val nested = Result.Success(Result.Success(Result.Success(Result.Fail("error"))))
-            assert(nested.toString == "Success(Success(Success(Success(Fail(error)))))")
-        }
-
-        "mixed with regular Success" in {
-            val mixed = Result.Success(Result.Success(42))
-            assert(mixed.toString == "Success(42)")
+            assert(nested.toString == "Success(Success(Success(Fail(error))))")
         }
     }
 

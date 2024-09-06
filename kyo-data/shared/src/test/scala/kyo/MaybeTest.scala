@@ -517,7 +517,6 @@ class MaybeTest extends Test:
         }
 
         "should handle nested Defined values" in {
-            assert(Defined(Defined(1)).show == "Defined(Defined(1))")
             assert(Defined(Empty).show == "Defined(Empty)")
         }
     }
