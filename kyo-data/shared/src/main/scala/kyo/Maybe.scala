@@ -387,6 +387,10 @@ object Maybe:
         inline def toLeft[X](inline right: => X): Either[A, X] =
             if isEmpty then Right(right) else Left(get)
 
+        def show: String =
+            if isEmpty then "Empty"
+            else s"Defined(${get})"
+
     end extension
 
     private[kyo] object internal:
@@ -399,6 +403,9 @@ object Maybe:
                     Empty
             def nest =
                 DefinedEmpty(depth + 1)
+
+            override def toString: String =
+                "Maybe(" * depth + "Empty" + ")" * depth
         end DefinedEmpty
 
         object DefinedEmpty:

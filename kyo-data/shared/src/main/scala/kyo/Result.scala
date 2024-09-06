@@ -595,6 +595,9 @@ object Result:
                     failure
             def nest: Success[A] =
                 SuccessError(failure, depth + 1)
+
+            override def toString: String =
+                "Success(" * depth + failure.toString + ")" * depth
         end SuccessError
     end internal
 end Result

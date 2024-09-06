@@ -506,4 +506,34 @@ class MaybeTest extends Test:
 
     }
 
+    "show" - {
+        "should return 'Empty' for Empty" in {
+            assert(Empty.show == "Empty")
+        }
+
+        "should return 'Defined(value)' for Defined" in {
+            assert(Defined(1).show == "Defined(1)")
+            assert(Defined("hello").show == "Defined(hello)")
+        }
+
+        "should handle nested Defined values" in {
+            assert(Defined(Defined(1)).show == "Defined(Defined(1))")
+            assert(Defined(Empty).show == "Defined(Empty)")
+        }
+    }
+
+    "DefinedEmpty.toString" - {
+        "should return correct string representation" in {
+            assert(DefinedEmpty(1).toString == "Maybe(Empty)")
+            assert(DefinedEmpty(2).toString == "Maybe(Maybe(Empty))")
+            assert(DefinedEmpty(3).toString == "Maybe(Maybe(Maybe(Empty)))")
+        }
+
+        "should handle large depths" in {
+            val largeDepth = 10
+            val expected   = "Maybe(" * largeDepth + "Empty" + ")" * largeDepth
+            assert(DefinedEmpty(largeDepth).toString == expected)
+        }
+    }
+
 end MaybeTest
