@@ -12,6 +12,15 @@ object Debug:
 
     private inline def maxValueLength = 500
 
+    /** Applies debugging to the given effect, printing the frame and value.
+      *
+      * @param v
+      *   The effect to debug
+      * @param frame
+      *   The implicit Frame
+      * @return
+      *   The original effect with debugging applied
+      */
     def apply[A, S](v: => A < S)(using frame: Frame): A < S =
         Effect.catching {
             v.map { value =>
@@ -26,6 +35,15 @@ object Debug:
         }
     end apply
 
+    /** Traces the execution of the given effect, printing intermediate values and frames.
+      *
+      * @param v
+      *   The effect to trace
+      * @param Frame
+      *   The implicit Frame
+      * @return
+      *   The original effect with tracing applied
+      */
     def trace[A, S](v: => A < S)(using Frame): A < S =
         val interceptor = new Safepoint.Interceptor:
             def enter(frame: Frame, value: Any): Boolean =
@@ -49,6 +67,13 @@ object Debug:
         }
     end trace
 
+    /** Prints the values of the given parameters along with their code representations.
+      *
+      * @param params
+      *   The parameters to print
+      * @param frame
+      *   The implicit Frame
+      */
     def values(params: Param[?]*)(using frame: Frame): Unit =
         val tuples = LinkedHashMap(params.map(p => (p.code, p.value))*)
         val string = pprint(tuples).render.replaceFirst("LinkedHashMap", "Params")
@@ -60,6 +85,13 @@ object Debug:
 
     object Param:
 
+        /** Derives a Param instance from a given value.
+          *
+          * @param v
+          *   The value to derive the Param from
+          * @return
+          *   A Param instance containing the code representation and value
+          */
         implicit inline def derive[T](v: => T): Param[T] =
             ${ paramImpl('v) }
 
