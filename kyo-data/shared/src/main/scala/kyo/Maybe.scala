@@ -405,7 +405,7 @@ object Maybe:
                 DefinedEmpty(depth + 1)
 
             override def toString: String =
-                "Maybe(" * depth + "Empty" + ")" * depth
+                "Defined(" * depth + "Empty" + ")" * depth
         end DefinedEmpty
 
         object DefinedEmpty:
