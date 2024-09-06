@@ -1392,6 +1392,8 @@ val f: Unit < IO =
 
 ### Clock: Time Management
 
+The `Clock` effect provides utilities for time-related operations, including getting the current time, creating stopwatches, and managing deadlines.
+
 ```scala
 import java.time.Instant
 import kyo.*
@@ -1400,10 +1402,51 @@ import kyo.*
 val a: Instant < IO =
     Clock.now
 
-// Run with an explicit 'Clock'
-val c: Instant < IO =
-    Clock.let(Clock.live)(a)
+// Create a stopwatch
+val b: Clock.Stopwatch < IO =
+    Clock.stopwatch
+
+// Measure elapsed time with a stopwatch
+val c: Duration < IO =
+    for
+        sw      <- Clock.stopwatch
+        elapsed <- sw.elapsed
+    yield elapsed
+
+// Create a deadline
+val d: Clock.Deadline < IO =
+    Clock.deadline(5.seconds)
+
+// Check time left until deadline
+val e: Duration < IO =
+    for
+        deadline <- Clock.deadline(5.seconds)
+        timeLeft <- deadline.timeLeft
+    yield timeLeft
+
+// Check if a deadline is overdue
+val f: Boolean < IO =
+    for
+        deadline <- Clock.deadline(5.seconds)
+        isOverdue <- deadline.isOverdue
+    yield isOverdue
+
+// Run with an explicit `Clock` implementation
+val g: Instant < IO =
+    Clock.let(Clock.live)(Clock.now)
+
+// Access unsafe (non-effectful) clock operations
+val h: Instant =
+    Clock.live.unsafe.now
+
+val i: Clock.Unsafe.Stopwatch =
+    Clock.live.unsafe.stopwatch
+
+val j: Clock.Unsafe.Deadline =
+    Clock.live.unsafe.deadline(5.seconds)
 ```
+
+`Clock` both safe (effectful) and unsafe (non-effectful) versions of its operations. The safe versions are suspended in `IO` and should be used in most cases. The unsafe versions are available through the `unsafe` property and should be used with caution, typically only in performance-critical sections or when integrating with non-effectful code.
 
 ### System: Environment Variables and System Properties
 
