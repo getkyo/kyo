@@ -19,7 +19,7 @@ import scala.io.*
 import scala.jdk.CollectionConverters.*
 import scala.jdk.StreamConverters.*
 
-class Path(val path: List[String]) derives CanEqual:
+class Path private (val path: List[String]) derives CanEqual:
 
     def toJava: JPath               = Paths.get(path.mkString("/"))
     lazy val parts: List[Path.Part] = path
@@ -343,7 +343,7 @@ class Path(val path: List[String]) derives CanEqual:
 
     override def equals(obj: Any): Boolean = obj match
         case that: Path =>
-            (this eq that) || (that.isInstanceOf[Path] && this.path == that.path)
+            (this eq that) || this.path == that.path
         case _ => false
 
     override def toString = s"Path(\"${path.mkString("/")}\")"
@@ -393,7 +393,7 @@ object Path:
     end User
 
     case class Project(qualifier: String, organization: String, application: String):
-        private def dirs                       = ProjectDirectories.from(qualifier, organization, application)
+        private lazy val dirs                  = ProjectDirectories.from(qualifier, organization, application)
         def path(using Frame): Path < IO       = IO(Path(dirs.projectPath))
         def cache(using Frame): Path < IO      = IO(Path(dirs.cacheDir))
         def config(using Frame): Path < IO     = IO(Path(dirs.configDir))
