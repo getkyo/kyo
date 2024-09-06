@@ -523,14 +523,14 @@ class MaybeTest extends Test:
 
     "DefinedEmpty.toString" - {
         "should return correct string representation" in {
-            assert(DefinedEmpty(1).toString == "Maybe(Empty)")
-            assert(DefinedEmpty(2).toString == "Maybe(Maybe(Empty))")
-            assert(DefinedEmpty(3).toString == "Maybe(Maybe(Maybe(Empty)))")
+            assert(DefinedEmpty(1).toString == "Defined(Empty)")
+            assert(DefinedEmpty(2).toString == "Defined(Defined(Empty))")
+            assert(DefinedEmpty(3).toString == "Defined(Defined(Defined(Empty)))")
         }
 
         "should handle large depths" in {
             val largeDepth = 10
-            val expected   = "Maybe(" * largeDepth + "Empty" + ")" * largeDepth
+            val expected   = "Defined(" * largeDepth + "Empty" + ")" * largeDepth
             assert(DefinedEmpty(largeDepth).toString == expected)
         }
     }
