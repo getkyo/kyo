@@ -803,4 +803,36 @@ class ResultTest extends Test:
 
     }
 
+    "show" - {
+        "Success" in {
+            assert(Result.success(42).show == "Success(42)")
+        }
+
+        "Fail" in {
+            assert(Result.fail("error").show == "Fail(error)")
+        }
+
+        "Panic" in {
+            val ex = new Exception("test")
+            assert(Result.panic(ex).show == s"Panic($ex)")
+        }
+
+        "nested Success" in {
+            val nested = Result.success(Result.success(Result.fail("error")))
+            assert(nested.show == "Success(Success(Success(Fail(error))))")
+        }
+    }
+
+    "SuccessError.toString" - {
+        "single level" in {
+            val successError = Result.Success(Result.Fail("error"))
+            assert(successError.toString == "Success(Fail(error))")
+        }
+
+        "multiple levels" in {
+            val nested = Result.Success(Result.Success(Result.Success(Result.Fail("error"))))
+            assert(nested.toString == "Success(Success(Success(Fail(error))))")
+        }
+    }
+
 end ResultTest
