@@ -1,10 +1,17 @@
 package kyo
 
-sealed abstract class Access derives CanEqual
+/** Represents different access patterns for concurrent queues.
+  */
+enum Access derives CanEqual:
+    /** Multiple Producer Multiple Consumer access pattern */
+    case Mpmc
 
-object Access:
-    case object Mpmc extends Access
-    case object Mpsc extends Access
-    case object Spmc extends Access
-    case object Spsc extends Access
+    /** Multiple Producer Single Consumer access pattern */
+    case Mpsc
+
+    /** Single Producer Multiple Consumer access pattern */
+    case Spmc
+
+    /** Single Producer Single Consumer access pattern */
+    case Spsc
 end Access

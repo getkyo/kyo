@@ -2,13 +2,24 @@ package kyo
 
 import kyo.internal.LogPlatformSpecific
 
+/** Logging utility object for Kyo applications. */
 object Log extends LogPlatformSpecific:
 
     private val local = Local.init[Unsafe](unsafe)
 
+    /** Executes a function with a custom Unsafe logger.
+      *
+      * @param u
+      *   The Unsafe logger to use
+      * @param f
+      *   The function to execute
+      * @return
+      *   The result of the function execution
+      */
     def let[A, S](u: Unsafe)(f: => A < (IO & S))(using Frame): A < (IO & S) =
         local.let(u)(f)
 
+    /** Abstract class defining the interface for unsafe logging operations. */
     abstract class Unsafe:
         def traceEnabled: Boolean
         def debugEnabled: Boolean
@@ -90,33 +101,114 @@ object Log extends LogPlatformSpecific:
                 (
             )
         }
+
+    /** Logs a trace message.
+      *
+      * @param msg
+      *   The message to log
+      * @return
+      *   An IO effect that logs the message
+      */
     inline def trace(inline msg: => String)(using inline frame: Frame): Unit < IO =
         logWhen(_.traceEnabled)(_.trace(msg))
 
+    /** Logs a trace message with an exception.
+      *
+      * @param msg
+      *   The message to log
+      * @param t
+      *   The exception to log
+      * @return
+      *   An IO effect that logs the message and exception
+      */
     inline def trace(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
         logWhen(_.traceEnabled)(_.trace(msg, t))
 
+    /** Logs a debug message.
+      *
+      * @param msg
+      *   The message to log
+      * @return
+      *   An IO effect that logs the message
+      */
     inline def debug(inline msg: => String)(using inline frame: Frame): Unit < IO =
         logWhen(_.debugEnabled)(_.debug(msg))
 
+    /** Logs a debug message with an exception.
+      *
+      * @param msg
+      *   The message to log
+      * @param t
+      *   The exception to log
+      * @return
+      *   An IO effect that logs the message and exception
+      */
     inline def debug(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
         logWhen(_.debugEnabled)(_.debug(msg, t))
 
+    /** Logs an info message.
+      *
+      * @param msg
+      *   The message to log
+      * @return
+      *   An IO effect that logs the message
+      */
     inline def info(inline msg: => String)(using inline frame: Frame): Unit < IO =
         logWhen(_.infoEnabled)(_.info(msg))
 
+    /** Logs an info message with an exception.
+      *
+      * @param msg
+      *   The message to log
+      * @param t
+      *   The exception to log
+      * @return
+      *   An IO effect that logs the message and exception
+      */
     inline def info(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
         logWhen(_.infoEnabled)(_.info(msg, t))
 
+    /** Logs a warning message.
+      *
+      * @param msg
+      *   The message to log
+      * @return
+      *   An IO effect that logs the message
+      */
     inline def warn(inline msg: => String)(using inline frame: Frame): Unit < IO =
         logWhen(_.warnEnabled)(_.warn(msg))
 
+    /** Logs a warning message with an exception.
+      *
+      * @param msg
+      *   The message to log
+      * @param t
+      *   The exception to log
+      * @return
+      *   An IO effect that logs the message and exception
+      */
     inline def warn(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
         logWhen(_.warnEnabled)(_.warn(msg, t))
 
+    /** Logs an error message.
+      *
+      * @param msg
+      *   The message to log
+      * @return
+      *   An IO effect that logs the message
+      */
     inline def error(inline msg: => String)(using inline frame: Frame): Unit < IO =
         logWhen(_.errorEnabled)(_.error(msg))
 
+    /** Logs an error message with an exception.
+      *
+      * @param msg
+      *   The message to log
+      * @param t
+      *   The exception to log
+      * @return
+      *   An IO effect that logs the message and exception
+      */
     inline def error(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
         logWhen(_.errorEnabled)(_.error(msg, t))
 

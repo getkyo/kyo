@@ -4,22 +4,28 @@ import System.Parser
 import java.lang.System as JSystem
 import kyo.kernel.Reducible
 
+/** Represents a system environment with various operations.
+  *
+  * This abstract class provides methods to interact with system properties, environment variables, and other system-related information.
+  */
 abstract class System:
     def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO)
     def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO)
     def lineSeparator(using Frame): String < IO
     def userName(using Frame): String < IO
     def operatingSystem(using Frame): System.OS < IO
-
 end System
 
+/** Companion object for System, containing utility methods and type classes. */
 object System:
 
+    /** Enumeration of supported operating systems. */
     enum OS derives CanEqual:
         case Linux, MacOS, Windows, BSD, Solaris, IBMI, AIX, Unknown
 
     private val local = Local.init(live)
 
+    /** The default live System implementation. */
     val live: System =
         new System:
             def env[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
@@ -56,11 +62,32 @@ object System:
                     }.getOrElse(OS.Unknown)
                 }
 
+    /** Executes a computation with a custom System implementation.
+      *
+      * @param system
+      *   The custom System implementation to use.
+      * @param f
+      *   The computation to execute.
+      * @tparam A
+      *   The return type of the computation.
+      * @tparam S
+      *   The effect type of the computation.
+      * @return
+      *   The result of the computation.
+      */
     def let[A, S](system: System)(f: => A < S)(using Frame): A < S =
         local.let(system)(f)
 
     class EnvOps[A](dummy: Unit) extends AnyVal:
-
+        /** Retrieves an environment variable.
+          *
+          * @param name
+          *   The name of the environment variable.
+          * @tparam E
+          *   The error type for parsing.
+          * @return
+          *   A `Maybe` containing the parsed value if it exists, or `Maybe.empty` otherwise.
+          */
         def apply[E](name: String)(
             using
             parser: Parser[E, A],
@@ -69,6 +96,17 @@ object System:
         ): Maybe[A] < (reduce.SReduced & IO) =
             reduce(local.use(_.env[E, A](name)))
 
+        /** Retrieves an environment variable with a default value.
+          *
+          * @param name
+          *   The name of the environment variable.
+          * @param default
+          *   The default value to use if the variable is not found.
+          * @tparam E
+          *   The error type for parsing.
+          * @return
+          *   The parsed value if it exists, or the default value otherwise.
+          */
         def apply[E](name: String, default: => A)(
             using
             parser: Parser[E, A],
@@ -82,6 +120,16 @@ object System:
     def env[A]: EnvOps[A] = EnvOps(())
 
     class PropertyOps[A](dummy: Unit) extends AnyVal:
+
+        /** Retrieves a system property.
+          *
+          * @param name
+          *   The name of the system property.
+          * @tparam E
+          *   The error type for parsing.
+          * @return
+          *   A `Maybe` containing the parsed value if it exists, or `Maybe.empty` otherwise.
+          */
         def apply[E](name: String)(
             using
             parser: Parser[E, A],
@@ -90,6 +138,17 @@ object System:
         ): Maybe[A] < (reduce.SReduced & IO) =
             reduce(local.use(_.property[E, A](name)))
 
+        /** Retrieves a system property with a default value.
+          *
+          * @param name
+          *   The name of the system property.
+          * @param default
+          *   The default value to use if the property is not found.
+          * @tparam E
+          *   The error type for parsing.
+          * @return
+          *   The parsed value if it exists, or the default value otherwise.
+          */
         def apply[E](name: String, default: => A)(
             using
             parser: Parser[E, A],
@@ -101,13 +160,28 @@ object System:
 
     def property[A]: PropertyOps[A] = PropertyOps(())
 
+    /** Retrieves the system-dependent line separator string. */
     def lineSeparator(using Frame): String < IO = local.use(_.lineSeparator)
-    def userName(using Frame): String < IO      = local.use(_.userName)
-    def operatingSystem(using Frame): OS < IO   = local.use(_.operatingSystem)
 
+    /** Retrieves the user name of the current user. */
+    def userName(using Frame): String < IO = local.use(_.userName)
+
+    /** Retrieves the current operating system. */
+    def operatingSystem(using Frame): OS < IO = local.use(_.operatingSystem)
+
+    /** Abstract class for parsing string values into specific types. */
     abstract class Parser[E, A]:
+        /** Parses a string value into type A.
+          *
+          * @param s
+          *   The string to parse.
+          * @return
+          *   A Result containing either the parsed value or an error.
+          */
         def apply(s: String): Result[E, A]
+    end Parser
 
+    /** Companion object for Parser, containing default implementations. */
     object Parser:
         given Parser[Nothing, String]                    = v => Result.success(v)
         given Parser[NumberFormatException, Int]         = v => Result.catching(v.toInt)
