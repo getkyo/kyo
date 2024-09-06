@@ -344,7 +344,7 @@ object Async:
 
     private def deadline(timeout: Duration): Long =
         if timeout.isFinite then
-            System.currentTimeMillis() + timeout.toMillis
+            java.lang.System.currentTimeMillis() + timeout.toMillis
         else
             Long.MaxValue
 

@@ -1,6 +1,7 @@
 package kyo
 
 import Chunk.Indexed
+import java.util.Arrays
 import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.reflect.ClassTag
@@ -241,6 +242,9 @@ object Chunk:
 
     def apply[A](values: A*): Chunk[A] =
         from(values)
+
+    def from[A <: AnyRef](values: Array[A]): Chunk.Indexed[A] =
+        Compact(Arrays.copyOf(values, values.length))
 
     def from[A](values: Seq[A]): Chunk.Indexed[A] =
         if values.isEmpty then cachedEmpty.asInstanceOf[Chunk.Indexed[A]]

@@ -2,7 +2,7 @@ package kyo
 
 import scala.concurrent.duration.Duration as ScalaDuration
 import zio.Duration as ZDuration
-import zio.test.*
+import zio.test.{Result as _, *}
 import zio.test.Assertion.*
 
 object DurationSpec extends ZIOSpecDefault:
@@ -104,6 +104,58 @@ object DurationSpec extends ZIOSpecDefault:
                 val d = 10.nanos.toString
                 assertTrue(d != "10") // opaque type inherits toString method from Long
             } @@ TestAspect.failing
+        ),
+        suite("Duration.parse")(
+            test("valid durations") {
+                val testCases = List(
+                    "1ns"       -> 1.nano,
+                    "1 ns"      -> 1.nano,
+                    "500ms"     -> 500.millis,
+                    "2s"        -> 2.seconds,
+                    "3 minutes" -> 3.minutes,
+                    "4h"        -> 4.hours,
+                    "1 day"     -> 1.day,
+                    "2 weeks"   -> 2.weeks,
+                    "6 months"  -> 6.months,
+                    "1 year"    -> 1.year,
+                    "infinity"  -> Duration.Infinity,
+                    "INF"       -> Duration.Infinity
+                )
+
+                TestResult.allSuccesses(
+                    testCases.map { case (input, expected) =>
+                        assertTrue(Duration.parse(input) == Result.success(expected))
+                    }
+                )
+            },
+            test("invalid durations") {
+                val testCases = List(
+                    "invalid",
+                    "1x",
+                    "1 lightyear",
+                    "-1s",
+                    "2.5h"
+                )
+
+                TestResult.allSuccesses(
+                    testCases.map { input =>
+                        assertTrue(Duration.parse(input).isFail)
+                    }
+                )
+            },
+            test("case insensitivity") {
+                TestResult.allSuccesses(
+                    assertTrue(Duration.parse("1MS") == Result.success(1.millis)),
+                    assertTrue(Duration.parse("2H") == Result.success(2.hours)),
+                    assertTrue(Duration.parse("3D") == Result.success(3.days))
+                )
+            },
+            test("whitespace handling") {
+                TestResult.allSuccesses(
+                    assertTrue(Duration.parse("  1  second  ") == Result.success(1.seconds)),
+                    assertTrue(Duration.parse("5\tminutes") == Result.success(5.minutes))
+                )
+            }
         )
     )
 end DurationSpec

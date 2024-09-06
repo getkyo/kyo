@@ -165,7 +165,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                             LockSupport.unpark(waiter)
                         @tailrec def apply(): Result[E | Timeout, A] =
                             if isNull(result) then
-                                val remainingNanos = deadline - System.currentTimeMillis()
+                                val remainingNanos = deadline - java.lang.System.currentTimeMillis()
                                 if remainingNanos <= 0 then
                                     return Result.fail(Timeout(frame))
                                 else if remainingNanos == Long.MaxValue then

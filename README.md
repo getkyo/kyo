@@ -1405,6 +1405,44 @@ val c: Instant < IO =
     Clock.let(Clock.live)(a)
 ```
 
+### System: Environment Variables and System Properties
+
+The `System` effect provides a safe and convenient way to access environment variables and system properties. It offers methods to retrieve values with proper type conversion and fallback options.
+
+```scala
+import kyo.*
+
+// Get an environment variable as a String
+val a: Maybe[String] < IO =
+    System.env[String]("PATH")
+
+// Get an environment variable with a default value
+val b: String < IO =
+    System.env[String]("CUSTOM_VAR", "default")
+
+// Get a system property as an Int.
+val c: Maybe[Int] < (Abort[NumberFormatException] & IO) =
+    System.property[Int]("java.version")
+
+// Get a system property with a default value
+val d: Int < (Abort[NumberFormatException] & IO) =
+    System.property[Int]("custom.property", 42)
+
+// Get the line separator for the current platform
+val e: String < IO =
+    System.lineSeparator
+
+// Get the current user's name
+val f: String < IO =
+    System.userName
+
+// Use a custom System implementation
+val g: String < IO =
+    System.let(System.live)(System.userName)
+```
+
+The `System` effect provides built-in parsers for common types like `String`, `Int`, `Boolean`, `Double`, `Long`, `Char`, `Duration`, and `UUID`. Custom parsers can be implemented by providing an implicit `System.Parser[E, A]` instance.
+
 ### Random: Random Values
 
 ```scala

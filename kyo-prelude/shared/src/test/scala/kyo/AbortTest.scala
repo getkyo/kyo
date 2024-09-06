@@ -286,11 +286,108 @@ class AbortsTest extends Test:
                 assert(Abort.run[Throwable](a).eval == Result.panic(ex))
             }
         }
-        "when" in {
-            def test(b: Boolean) = Abort.run[String](Abort.when(b)("FAIL!")).eval
+        "when" - {
+            "basic usage" in {
+                def test(b: Boolean) = Abort.run[String](Abort.when(b)("FAIL!")).eval
 
-            assert(test(true) == Result.fail("FAIL!"))
-            assert(test(false) == Result.success(()))
+                assert(test(true) == Result.fail("FAIL!"))
+                assert(test(false) == Result.success(()))
+            }
+
+            "with Env" in {
+                def test(env: Int) = Env.run(env) {
+                    Abort.run[String](
+                        for
+                            x <- Env.get[Int]
+                            _ <- Abort.when(x > 5)("Too big")
+                            _ <- Abort.when(x < 0)("Negative")
+                        yield x
+                    )
+                }.eval
+
+                assert(test(3) == Result.success(3))
+                assert(test(7) == Result.fail("Too big"))
+                assert(test(-1) == Result.fail("Negative"))
+            }
+
+            "with Var" in {
+                def test(initial: Int) = Var.run(initial) {
+                    Abort.run[String] {
+                        for
+                            v  <- Var.get[Int]
+                            _  <- Abort.when(v % 2 == 0)("Even")
+                            _  <- Var.update[Int](_ + 1)
+                            v2 <- Var.get[Int]
+                            _  <- Abort.when(v2 > 5)("Too big")
+                        yield Var.get[Int]
+                    }
+                }.eval
+
+                assert(test(1) == Result.success(2))
+                assert(test(2) == Result.fail("Even"))
+                assert(test(5) == Result.fail("Too big"))
+            }
+
+            "short-circuiting" in {
+                var sideEffect = 0
+                def test(b: Boolean) = Abort.run[String] {
+                    for
+                        _ <- Abort.when(b)("FAIL!")
+                        _ <- Env.use[Unit](_ => sideEffect += 1)
+                    yield ()
+                }
+
+                assert(Env.run(())(test(true)).eval == Result.fail("FAIL!"))
+                assert(sideEffect == 0)
+                assert(Env.run(())(test(false)).eval == Result.success(()))
+                assert(sideEffect == 1)
+            }
+        }
+
+        "ensuring" - {
+            "basic usage" in {
+                def test(x: Int) = Abort.run[String](Abort.ensuring(x > 0, x)("Non-positive")).eval
+
+                assert(test(5) == Result.success(5))
+                assert(test(0) == Result.fail("Non-positive"))
+                assert(test(-3) == Result.fail("Non-positive"))
+            }
+
+            "with Env" in {
+                def test(env: Int) = Env.run(env) {
+                    Abort.run[String] {
+                        for
+                            x      <- Env.get[Int]
+                            result <- Abort.ensuring(x >= 0 && x <= 10, x)("Out of range")
+                        yield result * 2
+                    }
+                }.eval
+
+                assert(test(5) == Result.success(10))
+                assert(test(0) == Result.success(0))
+                assert(test(10) == Result.success(20))
+                assert(test(-1) == Result.fail("Out of range"))
+                assert(test(11) == Result.fail("Out of range"))
+            }
+
+            "with Var" in {
+                def test(initial: Int) = Var.run(initial) {
+                    Abort.run[String] {
+                        for
+                            x      <- Var.get[Int]
+                            _      <- Abort.ensuring(x % 2 == 0, ())("Odd")
+                            _      <- Var.update[Int](_ * 2)
+                            result <- Var.get[Int]
+                        yield result
+                    }
+                }.eval
+
+                assert(test(2) == Result.success(4))
+                assert(test(4) == Result.success(8))
+                assert(test(1) == Result.fail("Odd"))
+                assert(test(3) == Result.fail("Odd"))
+            }
+
         }
         "catching" - {
             "only effect" - {

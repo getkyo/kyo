@@ -41,7 +41,7 @@ object Abort:
       */
     inline def panic[E](inline ex: Throwable)(using inline frame: Frame): Nothing < Abort[E] = error(Panic(ex))
 
-    private[kyo] inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
+    inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
         ArrowEffect.suspendMap[Any](erasedTag[E], e)(_ => ???)
 
     /** Fails the computation if the condition is true.
@@ -54,8 +54,26 @@ object Abort:
       *   A unit computation that may fail if the condition is true
       */
     inline def when[E](b: Boolean)(inline value: => E)(using inline frame: Frame): Unit < Abort[E] =
-        if b then fail(value)
-        else ()
+        ensuring(!b, ())(value)
+
+    /** Ensures a condition is met before returning the provided result.
+      *
+      * @param cond
+      *   The condition to check
+      * @param result
+      *   The result to return if the condition is true
+      * @param value
+      *   The failure value to use if the condition is false
+      * @tparam A
+      *   The type of the result
+      * @tparam E
+      *   The type of the failure value
+      * @return
+      *   A computation that succeeds with the result if the condition is true, or fails with the given value if it's false
+      */
+    inline def ensuring[A, E](cond: Boolean, result: => A)(inline value: => E)(using inline frame: Frame): A < Abort[E] =
+        if !cond then fail(value)
+        else result
 
     final class GetOps[E >: Nothing](dummy: Unit) extends AnyVal:
 

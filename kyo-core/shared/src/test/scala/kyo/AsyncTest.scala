@@ -131,17 +131,17 @@ class AsyncTest extends Test:
 
     "sleep" in run {
         for
-            start <- IO(System.currentTimeMillis())
+            start <- IO(java.lang.System.currentTimeMillis())
             _     <- Async.sleep(10.millis)
-            end   <- IO(System.currentTimeMillis())
+            end   <- IO(java.lang.System.currentTimeMillis())
         yield assert(end - start >= 8)
     }
 
     "delay" in run {
         for
-            start <- IO(System.currentTimeMillis())
+            start <- IO(java.lang.System.currentTimeMillis())
             res   <- Async.delay(5.millis)(42)
-            end   <- IO(System.currentTimeMillis())
+            end   <- IO(java.lang.System.currentTimeMillis())
         yield
             assert(end - start >= 4)
             assert(res == 42)
