@@ -1,5 +1,8 @@
 package kyo
 
+import dev.dirs.BaseDirectories
+import dev.dirs.ProjectDirectories
+import dev.dirs.UserDirectories
 import java.io.BufferedReader
 import java.io.IOException
 import java.lang.System as JSystem
@@ -16,7 +19,7 @@ import scala.io.*
 import scala.jdk.CollectionConverters.*
 import scala.jdk.StreamConverters.*
 
-class Path(val path: List[String]):
+class Path(val path: List[String]) derives CanEqual:
 
     def toJava: JPath               = Paths.get(path.mkString("/"))
     lazy val parts: List[Path.Part] = path
@@ -331,6 +334,18 @@ class Path(val path: List[String]):
     def walk(maxDepth: Int)(using Frame): Stream[Path, IO] =
         Stream.init(IO(JFiles.walk(toJava).toScala(LazyList).map(path => Path(path.toString))))
 
+    override def hashCode(): Int =
+        val prime  = 31
+        var result = 1
+        result = prime * result + (if path == null then 0 else path.hashCode)
+        result
+    end hashCode
+
+    override def equals(obj: Any): Boolean = obj match
+        case that: Path =>
+            (this eq that) || (that.isInstanceOf[Path] && this.path == that.path)
+        case _ => false
+
     override def toString = s"Path(\"${path.mkString("/")}\")"
 
 end Path
@@ -339,22 +354,55 @@ object Path:
 
     type Part = String | Path
 
-    def apply(path: List[Part]): Path =
-        def loop(path: List[Part], acc: List[String]): List[String] =
-            path match
-                case _: Nil.type =>
-                    acc.reverse
-                case h :: t =>
-                    h match
-                        case h: String =>
-                            loop(t, h.split('/').filter(_.nonEmpty).toList.reverse ::: acc)
-                        case h: Path =>
-                            loop(h.path ::: t, acc)
-        new Path(loop(path, Nil))
+    def apply(parts: List[Part]): Path =
+        val flattened = parts.flatMap {
+            case p if isNull(p) => Nil
+            case s: String      => List(s)
+            case p: Path        => p.path
+        }
+        val javaPath       = if flattened.isEmpty then Paths.get("") else Paths.get(flattened.head, flattened.tail*)
+        val normalizedPath = javaPath.normalize().toString
+
+        new Path(if normalizedPath.isEmpty then Nil else normalizedPath.split("/").toList)
     end apply
 
     def apply(path: Part*): Path =
         apply(path.toList)
+
+    object Base:
+        def cache(using Frame): Path < IO      = IO(Path(BaseDirectories.get().cacheDir))
+        def config(using Frame): Path < IO     = IO(Path(BaseDirectories.get().configDir))
+        def data(using Frame): Path < IO       = IO(Path(BaseDirectories.get().dataDir))
+        def dataLocal(using Frame): Path < IO  = IO(Path(BaseDirectories.get().dataLocalDir))
+        def executable(using Frame): Path < IO = IO(Path(BaseDirectories.get().executableDir))
+        def preference(using Frame): Path < IO = IO(Path(BaseDirectories.get().preferenceDir))
+        def runtime(using Frame): Path < IO    = IO(Path(BaseDirectories.get().runtimeDir))
+    end Base
+
+    object User:
+        def home(using Frame): Path < IO     = IO(Path(UserDirectories.get().homeDir))
+        def audio(using Frame): Path < IO    = IO(Path(UserDirectories.get().audioDir))
+        def desktop(using Frame): Path < IO  = IO(Path(UserDirectories.get().desktopDir))
+        def document(using Frame): Path < IO = IO(Path(UserDirectories.get().documentDir))
+        def download(using Frame): Path < IO = IO(Path(UserDirectories.get().downloadDir))
+        def font(using Frame): Path < IO     = IO(Path(UserDirectories.get().fontDir))
+        def picture(using Frame): Path < IO  = IO(Path(UserDirectories.get().pictureDir))
+        def public(using Frame): Path < IO   = IO(Path(UserDirectories.get().publicDir))
+        def template(using Frame): Path < IO = IO(Path(UserDirectories.get().templateDir))
+        def video(using Frame): Path < IO    = IO(Path(UserDirectories.get().videoDir))
+    end User
+
+    case class Project(qualifier: String, organization: String, application: String):
+        private def dirs                       = ProjectDirectories.from(qualifier, organization, application)
+        def path(using Frame): Path < IO       = IO(Path(dirs.projectPath))
+        def cache(using Frame): Path < IO      = IO(Path(dirs.cacheDir))
+        def config(using Frame): Path < IO     = IO(Path(dirs.configDir))
+        def data(using Frame): Path < IO       = IO(Path(dirs.dataDir))
+        def dataLocal(using Frame): Path < IO  = IO(Path(dirs.dataLocalDir))
+        def preference(using Frame): Path < IO = IO(Path(dirs.preferenceDir))
+        def runtime(using Frame): Path < IO    = IO(Path(dirs.runtimeDir))
+    end Project
+
 end Path
 
 extension [S](stream: Stream[Byte, S])
