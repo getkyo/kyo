@@ -3,6 +3,14 @@ package kyo
 import kyo.Tag
 import kyo.kernel.*
 
+/** The Batch effect allows for efficient batching and processing of operations.
+  *
+  * Batch is used to group multiple operations together and execute them in a single batch, which can lead to performance improvements,
+  * especially when dealing with external systems or databases.
+  *
+  * @tparam S
+  *   Effects from batch sources
+  */
 sealed trait Batch[+S] extends ArrowEffect[Batch.Op[*, S], Id]
 
 object Batch:
@@ -20,12 +28,33 @@ object Batch:
 
     private inline def erasedTag[S]: Tag[Batch[S]] = Tag[Batch[Any]].asInstanceOf[Tag[Batch[S]]]
 
+    /** Creates a batched computation from a source function.
+      *
+      * @param f
+      *   The source function that takes a sequence of inputs and produces a sequence of outputs
+      * @return
+      *   A function that takes a single input and returns a batched computation
+      */
     inline def source[A, B, S](f: Seq[A] => Seq[B] < S)(using inline frame: Frame): A => B < Batch[S] =
         (v: A) => ArrowEffect.suspend[B](erasedTag[S], Op.Call(v, f, frame))
 
+    /** Evaluates a sequence of values in a batch.
+      *
+      * @param seq
+      *   The sequence of values to evaluate
+      * @return
+      *   A batched operation that produces a single value from the sequence
+      */
     inline def eval[A](seq: Seq[A])(using inline frame: Frame): A < Batch[Any] =
         ArrowEffect.suspend[A](erasedTag[Any], Op.Eval(seq))
 
+    /** Runs a computation with Batch effect, executing all batched operations.
+      *
+      * @param v
+      *   The computation to run
+      * @return
+      *   A sequence of results from executing the batched operations
+      */
     def run[A: Flat, S, S2](v: A < (Batch[S] & S2))(using Frame): Seq[A] < (S & S2) =
 
         case class Cont(op: Op[?, S], cont: Any => (Cont | A) < (Batch[S] & S2))
