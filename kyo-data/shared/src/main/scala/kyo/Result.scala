@@ -189,8 +189,7 @@ object Result:
                     try Fail(f(e))
                     catch
                         case ex => Panic(ex)
-                case Panic(ex) => Panic(ex)
-                case _         => self.asInstanceOf[Result[E2, A]]
+                case _ => self.asInstanceOf[Result[E2, A]]
 
         inline def withFilter(inline p: A => Boolean): Result[E | NoSuchElementException, A] =
             filter(p)
