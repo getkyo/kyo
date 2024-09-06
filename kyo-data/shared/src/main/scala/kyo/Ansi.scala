@@ -1,58 +1,112 @@
 package kyo
 
+import scala.util.control.NonFatal
+
+/** Provides ANSI color and formatting utilities for strings.
+  */
 object Ansi:
 
     extension (str: String)
-        def black: String   = s"\u001b[30m$str\u001b[0m"
-        def red: String     = s"\u001b[31m$str\u001b[0m"
-        def green: String   = s"\u001b[32m$str\u001b[0m"
-        def yellow: String  = s"\u001b[33m$str\u001b[0m"
-        def blue: String    = s"\u001b[34m$str\u001b[0m"
-        def magenta: String = s"\u001b[35m$str\u001b[0m"
-        def cyan: String    = s"\u001b[36m$str\u001b[0m"
-        def white: String   = s"\u001b[37m$str\u001b[0m"
-        def grey: String    = s"\u001b[90m$str\u001b[0m"
+        /** Applies black color to the string. */
+        def black: String = s"\u001b[30m$str\u001b[0m"
 
-        def bold: String      = s"\u001b[1m$str\u001b[0m"
-        def dim: String       = s"\u001b[2m$str\u001b[0m"
-        def italic: String    = s"\u001b[3m$str\u001b[0m"
+        /** Applies red color to the string. */
+        def red: String = s"\u001b[31m$str\u001b[0m"
+
+        /** Applies green color to the string. */
+        def green: String = s"\u001b[32m$str\u001b[0m"
+
+        /** Applies yellow color to the string. */
+        def yellow: String = s"\u001b[33m$str\u001b[0m"
+
+        /** Applies blue color to the string. */
+        def blue: String = s"\u001b[34m$str\u001b[0m"
+
+        /** Applies magenta color to the string. */
+        def magenta: String = s"\u001b[35m$str\u001b[0m"
+
+        /** Applies cyan color to the string. */
+        def cyan: String = s"\u001b[36m$str\u001b[0m"
+
+        /** Applies white color to the string. */
+        def white: String = s"\u001b[37m$str\u001b[0m"
+
+        /** Applies grey color to the string. */
+        def grey: String = s"\u001b[90m$str\u001b[0m"
+
+        /** Applies bold formatting to the string. */
+        def bold: String = s"\u001b[1m$str\u001b[0m"
+
+        /** Applies dim formatting to the string. */
+        def dim: String = s"\u001b[2m$str\u001b[0m"
+
+        /** Applies italic formatting to the string. */
+        def italic: String = s"\u001b[3m$str\u001b[0m"
+
+        /** Applies underline formatting to the string. */
         def underline: String = s"\u001b[4m$str\u001b[0m"
 
+        /** Removes all ANSI escape sequences from the string. */
         def stripAnsi: String = str.replaceAll("\u001b\\[[0-9;]*[a-zA-Z]", "")
     end extension
 
     object highlight:
+
+        /** Applies syntax highlighting to a code snippet with optional header and trailer.
+          *
+          * @param header
+          *   The header text to be displayed before the code (optional).
+          * @param code
+          *   The main code snippet to be highlighted.
+          * @param trailer
+          *   The trailer text to be displayed after the code (optional).
+          * @param startLine
+          *   The starting line number for the code snippet (default is 1).
+          * @return
+          *   A string with the highlighted code, including line numbers and formatting.
+          */
         def apply(header: String, code: String, trailer: String, startLine: Int = 1): String =
-            val headerLines  = if header.nonEmpty then header.split("\n") else Array.empty[String]
-            val codeLines    = code.split("\n").dropWhile(_.trim.isEmpty).reverse.dropWhile(_.trim.isEmpty).reverse
-            val trailerLines = if trailer.nonEmpty then trailer.split("\n") else Array.empty[String]
+            try
+                val headerLines  = if header.nonEmpty then header.split("\n") else Array.empty[String]
+                val codeLines    = code.split("\n").dropWhile(_.trim.isEmpty).reverse.dropWhile(_.trim.isEmpty).reverse
+                val trailerLines = if trailer.nonEmpty then trailer.split("\n") else Array.empty[String]
 
-            val allLines        = headerLines ++ codeLines ++ trailerLines
-            val toDrop          = codeLines.filter(_.trim.nonEmpty).map(_.takeWhile(_ == ' ').length).minOption.getOrElse(0)
-            val lineNumberWidth = (startLine + codeLines.length - 1).toString.length
-            val separator       = "│".dim
+                val allLines        = headerLines ++ codeLines ++ trailerLines
+                val toDrop          = codeLines.filter(_.trim.nonEmpty).map(_.takeWhile(_ == ' ').length).minOption.getOrElse(0)
+                val lineNumberWidth = (startLine + codeLines.length - 1).toString.length
+                val separator       = "│".dim
 
-            val processedLines = allLines.zipWithIndex.map { case (line, index) =>
-                val isHeader  = index < headerLines.length
-                val isTrailer = index >= (headerLines.length + codeLines.length)
-                val lineNumber =
-                    if isHeader || isTrailer then
-                        " ".repeat(lineNumberWidth)
-                    else
-                        (startLine + index - headerLines.length).toString.padTo(lineNumberWidth, ' ')
+                val processedLines = allLines.zipWithIndex.map { case (line, index) =>
+                    val isHeader  = index < headerLines.length
+                    val isTrailer = index >= (headerLines.length + codeLines.length)
+                    val lineNumber =
+                        if isHeader || isTrailer then
+                            " ".repeat(lineNumberWidth)
+                        else
+                            (startLine + index - headerLines.length).toString.padTo(lineNumberWidth, ' ')
 
-                val highlightedLine =
-                    if isHeader || isTrailer then
-                        line.green
-                    else
-                        highlightLine(line.drop(toDrop))
+                    val highlightedLine =
+                        if isHeader || isTrailer then
+                            line.green
+                        else
+                            highlightLine(line.drop(toDrop))
 
-                s"${lineNumber.dim} $separator $highlightedLine"
-            }
+                    s"${lineNumber.dim} $separator $highlightedLine"
+                }
 
-            processedLines.mkString("\n")
+                processedLines.mkString("\n")
+            catch
+                case ex if NonFatal(ex) =>
+                    (header :: code :: trailer :: Nil).mkString("\n")
         end apply
 
+        /** Applies syntax highlighting to a code snippet without header or trailer.
+          *
+          * @param code
+          *   The code snippet to be highlighted.
+          * @return
+          *   A string with the highlighted code, including line numbers and formatting.
+          */
         def apply(code: String): String = apply("", code, "", 1)
 
         private def highlightLine(line: String): String =

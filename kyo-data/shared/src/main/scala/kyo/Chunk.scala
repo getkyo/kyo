@@ -6,6 +6,14 @@ import scala.annotation.tailrec
 import scala.annotation.targetName
 import scala.reflect.ClassTag
 
+/** An immutable, efficient sequence of elements.
+  *
+  * Chunk provides O(1) operations for many common operations like `take`, `drop`, and `slice`. It also provides efficient concatenation and
+  * element access.
+  *
+  * @tparam A
+  *   the type of elements in this Chunk
+  */
 sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
     self =>
 
@@ -17,23 +25,74 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
     // O(1) methods //
     //////////////////
 
+    /** Checks if the Chunk is empty.
+      *
+      * @return
+      *   true if the Chunk contains no elements, false otherwise
+      */
     final override def isEmpty: Boolean = size == 0
 
+    /** Takes the first n elements of the Chunk.
+      *
+      * @param n
+      *   the number of elements to take
+      * @return
+      *   a new Chunk containing the first n elements
+      */
     override def take(n: Int): Chunk[A] =
         dropLeftAndRight(0, size - Math.min(Math.max(0, n), size))
 
+    /** Drops the first n elements of the Chunk.
+      *
+      * @param n
+      *   the number of elements to drop
+      * @return
+      *   a new Chunk with the first n elements removed
+      */
     override def drop(n: Int): Seq[A] =
         dropLeft(n)
 
+    /** Drops the first n elements of the Chunk.
+      *
+      * @param n
+      *   the number of elements to drop
+      * @return
+      *   a new Chunk with the first n elements removed
+      */
     final def dropLeft(n: Int): Chunk[A] =
         dropLeftAndRight(Math.min(size, Math.max(0, n)), 0)
 
+    /** Drops the last n elements of the Chunk.
+      *
+      * @param n
+      *   the number of elements to drop
+      * @return
+      *   a new Chunk with the last n elements removed
+      */
     override def dropRight(n: Int): Chunk[A] =
         dropLeftAndRight(0, Math.min(size, Math.max(0, n)))
 
+    /** Returns a Chunk that is a slice of this Chunk.
+      *
+      * @param from
+      *   the starting index of the slice
+      * @param until
+      *   the ending index (exclusive) of the slice
+      * @return
+      *   a new Chunk containing the specified slice
+      */
     override def slice(from: Int, until: Int): Chunk[A] =
         dropLeftAndRight(Math.max(0, from), size - Math.min(size, until))
 
+    /** Drops elements from both ends of the Chunk.
+      *
+      * @param left
+      *   the number of elements to drop from the left
+      * @param right
+      *   the number of elements to drop from the right
+      * @return
+      *   a new Chunk with elements dropped from both ends
+      */
     final def dropLeftAndRight(left: Int, right: Int): Chunk[A] =
         @tailrec def loop(c: Chunk[A], left: Int, right: Int): Chunk[A] =
             val size = c.size - left - right
@@ -51,9 +110,23 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
         loop(this, left, right)
     end dropLeftAndRight
 
+    /** Appends an element to the end of the Chunk.
+      *
+      * @param v
+      *   the element to append
+      * @return
+      *   a new Chunk with the element appended
+      */
     final def append(v: A): Chunk[A] =
         Append(this, v, size + 1)
 
+    /** Returns the last element of the Chunk.
+      *
+      * @return
+      *   the last element
+      * @throws NoSuchElementException
+      *   if the Chunk is empty
+      */
     override def last: A =
         @tailrec def loop(c: Chunk[A], index: Int): A =
             c match
@@ -75,6 +148,15 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
     // O(n) methods //
     //////////////////
 
+    /** Returns the element at the specified index.
+      *
+      * @param index
+      *   the index of the element to return
+      * @return
+      *   the element at the specified index
+      * @throws IndexOutOfBoundsException
+      *   if the index is out of bounds
+      */
     def apply(index: Int): A =
         def outOfBounds = throw new IndexOutOfBoundsException(s"Index out of range: $index")
         @tailrec
@@ -93,8 +175,20 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
         else loop(this, index)
     end apply
 
+    /** Returns an iterator over the elements of the Chunk.
+      *
+      * @return
+      *   an Iterator[A] over the elements of the Chunk
+      */
     def iterator: Iterator[A] = toArray.iterator
 
+    /** Concatenates this Chunk with another Chunk.
+      *
+      * @param other
+      *   the Chunk to concatenate with this one
+      * @return
+      *   a new Chunk containing all elements from this Chunk followed by all elements from the other Chunk
+      */
     final def concat(other: Chunk[A]): Chunk[A] =
         if isEmpty then other
         else if other.isEmpty then this
@@ -107,9 +201,25 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
         end if
     end concat
 
+    /** Returns a new Chunk containing only the elements that change from the previous element.
+      *
+      * @param using
+      *   CanEqual[A, A] implicit evidence that A can be compared for equality
+      * @return
+      *   a new Chunk containing only the changing elements
+      */
     final def changes(using CanEqual[A, A]): Chunk[A] =
         changes(Maybe.empty)
 
+    /** Returns a new Chunk containing only the elements that change from the previous element, with a given initial value.
+      *
+      * @param first
+      *   the initial value to compare against
+      * @param using
+      *   CanEqual[A, A] implicit evidence that A can be compared for equality
+      * @return
+      *   a new Chunk containing only the changing elements
+      */
     @targetName("changesMaybe")
     final def changes(first: Maybe[A])(using CanEqual[A, A]): Chunk[A] =
         if isEmpty then Chunk.empty
@@ -129,6 +239,11 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
             loop(0, first, Chunk.empty)
     end changes
 
+    /** Converts this Chunk to an Indexed Chunk.
+      *
+      * @return
+      *   an Indexed version of this Chunk
+      */
     final def toIndexed: Indexed[A] =
         if isEmpty then cachedEmpty.asInstanceOf[Indexed[A]]
         else
@@ -136,6 +251,13 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
                 case c: Indexed[A] => c
                 case _             => Compact(toArrayInternal)
 
+    /** Flattens a Chunk of Chunks into a single Chunk.
+      *
+      * @param ev
+      *   evidence that A is a Chunk[B]
+      * @return
+      *   a flattened Chunk
+      */
     final def flatten[B](using ev: A =:= Chunk[B]): Chunk[B] =
         if isEmpty then Chunk.empty
         else
@@ -160,9 +282,25 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
             Compact(unnested)
     end flatten
 
+    /** Copies the elements of this Chunk to an array.
+      *
+      * @param array
+      *   the array to copy to
+      * @param start
+      *   the starting position in the array
+      */
     final def copyTo[B >: A](array: Array[B], start: Int): Unit =
         copyTo(array, start, size)
 
+    /** Copies a specified number of elements from this Chunk to an array.
+      *
+      * @param array
+      *   the array to copy to
+      * @param start
+      *   the starting position in the array
+      * @param elements
+      *   the number of elements to copy
+      */
     final def copyTo[B >: A](array: Array[B], start: Int, elements: Int): Unit =
         @tailrec def loop(c: Chunk[A], end: Int, dropLeft: Int, dropRight: Int): Unit =
             c match
@@ -192,6 +330,11 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
             loop(this, elements, 0, 0)
     end copyTo
 
+    /** Converts this Chunk to an Array.
+      *
+      * @return
+      *   an Array containing all elements of this Chunk
+      */
     override def toArray[B >: A: ClassTag]: Array[B] =
         val array = new Array[B](size)
         copyTo(array, 0)
@@ -213,20 +356,46 @@ object Chunk:
 
     import internal.*
 
+    /** An indexed version of Chunk that provides O(1) access to elements.
+      *
+      * @tparam A
+      *   the type of elements in the Indexed Chunk
+      */
     sealed abstract class Indexed[A] extends Chunk[A]:
 
         //////////////////
         // O(1) methods //
         //////////////////
 
+        /** Returns the element at the specified index.
+          *
+          * @param i
+          *   the index of the element to return
+          * @return
+          *   the element at the specified index
+          * @throws IndexOutOfBoundsException
+          *   if the index is out of bounds
+          */
         def apply(i: Int): A
 
+        /** Returns the first element of the Indexed Chunk.
+          *
+          * @return
+          *   the first element
+          * @throws NoSuchElementException
+          *   if the Indexed Chunk is empty
+          */
         final override def head: A =
             if isEmpty then
                 throw new NoSuchElementException
             else
                 apply(0)
 
+        /** Returns a new Indexed Chunk containing all elements except the first.
+          *
+          * @return
+          *   a new Indexed Chunk without the first element
+          */
         final override def tail: Indexed[A] =
             if size <= 1 then cachedEmpty.asInstanceOf[Indexed[A]]
             else
@@ -237,15 +406,49 @@ object Chunk:
                         Tail(c, 1, size - 1)
     end Indexed
 
+    /** Returns an empty Chunk.
+      *
+      * @tparam A
+      *   the type of elements in the Chunk
+      * @return
+      *   an empty Chunk of type A
+      */
     def empty[A]: Chunk[A] =
         cachedEmpty.asInstanceOf[Chunk[A]]
 
+    /** Creates a Chunk from a variable number of elements.
+      *
+      * @tparam A
+      *   the type of elements in the Chunk
+      * @param values
+      *   the elements to include in the Chunk
+      * @return
+      *   a new Chunk containing the provided values
+      */
     def apply[A](values: A*): Chunk[A] =
         from(values)
 
+    /** Creates a Chunk from an Array of elements.
+      *
+      * @tparam A
+      *   the type of elements in the Array (must be a subtype of AnyRef)
+      * @param values
+      *   the Array to create the Chunk from
+      * @return
+      *   a new Chunk.Indexed containing the elements from the Array
+      */
     def from[A <: AnyRef](values: Array[A]): Chunk.Indexed[A] =
         Compact(Arrays.copyOf(values, values.length))
 
+    /** Creates a Chunk from a Seq of elements.
+      *
+      * @tparam A
+      *   the type of elements in the Seq
+      * @param values
+      *   the Seq to create the Chunk from
+      * @return
+      *   a new Chunk.Indexed containing the elements from the Seq
+      */
     def from[A](values: Seq[A]): Chunk.Indexed[A] =
         if values.isEmpty then cachedEmpty.asInstanceOf[Chunk.Indexed[A]]
         else
@@ -254,6 +457,17 @@ object Chunk:
                 case seq: IndexedSeq[A]               => FromSeq(seq)
                 case _                                => Compact(values.toArray(using ClassTag.Any.asInstanceOf[ClassTag[A]]))
 
+    /** Creates a Chunk filled with a specified number of copies of a given value.
+      *
+      * @tparam A
+      *   the type of elements in the Chunk
+      * @param n
+      *   the number of times to repeat the value
+      * @param v
+      *   the value to fill the Chunk with
+      * @return
+      *   a new Chunk containing n copies of v
+      */
     def fill[A](n: Int)(v: A): Chunk[A] =
         if n <= 0 then empty
         else
