@@ -30,26 +30,24 @@ object Batch:
 
     /** Creates a batched computation from a source function.
       *
-      * This method allows for efficient batching of operations by processing multiple inputs at once, while still providing individual
-      * results for each input. The returned function must be able to handle all values from the input sequence.
-      *
       * @param f
       *   The source function with the following signature:
       *   - Input: `Seq[A]` - A sequence of input values to be processed in batch
       *   - Output: `(A => B < S) < S` - A function that, when evaluated, produces another function:
       *     - This inner function takes a single input `A` and returns a value `B` with effects `S`, allowing effects on each element
       *       individually.
-      *   - The outer `< S` indicates that the creation of this function may itself involve effects `S`
+      *     - The outer `< S` indicates that the creation of this function may itself involve effects `S`
       *
       * @return
       *   A function that takes a single input `A` and returns a batched computation `B < Batch[S]`
+      *
+      * This method allows for efficient batching of operations by processing multiple inputs at once, while still providing individual
+      * results for each input.
       */
     inline def source[A, B, S](f: Seq[A] => (A => B < S) < S)(using inline frame: Frame): A => B < Batch[S] =
         (v: A) => ArrowEffect.suspend[B](erasedTag[S], Op.Call(v, f, frame))
 
     /** Creates a batched computation from a source function that returns a Map.
-      *
-      * The returned Map must contain an entry for each element in the input sequence.
       *
       * @param f
       *   The source function that takes a sequence of inputs and returns a Map of results
@@ -68,8 +66,6 @@ object Batch:
         }
 
     /** Creates a batched computation from a source function that returns a Sequence.
-      *
-      * The returned Sequence must have the same size as the input sequence and maintain the order of elements.
       *
       * @param f
       *   The source function that takes a sequence of inputs and returns a sequence of results
@@ -115,13 +111,13 @@ object Batch:
             }
         end runCont
 
-        case class Expanded(v: Any, source: Seq[Any] => (Any => Any < S) < S, cont: Any => (Cont | A) < (Batch[S] & S & S2), frame: Frame)
+        case class Expanded(v: Any, source: Seq[Any] => (Any => Any < S) < S, cont: Any => (Cont | A) < (Batch[S] & S & S2))
         def expand(state: Seq[Cont | A]): Seq[Expanded | A] < (S & S2) =
             Kyo.foreach(state) {
                 case Cont(Op.Eval(seq), cont) =>
                     Kyo.foreach(seq)(v => runCont(cont(v))).map(expand)
                 case Cont(Op.Call(v, source, frame), cont) =>
-                    Seq(Expanded(v, source.asInstanceOf, cont, frame))
+                    Seq(Expanded(v, source.asInstanceOf, cont))
                 case a: A @unchecked =>
                     Seq(a)
             }.map(_.flatten)
@@ -137,9 +133,9 @@ object Batch:
                 if pending.isEmpty then
                     completed.sortBy(_._2).map(_._1)
                 else
-                    val grouped = pending.groupBy(v => (v._1.source, v._1.frame))
+                    val grouped = pending.groupBy(_._1.source)
 
-                    Kyo.foreach(grouped.toSeq) { case ((source, frame), items) =>
+                    Kyo.foreach(grouped.toSeq) { case (source, items) =>
                         val (expandedItems, indices) = items.unzip
                         val values                   = expandedItems.map(_.v)
                         val uniqueValues             = values.distinct
