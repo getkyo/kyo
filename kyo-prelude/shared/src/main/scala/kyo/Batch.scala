@@ -30,14 +30,32 @@ object Batch:
 
     /** Creates a batched computation from a source function.
       *
+      * This method allows for efficient batching of operations by processing multiple inputs at once, while still providing individual
+      * results for each input. The returned function must be able to handle all values from the input sequence.
+      *
       * @param f
-      *   The source function that takes a sequence of inputs and produces a sequence of outputs
+      *   The source function with the following signature:
+      *   - Input: `Seq[A]` - A sequence of input values to be processed in batch
+      *   - Output: `(A => B < S) < S` - A function that, when evaluated, produces another function:
+      *     - This inner function takes a single input `A` and returns a value `B` with effects `S`, allowing effects on each element
+      *       individually.
+      *   - The outer `< S` indicates that the creation of this function may itself involve effects `S`
+      *
       * @return
-      *   A function that takes a single input and returns a batched computation
+      *   A function that takes a single input `A` and returns a batched computation `B < Batch[S]`
       */
     inline def source[A, B, S](f: Seq[A] => (A => B < S) < S)(using inline frame: Frame): A => B < Batch[S] =
         (v: A) => ArrowEffect.suspend[B](erasedTag[S], Op.Call(v, f, frame))
 
+    /** Creates a batched computation from a source function that returns a Map.
+      *
+      * The returned Map must contain an entry for each element in the input sequence.
+      *
+      * @param f
+      *   The source function that takes a sequence of inputs and returns a Map of results
+      * @return
+      *   A function that takes a single input and returns a batched computation
+      */
     inline def sourceMap[A, B, S](f: Seq[A] => Map[A, B] < S)(using inline frame: Frame): A => B < Batch[S] =
         source[A, B, S] { input =>
             f(input).map { output =>
@@ -49,6 +67,15 @@ object Batch:
             }
         }
 
+    /** Creates a batched computation from a source function that returns a Sequence.
+      *
+      * The returned Sequence must have the same size as the input sequence and maintain the order of elements.
+      *
+      * @param f
+      *   The source function that takes a sequence of inputs and returns a sequence of results
+      * @return
+      *   A function that takes a single input and returns a batched computation
+      */
     inline def sourceSeq[A, B, S](f: Seq[A] => Seq[B] < S)(using inline frame: Frame): A => B < Batch[S] =
         sourceMap[A, B, S] { input =>
             f(input).map { output =>
