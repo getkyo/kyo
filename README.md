@@ -856,8 +856,8 @@ yield c
 // Incorrect usage: creating new sources inline
 val badBatch = for
     a <- Batch.eval(1 to 1000)
-    b <- Batch.source[Int, Int, IO](seq => IO(seq.map(_ * 2)))(a)  // This won't be batched
-    c <- Batch.source[Int, Int, IO](seq => IO(seq.map(_ * 2)))(b)  // This also won't be batched
+    b <- Batch.sourceSeq[Int, Int, IO](seq => IO(seq.map(_ * 2)))(a)  // This won't be batched
+    c <- Batch.sourceSeq[Int, Int, IO](seq => IO(seq.map(_ * 2)))(b)  // This also won't be batched
 yield c
 ```
 
