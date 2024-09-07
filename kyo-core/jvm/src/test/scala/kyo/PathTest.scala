@@ -330,49 +330,49 @@ class PathTest extends Test:
     "Base directories" - {
         "cache" in run {
             for
-                kyoPath <- Path.Base.cache
+                kyoPath <- Path.basePaths.map(_.cache)
                 libPath <- IO(BaseDirectories.get().cacheDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "config" in run {
             for
-                kyoPath <- Path.Base.config
+                kyoPath <- Path.basePaths.map(_.config)
                 libPath <- IO(BaseDirectories.get().configDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "data" in run {
             for
-                kyoPath <- Path.Base.data
+                kyoPath <- Path.basePaths.map(_.data)
                 libPath <- IO(BaseDirectories.get().dataDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "dataLocal" in run {
             for
-                kyoPath <- Path.Base.dataLocal
+                kyoPath <- Path.basePaths.map(_.dataLocal)
                 libPath <- IO(BaseDirectories.get().dataLocalDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "executable" in run {
             for
-                kyoPath <- Path.Base.executable
+                kyoPath <- Path.basePaths.map(_.executable)
                 libPath <- IO(BaseDirectories.get().executableDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "preference" in run {
             for
-                kyoPath <- Path.Base.preference
+                kyoPath <- Path.basePaths.map(_.preference)
                 libPath <- IO(BaseDirectories.get().preferenceDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "runtime" in run {
             for
-                kyoPath <- Path.Base.runtime
+                kyoPath <- Path.basePaths.map(_.runtime)
                 libPath <- IO(BaseDirectories.get().runtimeDir)
             yield assert(kyoPath == Path(libPath))
         }
@@ -381,124 +381,124 @@ class PathTest extends Test:
     "User directories" - {
         "home" in run {
             for
-                kyoPath <- Path.User.home
+                kyoPath <- Path.userPaths.map(_.home)
                 libPath <- IO(UserDirectories.get().homeDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "audio" in run {
             for
-                kyoPath <- Path.User.audio
+                kyoPath <- Path.userPaths.map(_.audio)
                 libPath <- IO(UserDirectories.get().audioDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "desktop" in run {
             for
-                kyoPath <- Path.User.desktop
+                kyoPath <- Path.userPaths.map(_.desktop)
                 libPath <- IO(UserDirectories.get().desktopDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "document" in run {
             for
-                kyoPath <- Path.User.document
+                kyoPath <- Path.userPaths.map(_.document)
                 libPath <- IO(UserDirectories.get().documentDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "download" in run {
             for
-                kyoPath <- Path.User.download
+                kyoPath <- Path.userPaths.map(_.download)
                 libPath <- IO(UserDirectories.get().downloadDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "font" in run {
             for
-                kyoPath <- Path.User.font
+                kyoPath <- Path.userPaths.map(_.font)
                 libPath <- IO(UserDirectories.get().fontDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "picture" in run {
             for
-                kyoPath <- Path.User.picture
+                kyoPath <- Path.userPaths.map(_.picture)
                 libPath <- IO(UserDirectories.get().pictureDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "public" in run {
             for
-                kyoPath <- Path.User.public
+                kyoPath <- Path.userPaths.map(_.public)
                 libPath <- IO(UserDirectories.get().publicDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "template" in run {
             for
-                kyoPath <- Path.User.template
+                kyoPath <- Path.userPaths.map(_.template)
                 libPath <- IO(UserDirectories.get().templateDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "video" in run {
             for
-                kyoPath <- Path.User.video
+                kyoPath <- Path.userPaths.map(_.video)
                 libPath <- IO(UserDirectories.get().videoDir)
             yield assert(kyoPath == Path(libPath))
         }
     }
 
     "Project directories" - {
-        val testProject = Path.Project("com.example", "MyOrg", "MyApp")
+        val testProject = Path.projectPaths("com.example", "MyOrg", "MyApp")
         val libProject  = ProjectDirectories.from("com.example", "MyOrg", "MyApp")
 
         "path" in run {
             for
-                kyoPath <- testProject.path
+                kyoPath <- testProject.map(_.path)
                 libPath <- IO(libProject.projectPath)
             yield assert(kyoPath == Path(libPath))
         }
 
         "cache" in run {
             for
-                kyoPath <- testProject.cache
+                kyoPath <- testProject.map(_.cache)
                 libPath <- IO(libProject.cacheDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "config" in run {
             for
-                kyoPath <- testProject.config
+                kyoPath <- testProject.map(_.config)
                 libPath <- IO(libProject.configDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "data" in run {
             for
-                kyoPath <- testProject.data
+                kyoPath <- testProject.map(_.data)
                 libPath <- IO(libProject.dataDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "dataLocal" in run {
             for
-                kyoPath <- testProject.dataLocal
+                kyoPath <- testProject.map(_.dataLocal)
                 libPath <- IO(libProject.dataLocalDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "preference" in run {
             for
-                kyoPath <- testProject.preference
+                kyoPath <- testProject.map(_.preference)
                 libPath <- IO(libProject.preferenceDir)
             yield assert(kyoPath == Path(libPath))
         }
 
         "runtime" in run {
             for
-                kyoPath <- testProject.runtime
+                kyoPath <- testProject.map(_.runtime)
                 libPath <- IO(libProject.runtimeDir)
             yield assert(kyoPath == Path(libPath))
         }

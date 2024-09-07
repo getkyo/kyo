@@ -369,39 +369,83 @@ object Path:
     def apply(path: Part*): Path =
         apply(path.toList)
 
-    object Base:
-        def cache(using Frame): Path < IO      = IO(Path(BaseDirectories.get().cacheDir))
-        def config(using Frame): Path < IO     = IO(Path(BaseDirectories.get().configDir))
-        def data(using Frame): Path < IO       = IO(Path(BaseDirectories.get().dataDir))
-        def dataLocal(using Frame): Path < IO  = IO(Path(BaseDirectories.get().dataLocalDir))
-        def executable(using Frame): Path < IO = IO(Path(BaseDirectories.get().executableDir))
-        def preference(using Frame): Path < IO = IO(Path(BaseDirectories.get().preferenceDir))
-        def runtime(using Frame): Path < IO    = IO(Path(BaseDirectories.get().runtimeDir))
-    end Base
+    case class BasePaths(
+        cache: Path,
+        config: Path,
+        data: Path,
+        dataLocal: Path,
+        executable: Path,
+        preference: Path,
+        runtime: Path
+    )
 
-    object User:
-        def home(using Frame): Path < IO     = IO(Path(UserDirectories.get().homeDir))
-        def audio(using Frame): Path < IO    = IO(Path(UserDirectories.get().audioDir))
-        def desktop(using Frame): Path < IO  = IO(Path(UserDirectories.get().desktopDir))
-        def document(using Frame): Path < IO = IO(Path(UserDirectories.get().documentDir))
-        def download(using Frame): Path < IO = IO(Path(UserDirectories.get().downloadDir))
-        def font(using Frame): Path < IO     = IO(Path(UserDirectories.get().fontDir))
-        def picture(using Frame): Path < IO  = IO(Path(UserDirectories.get().pictureDir))
-        def public(using Frame): Path < IO   = IO(Path(UserDirectories.get().publicDir))
-        def template(using Frame): Path < IO = IO(Path(UserDirectories.get().templateDir))
-        def video(using Frame): Path < IO    = IO(Path(UserDirectories.get().videoDir))
-    end User
+    def basePaths(using Frame): BasePaths < IO =
+        IO {
+            val dirs = BaseDirectories.get()
+            BasePaths(
+                Path(dirs.cacheDir),
+                Path(dirs.configDir),
+                Path(dirs.dataDir),
+                Path(dirs.dataLocalDir),
+                Path(dirs.executableDir),
+                Path(dirs.preferenceDir),
+                Path(dirs.runtimeDir)
+            )
+        }
 
-    case class Project(qualifier: String, organization: String, application: String):
-        private lazy val dirs                  = ProjectDirectories.from(qualifier, organization, application)
-        def path(using Frame): Path < IO       = IO(Path(dirs.projectPath))
-        def cache(using Frame): Path < IO      = IO(Path(dirs.cacheDir))
-        def config(using Frame): Path < IO     = IO(Path(dirs.configDir))
-        def data(using Frame): Path < IO       = IO(Path(dirs.dataDir))
-        def dataLocal(using Frame): Path < IO  = IO(Path(dirs.dataLocalDir))
-        def preference(using Frame): Path < IO = IO(Path(dirs.preferenceDir))
-        def runtime(using Frame): Path < IO    = IO(Path(dirs.runtimeDir))
-    end Project
+    case class UserPaths(
+        home: Path,
+        audio: Path,
+        desktop: Path,
+        document: Path,
+        download: Path,
+        font: Path,
+        picture: Path,
+        public: Path,
+        template: Path,
+        video: Path
+    )
+
+    def userPaths(using Frame): UserPaths < IO =
+        IO {
+            val dirs = UserDirectories.get()
+            UserPaths(
+                Path(dirs.homeDir),
+                Path(dirs.audioDir),
+                Path(dirs.desktopDir),
+                Path(dirs.documentDir),
+                Path(dirs.downloadDir),
+                Path(dirs.fontDir),
+                Path(dirs.pictureDir),
+                Path(dirs.publicDir),
+                Path(dirs.templateDir),
+                Path(dirs.videoDir)
+            )
+        }
+
+    case class ProjectPaths(
+        path: Path,
+        cache: Path,
+        config: Path,
+        data: Path,
+        dataLocal: Path,
+        preference: Path,
+        runtime: Path
+    )
+
+    def projectPaths(qualifier: String, organization: String, application: String)(using Frame): ProjectPaths < IO =
+        IO {
+            val dirs = ProjectDirectories.from(qualifier, organization, application)
+            ProjectPaths(
+                Path(dirs.projectPath),
+                Path(dirs.cacheDir),
+                Path(dirs.configDir),
+                Path(dirs.dataDir),
+                Path(dirs.dataLocalDir),
+                Path(dirs.preferenceDir),
+                Path(dirs.runtimeDir)
+            )
+        }
 
 end Path
 
