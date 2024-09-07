@@ -21,7 +21,7 @@ object Batch:
 
         case Call[A, B, S](
             v: A,
-            source: Seq[A] => Seq[B] < S,
+            source: Seq[A] => (A => B < S) < S,
             frame: Frame
         ) extends Op[B, S]
     end Op
@@ -35,8 +35,30 @@ object Batch:
       * @return
       *   A function that takes a single input and returns a batched computation
       */
-    inline def source[A, B, S](f: Seq[A] => Seq[B] < S)(using inline frame: Frame): A => B < Batch[S] =
+    inline def source[A, B, S](f: Seq[A] => (A => B < S) < S)(using inline frame: Frame): A => B < Batch[S] =
         (v: A) => ArrowEffect.suspend[B](erasedTag[S], Op.Call(v, f, frame))
+
+    inline def sourceMap[A, B, S](f: Seq[A] => Map[A, B] < S)(using inline frame: Frame): A => B < Batch[S] =
+        source[A, B, S] { input =>
+            f(input).map { output =>
+                require(
+                    input.size == output.size,
+                    s"Source created at ${frame.parse.position} returned a different number of elements than input: ${input.size} != ${output.size}"
+                )
+                ((a: A) => output(a): B < S)
+            }
+        }
+
+    inline def sourceSeq[A, B, S](f: Seq[A] => Seq[B] < S)(using inline frame: Frame): A => B < Batch[S] =
+        sourceMap[A, B, S] { input =>
+            f(input).map { result =>
+                require(
+                    input.size == result.size,
+                    s"Source created at ${frame.parse.position} returned a different number of elements than input: ${input.size} != ${result.size}"
+                )
+                input.zip(result).toMap
+            }
+        }
 
     /** Evaluates a sequence of values in a batch.
       *
@@ -57,8 +79,8 @@ object Batch:
       */
     def run[A: Flat, S, S2](v: A < (Batch[S] & S2))(using Frame): Seq[A] < (S & S2) =
 
-        case class Cont(op: Op[?, S], cont: Any => (Cont | A) < (Batch[S] & S2))
-        def runCont(v: (Cont | A) < (Batch[S] & S2)): (Cont | A) < S2 =
+        case class Cont(op: Op[?, S], cont: Any => (Cont | A) < (Batch[S] & S & S2))
+        def runCont(v: (Cont | A) < (Batch[S] & S & S2)): (Cont | A) < (S & S2) =
             // TODO workaround, Flat macro isn't inferring correctly with nested classes
             import Flat.unsafe.bypass
             ArrowEffect.handle(erasedTag[S], v) {
@@ -66,8 +88,8 @@ object Batch:
             }
         end runCont
 
-        case class Expanded(v: Any, source: Seq[Any] => Seq[Any] < S, cont: Any => (Cont | A) < (Batch[S] & S2), frame: Frame)
-        def expand(state: Seq[Cont | A]): Seq[Expanded | A] < S2 =
+        case class Expanded(v: Any, source: Seq[Any] => (Any => Any < S) < S, cont: Any => (Cont | A) < (Batch[S] & S & S2), frame: Frame)
+        def expand(state: Seq[Cont | A]): Seq[Expanded | A] < (S & S2) =
             Kyo.foreach(state) {
                 case Cont(Op.Eval(seq), cont) =>
                     Kyo.foreach(seq)(v => runCont(cont(v))).map(expand)
@@ -79,7 +101,6 @@ object Batch:
 
         def loop(state: Seq[Cont | A]): Seq[A] < (S & S2) =
             expand(state).flatMap { expanded =>
-
                 val (completed, pending) =
                     expanded.zipWithIndex.partitionMap {
                         case (e: Expanded @unchecked, idx) => Right((e, idx))
@@ -93,25 +114,16 @@ object Batch:
 
                     Kyo.foreach(grouped.toSeq) { case ((source, frame), items) =>
                         val (expandedItems, indices) = items.unzip
-                        val (values, conts)          = expandedItems.map(e => (e.v, e.cont)).unzip
+                        val values                   = expandedItems.map(_.v)
                         val uniqueValues             = values.distinct
 
-                        source(uniqueValues).flatMap { seq =>
-                            require(
-                                uniqueValues.size == seq.size,
-                                s"Source created at ${frame.parse.position} returned a different number of elements than input: ${uniqueValues.size} != ${seq.size}"
-                            )
-                            if seq.isEmpty then Seq.empty
-                            else
-                                val results   = seq.toIndexedSeq
-                                val resultMap = uniqueValues.zip(results).toMap
-                                Kyo.foreach(expandedItems.zip(indices)) { case (e, idx) =>
-                                    runCont(e.cont(resultMap(e.v.asInstanceOf[Any]))).map((_, idx))
-                                }
-                            end if
+                        source(uniqueValues).flatMap { map =>
+                            Kyo.foreach(expandedItems.zip(indices)) { case (e, idx) =>
+                                runCont(map(e.v).map(e.cont)).map((_, idx))
+                            }
                         }
                     }.flatMap { results =>
-                        loop((completed ++ results.flatten).map(_._1))
+                        loop(completed.map(_._1) ++ results.flatten.map(_._1))
                     }
                 end if
             }

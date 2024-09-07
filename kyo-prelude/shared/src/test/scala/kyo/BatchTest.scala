@@ -7,7 +7,7 @@ class BatchTest extends Test:
 
     class TestSource[A, B, S](f: Seq[A] => Seq[B] < S):
         private val callsBuffer = ArrayBuffer[Seq[A]]()
-        private val source = Batch.source[A, B, S] { seq =>
+        private val source = Batch.sourceSeq[A, B, S] { seq =>
             callsBuffer += seq
             f(seq)
         }
@@ -481,6 +481,135 @@ class BatchTest extends Test:
                     assert(result.isPanic)
                     assert(source.calls == Seq(Seq(1, 2, 3)))
                 }
+        }
+    }
+
+    "Batch.source" - {
+        "with individual effect suspensions" in run {
+            var counter = 0
+            val source = Batch.source[Int, String, Env[Int]] { seq =>
+                val map = seq.map(i =>
+                    i -> Env.use[Int](env =>
+                        counter += 1
+                        (i * env).toString
+                    )
+                ).toMap
+                (i: Int) => map(i)
+            }
+
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2, 3))
+                    b <- source(a)
+                yield (a, b)
+
+            Env.run(10) {
+                Batch.run(result).map { seq =>
+                    assert(seq == Seq((1, "10"), (2, "20"), (3, "30")))
+                    assert(counter == 3) // Each value caused a separate effect suspension
+                }
+            }
+        }
+
+        "with conditional effect suspensions" in run {
+            var evenCounter = 0
+            var oddCounter  = 0
+            val source = Batch.source[Int, String, Env[Int] & Var[Int]] { seq =>
+                val map = seq.map { i =>
+                    i -> {
+                        if i % 2 == 0 then
+                            Env.use[Int] { env =>
+                                evenCounter += 1
+                                (i * env).toString
+                            }
+                        else
+                            Var.update[Int](_ + i).map { _ =>
+                                oddCounter += 1
+                                i.toString
+                            }
+                    }
+                }.toMap
+                (i: Int) => map(i)
+            }
+
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2, 3, 4))
+                    b <- source(a)
+                yield (a, b)
+
+            Env.run(10) {
+                Var.runTuple(0) {
+                    Batch.run(result).map { seq =>
+                        assert(seq == Seq((1, "1"), (2, "20"), (3, "3"), (4, "40")))
+                        assert(evenCounter == 2)
+                        assert(oddCounter == 2)
+                    }
+                }.map { case (finalVarValue, _) =>
+                    assert(finalVarValue == 4) // 1 + 3
+                }
+            }
+        }
+    }
+
+    "Batch.sourceMap" - {
+        "basic usage" in run {
+            val source = Batch.sourceMap[Int, String, Any] { seq =>
+                seq.map(i => i -> i.toString).toMap
+            }
+
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2, 3))
+                    b <- source(a)
+                yield (a, b)
+
+            Batch.run(result).map { seq =>
+                assert(seq == Seq((1, "1"), (2, "2"), (3, "3")))
+            }
+        }
+
+        "with effects" in run {
+            val source = Batch.sourceMap[Int, String, Env[Int] & Var[Int]] { seq =>
+                Env.use[Int] { env =>
+                    Var.update[Int](_ + seq.sum).map { _ =>
+                        seq.map(i => i -> (i * env).toString).toMap
+                    }
+                }
+            }
+
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2, 3))
+                    b <- source(a)
+                yield (a, b)
+
+            Env.run(10) {
+                Var.runTuple(0) {
+                    Batch.run(result).map { seq =>
+                        assert(seq == Seq((1, "10"), (2, "20"), (3, "30")))
+                    }
+                }.map { case (finalVarValue, _) =>
+                    assert(finalVarValue == 6) // 1 + 2 + 3
+                }
+            }
+        }
+
+        "error handling" in run {
+            val source = Batch.sourceMap[Int, String, Any] { seq =>
+                if seq.contains(3) then throw new RuntimeException("Error in source")
+                else seq.map(i => i -> i.toString).toMap
+            }
+
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2, 3, 4))
+                    b <- source(a)
+                yield (a, b)
+
+            assertThrows[RuntimeException] {
+                Batch.run(result).eval
+            }
         }
     }
 
