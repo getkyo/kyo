@@ -2329,7 +2329,7 @@ val d: Boolean < IO =
     a.map(_.isDone)
 ```
 
-### Latch: Fiber Coordination
+### Latch: Countdown Synchronization
 
 The `Latch` effect serves as a coordination mechanism for fibers in a concurrent environment, primarily used for task synchronization. It provides a low-level API for controlling the flow of execution and ensuring certain tasks are completed before others, all while maintaining thread safety.
 
@@ -2352,6 +2352,52 @@ val c: Unit < IO =
 val d: Int < IO =
     a.map(_.pending)
 ```
+
+### Barrier: Multi-party Rendezvous
+
+The `Barrier` effect provides a synchronization primitive that allows a fixed number of parties to wait for each other to reach a common point of execution. It's particularly useful in scenarios where multiple fibers need to synchronize their progress.
+
+```scala
+import kyo.*
+
+// Initialize a barrier for 3 parties
+val a: Barrier < IO =
+    Barrier.init(3)
+
+// Wait for the barrier to be released
+val b: Unit < Async =
+    a.map(_.await)
+
+// Get the number of parties still waiting
+val c: Int < IO =
+    a.map(_.pending)
+
+// Example usage with multiple fibers
+val d: Unit < Async =
+    for
+        barrier <- Barrier.init(3)
+        _       <- Async.parallel(
+                     barrier.await,
+                     barrier.await,
+                     barrier.await
+                   )
+    yield ()
+
+// Fibers can join the barrier at different points of the computation
+val e: Unit < Async =
+    for
+        barrier <- Barrier.init(3)
+        fiber1  <- Async.run(Async.sleep(1.second))
+        fiber2  <- Async.run(Async.sleep(2.seconds))
+        _       <- Async.parallel(
+                     fiber1.get.map(_ => barrier.await),
+                     fiber2.get.map(_ => barrier.await),
+                     Async.run(barrier.await).map(_.get)
+                   )
+    yield ()
+```
+
+The `Barrier` is initialized with a specific number of parties. Each party calls `await` when it reaches the barrier point. The barrier releases all waiting parties when the last party arrives. After all parties have been released, the barrier cannot be reset or reused.
 
 ### Atomic: Concurrent State
 

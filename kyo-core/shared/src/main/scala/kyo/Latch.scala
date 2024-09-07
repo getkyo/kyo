@@ -37,7 +37,7 @@ object Latch:
                                 if c > 0 && !count.compareAndSet(c, c - 1) then
                                     loop(count.get)
                                 else if c == 1 then
-                                    promise.completeUnit(Result.success(()))
+                                    promise.completeUnit(Result.unit)
                             loop(count.get())
                         }
 
