@@ -2382,6 +2382,19 @@ val d: Unit < Async =
                      barrier.await
                    )
     yield ()
+
+// Fibers can join the barrier at different points of the computation
+val e: Unit < Async =
+    for
+        barrier <- Barrier.init(3)
+        fiber1  <- Async.run(Async.sleep(1.second))
+        fiber2  <- Async.run(Async.sleep(2.seconds))
+        _       <- Async.parallel(
+                     fiber1.get.map(_ => barrier.await),
+                     fiber2.get.map(_ => barrier.await),
+                     Async.run(barrier.await).map(_.get)
+                   )
+    yield ()
 ```
 
 The `Barrier` is initialized with a specific number of parties. Each party calls `await` when it reaches the barrier point. The barrier releases all waiting parties when the last party arrives. After all parties have been released, the barrier cannot be reset or reused.
