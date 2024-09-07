@@ -51,12 +51,12 @@ object Batch:
 
     inline def sourceSeq[A, B, S](f: Seq[A] => Seq[B] < S)(using inline frame: Frame): A => B < Batch[S] =
         sourceMap[A, B, S] { input =>
-            f(input).map { result =>
+            f(input).map { output =>
                 require(
-                    input.size == result.size,
-                    s"Source created at ${frame.parse.position} returned a different number of elements than input: ${input.size} != ${result.size}"
+                    input.size == output.size,
+                    s"Source created at ${frame.parse.position} returned a different number of elements than input: ${input.size} != ${output.size}"
                 )
-                input.zip(result).toMap
+                input.zip(output).toMap
             }
         }
 

@@ -782,29 +782,43 @@ The `Batch` effect provides a mechanism for efficient processing of data in batc
 ```scala
 import kyo.*
 
-// Create a source that doubles input values. 'Batch.source' takes a 'Seq'-processing
-// function and returns an element-wise function. This allows efficient batching
-// while maintaining a simple interface. The 'Batch' effect automatically
-// accumulates calls and executes them in a single batch operation.
-val source: Int => Int < Batch[IO] = 
-    Batch.source { seq =>
-        IO(seq.map(_ * 2))
+// Using 'Batch.sourceSeq' for processing the entire sequence at once, returning a 'Seq'
+val source1 = Batch.sourceSeq[Int, String, Any] { seq =>
+    seq.map(i => i.toString)
+}
+
+// Using 'Batch.sourceMap' for processing the entire sequence at once, returning a 'Map'
+val source2 = Batch.sourceMap[Int, String, IO] { seq =>
+    // Source functions can perform arbitrary effects like 'IO' before returning the results
+    IO {
+        seq.map(i => i -> i.toString).toMap
     }
+}
 
-// Use the source in a batch computation
-val a: Int < Batch[IO] =
+// Using 'Batch.source' for individual effect suspensions
+// This is a more generic method that allows effects for each of the inputs
+val source3 = Batch.source[Int, String, IO] { seq =>
+    val map = seq.map { i =>
+        i -> IO((i * 2).toString)
+    }.toMap
+    (i: Int) => map(i)
+}
+
+// Example usage
+val result =
     for
-        v <- Batch.eval(Seq(1, 2, 3))
-        r <- source(v)
-    yield r
+        a <- Batch.eval(Seq(1, 2, 3))
+        b1 <- source1(a)
+        b2 <- source2(a)
+        b3 <- source3(a)
+    yield (a, b1, b2, b3)
 
-// Handle the Batch effect
-val b: Seq[Int] < IO =
-    Batch.run(a)
+val finalResult: Seq[(Int, String, String, String)] < IO =
+    Batch.run(result)
 
-// The result will be Seq(2, 4, 6)
-val c: Seq[Int] =
-    IO.run(b).eval
+// Execute the computation
+val output: Seq[(Int, String, String, String)] =
+    IO.run(finalResult).eval // Seq((1,"1","1","2"), (2,"2","2","4"), (3,"3","3","6"))
 ```
 
 When creating a source, it's important to note that the returned sequence must have the same number of elements as the input sequence. This restriction ensures consistent behavior and allows for proper batching of operations.
@@ -813,12 +827,12 @@ When creating a source, it's important to note that the returned sequence must h
 import kyo.*
 
 // This is valid
-val validSource = Batch.source[Int, String, Any] { seq =>
+val validSource = Batch.sourceSeq[Int, String, Any] { seq =>
     seq.map(_.toString)
 }
 
 // This would cause a runtime error
-val invalidSource = Batch.source[Int, Int, Any] { seq =>
+val invalidSource = Batch.sourceSeq[Int, Int, Any] { seq =>
     seq.filter(_ % 2 == 0)
 }
 ```
@@ -829,7 +843,7 @@ It's crucial to understand that the batching is done based on the identity of th
 import kyo.*
 
 // Correct usage: reusing the source
-val source = Batch.source[Int, Int, IO] { seq => 
+val source = Batch.sourceSeq[Int, Int, IO] { seq => 
     IO(seq.map(_ * 2))
 }
 
