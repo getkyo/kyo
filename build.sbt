@@ -239,8 +239,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.41.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.41.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.42.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.42.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
 
