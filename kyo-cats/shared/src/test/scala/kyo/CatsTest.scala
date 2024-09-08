@@ -38,25 +38,23 @@ class CatsTest extends Test:
             val a = Cats.get(CatsIO.raiseError(catsFailure))
             val b = Abort.fail(kyoFailure)
             Abort.run(a.map(_ => b)).map {
-                case Result.Panic(ex) =>
+                case Result.Fail(ex) =>
                     assert(ex == catsFailure)
                 case ex =>
-                    println(ex)
                     fail()
             }
         }
     }
 
     "A < Cats" in runKyo {
-        val a: Int < Cats = Cats.get(CatsIO.pure(10))
-        val b             = a.map(_ * 2)
+        val a = Cats.get(CatsIO.pure(10))
+        val b = a.map(_ * 2)
         b.map(i => assert(i == 20))
     }
 
     "nested" in runKyo {
-        val a: (String < Cats) < Cats = Cats.get(CatsIO.pure(Cats.get(CatsIO.pure("Nested"))))
-        val b: String < Cats          = a.flatten
-        b.map(s => assert(s == "Nested"))
+        val a = Cats.get(CatsIO.pure(Cats.get(CatsIO.pure("Nested")))).flatten
+        a.map(s => assert(s == "Nested"))
     }
 
     "fibers" in runKyo {

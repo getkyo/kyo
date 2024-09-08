@@ -16,11 +16,8 @@ object Cats:
       * @return
       *   A Kyo effect that, when run, will execute the cats.effect.IO
       */
-    def get[A](io: CatsIO[A])(using Frame): A < Cats =
-        ArrowEffect.suspendMap(Tag[GetCatsIO], io) {
-            case Left(ex) => throw ex
-            case Right(v) => v
-        }
+    def get[A](io: CatsIO[A])(using Frame): A < (Abort[Throwable] & Cats) =
+        ArrowEffect.suspendMap(Tag[GetCatsIO], io)(Abort.get(_))
 
     /** Runs a Kyo effect that uses Cats and converts it to a cats.effect.IO.
       *
