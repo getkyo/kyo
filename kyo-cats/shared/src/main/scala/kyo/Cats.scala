@@ -5,7 +5,7 @@ import cats.effect.IO as CatsIO
 import kyo.kernel.*
 import scala.util.control.NonFatal
 
-opaque type Cats <: Async = GetCatsIO & Async
+opaque type Cats <: (Async & Abort[Throwable]) = GetCatsIO & Async & Abort[Throwable]
 
 object Cats:
 
@@ -26,7 +26,7 @@ object Cats:
       * @return
       *   A cats.effect.IO that, when run, will execute the Kyo effect
       */
-    def run[A](v: => A < (Abort[Throwable] & Cats))(using frame: Frame): CatsIO[A] =
+    def run[A](v: => A < Cats)(using frame: Frame): CatsIO[A] =
         CatsIO.defer {
             ArrowEffect.handle(Tag[GetCatsIO], v.map(CatsIO.pure))(
                 [C] => (input, cont) => input.attempt.flatMap(r => run(cont(r)).flatten)

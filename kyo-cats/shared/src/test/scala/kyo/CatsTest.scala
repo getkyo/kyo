@@ -25,7 +25,7 @@ class CatsTest extends Test:
             object kyoFailure  extends RuntimeException
             val a = Abort.fail(kyoFailure)
             val b = Cats.get(CatsIO.raiseError(catsFailure))
-            Abort.run(a.map(_ => b)).map {
+            Abort.run[Throwable](a.map(_ => b)).map {
                 case Result.Fail(ex) =>
                     assert(ex == kyoFailure)
                 case _ =>
@@ -37,7 +37,7 @@ class CatsTest extends Test:
             object kyoFailure  extends RuntimeException
             val a = Cats.get(CatsIO.raiseError(catsFailure))
             val b = Abort.fail(kyoFailure)
-            Abort.run(a.map(_ => b)).map {
+            Abort.run[Throwable](a.map(_ => b)).map {
                 case Result.Fail(ex) =>
                     assert(ex == catsFailure)
                 case ex =>
