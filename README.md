@@ -2978,6 +2978,56 @@ val d: Task[Int] =
 
 > Note: Support for ZIO environments (`R` in `ZIO[R, E, A]`) is currently in development. Once implemented, it will be possible to use ZIO effects with environments directly within Kyo computations.
 
+### Cats: Integration with Cats Effect
+
+The `Cats` effect provides seamless integration between Kyo and the Cats Effect library. This integration is designed to enable gradual adoption of Kyo within a Cats Effect codebase. The integration properly suspends side effects and propagates fiber cancellations/interrupts between both libraries.
+
+```scala
+import kyo.*
+import cats.effect.IO as CatsIO
+
+// Use the 'get' method to extract a 'IO' effect from Cats Effect:
+val a: Int < Cats =
+    Cats.get(CatsIO.pure(42))
+
+// Handle the 'Cats' effect to obtain a 'CatsIO' effect:
+val b: CatsIO[Int] =
+    Cats.run(a)
+```
+
+Kyo and Cats effects can be seamlessly mixed and matched within computations, allowing developers to leverage the power of both libraries. Here are a few examples showcasing this integration:
+
+```scala
+import kyo.*
+import cats.effect.IO as CatsIO
+import cats.effect.kernel.Outcome.Succeeded
+
+// Note how Cats includes the IO and Async effects:
+val a: Int < Cats =
+    for
+        v1 <- Cats.get(CatsIO.pure(21))
+        v2 <- IO(21)
+        v3 <- Async.run(-42).map(_.get)
+    yield v1 + v2 + v3
+
+// Using fibers from both libraries:
+val b: Int < Cats =
+    for
+        f1 <- Cats.get(CatsIO.pure(21).start)
+        f2 <- Async.run(IO(21))
+        v1 <- Cats.get(f1.joinWith(CatsIO(99)))
+        v2 <- f2.get
+    yield v1 + v2
+
+// Transforming Cats Effect IO within Kyo computations:
+val c: Int < Cats =
+    Cats.get(CatsIO.pure(21)).map(_ * 2)
+
+// Transforming Kyo effects within Cats Effect IO:
+val d: CatsIO[Int] =
+    Cats.run(IO(21).map(_ * 2))
+```
+
 ### Resolvers: GraphQL Server via Caliban
 
 `Resolvers` integrates with the [Caliban](https://github.com/ghostdogpr/caliban) library to help setup GraphQL servers.
