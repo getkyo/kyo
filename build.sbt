@@ -9,6 +9,7 @@ val scala212Version = "2.12.20"
 val scala213Version = "2.13.14"
 
 val zioVersion       = "2.1.9"
+val catsVersion      = "3.5.4"
 val scalaTestVersion = "3.2.19"
 
 val compilerOptions = Set(
@@ -92,6 +93,7 @@ lazy val kyoJVM = project
         `kyo-bench`.jvm,
         `kyo-test`.jvm,
         `kyo-zio`.jvm,
+        `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
         `kyo-examples`.jvm
     )
@@ -113,6 +115,7 @@ lazy val kyoJS = project
         `kyo-sttp`.js,
         `kyo-test`.js,
         `kyo-zio`.js,
+        `kyo-cats`.js,
         `kyo-combinators`.js
     )
 
@@ -344,6 +347,19 @@ lazy val `kyo-zio` =
             `js-settings`
         )
 
+lazy val `kyo-cats` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-cats"))
+        .dependsOn(`kyo-core`)
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion
+        ).jsSettings(
+            `js-settings`
+        )
+
 lazy val `kyo-combinators` =
     crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
@@ -411,7 +427,7 @@ lazy val `kyo-bench` =
                 }
             },
             libraryDependencies += "dev.zio"             %% "izumi-reflect"       % "2.3.10",
-            libraryDependencies += "org.typelevel"       %% "cats-effect"         % "3.5.4",
+            libraryDependencies += "org.typelevel"       %% "cats-effect"         % catsVersion,
             libraryDependencies += "org.typelevel"       %% "log4cats-core"       % "2.7.0",
             libraryDependencies += "org.typelevel"       %% "log4cats-slf4j"      % "2.7.0",
             libraryDependencies += "org.typelevel"       %% "cats-mtl"            % "1.5.0",
@@ -460,6 +476,7 @@ lazy val readme =
             `kyo-tapir`,
             `kyo-bench`,
             `kyo-zio`,
+            `kyo-cats`,
             `kyo-caliban`,
             `kyo-combinators`
         )
