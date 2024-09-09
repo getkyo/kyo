@@ -6,7 +6,7 @@ import org.jctools.queues.MessagePassingQueue.Consumer
 import org.jctools.queues.MpmcArrayQueue
 
 private[kernel] object TracePool:
-    inline def globalCapacity: Int = 10240
+    inline def globalCapacity: Int = 8192
     inline def localCapacity: Int  = 32
 
     private val global = new MpmcArrayQueue[Trace](globalCapacity)

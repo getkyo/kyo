@@ -8,7 +8,7 @@ import kyo.discard
 import scala.annotation.tailrec
 
 private[kernel] object TracePool:
-    inline def globalCapacity: Int = 10240
+    inline def globalCapacity: Int = 8192
     inline def localCapacity: Int  = 32
 
     private val global = new ConcurrentLinkedQueue[Trace]()
