@@ -132,7 +132,7 @@ extension (kyoObject: Kyo.type)
     )(
         useElement: A => Any < Async
     )(using Flat[Any], Frame): Unit < (S & Async) =
-        sequence.map(seq => Async.parallel(seq.map(v => useElement(v).unit))).unit
+        sequence.map(seq => Async.parallel(seq.map(v => useElement(v)))).unit
 
     /** Creates an effect from an AutoCloseable resource.
       *
@@ -355,7 +355,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that never completes
       */
     def never(using Frame): Nothing < Async =
-        Promise.init[Nothing, Nothing].join
+        Fiber.never.join
             *> IO(throw new IllegalStateException("Async.never completed"))
 
     /** Provides a dependency to an effect using Env.
