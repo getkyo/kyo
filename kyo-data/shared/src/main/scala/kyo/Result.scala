@@ -200,6 +200,12 @@ object Result:
           */
         def getFailure: E | Throwable
     end Error
+    object Error:
+        def unapply[E, A](self: Result[E, A]): Maybe.Ops[E | Throwable] =
+            self match
+                case error: Error[E] @unchecked => Maybe(error.getFailure)
+                case _                          => Maybe.empty
+    end Error
 
     /** Represents a failure in a Result. */
     case class Fail[+E](error: E) extends Error[E]:

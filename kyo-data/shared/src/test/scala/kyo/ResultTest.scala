@@ -430,6 +430,27 @@ class ResultTest extends Test:
                 assert(result == "short error")
             }
         }
+        "Error.unapply" - {
+            "should match Fail" in {
+                val result = Result.fail("FAIL!")
+                result match
+                    case Error(_) => succeed
+                    case _        => fail()
+            }
+            "should match Panic" in {
+                val result = Result.panic(new AssertionError)
+                result match
+                    case Error(_) => succeed
+                    case _        => fail()
+            }
+            "should not match Success" in {
+                val result = Result.success(1)
+                result match
+                    case Error(_) => fail()
+                    case _        => succeed
+            }
+        }
+
     }
 
     "inference" - {
