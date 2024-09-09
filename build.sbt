@@ -198,6 +198,7 @@ lazy val `kyo-core` =
             `kyo-settings`,
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
+            libraryDependencies += "dev.dirs"       % "directories"     % "26",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC31" % Test,
             libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.9"      % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.8"      % Test,
