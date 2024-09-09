@@ -162,7 +162,11 @@ object `<`:
     // TODO Compiler crash if inlined
     extension [A, S](v: A < S)
         def repeat(i: Int)(using ev: A => Unit, frame: Frame, flat: Flat.Weak[A]): Unit < S =
-            if i <= 0 then () else v.andThen(repeat(i - 1))
+            if i <= 0 then ()
+            else
+                // TODO Test failures in Scala Native without `return`
+                return v.andThen(repeat(i - 1))
+            end if
 
     // TODO Compiler crash if inlined
     extension [A, S, S2](v: A < S < S2)

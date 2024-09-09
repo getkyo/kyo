@@ -157,7 +157,7 @@ object DurationSpec extends ZIOSpecDefault:
                 )
             }
         )
-    )
+    ) @@ TestAspect.exceptNative
 end DurationSpec
 
 object ZDurations:

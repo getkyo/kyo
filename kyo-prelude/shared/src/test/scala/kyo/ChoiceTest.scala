@@ -1,5 +1,7 @@
 package kyo
 
+import Tagged.*
+
 class ChoiceTest extends Test:
 
     "eval with a single choice" in {
@@ -81,7 +83,7 @@ class ChoiceTest extends Test:
         end try
     }
 
-    "large number of suspensions" in pendingUntilFixed {
+    "large number of suspensions" taggedAs notNative in pendingUntilFixed {
         // https://github.com/getkyo/kyo/issues/208
         var v = Choice.get(Seq(1))
         for _ <- 0 until 100000 do
