@@ -3002,11 +3002,12 @@ import kyo.*
 import cats.effect.IO as CatsIO
 import cats.effect.kernel.Outcome.Succeeded
 
-// Note how Cats includes the IO and Async effects:
+// Note how Cats includes the IO, Async, and Abort[Throwable] effects:
 val a: Int < Cats =
     for
         v1 <- Cats.get(CatsIO.pure(21))
         v2 <- IO(21)
+        _  <- Abort.when(v1 > 10)(new Exception)
         v3 <- Async.run(-42).map(_.get)
     yield v1 + v2 + v3
 
