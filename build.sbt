@@ -61,7 +61,7 @@ Global / onLoad := {
         System.getProperty("platform", "JVM").toUpperCase match {
             case "JVM"    => kyoJVM
             case "JS"     => kyoJS
-            case "Native" => kyoNative
+            case "NATIVE" => kyoNative
             case platform => throw new IllegalArgumentException("Invalid platform: " + platform)
         }
 
