@@ -1,5 +1,6 @@
 package kyo
 
+import Batch.internal.*
 import kyo.Tag
 import kyo.kernel.*
 
@@ -11,13 +12,11 @@ import kyo.kernel.*
   * @tparam S
   *   Effects from batch sources
   */
-sealed trait Batch[+S] extends ArrowEffect[Batch.Op[*, S], Id]
+sealed trait Batch[+S] extends ArrowEffect[Op[*, S], Id]
 
 object Batch:
 
-    enum Op[V, -S]:
-        case Eval[A](seq: Seq[A])                                    extends Op[A, Any]
-        case Call[A, B, S](v: A, source: Seq[A] => (A => B < S) < S) extends Op[B, S]
+    import internal.*
 
     private inline def erasedTag[S]: Tag[Batch[S]] = Tag[Batch[Any]].asInstanceOf[Tag[Batch[S]]]
 
@@ -86,6 +85,20 @@ object Batch:
     inline def eval[A](seq: Seq[A])(using inline frame: Frame): A < Batch[Any] =
         ArrowEffect.suspend[A](erasedTag[Any], Op.Eval(seq))
 
+    /** Applies a function to each element of a sequence in a batched context.
+      *
+      * This method is similar to `Kyo.foreach`, but instead of returning a `Seq[B]`, it returns a single value of type `B`.
+      *
+      * @param seq
+      *   The sequence of values to process
+      * @param f
+      *   The function to apply to each element
+      * @return
+      *   A batched computation that produces a single value of type B
+      */
+    inline def foreach[A, B, S](seq: Seq[A])(inline f: A => B < S): B < (Batch[Any] & S) =
+        ArrowEffect.suspendMap[A](erasedTag[Any], Op.Eval(seq))(f)
+
     /** Runs a computation with Batch effect, executing all batched operations.
       *
       * @param v
@@ -104,7 +117,7 @@ object Batch:
             }
         end runCont
 
-        case class Expanded(v: Any, source: Seq[Any] => (Any => Any < S) < S, cont: Any => (Cont | A) < (Batch[S] & S & S2))
+        case class Expanded(v: Any, source: Source[Any, Any, S], cont: Any => (Cont | A) < (Batch[S] & S & S2))
         def expand(state: Seq[Cont | A]): Seq[Expanded | A] < (S & S2) =
             Kyo.foreach(state) {
                 case Cont(Op.Eval(seq), cont) =>
@@ -116,7 +129,7 @@ object Batch:
             }.map(_.flatten)
 
         def loop(state: Seq[Cont | A]): Seq[A] < (S & S2) =
-            expand(state).flatMap { expanded =>
+            expand(state).map { expanded =>
                 val (completed, pending) =
                     expanded.zipWithIndex.partitionMap {
                         case (e: Expanded @unchecked, idx) => Right((e, idx))
@@ -133,12 +146,12 @@ object Batch:
                         val values                   = expandedItems.map(_.v)
                         val uniqueValues             = values.distinct
 
-                        source(uniqueValues).flatMap { map =>
+                        source(uniqueValues).map { map =>
                             Kyo.foreach(expandedItems.zip(indices)) { case (e, idx) =>
                                 runCont(map(e.v).map(e.cont)).map((_, idx))
                             }
                         }
-                    }.flatMap { results =>
+                    }.map { results =>
                         loop(completed.map(_._1) ++ results.flatten.map(_._1))
                     }
                 end if
@@ -146,5 +159,13 @@ object Batch:
         end loop
         runCont(v).map(c => loop(Seq(c)))
     end run
+
+    object internal:
+        type Source[A, B, S] = Seq[A] => (A => B < S) < S
+
+        enum Op[V, -S]:
+            case Eval[A](seq: Seq[A])                         extends Op[A, Any]
+            case Call[A, B, S](v: A, source: Source[A, B, S]) extends Op[B, S]
+    end internal
 
 end Batch

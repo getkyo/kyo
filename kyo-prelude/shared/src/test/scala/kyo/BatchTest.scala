@@ -613,4 +613,87 @@ class BatchTest extends Test:
         }
     }
 
+    "Batch.foreach" - {
+        "simple usage" in run {
+            val result = Batch.foreach(Seq(1, 2, 3))(x => x * 2)
+            Batch.run(result).map { seq =>
+                assert(seq == Seq(2, 4, 6))
+            }
+        }
+
+        "with effects" in run {
+            val result = Batch.foreach(Seq(1, 2, 3)) { x =>
+                Env.use[Int](env => x * env)
+            }
+            Env.run(10) {
+                Batch.run(result).map { seq =>
+                    assert(seq == Seq(10, 20, 30))
+                }
+            }
+        }
+
+        "empty sequence" in run {
+            val result = Batch.foreach(Seq.empty[Int])(x => x * 2)
+            Batch.run(result).map { seq =>
+                assert(seq.isEmpty)
+            }
+        }
+
+        "with error handling" in run {
+            val result = Batch.foreach(Seq(1, 2, 3, 4, 5)) { x =>
+                if x == 3 then throw new RuntimeException("Error at 3")
+                else x * 2
+            }
+            assertThrows[RuntimeException] {
+                Batch.run(result).eval
+            }
+        }
+
+        "with multiple effects" in run {
+            var sideEffect = 0
+            val result = Batch.foreach(Seq(1, 2, 3)) { x =>
+                for
+                    a <- Env.use[Int](env => x * env)
+                    _ = sideEffect += 1
+                    b <- Var.update[Int](_ + a)
+                yield b
+            }
+            Env.run(10) {
+                Var.runTuple(0) {
+                    Batch.run(result).map { seq =>
+                        assert(seq == Seq(10, 30, 60))
+                        assert(sideEffect == 3)
+                    }
+                }.map { case (finalVarValue, _) =>
+                    assert(finalVarValue == 60)
+                }
+            }
+        }
+
+        "interleaved with other Batch operations" in run {
+            val source = TestSource[Int, String, Any](seq => seq.map(_.toString))
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2, 3))
+                    b <- Batch.foreach(Seq(10, 20, 30))(x => x + a)
+                    c <- source(b)
+                yield (a, b, c)
+
+            Batch.run(result).map { seq =>
+                assert(seq == Seq(
+                    (1, 11, "11"),
+                    (1, 21, "21"),
+                    (1, 31, "31"),
+                    (2, 12, "12"),
+                    (2, 22, "22"),
+                    (2, 32, "32"),
+                    (3, 13, "13"),
+                    (3, 23, "23"),
+                    (3, 33, "33")
+                ))
+                assert(source.calls == Seq(Seq(11, 21, 31, 12, 22, 32, 13, 23, 33)))
+            }
+        }
+    }
+
 end BatchTest
