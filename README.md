@@ -813,12 +813,9 @@ val result =
         b3 <- source3(a)
     yield (a, b1, b2, b3)
 
+// Handle the effect
 val finalResult: Seq[(Int, String, String, String)] < IO =
     Batch.run(result)
-
-// Execute the computation
-val output: Seq[(Int, String, String, String)] =
-    IO.run(finalResult).eval // Seq((1,"1","1","2"), (2,"2","2","4"), (3,"3","3","6"))
 ```
 
 When creating a source, it's important to note that the returned sequence must have the same number of elements as the input sequence. This restriction ensures consistent behavior and allows for proper batching of operations.

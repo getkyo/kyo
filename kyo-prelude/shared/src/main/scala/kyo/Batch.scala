@@ -16,15 +16,8 @@ sealed trait Batch[+S] extends ArrowEffect[Batch.Op[*, S], Id]
 object Batch:
 
     enum Op[V, -S]:
-
-        case Eval[A](seq: Seq[A]) extends Op[A, Any]
-
-        case Call[A, B, S](
-            v: A,
-            source: Seq[A] => (A => B < S) < S,
-            frame: Frame
-        ) extends Op[B, S]
-    end Op
+        case Eval[A](seq: Seq[A])                                    extends Op[A, Any]
+        case Call[A, B, S](v: A, source: Seq[A] => (A => B < S) < S) extends Op[B, S]
 
     private inline def erasedTag[S]: Tag[Batch[S]] = Tag[Batch[Any]].asInstanceOf[Tag[Batch[S]]]
 
@@ -45,7 +38,7 @@ object Batch:
       * results for each input.
       */
     inline def source[A, B, S](f: Seq[A] => (A => B < S) < S)(using inline frame: Frame): A => B < Batch[S] =
-        (v: A) => ArrowEffect.suspend[B](erasedTag[S], Op.Call(v, f, frame))
+        (v: A) => ArrowEffect.suspend[B](erasedTag[S], Op.Call(v, f))
 
     /** Creates a batched computation from a source function that returns a Map.
       *
@@ -116,7 +109,7 @@ object Batch:
             Kyo.foreach(state) {
                 case Cont(Op.Eval(seq), cont) =>
                     Kyo.foreach(seq)(v => runCont(cont(v))).map(expand)
-                case Cont(Op.Call(v, source, frame), cont) =>
+                case Cont(Op.Call(v, source), cont) =>
                     Seq(Expanded(v, source.asInstanceOf, cont))
                 case a: A @unchecked =>
                     Seq(a)
