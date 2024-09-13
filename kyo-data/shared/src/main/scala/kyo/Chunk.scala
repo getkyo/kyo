@@ -258,7 +258,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       * @return
       *   a flattened Chunk
       */
-    final def flatten[B](using ev: A =:= Chunk[B]): Chunk[B] =
+    final def flattenChunk[B](using ev: A =:= Chunk[B]): Chunk[B] =
         if isEmpty then Chunk.empty
         else
             val nested = this.toArrayInternal
@@ -280,7 +280,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
             copy()
 
             Compact(unnested)
-    end flatten
+    end flattenChunk
 
     /** Copies the elements of this Chunk to an array.
       *

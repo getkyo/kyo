@@ -470,41 +470,41 @@ class ChunkTest extends Test:
         }
     }
 
-    "flatten" - {
+    "flattenChunk" - {
         "flattens a chunk of chunks in original order" in {
             val chunk: Chunk[Chunk[Int]] = Chunk(Chunk(1, 2), Chunk(3, 4, 5), Chunk(6, 7, 8, 9))
-            assert(chunk.flatten == Chunk(1, 2, 3, 4, 5, 6, 7, 8, 9))
+            assert(chunk.flattenChunk == Chunk(1, 2, 3, 4, 5, 6, 7, 8, 9))
         }
 
         "returns an empty chunk when flattening an empty chunk of chunks" in {
             val chunk = Chunk.empty[Chunk[Int]]
-            assert(chunk.flatten.isEmpty)
+            assert(chunk.flattenChunk.isEmpty)
         }
 
         "returns an empty chunk when flattening a chunk of empty chunks" in {
             val chunk = Chunk(Chunk.empty[Int], Chunk.empty[Int])
-            assert(chunk.flatten.isEmpty)
+            assert(chunk.flattenChunk.isEmpty)
         }
 
         "preserves the order of elements within each chunk" in {
             val chunk = Chunk(Chunk(1, 2, 3), Chunk(4, 5, 6))
-            assert(chunk.flatten == Chunk(1, 2, 3, 4, 5, 6))
+            assert(chunk.flattenChunk == Chunk(1, 2, 3, 4, 5, 6))
         }
 
         "handles a chunk containing a single chunk" in {
             val chunk = Chunk(Chunk(1, 2, 3))
-            assert(chunk.flatten == Chunk(1, 2, 3))
+            assert(chunk.flattenChunk == Chunk(1, 2, 3))
         }
 
         "handles chunks of different sizes" in {
             val chunk = Chunk(Chunk(1), Chunk(2, 3), Chunk(4, 5, 6, 7))
-            assert(chunk.flatten == Chunk(1, 2, 3, 4, 5, 6, 7))
+            assert(chunk.flattenChunk == Chunk(1, 2, 3, 4, 5, 6, 7))
         }
 
         "appends" in {
             val chunk: Chunk[Chunk[Int]] =
                 Chunk(Chunk.empty[Int].append(1).append(2), Chunk(3, 4).append(5), Chunk(6, 7).append(8).append(9))
-            assert(chunk.flatten == Chunk(1, 2, 3, 4, 5, 6, 7, 8, 9))
+            assert(chunk.flattenChunk == Chunk(1, 2, 3, 4, 5, 6, 7, 8, 9))
         }
     }
 

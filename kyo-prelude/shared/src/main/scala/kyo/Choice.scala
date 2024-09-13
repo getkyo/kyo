@@ -66,7 +66,7 @@ object Choice:
         ArrowEffect.handle(Tag[Choice], v.map(Chunk[A](_))) {
             [C] =>
                 (input, cont) =>
-                    Kyo.foreach(input)(v => Choice.run(cont(v))).map(_.flatten.flatten)
+                    Kyo.foreach(input)(v => Choice.run(cont(v))).map(_.flattenChunk.flattenChunk)
         }
 
 end Choice
