@@ -17,12 +17,35 @@ import scala.util.NotGiven
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 
+/** Represents an asynchronous computation effect.
+  *
+  * This effect provides methods for running asynchronous computations, creating and managing fibers, handling promises, and performing
+  * parallel and race operations.
+  *
+  * @see
+  *   [[Async.run]] for running asynchronous computations
+  * @see
+  *   [[Async.Fiber]] for managing asynchronous tasks
+  * @see
+  *   [[Async.Promise]] for creating and managing promises
+  * @see
+  *   [[Async.parallel]] for running computations in parallel
+  * @see
+  *   [[Async.race]] for racing multiple computations
+  */
 opaque type Async <: (IO & Async.Join) = Async.Join & IO
 
 object Async:
 
     sealed trait Join extends ArrowEffect[IOPromise[?, *], Result[Nothing, *]]
 
+    /** Runs an asynchronous computation and returns a Fiber.
+      *
+      * @param v
+      *   The computation to run
+      * @return
+      *   A Fiber representing the running computation
+      */
     inline def run[E, A: Flat, Ctx](inline v: => A < (Abort[E] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, IO],
@@ -31,6 +54,15 @@ object Async:
     ): Fiber[E, A] < (IO & Ctx) =
         boundary((trace, context) => IOTask(v, trace, context))
 
+    /** Runs an asynchronous computation and blocks until completion or timeout.
+      *
+      * @param timeout
+      *   The maximum duration to wait
+      * @param v
+      *   The computation to run
+      * @return
+      *   The result of the computation, or a Timeout error
+      */
     def runAndBlock[E, A: Flat, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, IO & Abort[E]],
@@ -46,12 +78,44 @@ object Async:
     object Promise:
         inline given [E, A]: Flat[Promise[E, A]] = Flat.unsafe.bypass
 
+        /** Initializes a new Promise.
+          *
+          * @return
+          *   A new Promise
+          */
         def init[E, A](using Frame): Promise[E, A] < IO = IO(IOPromise())
 
         extension [E, A](self: Promise[E, A])
-            def complete[E2 <: E, A2 <: A](v: Result[E, A])(using Frame): Boolean < IO     = IO(self.complete(v))
-            def completeUnit[E2 <: E, A2 <: A](v: Result[E, A])(using Frame): Unit < IO    = IO(discard(self.complete(v)))
-            def become[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using Frame): Boolean < IO  = IO(self.become(other))
+            /** Completes the Promise with a result.
+              *
+              * @param v
+              *   The result to complete the Promise with
+              * @return
+              *   Whether the Promise was successfully completed
+              */
+            def complete[E2 <: E, A2 <: A](v: Result[E, A])(using Frame): Boolean < IO = IO(self.complete(v))
+
+            /** Completes the Promise with a result, discarding the return value.
+              *
+              * @param v
+              *   The result to complete the Promise with
+              */
+            def completeUnit[E2 <: E, A2 <: A](v: Result[E, A])(using Frame): Unit < IO = IO(discard(self.complete(v)))
+
+            /** Makes this Promise become another Fiber.
+              *
+              * @param other
+              *   The Fiber to become
+              * @return
+              *   Whether the Promise successfully became the other Fiber
+              */
+            def become[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using Frame): Boolean < IO = IO(self.become(other))
+
+            /** Makes this Promise become another Fiber, discarding the return value.
+              *
+              * @param other
+              *   The Fiber to become
+              */
             def becomeUnit[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using Frame): Unit < IO = IO(discard(self.become(other)))
         end extension
     end Promise
@@ -64,14 +128,54 @@ object Async:
 
         private val _unit = success(())
 
+        /** Creates a unit Fiber.
+          *
+          * @return
+          *   A Fiber that completes with unit
+          */
         def unit[E]: Fiber[E, Unit] = _unit.asInstanceOf[Fiber[E, Unit]]
 
+        /** Creates a never-completing Fiber.
+          *
+          * @return
+          *   A Fiber that never completes
+          */
         def never: Fiber[Nothing, Unit] = IOPromise[Nothing, Unit]()
 
-        def success[E, A](v: A): Fiber[E, A]        = result(Result.success(v))
-        def fail[E, A](ex: E): Fiber[E, A]          = result(Result.fail(ex))
+        /** Creates a successful Fiber.
+          *
+          * @param v
+          *   The value to complete the Fiber with
+          * @return
+          *   A Fiber that completes successfully with the given value
+          */
+        def success[E, A](v: A): Fiber[E, A] = result(Result.success(v))
+
+        /** Creates a failed Fiber.
+          *
+          * @param ex
+          *   The error to fail the Fiber with
+          * @return
+          *   A Fiber that fails with the given error
+          */
+        def fail[E, A](ex: E): Fiber[E, A] = result(Result.fail(ex))
+
+        /** Creates a panicked Fiber.
+          *
+          * @param ex
+          *   The throwable to panic the Fiber with
+          * @return
+          *   A Fiber that panics with the given throwable
+          */
         def panic[E, A](ex: Throwable): Fiber[E, A] = result(Result.panic(ex))
 
+        /** Creates a Fiber from a Future.
+          *
+          * @param f
+          *   The Future to create a Fiber from
+          * @return
+          *   A Fiber that completes with the result of the Future
+          */
         def fromFuture[A: Flat](f: Future[A])(using Frame): Fiber[Nothing, A] < IO =
             import scala.util.*
             IO {
@@ -92,18 +196,68 @@ object Async:
 
         extension [E, A](self: Fiber[E, A])
 
+            /** Gets the result of the Fiber.
+              *
+              * @return
+              *   The result of the Fiber
+              */
             def get(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async) =
                 Async.get(self)
 
+            /** Uses the result of the Fiber to compute a new value.
+              *
+              * @param f
+              *   The function to apply to the Fiber's result
+              * @return
+              *   The result of applying the function to the Fiber's result
+              */
             def use[B, S](f: A => B < S)(using reduce: Reducible[Abort[E]], frame: Frame): B < (reduce.SReduced & Async & S) =
                 Async.use(self)(f)
 
-            def getResult(using Frame): Result[E, A] < Async                            = Async.getResult(self)
-            def useResult[B, S](f: Result[E, A] => B < S)(using Frame): B < (Async & S) = Async.useResult(self)(f)
-            def isDone(using Frame): Boolean < IO                                       = IO(self.isDone())
-            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO        = IO(self.onComplete(r => IO.run(f(r)).eval))
-            def block(timeout: Duration)(using Frame): Result[E | Timeout, A] < IO      = IO(self.block(deadline(timeout)))
+            /** Gets the result of the Fiber as a Result.
+              *
+              * @return
+              *   The Result of the Fiber
+              */
+            def getResult(using Frame): Result[E, A] < Async = Async.getResult(self)
 
+            /** Uses the Result of the Fiber to compute a new value.
+              *
+              * @param f
+              *   The function to apply to the Fiber's Result
+              * @return
+              *   The result of applying the function to the Fiber's Result
+              */
+            def useResult[B, S](f: Result[E, A] => B < S)(using Frame): B < (Async & S) = Async.useResult(self)(f)
+
+            /** Checks if the Fiber is done.
+              *
+              * @return
+              *   Whether the Fiber is done
+              */
+            def isDone(using Frame): Boolean < IO = IO(self.isDone())
+
+            /** Registers a callback to be called when the Fiber completes.
+              *
+              * @param f
+              *   The callback function
+              */
+            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO = IO(self.onComplete(r => IO.run(f(r)).eval))
+
+            /** Blocks until the Fiber completes or the timeout is reached.
+              *
+              * @param timeout
+              *   The maximum duration to wait
+              * @return
+              *   The Result of the Fiber, or a Timeout error
+              */
+            def block(timeout: Duration)(using Frame): Result[E | Timeout, A] < IO = IO(self.block(deadline(timeout)))
+
+            /** Converts the Fiber to a Future.
+              *
+              * @return
+              *   A Future that completes with the result of the Fiber
+              */
             def toFuture(using E <:< Throwable, Frame): Future[A] < IO =
                 IO {
                     val r = scala.concurrent.Promise[A]()
@@ -113,6 +267,13 @@ object Async:
                     r.future
                 }
 
+            /** Maps the result of the Fiber.
+              *
+              * @param f
+              *   The function to apply to the Fiber's result
+              * @return
+              *   A new Fiber with the mapped result
+              */
             def map[B](f: A => B)(using Frame): Fiber[E, B] < IO =
                 IO {
                     val p = IOPromise[E, B](interrupts = self)
@@ -120,6 +281,13 @@ object Async:
                     p
                 }
 
+            /** Flat maps the result of the Fiber.
+              *
+              * @param f
+              *   The function to apply to the Fiber's result
+              * @return
+              *   A new Fiber with the flat mapped result
+              */
             def flatMap[E2, B](f: A => Fiber[E2, B])(using Frame): Fiber[E | E2, B] < IO =
                 IO {
                     val p = IOPromise[E | E2, B](interrupts = self)
@@ -127,12 +295,29 @@ object Async:
                     p
                 }
 
+            /** Interrupts the Fiber.
+              *
+              * @return
+              *   Whether the Fiber was successfully interrupted
+              */
             def interrupt(using frame: Frame): Boolean < IO =
                 interrupt(Result.Panic(Interrupted(frame)))
 
+            /** Interrupts the Fiber with a specific error.
+              *
+              * @param error
+              *   The error to interrupt the Fiber with
+              * @return
+              *   Whether the Fiber was successfully interrupted
+              */
             def interrupt(error: Panic)(using Frame): Boolean < IO =
                 IO(self.interrupt(error))
 
+            /** Interrupts the Fiber with a specific error, discarding the return value.
+              *
+              * @param error
+              *   The error to interrupt the Fiber with
+              */
             def interruptUnit(error: Panic)(using Frame): Unit < IO =
                 IO(discard(self.interrupt(error)))
 
@@ -146,6 +331,14 @@ object Async:
             override def getCause() = null
         end Interrupted
 
+        /** Races multiple Fibers and returns a Fiber that completes with the result of the first to complete. When one Fiber completes, all
+          * other Fibers are interrupted.
+          *
+          * @param seq
+          *   The sequence of Fibers to race
+          * @return
+          *   A Fiber that completes with the result of the first Fiber to complete
+          */
         def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
             using
             boundary: Boundary[Ctx, IO],
@@ -180,6 +373,14 @@ object Async:
                 end if
             }
 
+        /** Runs multiple Fibers in parallel and returns a Fiber that completes with their results. If any Fiber fails or is interrupted,
+          * all other Fibers are interrupted.
+          *
+          * @param seq
+          *   The sequence of Fibers to run in parallel
+          * @return
+          *   A Fiber that completes with the results of all Fibers
+          */
         def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
             using
             boundary: Boundary[Ctx, IO],
@@ -221,9 +422,23 @@ object Async:
 
     end Fiber
 
+    /** Delays execution of a computation by a specified duration.
+      *
+      * @param d
+      *   The duration to delay
+      * @param v
+      *   The computation to execute after the delay
+      * @return
+      *   The result of the computation
+      */
     def delay[A, S](d: Duration)(v: => A < S)(using Frame): A < (S & Async) =
         sleep(d).andThen(v)
 
+    /** Suspends execution for a specified duration.
+      *
+      * @param d
+      *   The duration to sleep
+      */
     def sleep(d: Duration)(using Frame): Unit < Async =
         IO {
             val p = IOPromise[Nothing, Unit]()
@@ -236,6 +451,15 @@ object Async:
             end if
         }
 
+    /** Runs a computation with a timeout.
+      *
+      * @param d
+      *   The timeout duration
+      * @param v
+      *   The computation to run
+      * @return
+      *   The result of the computation, or a Timeout error
+      */
     def timeout[E, A: Flat, Ctx](d: Duration)(v: => A < (Abort[E] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
@@ -249,6 +473,14 @@ object Async:
         }
     end timeout
 
+    /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations
+      * are interrupted.
+      *
+      * @param seq
+      *   The sequence of computations to race
+      * @return
+      *   The result of the first computation to complete
+      */
     def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, Async],
@@ -258,6 +490,15 @@ object Async:
         if seq.isEmpty then reduce(seq(0))
         else Fiber.race(seq).map(get)
 
+    /** Races two or more computations and returns the result of the first to complete.
+      *
+      * @param first
+      *   The first computation
+      * @param rest
+      *   The rest of the computations
+      * @return
+      *   The result of the first computation to complete
+      */
     def race[E, A: Flat, Ctx](
         first: A < (Abort[E] & Async & Ctx),
         rest: A < (Abort[E] & Async & Ctx)*
@@ -269,6 +510,14 @@ object Async:
     ): A < (reduce.SReduced & Async & Ctx) =
         race[E, A, Ctx](first +: rest)
 
+    /** Runs multiple computations in parallel and returns their results. If any computation fails or is interrupted, all other computations
+      * are interrupted.
+      *
+      * @param seq
+      *   The sequence of computations to run in parallel
+      * @return
+      *   A sequence containing the results of all computations
+      */
     def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, Async],
@@ -282,6 +531,15 @@ object Async:
         end match
     end parallel
 
+    /** Runs two computations in parallel and returns their results as a tuple.
+      *
+      * @param v1
+      *   The first computation
+      * @param v2
+      *   The second computation
+      * @return
+      *   A tuple containing the results of both computations
+      */
     def parallel[E, A1: Flat, A2: Flat, Ctx](
         v1: A1 < (Abort[E] & Async & Ctx),
         v2: A2 < (Abort[E] & Async & Ctx)
@@ -295,6 +553,17 @@ object Async:
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2])
         }
 
+    /** Runs three computations in parallel and returns their results as a tuple.
+      *
+      * @param v1
+      *   The first computation
+      * @param v2
+      *   The second computation
+      * @param v3
+      *   The third computation
+      * @return
+      *   A tuple containing the results of all three computations
+      */
     def parallel[E, A1: Flat, A2: Flat, A3: Flat, Ctx](
         v1: A1 < (Abort[E] & Async & Ctx),
         v2: A2 < (Abort[E] & Async & Ctx),
@@ -309,6 +578,19 @@ object Async:
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3])
         }
 
+    /** Runs four computations in parallel and returns their results as a tuple.
+      *
+      * @param v1
+      *   The first computation
+      * @param v2
+      *   The second computation
+      * @param v3
+      *   The third computation
+      * @param v4
+      *   The fourth computation
+      * @return
+      *   A tuple containing the results of all four computations
+      */
     def parallel[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, Ctx](
         v1: A1 < (Abort[E] & Async & Ctx),
         v2: A2 < (Abort[E] & Async & Ctx),
@@ -324,6 +606,13 @@ object Async:
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }
 
+    /** Gets the result of an IOPromise.
+      *
+      * @param v
+      *   The IOPromise to get the result from
+      * @return
+      *   The result of the IOPromise
+      */
     def get[E, A](v: IOPromise[E, A])(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async) =
         reduce(use(v)(identity))
 

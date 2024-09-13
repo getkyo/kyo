@@ -4,40 +4,127 @@ import kyo.scheduler.IOPromise
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 
+/** A channel for communicating between fibers.
+  *
+  * @tparam A
+  *   The type of elements in the channel
+  */
 abstract class Channel[A]:
     self =>
 
+    /** Returns the current size of the channel.
+      *
+      * @return
+      *   The number of elements currently in the channel
+      */
     def size(using Frame): Int < IO
 
+    /** Attempts to offer an element to the channel without blocking.
+      *
+      * @param v
+      *   The element to offer
+      * @return
+      *   true if the element was added to the channel, false otherwise
+      */
     def offer(v: A)(using Frame): Boolean < IO
 
+    /** Offers an element to the channel without returning a result.
+      *
+      * @param v
+      *   The element to offer
+      */
     def offerUnit(v: A)(using Frame): Unit < IO
 
+    /** Attempts to poll an element from the channel without blocking.
+      *
+      * @return
+      *   Maybe containing the polled element, or empty if the channel is empty
+      */
     def poll(using Frame): Maybe[A] < IO
 
     private[kyo] def unsafePoll: Maybe[A]
 
+    /** Checks if the channel is empty.
+      *
+      * @return
+      *   true if the channel is empty, false otherwise
+      */
     def isEmpty(using Frame): Boolean < IO
 
+    /** Checks if the channel is full.
+      *
+      * @return
+      *   true if the channel is full, false otherwise
+      */
     def isFull(using Frame): Boolean < IO
 
+    /** Creates a fiber that puts an element into the channel.
+      *
+      * @param v
+      *   The element to put
+      * @return
+      *   A fiber that completes when the element is put into the channel
+      */
     def putFiber(v: A)(using Frame): Fiber[Nothing, Unit] < IO
 
+    /** Creates a fiber that takes an element from the channel.
+      *
+      * @return
+      *   A fiber that completes with the taken element
+      */
     def takeFiber(using Frame): Fiber[Nothing, A] < IO
 
+    /** Puts an element into the channel, asynchronously blocking if necessary.
+      *
+      * @param v
+      *   The element to put
+      */
     def put(v: A)(using Frame): Unit < Async
 
+    /** Takes an element from the channel, asynchronously blocking if necessary.
+      *
+      * @return
+      *   The taken element
+      */
     def take(using Frame): A < Async
 
+    /** Checks if the channel is closed.
+      *
+      * @return
+      *   true if the channel is closed, false otherwise
+      */
     def isClosed(using Frame): Boolean < IO
 
+    /** Drains all elements from the channel.
+      *
+      * @return
+      *   A sequence containing all elements that were in the channel
+      */
     def drain(using Frame): Seq[A] < IO
 
+    /** Closes the channel.
+      *
+      * @return
+      *   Maybe containing a sequence of remaining elements, or empty if the channel was already closed
+      */
     def close(using Frame): Maybe[Seq[A]] < IO
 end Channel
 
 object Channel:
 
+    /** Initializes a new Channel.
+      *
+      * @param capacity
+      *   The capacity of the channel
+      * @param access
+      *   The access mode for the channel (default is MPMC)
+      * @param initFrame
+      *   The initial frame for the channel
+      * @tparam A
+      *   The type of elements in the channel
+      * @return
+      *   A new Channel instance
+      */
     def init[A](
         capacity: Int,
         access: Access = Access.Mpmc
