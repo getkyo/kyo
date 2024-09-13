@@ -4,7 +4,7 @@ import java.util.concurrent.atomic as j
 
 /** A wrapper for Java's AtomicInteger.
   */
-class AtomicInt private[kyo] (ref: j.AtomicInteger) extends AnyVal:
+final class AtomicInt private[kyo] (ref: j.AtomicInteger) extends AnyVal:
 
     /** Gets the current value.
       * @return
@@ -101,7 +101,7 @@ end AtomicInt
 
 /** A wrapper for Java's AtomicLong.
   */
-class AtomicLong private[kyo] (ref: j.AtomicLong) extends AnyVal:
+final class AtomicLong private[kyo] (ref: j.AtomicLong) extends AnyVal:
     /** Gets the current value.
       * @return
       *   The current long value
@@ -198,7 +198,7 @@ end AtomicLong
 
 /** A wrapper for Java's AtomicBoolean.
   */
-class AtomicBoolean private[kyo] (ref: j.AtomicBoolean) extends AnyVal:
+final class AtomicBoolean private[kyo] (ref: j.AtomicBoolean) extends AnyVal:
     /** Gets the current value.
       * @return
       *   The current boolean value
@@ -258,7 +258,7 @@ end AtomicBoolean
   * @tparam A
   *   The type of the referenced value
   */
-class AtomicRef[A] private[kyo] (private val ref: j.AtomicReference[A]) extends AnyVal:
+final class AtomicRef[A] private[kyo] (private val ref: j.AtomicReference[A]) extends AnyVal:
 
     /** Gets the current value.
       * @return

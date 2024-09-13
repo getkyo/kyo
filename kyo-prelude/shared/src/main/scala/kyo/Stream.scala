@@ -19,7 +19,7 @@ import scala.annotation.targetName
   * @param v
   *   The effect that produces acknowledgments and emits chunks of values
   */
-case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
+final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
 
     /** Returns the effect that produces acknowledgments and emits chunks of values. */
     def emit: Ack < (Emit[Chunk[V]] & S) = v

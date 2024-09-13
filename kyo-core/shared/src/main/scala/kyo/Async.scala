@@ -235,7 +235,7 @@ object Async:
               * @return
               *   Whether the Fiber is done
               */
-            def isDone(using Frame): Boolean < IO = IO(self.isDone())
+            def done(using Frame): Boolean < IO = IO(self.done())
 
             /** Registers a callback to be called when the Fiber completes.
               *
@@ -357,7 +357,7 @@ object Async:
                 val state = new State
                 import state.*
                 foreach(seq)((idx, io) => io.evalNow.foreach(v => state(Result.success(v))))
-                if state.isDone() then
+                if state.done() then
                     state
                 else
                     boundary { (trace, context) =>
@@ -395,16 +395,16 @@ object Async:
                         class State extends IOPromise[E, Seq[A]]:
                             val results = (new Array[Any](seq.size)).asInstanceOf[Array[A]]
                             val pending = new AtomicInteger(seq.size)
-                            def done(idx: Int, value: A) =
+                            def update(idx: Int, value: A) =
                                 results(idx) = value
                                 if pending.decrementAndGet() == 0 then
                                     this.completeUnit(Result.success(ArraySeq.unsafeWrapArray(results)))
-                            end done
+                            end update
                         end State
                         val state = new State
                         import state.*
-                        foreach(seq)((idx, io) => io.evalNow.foreach(done(idx, _)))
-                        if state.isDone() then state
+                        foreach(seq)((idx, io) => io.evalNow.foreach(update(idx, _)))
+                        if state.done() then state
                         else
                             boundary { (trace, context) =>
                                 IO {
@@ -412,7 +412,7 @@ object Async:
                                         if isNull(results(idx)) then
                                             val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                                             state.interrupts(fiber)
-                                            fiber.onComplete(_.fold(state.completeUnit)(done(idx, _)))
+                                            fiber.onComplete(_.fold(state.completeUnit)(update(idx, _)))
                                     }
                                     state
                                 }

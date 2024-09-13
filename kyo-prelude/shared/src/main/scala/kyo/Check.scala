@@ -13,7 +13,7 @@ import kyo.kernel.*
   * @param frame
   *   The [[Frame]] where the check failure occurred
   */
-class CheckFailed(val message: String, val frame: Frame) extends AssertionError(message):
+final class CheckFailed(val message: String, val frame: Frame) extends AssertionError(message):
     override def getMessage() =
         Seq(
             "",

@@ -42,14 +42,14 @@ class Hub[A] private[kyo] (
       * @return
       *   true if the Hub is empty, false otherwise
       */
-    def isEmpty(using Frame): Boolean < IO = ch.isEmpty
+    def empty(using Frame): Boolean < IO = ch.empty
 
     /** Checks if the Hub is full.
       *
       * @return
       *   true if the Hub is full, false otherwise
       */
-    def isFull(using Frame): Boolean < IO = ch.isFull
+    def full(using Frame): Boolean < IO = ch.full
 
     /** Creates a fiber that puts an element into the Hub.
       *
@@ -72,7 +72,7 @@ class Hub[A] private[kyo] (
       * @return
       *   true if the Hub is closed, false otherwise
       */
-    def isClosed(using Frame): Boolean < IO = ch.isClosed
+    def closed(using Frame): Boolean < IO = ch.closed
 
     /** Closes the Hub and all its listeners.
       *
@@ -111,19 +111,19 @@ class Hub[A] private[kyo] (
       *   a new Listener
       */
     def listen(bufferSize: Int)(using frame: Frame): Listener[A] < IO =
-        def closed = IO(throw Closed("Hub", initFrame, frame))
-        isClosed.map {
-            case true => closed
+        def fail = IO(throw Closed("Hub", initFrame, frame))
+        closed.map {
+            case true => fail
             case false =>
                 Channel.init[A](bufferSize).map { child =>
                     IO {
                         listeners.add(child)
-                        isClosed.map {
+                        closed.map {
                             case true =>
                                 // race condition
                                 IO {
                                     listeners.remove(child)
-                                    closed
+                                    fail
                                 }
                             case false =>
                                 new Listener[A](this, child)
@@ -192,14 +192,14 @@ object Hub:
           * @return
           *   true if the Listener's buffer is empty, false otherwise
           */
-        def isEmpty(using Frame): Boolean < IO = child.isEmpty
+        def empty(using Frame): Boolean < IO = child.empty
 
         /** Checks if the Listener's buffer is full.
           *
           * @return
           *   true if the Listener's buffer is full, false otherwise
           */
-        def isFull(using Frame): Boolean < IO = child.isFull
+        def full(using Frame): Boolean < IO = child.full
 
         /** Attempts to retrieve and remove the head of the Listener's buffer without blocking.
           *
@@ -227,7 +227,7 @@ object Hub:
           * @return
           *   true if the Listener is closed, false otherwise
           */
-        def isClosed(using Frame): Boolean < IO = child.isClosed
+        def closed(using Frame): Boolean < IO = child.closed
 
         /** Closes the Listener and removes it from the Hub.
           *

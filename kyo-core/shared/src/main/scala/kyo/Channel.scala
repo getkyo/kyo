@@ -49,14 +49,14 @@ abstract class Channel[A]:
       * @return
       *   true if the channel is empty, false otherwise
       */
-    def isEmpty(using Frame): Boolean < IO
+    def empty(using Frame): Boolean < IO
 
     /** Checks if the channel is full.
       *
       * @return
       *   true if the channel is full, false otherwise
       */
-    def isFull(using Frame): Boolean < IO
+    def full(using Frame): Boolean < IO
 
     /** Creates a fiber that puts an element into the channel.
       *
@@ -93,7 +93,7 @@ abstract class Channel[A]:
       * @return
       *   true if the channel is closed, false otherwise
       */
-    def isClosed(using Frame): Boolean < IO
+    def closed(using Frame): Boolean < IO
 
     /** Drains all elements from the channel.
       *
@@ -127,7 +127,7 @@ object Channel:
       */
     def init[A](
         capacity: Int,
-        access: Access = Access.Mpmc
+        access: Access = Access.MultiProducerMultiConsumer
     )(using initFrame: Frame): Channel[A] < IO =
         Queue.init[A](capacity, access).map { queue =>
             IO {
@@ -137,13 +137,13 @@ object Channel:
                     val takes = new MpmcUnboundedXaddArrayQueue[IOPromise[Nothing, A]](8)
                     val puts  = new MpmcUnboundedXaddArrayQueue[(A, IOPromise[Nothing, Unit])](8)
 
-                    def size(using Frame)    = op(u.size())
-                    def isEmpty(using Frame) = op(u.isEmpty())
-                    def isFull(using Frame)  = op(u.isFull())
+                    def size(using Frame)  = op(u.size())
+                    def empty(using Frame) = op(u.empty())
+                    def full(using Frame)  = op(u.full())
 
                     def offer(v: A)(using Frame) =
                         IO {
-                            !u.isClosed() && {
+                            !u.closed() && {
                                 try u.offer(v)
                                 finally flush()
                             }
@@ -151,13 +151,13 @@ object Channel:
 
                     def offerUnit(v: A)(using Frame) =
                         IO {
-                            if !u.isClosed() then
+                            if !u.closed() then
                                 try discard(u.offer(v))
                                 finally flush()
                         }
 
                     def unsafePoll: Maybe[A] =
-                        if u.isClosed() then
+                        if u.closed() then
                             Maybe.empty
                         else
                             try Maybe(u.poll())
@@ -169,8 +169,8 @@ object Channel:
                     def put(v: A)(using Frame) =
                         IO {
                             try
-                                if u.isClosed() then
-                                    throw closed
+                                if u.closed() then
+                                    throw closedException
                                 else if u.offer(v) then
                                     ()
                                 else
@@ -185,8 +185,8 @@ object Channel:
                     def putFiber(v: A)(using frame: Frame) =
                         IO {
                             try
-                                if u.isClosed() then
-                                    throw closed
+                                if u.closed() then
+                                    throw closedException
                                 else if u.offer(v) then
                                     Fiber.unit
                                 else
@@ -201,8 +201,8 @@ object Channel:
                     def take(using Frame) =
                         IO {
                             try
-                                if u.isClosed() then
-                                    throw closed
+                                if u.closed() then
+                                    throw closedException
                                 else
                                     val v = u.poll()
                                     if isNull(v) then
@@ -219,8 +219,8 @@ object Channel:
                     def takeFiber(using frame: Frame) =
                         IO {
                             try
-                                if u.isClosed() then
-                                    throw closed
+                                if u.closed() then
+                                    throw closedException
                                 else
                                     val v = u.poll()
                                     if isNull(v) then
@@ -234,17 +234,17 @@ object Channel:
                                 flush()
                         }
 
-                    def closed(using frame: Frame): Closed = Closed("Channel", initFrame, frame)
+                    def closedException(using frame: Frame): Closed = Closed("Channel", initFrame, frame)
 
                     inline def op[A](inline v: => A)(using inline frame: Frame): A < IO =
                         IO {
-                            if u.isClosed() then
-                                throw closed
+                            if u.closed() then
+                                throw closedException
                             else
                                 v
                         }
 
-                    def isClosed(using Frame) = queue.isClosed
+                    def closed(using Frame) = queue.closed
 
                     def drain(using Frame) = queue.drain
 
@@ -253,7 +253,7 @@ object Channel:
                             u.close() match
                                 case Maybe.Empty => Maybe.empty
                                 case r =>
-                                    val c = Result.panic(closed)
+                                    val c = Result.panic(closedException)
                                     def dropTakes(): Unit =
                                         takes.poll() match
                                             case null =>

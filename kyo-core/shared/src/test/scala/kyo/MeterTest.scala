@@ -22,8 +22,8 @@ class MeterTest extends Test:
                 f2 <- Async.run(b2.complete(Result.unit).map(_ => t.run(2)))
                 _  <- b2.get
                 a2 <- t.isAvailable
-                d1 <- f1.isDone
-                d2 <- f2.isDone
+                d1 <- f1.done
+                d2 <- f2.done
                 _  <- p.complete(Result.success(1))
                 v1 <- f1.get
                 v2 <- f2.get
@@ -40,7 +40,7 @@ class MeterTest extends Test:
                 _   <- b1.get
                 a1  <- sem.isAvailable
                 b1  <- sem.tryRun(2)
-                b2  <- f1.isDone
+                b2  <- f1.done
                 _   <- p.complete(Result.success(1))
                 v1  <- f1.get
             yield assert(!a1 && b1.isEmpty && !b2 && v1.contains(Result.success(1)))
@@ -71,8 +71,8 @@ class MeterTest extends Test:
                 f2 <- Async.run(b3.complete(Result.unit).map(_ => t.run(2)))
                 _  <- b3.get
                 a2 <- t.isAvailable
-                d1 <- f1.isDone
-                d2 <- f2.isDone
+                d1 <- f1.done
+                d2 <- f2.done
                 _  <- p.complete(Result.success(1))
                 v1 <- f1.get
                 v2 <- f2.get
@@ -92,8 +92,8 @@ class MeterTest extends Test:
                 _   <- b2.get
                 a1  <- sem.isAvailable
                 b3  <- sem.tryRun(2)
-                b4  <- f1.isDone
-                b5  <- f2.isDone
+                b4  <- f1.done
+                b5  <- f2.done
                 _   <- p.complete(Result.success(1))
                 v1  <- f1.get
                 v2  <- f2.get

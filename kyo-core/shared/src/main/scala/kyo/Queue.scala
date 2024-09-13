@@ -20,28 +20,28 @@ class Queue[A] private[kyo] (initFrame: Frame, private[kyo] val unsafe: Queue.Un
       * @return
       *   the capacity of the queue
       */
-    def capacity(using Frame): Int = unsafe.capacity
+    final def capacity(using Frame): Int = unsafe.capacity
 
     /** Returns the current size of the queue.
       *
       * @return
       *   the current size of the queue
       */
-    def size(using Frame): Int < IO = op(unsafe.size())
+    final def size(using Frame): Int < IO = op(unsafe.size())
 
     /** Checks if the queue is empty.
       *
       * @return
       *   true if the queue is empty, false otherwise
       */
-    def isEmpty(using Frame): Boolean < IO = op(unsafe.isEmpty())
+    final def empty(using Frame): Boolean < IO = op(unsafe.empty())
 
     /** Checks if the queue is full.
       *
       * @return
       *   true if the queue is full, false otherwise
       */
-    def isFull(using Frame): Boolean < IO = op(unsafe.isFull())
+    final def full(using Frame): Boolean < IO = op(unsafe.full())
 
     /** Offers an element to the queue.
       *
@@ -50,46 +50,46 @@ class Queue[A] private[kyo] (initFrame: Frame, private[kyo] val unsafe: Queue.Un
       * @return
       *   true if the element was added, false if the queue is full or closed
       */
-    def offer(v: A)(using Frame): Boolean < IO = IO(!unsafe.isClosed() && unsafe.offer(v))
+    final def offer(v: A)(using Frame): Boolean < IO = IO(!unsafe.closed() && unsafe.offer(v))
 
     /** Polls an element from the queue.
       *
       * @return
       *   Maybe containing the polled element, or empty if the queue is empty
       */
-    def poll(using Frame): Maybe[A] < IO = op(Maybe(unsafe.poll()))
+    final def poll(using Frame): Maybe[A] < IO = op(Maybe(unsafe.poll()))
 
     /** Peeks at the first element in the queue without removing it.
       *
       * @return
       *   Maybe containing the first element, or empty if the queue is empty
       */
-    def peek(using Frame): Maybe[A] < IO = op(Maybe(unsafe.peek()))
+    final def peek(using Frame): Maybe[A] < IO = op(Maybe(unsafe.peek()))
 
     /** Drains all elements from the queue.
       *
       * @return
       *   a sequence of all elements in the queue
       */
-    def drain(using Frame): Seq[A] < IO = op(unsafe.drain())
+    final def drain(using Frame): Seq[A] < IO = op(unsafe.drain())
 
     /** Checks if the queue is closed.
       *
       * @return
       *   true if the queue is closed, false otherwise
       */
-    def isClosed(using Frame): Boolean < IO = IO(unsafe.isClosed())
+    final def closed(using Frame): Boolean < IO = IO(unsafe.closed())
 
     /** Closes the queue and returns any remaining elements.
       *
       * @return
       *   Maybe containing a sequence of remaining elements, or empty if already closed
       */
-    def close(using Frame): Maybe[Seq[A]] < IO = IO(unsafe.close())
+    final def close(using Frame): Maybe[Seq[A]] < IO = IO(unsafe.close())
 
     protected inline def op[A, S](inline v: => A < (IO & S))(using frame: Frame): A < (IO & S) =
         IO {
-            if unsafe.isClosed() then
+            if unsafe.closed() then
                 throw Closed("Queue", initFrame, frame)
             else
                 v
@@ -107,12 +107,12 @@ object Queue:
         extends AtomicBoolean(false):
         def capacity: Int
         def size(): Int
-        def isEmpty(): Boolean
-        def isFull(): Boolean
+        def empty(): Boolean
+        def full(): Boolean
         def offer(v: A): Boolean
         def poll(): A
         def peek(): A
-        def drain(): Seq[A] =
+        final def drain(): Seq[A] =
             val b = Seq.newBuilder[A]
             @tailrec def loop(): Unit =
                 val v = poll()
@@ -124,10 +124,10 @@ object Queue:
             b.result()
         end drain
 
-        def isClosed(): Boolean =
+        final def closed(): Boolean =
             super.get()
 
-        def close(): Maybe[Seq[A]] =
+        final def close(): Maybe[Seq[A]] =
             super.compareAndSet(false, true) match
                 case false =>
                     Maybe.empty
@@ -146,7 +146,7 @@ object Queue:
           * @param v
           *   the element to add
           */
-        def add[S](v: A < S)(using Frame): Unit < (IO & S) =
+        final def add[S](v: A < S)(using Frame): Unit < (IO & S) =
             op(v.map(offer).unit)
     end Unbounded
 
@@ -159,7 +159,7 @@ object Queue:
       * @return
       *   a new Queue instance
       */
-    def init[A](capacity: Int, access: Access = Access.Mpmc)(using frame: Frame): Queue[A] < IO =
+    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using frame: Frame): Queue[A] < IO =
         IO {
             capacity match
                 case c if (c <= 0) =>
@@ -168,8 +168,8 @@ object Queue:
                         new Unsafe[A]:
                             def capacity    = 0
                             def size()      = 0
-                            def isEmpty()   = true
-                            def isFull()    = true
+                            def empty()     = true
+                            def full()      = true
                             def offer(v: A) = false
                             def poll()      = null.asInstanceOf[A]
                             def peek()      = null.asInstanceOf[A]
@@ -181,8 +181,8 @@ object Queue:
                             val state       = new AtomicReference[A]
                             def capacity    = 1
                             def size()      = if isNull(state.get()) then 0 else 1
-                            def isEmpty()   = isNull(state.get())
-                            def isFull()    = !isNull(state.get())
+                            def empty()     = isNull(state.get())
+                            def full()      = !isNull(state.get())
                             def offer(v: A) = state.compareAndSet(null.asInstanceOf[A], v)
                             def poll()      = state.getAndSet(null.asInstanceOf[A])
                             def peek()      = state.get()
@@ -191,13 +191,13 @@ object Queue:
                     initUnbounded(access)
                 case _ =>
                     access match
-                        case Access.Mpmc =>
+                        case Access.MultiProducerMultiConsumer =>
                             fromJava(new MpmcArrayQueue[A](capacity), capacity)
-                        case Access.Mpsc =>
+                        case Access.MultiProducerSingleConsumer =>
                             fromJava(new MpscArrayQueue[A](capacity), capacity)
-                        case Access.Spmc =>
+                        case Access.SingleProducerMultiConsumer =>
                             fromJava(new SpmcArrayQueue[A](capacity), capacity)
-                        case Access.Spsc =>
+                        case Access.SingleProducerSingleConsumer =>
                             if capacity >= 4 then
                                 fromJava(new SpscArrayQueue[A](capacity), capacity)
                             else
@@ -214,16 +214,16 @@ object Queue:
       * @return
       *   a new Unbounded Queue instance
       */
-    def initUnbounded[A](access: Access = Access.Mpmc, chunkSize: Int = 8)(using Frame): Unbounded[A] < IO =
+    def initUnbounded[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)(using Frame): Unbounded[A] < IO =
         IO {
             access match
-                case Access.Mpmc =>
+                case Access.MultiProducerMultiConsumer =>
                     fromJava(new MpmcUnboundedXaddArrayQueue[A](chunkSize))
-                case Access.Mpsc =>
+                case Access.MultiProducerSingleConsumer =>
                     fromJava(new MpscUnboundedArrayQueue[A](chunkSize))
-                case Access.Spmc =>
+                case Access.SingleProducerMultiConsumer =>
                     fromJava(new MpmcUnboundedXaddArrayQueue[A](chunkSize))
-                case Access.Spsc =>
+                case Access.SingleProducerSingleConsumer =>
                     fromJava(new SpscUnboundedArrayQueue[A](chunkSize))
         }
 
@@ -236,17 +236,17 @@ object Queue:
       * @return
       *   a new Unbounded Queue instance that drops elements when full
       */
-    def initDropping[A](capacity: Int, access: Access = Access.Mpmc)(using frame: Frame): Unbounded[A] < IO =
+    def initDropping[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using frame: Frame): Unbounded[A] < IO =
         init[A](capacity, access).map { q =>
             val u = q.unsafe
             val c = capacity
             new Unbounded(
                 frame,
                 new Unsafe[A]:
-                    def capacity  = c
-                    def size()    = u.size()
-                    def isEmpty() = u.isEmpty()
-                    def isFull()  = false
+                    def capacity = c
+                    def size()   = u.size()
+                    def empty()  = u.empty()
+                    def full()   = false
                     def offer(v: A) =
                         u.offer(v)
                         true
@@ -264,17 +264,17 @@ object Queue:
       * @return
       *   a new Unbounded Queue instance that slides elements when full
       */
-    def initSliding[A](capacity: Int, access: Access = Access.Mpmc)(using frame: Frame): Unbounded[A] < IO =
+    def initSliding[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using frame: Frame): Unbounded[A] < IO =
         init[A](capacity, access).map { q =>
             val u = q.unsafe
             val c = capacity
             new Unbounded(
                 frame,
                 new Unsafe[A]:
-                    def capacity  = c
-                    def size()    = u.size()
-                    def isEmpty() = u.isEmpty()
-                    def isFull()  = false
+                    def capacity = c
+                    def size()   = u.size()
+                    def empty()  = u.empty()
+                    def full()   = false
                     def offer(v: A) =
                         @tailrec def loop(v: A): Unit =
                             val u = q.unsafe
@@ -298,8 +298,8 @@ object Queue:
             new Unsafe[A]:
                 def capacity    = Int.MaxValue
                 def size()      = q.size
-                def isEmpty()   = q.isEmpty()
-                def isFull()    = false
+                def empty()     = q.isEmpty()
+                def full()      = false
                 def offer(v: A) = q.offer(v)
                 def poll()      = q.poll
                 def peek()      = q.peek
@@ -311,8 +311,8 @@ object Queue:
             new Unsafe[A]:
                 def capacity    = _capacity
                 def size()      = q.size
-                def isEmpty()   = q.isEmpty()
-                def isFull()    = q.size >= _capacity
+                def empty()     = q.isEmpty()
+                def full()      = q.size >= _capacity
                 def offer(v: A) = q.offer(v)
                 def poll()      = q.poll
                 def peek()      = q.peek

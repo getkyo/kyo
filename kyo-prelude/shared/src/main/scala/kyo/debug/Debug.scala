@@ -81,7 +81,7 @@ object Debug:
         println(string)
     end values
 
-    case class Param[T](code: String, value: T) derives CanEqual
+    final case class Param[T](code: String, value: T) derives CanEqual
 
     object Param:
 

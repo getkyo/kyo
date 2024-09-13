@@ -1855,7 +1855,7 @@ val a: Fiber[Nothing, Int] = Fiber.success(42)
 
 // Check if the fiber is done
 val b: Boolean < IO =
-    a.isDone
+    a.done
 
 // Instance-level version of 'Async.get'
 val c: Int < Async =
@@ -2006,11 +2006,11 @@ val f: Maybe[Int] < IO =
 
 // Check if the queue is empty
 val g: Boolean < IO =
-    a.map(_.isEmpty)
+    a.map(_.empty)
 
 // Check if the queue is full
 val h: Boolean < IO =
-    a.map(_.isFull)
+    a.map(_.full)
 
 // Drain the queue items
 val i: Seq[Int] < IO =
@@ -2076,7 +2076,7 @@ import kyo.*
 val a: Queue[Int] < IO =
     Queue.init(
         capacity = 42,
-        access = Access.Mpmc
+        access = Access.MultiProducerMultiConsumer
     )
 ```
 
@@ -2097,7 +2097,7 @@ val a: Channel[Int] < IO =
 val b: Channel[Int] < IO =
     Channel.init(
         capacity = 42,
-        access = Access.Mpmc
+        access = Access.MultiProducerMultiConsumer
     )
 ```
 
@@ -2325,11 +2325,11 @@ val b: Boolean < IO =
 
 // Check if the task is cancelled
 val c: Boolean < IO =
-    a.map(_.isCancelled)
+    a.map(_.cancelled)
 
 // Check if the task is done
 val d: Boolean < IO =
-    a.map(_.isDone)
+    a.map(_.done)
 ```
 
 ### Latch: Countdown Synchronization

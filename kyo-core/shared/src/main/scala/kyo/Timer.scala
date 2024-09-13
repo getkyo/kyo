@@ -126,9 +126,9 @@ object Timer:
         new Timer:
 
             final private class Task(task: ScheduledFuture[?]) extends TimerTask:
-                def cancel(using Frame): Boolean < IO      = IO(task.cancel(false))
-                def isCancelled(using Frame): Boolean < IO = IO(task.isCancelled())
-                def isDone(using Frame): Boolean < IO      = IO(task.isDone())
+                def cancel(using Frame): Boolean < IO    = IO(task.cancel(false))
+                def cancelled(using Frame): Boolean < IO = IO(task.isCancelled())
+                def done(using Frame): Boolean < IO      = IO(task.isDone())
             end Task
 
             private def eval(f: => Unit < Async)(using Frame): Unit =
@@ -190,20 +190,20 @@ abstract class TimerTask:
       * @return
       *   true if the task has been cancelled, false otherwise
       */
-    def isCancelled(using Frame): Boolean < IO
+    def cancelled(using Frame): Boolean < IO
 
     /** Check if this task has completed its execution.
       *
       * @return
       *   true if the task has completed, false otherwise
       */
-    def isDone(using Frame): Boolean < IO
+    def done(using Frame): Boolean < IO
 end TimerTask
 
 object TimerTask:
     /** A no-op TimerTask that is always considered done and cannot be cancelled. */
     val noop = new TimerTask:
-        def cancel(using Frame)      = false
-        def isCancelled(using Frame) = false
-        def isDone(using Frame)      = true
+        def cancel(using Frame)    = false
+        def cancelled(using Frame) = false
+        def done(using Frame)      = true
 end TimerTask
