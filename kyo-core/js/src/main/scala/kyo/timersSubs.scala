@@ -9,7 +9,7 @@ class ScheduledFuture[A](r: => A) extends TimerTask:
     def cancel(b: Boolean) =
         _cancelled = true
         super.cancel()
-    def cancelled(): Boolean = _cancelled
+    def isCancelled(): Boolean = _cancelled
     def run(): Unit =
         _done = true
         try
@@ -20,7 +20,7 @@ class ScheduledFuture[A](r: => A) extends TimerTask:
                 e.printStackTrace()
         end try
     end run
-    def done(): Boolean = _done
+    def isDone(): Boolean = _done
 end ScheduledFuture
 
 class ScheduledExecutorService():
