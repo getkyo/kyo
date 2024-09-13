@@ -4,14 +4,14 @@ import java.util.Timer
 import java.util.TimerTask
 
 class ScheduledFuture[A](r: => A) extends TimerTask:
-    private var cancelled = false
-    private var done      = false
+    private var _cancelled = false
+    private var _done      = false
     def cancel(b: Boolean) =
-        cancelled = true
+        _cancelled = true
         super.cancel()
-    def isCancelled(): Boolean = cancelled
+    def cancelled(): Boolean = _cancelled
     def run(): Unit =
-        done = true
+        _done = true
         try
             r
             ()
@@ -20,7 +20,7 @@ class ScheduledFuture[A](r: => A) extends TimerTask:
                 e.printStackTrace()
         end try
     end run
-    def isDone(): Boolean = done
+    def done(): Boolean = _done
 end ScheduledFuture
 
 class ScheduledExecutorService():

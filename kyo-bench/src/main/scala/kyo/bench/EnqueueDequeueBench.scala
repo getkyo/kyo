@@ -28,7 +28,7 @@ class EnqueueDequeueBench extends Bench.ForkOnly(()):
             else
                 c.put(()).flatMap(_ => c.take.flatMap(_ => loop(c, i + 1)))
 
-        Channel.init[Unit](1, Access.Spsc).flatMap(loop(_, 0))
+        Channel.init[Unit](1, Access.SingleProducerSingleConsumer).flatMap(loop(_, 0))
     end kyoBenchFiber
 
     def zioBench() =

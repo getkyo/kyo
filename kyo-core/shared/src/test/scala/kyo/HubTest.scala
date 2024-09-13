@@ -25,7 +25,7 @@ class HubTest extends Test:
             h  <- Hub.init[Int](2)
             l1 <- h.listen
             b  <- h.offer(1)
-            _  <- untilTrue(h.isEmpty) // wait transfer
+            _  <- untilTrue(h.empty) // wait transfer
             l2 <- h.listen
             v1 <- l1.take
             v2 <- l2.poll
@@ -45,7 +45,7 @@ class HubTest extends Test:
         for
             h <- Hub.init[Int](2)
             b <- h.offer(1)
-            _ <- untilTrue(h.isEmpty) // wait transfer
+            _ <- untilTrue(h.empty) // wait transfer
             l <- h.listen
             v <- l.poll
         yield assert(b && v.isEmpty)
@@ -54,7 +54,7 @@ class HubTest extends Test:
         for
             h  <- Hub.init[Int](2)
             b  <- h.offer(1)
-            _  <- untilTrue(h.isEmpty) // wait transfer
+            _  <- untilTrue(h.empty) // wait transfer
             l  <- h.listen
             c1 <- h.close
             v1 <- Abort.run[Throwable](h.listen)
@@ -70,11 +70,11 @@ class HubTest extends Test:
             h  <- Hub.init[Int](2)
             l1 <- h.listen(2)
             b1 <- h.offer(1)
-            _  <- untilTrue(l1.isEmpty.map(!_))
+            _  <- untilTrue(l1.empty.map(!_))
             c1 <- l1.close
             l2 <- h.listen(2)
             b2 <- h.offer(2)
-            _  <- untilTrue(l2.isEmpty.map(!_))
+            _  <- untilTrue(l2.empty.map(!_))
             v2 <- l2.poll
             c2 <- l2.close
         yield assert(
@@ -110,7 +110,7 @@ class HubTest extends Test:
             h <- Hub.init[Int](2)
             l <- h.listen
             _ <- h.offer(1)
-            _ <- untilTrue(h.isEmpty)
+            _ <- untilTrue(h.empty)
             c <- l.close
             _ <- h.offer(2)
             v <- l.poll
@@ -138,8 +138,8 @@ class HubTest extends Test:
                 l  <- h.listen
                 _  <- Kyo.fill(100)(Async.run(h.put(1)))
                 t  <- Kyo.fill(100)(l.take)
-                e1 <- h.isEmpty
-                e2 <- l.isEmpty
+                e1 <- h.empty
+                e2 <- l.empty
             yield assert(t == List.fill(100)(1) && e1 && e2)
         }
         "reads + writes" in runJVM {
@@ -148,8 +148,8 @@ class HubTest extends Test:
                 l  <- h.listen
                 _  <- Kyo.fill(100)(Async.run(h.put(1)))
                 t  <- Kyo.fill(100)(Async.run(l.take).map(_.get))
-                e1 <- h.isEmpty
-                e2 <- l.isEmpty
+                e1 <- h.empty
+                e2 <- l.empty
             yield assert(t == List.fill(100)(1) && e1 && e2)
         }
         "listeners" in runJVM {
@@ -158,8 +158,8 @@ class HubTest extends Test:
                 l  <- Kyo.fill(100)(Async.run(h.listen).map(_.get))
                 _  <- Async.run(h.put(1))
                 t  <- Kyo.foreach(l)(l => Async.run(l.take).map(_.get))
-                e1 <- h.isEmpty
-                e2 <- Kyo.foreach(l)(_.isEmpty)
+                e1 <- h.empty
+                e2 <- Kyo.foreach(l)(_.empty)
             yield assert(t == Chunk.fill(100)(1) && e1 && e2 == Chunk.fill(100)(true))
         }
     }

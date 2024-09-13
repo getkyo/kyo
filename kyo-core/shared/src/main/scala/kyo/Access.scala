@@ -4,14 +4,14 @@ package kyo
   */
 enum Access derives CanEqual:
     /** Multiple Producer Multiple Consumer access pattern */
-    case Mpmc
+    case MultiProducerMultiConsumer
 
     /** Multiple Producer Single Consumer access pattern */
-    case Mpsc
+    case MultiProducerSingleConsumer
 
     /** Single Producer Multiple Consumer access pattern */
-    case Spmc
+    case SingleProducerMultiConsumer
 
     /** Single Producer Single Consumer access pattern */
-    case Spsc
+    case SingleProducerSingleConsumer
 end Access

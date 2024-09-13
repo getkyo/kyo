@@ -29,10 +29,10 @@ class TimerTest extends Test:
             p         <- Promise.init[Nothing, String]
             task      <- Timer.schedule(5.seconds)(p.complete(Result.success("hello")).map(require(_)))
             _         <- task.cancel
-            cancelled <- untilTrue(task.isCancelled)
-            done1     <- p.isDone
+            cancelled <- untilTrue(task.cancelled)
+            done1     <- p.done
             _         <- Async.sleep(5.millis)
-            done2     <- p.isDone
+            done2     <- p.done
         yield assert(cancelled && !done1 && !done2)
     }
 

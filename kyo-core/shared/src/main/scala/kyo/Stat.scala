@@ -86,7 +86,7 @@ abstract class CounterGauge:
     def collect(using Frame): Long < IO
 end CounterGauge
 
-class Stat(private val registryScope: StatsRegistry.Scope) extends AnyVal:
+final class Stat(private val registryScope: StatsRegistry.Scope) extends AnyVal:
 
     /** Create a new Stat instance with an additional scope.
       * @param path

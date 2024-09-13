@@ -8,7 +8,7 @@ import scala.util.*
 object Retry:
 
     /** Represents a retry policy with backoff strategy and attempt limit. */
-    case class Policy(backoff: Int => Duration, limit: Int):
+    final case class Policy(backoff: Int => Duration, limit: Int):
 
         /** Creates an exponential backoff strategy.
           *
