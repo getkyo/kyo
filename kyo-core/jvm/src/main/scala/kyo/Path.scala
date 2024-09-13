@@ -4,6 +4,7 @@ import dev.dirs.BaseDirectories
 import dev.dirs.ProjectDirectories
 import dev.dirs.UserDirectories
 import java.io.BufferedReader
+import java.io.File
 import java.io.IOException
 import java.lang.System as JSystem
 import java.nio.*
@@ -21,7 +22,7 @@ import scala.jdk.StreamConverters.*
 
 class Path private (val path: List[String]) derives CanEqual:
 
-    def toJava: JPath               = Paths.get(path.mkString("/"))
+    def toJava: JPath               = Paths.get(path.mkString(File.separator))
     lazy val parts: List[Path.Part] = path
 
     /** Methods to read files completely
@@ -346,7 +347,7 @@ class Path private (val path: List[String]) derives CanEqual:
             (this eq that) || this.path == that.path
         case _ => false
 
-    override def toString = s"Path(\"${path.mkString("/")}\")"
+    override def toString = s"Path(\"${path.mkString(File.separator)}\")"
 
 end Path
 
@@ -362,8 +363,7 @@ object Path:
         }
         val javaPath       = if flattened.isEmpty then Paths.get("") else Paths.get(flattened.head, flattened.tail*)
         val normalizedPath = javaPath.normalize().toString
-
-        new Path(if normalizedPath.isEmpty then Nil else normalizedPath.split("/").toList)
+        new Path(if normalizedPath.isEmpty then Nil else normalizedPath.split(File.separator).toList)
     end apply
 
     def apply(path: Part*): Path =

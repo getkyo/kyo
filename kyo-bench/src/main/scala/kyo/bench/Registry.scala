@@ -1,6 +1,7 @@
 package kyo.bench
 
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStream
 import java.io.InputStreamReader
 import scala.jdk.CollectionConverters.*
@@ -28,7 +29,7 @@ object Registry:
 
     private def findClasses(packageName: String): Seq[Class[?]] =
         val stream: InputStream = getClass.getClassLoader()
-            .getResourceAsStream(packageName.replaceAll("[.]", "/"))
+            .getResourceAsStream(packageName.replaceAll("[.]", File.separator))
         val reader = new BufferedReader(new InputStreamReader(stream))
         reader.lines()
             .filter(line => line.endsWith(".class"))
