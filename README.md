@@ -874,7 +874,7 @@ import kyo.*
 val a: Int < Choice =
     Choice.get(Seq(1, 2, 3, 4))
 
-// 'filter' discards the current element if
+// 'dropIf' discards the current element if
 // a condition is not met. Produces a 'Seq(1, 2)'
 // since values greater than 2 are dropped
 val b: Int < Choice =
