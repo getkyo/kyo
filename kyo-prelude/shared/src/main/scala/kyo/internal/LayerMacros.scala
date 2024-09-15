@@ -1,17 +1,10 @@
 package kyo.internal
 
 import kyo.*
+import kyo.Ansi.*
 import scala.quoted.*
 
 private[kyo] object LayerMacros:
-    extension (string: String)
-        def bold      = scala.Console.BOLD + string + scala.Console.RESET
-        def underline = scala.Console.UNDERLINED + string + scala.Console.RESET
-        def dim       = s"\u001b[2m$string\u001b[0m"
-        def red       = scala.Console.RED + string + scala.Console.RESET
-        def green     = scala.Console.GREEN + string + scala.Console.RESET
-        def blue      = scala.Console.BLUE + string + scala.Console.RESET
-    end extension
 
     transparent inline def reflect(using q: Quotes): q.reflectModule = q.reflect
 
