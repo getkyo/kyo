@@ -3,28 +3,82 @@ package kyo
 import Hub.*
 import java.util.concurrent.CopyOnWriteArraySet
 
+/** A Hub is a multi-producer, multi-consumer channel that broadcasts messages to all listeners.
+  *
+  * @tparam A
+  *   the type of elements in the Hub
+  */
 class Hub[A] private[kyo] (
     ch: Channel[A],
     fiber: Fiber[Nothing, Unit],
     listeners: CopyOnWriteArraySet[Channel[A]]
 )(using initFrame: Frame):
 
+    /** Returns the current size of the Hub.
+      *
+      * @return
+      *   the number of elements currently in the Hub
+      */
     def size(using Frame): Int < IO = ch.size
 
+    /** Attempts to offer an element to the Hub without blocking.
+      *
+      * @param v
+      *   the element to offer
+      * @return
+      *   true if the element was added, false otherwise
+      */
     def offer(v: A)(using Frame): Boolean < IO = ch.offer(v)
 
+    /** Offers an element to the Hub without returning a result.
+      *
+      * @param v
+      *   the element to offer
+      */
     def offerUnit(v: A)(using Frame): Unit < IO = ch.offerUnit(v)
 
-    def isEmpty(using Frame): Boolean < IO = ch.isEmpty
+    /** Checks if the Hub is empty.
+      *
+      * @return
+      *   true if the Hub is empty, false otherwise
+      */
+    def empty(using Frame): Boolean < IO = ch.empty
 
-    def isFull(using Frame): Boolean < IO = ch.isFull
+    /** Checks if the Hub is full.
+      *
+      * @return
+      *   true if the Hub is full, false otherwise
+      */
+    def full(using Frame): Boolean < IO = ch.full
 
+    /** Creates a fiber that puts an element into the Hub.
+      *
+      * @param v
+      *   the element to put
+      * @return
+      *   a Fiber that, when run, will put the element into the Hub
+      */
     def putFiber(v: A)(using Frame): Fiber[Nothing, Unit] < IO = ch.putFiber(v)
 
+    /** Puts an element into the Hub, potentially blocking if the Hub is full.
+      *
+      * @param v
+      *   the element to put
+      */
     def put(v: A)(using Frame): Unit < Async = ch.put(v)
 
-    def isClosed(using Frame): Boolean < IO = ch.isClosed
+    /** Checks if the Hub is closed.
+      *
+      * @return
+      *   true if the Hub is closed, false otherwise
+      */
+    def closed(using Frame): Boolean < IO = ch.closed
 
+    /** Closes the Hub and all its listeners.
+      *
+      * @return
+      *   a Maybe containing any remaining elements in the Hub
+      */
     def close(using frame: Frame): Maybe[Seq[A]] < IO =
         fiber.interruptUnit(Result.Panic(Closed("Hub", initFrame, frame))).andThen {
             ch.close.map { r =>
@@ -41,23 +95,35 @@ class Hub[A] private[kyo] (
             }
         }
 
+    /** Creates a new listener for this Hub with default buffer size.
+      *
+      * @return
+      *   a new Listener
+      */
     def listen(using Frame): Listener[A] < IO =
         listen(0)
 
+    /** Creates a new listener for this Hub with specified buffer size.
+      *
+      * @param bufferSize
+      *   the size of the buffer for the new listener
+      * @return
+      *   a new Listener
+      */
     def listen(bufferSize: Int)(using frame: Frame): Listener[A] < IO =
-        def closed = IO(throw Closed("Hub", initFrame, frame))
-        isClosed.map {
-            case true => closed
+        def fail = IO(throw Closed("Hub", initFrame, frame))
+        closed.map {
+            case true => fail
             case false =>
                 Channel.init[A](bufferSize).map { child =>
                     IO {
                         listeners.add(child)
-                        isClosed.map {
+                        closed.map {
                             case true =>
                                 // race condition
                                 IO {
                                     listeners.remove(child)
-                                    closed
+                                    fail
                                 }
                             case false =>
                                 new Listener[A](this, child)
@@ -76,6 +142,15 @@ end Hub
 
 object Hub:
 
+    /** Initializes a new Hub with the specified capacity.
+      *
+      * @param capacity
+      *   the maximum number of elements the Hub can hold
+      * @tparam A
+      *   the type of elements in the Hub
+      * @return
+      *   a new Hub instance
+      */
     def init[A](capacity: Int)(using Frame): Hub[A] < IO =
         Channel.init[A](capacity).map { ch =>
             IO {
@@ -98,22 +173,67 @@ object Hub:
             }
         }
 
+    /** A Listener represents a subscriber to a Hub.
+      *
+      * @tparam A
+      *   the type of elements the Listener receives
+      */
     class Listener[A] private[kyo] (hub: Hub[A], child: Channel[A]):
 
+        /** Returns the current size of the Listener's buffer.
+          *
+          * @return
+          *   the number of elements currently in the Listener's buffer
+          */
         def size(using Frame): Int < IO = child.size
 
-        def isEmpty(using Frame): Boolean < IO = child.isEmpty
+        /** Checks if the Listener's buffer is empty.
+          *
+          * @return
+          *   true if the Listener's buffer is empty, false otherwise
+          */
+        def empty(using Frame): Boolean < IO = child.empty
 
-        def isFull(using Frame): Boolean < IO = child.isFull
+        /** Checks if the Listener's buffer is full.
+          *
+          * @return
+          *   true if the Listener's buffer is full, false otherwise
+          */
+        def full(using Frame): Boolean < IO = child.full
 
+        /** Attempts to retrieve and remove the head of the Listener's buffer without blocking.
+          *
+          * @return
+          *   a Maybe containing the head element if available, or empty if the buffer is empty
+          */
         def poll(using Frame): Maybe[A] < IO = child.poll
 
+        /** Creates a fiber that takes an element from the Listener's buffer.
+          *
+          * @return
+          *   a Fiber that, when run, will take an element from the Listener's buffer
+          */
         def takeFiber(using Frame): Fiber[Nothing, A] < IO = child.takeFiber
 
+        /** Takes an element from the Listener's buffer, potentially blocking if the buffer is empty.
+          *
+          * @return
+          *   the next element from the Listener's buffer
+          */
         def take(using Frame): A < Async = child.take
 
-        def isClosed(using Frame): Boolean < IO = child.isClosed
+        /** Checks if the Listener is closed.
+          *
+          * @return
+          *   true if the Listener is closed, false otherwise
+          */
+        def closed(using Frame): Boolean < IO = child.closed
 
+        /** Closes the Listener and removes it from the Hub.
+          *
+          * @return
+          *   a Maybe containing any remaining elements in the Listener's buffer
+          */
         def close(using Frame): Maybe[Seq[A]] < IO =
             hub.remove(child).andThen(child.close)
 

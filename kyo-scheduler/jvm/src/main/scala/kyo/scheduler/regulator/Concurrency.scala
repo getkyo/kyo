@@ -1,23 +1,25 @@
 package kyo.scheduler.regulator
 
+import java.util.function.DoubleSupplier
+import java.util.function.LongSupplier
 import kyo.scheduler.*
 import kyo.scheduler.top.ConcurrencyStatus
 import kyo.scheduler.util.Flag
 import scala.concurrent.duration.*
 
 final class Concurrency(
-    loadAvg: () => Double,
+    loadAvg: DoubleSupplier,
     updateConcurrency: Int => Unit,
     sleep: Int => Unit,
-    nowNanos: () => Long,
+    nowNanos: LongSupplier,
     timer: InternalTimer,
     config: Config = Concurrency.defaultConfig
 ) extends Regulator(loadAvg, timer, config) {
 
     protected def probe() = {
-        val start = nowNanos()
+        val start = nowNanos.getAsLong()
         sleep(1)
-        measure(nowNanos() - start - 1000000)
+        measure(nowNanos.getAsLong() - start - 1000000)
     }
 
     protected def update(diff: Int): Unit =

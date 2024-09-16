@@ -125,7 +125,7 @@ class KyoTest extends Test:
             "no effect" in {
                 assert(incr(0, n).eval == n)
             }
-            "suspension at the start" in pendingUntilFixed {
+            "suspension at the start" taggedAs notNative in pendingUntilFixed {
                 try
                     assert(Env.run(n)(incr(Env.get[Int], n)).eval == 0)
                 catch
@@ -137,7 +137,7 @@ class KyoTest extends Test:
             "effect at the end" in {
                 assert(Env.run(n)(incr(n, n).map(n => Env.use[Int](_ + n))).eval == n * 3)
             }
-            "multiple effects" in pendingUntilFixed {
+            "multiple effects" taggedAs notNative in pendingUntilFixed {
                 @tailrec def incr(v: Int < Env[Unit], n: Int): Int < Env[Unit] =
                     n match
                         case 0 => v

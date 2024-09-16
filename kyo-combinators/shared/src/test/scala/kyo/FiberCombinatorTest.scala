@@ -117,5 +117,85 @@ class FiberCombinatorTest extends Test:
                 )
             }
         }
+        "forkScoped" - {
+            "should fork a fiber and manage its lifecycle" in {
+                var state = 0
+                val effect = Kyo.async[Int]((continuation) =>
+                    state = state + 1
+                    continuation(state)
+                )
+
+                val program =
+                    for
+                        fiber  <- effect.forkScoped
+                        result <- fiber.join
+                    yield result
+
+                val handledEffect = IO.run(Async.run(Resource.run(program)).map(_.toFuture)).eval
+                handledEffect.map(v =>
+                    assert(state == 1)
+                    assert(v == 1)
+                )
+            }
+
+            "should clean up resources when scope is closed" in {
+                var cleanedUp = false
+                val effect = Kyo.async[Int]((continuation) =>
+                    continuation(42)
+                )
+
+                val program =
+                    for
+                        fiber  <- effect.forkScoped
+                        _      <- Resource.acquireRelease(())(_ => cleanedUp = true)
+                        result <- fiber.join
+                    yield result
+
+                val handledEffect = IO.run(Async.run(Resource.run(program)).map(_.toFuture)).eval
+                handledEffect.map(v =>
+                    assert(v == 42)
+                    assert(cleanedUp)
+                )
+            }
+        }
+
+        "awaitCompletion" - {
+
+            "should wait for fiber completion without returning result" in {
+                var completed = false
+                val effect = Kyo.async[Int](continuation =>
+                    completed = true
+                    continuation(42)
+                )
+
+                val program =
+                    for
+                        fiber <- effect.fork
+                        _     <- fiber.awaitCompletion
+                    yield completed
+
+                val handledEffect = IO.run(Async.run(program).map(_.toFuture)).eval
+                handledEffect.map(v =>
+                    assert(v)
+                )
+            }
+
+            "should not propagate fiber result" in {
+                val effect = Kyo.async[Int]((continuation) =>
+                    continuation(42)
+                )
+
+                val program =
+                    for
+                        fiber <- effect.fork
+                        _     <- fiber.awaitCompletion
+                    yield ()
+
+                val handledEffect = IO.run(Async.run(program).map(_.toFuture)).eval
+                handledEffect.map(v =>
+                    assert(v == ())
+                )
+            }
+        }
     }
 end FiberCombinatorTest

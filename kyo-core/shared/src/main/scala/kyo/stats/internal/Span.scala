@@ -5,7 +5,7 @@ import kyo.stats.*
 import kyo.stats.Attributes
 import scala.annotation.tailrec
 
-case class Span(unsafe: Span.Unsafe):
+final case class Span(unsafe: Span.Unsafe):
 
     def end(using Frame): Unit < IO =
         IO(unsafe.end())

@@ -3,6 +3,7 @@ package kyo
 import java.io.*
 import java.lang.Process as JProcess
 import java.lang.ProcessBuilder.Redirect
+import java.lang.System as JSystem
 import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
@@ -35,8 +36,8 @@ object Process:
           */
         def command(clazz: Class[?], args: List[String] = Nil)(using Frame): Process.Command < IO =
             IO {
-                val javaHome  = System.getProperty("java.home") + File.separator + "bin" + File.separator + "java"
-                val classPath = System.getProperty("java.class.path")
+                val javaHome  = JSystem.getProperty("java.home") + File.separator + "bin" + File.separator + "java"
+                val classPath = JSystem.getProperty("java.class.path")
                 val command   = javaHome :: "-cp" :: classPath :: clazz.getName().init :: args
 
                 Process.Command(command*)

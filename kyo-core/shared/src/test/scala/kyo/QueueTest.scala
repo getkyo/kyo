@@ -2,7 +2,7 @@ package kyo
 
 class QueueTest extends Test:
 
-    val access = List(Access.Mpmc, Access.Mpsc, Access.Spmc, Access.Spsc)
+    val access = Access.values.toList
 
     "bounded" - {
         access.foreach { access =>
@@ -10,7 +10,7 @@ class QueueTest extends Test:
                 "isEmpty" in run {
                     for
                         q <- Queue.init[Int](2, access)
-                        b <- q.isEmpty
+                        b <- q.empty
                     yield assert(b && q.capacity == 2)
                 }
                 "offer and poll" in run {
@@ -62,8 +62,8 @@ class QueueTest extends Test:
             b  <- q.offer(1)
             c1 <- q.close
             v1 <- Abort.run[Throwable](q.size)
-            v2 <- Abort.run[Throwable](q.isEmpty)
-            v3 <- Abort.run[Throwable](q.isFull)
+            v2 <- Abort.run[Throwable](q.empty)
+            v3 <- Abort.run[Throwable](q.full)
             v4 <- q.offer(2)
             v5 <- Abort.run[Throwable](q.poll)
             v6 <- Abort.run[Throwable](q.peek)
@@ -97,7 +97,7 @@ class QueueTest extends Test:
                 "isEmpty" in run {
                     for
                         q <- Queue.initUnbounded[Int](access)
-                        b <- q.isEmpty
+                        b <- q.empty
                     yield assert(b)
                 }
                 "offer and poll" in run {

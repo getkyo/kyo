@@ -3,11 +3,9 @@ package kyo.grpc
 import io.grpc.ServerCallHandler
 import io.grpc.Status
 import io.grpc.StatusException
-import io.grpc.StatusRuntimeException
 import io.grpc.stub.ServerCalls
 import io.grpc.stub.StreamObserver
 import kyo.*
-import scala.util.Try
 
 // TODO: Rename.
 object ServerHandler:
@@ -21,6 +19,7 @@ object ServerHandler:
 
     // Adapted from scalapb.grpc.Grpc#completeObserver.
     private def completeObserver[Response](observer: StreamObserver[Response])(result: Result[StatusException, Response]): Unit =
+        // TODO: Why is there a partial match warning here?
         result.map(observer.onNext) match
             case Result.Success(_) =>
                 observer.onCompleted()

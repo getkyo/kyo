@@ -2,6 +2,9 @@ package kyo
 
 import Tagged.*
 import java.time.Instant
+import kyo.Clock.Deadline
+import kyo.Clock.Stopwatch
+import kyo.Clock.Unsafe
 
 class KyoAppTest extends Test:
 
@@ -73,7 +76,10 @@ class KyoAppTest extends Test:
             instantRef <- AtomicRef.init(Instant.MAX)
             randomRef  <- AtomicRef.init("")
             testClock = new Clock:
-                override def now(using Frame): Instant < IO = Instant.EPOCH
+                override def unsafe: Unsafe                            = ???
+                override def now(using Frame)                          = Instant.EPOCH
+                override def deadline(duration: Duration)(using Frame) = ???
+                override def stopwatch(using Frame)                    = ???
             testRandom = new Random:
                 override def nextInt(using Frame): Int < IO = ???
 

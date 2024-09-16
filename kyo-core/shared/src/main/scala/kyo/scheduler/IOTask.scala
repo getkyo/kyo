@@ -3,7 +3,7 @@ package kyo.scheduler
 import kyo.*
 import kyo.Tag
 import kyo.kernel.*
-import kyo.kernel.Effect
+import kyo.kernel.ArrowEffect
 import kyo.scheduler.IOTask.*
 import scala.util.control.NonFatal
 
@@ -36,7 +36,7 @@ private[kyo] class IOTask[Ctx, E, A] private (
     final private def eval(startMillis: Long, clock: InternalClock)(using Safepoint) =
         try
             curr = Boundary.restoring(trace, this) {
-                Effect.handle.partial(Tag[IO], erasedAbortTag, Tag[Async.Join], curr, context)(
+                ArrowEffect.handle.partial(Tag[IO], erasedAbortTag, Tag[Async.Join], curr, context)(
                     stop = shouldPreempt(),
                     [C] => (input, cont) => cont(()),
                     [C] =>

@@ -70,6 +70,9 @@ libraryDependencies += "io.getkyo" %%  "kyo-data"        % "<version>"
 
 Replace `<version>` with the latest version: ![Version](https://img.shields.io/maven-central/v/io.getkyo/kyo-core_3).
 
+### IDE Support
+
+Kyo utilizes features from the latest Scala 3 versions that are not yet properly supported by IntelliJ IDEA. For the best development experience and to ensure all Kyo features are correctly recognized, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE for your Kyo projects.
 
 ### The "Pending" type: `<`
 
@@ -145,6 +148,41 @@ val a: Unit < IO =
 // Use 'andThen'.
 val b: String < IO =
     a.andThen("test")
+```
+
+The `pipe` method allows for chaining effect handlers without nesting parentheses. It's particularly useful when dealing with multiple effects.
+
+```scala
+import kyo.*
+
+val a: Int < (Abort[String] & Env[Int]) =
+    for
+        v <- Abort.get(Right(42))
+        e <- Env.get[Int]
+    yield v + e
+
+// Handle effects using `pipe`
+val b: Result[String, Int] =
+    a.pipe(Abort.run(_))   // Handle Abort
+     .pipe(Env.run(10))    // Handle Env
+     .eval                 // Evaluate the computation
+
+// Equivalent without `pipe`
+val c: Result[String, Int] =
+    Env.run(10)(Abort.run(a)).eval
+
+// `pipe` also supports multiple functions
+val d: Result[String, Int] =
+    a.pipe(Abort.run(_), Env.run(10)).eval
+
+// Mixing effect handling, 'map' transformation, and 'eval'
+val e: Int =
+    a.pipe(
+        Abort.run(_),
+        Env.run(10),
+        _.map(_.getOrElse(24)), // Convert Result to Int
+        _.eval
+    )
 ```
 
 ### Effect widening
@@ -740,6 +778,89 @@ val d: Int < Async =
     Resource.run(c)
 ```
 
+### Batch: Efficient Data Processing
+
+The `Batch` effect provides a mechanism for efficient processing of data in batches, allowing for optimized handling of datasets. It includes a type parameter `S` that represents the possible effects that can occur in the data sources.
+
+```scala
+import kyo.*
+
+// Using 'Batch.sourceSeq' for processing the entire sequence at once, returning a 'Seq'
+val source1 = Batch.sourceSeq[Int, String, Any] { seq =>
+    seq.map(i => i.toString)
+}
+
+// Using 'Batch.sourceMap' for processing the entire sequence at once, returning a 'Map'
+val source2 = Batch.sourceMap[Int, String, IO] { seq =>
+    // Source functions can perform arbitrary effects like 'IO' before returning the results
+    IO {
+        seq.map(i => i -> i.toString).toMap
+    }
+}
+
+// Using 'Batch.source' for individual effect suspensions
+// This is a more generic method that allows effects for each of the inputs
+val source3 = Batch.source[Int, String, IO] { seq =>
+    val map = seq.map { i =>
+        i -> IO((i * 2).toString)
+    }.toMap
+    (i: Int) => map(i)
+}
+
+// Example usage
+val result =
+    for
+        a <- Batch.eval(Seq(1, 2, 3))
+        b1 <- source1(a)
+        b2 <- source2(a)
+        b3 <- source3(a)
+    yield (a, b1, b2, b3)
+
+// Handle the effect
+val finalResult: Seq[(Int, String, String, String)] < IO =
+    Batch.run(result)
+```
+
+When creating a source, it's important to note that the returned sequence must have the same number of elements as the input sequence. This restriction ensures consistent behavior and allows for proper batching of operations.
+
+```scala
+import kyo.*
+
+// This is valid
+val validSource = Batch.sourceSeq[Int, String, Any] { seq =>
+    seq.map(_.toString)
+}
+
+// This would cause a runtime error
+val invalidSource = Batch.sourceSeq[Int, Int, Any] { seq =>
+    seq.filter(_ % 2 == 0)
+}
+```
+
+It's crucial to understand that the batching is done based on the identity of the provided source function. To ensure proper batching, it's necessary to reuse the function returned by `Batch.source`. Creating a new source for each operation will prevent effective batching. For example:
+
+```scala
+import kyo.*
+
+// Correct usage: reusing the source
+val source = Batch.sourceSeq[Int, Int, IO] { seq => 
+    IO(seq.map(_ * 2))
+}
+
+val goodBatch = for
+    a <- Batch.eval(1 to 1000)
+    b <- source(a)  // This will be batched
+    c <- source(b)  // This will also be batched
+yield c
+
+// Incorrect usage: creating new sources inline
+val badBatch = for
+    a <- Batch.eval(1 to 1000)
+    b <- Batch.sourceSeq[Int, Int, IO](seq => IO(seq.map(_ * 2)))(a)  // This won't be batched
+    c <- Batch.sourceSeq[Int, Int, IO](seq => IO(seq.map(_ * 2)))(b)  // This also won't be batched
+yield c
+```
+
 ### Choice: Exploratory Branching
 
 The `Choice` effect is designed to aid in handling and exploring multiple options, pathways, or outcomes in a computation. This effect is particularly useful in scenario where you're dealing with decision trees, backtracking algorithms, or any situation that involves dynamically exploring multiple options.
@@ -753,7 +874,7 @@ import kyo.*
 val a: Int < Choice =
     Choice.get(Seq(1, 2, 3, 4))
 
-// 'filter' discards the current element if
+// 'dropIf' discards the current element if
 // a condition is not met. Produces a 'Seq(1, 2)'
 // since values greater than 2 are dropped
 val b: Int < Choice =
@@ -1021,7 +1142,7 @@ val n: Array[Int] = a.toArray
 
 // Flatten a nested chunk
 val o: Chunk[Int] =
-    Chunk(a, b).flatten
+    Chunk(a, b).flattenChunk
 
 // Obtain sequentially distict elements.
 // Outputs: Chunk(1, 2, 3, 1)
@@ -1247,7 +1368,7 @@ def count(db: Database): Int < IO =
 
 // To bind an aspect to an implementation, first create a new 'Cut'
 val countPlusOne =
-    new Cut[Database, Int, IO]:
+    new Aspect.Cut[Database, Int, IO]:
         // The first param is the input of the computation and the second is
         // the computation being handled
         def apply[S](v: Database < S)(f: Database => Int < IO) =
@@ -1267,7 +1388,7 @@ def example(db: Database): Int < IO =
 
 // Another 'Cut' implementation
 val countTimesTen =
-    new Cut[Database, Int, IO]:
+    new Aspect.Cut[Database, Int, IO]:
         def apply[S](v: Database < S)(f: Database => Int < IO) =
             v.map(db => f(db).map(_ * 10))
 
@@ -1295,6 +1416,35 @@ def example3(db: Database) =
         count(db)
     }
 ```
+
+### Check: Runtime Assertions
+
+The `Check` effect provides a mechanism for runtime assertions and validations. It allows you to add checks throughout your code that can be handled in different ways, such collecting failures or discarding them.
+
+```scala
+import kyo.*
+
+// Create a simple check
+val a: Unit < Check =
+    Check(1 + 1 == 2, "Basic math works")
+
+// Checks can be composed with other effects
+val b: Int < (Check & IO) =
+    for
+        value <- IO(42)
+        _     <- Check(value > 0, "Value is positive")
+    yield value
+
+// Handle checks by converting the first failed check to Abort
+val c: Int < (Abort[CheckFailed] & IO) =
+    Check.runAbort(b)
+
+// Discard check failures and continue execution
+val e: Int < IO =
+    Check.runDiscard(b)
+```
+
+The `CheckFailed` exception class, which is used to represent failed checks, includes both the failure message and the source code location (via `Frame`) where the check failed, making it easier to locate and debug issues.
 
 ### Console: Console Interaction
 
@@ -1328,6 +1478,8 @@ val f: Unit < IO =
 
 ### Clock: Time Management
 
+The `Clock` effect provides utilities for time-related operations, including getting the current time, creating stopwatches, and managing deadlines.
+
 ```scala
 import java.time.Instant
 import kyo.*
@@ -1336,10 +1488,89 @@ import kyo.*
 val a: Instant < IO =
     Clock.now
 
-// Run with an explicit 'Clock'
-val c: Instant < IO =
-    Clock.let(Clock.live)(a)
+// Create a stopwatch
+val b: Clock.Stopwatch < IO =
+    Clock.stopwatch
+
+// Measure elapsed time with a stopwatch
+val c: Duration < IO =
+    for
+        sw      <- Clock.stopwatch
+        elapsed <- sw.elapsed
+    yield elapsed
+
+// Create a deadline
+val d: Clock.Deadline < IO =
+    Clock.deadline(5.seconds)
+
+// Check time left until deadline
+val e: Duration < IO =
+    for
+        deadline <- Clock.deadline(5.seconds)
+        timeLeft <- deadline.timeLeft
+    yield timeLeft
+
+// Check if a deadline is overdue
+val f: Boolean < IO =
+    for
+        deadline <- Clock.deadline(5.seconds)
+        isOverdue <- deadline.isOverdue
+    yield isOverdue
+
+// Run with an explicit `Clock` implementation
+val g: Instant < IO =
+    Clock.let(Clock.live)(Clock.now)
+
+// Access unsafe (non-effectful) clock operations
+val h: Instant =
+    Clock.live.unsafe.now
+
+val i: Clock.Unsafe.Stopwatch =
+    Clock.live.unsafe.stopwatch
+
+val j: Clock.Unsafe.Deadline =
+    Clock.live.unsafe.deadline(5.seconds)
 ```
+
+`Clock` both safe (effectful) and unsafe (non-effectful) versions of its operations. The safe versions are suspended in `IO` and should be used in most cases. The unsafe versions are available through the `unsafe` property and should be used with caution, typically only in performance-critical sections or when integrating with non-effectful code.
+
+### System: Environment Variables and System Properties
+
+The `System` effect provides a safe and convenient way to access environment variables and system properties. It offers methods to retrieve values with proper type conversion and fallback options.
+
+```scala
+import kyo.*
+
+// Get an environment variable as a String
+val a: Maybe[String] < IO =
+    System.env[String]("PATH")
+
+// Get an environment variable with a default value
+val b: String < IO =
+    System.env[String]("CUSTOM_VAR", "default")
+
+// Get a system property as an Int.
+val c: Maybe[Int] < (Abort[NumberFormatException] & IO) =
+    System.property[Int]("java.version")
+
+// Get a system property with a default value
+val d: Int < (Abort[NumberFormatException] & IO) =
+    System.property[Int]("custom.property", 42)
+
+// Get the line separator for the current platform
+val e: String < IO =
+    System.lineSeparator
+
+// Get the current user's name
+val f: String < IO =
+    System.userName
+
+// Use a custom System implementation
+val g: String < IO =
+    System.let(System.live)(System.userName)
+```
+
+The `System` effect provides built-in parsers for common types like `String`, `Int`, `Boolean`, `Double`, `Long`, `Char`, `Duration`, and `UUID`. Custom parsers can be implemented by providing an implicit `System.Parser[E, A]` instance.
 
 ### Random: Random Values
 
@@ -1707,7 +1938,7 @@ val a: Fiber[Nothing, Int] = Fiber.success(42)
 
 // Check if the fiber is done
 val b: Boolean < IO =
-    a.isDone
+    a.done
 
 // Instance-level version of 'Async.get'
 val c: Int < Async =
@@ -1858,11 +2089,11 @@ val f: Maybe[Int] < IO =
 
 // Check if the queue is empty
 val g: Boolean < IO =
-    a.map(_.isEmpty)
+    a.map(_.empty)
 
 // Check if the queue is full
 val h: Boolean < IO =
-    a.map(_.isFull)
+    a.map(_.full)
 
 // Drain the queue items
 val i: Seq[Int] < IO =
@@ -1928,7 +2159,7 @@ import kyo.*
 val a: Queue[Int] < IO =
     Queue.init(
         capacity = 42,
-        access = Access.Mpmc
+        access = Access.MultiProducerMultiConsumer
     )
 ```
 
@@ -1949,7 +2180,7 @@ val a: Channel[Int] < IO =
 val b: Channel[Int] < IO =
     Channel.init(
         capacity = 42,
-        access = Access.Mpmc
+        access = Access.MultiProducerMultiConsumer
     )
 ```
 
@@ -2177,14 +2408,14 @@ val b: Boolean < IO =
 
 // Check if the task is cancelled
 val c: Boolean < IO =
-    a.map(_.isCancelled)
+    a.map(_.cancelled)
 
 // Check if the task is done
 val d: Boolean < IO =
-    a.map(_.isDone)
+    a.map(_.done)
 ```
 
-### Latch: Fiber Coordination
+### Latch: Countdown Synchronization
 
 The `Latch` effect serves as a coordination mechanism for fibers in a concurrent environment, primarily used for task synchronization. It provides a low-level API for controlling the flow of execution and ensuring certain tasks are completed before others, all while maintaining thread safety.
 
@@ -2207,6 +2438,52 @@ val c: Unit < IO =
 val d: Int < IO =
     a.map(_.pending)
 ```
+
+### Barrier: Multi-party Rendezvous
+
+The `Barrier` effect provides a synchronization primitive that allows a fixed number of parties to wait for each other to reach a common point of execution. It's particularly useful in scenarios where multiple fibers need to synchronize their progress.
+
+```scala
+import kyo.*
+
+// Initialize a barrier for 3 parties
+val a: Barrier < IO =
+    Barrier.init(3)
+
+// Wait for the barrier to be released
+val b: Unit < Async =
+    a.map(_.await)
+
+// Get the number of parties still waiting
+val c: Int < IO =
+    a.map(_.pending)
+
+// Example usage with multiple fibers
+val d: Unit < Async =
+    for
+        barrier <- Barrier.init(3)
+        _       <- Async.parallel(
+                     barrier.await,
+                     barrier.await,
+                     barrier.await
+                   )
+    yield ()
+
+// Fibers can join the barrier at different points of the computation
+val e: Unit < Async =
+    for
+        barrier <- Barrier.init(3)
+        fiber1  <- Async.run(Async.sleep(1.second))
+        fiber2  <- Async.run(Async.sleep(2.seconds))
+        _       <- Async.parallel(
+                     fiber1.get.map(_ => barrier.await),
+                     fiber2.get.map(_ => barrier.await),
+                     Async.run(barrier.await).map(_.get)
+                   )
+    yield ()
+```
+
+The `Barrier` is initialized with a specific number of parties. Each party calls `await` when it reaches the barrier point. The barrier releases all waiting parties when the last party arrives. After all parties have been released, the barrier cannot be reset or reused.
 
 ### Atomic: Concurrent State
 
@@ -2786,6 +3063,57 @@ val d: Task[Int] =
 ```
 
 > Note: Support for ZIO environments (`R` in `ZIO[R, E, A]`) is currently in development. Once implemented, it will be possible to use ZIO effects with environments directly within Kyo computations.
+
+### Cats: Integration with Cats Effect
+
+The `Cats` effect provides seamless integration between Kyo and the Cats Effect library. This integration is designed to enable gradual adoption of Kyo within a Cats Effect codebase. The integration properly suspends side effects and propagates fiber cancellations/interrupts between both libraries.
+
+```scala
+import kyo.*
+import cats.effect.IO as CatsIO
+
+// Use the 'get' method to extract a 'IO' effect from Cats Effect:
+val a: Int < Cats =
+    Cats.get(CatsIO.pure(42))
+
+// Handle the 'Cats' effect to obtain a 'CatsIO' effect:
+val b: CatsIO[Int] =
+    Cats.run(a)
+```
+
+Kyo and Cats effects can be seamlessly mixed and matched within computations, allowing developers to leverage the power of both libraries. Here are a few examples showcasing this integration:
+
+```scala
+import kyo.*
+import cats.effect.IO as CatsIO
+import cats.effect.kernel.Outcome.Succeeded
+
+// Note how Cats includes the IO, Async, and Abort[Throwable] effects:
+val a: Int < Cats =
+    for
+        v1 <- Cats.get(CatsIO.pure(21))
+        v2 <- IO(21)
+        _  <- Abort.when(v1 > 10)(new Exception)
+        v3 <- Async.run(-42).map(_.get)
+    yield v1 + v2 + v3
+
+// Using fibers from both libraries:
+val b: Int < Cats =
+    for
+        f1 <- Cats.get(CatsIO.pure(21).start)
+        f2 <- Async.run(IO(21))
+        v1 <- Cats.get(f1.joinWith(CatsIO(99)))
+        v2 <- f2.get
+    yield v1 + v2
+
+// Transforming Cats Effect IO within Kyo computations:
+val c: Int < Cats =
+    Cats.get(CatsIO.pure(21)).map(_ * 2)
+
+// Transforming Kyo effects within Cats Effect IO:
+val d: CatsIO[Int] =
+    Cats.run(IO(21).map(_ * 2))
+```
 
 ### Resolvers: GraphQL Server via Caliban
 

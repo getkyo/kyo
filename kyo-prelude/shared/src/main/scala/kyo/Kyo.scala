@@ -4,17 +4,60 @@ import kernel.Frame
 import kernel.Loop
 import scala.annotation.tailrec
 
+/** Object containing utility functions for working with Kyo effects. */
 object Kyo:
 
+    /** Zips two effects into a tuple.
+      *
+      * @param v1
+      *   The first effect
+      * @param v2
+      *   The second effect
+      * @return
+      *   A new effect that produces a tuple of the results
+      */
     def zip[A1, A2, S](v1: A1 < S, v2: A2 < S)(using Frame): (A1, A2) < S =
         v1.map(t1 => v2.map(t2 => (t1, t2)))
 
+    /** Zips three effects into a tuple.
+      *
+      * @param v1
+      *   The first effect
+      * @param v2
+      *   The second effect
+      * @param v3
+      *   The third effect
+      * @return
+      *   A new effect that produces a tuple of the results
+      */
     def zip[A1, A2, A3, S](v1: A1 < S, v2: A2 < S, v3: A3 < S)(using Frame): (A1, A2, A3) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => (t1, t2, t3))))
 
+    /** Zips four effects into a tuple.
+      *
+      * @param v1
+      *   The first effect
+      * @param v2
+      *   The second effect
+      * @param v3
+      *   The third effect
+      * @param v4
+      *   The fourth effect
+      * @return
+      *   A new effect that produces a tuple of the results
+      */
     def zip[A1, A2, A3, A4, S](v1: A1 < S, v2: A2 < S, v3: A3 < S, v4: A4 < S)(using Frame): (A1, A2, A3, A4) < S =
         v1.map(t1 => v2.map(t2 => v3.map(t3 => v4.map(t4 => (t1, t2, t3, t4)))))
 
+    /** Applies an effect-producing function to each element of a sequence.
+      *
+      * @param seq
+      *   The input sequence
+      * @param f
+      *   The effect-producing function to apply to each element
+      * @return
+      *   A new effect that produces a Chunk of results
+      */
     def foreach[A, B, S, S2](seq: Seq[A])(f: A => B < S2)(using Frame): Chunk[B] < (S & S2) =
         seq.knownSize match
             case 0 => Chunk.empty
@@ -35,7 +78,15 @@ object Kyo:
                             else f(indexed(idx)).map(u => Loop.continue(acc.append(u)))
                         }
                 end match
-
+    /** Applies an effect-producing function to each element of a sequence, discarding the results.
+      *
+      * @param seq
+      *   The input sequence
+      * @param f
+      *   The effect-producing function to apply to each element
+      * @return
+      *   A new effect that produces Unit
+      */
     def foreachDiscard[A, B, S](seq: Seq[A])(f: A => Unit < S)(using Frame): Unit < S =
         seq.knownSize match
             case 0 =>
@@ -58,6 +109,15 @@ object Kyo:
         end match
     end foreachDiscard
 
+    /** Filters elements of a sequence based on an effect-producing predicate.
+      *
+      * @param seq
+      *   The input sequence
+      * @param f
+      *   The effect-producing predicate function
+      * @return
+      *   A new effect that produces a Chunk of filtered elements
+      */
     def filter[A, S, S2](seq: Seq[A])(f: A => Boolean < S2)(using Frame): Chunk[A] < (S & S2) =
         seq.knownSize match
             case 0 => Chunk.empty
@@ -86,7 +146,17 @@ object Kyo:
                                 }
                         }
                 end match
-
+    /** Folds over a sequence with an effect-producing function.
+      *
+      * @param seq
+      *   The input sequence
+      * @param acc
+      *   The initial accumulator value
+      * @param f
+      *   The effect-producing folding function
+      * @return
+      *   A new effect that produces the final accumulated value
+      */
     def foldLeft[A, B, S](seq: Seq[A])(acc: B)(f: (B, A) => B < S)(using Frame): B < S =
         seq.knownSize match
             case 0 => acc
@@ -110,6 +180,13 @@ object Kyo:
         end match
     end foldLeft
 
+    /** Collects the results of a sequence of effects into a single effect.
+      *
+      * @param seq
+      *   The sequence of effects
+      * @return
+      *   A new effect that produces a Chunk of results
+      */
     def collect[A, S](seq: Seq[A < S])(using Frame): Chunk[A] < S =
         seq.knownSize match
             case 0 => Chunk.empty
@@ -130,7 +207,13 @@ object Kyo:
                             else indexed(idx).map(u => Loop.continue(acc.append(u)))
                         }
                 end match
-
+    /** Collects the results of a sequence of effects, discarding the results.
+      *
+      * @param seq
+      *   The sequence of effects
+      * @return
+      *   A new effect that produces Unit
+      */
     def collectDiscard[A, S](seq: Seq[A < S])(using Frame): Unit < S =
         seq.knownSize match
             case 0 =>
@@ -151,7 +234,15 @@ object Kyo:
                             else indexed(idx).map(_ => Loop.continue)
                         }
                 end match
-
+    /** Takes elements from a sequence while a predicate holds true.
+      *
+      * @param seq
+      *   The input sequence
+      * @param f
+      *   The effect-producing predicate function
+      * @return
+      *   A new effect that produces a Chunk of taken elements
+      */
     def takeWhile[A, S](seq: Seq[A])(f: A => Boolean < S)(using Frame): Chunk[A] < S =
         seq.knownSize match
             case 0 => Chunk.empty
@@ -180,7 +271,15 @@ object Kyo:
                                 }
                         }
                 end match
-
+    /** Drops elements from a sequence while a predicate holds true.
+      *
+      * @param seq
+      *   The input sequence
+      * @param f
+      *   The effect-producing predicate function
+      * @return
+      *   A new effect that produces a Chunk of remaining elements
+      */
     def dropWhile[A, S](seq: Seq[A])(f: A => Boolean < S)(using Frame): Chunk[A] < S =
         seq.knownSize match
             case 0 => Chunk.empty
@@ -209,7 +308,15 @@ object Kyo:
                                 }
                         }
                 end match
-
+    /** Creates a Chunk by repeating an effect-producing value.
+      *
+      * @param n
+      *   The number of times to repeat the value
+      * @param v
+      *   The effect-producing value
+      * @return
+      *   A new effect that produces a Chunk of repeated values
+      */
     def fill[A, S](n: Int)(v: => A < S)(using Frame): Chunk[A] < S =
         Loop.indexed(Chunk.empty[A]) { (idx, acc) =>
             if idx == n then Loop.done(acc)

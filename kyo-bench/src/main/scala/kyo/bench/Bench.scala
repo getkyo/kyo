@@ -1,6 +1,10 @@
 package kyo.bench
 
+import WarmupJITProfile.*
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import org.openjdk.jmh.annotations.*
+import scala.concurrent.duration.*
 
 @State(Scope.Benchmark)
 @Fork(
@@ -52,19 +56,19 @@ object Bench:
     abstract class Fork[A: kyo.Flat](expectedResult: A) extends Base[A](expectedResult):
 
         @Benchmark
-        def forkKyo(): A =
+        def forkKyo(warmup: KyoForkWarmup): A =
             import kyo.*
             IO.run(Async.run(kyoBenchFiber()).flatMap(_.block(Duration.Infinity))).eval.getOrThrow
         end forkKyo
 
         @Benchmark
-        def forkCats(): A =
+        def forkCats(warmup: CatsForkWarmup): A =
             import cats.effect.unsafe.implicits.global
             cats.effect.IO.cede.flatMap(_ => catsBench()).unsafeRunSync()
         end forkCats
 
         @Benchmark
-        def forkZIO(): A = zio.Unsafe.unsafe(implicit u =>
+        def forkZIO(warmup: ZIOForkWarmup): A = zio.Unsafe.unsafe(implicit u =>
             zioRuntime.run(zio.ZIO.yieldNow.flatMap(_ => zioBench())).getOrThrow()
         )
     end Fork
@@ -75,16 +79,16 @@ object Bench:
     abstract class SyncAndFork[A: kyo.Flat](expectedResult: A) extends Fork[A](expectedResult):
 
         @Benchmark
-        def syncKyo(): A = kyo.IO.run(kyoBench()).eval
+        def syncKyo(warmup: KyoSyncWarmup): A = kyo.IO.run(kyoBench()).eval
 
         @Benchmark
-        def syncCats(): A =
+        def syncCats(warmup: CatsSyncWarmup): A =
             import cats.effect.unsafe.implicits.global
             catsBench().unsafeRunSync()
         end syncCats
 
         @Benchmark
-        def syncZIO(): A = zio.Unsafe.unsafe(implicit u =>
+        def syncZIO(warmup: ZIOSyncWarmup): A = zio.Unsafe.unsafe(implicit u =>
             zioRuntime.run(zioBench()).getOrThrow()
         )
     end SyncAndFork

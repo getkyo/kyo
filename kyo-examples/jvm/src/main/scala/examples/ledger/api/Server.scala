@@ -7,46 +7,39 @@ import sttp.tapir.server.netty.*
 
 object Server extends KyoApp:
 
-    def flag(name: String, default: String) =
-        Option(System.getenv(name))
-            .getOrElse(System.getProperty(name, default))
-
     run {
-
-        val port = flag("PORT", "9999").toInt
-
-        val dbConfig =
-            DB.Config(
-                flag("DB_PATH", "/tmp/"),
-                flag("flushInternalMs", "1000").toInt.millis
-            )
-
-        val options =
-            NettyKyoServerOptions
-                .default(enableLogging = false)
-                .forkExecution(false)
-
-        val cfg =
-            NettyConfig.default
-                .withSocketKeepAlive
-                .copy(lingerTimeout = None)
-
-        val server =
-            NettyKyoServer(options, cfg)
-                .host("0.0.0.0")
-                .port(port)
 
         val timer = Timer(Executors.newSingleThreadScheduledExecutor())
 
-        val init = defer {
+        defer {
+            val port = await(System.property[Int]("PORT", 9999))
+
+            val dbConfig =
+                DB.Config(
+                    await(System.property[String]("DB_PATH", "/tmp/")),
+                    await(System.property[Duration]("flushInternal", 1000.millis))
+                )
+
+            val options =
+                NettyKyoServerOptions
+                    .default(enableLogging = false)
+                    .forkExecution(false)
+
+            val cfg =
+                NettyConfig.default
+                    .withSocketKeepAlive
+                    .copy(lingerTimeout = None)
+
+            val server =
+                NettyKyoServer(options, cfg)
+                    .host("0.0.0.0")
+                    .port(port)
+
             val db      = await(Env.run(dbConfig)(DB.init))
             val handler = await(Env.run(db)(Handler.init))
-            await(Env.run(handler)(Endpoints.init))
-        }
 
-        defer {
             await(Console.println(s"Server starting on port $port..."))
-            val binding = await(Routes.run(server)(Timer.let(timer)(init)))
+            val binding = await(Routes.run(server)(Timer.let(timer)(Env.run(handler)(Endpoints.init))))
             await(Console.println(s"Server started: ${binding.localSocket}"))
         }
     }

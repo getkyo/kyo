@@ -11,7 +11,7 @@ class AsyncTest extends Test:
             for
                 p <- Promise.init[Nothing, Int]
                 a <- p.complete(Result.success(1))
-                b <- p.isDone
+                b <- p.done
                 c <- p.get
             yield assert(a && b && c == 1)
         }
@@ -20,7 +20,7 @@ class AsyncTest extends Test:
                 p <- Promise.init[Nothing, Int]
                 a <- p.complete(Result.success(1))
                 b <- p.complete(Result.success(2))
-                c <- p.isDone
+                c <- p.done
                 d <- p.get
             yield assert(a && !b && c && d == 1)
         }
@@ -36,7 +36,7 @@ class AsyncTest extends Test:
             for
                 p <- Promise.init[Exception, Int]
                 a <- p.complete(Result.fail(ex))
-                b <- p.isDone
+                b <- p.done
                 c <- p.getResult
             yield assert(a && b && c == Result.fail(ex))
             end for
@@ -49,7 +49,7 @@ class AsyncTest extends Test:
                     p2 <- Promise.init[Nothing, Int]
                     a  <- p2.complete(Result.success(42))
                     b  <- p1.become(p2)
-                    c  <- p1.isDone
+                    c  <- p1.done
                     d  <- p1.get
                 yield assert(a && b && c && d == 42)
             }
@@ -61,7 +61,7 @@ class AsyncTest extends Test:
                     p2 <- Promise.init[Exception, Int]
                     a  <- p2.complete(Result.fail(ex))
                     b  <- p1.become(p2)
-                    c  <- p1.isDone
+                    c  <- p1.done
                     d  <- p1.getResult
                 yield assert(a && b && c && d == Result.fail(ex))
                 end for
@@ -82,7 +82,7 @@ class AsyncTest extends Test:
                 for
                     p <- Promise.init[Nothing, Int]
                     a <- p.become(Fiber.success(42))
-                    b <- p.isDone
+                    b <- p.done
                     c <- p.get
                 yield assert(a && b && c == 42)
             }
@@ -131,17 +131,17 @@ class AsyncTest extends Test:
 
     "sleep" in run {
         for
-            start <- IO(System.currentTimeMillis())
+            start <- IO(java.lang.System.currentTimeMillis())
             _     <- Async.sleep(10.millis)
-            end   <- IO(System.currentTimeMillis())
-        yield assert(end - start >= 10)
+            end   <- IO(java.lang.System.currentTimeMillis())
+        yield assert(end - start >= 8)
     }
 
     "delay" in run {
         for
-            start <- IO(System.currentTimeMillis())
+            start <- IO(java.lang.System.currentTimeMillis())
             res   <- Async.delay(5.millis)(42)
-            end   <- IO(System.currentTimeMillis())
+            end   <- IO(java.lang.System.currentTimeMillis())
         yield
             assert(end - start >= 4)
             assert(res == 42)

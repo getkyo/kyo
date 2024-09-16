@@ -7,8 +7,35 @@ import directInternal.*
 import scala.annotation.tailrec
 import scala.quoted.*
 
+/** Defers the execution of a block of code, allowing the use of `await` within it.
+  *
+  * This macro transforms the given block of code to work with effectful computations, enabling the use of `await` to handle various types
+  * of effects. The `defer` block is desugared into regular monadic composition using `map`, making it equivalent to writing out the monadic
+  * code explicitly.
+  *
+  * @tparam A
+  *   The type of the value returned by the deferred block
+  * @param f
+  *   The block of code to be deferred
+  * @return
+  *   A value of type `A < S`, where `S` represents the combined effects of all `await` calls
+  */
 transparent inline def defer[A](inline f: A) = ${ impl[A]('f) }
 
+/** Awaits the result of an effectful computation.
+  *
+  * This function can only be used within a `defer` block. It suspends the execution of the current block until the result of the effectful
+  * computation is available. In the desugared monadic composition, `await` calls are transformed into appropriate `map` operations.
+  *
+  * @tparam A
+  *   The type of the value being awaited
+  * @tparam S
+  *   The type of the effect (e.g., IO, Abort, Choice, etc.)
+  * @param v
+  *   The effectful computation to await
+  * @return
+  *   The result of type A, once the computation completes
+  */
 inline def await[A, S](v: A < S): A =
     compiletime.error("`await` must be used within a `defer` block")
 

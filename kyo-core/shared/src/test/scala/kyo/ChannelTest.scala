@@ -32,7 +32,7 @@ class ChannelTest extends Test:
             _  <- c.put(2)
             v1 <- c.poll
             v2 <- c.poll
-            b2 <- c.isEmpty
+            b2 <- c.empty
         yield assert(b && v1 == Maybe(1) && v2 == Maybe(2) && b2)
     }
     "offer, put, and take in parallel" in runJVM {
@@ -40,7 +40,7 @@ class ChannelTest extends Test:
             c     <- Channel.init[Int](2)
             b     <- c.offer(1)
             put   <- c.putFiber(2)
-            f     <- c.isFull
+            f     <- c.full
             take1 <- c.takeFiber
             take2 <- c.takeFiber
             v1    <- take1.get
@@ -56,9 +56,9 @@ class ChannelTest extends Test:
             _  <- c.put(2)
             f  <- c.putFiber(3)
             _  <- Async.sleep(10.millis)
-            d1 <- f.isDone
+            d1 <- f.done
             v1 <- c.poll
-            d2 <- f.isDone
+            d2 <- f.done
             v2 <- c.poll
             v3 <- c.poll
         yield assert(!d1 && d2 && v1 == Maybe(1) && v2 == Maybe(2) && v3 == Maybe(3))
@@ -68,9 +68,9 @@ class ChannelTest extends Test:
             c  <- Channel.init[Int](2)
             f  <- c.takeFiber
             _  <- Async.sleep(10.millis)
-            d1 <- f.isDone
+            d1 <- f.done
             _  <- c.put(1)
-            d2 <- f.isDone
+            d2 <- f.done
             v  <- f.get
         yield assert(!d1 && d2 && v == 1)
     }
@@ -104,7 +104,7 @@ class ChannelTest extends Test:
                 _ <- c.put(1)
                 _ <- c.put(2)
                 r <- c.close
-                t <- Abort.run[Throwable](c.isEmpty)
+                t <- Abort.run[Throwable](c.empty)
             yield assert(r == Maybe(Seq(1, 2)) && t.isFail)
         }
         "pending take" in runJVM {
@@ -113,7 +113,7 @@ class ChannelTest extends Test:
                 f <- c.takeFiber
                 r <- c.close
                 d <- f.getResult
-                t <- Abort.run[Throwable](c.isFull)
+                t <- Abort.run[Throwable](c.full)
             yield assert(r == Maybe(Seq()) && d.isPanic && t.isFail)
         }
         "pending put" in runJVM {
@@ -151,8 +151,8 @@ class ChannelTest extends Test:
             c <- Channel.init[Int](0)
             _ <- c.putFiber(1)
             v <- c.take
-            f <- c.isFull
-            e <- c.isEmpty
+            f <- c.full
+            e <- c.empty
         yield assert(v == 1 && f && e)
     }
     "contention" - {
@@ -163,7 +163,7 @@ class ChannelTest extends Test:
                 f2 <- Fiber.parallel(List.fill(1000)(c.take))
                 _  <- f1.get
                 _  <- f2.get
-                b  <- c.isEmpty
+                b  <- c.empty
             yield assert(b)
         }
 
@@ -174,7 +174,7 @@ class ChannelTest extends Test:
                 f2 <- Fiber.parallel(List.fill(1000)(c.take))
                 _  <- f1.get
                 _  <- f2.get
-                b  <- c.isEmpty
+                b  <- c.empty
             yield assert(b)
         }
     }

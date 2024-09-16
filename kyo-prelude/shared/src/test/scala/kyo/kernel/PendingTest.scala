@@ -60,7 +60,7 @@ class PendingTest extends Test:
     }
 
     "eval should not compile for pending effects" in {
-        @nowarn("msg=unused") trait CustomEffect extends Effect[Const[Unit], Const[Unit]]
+        @nowarn("msg=unused") trait CustomEffect extends ArrowEffect[Const[Unit], Const[Unit]]
         assertDoesNotCompile("val x: Int < CustomEffect = 5; x.eval")
     }
 
@@ -132,10 +132,10 @@ class PendingTest extends Test:
         }
     }
 
-    sealed trait TestEffect extends Effect[Const[Int], Const[Int]]
+    sealed trait TestEffect extends ArrowEffect[Const[Int], Const[Int]]
 
     def testEffect(i: Int): Int < TestEffect =
-        Effect.suspend[Int](Tag[TestEffect], i)
+        ArrowEffect.suspend[Int](Tag[TestEffect], i)
 
     "evalNow" - {
         "returns Defined for pure values" in {
@@ -201,6 +201,56 @@ class PendingTest extends Test:
         "can produce a value instead of a computation" in {
             val result: Int = Env.get[Int].pipe(Env.run(5)).pipe(_.eval)
             assert(result == 5)
+        }
+
+        "works with two functions" in {
+            val result = (5: Int < Any).pipe(
+                _.map(_ + 1),
+                _.map(_ * 2)
+            )
+            assert(result.eval == 12)
+        }
+
+        "works with three functions" in {
+            val result = (5: Int < Any).pipe(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString)
+            )
+            assert(result.eval == "12")
+        }
+
+        "works with four functions" in {
+            val result = (5: Int < Any).pipe(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length)
+            )
+            assert(result.eval == 2)
+        }
+
+        "works with five functions" in {
+            val result = (5: Int < Any).pipe(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1)
+            )
+            assert(result.eval == true)
+        }
+
+        "works with six functions" in {
+            val result = (5: Int < Any).pipe(
+                _.map(_ + 1),
+                _.map(_ * 2),
+                _.map(_.toString),
+                _.map(_.length),
+                _.map(_ > 1),
+                _.map(if _ then "Yes" else "No")
+            )
+            assert(result.eval == "Yes")
         }
 
         "piped computation is by-name" in {
