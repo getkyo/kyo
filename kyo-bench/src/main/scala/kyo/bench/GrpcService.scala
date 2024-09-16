@@ -8,7 +8,6 @@ import kgrpc.helloworld.testservice.*
 import kyo.*
 import scala.language.implicitConversions
 import scalapb.zio_grpc
-import scalapb.zio_grpc.Server
 import scalapb.zio_grpc.ServerLayer
 import scalapb.zio_grpc.ZManagedChannel
 import zio.ZIO
