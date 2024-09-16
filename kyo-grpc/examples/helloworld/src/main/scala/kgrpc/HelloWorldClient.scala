@@ -1,6 +1,6 @@
 package kgrpc
 
-import io.grpc.examples.helloworld.helloworld.*
+import kgrpc.helloworld.*
 import kyo.*
 import kyo.grpc.*
 
