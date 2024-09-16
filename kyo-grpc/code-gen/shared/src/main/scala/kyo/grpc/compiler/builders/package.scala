@@ -1,7 +1,8 @@
 package kyo.grpc.compiler
 
+import org.typelevel.paiges.Doc
+import org.typelevel.paiges.Docx
 import org.typelevel.paiges.ExtendedSyntax.*
-import org.typelevel.paiges.{Doc, Docx}
 import scalapb.compiler.FunctionalPrinter
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
 

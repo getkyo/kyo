@@ -2,10 +2,9 @@ package kyo.grpc
 
 import kyo.grpc.compiler.builders.*
 import org.typelevel.paiges.Doc
+import scala.language.implicitConversions
 import scalapb.compiler.FunctionalPrinter
 import scalapb.compiler.FunctionalPrinter.PrinterEndo
-
-import scala.language.implicitConversions
 
 package object compiler {
 

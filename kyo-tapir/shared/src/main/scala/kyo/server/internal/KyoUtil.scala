@@ -5,34 +5,30 @@ import io.netty.channel.ChannelFuture
 import kyo.*
 
 object KyoUtil:
-    def nettyChannelFutureToScala(nettyFuture: ChannelFuture): Channel < Fibers =
-        Fibers.initPromise[Channel].map { p =>
-            p.onComplete(_ => IOs(nettyFuture.cancel(true).unit)).andThen {
+    def nettyChannelFutureToScala(nettyFuture: ChannelFuture)(using Frame): Channel < Async =
+        Promise.init[Nothing, Channel].map { p =>
+            p.onComplete(_ => IO(nettyFuture.cancel(true)).unit).andThen {
                 nettyFuture.addListener((future: ChannelFuture) =>
                     discard {
-                        IOs.run {
-                            if future.isSuccess then p.complete(future.channel())
-                            else if future.isCancelled then
-                                p.complete(Fibers.interrupted)
-                            else p.complete(IOs.fail(future.cause()))
-                        }
+                        IO.run {
+                            if future.isSuccess then p.unsafe.complete(Result.success(future.channel()))
+                            else p.unsafe.complete(Result.panic(future.cause()))
+                        }.eval
                     }
                 )
                 p.get
             }
         }
 
-    def nettyFutureToScala[T](f: io.netty.util.concurrent.Future[T]): T < Fibers =
-        Fibers.initPromise[T].map { p =>
-            p.onComplete(_ => IOs(f.cancel(true)).unit).andThen {
-                f.addListener((future: io.netty.util.concurrent.Future[T]) =>
+    def nettyFutureToScala[A](f: io.netty.util.concurrent.Future[A])(using Frame): A < Async =
+        Promise.init[Nothing, A].map { p =>
+            p.onComplete(_ => IO(f.cancel(true)).unit).andThen {
+                f.addListener((future: io.netty.util.concurrent.Future[A]) =>
                     discard {
-                        IOs.run {
-                            if future.isSuccess then p.complete(future.getNow)
-                            else if future.isCancelled then
-                                p.complete(Fibers.interrupted)
-                            else p.complete(IOs.fail(future.cause()))
-                        }
+                        IO.run {
+                            if future.isSuccess then p.unsafe.complete(Result.success(future.getNow))
+                            else p.unsafe.complete(Result.panic(future.cause()))
+                        }.eval
                     }
                 )
                 p.get

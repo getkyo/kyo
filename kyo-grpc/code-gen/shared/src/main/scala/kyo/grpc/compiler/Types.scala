@@ -8,15 +8,17 @@ object Types {
 
     def pending(t: String, s: String) = s"_root_.kyo.<[$t, $s]"
 
-    def pendingGrpcResponses(t: String) = s"_root_.kyo.<[$t, $grpcResponses]"
+    def pendingGrpcResponse(t: String) = s"_root_.kyo.<[$t, $grpcResponse]"
 
-    def pendingGrpcRequests(t: String) = s"_root_.kyo.<[$t, $grpcRequests]"
+    def pendingGrpcRequest(t: String) = s"_root_.kyo.<[$t, $grpcRequest]"
+
+    val frame = "_root_.kyo.Frame"
 
     val clientCalls = "_root_.kyo.grpc.ClientCalls"
 
-    val grpcResponses = "_root_.kyo.grpc.GrpcResponses"
+    val grpcResponse = "_root_.kyo.grpc.GrpcResponse"
 
-    val grpcRequests = "_root_.kyo.grpc.GrpcRequests"
+    val grpcRequest = "_root_.kyo.Async"
 
     val serverHandler = "_root_.kyo.grpc.ServerHandler"
 

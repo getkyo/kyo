@@ -1,12 +1,14 @@
 package kyo.scheduler
 
 import Scheduler.*
+import java.util.concurrent.Callable
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
+import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.regulator.Admission
 import kyo.scheduler.regulator.Concurrency
 import kyo.scheduler.top.Reporter
@@ -15,6 +17,7 @@ import kyo.scheduler.util.Flag
 import kyo.scheduler.util.LoomSupport
 import kyo.scheduler.util.Threads
 import kyo.scheduler.util.XSRandom
+import scala.annotation.nowarn
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 
@@ -70,7 +73,7 @@ final class Scheduler(
         var worker: Worker = null
         if (submitter eq null) {
             worker = Worker.current()
-            if ((worker ne null) && !worker.checkAvailability(nowMs))
+            if ((worker ne null) && ((worker eq submitter) || !worker.checkAvailability(nowMs)))
                 worker = null
         }
         if (worker eq null) {
@@ -175,22 +178,25 @@ final class Scheduler(
         }
 
     private val cycleTask =
-        timerExecutor.scheduleAtFixedRate(
-            () => cycleWorkers(),
-            cycleNs,
-            cycleNs,
-            TimeUnit.NANOSECONDS
+        timerExecutor.submit(
+            (
+                () => {
+                    val thread = Thread.currentThread()
+                    while (!thread.isInterrupted()) {
+                        cycleWorkers()
+                        LockSupport.parkNanos(cycleIntervalNs)
+                    }
+                }
+            ): Callable[Unit]
         )
 
     private def cycleWorkers(): Unit = {
         try {
             val nowMs    = clock.currentMillis()
             var position = 0
-            while (position < allocatedWorkers) {
+            while (position < currentWorkers) {
                 val worker = workers(position)
                 if (worker ne null) {
-                    if (position >= currentWorkers)
-                        worker.drain()
                     val _ = worker.checkAvailability(nowMs)
                 }
                 position += 1
@@ -201,15 +207,14 @@ final class Scheduler(
         }
     }
 
-    locally {
-        val _ =
-            List(
-                statsScope.gauge("current_workers")(currentWorkers),
-                statsScope.gauge("allocated_workers")(allocatedWorkers),
-                statsScope.gauge("load_avg")(loadAvg()),
-                statsScope.gauge("flushes")(flushes.sum().toDouble)
-            )
-    }
+    @nowarn("msg=unused")
+    private val gauges =
+        List(
+            statsScope.gauge("current_workers")(currentWorkers),
+            statsScope.gauge("allocated_workers")(allocatedWorkers),
+            statsScope.gauge("load_avg")(loadAvg()),
+            statsScope.gauge("flushes")(flushes.sum().toDouble)
+        )
 
     def status(): Status = {
         def workerStatus(i: Int) =
@@ -255,7 +260,7 @@ object Scheduler {
         stealStride: Int,
         virtualizeWorkers: Boolean,
         timeSliceMs: Int,
-        cycleNs: Int,
+        cycleIntervalNs: Int,
         enableTopJMX: Boolean,
         enableTopConsoleMs: Int
     )
@@ -269,7 +274,7 @@ object Scheduler {
             val stealStride       = Math.max(1, Flag("stealStride", cores * 4))
             val virtualizeWorkers = Flag("virtualizeWorkers", false)
             val timeSliceMs       = Flag("timeSliceMs", 10)
-            val cycleNs           = Flag("cycleNs", 100000)
+            val cycleIntervalNs   = Flag("cycleIntervalNs", 100000)
             val enableTopJMX      = Flag("enableTopJMX", true)
             val enableTopConsole  = Flag("enableTopConsoleMs", 0)
             Config(
@@ -281,7 +286,7 @@ object Scheduler {
                 stealStride,
                 virtualizeWorkers,
                 timeSliceMs,
-                cycleNs,
+                cycleIntervalNs,
                 enableTopJMX,
                 enableTopConsole
             )

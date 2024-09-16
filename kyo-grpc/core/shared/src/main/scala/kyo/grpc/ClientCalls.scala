@@ -1,6 +1,8 @@
 package kyo.grpc
 
-import io.grpc.{CallOptions, Channel, MethodDescriptor}
+import io.grpc.CallOptions
+import io.grpc.Channel
+import io.grpc.MethodDescriptor
 import kyo.*
 
 object ClientCalls:
@@ -10,8 +12,9 @@ object ClientCalls:
         method: MethodDescriptor[Request, Response],
         options: CallOptions,
         request: Request
-    ): Response < GrpcRequests =
+    )(using Frame): Response < Async =
         val future = scalapb.grpc.ClientCalls.asyncUnaryCall(channel, method, options, request)
-        GrpcRequests.fromFuture(future)
+        GrpcRequest.fromFuture(future)
+    end asyncUnaryCall
 
 end ClientCalls

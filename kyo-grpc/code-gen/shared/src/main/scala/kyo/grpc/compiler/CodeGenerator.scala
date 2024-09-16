@@ -4,11 +4,14 @@ import com.google.protobuf.Descriptors.FileDescriptor
 import com.google.protobuf.ExtensionRegistry
 import com.google.protobuf.compiler.PluginProtos.CodeGeneratorResponse
 import protocbridge.Artifact
-import protocgen.{CodeGenApp, CodeGenRequest, CodeGenResponse}
-import scalapb.compiler.{DescriptorImplicits, GeneratorException, ProtobufGenerator}
-import scalapb.options.Scalapb
-
+import protocgen.CodeGenApp
+import protocgen.CodeGenRequest
+import protocgen.CodeGenResponse
 import scala.jdk.CollectionConverters.*
+import scalapb.compiler.DescriptorImplicits
+import scalapb.compiler.GeneratorException
+import scalapb.compiler.ProtobufGenerator
+import scalapb.options.Scalapb
 
 object CodeGenerator extends CodeGenApp {
 

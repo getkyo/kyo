@@ -5,15 +5,15 @@ import kyo.*
 
 object Client:
 
-    def shutdown(channel: ManagedChannel): Unit < IOs =
-        IOs(channel.shutdown()).unit
+    def shutdown(channel: ManagedChannel)(using Frame): Unit < IO =
+        IO(channel.shutdown()).unit
 
     def channel(host: String, port: Int)(
         configure: ManagedChannelBuilder[?] => ManagedChannelBuilder[?],
-        shutdown: ManagedChannel => Unit < IOs = shutdown
-    ): ManagedChannel < Resources =
-        Resources.acquireRelease(
-            IOs(configure(ManagedChannelBuilder.forAddress(host, port)).build())
-        )(shutdown)
+        shutdown: ManagedChannel => Frame ?=> Unit < IO = shutdown
+    )(using Frame): ManagedChannel < (Resource & IO) =
+        Resource.acquireRelease(
+            IO(configure(ManagedChannelBuilder.forAddress(host, port)).build())
+        )(channel => shutdown(channel))
 
 end Client

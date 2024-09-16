@@ -47,7 +47,7 @@ class HttpClientRaceContentionBench
 
     lazy val kyoClient =
         import kyo.*
-        IOs.run(Meters.initSemaphore(5).map(PlatformBackend.default.withMeter))
+        IO.run(Meter.initSemaphore(5).map(PlatformBackend.default.withMeter)).eval
 
     val kyoUrl =
         import sttp.client3.*
@@ -56,7 +56,7 @@ class HttpClientRaceContentionBench
     override def kyoBenchFiber() =
         import kyo.*
 
-        Fibers.race(Seq.fill(concurrency)(Requests.run(kyoClient)(Requests[String](_.get(kyoUrl)))))
+        Async.race(Seq.fill(concurrency)(Requests.let(kyoClient)(Abort.run(Requests(_.get(kyoUrl)))).map(_.getOrThrow)))
     end kyoBenchFiber
 
     val zioUrl =

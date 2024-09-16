@@ -1,69 +1,73 @@
 package kyo.internal
 
 import KyoSttpMonad.M
+import KyoSttpMonad.given
 import kyo.*
-import kyo.core.internal.Kyo
+import kyo.kernel.Effect
+import kyo.scheduler.IOPromise
 import sttp.monad.Canceler
 import sttp.monad.MonadAsyncError
 
 class KyoSttpMonad extends MonadAsyncError[M]:
 
-    def map[T, T2](fa: T < Fibers)(f: T => T2): T2 < Fibers =
-        fa.map(f)
+    def map[A, T2](fa: M[A])(f: A => T2): M[T2] =
+        fa.map(v => f(v))
 
-    def flatMap[T, T2](fa: T < Fibers)(
-        f: T => T2 < Fibers
-    ): T2 < Fibers =
-        fa.flatMap(f)
+    def flatMap[A, T2](fa: M[A])(f: A => M[T2]): M[T2] =
+        fa.map(v => f(v))
 
-    protected def handleWrappedError[T](rt: T < Fibers)(
-        h: PartialFunction[Throwable, T < Fibers]
+    protected def handleWrappedError[A](rt: M[A])(
+        h: PartialFunction[Throwable, M[A]]
     ) =
-        IOs.catching(rt) {
-            case ex if ex eq Fibers.Interrupted =>
-                Fibers.interrupted
+        Effect.catching(rt) {
             case ex if h.isDefinedAt(ex) =>
                 h(ex)
+            case r =>
+                throw r
         }
 
-    override def handleError[T](rt: => T < Fibers)(h: PartialFunction[Throwable, T < Fibers]) =
+    override def handleError[A](rt: => M[A])(h: PartialFunction[Throwable, M[A]]) =
         handleWrappedError(rt)(h)
 
-    def ensure[T](f: T < Fibers, e: => Unit < Fibers) =
-        Fibers.initPromise[Unit].map { p =>
+    def ensure[A](f: M[A], e: => M[Unit]) =
+        Promise.init[Nothing, Unit].map { p =>
             def run =
-                Fibers.run(e).map(p.become).unit
-            IOs.ensure(run)(f).map(r => p.get.andThen(r))
+                Async.run(e).map(p.become).unit
+            IO.ensure(run)(f).map(r => p.get.andThen(r))
         }
 
-    def error[T](t: Throwable) =
-        IOs.fail(t)
+    def error[A](t: Throwable) =
+        IO(throw t)
 
-    def unit[T](t: T) =
+    def unit[A](t: A) =
         t
 
-    override def eval[T](t: => T) =
-        IOs[T, Fibers](t)
+    override def eval[A](t: => A) =
+        IO(t)
 
-    override def suspend[T](t: => M[T]) =
-        IOs[T, Fibers](t)
+    override def suspend[A](t: => M[A]) =
+        IO(t)
 
-    def async[T](register: (Either[Throwable, T] => Unit) => Canceler): M[T] =
-        Fibers.initPromise[T].map { p =>
+    def async[A](register: (Either[Throwable, A] => Unit) => Canceler): M[A] =
+        IO {
+            val p = IOPromise[Nothing, A]()
             val canceller =
                 register {
-                    case Left(t)  => discard(p.unsafeComplete(IOs.fail(t)))
-                    case Right(t) => discard(p.unsafeComplete(t))
+                    case Left(t)  => discard(p.complete(Result.panic(t)))
+                    case Right(t) => discard(p.complete(Result.success(t)))
                 }
             p.onComplete { r =>
-                if r.equals(Fibers.interrupted) then
+                if r.isPanic then
                     canceller.cancel()
-            }.andThen(p.get)
+            }
+            Fiber.initUnsafe(p).get
         }
+
 end KyoSttpMonad
 
 object KyoSttpMonad extends KyoSttpMonad:
-    type M[T] = T < Fibers
+    type M[A] = A < Async
 
     inline given KyoSttpMonad = this
+    given Frame               = Frame.internal
 end KyoSttpMonad

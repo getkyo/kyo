@@ -1,17 +1,17 @@
 package kyo.grpc
 
 import io.grpc.{Server as _, *}
+import java.net.ServerSocket
+import java.util.concurrent.TimeUnit
+import kgrpc.*
+import kgrpc.test.*
 import kyo.*
-import kyo.grpc.test.*
 import org.scalactic.Equality
 import org.scalactic.TripleEquals.*
 import org.scalatest.EitherValues.*
 import org.scalatest.Inspectors.*
 
-import java.net.ServerSocket
-import java.util.concurrent.TimeUnit
-
-class ServiceTest extends KyoTest:
+class ServiceTest extends Test:
 
     "unary" - {
         "echo" in run {
@@ -25,18 +25,16 @@ class ServiceTest extends KyoTest:
         "abort" in {
             forEvery(Status.Code.values().filterNot(_ == Status.Code.OK)) { code =>
                 run {
-                    for
-                        client <- createClientAndServer
-                        status  = code.toStatus
-                        request = Abort(status.getCode.value)
-                        response <- IOs.catching(client.unary(request)) {
-                            case e: StatusRuntimeException => e
-                        }
-                    yield
-                        val responseOrException = response match
-                            case e: StatusRuntimeException => Right(e)
-                            case other                     => Left(other)
-                        assert(responseOrException.value.getStatus === status)
+                    val status = code.toStatus
+                    Abort.run {
+                        for
+                            client <- createClientAndServer
+                            request = Cancel(status.getCode.value)
+                            _ <- Abort.catching[StatusRuntimeException](client.unary(request))
+                        yield ()
+                    }.map { result =>
+                        assert(result.swap.toEither.value.getStatus === status)
+                    }
                 }
             }
         }
@@ -45,9 +43,7 @@ class ServiceTest extends KyoTest:
                 client <- createClientAndServer
                 message = "Oh no!"
                 request = Fail(message)
-                response <- IOs.catching(client.unary(request)) {
-                    case e: StatusRuntimeException => e
-                }
+                response <- Abort.catching[StatusRuntimeException](client.unary(request))
             yield
                 val responseOrException = response match
                     case e: StatusRuntimeException => Right(e)
@@ -83,19 +79,19 @@ class ServiceTest extends KyoTest:
         createChannel(port).map(TestService.client(_))
 
     private def createChannel(port: Int) =
-        Resources.acquireRelease(
-            IOs(
+        Resource.acquireRelease(
+            IO(
                 ManagedChannelBuilder
                     .forAddress("localhost", port)
                     .usePlaintext()
                     .build()
             )
         ) { channel =>
-            IOs(channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)).unit
+            IO(channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)).unit
         }
 
     private def findFreePort =
         val socket = new ServerSocket(0)
-        IOs.ensure(IOs(socket.close()))(socket.getLocalPort)
+        IO.ensure(IO(socket.close()))(socket.getLocalPort)
 
 end ServiceTest

@@ -7,11 +7,11 @@ import scala.annotation.tailrec
 
 case class Span(unsafe: Span.Unsafe):
 
-    def end: Unit < IOs =
-        IOs(unsafe.end())
+    def end(using Frame): Unit < IO =
+        IO(unsafe.end())
 
-    def event(name: String, a: Attributes): Unit < IOs =
-        IOs(unsafe.event(name, a))
+    def event(name: String, a: Attributes)(using Frame): Unit < IO =
+        IO(unsafe.event(name, a))
 end Span
 
 object Span:
@@ -54,20 +54,20 @@ object Span:
                         end event
                 )
 
-    private val currentSpan = Locals.init[Option[Span]](None)
+    private val currentSpan = Local.init(Maybe.empty[Span])
 
-    def trace[T, S](
+    def trace[A, S](
         receiver: TraceReceiver,
         scope: List[String],
         name: String,
         attributes: Attributes = Attributes.empty
-    )(v: => T < S): T < (IOs & S) =
+    )(v: => A < S)(using Frame): A < (IO & S) =
         currentSpan.use { parent =>
             receiver
                 .startSpan(scope, name, parent, attributes)
                 .map { child =>
-                    IOs.ensure(child.end) {
-                        currentSpan.let(Some(child))(v)
+                    IO.ensure(child.end) {
+                        currentSpan.let(Maybe(child))(v)
                     }
                 }
         }

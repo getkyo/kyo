@@ -10,7 +10,7 @@ class BlockingBench extends Bench.ForkOnly(()):
     override def kyoBenchFiber() =
         import kyo.*
 
-        IOs(block())
+        IO(block())
     end kyoBenchFiber
 
     def catsBench() =

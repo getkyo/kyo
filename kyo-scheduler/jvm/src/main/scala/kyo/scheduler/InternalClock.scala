@@ -2,8 +2,9 @@ package kyo.scheduler
 
 import java.util.concurrent.Executor
 import java.util.concurrent.locks.LockSupport
+import scala.annotation.nowarn
 
-final private[kyo] case class InternalClock(executor: Executor) {
+final case class InternalClock(executor: Executor) {
 
     @volatile private var _stop = false
 
@@ -32,8 +33,7 @@ final private[kyo] case class InternalClock(executor: Executor) {
     def stop(): Unit =
         _stop = true
 
-    locally {
-        val _ =
-            statsScope.scope("clock").gauge("skew")((System.currentTimeMillis() - millis).toDouble)
-    }
+    @nowarn("msg=unused")
+    private val gauge =
+        statsScope.scope("clock").gauge("skew")((System.currentTimeMillis() - millis).toDouble)
 }

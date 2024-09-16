@@ -1,36 +1,32 @@
 package kyo.grpc
 
-import io.grpc.stub.{ServerCalls, StreamObserver}
-import io.grpc.{ServerCallHandler, Status, StatusException, StatusRuntimeException}
+import io.grpc.ServerCallHandler
+import io.grpc.Status
+import io.grpc.StatusException
+import io.grpc.StatusRuntimeException
+import io.grpc.stub.ServerCalls
+import io.grpc.stub.StreamObserver
 import kyo.*
-
 import scala.util.Try
 
 // TODO: Rename.
 object ServerHandler:
 
-    def unary[Request, Response: Flat](f: Request => Response < GrpcResponses): ServerCallHandler[Request, Response] =
-        ServerCalls.asyncUnaryCall((request, observer) =>
-            IOs.run(
-                for {
-                    fiber <- GrpcResponses.init(f(request))
-                    response <- fiber.onComplete { reply =>
-                        IOs.attempt(reply).map(completeObserver(observer))
-                    }
-                } yield response
-            )
-        )
+    def unary[Request, Response: Flat](f: Request => Response < GrpcResponse)(using Frame): ServerCallHandler[Request, Response] =
+        ServerCalls.asyncUnaryCall { (request, observer) =>
+            IO.run(Async.run(f(request)).flatMap { fiber =>
+                fiber.onComplete(completeObserver(observer))
+            }).eval
+        }
 
-    // Copied from scalapb.grpc.Grpc#completeObserver.
-    private def completeObserver[T](observer: StreamObserver[T])(t: Try[T]): Unit =
-        t.map(observer.onNext) match
-            case scala.util.Success(_) =>
+    // Adapted from scalapb.grpc.Grpc#completeObserver.
+    private def completeObserver[Response](observer: StreamObserver[Response])(result: Result[StatusException, Response]): Unit =
+        result.map(observer.onNext) match
+            case Result.Success(_) =>
                 observer.onCompleted()
-            case scala.util.Failure(s: StatusException) =>
+            case Result.Fail(s: StatusException) =>
                 observer.onError(s)
-            case scala.util.Failure(s: StatusRuntimeException) =>
-                observer.onError(s)
-            case scala.util.Failure(e) =>
+            case Result.Panic(e) =>
                 observer.onError(
                     Status.INTERNAL.withDescription(e.getMessage).withCause(e).asException()
                 )

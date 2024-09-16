@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.scheduler.*
 import zio.*
 import zio.internal.ExecutionMetrics
 

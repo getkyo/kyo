@@ -2,6 +2,8 @@ package kyo.stats.internal
 
 class UnsafeHistogram(numberOfSignificantValueDigits: Int, highestToLowestValueRatio: Long) {
 
+    val _ = (numberOfSignificantValueDigits, highestToLowestValueRatio)
+
     def observe(v: Long): Unit = {}
 
     def observe(v: Double): Unit = {}

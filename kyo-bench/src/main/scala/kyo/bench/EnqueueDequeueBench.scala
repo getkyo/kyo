@@ -22,13 +22,13 @@ class EnqueueDequeueBench extends Bench.ForkOnly(()):
 
         import kyo.Access
 
-        def loop(c: Channel[Unit], i: Int): Unit < Fibers =
+        def loop(c: Channel[Unit], i: Int): Unit < Async =
             if i >= depth then
-                IOs.unit
+                IO.unit
             else
                 c.put(()).flatMap(_ => c.take.flatMap(_ => loop(c, i + 1)))
 
-        Channels.init[Unit](1, Access.Spsc).flatMap(loop(_, 0))
+        Channel.init[Unit](1, Access.Spsc).flatMap(loop(_, 0))
     end kyoBenchFiber
 
     def zioBench() =

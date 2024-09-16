@@ -2,9 +2,11 @@ package kyo.grpc.compiler
 
 import com.google.protobuf.Descriptors.*
 import com.google.protobuf.compiler.PluginProtos.CodeGeneratorResponse
-import scalapb.compiler.{DescriptorImplicits, FunctionalPrinter, NameUtils, StreamType}
-
 import scala.jdk.CollectionConverters.*
+import scalapb.compiler.DescriptorImplicits
+import scalapb.compiler.FunctionalPrinter
+import scalapb.compiler.NameUtils
+import scalapb.compiler.StreamType
 
 class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits) {
 
@@ -68,7 +70,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.Bidirectional   => Seq(responseObserverParameter)
         }
         val returnType = method.streamType match {
-            case StreamType.Unary           => Types.pendingGrpcResponses(method.outputType.scalaType)
+            case StreamType.Unary           => Types.pendingGrpcResponse(method.outputType.scalaType)
             case StreamType.ClientStreaming => Types.streamObserver(method.inputType.scalaType)
             case StreamType.ServerStreaming => Types.unit
             case StreamType.Bidirectional   => Types.streamObserver(method.inputType.scalaType)
@@ -150,7 +152,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.Bidirectional   => Seq(responseObserverParameter)
         }
         val returnType = method.streamType match {
-            case StreamType.Unary           => Types.pendingGrpcRequests(method.outputType.scalaType)
+            case StreamType.Unary           => Types.pendingGrpcRequest(method.outputType.scalaType)
             case StreamType.ClientStreaming => Types.streamObserver(method.inputType.scalaType)
             case StreamType.ServerStreaming => Types.unit
             case StreamType.Bidirectional   => Types.streamObserver(method.inputType.scalaType)
@@ -187,7 +189,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.Bidirectional   => Seq(responseObserverParameter)
         }
         val returnType = method.streamType match {
-            case StreamType.Unary           => Types.pendingGrpcRequests(method.outputType.scalaType)
+            case StreamType.Unary           => Types.pendingGrpcRequest(method.outputType.scalaType)
             case StreamType.ClientStreaming => Types.streamObserver(method.inputType.scalaType)
             case StreamType.ServerStreaming => Types.unit
             case StreamType.Bidirectional   => Types.streamObserver(method.inputType.scalaType)

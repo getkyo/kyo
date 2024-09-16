@@ -37,27 +37,27 @@ class PingPongBench extends Bench.ForkOnly(()):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def repeat[A](n: Int)(io: A < Fibers): A < Fibers =
+        def repeat[A](n: Int)(io: A < Async): A < Async =
             if n <= 1 then io
             else io.flatMap(_ => repeat(n - 1)(io))
 
-        def iterate(promise: Promise[Unit], n: Int): Unit < Fibers =
+        def iterate(promise: Promise[Nothing, Unit], n: Int): Unit < Async =
             for
-                ref  <- Atomics.initInt(n)
-                chan <- Channels.init[Unit](1)
+                ref  <- AtomicInt.init(n)
+                chan <- Channel.init[Unit](1)
                 effect =
                     for
-                        _ <- Fibers.init(chan.put(()))
+                        _ <- Async.run(chan.put(()))
                         _ <- chan.take
                         n <- ref.decrementAndGet
-                        _ <- if n == 0 then promise.complete(()).unit else IOs.unit
+                        _ <- if n == 0 then promise.complete(Result.unit).unit else IO.unit
                     yield ()
-                _ <- repeat(depth)(Fibers.init(effect))
+                _ <- repeat(depth)(Async.run[Nothing, Unit, Any](effect))
             yield ()
 
         for
-            promise <- Fibers.initPromise[Unit]
-            _       <- Fibers.init(iterate(promise, depth))
+            promise <- Promise.init[Nothing, Unit]
+            _       <- Async.run(iterate(promise, depth))
             _       <- promise.get
         yield ()
         end for

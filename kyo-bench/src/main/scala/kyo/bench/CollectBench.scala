@@ -4,14 +4,14 @@ class CollectBench extends Bench.SyncAndFork(Seq.fill(1000)(1)):
 
     val count = 1000
 
-    val kyoTasks  = List.fill(count)(kyo.IOs(1))
+    val kyoTasks  = List.fill(count)(kyo.IO(1))
     val catsTasks = List.fill(count)(cats.effect.IO(1))
     val zioTasks  = List.fill(count)(zio.ZIO.succeed(1))
 
     def kyoBench() =
         import kyo.*
 
-        Seqs.collect(kyoTasks)
+        Kyo.collect(kyoTasks)
     end kyoBench
 
     def catsBench() =

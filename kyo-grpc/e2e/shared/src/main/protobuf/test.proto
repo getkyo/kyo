@@ -1,6 +1,7 @@
 syntax = "proto3";
 
-package kyo.grpc;
+// Don't use kyo here because otherwise it cannot derive the Frame.
+package kgrpc;
 
 service TestService {
   rpc Unary(Request) returns (Response);
@@ -9,7 +10,7 @@ service TestService {
 message Request {
   oneof sealed_value {
     Echo echo = 1;
-    Abort abort = 2;
+    Cancel abort = 2;
     Fail fail = 3;
   }
 }
@@ -28,7 +29,7 @@ message EchoEcho {
   string message = 1;
 }
 
-message Abort {
+message Cancel {
   int32 code = 1;
 }
 

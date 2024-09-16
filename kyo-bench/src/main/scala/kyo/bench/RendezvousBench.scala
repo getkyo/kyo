@@ -4,7 +4,7 @@ import org.openjdk.jmh.annotations.*
 
 class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
 
-    given canEqualNull[T]: CanEqual[T, T | Null] = CanEqual.derived
+    given canEqualNull[A]: CanEqual[A, A | Null] = CanEqual.derived
 
     val depth = 10000
 
@@ -65,13 +65,13 @@ class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def produce(waiting: AtomicRef[Any], n: Int = 0): Unit < Fibers =
+        def produce(waiting: AtomicRef[Any], n: Int = 0): Unit < Async =
             if n <= depth then
-                Fibers.initPromise[Unit].flatMap { p =>
+                Promise.init[Nothing, Unit].flatMap { p =>
                     waiting.cas(null, (p, n)).flatMap {
                         case false =>
                             waiting.getAndSet(null).flatMap {
-                                _.asInstanceOf[Promise[Int]].complete(n)
+                                _.asInstanceOf[Promise[Nothing, Int]].complete(Result.success(n))
                             }
                         case true =>
                             p.get
@@ -80,16 +80,16 @@ class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
                     }
                 }
             else
-                IOs.unit
+                IO.unit
 
-        def consume(waiting: AtomicRef[Any], n: Int = 0, acc: Int = 0): Int < Fibers =
+        def consume(waiting: AtomicRef[Any], n: Int = 0, acc: Int = 0): Int < Async =
             if n <= depth then
-                Fibers.initPromise[Int].flatMap { p =>
+                Promise.init[Nothing, Int].flatMap { p =>
                     waiting.cas(null, p).flatMap {
                         case false =>
                             waiting.getAndSet(null).flatMap {
-                                case (p2: Promise[Unit] @unchecked, i: Int) =>
-                                    p2.complete(()).map(_ => i)
+                                case (p2: Promise[Nothing, Unit] @unchecked, i: Int) =>
+                                    p2.complete(Result.unit).map(_ => i)
                             }
                         case true =>
                             p.get
@@ -101,9 +101,9 @@ class RendezvousBench extends Bench.ForkOnly(10000 * (10000 + 1) / 2):
                 acc
 
         for
-            waiting  <- Atomics.initRef[Any](null)
-            _        <- Fibers.init(produce(waiting))
-            consumer <- Fibers.init(consume(waiting))
+            waiting  <- AtomicRef.init[Any](null)
+            _        <- Async.run(produce(waiting))
+            consumer <- Async.run(consume(waiting))
             res      <- consumer.get
         yield res
         end for

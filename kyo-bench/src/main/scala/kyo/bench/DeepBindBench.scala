@@ -7,8 +7,8 @@ class DeepBindBench extends Bench.SyncAndFork(()):
     def kyoBench() =
         import kyo.*
 
-        def loop(i: Int): Unit < IOs =
-            IOs {
+        def loop(i: Int): Unit < IO =
+            IO.unit.flatMap { _ =>
                 if i > depth then
                     ()
                 else

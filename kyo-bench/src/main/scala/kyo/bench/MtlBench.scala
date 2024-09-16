@@ -13,23 +13,23 @@ class MtlBench extends Bench(()):
     @Benchmark
     def syncKyo() =
         import kyo.*
-        def testKyo: Unit < (Aborts[Throwable] & Envs[EnvValue] & Vars[State] & Sums[Event]) =
-            Seqs.foreach(loops)(_ =>
+        def testKyo: Unit < (Abort[Throwable] & Env[EnvValue] & Var[State] & Emit[Event]) =
+            Kyo.foreachDiscard(loops)(_ =>
                 for
-                    conf <- Envs.use[EnvValue](_.config)
-                    _    <- Sums.add(Event(s"Env = $conf"))
-                    _    <- Vars.update((state: State) => state.copy(value = state.value + 1))
+                    conf <- Env.use[EnvValue](_.config)
+                    _    <- Emit(Event(s"Env = $conf"))
+                    _    <- Var.update((state: State) => state.copy(value = state.value + 1))
                 yield ()
             )
-        Aborts.run[Throwable](
-            Vars.run(State(2))(
-                Sums.run(
-                    Envs.run(EnvValue("config"))(
-                        testKyo.andThen(Vars.get[State])
+        Abort.run[Throwable](
+            Var.run(State(2))(
+                Emit.run(
+                    Env.run(EnvValue("config"))(
+                        testKyo.andThen(Var.get[State])
                     )
                 )
             )
-        ).pure
+        ).eval
     end syncKyo
 
     @Benchmark

@@ -13,4 +13,3 @@ object Service:
     given Conversion[Service, ServerServiceDefinition] = _.definition
 
 end Service
-

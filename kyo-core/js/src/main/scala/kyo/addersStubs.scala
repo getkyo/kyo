@@ -5,6 +5,11 @@ class DoubleAdder():
     def add(v: Double) = curr += v
     def sum(): Double  = curr
     def reset()        = curr = 0
+    def sumThenReset(): Double =
+        val res = curr
+        curr = 0
+        res
+    end sumThenReset
 end DoubleAdder
 
 class LongAdder():
@@ -14,4 +19,9 @@ class LongAdder():
     def increment()  = curr += 1
     def sum(): Long  = curr
     def reset()      = curr = 0
+    def sumThenReset(): Long =
+        val res = curr
+        curr = 0
+        res
+    end sumThenReset
 end LongAdder

@@ -4,10 +4,8 @@ import io.grpc
 import io.grpc.ManagedChannelBuilder
 import io.grpc.ServerBuilder
 import io.grpc.StatusException
-
-import kyo.{size as _, *}
-import kyo.grpc.helloworld.testservice.*
-
+import kgrpc.helloworld.testservice.*
+import kyo.*
 import scala.language.implicitConversions
 import scalapb.zio_grpc
 import scalapb.zio_grpc.Server
@@ -17,6 +15,8 @@ import zio.ZIO
 import zio.ZLayer
 
 object GrpcService:
+
+    given Frame = Frame.internal
 
     val host = "localhost"
     val port = 50051
@@ -35,10 +35,10 @@ object GrpcService:
             ZioTestservice.GreeterClient.scoped(ZManagedChannel(channel)).orDie
         }
 
-    def createServer(port: Int): grpc.Server < Resources =
+    def createServer(port: Int): grpc.Server < (Resource & IO) =
         kyo.grpc.Server.start(port)(_.addService(KyoGreeterImpl(size)))
 
-    def createClient(port: Int): Greeter.Client < Resources =
+    def createClient(port: Int): Greeter.Client < (Resource & IO) =
         kyo.grpc.Client.channel(host, port)(_.usePlaintext()).map(Greeter.client(_))
 
 end GrpcService

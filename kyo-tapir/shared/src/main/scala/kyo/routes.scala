@@ -2,7 +2,6 @@ package kyo
 
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
-import kyo.internal.Trace
 import scala.reflect.ClassTag
 import sttp.tapir.*
 import sttp.tapir.server.ServerEndpoint
@@ -11,29 +10,31 @@ import sttp.tapir.server.netty.NettyKyoServerBinding
 
 case class Route(endpoint: ServerEndpoint[Any, KyoSttpMonad.M]) extends AnyVal
 
-type Routes >: Routes.Effects <: Routes.Effects
+opaque type Routes <: (Emit[Route] & Async) = Emit[Route] & Async
 
 object Routes:
 
-    type Effects = Sums[Route] & Fibers
+    def run[A, S](v: Unit < (Routes & S))(using Frame): NettyKyoServerBinding < (Async & S) =
+        run[A, S](NettyKyoServer())(v)
 
-    def run[T, S](v: Unit < (Routes & S))(using Trace): NettyKyoServerBinding < (Fibers & S) =
-        run[T, S](NettyKyoServer())(v)
-
-    def run[T, S](server: NettyKyoServer)(v: Unit < (Routes & S))(using Trace): NettyKyoServerBinding < (Fibers & S) =
-        Sums.run[Route].apply[Unit, Fibers & S](v).map { (routes, _) =>
-            IOs(server.addEndpoints(routes.toSeq.map(_.endpoint).toList).start()): NettyKyoServerBinding < (Fibers & S)
+    def run[A, S](server: NettyKyoServer)(v: Unit < (Routes & S))(using Frame): NettyKyoServerBinding < (Async & S) =
+        Emit.run[Route].apply[Unit, Async & S](v).map { (routes, _) =>
+            IO(server.addEndpoints(routes.toSeq.map(_.endpoint).toList).start()): NettyKyoServerBinding < (Async & S)
         }
     end run
 
     def add[A: Tag, I, E: Tag: ClassTag, O: Flat](e: Endpoint[A, I, E, O, Any])(
-        f: I => O < (Fibers & Envs[A] & Aborts[E])
-    )(using Trace): Unit < Routes =
-        Sums.add(
+        f: I => O < (Async & Env[A] & Abort[E])
+    )(using Frame): Unit < Routes =
+        Emit(
             Route(
                 e.serverSecurityLogic[A, KyoSttpMonad.M](a => Right(a)).serverLogic((a: A) =>
                     (i: I) =>
-                        Aborts.run(Envs.run(a)(f(i)))
+                        Abort.run[E](Env.run(a)(f(i))).map {
+                            case Result.Success(v) => Right(v)
+                            case Result.Fail(e)    => Left(e)
+                            case Result.Panic(ex)  => throw ex
+                        }
                 )
             )
         ).unit
@@ -41,11 +42,11 @@ object Routes:
     def add[A: Tag, I, E: Tag: ClassTag, O: Flat](
         e: PublicEndpoint[Unit, Unit, Unit, Any] => Endpoint[A, I, E, O, Any]
     )(
-        f: I => O < (Fibers & Envs[A] & Aborts[E])
-    )(using Trace): Unit < Routes =
+        f: I => O < (Async & Env[A] & Abort[E])
+    )(using Frame): Unit < Routes =
         add(e(endpoint))(f)
 
-    def collect(init: (Unit < Routes)*)(using Trace): Unit < Routes =
-        Seqs.collect(init).unit
+    def collect(init: (Unit < Routes)*)(using Frame): Unit < Routes =
+        Kyo.collect(init).unit
 
 end Routes

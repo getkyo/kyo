@@ -47,7 +47,7 @@ object ExtendedSyntax {
                 case Union(a, _)                    => a.containsHardLine
                 case Concat(a, b)                   => a.containsHardLine || b.containsHardLine
                 // TODO: We could try a bit harder to traverse the strict paths first.
-                case d @ LazyDoc(_)                 => d.evaluated.containsHardLine
+                case d @ LazyDoc(_) => d.evaluated.containsHardLine
             }
 
 //        def containsSoftLine: Boolean =
@@ -64,7 +64,7 @@ object ExtendedSyntax {
 
         // This is unsafe. It violates the invariants of FlatAlt
         def hanging(i: Int, sep: Doc = Doc.space): Doc = {
-          FlatAlt(Doc.hardLine + Doc.spaces(i) + doc.aligned, sep + doc.flatten).grouped
+            FlatAlt(Doc.hardLine + Doc.spaces(i) + doc.aligned, sep + doc.flatten).grouped
         }
     }
 }

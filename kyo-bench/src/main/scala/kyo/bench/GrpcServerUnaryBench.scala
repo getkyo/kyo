@@ -1,14 +1,14 @@
 package kyo.bench
 
 import io.grpc.ManagedChannelBuilder
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.TimeUnit
+import kgrpc.helloworld.testservice.*
+import kyo.*
 import kyo.bench.GrpcService.*
-import kyo.grpc.helloworld.testservice.*
-import kyo.{size as _, *}
 import org.openjdk.jmh.annotations.TearDown
 import scalapb.zio_grpc.Server
 import zio.ZIO
-
-import java.util.concurrent.{TimeUnit, TimeoutException}
 
 class GrpcServerUnaryBench extends Bench.ForkOnly(reply):
 
@@ -19,15 +19,16 @@ class GrpcServerUnaryBench extends Bench.ForkOnly(reply):
     def shutdownChannel() =
         val shutdown = channel.shutdownNow().awaitTermination(10, TimeUnit.SECONDS)
         if !shutdown then throw TimeoutException("Channel did not shutdown within 10 seconds.")
+    end shutdownChannel
 
     override def catsBench() =
         ???
 
     override def kyoBenchFiber() =
-        Resources.run {
+        Resource.run {
             for
                 _     <- createServer(port)
-                reply <- IOs(blockingStub.sayHello(request))
+                reply <- IO(blockingStub.sayHello(request))
             yield reply
         }
 

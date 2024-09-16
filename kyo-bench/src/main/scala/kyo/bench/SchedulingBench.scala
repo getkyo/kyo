@@ -29,22 +29,22 @@ class SchedulingBench extends Bench.ForkOnly(1001000):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def fiber(i: Int): Int < IOs =
-            IOs.unit.flatMap { _ =>
-                IOs(i).flatMap { j =>
-                    IOs.unit.flatMap { _ =>
+        def fiber(i: Int): Int < IO =
+            IO.unit.flatMap { _ =>
+                IO(i).flatMap { j =>
+                    IO.unit.flatMap { _ =>
                         if j > depth then
-                            IOs.unit.flatMap(_ => IOs(j))
+                            IO.unit.flatMap(_ => IO(j))
                         else
-                            IOs.unit.flatMap(_ => fiber(j + 1))
+                            IO.unit.flatMap(_ => fiber(j + 1))
                     }
                 }
             }
 
-        Seqs.map(range) { i =>
-            Fibers.init(fiber(i))
+        Kyo.foreach(range) { i =>
+            Async.run(fiber(i))
         }.map { fibers =>
-            Seqs.map(fibers)(_.get)
+            Kyo.foreach(fibers)(_.get)
         }.map(_.sum)
     end kyoBenchFiber
 

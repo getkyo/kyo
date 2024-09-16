@@ -26,10 +26,10 @@ class DocxTest extends AnyFreeSpec {
                 assert(actual == expected)
             }
             "should add separators when the document is multiline" in {
-                val sig      = Doc.text("def foo = ")
-                val body     = Doc.text("a") + Doc.hardLine + Doc.text("b")
-                val doc      = sig + Docx.bracketIfMultiline(Doc.char('{'), body, Doc.char('}'))
-                val actual   = doc.render(25)
+                val sig    = Doc.text("def foo = ")
+                val body   = Doc.text("a") + Doc.hardLine + Doc.text("b")
+                val doc    = sig + Docx.bracketIfMultiline(Doc.char('{'), body, Doc.char('}'))
+                val actual = doc.render(25)
                 val expected =
                     """def foo = {
                       |  a

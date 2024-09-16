@@ -1,8 +1,0 @@
-#!/bin/sh
-echo "Running pre-commit hook to format Scala source files"
-sbt scalafmtAll
-if ! git diff --exit-code --quiet
-then
-    echo "Formatting changes detected. Please stage the changes and commit again."
-    exit 1
-fi

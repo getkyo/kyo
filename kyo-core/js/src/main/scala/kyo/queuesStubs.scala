@@ -2,22 +2,22 @@ package org.jctools.queues
 
 import java.util.ArrayDeque
 
-class StubQueue[T](capacity: Int) extends ArrayDeque[T]:
+class StubQueue[A](capacity: Int) extends ArrayDeque[A]:
     def isFull = size() >= capacity
-    override def offer(e: T): Boolean =
+    override def offer(e: A): Boolean =
         !isFull && super.offer(e)
 end StubQueue
 
-case class MpmcArrayQueue[T](capacity: Int) extends StubQueue[T](capacity)
+case class MpmcArrayQueue[A](capacity: Int) extends StubQueue[A](capacity)
 
-case class MpscArrayQueue[T](capacity: Int) extends StubQueue[T](capacity)
+case class MpscArrayQueue[A](capacity: Int) extends StubQueue[A](capacity)
 
-case class SpmcArrayQueue[T](capacity: Int) extends StubQueue[T](capacity)
+case class SpmcArrayQueue[A](capacity: Int) extends StubQueue[A](capacity)
 
-case class SpscArrayQueue[T](capacity: Int) extends StubQueue[T](capacity)
+case class SpscArrayQueue[A](capacity: Int) extends StubQueue[A](capacity)
 
-case class MpmcUnboundedXaddArrayQueue[T](chunkSize: Int) extends ArrayDeque[T] {}
+case class MpmcUnboundedXaddArrayQueue[A](chunkSize: Int) extends ArrayDeque[A] {}
 
-case class MpscUnboundedArrayQueue[T](chunkSize: Int) extends ArrayDeque[T] {}
+case class MpscUnboundedArrayQueue[A](chunkSize: Int) extends ArrayDeque[A] {}
 
-case class SpscUnboundedArrayQueue[T](chunkSize: Int) extends ArrayDeque[T] {}
+case class SpscUnboundedArrayQueue[A](chunkSize: Int) extends ArrayDeque[A] {}

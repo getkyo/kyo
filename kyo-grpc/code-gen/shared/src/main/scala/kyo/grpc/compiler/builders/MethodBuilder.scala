@@ -1,6 +1,7 @@
 package kyo.grpc.compiler.builders
 
-import kyo.grpc.compiler.{INDENT, builders}
+import kyo.grpc.compiler.INDENT
+import kyo.grpc.compiler.builders
 import org.typelevel.paiges.Doc
 import org.typelevel.paiges.ExtendedSyntax.*
 import scalapb.compiler.FunctionalPrinter.PrinterEndo

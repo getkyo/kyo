@@ -2,7 +2,6 @@ package sttp.tapir.server.netty.internal
 
 import io.netty.handler.codec.http.HttpContent
 import kyo.*
-import kyo.Fibers
 import kyo.internal.KyoSttpMonad
 import org.reactivestreams.Publisher
 import scala.concurrent.ExecutionContext
@@ -24,9 +23,9 @@ private[netty] class NettyKyoRequestBody(val createFile: ServerRequest => KyoStt
         contentLength: Option[Long],
         maxBytes: Option[Long]
     ): KyoSttpMonad.M[Array[Byte]] =
-        Fibers.initPromise[Array[Byte]].map { p =>
+        Promise.init[Nothing, Array[Byte]].map { p =>
             val fut = SimpleSubscriber.processAll(publisher, contentLength, maxBytes)
-            fut.onComplete(r => IOs.run(p.complete(IOs(r.get))))(ExecutionContext.parasitic)
+            fut.onComplete(r => IO.run(p.complete(Result(r.get))).eval)(ExecutionContext.parasitic)
             p.get
         }
 

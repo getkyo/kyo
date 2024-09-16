@@ -6,6 +6,6 @@ import sttp.client3.internal.httpclient.Sequencer
 
 class KyoSequencer(mutex: Meter) extends Sequencer[KyoSttpMonad.M]:
 
-    def apply[T](t: => KyoSttpMonad.M[T]) =
-        mutex.run[T, Fibers](t)
+    def apply[A](t: => KyoSttpMonad.M[A]) =
+        mutex.run(t)
 end KyoSequencer

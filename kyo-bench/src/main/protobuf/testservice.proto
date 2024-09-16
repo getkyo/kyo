@@ -1,7 +1,8 @@
 syntax = "proto3";
 
 option java_multiple_files = true;
-option java_package = "kyo.grpc.helloworld";
+// Don't use kyo here because otherwise it cannot derive the Frame.
+option java_package = "kgrpc.helloworld";
 option java_outer_classname = "HelloWorldProto";
 
 package helloworld;

@@ -6,6 +6,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.Task.Done
@@ -207,7 +208,7 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
     }
 
     "live" - {
-        def withExecutor[T](f: Executor => T): T = {
+        def withExecutor[A](f: Executor => A): A = {
             val exec = Executors.newCachedThreadPool(Threads("test"))
             try f(exec)
             finally {
@@ -389,4 +390,110 @@ class WorkerTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    "checkAvailability" - {
+
+        val scheduled = new AtomicInteger
+
+        def withWorker[A](testCode: Worker => A): A = {
+            val executor = Executors.newCachedThreadPool(Threads("test-worker"))
+            val clock    = InternalClock(executor)
+            val worker = new Worker(0, executor, (_, _) => { scheduled.incrementAndGet(); () }, _ => null, clock, 10) {
+                def getCurrentCycle() = 0L
+                def shouldStop()      = false
+            }
+            try {
+                testCode(worker)
+            } finally {
+                executor.shutdown()
+            }
+        }
+
+        "when worker is idle" in withWorker { worker =>
+            assert(worker.checkAvailability(0))
+        }
+
+        "when worker is running and not stalled or blocked" in withWorker { worker =>
+            val task = TestTask()
+            worker.enqueue(task)
+            eventually(assert(task.executions == 1))
+            assert(worker.checkAvailability(0))
+        }
+
+        "when task is running longer than time slice" in withWorker { worker =>
+            val cdl = new CountDownLatch(1)
+            val longRunningTask = TestTask(_run = () => {
+                while (cdl.getCount() > 0) {}
+                Task.Done
+            })
+            worker.enqueue(longRunningTask)
+            eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
+            cdl.countDown()
+        }
+
+        "when worker is blocked" in withWorker { worker =>
+            val cdl = new CountDownLatch(1)
+            val blockedTask = TestTask(_run = () => {
+                cdl.await()
+                Task.Done
+            })
+            worker.enqueue(blockedTask)
+            eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
+            cdl.countDown()
+        }
+
+        "drains queue when transitioning to stalled state" in withWorker { worker =>
+            val cdl = new CountDownLatch(1)
+            val stalledTask = TestTask(_run = () => {
+                cdl.await()
+                Task.Done
+            })
+            worker.enqueue(stalledTask)
+            worker.enqueue(TestTask())
+            worker.enqueue(TestTask())
+            eventually {
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+                assert(worker.load() == 1) // Only the running task should remain
+            }
+            cdl.countDown()
+        }
+
+        "preempts long-running task" in withWorker { worker =>
+            var preempted = false
+            val longRunningTask = TestTask(
+                _run = () => {
+                    while (!preempted) {}
+                    Task.Done
+                },
+                _preempt = () => preempted = true
+            )
+            worker.enqueue(longRunningTask)
+            eventually {
+                assert(!worker.checkAvailability(System.currentTimeMillis()))
+                assert(preempted)
+            }
+        }
+        "drains queue only once when transitioning to stalled state" in withWorker { worker =>
+            scheduled.set(0)
+            val cdl = new CountDownLatch(1)
+            val stalledTask = TestTask(_run = () => {
+                cdl.await()
+                Task.Done
+            })
+            worker.enqueue(stalledTask)
+
+            for (_ <- 1 to 5) {
+                worker.enqueue(TestTask())
+            }
+
+            eventually(assert(!worker.checkAvailability(System.currentTimeMillis())))
+            worker.enqueue(TestTask())
+            assert(!worker.checkAvailability(System.currentTimeMillis()))
+            worker.enqueue(TestTask())
+            assert(!worker.checkAvailability(System.currentTimeMillis()))
+
+            assert(scheduled.get() == 5)
+            cdl.countDown()
+            eventually(assert(worker.checkAvailability(System.currentTimeMillis())))
+        }
+    }
 }
