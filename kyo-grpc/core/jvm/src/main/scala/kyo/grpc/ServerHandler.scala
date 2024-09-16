@@ -12,13 +12,12 @@ object ServerHandler:
 
     def unary[Request, Response: Flat](f: Request => Response < GrpcResponse)(using Frame): ServerCallHandler[Request, Response] =
         ServerCalls.asyncUnaryCall { (request, observer) =>
-            IO.run(Async.run(f(request)).flatMap { fiber =>
-                fiber.onComplete(completeObserver(observer))
-            }).eval
+            // TODO: Is it safe to discard the Fiber here?
+            IO.run(Async.run(Abort.run[StatusException](f(request)).map(completeObserver(observer, _)))).eval
         }
 
     // Adapted from scalapb.grpc.Grpc#completeObserver.
-    private def completeObserver[Response](observer: StreamObserver[Response])(result: Result[StatusException, Response]): Unit =
+    private def completeObserver[Response](observer: StreamObserver[Response], result: Result[StatusException, Response]): Unit =
         // TODO: Why is there a partial match warning here?
         result.map(observer.onNext) match
             case Result.Success(_) =>

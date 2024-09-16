@@ -478,7 +478,7 @@ lazy val `kyo-grpc-e2e` =
         ).jvmSettings(
             codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
             libraryDependencies ++= Seq(
-                "io.grpc" % "grpc-netty" % "1.64.0"
+                "io.grpc" % "grpc-netty" % "1.65.1"
             )
         ).jsSettings(
             `js-settings`,
@@ -585,9 +585,10 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.28",
             libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.28",
             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0",
+            libraryDependencies += "io.grpc"              % "grpc-netty"          % "1.65.1",
             libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.10",
             libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.10",
-            libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
+            libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test,
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
