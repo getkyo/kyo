@@ -26,7 +26,7 @@ class ServiceTest extends Test:
             forEvery(Status.Code.values().filterNot(_ == Status.Code.OK)) { code =>
                 run {
                     val status = code.toStatus
-                    Abort.run {
+                    Abort.run[StatusRuntimeException] {
                         for
                             client <- createClientAndServer
                             request = Cancel(status.getCode.value)
@@ -39,16 +39,16 @@ class ServiceTest extends Test:
             }
         }
         "fail" in run {
-            for
-                client <- createClientAndServer
-                message = "Oh no!"
-                request = Fail(message)
-                response <- Abort.catching[StatusRuntimeException](client.unary(request))
-            yield
-                val responseOrException = response match
-                    case e: StatusRuntimeException => Right(e)
-                    case other                     => Left(other)
-                assert(responseOrException.value.getStatus === Status.INTERNAL.withDescription(message))
+            val message = "Oh no!"
+            Abort.run[StatusRuntimeException] {
+                for
+                    client <- createClientAndServer
+                    request = Fail(message)
+                    _ <- Abort.catching[StatusRuntimeException](client.unary(request))
+                yield ()
+            }.map { result =>
+                assert(result.swap.toEither.value.getStatus === Status.INTERNAL.withDescription(message))
+            }
         }
     }
 

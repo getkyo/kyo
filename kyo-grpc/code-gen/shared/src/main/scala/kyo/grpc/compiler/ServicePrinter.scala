@@ -195,7 +195,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.Bidirectional   => Types.streamObserver(method.inputType.scalaType)
         }
         val delegate = method.streamType match {
-            case StreamType.Unary           => s"asyncUnaryCall(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
+            case StreamType.Unary           => s"unary(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
             case StreamType.ClientStreaming => ???
             case StreamType.ServerStreaming => ???
             case StreamType.Bidirectional   => ???
@@ -208,7 +208,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             .addParameterList(parameters*)
             .addReturnType(returnType)
             .addBody(
-                _.add(s"${Types.clientCalls}.$delegate")
+                _.add(s"${Types.clientCall}.$delegate")
             )
     }
 }

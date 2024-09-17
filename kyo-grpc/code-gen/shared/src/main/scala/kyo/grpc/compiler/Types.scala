@@ -14,11 +14,11 @@ object Types {
 
     val frame = "_root_.kyo.Frame"
 
-    val clientCalls = "_root_.kyo.grpc.ClientCalls"
+    val clientCall = "_root_.kyo.grpc.ClientCall"
 
     val grpcResponse = "_root_.kyo.grpc.GrpcResponse"
 
-    val grpcRequest = "_root_.kyo.Async"
+    val grpcRequest = "_root_.kyo.grpc.GrpcRequest"
 
     val serverHandler = "_root_.kyo.grpc.ServerHandler"
 
