@@ -475,6 +475,35 @@ class AsyncTest extends Test:
         }
     }
 
+    "Fiber.fromFuture" - {
+        import scala.concurrent.Future
+        import scala.concurrent.ExecutionContext.Implicits.global
+
+        "success" in run {
+            val future = Future.successful(42)
+            for
+                fiber  <- Fiber.fromFuture[Throwable, Int](future)
+                result <- fiber.get
+            yield assert(result == 42)
+            end for
+        }
+
+        "failure" in run {
+            val exception = new RuntimeException("Test exception")
+            val future    = Future.failed(exception)
+            for
+                fiber  <- Fiber.fromFuture[RuntimeException, Int](future)
+                result <- Abort.run(fiber.get)
+            yield assert(result == Result.fail(exception))
+            end for
+        }
+
+        "failed failure inference" in run {
+            val future = Future.successful(42)
+            assertDoesNotCompile("Fiber.fromFuture(future)")
+        }
+    }
+
     "stack safety" in run {
         def loop(i: Int): Assertion < Async =
             if i > 0 then

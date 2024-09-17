@@ -9,10 +9,12 @@ import kyo.Tag
 import kyo.internal.FiberPlatformSpecific
 import kyo.kernel.*
 import kyo.scheduler.*
+import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.reflect.ClassTag
 import scala.util.NotGiven
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
@@ -171,19 +173,34 @@ object Async:
 
         /** Creates a Fiber from a Future.
           *
+          * This method allows integration of existing Future-based code with Kyo's Fiber system. It handles successful completion, expected
+          * failures (of type E), and unexpected failures.
+          *
           * @param f
-          *   The Future to create a Fiber from
+          *   The Future to convert into a Fiber
+          * @tparam E
+          *   The expected error type that the Future might fail with. Use Throwable if you don't need to catch specific exceptions.
+          * @tparam A
+          *   The type of the successful result
           * @return
           *   A Fiber that completes with the result of the Future
           */
-        def fromFuture[A: Flat](f: Future[A])(using Frame): Fiber[Nothing, A] < IO =
+        def fromFuture[E <: Throwable, A: Flat](f: Future[A])(using
+            frame: Frame,
+            @implicitNotFound(
+                "Cannot infer the failure type for Fiber.fromFuture. Please provide explicit type parameters.\n" +
+                    "Example: Fiber.fromFuture[MyException, String](myFuture: Future[String])"
+            ) ct: ClassTag[E]
+        ): Fiber[E, A] < IO =
             import scala.util.*
             IO {
-                val p = new IOPromise[Nothing, A] with (Try[A] => Unit):
+                val p = new IOPromise[E, A] with (Try[A] => Unit):
                     def apply(result: Try[A]) =
                         result match
                             case Success(v) =>
                                 completeUnit(Result.success(v))
+                            case Failure(ex: E) =>
+                                completeUnit(Result.fail(ex))
                             case Failure(ex) =>
                                 completeUnit(Result.panic(ex))
 

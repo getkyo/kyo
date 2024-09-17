@@ -9,5 +9,7 @@ object PlatformBackend:
             val b = FetchBackend()
             def send[A](r: Request[A, Any]) =
                 given Frame = Frame.internal
-                Fiber.fromFuture(r.send(b)).map(_.get)
+                Abort.run(Fiber.fromFuture[Throwable, Response[A]](r.send(b)).map(_.get))
+                    .map(_.fold(ex => Abort.fail(FailedRequest(ex.getFailure)))(identity))
+            end send
 end PlatformBackend
