@@ -55,7 +55,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                 val trace = this.trace
                                 this.trace = null.asInstanceOf[Trace]
                                 input.onComplete { r =>
-                                    val task = IOTask(cont(r.asInstanceOf[Result[Nothing, C]]), trace, context, ensures, runtime)
+                                    val task = IOTask(IO(cont(r.asInstanceOf[Result[Nothing, C]])), trace, context, ensures, runtime)
                                     this.becomeUnit(task)
                                 }
                                 nullResult
