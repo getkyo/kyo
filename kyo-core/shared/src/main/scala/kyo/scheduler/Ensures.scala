@@ -1,6 +1,7 @@
 package kyo.scheduler
 
 import java.util.ArrayDeque
+import kyo.Maybe
 import kyo.discard
 import org.jctools.queues.MpmcArrayQueue
 import scala.annotation.tailrec
@@ -13,11 +14,9 @@ private[kyo] object Ensures:
     val empty: Ensures = Empty
 
     private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1000)
+
     private def buffer(): ArrayDeque[() => Unit] =
-        val b = bufferCache.poll()
-        if b == null then new ArrayDeque()
-        else b
-    end buffer
+        Maybe(bufferCache.poll()).getOrElse(new ArrayDeque())
 
     extension (e: Ensures)
         def add(f: () => Unit): Ensures =

@@ -7,7 +7,7 @@ import kyo.kernel.ArrowEffect
 import kyo.scheduler.IOTask.*
 import scala.util.control.NonFatal
 
-private[kyo] class IOTask[Ctx, E, A] private (
+sealed private[kyo] class IOTask[Ctx, E, A] private (
     private var curr: A < (Ctx & Async & Abort[E]),
     private var trace: Trace,
     private var ensures: Ensures
@@ -55,7 +55,7 @@ private[kyo] class IOTask[Ctx, E, A] private (
                                 val trace = this.trace
                                 this.trace = null.asInstanceOf[Trace]
                                 input.onComplete { r =>
-                                    val task = IOTask(IO(cont(r.asInstanceOf[Result[Nothing, C]])), trace, context, ensures, runtime)
+                                    val task = IOTask(cont(r.asInstanceOf[Result[Nothing, C]]), trace, context, ensures, runtime)
                                     this.becomeUnit(task)
                                 }
                                 nullResult

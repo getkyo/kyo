@@ -5,6 +5,7 @@ import java.util.concurrent.locks.LockSupport
 import kyo.*
 import kyo.Result.Panic
 import kyo.kernel.Safepoint
+import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
@@ -112,7 +113,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         becomeLoop(other.compress())
     end become
 
-    final def onComplete(f: Result[E, A] => Unit): Unit =
+    inline def onComplete(inline f: Result[E, A] => Unit): Unit =
         @tailrec def onCompleteLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
@@ -211,7 +212,8 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
         def waiters: Int
         def run(v: Result[E, A]): Pending[E, A]
 
-        def add(f: Result[E, A] => Unit): Pending[E, A] =
+        @nowarn("msg=anonymous")
+        inline def add(inline f: Result[E, A] => Unit): Pending[E, A] =
             new Pending[E, A]:
                 def waiters: Int = self.waiters + 1
                 def run(v: Result[E, A]) =
