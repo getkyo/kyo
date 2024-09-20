@@ -264,9 +264,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
       *   A unit effect that runs the stream without collecting results
       */
     def runDiscard(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Unit < S =
-        ArrowEffect.handle(tag, v.unit)(
-            [C] => (input, cont) => cont(Stop)
-        )
+        runForeach(_ => ())
 
     /** Runs the stream and applies the given function to each emitted value.
       *
