@@ -10,7 +10,7 @@ class AsyncTest extends Test:
         "complete" in run {
             for
                 p <- Promise.init[Nothing, Int]
-                a <- p.complete(Result.success(1))
+                a <- p.complete(Result.succeed(1))
                 b <- p.done
                 c <- p.get
             yield assert(a && b && c == 1)
@@ -18,8 +18,8 @@ class AsyncTest extends Test:
         "complete twice" in run {
             for
                 p <- Promise.init[Nothing, Int]
-                a <- p.complete(Result.success(1))
-                b <- p.complete(Result.success(2))
+                a <- p.complete(Result.succeed(1))
+                b <- p.complete(Result.succeed(2))
                 c <- p.done
                 d <- p.get
             yield assert(a && !b && c && d == 1)
@@ -35,10 +35,10 @@ class AsyncTest extends Test:
             val ex = new Exception
             for
                 p <- Promise.init[Exception, Int]
-                a <- p.complete(Result.fail(ex))
+                a <- p.complete(Result.error(ex))
                 b <- p.done
                 c <- p.getResult
-            yield assert(a && b && c == Result.fail(ex))
+            yield assert(a && b && c == Result.error(ex))
             end for
         }
 
@@ -47,7 +47,7 @@ class AsyncTest extends Test:
                 for
                     p1 <- Promise.init[Nothing, Int]
                     p2 <- Promise.init[Nothing, Int]
-                    a  <- p2.complete(Result.success(42))
+                    a  <- p2.complete(Result.succeed(42))
                     b  <- p1.become(p2)
                     c  <- p1.done
                     d  <- p1.get
@@ -59,11 +59,11 @@ class AsyncTest extends Test:
                 for
                     p1 <- Promise.init[Exception, Int]
                     p2 <- Promise.init[Exception, Int]
-                    a  <- p2.complete(Result.fail(ex))
+                    a  <- p2.complete(Result.error(ex))
                     b  <- p1.become(p2)
                     c  <- p1.done
                     d  <- p1.getResult
-                yield assert(a && b && c && d == Result.fail(ex))
+                yield assert(a && b && c && d == Result.error(ex))
                 end for
             }
 
@@ -71,8 +71,8 @@ class AsyncTest extends Test:
                 for
                     p1 <- Promise.init[Nothing, Int]
                     p2 <- Promise.init[Nothing, Int]
-                    a  <- p1.complete(Result.success(42))
-                    b  <- p2.complete(Result.success(99))
+                    a  <- p1.complete(Result.succeed(42))
+                    b  <- p2.complete(Result.succeed(99))
                     c  <- p1.become(p2)
                     d  <- p1.get
                 yield assert(a && b && !c && d == 42)
@@ -81,7 +81,7 @@ class AsyncTest extends Test:
             "done fiber" in run {
                 for
                     p <- Promise.init[Nothing, Int]
-                    a <- p.become(Fiber.success(42))
+                    a <- p.become(Fiber.succeed(42))
                     b <- p.done
                     c <- p.get
                 yield assert(a && b && c == 42)
@@ -155,8 +155,8 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(Duration.Infinity))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(Timeout(_)) => succeed
-                    case v                       => fail(v.toString())
+                    case Result.Error(Timeout(_)) => succeed
+                    case v                        => fail(v.toString())
                 }
         }
 
@@ -165,8 +165,8 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(Timeout(_)) => succeed
-                    case v                       => fail(v.toString())
+                    case Result.Error(Timeout(_)) => succeed
+                    case v                        => fail(v.toString())
                 }
         }
 
@@ -175,8 +175,8 @@ class AsyncTest extends Test:
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
-                    case Result.Fail(Timeout(_)) => succeed
-                    case v                       => fail(v.toString())
+                    case Result.Error(Timeout(_)) => succeed
+                    case v                        => fail(v.toString())
                 }
         }
     }

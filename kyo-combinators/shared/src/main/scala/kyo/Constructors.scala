@@ -99,8 +99,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that fails with the given error
       */
-    def fail[E, S](error: => E < S)(using Frame): Nothing < (S & Abort[E]) =
-        error.map(e => Abort.fail(e))
+    def error[E, S](error: => E < S)(using Frame): Nothing < (S & Abort[E]) =
+        error.map(e => Abort.error(e))
 
     /** Applies a function to each element in parallel and returns a new sequence with the results.
       *

@@ -254,7 +254,7 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of this computation with Abort[Maybe.Empty] effect
       */
     def when[S1](condition: => Boolean < S1)(using Frame): A < (S & S1 & Abort[Maybe.Empty]) =
-        condition.map(c => if c then effect else Abort.fail(Maybe.Empty))
+        condition.map(c => if c then effect else Abort.error(Maybe.Empty))
 
     /** Performs this computation catching any Throwable in an Abort[Throwable] effect.
       *
@@ -280,7 +280,7 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of this computation with Abort[Maybe.Empty] effect
       */
     def unless[S1](condition: Boolean < S1)(using Frame): A < (S & S1 & Abort[Maybe.Empty]) =
-        condition.map(c => if c then Abort.fail(Maybe.Empty) else effect)
+        condition.map(c => if c then Abort.error(Maybe.Empty) else effect)
 
 end extension
 
@@ -328,7 +328,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         flat: Flat[A]
     )(using Frame): A < (S & Abort[Maybe.Empty]) =
         effect.handleAbort.map {
-            case Result.Fail(_)    => Abort.fail(Maybe.Empty)
+            case Result.Error(_)   => Abort.error(Maybe.Empty)
             case Result.Panic(e)   => throw e
             case Result.Success(a) => a
         }
@@ -347,7 +347,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         fl: Flat[A]
     )(using Frame): A1 < (S & S1) =
         effect.handleAbort.map {
-            case Result.Fail(e)    => fn(e)
+            case Result.Error(e)   => fn(e)
             case Result.Panic(e)   => throw e
             case Result.Success(v) => v
         }
@@ -365,9 +365,9 @@ extension [A, S, E](effect: A < (Abort[E] & S))
         frame: Frame
     ): A1 < (S & S1 & Abort[E]) =
         effect.handleAbort.map {
-            case Result.Fail(e) =>
+            case Result.Error(e) =>
                 if fn.isDefinedAt(e) then fn(e)
-                else Abort.fail(e)
+                else Abort.error(e)
             case Result.Panic(e)   => throw e
             case Result.Success(v) => v
         }
@@ -420,7 +420,7 @@ extension [A, S, E](effect: A < (Abort[Maybe.Empty] & S))
       */
     def handleEmptyAbort(using f: Flat[A], frame: Frame): Maybe[A] < S =
         Abort.run[Maybe.Empty](effect).map {
-            case Result.Fail(_)    => Maybe.Empty
+            case Result.Error(_)   => Maybe.Empty
             case Result.Panic(e)   => throw e
             case Result.Success(a) => Maybe.Defined(a)
         }
@@ -443,9 +443,9 @@ extension [A, S, E](effect: A < (Abort[Maybe.Empty] & S))
             f   <- failure
             res <- effect.handleSomeAbort[Maybe.Empty]()
         yield res match
-            case Result.Fail(_)    => Abort.get(Result.Fail(f))
+            case Result.Error(_)   => Abort.get(Result.Error(f))
             case Result.Panic(e)   => Abort.get(Result.Panic(e))
-            case Result.Success(a) => Abort.get(Result.success(a))
+            case Result.Success(a) => Abort.get(Result.succeed(a))
 end extension
 
 class SomeAbortToChoiceOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
@@ -485,7 +485,7 @@ class SomeAbortToEmptyOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends 
         frame: Frame
     ): A < (S & reduce.SReduced & Abort[Maybe.Empty]) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
-            case Result.Fail(_)        => Abort.get(Result.Fail(Maybe.Empty))
+            case Result.Error(_)       => Abort.get(Result.Error(Maybe.Empty))
             case p @ Result.Panic(e)   => Abort.get(p.asInstanceOf[Result[Nothing, Nothing]])
             case s @ Result.Success(a) => Abort.get(s.asInstanceOf[Result[Nothing, A]])
         }
@@ -531,7 +531,7 @@ class CatchSomeAbort[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVa
         [A1 >: A, S1] =>
             (fn: E1 => A1 < S1) =>
                 reduce(Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
-                    case Result.Fail(e1)   => fn(e1)
+                    case Result.Error(e1)  => fn(e1)
                     case Result.Success(v) => v
                     case Result.Panic(ex)  => throw ex
                 })
@@ -556,9 +556,9 @@ class CatchSomeAbortPartialOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) ext
         [A1 >: A, S1] =>
             (fn: PartialFunction[E1, A1 < S1]) =>
                 Abort.run[E1](effect).map {
-                    case Result.Fail(e1) if fn.isDefinedAt(e1) => fn(e1)
-                    case e1: Result.Error[?]                   => Abort.get(e1)
-                    case Result.Success(a)                     => a
+                    case Result.Error(e1) if fn.isDefinedAt(e1) => fn(e1)
+                    case e1: Result.Error[?]                    => Abort.get(e1)
+                    case Result.Success(a)                      => a
             }
     end apply
 end CatchSomeAbortPartialOps
@@ -664,7 +664,7 @@ extension [A, S](effect: A < (S & Choice))
         Frame
     ): A < (S & S1 & Abort[E]) =
         Choice.run(effect).map {
-            case s if s.isEmpty => Kyo.fail[E, S1](error)
+            case s if s.isEmpty => Kyo.error[E, S1](error)
             case s              => s.head
         }
 

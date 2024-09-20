@@ -29,7 +29,7 @@ object ZIOs:
       *   A Kyo effect that will produce A or abort with E
       */
     def get[E >: Nothing: Tag, A](v: ZIO[Any, E, A])(using Frame): A < (Abort[E] & ZIOs) =
-        val task = v.fold(Result.fail, Result.success)
+        val task = v.fold(Result.error, Result.succeed)
         ArrowEffect.suspendMap(Tag[GetZIO], task)(Abort.get(_))
 
     /** Executes a ZIO effect that cannot fail and returns its result within the Kyo effect system.
@@ -79,7 +79,7 @@ object ZIOs:
                 ).pipe(Async.run).map { fiber =>
                     ZIO.asyncInterrupt[Any, E, A] { cb =>
                         fiber.unsafe.onComplete {
-                            case Result.Fail(ex)   => cb(Exit.fail(ex))
+                            case Result.Error(ex)  => cb(Exit.fail(ex))
                             case Result.Panic(ex)  => cb(Exit.die(ex))
                             case Result.Success(v) => cb(v)
                         }

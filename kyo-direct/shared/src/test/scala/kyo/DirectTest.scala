@@ -40,7 +40,7 @@ class DirectTest extends Test:
                 val b = await(IO("world"))
                 a + " " + b
             }
-        assert(IO.run(Abort.run(io)).eval == Result.success("hello world"))
+        assert(IO.run(Abort.run(io)).eval == Result.succeed("hello world"))
     }
 
     "if" in {

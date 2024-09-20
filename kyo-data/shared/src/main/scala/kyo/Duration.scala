@@ -29,18 +29,18 @@ object Duration:
     def parse(s: String): Result[InvalidDuration, Duration] =
         val pattern = """(\d+)\s*([a-zA-Z]+)""".r
         s.trim.toLowerCase match
-            case "infinity" | "inf" => Result.success(Infinity)
+            case "infinity" | "inf" => Result.succeed(Infinity)
             case pattern(value, unit) =>
                 for
                     longValue <-
                         Result.catching[NumberFormatException](value.toLong)
-                            .mapFail(_ => InvalidDuration(s"Invalid number: $value"))
+                            .mapError(_ => InvalidDuration(s"Invalid number: $value"))
                     unitEnum <-
                         Units.values.find(_.names.exists(_.startsWith(unit)))
-                            .map(Result.success)
-                            .getOrElse(Result.fail(InvalidDuration(s"Invalid unit: $unit")))
+                            .map(Result.succeed)
+                            .getOrElse(Result.error(InvalidDuration(s"Invalid unit: $unit")))
                 yield fromUnits(longValue, unitEnum)
-            case _ => Result.fail(InvalidDuration(s"Invalid duration format: $s"))
+            case _ => Result.error(InvalidDuration(s"Invalid duration format: $s"))
         end match
     end parse
 

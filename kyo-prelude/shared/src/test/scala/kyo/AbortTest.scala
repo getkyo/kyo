@@ -12,13 +12,13 @@ class AbortsTest extends Test:
         "handle" in {
             assert(
                 Abort.run[Ex1](Abort.get[Ex1](Right(1))).eval ==
-                    Result.success(1)
+                    Result.succeed(1)
             )
         }
         "handle + transform" in {
             assert(
                 Abort.run[Ex1](Abort.get[Ex1](Right(1)).map(_ + 1)).eval ==
-                    Result.success(2)
+                    Result.succeed(2)
             )
         }
         "handle + effectful transform" in {
@@ -26,7 +26,7 @@ class AbortsTest extends Test:
                 Abort.run[Ex1](Abort.get[Ex1](Right(1)).map(i =>
                     Abort.get[Ex1](Right(i + 1))
                 )).eval ==
-                    Result.success(2)
+                    Result.succeed(2)
             )
         }
         "handle + transform + effectful transform" in {
@@ -34,7 +34,7 @@ class AbortsTest extends Test:
                 Abort.run[Ex1](Abort.get[Ex1](Right(1)).map(_ + 1).map(i =>
                     Abort.get[Ex1](Right(i + 1))
                 )).eval ==
-                    Result.success(3)
+                    Result.succeed(3)
             )
         }
         "handle + transform + failed effectful transform" in {
@@ -43,31 +43,31 @@ class AbortsTest extends Test:
                 Abort.run[Ex1](Abort.get[Ex1](Right(1)).map(_ + 1).map(_ =>
                     Abort.get(fail)
                 )).eval ==
-                    Result.fail(ex1)
+                    Result.error(ex1)
             )
         }
         "union tags" - {
             "in suspend 1" in {
                 val effect1: Int < Abort[String | Boolean] =
-                    Abort.fail("failure")
+                    Abort.error("failure")
                 val handled1: Result[String, Int] < Abort[Boolean] =
                     Abort.run[String](effect1)
                 val handled2: Result[Boolean, Result[String, Int]] =
                     Abort.run[Boolean](handled1).eval
-                assert(handled2 == Result.success(Result.fail("failure")))
+                assert(handled2 == Result.succeed(Result.error("failure")))
             }
             "in suspend 2" in {
                 val effect1: Int < Abort[String | Boolean] =
-                    Abort.fail("failure")
+                    Abort.error("failure")
                 val handled1: Result[Boolean, Int] < Abort[String] =
                     Abort.run[Boolean](effect1)
                 val handled2: Result[String, Result[Boolean, Int]] =
                     Abort.run[String](handled1).eval
-                assert(handled2 == Result.fail("failure"))
+                assert(handled2 == Result.error("failure"))
             }
             "in handle" in {
                 val effect: Int < Abort[String | Boolean] =
-                    Abort.fail("failure")
+                    Abort.error("failure")
                 val _ = effect
                 assertDoesNotCompile("Abort.run[String | Boolean](effect)")
             }
@@ -75,27 +75,27 @@ class AbortsTest extends Test:
         "try" in {
             import scala.util.Try
 
-            assert(Abort.run(Abort.get(Try(throw ex1))).eval == Result.fail(ex1))
-            assert(Abort.run(Abort.get(Try("success!"))).eval == Result.success("success!"))
+            assert(Abort.run(Abort.get(Try(throw ex1))).eval == Result.error(ex1))
+            assert(Abort.run(Abort.get(Try("success!"))).eval == Result.succeed("success!"))
         }
     }
 
     "get" - {
         "either" in {
-            assert(Abort.run(Abort.get(Left(1))).eval == Result.fail(1))
-            assert(Abort.run(Abort.get[Ex1](Right(1))).eval == Result.success(1))
+            assert(Abort.run(Abort.get(Left(1))).eval == Result.error(1))
+            assert(Abort.run(Abort.get[Ex1](Right(1))).eval == Result.succeed(1))
         }
         "result" in {
-            assert(Abort.run(Abort.get(Result.success[Ex1, Int](1))).eval == Result.success(1))
-            assert(Abort.run(Abort.get(Result.fail(ex1))).eval == Result.fail(ex1))
+            assert(Abort.run(Abort.get(Result.succeed[Ex1, Int](1))).eval == Result.succeed(1))
+            assert(Abort.run(Abort.get(Result.error(ex1))).eval == Result.error(ex1))
         }
         "option" in {
-            assert(Abort.run(Abort.get(Option.empty)).eval == Result.fail(Maybe.Empty))
-            assert(Abort.run(Abort.get(Some(1))).eval == Result.success(1))
+            assert(Abort.run(Abort.get(Option.empty)).eval == Result.error(Maybe.Empty))
+            assert(Abort.run(Abort.get(Some(1))).eval == Result.succeed(1))
         }
         "maybe" in {
-            assert(Abort.run(Abort.get(Maybe.empty)).eval == Result.fail(Maybe.Empty))
-            assert(Abort.run(Abort.get(Maybe(1))).eval == Result.success(1))
+            assert(Abort.run(Abort.get(Maybe.empty)).eval == Result.error(Maybe.Empty))
+            assert(Abort.run(Abort.get(Maybe(1))).eval == Result.succeed(1))
         }
     }
 
@@ -105,32 +105,32 @@ class AbortsTest extends Test:
             "handle" in {
                 assert(
                     Abort.run[Ex1](v).eval ==
-                        Result.success(1)
+                        Result.succeed(1)
                 )
             }
             "handle + transform" in {
                 assert(
                     Abort.run[Ex1](v.map(_ + 1)).eval ==
-                        Result.success(2)
+                        Result.succeed(2)
                 )
             }
             "handle + effectful transform" in {
                 assert(
                     Abort.run[Ex1](v.map(i => Abort.get[Ex1](Right(i + 1)))).eval ==
-                        Result.success(2)
+                        Result.succeed(2)
                 )
             }
             "handle + transform + effectful transform" in {
                 assert(
                     Abort.run[Ex1](v.map(_ + 1).map(i => Abort.get[Ex1](Right(i + 1)))).eval ==
-                        Result.success(3)
+                        Result.succeed(3)
                 )
             }
             "handle + transform + failed effectful transform" in {
                 val fail = Left[Ex1, Int](ex1)
                 assert(
                     Abort.run[Ex1](v.map(_ + 1).map(_ => Abort.get(fail))).eval ==
-                        Result.fail(ex1)
+                        Result.error(ex1)
                 )
             }
         }
@@ -139,32 +139,32 @@ class AbortsTest extends Test:
             "handle" in {
                 assert(
                     Abort.run[Ex1](v).eval ==
-                        Result.fail(ex1)
+                        Result.error(ex1)
                 )
             }
             "handle + transform" in {
                 assert(
                     Abort.run[Ex1](v.map(_ + 1)).eval ==
-                        Result.fail(ex1)
+                        Result.error(ex1)
                 )
             }
             "handle + effectful transform" in {
                 assert(
                     Abort.run[Ex1](v.map(i => Abort.get[Ex1](Right(i + 1)))).eval ==
-                        Result.fail(ex1)
+                        Result.error(ex1)
                 )
             }
             "handle + transform + effectful transform" in {
                 assert(
                     Abort.run[Ex1](v.map(_ + 1).map(i => Abort.get[Ex1](Right(i + 1)))).eval ==
-                        Result.fail(ex1)
+                        Result.error(ex1)
                 )
             }
             "handle + transform + failed effectful transform" in {
                 val fail = Left[Ex1, Int](ex1)
                 assert(
                     Abort.run[Ex1](v.map(_ + 1).map(_ => Abort.get(fail))).eval ==
-                        Result.fail(ex1)
+                        Result.error(ex1)
                 )
             }
         }
@@ -174,19 +174,19 @@ class AbortsTest extends Test:
         def test(v: Int): Int < Abort[Ex1] =
             v match
                 case 0 =>
-                    Abort.fail(ex1)
+                    Abort.error(ex1)
                 case i => 10 / i
         "run" - {
             "success" in {
                 assert(
                     Abort.run[Ex1](test(2)).eval ==
-                        Result.success(5)
+                        Result.succeed(5)
                 )
             }
             "failure" in {
                 assert(
                     Abort.run[Ex1](test(0)).eval ==
-                        Result.fail(ex1)
+                        Result.error(ex1)
                 )
             }
             "panic" in {
@@ -220,14 +220,14 @@ class AbortsTest extends Test:
             }
             "super" in {
                 val ex                        = new Exception
-                val a: Int < Abort[Exception] = Abort.fail(ex)
+                val a: Int < Abort[Exception] = Abort.error(ex)
                 val b: Result[Throwable, Int] = Abort.run[Throwable](a).eval
-                assert(b == Result.fail(ex))
+                assert(b == Result.error(ex))
             }
             "super success" in {
                 val a: Int < Abort[Exception] = 24
                 val b: Result[Throwable, Int] = Abort.run[Throwable](a).eval
-                assert(b == Result.success(24))
+                assert(b == Result.succeed(24))
             }
             "reduce large union incrementally" in {
                 val t1: Int < Abort[Int | String | Boolean | Float | Char | Double] =
@@ -238,7 +238,7 @@ class AbortsTest extends Test:
                 val t5 = Abort.run[Float](t4)
                 val t6 = Abort.run[Char](t5)
                 val t7 = Abort.run[Double](t6)
-                assert(t7.eval == Result.success(Result.success(Result.success(Result.success(Result.success(Result.success(18)))))))
+                assert(t7.eval == Result.succeed(Result.succeed(Result.succeed(Result.succeed(Result.succeed(Result.succeed(18)))))))
             }
             "reduce large union in a single expression" in {
                 val t: Int < Abort[Int | String | Boolean | Float | Char | Double] = 18
@@ -256,33 +256,33 @@ class AbortsTest extends Test:
                         )
                     ).eval
                 val expected: Result[Double, Result[Char, Result[Float, Result[Boolean, Result[String, Result[Int, Int]]]]]] =
-                    Result.success(Result.success(Result.success(Result.success(Result.success(Result.success(18))))))
+                    Result.succeed(Result.succeed(Result.succeed(Result.succeed(Result.succeed(Result.succeed(18))))))
                 assert(res == expected)
             }
-            "doesn't produce Fail if E isn't Throwable" in run {
+            "doesn't produce Error if E isn't Throwable" in run {
                 val ex = new Exception
                 Abort.run[Any](throw ex).map(result => assert(result == Result.panic(ex)))
             }
         }
         "fail" in {
             val ex: Throwable = new Exception("throwable failure")
-            val a             = Abort.fail(ex)
-            assert(Abort.run[Throwable](a).eval == Result.fail(ex))
+            val a             = Abort.error(ex)
+            assert(Abort.run[Throwable](a).eval == Result.error(ex))
         }
         "fail inferred" in {
             val e = "test"
-            val f = Abort.fail(e)
-            assert(Abort.run(f).eval == Result.fail(e))
+            val f = Abort.error(e)
+            assert(Abort.run(f).eval == Result.error(e))
         }
         "error" - {
             "fail" in {
                 val ex: Throwable = new Exception("throwable failure")
-                val a             = Abort.error(Result.Fail(ex))
-                assert(Abort.run[Throwable](a).eval == Result.fail(ex))
+                val a             = Abort.fail(Result.Error(ex))
+                assert(Abort.run[Throwable](a).eval == Result.error(ex))
             }
             "panic" in {
                 val ex: Throwable = new Exception("throwable failure")
-                val a             = Abort.error(Result.Panic(ex))
+                val a             = Abort.fail(Result.Panic(ex))
                 assert(Abort.run[Throwable](a).eval == Result.panic(ex))
             }
         }
@@ -290,8 +290,8 @@ class AbortsTest extends Test:
             "basic usage" in {
                 def test(b: Boolean) = Abort.run[String](Abort.when(b)("FAIL!")).eval
 
-                assert(test(true) == Result.fail("FAIL!"))
-                assert(test(false) == Result.success(()))
+                assert(test(true) == Result.error("FAIL!"))
+                assert(test(false) == Result.succeed(()))
             }
 
             "with Env" in {
@@ -305,9 +305,9 @@ class AbortsTest extends Test:
                     )
                 }.eval
 
-                assert(test(3) == Result.success(3))
-                assert(test(7) == Result.fail("Too big"))
-                assert(test(-1) == Result.fail("Negative"))
+                assert(test(3) == Result.succeed(3))
+                assert(test(7) == Result.error("Too big"))
+                assert(test(-1) == Result.error("Negative"))
             }
 
             "with Var" in {
@@ -323,9 +323,9 @@ class AbortsTest extends Test:
                     }
                 }.eval
 
-                assert(test(1) == Result.success(2))
-                assert(test(2) == Result.fail("Even"))
-                assert(test(5) == Result.fail("Too big"))
+                assert(test(1) == Result.succeed(2))
+                assert(test(2) == Result.error("Even"))
+                assert(test(5) == Result.error("Too big"))
             }
 
             "short-circuiting" in {
@@ -337,9 +337,9 @@ class AbortsTest extends Test:
                     yield ()
                 }
 
-                assert(Env.run(())(test(true)).eval == Result.fail("FAIL!"))
+                assert(Env.run(())(test(true)).eval == Result.error("FAIL!"))
                 assert(sideEffect == 0)
-                assert(Env.run(())(test(false)).eval == Result.success(()))
+                assert(Env.run(())(test(false)).eval == Result.succeed(()))
                 assert(sideEffect == 1)
             }
         }
@@ -348,9 +348,9 @@ class AbortsTest extends Test:
             "basic usage" in {
                 def test(x: Int) = Abort.run[String](Abort.ensuring(x > 0, x)("Non-positive")).eval
 
-                assert(test(5) == Result.success(5))
-                assert(test(0) == Result.fail("Non-positive"))
-                assert(test(-3) == Result.fail("Non-positive"))
+                assert(test(5) == Result.succeed(5))
+                assert(test(0) == Result.error("Non-positive"))
+                assert(test(-3) == Result.error("Non-positive"))
             }
 
             "with Env" in {
@@ -363,11 +363,11 @@ class AbortsTest extends Test:
                     }
                 }.eval
 
-                assert(test(5) == Result.success(10))
-                assert(test(0) == Result.success(0))
-                assert(test(10) == Result.success(20))
-                assert(test(-1) == Result.fail("Out of range"))
-                assert(test(11) == Result.fail("Out of range"))
+                assert(test(5) == Result.succeed(10))
+                assert(test(0) == Result.succeed(0))
+                assert(test(10) == Result.succeed(20))
+                assert(test(-1) == Result.error("Out of range"))
+                assert(test(11) == Result.error("Out of range"))
             }
 
             "with Var" in {
@@ -382,10 +382,10 @@ class AbortsTest extends Test:
                     }
                 }.eval
 
-                assert(test(2) == Result.success(4))
-                assert(test(4) == Result.success(8))
-                assert(test(1) == Result.fail("Odd"))
-                assert(test(3) == Result.fail("Odd"))
+                assert(test(2) == Result.succeed(4))
+                assert(test(4) == Result.succeed(8))
+                assert(test(1) == Result.error("Odd"))
+                assert(test(3) == Result.error("Odd"))
             }
 
         }
@@ -398,19 +398,19 @@ class AbortsTest extends Test:
                 "success" in {
                     assert(
                         Abort.run[Ex1](Abort.catching[Ex1](test(2))).eval ==
-                            Result.success(5)
+                            Result.succeed(5)
                     )
                 }
                 "failure" in {
                     assert(
                         Abort.run[Ex1](Abort.catching[Ex1](test(0))).eval ==
-                            Result.fail(ex1)
+                            Result.error(ex1)
                     )
                 }
                 "subclass" in {
                     assert(
                         Abort.run[RuntimeException](Abort.catching[RuntimeException](test(0))).eval ==
-                            Result.fail(ex1)
+                            Result.error(ex1)
                     )
                 }
                 "distinct" in {
@@ -427,10 +427,10 @@ class AbortsTest extends Test:
 
                     val a = Abort.run[Distinct1](distinct)
                     val b = Abort.run[Distinct2](a).eval
-                    assert(b == Result.success(Result.fail(d1)))
+                    assert(b == Result.succeed(Result.error(d1)))
                     assertDoesNotCompile("Abort.run[Distinct1 | Distinct2](distinct)")
                     val c = Abort.run[Throwable](distinct).eval
-                    assert(c == Result.fail(d1))
+                    assert(c == Result.error(d1))
                 }
                 "ClassTag inference" in pendingUntilFixed {
                     assertCompiles("""
@@ -452,7 +452,7 @@ class AbortsTest extends Test:
                         Env.run(2)(
                             Abort.run[Ex1](Abort.catching[Ex1](test(Env.get)))
                         ).eval ==
-                            Result.success(5)
+                            Result.succeed(5)
                     )
                 }
                 "failure" in {
@@ -460,7 +460,7 @@ class AbortsTest extends Test:
                         Env.run(0)(
                             Abort.run[Ex1](Abort.catching[Ex1](test(Env.get)))
                         ).eval ==
-                            Result.fail(ex1)
+                            Result.error(ex1)
                     )
                 }
             }
@@ -469,17 +469,17 @@ class AbortsTest extends Test:
                 "should propagate the innermost failure" in {
                     val nested = Abort.run[String](
                         Abort.run[Int](
-                            Abort.fail[String]("inner").map(_ => Abort.fail[Int](42))
+                            Abort.error[String]("inner").map(_ => Abort.error[Int](42))
                         )
                     )
-                    assert(nested.eval == Result.fail("inner"))
+                    assert(nested.eval == Result.error("inner"))
                 }
 
                 "should propagate the outermost failure if there are no inner failures" in {
                     val nested = Abort.run(Abort.run[String](
                         Abort.run[Int](Abort.get[Int](Right(42)))
-                    ).map(_ => Abort.fail("outer")))
-                    assert(nested.eval == Result.fail("outer"))
+                    ).map(_ => Abort.error("outer")))
+                    assert(nested.eval == Result.error("outer"))
                 }
             }
 
@@ -487,12 +487,12 @@ class AbortsTest extends Test:
                 "should have access to the environment within Abort" in {
                     val env    = "test"
                     val result = Env.run(env)(Abort.run[String](Env.get[String]))
-                    assert(result.eval == Result.success(env))
+                    assert(result.eval == Result.succeed(env))
                 }
 
                 "should propagate Abort failures within Env" in {
-                    val result = Env.run("test")(Abort.run[String](Abort.fail("failure")))
-                    assert(result.eval == Result.fail("failure"))
+                    val result = Env.run("test")(Abort.run[String](Abort.error("failure")))
+                    assert(result.eval == Result.error("failure"))
                 }
             }
 
@@ -503,16 +503,16 @@ class AbortsTest extends Test:
                             Var.get[Int].map(_.toString)
                         )
                     )
-                    assert(result.eval == Result.success("42"))
+                    assert(result.eval == Result.succeed("42"))
                 }
 
                 "should not modify state on Abort failures" in {
                     val result = Var.run(42)(
                         Abort.run[String](
-                            Var.set[Int](24).map(_ => Abort.fail("failure"))
+                            Var.set[Int](24).map(_ => Abort.error("failure"))
                         )
                     )
-                    assert(result.eval == Result.fail("failure"))
+                    assert(result.eval == Result.error("failure"))
                     assert(Var.run(42)(Var.get[Int]).eval == 42)
                 }
             }
@@ -521,9 +521,9 @@ class AbortsTest extends Test:
                 "should not execute subsequent operations on failure" in {
                     var executed = false
                     val result = Abort.run[String](
-                        Abort.fail("failure").map(_ => executed = true)
+                        Abort.error("failure").map(_ => executed = true)
                     )
-                    assert(result.eval == Result.fail("failure"))
+                    assert(result.eval == Result.error("failure"))
                     assert(!executed)
                 }
 
@@ -532,7 +532,7 @@ class AbortsTest extends Test:
                     val result = Abort.run(Abort.run[String](
                         Abort.get[Int](Right(42)).map(_ => executed = true)
                     ))
-                    assert(result.eval == Result.success(Result.success(())))
+                    assert(result.eval == Result.succeed(Result.succeed(())))
                     assert(executed)
                 }
             }
@@ -545,12 +545,12 @@ class AbortsTest extends Test:
                 Abort.run[String] {
                     for
                         x <- Env.get[Int]
-                        _ <- if x > 10 then Abort.fail("Too big") else Env.get[Int]
+                        _ <- if x > 10 then Abort.error("Too big") else Env.get[Int]
                         y <- Env.use[Int](_ * 2)
                     yield y
                 }
             }
-            assert(result.eval == Result.success(10))
+            assert(result.eval == Result.succeed(10))
         }
 
         "Abort failure through Env and Var" in {
@@ -560,12 +560,12 @@ class AbortsTest extends Test:
                         for
                             x <- Env.get[Int]
                             _ <- Var.update[Int](_ + x)
-                            _ <- if x > 10 then Abort.fail("Too big") else Var.get[Int]
+                            _ <- if x > 10 then Abort.error("Too big") else Var.get[Int]
                         yield ()
                     }
                 }
             }
-            assert(result.eval == Result.fail("Too big"))
+            assert(result.eval == Result.error("Too big"))
         }
     }
 
@@ -573,36 +573,36 @@ class AbortsTest extends Test:
         "Abort within map" in {
             val result = Abort.run[String] {
                 Env.get[Int].map { x =>
-                    if x > 5 then Abort.fail("Too big")
+                    if x > 5 then Abort.error("Too big")
                     else Env.get[Int]
                 }
             }
-            assert(Env.run(10)(result).eval == Result.fail("Too big"))
+            assert(Env.run(10)(result).eval == Result.error("Too big"))
         }
 
         "multiple Aborts in for-comprehension" in {
             val result = Abort.run[String] {
                 for
                     x <- Env.get[Int]
-                    _ <- if x > 5 then Abort.fail("Too big") else Env.get[Int]
+                    _ <- if x > 5 then Abort.error("Too big") else Env.get[Int]
                     y <- Var.get[Int]
-                    _ <- if y < 0 then Abort.fail("Negative") else Var.get[Int]
+                    _ <- if y < 0 then Abort.error("Negative") else Var.get[Int]
                 yield (x, y)
             }
             val finalResult = Env.run(3) {
                 Var.run(-1)(result)
             }
-            assert(finalResult.eval == Result.fail("Negative"))
+            assert(finalResult.eval == Result.error("Negative"))
         }
 
         "Abort within Abort" in {
             val innerAbort = Abort.run[Int] {
-                Abort.fail[String]("Inner error").map(_ => 42)
+                Abort.error[String]("Inner error").map(_ => 42)
             }
             val outerAbort = Abort.run[String] {
-                innerAbort.map(x => if x.value.exists(_ > 50) then Abort.fail("Outer error") else x)
+                innerAbort.map(x => if x.value.exists(_ > 50) then Abort.error("Outer error") else x)
             }
-            assert(outerAbort.eval == Result.fail("Inner error"))
+            assert(outerAbort.eval == Result.error("Inner error"))
         }
 
         "deeply nested Aborts" in {
@@ -611,7 +611,7 @@ class AbortsTest extends Test:
                 else Abort.get(Right(depth)).map(_ => nestedAborts(depth - 1))
 
             val result = Abort.run(nestedAborts(10000))
-            assert(result.eval == Result.success(0))
+            assert(result.eval == Result.succeed(0))
         }
     }
 
@@ -620,7 +620,7 @@ class AbortsTest extends Test:
             for
                 x <- Env.get[Int]
                 y <- Var.get[Int]
-                _ <- if x + y > 10 then Abort.fail("Sum too large") else Env.get[Int]
+                _ <- if x + y > 10 then Abort.error("Sum too large") else Env.get[Int]
             yield x + y
         }
         val finalResult: Result[String, Int] < (Env[Int] & Var[Int]) = result

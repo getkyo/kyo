@@ -371,12 +371,12 @@ class StreamTest extends Test:
             val result = Abort.run[String] {
                 Stream.init(Seq(1, 2, 3))
                     .flatMap(i =>
-                        if i > 2 then Abort.fail("Too large")
+                        if i > 2 then Abort.error("Too large")
                         else Stream.init(Seq(i, i + 1))
                     )
                     .run
             }
-            assert(result.eval == Result.fail("Too large"))
+            assert(result.eval == Result.error("Too large"))
         }
 
         "chunked input" in {
@@ -413,12 +413,12 @@ class StreamTest extends Test:
             val result = Abort.run[String] {
                 Stream.init(Seq(1, 2, 3))
                     .flatMapChunk(c =>
-                        if !c.filter(_ > 2).isEmpty then Abort.fail("Too large")
+                        if !c.filter(_ > 2).isEmpty then Abort.error("Too large")
                         else Stream.init(c.map(_ * 2))
                     )
                     .run
             }
-            assert(result.eval == Result.fail("Too large"))
+            assert(result.eval == Result.error("Too large"))
         }
 
         "combining multiple chunks" in {
@@ -521,12 +521,12 @@ class StreamTest extends Test:
             val result = Abort.run[String] {
                 Stream.init(Seq(1, 2, 3, 4, 5)).runForeach { i =>
                     sum += i
-                    if i >= 3 then Abort.fail("Reached 3")
+                    if i >= 3 then Abort.error("Reached 3")
                     else Abort.get(Right(()))
                 }
             }
             result.map { r =>
-                assert(r == Result.fail("Reached 3"))
+                assert(r == Result.error("Reached 3"))
                 assert(sum == 6)
             }
         }
@@ -577,7 +577,7 @@ class StreamTest extends Test:
         "early termination" in {
             val stream = Stream.init(Seq(1, 2, 3, 4, 5))
             val folded = stream.runFold(0) { (acc, v) =>
-                if acc < 6 then acc + v else Abort.fail(())
+                if acc < 6 then acc + v else Abort.error(())
             }
             assert(Abort.run[Unit](folded).eval.fold(_ => true)(_ => false))
         }
@@ -603,13 +603,13 @@ class StreamTest extends Test:
                 Stream.init(Seq(1, 2, 3))
                     .flatMap(i =>
                         Stream.init(Seq(i, i + 1)).flatMap(j =>
-                            if j > 3 then Abort.fail(s"Value too large: $j")
+                            if j > 3 then Abort.error(s"Value too large: $j")
                             else Stream.init(Seq(j, j * 10))
                         )
                     )
                     .run
             }
-            assert(result.eval == Result.fail("Value too large: 4"))
+            assert(result.eval == Result.error("Value too large: 4"))
         }
 
         "flatMapChunk with alternating aborts" in {
@@ -619,14 +619,14 @@ class StreamTest extends Test:
                     .flatMapChunk(c =>
                         if abortCounter % 2 == 0 then
                             abortCounter += 1
-                            Stream.init(Kyo.foreach(c)(i => if i > 3 then Abort.fail(s"Odd abort: $i") else i))
+                            Stream.init(Kyo.foreach(c)(i => if i > 3 then Abort.error(s"Odd abort: $i") else i))
                         else
                             abortCounter += 1
                             Stream.init(c)
                     )
                     .run
             }
-            assert(result.eval == Result.fail("Odd abort: 4"))
+            assert(result.eval == Result.error("Odd abort: 4"))
         }
 
         "flatMap with env-dependent abort" in {
@@ -636,7 +636,7 @@ class StreamTest extends Test:
                         .flatMap(i =>
                             Stream.init(Seq(i)).flatMap(j =>
                                 Env.use[Int](threshold =>
-                                    if j > threshold then Abort.fail(s"Exceeded threshold $threshold: $j")
+                                    if j > threshold then Abort.error(s"Exceeded threshold $threshold: $j")
                                     else Stream.init(Chunk(j))
                                 )
                             )
@@ -644,7 +644,7 @@ class StreamTest extends Test:
                         .run
                 }
             }
-            assert(result.eval == Result.fail("Exceeded threshold 3: 4"))
+            assert(result.eval == Result.error("Exceeded threshold 3: 4"))
         }
 
         "flatMap with interleaved effects" in {
@@ -654,12 +654,12 @@ class StreamTest extends Test:
                     .flatMap(i =>
                         Stream.init(Seq(i, i + 1)).map { j =>
                             sum += j
-                            Env.use[Int](env => if sum > env then Abort.fail("Sum too large") else j)
+                            Env.use[Int](env => if sum > env then Abort.error("Sum too large") else j)
                         }
                     )
                     .run
             }
-            assert(Abort.run(result).eval == Result.fail("Sum too large"))
+            assert(Abort.run(result).eval == Result.error("Sum too large"))
         }
 
         "nested flatMap with alternating effects" in run {
@@ -669,16 +669,16 @@ class StreamTest extends Test:
                 stream.flatMap { n =>
                     counter += 1
                     if counter % 2 == 0 then
-                        Abort.fail(s"Even counter: $counter")
+                        Abort.error(s"Even counter: $counter")
                     else
                         Stream.init(Seq(n, n * 10)).map { m =>
-                            if m > 20 then Abort.fail(s"Value too large: $m")
+                            if m > 20 then Abort.error(s"Value too large: $m")
                             else Env.use[Int](_ + m)
                         }
                     end if
                 }.run
             }
-            assert(Env.run(0)(result).eval == Result.fail("Even counter: 2"))
+            assert(Env.run(0)(result).eval == Result.error("Even counter: 2"))
             assert(counter == 2)
         }
 
@@ -688,13 +688,13 @@ class StreamTest extends Test:
                 Var.run(0) {
                     stream.mapChunk { chunk =>
                         Var.update[Int](_ + chunk.size).map { newState =>
-                            if newState > 3 then Abort.fail(s"State too high: $newState")
+                            if newState > 3 then Abort.error(s"State too high: $newState")
                             else chunk.map(_ * newState)
                         }
                     }.run
                 }
             }
-            assert(result.eval == Result.fail("State too high: 5"))
+            assert(result.eval == Result.error("State too high: 5"))
         }
 
         "flatMap with env-dependent chunking" in run {
@@ -715,13 +715,13 @@ class StreamTest extends Test:
                 Abort.run[String] {
                     stream.take(4).flatMap { n =>
                         Env.use[Int] { limit =>
-                            if n > limit then Abort.fail(s"Value $n exceeds limit $limit")
+                            if n > limit then Abort.error(s"Value $n exceeds limit $limit")
                             else Stream.init(Seq(n, n * 10))
                         }
                     }.run
                 }
             }
-            assert(result.eval == Result.fail("Value 4 exceeds limit 3"))
+            assert(result.eval == Result.error("Value 4 exceeds limit 3"))
         }
     }
 

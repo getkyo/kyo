@@ -16,7 +16,7 @@ import scala.reflect.ClassTag
   * @tparam E
   *   The type of the failure value
   */
-sealed trait Abort[-E] extends ArrowEffect[Const[Error[E]], Const[Unit]]
+sealed trait Abort[-E] extends ArrowEffect[Const[Failure[E]], Const[Unit]]
 
 object Abort:
 
@@ -30,7 +30,7 @@ object Abort:
       * @return
       *   A computation that immediately fails with the given value
       */
-    inline def fail[E](inline value: E)(using inline frame: Frame): Nothing < Abort[E] = error(Fail(value))
+    inline def error[E](inline value: E)(using inline frame: Frame): Nothing < Abort[E] = fail(Error(value))
 
     /** Fails the computation with a panic value (unchecked exception).
       *
@@ -39,9 +39,16 @@ object Abort:
       * @return
       *   A computation that immediately fails with the given exception
       */
-    inline def panic[E](inline ex: Throwable)(using inline frame: Frame): Nothing < Abort[E] = error(Panic(ex))
+    inline def panic[E](inline ex: Throwable)(using inline frame: Frame): Nothing < Abort[E] = fail(Panic(ex))
 
-    inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
+    /** Fails the computation with the given `Failure` value.
+      *
+      * @param e
+      *   The failure value to use
+      * @return
+      *   A computation that immediately fails with the given failure value
+      */
+    inline def fail[E](inline e: Failure[E])(using inline frame: Frame): Nothing < Abort[E] =
         ArrowEffect.suspendMap[Any](erasedTag[E], e)(_ => ???)
 
     /** Fails the computation if the condition is true.
@@ -72,7 +79,7 @@ object Abort:
       *   A computation that succeeds with the result if the condition is true, or fails with the given value if it's false
       */
     inline def ensuring[A, E](cond: Boolean, result: => A)(inline value: => E)(using inline frame: Frame): A < Abort[E] =
-        if !cond then fail(value)
+        if !cond then error(value)
         else result
 
     final class GetOps[E >: Nothing](dummy: Unit) extends AnyVal:
@@ -87,7 +94,7 @@ object Abort:
         inline def apply[A](either: Either[E, A])(using inline frame: Frame): A < Abort[E] =
             either match
                 case Right(value) => value
-                case Left(value)  => fail(value)
+                case Left(value)  => error(value)
 
         /** Lifts an Option into the Abort effect with Maybe.Empty as the failure value.
           *
@@ -98,7 +105,7 @@ object Abort:
           */
         inline def apply[A](opt: Option[A])(using inline frame: Frame): A < Abort[Maybe.Empty] =
             opt match
-                case None    => fail(Maybe.Empty)
+                case None    => error(Maybe.Empty)
                 case Some(v) => v
 
         /** Lifts a scala.util.Try into the Abort effect.
@@ -111,7 +118,7 @@ object Abort:
         inline def apply[A](e: scala.util.Try[A])(using inline frame: Frame): A < Abort[Throwable] =
             e match
                 case scala.util.Success(t) => t
-                case scala.util.Failure(v) => fail(v)
+                case scala.util.Failure(v) => error(v)
 
         /** Lifts a Result into the Abort effect.
           *
@@ -122,8 +129,8 @@ object Abort:
           */
         inline def apply[E, A](r: Result[E, A])(using inline frame: Frame): A < Abort[E] =
             r.fold {
-                case e: Fail[E] => fail(e.error)
-                case Panic(ex)  => Abort.panic(ex)
+                case e: Error[E] => Abort.fail(e)
+                case Panic(ex)   => Abort.panic(ex)
             }(identity)
 
         /** Lifts a Maybe into the Abort effect.
@@ -135,7 +142,7 @@ object Abort:
           */
         @targetName("maybe")
         inline def apply[A](m: Maybe[A])(using inline frame: Frame): A < Abort[Maybe.Empty] =
-            m.fold(fail(Maybe.Empty))(identity)
+            m.fold(error(Maybe.Empty))(identity)
     end GetOps
 
     /** Operations for lifting various types into the Abort effect.
@@ -168,7 +175,7 @@ object Abort:
         ): Result[E, A] < (S & reduce.SReduced) =
             reduce {
                 ArrowEffect.handle.catching[
-                    Const[Error[E]],
+                    Const[Failure[E]],
                     Const[Unit],
                     Abort[E],
                     Result[E, A],
@@ -178,19 +185,19 @@ object Abort:
                     Any
                 ](
                     erasedTag[E],
-                    v.map(Result.success[E, A](_))
+                    v.map(Result.succeed[E, A](_))
                 )(
                     accept = [C] =>
                         input =>
                             input.isPanic ||
-                                input.asInstanceOf[Error[Any]].failure.exists {
+                                input.asInstanceOf[Failure[Any]].failure.exists {
                                     case e: E => true
                                     case _    => false
                             },
                     handle = [C] => (input, _) => input,
                     recover =
                         case fail: E if classOf[Throwable].isAssignableFrom(ct.runtimeClass) =>
-                            Result.fail(fail)
+                            Result.error(fail)
                         case fail => Result.panic(fail)
                 )
             }
@@ -218,7 +225,7 @@ object Abort:
             frame: Frame
         ): A < (Abort[E] & S) =
             Effect.catching(v) {
-                case ex: E => Abort.fail(ex)
+                case ex: E => Abort.error(ex)
                 case ex    => Abort.panic(ex)
             }
     end CatchingOps

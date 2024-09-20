@@ -24,11 +24,11 @@ class MeterTest extends Test:
                 a2 <- t.isAvailable
                 d1 <- f1.done
                 d2 <- f2.done
-                _  <- p.complete(Result.success(1))
+                _  <- p.complete(Result.succeed(1))
                 v1 <- f1.get
                 v2 <- f2.get
                 a3 <- t.isAvailable
-            yield assert(!a1 && !d1 && !d2 && !a2 && v1 == Result.success(1) && v2 == 2 && a3)
+            yield assert(!a1 && !d1 && !d2 && !a2 && v1 == Result.succeed(1) && v2 == 2 && a3)
         }
 
         "tryRun" in runJVM {
@@ -41,9 +41,9 @@ class MeterTest extends Test:
                 a1  <- sem.isAvailable
                 b1  <- sem.tryRun(2)
                 b2  <- f1.done
-                _   <- p.complete(Result.success(1))
+                _   <- p.complete(Result.succeed(1))
                 v1  <- f1.get
-            yield assert(!a1 && b1.isEmpty && !b2 && v1.contains(Result.success(1)))
+            yield assert(!a1 && b1.isEmpty && !b2 && v1.contains(Result.succeed(1)))
         }
     }
 
@@ -73,11 +73,11 @@ class MeterTest extends Test:
                 a2 <- t.isAvailable
                 d1 <- f1.done
                 d2 <- f2.done
-                _  <- p.complete(Result.success(1))
+                _  <- p.complete(Result.succeed(1))
                 v1 <- f1.get
                 v2 <- f2.get
                 a3 <- t.isAvailable
-            yield assert(!a1 && !d1 && !d2 && !a2 && v1 == Result.success(1) && v2 == 2 && a3)
+            yield assert(!a1 && !d1 && !d2 && !a2 && v1 == Result.succeed(1) && v2 == 2 && a3)
         }
 
         "tryRun" in runJVM {
@@ -94,10 +94,10 @@ class MeterTest extends Test:
                 b3  <- sem.tryRun(2)
                 b4  <- f1.done
                 b5  <- f2.done
-                _   <- p.complete(Result.success(1))
+                _   <- p.complete(Result.succeed(1))
                 v1  <- f1.get
                 v2  <- f2.get
-            yield assert(!a1 && b3.isEmpty && !b4 && !b5 && v1.contains(Result.success(1)) && v2.contains(Result.success(1)))
+            yield assert(!a1 && b3.isEmpty && !b4 && !b5 && v1.contains(Result.succeed(1)) && v2.contains(Result.succeed(1)))
         }
     }
 

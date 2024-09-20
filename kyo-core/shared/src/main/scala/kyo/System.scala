@@ -183,7 +183,7 @@ object System:
 
     /** Companion object for Parser, containing default implementations. */
     object Parser:
-        given Parser[Nothing, String]                    = v => Result.success(v)
+        given Parser[Nothing, String]                    = v => Result.succeed(v)
         given Parser[NumberFormatException, Int]         = v => Result.catching(v.toInt)
         given Parser[NumberFormatException, Long]        = v => Result.catching(v.toLong)
         given Parser[NumberFormatException, Float]       = v => Result.catching(v.toFloat)
@@ -216,8 +216,8 @@ object System:
 
         given Parser[IllegalArgumentException, Char] =
             v =>
-                if v.length() == 1 then Result.success(v(0))
-                else Result.fail(new IllegalArgumentException("String must have exactly one character"))
+                if v.length() == 1 then Result.succeed(v(0))
+                else Result.error(new IllegalArgumentException("String must have exactly one character"))
 
     end Parser
 

@@ -196,7 +196,7 @@ class MemoTest extends Test:
             var count = 0
             val f = Memo[Int, Int, Abort[String]] { x =>
                 count += 1
-                if x < 0 then Abort.fail("Negative input")
+                if x < 0 then Abort.error("Negative input")
                 else x * 2
             }
 
@@ -210,7 +210,7 @@ class MemoTest extends Test:
                 }
             }
 
-            assert(result.eval == Result.fail("Negative input"))
+            assert(result.eval == Result.error("Negative input"))
             assert(count == 2)
         }
 
@@ -250,7 +250,7 @@ class MemoTest extends Test:
                 for
                     env <- Env.get[Int]
                     _   <- Var.update[String](s => s"$s-$x")
-                    _   <- if x > 10 then Abort.fail("Too large") else Abort.get(Right(()))
+                    _   <- if x > 10 then Abort.error("Too large") else Abort.get(Right(()))
                 yield x * env
                 end for
             }
@@ -271,7 +271,7 @@ class MemoTest extends Test:
                 }
             }
 
-            assert(result.eval == Result.fail("Too large"))
+            assert(result.eval == Result.error("Too large"))
             assert(count == 3)
         }
     }

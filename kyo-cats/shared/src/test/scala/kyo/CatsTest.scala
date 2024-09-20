@@ -25,10 +25,10 @@ class CatsTest extends Test:
         "kyo then cats" in runKyo {
             object catsFailure extends RuntimeException
             object kyoFailure  extends RuntimeException
-            val a = Abort.fail(kyoFailure)
+            val a = Abort.error(kyoFailure)
             val b = Cats.get(CatsIO.raiseError(catsFailure))
             Abort.run[Throwable](a.map(_ => b)).map {
-                case Result.Fail(ex) =>
+                case Result.Error(ex) =>
                     assert(ex == kyoFailure)
                 case _ =>
                     fail()
@@ -38,9 +38,9 @@ class CatsTest extends Test:
             object catsFailure extends RuntimeException
             object kyoFailure  extends RuntimeException
             val a = Cats.get(CatsIO.raiseError(catsFailure))
-            val b = Abort.fail(kyoFailure)
+            val b = Abort.error(kyoFailure)
             Abort.run[Throwable](a.map(_ => b)).map {
-                case Result.Fail(ex) =>
+                case Result.Error(ex) =>
                     assert(ex == catsFailure)
                 case ex =>
                     fail()
@@ -130,11 +130,11 @@ class CatsTest extends Test:
 
     "Error handling" - {
         "Kyo Abort to Cats IO error" in runKyo {
-            val kyoAbort  = Abort.fail(new Exception("Kyo error"))
+            val kyoAbort  = Abort.error(new Exception("Kyo error"))
             val converted = Cats.get(CatsIO.fromEither(Abort.run(kyoAbort).eval.toEither))
             Abort.run[Throwable](converted).map {
-                case Result.Fail(ex) => assert(ex.getMessage() == "Kyo error")
-                case _               => fail("Expected a String error")
+                case Result.Error(ex) => assert(ex.getMessage() == "Kyo error")
+                case _                => fail("Expected a String error")
             }
         }
 
@@ -142,8 +142,8 @@ class CatsTest extends Test:
             val catsError = CatsIO.raiseError[Int](new Exception("Cats error"))
             val converted = Cats.get(catsError)
             Abort.run[Throwable](converted).map {
-                case Result.Fail(error: Exception) => assert(error.getMessage == "Cats error")
-                case _                             => fail("Expected an Exception")
+                case Result.Error(error: Exception) => assert(error.getMessage == "Cats error")
+                case _                              => fail("Expected an Exception")
             }
         }
     }

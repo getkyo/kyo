@@ -35,7 +35,7 @@ class CheckTest extends Test:
                     _ <- Check(1 + 1 == 2, "Basic math works")
                 yield "All checks passed"
             }
-            Abort.run(result).map(r => assert(r == Result.success("All checks passed")))
+            Abort.run(result).map(r => assert(r == Result.succeed("All checks passed")))
         }
 
         "returns failure for failing checks" in run {

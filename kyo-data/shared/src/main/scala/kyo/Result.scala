@@ -7,14 +7,21 @@ import scala.reflect.ClassTag
 import scala.util.Try
 import scala.util.control.NonFatal
 
-/** Represents a result that can be either a success, a failure or an unexpected panic.
+/** Represents a computation result that can be either successful, failed, or in an unexpected panic state.
+  *
+  * The Result type has the following hierarchy:
+  *   - Result[+E, +A]
+  *     - Success[+A]: Represents a successful result
+  *     - Failure[+E]: Represents a failure
+  *       - Error[+E]: Represents an expected error
+  *       - Panic: Represents an unexpected error (always contains a Throwable)
   *
   * @tparam E
   *   The type of the error in case of failure
   * @tparam A
   *   The type of the value in case of success
   */
-opaque type Result[+E, +A] >: (Success[A] | Error[E]) = Success[A] | Error[E]
+opaque type Result[+E, +A] >: (Success[A] | Failure[E]) = Success[A] | Failure[E]
 
 /** Companion object for Result type */
 object Result:
@@ -46,13 +53,13 @@ object Result:
           * @tparam A
           *   The type of the successful result
           * @return
-          *   A Result containing either the successful value, a Fail with the caught exception, or a Panic for other exceptions
+          *   A Result containing either the successful value, a Error with the caught exception, or a Panic for other exceptions
           */
         inline def apply[A](inline expr: => A)(using ClassTag[E]): Result[E, A] =
             try
                 Success(expr)
             catch
-                case ex: E => Fail(ex)
+                case ex: E => Error(ex)
                 case ex    => Panic(ex)
     end CatchingOps
 
@@ -69,7 +76,7 @@ object Result:
       * @return
       *   A successful Result
       */
-    inline def success[E, A](inline value: A): Result[E, A] = Success(value)
+    inline def succeed[E, A](inline value: A): Result[E, A] = Success(value)
 
     /** Creates a failed Result.
       *
@@ -82,7 +89,7 @@ object Result:
       * @return
       *   A failed Result
       */
-    inline def fail[E, A](inline error: E): Result[E, A] = Fail(error)
+    inline def error[E, A](inline error: E): Result[E, A] = Error(error)
 
     /** Creates a Result representing a panic situation.
       *
@@ -141,7 +148,7 @@ object Result:
       *   A Result equivalent to the input Either
       */
     def fromEither[E, A](either: Either[E, A]): Result[E, A] =
-        either.fold(fail, success)
+        either.fold(error, succeed)
 
     /** Converts a Try to a Result.
       *
@@ -153,7 +160,7 @@ object Result:
       *   A Result equivalent to the input Try
       */
     def fromTry[A](t: Try[A]): Result[Throwable, A] =
-        t.fold(fail, success)
+        t.fold(error, succeed)
 
     /** Represents a successful Result. */
     opaque type Success[+A] = A | SuccessError[A]
@@ -171,9 +178,9 @@ object Result:
           */
         def apply[A](value: A): Success[A] =
             value match
-                case v: SuccessError[?]    => v.nest.asInstanceOf[Success[A]]
-                case v: Fail[A] @unchecked => SuccessError(v)
-                case v                     => v
+                case v: SuccessError[?]     => v.nest.asInstanceOf[Success[A]]
+                case v: Error[A] @unchecked => SuccessError(v)
+                case v                      => v
 
         /** Extracts the value from a Success Result.
           *
@@ -192,27 +199,27 @@ object Result:
     end Success
 
     /** Represents an error in a Result. */
-    sealed abstract class Error[+E]:
+    sealed abstract class Failure[+E]:
         /** Gets the failure value.
           *
           * @return
           *   The error value or exception
           */
         def getFailure: E | Throwable
-    end Error
-    object Error:
+    end Failure
+    object Failure:
         def unapply[E, A](self: Result[E, A]): Maybe.Ops[E | Throwable] =
             self match
-                case error: Error[E] @unchecked => Maybe(error.getFailure)
-                case _                          => Maybe.empty
-    end Error
+                case error: Failure[E] @unchecked => Maybe(error.getFailure)
+                case _                            => Maybe.empty
+    end Failure
 
     /** Represents a failure in a Result. */
-    case class Fail[+E](error: E) extends Error[E]:
+    case class Error[+E](error: E) extends Failure[E]:
         def getFailure = error
 
-    object Fail:
-        /** Extracts the error value from a Fail Result.
+    object Error:
+        /** Extracts the error value from a Error Result.
           *
           * @param result
           *   The Result to extract from
@@ -221,17 +228,17 @@ object Result:
           * @tparam A
           *   The type of the successful value (not used in this case)
           * @return
-          *   A Maybe containing the error value, or empty for non-Fail Results
+          *   A Maybe containing the error value, or empty for non-Error Results
           */
         def unapply[E, A](result: Result[E, A]): Maybe.Ops[E] =
             result match
-                case result: Fail[E] @unchecked =>
+                case result: Error[E] @unchecked =>
                     Maybe(result.error)
                 case _ => Maybe.empty
-    end Fail
+    end Error
 
     /** Represents a panic situation in a Result. */
-    case class Panic(exception: Throwable) extends Error[Nothing]:
+    case class Panic(exception: Throwable) extends Failure[Nothing]:
         def getFailure = exception
 
     object Panic:
@@ -249,8 +256,8 @@ object Result:
                 throw exception
     end Panic
 
-    extension [E](self: Error[E])
-        /** Gets the exception from an Error.
+    extension [E](self: Failure[E])
+        /** Gets the exception from an Failure.
           *
           * @param ev
           *   Evidence that E is a subtype of Throwable
@@ -259,12 +266,12 @@ object Result:
           */
         def exception(
             using
-            @implicitNotFound("Error must be a 'Throwable'")
+            @implicitNotFound("Failure must be a 'Throwable'")
             ev: E <:< Throwable
         ): Throwable =
             self match
-                case self: Fail[E] => self.error
-                case self: Panic   => self.exception
+                case self: Error[E] => self.error
+                case self: Panic    => self.exception
 
     /** Provides extension methods for Result type */
     extension [E, A](self: Result[E, A])
@@ -276,16 +283,16 @@ object Result:
           */
         def isSuccess: Boolean =
             self match
-                case _: Error[?] => false
-                case _           => true
+                case _: Failure[?] => false
+                case _             => true
 
-        /** Checks if the Result is a Fail.
+        /** Checks if the Result is a Error.
           *
           * @return
-          *   true if the Result is a Fail, false otherwise
+          *   true if the Result is a Error, false otherwise
           */
         def isFail =
-            self.isInstanceOf[Fail[?]]
+            self.isInstanceOf[Error[?]]
 
         /** Checks if the Result is a Panic.
           *
@@ -302,19 +309,19 @@ object Result:
           */
         def value: Maybe[A] =
             self match
-                case self: Error[?] => Maybe.empty
-                case self           => Maybe(self.asInstanceOf[A])
+                case self: Failure[?] => Maybe.empty
+                case self             => Maybe(self.asInstanceOf[A])
 
         /** Gets the error value if present.
           *
           * @return
-          *   A Maybe containing the error value, or empty for non-Fail Results
+          *   A Maybe containing the error value, or empty for non-Error Results
           */
         @targetName("maybeError")
         def failure: Maybe[E] =
             self match
-                case self: Fail[E] @unchecked => Maybe(self.error)
-                case _                        => Maybe.empty
+                case self: Error[E] @unchecked => Maybe(self.error)
+                case _                         => Maybe.empty
 
         /** Gets the panic exception if present.
           *
@@ -338,9 +345,9 @@ object Result:
           * @return
           *   The result of applying the appropriate function
           */
-        inline def fold[B](inline ifFailure: Error[E] => B)(inline ifSuccess: A => B): B =
+        inline def fold[B](inline ifFailure: Failure[E] => B)(inline ifSuccess: A => B): B =
             self match
-                case self: Error[E] @unchecked => ifFailure(self)
+                case self: Failure[E] @unchecked => ifFailure(self)
                 case _ =>
                     try ifSuccess(self.asInstanceOf[Result[Nothing, A]].get)
                     catch
@@ -353,7 +360,7 @@ object Result:
           * @return
           *   The successful value
           * @throws NoSuchElementException
-          *   if the Result is a Fail
+          *   if the Result is a Error
           * @throws Throwable
           *   if the Result is a Panic
           */
@@ -363,10 +370,10 @@ object Result:
             ev: E =:= Nothing
         ): A =
             self match
-                case self: Fail[E] @unchecked => throw new NoSuchElementException(s"Error: ${self.error}")
-                case self: Panic              => throw self.exception
-                case self: SuccessError[?]    => self.unnest.asInstanceOf[A]
-                case self                     => self.asInstanceOf[A]
+                case self: Error[E] @unchecked => throw new NoSuchElementException(s"Failure: ${self.error}")
+                case self: Panic               => throw self.exception
+                case self: SuccessError[?]     => self.unnest.asInstanceOf[A]
+                case self                      => self.asInstanceOf[A]
             end match
         end get
 
@@ -377,13 +384,13 @@ object Result:
           * @return
           *   The successful value
           * @throws E
-          *   if the Result is a Fail
+          *   if the Result is a Error
           * @throws Throwable
           *   if the Result is a Panic
           */
         def getOrThrow(
             using
-            @implicitNotFound("Error must be a 'Throwable' to invoke 'getOrThrow'. Found: '${E}'")
+            @implicitNotFound("Failure must be a 'Throwable' to invoke 'getOrThrow'. Found: '${E}'")
             ev: E <:< Throwable
         ): A =
             fold(e => throw e.exception)(identity)
@@ -412,7 +419,7 @@ object Result:
           *   This Result if it's a Success, or the alternative Result
           */
         def orElse[E2, B >: A](alternative: => Result[E2, B]): Result[E | E2, B] =
-            fold(_ => alternative)(Result.success)
+            fold(_ => alternative)(Result.succeed)
 
         /** Applies a function to the successful value of this Result.
           *
@@ -427,7 +434,7 @@ object Result:
           */
         inline def flatMap[E2, B](inline f: A => Result[E2, B]): Result[E | E2, B] =
             self match
-                case self: Error[E] @unchecked => self
+                case self: Failure[E] @unchecked => self
                 case self =>
                     try f(self.asInstanceOf[Success[A]].get)
                     catch
@@ -457,7 +464,7 @@ object Result:
           *   A new Result after applying the function
           */
         inline def map[B](inline f: A => B): Result[E, B] =
-            flatMap(v => Result.success(f(v)))
+            flatMap(v => Result.succeed(f(v)))
 
         /** Applies a function to the error value of this Result.
           *
@@ -468,10 +475,10 @@ object Result:
           * @return
           *   A new Result after applying the function to the error
           */
-        inline def mapFail[E2](inline f: E => E2): Result[E2, A] =
+        inline def mapError[E2](inline f: E => E2): Result[E2, A] =
             self match
-                case Fail(e) =>
-                    try Fail(f(e))
+                case Error(e) =>
+                    try Error(f(e))
                     catch
                         case ex => Panic(ex)
                 case _ => self.asInstanceOf[Result[E2, A]]
@@ -496,7 +503,7 @@ object Result:
         inline def filter(inline p: A => Boolean): Result[E | NoSuchElementException, A] =
             flatMap { v =>
                 if !p(v) then
-                    Fail(new NoSuchElementException("Predicate does not hold for " + v))
+                    Error(new NoSuchElementException("Predicate does not hold for " + v))
                 else
                     v
             }
@@ -510,11 +517,11 @@ object Result:
           * @return
           *   A new Result with the error potentially recovered
           */
-        inline def recover[B >: A](pf: PartialFunction[Error[E], B]): Result[E, B] =
+        inline def recover[B >: A](pf: PartialFunction[Failure[E], B]): Result[E, B] =
             try
                 self match
-                    case self: Error[E] @unchecked if pf.isDefinedAt(self) =>
-                        Result.success(pf(self))
+                    case self: Failure[E] @unchecked if pf.isDefinedAt(self) =>
+                        Result.succeed(pf(self))
                     case _ => self
             catch
                 case ex => Panic(ex)
@@ -530,10 +537,10 @@ object Result:
           * @return
           *   A new Result with the error potentially recovered
           */
-        inline def recoverWith[E2, B >: A](pf: PartialFunction[Error[E], Result[E2, B]]): Result[E | E2, B] =
+        inline def recoverWith[E2, B >: A](pf: PartialFunction[Failure[E], Result[E2, B]]): Result[E | E2, B] =
             try
                 self match
-                    case self: Error[E] @unchecked if pf.isDefinedAt(self) =>
+                    case self: Failure[E] @unchecked if pf.isDefinedAt(self) =>
                         pf(self)
                     case _ => self
             catch
@@ -563,7 +570,7 @@ object Result:
           *   A Try containing the successful value, or Failure with the error
           */
         def toTry(using
-            @implicitNotFound("Fail type must be a 'Throwable' to invoke 'toTry'. Found: '${E}'")
+            @implicitNotFound("Error type must be a 'Throwable' to invoke 'toTry'. Found: '${E}'")
             ev: E <:< Throwable
         ): Try[A] =
             fold(e => scala.util.Failure(e.getFailure.asInstanceOf[Throwable]))(scala.util.Success(_))
@@ -575,8 +582,8 @@ object Result:
           */
         def swap: Result[A, E] =
             self match
-                case Fail(e)    => Result.success(e)
-                case Success(v) => Result.fail(v)
+                case Error(e)   => Result.succeed(e)
+                case Success(v) => Result.error(v)
                 case _          => self.asInstanceOf[Result[A, E]]
 
         /** Returns a string representation of the Result.
@@ -587,13 +594,13 @@ object Result:
         def show: String =
             self match
                 case Panic(ex) => s"Panic($ex)"
-                case Fail(ex)  => s"Fail($ex)"
+                case Error(ex) => s"Error($ex)"
                 case v         => s"Success($v)"
 
     end extension
 
     private object internal:
-        case class SuccessError[+A](failure: Error[A], depth: Int = 1):
+        case class SuccessError[+A](failure: Failure[A], depth: Int = 1):
             def unnest: Result[Any, A] =
                 if depth > 1 then
                     SuccessError(failure, depth - 1)

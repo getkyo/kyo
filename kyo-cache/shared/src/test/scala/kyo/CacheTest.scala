@@ -51,7 +51,7 @@ class CacheTest extends Test:
             }
             v1 <- Abort.run[Throwable](m(1))
             v2 <- Abort.run[Throwable](m(1))
-        yield assert(calls == 2 && v1 == Result.fail(ex) && v2 == Result.success(2))
+        yield assert(calls == 2 && v1 == Result.error(ex) && v2 == Result.succeed(2))
         end for
     }
 end CacheTest

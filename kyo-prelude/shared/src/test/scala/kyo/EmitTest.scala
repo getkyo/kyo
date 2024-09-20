@@ -130,11 +130,11 @@ class EmitTest extends Test:
                     Emit.runAck(emits(0)) { v =>
                         seen :+= v
                         if v < 3 then Emit.Ack.Continue()
-                        else Abort.fail("Reached 3")
+                        else Abort.error("Reached 3")
                     }
                 }.eval
                 assert(seen == List(0, 1, 2, 3))
-                assert(result == Result.fail("Reached 3"))
+                assert(result == Result.error("Reached 3"))
             }
         }
     }

@@ -119,7 +119,7 @@ class EffectCombinatorTest extends Test:
                 val getState          = IO(state)
                 val effectWhen        = (toggleState *> getState).when(getState)
                 val handledEffectWhen = IO.run(Abort.run(effectWhen))
-                assert(handledEffectWhen.eval == Result.fail(Maybe.Empty))
+                assert(handledEffectWhen.eval == Result.error(Maybe.Empty))
             }
             "condition is true" in {
                 var state: Boolean = true
@@ -129,7 +129,7 @@ class EffectCombinatorTest extends Test:
                 val getState          = IO(state)
                 val effectWhen        = (toggleState *> getState).when(getState)
                 val handledEffectWhen = IO.run(Abort.run(effectWhen))
-                assert(handledEffectWhen.eval == Result.success(false))
+                assert(handledEffectWhen.eval == Result.succeed(false))
             }
         }
 
@@ -143,7 +143,7 @@ class EffectCombinatorTest extends Test:
                         }
                     }
                 }.eval
-                assert(result == Result.fail(Maybe.Empty))
+                assert(result == Result.error(Maybe.Empty))
             }
             "condition is false" in {
                 val effect = IO("value").unless(Env.get[Boolean])
@@ -154,7 +154,7 @@ class EffectCombinatorTest extends Test:
                         }
                     }
                 }.eval
-                assert(result == Result.success("value"))
+                assert(result == Result.succeed("value"))
             }
         }
 

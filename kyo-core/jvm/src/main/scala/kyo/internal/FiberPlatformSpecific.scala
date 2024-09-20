@@ -12,7 +12,7 @@ trait FiberPlatformSpecific:
         IO {
             val p = new IOPromise[Nothing, A]()
             cs.whenComplete { (success, error) =>
-                if error == null then p.completeUnit(Result.success(success))
+                if error == null then p.completeUnit(Result.succeed(success))
                 else p.completeUnit(Result.panic(error))
             }
             Fiber.initUnsafe(p)

@@ -291,11 +291,11 @@ val a: Result[Exception, Result[String, Int]] = abortStringFirst(1)    // Result
 val b: Result[String, Result[Exception, Int]] = abortExceptionFirst(1) // Result.Success(Result.Success(1))
 
 // If there's short-circuiting, the resulting value can be different depending on the handling order.
-abortStringFirst(Abort.fail("test"))    // Result.Success(Result.Fail("test"))
-abortStringFirst(Abort.fail(ex))        // Result.Fail(ex)
+abortStringFirst(Abort.error("test"))    // Result.Success(Result.Error("test"))
+abortStringFirst(Abort.error(ex))        // Result.Error(ex)
 
-abortExceptionFirst(Abort.fail("test")) // Result.Fail("test")
-abortExceptionFirst(Abort.fail(ex))     // Result.Success(Result.Fail(ex))
+abortExceptionFirst(Abort.error("test")) // Result.Error("test")
+abortExceptionFirst(Abort.error(ex))     // Result.Success(Result.Error(ex))
 ```
 
 ### Direct Syntax
@@ -452,7 +452,7 @@ val b: Int < Abort[String] =
 
 // short-circuiting via 'Fail'
 val c: Int < Abort[String] =
-    Abort.fail("failed!")
+    Abort.error("failed!")
 
 // 'catching' automatically catches exceptions
 val d: Int < Abort[Exception] =
@@ -1934,7 +1934,7 @@ import kyo.*
 import scala.concurrent.*
 
 // An example fiber
-val a: Fiber[Nothing, Int] = Fiber.success(42)
+val a: Fiber[Nothing, Int] = Fiber.succeed(42)
 
 // Check if the fiber is done
 val b: Boolean < IO =
@@ -1965,7 +1965,7 @@ val h: Future[Int] < IO =
 // 'Fiber' provides a monadic API with both
 // 'map' and 'flatMap'
 val i: Fiber[Nothing, Int] < IO =
-    a.flatMap(v => Fiber.success(v + 1))
+    a.flatMap(v => Fiber.succeed(v + 1))
 ```
 
 Similarly to `IO`, users should avoid handling the `Async` effect directly and rely on `KyoApp` instead. If strictly necessary, there are two methods to handle the `Async` effect:
@@ -2006,7 +2006,7 @@ val a: Promise[Nothing, Int] < IO =
 
 // Try to fulfill a promise
 val b: Boolean < IO =
-    a.map(_.complete(Result.success(42)))
+    a.map(_.complete(Result.succeed(42)))
 
 // Fullfil the promise with
 // another fiber
@@ -2733,10 +2733,10 @@ import kyo._
 import scala.util.Try
 
 // Create a 'Result' from a value
-val a: Result[Nothing, Int] = Result.success(42)
+val a: Result[Nothing, Int] = Result.succeed(42)
 
 // Create a 'Result' from an failure
-val b: Result[Exception, Int] = Result.fail(new Exception("Oops"))
+val b: Result[Exception, Int] = Result.error(new Exception("Oops"))
 
 // Use 'apply' to create a 'Result' from a block of code
 val c: Result[Nothing, Int] = Result(42 / 0)
@@ -2760,20 +2760,20 @@ val h: String = a.fold(e => "failure " + e)(_.toString)
 val i: Result[Nothing, String] = a.map(_.toString)
 
 // 'flatMap' allows chaining 'Result' operations
-val j: Result[Nothing, Int] = a.flatMap(v => Result.success(v + 1))
+val j: Result[Nothing, Int] = a.flatMap(v => Result.succeed(v + 1))
 
 // 'flatten' removes one level of nesting from a 'Result[Result[T]]'
-val k: Result[Nothing, Result[Nothing, Int]] = Result.success(a)
+val k: Result[Nothing, Result[Nothing, Int]] = Result.succeed(a)
 val l: Result[Nothing, Int] = k.flatten
 
 // 'filter' conditionally keeps or discards the value
 val m: Result[NoSuchElementException, Int] = a.filter(_ > 0)
 
 // 'recover' allows handling failures with a partial function
-val n: Result[Exception, Int] = b.recover { case Result.Fail(_: ArithmeticException) => 0 }
+val n: Result[Exception, Int] = b.recover { case Result.Error(_: ArithmeticException) => 0 }
 
 // 'recoverWith' allows handling failures with a partial function returning a 'Result'
-val o: Result[Exception, Int] = b.recoverWith { case Result.Fail(_: ArithmeticException) => Result.success(0) }
+val o: Result[Exception, Int] = b.recoverWith { case Result.Error(_: ArithmeticException) => Result.succeed(0) }
 
 // 'toEither' converts a 'Result' to an 'Either'
 val p: Either[Throwable, Int] = a.toEither
@@ -3001,7 +3001,7 @@ val a: Unit < Routes =
             .out(stringBody)
     ) { (id: Int) =>
         if id == 42 then "ok"
-        else Abort.fail(StatusCode.NotFound)
+        else Abort.error(StatusCode.NotFound)
         // returns a 'String < Abort[StatusCode]'
     }
 ```

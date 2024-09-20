@@ -24,7 +24,7 @@ object MonadLawsTest extends ZIOSpecDefault:
                 Gen.oneOf(
                     gen.map(v => (v: A < Any)),
                     gen.zip(boolGen).map((v, b) =>
-                        if b then Abort.fail("fail") else (v: A < Any)
+                        if b then Abort.error("fail") else (v: A < Any)
                     ),
                     gen.zip(intGen).map((v, i) =>
                         Emit(i).unit.andThen(v)
@@ -36,10 +36,10 @@ object MonadLawsTest extends ZIOSpecDefault:
                         Env.use[String](_ => ()).andThen(v)
                     ),
                     gen.zip(boolGen).map((v, b) =>
-                        Var.get[Boolean].map(x => if x then v else Abort.fail("var fail"))
+                        Var.get[Boolean].map(x => if x then v else Abort.error("var fail"))
                     ),
                     gen.zip(intGen).map((v, i) =>
-                        Emit(i).map(_ => if i % 2 == 0 then v else Abort.fail("sum fail"))
+                        Emit(i).map(_ => if i % 2 == 0 then v else Abort.error("sum fail"))
                     ),
                     gen.map(v =>
                         for
@@ -73,7 +73,7 @@ object MonadLawsTest extends ZIOSpecDefault:
                             ).eval._2
                         (run(l), run(r)) match
                             case (Result.Success(l), Result.Success(r)) => summon[Equal[A]].equal(l, r)
-                            case (Result.Fail(l), Result.Fail(r))       => l == r
+                            case (Result.Error(l), Result.Error(r))     => l == r
                             case _                                      => false
                         end match
                     end checkEqual

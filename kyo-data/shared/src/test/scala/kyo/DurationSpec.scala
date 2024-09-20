@@ -124,7 +124,7 @@ object DurationSpec extends ZIOSpecDefault:
 
                 TestResult.allSuccesses(
                     testCases.map { case (input, expected) =>
-                        assertTrue(Duration.parse(input) == Result.success(expected))
+                        assertTrue(Duration.parse(input) == Result.succeed(expected))
                     }
                 )
             },
@@ -145,15 +145,15 @@ object DurationSpec extends ZIOSpecDefault:
             },
             test("case insensitivity") {
                 TestResult.allSuccesses(
-                    assertTrue(Duration.parse("1MS") == Result.success(1.millis)),
-                    assertTrue(Duration.parse("2H") == Result.success(2.hours)),
-                    assertTrue(Duration.parse("3D") == Result.success(3.days))
+                    assertTrue(Duration.parse("1MS") == Result.succeed(1.millis)),
+                    assertTrue(Duration.parse("2H") == Result.succeed(2.hours)),
+                    assertTrue(Duration.parse("3D") == Result.succeed(3.days))
                 )
             },
             test("whitespace handling") {
                 TestResult.allSuccesses(
-                    assertTrue(Duration.parse("  1  second  ") == Result.success(1.seconds)),
-                    assertTrue(Duration.parse("5\tminutes") == Result.success(5.minutes))
+                    assertTrue(Duration.parse("  1  second  ") == Result.succeed(1.seconds)),
+                    assertTrue(Duration.parse("5\tminutes") == Result.succeed(5.minutes))
                 )
             }
         )

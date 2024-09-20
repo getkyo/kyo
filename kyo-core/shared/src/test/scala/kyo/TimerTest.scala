@@ -8,7 +8,7 @@ class TimerTest extends Test:
     "schedule" in run {
         for
             p     <- Promise.init[Nothing, String]
-            _     <- Timer.schedule(1.milli)(p.complete(Result.success("hello")).map(require(_)))
+            _     <- Timer.schedule(1.milli)(p.complete(Result.succeed("hello")).map(require(_)))
             hello <- p.get
         yield assert(hello == "hello")
     }
@@ -18,7 +18,7 @@ class TimerTest extends Test:
         Timer.let(Timer(exec)) {
             for
                 p     <- Promise.init[Nothing, String]
-                _     <- Timer.schedule(1.milli)(p.complete(Result.success("hello")).map(require(_)))
+                _     <- Timer.schedule(1.milli)(p.complete(Result.succeed("hello")).map(require(_)))
                 hello <- p.get
             yield assert(hello == "hello")
         }
@@ -27,7 +27,7 @@ class TimerTest extends Test:
     "cancel" in runJVM {
         for
             p         <- Promise.init[Nothing, String]
-            task      <- Timer.schedule(5.seconds)(p.complete(Result.success("hello")).map(require(_)))
+            task      <- Timer.schedule(5.seconds)(p.complete(Result.succeed("hello")).map(require(_)))
             _         <- task.cancel
             cancelled <- untilTrue(task.cancelled)
             done1     <- p.done

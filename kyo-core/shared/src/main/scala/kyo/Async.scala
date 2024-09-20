@@ -126,7 +126,7 @@ object Async:
 
         inline given [E, A]: Flat[Fiber[E, A]] = Flat.unsafe.bypass
 
-        private val _unit = success(())
+        private val _unit = succeed(())
 
         /** Creates a unit Fiber.
           *
@@ -149,7 +149,7 @@ object Async:
           * @return
           *   A Fiber that completes successfully with the given value
           */
-        def success[E, A](v: A): Fiber[E, A] = result(Result.success(v))
+        def succeed[E, A](v: A): Fiber[E, A] = result(Result.succeed(v))
 
         /** Creates a failed Fiber.
           *
@@ -158,7 +158,7 @@ object Async:
           * @return
           *   A Fiber that fails with the given error
           */
-        def fail[E, A](ex: E): Fiber[E, A] = result(Result.fail(ex))
+        def error[E, A](ex: E): Fiber[E, A] = result(Result.error(ex))
 
         /** Creates a panicked Fiber.
           *
@@ -183,7 +183,7 @@ object Async:
                     def apply(result: Try[A]) =
                         result match
                             case Success(v) =>
-                                completeUnit(Result.success(v))
+                                completeUnit(Result.succeed(v))
                             case Failure(ex) =>
                                 completeUnit(Result.panic(ex))
 
@@ -355,12 +355,12 @@ object Async:
                     val pending = new AtomicInteger(seq.size)
                     def apply(result: Result[E, A]): Unit =
                         val last = pending.decrementAndGet() == 0
-                        result.fold(e => if last then completeUnit(e))(v => completeUnit(Result.success(v)))
+                        result.fold(e => if last then completeUnit(e))(v => completeUnit(Result.succeed(v)))
                     end apply
                 end State
                 val state = new State
                 import state.*
-                foreach(seq)((idx, io) => io.evalNow.foreach(v => state(Result.success(v))))
+                foreach(seq)((idx, io) => io.evalNow.foreach(v => state(Result.succeed(v))))
                 if state.done() then
                     state
                 else
@@ -393,7 +393,7 @@ object Async:
             safepoint: Safepoint
         ): Fiber[E, Seq[A]] < (IO & Ctx) =
             seq.size match
-                case 0 => Fiber.success(Seq.empty)
+                case 0 => Fiber.succeed(Seq.empty)
                 case _ =>
                     IO {
                         class State extends IOPromise[E, Seq[A]]:
@@ -402,7 +402,7 @@ object Async:
                             def update(idx: Int, value: A) =
                                 results(idx) = value
                                 if pending.decrementAndGet() == 0 then
-                                    this.completeUnit(Result.success(ArraySeq.unsafeWrapArray(results)))
+                                    this.completeUnit(Result.succeed(ArraySeq.unsafeWrapArray(results)))
                             end update
                         end State
                         val state = new State
@@ -449,7 +449,7 @@ object Async:
             IO {
                 val p = IOPromise[Nothing, Unit]()
                 if d.isFinite then
-                    Timer.schedule(d)(p.completeUnit(Result.success(()))).map { t =>
+                    Timer.schedule(d)(p.completeUnit(Result.unit)).map { t =>
                         IO.ensure(t.cancel.unit)(get(p))
                     }
                 else
@@ -473,7 +473,7 @@ object Async:
     ): A < (Abort[E | Timeout] & Async & Ctx) =
         boundary { (trace, context) =>
             val task = IOTask[Ctx, E | Timeout, A](v, trace, context)
-            Timer.schedule(d)(task.completeUnit(Result.fail(Timeout(frame)))).map { t =>
+            Timer.schedule(d)(task.completeUnit(Result.error(Timeout(frame)))).map { t =>
                 IO.ensure(t.cancel.unit)(Async.get(task))
             }
         }
@@ -627,7 +627,7 @@ object Async:
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): B < (S & reduce.SReduced & Async) =
-        val x = useResult(v)(_.fold(Abort.error)(f))
+        val x = useResult(v)(_.fold(Abort.fail)(f))
         reduce(x)
     end use
 

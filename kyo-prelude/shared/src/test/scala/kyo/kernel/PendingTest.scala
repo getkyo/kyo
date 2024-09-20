@@ -185,11 +185,11 @@ class PendingTest extends Test:
 
         "preserves the effect type" in {
             val effect: Int < (Env[Int] & Abort[String]) =
-                Env.get[Int].flatMap(x => if x > 5 then Abort.fail("Too big") else x)
+                Env.get[Int].flatMap(x => if x > 5 then Abort.error("Too big") else x)
             val result = effect.pipe { v =>
                 Abort.run(Env.run(10)(v))
             }
-            assert(result.eval == Result.fail("Too big"))
+            assert(result.eval == Result.error("Too big"))
         }
 
         "works with identity function" in {

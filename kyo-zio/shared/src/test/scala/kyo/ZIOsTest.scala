@@ -37,10 +37,10 @@ class ZIOsTest extends Test:
         "kyo then zio" in runKyo {
             object zioFailure extends RuntimeException
             object kyoFailure extends RuntimeException
-            val a = Abort.fail(kyoFailure)
+            val a = Abort.error(kyoFailure)
             val b = ZIOs.get(ZIO.fail(zioFailure))
             Abort.run(a.map(_ => b)).map {
-                case Result.Fail(ex) =>
+                case Result.Error(ex) =>
                     assert(ex == kyoFailure)
                 case _ =>
                     fail()
@@ -50,9 +50,9 @@ class ZIOsTest extends Test:
             object zioFailure extends RuntimeException
             object kyoFailure extends RuntimeException
             val a = ZIOs.get(ZIO.fail(zioFailure))
-            val b = Abort.fail(kyoFailure)
+            val b = Abort.error(kyoFailure)
             Abort.run(a.map(_ => b)).map {
-                case Result.Fail(ex) =>
+                case Result.Error(ex) =>
                     assert(ex == zioFailure)
                 case _ =>
                     fail()

@@ -63,7 +63,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                 )
             }
             if !isNull(curr) then
-                curr.evalNow.foreach(a => completeUnit(Result.success(a)))
+                curr.evalNow.foreach(a => completeUnit(Result.succeed(a)))
         catch
             case ex =>
                 completeUnit(Result.panic(ex))

@@ -49,17 +49,17 @@ class FailureBench extends Bench.SyncAndFork[Either[Ex1 | Ex2, Int]](Left(Ex2)):
             if i > depth then i
             else
                 (i % 5) match
-                    case 0 => loop(i + 1).map(_ => Abort.fail(Ex1))
-                    case 1 => loop(i + 1).map(_ => Abort.fail(Ex2))
+                    case 0 => loop(i + 1).map(_ => Abort.error(Ex1))
+                    case 1 => loop(i + 1).map(_ => Abort.error(Ex2))
                     case 2 =>
                         Abort.run[Ex1](loop(i + 1)).map {
-                            case Result.Fail(_)    => Abort.fail(Ex2)
+                            case Result.Error(_)   => Abort.error(Ex2)
                             case Result.Success(v) => v
                             case Result.Panic(ex)  => Abort.panic(ex)
                         }
                     case 3 =>
                         Abort.run[Ex2](loop(i + 1)).map {
-                            case Result.Fail(_)    => Abort.fail(Ex1)
+                            case Result.Error(_)   => Abort.error(Ex1)
                             case Result.Success(v) => v
                             case Result.Panic(ex)  => Abort.panic(ex)
                         }
@@ -67,9 +67,9 @@ class FailureBench extends Bench.SyncAndFork[Either[Ex1 | Ex2, Int]](Left(Ex2)):
                 end match
         end loop
         Abort.run[Exception](loop(0)).map {
-            case Result.Fail(ex: (Ex1 | Ex2)) => Left(ex)
-            case Result.Success(v)            => Right(v)
-            case _                            => ???
+            case Result.Error(ex: (Ex1 | Ex2)) => Left(ex)
+            case Result.Success(v)             => Right(v)
+            case _                             => ???
         }
     end kyoBench
 

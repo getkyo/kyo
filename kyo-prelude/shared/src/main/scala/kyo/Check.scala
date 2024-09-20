@@ -66,7 +66,7 @@ object Check:
       */
     def runAbort[A: Flat, S](v: A < (Check & S))(using Frame): A < (Abort[CheckFailed] & S) =
         ArrowEffect.handle(Tag[Check], v)(
-            [C] => (input, cont) => Abort.fail(input)
+            [C] => (input, cont) => Abort.error(input)
         )
 
     /** Runs a computation with Check effect, collecting all failures.

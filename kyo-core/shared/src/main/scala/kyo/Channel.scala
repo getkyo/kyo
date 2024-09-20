@@ -228,7 +228,7 @@ object Channel:
                                         takes.add(p)
                                         Fiber.initUnsafe(p)
                                     else
-                                        Fiber.success(v)
+                                        Fiber.succeed(v)
                                     end if
                             finally
                                 flush()
@@ -288,7 +288,7 @@ object Channel:
                                     // If the queue has been emptied before the
                                     // transfer, requeue the consumer's promise.
                                     discard(takes.add(p))
-                                else if !p.complete(Result.success(v)) && !u.offer(v) then
+                                else if !p.complete(Result.succeed(v)) && !u.offer(v) then
                                     // If completing the take fails and the queue
                                     // cannot accept the value back, enqueue a
                                     // placeholder put operation to preserve the value.
@@ -307,7 +307,7 @@ object Channel:
                                     // Complete the put's promise if the value is
                                     // successfully enqueued. If the fiber became
                                     // interrupted, the completion will be ignored.
-                                    discard(p.complete(Result.success(())))
+                                    discard(p.complete(Result.succeed(())))
                                 else
                                     // If the queue becomes full before the transfer,
                                     // requeue the producer's operation.
@@ -322,12 +322,12 @@ object Channel:
                             if t != null then
                                 val (v, p) = t
                                 val p2     = takes.poll()
-                                if p2 != null && p2.complete(Result.success(v)) then
+                                if p2 != null && p2.complete(Result.succeed(v)) then
                                     // If the transfer is successful, complete
                                     // the put's promise. If the consumer's fiber
                                     // became interrupted, the completion will be
                                     // ignored.
-                                    discard(p.complete(Result.success(())))
+                                    discard(p.complete(Result.succeed(())))
                                 else
                                     // If the transfer to the consumer fails, requeue
                                     // the producer's operation.

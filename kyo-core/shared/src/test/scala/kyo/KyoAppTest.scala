@@ -49,12 +49,12 @@ class KyoAppTest extends Test:
             for
                 _ <- Clock.now
                 _ <- Random.nextInt
-                _ <- Abort.fail(new RuntimeException("Aborts!"))
+                _ <- Abort.error(new RuntimeException("Aborts!"))
             yield ()
 
         KyoApp.attempt(Duration.Infinity)(run) match
-            case Result.Fail(exception) => assert(exception.getMessage == "Aborts!")
-            case _                      => fail("Unexpected Success...")
+            case Result.Error(exception) => assert(exception.getMessage == "Aborts!")
+            case _                       => fail("Unexpected Success...")
     }
 
     "effect mismatch" taggedAs jvmOnly in {
