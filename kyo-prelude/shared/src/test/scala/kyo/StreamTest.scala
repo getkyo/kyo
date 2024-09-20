@@ -481,6 +481,20 @@ class StreamTest extends Test:
             )
         }
 
+        "works with effects" in run {
+            var sum = 0
+            val stream = Stream.init(Seq(1, 2, 3, 4, 5)).map { i =>
+                sum = sum + i
+                if i == 3 then Abort.fail("Reached 3")
+                else i
+            }
+
+            Abort.run[String](stream.runDiscard).map { r =>
+                assert(r == Result.fail("Reached 3"))
+                assert(sum == 6)
+            }
+        }
+
         "empty stream" in {
             assert(
                 Stream.init(Seq.empty[Int]).runDiscard.eval == ()
