@@ -139,4 +139,48 @@ class EmitTest extends Test:
         }
     }
 
+    "generic type parameters" - {
+        "single generic emit" in {
+            def emitGeneric[T: Tag](value: T): Unit < Emit[T] =
+                Emit(value).unit
+
+            val result = Emit.run(emitGeneric(42)).eval
+            assert(result == (Chunk(42), ()))
+        }
+
+        "multiple generic emits" in {
+            def emitMultipleGeneric[T: Tag, U: Tag](t: T, u: U): Unit < (Emit[T] & Emit[U]) =
+                for
+                    _ <- Emit(t)
+                    _ <- Emit(u)
+                yield ()
+
+            val result = Emit.run[Int](Emit.run[String](emitMultipleGeneric(42, "hello"))).eval
+            assert(result == (Chunk(42), (Chunk("hello"), ())))
+        }
+
+        "nested generic emits" in {
+            def nestedEmit[T: Tag, U: Tag](t: T, u: U): Unit < (Emit[T] & Emit[U] & Emit[(T, U)]) =
+                for
+                    _ <- Emit(t)
+                    _ <- Emit(u)
+                    _ <- Emit((t, u))
+                yield ()
+
+            val result = Emit.run[Int](Emit.run[String](Emit.run[(Int, String)](nestedEmit(42, "world")))).eval
+            assert(result == (Chunk(42), (Chunk("world"), (Chunk((42, "world")), ()))))
+        }
+
+        "multiple generic emits with different types" in {
+            def multiEmit[T: Tag, U: Tag, V: Tag](t: T, u: U, v: V): Unit < (Emit[T] & Emit[U] & Emit[V]) =
+                for
+                    _ <- Emit(t)
+                    _ <- Emit(u)
+                    _ <- Emit(v)
+                yield ()
+
+            val result = Emit.run[Int](Emit.run[String](Emit.run[Boolean](multiEmit(42, "test", true)))).eval
+            assert(result == (Chunk(42), (Chunk("test"), (Chunk(true), ()))))
+        }
+    }
 end EmitTest
