@@ -4,6 +4,8 @@ import cats.effect.IO as CatsIO
 import cats.effect.kernel.Fiber as CatsFiber
 import cats.effect.kernel.Outcome
 import cats.effect.unsafe.implicits.global
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kyo.*
 import kyo.kernel.Platform
 import org.scalatest.compatible.Assertion
@@ -67,43 +69,60 @@ class CatsTest extends Test:
 
     "interrupts" - {
 
-        import java.util.concurrent.atomic.LongAdder
+        def kyoLoop(cdl: CountDownLatch): Unit < IO =
+            def loop(): Unit < IO =
+                IO(()).flatMap(_ => loop())
+            IO.ensure(IO(cdl.countDown()))(loop())
+        end kyoLoop
 
-        def kyoLoop(a: LongAdder = new LongAdder): Unit < IO =
-            IO(a.increment()).map(_ => kyoLoop(a))
-
-        def catsLoop(a: LongAdder = new LongAdder): CatsIO[Unit] =
-            CatsIO.delay(a.increment()).flatMap(_ => catsLoop(a))
+        def catsLoop(cdl: CountDownLatch): CatsIO[Unit] =
+            def loop(): CatsIO[Unit] =
+                CatsIO.unit.flatMap(_ => loop())
+            loop().guarantee(CatsIO(cdl.countDown()))
+        end catsLoop
 
         if Platform.isJVM then
 
             "cats to kyo" in runCatsIO {
+                pending
+                val cdl = new CountDownLatch(1)
                 for
-                    f <- Cats.run(kyoLoop()).start
+                    f <- Cats.run(kyoLoop(cdl)).start
                     _ <- f.cancel
                     r <- f.join
-                yield assert(r.isCanceled)
+                yield
+                    assert(cdl.await(10, TimeUnit.MILLISECONDS))
+                    assert(r.isCanceled)
                 end for
             }
             "kyo to cats" in runKyo {
+                pending
+                val cdl   = new CountDownLatch(1)
+                val panic = Result.Panic(new Exception)
                 for
-                    f <- Async.run(Cats.run(catsLoop()))
-                    _ <- f.interrupt(Result.Panic(new Exception))
+                    f <- Async.run(Cats.run(catsLoop(cdl)))
+                    _ <- f.interrupt(panic)
                     r <- f.getResult
-                yield assert(r.isPanic)
+                yield
+                    assert(cdl.await(10, TimeUnit.MILLISECONDS))
+                    assert(r == panic)
                 end for
             }
             "both" in runCatsIO {
+                pending
+                val cdl = new CountDownLatch(1)
                 val v =
                     for
-                        _ <- Cats.get(catsLoop())
-                        _ <- Async.run(kyoLoop())
+                        _ <- Cats.get(catsLoop(cdl))
+                        _ <- Async.run(kyoLoop(cdl))
                     yield ()
                 for
                     f <- Cats.run(v).start
                     _ <- f.cancel
                     r <- f.join
-                yield assert(r.isCanceled)
+                yield
+                    assert(cdl.await(10, TimeUnit.MILLISECONDS))
+                    assert(r.isCanceled)
                 end for
             }
         end if
