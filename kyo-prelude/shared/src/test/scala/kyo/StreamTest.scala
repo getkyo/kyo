@@ -477,7 +477,9 @@ class StreamTest extends Test:
     "runDiscard" - {
         "non-empty stream" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).runDiscard.eval == ()
+                Var.run(0) {
+                    Stream.init(0 until 100).map(i => Var.update[Int](_ + i)).runDiscard.andThen(Var.get[Int])
+                }.eval == 4950
             )
         }
 
