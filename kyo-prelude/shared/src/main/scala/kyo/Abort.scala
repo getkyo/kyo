@@ -138,7 +138,11 @@ object Abort:
             m.fold(fail(Maybe.Empty))(identity)
     end GetOps
 
-    /** Operations for lifting various types into the Abort effect. */
+    /** Operations for lifting various types into the Abort effect.
+      *
+      * @tparam E
+      *   The failure type of the Abort effect being run
+      */
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
     final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
@@ -150,14 +154,12 @@ object Abort:
           *   The success type of the computation
           * @tparam S
           *   The effect type of the computation
-          * @tparam E
-          *   The failure type of the Abort effect being run
           * @tparam ER
           *   Any remaining Abort effects after running this one
           * @return
           *   A Result containing either the success value or the failure value, wrapped in the remaining effects
           */
-        def apply[A: Flat, S, ES, ER](v: => A < (Abort[E | ER] & S))(
+        def apply[A: Flat, S, ER](v: => A < (Abort[E | ER] & S))(
             using
             ct: ClassTag[E],
             tag: Tag[E],
