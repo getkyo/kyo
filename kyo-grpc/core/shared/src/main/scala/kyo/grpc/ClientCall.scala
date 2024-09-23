@@ -17,4 +17,13 @@ object ClientCall:
         GrpcRequest.fromFuture(future)
     end unary
 
+    def serverStreaming[Request, Response: Flat](
+        channel: Channel,
+        method: MethodDescriptor[Request, Response],
+        options: CallOptions,
+        request: Request
+    )(using Frame): Stream[Response, GrpcRequest] =
+        ???
+    end serverStreaming
+
 end ClientCall

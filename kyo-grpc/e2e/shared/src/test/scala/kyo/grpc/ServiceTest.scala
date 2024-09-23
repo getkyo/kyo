@@ -52,6 +52,45 @@ class ServiceTest extends Test:
         }
     }
 
+    "server streaming" - {
+        "echo" in run {
+            for
+                client <- createClientAndServer
+                message = "Hello"
+                request = Echo(message)
+                response <- client.unary(request)
+            yield assert(response == EchoEcho(message))
+        }
+        "abort" in {
+            forEvery(Status.Code.values().filterNot(_ == Status.Code.OK)) { code =>
+                run {
+                    val status = code.toStatus
+                    Abort.run[StatusRuntimeException] {
+                        for
+                            client <- createClientAndServer
+                            request = Cancel(status.getCode.value)
+                            _ <- Abort.catching[StatusRuntimeException](client.unary(request))
+                        yield ()
+                    }.map { result =>
+                        assert(result.swap.toEither.value.getStatus === status)
+                    }
+                }
+            }
+        }
+        "fail" in run {
+            val message = "Oh no!"
+            Abort.run[StatusRuntimeException] {
+                for
+                    client <- createClientAndServer
+                    request = Fail(message)
+                    _ <- Abort.catching[StatusRuntimeException](client.unary(request))
+                yield ()
+            }.map { result =>
+                assert(result.swap.toEither.value.getStatus === Status.INTERNAL.withDescription(message))
+            }
+        }
+    }
+
     private given CanEqual[Response, EchoEcho]       = CanEqual.derived
     private given CanEqual[Status.Code, Status.Code] = CanEqual.derived
 

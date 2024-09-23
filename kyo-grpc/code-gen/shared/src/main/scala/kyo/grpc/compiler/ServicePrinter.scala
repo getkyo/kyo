@@ -110,9 +110,12 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
     }
 
     private def printAddMethod(method: MethodDescriptor)(fp: FunctionalPrinter): FunctionalPrinter = {
+        // TODO: Simplify this.
         val handler = method.streamType match {
-            case StreamType.Unary => s"${Types.serverHandler}.unary(serviceImpl.${method.name})"
-            case _                => ???
+            case StreamType.Unary           => s"${Types.serverHandler}.unary(serviceImpl.${method.name})"
+            case StreamType.ClientStreaming => s"${Types.serverHandler}.clientStreaming(serviceImpl.${method.name})"
+            case StreamType.ServerStreaming => s"${Types.serverHandler}.serverStreaming(serviceImpl.${method.name})"
+            case StreamType.Bidirectional   => s"${Types.serverHandler}.bidirectional(serviceImpl.${method.name})"
         }
         fp.add(".addMethod(")
             .indented(
@@ -194,11 +197,12 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.ServerStreaming => Types.unit
             case StreamType.Bidirectional   => Types.streamObserver(method.inputType.scalaType)
         }
+        // TODO: Simplify this.
         val delegate = method.streamType match {
             case StreamType.Unary           => s"unary(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
-            case StreamType.ClientStreaming => ???
-            case StreamType.ServerStreaming => ???
-            case StreamType.Bidirectional   => ???
+            case StreamType.ClientStreaming => s"clientStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
+            case StreamType.ServerStreaming => s"serverStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
+            case StreamType.Bidirectional   => s"bidirectional(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
         }
         fp
             .call(scalapbServicePrinter.generateScalaDoc(method))

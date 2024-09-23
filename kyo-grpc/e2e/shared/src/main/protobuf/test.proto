@@ -4,7 +4,10 @@ syntax = "proto3";
 package kgrpc;
 
 service TestService {
-  rpc Unary(Request) returns (Response);
+  rpc OneToOne(Request) returns (Response);
+  rpc OneToMany(Request) returns (stream Response);
+  rpc ManyToOne(stream Request) returns (Response);
+  rpc ManyToMany(stream Request) returns (stream Response);
 }
 
 message Request {
