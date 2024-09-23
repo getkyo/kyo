@@ -191,8 +191,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Future to Async.
       */
-    def fromFuture[E <: Throwable: ClassTag, A: Flat, S](future: => Future[A] < S)(using Frame): A < (S & Async & Abort[E]) =
-        future.map(f => Fiber.fromFuture(f).map(_.get))
+    def fromFuture[A: Flat, S](future: => Future[A] < S)(using Frame): A < (S & Async & Abort[Throwable]) =
+        future.map(f => Async.fromFuture(f))
 
     /** Creates an effect from a Promise[A] and handles the Promise to Async.
       *
@@ -201,9 +201,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Promise to Async.
       */
-    def fromPromiseScala[E <: Throwable: ClassTag, A: Flat, S](promise: => scala.concurrent.Promise[A] < S)(using
-        Frame
-    ): A < (S & Async & Abort[E]) =
+    def fromPromiseScala[A: Flat, S](promise: => scala.concurrent.Promise[A] < S)(using Frame): A < (S & Async & Abort[Throwable]) =
         promise.map(p => fromFuture(p.future))
 
     /** Creates an effect from a sequence and handles the sequence to Choice.

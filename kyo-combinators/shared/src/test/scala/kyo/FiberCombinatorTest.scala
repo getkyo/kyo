@@ -19,7 +19,7 @@ class FiberCombinatorTest extends Test:
 
             "should construct from Future" in {
                 val future        = scala.concurrent.Future(100)
-                val effect        = Kyo.fromFuture[Throwable, Int, Any](future)
+                val effect        = Kyo.fromFuture(future)
                 val handledEffect = IO.run(Async.run(effect).map(_.toFuture)).eval
                 handledEffect.map(v =>
                     assert(v == 100)
@@ -28,7 +28,7 @@ class FiberCombinatorTest extends Test:
 
             "should construct from Promise" in {
                 val promise = scala.concurrent.Promise[Int]
-                val effect  = Kyo.fromPromiseScala[Throwable, Int, Any](promise)
+                val effect  = Kyo.fromPromiseScala(promise)
                 scala.concurrent.Future {
                     promise.complete(scala.util.Success(100))
                 }

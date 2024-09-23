@@ -482,25 +482,42 @@ class AsyncTest extends Test:
         "success" in run {
             val future = Future.successful(42)
             for
-                fiber  <- Fiber.fromFuture[Throwable, Int](future)
+                fiber  <- Fiber.fromFuture(future)
                 result <- fiber.get
             yield assert(result == 42)
             end for
         }
 
         "failure" in run {
-            val exception = new RuntimeException("Test exception")
-            val future    = Future.failed(exception)
+            val exception           = new RuntimeException("Test exception")
+            val future: Future[Int] = Future.failed(exception)
             for
-                fiber  <- Fiber.fromFuture[RuntimeException, Int](future)
+                fiber  <- Fiber.fromFuture(future)
                 result <- Abort.run(fiber.get)
-            yield assert(result == Result.fail(exception))
+            yield assert(result.failure.contains(exception))
+            end for
+        }
+    }
+
+    "Async.fromFuture" - {
+        import scala.concurrent.Future
+        import scala.concurrent.ExecutionContext.Implicits.global
+
+        "success" in run {
+            val future = Future.successful(42)
+            for
+                result <- Async.fromFuture(future)
+            yield assert(result == 42)
             end for
         }
 
-        "failed failure inference" in run {
-            val future = Future.successful(42)
-            assertDoesNotCompile("Fiber.fromFuture(future)")
+        "failure" in run {
+            val exception           = new RuntimeException("Test exception")
+            val future: Future[Int] = Future.failed(exception)
+            for
+                result <- Abort.run(Async.fromFuture(future))
+            yield assert(result.failure.contains(exception))
+            end for
         }
     }
 
