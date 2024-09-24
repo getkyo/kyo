@@ -7,9 +7,14 @@ import sttp.client3.*
   * This exception is thrown when an HTTP request fails for any reason.
   *
   * @param cause
-  *   A string describing the reason for the failure
+  *   A string or throwable describing the reason for the failure
   */
-case class FailedRequest(cause: String) extends Exception
+case class FailedRequest(cause: String | Throwable) extends Exception:
+    override def getCause(): Throwable =
+        cause match
+            case ex: Throwable => ex
+            case _             => null
+end FailedRequest
 
 object Requests:
 
@@ -26,7 +31,7 @@ object Requests:
           * @return
           *   The response wrapped in an effect
           */
-        def send[A](r: Request[A, Any]): Response[A] < Async
+        def send[A](r: Request[A, Any]): Response[A] < (Async & Abort[FailedRequest])
 
         /** Wraps the Backend with a meter
           *
@@ -78,7 +83,7 @@ object Requests:
       * @return
       *   The response body wrapped in an effect
       */
-    def apply[E, A](f: BasicRequest => Request[Either[E, A], Any])(using Frame): A < (Async & Abort[E]) =
+    def apply[E, A](f: BasicRequest => Request[Either[E, A], Any])(using Frame): A < (Async & Abort[FailedRequest | E]) =
         request(f(basicRequest))
 
     /** Sends an HTTP request
@@ -92,7 +97,7 @@ object Requests:
       * @return
       *   The response body wrapped in an effect
       */
-    def request[E, A](req: Request[Either[E, A], Any])(using Frame): A < (Async & Abort[E]) =
+    def request[E, A](req: Request[Either[E, A], Any])(using Frame): A < (Async & Abort[FailedRequest | E]) =
         local.use(_.send(req)).map { r =>
             Abort.get(r.body)
         }

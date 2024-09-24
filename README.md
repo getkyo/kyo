@@ -1921,7 +1921,7 @@ import scala.concurrent.Future
 val a: Future[Int] = Future.successful(42)
 
 // Transform a 'Future' into a 'Fiber'
-val b: Fiber[Nothing, Int] < IO =
+val b: Fiber[Throwable, Int] < IO =
     Fiber.fromFuture(a)
 ```
 
