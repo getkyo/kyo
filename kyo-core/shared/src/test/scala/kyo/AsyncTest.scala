@@ -87,6 +87,24 @@ class AsyncTest extends Test:
                 yield assert(a && b && c == 42)
             }
         }
+
+        "completeUnit" in run {
+            for
+                p <- Promise.init[Nothing, Int]
+                _ <- p.completeUnit(Result.success(1))
+                v <- p.get
+            yield assert(v == 1)
+        }
+
+        "becomeUnit" in run {
+            for
+                p1 <- Promise.init[Nothing, Int]
+                p2 <- Promise.init[Nothing, Int]
+                _  <- p2.complete(Result.success(42))
+                _  <- p1.becomeUnit(p2)
+                v  <- p1.get
+            yield assert(v == 42)
+        }
     }
 
     "run" - {
@@ -329,6 +347,16 @@ class AsyncTest extends Test:
                 assert(bc.get() == 5)
             }
         }
+        "three arguments" in run {
+            for
+                (v1, v2, v3) <- Async.parallel(IO(1), IO(2), IO(3))
+            yield assert(v1 == 1 && v2 == 2 && v3 == 3)
+        }
+        "four arguments" in run {
+            for
+                (v1, v2, v3, v4) <- Async.parallel(IO(1), IO(2), IO(3), IO(4))
+            yield assert(v1 == 1 && v2 == 2 && v3 == 3 && v4 == 4)
+        }
     }
 
     "Fiber.parallel" - {
@@ -528,5 +556,89 @@ class AsyncTest extends Test:
             else
                 succeed
         loop(10000)
+    }
+
+    "Fiber" - {
+
+        "mapResult" in run {
+            val fiber = Fiber.success[Nothing, Int](42)
+            for
+                mappedFiber <- fiber.mapResult(r => r.map(_ * 2))
+                result      <- mappedFiber.get
+            yield assert(result == 84)
+            end for
+        }
+
+        "map" in run {
+            val fiber = Fiber.success[Nothing, Int](42)
+            for
+                mappedFiber <- fiber.map(_ * 2)
+                result      <- mappedFiber.get
+            yield assert(result == 84)
+            end for
+        }
+
+        "flatMap" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    flatMappedFiber <- fiber.flatMap(x => Fiber.success(x.toString))
+                    result          <- flatMappedFiber.get
+                yield assert(result == "42")
+                end for
+            }
+
+            "failure" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                val ex    = new Exception("Test exception")
+                for
+                    flatMappedFiber <- fiber.flatMap(_ => Fiber.fail[Exception, String](ex))
+                    result          <- Abort.run[Throwable](flatMappedFiber.get)
+                yield assert(result.failure.contains(ex))
+                end for
+            }
+        }
+
+        "onComplete" - {
+            "already completed" in run {
+                var completed = false
+                val fiber     = Fiber.success(42)
+                for
+                    _ <- fiber.onComplete(_ => IO { completed = true })
+                yield assert(completed)
+                end for
+            }
+
+            "pending" in run {
+                var completed = false
+                for
+                    fiber <- Async.run(Async.sleep(50.millis).andThen(42))
+                    _     <- fiber.onComplete(_ => IO { completed = true })
+                    _     <- Async.sleep(1.millis)
+                    notCompletedYet = completed
+                    _ <- Async.sleep(50.millis)
+                    completedAfterWait = completed
+                yield
+                    assert(!notCompletedYet, "Callback shouldn't have been called before fiber completion")
+                    assert(completedAfterWait, "Callback should have been called after fiber completion")
+                end for
+            }
+        }
+
+        "block" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    result <- fiber.block(Duration.Infinity)
+                yield assert(result == Result.success(42))
+            }
+
+            "timeout" in runJVM {
+                for
+                    fiber  <- Async.run(Async.sleep(1.second).andThen(42))
+                    result <- fiber.block(1.millis)
+                yield assert(result.isFail)
+            }
+        }
     }
 end AsyncTest

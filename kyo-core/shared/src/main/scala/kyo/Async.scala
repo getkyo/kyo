@@ -253,7 +253,7 @@ object Async:
               * @param f
               *   The callback function
               */
-            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO = IO(self.onComplete(r => IO.run(f(r)).eval))
+            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO = IO(self.onResult(r => IO.run(f(r)).eval))
 
             /** Blocks until the Fiber completes or the timeout is reached.
               *
@@ -272,7 +272,7 @@ object Async:
             def toFuture(using E <:< Throwable, Frame): Future[A] < IO =
                 IO {
                     val r = scala.concurrent.Promise[A]()
-                    self.onComplete { v =>
+                    self.onResult { v =>
                         r.complete(v.toTry)
                     }
                     r.future
@@ -289,7 +289,7 @@ object Async:
                 IO {
                     val p = new IOPromise[E, B](interrupts = self) with (Result[E, A] => Unit):
                         def apply(v: Result[E, A]) = completeUnit(v.map(f))
-                    self.onComplete(p)
+                    self.onResult(p)
                     p
                 }
 
@@ -302,9 +302,9 @@ object Async:
               */
             def flatMap[E2, B](f: A => Fiber[E2, B])(using Frame): Fiber[E | E2, B] < IO =
                 IO {
-                    val p = new IOPromise[E | E2, B](interrupts = self) with (Result[E, A] => Unit < IO):
+                    val p = new IOPromise[E | E2, B](interrupts = self) with (Result[E, A] => Unit):
                         def apply(r: Result[E, A]) = r.fold(completeUnit)(v => becomeUnit(f(v)))
-                    self.onComplete(p)
+                    self.onResult(p)
                     p
                 }
 
@@ -320,9 +320,9 @@ object Async:
               */
             def mapResult[E2, B](f: Result[E, A] => Result[E2, B])(using Frame): Fiber[E2, B] < IO =
                 IO {
-                    val p = new IOPromise[E2, B](interrupts = self) with (Result[E, A] => Unit < IO):
+                    val p = new IOPromise[E2, B](interrupts = self) with (Result[E, A] => Unit):
                         def apply(r: Result[E, A]) = completeUnit(f(r))
-                    self.onComplete(p)
+                    self.onResult(p)
                     p
                 }
 
@@ -396,7 +396,7 @@ object Async:
                             foreach(seq) { (_, v) =>
                                 val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                                 state.interrupts(fiber)
-                                fiber.onComplete(state)
+                                fiber.onResult(state)
                             }
                             state
                         }
@@ -443,7 +443,7 @@ object Async:
                                         if isNull(results(idx)) then
                                             val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                                             state.interrupts(fiber)
-                                            fiber.onComplete(_.fold(state.completeUnit)(update(idx, _)))
+                                            fiber.onResult(_.fold(state.completeUnit)(update(idx, _)))
                                     }
                                     state
                                 }

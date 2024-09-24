@@ -78,7 +78,7 @@ object ZIOs:
                     [C] => (input, cont) => input.flatMap(r => run(cont(r)).flatten)
                 ).pipe(Async.run).map { fiber =>
                     ZIO.asyncInterrupt[Any, E, A] { cb =>
-                        fiber.unsafe.onComplete {
+                        fiber.unsafe.onResult {
                             case Result.Fail(ex)   => cb(Exit.fail(ex))
                             case Result.Panic(ex)  => cb(Exit.die(ex))
                             case Result.Success(v) => cb(v)
