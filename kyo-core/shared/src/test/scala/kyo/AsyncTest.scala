@@ -252,7 +252,7 @@ class AsyncTest extends Test:
             val ex = new Exception
             Async.race(
                 Async.sleep(1.milli).andThen(42),
-                Abort.panic[Exception](ex)
+                Abort.panic(ex)
             ).map { r =>
                 assert(r == 42)
             }
@@ -262,10 +262,10 @@ class AsyncTest extends Test:
             val ex2 = new Exception
             val race =
                 Async.race(
-                    Async.sleep(1.milli).andThen(Abort.panic[Int](ex1)),
-                    Abort.panic[Int](ex2)
+                    Async.sleep(1.milli).andThen(Abort.panic(ex1)),
+                    Abort.panic(ex2)
                 )
-            Abort.run(race).map {
+            Async.run(race).map(_.getResult).map {
                 r => assert(r == Result.panic(ex1))
             }
         }

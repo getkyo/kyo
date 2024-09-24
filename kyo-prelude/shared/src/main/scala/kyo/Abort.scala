@@ -30,7 +30,8 @@ object Abort:
       * @return
       *   A computation that immediately fails with the given value
       */
-    inline def fail[E](inline value: E)(using inline frame: Frame): Nothing < Abort[E] = error(Fail(value))
+    inline def fail[E](inline value: E)(using inline frame: Frame): Nothing < Abort[E] =
+        error(Fail(value))
 
     /** Fails the computation with a panic value (unchecked exception).
       *
@@ -39,7 +40,8 @@ object Abort:
       * @return
       *   A computation that immediately fails with the given exception
       */
-    inline def panic[E](inline ex: Throwable)(using inline frame: Frame): Nothing < Abort[E] = error(Panic(ex))
+    inline def panic(inline ex: Throwable)(using inline frame: Frame): Nothing < Any =
+        Reducible.eliminate[Abort[Nothing]](error(Panic(ex)))
 
     inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
         ArrowEffect.suspendMap[Any](erasedTag[E], e)(_ => ???)
