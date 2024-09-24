@@ -15,15 +15,15 @@ import kyo.*
 import scala.jdk.CollectionConverters.*
 
 case class Process(private val process: JProcess):
-    def stdin: OutputStream                                               = process.getOutputStream
-    def stdout: InputStream                                               = process.getInputStream
-    def stderr: InputStream                                               = process.getErrorStream
-    def waitFor(using Frame): Int < IO                                    = IO(process.waitFor())
-    def waitFor(timeout: Long, unit: TimeUnit)(using Frame): Boolean < IO = IO(process.waitFor(timeout, unit))
-    def exitValue(using Frame): Int < IO                                  = IO(process.exitValue())
-    def destroy(using Frame): Unit < IO                                   = IO(process.destroy())
-    def destroyForcibly(using Frame): JProcess < IO                       = IO(process.destroyForcibly())
-    def isAlive(using Frame): Boolean < IO                                = IO(process.isAlive())
+    def stdin: OutputStream                                   = process.getOutputStream
+    def stdout: InputStream                                   = process.getInputStream
+    def stderr: InputStream                                   = process.getErrorStream
+    def waitFor(using Frame): Int < IO                        = IO(process.waitFor())
+    def waitFor(timeout: Duration)(using Frame): Boolean < IO = IO(process.waitFor(timeout.toMillis, TimeUnit.MILLISECONDS))
+    def exitValue(using Frame): Int < IO                      = IO(process.exitValue())
+    def destroy(using Frame): Unit < IO                       = IO(process.destroy())
+    def destroyForcibly(using Frame): JProcess < IO           = IO(process.destroyForcibly())
+    def isAlive(using Frame): Boolean < IO                    = IO(process.isAlive())
 end Process
 
 object Process:
@@ -101,8 +101,8 @@ object Process:
         def waitFor(using Frame): Int < IO =
             spawn.map(_.waitFor)
 
-        def waitFor(timeout: Long, unit: TimeUnit)(using Frame): Boolean < IO =
-            spawn.map(_.waitFor(timeout, unit))
+        def waitFor(timeout: Duration)(using Frame): Boolean < IO =
+            spawn.map(_.waitFor(timeout))
 
         def pipe(that: Command): Command =
             Piped(self.flatten ++ that.flatten).simplify
