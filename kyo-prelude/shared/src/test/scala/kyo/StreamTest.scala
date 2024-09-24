@@ -1,5 +1,9 @@
 package kyo
 
+import kyo.Emit.Ack
+import kyo.Emit.Ack.*
+import kyo.kernel.Reducible
+
 class StreamTest extends Test:
 
     val n = 10000
@@ -61,6 +65,18 @@ class StreamTest extends Test:
             assert(
                 Stream.init(Seq.fill(100000)(1)).take(5).run.eval ==
                     Seq.fill(5)(1)
+            )
+        }
+
+        "exact amount" in pendingUntilFixed {
+            def emit(remaining: Int)(ack: Ack): Ack < Emit[Chunk[Int]] =
+                if remaining <= 0 then Reducible.eliminate[Abort[Nothing]](Abort.panic(new Exception("Boom!")))
+                else
+                    ack match
+                        case Stop        => Stop
+                        case Continue(_) => Emit.andMap(Chunk(remaining))(emit(remaining - 1))
+            assert(
+                Stream(Emit.andMap(Chunk.empty[Int])(emit(5))).take(5).run.eval == (5 to 1)
             )
         }
     }
