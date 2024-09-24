@@ -321,7 +321,7 @@ object Async:
             def mapResult[E2, B](f: Result[E, A] => Result[E2, B])(using Frame): Fiber[E2, B] < IO =
                 IO {
                     val p = new IOPromise[E2, B](interrupts = self) with (Result[E, A] => Unit):
-                        def apply(r: Result[E, A]) = completeUnit(f(r))
+                        def apply(r: Result[E, A]) = completeUnit(Result(f(r)).flatten)
                     self.onResult(p)
                     p
                 }

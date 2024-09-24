@@ -560,22 +560,54 @@ class AsyncTest extends Test:
 
     "Fiber" - {
 
-        "mapResult" in run {
-            val fiber = Fiber.success[Nothing, Int](42)
-            for
-                mappedFiber <- fiber.mapResult(r => r.map(_ * 2))
-                result      <- mappedFiber.get
-            yield assert(result == 84)
-            end for
+        "mapResult" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    mappedFiber <- fiber.mapResult(r => r.map(_ * 2))
+                    result      <- mappedFiber.get
+                yield assert(result == 84)
+                end for
+            }
+
+            "failure" in run {
+                val ex    = new Exception("Test exception")
+                val fiber = Fiber.fail[Exception, Int](ex)
+                for
+                    mappedFiber <- fiber.mapResult(r => r.mapFail(_.getMessage))
+                    result      <- Abort.run(mappedFiber.get)
+                yield assert(result == Result.fail("Test exception"))
+                end for
+            }
+
+            "exception in mapping function" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    mappedFiber: Fiber[Nothing, Int] <- fiber.mapResult(_ => throw new RuntimeException("Mapping exception"))
+                    result                           <- Abort.run[Throwable](mappedFiber.get)
+                yield assert(result.isPanic)
+                end for
+            }
         }
 
-        "map" in run {
-            val fiber = Fiber.success[Nothing, Int](42)
-            for
-                mappedFiber <- fiber.map(_ * 2)
-                result      <- mappedFiber.get
-            yield assert(result == 84)
-            end for
+        "map" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    mappedFiber <- fiber.map(_ * 2)
+                    result      <- mappedFiber.get
+                yield assert(result == 84)
+                end for
+            }
+
+            "exception in mapping function" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    mappedFiber: Fiber[Nothing, Int] <- fiber.map(_ => throw new RuntimeException("Mapping exception"))
+                    result                           <- Abort.run[Throwable](mappedFiber.get)
+                yield assert(result.isPanic)
+                end for
+            }
         }
 
         "flatMap" - {
@@ -597,6 +629,63 @@ class AsyncTest extends Test:
                 yield assert(result.failure.contains(ex))
                 end for
             }
+
+            "exception in mapping function" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    flatMappedFiber: Fiber[Nothing, Int] <- fiber.flatMap(_ => throw new RuntimeException("Mapping exception"))
+                    result                               <- Abort.run[Throwable](flatMappedFiber.get)
+                yield assert(result.isPanic)
+                end for
+            }
+        }
+
+        "use" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    result <- fiber.use(x => x * 2)
+                yield assert(result == 84)
+            }
+
+            "failure" in run {
+                val ex    = new Exception("Test exception")
+                val fiber = Fiber.fail[Exception, Int](ex)
+                for
+                    result <- Abort.run(fiber.use(x => x * 2))
+                yield assert(result.failure.contains(ex))
+            }
+
+            "exception in use function" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    result <- Abort.run[Throwable](fiber.use(_ => throw new RuntimeException("Use exception")))
+                yield assert(result.isPanic)
+            }
+        }
+
+        "useResult" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    result <- fiber.useResult(r => r.map(_ * 2))
+                yield assert(result == Result.success(84))
+            }
+
+            "failure" in run {
+                val ex    = new Exception("Test exception")
+                val fiber = Fiber.fail[Exception, Int](ex)
+                for
+                    result <- fiber.useResult(r => r.mapFail(_.getMessage))
+                yield assert(result == Result.fail("Test exception"))
+            }
+
+            "exception in useResult function" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    result <- Abort.run[Throwable](fiber.useResult(_ => throw new RuntimeException("UseResult exception")))
+                yield assert(result.isFail)
+            }
         }
 
         "onComplete" - {
@@ -610,17 +699,16 @@ class AsyncTest extends Test:
             }
 
             "pending" in run {
-                var completed = false
+                var completed = Maybe.empty[Result[Nothing, Int]]
                 for
-                    fiber <- Async.run(Async.sleep(50.millis).andThen(42))
-                    _     <- fiber.onComplete(_ => IO { completed = true })
-                    _     <- Async.sleep(1.millis)
+                    fiber <- Promise.init[Nothing, Int]
+                    _     <- fiber.onComplete(v => IO { completed = Maybe(v) })
                     notCompletedYet = completed
-                    _ <- Async.sleep(50.millis)
+                    _ <- fiber.complete(Result.success(42))
                     completedAfterWait = completed
                 yield
-                    assert(!notCompletedYet, "Callback shouldn't have been called before fiber completion")
-                    assert(completedAfterWait, "Callback should have been called after fiber completion")
+                    assert(notCompletedYet.isEmpty)
+                    assert(completedAfterWait == Maybe(Result.success(42)))
                 end for
             }
         }
