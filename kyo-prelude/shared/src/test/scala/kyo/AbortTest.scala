@@ -189,10 +189,17 @@ class AbortsTest extends Test:
                         Result.fail(ex1)
                 )
             }
-            "panic" in {
+            "throw" in {
                 val p = new Exception
                 assert(
                     Abort.run[Ex1](throw p).eval ==
+                        Result.panic(p)
+                )
+            }
+            "panic" in {
+                val p = new Exception
+                assert(
+                    Abort.run(Abort.panic[Nothing](p)).eval ==
                         Result.panic(p)
                 )
             }

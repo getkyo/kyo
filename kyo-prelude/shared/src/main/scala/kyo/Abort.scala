@@ -200,6 +200,36 @@ object Abort:
       */
     inline def run[E >: Nothing]: RunOps[E] = RunOps(())
 
+    /** Runs an Abort effect which may only fail with a panic value, converting it to a Result.
+      *
+      * @param v
+      *   The computation to run
+      * @tparam A
+      *   The success type of the computation
+      * @tparam S
+      *   The effect type of the computation
+      * @return
+      *   A Result containing either the success value or the panic value, wrapped in the remaining effects
+      */
+    def run[A: Flat, S](v: => A < (Abort[Nothing] & S))(using Frame): Result[Nothing, A] < S =
+        ArrowEffect.handle.catching[
+            Const[Error[Nothing]],
+            Const[Unit],
+            Abort[Nothing],
+            Result[Nothing, A],
+            Result[Nothing, A],
+            S,
+            S,
+            Any
+        ](
+            erasedTag[Nothing],
+            v.map(Result.success[Nothing, A](_))
+        )(
+            accept = [C] => _.isPanic,
+            handle = [C] => (input, _) => input,
+            recover = Result.panic
+        )
+
     final class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
         /** Catches exceptions of type E and converts them to Abort failures.
           *
