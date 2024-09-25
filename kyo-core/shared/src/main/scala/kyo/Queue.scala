@@ -248,7 +248,7 @@ object Queue:
                     def empty()  = u.empty()
                     def full()   = false
                     def offer(v: A) =
-                        u.offer(v)
+                        discard(u.offer(v))
                         true
                     def poll() = u.poll()
                     def peek() = u.peek()
@@ -280,7 +280,7 @@ object Queue:
                             val u = q.unsafe
                             if u.offer(v) then ()
                             else
-                                u.poll()
+                                discard(u.poll())
                                 loop(v)
                             end if
                         end loop
