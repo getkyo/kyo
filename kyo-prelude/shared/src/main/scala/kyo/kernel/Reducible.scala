@@ -2,7 +2,7 @@ package kyo.kernel
 
 sealed trait Reducible[S]:
     type SReduced
-    def apply[A, S1](value: A < (S1 & S)): A < (S1 & SReduced)
+    private[kyo] def apply[A, S1](value: A < (S1 & S)): A < (S1 & SReduced)
 
 sealed trait LowPriorityReducibles:
     inline given irreducible[S]: Reducible.Aux[S, S] =

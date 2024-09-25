@@ -18,6 +18,7 @@ val compilerOptions = Set(
     ScalacOptions.unchecked,
     ScalacOptions.deprecation,
     ScalacOptions.warnValueDiscard,
+    ScalacOptions.warnNonUnitStatement,
     ScalacOptions.languageStrictEquality,
     ScalacOptions.release("11"),
     ScalacOptions.advancedKindProjector
@@ -49,6 +50,7 @@ lazy val `kyo-settings` = Seq(
     scalaVersion       := scala3Version,
     crossScalaVersions := List(scala3Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
+    Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     scalafmtOnCompile := true,
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
@@ -460,6 +462,7 @@ lazy val readme =
             `kyo-settings`,
             mdocIn  := new File("./../../README-in.md"),
             mdocOut := new File("./../../README-out.md"),
+            scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
             rewriteReadmeFile := {
                 val readmeFile       = new File("README.md")
                 val targetReadmeFile = new File("target/README-in.md")

@@ -23,7 +23,7 @@ object Log:
         val cfg = await(Env.get[DB.Config])
         val q   = await(Queue.initUnbounded[Entry](Access.MultiProducerSingleConsumer))
         val log = await(IO(Live(cfg.workingDir + "/log.dat", q)))
-        await(Async.run(log.flushLoop(cfg.flushInterval)))
+        val _   = await(Async.run(log.flushLoop(cfg.flushInterval)))
         log
     }
 
