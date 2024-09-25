@@ -9,6 +9,7 @@ import kyo.kernel.Effect
 import kyo.kernel.Reducible
 import scala.annotation.targetName
 import scala.reflect.ClassTag
+import scala.util.NotGiven
 
 /** The Abort effect allows for short-circuiting computations with failure values. This effect is used for handling errors and early
   * termination scenarios in a functional manner and handle thrown exceptions.
@@ -146,6 +147,7 @@ object Abort:
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
     final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
+
         /** Runs an Abort effect, converting it to a Result.
           *
           * @param v
@@ -159,76 +161,80 @@ object Abort:
           * @return
           *   A Result containing either the success value or the failure value, wrapped in the remaining effects
           */
-        def apply[A: Flat, S, ER](v: => A < (Abort[E | ER] & S))(
-            using
-            ct: ClassTag[E],
-            tag: Tag[E],
-            frame: Frame,
-            reduce: Reducible[Abort[ER]]
-        ): Result[E, A] < (S & reduce.SReduced) =
-            reduce {
-                ArrowEffect.handle.catching[
-                    Const[Error[E]],
-                    Const[Unit],
-                    Abort[E],
-                    Result[E, A],
-                    Result[E, A],
-                    Abort[ER] & S,
-                    Abort[ER] & S,
-                    Any
-                ](
-                    erasedTag[E],
-                    v.map(Result.success[E, A](_))
-                )(
-                    accept = [C] =>
-                        input =>
-                            input.isPanic ||
-                                input.asInstanceOf[Error[Any]].failure.exists {
-                                    case e: E => true
-                                    case _    => false
-                            },
-                    handle = [C] => (input, _) => input,
-                    recover =
-                        case fail: E if classOf[Throwable].isAssignableFrom(ct.runtimeClass) =>
-                            Result.fail(fail)
-                        case fail => Result.panic(fail)
-                )
-            }
+        def apply[A, S, ER](v: => A < (Abort[E | ER] & S))(using
+            reduce: Reducible[Abort[ER]],
+            impl: RunOps.ApplyImpl[E, ER]
+        ): Result[E, A] < (S & reduce.SReduced) = impl(v)
+
+    end RunOps
+
+    object RunOps:
+
+        trait ApplyImpl[E >: Nothing, ER]:
+            def apply[A, S](v: => A < (Abort[E | ER] & S))(using reduce: Reducible[Abort[ER]]): Result[E, A] < (S & reduce.SReduced)
+
+        object ApplyImpl:
+
+            given fail[E >: Nothing, ER](using ct: ClassTag[E], tag: Tag[E], frame: Frame): ApplyImpl[E, ER] with
+                def apply[A, S](v: => A < (Abort[E | ER] & S))(using reduce: Reducible[Abort[ER]]): Result[E, A] < (S & reduce.SReduced) =
+                    reduce {
+                        ArrowEffect.handle.catching[
+                            Const[Error[E]],
+                            Const[Unit],
+                            Abort[E],
+                            Result[E, A],
+                            Result[E, A],
+                            Abort[ER] & S,
+                            Abort[ER] & S,
+                            Any
+                        ](
+                            erasedTag[E],
+                            v.map(Result.success[E, A](_))
+                        )(
+                            accept = [C] =>
+                                input =>
+                                    input.isPanic ||
+                                        input.asInstanceOf[Error[Any]].failure.exists {
+                                            case e: E => true
+                                            case _    => false
+                                    },
+                            handle = [C] => (input, _) => input,
+                            recover =
+                                case fail: E if classOf[Throwable].isAssignableFrom(ct.runtimeClass) =>
+                                    Result.fail(fail)
+                                case fail => Result.panic(fail)
+                        )
+                    }
+            end fail
+
+            given panic(using Frame): ApplyImpl[Nothing, Nothing] with
+                def apply[A, S](v: => A < (Abort[Nothing] & S))(using Reducible[Abort[Nothing]]): Result[Nothing, A] < S =
+                    ArrowEffect.handle.catching[
+                        Const[Error[Nothing]],
+                        Const[Unit],
+                        Abort[Nothing],
+                        Result[Nothing, A],
+                        Result[Nothing, A],
+                        S,
+                        S,
+                        Any
+                    ](
+                        erasedTag[Nothing],
+                        v.map(Result.success[Nothing, A](_))
+                    )(
+                        accept = [C] => _.isPanic,
+                        handle = [C] => (input, _) => input,
+                        recover = Result.panic
+                    )
+            end panic
+
+        end ApplyImpl
+
     end RunOps
 
     /** Runs an Abort effect. This operation handles the Abort effect, converting it into a Result type.
       */
     inline def run[E >: Nothing]: RunOps[E] = RunOps(())
-
-    /** Runs an Abort effect which may only fail with a panic value, converting it to a Result.
-      *
-      * @param v
-      *   The computation to run
-      * @tparam A
-      *   The success type of the computation
-      * @tparam S
-      *   The effect type of the computation
-      * @return
-      *   A Result containing either the success value or the panic value, wrapped in the remaining effects
-      */
-    def run[A: Flat, S](v: => A < (Abort[Nothing] & S))(using Frame): Result[Nothing, A] < S =
-        ArrowEffect.handle.catching[
-            Const[Error[Nothing]],
-            Const[Unit],
-            Abort[Nothing],
-            Result[Nothing, A],
-            Result[Nothing, A],
-            S,
-            S,
-            Any
-        ](
-            erasedTag[Nothing],
-            v.map(Result.success[Nothing, A](_))
-        )(
-            accept = [C] => _.isPanic,
-            handle = [C] => (input, _) => input,
-            recover = Result.panic
-        )
 
     final class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
         /** Catches exceptions of type E and converts them to Abort failures.
