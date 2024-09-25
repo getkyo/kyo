@@ -68,15 +68,18 @@ class StreamTest extends Test:
             )
         }
 
-        "exact amount" in pendingUntilFixed {
-            def emit(remaining: Int)(ack: Ack): Ack < Emit[Chunk[Int]] =
-                if remaining <= 0 then Reducible.eliminate[Abort[Nothing]](Abort.panic(new Exception("Boom!")))
-                else
-                    ack match
-                        case Stop        => Stop
-                        case Continue(_) => Emit.andMap(Chunk(remaining))(emit(remaining - 1))
+        "exact amount" in {
+            def emit(ack: Ack): Ack < (Emit[Chunk[Int]] & Var[Int]) =
+                for
+                    n <- Var.update[Int](_ + 1)
+                    next <- ack match
+                        case Stop        => Stop: Ack < Any
+                        case Continue(_) => Emit.andMap(Chunk(n))(emit)
+                yield next
+            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(emit(_))).take(5).run
+            val (count, chunk) = Var.runTuple(0)(stream).eval
             assert(
-                Stream(Emit.andMap(Chunk.empty[Int])(emit(5))).take(5).run.eval == (5 to 1)
+                count == 5 && chunk == (1 to 5)
             )
         }
     }
