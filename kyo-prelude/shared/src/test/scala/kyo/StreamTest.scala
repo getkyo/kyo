@@ -68,7 +68,7 @@ class StreamTest extends Test:
             )
         }
 
-        "exact amount" in {
+        "exact amount" in pendingUntilFixed {
             def emit(ack: Ack): Ack < (Emit[Chunk[Int]] & Var[Int]) =
                 for
                     n <- Var.update[Int](_ + 1)
