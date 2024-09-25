@@ -68,16 +68,48 @@ class StreamTest extends Test:
             )
         }
 
-        "exact amount" in pendingUntilFixed {
+        "emit one at a time" in {
             def emit(ack: Ack): Ack < (Emit[Chunk[Int]] & Var[Int]) =
-                for
-                    n <- Var.update[Int](_ + 1)
-                    next <- ack match
-                        case Stop        => Stop: Ack < Any
-                        case Continue(_) => Emit.andMap(Chunk(n))(emit)
-                yield next
+                ack match
+                    case Stop        => Stop: Ack < Any
+                    case Continue(0) => Emit.andMap(Chunk.empty)(emit)
+                    case Continue(maxItems) =>
+                        for
+                            n <- Var.update[Int](_ + 1)
+                            next <-
+                                println(s"emit one at a time: n = $n, maxItems = $maxItems")
+                                Emit.andMap(Chunk(n))(emit)
+                        yield next
+            end emit
+
             val stream         = Stream(Emit.andMap(Chunk.empty[Int])(emit(_))).take(5).run
             val (count, chunk) = Var.runTuple(0)(stream).eval
+
+            assert(
+                count == 5 && chunk == (1 to 5)
+            )
+        }
+
+        "exact amount" in {
+            def emit(ack: Ack): Ack < (Emit[Chunk[Int]] & Var[Int]) =
+                ack match
+                    case Stop        => Stop: Ack < Any
+                    case Continue(0) => Emit.andMap(Chunk.empty)(emit)
+                    case Continue(maxItems) =>
+                        println(maxItems)
+                        for
+                            end <- Var.update[Int](_ + maxItems)
+                            start = end - maxItems + 1
+                            next <-
+                                println(s"exact amount: start = $start, end = $end, maxItems = $maxItems")
+                                Emit.andMap(Chunk.from(start to end): Chunk[Int])(emit)
+                        yield next
+                        end for
+            end emit
+
+            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(emit(_))).take(5).run
+            val (count, chunk) = Var.runTuple(0)(stream).eval
+
             assert(
                 count == 5 && chunk == (1 to 5)
             )
