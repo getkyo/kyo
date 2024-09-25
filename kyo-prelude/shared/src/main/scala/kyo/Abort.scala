@@ -9,7 +9,6 @@ import kyo.kernel.Effect
 import kyo.kernel.Reducible
 import scala.annotation.targetName
 import scala.reflect.ClassTag
-import scala.util.NotGiven
 
 /** The Abort effect allows for short-circuiting computations with failure values. This effect is used for handling errors and early
   * termination scenarios in a functional manner and handle thrown exceptions.
