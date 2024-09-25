@@ -75,10 +75,8 @@ class StreamTest extends Test:
                     case Continue(0) => Emit.andMap(Chunk.empty)(emit)
                     case Continue(maxItems) =>
                         for
-                            n <- Var.update[Int](_ + 1)
-                            next <-
-                                println(s"emit one at a time: n = $n, maxItems = $maxItems")
-                                Emit.andMap(Chunk(n))(emit)
+                            n    <- Var.update[Int](_ + 1)
+                            next <- Emit.andMap(Chunk(n))(emit)
                         yield next
             end emit
 
@@ -96,13 +94,10 @@ class StreamTest extends Test:
                     case Stop        => Stop: Ack < Any
                     case Continue(0) => Emit.andMap(Chunk.empty)(emit)
                     case Continue(maxItems) =>
-                        println(maxItems)
                         for
                             end <- Var.update[Int](_ + maxItems)
                             start = end - maxItems + 1
-                            next <-
-                                println(s"exact amount: start = $start, end = $end, maxItems = $maxItems")
-                                Emit.andMap(Chunk.from(start to end): Chunk[Int])(emit)
+                            next <- Emit.andMap(Chunk.from(start to end): Chunk[Int])(emit)
                         yield next
                         end for
             end emit
