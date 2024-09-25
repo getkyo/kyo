@@ -145,7 +145,8 @@ object Abort:
       */
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
-    final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
+    final class RunOps[E](dummy: Unit) extends AnyVal:
+
         /** Runs an Abort effect, converting it to a Result.
           *
           * @param v
@@ -159,7 +160,7 @@ object Abort:
           * @return
           *   A Result containing either the success value or the failure value, wrapped in the remaining effects
           */
-        def apply[A: Flat, S, ER](v: => A < (Abort[E | ER] & S))(
+        def apply[A, S, ER](v: => A < (Abort[E | ER] & S))(
             using
             ct: ClassTag[E],
             tag: Tag[E],
@@ -198,7 +199,7 @@ object Abort:
 
     /** Runs an Abort effect. This operation handles the Abort effect, converting it into a Result type.
       */
-    inline def run[E >: Nothing]: RunOps[E] = RunOps(())
+    inline def run[E]: RunOps[E] = RunOps(())
 
     /** Runs an Abort effect which may only fail with a panic value, converting it to a Result.
       *
@@ -211,7 +212,7 @@ object Abort:
       * @return
       *   A Result containing either the success value or the panic value, wrapped in the remaining effects
       */
-    def run[A: Flat, S](v: => A < (Abort[Nothing] & S))(using Frame): Result[Nothing, A] < S =
+    def runPanic[A, S](v: => A < (Abort[Nothing] & S))(using Frame): Result[Nothing, A] < S =
         ArrowEffect.handle.catching[
             Const[Error[Nothing]],
             Const[Unit],
