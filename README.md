@@ -74,6 +74,23 @@ Replace `<version>` with the latest version: ![Version](https://img.shields.io/m
 
 Kyo utilizes features from the latest Scala 3 versions that are not yet properly supported by IntelliJ IDEA. For the best development experience and to ensure all Kyo features are correctly recognized, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE for your Kyo projects.
 
+### Recommended Compiler Flags
+
+We strongly recommend enabling two Scala compiler flags when working with Kyo:
+
+1. `-Wvalue-discard`: Warns when non-Unit expression results are unused.
+2. `-Wnonunit-statement`: Warns when non-Unit expressions are used in statement position.
+
+Add these to your `build.sbt`:
+
+```scala 
+scalacOptions ++= Seq("-Wvalue-discard", "-Wnonunit-statement")
+```
+
+These flags help catch unintended effect discards, enforce proper effect sequencing, and prevent subtle bugs in Kyo applications.
+
+Note: In test code, you might want to selectively disable these warnings, as tests often assert side effects without using returned values.
+
 ### The "Pending" type: `<`
 
 In Kyo, computations are expressed via the infix type `<`, known as "Pending". It takes two type parameters:

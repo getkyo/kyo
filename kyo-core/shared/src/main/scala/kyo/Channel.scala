@@ -258,13 +258,13 @@ object Channel:
                                         takes.poll() match
                                             case null =>
                                             case p =>
-                                                p.complete(c)
+                                                p.completeUnit(c)
                                                 dropTakes()
                                     def dropPuts(): Unit =
                                         puts.poll() match
                                             case null => ()
                                             case (_, p) =>
-                                                p.complete(c)
+                                                p.completeUnit(c)
                                                 dropPuts()
                                     dropTakes()
                                     dropPuts()
