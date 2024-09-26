@@ -12,7 +12,7 @@ service TestService {
 
 message Request {
   oneof sealed_value {
-    Echo echo = 1;
+    Say say = 1;
     Cancel abort = 2;
     Fail fail = 3;
   }
@@ -20,22 +20,25 @@ message Request {
 
 message Response {
   oneof sealed_value {
-    EchoEcho echo = 1;
+    Echo echo = 1;
   }
 }
 
-message Echo {
+message Say {
   string message = 1;
-}
-
-message EchoEcho {
-  string message = 1;
+  int32 count = 2;
 }
 
 message Cancel {
   int32 code = 1;
+  int32 after = 2;
 }
 
 message Fail {
+  string message = 1;
+  int32 after = 2;
+}
+
+message Echo {
   string message = 1;
 }

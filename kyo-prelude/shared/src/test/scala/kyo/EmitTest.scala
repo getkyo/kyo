@@ -139,4 +139,129 @@ class EmitTest extends Test:
         }
     }
 
+    "generic type parameters" - {
+        "single generic emit" in {
+            def emitGeneric[T: Tag](value: T): Unit < Emit[T] =
+                Emit(value).unit
+
+            val result = Emit.run(emitGeneric(42)).eval
+            assert(result == (Chunk(42), ()))
+        }
+
+        "multiple generic emits" in {
+            def emitMultipleGeneric[T: Tag, U: Tag](t: T, u: U): Unit < (Emit[T] & Emit[U]) =
+                for
+                    _ <- Emit(t)
+                    _ <- Emit(u)
+                yield ()
+
+            val result = Emit.run[Int](Emit.run[String](emitMultipleGeneric(42, "hello"))).eval
+            assert(result == (Chunk(42), (Chunk("hello"), ())))
+        }
+
+        "nested generic emits" in {
+            def nestedEmit[T: Tag, U: Tag](t: T, u: U): Unit < (Emit[T] & Emit[U] & Emit[(T, U)]) =
+                for
+                    _ <- Emit(t)
+                    _ <- Emit(u)
+                    _ <- Emit((t, u))
+                yield ()
+
+            val result = Emit.run[Int](Emit.run[String](Emit.run[(Int, String)](nestedEmit(42, "world")))).eval
+            assert(result == (Chunk(42), (Chunk("world"), (Chunk((42, "world")), ()))))
+        }
+
+        "multiple generic emits with different types" in {
+            def multiEmit[T: Tag, U: Tag, V: Tag](t: T, u: U, v: V): Unit < (Emit[T] & Emit[U] & Emit[V]) =
+                for
+                    _ <- Emit(t)
+                    _ <- Emit(u)
+                    _ <- Emit(v)
+                yield ()
+
+            val result = Emit.run[Int](Emit.run[String](Emit.run[Boolean](multiEmit(42, "test", true)))).eval
+            assert(result == (Chunk(42), (Chunk("test"), (Chunk(true), ()))))
+        }
+    }
+
+    "different emit tags with same object instance" - {
+        trait A derives CanEqual
+        trait B derives CanEqual
+        object C extends A with B
+
+        "two emitters with same object" in {
+            def emitC: Unit < (Emit[A] & Emit[B]) =
+                for
+                    _ <- Emit[A](C)
+                    _ <- Emit[B](C)
+                yield ()
+
+            val result = Emit.run[A] {
+                Emit.run[B] {
+                    emitC
+                }
+            }.eval
+
+            assert(result._1 == Chunk(C: A))
+            assert(result._2._1 == Chunk(C))
+            assert(result._2._2 == ())
+        }
+
+        "multiple emissions with different tags" in {
+            trait X derives CanEqual
+            trait Y derives CanEqual
+            case class D(value: Int) extends X with Y
+
+            def emitMultiple(values: List[D]): Unit < (Emit[X] & Emit[Y]) =
+                Kyo.foreachDiscard(values) { d =>
+                    for
+                        _ <- Emit[X](d)
+                        _ <- Emit[Y](d)
+                    yield ()
+                }
+
+            val data = List(D(1), D(2), D(3))
+
+            val result = Emit.run[X] {
+                Emit.run[Y] {
+                    emitMultiple(data)
+                }
+            }.eval
+
+            assert(result._1 == Chunk(D(1), D(2), D(3)))
+            assert(result._2._1 == Chunk(D(1), D(2), D(3)))
+            assert(result._2._2 == ())
+        }
+
+        "complex scenario with multiple tags" in {
+            trait P derives CanEqual
+            trait Q derives CanEqual
+            trait R derives CanEqual
+            case class E(value: String) extends P with Q with R
+
+            def complexEmit(values: List[E]): Unit < (Emit[P] & Emit[Q] & Emit[R]) =
+                Kyo.foreachDiscard(values) { e =>
+                    for
+                        _ <- Emit[P](e)
+                        _ <- Emit[Q](e)
+                        _ <- Emit[R](e)
+                    yield ()
+                }
+
+            val data = List(E("one"), E("two"), E("three"))
+
+            val result = Emit.run[P] {
+                Emit.run[Q] {
+                    Emit.run[R] {
+                        complexEmit(data)
+                    }
+                }
+            }.eval
+
+            assert(result._1 == Chunk(E("one"), E("two"), E("three")))
+            assert(result._2._1 == Chunk(E("one"), E("two"), E("three")))
+            assert(result._2._2._1 == Chunk(E("one"), E("two"), E("three")))
+            assert(result._2._2._2 == ())
+        }
+    }
 end EmitTest

@@ -179,13 +179,15 @@ object Async:
         def fromFuture[A: Flat](f: Future[A])(using Frame): Fiber[Nothing, A] < IO =
             import scala.util.*
             IO {
-                val p = new IOPromise[Nothing, A]()
-                f.onComplete {
-                    case Success(v) =>
-                        p.complete(Result.success(v))
-                    case Failure(ex) =>
-                        p.complete(Result.panic(ex))
-                }(ExecutionContext.parasitic)
+                val p = new IOPromise[Nothing, A] with (Try[A] => Unit):
+                    def apply(result: Try[A]) =
+                        result match
+                            case Success(v) =>
+                                completeUnit(Result.success(v))
+                            case Failure(ex) =>
+                                completeUnit(Result.panic(ex))
+
+                f.onComplete(p)(ExecutionContext.parasitic)
                 p
             }
         end fromFuture
@@ -276,8 +278,9 @@ object Async:
               */
             def map[B](f: A => B)(using Frame): Fiber[E, B] < IO =
                 IO {
-                    val p = IOPromise[E, B](interrupts = self)
-                    self.onComplete(v => p.completeUnit(v.map(f)))
+                    val p = new IOPromise[E, B](interrupts = self) with (Result[E, A] => Unit):
+                        def apply(v: Result[E, A]) = completeUnit(v.map(f))
+                    self.onComplete(p)
                     p
                 }
 
@@ -290,8 +293,9 @@ object Async:
               */
             def flatMap[E2, B](f: A => Fiber[E2, B])(using Frame): Fiber[E | E2, B] < IO =
                 IO {
-                    val p = IOPromise[E | E2, B](interrupts = self)
-                    self.onComplete(_.fold(p.completeUnit)(v => p.becomeUnit(f(v))))
+                    val p = new IOPromise[E | E2, B](interrupts = self) with (Result[E, A] => Unit < IO):
+                        def apply(r: Result[E, A]) = r.fold(completeUnit)(v => becomeUnit(f(v)))
+                    self.onComplete(p)
                     p
                 }
 
@@ -440,16 +444,18 @@ object Async:
       *   The duration to sleep
       */
     def sleep(d: Duration)(using Frame): Unit < Async =
-        IO {
-            val p = IOPromise[Nothing, Unit]()
-            if d.isFinite then
-                Timer.schedule(d)(p.completeUnit(Result.success(()))).map { t =>
-                    IO.ensure(t.cancel.unit)(get(p))
-                }
-            else
-                get(p)
-            end if
-        }
+        if d == Duration.Zero then ()
+        else
+            IO {
+                val p = IOPromise[Nothing, Unit]()
+                if d.isFinite then
+                    Timer.schedule(d)(p.completeUnit(Result.success(()))).map { t =>
+                        IO.ensure(t.cancel.unit)(get(p))
+                    }
+                else
+                    get(p)
+                end if
+            }
 
     /** Runs a computation with a timeout.
       *

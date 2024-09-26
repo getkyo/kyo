@@ -60,20 +60,20 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
     }
 
     private def printServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
-        def requestParameter          = "request" :- method.inputType.scalaType
-        def responseObserverParameter = "responseObserver" :- Types.streamObserver(method.outputType.scalaType)
-        // TODO: Only unary has the correct types.
+        // TODO: De-duplicate.
+        def requestParameter  = "request" :- method.inputType.scalaType
+        def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
         val parameters = method.streamType match {
             case StreamType.Unary           => Seq(requestParameter)
-            case StreamType.ClientStreaming => Seq(responseObserverParameter)
-            case StreamType.ServerStreaming => Seq(requestParameter, responseObserverParameter)
-            case StreamType.Bidirectional   => Seq(responseObserverParameter)
+            case StreamType.ClientStreaming => Seq(requestsParameter)
+            case StreamType.ServerStreaming => Seq(requestParameter)
+            case StreamType.Bidirectional   => Seq(requestsParameter)
         }
         val returnType = method.streamType match {
             case StreamType.Unary           => Types.pendingGrpcResponse(method.outputType.scalaType)
-            case StreamType.ClientStreaming => Types.streamObserver(method.inputType.scalaType)
-            case StreamType.ServerStreaming => Types.unit
-            case StreamType.Bidirectional   => Types.streamObserver(method.inputType.scalaType)
+            case StreamType.ClientStreaming => Types.pendingGrpcResponse(method.outputType.scalaType)
+            case StreamType.ServerStreaming => Types.streamGrpcResponse(method.outputType.scalaType)
+            case StreamType.Bidirectional   => Types.streamGrpcResponse(method.outputType.scalaType)
         }
         fp
             .call(scalapbServicePrinter.generateScalaDoc(method))
@@ -115,7 +115,7 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             case StreamType.Unary           => s"${Types.serverHandler}.unary(serviceImpl.${method.name})"
             case StreamType.ClientStreaming => s"${Types.serverHandler}.clientStreaming(serviceImpl.${method.name})"
             case StreamType.ServerStreaming => s"${Types.serverHandler}.serverStreaming(serviceImpl.${method.name})"
-            case StreamType.Bidirectional   => s"${Types.serverHandler}.bidirectional(serviceImpl.${method.name})"
+            case StreamType.Bidirectional   => s"${Types.serverHandler}.bidiStreaming(serviceImpl.${method.name})"
         }
         fp.add(".addMethod(")
             .indented(
@@ -145,20 +145,20 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             }
 
     private def printClientServiceMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
-        def requestParameter          = "request" :- method.inputType.scalaType
-        def responseObserverParameter = "responseObserver" :- Types.streamObserver(method.outputType.scalaType)
-        // TODO: Only unary has the correct types.
+        // TODO: De-duplicate.
+        def requestParameter  = "request" :- method.inputType.scalaType
+        def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
         val parameters = method.streamType match {
             case StreamType.Unary           => Seq(requestParameter)
-            case StreamType.ClientStreaming => Seq(responseObserverParameter)
-            case StreamType.ServerStreaming => Seq(requestParameter, responseObserverParameter)
-            case StreamType.Bidirectional   => Seq(responseObserverParameter)
+            case StreamType.ClientStreaming => Seq(requestsParameter)
+            case StreamType.ServerStreaming => Seq(requestParameter)
+            case StreamType.Bidirectional   => Seq(requestsParameter)
         }
         val returnType = method.streamType match {
             case StreamType.Unary           => Types.pendingGrpcRequest(method.outputType.scalaType)
-            case StreamType.ClientStreaming => Types.streamObserver(method.inputType.scalaType)
-            case StreamType.ServerStreaming => Types.unit
-            case StreamType.Bidirectional   => Types.streamObserver(method.inputType.scalaType)
+            case StreamType.ClientStreaming => Types.pendingGrpcRequest(method.outputType.scalaType)
+            case StreamType.ServerStreaming => Types.streamGrpcRequest(method.outputType.scalaType)
+            case StreamType.Bidirectional   => Types.streamGrpcRequest(method.outputType.scalaType)
         }
         fp
             .call(scalapbServicePrinter.generateScalaDoc(method))
@@ -182,27 +182,28 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
             }
 
     private def printClientImplMethod(fp: FunctionalPrinter, method: MethodDescriptor): FunctionalPrinter = {
-        def requestParameter          = "request" :- method.inputType.scalaType
-        def responseObserverParameter = "responseObserver" :- Types.streamObserver(method.outputType.scalaType)
-        // TODO: Only unary has the correct types.
+        // TODO: De-duplicate.
+        def requestParameter  = "request" :- method.inputType.scalaType
+        def requestsParameter = "requests" :- Types.streamGrpcRequest(method.inputType.scalaType)
         val parameters = method.streamType match {
             case StreamType.Unary           => Seq(requestParameter)
-            case StreamType.ClientStreaming => Seq(responseObserverParameter)
-            case StreamType.ServerStreaming => Seq(requestParameter, responseObserverParameter)
-            case StreamType.Bidirectional   => Seq(responseObserverParameter)
+            case StreamType.ClientStreaming => Seq(requestsParameter)
+            case StreamType.ServerStreaming => Seq(requestParameter)
+            case StreamType.Bidirectional   => Seq(requestsParameter)
         }
         val returnType = method.streamType match {
             case StreamType.Unary           => Types.pendingGrpcRequest(method.outputType.scalaType)
-            case StreamType.ClientStreaming => Types.streamObserver(method.inputType.scalaType)
-            case StreamType.ServerStreaming => Types.unit
-            case StreamType.Bidirectional   => Types.streamObserver(method.inputType.scalaType)
+            case StreamType.ClientStreaming => Types.pendingGrpcRequest(method.outputType.scalaType)
+            case StreamType.ServerStreaming => Types.streamGrpcRequest(method.outputType.scalaType)
+            case StreamType.Bidirectional   => Types.streamGrpcRequest(method.outputType.scalaType)
         }
         // TODO: Simplify this.
         val delegate = method.streamType match {
-            case StreamType.Unary           => s"unary(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
-            case StreamType.ClientStreaming => s"clientStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
+            case StreamType.Unary => s"unary(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
+            case StreamType.ClientStreaming =>
+                s"clientStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, requests)"
             case StreamType.ServerStreaming => s"serverStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
-            case StreamType.Bidirectional   => s"bidirectional(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, request)"
+            case StreamType.Bidirectional   => s"bidiStreaming(channel, ${method.grpcDescriptor.fullNameWithMaybeRoot}, options, requests)"
         }
         fp
             .call(scalapbServicePrinter.generateScalaDoc(method))

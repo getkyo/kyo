@@ -7,7 +7,7 @@ import kyo.kernel.ArrowEffect
 import kyo.scheduler.IOTask.*
 import scala.util.control.NonFatal
 
-private[kyo] class IOTask[Ctx, E, A] private (
+sealed private[kyo] class IOTask[Ctx, E, A] private (
     private var curr: A < (Ctx & Async & Abort[E]),
     private var trace: Trace,
     private var ensures: Ensures

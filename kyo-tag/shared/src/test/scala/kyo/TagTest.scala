@@ -1,4 +1,4 @@
-package kyoTest
+package kyo
 
 import izumi.reflect.Tag as ITag
 import kyo.*
@@ -8,7 +8,7 @@ import org.scalatest.NonImplicitAssertions
 import org.scalatest.freespec.AsyncFreeSpec
 import scala.annotation.nowarn
 
-class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
+class TagTest extends AsyncFreeSpec with NonImplicitAssertions:
 
     inline def test[T1, T2](using k1: Tag[T1], i1: ITag[T1], k2: Tag[T2], i2: ITag[T2]): Unit =
         "T1 <:< T2" in {
@@ -258,7 +258,7 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
         "custom" in {
             trait CustomType
-            assert(Tag[CustomType].showTpe == "kyoTest.tagsTest._$CustomType")
+            assert(Tag[CustomType].showTpe == "kyo.TagTest._$CustomType")
         }
     }
 
@@ -430,8 +430,8 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
                 trait A
                 trait B
 
-                assert(Union[A].showTpe == "kyoTest.tagsTest._$A")
-                assert(Union[A | B].showTpe == "kyoTest.tagsTest._$A | kyoTest.tagsTest._$B")
+                assert(Union[A].showTpe == "kyo.TagTest._$A")
+                assert(Union[A | B].showTpe == "kyo.TagTest._$A | kyo.TagTest._$B")
             }
         }
     }
@@ -600,8 +600,8 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
                 trait A
                 trait B
 
-                assert(Intersection[A].showTpe == "kyoTest.tagsTest._$A")
-                assert(Intersection[A & B].showTpe == "kyoTest.tagsTest._$A & kyoTest.tagsTest._$B")
+                assert(Intersection[A].showTpe == "kyo.TagTest._$A")
+                assert(Intersection[A & B].showTpe == "kyo.TagTest._$A & kyo.TagTest._$B")
             }
         }
 
@@ -701,4 +701,91 @@ class tagsTest extends AsyncFreeSpec with NonImplicitAssertions:
         }
     }
 
-end tagsTest
+    "generic parameters requiring tags" - {
+        "simple generic" in {
+            trait Test[A]
+            def testGeneric[A](using Tag[A]) = Tag[Test[A]]
+            assertCompiles("testGeneric[Int]")
+            assertCompiles("testGeneric[String]")
+        }
+
+        "nested generic" in {
+            def testNestedGeneric[A, B](using Tag[A], Tag[B]) = Tag[Map[A, List[B]]]
+            assertCompiles("testNestedGeneric[String, Int]")
+            assertCompiles("testNestedGeneric[Int, Boolean]")
+        }
+
+        "generic with bounds" in {
+            def testBounded[A <: AnyVal](using Tag[A]) = Tag[Option[A]]
+            assertCompiles("testBounded[Int]")
+            assertCompiles("testBounded[Double]")
+        }
+
+        "generic with variance" - {
+            "covariance" in {
+                class Covariant[+A]
+                def testCovariance[A](using Tag[A]) = Tag[Covariant[A]]
+                assertCompiles("testCovariance[Int]")
+                assertCompiles("testCovariance[String]")
+            }
+
+            "contravariance" in {
+                class Contravariant[-A]
+                def testContravariance[A](using Tag[A]) = Tag[Contravariant[A]]
+                assertCompiles("testContravariance[Int]")
+                assertCompiles("testContravariance[String]")
+            }
+
+            "invariance" in {
+                class Invariant[A]
+                def testInvariance[A](using Tag[A]) = Tag[Invariant[A]]
+                assertCompiles("testInvariance[Int]")
+                assertCompiles("testInvariance[String]")
+            }
+
+            "mixed variance" in {
+                class Mixed[+A, -B, C]
+                def testMixed[A, B, C](using Tag[A], Tag[B], Tag[C]) = Tag[Mixed[A, B, C]]
+                assertCompiles("testMixed[Int, String, Boolean]")
+            }
+        }
+
+        "sealed trait with generic parameters" - {
+            "one" in {
+                sealed trait SealedGeneric[A]
+                def testSealed[A: Tag] = Tag[SealedGeneric[A]]
+                assertCompiles("testSealed[Int]")
+                assertCompiles("testSealed[String]")
+            }
+            "two" in {
+                sealed trait SealedGeneric[A, B]
+                def testSealed[A, B](using Tag[A], Tag[B]) = Tag[SealedGeneric[A, B]]
+                assertCompiles("testSealed[Int, String]")
+                assertCompiles("testSealed[Boolean, Double]")
+            }
+        }
+
+        "opaque types" - {
+            "simple opaque type" in {
+                def testOpaque = Tag[MyInt]
+                assertCompiles("testOpaque")
+            }
+
+            "opaque type with type parameter" in {
+                def testOpaqueGeneric[A](using Tag[A]) = Tag[MyList[A]]
+                assertCompiles("testOpaqueGeneric[Int]")
+            }
+
+            "nested opaque types" in {
+                def testNestedOpaque[A](using Tag[A]) = Tag[Outer[A]]
+                assertCompiles("testNestedOpaque[String]")
+            }
+        }
+    }
+
+    opaque type MyInt     = Int
+    opaque type MyList[A] = List[A]
+    opaque type Inner[A]  = List[A]
+    opaque type Outer[B]  = Inner[B]
+
+end TagTest

@@ -17,6 +17,15 @@ object ClientCall:
         GrpcRequest.fromFuture(future)
     end unary
 
+    def clientStreaming[Request, Response: Flat](
+        channel: Channel,
+        method: MethodDescriptor[Request, Response],
+        options: CallOptions,
+        requests: Stream[Request, GrpcRequest]
+    )(using Frame): Response < GrpcRequest =
+        ???
+    end clientStreaming
+
     def serverStreaming[Request, Response: Flat](
         channel: Channel,
         method: MethodDescriptor[Request, Response],
@@ -25,5 +34,14 @@ object ClientCall:
     )(using Frame): Stream[Response, GrpcRequest] =
         ???
     end serverStreaming
+
+    def bidiStreaming[Request, Response: Flat](
+        channel: Channel,
+        method: MethodDescriptor[Request, Response],
+        options: CallOptions,
+        requests: Stream[Request, GrpcRequest]
+    )(using Frame): Stream[Response, GrpcRequest] =
+        ???
+    end bidiStreaming
 
 end ClientCall

@@ -14,6 +14,10 @@ object Types {
 
     val frame = "_root_.kyo.Frame"
 
+    def streamGrpcResponse(t: String) = s"_root_.kyo.Stream[$t, $grpcResponse]"
+
+    def streamGrpcRequest(t: String) = s"_root_.kyo.Stream[$t, $grpcRequest]"
+
     val clientCall = "_root_.kyo.grpc.ClientCall"
 
     val grpcResponse = "_root_.kyo.grpc.GrpcResponse"

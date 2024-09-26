@@ -302,8 +302,8 @@ lazy val `kyo-tapir` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.3",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.3"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.4",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.4"
         )
 
 lazy val `kyo-caliban` =
@@ -319,7 +319,7 @@ lazy val `kyo-caliban` =
             `kyo-settings`,
             libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.8.1",
             libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.8.1",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.3" % Test
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.4" % Test
         )
 
 lazy val `kyo-test` =
@@ -584,7 +584,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.11.0",
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.28",
             libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.28",
-            libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.0",
+            libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.1",
             libraryDependencies += "io.grpc"              % "grpc-netty"          % "1.65.1",
             libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.10",
             libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.10",
