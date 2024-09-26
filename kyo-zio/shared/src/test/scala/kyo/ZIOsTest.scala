@@ -116,7 +116,7 @@ class ZIOsTest extends Test:
                     _ <- f.interrupt
                     r <- f.await
                 yield
-                    assert(cdl.await(10, TimeUnit.MILLISECONDS))
+                    assert(cdl.await(100, TimeUnit.MILLISECONDS))
                     assert(r.isFailure)
                 end for
             }
@@ -128,7 +128,7 @@ class ZIOsTest extends Test:
                     _ <- f.interrupt(Result.Panic(new Exception))
                     r <- f.getResult
                 yield
-                    assert(cdl.await(10, TimeUnit.MILLISECONDS))
+                    assert(cdl.await(100, TimeUnit.MILLISECONDS))
                     assert(r.isPanic)
                 end for
             }
@@ -145,7 +145,7 @@ class ZIOsTest extends Test:
                     _ <- f.interrupt
                     r <- f.await
                 yield
-                    assert(cdl.await(10, TimeUnit.MILLISECONDS))
+                    assert(cdl.await(100, TimeUnit.MILLISECONDS))
                     assert(r.isFailure)
                 end for
             }

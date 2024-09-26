@@ -167,7 +167,7 @@ object Process:
                         val builder = new ProcessBuilder(command*)
 
                         builder.redirectErrorStream(redirectErrorStream)
-                        cwd.map(p => builder.directory(p.toFile()))
+                        cwd.foreach(p => builder.directory(p.toFile()))
 
                         if env.nonEmpty then
                             builder.environment().putAll(env.asJava)

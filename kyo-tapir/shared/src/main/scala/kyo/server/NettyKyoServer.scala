@@ -86,7 +86,7 @@ case class NettyKyoServer(
                 IO.run(Async.run(block())).eval
         val future = IO.run(fiber.toFuture).eval
         val cancel = () =>
-            IO.run(fiber.interrupt).eval
+            val _ = IO.run(fiber.interrupt).eval
             Future.unit
         (future, cancel)
     end unsafeRunAsync

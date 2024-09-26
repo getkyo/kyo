@@ -49,7 +49,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       * @return
       *   a new Chunk with the first n elements removed
       */
-    override def drop(n: Int): Seq[A] =
+    override def drop(n: Int): Chunk[A] =
         dropLeft(n)
 
     /** Drops the first n elements of the Chunk.
