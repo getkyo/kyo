@@ -234,6 +234,12 @@ object Abort:
 
         object Abortable:
             inline given Abortable[Nothing] = Abortable[Nothing](ClassTag.Nothing)
+
+            // The `tag` parameter is used to disallow handling multiple aborts at once
+            // like `Abort.run[Int | String]`, which would make the compiler infer a
+            // `ClassTag[Any]` and incorrectly handle all aborts. The `tag` parameter
+            // is used as a workaround since the macro currently doesn't materialize
+            // tags for union types.
             inline given [E](using inline ct: ClassTag[E], inline tag: Tag[E]): Abortable[E] =
                 Abortable[E](ct)
         end Abortable
