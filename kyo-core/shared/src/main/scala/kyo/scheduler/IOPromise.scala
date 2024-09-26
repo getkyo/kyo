@@ -240,7 +240,7 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
         final def interrupts(p: IOPromise[?, ?]): Pending[E, A] =
             new Pending[E, A]:
                 def interrupt(panic: Panic): Pending[E, A] =
-                    p.interrupt(panic)
+                    discard(p.interrupt(panic))
                     self
                 def waiters: Int = self.waiters + 1
                 def run(v: Result[E, A]) =
