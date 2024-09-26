@@ -87,6 +87,24 @@ class AsyncTest extends Test:
                 yield assert(a && b && c == 42)
             }
         }
+
+        "completeUnit" in run {
+            for
+                p <- Promise.init[Nothing, Int]
+                _ <- p.completeUnit(Result.success(1))
+                v <- p.get
+            yield assert(v == 1)
+        }
+
+        "becomeUnit" in run {
+            for
+                p1 <- Promise.init[Nothing, Int]
+                p2 <- Promise.init[Nothing, Int]
+                _  <- p2.complete(Result.success(42))
+                _  <- p1.becomeUnit(p2)
+                v  <- p1.get
+            yield assert(v == 42)
+        }
     }
 
     "run" - {
@@ -329,6 +347,16 @@ class AsyncTest extends Test:
                 assert(bc.get() == 5)
             }
         }
+        "three arguments" in run {
+            for
+                (v1, v2, v3) <- Async.parallel(IO(1), IO(2), IO(3))
+            yield assert(v1 == 1 && v2 == 2 && v3 == 3)
+        }
+        "four arguments" in run {
+            for
+                (v1, v2, v3, v4) <- Async.parallel(IO(1), IO(2), IO(3), IO(4))
+            yield assert(v1 == 1 && v2 == 2 && v3 == 3 && v4 == 4)
+        }
     }
 
     "Fiber.parallel" - {
@@ -528,5 +556,177 @@ class AsyncTest extends Test:
             else
                 succeed
         loop(10000)
+    }
+
+    "Fiber" - {
+
+        "mapResult" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    mappedFiber <- fiber.mapResult(r => r.map(_ * 2))
+                    result      <- mappedFiber.get
+                yield assert(result == 84)
+                end for
+            }
+
+            "failure" in run {
+                val ex    = new Exception("Test exception")
+                val fiber = Fiber.fail[Exception, Int](ex)
+                for
+                    mappedFiber <- fiber.mapResult(r => r.mapFail(_.getMessage))
+                    result      <- Abort.run(mappedFiber.get)
+                yield assert(result == Result.fail("Test exception"))
+                end for
+            }
+
+            "exception in mapping function" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    mappedFiber: Fiber[Nothing, Int] <- fiber.mapResult(_ => throw new RuntimeException("Mapping exception"))
+                    result                           <- Abort.run[Throwable](mappedFiber.get)
+                yield assert(result.isPanic)
+                end for
+            }
+        }
+
+        "map" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    mappedFiber <- fiber.map(_ * 2)
+                    result      <- mappedFiber.get
+                yield assert(result == 84)
+                end for
+            }
+
+            "exception in mapping function" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    mappedFiber: Fiber[Nothing, Int] <- fiber.map(_ => throw new RuntimeException("Mapping exception"))
+                    result                           <- Abort.run[Throwable](mappedFiber.get)
+                yield assert(result.isPanic)
+                end for
+            }
+        }
+
+        "flatMap" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    flatMappedFiber <- fiber.flatMap(x => Fiber.success(x.toString))
+                    result          <- flatMappedFiber.get
+                yield assert(result == "42")
+                end for
+            }
+
+            "failure" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                val ex    = new Exception("Test exception")
+                for
+                    flatMappedFiber <- fiber.flatMap(_ => Fiber.fail[Exception, String](ex))
+                    result          <- Abort.run[Throwable](flatMappedFiber.get)
+                yield assert(result.failure.contains(ex))
+                end for
+            }
+
+            "exception in mapping function" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    flatMappedFiber: Fiber[Nothing, Int] <- fiber.flatMap(_ => throw new RuntimeException("Mapping exception"))
+                    result                               <- Abort.run[Throwable](flatMappedFiber.get)
+                yield assert(result.isPanic)
+                end for
+            }
+        }
+
+        "use" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    result <- fiber.use(x => x * 2)
+                yield assert(result == 84)
+            }
+
+            "failure" in run {
+                val ex    = new Exception("Test exception")
+                val fiber = Fiber.fail[Exception, Int](ex)
+                for
+                    result <- Abort.run(fiber.use(x => x * 2))
+                yield assert(result.failure.contains(ex))
+            }
+
+            "exception in use function" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    result <- Abort.run[Throwable](fiber.use(_ => throw new RuntimeException("Use exception")))
+                yield assert(result.isPanic)
+            }
+        }
+
+        "useResult" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    result <- fiber.useResult(r => r.map(_ * 2))
+                yield assert(result == Result.success(84))
+            }
+
+            "failure" in run {
+                val ex    = new Exception("Test exception")
+                val fiber = Fiber.fail[Exception, Int](ex)
+                for
+                    result <- fiber.useResult(r => r.mapFail(_.getMessage))
+                yield assert(result == Result.fail("Test exception"))
+            }
+
+            "exception in useResult function" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    result <- Abort.run[Throwable](fiber.useResult(_ => throw new RuntimeException("UseResult exception")))
+                yield assert(result.isFail)
+            }
+        }
+
+        "onComplete" - {
+            "already completed" in run {
+                var completed = false
+                val fiber     = Fiber.success(42)
+                for
+                    _ <- fiber.onComplete(_ => IO { completed = true })
+                yield assert(completed)
+                end for
+            }
+
+            "pending" in run {
+                var completed = Maybe.empty[Result[Nothing, Int]]
+                for
+                    fiber <- Promise.init[Nothing, Int]
+                    _     <- fiber.onComplete(v => IO { completed = Maybe(v) })
+                    notCompletedYet = completed
+                    _ <- fiber.complete(Result.success(42))
+                    completedAfterWait = completed
+                yield
+                    assert(notCompletedYet.isEmpty)
+                    assert(completedAfterWait == Maybe(Result.success(42)))
+                end for
+            }
+        }
+
+        "block" - {
+            "success" in run {
+                val fiber = Fiber.success[Nothing, Int](42)
+                for
+                    result <- fiber.block(Duration.Infinity)
+                yield assert(result == Result.success(42))
+            }
+
+            "timeout" in runJVM {
+                for
+                    fiber  <- Async.run(Async.sleep(1.second).andThen(42))
+                    result <- fiber.block(1.millis)
+                yield assert(result.isFail)
+            }
+        }
     }
 end AsyncTest

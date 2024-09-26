@@ -56,7 +56,7 @@ class KyoSttpMonad extends MonadAsyncError[M]:
                     case Left(t)  => discard(p.complete(Result.panic(t)))
                     case Right(t) => discard(p.complete(Result.success(t)))
                 }
-            p.onComplete { r =>
+            p.onResult { r =>
                 if r.isPanic then
                     canceller.cancel()
             }
