@@ -24,9 +24,11 @@ class OTelTraceReceiver extends TraceReceiver {
                 otel.getTracer(scope.mkString("_"))
                     .spanBuilder(name)
                     .setAllAttributes(OTelAttributes(attributes))
-            parent.collect {
-                case Span(SpanImpl(c)) =>
-                    b.setParent(c)
+            discard {
+                parent.collect {
+                    case Span(SpanImpl(c)) =>
+                        b.setParent(c)
+                }
             }
             Span(SpanImpl(b.startSpan().storeInContext(Context.current())))
         }

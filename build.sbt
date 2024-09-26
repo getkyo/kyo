@@ -4,7 +4,7 @@ import org.typelevel.scalacoptions.ScalacOption
 import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 
-val scala3Version   = "3.5.0"
+val scala3Version   = "3.5.1"
 val scala212Version = "2.12.20"
 val scala213Version = "2.13.14"
 
@@ -18,6 +18,7 @@ val compilerOptions = Set(
     ScalacOptions.unchecked,
     ScalacOptions.deprecation,
     ScalacOptions.warnValueDiscard,
+    ScalacOptions.warnNonUnitStatement,
     ScalacOptions.languageStrictEquality,
     ScalacOptions.release("11"),
     ScalacOptions.advancedKindProjector
@@ -49,6 +50,7 @@ lazy val `kyo-settings` = Seq(
     scalaVersion       := scala3Version,
     crossScalaVersions := List(scala3Version),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
+    Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     scalafmtOnCompile := true,
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
@@ -302,8 +304,8 @@ lazy val `kyo-tapir` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.4",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.4"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.5",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.5"
         )
 
 lazy val `kyo-caliban` =
@@ -319,7 +321,7 @@ lazy val `kyo-caliban` =
             `kyo-settings`,
             libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.8.1",
             libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.8.1",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.4" % Test
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.5" % Test
         )
 
 lazy val `kyo-test` =
@@ -606,6 +608,7 @@ lazy val readme =
             `kyo-settings`,
             mdocIn  := new File("./../../README-in.md"),
             mdocOut := new File("./../../README-out.md"),
+            scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
             rewriteReadmeFile := {
                 val readmeFile       = new File("README.md")
                 val targetReadmeFile = new File("target/README-in.md")

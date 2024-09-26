@@ -72,26 +72,27 @@ final private class Queue[A](implicit ord: Ordering[A]) extends AtomicBoolean {
 
     def stealingBy(to: Queue[A]): A = {
         var t: A = null.asInstanceOf[A]
-        !isEmpty() && tryLock() && {
-            try {
-                !isEmpty() && to.isEmpty() && to.tryLock() && {
-                    try {
-                        t = queue.dequeue()
-                        val s = size() - 1
-                        var i = s - Math.ceil(s.toDouble / 2).intValue()
-                        items -= i + 1
-                        to.items += i
-                        while (i > 0) {
-                            to.queue += queue.dequeue()
-                            i -= 1
-                        }
-                        true
-                    } finally
-                        to.unlock()
-                }
-            } finally
-                unlock()
-        }
+        val _ =
+            !isEmpty() && tryLock() && {
+                try {
+                    !isEmpty() && to.isEmpty() && to.tryLock() && {
+                        try {
+                            t = queue.dequeue()
+                            val s = size() - 1
+                            var i = s - Math.ceil(s.toDouble / 2).intValue()
+                            items -= i + 1
+                            to.items += i
+                            while (i > 0) {
+                                to.queue += queue.dequeue()
+                                i -= 1
+                            }
+                            true
+                        } finally
+                            to.unlock()
+                    }
+                } finally
+                    unlock()
+            }
         t
     }
 

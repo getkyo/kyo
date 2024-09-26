@@ -20,8 +20,9 @@ sealed trait Abort[-E] extends ArrowEffect[Const[Error[E]], Const[Unit]]
 
 object Abort:
 
+    import internal.*
+
     given eliminateAbort: Reducible.Eliminable[Abort[Nothing]] with {}
-    private inline def erasedTag[E]: Tag[Abort[E]] = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
 
     /** Fails the computation with the given value.
       *
@@ -138,7 +139,11 @@ object Abort:
             m.fold(fail(Maybe.Empty))(identity)
     end GetOps
 
-    /** Operations for lifting various types into the Abort effect. */
+    /** Operations for lifting various types into the Abort effect.
+      *
+      * @tparam E
+      *   The failure type of the Abort effect being run
+      */
     inline def get[E >: Nothing]: GetOps[E] = GetOps(())
 
     final class RunOps[E >: Nothing](dummy: Unit) extends AnyVal:
@@ -150,20 +155,18 @@ object Abort:
           *   The success type of the computation
           * @tparam S
           *   The effect type of the computation
-          * @tparam E
-          *   The failure type of the Abort effect being run
           * @tparam ER
           *   Any remaining Abort effects after running this one
           * @return
           *   A Result containing either the success value or the failure value, wrapped in the remaining effects
           */
-        def apply[A: Flat, S, ES, ER](v: => A < (Abort[E | ER] & S))(
+        def apply[A: Flat, S, ER](v: => A < (Abort[E | ER] & S))(
             using
-            ct: ClassTag[E],
-            tag: Tag[E],
             frame: Frame,
+            abortable: Abortable[E],
             reduce: Reducible[Abort[ER]]
         ): Result[E, A] < (S & reduce.SReduced) =
+            given ct: ClassTag[E] = abortable.classTag
             reduce {
                 ArrowEffect.handle.catching[
                     Const[Error[E]],
@@ -192,11 +195,12 @@ object Abort:
                         case fail => Result.panic(fail)
                 )
             }
+        end apply
     end RunOps
 
     /** Runs an Abort effect. This operation handles the Abort effect, converting it into a Result type.
       */
-    inline def run[E >: Nothing]: RunOps[E] = RunOps(())
+    inline def run[E]: RunOps[E] = RunOps(())
 
     final class CatchingOps[E <: Throwable](dummy: Unit) extends AnyVal:
         /** Catches exceptions of type E and converts them to Abort failures.
@@ -224,5 +228,23 @@ object Abort:
     /** Catches exceptions and converts them to Abort failures. This is useful for integrating exception-based code with the Abort effect.
       */
     inline def catching[E <: Throwable]: CatchingOps[E] = CatchingOps(())
+
+    object internal:
+        final case class Abortable[E] private (classTag: ClassTag[E]) extends AnyVal
+
+        object Abortable:
+            inline given Abortable[Nothing] = Abortable[Nothing](ClassTag.Nothing)
+
+            // The `tag` parameter is used to disallow handling multiple aborts at once
+            // like `Abort.run[Int | String]`, which would make the compiler infer a
+            // `ClassTag[Any]` and incorrectly handle all aborts. The `tag` parameter
+            // is used as a workaround since the macro currently doesn't materialize
+            // tags for union types.
+            inline given [E](using inline ct: ClassTag[E], inline tag: Tag[E]): Abortable[E] =
+                Abortable[E](ct)
+        end Abortable
+
+        private[Abort] inline def erasedTag[E]: Tag[Abort[E]] = Tag[Abort[Any]].asInstanceOf[Tag[Abort[E]]]
+    end internal
 
 end Abort

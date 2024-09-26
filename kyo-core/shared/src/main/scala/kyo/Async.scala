@@ -9,10 +9,12 @@ import kyo.Tag
 import kyo.internal.FiberPlatformSpecific
 import kyo.kernel.*
 import kyo.scheduler.*
+import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.reflect.ClassTag
 import scala.util.NotGiven
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
@@ -171,21 +173,28 @@ object Async:
 
         /** Creates a Fiber from a Future.
           *
+          * This method allows integration of existing Future-based code with Kyo's Fiber system. It handles successful completion, expected
+          * failures (of type E), and unexpected failures.
+          *
           * @param f
-          *   The Future to create a Fiber from
+          *   The Future to convert into a Fiber
+          * @tparam E
+          *   The expected error type that the Future might fail with. Use Throwable if you don't need to catch specific exceptions.
+          * @tparam A
+          *   The type of the successful result
           * @return
           *   A Fiber that completes with the result of the Future
           */
-        def fromFuture[A: Flat](f: Future[A])(using Frame): Fiber[Nothing, A] < IO =
+        def fromFuture[A: Flat](f: Future[A])(using frame: Frame): Fiber[Throwable, A] < IO =
             import scala.util.*
             IO {
-                val p = new IOPromise[Nothing, A] with (Try[A] => Unit):
+                val p = new IOPromise[Throwable, A] with (Try[A] => Unit):
                     def apply(result: Try[A]) =
                         result match
                             case Success(v) =>
                                 completeUnit(Result.success(v))
                             case Failure(ex) =>
-                                completeUnit(Result.panic(ex))
+                                completeUnit(Result.fail(ex))
 
                 f.onComplete(p)(ExecutionContext.parasitic)
                 p
@@ -244,7 +253,7 @@ object Async:
               * @param f
               *   The callback function
               */
-            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO = IO(self.onComplete(r => IO.run(f(r)).eval))
+            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO = IO(self.onResult(r => IO.run(f(r)).eval))
 
             /** Blocks until the Fiber completes or the timeout is reached.
               *
@@ -263,7 +272,7 @@ object Async:
             def toFuture(using E <:< Throwable, Frame): Future[A] < IO =
                 IO {
                     val r = scala.concurrent.Promise[A]()
-                    self.onComplete { v =>
+                    self.onResult { v =>
                         r.complete(v.toTry)
                     }
                     r.future
@@ -280,7 +289,7 @@ object Async:
                 IO {
                     val p = new IOPromise[E, B](interrupts = self) with (Result[E, A] => Unit):
                         def apply(v: Result[E, A]) = completeUnit(v.map(f))
-                    self.onComplete(p)
+                    self.onResult(p)
                     p
                 }
 
@@ -293,9 +302,27 @@ object Async:
               */
             def flatMap[E2, B](f: A => Fiber[E2, B])(using Frame): Fiber[E | E2, B] < IO =
                 IO {
-                    val p = new IOPromise[E | E2, B](interrupts = self) with (Result[E, A] => Unit < IO):
+                    val p = new IOPromise[E | E2, B](interrupts = self) with (Result[E, A] => Unit):
                         def apply(r: Result[E, A]) = r.fold(completeUnit)(v => becomeUnit(f(v)))
-                    self.onComplete(p)
+                    self.onResult(p)
+                    p
+                }
+
+            /** Maps the Result of the Fiber using the provided function.
+              *
+              * This method allows you to transform both the error and success types of the Fiber's result. It's useful when you need to
+              * modify the error type or perform a more complex transformation on the success value that may also produce a new error type.
+              *
+              * @param f
+              *   The function to apply to the Fiber's Result. It should take a Result[E, A] and return a Result[E2, B].
+              * @return
+              *   A new Fiber with the mapped Result
+              */
+            def mapResult[E2, B](f: Result[E, A] => Result[E2, B])(using Frame): Fiber[E2, B] < IO =
+                IO {
+                    val p = new IOPromise[E2, B](interrupts = self) with (Result[E, A] => Unit):
+                        def apply(r: Result[E, A]) = completeUnit(Result(f(r)).flatten)
+                    self.onResult(p)
                     p
                 }
 
@@ -369,7 +396,7 @@ object Async:
                             foreach(seq) { (_, v) =>
                                 val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                                 state.interrupts(fiber)
-                                fiber.onComplete(state)
+                                fiber.onResult(state)
                             }
                             state
                         }
@@ -416,7 +443,7 @@ object Async:
                                         if isNull(results(idx)) then
                                             val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                                             state.interrupts(fiber)
-                                            fiber.onComplete(_.fold(state.completeUnit)(update(idx, _)))
+                                            fiber.onResult(_.fold(state.completeUnit)(update(idx, _)))
                                     }
                                     state
                                 }
@@ -611,6 +638,19 @@ object Async:
         parallel(Seq(v1, v2, v3, v4))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }
+
+    /** Converts a Future to an asynchronous computation.
+      *
+      * This method allows integration of existing Future-based code with Kyo's asynchronous system. It handles successful completion and
+      * failures, wrapping any exceptions in an Abort effect.
+      *
+      * @param f
+      *   The Future to convert into an asynchronous computation
+      * @return
+      *   An asynchronous computation that completes with the result of the Future or aborts with Throwable
+      */
+    def fromFuture[A: Flat](f: Future[A])(using frame: Frame): A < (Async & Abort[Throwable]) =
+        Fiber.fromFuture(f).map(get)
 
     /** Gets the result of an IOPromise.
       *

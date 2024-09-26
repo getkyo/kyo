@@ -25,7 +25,7 @@ object Emit:
             def maxItems(n: Int): Ack =
                 ack match
                     case Stop         => Stop
-                    case Continue(n0) => Math.max(n0, n)
+                    case Continue(n0) => Math.min(n0, Math.max(0, n))
 
         /** Indicates to continue emitting values */
         opaque type Continue <: Ack = Int

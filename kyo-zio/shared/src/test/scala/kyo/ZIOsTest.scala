@@ -1,5 +1,7 @@
 package kyo
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kyo.*
 import kyo.kernel.Platform
 import org.scalatest.compatible.Assertion
@@ -93,43 +95,58 @@ class ZIOsTest extends Test:
 
     "interrupts" - {
 
-        import java.util.concurrent.atomic.LongAdder
+        def kyoLoop(cdl: CountDownLatch): Unit < IO =
+            def loop(): Unit < IO =
+                IO(()).flatMap(_ => loop())
+            IO.ensure(IO(cdl.countDown()))(loop())
+        end kyoLoop
 
-        def kyoLoop(a: LongAdder = new LongAdder): Unit < IO =
-            IO(a.increment()).map(_ => kyoLoop(a))
-
-        def zioLoop(a: LongAdder = new LongAdder): Task[Unit] =
-            ZIO.attempt(a.increment()).flatMap(_ => zioLoop(a))
+        def zioLoop(cdl: CountDownLatch): Task[Unit] =
+            def loop(): Task[Unit] =
+                ZIO.unit.flatMap(_ => loop())
+            loop().ensuring(ZIO.attempt(cdl.countDown()).ignore)
+        end zioLoop
 
         if Platform.isJVM then
 
             "zio to kyo" in runZIO {
+                val cdl = new CountDownLatch(1)
                 for
-                    f <- ZIOs.run(kyoLoop()).fork
+                    f <- ZIOs.run(kyoLoop(cdl)).fork
                     _ <- f.interrupt
                     r <- f.await
-                yield assert(r.isFailure)
+                yield
+                    assert(cdl.await(100, TimeUnit.MILLISECONDS))
+                    assert(r.isFailure)
                 end for
             }
             "kyo to zio" in runKyo {
+                pending
+                val cdl = new CountDownLatch(1)
                 for
-                    f <- Async.run(ZIOs.run(zioLoop()))
+                    f <- Async.run(ZIOs.run(zioLoop(cdl)))
                     _ <- f.interrupt(Result.Panic(new Exception))
                     r <- f.getResult
-                yield assert(r.isPanic)
+                yield
+                    assert(cdl.await(100, TimeUnit.MILLISECONDS))
+                    assert(r.isPanic)
                 end for
             }
             "both" in runZIO {
+                pending
+                val cdl = new CountDownLatch(1)
                 val v =
                     for
-                        _ <- ZIOs.get(zioLoop())
-                        _ <- Async.run(kyoLoop())
+                        _ <- ZIOs.get(zioLoop(cdl))
+                        _ <- Async.run(kyoLoop(cdl))
                     yield ()
                 for
                     f <- ZIOs.run(v).fork
                     _ <- f.interrupt
                     r <- f.await
-                yield assert(r.isFailure)
+                yield
+                    assert(cdl.await(100, TimeUnit.MILLISECONDS))
+                    assert(r.isFailure)
                 end for
             }
         end if

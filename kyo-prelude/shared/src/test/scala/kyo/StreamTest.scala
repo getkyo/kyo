@@ -1,5 +1,9 @@
 package kyo
 
+import kyo.Emit.Ack
+import kyo.Emit.Ack.*
+import kyo.kernel.Reducible
+
 class StreamTest extends Test:
 
     val n = 10000
@@ -61,6 +65,48 @@ class StreamTest extends Test:
             assert(
                 Stream.init(Seq.fill(100000)(1)).take(5).run.eval ==
                     Seq.fill(5)(1)
+            )
+        }
+
+        "emit one at a time" in {
+            def emit(ack: Ack): Ack < (Emit[Chunk[Int]] & Var[Int]) =
+                ack match
+                    case Stop        => Stop: Ack < Any
+                    case Continue(0) => Emit.andMap(Chunk.empty)(emit)
+                    case Continue(maxItems) =>
+                        for
+                            n    <- Var.update[Int](_ + 1)
+                            next <- Emit.andMap(Chunk(n))(emit)
+                        yield next
+            end emit
+
+            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(emit(_))).take(5).run
+            val (count, chunk) = Var.runTuple(0)(stream).eval
+
+            assert(
+                count == 5 && chunk == (1 to 5)
+            )
+        }
+
+        "exact amount" in {
+            def emit(ack: Ack): Ack < (Emit[Chunk[Int]] & Var[Int]) =
+                ack match
+                    case Stop        => Stop: Ack < Any
+                    case Continue(0) => Emit.andMap(Chunk.empty)(emit)
+                    case Continue(maxItems) =>
+                        for
+                            end <- Var.update[Int](_ + maxItems)
+                            start = end - maxItems + 1
+                            next <- Emit.andMap(Chunk.from(start to end): Chunk[Int])(emit)
+                        yield next
+                        end for
+            end emit
+
+            val stream         = Stream(Emit.andMap(Chunk.empty[Int])(emit(_))).take(5).run
+            val (count, chunk) = Var.runTuple(0)(stream).eval
+
+            assert(
+                count == 5 && chunk == (1 to 5)
             )
         }
     }
@@ -477,7 +523,9 @@ class StreamTest extends Test:
     "runDiscard" - {
         "non-empty stream" in {
             assert(
-                Stream.init(Seq(1, 2, 3)).runDiscard.eval == ()
+                Var.run(0) {
+                    Stream.init(0 until 100).map(i => Var.update[Int](_ + i)).runDiscard.andThen(Var.get[Int])
+                }.eval == 4950
             )
         }
 

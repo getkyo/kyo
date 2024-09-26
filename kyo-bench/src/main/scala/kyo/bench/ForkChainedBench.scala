@@ -65,7 +65,7 @@ class ForkChainedBench extends Bench.ForkOnly(0):
 
         scoped {
             val p = new CompletableFuture[Unit]()
-            fork(iterate(p, depth))
+            discard(fork(iterate(p, depth)))
             p.get()
         }
     end forkOx

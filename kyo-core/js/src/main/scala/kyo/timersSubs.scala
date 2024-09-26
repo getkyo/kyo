@@ -13,7 +13,7 @@ class ScheduledFuture[A](r: => A) extends TimerTask:
     def run(): Unit =
         _done = true
         try
-            r
+            val _ = r
             ()
         catch
             case e: Throwable =>
