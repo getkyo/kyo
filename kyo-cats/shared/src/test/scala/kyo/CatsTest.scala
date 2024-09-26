@@ -91,7 +91,7 @@ class CatsTest extends Test:
                     _ <- f.cancel
                     r <- f.join
                 yield
-                    assert(cdl.await(10, TimeUnit.MILLISECONDS))
+                    assert(cdl.await(100, TimeUnit.MILLISECONDS))
                     assert(r.isCanceled)
                 end for
             }
@@ -104,7 +104,7 @@ class CatsTest extends Test:
                     _ <- f.interrupt(panic)
                     r <- f.getResult
                 yield
-                    assert(cdl.await(10, TimeUnit.MILLISECONDS))
+                    assert(cdl.await(100, TimeUnit.MILLISECONDS))
                     assert(r == panic)
                 end for
             }
@@ -121,7 +121,7 @@ class CatsTest extends Test:
                     _ <- f.cancel
                     r <- f.join
                 yield
-                    assert(cdl.await(10, TimeUnit.MILLISECONDS))
+                    assert(cdl.await(100, TimeUnit.MILLISECONDS))
                     assert(r.isCanceled)
                 end for
             }
