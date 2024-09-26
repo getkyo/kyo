@@ -14,10 +14,13 @@ class IOTest extends Test:
                     1
                 }
             assert(!called)
-            assert(IO.runLazy(v).eval == 1)
-            assert(called)
+            v.map { result =>
+                assert(result == 1)
+                assert(called)
+            }
         }
         "next handled effects can execute" in run {
+            import AllowUnsafe.embrace.danger
             var called = false
             val v =
                 Env.get[Int].map { i =>
@@ -36,6 +39,7 @@ class IOTest extends Test:
             assert(called)
         }
         "failure" in run {
+            import AllowUnsafe.embrace.danger
             val ex        = new Exception
             def fail: Int = throw ex
 
@@ -59,10 +63,9 @@ class IOTest extends Test:
                     else
                         i
                 }
-            assert(
-                IO.runLazy(loop(0)).eval ==
-                    frames
-            )
+            loop(0).map { result =>
+                assert(result == frames)
+            }
         }
     }
     "run" - {
@@ -74,10 +77,10 @@ class IOTest extends Test:
                     1
                 }
             assert(!called)
-            assert(
-                IO.run(v).eval == 1
-            )
-            assert(called)
+            v.map { result =>
+                assert(result == 1)
+                assert(called)
+            }
         }
         "stack-safe" in run {
             val frames = 100000
@@ -88,9 +91,10 @@ class IOTest extends Test:
                     else
                         succeed
                 }
-            IO.run(loop(0))
+            loop(0)
         }
         "failure" in run {
+            import AllowUnsafe.embrace.danger
             val ex        = new Exception
             def fail: Int = throw ex
 
@@ -111,24 +115,22 @@ class IOTest extends Test:
     }
 
     "ensure" - {
-        "success" in {
+        "success" in run {
             var called = false
-            assert(
-                IO.run(IO.ensure { called = true }(1)).eval ==
-                    1
-            )
-            assert(called)
+            IO.ensure { called = true }(1).map { result =>
+                assert(result == 1)
+                assert(called)
+            }
         }
-        "failure" in {
+        "failure" in run {
             val ex     = new Exception
             var called = false
-            assert(
-                Abort.run[Any](IO.run(IO.ensure { called = true } {
-                    IO[Int, Any](throw ex)
-                })).eval ==
-                    Result.panic(ex)
-            )
-            assert(called)
+            Abort.run[Any](IO.ensure { called = true } {
+                IO[Int, Any](throw ex)
+            }).map { result =>
+                assert(result == Result.panic(ex))
+                assert(called)
+            }
         }
     }
 

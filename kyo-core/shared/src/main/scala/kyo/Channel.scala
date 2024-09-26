@@ -160,7 +160,7 @@ object Channel:
                         if u.closed() then
                             Maybe.empty
                         else
-                            try Maybe(u.poll())
+                            try u.poll()
                             finally flush()
 
                     def poll(using Frame) =
@@ -204,14 +204,13 @@ object Channel:
                                 if u.closed() then
                                     throw closedException
                                 else
-                                    val v = u.poll()
-                                    if isNull(v) then
-                                        val p = IOPromise[Nothing, A]
-                                        takes.add(p)
-                                        Async.get(p)
-                                    else
-                                        v
-                                    end if
+                                    u.poll() match
+                                        case Maybe.Empty =>
+                                            val p = IOPromise[Nothing, A]
+                                            takes.add(p)
+                                            Async.get(p)
+                                        case Maybe.Defined(v) =>
+                                            v
                             finally
                                 flush()
                         }
@@ -222,14 +221,13 @@ object Channel:
                                 if u.closed() then
                                     throw closedException
                                 else
-                                    val v = u.poll()
-                                    if isNull(v) then
-                                        val p = IOPromise[Nothing, A]
-                                        takes.add(p)
-                                        Fiber.initUnsafe(p)
-                                    else
-                                        Fiber.success(v)
-                                    end if
+                                    u.poll() match
+                                        case Maybe.Empty =>
+                                            val p = IOPromise[Nothing, A]
+                                            takes.add(p)
+                                            Fiber.initUnsafe(p)
+                                        case Maybe.Defined(v) =>
+                                            Fiber.success(v)
                             finally
                                 flush()
                         }
@@ -283,18 +281,18 @@ object Channel:
                             // a waiting consumer (take).
                             val p = takes.poll()
                             if !isNull(p) then
-                                val v = u.poll()
-                                if isNull(v) then
-                                    // If the queue has been emptied before the
-                                    // transfer, requeue the consumer's promise.
-                                    discard(takes.add(p))
-                                else if !p.complete(Result.success(v)) && !u.offer(v) then
-                                    // If completing the take fails and the queue
-                                    // cannot accept the value back, enqueue a
-                                    // placeholder put operation to preserve the value.
-                                    val placeholder = IOPromise[Nothing, Unit]
-                                    discard(puts.add((v, placeholder)))
-                                end if
+                                u.poll() match
+                                    case Maybe.Empty =>
+                                        // If the queue has been emptied before the
+                                        // transfer, requeue the consumer's promise.
+                                        discard(takes.add(p))
+                                    case Maybe.Defined(v) =>
+                                        if !p.complete(Result.success(v)) && !u.offer(v) then
+                                            // If completing the take fails and the queue
+                                            // cannot accept the value back, enqueue a
+                                            // placeholder put operation to preserve the value.
+                                            val placeholder = IOPromise[Nothing, Unit]
+                                            discard(puts.add((v, placeholder)))
                             end if
                             flush()
                         else if queueSize < capacity && !putsEmpty then

@@ -3,6 +3,7 @@ package kyo
 class StatTest extends Test:
 
     "scope" in runJVM {
+        import AllowUnsafe.embrace.danger
         val stat         = Stat.initScope("test1")
         val counter      = stat.initCounter("a")
         val histogram    = stat.initHistogram("a")

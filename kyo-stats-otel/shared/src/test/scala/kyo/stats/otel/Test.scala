@@ -10,7 +10,10 @@ import scala.concurrent.Future
 
 abstract class Test extends AsyncFreeSpec with BaseKyoTest[IO] with NonImplicitAssertions {
 
-    def run(v: Future[Assertion] < IO): Future[Assertion] = IO.run(v).eval
+    def run(v: Future[Assertion] < IO): Future[Assertion] = {
+        import AllowUnsafe.embrace.danger
+        IO.run(v).eval
+    }
 
     type Assertion = org.scalatest.compatible.Assertion
     def success = succeed

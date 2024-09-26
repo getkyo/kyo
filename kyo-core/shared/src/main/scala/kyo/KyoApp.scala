@@ -72,6 +72,7 @@ object KyoApp:
       *   A Result containing either the computed value or a Throwable.
       */
     def attempt[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): Result[Throwable, A] =
+        import AllowUnsafe.embrace.danger
         IO.run(runFiber(timeout)(v).block(timeout)).eval
 
     /** Runs an effect with a specified timeout, throwing an exception if it fails.
@@ -144,6 +145,7 @@ object KyoApp:
       *   A Fiber representing the running effect.
       */
     def runFiber[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): Fiber[Throwable, A] =
+        import AllowUnsafe.embrace.danger
         v.pipe(Resource.run, Async.run, IO.run).eval
 
 end KyoApp

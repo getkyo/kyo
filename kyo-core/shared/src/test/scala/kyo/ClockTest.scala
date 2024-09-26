@@ -2,6 +2,8 @@ package kyo
 
 import java.time.Instant
 import java.time.temporal.ChronoUnit
+import kyo.Clock.Deadline
+import kyo.Clock.Stopwatch
 
 class ClockTest extends Test:
 
@@ -11,20 +13,8 @@ class ClockTest extends Test:
         var currentTime = Instant.now()
 
         val unsafe: Clock.Unsafe = new Clock.Unsafe:
-            def now: Instant                                        = currentTime
-            def stopwatch: Clock.Unsafe.Stopwatch                   = new Clock.Unsafe.Stopwatch(currentTime, this)
-            def deadline(duration: Duration): Clock.Unsafe.Deadline = new Clock.Unsafe.Deadline(currentTime.plus(duration.toJava), this)
-
-        def now(using Frame): Instant < IO = IO(currentTime)
-        def stopwatch(using Frame): Clock.Stopwatch < IO = IO(new Clock.Stopwatch:
-            val unsafe                              = TestClock.this.unsafe.stopwatch
-            def elapsed(using Frame): Duration < IO = IO(unsafe.elapsed)
-        )
-        def deadline(duration: Duration)(using Frame): Clock.Deadline < IO = IO(new Clock.Deadline:
-            val unsafe                               = TestClock.this.unsafe.deadline(duration)
-            def timeLeft(using Frame): Duration < IO = IO(unsafe.timeLeft)
-            def isOverdue(using Frame): Boolean < IO = IO(unsafe.isOverdue)
-        )
+            def now()(using AllowUnsafe): Instant = currentTime
+        def now(using Frame) = IO(currentTime)
 
         def advance(duration: Duration): Unit =
             currentTime = currentTime.plus(duration.toJava)
@@ -43,9 +33,10 @@ class ClockTest extends Test:
         }
 
         "unsafe now" in {
+            import AllowUnsafe.embrace.danger
             val testClock = new TestClock
             val instant   = testClock.currentTime
-            assert(testClock.unsafe.now == instant)
+            assert(testClock.unsafe.now() == instant)
         }
 
         "now at epoch" in run {
@@ -77,10 +68,11 @@ class ClockTest extends Test:
         }
 
         "unsafe elapsed time" in {
+            import AllowUnsafe.embrace.danger
             val testClock = new TestClock
-            val stopwatch = testClock.unsafe.stopwatch
+            val stopwatch = testClock.unsafe.stopwatch()
             testClock.advance(5.seconds)
-            assert(stopwatch.elapsed == 5.seconds)
+            assert(stopwatch.elapsed() == 5.seconds)
         }
 
         "zero elapsed time" in run {
@@ -116,18 +108,20 @@ class ClockTest extends Test:
         }
 
         "unsafe timeLeft" in {
+            import AllowUnsafe.embrace.danger
             val testClock = new TestClock
             val deadline  = testClock.unsafe.deadline(10.seconds)
             testClock.advance(3.seconds)
-            assert(deadline.timeLeft == 7.seconds)
+            assert(deadline.timeLeft() == 7.seconds)
         }
 
         "unsafe isOverdue" in {
+            import AllowUnsafe.embrace.danger
             val testClock = new TestClock
             val deadline  = testClock.unsafe.deadline(5.seconds)
-            assert(!deadline.isOverdue)
+            assert(!deadline.isOverdue())
             testClock.advance(6.seconds)
-            assert(deadline.isOverdue)
+            assert(deadline.isOverdue())
         }
 
         "zero duration deadline" in run {

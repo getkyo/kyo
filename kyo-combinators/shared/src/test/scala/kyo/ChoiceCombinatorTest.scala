@@ -64,46 +64,50 @@ class ChoiceCombinatorTest extends Test:
         }
 
         "iteration" - {
-            "should iterate using foreach" in {
+            "should iterate using foreach" in run {
                 var state             = 0
                 def effectFor(i: Int) = IO { state += i; state }
                 val effect            = Kyo.foreach(1 to 10)(effectFor)
                 assert(state == 0)
-                val result = IO.run(effect).eval
-                //                   1, 2, 3,  4,  5,  6,  7,  8,  9, 10
-                assert(result == Seq(1, 3, 6, 10, 15, 21, 28, 36, 45, 55))
-                assert(state == 55)
+                effect.map { result =>
+                    //                   1, 2, 3,  4,  5,  6,  7,  8,  9, 10
+                    assert(result == Seq(1, 3, 6, 10, 15, 21, 28, 36, 45, 55))
+                    assert(state == 55)
+                }
             }
 
-            "should iterate using collect" in {
+            "should iterate using collect" in run {
                 var state = 0
                 val effect = Kyo.collect(1 to 10) {
                     case i if i % 2 == 0 => IO { state += i; i * 2 }
                 }
                 assert(state == 0)
-                val result = IO.run(effect).eval
-                assert(result == Seq(4, 8, 12, 16, 20))
-                assert(state == 30)
+                effect.map { result =>
+                    assert(result == Seq(4, 8, 12, 16, 20))
+                    assert(state == 30)
+                }
             }
 
-            "should iterate using traverse" in {
+            "should iterate using traverse" in run {
                 var state   = 0
                 val effects = (1 to 10).map(i => IO { state += i; state })
                 val effect  = Kyo.traverse(effects)
                 assert(state == 0)
-                val result = IO.run(effect).eval
-                assert(result == Seq(1, 3, 6, 10, 15, 21, 28, 36, 45, 55))
-                assert(state == 55)
+                effect.map { result =>
+                    assert(result == Seq(1, 3, 6, 10, 15, 21, 28, 36, 45, 55))
+                    assert(state == 55)
+                }
             }
 
-            "should iterate using traverseDiscard" in {
+            "should iterate using traverseDiscard" in run {
                 var state   = 0
                 val effects = (1 to 10).map(i => IO { state += i; state })
                 val effect  = Kyo.traverseDiscard(effects)
                 assert(state == 0)
-                val result = IO.run(effect).eval
-                assert(result == ())
-                assert(state == 55)
+                effect.map { result =>
+                    assert(result == ())
+                    assert(state == 55)
+                }
             }
         }
     }

@@ -6,31 +6,36 @@ class ConsoleTest extends Test:
     val obj       = Obj("a")
     val pprintObj = pprint.apply(obj).toString
 
-    "readln" in {
+    "readln" in run {
         val testConsole = new TestConsole
         testConsole.readlns = List("readln")
-        val io: String < IO = Console.let(testConsole)(Console.readln)
-        assert(IO.run(io).eval == "readln")
+        Console.let(testConsole)(Console.readln).map { result =>
+            assert(result == "readln")
+        }
     }
-    "print" in {
+    "print" in run {
         val testConsole = new TestConsole
-        IO.run(Console.let(testConsole)(Console.print("print"))).eval
-        assert(testConsole.prints == List("print"))
+        Console.let(testConsole)(Console.print("print")).andThen {
+            assert(testConsole.prints == List("print"))
+        }
     }
-    "printErr" in {
+    "printErr" in run {
         val testConsole = new TestConsole
-        IO.run(Console.let(testConsole)(Console.printErr("printErr"))).eval
-        assert(testConsole.printErrs == List("printErr"))
+        Console.let(testConsole)(Console.printErr("printErr")).andThen {
+            assert(testConsole.printErrs == List("printErr"))
+        }
     }
-    "println" in {
+    "println" in run {
         val testConsole = new TestConsole
-        IO.run(Console.let(testConsole)(Console.println("println"))).eval
-        assert(testConsole.printlns == List("println"))
+        Console.let(testConsole)(Console.println("println")).andThen {
+            assert(testConsole.printlns == List("println"))
+        }
     }
-    "printlnErr" in {
+    "printlnErr" in run {
         val testConsole = new TestConsole
-        IO.run(Console.let(testConsole)(Console.printlnErr("printlnErr"))).eval
-        assert(testConsole.printlnErrs == List("printlnErr"))
+        Console.let(testConsole)(Console.printlnErr("printlnErr")).andThen {
+            assert(testConsole.printlnErrs == List("printlnErr"))
+        }
     }
 
     class TestConsole extends Console:
@@ -39,6 +44,8 @@ class ConsoleTest extends Test:
         var printErrs   = List.empty[String]
         var printlns    = List.empty[String]
         var printlnErrs = List.empty[String]
+
+        def unsafe = ???
 
         def readln(using Frame): String < IO =
             IO {
@@ -63,5 +70,63 @@ class ConsoleTest extends Test:
                 printlnErrs ::= s
             }
     end TestConsole
+
+    "unsafe" - {
+        import AllowUnsafe.embrace.danger
+
+        "should read line correctly" in {
+            val testUnsafe = new TestUnsafeConsole("test input")
+            assert(testUnsafe.readln() == "test input")
+        }
+
+        "should print correctly" in {
+            val testUnsafe = new TestUnsafeConsole()
+            testUnsafe.print("test output")
+            assert(testUnsafe.prints.head == "test output")
+        }
+
+        "should print error correctly" in {
+            val testUnsafe = new TestUnsafeConsole()
+            testUnsafe.printErr("test error")
+            assert(testUnsafe.printErrs.head == "test error")
+        }
+
+        "should println correctly" in {
+            val testUnsafe = new TestUnsafeConsole()
+            testUnsafe.println("test line")
+            assert(testUnsafe.printlns.head == "test line")
+        }
+
+        "should println error correctly" in {
+            val testUnsafe = new TestUnsafeConsole()
+            testUnsafe.printlnErr("test error line")
+            assert(testUnsafe.printlnErrs.head == "test error line")
+        }
+
+        "should convert to safe Console" in {
+            val testUnsafe  = new TestUnsafeConsole()
+            val safeConsole = testUnsafe.safe
+            assert(safeConsole.isInstanceOf[Console])
+        }
+    }
+
+    class TestUnsafeConsole(input: String = "") extends Console.Unsafe:
+        var readlnInput = input
+        var prints      = List.empty[String]
+        var printErrs   = List.empty[String]
+        var printlns    = List.empty[String]
+        var printlnErrs = List.empty[String]
+
+        def readln()(using AllowUnsafe): String =
+            readlnInput
+        def print(s: String)(using AllowUnsafe): Unit =
+            prints = s :: prints
+        def printErr(s: String)(using AllowUnsafe): Unit =
+            printErrs = s :: printErrs
+        def println(s: String)(using AllowUnsafe): Unit =
+            printlns = s :: printlns
+        def printlnErr(s: String)(using AllowUnsafe): Unit =
+            printlnErrs = s :: printlnErrs
+    end TestUnsafeConsole
 
 end ConsoleTest

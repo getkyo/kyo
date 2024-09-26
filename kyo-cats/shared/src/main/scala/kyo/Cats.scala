@@ -48,7 +48,7 @@ object Cats:
                         Some(CatsIO(fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))).void)
                     }
                 }
-            }.pipe(IO.run).eval
+            }.pipe(IO.Unsafe.run).eval
         }
     end run
 end Cats

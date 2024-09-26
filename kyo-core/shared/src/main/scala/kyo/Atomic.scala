@@ -4,25 +4,25 @@ import java.util.concurrent.atomic as j
 
 /** A wrapper for Java's AtomicInteger.
   */
-final class AtomicInt private[kyo] (ref: j.AtomicInteger) extends AnyVal:
+final case class AtomicInt private (unsafe: AtomicInt.Unsafe) extends AnyVal:
 
     /** Gets the current value.
       * @return
       *   The current integer value
       */
-    def get(using Frame): Int < IO = IO(ref.get())
+    inline def get(using inline frame: Frame): Int < IO = IO(unsafe.get())
 
     /** Sets to the given value.
       * @param v
       *   The new value
       */
-    def set(v: Int)(using Frame): Unit < IO = IO(ref.set(v))
+    inline def set(v: Int)(using inline frame: Frame): Unit < IO = IO(unsafe.set(v))
 
     /** Eventually sets to the given value.
       * @param v
       *   The new value
       */
-    def lazySet(v: Int)(using Frame): Unit < IO = IO(ref.lazySet(v))
+    inline def lazySet(v: Int)(using inline frame: Frame): Unit < IO = IO(unsafe.lazySet(v))
 
     /** Atomically sets to the given value and returns the old value.
       * @param v
@@ -30,7 +30,7 @@ final class AtomicInt private[kyo] (ref: j.AtomicInteger) extends AnyVal:
       * @return
       *   The previous value
       */
-    def getAndSet(v: Int)(using Frame): Int < IO = IO(ref.getAndSet(v))
+    inline def getAndSet(v: Int)(using inline frame: Frame): Int < IO = IO(unsafe.getAndSet(v))
 
     /** Atomically sets the value to the given updated value if the current value is equal to the expected value.
       * @param curr
@@ -40,31 +40,31 @@ final class AtomicInt private[kyo] (ref: j.AtomicInteger) extends AnyVal:
       * @return
       *   true if successful, false otherwise
       */
-    def cas(curr: Int, next: Int)(using Frame): Boolean < IO = IO(ref.compareAndSet(curr, next))
+    inline def cas(curr: Int, next: Int)(using inline frame: Frame): Boolean < IO = IO(unsafe.cas(curr, next))
 
     /** Atomically increments the current value and returns the updated value.
       * @return
       *   The updated value
       */
-    def incrementAndGet(using Frame): Int < IO = IO(ref.incrementAndGet())
+    inline def incrementAndGet(using inline frame: Frame): Int < IO = IO(unsafe.incrementAndGet())
 
     /** Atomically decrements the current value and returns the updated value.
       * @return
       *   The updated value
       */
-    def decrementAndGet(using Frame): Int < IO = IO(ref.decrementAndGet())
+    inline def decrementAndGet(using inline frame: Frame): Int < IO = IO(unsafe.decrementAndGet())
 
     /** Atomically increments the current value and returns the old value.
       * @return
       *   The previous value
       */
-    def getAndIncrement(using Frame): Int < IO = IO(ref.getAndIncrement())
+    inline def getAndIncrement(using inline frame: Frame): Int < IO = IO(unsafe.getAndIncrement())
 
     /** Atomically decrements the current value and returns the old value.
       * @return
       *   The previous value
       */
-    def getAndDecrement(using Frame): Int < IO = IO(ref.getAndDecrement())
+    inline def getAndDecrement(using inline frame: Frame): Int < IO = IO(unsafe.getAndDecrement())
 
     /** Atomically adds the given value to the current value and returns the old value.
       * @param v
@@ -72,7 +72,7 @@ final class AtomicInt private[kyo] (ref: j.AtomicInteger) extends AnyVal:
       * @return
       *   The previous value
       */
-    def getAndAdd(v: Int)(using Frame): Int < IO = IO(ref.getAndAdd(v))
+    inline def getAndAdd(v: Int)(using inline frame: Frame): Int < IO = IO(unsafe.getAndAdd(v))
 
     /** Atomically adds the given value to the current value and returns the updated value.
       * @param v
@@ -80,13 +80,14 @@ final class AtomicInt private[kyo] (ref: j.AtomicInteger) extends AnyVal:
       * @return
       *   The updated value
       */
-    def addAndGet(v: Int)(using Frame): Int < IO = IO(ref.addAndGet(v))
+    inline def addAndGet(v: Int)(using inline frame: Frame): Int < IO = IO(unsafe.addAndGet(v))
 
     /** Returns a string representation of the current value.
       * @return
       *   A string representation of the atomic integer
       */
-    override def toString = ref.toString()
+    override def toString = unsafe.toString()
+
 end AtomicInt
 
 object AtomicInt:
@@ -97,28 +98,51 @@ object AtomicInt:
       *   A new AtomicInt instance
       */
     def init(v: Int)(using Frame): AtomicInt < IO = IO(AtomicInt(new j.AtomicInteger(v)))
+
+    opaque type Unsafe = j.AtomicInteger
+
+    object Unsafe:
+        given Flat[Unsafe] = Flat.unsafe.bypass
+
+        def init(v: Int)(using allow: AllowUnsafe): Unsafe = new j.AtomicInteger(v)
+
+        extension (self: Unsafe)
+            inline def get()(using inline allow: AllowUnsafe): Int                         = self.get()
+            inline def set(v: Int)(using inline allow: AllowUnsafe): Unit                  = self.set(v)
+            inline def lazySet(v: Int)(using inline allow: AllowUnsafe): Unit              = self.lazySet(v)
+            inline def getAndSet(v: Int)(using inline allow: AllowUnsafe): Int             = self.getAndSet(v)
+            inline def cas(curr: Int, next: Int)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
+            inline def incrementAndGet()(using inline allow: AllowUnsafe): Int             = self.incrementAndGet()
+            inline def decrementAndGet()(using inline allow: AllowUnsafe): Int             = self.decrementAndGet()
+            inline def getAndIncrement()(using inline allow: AllowUnsafe): Int             = self.getAndIncrement()
+            inline def getAndDecrement()(using inline allow: AllowUnsafe): Int             = self.getAndDecrement()
+            inline def getAndAdd(v: Int)(using inline allow: AllowUnsafe): Int             = self.getAndAdd(v)
+            inline def addAndGet(v: Int)(using inline allow: AllowUnsafe): Int             = self.addAndGet(v)
+            inline def safe: AtomicInt                                                     = AtomicInt(self)
+        end extension
+    end Unsafe
 end AtomicInt
 
 /** A wrapper for Java's AtomicLong.
   */
-final class AtomicLong private[kyo] (ref: j.AtomicLong) extends AnyVal:
+final case class AtomicLong private (unsafe: AtomicLong.Unsafe) extends AnyVal:
     /** Gets the current value.
       * @return
       *   The current long value
       */
-    def get(using Frame): Long < IO = IO(ref.get())
+    inline def get(using inline frame: Frame): Long < IO = IO(unsafe.get())
 
     /** Sets to the given value.
       * @param v
       *   The new value
       */
-    def set(v: Long)(using Frame): Unit < IO = IO(ref.set(v))
+    inline def set(v: Long)(using inline frame: Frame): Unit < IO = IO(unsafe.set(v))
 
     /** Eventually sets to the given value.
       * @param v
       *   The new value
       */
-    def lazySet(v: Long)(using Frame): Unit < IO = IO(ref.lazySet(v))
+    inline def lazySet(v: Long)(using inline frame: Frame): Unit < IO = IO(unsafe.lazySet(v))
 
     /** Atomically sets to the given value and returns the old value.
       * @param v
@@ -126,7 +150,7 @@ final class AtomicLong private[kyo] (ref: j.AtomicLong) extends AnyVal:
       * @return
       *   The previous value
       */
-    def getAndSet(v: Long)(using Frame): Long < IO = IO(ref.getAndSet(v))
+    inline def getAndSet(v: Long)(using inline frame: Frame): Long < IO = IO(unsafe.getAndSet(v))
 
     /** Atomically sets the value to the given updated value if the current value is equal to the expected value.
       * @param curr
@@ -136,31 +160,31 @@ final class AtomicLong private[kyo] (ref: j.AtomicLong) extends AnyVal:
       * @return
       *   true if successful, false otherwise
       */
-    def cas(curr: Long, next: Long)(using Frame): Boolean < IO = IO(ref.compareAndSet(curr, next))
+    inline def cas(curr: Long, next: Long)(using inline frame: Frame): Boolean < IO = IO(unsafe.cas(curr, next))
 
     /** Atomically increments the current value and returns the updated value.
       * @return
       *   The updated value
       */
-    def incrementAndGet(using Frame): Long < IO = IO(ref.incrementAndGet())
+    inline def incrementAndGet(using inline frame: Frame): Long < IO = IO(unsafe.incrementAndGet())
 
     /** Atomically decrements the current value and returns the updated value.
       * @return
       *   The updated value
       */
-    def decrementAndGet(using Frame): Long < IO = IO(ref.decrementAndGet())
+    inline def decrementAndGet(using inline frame: Frame): Long < IO = IO(unsafe.decrementAndGet())
 
     /** Atomically increments the current value and returns the old value.
       * @return
       *   The previous value
       */
-    def getAndIncrement(using Frame): Long < IO = IO(ref.getAndIncrement())
+    inline def getAndIncrement(using inline frame: Frame): Long < IO = IO(unsafe.getAndIncrement())
 
     /** Atomically decrements the current value and returns the old value.
       * @return
       *   The previous value
       */
-    def getAndDecrement(using Frame): Long < IO = IO(ref.getAndDecrement())
+    inline def getAndDecrement(using inline frame: Frame): Long < IO = IO(unsafe.getAndDecrement())
 
     /** Atomically adds the given value to the current value and returns the old value.
       * @param v
@@ -168,7 +192,7 @@ final class AtomicLong private[kyo] (ref: j.AtomicLong) extends AnyVal:
       * @return
       *   The previous value
       */
-    def getAndAdd(v: Long)(using Frame): Long < IO = IO(ref.getAndAdd(v))
+    inline def getAndAdd(v: Long)(using inline frame: Frame): Long < IO = IO(unsafe.getAndAdd(v))
 
     /** Atomically adds the given value to the current value and returns the updated value.
       * @param v
@@ -176,13 +200,14 @@ final class AtomicLong private[kyo] (ref: j.AtomicLong) extends AnyVal:
       * @return
       *   The updated value
       */
-    def addAndGet(v: Long)(using Frame): Long < IO = IO(ref.addAndGet(v))
+    inline def addAndGet(v: Long)(using inline frame: Frame): Long < IO = IO(unsafe.addAndGet(v))
 
     /** Returns a string representation of the current value.
       * @return
       *   A string representation of the atomic long
       */
-    override def toString = ref.toString()
+    override def toString = unsafe.toString()
+
 end AtomicLong
 
 object AtomicLong:
@@ -194,28 +219,51 @@ object AtomicLong:
       *   A new AtomicLong instance
       */
     def init(v: Long)(using Frame): AtomicLong < IO = IO(AtomicLong(new j.AtomicLong(v)))
+
+    opaque type Unsafe = j.AtomicLong
+
+    object Unsafe:
+        given Flat[Unsafe] = Flat.unsafe.bypass
+
+        def init(v: Long)(using AllowUnsafe): Unsafe = new j.AtomicLong(v)
+
+        extension (self: Unsafe)
+            inline def get()(using inline allow: AllowUnsafe): Long                          = self.get()
+            inline def set(v: Long)(using inline allow: AllowUnsafe): Unit                   = self.set(v)
+            inline def lazySet(v: Long)(using inline allow: AllowUnsafe): Unit               = self.lazySet(v)
+            inline def getAndSet(v: Long)(using inline allow: AllowUnsafe): Long             = self.getAndSet(v)
+            inline def cas(curr: Long, next: Long)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
+            inline def incrementAndGet()(using inline allow: AllowUnsafe): Long              = self.incrementAndGet()
+            inline def decrementAndGet()(using inline allow: AllowUnsafe): Long              = self.decrementAndGet()
+            inline def getAndIncrement()(using inline allow: AllowUnsafe): Long              = self.getAndIncrement()
+            inline def getAndDecrement()(using inline allow: AllowUnsafe): Long              = self.getAndDecrement()
+            inline def getAndAdd(v: Long)(using inline allow: AllowUnsafe): Long             = self.getAndAdd(v)
+            inline def addAndGet(v: Long)(using inline allow: AllowUnsafe): Long             = self.addAndGet(v)
+            inline def safe: AtomicLong                                                      = AtomicLong(self)
+        end extension
+    end Unsafe
 end AtomicLong
 
 /** A wrapper for Java's AtomicBoolean.
   */
-final class AtomicBoolean private[kyo] (ref: j.AtomicBoolean) extends AnyVal:
+final case class AtomicBoolean private (unsafe: AtomicBoolean.Unsafe) extends AnyVal:
     /** Gets the current value.
       * @return
       *   The current boolean value
       */
-    def get(using Frame): Boolean < IO = IO(ref.get())
+    inline def get(using inline frame: Frame): Boolean < IO = IO(unsafe.get())
 
     /** Sets to the given value.
       * @param v
       *   The new value
       */
-    def set(v: Boolean)(using Frame): Unit < IO = IO(ref.set(v))
+    inline def set(v: Boolean)(using inline frame: Frame): Unit < IO = IO(unsafe.set(v))
 
     /** Eventually sets to the given value.
       * @param v
       *   The new value
       */
-    def lazySet(v: Boolean)(using Frame): Unit < IO = IO(ref.lazySet(v))
+    inline def lazySet(v: Boolean)(using inline frame: Frame): Unit < IO = IO(unsafe.lazySet(v))
 
     /** Atomically sets to the given value and returns the old value.
       * @param v
@@ -223,7 +271,7 @@ final class AtomicBoolean private[kyo] (ref: j.AtomicBoolean) extends AnyVal:
       * @return
       *   The previous value
       */
-    def getAndSet(v: Boolean)(using Frame): Boolean < IO = IO(ref.getAndSet(v))
+    inline def getAndSet(v: Boolean)(using inline frame: Frame): Boolean < IO = IO(unsafe.getAndSet(v))
 
     /** Atomically sets the value to the given updated value if the current value is equal to the expected value.
       * @param curr
@@ -233,13 +281,14 @@ final class AtomicBoolean private[kyo] (ref: j.AtomicBoolean) extends AnyVal:
       * @return
       *   true if successful, false otherwise
       */
-    def cas(curr: Boolean, next: Boolean)(using Frame): Boolean < IO = IO(ref.compareAndSet(curr, next))
+    inline def cas(curr: Boolean, next: Boolean)(using inline frame: Frame): Boolean < IO = IO(unsafe.cas(curr, next))
 
     /** Returns a string representation of the current value.
       * @return
       *   A string representation of the atomic boolean
       */
-    override def toString = ref.toString()
+    override def toString = unsafe.toString()
+
 end AtomicBoolean
 
 object AtomicBoolean:
@@ -250,7 +299,24 @@ object AtomicBoolean:
       * @return
       *   A new AtomicBoolean instance
       */
-    def init(v: Boolean)(using Frame): AtomicBoolean < IO = IO(AtomicBoolean(new j.AtomicBoolean(v)))
+    def init(v: Boolean)(using Frame): AtomicBoolean < IO = IO(AtomicBoolean(Unsafe.init(v)))
+
+    opaque type Unsafe = j.AtomicBoolean
+
+    object Unsafe:
+        given Flat[Unsafe] = Flat.unsafe.bypass
+
+        def init(v: Boolean)(using AllowUnsafe): Unsafe = new j.AtomicBoolean(v)
+
+        extension (self: Unsafe)
+            inline def get()(using inline allow: AllowUnsafe): Boolean                             = self.get()
+            inline def set(v: Boolean)(using inline allow: AllowUnsafe): Unit                      = self.set(v)
+            inline def lazySet(v: Boolean)(using inline allow: AllowUnsafe): Unit                  = self.lazySet(v)
+            inline def getAndSet(v: Boolean)(using inline allow: AllowUnsafe): Boolean             = self.getAndSet(v)
+            inline def cas(curr: Boolean, next: Boolean)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
+            inline def safe: AtomicBoolean                                                         = AtomicBoolean(self)
+        end extension
+    end Unsafe
 end AtomicBoolean
 
 /** A wrapper for Java's AtomicReference.
@@ -258,25 +324,25 @@ end AtomicBoolean
   * @tparam A
   *   The type of the referenced value
   */
-final class AtomicRef[A] private[kyo] (private val ref: j.AtomicReference[A]) extends AnyVal:
+final case class AtomicRef[A] private (unsafe: AtomicRef.Unsafe[A]) extends AnyVal:
 
     /** Gets the current value.
       * @return
       *   The current value
       */
-    def get(using Frame): A < IO = IO(ref.get())
+    inline def get(using inline frame: Frame): A < IO = IO(unsafe.get())
 
     /** Sets to the given value.
       * @param v
       *   The new value
       */
-    def set(v: A)(using Frame): Unit < IO = IO(ref.set(v))
+    inline def set(v: A)(using inline frame: Frame): Unit < IO = IO(unsafe.set(v))
 
     /** Eventually sets to the given value.
       * @param v
       *   The new value
       */
-    def lazySet(v: A)(using Frame): Unit < IO = IO(ref.lazySet(v))
+    inline def lazySet(v: A)(using inline frame: Frame): Unit < IO = IO(unsafe.lazySet(v))
 
     /** Atomically sets to the given value and returns the old value.
       * @param v
@@ -284,7 +350,7 @@ final class AtomicRef[A] private[kyo] (private val ref: j.AtomicReference[A]) ex
       * @return
       *   The previous value
       */
-    def getAndSet(v: A)(using Frame): A < IO = IO(ref.getAndSet(v))
+    inline def getAndSet(v: A)(using inline frame: Frame): A < IO = IO(unsafe.getAndSet(v))
 
     /** Atomically sets the value to the given updated value if the current value is equal to the expected value.
       * @param curr
@@ -294,13 +360,13 @@ final class AtomicRef[A] private[kyo] (private val ref: j.AtomicReference[A]) ex
       * @return
       *   true if successful, false otherwise
       */
-    def cas(curr: A, next: A)(using Frame): Boolean < IO = IO(ref.compareAndSet(curr, next))
+    inline def cas(curr: A, next: A)(using inline frame: Frame): Boolean < IO = IO(unsafe.cas(curr, next))
 
     /** Atomically updates the current value using the given function.
       * @param f
       *   The function to apply to the current value
       */
-    def update[S](f: A => A)(using Frame): Unit < IO = updateAndGet(f).unit
+    inline def update[S](f: A => A)(using inline frame: Frame): Unit < IO = updateAndGet(f).unit
 
     /** Atomically updates the current value using the given function and returns the updated value.
       * @param f
@@ -308,13 +374,14 @@ final class AtomicRef[A] private[kyo] (private val ref: j.AtomicReference[A]) ex
       * @return
       *   The updated value
       */
-    def updateAndGet[S](f: A => A)(using Frame): A < IO = IO(ref.updateAndGet(f(_)))
+    inline def updateAndGet[S](f: A => A)(using inline frame: Frame): A < IO = IO(unsafe.updateAndGet(f(_)))
 
     /** Returns a string representation of the current value.
       * @return
       *   A string representation of the atomic reference
       */
-    override def toString = ref.toString()
+    override def toString = unsafe.toString()
+
 end AtomicRef
 
 object AtomicRef:
@@ -327,5 +394,24 @@ object AtomicRef:
       * @tparam A
       *   The type of the referenced value
       */
-    def init[A](v: A)(using Frame): AtomicRef[A] < IO = IO(AtomicRef(new j.AtomicReference(v)))
+    def init[A](v: A)(using Frame): AtomicRef[A] < IO = IO(AtomicRef(Unsafe.init(v)))
+
+    opaque type Unsafe[A] = j.AtomicReference[A]
+
+    object Unsafe:
+        given [A]: Flat[Unsafe[A]] = Flat.unsafe.bypass
+
+        def init[A](v: A)(using AllowUnsafe): Unsafe[A] = new j.AtomicReference(v)
+
+        extension [A](self: Unsafe[A])
+            inline def get()(using inline allow: AllowUnsafe): A                       = self.get()
+            inline def set(v: A)(using inline allow: AllowUnsafe): Unit                = self.set(v)
+            inline def lazySet(v: A)(using inline allow: AllowUnsafe): Unit            = self.lazySet(v)
+            inline def getAndSet(v: A)(using inline allow: AllowUnsafe): A             = self.getAndSet(v)
+            inline def cas(curr: A, next: A)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
+            def update[S](f: A => A)(using AllowUnsafe): Unit                          = discard(self.updateAndGet(f(_)))
+            def updateAndGet[S](f: A => A)(using AllowUnsafe): A                       = self.updateAndGet(f(_))
+            inline def safe: AtomicRef[A]                                              = AtomicRef(self)
+        end extension
+    end Unsafe
 end AtomicRef

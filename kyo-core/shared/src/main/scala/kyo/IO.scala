@@ -35,7 +35,8 @@ object IO:
       * @return
       *   The suspended computation wrapped in an IO effect.
       */
-    inline def apply[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (IO & S) =
+    inline def apply[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (IO & S) =
+        import AllowUnsafe.embrace.danger
         ArrowEffect.suspendMap[Any](Tag[IO], ())(_ => f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
@@ -78,7 +79,7 @@ object IO:
       * @return
       *   The result of the IO effect after executing its side effects.
       */
-    def run[A: Flat, S](v: A < IO)(using Frame): A < Any =
+    def run[A: Flat, S](v: A < IO)(using Frame, AllowUnsafe): A < Any =
         runLazy(v)
 
     /** Runs an IO effect lazily, only evaluating when needed.
@@ -102,7 +103,7 @@ object IO:
       * @return
       *   The result of the IO effect, evaluated lazily along with its side effects.
       */
-    def runLazy[A: Flat, S](v: A < (IO & S))(using Frame): A < S =
+    def runLazy[A: Flat, S](v: A < (IO & S))(using Frame, AllowUnsafe): A < S =
         ArrowEffect.handle(Tag[IO], v) {
             [C] => (_, cont) => cont(())
         }

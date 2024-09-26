@@ -156,4 +156,84 @@ class QueueTest extends Test:
             }
         }
     }
+
+    "unsafe" - {
+        import AllowUnsafe.embrace.danger
+
+        def withQueue[A](f: TestUnsafeQueue[Int] => A): A =
+            f(TestUnsafeQueue[Int](2))
+
+        "should offer and poll correctly" in withQueue { testUnsafe =>
+            assert(testUnsafe.offer(1))
+            assert(testUnsafe.poll() == Maybe(1))
+        }
+
+        "should peek correctly" in withQueue { testUnsafe =>
+            testUnsafe.offer(2)
+            assert(testUnsafe.peek() == Maybe(2))
+        }
+
+        "should report empty correctly" in withQueue { testUnsafe =>
+            assert(testUnsafe.empty())
+            testUnsafe.offer(3)
+            assert(!testUnsafe.empty())
+        }
+
+        "should report size correctly" in withQueue { testUnsafe =>
+            assert(testUnsafe.size() == 0)
+            testUnsafe.offer(3)
+            assert(testUnsafe.size() == 1)
+        }
+
+        "should drain correctly" in withQueue { testUnsafe =>
+            testUnsafe.offer(3)
+            testUnsafe.offer(4)
+            val drained = testUnsafe.drain()
+            assert(drained == Seq(3, 4))
+            assert(testUnsafe.empty())
+        }
+
+        "should close correctly" in withQueue { testUnsafe =>
+            testUnsafe.offer(5)
+            val closed = testUnsafe.close()
+            assert(closed == Maybe(Seq(5)))
+            assert(testUnsafe.close().isEmpty)
+        }
+    }
+
+    case class TestUnsafeQueue[A](capacity: Int) extends Queue.Unsafe[A]:
+        private var elements = scala.collection.mutable.Queue[A]()
+        private var closed   = false
+
+        def offer(a: A)(using AllowUnsafe): Boolean =
+            if closed then throw new IllegalStateException("Queue is closed")
+            else if elements.size >= capacity then false
+            else
+                elements.enqueue(a)
+                true
+
+        def poll()(using AllowUnsafe): Maybe[A] =
+            if closed then throw new IllegalStateException("Queue is closed")
+            else if elements.isEmpty then Maybe.empty
+            else Maybe(elements.dequeue())
+
+        def peek()(using AllowUnsafe): Maybe[A] =
+            if closed then throw new IllegalStateException("Queue is closed")
+            else if elements.isEmpty then Maybe.empty
+            else Maybe(elements.head)
+
+        def empty()(using AllowUnsafe): Boolean =
+            if closed then throw new IllegalStateException("Queue is closed")
+            else elements.isEmpty
+
+        def size()(using AllowUnsafe): Int =
+            if closed then throw new IllegalStateException("Queue is closed")
+            else elements.size
+
+        def full()(using AllowUnsafe): Boolean =
+            if closed then throw new IllegalStateException("Queue is closed")
+            else elements.size == capacity
+
+    end TestUnsafeQueue
+
 end QueueTest

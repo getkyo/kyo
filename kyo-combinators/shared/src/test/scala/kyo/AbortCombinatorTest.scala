@@ -51,6 +51,7 @@ class AbortCombinatorTest extends Test:
             }
 
             "should construct from an IO" in {
+                import AllowUnsafe.embrace.danger
                 val effect = Kyo.attempt(IO(throw new Exception("failure")))
                 assert(IO.run(
                     Abort.run[Throwable](effect)

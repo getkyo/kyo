@@ -1,5 +1,6 @@
 package kyo.internal
 
+import kyo.AllowUnsafe
 import kyo.Frame
 import kyo.Log
 
@@ -23,32 +24,34 @@ object LogPlatformSpecific:
 
             inline def errorEnabled: Boolean = logger.isErrorEnabled
 
-            inline def trace(msg: => String)(using frame: Frame): Unit =
+            inline def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if traceEnabled then logger.trace(s"[${frame.parse.position}] $msg")
 
-            inline def trace(msg: => String, t: => Throwable)(using frame: Frame): Unit =
+            inline def trace(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if traceEnabled then logger.trace(s"[${frame.parse.position}] $msg", t)
 
-            inline def debug(msg: => String)(using frame: Frame): Unit =
+            inline def debug(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if debugEnabled then logger.debug(s"[${frame.parse.position}] $msg")
 
-            inline def debug(msg: => String, t: => Throwable)(using frame: Frame): Unit =
+            inline def debug(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if debugEnabled then logger.debug(s"[${frame.parse.position}] $msg", t)
 
-            inline def info(msg: => String)(using frame: Frame): Unit = if infoEnabled then logger.info(s"[${frame.parse.position}] $msg")
+            inline def info(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if infoEnabled then logger.info(s"[${frame.parse.position}] $msg")
 
-            inline def info(msg: => String, t: => Throwable)(using frame: Frame): Unit =
+            inline def info(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if infoEnabled then logger.info(s"[${frame.parse.position}] $msg", t)
 
-            inline def warn(msg: => String)(using frame: Frame): Unit = if warnEnabled then logger.warn(s"[${frame.parse.position}] $msg")
+            inline def warn(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
+                if warnEnabled then logger.warn(s"[${frame.parse.position}] $msg")
 
-            inline def warn(msg: => String, t: => Throwable)(using frame: Frame): Unit =
+            inline def warn(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if warnEnabled then logger.warn(s"[${frame.parse.position}] $msg", t)
 
-            inline def error(msg: => String)(using frame: Frame): Unit =
+            inline def error(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if errorEnabled then logger.error(s"[${frame.parse.position}] $msg")
 
-            inline def error(msg: => String, t: => Throwable)(using frame: Frame): Unit =
+            inline def error(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
                 if errorEnabled then logger.error(s"[${frame.parse.position}] $msg", t)
         end SLF4J
     end Unsafe

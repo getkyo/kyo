@@ -5,10 +5,6 @@ import org.scalatest.freespec.AnyFreeSpec
 
 class HygieneTest extends AnyFreeSpec with Assertions:
 
-    "ok" in {
-        assert(IO.run(IO(1)).eval == 1)
-    }
-
     "use of var" in {
         assertDoesNotCompile("""
           defer {

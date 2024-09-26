@@ -63,7 +63,7 @@ object ZIOs:
                         fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))
                     })
                 }
-            }.pipe(IO.run).eval
+            }.pipe(IO.Unsafe.run).eval
         }
     end run
 
