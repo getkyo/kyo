@@ -628,4 +628,39 @@ class AbortsTest extends Test:
         succeed
     }
 
+    "Abortable" - {
+        "handle Abort[Nothing]" in {
+            val computation: Int < Abort[Nothing] = Abort.panic(new RuntimeException("Panic!"))
+            val result                            = Abort.run(computation).eval
+            val _: Result[Nothing, Int]           = result
+            assert(result.isPanic)
+        }
+
+        "handle Abort[Nothing] with custom error type" in {
+            val computation: Int < Abort[Nothing] = Abort.panic(new RuntimeException("Panic!"))
+            val result                            = Abort.run[String](computation).eval
+            val _: Result[String, Int]            = result
+            assert(result.isPanic)
+        }
+
+        "allow handling of pure values" in {
+            val computation: Int < Abort[Nothing] = 42
+            val result                            = Abort.run(computation).eval
+            val _: Result[Nothing, Int]           = result
+            assert(result == Result.success(42))
+        }
+
+        "work with other effect" in {
+            val computation: Int < (Abort[Nothing] & Env[Int]) =
+                Env.use[Int](_ => Abort.panic(new RuntimeException("IO Panic!")))
+
+            val result =
+                Env.run(42)(Abort.run(computation)).eval
+
+            val _: Result[Nothing, Int] = result
+
+            assert(result.isPanic)
+        }
+    }
+
 end AbortsTest
