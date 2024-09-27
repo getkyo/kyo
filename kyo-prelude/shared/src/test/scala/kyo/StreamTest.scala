@@ -8,6 +8,12 @@ class StreamTest extends Test:
 
     val n = 10000
 
+    "empty" in {
+        assert(
+            Stream.empty[Int].run.eval == Seq.empty
+        )
+    }
+
     "init" - {
         "empty" in {
             assert(
