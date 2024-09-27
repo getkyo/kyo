@@ -330,7 +330,7 @@ end Stream
 object Stream:
 
     private val _empty           = Stream(Stop)
-    def empty[V]: Stream[Any, V] = _empty.asInstanceOf[Stream[Any, V]]
+    def empty[V]: Stream[V, Any] = _empty.asInstanceOf[Stream[V, Any]]
 
     def init[V, S](seq: Seq[V] < S)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
         Stream[V, S](
