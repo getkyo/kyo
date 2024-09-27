@@ -3164,7 +3164,6 @@ import caliban.*
 import caliban.schema.*
 import kyo.*
 import kyo.given
-import sttp.tapir.json.zio.*
 import sttp.tapir.server.netty.*
 import zio.Task
 
@@ -3188,7 +3187,6 @@ import caliban.*
 import caliban.schema.*
 import kyo.*
 import kyo.given
-import sttp.tapir.json.zio.*
 import zio.Task
 
 type CustomEffects = Var[Int] & Env[String]
