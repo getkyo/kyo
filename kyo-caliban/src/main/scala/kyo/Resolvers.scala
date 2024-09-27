@@ -135,10 +135,7 @@ object Resolvers:
       * @return
       *   An HttpInterpreter wrapped in Resolvers effect
       */
-    def get[R](api: GraphQL[R])(using
-        requestCodec: JsonCodec[GraphQLRequest],
-        responseValueCodec: JsonCodec[ResponseValue]
-    )(using Frame): HttpInterpreter[R, CalibanError] < Resolvers =
+    def get[R](api: GraphQL[R])(using Frame): HttpInterpreter[R, CalibanError] < Resolvers =
         ZIOs.get(api.interpreter.map(HttpInterpreter(_)))
 
     private val rightUnit: Right[Nothing, Unit] = Right(())
