@@ -71,8 +71,7 @@ class StreamTest extends Test:
         "emit one at a time" in {
             def emit(ack: Ack): Ack < (Emit[Chunk[Int]] & Var[Int]) =
                 ack match
-                    case Stop        => Stop: Ack < Any
-                    case Continue(0) => Emit.andMap(Chunk.empty)(emit)
+                    case Stop => Stop: Ack < Any
                     case Continue(maxItems) =>
                         for
                             n    <- Var.update[Int](_ + 1)
@@ -91,8 +90,7 @@ class StreamTest extends Test:
         "exact amount" in {
             def emit(ack: Ack): Ack < (Emit[Chunk[Int]] & Var[Int]) =
                 ack match
-                    case Stop        => Stop: Ack < Any
-                    case Continue(0) => Emit.andMap(Chunk.empty)(emit)
+                    case Stop => Stop: Ack < Any
                     case Continue(maxItems) =>
                         for
                             end <- Var.update[Int](_ + maxItems)

@@ -69,6 +69,59 @@ class EmitTest extends Test:
         assert(res.eval == (Chunk(Set(1), Set(2), Set(3)), "a"))
     }
 
+    "Ack" - {
+        "apply" - {
+            "negative" in {
+                val ack = Emit.Ack(-1)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "zero" in {
+                val ack = Emit.Ack(0)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "positive" in {
+                val ack = Emit.Ack(1)
+                assert(ack == Emit.Ack.Continue(1))
+            }
+        }
+        "maxItems" - {
+            "stop" in {
+                val ack = Emit.Ack.Stop.maxItems(1)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "continue with zero" in {
+                val ack = Emit.Ack.Continue(2).maxItems(0)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "continue with less" in {
+                val ack = Emit.Ack.Continue(2).maxItems(1)
+                assert(ack == Emit.Ack.Continue(1))
+            }
+            "continue with more" in {
+                val ack = Emit.Ack.Continue(2).maxItems(3)
+                assert(ack == Emit.Ack.Continue(2))
+            }
+        }
+        "Continue" - {
+            "negative" in {
+                val Continue(n) = Emit.Ack.Continue(-1): @unchecked
+                assert(n == 1)
+            }
+            "zero" in {
+                val Continue(n) = Emit.Ack.Continue(0): @unchecked
+                assert(n == 1)
+            }
+            "positive" in {
+                val Continue(n) = Emit.Ack.Continue(1): @unchecked
+                assert(n == 1)
+            }
+            "unapply stop" in {
+                val res = Emit.Ack.Continue.unapply(Emit.Ack.Stop)
+                assert(res.isEmpty)
+            }
+        }
+    }
+
     "runAck" - {
         "runAck" - {
             "with pure function" in {

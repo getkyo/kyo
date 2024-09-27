@@ -21,24 +21,25 @@ object Emit:
         given CanEqual[Ack, Ack] = CanEqual.derived
         inline given Flat[Ack]   = Flat.unsafe.bypass
 
+        def apply(maxItems: Int): Ack =
+            if maxItems <= 0 then Stop else Continue(maxItems)
+
         extension (ack: Ack)
             def maxItems(n: Int): Ack =
-                ack match
-                    case Stop         => Stop
-                    case Continue(n0) => Math.min(n0, Math.max(0, n))
+                Ack(Math.min(ack, n))
 
         /** Indicates to continue emitting values */
         opaque type Continue <: Ack = Int
         object Continue:
             def apply(): Continue              = Int.MaxValue
-            def apply(maxItems: Int): Continue = Math.max(0, maxItems)
+            def apply(maxItems: Int): Continue = Math.max(1, maxItems)
             def unapply(ack: Ack): Maybe.Ops[Int] =
-                if ack < 0 then Maybe.empty
+                if ack <= 0 then Maybe.empty
                 else Maybe(ack)
         end Continue
 
         /** Indicates to stop emitting values */
-        val Stop: Ack = -1
+        val Stop: Ack = 0
     end Ack
 
     /** Emits a single value.
