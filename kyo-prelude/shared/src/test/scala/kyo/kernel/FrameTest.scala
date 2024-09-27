@@ -40,4 +40,17 @@ class FrameTest extends Test:
         assert(parsed.snippetLong == "def test1 = test(1 + 2)📍")
     }
 
+    "internal" in {
+        val internal = Frame.internal
+        val parsed   = internal.parse
+        assert(parsed.declaringClass == "kyo.kernel.FrameTest")
+        assert(parsed.methodName == "?")
+        assert(parsed.position.fileName == "FrameTest.scala")
+        assert(parsed.position.lineNumber == 44)
+        assert(parsed.position.columnNumber == 24)
+        assert(parsed.snippetShort == "<internal>")
+        assert(parsed.snippetLong == "<internal>")
+        assert(parsed.toString == "Frame(kyo.kernel.FrameTest, ?, FrameTest.scala:44:24, <internal>)")
+    }
+
 end FrameTest
