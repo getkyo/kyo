@@ -89,7 +89,7 @@ object Frame:
         val lines         = markedContent.linesIterator.toList
         val snippetLines  = lines.slice(startLine - 1, endLine + 2).filter(_.exists(_ != ' '))
         val toDrop        = snippetLines.map(_.takeWhile(_ == ' ').size).minOption.getOrElse(0)
-        val snippet       = snippetLines.map(_.drop(toDrop)).mkString("\n")
+        val snippet       = if internal then "<internal>" else snippetLines.map(_.drop(toDrop)).mkString("\n")
         val cls           = findEnclosing(_.isClassDef).map(show).getOrElse("?")
         val method        = findEnclosing(_.isDefDef).map(show).getOrElse("?")
 
