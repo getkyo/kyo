@@ -313,8 +313,8 @@ lazy val `kyo-caliban` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.9.0",
-            libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.9.0"
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.9.0",
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.9.0"
         )
 
 lazy val `kyo-test` =
@@ -390,7 +390,7 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.15"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.5"
         )
 
 lazy val `kyo-bench` =
