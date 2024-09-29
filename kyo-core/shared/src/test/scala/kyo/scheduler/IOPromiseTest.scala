@@ -291,4 +291,176 @@ class IOPromiseTest extends Test:
         }
     }
 
+    "mask" - {
+        "doesn't propagate interrupts to parent" in {
+            val original = new IOPromise[Nothing, Int]()
+            val masked   = original.mask
+
+            var originalCompleted                         = false
+            var maskedResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
+
+            original.onResult(_ => originalCompleted = true)
+            masked.onResult(r => maskedResult = Maybe(r))
+
+            assert(masked.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(maskedResult.exists(_.isPanic))
+            assert(!originalCompleted)
+        }
+
+        "completes when original completes" in {
+            val original = new IOPromise[Nothing, Int]()
+            val masked   = original.mask
+
+            var maskedResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
+            masked.onResult(r => maskedResult = Maybe(r))
+
+            original.complete(Result.success(42))
+            assert(maskedResult.contains(Result.success(42)))
+        }
+
+        "propagates failure" in {
+            val original = new IOPromise[Exception, Int]()
+            val masked   = original.mask
+
+            var maskedResult: Maybe[Result[Exception, Int]] = Maybe.Empty
+            masked.onResult(r => maskedResult = Maybe(r))
+
+            val ex = new Exception("Test exception")
+            original.complete(Result.fail(ex))
+            assert(maskedResult.contains(Result.fail(ex)))
+        }
+
+        "allows completion of masked promise" in {
+            val original = new IOPromise[Nothing, Int]()
+            val masked   = original.mask
+
+            var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
+            var maskedResult: Maybe[Result[Nothing, Int]]   = Maybe.Empty
+
+            original.onResult(r => originalResult = Maybe(r))
+            masked.onResult(r => maskedResult = Maybe(r))
+
+            masked.complete(Result.success(99))
+            assert(maskedResult.contains(Result.success(99)))
+            assert(originalResult.isEmpty)
+        }
+
+        "chained masks" in {
+            val original = new IOPromise[Nothing, Int]()
+            val masked1  = original.mask
+            val masked2  = masked1.mask
+
+            var originalCompleted                          = false
+            var masked1Completed                           = false
+            var masked2Result: Maybe[Result[Nothing, Int]] = Maybe.Empty
+
+            original.onResult(_ => originalCompleted = true)
+            masked1.onResult(_ => masked1Completed = true)
+            masked2.onResult(r => masked2Result = Maybe(r))
+
+            assert(masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(masked2Result.exists(_.isPanic))
+            assert(!masked1Completed)
+            assert(!originalCompleted)
+
+            original.complete(Result.success(42))
+            assert(masked1Completed)
+        }
+
+        "mask after completion" in {
+            val original = new IOPromise[Nothing, Int]()
+            original.complete(Result.success(42))
+
+            val masked                                    = original.mask
+            var maskedResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
+            masked.onResult(r => maskedResult = Maybe(r))
+
+            assert(maskedResult.contains(Result.success(42)))
+        }
+
+        "interrupt original completes masked" in {
+            val original = new IOPromise[Nothing, Int]()
+            val masked   = original.mask
+
+            var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
+            var maskedResult: Maybe[Result[Nothing, Int]]   = Maybe.Empty
+
+            original.onResult(r => originalResult = Maybe(r))
+            masked.onResult(r => maskedResult = Maybe(r))
+
+            val panic = Result.Panic(new Exception("Interrupted"))
+            assert(original.interrupt(panic))
+            assert(originalResult == Maybe(panic))
+            assert(maskedResult == Maybe(panic))
+        }
+
+        "chained masks with interrupt" in {
+            val original = new IOPromise[Nothing, Int]()
+            val masked1  = original.mask
+            val masked2  = masked1.mask
+
+            var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
+            var masked1Result: Maybe[Result[Nothing, Int]]  = Maybe.Empty
+            var masked2Result: Maybe[Result[Nothing, Int]]  = Maybe.Empty
+
+            original.onResult(r => originalResult = Maybe(r))
+            masked1.onResult(r => masked1Result = Maybe(r))
+            masked2.onResult(r => masked2Result = Maybe(r))
+
+            assert(masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
+
+            assert(masked2Result.exists(_.isPanic))
+            assert(masked1Result.isEmpty)
+            assert(originalResult.isEmpty)
+
+            original.complete(Result.success(42))
+
+            assert(originalResult.contains(Result.success(42)))
+            assert(masked1Result.contains(Result.success(42)))
+            assert(masked2Result.exists(_.isPanic))
+        }
+
+        "mask interaction with become" in {
+            val original = new IOPromise[Nothing, Int]()
+            val masked   = original.mask
+            val other    = new IOPromise[Nothing, Int]()
+
+            var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
+            var maskedResult: Maybe[Result[Nothing, Int]]   = Maybe.Empty
+            var otherResult: Maybe[Result[Nothing, Int]]    = Maybe.Empty
+
+            original.onResult(r => originalResult = Maybe(r))
+            masked.onResult(r => maskedResult = Maybe(r))
+            other.onResult(r => otherResult = Maybe(r))
+
+            assert(masked.become(other))
+
+            other.complete(Result.success(99))
+
+            assert(originalResult.isEmpty)
+            assert(maskedResult.contains(Result.success(99)))
+            assert(otherResult.contains(Result.success(99)))
+
+            original.complete(Result.success(42))
+
+            assert(originalResult.contains(Result.success(42)))
+            assert(maskedResult.contains(Result.success(99)))
+            assert(otherResult.contains(Result.success(99)))
+        }
+
+        "mask with interrupts" in {
+            val original = new IOPromise[Nothing, Int]()
+            val masked   = original.mask
+            val other    = new IOPromise[Nothing, Int]()
+
+            masked.interrupts(other)
+
+            assert(masked.interrupt(Result.Panic(new Exception("Interrupted"))))
+
+            assert(masked.block(timeout.toMillis).isPanic)
+            assert(other.block(timeout.toMillis).isPanic)
+            assert(!original.done())
+        }
+    }
+
 end IOPromiseTest

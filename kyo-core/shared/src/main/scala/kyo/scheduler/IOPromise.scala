@@ -61,6 +61,12 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         interruptsLoop(this)
     end interrupts
 
+    final def mask: IOPromise[E, A] =
+        val p = IOPromise[E, A]()
+        onResult(p.completeUnit)
+        p
+    end mask
+
     final def interrupt(error: Panic): Boolean =
         @tailrec def interruptLoop(promise: IOPromise[E, A]): Boolean =
             promise.state match

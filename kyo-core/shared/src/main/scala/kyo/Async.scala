@@ -74,6 +74,24 @@ object Async:
         }
     end runAndBlock
 
+    /** Runs an asynchronous computation with interrupt masking.
+      *
+      * This method executes the given computation in a context where interrupts are not propagated to previous "steps" of the computation.
+      * The returned computation can still be interrupted, but the interruption won't affect the masked portion. This is useful for ensuring
+      * that cleanup operations or critical sections complete even if an interrupt occurs.
+      *
+      * @param v
+      *   The computation to run with interrupt masking
+      * @return
+      *   The result of the computation, which can still be interrupted
+      */
+    def mask[E, A: Flat, Ctx](v: => A < (Abort[E] & Async & Ctx))(
+        using
+        boundary: Boundary[Ctx, IO],
+        frame: Frame
+    ): A < (Abort[E] & Async & Ctx) =
+        Async.run(v).map(_.mask.map(_.get))
+
     opaque type Promise[E, A] <: Fiber[E, A] = IOPromise[E, A]
 
     object Promise:
@@ -324,6 +342,17 @@ object Async:
                     self.onResult(p)
                     p
                 }
+
+            /** Creates a new Fiber that runs with interrupt masking.
+              *
+              * This method returns a new Fiber that, when executed, will not propagate interrupts to previous "steps" of the computation.
+              * The returned Fiber can still be interrupted, but the interruption won't affect the masked portion. This is useful for
+              * ensuring that critical operations or cleanup tasks complete even if an interrupt occurs.
+              *
+              * @return
+              *   A new Fiber that runs with interrupt masking
+              */
+            def mask(using Frame): Fiber[E, A] < IO = IO(self.mask)
 
             /** Interrupts the Fiber.
               *
