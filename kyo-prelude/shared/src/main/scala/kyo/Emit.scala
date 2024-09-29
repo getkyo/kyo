@@ -53,9 +53,7 @@ object Emit:
         object Continue:
             def apply(): Continue = Int.MaxValue
 
-            def unapply(ack: Ack): Maybe.Ops[Int] =
-                if ack <= 0 then Maybe.empty
-                else Maybe(ack)
+            def unapply(ack: Ack): Maybe.Ops[Int] = Maybe.when(ack > 0)(ack)
         end Continue
 
         /** Indicates to stop emitting values */
