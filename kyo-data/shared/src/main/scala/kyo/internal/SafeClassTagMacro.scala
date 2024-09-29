@@ -11,11 +11,26 @@ private[kyo] object SafeClassTagMacro:
 
         def checkType(tpe: TypeRepr) =
             if !tpe.dealias.typeSymbol.isClassDef then
-                report.errorAndAbort(s"Expected a class type but got: ${tpe.show}")
+                report.errorAndAbort(
+                    s"""This method requires a SafeClassTag, but the type ${tpe.show} is not a class.
+                       |Consider using a concrete class instead of an abstract type or type parameter.
+                       |For generic types, you can provide an evidence of SafeClassTag explicitly.
+                       |Example: def method[A](a: A)(using SafeClassTag[A]) = ???""".stripMargin
+                )
+            end if
             if tpe.typeArgs.nonEmpty then
-                report.errorAndAbort(s"Type ${tpe.show} has type parameters. SafeClassTag only supports types without parameters.")
+                report.errorAndAbort(
+                    s"""This method requires a SafeClassTag, but the type ${tpe.show} has type parameters.
+                       |This is a current limitation that may be lifted in future versions.
+                       |For now, use a non-generic type.""".stripMargin
+                )
+            end if
             if tpe =:= TypeRepr.of[Null] then
-                report.errorAndAbort(s"Type ${tpe.show} is not a valid type. SafeClassTag does not support Null.")
+                report.errorAndAbort(
+                    s"""This method requires a SafeClassTag, but Null is not a valid type for SafeClassTag.
+                       |SafeClassTag does not support Null to prevent runtime errors.""".stripMargin
+                )
+            end if
         end checkType
 
         def create(tpe: TypeRepr): Expr[SafeClassTag[Any]] =
@@ -25,16 +40,14 @@ private[kyo] object SafeClassTagMacro:
                         tpe match
                             case OrType(a, b) => flatten(a) ++ flatten(b)
                             case _            => Seq(tpe)
-                    val types = flatten(tpe)
-                    val exprs = types.map(create)
+                    val exprs = flatten(tpe).map(create)
                     '{ Union(${ Expr.ofList(exprs) }) }
                 case AndType(_, _) =>
                     def flatten(tpe: TypeRepr): Seq[TypeRepr] =
                         tpe match
                             case AndType(a, b) => flatten(a) ++ flatten(b)
                             case _             => Seq(tpe)
-                    val types = flatten(tpe)
-                    val exprs = types.map(create)
+                    val exprs = flatten(tpe).map(create)
                     '{ Intersection(${ Expr.ofList(exprs) }) }
                 case _ => createSingle(tpe)
             end match
