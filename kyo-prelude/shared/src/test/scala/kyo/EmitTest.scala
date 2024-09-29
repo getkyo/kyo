@@ -80,44 +80,51 @@ class EmitTest extends Test:
                 assert(ack == Emit.Ack.Stop)
             }
             "positive" in {
-                val ack = Emit.Ack(1)
-                assert(ack == Emit.Ack.Continue(1))
+                Emit.Ack(1) match
+                    case Continue(n) => assert(n == 1)
+                    case Stop        => fail()
             }
         }
         "maxItems" - {
-            "stop" in {
+            "stop with negative" in {
+                val ack = Emit.Ack.Stop.maxItems(-1)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "stop with zero" in {
+                val ack = Emit.Ack.Stop.maxItems(0)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "stop with positive" in {
                 val ack = Emit.Ack.Stop.maxItems(1)
                 assert(ack == Emit.Ack.Stop)
             }
+            "continue with negative" in {
+                val ack = Emit.Ack(2).maxItems(-1)
+                assert(ack == Emit.Ack.Stop)
+            }
             "continue with zero" in {
-                val ack = Emit.Ack.Continue(2).maxItems(0)
+                val ack = Emit.Ack(2).maxItems(0)
                 assert(ack == Emit.Ack.Stop)
             }
             "continue with less" in {
-                val ack = Emit.Ack.Continue(2).maxItems(1)
-                assert(ack == Emit.Ack.Continue(1))
+                val ack = Emit.Ack(2).maxItems(1)
+                assert(ack == Emit.Ack(1))
             }
             "continue with more" in {
-                val ack = Emit.Ack.Continue(2).maxItems(3)
-                assert(ack == Emit.Ack.Continue(2))
+                val ack = Emit.Ack(2).maxItems(3)
+                assert(ack == Emit.Ack(2))
             }
         }
         "Continue" - {
-            "negative" in {
-                val Continue(n) = Emit.Ack.Continue(-1): @unchecked
-                assert(n == 1)
-            }
-            "zero" in {
-                val Continue(n) = Emit.Ack.Continue(0): @unchecked
-                assert(n == 1)
-            }
-            "positive" in {
-                val Continue(n) = Emit.Ack.Continue(1): @unchecked
-                assert(n == 1)
-            }
-            "unapply stop" in {
-                val res = Emit.Ack.Continue.unapply(Emit.Ack.Stop)
-                assert(res.isEmpty)
+            "unapply" - {
+                "stop" in {
+                    val res = Emit.Ack.Continue.unapply(Emit.Ack.Stop)
+                    assert(res.isEmpty)
+                }
+                "continue" in {
+                    val res = Emit.Ack.Continue.unapply(Emit.Ack(2))
+                    assert(res.get == 2)
+                }
             }
         }
     }
