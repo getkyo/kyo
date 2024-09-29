@@ -87,31 +87,31 @@ class EmitTest extends Test:
         }
         "maxItems" - {
             "stop with negative" in {
-                val ack = Emit.Ack.Stop.maxItems(-1)
+                val ack = Emit.Ack.Stop.maxValues(-1)
                 assert(ack == Emit.Ack.Stop)
             }
             "stop with zero" in {
-                val ack = Emit.Ack.Stop.maxItems(0)
+                val ack = Emit.Ack.Stop.maxValues(0)
                 assert(ack == Emit.Ack.Stop)
             }
             "stop with positive" in {
-                val ack = Emit.Ack.Stop.maxItems(1)
+                val ack = Emit.Ack.Stop.maxValues(1)
                 assert(ack == Emit.Ack.Stop)
             }
             "continue with negative" in {
-                val ack = Emit.Ack(2).maxItems(-1)
+                val ack = Emit.Ack(2).maxValues(-1)
                 assert(ack == Emit.Ack.Stop)
             }
             "continue with zero" in {
-                val ack = Emit.Ack(2).maxItems(0)
+                val ack = Emit.Ack(2).maxValues(0)
                 assert(ack == Emit.Ack.Stop)
             }
             "continue with less" in {
-                val ack = Emit.Ack(2).maxItems(1)
+                val ack = Emit.Ack(2).maxValues(1)
                 assert(ack == Emit.Ack(1))
             }
             "continue with more" in {
-                val ack = Emit.Ack(2).maxItems(3)
+                val ack = Emit.Ack(2).maxValues(3)
                 assert(ack == Emit.Ack(2))
             }
         }

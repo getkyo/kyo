@@ -27,12 +27,12 @@ object Emit:
 
         /** Creates an [[Ack]] from a maximum number of values to emit.
           *
-          * @param maxItems
+          * @param maxValues
           *   The mamximum number of values to emit
           * @return
           *   [[Continue]] if the maximum number of values is positive, [[Stop]] otherwise
           */
-        def apply(maxItems: Int): Ack = Math.max(0, maxItems)
+        def apply(maxValues: Int): Ack = Math.max(0, maxValues)
 
         extension (ack: Ack)
             /** Limits the acknowledgement to a maximum number of values.
@@ -46,7 +46,7 @@ object Emit:
               * @return
               *   [[Continue]] if the minimum of the current maximum number of values and `n` is positive, [[Stop]] otherwise
               */
-            def maxItems(n: Int): Ack = Ack(Math.min(ack, n))
+            def maxValues(n: Int): Ack = Ack(Math.min(ack, n))
 
         /** Indicates to continue emitting values */
         opaque type Continue <: Ack = Int
