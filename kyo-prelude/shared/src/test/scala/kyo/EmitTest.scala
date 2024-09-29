@@ -122,8 +122,8 @@ class EmitTest extends Test:
                     assert(res.isEmpty)
                 }
                 "continue" in {
-                    val res = Emit.Ack.Continue.unapply(Emit.Ack(2))
-                    assert(res.get == 2)
+                    val res = Emit.Ack.Continue.unapply(Emit.Ack(1))
+                    assert(res.get == 1)
                 }
             }
         }
