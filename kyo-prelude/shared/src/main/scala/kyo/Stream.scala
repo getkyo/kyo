@@ -140,7 +140,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
                         else
                             val c   = input.take(state)
                             val nst = state - c.size
-                            Emit.andMap(c)(ack => (nst, cont(ack.maxItems(nst))))
+                            Emit.andMap(c)(ack => (nst, cont(ack.maxValues(nst))))
             ))
 
     /** Drops the first n elements from the stream.

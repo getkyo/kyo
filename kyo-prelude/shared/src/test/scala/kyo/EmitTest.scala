@@ -69,6 +69,66 @@ class EmitTest extends Test:
         assert(res.eval == (Chunk(Set(1), Set(2), Set(3)), "a"))
     }
 
+    "Ack" - {
+        "apply" - {
+            "negative" in {
+                val ack = Emit.Ack(-1)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "zero" in {
+                val ack = Emit.Ack(0)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "positive" in {
+                Emit.Ack(1) match
+                    case Continue(n) => assert(n == 1)
+                    case Stop        => fail()
+            }
+        }
+        "maxItems" - {
+            "stop with negative" in {
+                val ack = Emit.Ack.Stop.maxValues(-1)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "stop with zero" in {
+                val ack = Emit.Ack.Stop.maxValues(0)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "stop with positive" in {
+                val ack = Emit.Ack.Stop.maxValues(1)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "continue with negative" in {
+                val ack = Emit.Ack(2).maxValues(-1)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "continue with zero" in {
+                val ack = Emit.Ack(2).maxValues(0)
+                assert(ack == Emit.Ack.Stop)
+            }
+            "continue with less" in {
+                val ack = Emit.Ack(2).maxValues(1)
+                assert(ack == Emit.Ack(1))
+            }
+            "continue with more" in {
+                val ack = Emit.Ack(2).maxValues(3)
+                assert(ack == Emit.Ack(2))
+            }
+        }
+        "Continue" - {
+            "unapply" - {
+                "stop" in {
+                    val res = Emit.Ack.Continue.unapply(Emit.Ack.Stop)
+                    assert(res.isEmpty)
+                }
+                "continue" in {
+                    val res = Emit.Ack.Continue.unapply(Emit.Ack(1))
+                    assert(res.get == 1)
+                }
+            }
+        }
+    }
+
     "runAck" - {
         "runAck" - {
             "with pure function" in {
