@@ -6,7 +6,7 @@ import org.typelevel.scalacoptions.ScalaVersion
 
 val scala3Version   = "3.5.1"
 val scala212Version = "2.12.20"
-val scala213Version = "2.13.14"
+val scala213Version = "2.13.15"
 
 val zioVersion       = "2.1.9"
 val catsVersion      = "3.5.4"
