@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Tag
-import scala.reflect.ClassTag
 import scala.util.*
 
 /** Provides utilities for retrying operations with customizable policies. */
@@ -69,7 +68,7 @@ object Retry:
           */
         def apply[A: Flat, S](policy: Policy)(v: => A < S)(
             using
-            ClassTag[E],
+            SafeClassTag[E],
             Tag[E],
             Frame
         ): A < (Async & Abort[E] & S) =
@@ -86,7 +85,7 @@ object Retry:
           */
         def apply[A: Flat, S](builder: Policy => Policy)(v: => A < (Abort[E] & S))(
             using
-            ClassTag[E],
+            SafeClassTag[E],
             Tag[E],
             Frame
         ): A < (Async & Abort[E] & S) =

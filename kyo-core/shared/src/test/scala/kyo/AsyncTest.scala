@@ -585,7 +585,7 @@ class AsyncTest extends Test:
                 for
                     mappedFiber: Fiber[Nothing, Int] <- fiber.mapResult(_ => throw new RuntimeException("Mapping exception"))
                     result                           <- Abort.run[Throwable](mappedFiber.get)
-                yield assert(result.isPanic)
+                yield assert(result.isFail)
                 end for
             }
         }
@@ -605,7 +605,7 @@ class AsyncTest extends Test:
                 for
                     mappedFiber: Fiber[Nothing, Int] <- fiber.map(_ => throw new RuntimeException("Mapping exception"))
                     result                           <- Abort.run[Throwable](mappedFiber.get)
-                yield assert(result.isPanic)
+                yield assert(result.isFail)
                 end for
             }
         }
@@ -635,7 +635,7 @@ class AsyncTest extends Test:
                 for
                     flatMappedFiber: Fiber[Nothing, Int] <- fiber.flatMap(_ => throw new RuntimeException("Mapping exception"))
                     result                               <- Abort.run[Throwable](flatMappedFiber.get)
-                yield assert(result.isPanic)
+                yield assert(result.isFail)
                 end for
             }
         }
@@ -660,7 +660,7 @@ class AsyncTest extends Test:
                 val fiber = Fiber.success[Nothing, Int](42)
                 for
                     result <- Abort.run[Throwable](fiber.use(_ => throw new RuntimeException("Use exception")))
-                yield assert(result.isPanic)
+                yield assert(result.isFail)
             }
         }
 

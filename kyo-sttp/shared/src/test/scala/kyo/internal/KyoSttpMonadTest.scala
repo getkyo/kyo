@@ -76,7 +76,7 @@ class KyoSttpMonadTest extends Test:
                 cb(Left(ex))
                 Canceler(() => {})
             }
-            Abort.run[Throwable](result).map(r => assert(r == Result.panic(ex)))
+            Abort.run[Throwable](result).map(r => assert(r == Result.fail(ex)))
         }
 
         "cancel" in runJVM {

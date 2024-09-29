@@ -68,8 +68,8 @@ class AbortsTest extends Test:
             "in handle" in {
                 val effect: Int < Abort[String | Boolean] =
                     Abort.fail("failure")
-                val _ = effect
-                assertDoesNotCompile("Abort.run[String | Boolean](effect)")
+                val handled = Abort.run[String | Boolean](effect).eval
+                assert(handled == Result.fail("failure"))
             }
         }
         "try" in {
@@ -263,6 +263,39 @@ class AbortsTest extends Test:
                 val ex = new Exception
                 Abort.run[Any](throw ex).map(result => assert(result == Result.panic(ex)))
             }
+            "nested panic to fail" - {
+                "converts matching Panic to Fail" in {
+                    val ex     = new RuntimeException("Test exception")
+                    val result = Abort.run[RuntimeException](Abort.panic(ex)).eval
+                    assert(result == Result.fail(ex))
+                }
+
+                "leaves non-matching Panic as Panic" in {
+                    val ex     = new IllegalArgumentException("Test exception")
+                    val result = Abort.run[NoSuchElementException](Abort.panic(ex)).eval
+                    assert(result == Result.panic(ex))
+                }
+
+                "doesn't affect Success" in {
+                    val result = Abort.run[RuntimeException](42).eval
+                    assert(result == Result.success(42))
+                }
+
+                "doesn't affect Fail" in {
+                    val ex     = new RuntimeException("Test exception")
+                    val result = Abort.run[RuntimeException](Abort.fail(ex)).eval
+                    assert(result == Result.fail(ex))
+                }
+
+                "works with nested Aborts" in {
+                    val ex = new RuntimeException("Inner exception")
+                    val nested = Abort.run[IllegalArgumentException] {
+                        Abort.run[RuntimeException](Abort.panic(ex))
+                    }
+                    val result = nested.eval
+                    assert(result == Result.success(Result.fail(ex)))
+                }
+            }
         }
         "fail" in {
             val ex: Throwable = new Exception("throwable failure")
@@ -283,7 +316,7 @@ class AbortsTest extends Test:
             "panic" in {
                 val ex: Throwable = new Exception("throwable failure")
                 val a             = Abort.error(Result.Panic(ex))
-                assert(Abort.run[Throwable](a).eval == Result.panic(ex))
+                assert(Abort.run[Throwable](a).eval == Result.fail(ex))
             }
         }
         "when" - {
@@ -428,15 +461,12 @@ class AbortsTest extends Test:
                     val a = Abort.run[Distinct1](distinct)
                     val b = Abort.run[Distinct2](a).eval
                     assert(b == Result.success(Result.fail(d1)))
-                    assertDoesNotCompile("Abort.run[Distinct1 | Distinct2](distinct)")
-                    val c = Abort.run[Throwable](distinct).eval
+                    val c = Abort.run[Distinct1 | Distinct2](distinct).eval
                     assert(c == Result.fail(d1))
                 }
-                "ClassTag inference" in pendingUntilFixed {
-                    assertCompiles("""
-                        val r = Abort.run(Abort.catching(throw new RuntimeException)).eval
-                        assert(r.isLeft)
-                    """)
+                "ClassTag inference" in {
+                    val r = Abort.run(Abort.catching(throw new RuntimeException)).eval
+                    assert(r.isPanic)
                 }
             }
             "with other effect" - {
@@ -536,6 +566,37 @@ class AbortsTest extends Test:
                     assert(executed)
                 }
             }
+
+            "handle non-union exceptions as panic" in {
+                val result = Abort.run[IllegalArgumentException | NumberFormatException](
+                    Abort.catching[IllegalArgumentException | NumberFormatException](throw new RuntimeException)
+                ).eval
+
+                assert(result.isInstanceOf[Result.Panic])
+            }
+
+            "catch exceptions in nested computations" in {
+                def nestedComputation(): Int < Abort[ArithmeticException | IllegalArgumentException] =
+                    for
+                        _ <- Abort.catching[ArithmeticException](10 / 0)
+                        _ <- Abort.catching[IllegalArgumentException](throw new IllegalArgumentException)
+                    yield 42
+
+                val result = Abort.run[ArithmeticException | IllegalArgumentException](nestedComputation()).eval
+
+                assert(result.failure.exists {
+                    case ex: ArithmeticException => true
+                    case _                       => false
+                })
+            }
+
+            "handle success case with union types" in {
+                val result = Abort.run[IllegalArgumentException | NumberFormatException](
+                    Abort.catching[IllegalArgumentException | NumberFormatException](42)
+                ).eval
+
+                assert(result == Result.success(42))
+            }
         }
     }
 
@@ -628,7 +689,7 @@ class AbortsTest extends Test:
         succeed
     }
 
-    "Abortable" - {
+    "handling of Abort[Nothing]" - {
         val ex = new RuntimeException("Panic!")
 
         "handle Abort[Nothing]" in {
@@ -662,6 +723,77 @@ class AbortsTest extends Test:
             val _: Result[Nothing, Int] = result
 
             assert(result == Result.panic(ex))
+        }
+    }
+
+    "Abort.run with parametrized type" in pendingUntilFixed {
+        class Test[A]
+        assertCompiles("Abort.run(Abort.fail(new Test[Int]))")
+    }
+
+    "Abort.run with type unions" - {
+        case class CustomError(message: String) derives CanEqual
+
+        "handle part of union types" in {
+            val computation: Int < Abort[String | Int | CustomError] = Abort.fail("String error")
+            val result                                               = Abort.run[String](computation)
+            val finalResult                                          = Abort.run[Int | CustomError](result).eval
+            assert(finalResult == Result.success(Result.fail("String error")))
+        }
+
+        "handle multiple types from union" in {
+            def test(failWithString: Boolean): Result[String | Int, Int] < Abort[CustomError] =
+                val computation: Int < Abort[String | Int | CustomError] =
+                    if failWithString then Abort.fail("String error")
+                    else Abort.fail(42)
+
+                Abort.run[String | Int](computation)
+            end test
+
+            assert(Abort.run[CustomError](test(true)).eval == Result.success(Result.fail("String error")))
+            assert(Abort.run[CustomError](test(false)).eval == Result.success(Result.fail(42)))
+        }
+
+        "handle all types from union" in {
+            def test(failureType: Int): Result[String | Int | CustomError, Int] =
+                val computation: Int < Abort[String | Int | CustomError] =
+                    failureType match
+                        case 0 => Abort.fail("String error")
+                        case 1 => Abort.fail(42)
+                        case 2 => Abort.fail(CustomError("Custom error"))
+
+                Abort.run[String | Int | CustomError](computation).eval
+            end test
+
+            assert(test(0) == Result.fail("String error"))
+            assert(test(1) == Result.fail(42))
+            assert(test(2) == Result.fail(CustomError("Custom error")))
+        }
+
+        "handle part of union types with success case" in {
+            def test(succeed: Boolean): Result[String | Int, Int] < Abort[CustomError] =
+                val computation: Int < Abort[String | Int | CustomError] =
+                    if succeed then 100
+                    else Abort.fail(CustomError("Custom error"))
+
+                Abort.run[String | Int](computation)
+            end test
+
+            assert(Abort.run[CustomError](test(true)).eval == Result.success(Result.success(100)))
+            assert(Abort.run[CustomError](test(false)).eval == Result.fail(CustomError("Custom error")))
+        }
+
+        "nested handling of union types" in {
+            val computation: Int < Abort[String | Int | CustomError | Boolean] =
+                Abort.fail("String error")
+
+            val result1 = Abort.run[String](computation)
+            val result2 = Abort.run[Int](result1)
+            val result3 = Abort.run[CustomError](result2)
+            val finalResult: Result[CustomError, Result[Int, Result[String, Int]]] < Abort[Boolean] =
+                result3
+
+            assert(Abort.run[Boolean](finalResult).eval == Result.success(Result.success(Result.success(Result.fail("String error")))))
         }
     }
 

@@ -48,12 +48,12 @@ object Result:
           * @return
           *   A Result containing either the successful value, a Fail with the caught exception, or a Panic for other exceptions
           */
-        inline def apply[A](inline expr: => A)(using ClassTag[E]): Result[E, A] =
+        inline def apply[A](inline expr: => A)(using ct: SafeClassTag[E]): Result[E, A] =
             try
                 Success(expr)
             catch
-                case ex: E => Fail(ex)
-                case ex    => Panic(ex)
+                case ct(ex) => Fail(ex)
+                case ex     => Panic(ex)
     end CatchingOps
 
     inline def catching[E <: Throwable]: CatchingOps[E] = CatchingOps(())

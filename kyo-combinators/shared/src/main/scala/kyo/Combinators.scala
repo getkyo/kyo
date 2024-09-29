@@ -5,7 +5,6 @@ import kyo.kernel.Boundary
 import kyo.kernel.Reducible
 import scala.annotation.tailrec
 import scala.annotation.targetName
-import scala.reflect.ClassTag
 
 extension [A, S](effect: A < S)
 
@@ -293,7 +292,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       */
     def handleAbort(
         using
-        ct: ClassTag[E],
+        ct: SafeClassTag[E],
         tag: Tag[E],
         flat: Flat[A]
     )(using Frame): Result[E, A] < S =
@@ -308,7 +307,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       */
     def abortToChoice(
         using
-        ct: ClassTag[E],
+        ct: SafeClassTag[E],
         tag: Tag[E],
         flat: Flat[A]
     )(using Frame): A < (S & Choice) =
@@ -323,7 +322,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       */
     def abortToEmpty(
         using
-        ct: ClassTag[E],
+        ct: SafeClassTag[E],
         tag: Tag[E],
         flat: Flat[A]
     )(using Frame): A < (S & Abort[Maybe.Empty]) =
@@ -342,7 +341,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       */
     def catchAbort[A1 >: A, S1](fn: E => A1 < S1)(
         using
-        ct: ClassTag[E],
+        ct: SafeClassTag[E],
         tag: Tag[E],
         fl: Flat[A]
     )(using Frame): A1 < (S & S1) =
@@ -359,7 +358,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       */
     def catchAbortPartial[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
         using
-        ct: ClassTag[E],
+        ct: SafeClassTag[E],
         tag: Tag[E],
         fl: Flat[A],
         frame: Frame
@@ -383,8 +382,8 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       */
     def swapAbort(
         using
-        cta: ClassTag[A],
-        cte: ClassTag[E],
+        cta: SafeClassTag[A],
+        cte: SafeClassTag[E],
         te: Tag[E],
         fl: Flat[A],
         frame: Frame
@@ -458,7 +457,7 @@ class SomeAbortToChoiceOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends
     def apply[ER]()(
         using
         ev: E => E1 | ER,
-        ct: ClassTag[E1],
+        ct: SafeClassTag[E1],
         tag: Tag[E1],
         reduce: Reducible[Abort[ER]],
         flat: Flat[A],
@@ -478,7 +477,7 @@ class SomeAbortToEmptyOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends 
     def apply[ER]()(
         using
         ev: E => E1 | ER,
-        ct: ClassTag[E1],
+        ct: SafeClassTag[E1],
         tag: Tag[E1],
         reduce: Reducible[Abort[ER]],
         flat: Flat[A],
@@ -501,7 +500,7 @@ class HandleSomeAbort[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyV
     def apply[ER]()(
         using
         ev: E => E1 | ER,
-        ct: ClassTag[E1],
+        ct: SafeClassTag[E1],
         tag: Tag[E1],
         reduce: Reducible[Abort[ER]],
         flat: Flat[A],
@@ -523,7 +522,7 @@ class CatchSomeAbort[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVa
         using
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
-        ct: ClassTag[E1],
+        ct: SafeClassTag[E1],
         tag: Tag[E1],
         f: Flat[A],
         frame: Frame
@@ -548,7 +547,7 @@ class CatchSomeAbortPartialOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) ext
     def apply[ER]()(
         using
         ev: E => E1 | ER,
-        ct: ClassTag[E1],
+        ct: SafeClassTag[E1],
         tag: Tag[E1],
         f: Flat[A],
         frame: Frame
@@ -574,7 +573,7 @@ class SwapSomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends Any
         using
         ev: E => E1 | ER,
         reduce: Reducible[Abort[ER]],
-        ct: ClassTag[E1],
+        ct: SafeClassTag[E1],
         tag: Tag[E1],
         f: Flat[A],
         frame: Frame
