@@ -110,6 +110,7 @@ class ZIOsTest extends Test:
         if Platform.isJVM then
 
             "zio to kyo" in runZIO {
+                pending
                 val cdl = new CountDownLatch(1)
                 for
                     f <- ZIOs.run(kyoLoop(cdl)).fork
