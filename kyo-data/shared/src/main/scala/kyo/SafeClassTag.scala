@@ -37,7 +37,7 @@ object SafeClassTag:
                     case Union(elements)        => elements.exists(_.accepts(value))
                     case Intersection(elements) => elements.forall(_.accepts(value))
                     case NothingTag             => false
-                    case UnitTag                => value == ()
+                    case UnitTag                => value.isInstanceOf[Unit]
                     case AnyValTag =>
                         value match
                             case (_: Int | _: Long | _: Double | _: Float | _: Byte | _: Short | _: Char | _: Boolean) =>
@@ -61,28 +61,26 @@ object SafeClassTag:
             }
         end accepts
 
-        private def isCustomAnyVal(value: Any): Boolean =
-            if isNull(value) then false
-            else
-                val clazz       = value.getClass
-                val anyValClass = classOf[AnyVal]
-                anyValClass.isAssignableFrom(clazz) && (clazz ne anyValClass)
-        end isCustomAnyVal
-
         def unapply(value: Any): Maybe.Ops[A] =
             if accepts(value) then Maybe(value.asInstanceOf[A]) else Maybe.empty
 
-        infix def &[B](that: SafeClassTag[B]): SafeClassTag[A & B] = (self, that) match
-            case (Intersection(e1), Intersection(e2)) => Intersection(e1 ++ e2)
-            case (Intersection(e1), _)                => Intersection(e1 :+ that)
-            case (_, Intersection(e2))                => Intersection(self +: e2)
-            case _                                    => Intersection(List(self, that))
+        infix def &[B](that: SafeClassTag[B]): SafeClassTag[A & B] =
+            self match
+                case Intersection(e1) => that match
+                        case Intersection(e2) => Intersection(e1 ++ e2)
+                        case _                => Intersection(e1 :+ that)
+                case _ => that match
+                        case Intersection(e2) => Intersection(self +: e2)
+                        case _                => Intersection(List(self, that))
 
-        infix def |[B](that: SafeClassTag[B]): SafeClassTag[A | B] = (self, that) match
-            case (Union(e1), Union(e2)) => Union(e1 ++ e2)
-            case (Union(e1), _)         => Union(e1 :+ that)
-            case (_, Union(e2))         => Union(self +: e2)
-            case _                      => Union(List(self, that))
+        infix def |[B](that: SafeClassTag[B]): SafeClassTag[A | B] =
+            self match
+                case Union(e1) => that match
+                        case Union(e2) => Union(e1 ++ e2)
+                        case _         => Union(e1 :+ that)
+                case _ => that match
+                        case Union(e2) => Union(self +: e2)
+                        case _         => Union(List(self, that))
 
         infix def <:<[B](that: SafeClassTag[B]): Boolean =
             given CanEqual[Any, Any] = CanEqual.derived
