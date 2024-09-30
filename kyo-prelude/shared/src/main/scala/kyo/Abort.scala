@@ -190,11 +190,7 @@ object Abort:
                         case ct(fail) if ct <:< SafeClassTag[Throwable] =>
                             Result.fail(fail)
                         case fail =>
-                            Result.panic(fail),
-                    done =
-                        case Result.Panic(ct(e)) if ct <:< SafeClassTag[Throwable] =>
-                            Result.Fail(e)
-                        case r => r
+                            Result.panic(fail)
                 )
             }
         end apply

@@ -267,7 +267,7 @@ class AbortsTest extends Test:
                 "converts matching Panic to Fail" in {
                     val ex     = new RuntimeException("Test exception")
                     val result = Abort.run[RuntimeException](Abort.panic(ex)).eval
-                    assert(result == Result.fail(ex))
+                    assert(result == Result.panic(ex))
                 }
 
                 "leaves non-matching Panic as Panic" in {
@@ -293,7 +293,7 @@ class AbortsTest extends Test:
                         Abort.run[RuntimeException](Abort.panic(ex))
                     }
                     val result = nested.eval
-                    assert(result == Result.success(Result.fail(ex)))
+                    assert(result == Result.success(Result.panic(ex)))
                 }
             }
         }
@@ -316,7 +316,7 @@ class AbortsTest extends Test:
             "panic" in {
                 val ex: Throwable = new Exception("throwable failure")
                 val a             = Abort.error(Result.Panic(ex))
-                assert(Abort.run[Throwable](a).eval == Result.fail(ex))
+                assert(Abort.run[Throwable](a).eval == Result.panic(ex))
             }
         }
         "when" - {
