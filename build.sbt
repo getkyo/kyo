@@ -81,7 +81,6 @@ lazy val kyoJVM = project
     .aggregate(
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
-        `kyo-tag`.jvm,
         `kyo-data`.jvm,
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
@@ -108,7 +107,6 @@ lazy val kyoJS = project
     )
     .aggregate(
         `kyo-scheduler`.js,
-        `kyo-tag`.js,
         `kyo-data`.js,
         `kyo-prelude`.js,
         `kyo-core`.js,
@@ -128,7 +126,6 @@ lazy val kyoNative = project
         `kyo-settings`
     )
     .aggregate(
-        `kyo-tag`.native,
         `kyo-data`.native,
         `kyo-prelude`.native
     )
@@ -165,28 +162,16 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
     )
 
-lazy val `kyo-tag` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-tag"))
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
-            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
-        )
-        .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
-
 lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-tag`)
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
+            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test,
+            libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
+            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
         )
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
