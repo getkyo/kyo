@@ -2,6 +2,9 @@ package kyo
 
 import System.Parser
 import java.lang.System as JSystem
+import java.net.MalformedURLException
+import java.net.URISyntaxException
+import java.time.format.DateTimeParseException
 import kyo.kernel.Reducible
 
 /** Represents a system environment with various operations.
@@ -184,32 +187,32 @@ object System:
     /** Companion object for Parser, containing default implementations. */
     object Parser:
         given Parser[Nothing, String]                    = v => Result.success(v)
-        given Parser[NumberFormatException, Int]         = v => Result.catching(v.toInt)
-        given Parser[NumberFormatException, Long]        = v => Result.catching(v.toLong)
-        given Parser[NumberFormatException, Float]       = v => Result.catching(v.toFloat)
-        given Parser[NumberFormatException, Double]      = v => Result.catching(v.toDouble)
-        given Parser[IllegalArgumentException, Boolean]  = v => Result.catching(v.toBoolean)
-        given Parser[NumberFormatException, Byte]        = v => Result.catching(v.toByte)
-        given Parser[NumberFormatException, Short]       = v => Result.catching(v.toShort)
+        given Parser[NumberFormatException, Int]         = v => Result.catching[NumberFormatException](v.toInt)
+        given Parser[NumberFormatException, Long]        = v => Result.catching[NumberFormatException](v.toLong)
+        given Parser[NumberFormatException, Float]       = v => Result.catching[NumberFormatException](v.toFloat)
+        given Parser[NumberFormatException, Double]      = v => Result.catching[NumberFormatException](v.toDouble)
+        given Parser[IllegalArgumentException, Boolean]  = v => Result.catching[IllegalArgumentException](v.toBoolean)
+        given Parser[NumberFormatException, Byte]        = v => Result.catching[NumberFormatException](v.toByte)
+        given Parser[NumberFormatException, Short]       = v => Result.catching[NumberFormatException](v.toShort)
         given Parser[Duration.InvalidDuration, Duration] = v => Duration.parse(v)
 
         given Parser[IllegalArgumentException, java.util.UUID] =
-            v => Result.catching(java.util.UUID.fromString(v))
+            v => Result.catching[IllegalArgumentException](java.util.UUID.fromString(v))
 
-        given Parser[java.time.format.DateTimeParseException, java.time.LocalDate] =
-            v => Result.catching(java.time.LocalDate.parse(v))
+        given Parser[DateTimeParseException, java.time.LocalDate] =
+            v => Result.catching[DateTimeParseException](java.time.LocalDate.parse(v))
 
-        given Parser[java.time.format.DateTimeParseException, java.time.LocalTime] =
-            v => Result.catching(java.time.LocalTime.parse(v))
+        given Parser[DateTimeParseException, java.time.LocalTime] =
+            v => Result.catching[DateTimeParseException](java.time.LocalTime.parse(v))
 
-        given Parser[java.time.format.DateTimeParseException, java.time.LocalDateTime] =
-            v => Result.catching(java.time.LocalDateTime.parse(v))
+        given Parser[DateTimeParseException, java.time.LocalDateTime] =
+            v => Result.catching[DateTimeParseException](java.time.LocalDateTime.parse(v))
 
-        given Parser[java.net.URISyntaxException, java.net.URI] =
-            v => Result.catching(new java.net.URI(v))
+        given Parser[URISyntaxException, java.net.URI] =
+            v => Result.catching[URISyntaxException](new java.net.URI(v))
 
-        given Parser[java.net.MalformedURLException, java.net.URL] =
-            v => Result.catching(new java.net.URL(v))
+        given Parser[MalformedURLException, java.net.URL] =
+            v => Result.catching[MalformedURLException](new java.net.URL(v))
 
         given [E, A](using p: Parser[E, A], frame: Frame): Parser[E, Seq[A]] =
             v => Result.collect(Chunk.from(v.split(",")).map(v => p(v.trim())))
