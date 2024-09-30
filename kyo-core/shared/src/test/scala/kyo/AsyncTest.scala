@@ -713,6 +713,41 @@ class AsyncTest extends Test:
             }
         }
 
+        "onInterrupt" - {
+            "called on interrupt" in run {
+                var interrupted = false
+                for
+                    fiber <- Promise.init[Nothing, Int]
+                    _     <- fiber.onInterrupt(_ => IO { interrupted = true })
+                    _     <- fiber.interrupt
+                yield assert(interrupted)
+                end for
+            }
+
+            "not called on normal completion" in run {
+                var interrupted = false
+                for
+                    fiber <- Promise.init[Nothing, Int]
+                    _     <- fiber.onInterrupt(_ => IO { interrupted = true })
+                    _     <- fiber.complete(Result.success(42))
+                    _     <- fiber.get
+                yield assert(!interrupted)
+                end for
+            }
+
+            "multiple callbacks" in run {
+                var count = 0
+                for
+                    fiber <- Promise.init[Nothing, Int]
+                    _     <- fiber.onInterrupt(_ => IO { count += 1 })
+                    _     <- fiber.onInterrupt(_ => IO { count += 1 })
+                    _     <- fiber.onInterrupt(_ => IO { count += 1 })
+                    _     <- fiber.interrupt
+                yield assert(count == 3)
+                end for
+            }
+        }
+
         "block" - {
             "success" in run {
                 val fiber = Fiber.success[Nothing, Int](42)
