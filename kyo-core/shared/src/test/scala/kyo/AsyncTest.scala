@@ -713,6 +713,41 @@ class AsyncTest extends Test:
             }
         }
 
+        "onInterrupt" - {
+            "called on interrupt" in run {
+                var interrupted = false
+                for
+                    fiber <- Promise.init[Nothing, Int]
+                    _     <- fiber.onInterrupt(_ => IO { interrupted = true })
+                    _     <- fiber.interrupt
+                yield assert(interrupted)
+                end for
+            }
+
+            "not called on normal completion" in run {
+                var interrupted = false
+                for
+                    fiber <- Promise.init[Nothing, Int]
+                    _     <- fiber.onInterrupt(_ => IO { interrupted = true })
+                    _     <- fiber.complete(Result.success(42))
+                    _     <- fiber.get
+                yield assert(!interrupted)
+                end for
+            }
+
+            "multiple callbacks" in run {
+                var count = 0
+                for
+                    fiber <- Promise.init[Nothing, Int]
+                    _     <- fiber.onInterrupt(_ => IO { count += 1 })
+                    _     <- fiber.onInterrupt(_ => IO { count += 1 })
+                    _     <- fiber.onInterrupt(_ => IO { count += 1 })
+                    _     <- fiber.interrupt
+                yield assert(count == 3)
+                end for
+            }
+        }
+
         "block" - {
             "success" in run {
                 val fiber = Fiber.success[Nothing, Int](42)
@@ -729,4 +764,56 @@ class AsyncTest extends Test:
             }
         }
     }
+
+    "masking" - {
+        "Async.mask" in run {
+            for
+                start  <- Latch.init(1)
+                run    <- Latch.init(1)
+                stop   <- Latch.init(1)
+                result <- AtomicInt.init(0)
+                masked =
+                    Async.mask {
+                        for
+                            _ <- start.release
+                            _ <- run.await
+                            _ <- stop.release
+                            _ <- result.set(42)
+                        yield ()
+                    }
+                fiber <- Async.run(masked)
+                _     <- start.await
+                _     <- fiber.interrupt
+                r1    <- result.get
+                _     <- run.release
+                _     <- stop.await
+                r2    <- result.get
+            yield assert(r1 == 0 && r2 == 42)
+        }
+
+        "Fiber.mask" in run {
+            for
+                start  <- Latch.init(1)
+                run    <- Latch.init(1)
+                stop   <- Latch.init(1)
+                result <- AtomicInt.init(0)
+                fiber <-
+                    Async.run {
+                        for
+                            _ <- start.release
+                            _ <- run.await
+                            _ <- stop.release
+                            _ <- result.set(42)
+                        yield ()
+                    }
+                masked <- fiber.mask
+                _      <- masked.interrupt
+                r1     <- result.get
+                _      <- run.release
+                _      <- stop.await
+                r2     <- result.get
+            yield assert(r1 == 0 && r2 == 42)
+        }
+    }
+
 end AsyncTest

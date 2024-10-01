@@ -74,6 +74,24 @@ object Async:
         }
     end runAndBlock
 
+    /** Runs an asynchronous computation with interrupt masking.
+      *
+      * This method executes the given computation in a context where interrupts are not propagated to previous "steps" of the computation.
+      * The returned computation can still be interrupted, but the interruption won't affect the masked portion. This is useful for ensuring
+      * that cleanup operations or critical sections complete even if an interrupt occurs.
+      *
+      * @param v
+      *   The computation to run with interrupt masking
+      * @return
+      *   The result of the computation, which can still be interrupted
+      */
+    def mask[E, A: Flat, Ctx](v: => A < (Abort[E] & Async & Ctx))(
+        using
+        boundary: Boundary[Ctx, IO],
+        frame: Frame
+    ): A < (Abort[E] & Async & Ctx) =
+        Async.run(v).map(_.mask.map(_.get))
+
     opaque type Promise[E, A] <: Fiber[E, A] = IOPromise[E, A]
 
     object Promise:
@@ -184,7 +202,7 @@ object Async:
           * @return
           *   A Fiber that completes with the result of the Future
           */
-        def fromFuture[A: Flat](f: Future[A])(using frame: Frame): Fiber[Throwable, A] < IO =
+        def fromFuture[A](f: Future[A])(using frame: Frame): Fiber[Throwable, A] < IO =
             import scala.util.*
             IO {
                 val p = new IOPromise[Throwable, A] with (Try[A] => Unit):
@@ -252,7 +270,19 @@ object Async:
               * @param f
               *   The callback function
               */
-            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO = IO(self.onResult(r => IO.run(f(r)).eval))
+            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO = IO(self.onComplete(r => IO.run(f(r)).eval))
+
+            /** Registers a callback to be called when the Fiber is interrupted.
+              *
+              * This method allows you to specify a callback that will be executed if the Fiber is interrupted. The callback receives the
+              * Panic value that caused the interruption.
+              *
+              * @param f
+              *   The callback function to be executed on interruption
+              * @return
+              *   A unit value wrapped in IO, representing the registration of the callback
+              */
+            def onInterrupt(f: Panic => Unit < IO)(using Frame): Unit < IO = IO(self.onInterrupt(r => IO.run(f(r)).eval))
 
             /** Blocks until the Fiber completes or the timeout is reached.
               *
@@ -271,7 +301,7 @@ object Async:
             def toFuture(using E <:< Throwable, Frame): Future[A] < IO =
                 IO {
                     val r = scala.concurrent.Promise[A]()
-                    self.onResult { v =>
+                    self.onComplete { v =>
                         r.complete(v.toTry)
                     }
                     r.future
@@ -288,7 +318,7 @@ object Async:
                 IO {
                     val p = new IOPromise[E, B](interrupts = self) with (Result[E, A] => Unit):
                         def apply(v: Result[E, A]) = completeUnit(v.map(f))
-                    self.onResult(p)
+                    self.onComplete(p)
                     p
                 }
 
@@ -303,7 +333,7 @@ object Async:
                 IO {
                     val p = new IOPromise[E | E2, B](interrupts = self) with (Result[E, A] => Unit):
                         def apply(r: Result[E, A]) = r.fold(completeUnit)(v => becomeUnit(f(v)))
-                    self.onResult(p)
+                    self.onComplete(p)
                     p
                 }
 
@@ -321,9 +351,20 @@ object Async:
                 IO {
                     val p = new IOPromise[E2, B](interrupts = self) with (Result[E, A] => Unit):
                         def apply(r: Result[E, A]) = completeUnit(Result(f(r)).flatten)
-                    self.onResult(p)
+                    self.onComplete(p)
                     p
                 }
+
+            /** Creates a new Fiber that runs with interrupt masking.
+              *
+              * This method returns a new Fiber that, when executed, will not propagate interrupts to previous "steps" of the computation.
+              * The returned Fiber can still be interrupted, but the interruption won't affect the masked portion. This is useful for
+              * ensuring that critical operations or cleanup tasks complete even if an interrupt occurs.
+              *
+              * @return
+              *   A new Fiber that runs with interrupt masking
+              */
+            def mask(using Frame): Fiber[E, A] < IO = IO(self.mask)
 
             /** Interrupts the Fiber.
               *
@@ -395,7 +436,7 @@ object Async:
                             foreach(seq) { (_, v) =>
                                 val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                                 state.interrupts(fiber)
-                                fiber.onResult(state)
+                                fiber.onComplete(state)
                             }
                             state
                         }
@@ -442,7 +483,7 @@ object Async:
                                         if isNull(results(idx)) then
                                             val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                                             state.interrupts(fiber)
-                                            fiber.onResult(_.fold(state.completeUnit)(update(idx, _)))
+                                            fiber.onComplete(_.fold(state.completeUnit)(update(idx, _)))
                                     }
                                     state
                                 }
@@ -648,7 +689,7 @@ object Async:
       * @return
       *   An asynchronous computation that completes with the result of the Future or aborts with Throwable
       */
-    def fromFuture[A: Flat](f: Future[A])(using frame: Frame): A < (Async & Abort[Throwable]) =
+    def fromFuture[A](f: Future[A])(using frame: Frame): A < (Async & Abort[Throwable]) =
         Fiber.fromFuture(f).map(get)
 
     /** Gets the result of an IOPromise.
