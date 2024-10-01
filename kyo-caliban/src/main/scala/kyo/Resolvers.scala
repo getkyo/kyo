@@ -20,7 +20,7 @@ import zio.ZIO
 import zio.stream.ZStream
 
 /** Effect for interacting with Caliban GraphQL resolvers. */
-opaque type Resolvers <: (Abort[CalibanError] & ZIOs) = Abort[CalibanError] & ZIOs
+opaque type Resolvers <: (Abort[CalibanError] & Async) = Abort[CalibanError] & Async
 
 object Resolvers:
 
@@ -38,7 +38,7 @@ object Resolvers:
       */
     def run[A, S](v: HttpInterpreter[Any, CalibanError] < (Resolvers & S))(
         using Frame
-    ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
+    ): NettyKyoServerBinding < (Async & Abort[CalibanError] & S) =
         run[A, S](NettyKyoServer())(v)
 
     /** Runs a GraphQL server with a custom NettyKyoServer configuration.
@@ -54,7 +54,7 @@ object Resolvers:
       */
     def run[A, S](server: NettyKyoServer)(v: HttpInterpreter[Any, CalibanError] < (Resolvers & S))(
         using Frame
-    ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
+    ): NettyKyoServerBinding < (Async & Abort[CalibanError] & S) =
         ZIOs.get(ZIO.runtime[Any]).map(runtime => run(server, runtime)(v))
 
     /** Runs a GraphQL server with a custom Runner.
@@ -74,7 +74,7 @@ object Resolvers:
         using
         tag: Tag[Runner[R]],
         frame: Frame
-    ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
+    ): NettyKyoServerBinding < (Async & Abort[CalibanError] & S) =
         run[R, A, S](NettyKyoServer(), runner)(v)
 
     /** Runs a GraphQL server with a custom NettyKyoServer configuration and Runner.
@@ -96,7 +96,7 @@ object Resolvers:
         using
         tag: Tag[Runner[R]],
         frame: Frame
-    ): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
+    ): NettyKyoServerBinding < (Async & Abort[CalibanError] & S) =
         ZIOs.get(ZIO.runtime[Any]).map(runtime => run(server, runtime.withEnvironment(ZEnvironment(runner)))(v))
 
     /** Runs a GraphQL server with a custom NettyKyoServer configuration and Runtime.
@@ -115,7 +115,7 @@ object Resolvers:
     def run[R, A, S](
         server: NettyKyoServer,
         runtime: Runtime[R]
-    )(v: HttpInterpreter[R, CalibanError] < (Resolvers & S))(using Frame): NettyKyoServerBinding < (ZIOs & Abort[CalibanError] & S) =
+    )(v: HttpInterpreter[R, CalibanError] < (Resolvers & S))(using Frame): NettyKyoServerBinding < (Async & Abort[CalibanError] & S) =
         for
             interpreter <- v
             endpoints = interpreter.serverEndpoints[R, NoStreams](NoStreams).map(convertEndpoint(_, runtime))
