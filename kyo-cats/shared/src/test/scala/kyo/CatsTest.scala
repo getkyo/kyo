@@ -19,7 +19,7 @@ class CatsTest extends Test:
     def runCatsIO[T](v: CatsIO[T]): Future[T] =
         v.unsafeToFuture()
 
-    def runKyo(v: => Assertion < (Abort[Throwable] & Async)): Future[Assertion] =
+    def runKyo(v: => Assertion < (Abort[Nothing] & Async)): Future[Assertion] =
         Cats.run(v).unsafeToFuture()
 
     "Abort ordering" - {
@@ -41,7 +41,7 @@ class CatsTest extends Test:
             val a = Cats.get(CatsIO.raiseError(catsFailure))
             val b = Abort.fail(kyoFailure)
             Abort.run[Throwable](a.map(_ => b)).map {
-                case Result.Fail(ex) =>
+                case Result.Panic(ex) =>
                     assert(ex == catsFailure)
                 case ex =>
                     fail()
@@ -82,18 +82,18 @@ class CatsTest extends Test:
         }
 
         "complex nested pattern with parallel and race" in runKyo {
-            def kyoTask(i: Int): Int < (Abort[Nothing] & Async)    = Async.run(i * 2).map(_.get)
-            def catsTask(i: Int): Int < (Abort[Throwable] & Async) = Cats.get(CatsIO.pure(i + 1))
+            def kyoTask(i: Int): Int < (Abort[Nothing] & Async)  = Async.run(i * 2).map(_.get)
+            def catsTask(i: Int): Int < (Abort[Nothing] & Async) = Cats.get(CatsIO.pure(i + 1))
 
             for
                 (v1, v2) <- Async.parallel(kyoTask(1), catsTask(2))
                 (v3, v4) <- Async.race(
-                    Async.parallel[Throwable, Int, Int, Any](kyoTask(v1), catsTask(v2)),
+                    Async.parallel[Nothing, Int, Int, Any](kyoTask(v1), catsTask(v2)),
                     Cats.get(CatsIO.pure((v1, v2)))
                 )
                 (v5, v6) <- Async.parallel(
                     kyoTask(v3 + v4),
-                    Async.race[Throwable, Int, Any](catsTask(v1), kyoTask(v2))
+                    Async.race[Nothing, Int, Any](catsTask(v1), kyoTask(v2))
                 )
                 result <- Cats.get(CatsIO.pure(v1 + v2 + v4 + v5))
             yield assert(result >= 15 && result <= 30)
@@ -276,8 +276,8 @@ class CatsTest extends Test:
             val kyoAbort  = Abort.fail(new Exception("Kyo error"))
             val converted = Cats.get(CatsIO.fromEither(Abort.run(kyoAbort).eval.toEither))
             Abort.run[Throwable](converted).map {
-                case Result.Fail(ex) => assert(ex.getMessage() == "Kyo error")
-                case _               => fail("Expected a String error")
+                case Result.Panic(ex) => assert(ex.getMessage() == "Kyo error")
+                case _                => fail("Expected a String error")
             }
         }
 
@@ -285,8 +285,8 @@ class CatsTest extends Test:
             val catsError = CatsIO.raiseError[Int](new Exception("Cats error"))
             val converted = Cats.get(catsError)
             Abort.run[Throwable](converted).map {
-                case Result.Fail(error: Exception) => assert(error.getMessage == "Cats error")
-                case _                             => fail("Expected an Exception")
+                case Result.Panic(error: Exception) => assert(error.getMessage == "Cats error")
+                case _                              => fail("Expected an Exception")
             }
         }
     }

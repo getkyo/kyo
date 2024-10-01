@@ -3105,8 +3105,8 @@ import kyo.*
 import cats.effect.IO as CatsIO
 import cats.effect.kernel.Outcome.Succeeded
 
-// Note how Cats includes the IO, Async, and Abort[Throwable] effects:
-val a: Int < (Abort[Throwable] & Async) =
+// Note how Cats includes the IO, Async, and Abort[Nothing] effects:
+val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- Cats.get(CatsIO.pure(21))
         v2 <- IO(21)
@@ -3115,7 +3115,7 @@ val a: Int < (Abort[Throwable] & Async) =
     yield v1 + v2 + v3
 
 // Using fibers from both libraries:
-val b: Int < (Abort[Throwable] & Async) =
+val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- Cats.get(CatsIO.pure(21).start)
         f2 <- Async.run(IO(21))
@@ -3124,7 +3124,7 @@ val b: Int < (Abort[Throwable] & Async) =
     yield v1 + v2
 
 // Transforming Cats Effect IO within Kyo computations:
-val c: Int < (Abort[Throwable] & Async) =
+val c: Int < (Abort[Nothing] & Async) =
     Cats.get(CatsIO.pure(21)).map(_ * 2)
 
 // Transforming Kyo effects within Cats Effect IO:
