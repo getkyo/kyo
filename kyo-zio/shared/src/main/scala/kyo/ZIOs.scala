@@ -18,7 +18,7 @@ object ZIOs:
       * @return
       *   A Kyo effect that, when run, will execute the zio.ZIO
       */
-    def get[E, A](v: => ZIO[Any, E, A])(using Frame): A < (Abort[E] & Async) =
+    def get[E, A](v: => ZIO[Any, E, A])(using Frame, zio.Trace): A < (Abort[E] & Async) =
         IO {
             val p      = new IOPromise[E, A]
             val result = Unsafe.unsafely(Runtime.default.unsafe.runToFuture(v.either))
@@ -39,7 +39,7 @@ object ZIOs:
       * @tparam A
       *   The result type
       */
-    inline def get[R: zio.Tag, E, A](v: ZIO[R, E, A])(using Tag[Env[R]], Frame): A < (Env[R] & Abort[E] & Async) =
+    inline def get[R: zio.Tag, E, A](v: ZIO[R, E, A])(using Tag[Env[R]], Frame, zio.Trace): A < (Env[R] & Abort[E] & Async) =
         compiletime.error("ZIO environments are not supported yet. Please handle them before calling this method.")
 
     /** Interprets a Kyo computation to ZIO. Note that this method only accepts Abort[E] and Async pending effects. Plase handle any other
@@ -50,7 +50,7 @@ object ZIOs:
       * @return
       *   A zio.ZIO that, when run, will execute the Kyo effect
       */
-    def run[A: Flat, E](v: => A < (Abort[E] & Async))(using frame: Frame): ZIO[Any, E, A] =
+    def run[A: Flat, E](v: => A < (Abort[E] & Async))(using frame: Frame, trace: zio.Trace): ZIO[Any, E, A] =
         ZIO.suspendSucceed {
             Async.run(v).map { fiber =>
                 ZIO.asyncInterrupt[Any, E, A] { cb =>
