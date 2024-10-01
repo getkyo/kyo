@@ -18,7 +18,7 @@ object ZIOs:
       * @return
       *   A Kyo effect that, when run, will execute the zio.ZIO
       */
-    def get[E, A](v: ZIO[Any, E, A])(using Frame): A < (Abort[E] & Async) =
+    def get[E, A](v: => ZIO[Any, E, A])(using Frame): A < (Abort[E] & Async) =
         IO {
             val p = new IOPromise[E, A]
             val result =

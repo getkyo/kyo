@@ -295,4 +295,41 @@ class ZIOsTest extends Test:
             }
         end if
     }
+
+    "ZIO failure translation" - {
+        "regular failure to Abort[E]" in runKyo {
+            val zioFailure: ZIO[Any, String, Int]        = ZIO.fail("ZIO failed")
+            val kyoEffect: Int < (Abort[String] & Async) = ZIOs.get(zioFailure)
+            Abort.run(kyoEffect).map { result =>
+                assert(result == Result.fail("ZIO failed"))
+            }
+        }
+
+        "ZIO defect to Abort[Nothing] (panic)" in runKyo {
+            val zioDefect: ZIO[Any, Nothing, Int]         = ZIO.die(new RuntimeException("ZIO defect"))
+            val kyoEffect: Int < (Abort[Nothing] & Async) = ZIOs.get(zioDefect)
+            Abort.run(kyoEffect).map { result =>
+                assert(result.isPanic)
+                assert(result.panic.exists(_.getMessage == "ZIO defect"))
+            }
+        }
+
+        "nested ZIO failure in Kyo" in runKyo {
+            val nestedZIO: ZIO[Any, String, Int] = ZIO.fail("Nested ZIO failed")
+            val kyoEffect: Int < (Abort[String] & Async) =
+                ZIOs.get(ZIO.succeed(ZIOs.get(nestedZIO))).flatten
+            Abort.run(kyoEffect).map { result =>
+                assert(result == Result.fail("Nested ZIO failed"))
+            }
+        }
+
+        "ZIO failure with custom error type" in runKyo {
+            case class CustomError(message: String)
+            val zioFailure: ZIO[Any, CustomError, Int]        = ZIO.fail(CustomError("Custom ZIO error"))
+            val kyoEffect: Int < (Abort[CustomError] & Async) = ZIOs.get(zioFailure)
+            Abort.run(kyoEffect).map { result =>
+                assert(result == Result.fail(CustomError("Custom ZIO error")))
+            }
+        }
+    }
 end ZIOsTest
