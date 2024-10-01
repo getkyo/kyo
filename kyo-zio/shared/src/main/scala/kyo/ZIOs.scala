@@ -56,8 +56,8 @@ object ZIOs:
                 ZIO.asyncInterrupt[Any, E, A] { cb =>
                     fiber.unsafe.onComplete {
                         case Result.Success(a) => cb(Exit.succeed(a))
-                        case Result.Fail(e)    => cb(ZIO.fail(e))
-                        case Result.Panic(e)   => cb(ZIO.die(e))
+                        case Result.Fail(e)    => cb(Exit.fail(e))
+                        case Result.Panic(e)   => cb(Exit.die(e))
                     }
                     Left(ZIO.succeed {
                         fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))
