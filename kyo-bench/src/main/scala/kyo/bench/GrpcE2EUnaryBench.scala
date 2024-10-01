@@ -1,5 +1,6 @@
 package kyo.bench
 
+import io.grpc.Grpc
 import kgrpc.helloworld.testservice.*
 import kyo.*
 import kyo.bench.GrpcService.*
@@ -14,7 +15,7 @@ class GrpcE2EUnaryBench extends Bench.ForkOnly(reply):
 
     override def kyoBenchFiber() =
         Resource.run(
-            Abort.run[GrpcRequest.Exceptions](
+            GrpcRequest.run(
                 for
                     _      <- createServer(port)
                     client <- createClient(port)

@@ -11,7 +11,7 @@ import scala.language.future
 
 class BidiRequestStreamObserver[Request: Tag, Response: Flat: Tag] private (
     f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse],
-    requestChannel: Channel[Either[GrpcRequest.Exceptions, Request]],
+    requestChannel: Channel[Either[GrpcRequest.Errors, Request]],
     requestsComplete: AtomicBoolean,
     responseObserver: ServerCallStreamObserver[Response]
 )(using Frame) extends StreamObserver[Request]:
@@ -42,7 +42,7 @@ object BidiRequestStreamObserver:
     // Need this because we are not allowed to use private constructors in inline methods apparently.
     private def apply[Request: Tag, Response: Flat: Tag](
         f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse],
-        requestChannel: Channel[Either[GrpcRequest.Exceptions, Request]],
+        requestChannel: Channel[Either[GrpcRequest.Errors, Request]],
         requestsComplete: AtomicBoolean,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame) =

@@ -7,7 +7,7 @@ import kyo.*
 
 class RequestStreamObserver[Request: Tag, Response: Flat](
     f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
-    requestChannel: Channel[Either[GrpcRequest.Exceptions, Request]],
+    requestChannel: Channel[Either[GrpcRequest.Errors, Request]],
     requestsComplete: AtomicBoolean,
     responseObserver: ServerCallStreamObserver[Response]
 )(using Frame) extends StreamObserver[Request]:
@@ -38,7 +38,7 @@ object RequestStreamObserver:
     // Need this because we are not allowed to use private constructors in inline methods apparently.
     private def apply[Request: Tag, Response: Flat](
         f: Stream[Request, GrpcRequest] => Response < GrpcResponse,
-        requestChannel: Channel[Either[GrpcRequest.Exceptions, Request]],
+        requestChannel: Channel[Either[GrpcRequest.Errors, Request]],
         requestsComplete: AtomicBoolean,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame) =

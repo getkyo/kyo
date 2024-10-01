@@ -21,15 +21,13 @@ object ResponseStream:
         responseObserver: StreamObserver[Response],
         responses: Stream[Response, GrpcResponse]
     )(using Frame): Unit < Async =
-        // TODO: Why do I need to specify all the types here to get it to not think there is a discarded non-unit value?
-        Abort.run[StatusException].apply[Unit, Async, Any, Nothing](responses.runForeach(responseObserver.onNext))
-            .map(processCompleted(responseObserver, _))
+        Abort.run[StatusException](responses.runForeach(responseObserver.onNext)).map(processCompleted(responseObserver, _))
 
     private[grpc] def processResponse[Response: Flat](
         responseObserver: StreamObserver[?],
         response: Response < GrpcResponse
     )(onSuccess: Response => Unit)(using Frame): Unit < Async =
-        Abort.run[StatusException].apply[Response, Async, Any, Nothing](response).map(processResult(responseObserver, _)(onSuccess))
+        Abort.run[StatusException](response).map(processResult(responseObserver, _)(onSuccess))
 
     private[grpc] def processResult[Response](
         responseObserver: StreamObserver[?],

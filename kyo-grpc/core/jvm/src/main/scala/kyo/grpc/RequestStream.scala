@@ -6,12 +6,12 @@ import kyo.Emit.Ack.*
 
 object RequestStream:
 
-    private type ErrorOr[Request] = Either[GrpcRequest.Exceptions, Request]
+    private type ErrorOr[Request] = Either[GrpcRequest.Errors, Request]
 
     // TODO: Set the capacity to something else that matches how we backpressure.
     // TODO: Double check the access pattern here.
     def channel[Request](using Frame): Channel[ErrorOr[Request]] < IO =
-        Channel.init[Either[GrpcRequest.Exceptions, Request]](capacity = 42, access = Access.SingleProducerSingleConsumer)
+        Channel.init[Either[GrpcRequest.Errors, Request]](capacity = 42, access = Access.SingleProducerSingleConsumer)
 
     def emitFromChannel[Request: Tag](channel: Channel[ErrorOr[Request]], requestsComplete: AtomicBoolean)(ack: Ack)(using
         Frame
