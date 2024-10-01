@@ -55,7 +55,7 @@ object ZIOs:
             Async.run(v).map { fiber =>
                 ZIO.asyncInterrupt[Any, E, A] { cb =>
                     fiber.unsafe.onComplete {
-                        case Result.Success(a) => cb(ZIO.succeed(a))
+                        case Result.Success(a) => cb(Exit.succeed(a))
                         case Result.Fail(e)    => cb(ZIO.fail(e))
                         case Result.Panic(e)   => cb(ZIO.die(e))
                     }
