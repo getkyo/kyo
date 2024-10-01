@@ -15,21 +15,21 @@ final case class Latch private (unsafe: Latch.Unsafe) extends AnyVal:
       * @return
       *   Unit wrapped in an Async effect
       */
-    def await(using Frame): Unit < Async = IO(unsafe.await().safe.get)
+    def await(using Frame): Unit < Async = IO.Unsafe(unsafe.await().safe.get)
 
     /** Decrements the count of the latch, releasing it if the count reaches zero.
       *
       * @return
       *   Unit wrapped in an IO effect
       */
-    def release(using Frame): Unit < IO = IO(unsafe.release())
+    def release(using Frame): Unit < IO = IO.Unsafe(unsafe.release())
 
     /** Returns the current count of the latch.
       *
       * @return
       *   The current count wrapped in an IO effect
       */
-    def pending(using Frame): Int < IO = IO(unsafe.pending())
+    def pending(using Frame): Int < IO = IO.Unsafe(unsafe.pending())
 
 end Latch
 
@@ -43,8 +43,9 @@ object Latch:
       * @return
       *   A new Latch instance wrapped in an IO effect
       */
-    def init(n: Int)(using Frame): Latch < IO = IO(Latch(Unsafe.init(n)))
+    def init(n: Int)(using Frame): Latch < IO = IO.Unsafe(Latch(Unsafe.init(n)))
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:
         def await()(using AllowUnsafe): Fiber.Unsafe[Nothing, Unit]
         def release()(using AllowUnsafe): Unit
@@ -52,6 +53,7 @@ object Latch:
         def safe: Latch = Latch(this)
     end Unsafe
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
         val noop = new Unsafe:

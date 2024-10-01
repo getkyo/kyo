@@ -156,8 +156,8 @@ class ConstructorsTest extends Test:
                 val successEffect = Kyo.suspendAttempt(42)
                 val failureEffect = Kyo.suspendAttempt(throw new Exception("Error"))
 
-                val successResult = IO.run(Abort.run[Throwable](successEffect)).eval
-                val failureResult = IO.run(Abort.run[Throwable](failureEffect)).eval
+                val successResult = IO.Unsafe.run(Abort.run[Throwable](successEffect)).eval
+                val failureResult = IO.Unsafe.run(Abort.run[Throwable](failureEffect)).eval
 
                 assert(successResult == Result.success(42))
                 assert(failureResult.isInstanceOf[Result.Fail[?]])

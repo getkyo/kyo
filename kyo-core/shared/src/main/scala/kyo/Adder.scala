@@ -13,42 +13,42 @@ final case class LongAdder private (unsafe: LongAdder.Unsafe) extends AnyVal:
       * @return
       *   Unit
       */
-    inline def add(v: Long)(using inline frame: Frame): Unit < IO = IO(unsafe.add(v))
+    inline def add(v: Long)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.add(v))
 
     /** Decrements the sum by one.
       *
       * @return
       *   Unit
       */
-    inline def decrement(using inline frame: Frame): Unit < IO = IO(unsafe.decrement())
+    inline def decrement(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.decrement())
 
     /** Increments the sum by one.
       *
       * @return
       *   Unit
       */
-    inline def increment(using inline frame: Frame): Unit < IO = IO(unsafe.increment())
+    inline def increment(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.increment())
 
     /** Returns the current sum.
       *
       * @return
       *   The current sum
       */
-    inline def get(using inline frame: Frame): Long < IO = IO(unsafe.get())
+    inline def get(using inline frame: Frame): Long < IO = IO.Unsafe(unsafe.get())
 
     /** Resets the sum to zero.
       *
       * @return
       *   Unit
       */
-    inline def reset(using inline frame: Frame): Unit < IO = IO(unsafe.reset())
+    inline def reset(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.reset())
 
     /** Returns the current sum and resets it to zero.
       *
       * @return
       *   The sum before reset,
       */
-    inline def sumThenReset(using inline frame: Frame): Long < IO = IO(unsafe.sumThenReset())
+    inline def sumThenReset(using inline frame: Frame): Long < IO = IO.Unsafe(unsafe.sumThenReset())
 
 end LongAdder
 
@@ -59,10 +59,11 @@ object LongAdder:
       * @return
       *   A new LongAdder
       */
-    def init(using frame: Frame): LongAdder < IO = IO(LongAdder(Unsafe.init()))
+    def init(using frame: Frame): LongAdder < IO = IO.Unsafe(LongAdder(Unsafe.init()))
 
     opaque type Unsafe = j.LongAdder
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given Flat[Unsafe]                    = Flat.unsafe.bypass
         def init()(using AllowUnsafe): Unsafe = new j.LongAdder
@@ -90,28 +91,28 @@ final case class DoubleAdder private (unsafe: DoubleAdder.Unsafe) extends AnyVal
       * @return
       *   Unit
       */
-    inline def add(v: Double)(using inline frame: Frame): Unit < IO = IO(unsafe.add(v))
+    inline def add(v: Double)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.add(v))
 
     /** Returns the current sum.
       *
       * @return
       *   The current sum
       */
-    inline def get(using inline frame: Frame): Double < IO = IO(unsafe.get())
+    inline def get(using inline frame: Frame): Double < IO = IO.Unsafe(unsafe.get())
 
     /** Resets the sum to zero.
       *
       * @return
       *   Unit
       */
-    inline def reset(using inline frame: Frame): Unit < IO = IO(unsafe.reset())
+    inline def reset(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.reset())
 
     /** Returns the current sum and resets it to zero.
       *
       * @return
       *   The sum before reset,
       */
-    inline def sumThenReset(using inline frame: Frame): Double < IO = IO(unsafe.sumThenReset())
+    inline def sumThenReset(using inline frame: Frame): Double < IO = IO.Unsafe(unsafe.sumThenReset())
 
 end DoubleAdder
 
@@ -126,6 +127,7 @@ object DoubleAdder:
 
     opaque type Unsafe = j.DoubleAdder
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given Flat[Unsafe] = Flat.unsafe.bypass
 

@@ -19,7 +19,7 @@ object Log extends LogPlatformSpecific:
     def let[A, S](u: Unsafe)(f: => A < (IO & S))(using Frame): A < (IO & S) =
         local.let(u)(f)
 
-    /** Abstract class defining the interface for unsafe logging operations. */
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def traceEnabled: Boolean
         def debugEnabled: Boolean
@@ -39,6 +39,7 @@ object Log extends LogPlatformSpecific:
         def error(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
     end Unsafe
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         class ConsoleLogger(name: String) extends Log.Unsafe:
             inline def traceEnabled: Boolean = true
@@ -118,7 +119,7 @@ object Log extends LogPlatformSpecific:
     ): Unit < IO =
         local.use { unsafe =>
             if enabled(unsafe) then
-                IO(log(unsafe))
+                IO.Unsafe(log(unsafe))
             else
                 (
             )

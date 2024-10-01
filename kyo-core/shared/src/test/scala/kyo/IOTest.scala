@@ -30,7 +30,7 @@ class IOTest extends Test:
                     }
                 }
             assert(!called)
-            val v2 = IO.runLazy(v)
+            val v2 = IO.Unsafe.runLazy(v)
             assert(!called)
             assert(
                 Env.run(1)(v2).eval ==
@@ -50,7 +50,7 @@ class IOTest extends Test:
                 IO(IO(1)).map(_ => fail)
             )
             ios.foreach { io =>
-                assert(Try(IO.runLazy(io)) == Try(fail))
+                assert(Try(IO.Unsafe.runLazy(io)) == Try(fail))
             }
             succeed
         }
@@ -105,12 +105,12 @@ class IOTest extends Test:
                 IO(IO(1)).map(_ => fail)
             )
             ios.foreach { io =>
-                assert(Try(IO.run(io)) == Try(fail))
+                assert(Try(IO.Unsafe.run(io)) == Try(fail))
             }
             succeed
         }
         "doesn't accept other pending effects" in {
-            assertDoesNotCompile("IO.run[Int < Options](Options.get(Some(1)))")
+            assertDoesNotCompile("IO.Unsafe.run[Int < Options](Options.get(Some(1)))")
         }
     }
 

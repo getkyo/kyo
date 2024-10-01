@@ -50,7 +50,7 @@ class Queue[A] private[kyo] (initFrame: Frame, val unsafe: Queue.Unsafe[A]):
       * @return
       *   true if the element was added, false if the queue is full or closed
       */
-    final def offer(v: A)(using Frame): Boolean < IO = IO(!unsafe.closed() && unsafe.offer(v))
+    final def offer(v: A)(using Frame): Boolean < IO = IO.Unsafe(!unsafe.closed() && unsafe.offer(v))
 
     /** Polls an element from the queue.
       *
@@ -78,17 +78,17 @@ class Queue[A] private[kyo] (initFrame: Frame, val unsafe: Queue.Unsafe[A]):
       * @return
       *   true if the queue is closed, false otherwise
       */
-    final def closed(using Frame): Boolean < IO = IO(unsafe.closed())
+    final def closed(using Frame): Boolean < IO = IO.Unsafe(unsafe.closed())
 
     /** Closes the queue and returns any remaining elements.
       *
       * @return
       *   Maybe containing a sequence of remaining elements, or empty if already closed
       */
-    final def close(using Frame): Maybe[Seq[A]] < IO = IO(unsafe.close())
+    final def close(using Frame): Maybe[Seq[A]] < IO = IO.Unsafe(unsafe.close())
 
     protected inline def op[A, S](inline v: AllowUnsafe ?=> A < (IO & S))(using frame: Frame): A < (IO & S) =
-        IO {
+        IO.Unsafe {
             if unsafe.closed() then
                 throw Closed("Queue", initFrame, frame)
             else
@@ -103,6 +103,7 @@ end Queue
   */
 object Queue:
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe[A]
         extends AtomicBoolean(false):
         def capacity: Int

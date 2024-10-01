@@ -22,6 +22,7 @@ end Random
 
 object Random:
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def nextInt()(using AllowUnsafe): Int
         def nextInt(exclusiveBound: Int)(using AllowUnsafe): Int
@@ -39,6 +40,7 @@ object Random:
         def safe: Random = Random(this)
     end Unsafe
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         def apply(random: java.util.Random): Unsafe =
             new Unsafe:
@@ -95,24 +97,24 @@ object Random:
       */
     def apply(u: Unsafe): Random =
         new Random:
-            def nextInt(using Frame)                      = IO(u.nextInt())
-            def nextInt(exclusiveBound: Int)(using Frame) = IO(u.nextInt(exclusiveBound))
-            def nextLong(using Frame)                     = IO(u.nextLong())
-            def nextDouble(using Frame)                   = IO(u.nextDouble())
-            def nextBoolean(using Frame)                  = IO(u.nextBoolean())
-            def nextFloat(using Frame)                    = IO(u.nextFloat())
-            def nextGaussian(using Frame)                 = IO(u.nextGaussian())
-            def nextValue[A](seq: Seq[A])(using Frame)    = IO(u.nextValue[A](seq))
+            def nextInt(using Frame)                      = IO.Unsafe(u.nextInt())
+            def nextInt(exclusiveBound: Int)(using Frame) = IO.Unsafe(u.nextInt(exclusiveBound))
+            def nextLong(using Frame)                     = IO.Unsafe(u.nextLong())
+            def nextDouble(using Frame)                   = IO.Unsafe(u.nextDouble())
+            def nextBoolean(using Frame)                  = IO.Unsafe(u.nextBoolean())
+            def nextFloat(using Frame)                    = IO.Unsafe(u.nextFloat())
+            def nextGaussian(using Frame)                 = IO.Unsafe(u.nextGaussian())
+            def nextValue[A](seq: Seq[A])(using Frame)    = IO.Unsafe(u.nextValue[A](seq))
             def nextValues[A](length: Int, seq: Seq[A])(using Frame) =
-                IO(u.nextValues(length, seq))
+                IO.Unsafe(u.nextValues(length, seq))
             def nextStringAlphanumeric(length: Int)(using Frame) =
-                IO(u.nextStringAlphanumeric(length))
+                IO.Unsafe(u.nextStringAlphanumeric(length))
             def nextString(length: Int, chars: Seq[Char])(using Frame) =
-                IO(u.nextString(length, chars))
+                IO.Unsafe(u.nextString(length, chars))
             def nextBytes(length: Int)(using Frame) =
-                IO(u.nextBytes(length))
+                IO.Unsafe(u.nextBytes(length))
             def shuffle[A](seq: Seq[A])(using Frame) =
-                IO(u.shuffle(seq))
+                IO.Unsafe(u.shuffle(seq))
             def unsafe: Unsafe = u
 
     /** A live instance of Random using the default java.util.Random. */

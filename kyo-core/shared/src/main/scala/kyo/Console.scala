@@ -136,13 +136,14 @@ object Console:
       */
     def apply(u: Unsafe): Console =
         new Console:
-            def readln(using Frame): String < IO              = IO(u.readln())
-            def print(s: String)(using Frame): Unit < IO      = IO(u.print(s))
-            def printErr(s: String)(using Frame): Unit < IO   = IO(u.printErr(s))
-            def println(s: String)(using Frame): Unit < IO    = IO(u.println(s))
-            def printlnErr(s: String)(using Frame): Unit < IO = IO(u.printlnErr(s))
+            def readln(using Frame): String < IO              = IO.Unsafe(u.readln())
+            def print(s: String)(using Frame): Unit < IO      = IO.Unsafe(u.print(s))
+            def printErr(s: String)(using Frame): Unit < IO   = IO.Unsafe(u.printErr(s))
+            def println(s: String)(using Frame): Unit < IO    = IO.Unsafe(u.println(s))
+            def printlnErr(s: String)(using Frame): Unit < IO = IO.Unsafe(u.printlnErr(s))
             def unsafe: Unsafe                                = u
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def readln()(using AllowUnsafe): String
         def print(s: String)(using AllowUnsafe): Unit

@@ -27,6 +27,7 @@ object System:
     enum OS derives CanEqual:
         case Linux, MacOS, Windows, BSD, Solaris, IBMI, AIX, Unknown
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def env(name: String)(using AllowUnsafe): Maybe[String]
         def property(name: String)(using AllowUnsafe): Maybe[String]
@@ -39,20 +40,20 @@ object System:
     def apply(u: Unsafe): System =
         new System:
             def env[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
-                IO {
+                IO.Unsafe {
                     u.env(name) match
                         case Maybe.Empty      => Maybe.Empty
                         case Maybe.Defined(v) => Abort.get(p(v).map(Maybe(_)))
                 }
             def property[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
-                IO {
+                IO.Unsafe {
                     u.property(name) match
                         case Maybe.Empty      => Maybe.Empty
                         case Maybe.Defined(v) => Abort.get(p(v).map(Maybe(_)))
                 }
-            def lineSeparator(using Frame): String < IO = IO(u.lineSeparator())
-            def userName(using Frame): String < IO      = IO(u.userName())
-            def operatingSystem(using Frame): OS < IO   = IO(u.operatingSystem())
+            def lineSeparator(using Frame): String < IO = IO.Unsafe(u.lineSeparator())
+            def userName(using Frame): String < IO      = IO.Unsafe(u.userName())
+            def operatingSystem(using Frame): OS < IO   = IO.Unsafe(u.operatingSystem())
             def unsafe: Unsafe                          = u
 
     private val local = Local.init(live)

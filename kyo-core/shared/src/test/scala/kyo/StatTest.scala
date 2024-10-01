@@ -9,13 +9,13 @@ class StatTest extends Test:
         val histogram    = stat.initHistogram("a")
         val gauge        = stat.initGauge("a")(1)
         val counterGauge = stat.initCounterGauge("a")(1)
-        IO.run(counter.add(1))
-        IO.run(histogram.observe(1))
-        assert(IO.run(counter.get).eval == 1)
-        assert(IO.run(histogram.count).eval == 1)
-        assert(IO.run(gauge.collect).eval == 1)
-        assert(IO.run(counterGauge.collect).eval == 1)
+        IO.Unsafe.run(counter.add(1))
+        IO.Unsafe.run(histogram.observe(1))
+        assert(IO.Unsafe.run(counter.get).eval == 1)
+        assert(IO.Unsafe.run(histogram.count).eval == 1)
+        assert(IO.Unsafe.run(gauge.collect).eval == 1)
+        assert(IO.Unsafe.run(counterGauge.collect).eval == 1)
         val v = new Object
-        assert(IO.run(stat.traceSpan("a")(v)).eval eq v)
+        assert(IO.Unsafe.run(stat.traceSpan("a")(v)).eval eq v)
     }
 end StatTest

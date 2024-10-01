@@ -8,6 +8,8 @@ trait LogPlatformSpecific:
     val unsafe: Log.Unsafe = LogPlatformSpecific.Unsafe.SLF4J("kyo.logs")
 
 object LogPlatformSpecific:
+
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
         object SLF4J:

@@ -21,7 +21,7 @@ abstract class Clock:
       * @return
       *   A new Stopwatch instance
       */
-    def stopwatch(using Frame): Clock.Stopwatch < IO = IO(unsafe.stopwatch().safe)
+    def stopwatch(using Frame): Clock.Stopwatch < IO = IO.Unsafe(unsafe.stopwatch().safe)
 
     /** Creates a new deadline with the specified duration.
       *
@@ -30,7 +30,7 @@ abstract class Clock:
       * @return
       *   A new Deadline instance
       */
-    def deadline(duration: Duration)(using Frame): Clock.Deadline < IO = IO(unsafe.deadline(duration).safe)
+    def deadline(duration: Duration)(using Frame): Clock.Deadline < IO = IO.Unsafe(unsafe.deadline(duration).safe)
 end Clock
 
 /** Companion object for creating and managing Clock instances. */
@@ -43,10 +43,11 @@ object Clock:
           * @return
           *   The elapsed time as a Duration
           */
-        def elapsed(using Frame): Duration < IO = IO(unsafe.elapsed())
+        def elapsed(using Frame): Duration < IO = IO.Unsafe(unsafe.elapsed())
     end Stopwatch
 
     object Stopwatch:
+        /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         class Unsafe(start: Instant, clock: Clock.Unsafe):
             def elapsed()(using AllowUnsafe): Duration =
                 Duration.fromJava(java.time.Duration.between(start, clock.now()))
@@ -61,17 +62,18 @@ object Clock:
           * @return
           *   The remaining time as a Duration
           */
-        def timeLeft(using Frame): Duration < IO = IO(unsafe.timeLeft())
+        def timeLeft(using Frame): Duration < IO = IO.Unsafe(unsafe.timeLeft())
 
         /** Checks if the deadline is overdue.
           *
           * @return
           *   A boolean indicating if the deadline is overdue
           */
-        def isOverdue(using Frame): Boolean < IO = IO(unsafe.isOverdue())
+        def isOverdue(using Frame): Boolean < IO = IO.Unsafe(unsafe.isOverdue())
     end Deadline
 
     object Deadline:
+        /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         class Unsafe(end: Instant, clock: Clock.Unsafe):
             def timeLeft()(using AllowUnsafe): Duration =
                 val remaining = java.time.Duration.between(clock.now(), end)
@@ -138,9 +140,10 @@ object Clock:
     def apply(u: Unsafe): Clock =
         new Clock:
             def now(using Frame): Instant < IO =
-                IO(u.now())
+                IO.Unsafe(u.now())
             def unsafe: Unsafe = u
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def now()(using AllowUnsafe): Instant
         def stopwatch()(using AllowUnsafe): Stopwatch.Unsafe                 = Stopwatch.Unsafe(now(), this)

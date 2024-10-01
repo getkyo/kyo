@@ -18,7 +18,7 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Abort[Any] & Async & 
         import AllowUnsafe.embrace.danger
         val a = Async.run(Abort.run(Resource.run(v)).map(_.fold(e => throw new IllegalStateException(s"Test aborted with $e"))(identity)))
         val b = a.map(_.toFuture).map(_.flatten)
-        IO.run(b).eval
+        IO.Unsafe.run(b).eval
     end run
 
     type Assertion = org.scalatest.compatible.Assertion

@@ -5,22 +5,22 @@ import kyo.kernel.Safepoint
 import scala.annotation.implicitNotFound
 
 @implicitNotFound("""
-Unsafe operation detected!
-This code requires explicit permission to perform unsafe operations that
-break referential transparency.
+Use of Kyo's unsafe APIs detected! These are intended for low-level usage like in integrations, libraries, and performance-sensitive code.
 
-Recommended approach:
-Wrap your unsafe code in IO(...) to properly manage side effects:
+Options (in order of preference):
 
-IO { /* your unsafe code here */ }
+1. Receive an implicit AllowUnsafe parameter
+   def myFunction(implicit allow: AllowUnsafe) = // unsafe code here
 
-For low-level integration or performance-sensitive code only:
-If you must proceed without IO, you have to explicitly embrace the danger:
+2. Suspend the operation with IO
+   IO.Unsafe { // unsafe code here }
 
-import AllowUnsafe.embrace.danger // Avoid!
+3. Import implicit evidence (last resort)
+   import AllowUnsafe.embrace.danger
+   // unsafe code here
 
-WARNING: Using AllowUnsafe directly bypasses important safety mechanisms.
-Ensure you fully understand the risks before proceeding this way.""")
+WARNING: Using AllowUnsafe directly bypasses important safety mechanisms and may break referential transparency. Ensure you fully understand the risks before proceeding this way.
+""")
 opaque type AllowUnsafe = Null
 
 object AllowUnsafe:

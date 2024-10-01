@@ -14,7 +14,7 @@ class DirectTest extends Test:
     //         case 2                   => 99
     //       }
     //     }
-    //   assert(IO.run(c) == 1)
+    //   assert(IO.Unsafe.run(c) == 1)
     // }
 
     "one run" in run {

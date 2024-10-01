@@ -288,7 +288,9 @@ object Async:
               * @param f
               *   The callback function
               */
-            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO = IO(self.onComplete(r => IO.run(f(r)).eval))
+            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO =
+                import AllowUnsafe.embrace.danger
+                IO(self.onComplete(r => IO.Unsafe.run(f(r)).eval))
 
             /** Registers a callback to be called when the Fiber is interrupted.
               *
@@ -300,7 +302,9 @@ object Async:
               * @return
               *   A unit value wrapped in IO, representing the registration of the callback
               */
-            def onInterrupt(f: Panic => Unit < IO)(using Frame): Unit < IO = IO(self.onInterrupt(r => IO.run(f(r)).eval))
+            def onInterrupt(f: Panic => Unit < IO)(using Frame): Unit < IO =
+                import AllowUnsafe.embrace.danger
+                IO(self.onInterrupt(r => IO.Unsafe.run(f(r)).eval))
 
             /** Blocks until the Fiber completes or the timeout is reached.
               *
@@ -511,6 +515,7 @@ object Async:
 
         opaque type Unsafe[E, A] = IOPromise[E, A]
 
+        /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         object Unsafe:
             inline given [E, A]: Flat[Unsafe[E, A]] = Flat.unsafe.bypass
 
@@ -520,7 +525,7 @@ object Async:
 
             extension [E, A](self: Unsafe[E, A])
                 def done()(using AllowUnsafe): Boolean                                         = self.done()
-                def onComplete(f: Result[E, A] => Unit)(using AllowUnsafe): Unit               = self.onResult(f)
+                def onComplete(f: Result[E, A] => Unit)(using AllowUnsafe): Unit               = self.onComplete(f)
                 def block(timeout: Duration)(using AllowUnsafe, Frame): Result[E | Timeout, A] = self.block(deadline(timeout))
                 def interrupt(error: Panic)(using AllowUnsafe): Boolean                        = self.interrupt(error)
                 def interruptUnit(error: Panic)(using AllowUnsafe): Unit                       = discard(self.interrupt(error))

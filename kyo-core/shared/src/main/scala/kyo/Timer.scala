@@ -160,23 +160,24 @@ object Timer:
 
             private def eval(f: => Unit < Async)(using Frame): Unit =
                 import AllowUnsafe.embrace.danger
-                discard(IO.run(Async.run(f)).eval)
+                discard(IO.Unsafe.run(Async.run(f)).eval)
 
             def schedule(delay: Duration)(f: => Unit < Async)(using Frame): TimerTask < IO =
-                IO(unsafe.schedule(delay)(eval(f)).safe)
+                IO.Unsafe(unsafe.schedule(delay)(eval(f)).safe)
 
             def scheduleAtFixedRate(
                 initialDelay: Duration,
                 period: Duration
             )(f: => Unit < Async)(using Frame): TimerTask < IO =
-                IO(unsafe.scheduleAtFixedRate(initialDelay, period)(eval(f)).safe)
+                IO.Unsafe(unsafe.scheduleAtFixedRate(initialDelay, period)(eval(f)).safe)
 
             def scheduleWithFixedDelay(
                 initialDelay: Duration,
                 period: Duration
             )(f: => Unit < Async)(using Frame): TimerTask < IO =
-                IO(unsafe.scheduleWithFixedDelay(initialDelay, period)(eval(f)).safe)
+                IO.Unsafe(unsafe.scheduleWithFixedDelay(initialDelay, period)(eval(f)).safe)
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def schedule(delay: Duration)(f: => Unit)(using AllowUnsafe): TimerTask.Unsafe
         def scheduleAtFixedRate(
@@ -190,6 +191,7 @@ object Timer:
         def safe: Timer = Timer(this)
     end Unsafe
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         def apply(exec: ScheduledExecutorService)(using AllowUnsafe): Unsafe = new Unsafe:
             final private class FutureTimerTask(task: ScheduledFuture[?]) extends TimerTask.Unsafe:
@@ -247,27 +249,28 @@ final case class TimerTask private (unsafe: TimerTask.Unsafe) extends AnyVal:
       * @return
       *   true if the task was successfully cancelled, false otherwise
       */
-    def cancel(using Frame): Boolean < IO = IO(unsafe.cancel())
+    def cancel(using Frame): Boolean < IO = IO.Unsafe(unsafe.cancel())
 
     /** Check if this task has been cancelled.
       *
       * @return
       *   true if the task has been cancelled, false otherwise
       */
-    def cancelled(using Frame): Boolean < IO = IO(unsafe.cancelled())
+    def cancelled(using Frame): Boolean < IO = IO.Unsafe(unsafe.cancelled())
 
     /** Check if this task has completed its execution.
       *
       * @return
       *   true if the task has completed, false otherwise
       */
-    def done(using Frame): Boolean < IO = IO(unsafe.done())
+    def done(using Frame): Boolean < IO = IO.Unsafe(unsafe.done())
 end TimerTask
 
 object TimerTask:
     /** A no-op TimerTask that is always considered done and cannot be cancelled. */
     val noop = TimerTask(Unsafe.noop)
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def cancel()(using AllowUnsafe): Boolean
         def cancelled()(using AllowUnsafe): Boolean
@@ -275,6 +278,7 @@ object TimerTask:
         def safe: TimerTask = TimerTask(this)
     end Unsafe
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         val noop = new Unsafe:
             def cancel()(using AllowUnsafe)    = false

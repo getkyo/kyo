@@ -48,7 +48,7 @@ class ResourceTest extends Test:
                 assert(r1.closes == 0)
                 Env.get[Int]
             }.pipe(Resource.run)
-                .pipe(IO.runLazy)
+                .pipe(IO.Unsafe.runLazy)
         assert(r1.closes == 0)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
@@ -56,7 +56,7 @@ class ResourceTest extends Test:
         Async.runAndBlock(timeout)(r)
             .pipe(Env.run(1))
             .pipe(Abort.run(_))
-            .pipe(IO.run)
+            .pipe(IO.Unsafe.run)
             .eval
         assert(r1.closes == 1)
         assert(r2.closes == 0)
@@ -110,7 +110,7 @@ class ResourceTest extends Test:
             yield i1 + i2
         val r =
             io.pipe(Resource.run)
-                .pipe(IO.runLazy)
+                .pipe(IO.Unsafe.runLazy)
         assert(r1.closes == 0)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
@@ -118,7 +118,7 @@ class ResourceTest extends Test:
         r.pipe(Env.run(3))
             .pipe(Async.runAndBlock(timeout))
             .pipe(Abort.run(_))
-            .pipe(IO.run)
+            .pipe(IO.Unsafe.run)
             .eval
         assert(r1.closes == 1)
         assert(r2.closes == 1)

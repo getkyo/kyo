@@ -59,7 +59,7 @@ object Bench:
         def forkKyo(warmup: KyoForkWarmup): A =
             import kyo.*
             import AllowUnsafe.embrace.danger
-            IO.run(Async.run(kyoBenchFiber()).flatMap(_.block(Duration.Infinity))).eval.getOrThrow
+            IO.Unsafe.run(Async.run(kyoBenchFiber()).flatMap(_.block(Duration.Infinity))).eval.getOrThrow
         end forkKyo
 
         @Benchmark
@@ -82,7 +82,7 @@ object Bench:
         @Benchmark
         def syncKyo(warmup: KyoSyncWarmup): A =
             import kyo.AllowUnsafe.embrace.danger
-            kyo.IO.run(kyoBench()).eval
+            kyo.IO.Unsafe.run(kyoBench()).eval
         end syncKyo
 
         @Benchmark

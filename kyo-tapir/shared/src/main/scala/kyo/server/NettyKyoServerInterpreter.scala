@@ -47,7 +47,7 @@ object NettyKyoServerInterpreter:
                 else
                     f
             import AllowUnsafe.embrace.danger
-            IO.run(Async.run(exec).unit).eval
+            IO.Unsafe.run(Async.run(exec).unit).eval
         end apply
     end KyoRunAsync
 end NettyKyoServerInterpreter

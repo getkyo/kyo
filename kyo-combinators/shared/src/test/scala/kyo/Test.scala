@@ -17,7 +17,7 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Async & Abort[Throwab
             .pipe(Async.run)
             .map(_.toFuture)
             .map(_.flatten)
-            .pipe(IO.run)
+            .pipe(IO.Unsafe.run)
             .eval
     end run
 
