@@ -20,11 +20,8 @@ object ZIOs:
       */
     def get[E, A](v: => ZIO[Any, E, A])(using Frame): A < (Abort[E] & Async) =
         IO {
-            val p = new IOPromise[E, A]
-            val result =
-                Unsafe.unsafe { implicit unsafe =>
-                    Runtime.default.unsafe.runToFuture(v.either)
-                }
+            val p      = new IOPromise[E, A]
+            val result = Unsafe.unsafely(Runtime.default.unsafe.runToFuture(v.either))
             result.onComplete { r =>
                 p.complete(r.fold(ex => Result.panic(ex), e => Result.fromEither(e)))
             }(ExecutionContext.parasitic)
