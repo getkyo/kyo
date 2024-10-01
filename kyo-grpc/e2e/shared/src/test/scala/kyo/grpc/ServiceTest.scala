@@ -18,9 +18,9 @@ class ServiceTest extends Test:
             for
                 client <- createClientAndServer
                 message = "Hello"
-                request = Echo(message)
-                response <- client.unary(request)
-            yield assert(response == EchoEcho(message))
+                request = Say(message)
+                response <- client.oneToOne(request)
+            yield assert(response == Echo(message))
         }
         "abort" in {
             forEvery(Status.Code.values().filterNot(_ == Status.Code.OK)) { code =>
@@ -30,7 +30,7 @@ class ServiceTest extends Test:
                         for
                             client <- createClientAndServer
                             request = Cancel(status.getCode.value)
-                            _ <- Abort.catching[StatusRuntimeException](client.unary(request))
+                            _ <- Abort.catching[StatusRuntimeException](client.oneToOne(request))
                         yield ()
                     }.map { result =>
                         assert(result.swap.toEither.value.getStatus === status)
@@ -44,7 +44,7 @@ class ServiceTest extends Test:
                 for
                     client <- createClientAndServer
                     request = Fail(message)
-                    _ <- Abort.catching[StatusRuntimeException](client.unary(request))
+                    _ <- Abort.catching[StatusRuntimeException](client.oneToOne(request))
                 yield ()
             }.map { result =>
                 assert(result.swap.toEither.value.getStatus === Status.INTERNAL.withDescription(message))
@@ -57,9 +57,9 @@ class ServiceTest extends Test:
             for
                 client <- createClientAndServer
                 message = "Hello"
-                request = Echo(message)
-                response <- client.unary(request)
-            yield assert(response == EchoEcho(message))
+                request = Say(message, count = 5)
+                responses <- client.oneToMany(request).run
+            yield assert(responses == Chunk.from((1 to 5).map(n => Echo(s"$message $n"))))
         }
         "abort" in {
             forEvery(Status.Code.values().filterNot(_ == Status.Code.OK)) { code =>
@@ -69,7 +69,7 @@ class ServiceTest extends Test:
                         for
                             client <- createClientAndServer
                             request = Cancel(status.getCode.value)
-                            _ <- Abort.catching[StatusRuntimeException](client.unary(request))
+                            _ <- Abort.catching[StatusRuntimeException](client.oneToMany(request))
                         yield ()
                     }.map { result =>
                         assert(result.swap.toEither.value.getStatus === status)
@@ -83,7 +83,7 @@ class ServiceTest extends Test:
                 for
                     client <- createClientAndServer
                     request = Fail(message)
-                    _ <- Abort.catching[StatusRuntimeException](client.unary(request))
+                    _ <- Abort.catching[StatusRuntimeException](client.oneToMany(request))
                 yield ()
             }.map { result =>
                 assert(result.swap.toEither.value.getStatus === Status.INTERNAL.withDescription(message))
@@ -91,7 +91,7 @@ class ServiceTest extends Test:
         }
     }
 
-    private given CanEqual[Response, EchoEcho]       = CanEqual.derived
+    private given CanEqual[Response, Echo]           = CanEqual.derived
     private given CanEqual[Status.Code, Status.Code] = CanEqual.derived
 
     private given Equality[Status] with

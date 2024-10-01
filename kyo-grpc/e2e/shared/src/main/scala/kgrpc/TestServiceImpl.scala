@@ -5,6 +5,8 @@ import kgrpc.test.*
 import kgrpc.test.given
 import kyo.*
 import kyo.Emit.Ack.*
+import kyo.Result
+import kyo.Result.Panic
 import kyo.grpc.*
 
 object TestServiceImpl extends TestService:
@@ -21,7 +23,7 @@ object TestServiceImpl extends TestService:
             case Request.Empty => Stream.empty[Response]
             case nonEmpty: Request.NonEmpty => nonEmpty match
                     case Say(message, count, _) =>
-                        stream(Seq.fill(count)(Echo(message)))
+                        stream((1 to count).map(n => Echo(s"$message $n")))
                     case Cancel(code, after, _) =>
                         stream((0 until after).map(i => Echo(s"Cancelling in ${after - i}")))
                             .concat(Stream.init(Abort.fail(Status.fromCodeValue(code).asException)))
@@ -30,14 +32,17 @@ object TestServiceImpl extends TestService:
                             .concat(Stream.init(Abort.panic(new Exception(message))))
 
     override def manyToOne(requests: Stream[Request, GrpcRequest]): Response < GrpcResponse =
-        requests.runFold(Maybe.empty[String])((acc, request) =>
+        val result = requests.runFold(Maybe.empty[String])((acc, request) =>
             oneToOne(request).map(_.asNonEmpty.get match
                 case Echo(message, _) => acc.map(_ + " " + message).orElse(Maybe(message))
             )
         ).map(maybeMessage => Echo(maybeMessage.getOrElse("")))
+        GrpcRequest.mergeErrors(result)
+    end manyToOne
 
     override def manyToMany(requests: Stream[Request, GrpcRequest]): Stream[Response, GrpcResponse] =
-        ???
+        // TODO: There should be an easier way to do this.
+        Stream(GrpcRequest.mergeErrors(requests.map(oneToOne).emit))
 
     private def stream(responses: Seq[Response < GrpcResponse]): Stream[Response, GrpcResponse] =
         Stream[Response, GrpcResponse](
