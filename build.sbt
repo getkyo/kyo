@@ -6,7 +6,7 @@ import org.typelevel.scalacoptions.ScalaVersion
 
 val scala3Version   = "3.5.1"
 val scala212Version = "2.12.20"
-val scala213Version = "2.13.14"
+val scala213Version = "2.13.15"
 
 val zioVersion       = "2.1.9"
 val catsVersion      = "3.5.4"
@@ -82,7 +82,6 @@ lazy val kyoJVM = project
     .aggregate(
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
-        `kyo-tag`.jvm,
         `kyo-data`.jvm,
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
@@ -111,7 +110,6 @@ lazy val kyoJS = project
     )
     .aggregate(
         `kyo-scheduler`.js,
-        `kyo-tag`.js,
         `kyo-data`.js,
         `kyo-prelude`.js,
         `kyo-core`.js,
@@ -132,7 +130,6 @@ lazy val kyoNative = project
         `kyo-settings`
     )
     .aggregate(
-        `kyo-tag`.native,
         `kyo-data`.native,
         `kyo-prelude`.native
     )
@@ -170,28 +167,16 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
     )
 
-lazy val `kyo-tag` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
-        .withoutSuffixFor(JVMPlatform)
-        .crossType(CrossType.Full)
-        .in(file("kyo-tag"))
-        .settings(
-            `kyo-settings`,
-            libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
-            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
-        )
-        .nativeSettings(`native-settings`)
-        .jsSettings(`js-settings`)
-
 lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
-        .dependsOn(`kyo-tag`)
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
+            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test,
+            libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
+            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
         )
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
@@ -319,9 +304,8 @@ lazy val `kyo-caliban` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.github.ghostdogpr"       %% "caliban"        % "2.8.1",
-            libraryDependencies += "com.github.ghostdogpr"       %% "caliban-tapir"  % "2.8.1",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.5" % Test
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.9.0",
+            libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.9.0"
         )
 
 lazy val `kyo-test` =
@@ -519,7 +503,7 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.10.15"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.5"
         )
 
 lazy val `kyo-bench` =

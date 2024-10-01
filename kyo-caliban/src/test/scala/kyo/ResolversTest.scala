@@ -7,7 +7,6 @@ import caliban.schema.SchemaDerivation
 import scala.concurrent.Future
 import sttp.model.Uri
 import sttp.tapir.*
-import sttp.tapir.json.zio.*
 import sttp.tapir.server.netty.NettyConfig
 import sttp.tapir.server.netty.NettyKyoServer
 import zio.Task

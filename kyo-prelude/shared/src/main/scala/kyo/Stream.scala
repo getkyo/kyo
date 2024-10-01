@@ -140,7 +140,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
                         else
                             val c   = input.take(state)
                             val nst = state - c.size
-                            Emit.andMap(c)(ack => (nst, cont(ack.maxItems(nst))))
+                            Emit.andMap(c)(ack => (nst, cont(ack.maxValues(nst))))
             ))
 
     /** Drops the first n elements from the stream.
@@ -330,7 +330,7 @@ end Stream
 object Stream:
 
     private val _empty           = Stream(Stop)
-    def empty[V]: Stream[Any, V] = _empty.asInstanceOf[Stream[Any, V]]
+    def empty[V]: Stream[V, Any] = _empty.asInstanceOf[Stream[V, Any]]
 
     def init[V, S](seq: Seq[V] < S)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
         Stream[V, S](

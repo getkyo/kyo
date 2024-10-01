@@ -2,7 +2,6 @@ package kyo
 
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
-import scala.reflect.ClassTag
 import sttp.tapir.*
 import sttp.tapir.server.ServerEndpoint
 import sttp.tapir.server.netty.NettyKyoServer
@@ -50,7 +49,7 @@ object Routes:
       * @return
       *   Unit wrapped in Routes effect
       */
-    def add[A: Tag, I, E: Tag: ClassTag, O: Flat](e: Endpoint[A, I, E, O, Any])(
+    def add[A: Tag, I, E: SafeClassTag, O: Flat](e: Endpoint[A, I, E, O, Any])(
         f: I => O < (Async & Env[A] & Abort[E])
     )(using Frame): Unit < Routes =
         Emit(
@@ -75,7 +74,7 @@ object Routes:
       * @return
       *   Unit wrapped in Routes effect
       */
-    def add[A: Tag, I, E: Tag: ClassTag, O: Flat](
+    def add[A: Tag, I, E: SafeClassTag, O: Flat](
         e: PublicEndpoint[Unit, Unit, Unit, Any] => Endpoint[A, I, E, O, Any]
     )(
         f: I => O < (Async & Env[A] & Abort[E])

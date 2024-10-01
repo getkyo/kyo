@@ -18,14 +18,43 @@ class ResultTest extends Test:
     }
 
     "catching" - {
+
         "success" in {
             assert(Result.catching[Exception](1) == Success(1))
         }
+
         "fail" in {
             assert(Result.catching[Exception](throw ex) == Fail(ex))
         }
+
         "panic" in {
             assert(Result.catching[IllegalArgumentException](throw ex) == Panic(ex))
+        }
+
+        "union of exception types" in {
+            val ex = new IllegalStateException("test")
+            val result = Result.catching[IllegalArgumentException | IllegalStateException] {
+                throw ex
+            }
+            assert(result == Result.fail(ex))
+        }
+
+        "intersection of exception types" in {
+            trait CustomException
+            class CustomRuntimeException extends RuntimeException("test") with CustomException
+            val ex     = new CustomRuntimeException
+            val result = Result.catching[RuntimeException & CustomException](throw ex)
+            assert(result == Result.fail(ex))
+        }
+
+        "union + intersection" in {
+            trait SomeTrait
+            class CustomException extends RuntimeException("inner") with SomeTrait
+            val ex = new CustomException
+            val result = Result.catching[IllegalArgumentException | (RuntimeException & SomeTrait)] {
+                throw ex
+            }
+            assert(result == Result.fail(ex))
         }
     }
 
