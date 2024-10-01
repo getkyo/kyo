@@ -502,11 +502,11 @@ import kyo.*
 val a: Int < IO =
     IO(42)
 
-// ** Avoid 'IO.run', use 'KyoApp' instead. **
+// ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
 val b: Int =
     import AllowUnsafe.embrace.danger // Required for unsafe operations
-    IO.run(a).eval
-// ** Avoid 'IO.run', use 'KyoApp' instead. **
+    IO.Unsafe.run(a).eval
+// ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
 ```
 
 The `runLazy` method accepts computations with other effects but it doesn't guarantee that all side effects are performed before the method returns. If other effects still have to be handled, the side effects can be executed later once the other effects are handled. This a low-level API that must be used with caution.
@@ -523,12 +523,12 @@ val a: Int < (Env[Int] & IO) =
         }
     }
 
-// ** Avoid 'IO.runLazy', use 'KyoApp' instead. **
+// ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
 // Handle the 'IO' effect lazily
 val b: Int < Env[Int] =
     import AllowUnsafe.embrace.danger // Required for unsafe operations
-    IO.runLazy(a)
-// ** Avoid 'IO.runLazy', use 'KyoApp' instead. **
+    IO.Unsafe.runLazy(a)
+// ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
 
 // Since the computation is suspended with the
 // 'Env' effect first, the lazy 'IO' execution
@@ -3294,7 +3294,7 @@ val effect: Unit < (Console & Async & Resource & Abort[Throwable] & Env[NameServ
 
 // There are no combinators for handling IO or blocking Async, since this should
 // be done at the edge of the program
-IO.run {                              // Handles IO
+IO.Unsafe.run {                              // Handles IO
     Async.runAndBlock(Duration.Inf) { // Handles Async
         Kyo.scoped {                   // Handles Resource
             effect
