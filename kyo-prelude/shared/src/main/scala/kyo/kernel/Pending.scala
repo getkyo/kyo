@@ -45,6 +45,14 @@ object `<`:
         ): B < (S & S2) =
             map(_ => f)
 
+        inline def as[B, S2](other: B < S2)(
+            using
+            inline frame: Frame,
+            inline flatA: Flat.Weak[A],
+            inline flatB: Flat.Weak[B]
+        ): B < (S & S2) =
+            map(_ => other)
+
         inline def flatMap[B, S2](inline f: Safepoint ?=> A => B < S2)(
             using
             inline frame: Frame,
