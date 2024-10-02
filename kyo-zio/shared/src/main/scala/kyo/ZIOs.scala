@@ -21,11 +21,11 @@ object ZIOs:
     def get[E, A](v: => ZIO[Any, E, A])(using Frame, zio.Trace): A < (Abort[E] & Async) =
         IO {
             val p      = new IOPromise[E, A]
-            val result = Unsafe.unsafely(Runtime.default.unsafe.runToFuture(v.either))
-            result.onComplete { r =>
-                p.complete(r.fold(ex => Result.panic(ex), e => Result.fromEither(e)))
+            val future = Unsafe.unsafely(Runtime.default.unsafe.runToFuture(v.either))
+            future.onComplete { t =>
+                p.complete(t.fold(ex => Result.panic(ex), Result.fromEither))
             }(ExecutionContext.parasitic)
-            p.onInterrupt(_ => discard(result.cancel()))
+            p.onInterrupt(_ => discard(future.cancel()))
             Async.get(p)
         }
     end get
