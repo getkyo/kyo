@@ -331,5 +331,11 @@ class EffectCombinatorTest extends Test:
                 assert(handled.eval.isSuccess)
             }
         }
+
+        "ensuring" in run {
+            var finalizerCalled = false
+            Resource.run(IO(()).ensuring(IO { finalizerCalled = true }))
+                .andThen(assert(finalizerCalled))
+        }
     }
 end EffectCombinatorTest

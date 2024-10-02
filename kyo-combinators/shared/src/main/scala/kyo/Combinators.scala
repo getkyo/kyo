@@ -100,7 +100,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def repeat(backoff: Int => Duration, limit: => Int)(using Flat[A], Frame): A < (S & Async) =
+    def repeat(backoff: Int => Duration, limit: Int)(using Flat[A], Frame): A < (S & Async) =
         Loop.indexed { i =>
             if i >= limit then effect.map(Loop.done)
             else effect.delayed(backoff(i)).as(Loop.continue)
@@ -256,6 +256,17 @@ extension [A, S](effect: A < S)
       */
     def unless[S1](condition: Boolean < S1)(using Frame): A < (S & S1 & Abort[Maybe.Empty]) =
         condition.map(c => if c then Abort.fail(Maybe.Empty) else effect)
+
+    /** Ensures that the specified finalizer is executed after this effect, whether it succeeds or fails. The finalizer will execute when
+      * the Resource effect is handled.
+      *
+      * @param finalizer
+      *   The finalizer to execute after this effect
+      * @return
+      *   An effect that executes the finalizer after this effect
+      */
+    def ensuring(finalizer: => Unit < Async)(using Frame): A < (S & Resource & IO) =
+        Resource.ensure(finalizer).andThen(effect)
 
 end extension
 
@@ -413,13 +424,13 @@ extension [A, S, E](effect: A < (Abort[Maybe.Empty] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[Maybe.Empty] effect translated to Abort[E]
       */
-    def emptyAbortToFailure(failure: E)(using Flat[A], Frame): A < (S & Abort[E]) =
+    def emptyAbortToFailure(failure: => E)(using Flat[A], Frame): A < (S & Abort[E]) =
         for
             res <- effect.handleSomeAbort[Maybe.Empty]()
         yield res match
             case Result.Fail(_)    => Abort.get(Result.Fail(failure))
-            case Result.Panic(e)   => Abort.get(Result.Panic(e))
             case Result.Success(a) => Abort.get(Result.success(a))
+            case res: Result.Panic => Abort.get(res)
 end extension
 
 class SomeAbortToChoiceOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
@@ -631,7 +642,7 @@ extension [A, S](effect: A < (S & Choice))
       * @return
       *   A computation that produces the result of this computation with Abort[E] effect
       */
-    def choiceToAbort[E](error: E)(using Flat[A], Frame): A < (S & Abort[E]) =
+    def choiceToAbort[E](error: => E)(using Flat[A], Frame): A < (S & Abort[E]) =
         Choice.run(effect).map {
             case s if s.isEmpty => Kyo.fail(error)
             case s              => s.head
