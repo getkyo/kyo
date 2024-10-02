@@ -102,8 +102,8 @@ class ZIOsTest extends Test:
         }
 
         "nested ZIO in Kyo" in runKyo {
-            val nestedZIO = ZIOs.get(ZIO.succeed("nested"))
-            Async.run(nestedZIO).map(_.get).map(s => assert(s == "nested"))
+            Async.run(ZIOs.get(ZIOs.run(42))).map(_.get)
+                .map(v => assert(v == 42))
         }
 
         "complex nested pattern with parallel and race" in runKyo {
