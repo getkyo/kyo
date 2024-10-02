@@ -26,8 +26,8 @@ class ResolverTest extends Test:
 
     case class Query(
         k1: Int < Abort[Throwable],
-        k2: Int < ZIOs,
-        k3: Int < (Abort[Throwable] & ZIOs),
+        k2: Int < Async,
+        k3: Int < (Abort[Throwable] & Async),
         k4: Int < IO,
         k5: Int < Async
     ) derives Schema.SemiAuto

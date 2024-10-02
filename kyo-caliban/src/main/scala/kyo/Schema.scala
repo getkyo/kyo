@@ -8,7 +8,7 @@ import zio.Task
 import zio.ZIO
 import zio.query.ZQuery
 
-given zioSchema[R, A: Flat, S](using ev: Schema[R, A], ev2: (A < S) <:< (A < (Abort[Throwable] & ZIOs))): Schema[R, A < S] =
+given zioSchema[R, A: Flat, S](using ev: Schema[R, A], ev2: (A < S) <:< (A < (Abort[Throwable] & Async))): Schema[R, A < S] =
     new Schema[R, A < S]:
         override def nullable: Boolean = ev.nullable
         override def canFail: Boolean  = ev.canFail

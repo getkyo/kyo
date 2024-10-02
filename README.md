@@ -3034,11 +3034,11 @@ import kyo.*
 import zio.*
 
 // Use the 'get' method to extract a 'ZIO' effect
-val a: Int < ZIOs =
+val a: Int < (Abort[Nothing] & Async) =
     ZIOs.get(ZIO.succeed(42))
 
 // 'get' also supports error handling with 'Abort'
-val b: Int < (Abort[String] & ZIOs) =
+val b: Int < (Abort[String] & Async) =
     ZIOs.get(ZIO.fail("error"))
 
 // Handle the 'ZIO' effect to obtain a 'ZIO' effect
@@ -3054,7 +3054,7 @@ import zio.*
 
 // Note how ZIO includes the
 // IO and Async effects
-val a: Int < ZIOs =
+val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- ZIOs.get(ZIO.succeed(21))
         v2 <- IO(21)
@@ -3062,7 +3062,7 @@ val a: Int < ZIOs =
     yield v1 + v2 + v3
 
 // Using fibers from both libraries
-val b: Int < ZIOs =
+val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- ZIOs.get(ZIO.succeed(21).fork)
         f2 <- Async.run(IO(21))
@@ -3071,7 +3071,7 @@ val b: Int < ZIOs =
     yield v1 + v2
 
 // Transforming ZIO effects within Kyo computations
-val c: Int < ZIOs =
+val c: Int < (Abort[Nothing] & Async) =
     ZIOs.get(ZIO.succeed(21)).map(_ * 2)
 
 // Transforming Kyo effects within ZIO effects
@@ -3090,7 +3090,7 @@ import kyo.*
 import cats.effect.IO as CatsIO
 
 // Use the 'get' method to extract a 'IO' effect from Cats Effect:
-val a: Int < Cats =
+val a: Int < (Abort[Throwable] & Async) =
     Cats.get(CatsIO.pure(42))
 
 // Handle the 'Cats' effect to obtain a 'CatsIO' effect:
@@ -3105,17 +3105,16 @@ import kyo.*
 import cats.effect.IO as CatsIO
 import cats.effect.kernel.Outcome.Succeeded
 
-// Note how Cats includes the IO, Async, and Abort[Throwable] effects:
-val a: Int < Cats =
+// Note how Cats includes the IO, Async, and Abort[Nothing] effects:
+val a: Int < (Abort[Nothing] & Async) =
     for
         v1 <- Cats.get(CatsIO.pure(21))
         v2 <- IO(21)
-        _  <- Abort.when(v1 > 10)(new Exception)
         v3 <- Async.run(-42).map(_.get)
     yield v1 + v2 + v3
 
 // Using fibers from both libraries:
-val b: Int < Cats =
+val b: Int < (Abort[Nothing] & Async) =
     for
         f1 <- Cats.get(CatsIO.pure(21).start)
         f2 <- Async.run(IO(21))
@@ -3124,7 +3123,7 @@ val b: Int < Cats =
     yield v1 + v2
 
 // Transforming Cats Effect IO within Kyo computations:
-val c: Int < Cats =
+val c: Int < (Abort[Nothing] & Async) =
     Cats.get(CatsIO.pure(21)).map(_ * 2)
 
 // Transforming Kyo effects within Cats Effect IO:
@@ -3170,11 +3169,11 @@ import zio.Task
 case class Query(k: Int < Abort[Throwable]) derives Schema.SemiAuto
 val api = graphQL(RootResolver(Query(42)))
 
-val a: NettyKyoServerBinding < (ZIOs & Abort[CalibanError]) =
+val a: NettyKyoServerBinding < (Async & Abort[CalibanError]) =
     Resolvers.run { Resolvers.get(api) }
 
 // similarly to the tapir integration, you can also pass a `NettyKyoServer` explicitly
-val b: NettyKyoServerBinding < (ZIOs & Abort[CalibanError]) =
+val b: NettyKyoServerBinding < (Async & Abort[CalibanError]) =
     Resolvers.run(NettyKyoServer().port(9999)) { Resolvers.get(api) }
 
 // you can turn this into a ZIO as seen in the ZIO integration
