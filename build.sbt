@@ -169,7 +169,7 @@ lazy val `kyo-data` =
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test,
+            libraryDependencies += "dev.zio"       %%% "zio-test-sbt"  % zioVersion       % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
             libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
         )
@@ -270,7 +270,7 @@ lazy val `kyo-sttp` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.9.8"
+            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.10.0"
         )
         .jsSettings(`js-settings`)
 
