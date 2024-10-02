@@ -134,7 +134,7 @@ class ZIOsTest extends Test:
                     if i == 0 then
                         IO(started.countDown()).andThen(loop(i + 1))
                     else
-                        loop(i + 2)
+                        loop(i + 1)
                 }
             IO.ensure(IO(done.countDown()))(loop(0))
         end kyoLoop
