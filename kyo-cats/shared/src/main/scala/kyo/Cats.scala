@@ -41,6 +41,7 @@ object Cats:
       */
     def run[A: Flat](v: => A < (Abort[Throwable] & Async))(using frame: Frame): CatsIO[A] =
         CatsIO.defer {
+            import AllowUnsafe.embrace.danger
             Async.run(v).map { fiber =>
                 CatsIO.async[A] { cb =>
                     CatsIO {
