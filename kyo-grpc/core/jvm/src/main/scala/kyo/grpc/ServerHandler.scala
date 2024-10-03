@@ -15,7 +15,7 @@ object ServerHandler:
 
     def unary[Request, Response: Flat](f: Request => Response < GrpcResponse)(using Frame): ServerCallHandler[Request, Response] =
         ServerCalls.asyncUnaryCall { (request, responseObserver) =>
-            val completed = ResponseStream.processSingleResponse(responseObserver, f(request))
+            val completed = StreamNotifier.notifyObserver(f(request), responseObserver)
             IO.run(Async.run(completed)).unit.eval
         }
 
@@ -23,7 +23,8 @@ object ServerHandler:
         Frame
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncClientStreamingCall(responseObserver =>
-            val observer = RequestStreamObserver.init(f, responseObserver.asInstanceOf[ServerCallStreamObserver[Response]])
+            val serverResponseObserver = responseObserver.asInstanceOf[ServerCallStreamObserver[Response]]
+            val observer               = RequestStreamObserver.init(f, serverResponseObserver)
             IO.run(observer).eval
         )
 
@@ -31,7 +32,7 @@ object ServerHandler:
         Frame
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncServerStreamingCall { (request, responseObserver) =>
-            val completed = ResponseStream.processMultipleResponses(responseObserver, f(request))
+            val completed = StreamNotifier.notifyObserver(f(request), responseObserver)
             IO.run(Async.run(completed)).unit.eval
         }
 

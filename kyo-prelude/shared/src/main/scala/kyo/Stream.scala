@@ -349,4 +349,8 @@ object Stream:
             }
         )
 
+    // TODO: Name?
+    def embed[V, S1, S2](stream: Stream[V, S1] < S2)(using Frame): Stream[V, S1 & S2] =
+        Stream(stream.map(_.emit))
+
 end Stream
