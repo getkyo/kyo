@@ -7,6 +7,12 @@ import scala.annotation.tailrec
 /** Object containing utility functions for working with Kyo effects. */
 object Kyo:
 
+    // TODO: Commit this separately.
+    def pure[A](a: A): A < Any = a
+
+    // TODO: Commit this separately.
+    def unit: Unit < Any = ()
+
     /** Zips two effects into a tuple.
       *
       * @param v1

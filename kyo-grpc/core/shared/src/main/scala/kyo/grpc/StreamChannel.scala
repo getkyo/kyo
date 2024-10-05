@@ -3,6 +3,7 @@ package kyo.grpc
 import kyo.*
 import kyo.Emit.Ack
 import kyo.Emit.Ack.*
+import kyo.Result.*
 
 object StreamChannel:
 
@@ -30,20 +31,27 @@ object StreamChannel:
         Frame
     ): Ack < (Emit[Chunk[A]] & Abort[E] & Async) =
         ack match
-            case Stop        => Stop
-            case Continue(0) => Emit.andMap(Chunk.empty)(emitLoop(channel, complete))
+            case Stop => Stop
             // TODO: Can we take multiple? https://github.com/getkyo/kyo/issues/678
-            case Continue(_) =>
+            case Continue(n) =>
                 for
                     isDrained  <- channel.empty
                     isComplete <- complete.get
                     ack <-
-                        if isDrained && isComplete then channel.close.map(_ => (Stop: Ack < Any))
+                        if isDrained && isComplete then channel.close.map(_ => Kyo.pure[Ack](Stop))
                         else
+                            // TODO: Unnest this.
                             for
-                                result <- channel.take
-                                a      <- Abort.get(result)
-                            yield Emit.andMap(Chunk(a))(emitLoop(channel, complete))
+                                result <- takeMaybe(channel)
+                                maybeA <- Abort.get(result)
+                            yield maybeA.fold(Kyo.pure[Ack](Stop))(a => Emit.andMap(Chunk(a))(emitLoop(channel, complete)))
                 yield ack
+                end for
+
+    private def takeMaybe[A: Tag, E](channel: Channel[Result[E, A]])(using Frame): Result[E, Maybe[A]] < Async =
+        // TODO: Is there a better way to do this?
+        Abort.run[Closed](channel.take).map { closedResult =>
+            closedResult.fold(_ => Success(Maybe.empty))(_.map(Maybe(_)))
+        }
 
 end StreamChannel

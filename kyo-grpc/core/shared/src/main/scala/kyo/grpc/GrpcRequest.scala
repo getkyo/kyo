@@ -15,6 +15,7 @@ type GrpcRequest = Async & Abort[GrpcRequest.Errors]
 
 object GrpcRequest:
 
+    // TODO: We should really get rid of StatusRuntimeException from here and combine the two effects.
     type Errors = StatusException | StatusRuntimeException
 
     def fromFuture[Response: Flat](f: Future[Response])(using Frame): Response < GrpcRequest =

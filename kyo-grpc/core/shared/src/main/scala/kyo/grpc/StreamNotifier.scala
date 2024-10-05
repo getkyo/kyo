@@ -2,8 +2,10 @@ package kyo.grpc
 
 import io.grpc.Status
 import io.grpc.StatusException
+import io.grpc.StatusRuntimeException
 import io.grpc.stub.StreamObserver
 import kyo.*
+import scala.util.chaining.scalaUtilChainingOps
 
 private[grpc] object StreamNotifier:
 
@@ -31,9 +33,11 @@ private[grpc] object StreamNotifier:
         requestObserver: StreamObserver[?]
     )(using Frame): Unit < IO =
         complete match
-            case Result.Success(_)       => IO(requestObserver.onCompleted())
+            case Result.Success(_) => IO(requestObserver.onCompleted())
             // TODO: Why the unchecked warning here?
             case result: Result.Error[E] => notifyError(result, requestObserver)
+        end match
+    end notifyCompleteOrError
 
     private def notifyError[E <: Throwable](
         result: Result.Error[E],
@@ -49,7 +53,8 @@ private[grpc] object StreamNotifier:
     // TODO: This doesn't belong here.
     def throwableToStatusException(t: Throwable): StatusException =
         t match
-            case e: StatusException => e
-            case _                  => Status.INTERNAL.withDescription(t.getMessage).withCause(t).asException()
+            case e: StatusException        => e
+            case e: StatusRuntimeException => StatusException(e.getStatus()).tap(_.setStackTrace(e.getStackTrace))
+            case _                         => Status.INTERNAL.withDescription(t.getMessage).withCause(t).asException()
 
 end StreamNotifier

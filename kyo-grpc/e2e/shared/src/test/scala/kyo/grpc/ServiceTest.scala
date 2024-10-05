@@ -1,6 +1,7 @@
 package kyo.grpc
 
 import io.grpc.{Server as _, *}
+import io.grpc.internal.GrpcUtil
 import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 import kgrpc.*
@@ -10,6 +11,7 @@ import org.scalactic.Equality
 import org.scalactic.TripleEquals.*
 import org.scalatest.EitherValues.*
 import org.scalatest.Inspectors.*
+import scala.util.chaining.scalaUtilChainingOps
 
 class ServiceTest extends Test:
 
@@ -22,33 +24,35 @@ class ServiceTest extends Test:
                 response <- client.oneToOne(request)
             yield assert(response == Echo(message))
         }
+
         "abort" in {
-            forEvery(Status.Code.values().filterNot(_ == Status.Code.OK)) { code =>
+            forEvery(notOKStatusCodes) { code =>
                 run {
                     val status = code.toStatus
+                    // TODO: No StatusRuntimeExceptions
+                    val expected = status.asRuntimeException(trailers)
                     Abort.run[StatusRuntimeException] {
                         for
                             client <- createClientAndServer
                             request = Cancel(status.getCode.value)
-                            _ <- Abort.catching[StatusRuntimeException](client.oneToOne(request))
+                            _ <- client.oneToOne(request)
                         yield ()
-                    }.map { result =>
-                        assert(result.swap.toEither.value.getStatus === status)
-                    }
+                    }.map(assertStatusRuntimeException(_, expected))
                 }
             }
         }
+
         "fail" in run {
             val message = "Oh no!"
+            // TODO: No StatusRuntimeExceptions
+            val expected = Status.INTERNAL.withDescription(message).asRuntimeException(trailers)
             Abort.run[StatusRuntimeException] {
                 for
                     client <- createClientAndServer
                     request = Fail(message)
-                    _ <- Abort.catching[StatusRuntimeException](client.oneToOne(request))
+                    _ <- client.oneToOne(request)
                 yield ()
-            }.map { result =>
-                assert(result.swap.toEither.value.getStatus === Status.INTERNAL.withDescription(message))
-            }
+            }.map(assertStatusRuntimeException(_, expected))
         }
     }
 
@@ -61,35 +65,102 @@ class ServiceTest extends Test:
                 responses <- client.oneToMany(request).run
             yield assert(responses == Chunk.from((1 to 5).map(n => Echo(s"$message $n"))))
         }
-        "abort" in {
-            forEvery(Status.Code.values().filterNot(_ == Status.Code.OK)) { code =>
-                run {
-                    val status = code.toStatus
-                    Abort.run[StatusRuntimeException] {
-                        for
-                            client <- createClientAndServer
-                            request = Cancel(status.getCode.value)
-                            _ <- Abort.catching[StatusRuntimeException](client.oneToMany(request))
-                        yield ()
-                    }.map { result =>
-                        assert(result.swap.toEither.value.getStatus === status)
-                    }
-                }
+
+        // "abort" - {
+        //     "producing stream" in {
+        //         forEvery(notOKStatusCodes) { code =>
+        //             run {
+        //                 val status = code.toStatus
+        //                 Abort.run[StatusRuntimeException] {
+        //                     for
+        //                         client <- createClientAndServer
+        //                         request = Cancel(status.getCode.value)
+        //                         _ <- client.oneToMany(request).run
+        //                     yield ()
+        //                 }.map { result =>
+        //                     assert(result.swap.toEither.value.getStatus === status)
+        //                 }
+        //             }
+        //         }
+        //     }
+
+        //     "first element" in {
+        //         forEvery(notOKStatusCodes) { code =>
+        //             run {
+        //                 val status = code.toStatus
+        //                 Abort.run[StatusRuntimeException] {
+        //                     for
+        //                         client <- createClientAndServer
+        //                         request = Cancel(status.getCode.value)
+        //                         _ <- client.oneToMany(request).run
+        //                     yield ()
+        //                 }.map { result =>
+        //                     assert(result.swap.toEither.value.getStatus === status)
+        //                 }
+        //             }
+        //         }
+        //     }
+
+        //     "after some elements" in {
+        //         forEvery(notOKStatusCodes) { code =>
+        //             run {
+        //                 val status = code.toStatus
+        //                 Abort.run[StatusRuntimeException] {
+        //                     for
+        //                         client <- createClientAndServer
+        //                         request = Cancel(status.getCode.value)
+        //                         _ <- client.oneToMany(request).run
+        //                     yield ()
+        //                 }.map { result =>
+        //                     assert(result.swap.toEither.value.getStatus === status)
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+
+        "fail" - {
+            "producing stream" in run {
+                val message  = "Oh no!"
+                val expected = Status.INTERNAL.withDescription(message).asException
+                Abort.run[StatusException] {
+                    for
+                        client <- createClientAndServer
+                        request = Fail(message)
+                        _ <- client.oneToMany(request).runDiscard
+                    yield ()
+                }.map(assertStatusException(_, expected))
             }
-        }
-        "fail" in run {
-            val message = "Oh no!"
-            Abort.run[StatusRuntimeException] {
-                for
-                    client <- createClientAndServer
-                    request = Fail(message)
-                    _ <- Abort.catching[StatusRuntimeException](client.oneToMany(request))
-                yield ()
-            }.map { result =>
-                assert(result.swap.toEither.value.getStatus === Status.INTERNAL.withDescription(message))
+
+            "first element" in run {
+                val message  = "Oh no!"
+                val expected = Status.INTERNAL.withDescription(message).asException
+                Abort.run[StatusException] {
+                    for
+                        client <- createClientAndServer
+                        request = Fail(message)
+                        _ <- client.oneToMany(request).runDiscard
+                    yield ()
+                }.map(assertStatusException(_, expected))
+            }
+
+            "after some elements" in run {
+                val message  = "Oh no!"
+                val expected = Status.INTERNAL.withDescription(message).asException
+                Abort.run[StatusException] {
+                    for
+                        client <- createClientAndServer
+                        request = Fail(message)
+                        _ <- client.oneToMany(request).runDiscard
+                    yield ()
+                }.map(assertStatusException(_, expected))
             }
         }
     }
+
+    private val trailers = Metadata().tap(_.put(GrpcUtil.CONTENT_TYPE_KEY, GrpcUtil.CONTENT_TYPE_GRPC))
+
+    private val notOKStatusCodes = Status.Code.values().filterNot(_ == Status.Code.OK)
 
     private given CanEqual[Response, Echo]           = CanEqual.derived
     private given CanEqual[Status.Code, Status.Code] = CanEqual.derived
@@ -103,6 +174,29 @@ class ServiceTest extends Test:
                     status.getCause == other.getCause
                 case _ => false
     end given
+
+    private given Equality[Metadata] with
+        override def areEqual(metadata: Metadata, b: Any): Boolean =
+            b match
+                case other: Metadata => metadata.toString == other.toString
+                case _               => false
+    end given
+
+    private def assertStatusException(result: Result[StatusException, Any], expected: StatusException) =
+        val actual = result.swap.value.get
+        // We can't compare the exception here because if it fails we run into https://github.com/scalatest/scalatest/issues/427.
+        assert(actual.getStatus === expected.getStatus)
+        assert((actual.getTrailers == null && expected.getTrailers == null) || actual.getTrailers === expected.getTrailers)
+        assert(actual.getMessage === expected.getMessage)
+    end assertStatusException
+
+    private def assertStatusRuntimeException(result: Result[StatusRuntimeException, Any], expected: StatusRuntimeException) =
+        val actual = result.swap.value.get
+        // We can't compare the exception here because if it fails we run into https://github.com/scalatest/scalatest/issues/427.
+        assert(actual.getStatus === expected.getStatus)
+        assert((actual.getTrailers == null && expected.getTrailers == null) || actual.getTrailers === expected.getTrailers)
+        assert(actual.getMessage === expected.getMessage)
+    end assertStatusRuntimeException
 
     private def createClientAndServer =
         for

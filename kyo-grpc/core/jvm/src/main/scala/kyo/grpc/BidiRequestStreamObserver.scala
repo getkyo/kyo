@@ -12,13 +12,13 @@ import kyo.scheduler.top.Status
 import scala.language.future
 
 class BidiRequestStreamObserver[Request: Tag, Response: Flat: Tag] private (
-    f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse],
+    f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
     requestChannel: Channel[Result[GrpcRequest.Errors, Request]],
     requestsCompleted: AtomicBoolean,
     responseObserver: ServerCallStreamObserver[Response]
 )(using Frame) extends StreamObserver[Request]:
 
-    private val responses = f(StreamChannel.stream(requestChannel, requestsCompleted))
+    private val responses = Stream.embed(f(StreamChannel.stream(requestChannel, requestsCompleted)))
 
     // TODO: Handle the backpressure properly.
     /** Only run this once.
@@ -42,7 +42,7 @@ end BidiRequestStreamObserver
 object BidiRequestStreamObserver:
 
     def init[Request: Tag, Response: Flat: Tag](
-        f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse],
+        f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse,
         responseObserver: ServerCallStreamObserver[Response]
     )(using Frame): BidiRequestStreamObserver[Request, Response] < IO =
         for

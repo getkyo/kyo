@@ -10,11 +10,10 @@ import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.language.implicitConversions
 
-abstract class Test extends AsyncFreeSpec with BaseKyoTest[Async & Abort[Throwable] & Resource] with NonImplicitAssertions:
+abstract class Test extends AsyncFreeSpec with BaseKyoTest[Async & Abort[Throwable]] with NonImplicitAssertions:
 
-    def run(v: Future[Assertion] < (Async & Abort[Throwable] & Resource)): Future[Assertion] =
-        Resource.run(v)
-            .pipe(Async.run)
+    def run(v: Future[Assertion] < (Async & Abort[Throwable])): Future[Assertion] =
+        Async.run(v)
             .map(_.toFuture)
             .map(_.flatten)
             .pipe(IO.run)

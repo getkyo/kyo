@@ -72,8 +72,8 @@ class ServicePrinter(service: ServiceDescriptor, implicits: DescriptorImplicits)
         val returnType = method.streamType match {
             case StreamType.Unary           => Types.pendingGrpcResponse(method.outputType.scalaType)
             case StreamType.ClientStreaming => Types.pendingGrpcResponse(method.outputType.scalaType)
-            case StreamType.ServerStreaming => Types.streamGrpcResponse(method.outputType.scalaType)
-            case StreamType.Bidirectional   => Types.streamGrpcResponse(method.outputType.scalaType)
+            case StreamType.ServerStreaming => Types.pendingGrpcResponse(Types.streamGrpcResponse(method.outputType.scalaType))
+            case StreamType.Bidirectional   => Types.pendingGrpcResponse(Types.streamGrpcResponse(method.outputType.scalaType))
         }
         fp
             .call(scalapbServicePrinter.generateScalaDoc(method))

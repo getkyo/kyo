@@ -14,12 +14,28 @@ class ResponseStreamObserver[Response](
     override def onNext(response: Response): Unit =
         // TODO: Do a better job of backpressuring here.
         IO.run(Async.run(responseChannel.put(Success(response)))).unit.eval
+    end onNext
 
     override def onError(t: Throwable): Unit =
         // TODO: Do a better job of backpressuring here.
-        IO.run(Async.run(responseChannel.put(Fail(StreamNotifier.throwableToStatusException(t))))).unit.eval
+        val putAndClose =
+            for
+                _       <- responseChannel.put(Fail(StreamNotifier.throwableToStatusException(t)))
+                isEmpty <- responseChannel.empty
+                // TODO: Make sure we close properly everywhere else
+                _ <- if isEmpty then responseChannel.close else Kyo.unit
+            yield ()
+        IO.run(Async.run(putAndClose)).unit.eval
+    end onError
 
     override def onCompleted(): Unit =
-        IO.run(responsesCompleted.set(true)).unit.eval
+        val close =
+            for
+                _       <- responsesCompleted.set(true)
+                isEmpty <- responseChannel.empty
+                _       <- if isEmpty then responseChannel.close else Kyo.unit
+            yield ()
+        IO.run(close).eval
+    end onCompleted
 
 end ResponseStreamObserver

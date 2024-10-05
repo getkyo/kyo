@@ -28,16 +28,16 @@ object ServerHandler:
             IO.run(observer).eval
         )
 
-    def serverStreaming[Request: Tag, Response: Flat: Tag](f: Request => Stream[Response, GrpcResponse])(using
+    def serverStreaming[Request: Tag, Response: Flat: Tag](f: Request => Stream[Response, GrpcResponse] < GrpcResponse)(using
         Frame
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncServerStreamingCall { (request, responseObserver) =>
-            val completed = StreamNotifier.notifyObserver(f(request), responseObserver)
+            val completed = StreamNotifier.notifyObserver(Stream.embed(f(request)), responseObserver)
             IO.run(Async.run(completed)).unit.eval
         }
 
-    def bidiStreaming[Request: Tag, Response: Flat: Tag](f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse])(using
-        Frame
+    def bidiStreaming[Request: Tag, Response: Flat: Tag](f: Stream[Request, GrpcRequest] => Stream[Response, GrpcResponse] < GrpcResponse)(
+        using Frame
     ): ServerCallHandler[Request, Response] =
         ServerCalls.asyncBidiStreamingCall(responseObserver =>
             val observer = BidiRequestStreamObserver.init(f, responseObserver.asInstanceOf[ServerCallStreamObserver[Response]])
