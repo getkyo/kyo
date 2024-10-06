@@ -159,9 +159,18 @@ class ConstructorsTest extends Test:
         "foreachPar" - {
             "should apply a function to each element in parallel" in run {
                 val input  = Seq(1, 2, 3, 4, 5)
-                val result = Kyo.foreachPar(input)(x => Async.sleep(10.millis).andThen(x * 2))
+                val result = Kyo.foreachPar(input)(x => Async.sleep(1.millis).andThen(x * 2))
                 result.map { r =>
                     assert(r == Seq(2, 4, 6, 8, 10))
+                }
+            }
+            "should support context effects" in run {
+                val input  = Seq(1, 2, 3, 4, 5)
+                val result = Kyo.foreachPar(input)(x => Env.use[Int](d => Async.sleep(d.millis)).andThen(x * 2))
+                Env.run(1) {
+                    result.map { r =>
+                        assert(r == Seq(2, 4, 6, 8, 10))
+                    }
                 }
             }
         }
@@ -171,10 +180,24 @@ class ConstructorsTest extends Test:
                 val input = Seq(1, 2, 3, 4, 5)
                 AtomicInt.init(0).map { counter =>
                     Kyo.foreachParDiscard(input) { x =>
-                        Async.sleep(10.millis).andThen(counter.incrementAndGet)
+                        Async.sleep(1.millis).andThen(counter.incrementAndGet)
                     }.map { _ =>
                         counter.get.map { count =>
                             assert(count == 5)
+                        }
+                    }
+                }
+            }
+            "should support context effects" in run {
+                val input = Seq(1, 2, 3, 4, 5)
+                Env.run(1) {
+                    AtomicInt.init(0).map { counter =>
+                        Kyo.foreachParDiscard(input) { x =>
+                            Env.use[Int](d => Async.sleep(d.millis)).andThen(counter.incrementAndGet)
+                        }.map { _ =>
+                            counter.get.map { count =>
+                                assert(count == 5)
+                            }
                         }
                     }
                 }
