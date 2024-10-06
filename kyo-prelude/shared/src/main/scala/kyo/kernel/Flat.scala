@@ -82,7 +82,7 @@ private object FlatMacro:
         def canDerive(t: TypeRepr): Boolean =
             t.asType match
                 case '[t] =>
-                    Expr.summon[Tag.Full[t]].isDefined || Expr.summon[Flat[t]].isDefined
+                    Expr.summon[Flat[t]].isDefined || Expr.summon[Tag.Full[t]].isDefined
 
         def check(t: TypeRepr): Unit =
             t match
