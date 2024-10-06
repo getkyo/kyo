@@ -2,9 +2,9 @@ package kyo.bench
 
 import java.util.concurrent.locks.LockSupport
 
-class BatchBench extends Bench.SyncAndFork(500500):
+class BatchBench extends Bench.SyncAndFork(5050):
 
-    val count = 1000
+    val count = 100
 
     object CatsImpl:
         import cats.data.NonEmptyList
