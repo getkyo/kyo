@@ -86,7 +86,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that prints the message to the console
       */
-    def debugln[S](message: String)(using Frame): Unit < IO =
+    def debugln(message: String)(using Frame): Unit < IO =
         Console.println(message)
 
     /** Creates an effect that fails with Abort[E].
@@ -96,7 +96,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that fails with the given error
       */
-    def fail[E](error: E)(using Frame): Nothing < Abort[E] =
+    def fail[E](error: => E)(using Frame): Nothing < Abort[E] =
         Abort.fail(error)
 
     /** Applies a function to each element in parallel and returns a new sequence with the results.
@@ -108,7 +108,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   A new sequence with elements collected using the function
       */
-    def foreachPar[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async))(
+    def foreachPar[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
         using
         flat: Flat[A1],
         boundary: Boundary[Ctx, Async],
@@ -126,7 +126,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   Discards the results of the function application and returns Unit
       */
-    def foreachParDiscard[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async))(
+    def foreachParDiscard[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
         using
         flat: Flat[A1],
         boundary: Boundary[Ctx, Async],
@@ -192,7 +192,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Future to Async.
       */
-    def fromFuture[A: Flat](future: Future[A])(using Frame): A < (Async & Abort[Throwable]) =
+    def fromFuture[A: Flat](future: => Future[A])(using Frame): A < (Async & Abort[Throwable]) =
         Async.fromFuture(future)
 
     /** Creates an effect from a Promise[A] and handles the Promise to Async.
@@ -202,7 +202,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Promise to Async.
       */
-    def fromPromiseScala[A: Flat](promise: scala.concurrent.Promise[A])(using Frame): A < (Async & Abort[Throwable]) =
+    def fromPromiseScala[A: Flat](promise: => scala.concurrent.Promise[A])(using Frame): A < (Async & Abort[Throwable]) =
         fromFuture(promise.future)
 
     /** Creates an effect from a sequence and handles the sequence to Choice.
