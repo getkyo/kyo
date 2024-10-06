@@ -73,9 +73,12 @@ object Loop:
             def _3 = v3
             def _4 = v4
 
-    inline def apply[A, O, S](inline input: A)(inline run: A => Outcome[A, O] < S)(using inline _frame: Frame): O < S =
+    inline def apply[A, O, S](inline input: A)(inline run: Safepoint ?=> A => Outcome[A, O] < S)(using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(i1: A)(v: Outcome[A, O] < S = run(i1)): O < S =
+        @tailrec def loop(i1: A)(v: Outcome[A, O] < S = run(i1))(using Safepoint): O < S =
             v match
                 case next: Continue[A] @unchecked =>
                     loop(next._1)()
@@ -89,9 +92,13 @@ object Loop:
         loop(input)()
     end apply
 
-    inline def apply[A, B, O, S](input1: A, input2: B)(inline run: (A, B) => Outcome2[A, B, O] < S)(using inline _frame: Frame): O < S =
+    inline def apply[A, B, O, S](input1: A, input2: B)(inline run: Safepoint ?=> (A, B) => Outcome2[A, B, O] < S)(
+        using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(i1: A, i2: B)(v: Outcome2[A, B, O] < S = run(i1, i2)): O < S =
+        @tailrec def loop(i1: A, i2: B)(v: Outcome2[A, B, O] < S = run(i1, i2))(using Safepoint): O < S =
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(next._1, next._2)()
@@ -106,10 +113,10 @@ object Loop:
     end apply
 
     inline def apply[A, B, C, O, S](input1: A, input2: B, input3: C)(
-        inline run: (A, B, C) => Outcome3[A, B, C, O] < S
-    )(using inline _frame: Frame): O < S =
+        inline run: Safepoint ?=> (A, B, C) => Outcome3[A, B, C, O] < S
+    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(i1: A, i2: B, i3: C)(v: Outcome3[A, B, C, O] < S = run(i1, i2, i3)): O < S =
+        @tailrec def loop(i1: A, i2: B, i3: C)(v: Outcome3[A, B, C, O] < S = run(i1, i2, i3))(using Safepoint): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(next._1, next._2, next._3)()
@@ -124,10 +131,10 @@ object Loop:
     end apply
 
     inline def apply[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
-        inline run: (A, B, C, D) => Outcome4[A, B, C, D, O] < S
-    )(using inline _frame: Frame): O < S =
+        inline run: Safepoint ?=> (A, B, C, D) => Outcome4[A, B, C, D, O] < S
+    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(i1: A, i2: B, i3: C, i4: D)(v: Outcome4[A, B, C, D, O] < S = run(i1, i2, i3, i4)): O < S =
+        @tailrec def loop(i1: A, i2: B, i3: C, i4: D)(v: Outcome4[A, B, C, D, O] < S = run(i1, i2, i3, i4))(using Safepoint): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(next._1, next._2, next._3, next._4)()
@@ -141,9 +148,12 @@ object Loop:
         loop(input1, input2, input3, input4)()
     end apply
 
-    inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using inline _frame: Frame): O < S =
+    inline def indexed[O, S](inline run: Int => Outcome[Unit, O] < S)(using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int)(v: Outcome[Unit, O] < S = run(idx)): O < S =
+        @tailrec def loop(idx: Int)(v: Outcome[Unit, O] < S = run(idx))(using Safepoint): O < S =
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop(idx + 1)()
@@ -157,9 +167,12 @@ object Loop:
         loop(0)()
     end indexed
 
-    inline def indexed[A, O, S](input: A)(inline run: (Int, A) => Outcome[A, O] < S)(using inline _frame: Frame): O < S =
+    inline def indexed[A, O, S](input: A)(inline run: Safepoint ?=> (Int, A) => Outcome[A, O] < S)(using
+        inline _frame: Frame,
+        safepoint: Safepoint
+    ): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int, i1: A)(v: Outcome[A, O] < S = run(idx, i1)): O < S =
+        @tailrec def loop(idx: Int, i1: A)(v: Outcome[A, O] < S = run(idx, i1))(using Safepoint): O < S =
             v match
                 case next: Continue[A] @unchecked =>
                     loop(idx + 1, next._1)()
@@ -174,10 +187,10 @@ object Loop:
     end indexed
 
     inline def indexed[A, B, O, S](input1: A, input2: B)(
-        inline run: (Int, A, B) => Outcome2[A, B, O] < S
-    )(using inline _frame: Frame): O < S =
+        inline run: Safepoint ?=> (Int, A, B) => Outcome2[A, B, O] < S
+    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int, i1: A, i2: B)(v: Outcome2[A, B, O] < S = run(idx, i1, i2)): O < S =
+        @tailrec def loop(idx: Int, i1: A, i2: B)(v: Outcome2[A, B, O] < S = run(idx, i1, i2))(using Safepoint): O < S =
             v match
                 case next: Continue2[A, B] @unchecked =>
                     loop(idx + 1, next._1, next._2)()
@@ -192,10 +205,10 @@ object Loop:
     end indexed
 
     inline def indexed[A, B, C, O, S](input1: A, input2: B, input3: C)(
-        inline run: (Int, A, B, C) => Outcome3[A, B, C, O] < S
-    )(using inline _frame: Frame): O < S =
+        inline run: Safepoint ?=> (Int, A, B, C) => Outcome3[A, B, C, O] < S
+    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(idx: Int, i1: A, i2: B, i3: C)(v: Outcome3[A, B, C, O] < S = run(idx, i1, i2, i3)): O < S =
+        @tailrec def loop(idx: Int, i1: A, i2: B, i3: C)(v: Outcome3[A, B, C, O] < S = run(idx, i1, i2, i3))(using Safepoint): O < S =
             v match
                 case next: Continue3[A, B, C] @unchecked =>
                     loop(idx + 1, next._1, next._2, next._3)()
@@ -210,11 +223,11 @@ object Loop:
     end indexed
 
     inline def indexed[A, B, C, D, O, S](input1: A, input2: B, input3: C, input4: D)(
-        inline run: (Int, A, B, C, D) => Outcome4[A, B, C, D, O] < S
-    )(using inline _frame: Frame): O < S =
+        inline run: Safepoint ?=> (Int, A, B, C, D) => Outcome4[A, B, C, D, O] < S
+    )(using inline _frame: Frame, safepoint: Safepoint): O < S =
         @nowarn("msg=anonymous")
         @tailrec def loop(idx: Int, i1: A, i2: B, i3: C, i4: D)(v: Outcome4[A, B, C, D, O] < S =
-            run(idx, i1, i2, i3, i4)): O < S =
+            run(idx, i1, i2, i3, i4))(using Safepoint): O < S =
             v match
                 case next: Continue4[A, B, C, D] @unchecked =>
                     loop(idx + 1, next._1, next._2, next._3, next._4)()
@@ -228,9 +241,9 @@ object Loop:
         loop(0, input1, input2, input3, input4)()
     end indexed
 
-    inline def foreach[S](inline run: => Outcome[Unit, Unit] < S)(using inline _frame: Frame): Unit < S =
+    inline def foreach[S](inline run: Safepoint ?=> Outcome[Unit, Unit] < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(v: Outcome[Unit, Unit] < S = run): Unit < S =
+        @tailrec def loop(v: Outcome[Unit, Unit] < S = run)(using Safepoint): Unit < S =
             v match
                 case next: Continue[Unit] @unchecked =>
                     loop()
@@ -244,9 +257,9 @@ object Loop:
         loop()
     end foreach
 
-    inline def repeat[S](n: Int)(inline run: => Unit < S)(using inline _frame: Frame): Unit < S =
+    inline def repeat[S](n: Int)(inline run: Safepoint ?=> Unit < S)(using inline _frame: Frame, safepoint: Safepoint): Unit < S =
         @nowarn("msg=anonymous")
-        @tailrec def loop(i: Int)(v: Outcome[Unit, Unit] < S = run): Unit < S =
+        @tailrec def loop(i: Int)(v: Outcome[Unit, Unit] < S = run)(using Safepoint): Unit < S =
             if i == n then ()
             else
                 v match
@@ -263,7 +276,7 @@ object Loop:
         loop(0)()
     end repeat
 
-    inline def forever[S](inline run: Unit < S)(using Frame): Unit < S =
+    inline def forever[S](inline run: Safepoint ?=> Unit < S)(using Frame, Safepoint): Unit < S =
         def _loop(): Unit < S = loop()
         @tailrec def loop(): Unit < S =
             run match
