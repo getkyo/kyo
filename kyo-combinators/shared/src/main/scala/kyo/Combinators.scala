@@ -637,32 +637,6 @@ extension [A, S](effect: A < (S & Choice))
       */
     def handleChoice(using Flat[A], Frame): Seq[A] < S = Choice.run(effect)
 
-    /** Translates the Choice effect to an Abort[E] effect in case the result is empty.
-      *
-      * @return
-      *   A computation that produces the result of this computation with Abort[E] effect
-      */
-    def choiceToAbort[E](error: => E)(using Flat[A], Frame): A < (S & Abort[E]) =
-        Choice.run(effect).map {
-            case s if s.isEmpty => Kyo.fail(error)
-            case s              => s.head
-        }
-
-    /** Translates the Choice effect to an Abort[Throwable] effect.
-      *
-      * @return
-      *   A computation that produces the result of this computation with Abort[Throwable] effect
-      */
-    def choiceToThrowable(using Flat[A], Frame): A < (S & Abort[Throwable]) =
-        choiceToAbort(new NoSuchElementException("head of empty list"))
-
-    /** Translates the Choice effect to an Abort[Maybe.Empty] effect.
-      *
-      * @return
-      *   A computation that produces the result of this computation with Abort[Maybe.Empty] effect
-      */
-    def choiceToEmpty(using Flat[A], Frame): A < (S & Abort[Maybe.Empty]) =
-        choiceToAbort(Maybe.Empty)
 end extension
 
 extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
