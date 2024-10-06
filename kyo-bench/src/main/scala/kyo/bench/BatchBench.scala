@@ -43,7 +43,7 @@ class BatchBench extends Bench.SyncAndFork(5050):
 
     object KyoImpl:
         import kyo.*
-        val source = Batch.sourceSeq[Int, Int, Any](_.map(_ + 1))
+        val source = Batch.source[Int, Int, Any]((seq: Seq[Int]) => ((key: Int) => key + 1): (Int => Int < Any))
 
     def kyoBench() =
         import kyo.*
