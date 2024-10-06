@@ -30,7 +30,9 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       * @return
       *   true if the Chunk contains no elements, false otherwise
       */
-    final override def isEmpty: Boolean = size == 0
+    final override def isEmpty: Boolean = length == 0
+
+    override def length: Int
 
     /** Takes the first n elements of the Chunk.
       *
@@ -40,7 +42,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       *   a new Chunk containing the first n elements
       */
     override def take(n: Int): Chunk[A] =
-        dropLeftAndRight(0, size - Math.min(Math.max(0, n), size))
+        dropLeftAndRight(0, length - Math.min(Math.max(0, n), length))
 
     /** Drops the first n elements of the Chunk.
       *
@@ -60,7 +62,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       *   a new Chunk with the first n elements removed
       */
     final def dropLeft(n: Int): Chunk[A] =
-        dropLeftAndRight(Math.min(size, Math.max(0, n)), 0)
+        dropLeftAndRight(Math.min(length, Math.max(0, n)), 0)
 
     /** Drops the last n elements of the Chunk.
       *
@@ -70,7 +72,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       *   a new Chunk with the last n elements removed
       */
     override def dropRight(n: Int): Chunk[A] =
-        dropLeftAndRight(0, Math.min(size, Math.max(0, n)))
+        dropLeftAndRight(0, Math.min(length, Math.max(0, n)))
 
     /** Returns a Chunk that is a slice of this Chunk.
       *
@@ -82,7 +84,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       *   a new Chunk containing the specified slice
       */
     override def slice(from: Int, until: Int): Chunk[A] =
-        dropLeftAndRight(Math.max(0, from), size - Math.min(size, until))
+        dropLeftAndRight(Math.max(0, from), length - Math.min(length, until))
 
     /** Drops elements from both ends of the Chunk.
       *
@@ -95,16 +97,16 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       */
     final def dropLeftAndRight(left: Int, right: Int): Chunk[A] =
         @tailrec def loop(c: Chunk[A], left: Int, right: Int): Chunk[A] =
-            val size = c.size - left - right
-            if size <= 0 then Chunk.empty
+            val length = c.length - left - right
+            if length <= 0 then Chunk.empty
             else
                 c match
                     case Drop(chunk, dropLeft, dropRight, _) =>
-                        Drop(chunk, left + dropLeft, right + dropRight, size)
-                    case Append(chunk, value, size) if right > 0 =>
+                        Drop(chunk, left + dropLeft, right + dropRight, length)
+                    case Append(chunk, value, length) if right > 0 =>
                         loop(chunk, left, right - 1)
                     case _ =>
-                        Drop(c, left, right, size)
+                        Drop(c, left, right, length)
             end if
         end loop
         loop(this, left, right)
@@ -118,7 +120,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       *   a new Chunk with the element appended
       */
     final def append(v: A): Chunk[A] =
-        Append(this, v, size + 1)
+        Append(this, v, length + 1)
 
     /** Returns the last element of the Chunk.
       *
@@ -130,10 +132,10 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
     override def last: A =
         @tailrec def loop(c: Chunk[A], index: Int): A =
             c match
-                case c if index >= c.size || index < 0 =>
+                case c if index >= c.length || index < 0 =>
                     throw new NoSuchElementException
                 case c: Append[A] =>
-                    if index == c.size - 1 then
+                    if index == c.length - 1 then
                         c.value
                     else
                         loop(c.chunk, index)
@@ -141,7 +143,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
                     loop(c.chunk, index + c.dropLeft)
                 case c: Indexed[A] =>
                     c(index)
-        loop(this, this.size - 1)
+        loop(this, this.length - 1)
     end last
 
     //////////////////
@@ -180,7 +182,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       * @return
       *   an Iterator[A] over the elements of the Chunk
       */
-    def iterator: Iterator[A] = toArray.iterator
+    def iterator: Iterator[A] = toIndexed.iterator
 
     /** Concatenates this Chunk with another Chunk.
       *
@@ -193,8 +195,8 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
         if isEmpty then other
         else if other.isEmpty then this
         else
-            val s     = size
-            val array = new Array[A](s + other.size)
+            val s     = length
+            val array = new Array[A](s + other.length)
             this.copyTo(array, 0)
             other.copyTo(array, s)
             Compact(array)
@@ -224,10 +226,10 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
     final def changes(first: Maybe[A])(using CanEqual[A, A]): Chunk[A] =
         if isEmpty then Chunk.empty
         else
-            val size    = this.size
+            val length  = this.length
             val indexed = this.toIndexed
             @tailrec def loop(idx: Int, prev: Maybe[A], acc: Chunk[A]): Chunk[A] =
-                if idx < size then
+                if idx < length then
                     val v = indexed(idx)
                     if prev.contains(v) then
                         loop(idx + 1, prev, acc)
@@ -266,7 +268,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
             @tailrec def totalSize(idx: Int = 0, acc: Int = 0): Int =
                 if idx < nested.length then
                     val chunk = nested(idx).asInstanceOf[Chunk[B]]
-                    totalSize(idx + 1, acc + chunk.size)
+                    totalSize(idx + 1, acc + chunk.length)
                 else
                     acc
 
@@ -276,7 +278,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
                 if idx < nested.length then
                     val chunk = nested(idx).asInstanceOf[Chunk[B]]
                     chunk.copyTo(unnested, offset)
-                    copy(idx + 1, offset + chunk.size)
+                    copy(idx + 1, offset + chunk.length)
             copy()
 
             Compact(unnested)
@@ -290,7 +292,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       *   the starting position in the array
       */
     final def copyTo[B >: A](array: Array[B], start: Int): Unit =
-        copyTo(array, start, size)
+        copyTo(array, start, length)
 
     /** Copies a specified number of elements from this Chunk to an array.
       *
@@ -319,10 +321,10 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
                     if l > 0 then
                         System.arraycopy(c.array, dropLeft, array, start, l - dropRight - dropLeft)
                 case c: FromSeq[A] =>
-                    val seq  = c.value
-                    val size = Math.min(end, c.value.size - dropLeft - dropRight)
+                    val seq    = c.value
+                    val length = Math.min(end, c.value.length - dropLeft - dropRight)
                     @tailrec def loop(index: Int): Unit =
-                        if index < size then
+                        if index < length then
                             array(start + index) = seq(index + dropLeft)
                             loop(index + 1)
                     loop(0)
@@ -336,7 +338,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       *   an Array containing all elements of this Chunk
       */
     override def toArray[B >: A: ClassTag]: Array[B] =
-        val array = new Array[B](size)
+        val array = new Array[B](length)
         copyTo(array, 0)
         array
     end toArray
@@ -362,6 +364,7 @@ object Chunk:
       *   the type of elements in the Indexed Chunk
       */
     sealed abstract class Indexed[A] extends Chunk[A]:
+        self =>
 
         //////////////////
         // O(1) methods //
@@ -397,13 +400,24 @@ object Chunk:
           *   a new Indexed Chunk without the first element
           */
         final override def tail: Indexed[A] =
-            if size <= 1 then cachedEmpty.asInstanceOf[Indexed[A]]
+            if length <= 1 then cachedEmpty.asInstanceOf[Indexed[A]]
             else
                 this match
-                    case Tail(chunk, offset, size) =>
-                        Tail(chunk, offset + 1, size - 1)
+                    case Tail(chunk, offset, length) =>
+                        Tail(chunk, offset + 1, length - 1)
                     case c =>
-                        Tail(c, 1, size - 1)
+                        Tail(c, 1, length - 1)
+
+        override def iterator: Iterator[A] =
+            new Iterator[A]:
+                var curr    = 0
+                def hasNext = curr < self.length
+                def next() =
+                    val r = self(curr)
+                    curr += 1
+                    r
+                end next
+
     end Indexed
 
     /** Returns an empty Chunk.
@@ -487,9 +501,9 @@ object Chunk:
         final case class FromSeq[A](
             value: IndexedSeq[A]
         ) extends Indexed[A]:
-            def length = value.size
+            val length = value.length
             override def apply(i: Int) =
-                if i >= size || i < 0 then
+                if i >= length || i < 0 then
                     throw new IndexOutOfBoundsException(s"Index out of range: $i")
                 else
                     value(i)
@@ -502,7 +516,7 @@ object Chunk:
         ) extends Indexed[A]:
             def length = array.length
             override def apply(i: Int) =
-                if i >= size || i < 0 then
+                if i >= length || i < 0 then
                     throw new IndexOutOfBoundsException(s"Index out of range: $i")
                 else
                     array(i)
