@@ -4,6 +4,7 @@ import io.grpc.StatusException
 import io.grpc.stub.StreamObserver
 import kyo.*
 import kyo.Result.*
+import org.checkerframework.checker.units.qual.s
 
 // TODO: Should this extend another StreamObserver?
 class ResponseStreamObserver[Response](
@@ -12,11 +13,13 @@ class ResponseStreamObserver[Response](
 )(using Frame) extends StreamObserver[Response]:
 
     override def onNext(response: Response): Unit =
+        println(s"ResponseStreamObserver.onNext: $response")
         // TODO: Do a better job of backpressuring here.
         IO.run(Async.run(responseChannel.put(Success(response)))).unit.eval
     end onNext
 
     override def onError(t: Throwable): Unit =
+        println(s"ResponseStreamObserver.onError: $t")
         // TODO: Do a better job of backpressuring here.
         val putAndClose =
             for
@@ -29,6 +32,7 @@ class ResponseStreamObserver[Response](
     end onError
 
     override def onCompleted(): Unit =
+        print("ResponseStreamObserver.onCompleted")
         val close =
             for
                 _       <- responsesCompleted.set(true)

@@ -45,7 +45,7 @@ object GrpcRequest:
         Abort.run[StatusRuntimeException](request).map(_.fold[Request < Abort[StatusException]]({
             // TODO: Why the partial match here?
             case Result.Fail(ex: StatusRuntimeException) =>
-                Abort.fail(StatusException(ex.getStatus, ex.getTrailers()).tap(_.setStackTrace(ex.getStackTrace)))
+                Abort.fail(StatusException(ex.getStatus, ex.getTrailers).tap(_.setStackTrace(ex.getStackTrace)))
             case Panic(ex) => Abort.panic(ex)
         })(identity))
 
