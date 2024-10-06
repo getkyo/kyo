@@ -106,7 +106,7 @@ object Batch:
       * @return
       *   A sequence of results from executing the batched operations
       */
-    def run[A: Flat, S, S2](v: A < (Batch[S] & S2))(using Frame): Seq[A] < (S & S2) =
+    def run[A: Flat, S, S2](v: A < (Batch[S] & S2))(using Frame): Chunk[A] < (S & S2) =
 
         type SourceAny = Source[Any, Any, S]
         type ContAny   = Any => (ToExpand | Expanded | A) < (Batch[S] & S & S2)
@@ -133,7 +133,7 @@ object Batch:
                 case done: A @unchecked            => Chunk(done)
             }.map(_.flattenChunk)
 
-        def loop(state: Seq[ToExpand | Expanded | A]): Seq[A] < (S & S2) =
+        def loop(state: Seq[ToExpand | Expanded | A]): Chunk[A] < (S & S2) =
             expand(state).map { expanded =>
                 if !expanded.exists((_: @unchecked).isInstanceOf[Expanded]) then
                     expanded.asInstanceOf[Chunk[A]]
