@@ -79,10 +79,10 @@ private object FlatMacro:
                     base =:= TypeRepr.of[Duration]
                 case _ => false
 
-        def hasTag(t: TypeRepr): Boolean =
+        def canDerive(t: TypeRepr): Boolean =
             t.asType match
                 case '[t] =>
-                    Expr.summon[Tag.Full[t]].isDefined
+                    Expr.summon[Tag.Full[t]].isDefined || Expr.summon[Flat[t]].isDefined
 
         def check(t: TypeRepr): Unit =
             t match
@@ -93,7 +93,7 @@ private object FlatMacro:
                     check(a)
                     check(b)
                 case _ =>
-                    if isAny(t) || (!isConcrete(t.dealias) && !hasTag(t) && !isKyoData(t)) then
+                    if isAny(t) || (!isConcrete(t.dealias) && !canDerive(t) && !isKyoData(t)) then
                         fail(
                             s"Cannot prove ${code(print(t))} isn't nested. " +
                                 s"This error can be reported an unsupported pending effect is passed to a method. " +
