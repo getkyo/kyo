@@ -258,5 +258,17 @@ class KyoTest extends Test:
                 assert(Kyo.fill(n)(1).eval == Chunk.fill(n)(1))
             }
         }
+
+        "foreachIndexed" in {
+            assert(Kyo.foreachIndexed(Seq.empty[Int])((idx, v) => (idx, v)).eval == Chunk.empty)
+            assert(Kyo.foreachIndexed(Seq(1))((idx, v) => (idx, v)).eval == Chunk((0, 1)))
+            assert(Kyo.foreachIndexed(Seq(1, 2))((idx, v) => (idx, v)).eval == Chunk((0, 1), (1, 2)))
+            assert(Kyo.foreachIndexed(List(1, 2, 3))((idx, v) => (idx, v)).eval == Chunk((0, 1), (1, 2), (2, 3)))
+            assert(Kyo.foreachIndexed(Vector(1, 2, 3))((idx, v) => (idx, v)).eval == Chunk((0, 1), (1, 2), (2, 3)))
+
+            // Test with a larger sequence
+            val largeSeq = Seq.tabulate(100)(identity)
+            assert(Kyo.foreachIndexed(largeSeq)((idx, v) => idx == v).eval == Chunk.fill(100)(true))
+        }
     }
 end KyoTest
