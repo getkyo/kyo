@@ -229,7 +229,8 @@ class EffectCombinatorTest extends Test:
                         handled.map { v =>
                             assert(v == 4)
                             assert(count == 4)
-                        }                    }
+                        }
+                    }
                 }
             }
         }
