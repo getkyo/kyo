@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.kernel.Boundary
 import kyo.kernel.Reducible
 import scala.annotation.tailrec
 import scala.concurrent.Future
@@ -19,8 +20,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that manages the resource lifecycle using Resource and IO effects
       */
-    def acquireRelease[A, S](acquire: => A < S)(release: A => Unit < IO)(using Frame): A < (S & Resource & IO) =
-        acquire.map(a => Resource.ensure(release(a)).as(a))
+    def acquireRelease[A, S](acquire: => A < S)(release: A => Unit < Async)(using Frame): A < (S & Resource & IO) =
+        Resource.acquireRelease(acquire)(release)
 
     /** Adds a finalizer to the current effect using Resource.
       *
@@ -29,7 +30,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that ensures the finalizer is executed when the effect is completed
       */
-    def addFinalizer(finalizer: => Unit < IO)(using Frame): Unit < (Resource & IO) =
+    def addFinalizer(finalizer: => Unit < Async)(using Frame): Unit < (Resource & IO) =
         Resource.ensure(finalizer)
 
     /** Creates an asynchronous effect that can be completed by the given register function.
@@ -76,12 +77,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   A new sequence with elements collected using the partial function
       */
-    def collect[A, S, A1, S1](
-        sequence: => Seq[A] < S
-    )(
-        useElement: PartialFunction[A, A1 < S1]
-    )(using Frame): Seq[A1] < (S & S1) =
-        sequence.flatMap((seq: Seq[A]) => Kyo.collect(seq.collect(useElement)))
+    def collect[A, S, A1](sequence: Seq[A])(useElement: PartialFunction[A, A1 < S])(using Frame): Seq[A1] < S =
+        Kyo.collect(sequence.collect(useElement))
 
     /** Prints a message to the console.
       *
@@ -90,8 +87,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that prints the message to the console
       */
-    def debugln[S](message: => String < S)(using Frame): Unit < (S & IO) =
-        message.map(m => Console.println(m))
+    def debugln(message: String)(using Frame): Unit < IO =
+        Console.println(message)
 
     /** Creates an effect that fails with Abort[E].
       *
@@ -100,8 +97,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that fails with the given error
       */
-    def fail[E, S](error: => E < S)(using Frame): Nothing < (S & Abort[E]) =
-        error.map(e => Abort.fail(e))
+    def fail[E](error: => E)(using Frame): Nothing < Abort[E] =
+        Abort.fail(error)
 
     /** Applies a function to each element in parallel and returns a new sequence with the results.
       *
@@ -112,12 +109,14 @@ extension (kyoObject: Kyo.type)
       * @return
       *   A new sequence with elements collected using the function
       */
-    def foreachPar[A, S, A1](
-        sequence: => Seq[A] < S
-    )(
-        useElement: A => A1 < Async
-    )(using Flat[A1], Frame): Seq[A1] < (S & Async) =
-        sequence.map(seq => Async.parallel(seq.map(useElement)))
+    def foreachPar[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
+        using
+        flat: Flat[A1],
+        boundary: Boundary[Ctx, Async],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): Seq[A1] < (reduce.SReduced & Async & Ctx) =
+        Async.parallel[E, A1, Ctx](sequence.map(useElement))
 
     /** Applies a function to each element in parallel and discards the results.
       *
@@ -128,12 +127,14 @@ extension (kyoObject: Kyo.type)
       * @return
       *   Discards the results of the function application and returns Unit
       */
-    def foreachParDiscard[A, S, Any](
-        sequence: => Seq[A] < S
-    )(
-        useElement: A => Any < Async
-    )(using Flat[Any], Frame): Unit < (S & Async) =
-        sequence.map(seq => Async.parallel(seq.map(v => useElement(v)))).unit
+    def foreachParDiscard[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
+        using
+        flat: Flat[A1],
+        boundary: Boundary[Ctx, Async],
+        reduce: Reducible[Abort[E]],
+        frame: Frame
+    ): Unit < (reduce.SReduced & Async & Ctx) =
+        foreachPar(sequence)(useElement).unit
 
     /** Creates an effect from an AutoCloseable resource.
       *
@@ -152,8 +153,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles Left[E] to Abort[E].
       */
-    def fromEither[E, A, S](either: => Either[E, A] < S)(using Frame): A < (S & Abort[E]) =
-        either.map(Abort.get(_))
+    def fromEither[E, A](either: Either[E, A])(using Frame): A < Abort[E] =
+        Abort.get(either)
 
     /** Creates an effect from an Option[A] and handles None to Abort[Maybe.Empty].
       *
@@ -162,8 +163,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles None to Abort[Maybe.Empty].
       */
-    def fromOption[A, S](option: => Option[A] < S)(using Frame): A < (S & Abort[Maybe.Empty]) =
-        option.map(o => Abort.get(o.toRight[Maybe.Empty](Maybe.Empty)))
+    def fromOption[A](option: Option[A])(using Frame): A < Abort[Maybe.Empty] =
+        Abort.get(option)
 
     /** Creates an effect from a Maybe[A] and handles Maybe.Empty to Abort[Maybe.Empty].
       *
@@ -172,8 +173,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles Maybe.Empty to Abort[Maybe.Empty].
       */
-    def fromMaybe[A, S](maybe: => Maybe[A] < S)(using Frame): A < (S & Abort[Maybe.Empty]) =
-        maybe.map(m => Abort.get(m))
+    def fromMaybe[A](maybe: Maybe[A])(using Frame): A < Abort[Maybe.Empty] =
+        Abort.get(maybe)
 
     /** Creates an effect from a Result[E, A] and handles Result.Failure[E] to Abort[E].
       *
@@ -182,8 +183,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles Result.Failure[E] to Abort[E].
       */
-    def fromResult[E, A, S](result: => Result[E, A] < S)(using Frame): A < (S & Abort[E]) =
-        result.map(Abort.get(_))
+    def fromResult[E, A](result: Result[E, A])(using Frame): A < Abort[E] =
+        Abort.get(result)
 
     /** Creates an effect from a Future[A] and handles the Future to Async.
       *
@@ -192,8 +193,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Future to Async.
       */
-    def fromFuture[A: Flat, S](future: => Future[A] < S)(using Frame): A < (S & Async & Abort[Throwable]) =
-        future.map(f => Async.fromFuture(f))
+    def fromFuture[A: Flat](future: => Future[A])(using Frame): A < (Async & Abort[Throwable]) =
+        Async.fromFuture(future)
 
     /** Creates an effect from a Promise[A] and handles the Promise to Async.
       *
@@ -202,8 +203,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Promise to Async.
       */
-    def fromPromiseScala[A: Flat, S](promise: => scala.concurrent.Promise[A] < S)(using Frame): A < (S & Async & Abort[Throwable]) =
-        promise.map(p => fromFuture(p.future))
+    def fromPromiseScala[A: Flat](promise: => scala.concurrent.Promise[A])(using Frame): A < (Async & Abort[Throwable]) =
+        fromFuture(promise.future)
 
     /** Creates an effect from a sequence and handles the sequence to Choice.
       *
@@ -212,8 +213,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the sequence to Choice.
       */
-    def fromSeq[A, S](sequence: => Seq[A] < S)(using Frame): A < (S & Choice) =
-        sequence.map(seq => Choice.get(seq))
+    def fromSeq[A](sequence: Seq[A])(using Frame): A < Choice =
+        Choice.get(sequence)
 
     /** Creates an effect from a Try[A] and handles the Try to Abort[Throwable].
       *
@@ -222,8 +223,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that attempts to run the given effect and handles the Try to Abort[Throwable].
       */
-    def fromTry[A, S](_try: => scala.util.Try[A] < S)(using Frame): A < (S & Abort[Throwable]) =
-        _try.map(Abort.get(_))
+    def fromTry[A](_try: scala.util.Try[A])(using Frame): A < Abort[Throwable] =
+        Abort.get(_try)
 
     /** Logs an informational message to the console.
       *
@@ -232,8 +233,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message to the console
       */
-    inline def logInfo[S](message: => String < S): Unit < (S & IO) =
-        message.map(m => Log.info(m))
+    inline def logInfo(inline message: => String): Unit < IO =
+        Log.info(message)
 
     /** Logs an informational message to the console with an error.
       *
@@ -244,11 +245,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message and error to the console
       */
-    inline def logInfo[S, S1](
-        message: => String < S,
-        err: => Throwable < S1
-    ): Unit < (S & S1 & IO) =
-        message.map(m => err.map(e => Log.info(m, e)))
+    inline def logInfo(inline message: => String, inline err: => Throwable): Unit < IO =
+        Log.info(message, err)
 
     /** Logs a warning message to the console.
       *
@@ -257,8 +255,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message to the console
       */
-    inline def logWarn[S](message: => String < S): Unit < (S & IO) =
-        message.map(m => Log.warn(m))
+    inline def logWarn(inline message: => String): Unit < IO =
+        Log.warn(message)
 
     /** Logs a warning message to the console with an error.
       *
@@ -269,11 +267,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message and error to the console
       */
-    inline def logWarn[S, S1](
-        message: => String < S,
-        err: => Throwable < S1
-    ): Unit < (S & S1 & IO) =
-        message.map(m => err.map(e => Log.warn(m, e)))
+    inline def logWarn[S, S1](inline message: => String, inline err: => Throwable): Unit < IO =
+        Log.warn(message, err)
 
     /** Logs a debug message to the console.
       *
@@ -282,8 +277,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message to the console
       */
-    inline def logDebug[S](message: => String < S): Unit < (S & IO) =
-        message.map(m => Log.debug(m))
+    inline def logDebug(inline message: => String): Unit < IO =
+        Log.debug(message)
 
     /** Logs a debug message to the console with an error.
       *
@@ -294,11 +289,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message and error to the console
       */
-    inline def logDebug[S, S1](
-        message: => String < S,
-        err: => Throwable < S1
-    ): Unit < (S & S1 & IO) =
-        message.map(m => err.map(e => Log.debug(m, e)))
+    inline def logDebug(inline message: => String, inline err: => Throwable): Unit < IO =
+        Log.debug(message, err)
 
     /** Logs an error message to the console.
       *
@@ -307,8 +299,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message to the console
       */
-    inline def logError[S](message: => String < S): Unit < (S & IO) =
-        message.map(m => Log.error(m))
+    inline def logError(inline message: => String): Unit < IO =
+        Log.error(message)
 
     /** Logs an error message to the console with an error.
       *
@@ -319,11 +311,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message and error to the console
       */
-    inline def logError[S, S1](
-        message: => String < S,
-        err: => Throwable < S1
-    ): Unit < (S & S1 & IO) =
-        message.map(m => err.map(e => Log.error(m, e)))
+    inline def logError(inline message: => String, inline err: => Throwable): Unit < IO =
+        Log.error(message, err)
 
     /** Logs a trace message to the console.
       *
@@ -332,8 +321,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message to the console
       */
-    inline def logTrace[S](message: => String < S): Unit < (S & IO) =
-        message.map(m => Log.trace(m))
+    inline def logTrace(inline message: => String): Unit < IO =
+        Log.trace(message)
 
     /** Logs a trace message to the console with an error.
       *
@@ -344,11 +333,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that logs the message and error to the console
       */
-    inline def logTrace[S, S1](
-        message: => String < S,
-        err: => Throwable < S1
-    ): Unit < (S & S1 & IO) =
-        message.map(m => err.map(e => Log.trace(m, e)))
+    inline def logTrace(inline message: => String, inline err: Throwable): Unit < IO =
+        Log.trace(message, err)
 
     /** Creates an effect that never completes using Async.
       *
@@ -368,18 +354,14 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that provides the dependency to the effect
       */
-    def provideFor[E, SD, A, SA, ER](
-        dependency: => E < SD
-    )(
-        effect: A < (SA & Env[E | ER])
-    )(
+    def provideFor[E, A, SA, ER](dependency: E)(effect: A < (SA & Env[E | ER]))(
         using
         reduce: Reducible[Env[ER]],
         t: Tag[E],
         fl: Flat[A],
         frame: Frame
-    ): A < (SA & SD & reduce.SReduced) =
-        dependency.map(d => Env.run(d)(effect))
+    ): A < (SA & reduce.SReduced) =
+        Env.run(dependency)(effect)
 
     /** Creates a scoped effect using Resource.
       *
@@ -416,8 +398,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that sleeps for the given duration
       */
-    def sleep[S](duration: => Duration < S)(using Frame): Unit < (S & Async) =
-        duration.map(d => Async.sleep(d))
+    def sleep(duration: Duration)(using Frame): Unit < Async =
+        Async.sleep(duration)
 
     /** Suspends an effect using IO.
       *
@@ -449,10 +431,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that traverses the sequence of effects and collects the results
       */
-    def traverse[A, S, S1](
-        sequence: => Seq[A < S] < S1
-    )(using Frame): Seq[A] < (S & S1) =
-        sequence.flatMap((seq: Seq[A < S]) => Kyo.collect(seq))
+    def traverse[A, S](sequence: Seq[A < S])(using Frame): Seq[A] < S =
+        Kyo.collect(sequence)
 
     /** Traverses a sequence of effects and discards the results.
       *
@@ -461,10 +441,8 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that traverses the sequence of effects and discards the results
       */
-    def traverseDiscard[A, S, S1](
-        sequence: => Seq[A < S] < S1
-    )(using Frame): Unit < (S & S1) =
-        sequence.flatMap(Kyo.collectDiscard)
+    def traverseDiscard[A, S](sequence: Seq[A < S])(using Frame): Unit < S =
+        Kyo.collectDiscard(sequence)
 
     /** Traverses a sequence of effects in parallel and collects the results.
       *
@@ -473,10 +451,10 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that traverses the sequence of effects in parallel and collects the results
       */
-    def traversePar[A, S](
-        sequence: => Seq[A < Async] < S
-    )(using Flat[A], Frame): Seq[A] < (S & Async) =
-        sequence.map(seq => foreachPar(seq)(identity))
+    def traversePar[A](
+        sequence: => Seq[A < Async]
+    )(using Flat[A], Frame): Seq[A] < Async =
+        foreachPar(sequence)(identity)
 
     /** Traverses a sequence of effects in parallel and discards the results.
       *
@@ -485,10 +463,9 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that traverses the sequence of effects in parallel and discards the results
       */
-    def traverseParDiscard[A, S](
-        sequence: => Seq[A < Async] < S
-    )(using Flat[A < S], Frame): Unit < (S & Async) =
-        sequence.map(seq =>
-            foreachPar(seq.map(_.unit))(identity).unit
-        )
+    def traverseParDiscard[A](
+        sequence: => Seq[A < Async]
+    )(using Flat[A], Frame): Unit < Async =
+        foreachPar(sequence)(identity).unit
+
 end extension

@@ -41,16 +41,6 @@ extension [A, S](effect: A < S)
     def <*>[A1, S1](next: => A1 < S1)(using Frame): (A, A1) < (S & S1) =
         effect.map(e => next.map(n => (e, n)))
 
-    /** Performs this computation, discards its result, and returns the given value.
-      *
-      * @param value
-      *   The value to return
-      * @return
-      *   A computation that produces the given value
-      */
-    inline def as[A1, S1](value: => A1 < S1)(using inline frame: Frame): A1 < (S & S1) =
-        effect.map(_ => value)
-
     /** Performs this computation and prints its result to the console.
       *
       * @return
@@ -72,8 +62,8 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def delayed[S1](duration: Duration < S1)(using Frame): A < (S & S1 & Async) =
-        duration.map(d => Async.delay(d)(effect))
+    def delayed(duration: Duration)(using Frame): A < (S & Async) =
+        Async.delay(duration)(effect)
 
     /** Performs this computation repeatedly with a backoff policy.
       *
@@ -95,12 +85,10 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the last execution
       */
-    def repeat[S1](limit: Int < S1)(using Flat[A], Frame): A < (S & S1) =
-        limit.map { limit =>
-            Loop.indexed { i =>
-                if i >= limit then effect.map(Loop.done)
-                else effect.as(Loop.continue)
-            }
+    def repeat(limit: Int)(using Flat[A], Frame): A < S =
+        Loop.indexed { i =>
+            if i >= limit then effect.map(Loop.done)
+            else effect.as(Loop.continue)
         }
 
     /** Performs this computation repeatedly with a backoff policy and a limit.
@@ -112,17 +100,11 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Async effect
       */
-    def repeat[S1](backoff: Int => Duration, limit: => Int < S1)(using
-        Flat[A],
-        Frame
-    ): A < (S & S1 & Async) =
-        limit.map { limit =>
-            Loop.indexed { i =>
-                if i >= limit then effect.map(Loop.done)
-                else effect.delayed(backoff(i)).as(Loop.continue)
-            }
+    def repeat(backoff: Int => Duration, limit: Int)(using Flat[A], Frame): A < (S & Async) =
+        Loop.indexed { i =>
+            if i >= limit then effect.map(Loop.done)
+            else effect.delayed(backoff(i)).as(Loop.continue)
         }
-    end repeat
 
     /** Performs this computation repeatedly while the given condition holds.
       *
@@ -149,10 +131,7 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the last successful execution before the condition becomes false
       */
-    def repeatWhile[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using
-        Flat[A],
-        Frame
-    ): A < (S & S1 & Async) =
+    def repeatWhile[S1](fn: (A, Int) => (Boolean, Duration) < S1)(using Flat[A], Frame): A < (S & S1 & Async) =
         def loop(last: A, i: Int): A < (S & S1 & Async) =
             fn(last, i).map { case (cont, duration) =>
                 if cont then effect.delayed(duration).map(v => loop(v, i + 1))
@@ -217,8 +196,8 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Async and Abort[Throwable] effects
       */
-    def retry[S1](n: => Int < S1)(using Flat[A], Frame): A < (S & S1 & Async & Abort[Throwable]) =
-        n.map(nPure => Retry[Throwable](Retry.Policy(_ => Duration.Zero, nPure))(effect))
+    def retry(n: Int)(using Flat[A], Frame): A < (S & Async & Abort[Throwable]) =
+        Retry[Throwable](Retry.Policy(_ => Duration.Zero, n))(effect)
 
     /** Performs this computation repeatedly with a backoff policy and a limit in case of failures.
       *
@@ -229,11 +208,8 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Async and Abort[Throwable] effects
       */
-    def retry[S1](backoff: Int => Duration, n: => Int < S1)(using
-        Flat[A],
-        Frame
-    ): A < (S & S1 & Async & Abort[Throwable]) =
-        n.map(nPure => Retry[Throwable](Retry.Policy(backoff, nPure))(effect))
+    def retry(backoff: Int => Duration, n: Int)(using Flat[A], Frame): A < (S & Async & Abort[Throwable]) =
+        Retry[Throwable](Retry.Policy(backoff, n))(effect)
 
     /** Performs this computation indefinitely.
       *
@@ -280,6 +256,17 @@ extension [A, S](effect: A < S)
       */
     def unless[S1](condition: Boolean < S1)(using Frame): A < (S & S1 & Abort[Maybe.Empty]) =
         condition.map(c => if c then Abort.fail(Maybe.Empty) else effect)
+
+    /** Ensures that the specified finalizer is executed after this effect, whether it succeeds or fails. The finalizer will execute when
+      * the Resource effect is handled.
+      *
+      * @param finalizer
+      *   The finalizer to execute after this effect
+      * @return
+      *   An effect that executes the finalizer after this effect
+      */
+    def ensuring(finalizer: => Unit < Async)(using Frame): A < (S & Resource & IO) =
+        Resource.ensure(finalizer).andThen(effect)
 
 end extension
 
@@ -417,7 +404,7 @@ extension [A, S, E](effect: A < (Abort[Maybe.Empty] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[Maybe.Empty] effect handled
       */
-    def handleEmptyAbort(using f: Flat[A], frame: Frame): Maybe[A] < S =
+    def handleEmptyAbort(using Flat[A], Frame): Maybe[A] < S =
         Abort.run[Maybe.Empty](effect).map {
             case Result.Fail(_)    => Maybe.Empty
             case Result.Panic(e)   => throw e
@@ -429,7 +416,7 @@ extension [A, S, E](effect: A < (Abort[Maybe.Empty] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[Maybe.Empty] effect translated to Choice
       */
-    def emptyAbortToChoice(using f: Flat[A], frame: Frame): A < (S & Choice) =
+    def emptyAbortToChoice(using Flat[A], Frame): A < (S & Choice) =
         effect.someAbortToChoice[Maybe.Empty]()
 
     /** Handles the Abort[Maybe.Empty] effect translating it to an Abort[E] effect.
@@ -437,14 +424,13 @@ extension [A, S, E](effect: A < (Abort[Maybe.Empty] & S))
       * @return
       *   A computation that produces the result of this computation with the Abort[Maybe.Empty] effect translated to Abort[E]
       */
-    def emptyAbortToFailure[S1](failure: => E < S1)(using f: Flat[A], frame: Frame): A < (S & S1 & Abort[E]) =
+    def emptyAbortToFailure(failure: => E)(using Flat[A], Frame): A < (S & Abort[E]) =
         for
-            f   <- failure
             res <- effect.handleSomeAbort[Maybe.Empty]()
         yield res match
-            case Result.Fail(_)    => Abort.get(Result.Fail(f))
-            case Result.Panic(e)   => Abort.get(Result.Panic(e))
+            case Result.Fail(_)    => Abort.get(Result.Fail(failure))
             case Result.Success(a) => Abort.get(Result.success(a))
+            case res: Result.Panic => Abort.get(res)
 end extension
 
 class SomeAbortToChoiceOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
@@ -592,15 +578,15 @@ extension [A, S, E](effect: A < (S & Env[E]))
       * @return
       *   A computation that produces the result of this computation with the Env[E] effect handled
       */
-    def provideValue[S1, E1 >: E, ER](dependency: E1 < S1)(
+    def provideValue[E1 >: E, ER](dependency: E1)(
         using
         ev: E => E1 & ER,
         flat: Flat[A],
         reduce: Reducible[Env[ER]],
         tag: Tag[E1],
         frame: Frame
-    ): A < (S & S1 & reduce.SReduced) =
-        dependency.map(d => Env.run[E1, A, S, ER](d)(effect.asInstanceOf[A < (S & Env[E1 | ER])]))
+    ): A < (S & reduce.SReduced) =
+        Env.run[E1, A, S, ER](dependency)(effect.asInstanceOf[A < (S & Env[E1 | ER])])
 
     /** Handles the Env[E] effect with the provided layer.
       *
@@ -609,17 +595,16 @@ extension [A, S, E](effect: A < (S & Env[E]))
       * @return
       *   A computation that produces the result of this computation
       */
-    inline def provideLayer[S1, S2, E1 >: E, ER](layer: Layer[E1, S1] < S2)(
+    inline def provideLayer[S1, E1 >: E, ER](layer: Layer[E1, S1])(
         using
         ev: E => E1 & ER,
         flat: Flat[A],
         reduce: Reducible[Env[ER]],
         tag: Tag[E1],
         frame: Frame
-    ): A < (S & S1 & S2 & Memo & reduce.SReduced) =
+    ): A < (S & S1 & Memo & reduce.SReduced) =
         for
-            l  <- layer
-            tm <- l.run
+            tm <- layer.run
             e1 = tm.get[E1]
         yield effect.provideValue(e1)
 
@@ -652,36 +637,6 @@ extension [A, S](effect: A < (S & Choice))
       */
     def handleChoice(using Flat[A], Frame): Seq[A] < S = Choice.run(effect)
 
-    /** Translates the Choice effect to an Abort[E] effect in case the result is empty.
-      *
-      * @return
-      *   A computation that produces the result of this computation with Abort[E] effect
-      */
-    def choiceToAbort[E, S1](error: => E < S1)(
-        using
-        Flat[A],
-        Frame
-    ): A < (S & S1 & Abort[E]) =
-        Choice.run(effect).map {
-            case s if s.isEmpty => Kyo.fail[E, S1](error)
-            case s              => s.head
-        }
-
-    /** Translates the Choice effect to an Abort[Throwable] effect.
-      *
-      * @return
-      *   A computation that produces the result of this computation with Abort[Throwable] effect
-      */
-    def choiceToThrowable(using Flat[A], Frame): A < (S & Abort[Throwable]) =
-        choiceToAbort[Throwable, Any](new NoSuchElementException("head of empty list"))
-
-    /** Translates the Choice effect to an Abort[Maybe.Empty] effect.
-      *
-      * @return
-      *   A computation that produces the result of this computation with Abort[Maybe.Empty] effect
-      */
-    def choiceToEmpty(using Flat[A], Frame): A < (S & Abort[Maybe.Empty]) =
-        choiceToAbort(Maybe.Empty)
 end extension
 
 extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))

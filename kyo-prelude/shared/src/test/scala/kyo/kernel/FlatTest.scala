@@ -18,6 +18,26 @@ class FlatTest extends Test:
                 succeed
             test[Int]
         }
+        "derived from Flat" - {
+            "simple" in {
+                def test[A: Flat] =
+                    implicitly[Flat[A]]
+                    succeed
+                test[Int]
+            }
+            "union item" in {
+                def test[A: Flat] =
+                    implicitly[Flat[Int | A]]
+                    succeed
+                test[Int]
+            }
+            "intersection item" in {
+                def test[A: Flat] =
+                    implicitly[Flat[Thread & A]]
+                    succeed
+                test[Int]
+            }
+        }
     }
 
     "nok" - {
@@ -151,4 +171,5 @@ class FlatTest extends Test:
             succeed
         }
     }
+
 end FlatTest

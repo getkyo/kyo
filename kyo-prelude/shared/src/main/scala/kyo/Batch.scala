@@ -110,8 +110,6 @@ object Batch:
 
         case class Cont(op: Op[?, S], cont: Any => (Cont | A) < (Batch[S] & S & S2))
         def runCont(v: (Cont | A) < (Batch[S] & S & S2)): (Cont | A) < (S & S2) =
-            // TODO workaround, Flat macro isn't inferring correctly with nested classes
-            import Flat.unsafe.bypass
             ArrowEffect.handle(erasedTag[S], v) {
                 [C] => (input, cont) => Cont(input, v => cont(v.asInstanceOf[C]))
             }
