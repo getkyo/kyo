@@ -25,44 +25,6 @@ class ChoiceCombinatorTest extends Test:
             }
         }
 
-        "convert" - {
-
-            "should convert choice to abort, constructing Right from Seq#head" in {
-                val failure: Int < Choice             = Choice.get(Nil)
-                val failureAbort: Int < Abort[String] = failure.choiceToAbort("failure")
-                val handledFailureAbort               = Abort.run[String](failureAbort)
-                assert(handledFailureAbort.eval == Result.fail("failure"))
-                val success: Int < Choice             = Choice.get(Seq(1, 2, 3))
-                val successAbort: Int < Abort[String] = success.choiceToAbort("failure")
-                val handledSuccessAbort               = Abort.run[String](successAbort)
-                assert(handledSuccessAbort.eval == Result.success(1))
-            }
-
-            "should convert choice to throwable abort, constructing Right from Seq#head" in {
-                val failure: Int < Choice                = Choice.get(Nil)
-                val failureAbort: Int < Abort[Throwable] = failure.choiceToThrowable
-                val handledFailureAbort                  = Abort.run[Throwable](failureAbort)
-                assert(handledFailureAbort.eval.failure.get.getMessage.contains(
-                    "head of empty list"
-                ))
-                val success: Int < Choice                = Choice.get(Seq(1, 2, 3))
-                val successAbort: Int < Abort[Throwable] = success.choiceToThrowable
-                val handledSuccessAbort                  = Abort.run[Throwable](successAbort)
-                assert(handledSuccessAbort.eval == Result.success(1))
-            }
-
-            "should convert choice to empty abort, constructing Right from Seq#head" in {
-                val failure: Int < Choice                  = Choice.get(Nil)
-                val failureAbort: Int < Abort[Maybe.Empty] = failure.choiceToEmpty
-                val handledFailureAbort                    = Abort.run[Maybe.Empty](failureAbort)
-                assert(handledFailureAbort.eval == Result.fail(Maybe.Empty))
-                val success: Int < Choice                  = Choice.get(Seq(1, 2, 3))
-                val successAbort: Int < Abort[Maybe.Empty] = success.choiceToEmpty
-                val handledSuccessAbort                    = Abort.run[Maybe.Empty](successAbort)
-                assert(handledSuccessAbort.eval == Result.success(1))
-            }
-        }
-
         "iteration" - {
             "should iterate using foreach" in {
                 var state             = 0

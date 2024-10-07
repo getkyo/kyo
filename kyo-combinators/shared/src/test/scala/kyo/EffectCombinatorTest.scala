@@ -3,20 +3,6 @@ package kyo
 class EffectCombinatorTest extends Test:
 
     "all effects" - {
-        "as" - {
-            "with string value" in {
-                val effect         = IO(23)
-                val effectAsString = effect.as("hello")
-                val handled        = IO.run(effectAsString)
-                assert(handled.eval == "hello")
-            }
-            "with integer value" in {
-                val effect      = IO("test")
-                val effectAsInt = effect.as(42)
-                val handled     = IO.run(effectAsInt)
-                assert(handled.eval == 42)
-            }
-        }
 
         "debug" - {
             "with string value" in {
@@ -173,12 +159,12 @@ class EffectCombinatorTest extends Test:
 
         "delayed" - {
             "with short delay" in {
-                val effect  = IO(42).delayed(IO(1.millis))
+                val effect  = IO(42).delayed(1.millis)
                 val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
                 handled.map(v => assert(v == 42))
             }
             "with zero delay" in {
-                val effect  = IO("test").delayed(IO(0.millis))
+                val effect  = IO("test").delayed(0.millis)
                 val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
                 handled.map(v => assert(v == "test"))
             }
@@ -219,7 +205,7 @@ class EffectCombinatorTest extends Test:
                 "repeat with exponential backoff" in {
                     var count   = 0
                     val backoff = (i: Int) => Math.pow(2, i).toLong.millis
-                    val effect  = IO { count += 1; count }.repeat(backoff, IO(3))
+                    val effect  = IO { count += 1; count }.repeat(backoff, 3)
                     val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
                     handled.map { v =>
                         assert(v == 4)
@@ -326,7 +312,7 @@ class EffectCombinatorTest extends Test:
                         count += 1
                         if count < 3 then throw new Exception("Retry")
                         else count
-                    }.retry(backoff, IO(3))
+                    }.retry(backoff, 3)
                     val handled = IO.run(Async.run(effect).map(_.toFuture)).eval
                     handled.map(v => assert(v == 3))
                 }
@@ -344,6 +330,12 @@ class EffectCombinatorTest extends Test:
                 val handled = IO.run(Abort.run[Throwable](effect))
                 assert(handled.eval.isSuccess)
             }
+        }
+
+        "ensuring" in run {
+            var finalizerCalled = false
+            Resource.run(IO(()).ensuring(IO { finalizerCalled = true }))
+                .andThen(assert(finalizerCalled))
         }
     }
 end EffectCombinatorTest

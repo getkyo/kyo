@@ -276,4 +276,35 @@ class PendingTest extends Test:
         assert(test(nest((): Unit < Any)).eval == ())
     }
 
+    "as" - {
+        "with pure values" in {
+            val x: Int < Any    = 5
+            val y: String < Any = x.as("hello")
+            assert(y.eval == "hello")
+        }
+
+        "with effectful values" in {
+            val effect: Int < Env[Int]    = Env.get[Int]
+            val result: String < Env[Int] = effect.as("test")
+            assert(Env.run(10)(result).eval == "test")
+        }
+
+        "chaining with other operations" in {
+            val x: Int < Any = 5
+            val y: String < Any = x
+                .map(_ * 2)
+                .as("result")
+                .map(_.toUpperCase)
+            assert(y.eval == "RESULT")
+        }
+
+        "preserving effect types" in {
+            val effect: Int < (Env[Int] & Abort[String]) =
+                Env.get[Int].flatMap(x => if x > 5 then Abort.fail("Too big") else x)
+            val result: String < (Env[Int] & Abort[String]) = effect.as("success")
+            val handled                                     = Abort.run(Env.run(10)(result))
+            assert(handled.eval == Result.fail("Too big"))
+        }
+    }
+
 end PendingTest
