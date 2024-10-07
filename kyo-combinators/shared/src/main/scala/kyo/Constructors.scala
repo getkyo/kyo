@@ -465,6 +465,6 @@ extension (kyoObject: Kyo.type)
     def traverseParDiscard[A](
         sequence: => Seq[A < Async]
     )(using Flat[A], Frame): Unit < Async =
-        foreachPar(sequence.map(_.unit))(identity).unit
+        foreachPar(sequence)(identity).unit
 
 end extension
