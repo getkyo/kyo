@@ -1500,7 +1500,6 @@ val f: Unit < IO =
 The `Clock` effect provides utilities for time-related operations, including getting the current time, creating stopwatches, and managing deadlines.
 
 ```scala
-import java.time.Instant
 import kyo.*
 
 // Obtain the current time

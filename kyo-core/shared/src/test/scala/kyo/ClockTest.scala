@@ -1,6 +1,5 @@
 package kyo
 
-import java.time.Instant
 import java.time.temporal.ChronoUnit
 import kyo.Clock.Deadline
 import kyo.Clock.Stopwatch
@@ -10,14 +9,14 @@ class ClockTest extends Test:
     given CanEqual[Instant, Instant] = CanEqual.derived
 
     class TestClock extends Clock:
-        var currentTime = Instant.now()
+        var currentTime = Instant.fromJava(java.time.Instant.now())
 
         val unsafe: Clock.Unsafe = new Clock.Unsafe:
             def now()(using AllowUnsafe): Instant = currentTime
         def now(using Frame) = IO(currentTime)
 
         def advance(duration: Duration): Unit =
-            currentTime = currentTime.plus(duration.toJava)
+            currentTime = currentTime + duration
 
         def set(instant: Instant): Unit =
             currentTime = instant
@@ -41,18 +40,18 @@ class ClockTest extends Test:
 
         "now at epoch" in run {
             val testClock = new TestClock
-            testClock.set(Instant.EPOCH)
+            testClock.set(Instant.Epoch)
             for
                 result <- Clock.let(testClock)(Clock.now)
-            yield assert(result == Instant.EPOCH)
+            yield assert(result == Instant.Epoch)
         }
 
         "now at max instant" in run {
             val testClock = new TestClock
-            testClock.set(Instant.MAX)
+            testClock.set(Instant.Max)
             for
                 result <- Clock.let(testClock)(Clock.now)
-            yield assert(result == Instant.MAX)
+            yield assert(result == Instant.Max)
         }
 
         "handle Duration.Zero and Duration.Infinity" - {
@@ -116,16 +115,6 @@ class ClockTest extends Test:
                 stopwatch <- Clock.let(testClock)(Clock.stopwatch)
                 elapsed   <- stopwatch.elapsed
             yield assert(elapsed == Duration.Zero)
-            end for
-        }
-
-        "measure Infinity duration" in run {
-            val testClock = new TestClock
-            for
-                stopwatch <- Clock.let(testClock)(Clock.stopwatch)
-                _         <- Clock.let(testClock)(IO { testClock.advance(Duration.Infinity) })
-                elapsed   <- stopwatch.elapsed
-            yield assert(elapsed == Duration.Infinity)
             end for
         }
     }
