@@ -8,11 +8,12 @@ class ConstructorsTest extends Test:
 
     "Kyo constructors" - {
         "debugln" - {
-            "should print a message to the console" in {
+            "should print a message to the console" in run {
                 val effect = Kyo.debugln("Test message")
-                val result = IO.run(effect).eval
-                // Note: This test doesn't actually verify console output
-                assert(result == ())
+                effect.map { result =>
+                    // Note: This test doesn't actually verify console output
+                    assert(result == ())
+                }
             }
         }
 
@@ -90,66 +91,73 @@ class ConstructorsTest extends Test:
         }
 
         "logInfo" - {
-            "should log an informational message" in {
+            "should log an informational message" in run {
                 val effect = Kyo.logInfo("Info message")
-                val result = IO.run(effect).eval
-                assert(result == ())
+                effect.map { result =>
+                    assert(result == ())
+                }
             }
         }
 
         "logWarn" - {
-            "should log a warning message" in {
+            "should log a warning message" in run {
                 val effect = Kyo.logWarn("Warning message")
-                val result = IO.run(effect).eval
-                assert(result == ())
+                effect.map { result =>
+                    assert(result == ())
+                }
             }
         }
 
         "logDebug" - {
-            "should log a debug message" in {
+            "should log a debug message" in run {
                 val effect = Kyo.logDebug("Debug message")
-                val result = IO.run(effect).eval
-                assert(result == ())
+                effect.map { result =>
+                    assert(result == ())
+                }
             }
         }
 
         "logError" - {
-            "should log an error message" in {
+            "should log an error message" in run {
                 val effect = Kyo.logError("Error message")
-                val result = IO.run(effect).eval
-                assert(result == ())
+                effect.map { result =>
+                    assert(result == ())
+                }
             }
         }
 
         "logTrace" - {
-            "should log a trace message" in {
+            "should log a trace message" in run {
                 val effect = Kyo.logTrace("Trace message")
-                val result = IO.run(effect).eval
-                assert(result == ())
+                effect.map { result =>
+                    assert(result == ())
+                }
             }
         }
 
         "suspend" - {
-            "should suspend an effect using IO" in {
+            "should suspend an effect using IO" in run {
                 var executed = false
                 val effect = Kyo.suspend {
                     executed = true
                     42
                 }
                 assert(!executed)
-                val result = IO.run(effect).eval
-                assert(executed)
-                assert(result == 42)
+                effect.map { result =>
+                    assert(executed)
+                    assert(result == 42)
+                }
             }
         }
 
         "suspendAttempt" - {
             "should suspend an effect and handle exceptions" in {
+                import AllowUnsafe.embrace.danger
                 val successEffect = Kyo.suspendAttempt(42)
                 val failureEffect = Kyo.suspendAttempt(throw new Exception("Error"))
 
-                val successResult = IO.run(Abort.run[Throwable](successEffect)).eval
-                val failureResult = IO.run(Abort.run[Throwable](failureEffect)).eval
+                val successResult = IO.Unsafe.run(Abort.run[Throwable](successEffect)).eval
+                val failureResult = IO.Unsafe.run(Abort.run[Throwable](failureEffect)).eval
 
                 assert(successResult == Result.success(42))
                 assert(failureResult.isInstanceOf[Result.Fail[?]])

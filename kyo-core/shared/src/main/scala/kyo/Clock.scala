@@ -1,75 +1,153 @@
 package kyo
 
 import java.time.Instant
+import kyo.Clock.Deadline
+import kyo.Clock.Stopwatch
 
+/** A clock that provides time-related operations.
+  */
 abstract class Clock:
-    def now(using Frame): Instant < IO
-    def stopwatch(using Frame): Clock.Stopwatch < IO
-    def deadline(duration: Duration)(using Frame): Clock.Deadline < IO
     def unsafe: Clock.Unsafe
+
+    /** Gets the current time as an Instant.
+      *
+      * @return
+      *   The current time
+      */
+    def now(using Frame): Instant < IO
+
+    /** Creates a new stopwatch.
+      *
+      * @return
+      *   A new Stopwatch instance
+      */
+    def stopwatch(using Frame): Clock.Stopwatch < IO = IO.Unsafe(unsafe.stopwatch().safe)
+
+    /** Creates a new deadline with the specified duration.
+      *
+      * @param duration
+      *   The duration for the deadline
+      * @return
+      *   A new Deadline instance
+      */
+    def deadline(duration: Duration)(using Frame): Clock.Deadline < IO = IO.Unsafe(unsafe.deadline(duration).safe)
 end Clock
 
+/** Companion object for creating and managing Clock instances. */
 object Clock:
 
-    abstract class Unsafe:
-        def now: Instant
-        def stopwatch: Unsafe.Stopwatch
-        def deadline(duration: Duration): Unsafe.Deadline
-    end Unsafe
+    /** A stopwatch for measuring elapsed time. */
+    final case class Stopwatch private[Clock] (unsafe: Stopwatch.Unsafe) extends AnyVal:
+        /** Gets the elapsed time since the stopwatch was created.
+          *
+          * @return
+          *   The elapsed time as a Duration
+          */
+        def elapsed(using Frame): Duration < IO = IO.Unsafe(unsafe.elapsed())
+    end Stopwatch
 
-    object Unsafe:
-        class Stopwatch(start: Instant, clock: Clock.Unsafe):
-            def elapsed: Duration =
-                Duration.fromJava(java.time.Duration.between(start, clock.now))
+    object Stopwatch:
+        /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+        class Unsafe(start: Instant, clock: Clock.Unsafe):
+            def elapsed()(using AllowUnsafe): Duration =
+                Duration.fromJava(java.time.Duration.between(start, clock.now()))
+            def safe: Stopwatch = Stopwatch(this)
+        end Unsafe
+    end Stopwatch
 
-        class Deadline(end: Instant, clock: Clock.Unsafe):
-            def timeLeft: Duration =
-                val remaining = java.time.Duration.between(clock.now, end)
-                if remaining.isNegative then Duration.Zero else Duration.fromJava(remaining)
-            def isOverdue: Boolean = clock.now.isAfter(end)
-        end Deadline
-    end Unsafe
+    /** A deadline for checking remaining time or if it's overdue. */
+    final case class Deadline private[Clock] (unsafe: Deadline.Unsafe) extends AnyVal:
+        /** Gets the time left until the deadline.
+          *
+          * @return
+          *   The remaining time as a Duration
+          */
+        def timeLeft(using Frame): Duration < IO = IO.Unsafe(unsafe.timeLeft())
 
-    abstract class Stopwatch:
-        def elapsed(using Frame): Duration < IO
-        def unsafe: Unsafe.Stopwatch
-
-    abstract class Deadline:
-        def timeLeft(using Frame): Duration < IO
-        def isOverdue(using Frame): Boolean < IO
-        def unsafe: Unsafe.Deadline
+        /** Checks if the deadline is overdue.
+          *
+          * @return
+          *   A boolean indicating if the deadline is overdue
+          */
+        def isOverdue(using Frame): Boolean < IO = IO.Unsafe(unsafe.isOverdue())
     end Deadline
 
-    val live: Clock = new Clock:
-        val unsafe: Unsafe = new Unsafe:
-            def now: Instant                                  = Instant.now()
-            def stopwatch: Unsafe.Stopwatch                   = new Unsafe.Stopwatch(now, this)
-            def deadline(duration: Duration): Unsafe.Deadline = new Unsafe.Deadline(now.plus(duration.toJava), this)
+    object Deadline:
+        /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+        class Unsafe(end: Instant, clock: Clock.Unsafe):
+            def timeLeft()(using AllowUnsafe): Duration =
+                val remaining = java.time.Duration.between(clock.now(), end)
+                if remaining.isNegative then Duration.Zero else Duration.fromJava(remaining)
+            def isOverdue()(using AllowUnsafe): Boolean = clock.now().isAfter(end)
+            def safe: Deadline                          = Deadline(this)
+        end Unsafe
+    end Deadline
 
-        def now(using Frame): Instant < IO = IO(unsafe.now)
-        def stopwatch(using Frame): Stopwatch < IO = IO {
-            new Stopwatch:
-                val unsafe                              = Clock.live.unsafe.stopwatch
-                def elapsed(using Frame): Duration < IO = IO(unsafe.elapsed)
-        }
-        def deadline(duration: Duration)(using Frame): Deadline < IO = IO {
-            new Deadline:
-                val unsafe                               = Clock.live.unsafe.deadline(duration)
-                def timeLeft(using Frame): Duration < IO = IO(unsafe.timeLeft)
-                def isOverdue(using Frame): Boolean < IO = IO(unsafe.isOverdue)
-        }
+    /** A live Clock instance using the system clock. */
+    val live: Clock =
+        Clock(
+            new Unsafe:
+                def now()(using AllowUnsafe): Instant = Instant.now()
+        )
 
     private val local = Local.init(live)
 
+    /** Runs an effect with a specific Clock instance.
+      *
+      * @param c
+      *   The Clock instance to use
+      * @param f
+      *   The effect to run
+      * @return
+      *   The result of running the effect
+      */
     def let[A, S](c: Clock)(f: => A < S)(using Frame): A < S =
         local.let(c)(f)
 
+    /** Gets the current time using the local Clock instance.
+      *
+      * @return
+      *   The current time
+      */
     def now(using Frame): Instant < IO =
         local.use(_.now)
 
+    /** Creates a new stopwatch using the local Clock instance.
+      *
+      * @return
+      *   A new Stopwatch instance
+      */
     def stopwatch(using Frame): Stopwatch < IO =
         local.use(_.stopwatch)
 
+    /** Creates a new deadline with the specified duration using the local Clock instance.
+      *
+      * @param duration
+      *   The duration for the deadline
+      * @return
+      *   A new Deadline instance
+      */
     def deadline(duration: Duration)(using Frame): Deadline < IO =
         local.use(_.deadline(duration))
+
+    /** Creates a new Clock instance from an Unsafe implementation.
+      *
+      * @param u
+      *   The Unsafe implementation
+      * @return
+      *   A new Clock instance
+      */
+    def apply(u: Unsafe): Clock =
+        new Clock:
+            def now(using Frame): Instant < IO =
+                IO.Unsafe(u.now())
+            def unsafe: Unsafe = u
+
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    abstract class Unsafe:
+        def now()(using AllowUnsafe): Instant
+        def stopwatch()(using AllowUnsafe): Stopwatch.Unsafe                 = Stopwatch.Unsafe(now(), this)
+        def deadline(duration: Duration)(using AllowUnsafe): Deadline.Unsafe = Deadline.Unsafe(now().plus(duration.toJava), this)
+        def safe: Clock                                                      = Clock(this)
+    end Unsafe
 end Clock

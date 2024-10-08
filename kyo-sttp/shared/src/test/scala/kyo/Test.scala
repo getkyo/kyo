@@ -10,13 +10,14 @@ import scala.concurrent.Future
 abstract class Test extends AsyncFreeSpec with BaseKyoTest[Async & Abort[Throwable] & Resource] with NonImplicitAssertions:
 
     def run(v: Future[Assertion] < (Async & Abort[Throwable] & Resource)): Future[Assertion] =
+        import AllowUnsafe.embrace.danger
         Abort.run[Any](v)
             .map(_.fold(e => throw new Exception("Test failed with " + e))(identity))
             .pipe(Resource.run)
             .pipe(Async.run)
             .map(_.toFuture)
             .map(_.flatten)
-            .pipe(IO.run)
+            .pipe(IO.Unsafe.run)
             .eval
     end run
 

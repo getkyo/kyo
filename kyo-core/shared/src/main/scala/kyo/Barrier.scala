@@ -1,6 +1,5 @@
 package kyo
 
-import java.util.concurrent.atomic.AtomicInteger
 import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
 
@@ -10,21 +9,22 @@ import scala.annotation.tailrec
   *   - The barrier releases all waiting parties when the last party arrives.
   *   - The barrier can only be used once. After all parties have been released, the barrier cannot be reset.
   */
-abstract class Barrier:
+final case class Barrier private (unsafe: Barrier.Unsafe) extends AnyVal:
 
     /** Waits for the barrier to be released.
       *
       * @return
       *   Unit
       */
-    def await(using Frame): Unit < Async
+    def await(using Frame): Unit < Async = IO.Unsafe(unsafe.await().safe.get)
 
     /** Returns the number of parties still waiting at the barrier.
       *
       * @return
       *   The number of waiting parties
       */
-    def pending(using Frame): Int < IO
+    def pending(using Frame): Int < IO = IO.Unsafe(unsafe.pending())
+
 end Barrier
 
 object Barrier:
@@ -36,33 +36,39 @@ object Barrier:
       * @return
       *   A new Barrier instance
       */
-    def init(n: Int)(using Frame): Barrier < IO =
-        if n <= 0 then
-            new Barrier:
-                def await(using Frame)   = ()
-                def pending(using Frame) = 0
+    def init(n: Int)(using Frame): Barrier < IO = IO.Unsafe(Barrier(Unsafe.init(n)))
 
-                override def toString = "Barrier(0)"
-        else
-            IO {
-                new Barrier:
-                    val promise = IOPromise[Nothing, Unit]()
-                    val count   = new AtomicInteger(n)
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    sealed abstract class Unsafe:
+        def await()(using AllowUnsafe): Fiber.Unsafe[Nothing, Unit]
+        def pending()(using AllowUnsafe): Int
+        def safe: Barrier = Barrier(this)
+    end Unsafe
 
-                    def await(using Frame) =
-                        IO {
-                            @tailrec def loop(c: Int): Unit < Async =
-                                if c > 0 && !count.compareAndSet(c, c - 1) then
-                                    loop(count.get)
-                                else if c == 1 then
-                                    promise.completeUnit(Result.unit)
-                                else
-                                    Async.get(promise)
-                            loop(count.get())
-                        }
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    object Unsafe:
 
-                    def pending(using Frame) = IO(count.get())
+        val noop = new Unsafe:
+            def await()(using AllowUnsafe)   = Fiber.unit.unsafe
+            def pending()(using AllowUnsafe) = 0
 
-                    override def toString = s"Barrier($count)"
-            }
+        def init(n: Int)(using AllowUnsafe): Unsafe =
+            if n <= 0 then noop
+            else
+                new Unsafe:
+                    val promise = Promise.Unsafe.init[Nothing, Unit]()
+                    val count   = AtomicInt.Unsafe.init(n)
+
+                    def await()(using AllowUnsafe) =
+                        @tailrec def loop(c: Int): Fiber.Unsafe[Nothing, Unit] =
+                            if c > 0 && !count.cas(c, c - 1) then
+                                loop(count.get())
+                            else
+                                if c == 1 then promise.completeUnit(Result.unit)
+                                Fiber.Unsafe.fromPromise(promise)
+                        loop(count.get())
+                    end await
+
+                    def pending()(using AllowUnsafe) = count.get()
+    end Unsafe
 end Barrier

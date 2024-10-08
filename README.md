@@ -494,7 +494,7 @@ val a: Int < IO =
 
 Users shouldn't typically handle the `IO` effect directly since it triggers the execution of side effects, which breaks referential transparency. Prefer `KyoApp` instead.
 
-In some specific cases where Kyo isn't used as the main effect system of an application, it might make sense for the user to handle the `IO` effect directly. The `run` method can only be used if `IO` is the only pending effect.
+In some specific cases where Kyo isn't used as the main effect system of an application, it might be necessary to handle the IO effect directly. However, this requires explicit acknowledgment of the unsafe nature of the operation using `AllowUnsafe.embrace.danger`. The `run` method can only be used if `IO` is the only pending effect.
 
 ```scala
 import kyo.*
@@ -502,10 +502,11 @@ import kyo.*
 val a: Int < IO =
     IO(42)
 
-// ** Avoid 'IO.run', use 'KyoApp' instead. **
+// ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
 val b: Int =
-    IO.run(a).eval
-// ** Avoid 'IO.run', use 'KyoApp' instead. **
+    import AllowUnsafe.embrace.danger // Required for unsafe operations
+    IO.Unsafe.run(a).eval
+// ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
 ```
 
 The `runLazy` method accepts computations with other effects but it doesn't guarantee that all side effects are performed before the method returns. If other effects still have to be handled, the side effects can be executed later once the other effects are handled. This a low-level API that must be used with caution.
@@ -522,11 +523,12 @@ val a: Int < (Env[Int] & IO) =
         }
     }
 
-// ** Avoid 'IO.runLazy', use 'KyoApp' instead. **
+// ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
 // Handle the 'IO' effect lazily
 val b: Int < Env[Int] =
-    IO.runLazy(a)
-// ** Avoid 'IO.runLazy', use 'KyoApp' instead. **
+    import AllowUnsafe.embrace.danger // Required for unsafe operations
+    IO.Unsafe.runLazy(a)
+// ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
 
 // Since the computation is suspended with the
 // 'Env' effect first, the lazy 'IO' execution
@@ -1537,16 +1539,6 @@ val f: Boolean < IO =
 // Run with an explicit `Clock` implementation
 val g: Instant < IO =
     Clock.let(Clock.live)(Clock.now)
-
-// Access unsafe (non-effectful) clock operations
-val h: Instant =
-    Clock.live.unsafe.now
-
-val i: Clock.Unsafe.Stopwatch =
-    Clock.live.unsafe.stopwatch
-
-val j: Clock.Unsafe.Deadline =
-    Clock.live.unsafe.deadline(5.seconds)
 ```
 
 `Clock` both safe (effectful) and unsafe (non-effectful) versions of its operations. The safe versions are suspended in `IO` and should be used in most cases. The unsafe versions are available through the `unsafe` property and should be used with caution, typically only in performance-critical sections or when integrating with non-effectful code.
@@ -1998,10 +1990,8 @@ val a: Int < Async =
     Async.run(Math.cos(42).toInt).map(_.get)
 
 // Avoid handling 'Async' directly
-// Note how the code has to handle the
-// 'IO' effect and then handle 'Async'
 val b: Fiber[Nothing, Int] < IO =
-    Async.run(IO.runLazy(a))
+    Async.run(a)
 
 // The 'runAndBlock' method accepts
 // arbitrary pending effects but relies
@@ -2010,7 +2000,7 @@ val c: Int < (Abort[Timeout] & IO) =
     Async.runAndBlock(5.seconds)(a)
 ```
 
-> Note: Handling the `Async` effect doesn't break referential transparency as with `IO` but its usage is not trivial due to the limitations of the pending effects, especially `IO`. Prefer `KyoApp` instead.
+> Note: Handling the `Async` effect doesn't break referential transparency as with `IO` but its usage is not trivial due to the limitations of the pending effects. Prefer `KyoApp` instead.
 
 The `Async` effect also offers a low-level API to create `Promise`s as way to integrate external async operations with fibers. These APIs should be used only in low-level integration code.
 
@@ -3304,7 +3294,7 @@ val effect: Unit < (Console & Async & Resource & Abort[Throwable] & Env[NameServ
 
 // There are no combinators for handling IO or blocking Async, since this should
 // be done at the edge of the program
-IO.run {                              // Handles IO
+IO.Unsafe.run {                              // Handles IO
     Async.runAndBlock(Duration.Inf) { // Handles Async
         Kyo.scoped {                   // Handles Resource
             effect

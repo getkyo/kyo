@@ -3,6 +3,7 @@ package kyo
 import System.Parser
 import java.lang as j
 import kyo.System.OS
+import kyo.System.Unsafe
 
 class SystemTest extends Test:
 
@@ -83,6 +84,7 @@ class SystemTest extends Test:
 
     "custom System implementation" in run {
         val customSystem = new System:
+            def unsafe: Unsafe = ???
             def env[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO) =
                 IO(Maybe("custom_env").asInstanceOf[Maybe[A]])
             def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO) =
@@ -295,4 +297,73 @@ class SystemTest extends Test:
         }
 
     }
+
+    "unsafe" - {
+        import AllowUnsafe.embrace.danger
+
+        val TEST_ENV  = "TEST_ENV"
+        val TEST_PROP = "TEST_PROP"
+
+        "should get environment variable correctly" in {
+            val testUnsafe = new TestUnsafeSystem(Map(TEST_ENV -> "test_env_value"))
+            assert(testUnsafe.env(TEST_ENV) == Maybe("test_env_value"))
+        }
+
+        "should return Maybe.Empty for non-existent environment variable" in {
+            val testUnsafe = new TestUnsafeSystem()
+            assert(testUnsafe.env("NON_EXISTENT_ENV") == Maybe.Empty)
+        }
+
+        "should get system property correctly" in {
+            val testUnsafe = new TestUnsafeSystem(properties = Map(TEST_PROP -> "test_prop_value"))
+            assert(testUnsafe.property(TEST_PROP) == Maybe("test_prop_value"))
+        }
+
+        "should return Maybe.Empty for non-existent system property" in {
+            val testUnsafe = new TestUnsafeSystem()
+            assert(testUnsafe.property("NON_EXISTENT_PROP") == Maybe.Empty)
+        }
+
+        "should get line separator correctly" in {
+            val testUnsafe = new TestUnsafeSystem(lineSeparator = "\n")
+            assert(testUnsafe.lineSeparator() == "\n")
+        }
+
+        "should get user name correctly" in {
+            val testUnsafe = new TestUnsafeSystem(userName = "test_user")
+            assert(testUnsafe.userName() == "test_user")
+        }
+
+        "should get operating system correctly" in {
+            val testUnsafe = new TestUnsafeSystem(os = OS.Linux)
+            assert(testUnsafe.operatingSystem() == OS.Linux)
+        }
+
+        "should convert to safe System" in {
+            val testUnsafe = new TestUnsafeSystem()
+            val safeSystem = testUnsafe.safe
+            assert(safeSystem.isInstanceOf[System])
+        }
+    }
+
+    class TestUnsafeSystem(
+        envVars: Map[String, String] = Map.empty,
+        properties: Map[String, String] = Map.empty,
+        lineSeparator: String = "\n",
+        userName: String = "test_user",
+        os: OS = OS.Unknown
+    ) extends System.Unsafe:
+        def env(name: String)(using AllowUnsafe): Maybe[String] =
+            Maybe.fromOption(envVars.get(name))
+
+        def property(name: String)(using AllowUnsafe): Maybe[String] =
+            Maybe.fromOption(properties.get(name))
+
+        def lineSeparator()(using AllowUnsafe): String = lineSeparator
+
+        def userName()(using AllowUnsafe): String = userName
+
+        def operatingSystem()(using AllowUnsafe): OS = os
+    end TestUnsafeSystem
+
 end SystemTest

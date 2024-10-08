@@ -57,4 +57,64 @@ class BarrierTest extends Test:
             assert(count1 == 2)
             assert(count2 == 0)
     }
+
+    "unsafe" - {
+        import AllowUnsafe.embrace.danger
+
+        "should initialize with correct pending count" in {
+            val barrier = Barrier.Unsafe.init(3)
+            assert(barrier.pending() == 3)
+        }
+
+        "should decrement pending count on await" in {
+            val barrier = Barrier.Unsafe.init(3)
+            barrier.await()
+            assert(barrier.pending() == 2)
+        }
+
+        "should release all parties when last one arrives" in {
+            val barrier       = Barrier.Unsafe.init(3)
+            var releasedCount = 0
+
+            // Simulate 3 parties arriving
+            for _ <- 1 to 3 do
+                val fiber = barrier.await()
+                fiber.onComplete(_ => releasedCount += 1)
+
+            assert(barrier.pending() == 0)
+            assert(releasedCount == 3)
+        }
+
+        "should create noop barrier for n <= 0" in {
+            val barrier = Barrier.Unsafe.init(0)
+            assert(barrier.pending() == 0)
+            val fiber = barrier.await()
+            assert(fiber.done())
+        }
+
+        "should work with multiple awaits" in {
+            val barrier       = Barrier.Unsafe.init(2)
+            var releasedCount = 0
+
+            // First await
+            val fiber1 = barrier.await()
+            fiber1.onComplete(_ => releasedCount += 1)
+            assert(barrier.pending() == 1)
+
+            // Second await
+            val fiber2 = barrier.await()
+            fiber2.onComplete(_ => releasedCount += 1)
+            assert(barrier.pending() == 0)
+
+            assert(releasedCount == 2)
+        }
+
+        "should convert to safe Barrier" in {
+            val unsafeBarrier = Barrier.Unsafe.init(2)
+            val safeBarrier   = unsafeBarrier.safe
+
+            assert(safeBarrier.isInstanceOf[Barrier])
+        }
+    }
+
 end BarrierTest

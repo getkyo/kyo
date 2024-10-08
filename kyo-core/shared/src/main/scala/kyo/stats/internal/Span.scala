@@ -16,6 +16,7 @@ end Span
 
 object Span:
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def end(): Unit
         def event(name: String, a: Attributes): Unit

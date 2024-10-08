@@ -23,6 +23,7 @@ class LogTest extends Test:
     }
 
     "unsafe" in {
+        import AllowUnsafe.embrace.danger
         Log.unsafe.trace("trace")
         Log.unsafe.debug("debug")
         Log.unsafe.info("info")

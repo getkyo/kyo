@@ -52,7 +52,8 @@ extension (kyoObject: Kyo.type)
                 val updatePromise =
                     effFiber.map(_.onComplete(a => promise.completeUnit(a)))
                 val updatePromiseIO = Async.run(updatePromise).unit
-                IO.run(updatePromiseIO).eval
+                import AllowUnsafe.embrace.danger
+                IO.Unsafe.run(updatePromiseIO).eval
             _ <- register(registerFn)
             a <- promise.get
         yield a

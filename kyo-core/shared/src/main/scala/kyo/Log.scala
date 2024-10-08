@@ -19,7 +19,7 @@ object Log extends LogPlatformSpecific:
     def let[A, S](u: Unsafe)(f: => A < (IO & S))(using Frame): A < (IO & S) =
         local.let(u)(f)
 
-    /** Abstract class defining the interface for unsafe logging operations. */
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def traceEnabled: Boolean
         def debugEnabled: Boolean
@@ -27,18 +27,19 @@ object Log extends LogPlatformSpecific:
         def warnEnabled: Boolean
         def errorEnabled: Boolean
 
-        def trace(msg: => String)(using frame: Frame): Unit
-        def trace(msg: => String, t: => Throwable)(using frame: Frame): Unit
-        def debug(msg: => String)(using frame: Frame): Unit
-        def debug(msg: => String, t: => Throwable)(using frame: Frame): Unit
-        def info(msg: => String)(using frame: Frame): Unit
-        def info(msg: => String, t: => Throwable)(using frame: Frame): Unit
-        def warn(msg: => String)(using frame: Frame): Unit
-        def warn(msg: => String, t: => Throwable)(using frame: Frame): Unit
-        def error(msg: => String)(using frame: Frame): Unit
-        def error(msg: => String, t: => Throwable)(using frame: Frame): Unit
+        def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit
+        def trace(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
+        def debug(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit
+        def debug(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
+        def info(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit
+        def info(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
+        def warn(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit
+        def warn(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
+        def error(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit
+        def error(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit
     end Unsafe
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         class ConsoleLogger(name: String) extends Log.Unsafe:
             inline def traceEnabled: Boolean = true
@@ -52,51 +53,73 @@ object Log extends LogPlatformSpecific:
             inline def errorEnabled: Boolean = true
 
             inline def trace(msg: => String)(
-                using frame: Frame
+                using
+                frame: Frame,
+                allow: AllowUnsafe
             ): Unit = if traceEnabled then println(s"TRACE $name -- [${frame.parse.position}] $msg")
 
             inline def trace(msg: => String, t: => Throwable)(
-                using frame: Frame
+                using
+                frame: Frame,
+                allow: AllowUnsafe
             ): Unit = if traceEnabled then println(s"TRACE $name -- [${frame.parse.position}] $msg $t")
 
             inline def debug(msg: => String)(
-                using frame: Frame
+                using
+                frame: Frame,
+                allow: AllowUnsafe
             ): Unit = if debugEnabled then println(s"DEBUG $name -- [${frame.parse.position}] $msg")
 
             inline def debug(msg: => String, t: => Throwable)(
-                using frame: Frame
+                using
+                frame: Frame,
+                allow: AllowUnsafe
             ): Unit = if debugEnabled then println(s"DEBUG $name -- [${frame.parse.position}] $msg $t")
 
             inline def info(msg: => String)(
-                using frame: Frame
+                using
+                frame: Frame,
+                allow: AllowUnsafe
             ): Unit = if infoEnabled then println(s"INFO $name -- [${frame.parse.position}] $msg")
 
             inline def info(msg: => String, t: => Throwable)(
-                using frame: Frame
+                using
+                frame: Frame,
+                allow: AllowUnsafe
             ): Unit = if infoEnabled then println(s"INFO $name -- [${frame.parse.position}] $msg $t")
 
             inline def warn(msg: => String)(
-                using frame: Frame
+                using
+                frame: Frame,
+                allow: AllowUnsafe
             ): Unit = if warnEnabled then println(s"WARN $name -- [${frame.parse.position}] $msg")
 
             inline def warn(msg: => String, t: => Throwable)(
-                using frame: Frame
+                using
+                frame: Frame,
+                allow: AllowUnsafe
             ): Unit = if warnEnabled then println(s"WARN $name -- [${frame.parse.position}] $msg $t")
 
             inline def error(msg: => String)(
-                using frame: Frame
+                using
+                frame: Frame,
+                allow: AllowUnsafe
             ): Unit = if errorEnabled then println(s"ERROR $name -- [${frame.parse.position}] $msg")
 
             inline def error(msg: => String, t: => Throwable)(
-                using frame: Frame
+                using
+                frame: Frame,
+                allow: AllowUnsafe
             ): Unit = if errorEnabled then println(s"ERROR $name -- [${frame.parse.position}] $msg $t")
         end ConsoleLogger
     end Unsafe
 
-    private inline def logWhen(inline enabled: Unsafe => Boolean)(inline log: Unsafe => Unit)(using inline frame: Frame): Unit < IO =
+    private inline def logWhen(inline enabled: Unsafe => Boolean)(inline log: AllowUnsafe ?=> Unsafe => Unit)(using
+        inline frame: Frame
+    ): Unit < IO =
         local.use { unsafe =>
             if enabled(unsafe) then
-                IO(log(unsafe))
+                IO.Unsafe(log(unsafe))
             else
                 (
             )

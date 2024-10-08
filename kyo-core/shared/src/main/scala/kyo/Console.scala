@@ -5,6 +5,8 @@ import java.io.EOFException
 /** Represents a console for input and output operations.
   */
 abstract class Console:
+    def unsafe: Console.Unsafe
+
     /** Reads a line from the console.
       *
       * @return
@@ -48,20 +50,21 @@ object Console:
     /** A live implementation of the Console trait.
       */
     val live: Console =
-        new Console:
-            def readln(using Frame) =
-                IO {
+        Console(
+            new Unsafe:
+                def readln()(using AllowUnsafe) =
                     val line = scala.Console.in.readLine()
                     if line == null then
                         throw new EOFException("Consoles.readln failed.")
                     else
                         line
                     end if
-                }
-            def print(s: String)(using Frame)      = IO(scala.Console.out.print(s))
-            def printErr(s: String)(using Frame)   = IO(scala.Console.err.print(s))
-            def println(s: String)(using Frame)    = IO(scala.Console.out.println(s))
-            def printlnErr(s: String)(using Frame) = IO(scala.Console.err.println(s))
+                end readln
+                def print(s: String)(using AllowUnsafe)      = scala.Console.out.print(s)
+                def printErr(s: String)(using AllowUnsafe)   = scala.Console.err.print(s)
+                def println(s: String)(using AllowUnsafe)    = scala.Console.out.println(s)
+                def printlnErr(s: String)(using AllowUnsafe) = scala.Console.err.println(s)
+        )
 
     private val local = Local.init(live)
 
@@ -123,5 +126,31 @@ object Console:
       */
     def printlnErr[A](v: A)(using Frame): Unit < IO =
         local.use(_.printlnErr(toString(v)))
+
+    /** Creates a new Console instance from an Unsafe implementation.
+      *
+      * @param u
+      *   The Unsafe implementation
+      * @return
+      *   A new Console instance
+      */
+    def apply(u: Unsafe): Console =
+        new Console:
+            def readln(using Frame): String < IO              = IO.Unsafe(u.readln())
+            def print(s: String)(using Frame): Unit < IO      = IO.Unsafe(u.print(s))
+            def printErr(s: String)(using Frame): Unit < IO   = IO.Unsafe(u.printErr(s))
+            def println(s: String)(using Frame): Unit < IO    = IO.Unsafe(u.println(s))
+            def printlnErr(s: String)(using Frame): Unit < IO = IO.Unsafe(u.printlnErr(s))
+            def unsafe: Unsafe                                = u
+
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    abstract class Unsafe:
+        def readln()(using AllowUnsafe): String
+        def print(s: String)(using AllowUnsafe): Unit
+        def printErr(s: String)(using AllowUnsafe): Unit
+        def println(s: String)(using AllowUnsafe): Unit
+        def printlnErr(s: String)(using AllowUnsafe): Unit
+        def safe: Console = Console(this)
+    end Unsafe
 
 end Console

@@ -7,9 +7,11 @@ import sttp.tapir.server.netty.*
 
 object Server extends KyoApp:
 
-    run {
+    val timer =
+        import AllowUnsafe.embrace.danger
+        Timer(Timer.Unsafe(Executors.newSingleThreadScheduledExecutor()))
 
-        val timer = Timer(Executors.newSingleThreadScheduledExecutor())
+    run {
 
         defer {
             val port = await(System.property[Int]("PORT", 9999))

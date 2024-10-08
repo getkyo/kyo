@@ -92,7 +92,7 @@ object Meter:
                         }
 
                     def tryRun[A, S](v: => A < S)(using Frame) =
-                        IO {
+                        IO.Unsafe {
                             chan.unsafePoll match
                                 case Maybe.Empty => Maybe.empty
                                 case _ =>

@@ -22,41 +22,45 @@ end Random
 
 object Random:
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
-        def nextInt: Int
-        def nextInt(exclusiveBound: Int): Int
-        def nextLong: Long
-        def nextDouble: Double
-        def nextBoolean: Boolean
-        def nextFloat: Float
-        def nextGaussian: Double
-        def nextValue[A](seq: Seq[A]): A
-        def nextValues[A](length: Int, seq: Seq[A]): Seq[A]
-        def nextStringAlphanumeric(length: Int): String
-        def nextString(length: Int, seq: Seq[Char]): String
-        def nextBytes(length: Int): Seq[Byte]
-        def shuffle[A](seq: Seq[A]): Seq[A]
+        def nextInt()(using AllowUnsafe): Int
+        def nextInt(exclusiveBound: Int)(using AllowUnsafe): Int
+        def nextLong()(using AllowUnsafe): Long
+        def nextDouble()(using AllowUnsafe): Double
+        def nextBoolean()(using AllowUnsafe): Boolean
+        def nextFloat()(using AllowUnsafe): Float
+        def nextGaussian()(using AllowUnsafe): Double
+        def nextValue[A](seq: Seq[A])(using AllowUnsafe): A
+        def nextValues[A](length: Int, seq: Seq[A])(using AllowUnsafe): Seq[A]
+        def nextStringAlphanumeric(length: Int)(using AllowUnsafe): String
+        def nextString(length: Int, seq: Seq[Char])(using AllowUnsafe): String
+        def nextBytes(length: Int)(using AllowUnsafe): Seq[Byte]
+        def shuffle[A](seq: Seq[A])(using AllowUnsafe): Seq[A]
+        def safe: Random = Random(this)
     end Unsafe
 
+    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         def apply(random: java.util.Random): Unsafe =
             new Unsafe:
-                def nextInt: Int                      = random.nextInt()
-                def nextInt(exclusiveBound: Int): Int = random.nextInt(exclusiveBound)
-                def nextLong: Long                    = random.nextLong()
-                def nextDouble: Double                = random.nextDouble()
-                def nextBoolean: Boolean              = random.nextBoolean()
-                def nextFloat: Float                  = random.nextFloat()
-                def nextGaussian: Double              = random.nextGaussian()
-                def nextValue[A](seq: Seq[A]): A      = seq(random.nextInt(seq.size))
-                def nextValues[A](length: Int, seq: Seq[A]): Seq[A] =
+                def nextInt()(using AllowUnsafe)                    = random.nextInt()
+                def nextInt(exclusiveBound: Int)(using AllowUnsafe) = random.nextInt(exclusiveBound)
+                def nextLong()(using AllowUnsafe)                   = random.nextLong()
+                def nextDouble()(using AllowUnsafe)                 = random.nextDouble()
+                def nextBoolean()(using AllowUnsafe)                = random.nextBoolean()
+                def nextFloat()(using AllowUnsafe)                  = random.nextFloat()
+                def nextGaussian()(using AllowUnsafe)               = random.nextGaussian()
+                def nextValue[A](seq: Seq[A])(using AllowUnsafe)    = seq(random.nextInt(seq.size))
+                def nextValues[A](length: Int, seq: Seq[A])(using AllowUnsafe) =
                     Seq.fill(length)(nextValue(seq))
 
                 val alphanumeric = (('a' to 'z') ++ ('A' to 'Z') ++ ('0' to '9')).toIndexedSeq
-                def nextStringAlphanumeric(length: Int): String =
+
+                def nextStringAlphanumeric(length: Int)(using AllowUnsafe) =
                     nextString(length, alphanumeric)
 
-                def nextString(length: Int, seq: Seq[Char]): String =
+                def nextString(length: Int, seq: Seq[Char])(using AllowUnsafe) =
                     val b = new StringBuilder
                     @tailrec def loop(i: Int): Unit =
                         if i < length then
@@ -67,10 +71,10 @@ object Random:
                 end nextString
 
                 val bytes = Seq(0.toByte, 1.toByte).toIndexedSeq
-                def nextBytes(length: Int): Seq[Byte] =
+                def nextBytes(length: Int)(using AllowUnsafe) =
                     nextValues(length, bytes)
 
-                def shuffle[A](seq: Seq[A]): Seq[A] =
+                def shuffle[A](seq: Seq[A])(using AllowUnsafe) =
                     val buffer = scala.collection.mutable.ArrayBuffer.from(seq)
                     @tailrec def shuffleLoop(i: Int): Unit =
                         if i > 0 then
@@ -93,24 +97,24 @@ object Random:
       */
     def apply(u: Unsafe): Random =
         new Random:
-            def nextInt(using Frame): Int < IO                      = IO(u.nextInt)
-            def nextInt(exclusiveBound: Int)(using Frame): Int < IO = IO(u.nextInt(exclusiveBound))
-            def nextLong(using Frame): Long < IO                    = IO(u.nextLong)
-            def nextDouble(using Frame): Double < IO                = IO(u.nextDouble)
-            def nextBoolean(using Frame): Boolean < IO              = IO(u.nextBoolean)
-            def nextFloat(using Frame): Float < IO                  = IO(u.nextFloat)
-            def nextGaussian(using Frame): Double < IO              = IO(u.nextGaussian)
-            def nextValue[A](seq: Seq[A])(using Frame): A < IO      = IO(u.nextValue[A](seq))
-            def nextValues[A](length: Int, seq: Seq[A])(using Frame): Seq[A] < IO =
-                IO(u.nextValues(length, seq))
-            def nextStringAlphanumeric(length: Int)(using Frame): String < IO =
-                IO(u.nextStringAlphanumeric(length))
-            def nextString(length: Int, chars: Seq[Char])(using Frame): String < IO =
-                IO(u.nextString(length, chars))
-            def nextBytes(length: Int)(using Frame): Seq[Byte] < IO =
-                IO(u.nextBytes(length))
-            def shuffle[A](seq: Seq[A])(using Frame): Seq[A] < IO =
-                IO(u.shuffle(seq))
+            def nextInt(using Frame)                      = IO.Unsafe(u.nextInt())
+            def nextInt(exclusiveBound: Int)(using Frame) = IO.Unsafe(u.nextInt(exclusiveBound))
+            def nextLong(using Frame)                     = IO.Unsafe(u.nextLong())
+            def nextDouble(using Frame)                   = IO.Unsafe(u.nextDouble())
+            def nextBoolean(using Frame)                  = IO.Unsafe(u.nextBoolean())
+            def nextFloat(using Frame)                    = IO.Unsafe(u.nextFloat())
+            def nextGaussian(using Frame)                 = IO.Unsafe(u.nextGaussian())
+            def nextValue[A](seq: Seq[A])(using Frame)    = IO.Unsafe(u.nextValue[A](seq))
+            def nextValues[A](length: Int, seq: Seq[A])(using Frame) =
+                IO.Unsafe(u.nextValues(length, seq))
+            def nextStringAlphanumeric(length: Int)(using Frame) =
+                IO.Unsafe(u.nextStringAlphanumeric(length))
+            def nextString(length: Int, chars: Seq[Char])(using Frame) =
+                IO.Unsafe(u.nextString(length, chars))
+            def nextBytes(length: Int)(using Frame) =
+                IO.Unsafe(u.nextBytes(length))
+            def shuffle[A](seq: Seq[A])(using Frame) =
+                IO.Unsafe(u.shuffle(seq))
             def unsafe: Unsafe = u
 
     /** A live instance of Random using the default java.util.Random. */

@@ -136,7 +136,26 @@ object Async:
               *   The Fiber to become
               */
             def becomeUnit[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using Frame): Unit < IO = IO(discard(self.become(other)))
+
+            def unsafe: Unsafe[E, A] = self
         end extension
+
+        opaque type Unsafe[E, A] = IOPromise[E, A]
+
+        /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+        object Unsafe:
+            inline given [E, A]: Flat[Unsafe[E, A]] = Flat.unsafe.bypass
+
+            def init[E, A]()(using AllowUnsafe): Unsafe[E, A] = IOPromise()
+
+            extension [E, A](self: Unsafe[E, A])
+                def complete[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Boolean     = self.complete(v)
+                def completeUnit[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Unit    = discard(self.complete(v))
+                def become[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Boolean  = self.become(other)
+                def becomeUnit[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Unit = discard(self.become(other))
+                def safe: Promise[E, A]                                                         = self
+            end extension
+        end Unsafe
     end Promise
 
     opaque type Fiber[E, A] = IOPromise[E, A]
@@ -270,7 +289,9 @@ object Async:
               * @param f
               *   The callback function
               */
-            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO = IO(self.onComplete(r => IO.run(f(r)).eval))
+            def onComplete(f: Result[E, A] => Unit < IO)(using Frame): Unit < IO =
+                import AllowUnsafe.embrace.danger
+                IO(self.onComplete(r => IO.Unsafe.run(f(r)).eval))
 
             /** Registers a callback to be called when the Fiber is interrupted.
               *
@@ -282,7 +303,9 @@ object Async:
               * @return
               *   A unit value wrapped in IO, representing the registration of the callback
               */
-            def onInterrupt(f: Panic => Unit < IO)(using Frame): Unit < IO = IO(self.onInterrupt(r => IO.run(f(r)).eval))
+            def onInterrupt(f: Panic => Unit < IO)(using Frame): Unit < IO =
+                import AllowUnsafe.embrace.danger
+                IO(self.onInterrupt(r => IO.Unsafe.run(f(r)).eval))
 
             /** Blocks until the Fiber completes or the timeout is reached.
               *
@@ -392,7 +415,7 @@ object Async:
             def interruptUnit(error: Panic)(using Frame): Unit < IO =
                 IO(discard(self.interrupt(error)))
 
-            private[kyo] inline def unsafe: IOPromise[E, A] = self
+            def unsafe: Fiber.Unsafe[E, A] = self
 
         end extension
 
@@ -490,6 +513,26 @@ object Async:
                             }
                         end if
                     }
+
+        opaque type Unsafe[E, A] = IOPromise[E, A]
+
+        /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+        object Unsafe:
+            inline given [E, A]: Flat[Unsafe[E, A]] = Flat.unsafe.bypass
+
+            def init[E, A]()(using AllowUnsafe): Unsafe[E, A] = IOPromise()
+
+            def fromPromise[E, A](p: Promise.Unsafe[E, A]): Unsafe[E, A] = p.safe
+
+            extension [E, A](self: Unsafe[E, A])
+                def done()(using AllowUnsafe): Boolean                                         = self.done()
+                def onComplete(f: Result[E, A] => Unit)(using AllowUnsafe): Unit               = self.onComplete(f)
+                def block(timeout: Duration)(using AllowUnsafe, Frame): Result[E | Timeout, A] = self.block(deadline(timeout))
+                def interrupt(error: Panic)(using AllowUnsafe): Boolean                        = self.interrupt(error)
+                def interruptUnit(error: Panic)(using AllowUnsafe): Unit                       = discard(self.interrupt(error))
+                def safe: Fiber[E, A]                                                          = self
+            end extension
+        end Unsafe
 
     end Fiber
 

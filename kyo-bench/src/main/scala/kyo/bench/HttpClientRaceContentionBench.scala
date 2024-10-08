@@ -47,7 +47,9 @@ class HttpClientRaceContentionBench
 
     lazy val kyoClient =
         import kyo.*
-        IO.run(Meter.initSemaphore(5).map(PlatformBackend.default.withMeter)).eval
+        import AllowUnsafe.embrace.danger
+        IO.Unsafe.run(Meter.initSemaphore(5).map(PlatformBackend.default.withMeter)).eval
+    end kyoClient
 
     val kyoUrl =
         import sttp.client3.*

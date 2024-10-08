@@ -1,5 +1,7 @@
 package kyo
 
+import kyo.Console.Unsafe
+
 class DirectTest extends Test:
 
     // "match" in {
@@ -12,38 +14,44 @@ class DirectTest extends Test:
     //         case 2                   => 99
     //       }
     //     }
-    //   assert(IO.run(c) == 1)
+    //   assert(IO.Unsafe.run(c) == 1)
     // }
 
-    "one run" in {
+    "one run" in run {
         val io = defer {
             val a = await(IO("hello"))
             a + " world"
         }
-        assert(IO.run(io).eval == "hello world")
+        io.map { result =>
+            assert(result == "hello world")
+        }
     }
 
-    "two runs" in {
+    "two runs" in run {
         val io =
             defer {
                 val a = await(IO("hello"))
                 val b = await(IO("world"))
                 a + " " + b
             }
-        assert(IO.run(io).eval == "hello world")
+        io.map { result =>
+            assert(result == "hello world")
+        }
     }
 
-    "two effects" in {
+    "two effects" in run {
         val io: String < (IO & Abort[Maybe.Empty]) =
             defer {
                 val a = await(Abort.get(Some("hello")))
                 val b = await(IO("world"))
                 a + " " + b
             }
-        assert(IO.run(Abort.run(io)).eval == Result.success("hello world"))
+        Abort.run(io).map { result =>
+            assert(result == Result.success("hello world"))
+        }
     }
 
-    "if" in {
+    "if" in run {
         var calls = Seq.empty[Int]
         val io: Boolean < IO =
             defer {
@@ -52,32 +60,38 @@ class DirectTest extends Test:
                 else
                     await(IO { calls :+= 3; true })
             }
-        assert(IO.run(io).eval)
-        assert(calls == Seq(1, 2))
+        io.map { result =>
+            assert(result)
+            assert(calls == Seq(1, 2))
+        }
     }
 
     "booleans" - {
-        "&&" in {
+        "&&" in run {
             var calls = Seq.empty[Int]
             val io: Boolean < IO =
                 defer {
                     (await(IO { calls :+= 1; true }) && await(IO { calls :+= 2; true }))
                 }
-            assert(IO.run(io).eval)
-            assert(calls == Seq(1, 2))
+            io.map { result =>
+                assert(result)
+                assert(calls == Seq(1, 2))
+            }
         }
-        "||" in {
+        "||" in run {
             var calls = Seq.empty[Int]
             val io: Boolean < IO =
                 defer {
                     (await(IO { calls :+= 1; true }) || await(IO { calls :+= 2; true }))
                 }
-            assert(IO.run(io).eval)
-            assert(calls == Seq(1))
+            io.map { result =>
+                assert(result)
+                assert(calls == Seq(1))
+            }
         }
     }
 
-    "while" in {
+    "while" in run {
         val io =
             defer {
                 val c = await(AtomicInt.init(1))
@@ -86,7 +100,9 @@ class DirectTest extends Test:
                     ()
                 await(c.get)
             }
-        assert(IO.run(io).eval == 100)
+        io.map { result =>
+            assert(result == 100)
+        }
     }
 
     "options" in {
@@ -95,8 +111,9 @@ class DirectTest extends Test:
         test(Some(1))
         test(None)
     }
-    "consoles" in {
+    "consoles" in run {
         object console extends Console:
+            def unsafe: Unsafe = ???
 
             def printErr(s: String)(using Frame): Unit < IO = ???
 
@@ -108,8 +125,9 @@ class DirectTest extends Test:
 
             def printlnErr(s: String)(using Frame): Unit < IO = ???
         end console
-        val io: String < IO = Console.let(console)(defer(await(Console.readln)))
-        assert(IO.run(io).eval == "hello")
+        Console.let(console)(defer(await(Console.readln))).map { result =>
+            assert(result == "hello")
+        }
     }
 
     "kyo computations must be within a run block" in {

@@ -79,14 +79,11 @@ case class NettyKyoServer(
         forkExecution: Boolean,
         block: () => KyoSttpMonad.M[ServerResponse[NettyResponse]]
     ): (Future[ServerResponse[NettyResponse]], () => Future[Unit]) =
-        val fiber =
-            if forkExecution then
-                IO.run(Async.run(block())).eval
-            else
-                IO.run(Async.run(block())).eval
-        val future = IO.run(fiber.toFuture).eval
+        import AllowUnsafe.embrace.danger
+        val fiber  = IO.Unsafe.run(Async.run(block())).eval
+        val future = IO.Unsafe.run(fiber.toFuture).eval
         val cancel = () =>
-            val _ = IO.run(fiber.interrupt).eval
+            val _ = IO.Unsafe.run(fiber.interrupt).eval
             Future.unit
         (future, cancel)
     end unsafeRunAsync
