@@ -74,12 +74,17 @@ object Clock:
 
     object Deadline:
         /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-        class Unsafe(end: Instant, clock: Clock.Unsafe):
+        class Unsafe(endInstant: Maybe[Instant], clock: Clock.Unsafe):
+
             def timeLeft()(using AllowUnsafe): Duration =
-                val remaining = java.time.Duration.between(clock.now(), end)
-                if remaining.isNegative then Duration.Zero else Duration.fromJava(remaining)
-            def isOverdue()(using AllowUnsafe): Boolean = clock.now().isAfter(end)
-            def safe: Deadline                          = Deadline(this)
+                endInstant.map { endInstant =>
+                    val remaining = java.time.Duration.between(clock.now(), endInstant)
+                    if remaining.isNegative then Duration.Zero else Duration.fromJava(remaining)
+                }.getOrElse(Duration.Infinity)
+
+            def isOverdue()(using AllowUnsafe): Boolean = endInstant.exists(clock.now().isAfter)
+
+            def safe: Deadline = Deadline(this)
         end Unsafe
     end Deadline
 
@@ -146,8 +151,13 @@ object Clock:
     /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def now()(using AllowUnsafe): Instant
-        def stopwatch()(using AllowUnsafe): Stopwatch.Unsafe                 = Stopwatch.Unsafe(now(), this)
-        def deadline(duration: Duration)(using AllowUnsafe): Deadline.Unsafe = Deadline.Unsafe(now().plus(duration.toJava), this)
-        def safe: Clock                                                      = Clock(this)
+
+        def stopwatch()(using AllowUnsafe): Stopwatch.Unsafe = Stopwatch.Unsafe(now(), this)
+
+        def deadline(duration: Duration)(using AllowUnsafe): Deadline.Unsafe =
+            if !duration.isFinite then Deadline.Unsafe(Maybe.empty, this)
+            else Deadline.Unsafe(Maybe(now().plus(duration.toJava)), this)
+
+        def safe: Clock = Clock(this)
     end Unsafe
 end Clock

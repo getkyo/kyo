@@ -3,16 +3,19 @@ package kyo.scheduler
 import kyo.*
 import org.scalatest.compatible.Assertion
 import scala.annotation.tailrec
-import scala.concurrent.duration.*
 
 class IOPromiseTest extends Test:
+
+    def deadline(after: Duration = timeout) =
+        import AllowUnsafe.embrace.danger
+        Clock.live.unsafe.deadline(after)
 
     "complete" - {
         "success" in {
             val p = new IOPromise[Nothing, Int]()
             assert(p.complete(Result.success(1)))
             assert(p.done())
-            assert(p.block(timeout.toMillis) == Result.success(1))
+            assert(p.block(deadline()) == Result.success(1))
         }
 
         "failure" in {
@@ -20,7 +23,7 @@ class IOPromiseTest extends Test:
             val p  = new IOPromise[Exception, Int]()
             assert(p.complete(Result.fail(ex)))
             assert(p.done())
-            assert(p.block(timeout.toMillis) == Result.fail(ex))
+            assert(p.block(deadline()) == Result.fail(ex))
         }
 
         "complete twice" in {
@@ -28,14 +31,14 @@ class IOPromiseTest extends Test:
             assert(p.complete(Result.success(1)))
             assert(!p.complete(Result.success(2)))
             assert(p.done())
-            assert(p.block(timeout.toMillis) == Result.success(1))
+            assert(p.block(deadline()) == Result.success(1))
         }
 
         "complete with null value" in {
             val p = new IOPromise[Nothing, String]()
             assert(p.complete(Result.success(null)))
             assert(p.done())
-            assert(p.block(timeout.toMillis) == Result.success(null))
+            assert(p.block(deadline()) == Result.success(null))
         }
 
         "complete with exception" in {
@@ -43,7 +46,7 @@ class IOPromiseTest extends Test:
             val ex = new RuntimeException("Test")
             assert(p.complete(Result.fail(ex)))
             assert(p.done())
-            assert(p.block(timeout.toMillis) == Result.fail(ex))
+            assert(p.block(deadline()) == Result.fail(ex))
         }
     }
 
@@ -51,14 +54,14 @@ class IOPromiseTest extends Test:
         "success" in {
             val p = new IOPromise[Nothing, Int]()
             p.completeDiscard(Result.success(1))
-            assert(p.block(timeout.toMillis) == Result.success(1))
+            assert(p.block(deadline()) == Result.success(1))
         }
 
         "completeDiscard with failure" in {
             val p  = new IOPromise[Exception, Int]()
             val ex = new Exception("Test exception")
             p.completeDiscard(Result.fail(ex))
-            assert(p.block(timeout.toMillis) == Result.fail(ex))
+            assert(p.block(deadline()) == Result.fail(ex))
         }
     }
 
@@ -69,7 +72,7 @@ class IOPromiseTest extends Test:
             assert(p2.complete(Result.success(42)))
             assert(p1.become(p2))
             assert(p1.done())
-            assert(p1.block(timeout.toMillis) == Result.success(42))
+            assert(p1.block(deadline()) == Result.success(42))
         }
 
         "failure" in {
@@ -79,7 +82,7 @@ class IOPromiseTest extends Test:
             assert(p2.complete(Result.fail(ex)))
             assert(p1.become(p2))
             assert(p1.done())
-            assert(p1.block(timeout.toMillis) == Result.fail(ex))
+            assert(p1.block(deadline()) == Result.fail(ex))
         }
 
         "already completed" in {
@@ -88,7 +91,7 @@ class IOPromiseTest extends Test:
             assert(p1.complete(Result.success(42)))
             assert(p2.complete(Result.success(99)))
             assert(!p1.become(p2))
-            assert(p1.block(timeout.toMillis) == Result.success(42))
+            assert(p1.block(deadline()) == Result.success(42))
         }
 
         "become with incomplete promise" in {
@@ -97,7 +100,7 @@ class IOPromiseTest extends Test:
             assert(p1.become(p2))
             p2.complete(Result.success(42))
             assert(p1.done())
-            assert(p1.block(timeout.toMillis) == Result.success(42))
+            assert(p1.block(deadline()) == Result.success(42))
         }
 
         "become with chain of promises" in {
@@ -107,7 +110,7 @@ class IOPromiseTest extends Test:
             p1.become(p2)
             p2.become(p3)
             p3.complete(Result.success(42))
-            val v = p1.block(timeout.toMillis)
+            val v = p1.block(deadline())
             assert(v == Result.success(42))
         }
     }
@@ -118,7 +121,7 @@ class IOPromiseTest extends Test:
             val p2 = new IOPromise[Nothing, Int]()
             p2.complete(Result.success(42))
             p1.becomeDiscard(p2)
-            val v = p1.block(timeout.toMillis)
+            val v = p1.block(deadline())
             assert(v == Result.success(42))
         }
 
@@ -127,7 +130,7 @@ class IOPromiseTest extends Test:
             val p2 = new IOPromise[Nothing, Int]()
             p1.becomeDiscard(p2)
             p2.complete(Result.success(42))
-            val v = p1.block(timeout.toMillis)
+            val v = p1.block(deadline())
             assert(v == Result.success(42))
         }
     }
@@ -136,14 +139,14 @@ class IOPromiseTest extends Test:
         "interrupt" in {
             val p = new IOPromise[Nothing, Int]()
             assert(p.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(p.block(timeout.toMillis).isPanic)
+            assert(p.block(deadline()).isPanic)
         }
 
         "interrupt completed promise" in {
             val p = new IOPromise[Nothing, Int]()
             p.complete(Result.success(42))
             assert(!p.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(p.block(timeout.toMillis) == Result.success(42))
+            assert(p.block(deadline()) == Result.success(42))
         }
 
         "interrupt chain of promises" in {
@@ -153,7 +156,7 @@ class IOPromiseTest extends Test:
             p1.become(p2)
             p2.become(p3)
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(p3.block(timeout.toMillis).isPanic)
+            assert(p3.block(deadline()).isPanic)
         }
     }
 
@@ -190,19 +193,19 @@ class IOPromiseTest extends Test:
         "immediate completion" in {
             val p = new IOPromise[Nothing, Int]()
             p.complete(Result.success(42))
-            val result = p.block(timeout.toMillis)
+            val result = p.block(deadline())
             assert(result == Result.success(42))
         }
 
         "timeout" in runJVM {
             val p      = new IOPromise[Nothing, Int]()
-            val result = p.block(java.lang.System.currentTimeMillis() + 10)
+            val result = p.block(deadline(10.millis))
             assert(result.isFail)
         }
 
         "block with very short timeout" in runJVM {
             val p      = new IOPromise[Nothing, Int]()
-            val result = p.block(java.lang.System.currentTimeMillis() + 1)
+            val result = p.block(deadline(10.millis))
             assert(result.isFail)
         }
     }
@@ -222,7 +225,7 @@ class IOPromiseTest extends Test:
             end createNestedPromises
 
             val deeplyNested = createNestedPromises(10000)
-            assert(deeplyNested.block(timeout.toMillis) == Result.success(42))
+            assert(deeplyNested.block(deadline()) == Result.success(42))
         }
 
         "long chain of onComplete callbacks" in {
@@ -247,8 +250,8 @@ class IOPromiseTest extends Test:
 
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted p1"))))
 
-            assert(p1.block(timeout.toMillis).isPanic)
-            assert(p2.block(timeout.toMillis).isPanic)
+            assert(p1.block(deadline()).isPanic)
+            assert(p2.block(deadline()).isPanic)
         }
 
         "interrupt linked chain promises via interrupts" in {
@@ -261,9 +264,9 @@ class IOPromiseTest extends Test:
 
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted p1"))))
 
-            assert(p1.block(timeout.toMillis).isPanic)
-            assert(p2.block(timeout.toMillis).isPanic)
-            assert(p3.block(timeout.toMillis).isPanic)
+            assert(p1.block(deadline()).isPanic)
+            assert(p2.block(deadline()).isPanic)
+            assert(p3.block(deadline()).isPanic)
         }
 
         "interrupt multiple promises via single interrupts" in {
@@ -276,9 +279,9 @@ class IOPromiseTest extends Test:
 
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted p1"))))
 
-            assert(p1.block(timeout.toMillis).isPanic)
-            assert(p2.block(timeout.toMillis).isPanic)
-            assert(p3.block(timeout.toMillis).isPanic)
+            assert(p1.block(deadline()).isPanic)
+            assert(p2.block(deadline()).isPanic)
+            assert(p3.block(deadline()).isPanic)
         }
 
         "ensure interruptions do not propagate without linking" in {
@@ -286,7 +289,7 @@ class IOPromiseTest extends Test:
             val p2 = new IOPromise[Nothing, Int]()
 
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted p1"))))
-            assert(p1.block(timeout.toMillis).isPanic)
+            assert(p1.block(deadline()).isPanic)
             assert(!p2.done())
         }
     }
@@ -457,8 +460,8 @@ class IOPromiseTest extends Test:
 
             assert(masked.interrupt(Result.Panic(new Exception("Interrupted"))))
 
-            assert(masked.block(timeout.toMillis).isPanic)
-            assert(other.block(timeout.toMillis).isPanic)
+            assert(masked.block(deadline()).isPanic)
+            assert(other.block(deadline()).isPanic)
             assert(!original.done())
         }
     }
@@ -613,7 +616,7 @@ class IOPromiseTest extends Test:
             }
 
             p1.complete(Result.success(1))
-            assert(p2.block(timeout.toMillis) == Result.success(42))
+            assert(p2.block(deadline()) == Result.success(42))
         }
 
         "interrupting a promise during onComplete callback" in {
@@ -625,7 +628,7 @@ class IOPromiseTest extends Test:
             }
 
             p1.complete(Result.success(1))
-            assert(p2.block(timeout.toMillis).isPanic)
+            assert(p2.block(deadline()).isPanic)
         }
 
         "becoming another promise during onComplete callback" in {
@@ -639,7 +642,7 @@ class IOPromiseTest extends Test:
 
             p1.complete(Result.success(1))
             p3.complete(Result.success(42))
-            assert(p2.block(timeout.toMillis) == Result.success(42))
+            assert(p2.block(deadline()) == Result.success(42))
         }
 
         "complex chaining with interrupts and masks" in {
@@ -652,10 +655,10 @@ class IOPromiseTest extends Test:
             p1.interrupts(p3)
 
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(p1.block(timeout.toMillis).isPanic)
-            assert(p2.block(timeout.toMillis).isPanic)
-            assert(p3.block(timeout.toMillis).isPanic)
-            assert(p4.block(timeout.toMillis).isPanic)
+            assert(p1.block(deadline()).isPanic)
+            assert(p2.block(deadline()).isPanic)
+            assert(p3.block(deadline()).isPanic)
+            assert(p4.block(deadline()).isPanic)
         }
 
         "nested onComplete callbacks" in {
@@ -671,7 +674,7 @@ class IOPromiseTest extends Test:
             }
 
             p1.complete(Result.success(1))
-            assert(p3.block(timeout.toMillis) == Result.success(42))
+            assert(p3.block(deadline()) == Result.success(42))
         }
 
         "completing a promise with a failed result during onInterrupt" in {
@@ -683,7 +686,7 @@ class IOPromiseTest extends Test:
             }
 
             p1.interrupt(Result.Panic(new Exception("Interrupted")))
-            assert(p2.block(timeout.toMillis).isFail)
+            assert(p2.block(deadline()).isFail)
         }
     }
 
