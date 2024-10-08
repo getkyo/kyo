@@ -72,10 +72,11 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of the last execution
       */
-    def repeat(policy: Retry.Policy)(using Flat[A], Frame): A < (S & Async) =
-        Loop.indexed { i =>
-            if i >= policy.limit then effect.map(Loop.done)
-            else effect.delayed(policy.backoff(i)).as(Loop.continue)
+    def repeat(schedule: Schedule)(using Flat[A], Frame): A < (S & Async) =
+        Loop(schedule) { schedule =>
+            val (delay, nextSchedule) = schedule.next
+            if !delay.isFinite then effect.map(Loop.done)
+            else effect.delayed(delay).as(Loop.continue(nextSchedule))
         }
 
     /** Performs this computation repeatedly with a limit.
@@ -186,8 +187,8 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Async and Abort[Throwable] effects
       */
-    def retry(policy: Retry.Policy)(using Flat[A], Frame): A < (S & Async & Abort[Throwable]) =
-        Retry[Throwable](policy)(effect)
+    def retry(schedule: Schedule)(using Flat[A], Frame): A < (S & Async & Abort[Throwable]) =
+        Retry[Throwable](schedule)(effect)
 
     /** Performs this computation repeatedly with a limit in case of failures.
       *
@@ -197,19 +198,7 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of this computation with Async and Abort[Throwable] effects
       */
     def retry(n: Int)(using Flat[A], Frame): A < (S & Async & Abort[Throwable]) =
-        Retry[Throwable](Retry.Policy(_ => Duration.Zero, n))(effect)
-
-    /** Performs this computation repeatedly with a backoff policy and a limit in case of failures.
-      *
-      * @param backoff
-      *   The backoff policy to use
-      * @param limit
-      *   The limit to use
-      * @return
-      *   A computation that produces the result of this computation with Async and Abort[Throwable] effects
-      */
-    def retry(backoff: Int => Duration, n: Int)(using Flat[A], Frame): A < (S & Async & Abort[Throwable]) =
-        Retry[Throwable](Retry.Policy(backoff, n))(effect)
+        Retry[Throwable](Schedule.repeat(n))(effect)
 
     /** Performs this computation indefinitely.
       *
