@@ -47,17 +47,17 @@ class IOPromiseTest extends Test:
         }
     }
 
-    "completeUnit" - {
+    "completeDiscard" - {
         "success" in {
             val p = new IOPromise[Nothing, Int]()
-            p.completeUnit(Result.success(1))
+            p.completeDiscard(Result.success(1))
             assert(p.block(timeout.toMillis) == Result.success(1))
         }
 
-        "completeUnit with failure" in {
+        "completeDiscard with failure" in {
             val p  = new IOPromise[Exception, Int]()
             val ex = new Exception("Test exception")
-            p.completeUnit(Result.fail(ex))
+            p.completeDiscard(Result.fail(ex))
             assert(p.block(timeout.toMillis) == Result.fail(ex))
         }
     }
@@ -112,20 +112,20 @@ class IOPromiseTest extends Test:
         }
     }
 
-    "becomeUnit" - {
+    "becomeDiscard" - {
         "success" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
             p2.complete(Result.success(42))
-            p1.becomeUnit(p2)
+            p1.becomeDiscard(p2)
             val v = p1.block(timeout.toMillis)
             assert(v == Result.success(42))
         }
 
-        "becomeUnit with incomplete promise" in {
+        "becomeDiscard with incomplete promise" in {
             val p1 = new IOPromise[Nothing, Int]()
             val p2 = new IOPromise[Nothing, Int]()
-            p1.becomeUnit(p2)
+            p1.becomeDiscard(p2)
             p2.complete(Result.success(42))
             val v = p1.block(timeout.toMillis)
             assert(v == Result.success(42))

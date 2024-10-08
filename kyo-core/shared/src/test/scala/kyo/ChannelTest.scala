@@ -124,7 +124,7 @@ class ChannelTest extends Test:
                 f <- c.putFiber(3)
                 r <- c.close
                 d <- f.getResult
-                _ <- c.offerUnit(1)
+                _ <- c.offerDiscard(1)
             yield assert(r == Maybe(Seq(1, 2)) && d.isPanic)
         }
         "no buffer w/ pending put" in runJVM {

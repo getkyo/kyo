@@ -91,7 +91,7 @@ object Resource:
                                     .map(_.fold(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))
                             )
                                 .pipe(Async.run)
-                                .map(p.becomeUnit)
+                                .map(p.becomeDiscard)
                     }
                 ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
                     .pipe(IO.ensure(close))

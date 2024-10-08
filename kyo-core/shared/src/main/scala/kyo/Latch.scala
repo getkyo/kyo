@@ -75,7 +75,7 @@ object Latch:
                             if c > 0 && !count.cas(c, c - 1) then
                                 loop(count.get())
                             else if c == 1 then
-                                promise.completeUnit(Result.unit)
+                                promise.completeDiscard(Result.unit)
                         loop(count.get())
                     end release
 

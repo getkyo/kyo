@@ -35,7 +35,7 @@ class Hub[A] private[kyo] (
       * @param v
       *   the element to offer
       */
-    def offerUnit(v: A)(using Frame): Unit < IO = ch.offerUnit(v)
+    def offerDiscard(v: A)(using Frame): Unit < IO = ch.offerDiscard(v)
 
     /** Checks if the Hub is empty.
       *
@@ -80,7 +80,7 @@ class Hub[A] private[kyo] (
       *   a Maybe containing any remaining elements in the Hub
       */
     def close(using frame: Frame): Maybe[Seq[A]] < IO =
-        fiber.interruptUnit(Result.Panic(Closed("Hub", initFrame, frame))).andThen {
+        fiber.interruptDiscard(Result.Panic(Closed("Hub", initFrame, frame))).andThen {
             ch.close.map { r =>
                 IO {
                     val array = listeners.toArray()

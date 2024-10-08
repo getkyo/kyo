@@ -12,8 +12,8 @@ trait FiberPlatformSpecific:
         IO {
             val p = new IOPromise[Nothing, A]()
             cs.whenComplete { (success, error) =>
-                if error == null then p.completeUnit(Result.success(success))
-                else p.completeUnit(Result.panic(error))
+                if error == null then p.completeDiscard(Result.success(success))
+                else p.completeDiscard(Result.panic(error))
             }
             Fiber.initUnsafe(p)
         }

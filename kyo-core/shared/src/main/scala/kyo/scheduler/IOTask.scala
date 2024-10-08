@@ -42,7 +42,7 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                     [C] =>
                         (input, cont) =>
                             locally {
-                                completeUnit(input.asInstanceOf[Result[E, A]])
+                                completeDiscard(input.asInstanceOf[Result[E, A]])
                                 nullResult
                         },
                     [C] =>
@@ -56,17 +56,17 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
                                 this.trace = null.asInstanceOf[Trace]
                                 input.onComplete { r =>
                                     val task = IOTask(IO(cont(r.asInstanceOf[Result[Nothing, C]])), trace, context, ensures, runtime)
-                                    this.becomeUnit(task)
+                                    this.becomeDiscard(task)
                                 }
                                 nullResult
                         }
                 )
             }
             if !isNull(curr) then
-                curr.evalNow.foreach(a => completeUnit(Result.success(a)))
+                curr.evalNow.foreach(a => completeDiscard(Result.success(a)))
         catch
             case ex =>
-                completeUnit(Result.panic(ex))
+                completeDiscard(Result.panic(ex))
         end try
     end eval
 

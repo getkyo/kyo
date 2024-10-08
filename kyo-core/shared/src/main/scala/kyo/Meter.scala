@@ -84,7 +84,7 @@ object Meter:
             offer(concurrency, chan, ()).map { _ =>
                 new Meter:
                     def available(using Frame) = chan.size
-                    def release(using Frame)   = chan.offerUnit(())
+                    def release(using Frame)   = chan.offerDiscard(())
 
                     def run[A, S](v: => A < S)(using Frame) =
                         IO.ensure(release) {

@@ -64,7 +64,7 @@ object Barrier:
                             if c > 0 && !count.cas(c, c - 1) then
                                 loop(count.get())
                             else
-                                if c == 1 then promise.completeUnit(Result.unit)
+                                if c == 1 then promise.completeDiscard(Result.unit)
                                 Fiber.Unsafe.fromPromise(promise)
                         loop(count.get())
                     end await

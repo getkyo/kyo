@@ -50,7 +50,7 @@ extension (kyoObject: Kyo.type)
             registerFn = (eff: A < Async) =>
                 val effFiber = Async.run(eff)
                 val updatePromise =
-                    effFiber.map(_.onComplete(a => promise.completeUnit(a)))
+                    effFiber.map(_.onComplete(a => promise.completeDiscard(a)))
                 val updatePromiseIO = Async.run(updatePromise).unit
                 import AllowUnsafe.embrace.danger
                 IO.Unsafe.run(updatePromiseIO).eval
