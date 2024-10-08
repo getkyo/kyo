@@ -208,9 +208,9 @@ class EffectCombinatorTest extends Test:
 
             "repeat with policy" - {
                 "repeat with custom policy" in run {
-                    var count  = 0
-                    val policy = Retry.Policy(_ => Duration.Zero, 3)
-                    val effect = IO { count += 1; count }.repeat(policy)
+                    var count    = 0
+                    val schedule = Schedule.repeat(3)
+                    val effect   = IO { count += 1; count }.repeat(schedule)
                     Async.run(effect).map(_.toFuture).map { handled =>
                         handled.map { v =>
                             assert(v == 4)
@@ -321,7 +321,7 @@ class EffectCombinatorTest extends Test:
             "retry with policy" - {
                 "successful after retries with custom policy" in run {
                     var count  = 0
-                    val policy = Retry.Policy(_ => 10.millis, 3)
+                    val policy = Schedule.fixed(10.millis).take(3)
                     val effect = IO {
                         count += 1
                         if count < 3 then throw new Exception("Retry")
@@ -333,20 +333,6 @@ class EffectCombinatorTest extends Test:
                 }
             }
 
-            "retry with backoff and limit" - {
-                "successful after retries with exponential backoff" in run {
-                    var count   = 0
-                    val backoff = (i: Int) => Math.pow(2, i).toLong.millis
-                    val effect = IO {
-                        count += 1
-                        if count < 3 then throw new Exception("Retry")
-                        else count
-                    }.retry(backoff, 3)
-                    Async.run(effect).map(_.toFuture).map { handled =>
-                        handled.map(v => assert(v == 3))
-                    }
-                }
-            }
         }
 
         "explicitThrowable" - {

@@ -131,6 +131,10 @@ object Duration:
             val sum: Long = self.toLong + that.toLong
             if sum >= 0 then sum else Duration.Infinity
 
+        inline infix def -(that: Duration): Duration =
+            val diff: Long = self.toLong - that.toLong
+            if diff > 0 then diff else Duration.Zero
+
         inline infix def *(factor: Double): Duration =
             if factor <= 0 || self.toLong <= 0L then Duration.Zero
             else if factor <= Long.MaxValue / self.toLong.toDouble then Math.round(self.toLong.toDouble * factor)
