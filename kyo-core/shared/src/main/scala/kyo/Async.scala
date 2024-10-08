@@ -119,7 +119,7 @@ object Async:
               * @param v
               *   The result to complete the Promise with
               */
-            def completeUnit[E2 <: E, A2 <: A](v: Result[E, A])(using Frame): Unit < IO = IO(discard(self.complete(v)))
+            def completeDiscard[E2 <: E, A2 <: A](v: Result[E, A])(using Frame): Unit < IO = IO(discard(self.complete(v)))
 
             /** Makes this Promise become another Fiber.
               *
@@ -135,7 +135,7 @@ object Async:
               * @param other
               *   The Fiber to become
               */
-            def becomeUnit[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using Frame): Unit < IO = IO(discard(self.become(other)))
+            def becomeDiscard[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using Frame): Unit < IO = IO(discard(self.become(other)))
 
             def unsafe: Unsafe[E, A] = self
         end extension
@@ -149,11 +149,11 @@ object Async:
             def init[E, A]()(using AllowUnsafe): Unsafe[E, A] = IOPromise()
 
             extension [E, A](self: Unsafe[E, A])
-                def complete[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Boolean     = self.complete(v)
-                def completeUnit[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Unit    = discard(self.complete(v))
-                def become[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Boolean  = self.become(other)
-                def becomeUnit[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Unit = discard(self.become(other))
-                def safe: Promise[E, A]                                                         = self
+                def complete[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Boolean        = self.complete(v)
+                def completeDiscard[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Unit    = discard(self.complete(v))
+                def become[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Boolean     = self.become(other)
+                def becomeDiscard[E2 <: E, A2 <: A](other: Fiber[E2, A2])(using AllowUnsafe): Unit = discard(self.become(other))
+                def safe: Promise[E, A]                                                            = self
             end extension
         end Unsafe
     end Promise
@@ -228,9 +228,9 @@ object Async:
                     def apply(result: Try[A]) =
                         result match
                             case Success(v) =>
-                                completeUnit(Result.success(v))
+                                completeDiscard(Result.success(v))
                             case Failure(ex) =>
-                                completeUnit(Result.fail(ex))
+                                completeDiscard(Result.fail(ex))
 
                 f.onComplete(p)(ExecutionContext.parasitic)
                 p
@@ -340,7 +340,7 @@ object Async:
             def map[B](f: A => B)(using Frame): Fiber[E, B] < IO =
                 IO {
                     val p = new IOPromise[E, B](interrupts = self) with (Result[E, A] => Unit):
-                        def apply(v: Result[E, A]) = completeUnit(v.map(f))
+                        def apply(v: Result[E, A]) = completeDiscard(v.map(f))
                     self.onComplete(p)
                     p
                 }
@@ -355,7 +355,7 @@ object Async:
             def flatMap[E2, B](f: A => Fiber[E2, B])(using Frame): Fiber[E | E2, B] < IO =
                 IO {
                     val p = new IOPromise[E | E2, B](interrupts = self) with (Result[E, A] => Unit):
-                        def apply(r: Result[E, A]) = r.fold(completeUnit)(v => becomeUnit(f(v)))
+                        def apply(r: Result[E, A]) = r.fold(completeDiscard)(v => becomeDiscard(f(v)))
                     self.onComplete(p)
                     p
                 }
@@ -373,7 +373,7 @@ object Async:
             def mapResult[E2, B](f: Result[E, A] => Result[E2, B])(using Frame): Fiber[E2, B] < IO =
                 IO {
                     val p = new IOPromise[E2, B](interrupts = self) with (Result[E, A] => Unit):
-                        def apply(r: Result[E, A]) = completeUnit(Result(f(r)).flatten)
+                        def apply(r: Result[E, A]) = completeDiscard(Result(f(r)).flatten)
                     self.onComplete(p)
                     p
                 }
@@ -412,7 +412,7 @@ object Async:
               * @param error
               *   The error to interrupt the Fiber with
               */
-            def interruptUnit(error: Panic)(using Frame): Unit < IO =
+            def interruptDiscard(error: Panic)(using Frame): Unit < IO =
                 IO(discard(self.interrupt(error)))
 
             def unsafe: Fiber.Unsafe[E, A] = self
@@ -445,7 +445,7 @@ object Async:
                     val pending = new AtomicInteger(seq.size)
                     def apply(result: Result[E, A]): Unit =
                         val last = pending.decrementAndGet() == 0
-                        result.fold(e => if last then completeUnit(e))(v => completeUnit(Result.success(v)))
+                        result.fold(e => if last then completeDiscard(e))(v => completeDiscard(Result.success(v)))
                     end apply
                 end State
                 val state = new State
@@ -492,7 +492,7 @@ object Async:
                             def update(idx: Int, value: A) =
                                 results(idx) = value
                                 if pending.decrementAndGet() == 0 then
-                                    this.completeUnit(Result.success(ArraySeq.unsafeWrapArray(results)))
+                                    this.completeDiscard(Result.success(ArraySeq.unsafeWrapArray(results)))
                             end update
                         end State
                         val state = new State
@@ -506,7 +506,7 @@ object Async:
                                         if isNull(results(idx)) then
                                             val fiber = IOTask(v, safepoint.copyTrace(trace), context)
                                             state.interrupts(fiber)
-                                            fiber.onComplete(_.fold(state.completeUnit)(update(idx, _)))
+                                            fiber.onComplete(_.fold(state.completeDiscard)(update(idx, _)))
                                     }
                                     state
                                 }
@@ -529,7 +529,7 @@ object Async:
                 def onComplete(f: Result[E, A] => Unit)(using AllowUnsafe): Unit               = self.onComplete(f)
                 def block(timeout: Duration)(using AllowUnsafe, Frame): Result[E | Timeout, A] = self.block(deadline(timeout))
                 def interrupt(error: Panic)(using AllowUnsafe): Boolean                        = self.interrupt(error)
-                def interruptUnit(error: Panic)(using AllowUnsafe): Unit                       = discard(self.interrupt(error))
+                def interruptDiscard(error: Panic)(using AllowUnsafe): Unit                    = discard(self.interrupt(error))
                 def safe: Fiber[E, A]                                                          = self
             end extension
         end Unsafe
@@ -559,7 +559,7 @@ object Async:
             IO {
                 val p = IOPromise[Nothing, Unit]()
                 if d.isFinite then
-                    Timer.schedule(d)(p.completeUnit(Result.success(()))).map { t =>
+                    Timer.schedule(d)(p.completeDiscard(Result.success(()))).map { t =>
                         IO.ensure(t.cancel.unit)(get(p))
                     }
                 else
@@ -583,7 +583,7 @@ object Async:
     ): A < (Abort[E | Timeout] & Async & Ctx) =
         boundary { (trace, context) =>
             val task = IOTask[Ctx, E | Timeout, A](v, trace, context)
-            Timer.schedule(d)(task.completeUnit(Result.fail(Timeout(frame)))).map { t =>
+            Timer.schedule(d)(task.completeDiscard(Result.fail(Timeout(frame)))).map { t =>
                 IO.ensure(t.cancel.unit)(Async.get(task))
             }
         }

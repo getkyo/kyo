@@ -64,7 +64,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
 
     final def mask: IOPromise[E, A] =
         val p = IOPromise[E, A]()
-        onComplete(p.completeUnit)
+        onComplete(p.completeDiscard)
         p
     end mask
 
@@ -103,7 +103,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         mergeLoop(this)
     end merge
 
-    final def becomeUnit[E2 <: E, A2 <: A](other: IOPromise[E2, A2]): Unit =
+    final def becomeDiscard[E2 <: E, A2 <: A](other: IOPromise[E2, A2]): Unit =
         discard(become(other))
 
     final def become[E2 <: E, A2 <: A](other: IOPromise[E2, A2]): Boolean =
@@ -166,7 +166,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
             true
         }
 
-    final def completeUnit[E2 <: E, A2 <: A](v: Result[E2, A2]): Unit =
+    final def completeDiscard[E2 <: E, A2 <: A](v: Result[E2, A2]): Unit =
         discard(complete(v))
 
     final def complete[E2 <: E, A2 <: A](v: Result[E2, A2]): Boolean =

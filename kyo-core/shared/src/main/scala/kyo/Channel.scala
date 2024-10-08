@@ -33,7 +33,7 @@ abstract class Channel[A]:
       * @param v
       *   The element to offer
       */
-    def offerUnit(v: A)(using Frame): Unit < IO
+    def offerDiscard(v: A)(using Frame): Unit < IO
 
     /** Attempts to poll an element from the channel without blocking.
       *
@@ -149,7 +149,7 @@ object Channel:
                             }
                         }
 
-                    def offerUnit(v: A)(using Frame) =
+                    def offerDiscard(v: A)(using Frame) =
                         IO.Unsafe {
                             if !u.closed() then
                                 try discard(u.offer(v))
@@ -256,13 +256,13 @@ object Channel:
                                         takes.poll() match
                                             case null =>
                                             case p =>
-                                                p.completeUnit(c)
+                                                p.completeDiscard(c)
                                                 dropTakes()
                                     def dropPuts(): Unit =
                                         puts.poll() match
                                             case null => ()
                                             case (_, p) =>
-                                                p.completeUnit(c)
+                                                p.completeDiscard(c)
                                                 dropPuts()
                                     dropTakes()
                                     dropPuts()

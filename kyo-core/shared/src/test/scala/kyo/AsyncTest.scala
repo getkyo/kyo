@@ -88,20 +88,20 @@ class AsyncTest extends Test:
             }
         }
 
-        "completeUnit" in run {
+        "completeDiscard" in run {
             for
                 p <- Promise.init[Nothing, Int]
-                _ <- p.completeUnit(Result.success(1))
+                _ <- p.completeDiscard(Result.success(1))
                 v <- p.get
             yield assert(v == 1)
         }
 
-        "becomeUnit" in run {
+        "becomeDiscard" in run {
             for
                 p1 <- Promise.init[Nothing, Int]
                 p2 <- Promise.init[Nothing, Int]
                 _  <- p2.complete(Result.success(42))
-                _  <- p1.becomeUnit(p2)
+                _  <- p1.becomeDiscard(p2)
                 v  <- p1.get
             yield assert(v == 42)
         }
