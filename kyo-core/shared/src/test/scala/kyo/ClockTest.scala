@@ -54,6 +54,32 @@ class ClockTest extends Test:
                 result <- Clock.let(testClock)(Clock.now)
             yield assert(result == Instant.MAX)
         }
+
+        "handle Duration.Zero and Duration.Infinity" - {
+            "deadline with Zero duration" in run {
+                val testClock = new TestClock
+                for
+                    deadline  <- Clock.let(testClock)(Clock.deadline(Duration.Zero))
+                    isOverdue <- deadline.isOverdue
+                    timeLeft  <- deadline.timeLeft
+                yield
+                    assert(!isOverdue)
+                    assert(timeLeft == Duration.Zero)
+                end for
+            }
+
+            "deadline with Infinity duration" in run {
+                val testClock = new TestClock
+                for
+                    deadline  <- Clock.let(testClock)(Clock.deadline(Duration.Infinity))
+                    isOverdue <- deadline.isOverdue
+                    timeLeft  <- deadline.timeLeft
+                yield
+                    assert(!isOverdue)
+                    assert(timeLeft == Duration.Infinity)
+                end for
+            }
+        }
     }
 
     "Stopwatch" - {
@@ -81,6 +107,25 @@ class ClockTest extends Test:
                 stopwatch <- Clock.let(testClock)(Clock.stopwatch)
                 elapsed   <- stopwatch.elapsed
             yield assert(elapsed == Duration.Zero)
+            end for
+        }
+
+        "measure Zero duration" in run {
+            val testClock = new TestClock
+            for
+                stopwatch <- Clock.let(testClock)(Clock.stopwatch)
+                elapsed   <- stopwatch.elapsed
+            yield assert(elapsed == Duration.Zero)
+            end for
+        }
+
+        "measure Infinity duration" in run {
+            val testClock = new TestClock
+            for
+                stopwatch <- Clock.let(testClock)(Clock.stopwatch)
+                _         <- Clock.let(testClock)(IO { testClock.advance(Duration.Infinity) })
+                elapsed   <- stopwatch.elapsed
+            yield assert(elapsed == Duration.Infinity)
             end for
         }
     }
@@ -142,6 +187,31 @@ class ClockTest extends Test:
                 isOverdue <- deadline.isOverdue
                 timeLeft  <- deadline.timeLeft
             yield assert(!isOverdue && timeLeft == Duration.Zero)
+            end for
+        }
+
+        "handle Zero timeLeft" in run {
+            val testClock = new TestClock
+            for
+                deadline  <- Clock.let(testClock)(Clock.deadline(1.second))
+                _         <- Clock.let(testClock)(IO { testClock.advance(1.second) })
+                timeLeft  <- deadline.timeLeft
+                isOverdue <- deadline.isOverdue
+            yield
+                assert(timeLeft == Duration.Zero)
+                assert(!isOverdue)
+            end for
+        }
+
+        "handle Infinity timeLeft" in run {
+            val testClock = new TestClock
+            for
+                deadline  <- Clock.let(testClock)(Clock.deadline(Duration.Infinity))
+                timeLeft  <- deadline.timeLeft
+                isOverdue <- deadline.isOverdue
+            yield
+                assert(timeLeft == Duration.Infinity)
+                assert(!isOverdue)
             end for
         }
     }

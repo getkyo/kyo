@@ -179,7 +179,7 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
         completeLoop()
     end complete
 
-    final def block(deadline: Long)(using frame: Frame): Result[E | Timeout, A] =
+    final def block(deadline: Clock.Deadline.Unsafe)(using frame: Frame): Result[E | Timeout, A] =
         def blockLoop(promise: IOPromise[E, A]): Result[E | Timeout, A] =
             promise.state match
                 case _: Pending[E, A] @unchecked =>
@@ -192,18 +192,20 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
                             result = v
                             LockSupport.unpark(waiter)
                         @tailrec def apply(): Result[E | Timeout, A] =
+                            import kyo.AllowUnsafe.embrace.danger
                             if isNull(result) then
-                                val remainingNanos = deadline - java.lang.System.currentTimeMillis()
-                                if remainingNanos <= 0 then
+                                if deadline.isOverdue() then
                                     return Result.fail(Timeout(frame))
-                                else if remainingNanos == Long.MaxValue then
+                                val timeLeft = deadline.timeLeft()
+                                if !timeLeft.isFinite then
                                     LockSupport.park(this)
                                 else
-                                    LockSupport.parkNanos(this, remainingNanos)
+                                    LockSupport.parkNanos(this, timeLeft.toNanos)
                                 end if
                                 apply()
                             else
                                 result
+                            end if
                         end apply
                     end state
                     onComplete(state)
