@@ -288,14 +288,7 @@ object Async:
     def fromFuture[A](f: Future[A])(using frame: Frame): A < (Async & Abort[Throwable]) =
         Fiber.fromFuture(f).map(_.get)
 
-    /** Gets the result of an IOPromise.
-      *
-      * @param v
-      *   The IOPromise to get the result from
-      * @return
-      *   The result of the IOPromise
-      */
-    def get[E, A](v: IOPromise[E, A])(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async) =
+    private[kyo] def get[E, A](v: IOPromise[E, A])(using reduce: Reducible[Abort[E]], frame: Frame): A < (reduce.SReduced & Async) =
         reduce(use(v)(identity))
 
     private[kyo] def use[E, A, B, S](v: IOPromise[E, A])(f: A => B < S)(
