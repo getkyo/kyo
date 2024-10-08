@@ -156,6 +156,11 @@ object DurationSpec extends ZIOSpecDefault:
                     assertTrue(Duration.parse("5\tminutes") == Result.success(5.minutes))
                 )
             }
+        ),
+        suite("Duration.fromNanos")(
+            test("negative value") {
+                assertTrue(Duration.fromNanos(-1) == Duration.Zero)
+            }
         )
     ) @@ TestAspect.exceptNative
 end DurationSpec

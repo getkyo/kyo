@@ -1,6 +1,5 @@
 package kyo
 
-import java.time.Instant
 import kyo.Clock.Deadline
 import kyo.Clock.Stopwatch
 
@@ -49,9 +48,8 @@ object Clock:
     object Stopwatch:
         /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         class Unsafe(start: Instant, clock: Clock.Unsafe):
-            def elapsed()(using AllowUnsafe): Duration =
-                Duration.fromJava(java.time.Duration.between(start, clock.now()))
-            def safe: Stopwatch = Stopwatch(this)
+            def elapsed()(using AllowUnsafe): Duration = clock.now() - start
+            def safe: Stopwatch                        = Stopwatch(this)
         end Unsafe
     end Stopwatch
 
@@ -77,10 +75,7 @@ object Clock:
         class Unsafe(endInstant: Maybe[Instant], clock: Clock.Unsafe):
 
             def timeLeft()(using AllowUnsafe): Duration =
-                endInstant.map { endInstant =>
-                    val remaining = java.time.Duration.between(clock.now(), endInstant)
-                    if remaining.isNegative then Duration.Zero else Duration.fromJava(remaining)
-                }.getOrElse(Duration.Infinity)
+                endInstant.map(_ - clock.now()).getOrElse(Duration.Infinity)
 
             def isOverdue()(using AllowUnsafe): Boolean = endInstant.exists(clock.now().isAfter)
 
@@ -92,7 +87,7 @@ object Clock:
     val live: Clock =
         Clock(
             new Unsafe:
-                def now()(using AllowUnsafe): Instant = Instant.now()
+                def now()(using AllowUnsafe): Instant = Instant.fromJava(java.time.Instant.now())
         )
 
     private val local = Local.init(live)
@@ -156,7 +151,7 @@ object Clock:
 
         def deadline(duration: Duration)(using AllowUnsafe): Deadline.Unsafe =
             if !duration.isFinite then Deadline.Unsafe(Maybe.empty, this)
-            else Deadline.Unsafe(Maybe(now().plus(duration.toJava)), this)
+            else Deadline.Unsafe(Maybe(now() + duration), this)
 
         def safe: Clock = Clock(this)
     end Unsafe

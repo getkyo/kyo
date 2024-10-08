@@ -1,7 +1,6 @@
 package kyo
 
 import Tagged.*
-import java.time.Instant
 import kyo.Clock.Deadline
 import kyo.Clock.Stopwatch
 import kyo.Clock.Unsafe
@@ -73,11 +72,11 @@ class KyoAppTest extends Test:
 
     "custom services" taggedAs jvmOnly in run {
         for
-            instantRef <- AtomicRef.init(Instant.MAX)
+            instantRef <- AtomicRef.init(Instant.Max)
             randomRef  <- AtomicRef.init("")
             testClock = new Clock:
                 override def unsafe: Unsafe                            = ???
-                override def now(using Frame)                          = Instant.EPOCH
+                override def now(using Frame)                          = Instant.Epoch
                 override def deadline(duration: Duration)(using Frame) = ???
                 override def stopwatch(using Frame)                    = ???
             testRandom = new Random:
@@ -123,7 +122,7 @@ class KyoAppTest extends Test:
             time <- instantRef.get
             rand <- randomRef.get
         yield
-            assert(time eq Instant.EPOCH)
+            assert(time == Instant.Epoch)
             assert(rand == "FooBar")
         end for
     }

@@ -1,6 +1,7 @@
 package kyo
 
 import java.time.Duration as JavaDuration
+import java.time.temporal.ChronoUnit
 import java.time.temporal.ChronoUnit.*
 import kyo.Duration.Units
 import kyo.Duration.Units.*
@@ -57,7 +58,8 @@ object Duration:
       * @return
       *   A Duration instance
       */
-    inline def fromNanos(value: Long): Duration = value
+    inline def fromNanos(value: Long): Duration =
+        if value <= 0 then Duration.Zero else value
 
     /** Creates a Duration from a value and unit.
       *
@@ -94,18 +96,24 @@ object Duration:
     def fromScala(value: ScalaDuration): Duration =
         if value.isFinite then value.toNanos.nanos.max(Zero) else Infinity
 
+    /** Marker trait for units that can be used with Instant.truncatedTo */
+    sealed trait Truncatable
+
     /** Enumeration of time units with their conversion factors and names. */
-    enum Units(val factor: Double, val names: List[String]):
-        case Nanos   extends Units(NANOS.getDuration.toNanos.toDouble, List("ns", "nanos", "nanosecond", "nanoseconds"))
-        case Micros  extends Units(MICROS.getDuration.toNanos.toDouble, List("µs", "micros", "microsecond", "microseconds"))
-        case Millis  extends Units(MILLIS.getDuration.toNanos.toDouble, List("ms", "millis", "millisecond", "milliseconds"))
-        case Seconds extends Units(SECONDS.getDuration.toNanos.toDouble, List("s", "seconds", "second"))
-        case Minutes extends Units(MINUTES.getDuration.toNanos.toDouble, List("m", "minutes", "minute"))
-        case Hours   extends Units(HOURS.getDuration.toNanos.toDouble, List("h", "hours", "hour"))
-        case Days    extends Units(DAYS.getDuration.toNanos.toDouble, List("d", "days", "day"))
-        case Weeks   extends Units(WEEKS.getDuration.toNanos.toDouble, List("w", "weeks", "week"))
-        case Months  extends Units(MONTHS.getDuration.toNanos.toDouble, List("m", "months", "month"))
-        case Years   extends Units(YEARS.getDuration.toNanos.toDouble, List("y", "years", "year"))
+    enum Units(val names: List[String], val chronoUnit: ChronoUnit):
+        case Nanos   extends Units(List("ns", "nanos", "nanosecond", "nanoseconds"), ChronoUnit.NANOS) with Truncatable
+        case Micros  extends Units(List("µs", "micros", "microsecond", "microseconds"), ChronoUnit.MICROS) with Truncatable
+        case Millis  extends Units(List("ms", "millis", "millisecond", "milliseconds"), ChronoUnit.MILLIS) with Truncatable
+        case Seconds extends Units(List("s", "seconds", "second"), ChronoUnit.SECONDS) with Truncatable
+        case Minutes extends Units(List("m", "minutes", "minute"), ChronoUnit.MINUTES) with Truncatable
+        case Hours   extends Units(List("h", "hours", "hour"), ChronoUnit.HOURS) with Truncatable
+        case Days    extends Units(List("d", "days", "day"), ChronoUnit.DAYS) with Truncatable
+        case Weeks   extends Units(List("w", "weeks", "week"), ChronoUnit.WEEKS)
+        case Months  extends Units(List("m", "months", "month"), ChronoUnit.MONTHS)
+        case Years   extends Units(List("y", "years", "year"), ChronoUnit.YEARS)
+
+        /** Returns the factor for converting this unit to nanoseconds. */
+        val factor: Double = chronoUnit.getDuration.toNanos.toDouble
     end Units
 
     extension (self: Duration)
