@@ -116,8 +116,8 @@ class EffectCombinatorTest extends Test:
                 }
                 val getState   = IO(state)
                 val effectWhen = (toggleState *> getState).when(getState)
-                Abort.run(effectWhen).map { handledEffectWhen =>
-                    assert(handledEffectWhen == Result.fail(Maybe.Empty))
+                effectWhen.map { handledEffectWhen =>
+                    assert(handledEffectWhen == Maybe.Empty)
                 }
             }
             "condition is true" in run {
@@ -127,8 +127,8 @@ class EffectCombinatorTest extends Test:
                 }
                 val getState   = IO(state)
                 val effectWhen = (toggleState *> getState).when(getState)
-                Abort.run(effectWhen).map { handledEffectWhen =>
-                    assert(handledEffectWhen == Result.success(false))
+                effectWhen.map { handledEffectWhen =>
+                    assert(handledEffectWhen == Maybe.Defined(false))
                 }
             }
         }
