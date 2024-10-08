@@ -226,8 +226,8 @@ extension [A, S](effect: A < S)
       * @param condition
       *   The condition to check
       * @return
-      *   A computation that produces the result of this computation wrapped in Maybe.Defined if
-      *   the condition is satisfied, or Maybe.Empty if not
+      *   A computation that produces the result of this computation wrapped in Maybe.Defined if the condition is satisfied, or Maybe.Empty
+      *   if not
       */
     def when[S1](condition: => Boolean < S1)(using Frame): Maybe[A] < (S & S1) =
         condition.map(c => if c then effect.map(Maybe.Defined.apply) else Maybe.Empty)
