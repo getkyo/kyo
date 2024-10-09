@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.scheduler.IOPromise
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 
@@ -134,8 +133,8 @@ object Channel:
                 new Channel[A]:
 
                     def u     = queue.unsafe
-                    val takes = new MpmcUnboundedXaddArrayQueue[IOPromise[Nothing, A]](8)
-                    val puts  = new MpmcUnboundedXaddArrayQueue[(A, IOPromise[Nothing, Unit])](8)
+                    val takes = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Nothing, A]](8)
+                    val puts  = new MpmcUnboundedXaddArrayQueue[(A, Promise.Unsafe[Nothing, Unit])](8)
 
                     def size(using Frame)  = op(u.size())
                     def empty(using Frame) = op(u.empty())
@@ -174,9 +173,9 @@ object Channel:
                                 else if u.offer(v) then
                                     ()
                                 else
-                                    val p = IOPromise[Nothing, Unit]
+                                    val p = Promise.Unsafe.init[Nothing, Unit]()
                                     puts.add((v, p))
-                                    Async.get(p)
+                                    p.safe.get
                                 end if
                             finally
                                 flush()
@@ -190,9 +189,9 @@ object Channel:
                                 else if u.offer(v) then
                                     Fiber.unit
                                 else
-                                    val p = IOPromise[Nothing, Unit]
+                                    val p = Promise.Unsafe.init[Nothing, Unit]()
                                     puts.add((v, p))
-                                    Fiber.initUnsafe(p)
+                                    p.safe
                                 end if
                             finally
                                 flush()
@@ -206,9 +205,9 @@ object Channel:
                                 else
                                     u.poll() match
                                         case Maybe.Empty =>
-                                            val p = IOPromise[Nothing, A]
+                                            val p = Promise.Unsafe.init[Nothing, A]()
                                             takes.add(p)
-                                            Async.get(p)
+                                            p.safe.get
                                         case Maybe.Defined(v) =>
                                             v
                             finally
@@ -223,9 +222,9 @@ object Channel:
                                 else
                                     u.poll() match
                                         case Maybe.Empty =>
-                                            val p = IOPromise[Nothing, A]
+                                            val p = Promise.Unsafe.init[Nothing, A]()
                                             takes.add(p)
-                                            Fiber.initUnsafe(p)
+                                            p.safe
                                         case Maybe.Defined(v) =>
                                             Fiber.success(v)
                             finally
@@ -253,11 +252,11 @@ object Channel:
                                 case r =>
                                     val c = Result.panic(closedException)
                                     def dropTakes(): Unit =
-                                        takes.poll() match
-                                            case null =>
-                                            case p =>
-                                                p.completeDiscard(c)
-                                                dropTakes()
+                                        val p = takes.poll()
+                                        if !isNull(p) then
+                                            p.completeDiscard(c)
+                                            dropTakes()
+                                    end dropTakes
                                     def dropPuts(): Unit =
                                         puts.poll() match
                                             case null => ()
@@ -293,7 +292,7 @@ object Channel:
                                             // If completing the take fails and the queue
                                             // cannot accept the value back, enqueue a
                                             // placeholder put operation to preserve the value.
-                                            val placeholder = IOPromise[Nothing, Unit]
+                                            val placeholder = Promise.Unsafe.init[Nothing, Unit]()
                                             discard(puts.add((v, placeholder)))
                             end if
                             flush()
@@ -322,7 +321,7 @@ object Channel:
                             if t != null then
                                 val (v, p) = t
                                 val p2     = takes.poll()
-                                if p2 != null && p2.complete(Result.success(v)) then
+                                if !isNull(p2) && p2.complete(Result.success(v)) then
                                     // If the transfer is successful, complete
                                     // the put's promise. If the consumer's fiber
                                     // became interrupted, the completion will be

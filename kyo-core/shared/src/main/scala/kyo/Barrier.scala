@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
 
 /** A synchronization primitive that allows a fixed number of parties to wait for each other to reach a common point of execution.
@@ -65,7 +64,7 @@ object Barrier:
                                 loop(count.get())
                             else
                                 if c == 1 then promise.completeDiscard(Result.unit)
-                                Fiber.Unsafe.fromPromise(promise)
+                                promise
                         loop(count.get())
                     end await
 
