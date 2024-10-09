@@ -777,8 +777,8 @@ class AsyncTest extends Test:
                         for
                             _ <- start.release
                             _ <- run.await
-                            _ <- stop.release
                             _ <- result.set(42)
+                            _ <- stop.release
                         yield ()
                     }
                 fiber <- Async.run(masked)
