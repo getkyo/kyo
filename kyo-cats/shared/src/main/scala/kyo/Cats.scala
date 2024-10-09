@@ -2,7 +2,6 @@ package kyo
 
 import cats.effect.IO as CatsIO
 import kyo.kernel.*
-import kyo.scheduler.IOPromise
 import scala.concurrent.ExecutionContext
 import scala.util.Failure
 import scala.util.Success
@@ -18,16 +17,16 @@ object Cats:
       *   A Kyo effect that, when run, will execute the cats.effect.IO
       */
     def get[A](io: => CatsIO[A])(using Frame): A < (Abort[Nothing] & Async) =
-        IO {
+        IO.Unsafe {
             import cats.effect.unsafe.implicits.global
-            val p                = new IOPromise[Nothing, A]
+            val p                = Promise.Unsafe.init[Nothing, A]()
             val (future, cancel) = io.unsafeToFutureCancelable()
             future.onComplete {
                 case Success(v)  => p.complete(Result.success(v))
                 case Failure(ex) => p.complete(Result.panic(ex))
             }(ExecutionContext.parasitic)
             p.onInterrupt(_ => discard(cancel()))
-            Async.get(p)
+            p.safe.get
         }
     end get
 

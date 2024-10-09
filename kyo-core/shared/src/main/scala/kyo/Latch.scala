@@ -1,7 +1,6 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.scheduler.IOPromise
 import scala.annotation.tailrec
 
 /** A synchronization primitive that allows one or more tasks to wait until a set of operations being performed in other tasks completes.
@@ -68,7 +67,7 @@ object Latch:
                     val promise = Promise.Unsafe.init[Nothing, Unit]()
                     val count   = AtomicInt.Unsafe.init(n)
 
-                    def await()(using AllowUnsafe) = Fiber.Unsafe.fromPromise(promise)
+                    def await()(using AllowUnsafe) = promise
 
                     def release()(using AllowUnsafe) =
                         @tailrec def loop(c: Int): Unit =
