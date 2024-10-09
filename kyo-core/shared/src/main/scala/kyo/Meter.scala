@@ -94,7 +94,7 @@ object Meter:
                     def tryRun[A, S](v: => A < S)(using Frame) =
                         IO.Unsafe {
                             chan.unsafePoll match
-                                case Maybe.Empty => Maybe.empty
+                                case Empty => Maybe.empty
                                 case _ =>
                                     IO.ensure(release) {
                                         v.map(Maybe(_))
@@ -125,7 +125,7 @@ object Meter:
 
                     def tryRun[A, S](v: => A < S)(using Frame) =
                         chan.poll.map {
-                            case Maybe.Empty =>
+                            case Empty =>
                                 Maybe.empty
                             case _ =>
                                 v.map(Maybe(_))
@@ -217,8 +217,8 @@ object Meter:
                         if idx == meters.length then v.map(Maybe(_))
                         else
                             meters(idx).tryRun(loop(idx + 1)).map {
-                                case Maybe.Empty => Maybe.empty
-                                case r           => r.flatten
+                                case Empty => Maybe.empty
+                                case r     => r.flatten
                             }
                     loop()
                 end tryRun
