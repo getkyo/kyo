@@ -133,6 +133,7 @@ object Batch:
             }
 
         // Expands any `Batch.eval` calls, capturing items for each element in the sequence.
+        // Returns a `Chunk[Chunk[A]]` to reduce `map` calls.
         def expand(items: Chunk[Item]): Chunk[Chunk[Item]] < (S & S2) =
             Kyo.foreach(items) {
                 case ToExpand(seq: Seq[Any], cont) =>
@@ -141,6 +142,7 @@ object Batch:
             }
 
         // Groups all source calls (`Expanded`), calls their source functions, and reassembles the results.
+        // Returns a `Chunk[Chunk[A]]` to reduce `map` calls.
         def flush(items: Chunk[Item]): Chunk[Chunk[Item]] < (S & S2) =
             val pending: Map[SourceAny | Unit, Seq[Item]] =
                 items.groupBy {
@@ -154,9 +156,9 @@ object Batch:
                 case (source: SourceAny, items: Seq[Expanded] @unchecked) =>
                     // Only request distinct items from the source
                     source(items.map(_.value).distinct).map { results =>
-                        // Reassemble the results. Note how each value can have
-                        // its own effects.
+                        // Reassemble the results by iterating on the original collection
                         Kyo.foreach(items) { e =>
+                            // Note how each value can have its own effects
                             capture(results(e.value).map(e.cont))
                         }
                     }
