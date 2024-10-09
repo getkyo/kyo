@@ -17,8 +17,8 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
     def this() = this(Pending())
     def this(interrupts: IOPromise[?, ?]) = this(Pending().interrupts(interrupts))
 
-    def addEnsure(f: () => Unit): Unit           = {}
-    def removeEnsure(f: () => Unit): Unit        = {}
+    def addFinalizer(f: () => Unit): Unit        = {}
+    def removeFinalizer(f: () => Unit): Unit     = {}
     def enter(frame: Frame, value: Any): Boolean = true
 
     private def cas[E2 <: E, A2 <: A](curr: State[E2, A2], next: State[E2, A2]): Boolean =

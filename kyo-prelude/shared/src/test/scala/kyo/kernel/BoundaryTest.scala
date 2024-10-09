@@ -77,8 +77,8 @@ class BoundaryTest extends Test:
     "restoring" in {
         var interceptorCalled = false
         val interceptor = new Safepoint.Interceptor:
-            def addEnsure(f: () => Unit): Unit    = ()
-            def removeEnsure(f: () => Unit): Unit = ()
+            def addFinalizer(f: () => Unit): Unit    = ()
+            def removeFinalizer(f: () => Unit): Unit = ()
             def enter(frame: Frame, value: Any): Boolean =
                 interceptorCalled = true
                 true

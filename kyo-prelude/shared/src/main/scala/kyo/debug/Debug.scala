@@ -51,8 +51,8 @@ object Debug:
                 println(frame.parse.show)
                 true
             end enter
-            def addEnsure(f: () => Unit): Unit    = ()
-            def removeEnsure(f: () => Unit): Unit = ()
+            def addFinalizer(f: () => Unit): Unit    = ()
+            def removeFinalizer(f: () => Unit): Unit = ()
 
         Safepoint.propagating(interceptor) {
             Effect.catching {

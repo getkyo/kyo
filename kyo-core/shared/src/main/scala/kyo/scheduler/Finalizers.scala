@@ -6,20 +6,22 @@ import kyo.discard
 import org.jctools.queues.MpmcArrayQueue
 import scala.annotation.tailrec
 
-private[kyo] opaque type Ensures = Ensures.Empty.type | (() => Unit) | ArrayDeque[() => Unit]
+private[kyo] opaque type Finalizers = Finalizers.Empty.type | (() => Unit) | ArrayDeque[() => Unit]
 
-private[kyo] object Ensures:
+private[kyo] object Finalizers:
     case object Empty derives CanEqual
 
-    val empty: Ensures = Empty
+    val empty: Finalizers = Empty
 
-    private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1000)
+    private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1024)
 
     private def buffer(): ArrayDeque[() => Unit] =
         Maybe(bufferCache.poll()).getOrElse(new ArrayDeque())
 
-    extension (e: Ensures)
-        def add(f: () => Unit): Ensures =
+    extension (e: Finalizers)
+
+        /** Adds a finalizer function. */
+        def add(f: () => Unit): Finalizers =
             (e: @unchecked) match
                 case e if e.equals(Empty) || e.equals(f) => f
                 case f0: (() => Unit) @unchecked =>
@@ -31,7 +33,8 @@ private[kyo] object Ensures:
                     arr.add(f)
                     arr
 
-        def remove(f: () => Unit): Ensures =
+        /** Removes a finalizer function by its object identity. */
+        def remove(f: () => Unit): Finalizers =
             (e: @unchecked) match
                 case e if e.equals(Empty) => e
                 case e if e.equals(f)     => Empty
@@ -66,4 +69,4 @@ private[kyo] object Ensures:
                 case arr: ArrayDeque[() => Unit] @unchecked =>
                     arr.size()
     end extension
-end Ensures
+end Finalizers

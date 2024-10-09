@@ -197,8 +197,8 @@ class ArrowEffectTest extends Test:
 
     "Effect.partial" - {
         abstract class TestInterceptor extends Safepoint.Interceptor:
-            def addEnsure(f: () => Unit): Unit    = {}
-            def removeEnsure(f: () => Unit): Unit = {}
+            def addFinalizer(f: () => Unit): Unit    = {}
+            def removeFinalizer(f: () => Unit): Unit = {}
 
         "evaluates pure values" in {
             val x: Int < Any = 5
