@@ -451,4 +451,229 @@ class SafeClassTagTest extends Test:
         }
     }
 
+    "literal types" - {
+        "integer literals" - {
+            "zero" in {
+                val zeroTag = SafeClassTag[0]
+                assert(zeroTag.accepts(0))
+                assert(!zeroTag.accepts(1))
+                assert(zeroTag.accepts(-0))
+                assert(zeroTag <:< SafeClassTag[Int])
+                assert(!(SafeClassTag[Int] <:< zeroTag))
+            }
+
+            "positive" in {
+                val positiveTag = SafeClassTag[42]
+                assert(positiveTag.accepts(42))
+                assert(!positiveTag.accepts(43))
+                assert(!positiveTag.accepts(-42))
+                assert(positiveTag <:< SafeClassTag[Int])
+                assert(!(SafeClassTag[Int] <:< positiveTag))
+            }
+
+            "negative" in {
+                val negativeTag = SafeClassTag[-1]
+                assert(negativeTag.accepts(-1))
+                assert(!negativeTag.accepts(1))
+                assert(!negativeTag.accepts(0))
+                assert(negativeTag <:< SafeClassTag[Int])
+                assert(!(SafeClassTag[Int] <:< negativeTag))
+            }
+        }
+
+        "string literals" - {
+            "empty string" in {
+                val emptyStringTag = SafeClassTag[""]
+                assert(emptyStringTag.accepts(""))
+                assert(!emptyStringTag.accepts(" "))
+                assert(emptyStringTag <:< SafeClassTag[String])
+                assert(!(SafeClassTag[String] <:< emptyStringTag))
+            }
+
+            "non-empty string" in {
+                val helloTag = SafeClassTag["hello"]
+                assert(helloTag.accepts("hello"))
+                assert(!helloTag.accepts("Hello"))
+                assert(!helloTag.accepts(""))
+                assert(helloTag <:< SafeClassTag[String])
+                assert(!(SafeClassTag[String] <:< helloTag))
+            }
+        }
+
+        "boolean literals" - {
+            "true" in {
+                val trueTag = SafeClassTag[true]
+                assert(trueTag.accepts(true))
+                assert(!trueTag.accepts(false))
+                assert(trueTag <:< SafeClassTag[Boolean])
+                assert(!(SafeClassTag[Boolean] <:< trueTag))
+            }
+
+            "false" in {
+                val falseTag = SafeClassTag[false]
+                assert(falseTag.accepts(false))
+                assert(!falseTag.accepts(true))
+                assert(falseTag <:< SafeClassTag[Boolean])
+                assert(!(SafeClassTag[Boolean] <:< falseTag))
+            }
+        }
+
+        "char literals" in {
+            val charTag = SafeClassTag['a']
+            assert(charTag.accepts('a'))
+            assert(!charTag.accepts('A'))
+            assert(charTag.accepts('\u0061')) // Unicode for 'a'
+            assert(charTag <:< SafeClassTag[Char])
+            assert(!(SafeClassTag[Char] <:< charTag))
+        }
+
+        "float literals" in {
+            val floatTag = SafeClassTag[3.14f]
+            assert(floatTag.accepts(3.14f))
+            assert(!floatTag.accepts(3.14))
+            assert(!floatTag.accepts(3.140001f))
+            assert(!(SafeClassTag[Float] <:< floatTag))
+        }
+
+        "double literals" in {
+            val doubleTag = SafeClassTag[3.14]
+            assert(doubleTag.accepts(3.14))
+            assert(!doubleTag.accepts(3.14f))
+            assert(!doubleTag.accepts(3.140000000000001))
+            assert(doubleTag <:< SafeClassTag[Double])
+            assert(!(SafeClassTag[Double] <:< doubleTag))
+        }
+
+        "union with literals" in {
+            val unionTag = SafeClassTag[42 | "hello" | true]
+            assert(unionTag.accepts(42))
+            assert(unionTag.accepts("hello"))
+            assert(unionTag.accepts(true))
+            assert(!unionTag.accepts(43))
+            assert(!unionTag.accepts("Hello"))
+            assert(!unionTag.accepts(false))
+            assert(unionTag <:< SafeClassTag[Int | String | Boolean])
+            assert(!(SafeClassTag[Int | String | Boolean] <:< unionTag))
+        }
+
+        "intersection with literal" in {
+            val intersectionTag = SafeClassTag[Int & 42]
+            assert(intersectionTag.accepts(42))
+            assert(!intersectionTag.accepts(43))
+            assert(intersectionTag <:< SafeClassTag[Int])
+            assert(intersectionTag <:< SafeClassTag[42])
+            assert(!(SafeClassTag[Int] <:< intersectionTag))
+        }
+
+        "long literals" in {
+            val longTag = SafeClassTag[1000000000000L]
+            assert(longTag.accepts(1000000000000L))
+            assert(!longTag.accepts(1000000000001L))
+            assert(longTag <:< SafeClassTag[Long])
+        }
+
+        "extreme numeric literals" in {
+            val maxIntTag = SafeClassTag[2147483647]
+            assert(maxIntTag.accepts(Int.MaxValue))
+            assert(!maxIntTag.accepts(Int.MaxValue - 1))
+
+            val minLongTag = SafeClassTag[-9223372036854775808L]
+            assert(minLongTag.accepts(Long.MinValue))
+            assert(!minLongTag.accepts(Long.MinValue + 1))
+        }
+
+        "unicode character literals" in {
+            val unicodeCharTag = SafeClassTag['π']
+            assert(unicodeCharTag.accepts('π'))
+            assert(!unicodeCharTag.accepts('p'))
+            assert(unicodeCharTag <:< SafeClassTag[Char])
+        }
+
+        "complex literal combinations" in {
+            val complexTag = SafeClassTag[42 | "hello" | 3.14 | 'a']
+            assert(complexTag.accepts(42))
+            assert(complexTag.accepts("hello"))
+            assert(complexTag.accepts(3.14))
+            assert(complexTag.accepts('a'))
+            assert(!complexTag.accepts(43))
+            assert(!complexTag.accepts("world"))
+            assert(!complexTag.accepts(3.15))
+            assert(!complexTag.accepts('b'))
+        }
+
+        "complex type combinations" - {
+            "union of intersections" in {
+                val tag = SafeClassTag[(Int & 42) | (String & "hello")]
+                assert(tag.accepts(42))
+                assert(tag.accepts("hello"))
+                assert(!tag.accepts(43))
+                assert(!tag.accepts("world"))
+                assert(tag <:< SafeClassTag[Int | String])
+                assert(!(SafeClassTag[Int | String] <:< tag))
+            }
+
+            "intersection of unions" in {
+                val tag = SafeClassTag[(Int | String) & (42 | "hello")]
+                assert(tag.accepts(42))
+                assert(tag.accepts("hello"))
+                assert(!tag.accepts(43))
+                assert(!tag.accepts("world"))
+                assert(tag <:< SafeClassTag[Int | String])
+                assert(!(SafeClassTag[Int | String] <:< tag))
+            }
+
+            "nested unions and intersections" in {
+                val tag = SafeClassTag[((Int & 42) | (String & "hello")) & (Double | Boolean)]
+                assert(!tag.accepts(42))
+                assert(!tag.accepts("hello"))
+                assert(!tag.accepts(3.14))
+                assert(!tag.accepts(true))
+            }
+
+            "union of literal types and regular types" in {
+                val tag = SafeClassTag[42 | String | true | Double]
+                assert(tag.accepts(42))
+                assert(tag.accepts("hello"))
+                assert(tag.accepts(true))
+                assert(tag.accepts(3.14))
+                assert(!tag.accepts(43))
+                assert(!tag.accepts(false))
+                assert(tag <:< SafeClassTag[Int | String | Boolean | Double])
+            }
+
+            "complex union and intersection with traits" in {
+                trait X
+                trait Y
+                trait Z
+                class XY extends X with Y
+                class YZ extends Y with Z
+                val tag = SafeClassTag[(X & Y) | (Y & Z) | 42]
+                assert(tag.accepts(new XY))
+                assert(tag.accepts(new YZ))
+                assert(tag.accepts(42))
+                assert(!tag.accepts(new X {}))
+                assert(!tag.accepts(new Z {}))
+                assert(!tag.accepts(43))
+            }
+
+            "complex type bounds" in {
+                trait Numeric[T]
+                given Numeric[Int]    = new Numeric[Int] {}
+                given Numeric[Double] = new Numeric[Double] {}
+
+                val tag = SafeClassTag[Int | Double]
+                assert(tag.accepts(42))
+                assert(tag.accepts(3.14))
+                assert(!tag.accepts("not a number"))
+
+                // This test checks if we can use the tag with a type bound
+                def acceptsNumeric[T: Numeric](value: T)(using tag: SafeClassTag[T]): Boolean =
+                    tag.accepts(value)
+
+                assert(acceptsNumeric(42))
+                assert(acceptsNumeric(3.14))
+            }
+        }
+    }
+
 end SafeClassTagTest

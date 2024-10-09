@@ -26,6 +26,7 @@ object SafeClassTag:
 
     case class Union(elements: List[SafeClassTag[Any]])        extends Element
     case class Intersection(elements: List[SafeClassTag[Any]]) extends Element
+    case class LiteralTag(value: Any)                          extends Element
 
     sealed trait Primitive extends Element
     case object IntTag     extends Primitive
@@ -56,6 +57,7 @@ object SafeClassTag:
                 self match
                     case Union(elements)        => elements.exists(_.accepts(value))
                     case Intersection(elements) => elements.forall(_.accepts(value))
+                    case LiteralTag(literal)    => value == literal
                     case NothingTag             => false
                     case UnitTag                => value.isInstanceOf[Unit]
                     case AnyValTag =>
@@ -136,11 +138,13 @@ object SafeClassTag:
                 case NothingTag             => true
                 case Union(elements)        => elements.forall(_ <:< that)
                 case Intersection(elements) => elements.exists(_ <:< that)
+                case LiteralTag(value)      => that.accepts(value)
                 case _ =>
                     that match
                         case NothingTag             => false
                         case Union(elements)        => elements.exists(self <:< _)
                         case Intersection(elements) => elements.forall(self <:< _)
+                        case LiteralTag(value)      => false
                         case AnyValTag =>
                             self match
                                 case AnyValTag | IntTag | LongTag | DoubleTag | FloatTag | ByteTag | ShortTag | CharTag | BooleanTag | UnitTag =>
@@ -166,6 +170,7 @@ object SafeClassTag:
                 tag match
                     case Union(elements)        => s"(${elements.map(showInner).mkString(" | ")})"
                     case Intersection(elements) => s"(${elements.map(showInner).mkString(" & ")})"
+                    case LiteralTag(value)      => s"$value"
                     case NothingTag             => "Nothing"
                     case UnitTag                => "Unit"
                     case AnyValTag              => "AnyVal"
