@@ -111,10 +111,12 @@ object Batch:
         type SourceAny = Source[Any, Any, S]
         type ContAny   = Any => (ToExpand | Expanded | A) < (Batch[S] & S & S2)
 
-        case class ToExpand(op: Seq[Any], cont: ContAny)
-        case class Expanded(value: Any, source: SourceAny, cont: ContAny)
+        type Item = A | ToExpand | Expanded
+        abstract class Pending
+        case class ToExpand(op: Seq[Any], cont: ContAny)                  extends Pending
+        case class Expanded(value: Any, source: SourceAny, cont: ContAny) extends Pending
 
-        def runCont(v: (ToExpand | Expanded | A) < (Batch[S] & S & S2)): (ToExpand | Expanded | A) < (S & S2) =
+        def capture(v: Item < (Batch[S] & S & S2)): Item < (S & S2) =
             ArrowEffect.handle(erasedTag[S], v) {
                 [C] =>
                     (input, cont) =>
@@ -123,41 +125,43 @@ object Batch:
                             case Call(v, source) => Expanded(v, source.asInstanceOf[SourceAny], contAny)
                             case v: Seq[C]       => ToExpand(v, contAny)
             }
-        end runCont
 
-        def expand(state: Seq[ToExpand | Expanded | A]): Chunk[Expanded | A] < (S & S2) =
-            Kyo.foreach(state) {
-                case ToExpand(seq: Seq[Any], cont) =>
-                    Kyo.foreach(seq)(v => runCont(cont(v))).map(expand)
-                case expanded: Expanded @unchecked => Chunk(expanded)
-                case done: A @unchecked            => Chunk(done)
-            }.map(_.flattenChunk)
+        def expand(items: Chunk[Item]): Chunk[Item] < (S & S2) =
+            if !items.exists((_: @unchecked).isInstanceOf[ToExpand]) then items
+            else
+                Kyo.foreach(items) {
+                    case ToExpand(seq: Seq[Any], cont) =>
+                        Kyo.foreach(seq)(v => capture(cont(v)))
+                    case item => Chunk(item)
+                }.map(_.flattenChunk)
 
-        def loop(state: Seq[ToExpand | Expanded | A]): Chunk[A] < (S & S2) =
-            expand(state).map { expanded =>
-                if !expanded.exists((_: @unchecked).isInstanceOf[Expanded]) then
-                    expanded.asInstanceOf[Chunk[A]]
-                else
-                    val pending: Map[SourceAny | Unit, Seq[Expanded | A]] =
-                        expanded.groupBy {
-                            case Expanded(_, source, _) => source
-                            case _                      => ()
+        def flush(items: Chunk[Item]): Chunk[Item] < (S & S2) =
+            val pending: Map[SourceAny | Unit, Seq[Item]] =
+                items.groupBy {
+                    case Expanded(_, source, _) => source
+                    case _                      => ()
+                }
+            Kyo.foreach(pending.toSeq) {
+                case (_: Unit, items) => Chunk.from(items)
+                case (source: SourceAny, items: Seq[Expanded] @unchecked) =>
+                    source(items.map(_.value).distinct).map { map =>
+                        Kyo.foreach(items) { e =>
+                            capture(map(e.value).map(e.cont))
                         }
-                    Kyo.foreach(pending.toSeq) {
-                        case (_: Unit, items) => Chunk.from(items)
-                        case (source: SourceAny, items: Seq[Expanded] @unchecked) =>
-                            source(items.map(_.value).distinct).map { map =>
-                                Kyo.foreach(items) { e =>
-                                    runCont(map(e.value).map(e.cont))
-                                }
-                            }
-                    }.map { results =>
-                        loop(results.flattenChunk)
                     }
-            }
+            }.map(_.flattenChunk)
+        end flush
+
+        def loop(items: Chunk[Item]): Chunk[A] < (S & S2) =
+            if !items.exists((_: @unchecked).isInstanceOf[Pending]) then
+                items.asInstanceOf[Chunk[A]]
+            else
+                expand(items).map { expanded =>
+                    flush(expanded).map(loop)
+                }
         end loop
 
-        runCont(v).map(initial => loop(Seq(initial)))
+        capture(v).map(initial => loop(Chunk(initial)))
     end run
 
     object internal:
