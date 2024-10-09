@@ -13,12 +13,14 @@ private[kyo] object Finalizers:
 
     val empty: Finalizers = Empty
 
-    private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1000)
+    private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1024)
 
     private def buffer(): ArrayDeque[() => Unit] =
         Maybe(bufferCache.poll()).getOrElse(new ArrayDeque())
 
     extension (e: Finalizers)
+
+        /** Adds a finalizer function. */
         def add(f: () => Unit): Finalizers =
             (e: @unchecked) match
                 case e if e.equals(Empty) || e.equals(f) => f
@@ -31,6 +33,7 @@ private[kyo] object Finalizers:
                     arr.add(f)
                     arr
 
+        /** Removes a finalizer function by its object identity. */
         def remove(f: () => Unit): Finalizers =
             (e: @unchecked) match
                 case e if e.equals(Empty) => e
