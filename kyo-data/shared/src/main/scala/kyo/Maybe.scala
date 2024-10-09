@@ -10,6 +10,9 @@ import Maybe.internal.*
   */
 opaque type Maybe[+A] >: (Empty | Defined[A]) = Empty | Defined[A]
 
+export Maybe.Defined
+export Maybe.Empty
+
 /** Companion object for Maybe type */
 object Maybe:
     inline given [A, B](using inline ce: CanEqual[A, B]): CanEqual[Maybe[A], Maybe[B]] = CanEqual.derived
