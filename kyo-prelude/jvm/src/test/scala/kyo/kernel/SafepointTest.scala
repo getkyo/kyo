@@ -180,8 +180,8 @@ class SafepointTest extends Test:
 
     "interceptors" - {
         abstract class TestInterceptor extends Safepoint.Interceptor:
-            def addEnsure(f: () => Unit): Unit    = {}
-            def removeEnsure(f: () => Unit): Unit = {}
+            def addFinalizer(f: () => Unit): Unit    = {}
+            def removeFinalizer(f: () => Unit): Unit = {}
 
         "immediate" - {
 
@@ -537,12 +537,12 @@ class SafepointTest extends Test:
         "with interceptor" - {
 
             class TestInterceptor extends Safepoint.Interceptor:
-                var ensuresAdded: List[() => Unit]             = Nil
-                var ensuresRemoved: List[() => Unit]           = Nil
-                override def addEnsure(f: () => Unit): Unit    = ensuresAdded = f :: ensuresAdded
-                override def removeEnsure(f: () => Unit): Unit = ensuresRemoved = f :: ensuresRemoved
-                def enter(frame: Frame, value: Any): Boolean   = true
-                def exit(): Unit                               = {}
+                var ensuresAdded: List[() => Unit]                = Nil
+                var ensuresRemoved: List[() => Unit]              = Nil
+                override def addFinalizer(f: () => Unit): Unit    = ensuresAdded = f :: ensuresAdded
+                override def removeFinalizer(f: () => Unit): Unit = ensuresRemoved = f :: ensuresRemoved
+                def enter(frame: Frame, value: Any): Boolean      = true
+                def exit(): Unit                                  = {}
             end TestInterceptor
 
             "passes ensure function to Interceptor" in {
@@ -564,7 +564,7 @@ class SafepointTest extends Test:
                 assert(interceptor.ensuresAdded.equals(interceptor.ensuresRemoved))
             }
 
-            "calls removeEnsure on completion" in {
+            "calls removeFinalizer on completion" in {
                 val interceptor = new TestInterceptor
 
                 def testEnsure[A, S](v: => A < S)(using Frame): A < S =
@@ -604,15 +604,15 @@ class SafepointTest extends Test:
                 var interceptorCalls = 0
 
                 val interceptor = new Safepoint.Interceptor:
-                    override def addEnsure(f: () => Unit): Unit =
+                    override def addFinalizer(f: () => Unit): Unit =
                         interceptorCalls += 1
                         f()
                         f()
-                    end addEnsure
+                    end addFinalizer
 
-                    override def removeEnsure(f: () => Unit): Unit = {}
-                    def enter(frame: Frame, value: Any): Boolean   = true
-                    def exit(): Unit                               = {}
+                    override def removeFinalizer(f: () => Unit): Unit = {}
+                    def enter(frame: Frame, value: Any): Boolean      = true
+                    def exit(): Unit                                  = {}
 
                 val effect = Safepoint.propagating(interceptor) {
                     Safepoint.ensure {
@@ -631,10 +631,10 @@ class SafepointTest extends Test:
                 var interceptorActive = false
 
                 val interceptor = new Safepoint.Interceptor:
-                    override def addEnsure(f: () => Unit): Unit    = {}
-                    override def removeEnsure(f: () => Unit): Unit = {}
-                    def enter(frame: Frame, value: Any): Boolean   = true
-                    def exit(): Unit                               = {}
+                    override def addFinalizer(f: () => Unit): Unit    = {}
+                    override def removeFinalizer(f: () => Unit): Unit = {}
+                    def enter(frame: Frame, value: Any): Boolean      = true
+                    def exit(): Unit                                  = {}
 
                 val effect = Safepoint.propagating(interceptor) {
                     Safepoint.ensure {
@@ -655,10 +655,10 @@ class SafepointTest extends Test:
                 var interceptorActive = false
 
                 val interceptor = new Safepoint.Interceptor:
-                    override def addEnsure(f: () => Unit): Unit    = {}
-                    override def removeEnsure(f: () => Unit): Unit = {}
-                    def enter(frame: Frame, value: Any): Boolean   = true
-                    def exit(): Unit                               = {}
+                    override def addFinalizer(f: () => Unit): Unit    = {}
+                    override def removeFinalizer(f: () => Unit): Unit = {}
+                    def enter(frame: Frame, value: Any): Boolean      = true
+                    def exit(): Unit                                  = {}
 
                 assertThrows[RuntimeException] {
                     Safepoint.propagating(interceptor) {

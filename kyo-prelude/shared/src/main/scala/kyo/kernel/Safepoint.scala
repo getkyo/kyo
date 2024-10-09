@@ -71,8 +71,8 @@ object Safepoint:
     implicit def get: Safepoint = local.get()
 
     abstract private[kyo] class Interceptor:
-        def addEnsure(f: () => Unit): Unit
-        def removeEnsure(f: () => Unit): Unit
+        def addFinalizer(f: () => Unit): Unit
+        def removeFinalizer(f: () => Unit): Unit
         def enter(frame: Frame, value: Any): Boolean
     end Interceptor
 
@@ -85,8 +85,8 @@ object Safepoint:
             if isNull(prev) || (prev eq p) then p
             else
                 new Interceptor:
-                    override def addEnsure(f: () => Unit): Unit    = p.addEnsure(f)
-                    override def removeEnsure(f: () => Unit): Unit = p.removeEnsure(f)
+                    override def addFinalizer(f: () => Unit): Unit    = p.addFinalizer(f)
+                    override def removeFinalizer(f: () => Unit): Unit = p.removeFinalizer(f)
                     def enter(frame: Frame, value: Any) =
                         p.enter(frame, value) && prev.enter(frame, value)
         safepoint.setInterceptor(np)
@@ -124,7 +124,7 @@ object Safepoint:
 
     private inline def ensuring[A](ensure: Ensure)(inline thunk: => A)(using safepoint: Safepoint): A =
         val interceptor = safepoint.interceptor
-        if !isNull(interceptor) then interceptor.addEnsure(ensure)
+        if !isNull(interceptor) then interceptor.addFinalizer(ensure)
         try thunk
         catch
             case ex if NonFatal(ex) =>
@@ -149,7 +149,7 @@ object Safepoint:
                             ensuring(ensure)(ensureLoop(kyo(v, context)))
                 case _ =>
                     val interceptor = safepoint.interceptor
-                    if !isNull(interceptor) then interceptor.removeEnsure(ensure)
+                    if !isNull(interceptor) then interceptor.removeFinalizer(ensure)
                     ensure()
                     v
         ensuring(ensure)(ensureLoop(v))
