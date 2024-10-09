@@ -111,11 +111,17 @@ object Batch:
         type SourceAny = Source[Any, Any, S]
         type ContAny   = Any => (ToExpand | Expanded | A) < (Batch[S] & S & S2)
 
-        type Item = A | ToExpand | Expanded
         abstract class Pending
         case class ToExpand(op: Seq[Any], cont: ContAny)                  extends Pending
         case class Expanded(value: Any, source: SourceAny, cont: ContAny) extends Pending
 
+        // An item can be a final value (`A`),
+        // a sequence from `Batch.eval` (`ToExpand`),
+        // or a call to a source (`Expanded`).
+        type Item = A | ToExpand | Expanded
+
+        // Transforms effect suspensions into an item.
+        // Captures the continuation in the `Item` objects for `ToExpand` and `Expanded` cases.
         def capture(v: Item < (Batch[S] & S & S2)): Item < (S & S2) =
             ArrowEffect.handle(erasedTag[S], v) {
                 [C] =>
@@ -126,39 +132,54 @@ object Batch:
                             case v: Seq[C]       => ToExpand(v, contAny)
             }
 
-        def expand(items: Chunk[Item]): Chunk[Item] < (S & S2) =
-            if !items.exists((_: @unchecked).isInstanceOf[ToExpand]) then items
-            else
-                Kyo.foreach(items) {
-                    case ToExpand(seq: Seq[Any], cont) =>
-                        Kyo.foreach(seq)(v => capture(cont(v)))
-                    case item => Chunk(item)
-                }.map(_.flattenChunk)
+        // Expands any `Batch.eval` calls, capturing items for each element in the sequence.
+        def expand(items: Chunk[Item]): Chunk[Chunk[Item]] < (S & S2) =
+            Kyo.foreach(items) {
+                case ToExpand(seq: Seq[Any], cont) =>
+                    Kyo.foreach(seq)(v => capture(cont(v)))
+                case item => Chunk(item)
+            }
 
-        def flush(items: Chunk[Item]): Chunk[Item] < (S & S2) =
+        // Groups all source calls (`Expanded`), calls their source functions, and reassembles the results.
+        def flush(items: Chunk[Item]): Chunk[Chunk[Item]] < (S & S2) =
             val pending: Map[SourceAny | Unit, Seq[Item]] =
                 items.groupBy {
                     case Expanded(_, source, _) => source
-                    case _                      => ()
+                    case _                      => () // Used as a placeholder for items that aren't source calls
                 }
             Kyo.foreach(pending.toSeq) {
-                case (_: Unit, items) => Chunk.from(items)
+                case (_: Unit, items) =>
+                    // No need for flushing
+                    Chunk.from(items)
                 case (source: SourceAny, items: Seq[Expanded] @unchecked) =>
-                    source(items.map(_.value).distinct).map { map =>
+                    // Only request distinct items from the source
+                    source(items.map(_.value).distinct).map { results =>
+                        // Reassemble the results. Note how each value can have
+                        // its own effects.
                         Kyo.foreach(items) { e =>
-                            capture(map(e.value).map(e.cont))
+                            capture(results(e.value).map(e.cont))
                         }
                     }
-            }.map(_.flattenChunk)
+            }
         end flush
 
+        // The main evaluation loop that expands and flushes items until all values are final.
         def loop(items: Chunk[Item]): Chunk[A] < (S & S2) =
             if !items.exists((_: @unchecked).isInstanceOf[Pending]) then
+                // All values are final, done
                 items.asInstanceOf[Chunk[A]]
             else
-                expand(items).map { expanded =>
-                    flush(expanded).map(loop)
-                }
+                // The code repetition in the branches is a performance optimization to reduce
+                // `map` calls.
+                if items.exists((_: @unchecked).isInstanceOf[ToExpand]) then
+                    // Expand `Batch.eval` calls if present
+                    expand(items).map { expanded =>
+                        flush(expanded.flattenChunk)
+                            .map(c => loop(c.flattenChunk))
+                    }
+                else
+                    // No `Batch.eval` calls to expand, flush source calls directly
+                    flush(items).map(c => loop(c.flattenChunk))
         end loop
 
         capture(v).map(initial => loop(Chunk(initial)))
