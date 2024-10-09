@@ -305,8 +305,8 @@ class IOPromiseTest extends Test:
             original.onComplete(_ => originalCompleted = true)
             masked.onComplete(r => maskedResult = Maybe(r))
 
-            assert(masked.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(maskedResult.exists(_.isPanic))
+            assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(maskedResult.isEmpty)
             assert(!originalCompleted)
         }
 
@@ -361,8 +361,8 @@ class IOPromiseTest extends Test:
             masked1.onComplete(_ => masked1Completed = true)
             masked2.onComplete(r => masked2Result = Maybe(r))
 
-            assert(masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(masked2Result.exists(_.isPanic))
+            assert(!masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(masked2Result.isEmpty)
             assert(!masked1Completed)
             assert(!originalCompleted)
 
@@ -410,9 +410,9 @@ class IOPromiseTest extends Test:
             masked1.onComplete(r => masked1Result = Maybe(r))
             masked2.onComplete(r => masked2Result = Maybe(r))
 
-            assert(masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
 
-            assert(masked2Result.exists(_.isPanic))
+            assert(masked2Result.isEmpty)
             assert(masked1Result.isEmpty)
             assert(originalResult.isEmpty)
 
@@ -420,7 +420,7 @@ class IOPromiseTest extends Test:
 
             assert(originalResult.contains(Result.success(42)))
             assert(masked1Result.contains(Result.success(42)))
-            assert(masked2Result.exists(_.isPanic))
+            assert(masked2Result.contains(Result.success(42)))
         }
 
         "mask interaction with become" in {
@@ -458,10 +458,10 @@ class IOPromiseTest extends Test:
 
             masked.interrupts(other)
 
-            assert(masked.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
 
-            assert(masked.block(deadline()).isPanic)
-            assert(other.block(deadline()).isPanic)
+            assert(!masked.done())
+            assert(!other.done())
             assert(!original.done())
         }
     }
@@ -503,8 +503,8 @@ class IOPromiseTest extends Test:
             original.onInterrupt(_ => originalInterrupted = true)
             masked.onInterrupt(_ => maskedInterrupted = true)
 
-            assert(masked.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(maskedInterrupted)
+            assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!maskedInterrupted)
             assert(!originalInterrupted)
         }
 
@@ -521,8 +521,8 @@ class IOPromiseTest extends Test:
             masked1.onInterrupt(_ => masked1Interrupted = true)
             masked2.onInterrupt(_ => masked2Interrupted = true)
 
-            assert(masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
-            assert(masked2Interrupted)
+            assert(!masked2.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!masked2Interrupted)
             assert(!masked1Interrupted)
             assert(!originalInterrupted)
         }
@@ -598,11 +598,11 @@ class IOPromiseTest extends Test:
 
             masked.interrupts(other)
 
-            assert(masked.interrupt(Result.Panic(new Exception("Interrupted"))))
+            assert(!masked.interrupt(Result.Panic(new Exception("Interrupted"))))
 
             assert(!originalInterrupted)
-            assert(maskedInterrupted)
-            assert(otherInterrupted)
+            assert(!maskedInterrupted)
+            assert(!otherInterrupted)
         }
     }
 

@@ -63,12 +63,13 @@ private[kyo] class IOPromise[E, A](init: State[E, A]) extends Safepoint.Intercep
     end interrupts
 
     final def mask: IOPromise[E, A] =
-        val p = IOPromise[E, A]()
+        val p = new IOPromise[E, A]:
+            override def interrupt(error: Panic): Boolean = false
         onComplete(p.completeDiscard)
         p
     end mask
 
-    final def interrupt(error: Panic): Boolean =
+    def interrupt(error: Panic): Boolean =
         @tailrec def interruptLoop(promise: IOPromise[E, A]): Boolean =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
