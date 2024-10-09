@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.kernel.*
-import kyo.scheduler.IOPromise
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 import zio.Exit
@@ -19,14 +18,14 @@ object ZIOs:
       *   A Kyo effect that, when run, will execute the zio.ZIO
       */
     def get[E, A](v: => ZIO[Any, E, A])(using Frame, zio.Trace): A < (Abort[E] & Async) =
-        IO {
-            val p      = new IOPromise[E, A]
+        IO.Unsafe {
+            val p      = Promise.Unsafe.init[E, A]()
             val future = Unsafe.unsafely(Runtime.default.unsafe.runToFuture(v.either))
             future.onComplete { t =>
                 p.complete(t.fold(ex => Result.panic(ex), Result.fromEither))
             }(ExecutionContext.parasitic)
             p.onInterrupt(_ => discard(future.cancel()))
-            Async.get(p)
+            p.safe.get
         }
     end get
 

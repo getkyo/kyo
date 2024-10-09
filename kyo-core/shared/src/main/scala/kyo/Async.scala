@@ -109,14 +109,14 @@ object Async:
     def sleep(d: Duration)(using Frame): Unit < Async =
         if d == Duration.Zero then ()
         else
-            IO {
-                val p = IOPromise[Nothing, Unit]()
+            IO.Unsafe {
+                val p = Promise.Unsafe.init[Nothing, Unit]()
                 if d.isFinite then
                     Timer.schedule(d)(p.completeDiscard(Result.success(()))).map { t =>
-                        IO.ensure(t.cancel.unit)(get(p))
+                        IO.ensure(t.cancel.unit)(p.safe.get)
                     }
                 else
-                    get(p)
+                    p.safe.get
                 end if
             }
 
@@ -305,11 +305,5 @@ object Async:
 
     private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
         ArrowEffect.suspendMap[A](Tag[Join], v)(f)
-
-    private def deadline(timeout: Duration): Long =
-        if timeout.isFinite then
-            java.lang.System.currentTimeMillis() + timeout.toMillis
-        else
-            Long.MaxValue
 
 end Async
