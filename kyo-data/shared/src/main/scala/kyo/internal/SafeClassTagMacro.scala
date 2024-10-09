@@ -55,24 +55,38 @@ private[kyo] object SafeClassTagMacro:
 
         def createSingle(tpe: TypeRepr): Expr[SafeClassTag[Any]] =
             checkType(tpe)
-            tpe.asType match
-                case '[Nothing]                       => '{ NothingTag }
-                case '[Unit]                          => '{ UnitTag }
-                case '[Int]                           => '{ IntTag }
-                case '[Long]                          => '{ LongTag }
-                case '[Double]                        => '{ DoubleTag }
-                case '[Float]                         => '{ FloatTag }
-                case '[Byte]                          => '{ ByteTag }
-                case '[Short]                         => '{ ShortTag }
-                case '[Char]                          => '{ CharTag }
-                case '[Boolean]                       => '{ BooleanTag }
-                case _ if tpe =:= TypeRepr.of[AnyVal] => '{ AnyValTag }
-                case '[t] =>
-                    val classOfSym = Symbol.requiredMethod("scala.Predef.classOf")
-                    val classOfExpr = Select(Ref(Symbol.requiredModule("scala.Predef")), classOfSym)
-                        .appliedToType(TypeRepr.of[t])
-                    val expr = classOfExpr.asExprOf[Any]
-                    '{ $expr.asInstanceOf[SafeClassTag[Any]] }
+            tpe match
+                case ConstantType(const) =>
+                    val value =
+                        const.value match
+                            case x: Int     => Expr(x)
+                            case x: Long    => Expr(x)
+                            case x: Float   => Expr(x)
+                            case x: Double  => Expr(x)
+                            case x: Boolean => Expr(x)
+                            case x: Char    => Expr(x)
+                            case x: String  => Expr(x)
+                            case x          => report.errorAndAbort(s"Unsupported literal type: $x")
+                    '{ LiteralTag($value) }
+                case _ =>
+                    tpe.asType match
+                        case '[Nothing]                       => '{ NothingTag }
+                        case '[Unit]                          => '{ UnitTag }
+                        case '[Int]                           => '{ IntTag }
+                        case '[Long]                          => '{ LongTag }
+                        case '[Double]                        => '{ DoubleTag }
+                        case '[Float]                         => '{ FloatTag }
+                        case '[Byte]                          => '{ ByteTag }
+                        case '[Short]                         => '{ ShortTag }
+                        case '[Char]                          => '{ CharTag }
+                        case '[Boolean]                       => '{ BooleanTag }
+                        case _ if tpe =:= TypeRepr.of[AnyVal] => '{ AnyValTag }
+                        case '[t] =>
+                            val classOfSym = Symbol.requiredMethod("scala.Predef.classOf")
+                            val classOfExpr = Select(Ref(Symbol.requiredModule("scala.Predef")), classOfSym)
+                                .appliedToType(TypeRepr.of[t])
+                            val expr = classOfExpr.asExprOf[Any]
+                            '{ $expr.asInstanceOf[SafeClassTag[Any]] }
             end match
         end createSingle
 
