@@ -156,24 +156,24 @@ extension (kyoObject: Kyo.type)
     def fromEither[E, A](either: Either[E, A])(using Frame): A < Abort[E] =
         Abort.get(either)
 
-    /** Creates an effect from an Option[A] and handles None to Abort[Maybe.Empty].
+    /** Creates an effect from an Option[A] and handles None to Abort[Empty].
       *
       * @param option
       *   The Option[A] to create an effect from
       * @return
-      *   An effect that attempts to run the given effect and handles None to Abort[Maybe.Empty].
+      *   An effect that attempts to run the given effect and handles None to Abort[Empty].
       */
-    def fromOption[A](option: Option[A])(using Frame): A < Abort[Maybe.Empty] =
+    def fromOption[A](option: Option[A])(using Frame): A < Abort[Empty] =
         Abort.get(option)
 
-    /** Creates an effect from a Maybe[A] and handles Maybe.Empty to Abort[Maybe.Empty].
+    /** Creates an effect from a Maybe[A] and handles Empty to Abort[Empty].
       *
       * @param maybe
       *   The Maybe[A] to create an effect from
       * @return
-      *   An effect that attempts to run the given effect and handles Maybe.Empty to Abort[Maybe.Empty].
+      *   An effect that attempts to run the given effect and handles Empty to Abort[Empty].
       */
-    def fromMaybe[A](maybe: Maybe[A])(using Frame): A < Abort[Maybe.Empty] =
+    def fromMaybe[A](maybe: Maybe[A])(using Frame): A < Abort[Empty] =
         Abort.get(maybe)
 
     /** Creates an effect from a Result[E, A] and handles Result.Failure[E] to Abort[E].

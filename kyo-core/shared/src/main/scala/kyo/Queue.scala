@@ -118,8 +118,8 @@ object Queue:
             @tailrec def loop(): Unit =
                 val v = poll()
                 v match
-                    case Maybe.Empty =>
-                    case Maybe.Defined(v) =>
+                    case Empty =>
+                    case Defined(v) =>
                         b += v
                         loop()
                 end match
