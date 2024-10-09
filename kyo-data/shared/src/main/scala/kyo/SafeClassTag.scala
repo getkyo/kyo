@@ -26,7 +26,7 @@ object SafeClassTag:
 
     case class Union(elements: List[SafeClassTag[Any]])        extends Element
     case class Intersection(elements: List[SafeClassTag[Any]]) extends Element
-    case class LiteralTag[A](value: A)                         extends Element
+    case class LiteralTag(value: Any)                          extends Element
 
     sealed trait Primitive extends Element
     case object IntTag     extends Primitive
