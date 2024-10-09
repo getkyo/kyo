@@ -23,7 +23,8 @@ object Fiber extends FiberPlatformSpecific:
 
     inline given [E, A]: Flat[Fiber[E, A]] = Flat.unsafe.bypass
 
-    private val _unit = success(())
+    private val _unit  = success(()).mask
+    private val _never = IOPromise[Nothing, Unit]().mask
 
     private[kyo] inline def fromTask[E, A](inline ioTask: IOTask[?, E, A]): Fiber[E, A] = ioTask
 
@@ -39,7 +40,7 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that never completes
       */
-    def never: Fiber[Nothing, Unit] = IOPromise[Nothing, Unit]()
+    def never[E]: Fiber[E, Unit] = _never.asInstanceOf[Fiber[E, Unit]]
 
     /** Creates a successful Fiber.
       *
