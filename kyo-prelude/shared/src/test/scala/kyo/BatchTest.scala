@@ -696,4 +696,75 @@ class BatchTest extends Test:
         }
     }
 
+    "ordering preservation" - {
+        "complex interleaved with ordering dependency" in run {
+            val source1 = TestSource[Int, Int, Any] { seq =>
+                seq.map(_ * 2)
+            }
+            val source2 = TestSource[Int, String, Any] { seq =>
+                seq.map(x => s"value: $x")
+            }
+
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2, 3))
+                    b <- source1(a)
+                    c <- Batch.eval(Seq(4, 5, 6))
+                    d <- source2(b)
+                    e <- source1(c)
+                yield (a, b, c, d, e)
+
+            Batch.run(result).map { seq =>
+                assert(
+                    seq == Seq(
+                        (1, 2, 4, "value: 2", 8),
+                        (1, 2, 5, "value: 2", 10),
+                        (1, 2, 6, "value: 2", 12),
+                        (2, 4, 4, "value: 4", 8),
+                        (2, 4, 5, "value: 4", 10),
+                        (2, 4, 6, "value: 4", 12),
+                        (3, 6, 4, "value: 6", 8),
+                        (3, 6, 5, "value: 6", 10),
+                        (3, 6, 6, "value: 6", 12)
+                    )
+                )
+                assert(source1.calls == Seq(Seq(1, 2, 3), Seq(4, 5, 6)))
+                assert(source2.calls == Seq(Seq(2, 4, 6)))
+            }
+        }
+
+        "multiple dependent sources" in run {
+            val source1 = TestSource[Int, Int, Any] { seq =>
+                seq.map(_ + 1)
+            }
+            val source2 = TestSource[Int, Int, Any] { seq =>
+                seq.map(_ * 2)
+            }
+            val source3 = TestSource[Int, String, Any] { seq =>
+                seq.map(x => s"result: $x")
+            }
+
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2, 3))
+                    b <- source1(a)
+                    c <- source2(b)
+                    d <- source3(c)
+                yield (a, b, c, d)
+
+            Batch.run(result).map { seq =>
+                assert(
+                    seq == Seq(
+                        (1, 2, 4, "result: 4"),
+                        (2, 3, 6, "result: 6"),
+                        (3, 4, 8, "result: 8")
+                    )
+                )
+                assert(source1.calls == Seq(Seq(1, 2, 3)))
+                assert(source2.calls == Seq(Seq(2, 3, 4)))
+                assert(source3.calls == Seq(Seq(4, 6, 8)))
+            }
+        }
+    }
+
 end BatchTest

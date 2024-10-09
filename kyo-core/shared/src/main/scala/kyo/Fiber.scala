@@ -23,7 +23,8 @@ object Fiber extends FiberPlatformSpecific:
 
     inline given [E, A]: Flat[Fiber[E, A]] = Flat.unsafe.bypass
 
-    private val _unit = success(())
+    private val _unit  = success(()).mask
+    private val _never = IOPromise[Nothing, Unit]().mask
 
     private[kyo] inline def fromTask[E, A](inline ioTask: IOTask[?, E, A]): Fiber[E, A] = ioTask
 
@@ -39,7 +40,7 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that never completes
       */
-    def never: Fiber[Nothing, Unit] = IOPromise[Nothing, Unit]()
+    def never[E]: Fiber[E, Unit] = _never.asInstanceOf[Fiber[E, Unit]]
 
     /** Creates a successful Fiber.
       *
@@ -99,8 +100,6 @@ object Fiber extends FiberPlatformSpecific:
     end fromFuture
 
     private def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
-
-    private[kyo] inline def initUnsafe[E, A](p: IOPromise[E, A]): Fiber[E, A] = p
 
     extension [E, A](self: Fiber[E, A])
 
@@ -389,6 +388,7 @@ object Fiber extends FiberPlatformSpecific:
         extension [E, A](self: Unsafe[E, A])
             def done()(using AllowUnsafe): Boolean                                                       = self.done()
             def onComplete(f: Result[E, A] => Unit)(using AllowUnsafe): Unit                             = self.onComplete(f)
+            def onInterrupt(f: Panic => Unit)(using Frame): Unit                                         = self.onInterrupt(f)
             def block(deadline: Clock.Deadline.Unsafe)(using AllowUnsafe, Frame): Result[E | Timeout, A] = self.block(deadline)
             def interrupt(error: Panic)(using AllowUnsafe): Boolean                                      = self.interrupt(error)
             def interruptDiscard(error: Panic)(using AllowUnsafe): Unit                                  = discard(self.interrupt(error))
@@ -400,6 +400,8 @@ object Fiber extends FiberPlatformSpecific:
 
     object Promise:
         inline given [E, A]: Flat[Promise[E, A]] = Flat.unsafe.bypass
+
+        private[kyo] inline def fromTask[E, A](inline ioTask: IOTask[?, E, A]): Promise[E, A] = ioTask
 
         /** Initializes a new Promise.
           *
@@ -444,7 +446,7 @@ object Fiber extends FiberPlatformSpecific:
             def unsafe: Unsafe[E, A] = self
         end extension
 
-        opaque type Unsafe[E, A] = IOPromise[E, A]
+        opaque type Unsafe[E, A] <: Fiber.Unsafe[E, A] = IOPromise[E, A]
 
         /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         object Unsafe:
