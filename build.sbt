@@ -76,7 +76,8 @@ lazy val kyoJVM = project
     .in(file("."))
     .settings(
         name := "kyoJVM",
-        `kyo-settings`
+        `kyo-settings`,
+        crossScalaVersions := Seq.empty
     )
     .aggregate(
         `kyo-scheduler`.jvm,
@@ -96,6 +97,7 @@ lazy val kyoJVM = project
         `kyo-zio`.jvm,
         `kyo-cats`.jvm,
         `kyo-combinators`.jvm,
+        `kyo-grpc`.jvm,
         `kyo-examples`.jvm
     )
 
@@ -103,7 +105,8 @@ lazy val kyoJS = project
     .in(file("js"))
     .settings(
         name := "kyoJS",
-        `kyo-settings`
+        `kyo-settings`,
+        crossScalaVersions := Seq.empty
     )
     .aggregate(
         `kyo-scheduler`.js,
@@ -116,7 +119,8 @@ lazy val kyoJS = project
         `kyo-test`.js,
         `kyo-zio`.js,
         `kyo-cats`.js,
-        `kyo-combinators`.js
+        `kyo-combinators`.js,
+	`kyo-grpc`.js
     )
 
 lazy val kyoNative = project
@@ -139,6 +143,7 @@ lazy val `kyo-scheduler` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            Test / scalacOptions --= scalacOptionToken(ScalacOptions.languageStrictEquality).value,
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.9"          % Test
@@ -232,6 +237,7 @@ lazy val `kyo-stats-registry` =
         .settings(
             `kyo-settings`,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            scalacOptions --= scalacOptionToken(ScalacOptions.languageStrictEquality).value,
             libraryDependencies += "org.hdrhistogram" % "HdrHistogram" % "2.2.2",
             libraryDependencies += "org.scalatest"  %%% "scalatest"    % scalaTestVersion % Test,
             crossScalaVersions                       := List(scala3Version, scala212Version, scala213Version)
@@ -344,6 +350,128 @@ lazy val `kyo-cats` =
             libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion
         ).jsSettings(
             `js-settings`
+        ).jvmSettings()
+
+lazy val `kyo-grpc` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .settings(
+            crossScalaVersions := Seq.empty,
+            publishArtifact    := false,
+            publish            := {},
+            publishLocal       := {}
+        )
+        .aggregate(
+            `kyo-grpc-core`,
+            `kyo-grpc-code-gen`,
+            `kyo-grpc-e2e`
+        )
+
+lazy val `kyo-grpc-jvm` =
+    `kyo-grpc`
+        .jvm
+        .aggregate(`protoc-gen-kyo-grpc`.componentProjects.map(p => p: ProjectReference) *)
+
+// TODO: Split this into client and server
+lazy val `kyo-grpc-core` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-grpc") / "core")
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
+        .jvmSettings(
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
+                "io.grpc"               % "grpc-api"             % "1.64.0",
+                // It is a little unusual to include this here but it greatly reduces the amount of generated code.
+                "io.grpc" % "grpc-stub" % "1.64.0"
+            )
+        ).jsSettings(
+            `js-settings`,
+            libraryDependencies ++= Seq( //
+                "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0")
+        )
+
+// TODO: Split this into shared, client, and server
+// TODO: Do we need code gen for JS?
+lazy val `kyo-grpc-code-gen` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-grpc") / "code-gen")
+        .enablePlugins(BuildInfoPlugin)
+        .settings(
+            `kyo-settings`,
+            buildInfoKeys := Seq[BuildInfoKey](name, organization, version, scalaVersion, sbtVersion),
+            // TODO: What package to use here?
+            buildInfoPackage := "kyo.grpc.compiler",
+            // TODO: Which versions should this be for?
+            crossScalaVersions := List(scala212Version, scala213Version, scala3Version),
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb"    %% "compilerplugin"          % scalapb.compiler.Version.scalapbVersion,
+                "org.scala-lang.modules" %%% "scala-collection-compat" % "2.12.0",
+                "org.typelevel"          %%% "paiges-core"             % "0.4.3"
+            )
+        ).jsSettings(
+            `js-settings`
+        )
+
+lazy val `kyo-grpc-code-gen_2.12` =
+    `kyo-grpc-code-gen`
+        .jvm
+        .settings(scalaVersion := scala212Version)
+
+lazy val `kyo-grpc-code-genJS_2.12` =
+    `kyo-grpc-code-gen`
+        .js
+        .settings(scalaVersion := scala212Version)
+
+// TODO: Why this name?
+// TODO: Can these meta projects be in the sub directory?
+lazy val `protoc-gen-kyo-grpc` =
+    protocGenProject("protoc-gen-kyo-grpc", `kyo-grpc-code-gen_2.12`)
+        .settings(
+            `kyo-settings`,
+            scalaVersion       := scala212Version,
+            crossScalaVersions := Seq(scala212Version),
+            // TODO: Does it not auto-discover it?
+            Compile / mainClass := Some("kyo.grpc.compiler.CodeGenerator")
+        )
+        .aggregateProjectSettings(
+            scalaVersion       := scala212Version,
+            crossScalaVersions := Seq(scala212Version)
+        )
+
+lazy val `kyo-grpc-e2e` =
+    crossProject(JVMPlatform, JSPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-grpc") / "e2e")
+        .enablePlugins(LocalCodeGenPlugin)
+        .dependsOn(`kyo-grpc-core`)
+        .settings(
+            `kyo-settings`,
+            publish / skip := true,
+            Compile / PB.protoSources += sharedSourceDir("main").value / "protobuf",
+            Compile / PB.targets := Seq(
+                scalapb.gen() -> (Compile / sourceManaged).value / "scalapb",
+                // TODO: Make this nicer. Like scalapb.zio_grpc.ZioCodeGenerator.
+                genModule("kyo.grpc.compiler.CodeGenerator$") -> (Compile / sourceManaged).value / "scalapb"
+            ),
+            Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value
+        ).jvmSettings(
+            codeGenClasspath := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
+            libraryDependencies ++= Seq(
+                "io.grpc" % "grpc-netty" % "1.65.1"
+            )
+        ).jsSettings(
+            `js-settings`,
+            codeGenClasspath := (`kyo-grpc-code-genJS_2.12` / Compile / fullClasspath).value,
+            libraryDependencies ++= Seq(
+                "com.thesamet.scalapb.grpcweb" %%% "scalapb-grpcweb" % "0.7.0"
+            )
         )
 
 lazy val `kyo-combinators` =
@@ -383,12 +511,27 @@ lazy val `kyo-bench` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Pure)
         .in(file("kyo-bench"))
-        .enablePlugins(JmhPlugin)
-        .dependsOn(`kyo-core`)
-        .dependsOn(`kyo-sttp`)
-        .dependsOn(`kyo-scheduler-zio`)
+        .enablePlugins(JmhPlugin, LocalCodeGenPlugin)
+        .dependsOn(
+            `kyo-core`,
+            `kyo-grpc-core`,
+            `kyo-sttp`,
+            `kyo-scheduler-zio`
+        )
         .settings(
             `kyo-settings`,
+            publish / skip := true,
+            Compile / PB.protoSources += baseDirectory.value.getParentFile / "src" / "main" / "protobuf",
+            Compile / PB.targets := {
+                val scalapbDir = (Compile / sourceManaged).value / "scalapb"
+                Seq(
+                    scalapb.gen()                                 -> scalapbDir,
+                    scalapb.zio_grpc.ZioCodeGenerator             -> scalapbDir,
+                    genModule("kyo.grpc.compiler.CodeGenerator$") -> scalapbDir
+                )
+            },
+            codeGenClasspath          := (`kyo-grpc-code-gen_2.12` / Compile / fullClasspath).value,
+            Compile / scalacOptions ++= scalacOptionToken(ScalacOptions.warnOption("conf:src=.*/src_managed/main/scalapb/kgrpc/.*:silent")).value,
             Test / testForkedParallel := true,
             // Forks each test suite individually
             Test / testGrouping := {
@@ -426,13 +569,15 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"             %% "zio-query"           % "0.7.6",
             libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC31",
             libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
+            libraryDependencies += "com.thesamet.scalapb" %% "scalapb-runtime-grpc" % scalapb.compiler.Version.scalapbVersion,
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.11.0",
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.28",
             libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.28",
             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.1",
+            libraryDependencies += "io.grpc"              % "grpc-netty"          % "1.65.1",
             libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.10",
             libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.10",
-            libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
+            libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test,
         )
 
 lazy val rewriteReadmeFile = taskKey[Unit]("Rewrite README file")
@@ -445,6 +590,7 @@ lazy val readme =
         .crossType(CrossType.Full)
         .in(file("target/readme"))
         .enablePlugins(MdocPlugin)
+        .disablePlugins(ProtocPlugin)
         .settings(
             `kyo-settings`,
             mdocIn  := new File("./../../README-in.md"),
@@ -491,4 +637,8 @@ def scalacOptionToken(proposedScalacOption: ScalacOption) =
 def scalacOptionTokens(proposedScalacOptions: Set[ScalacOption]) = Def.setting {
     val version = ScalaVersion.fromString(scalaVersion.value).right.get
     ScalacOptions.tokensForVersion(version, proposedScalacOptions)
+}
+
+def sharedSourceDir(conf: String) = Def.setting {
+    CrossType.Full.sharedSrcDir(baseDirectory.value, conf).get.getParentFile
 }
