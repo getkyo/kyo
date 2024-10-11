@@ -22,7 +22,7 @@ end Random
 
 object Random:
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def nextInt()(using AllowUnsafe): Int
         def nextInt(exclusiveBound: Int)(using AllowUnsafe): Int
@@ -40,7 +40,7 @@ object Random:
         def safe: Random = Random(this)
     end Unsafe
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         def apply(random: java.util.Random): Unsafe =
             new Unsafe:

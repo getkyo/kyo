@@ -377,7 +377,7 @@ object Fiber extends FiberPlatformSpecific:
 
     opaque type Unsafe[E, A] = IOPromise[E, A]
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         inline given [E, A]: Flat[Unsafe[E, A]] = Flat.unsafe.bypass
 
@@ -448,7 +448,7 @@ object Fiber extends FiberPlatformSpecific:
 
         opaque type Unsafe[E, A] <: Fiber.Unsafe[E, A] = IOPromise[E, A]
 
-        /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+        /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         object Unsafe:
             inline given [E, A]: Flat[Unsafe[E, A]] = Flat.unsafe.bypass
 

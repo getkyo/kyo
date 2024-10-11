@@ -44,7 +44,7 @@ object Latch:
       */
     def init(n: Int)(using Frame): Latch < IO = IO.Unsafe(Latch(Unsafe.init(n)))
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     sealed abstract class Unsafe:
         def await()(using AllowUnsafe): Fiber.Unsafe[Nothing, Unit]
         def release()(using AllowUnsafe): Unit
@@ -52,7 +52,7 @@ object Latch:
         def safe: Latch = Latch(this)
     end Unsafe
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
 
         val noop = new Unsafe:

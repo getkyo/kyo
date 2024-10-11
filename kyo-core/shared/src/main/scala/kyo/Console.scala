@@ -143,7 +143,7 @@ object Console:
             def printlnErr(s: String)(using Frame): Unit < IO = IO.Unsafe(u.printlnErr(s))
             def unsafe: Unsafe                                = u
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def readln()(using AllowUnsafe): String
         def print(s: String)(using AllowUnsafe): Unit

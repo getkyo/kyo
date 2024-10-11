@@ -177,7 +177,7 @@ object Timer:
             )(f: => Unit < Async)(using Frame): TimerTask < IO =
                 IO.Unsafe(unsafe.scheduleWithFixedDelay(initialDelay, period)(eval(f)).safe)
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def schedule(delay: Duration)(f: => Unit)(using AllowUnsafe): TimerTask.Unsafe
         def scheduleAtFixedRate(
@@ -191,7 +191,7 @@ object Timer:
         def safe: Timer = Timer(this)
     end Unsafe
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         def apply(exec: ScheduledExecutorService)(using AllowUnsafe): Unsafe = new Unsafe:
             final private class FutureTimerTask(task: ScheduledFuture[?]) extends TimerTask.Unsafe:
@@ -270,7 +270,7 @@ object TimerTask:
     /** A no-op TimerTask that is always considered done and cannot be cancelled. */
     val noop = TimerTask(Unsafe.noop)
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def cancel()(using AllowUnsafe): Boolean
         def cancelled()(using AllowUnsafe): Boolean
@@ -278,7 +278,7 @@ object TimerTask:
         def safe: TimerTask = TimerTask(this)
     end Unsafe
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         val noop = new Unsafe:
             def cancel()(using AllowUnsafe)    = false
