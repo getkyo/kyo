@@ -330,7 +330,7 @@ class FiberTest extends Test:
         }
 
         "pending" in run {
-            var completed = Maybe.empty[Result[Nothing, Int]]
+            var completed = Maybe.empty[Result[Any, Int]]
             for
                 fiber <- Promise.init[Nothing, Int]
                 _     <- fiber.onComplete(v => IO { completed = Maybe(v) })
@@ -417,6 +417,166 @@ class FiberTest extends Test:
             _      <- stop.await
             r2     <- result.get
         yield assert(r1 == 0 && r2 == 42)
+    }
+
+    "variance" - {
+        given [A, B]: CanEqual[A, B] = CanEqual.derived
+        "covariance of A" in run {
+            val f                          = Fiber.success[Nothing, String]("Hello")
+            val f2: Fiber[Nothing, AnyRef] = f
+            f2.get.map { result =>
+                assert(result == "Hello")
+            }
+        }
+
+        "contravariance of E" in run {
+            val ex                            = new Exception("Test")
+            val f                             = Fiber.fail[Exception, Nothing](ex)
+            val f2: Fiber[Throwable, Nothing] = f
+            Abort.run(f2.get).map { result =>
+                assert(result == Result.fail(ex))
+            }
+        }
+
+        "variance with map" in run {
+            val f                          = Fiber.success[Nothing, String]("Hello")
+            val f2: Fiber[Nothing, AnyRef] = f
+            f2.get.map { result =>
+                assert(result == "Hello")
+            }
+        }
+
+        "variance with flatMap" in run {
+            val f                          = Fiber.success[Nothing, String]("Hello")
+            val f2: Fiber[Nothing, AnyRef] = f
+            f2.flatMap(s => Fiber.success[Nothing, String](s.asInstanceOf[String])).map(_.get).map { result =>
+                assert(result == "Hello")
+            }
+        }
+
+        "variance with mapResult" in run {
+            val f = Fiber.success[Exception, String]("Hello")
+            f.mapResult(_.map(_.length)).map(_.get).map { result =>
+                assert(result == 5)
+            }
+        }
+
+        "variance with use" in run {
+            val f                          = Fiber.success[Nothing, String]("Hello")
+            val f2: Fiber[Nothing, AnyRef] = f
+            f2.use(s => "!" + s).map { result =>
+                assert(result == "!Hello")
+            }
+        }
+
+        "variance with useResult" in run {
+            val f = Fiber.success[Exception, String]("Hello")
+            f.useResult(_.map(_.length)).map { result =>
+                assert(result == Result.success(5))
+            }
+        }
+
+        "variance with Promise" in run {
+            for
+                p <- Promise.init[Exception, String]
+                _ <- p.complete(Result.success("Hello"))
+                f: Fiber[Throwable, AnyRef] = p
+                result <- f.get
+            yield assert(result == "Hello")
+        }
+    }
+
+    "unsafe" - {
+        import AllowUnsafe.embrace.danger
+        "Fiber" - {
+            "init" in run {
+                val fiber = Fiber.Unsafe.init[Nothing, Unit](Result.unit)
+                assert(fiber.done())
+            }
+
+            "fromFuture" in run {
+                import scala.concurrent.Future
+                import scala.concurrent.ExecutionContext.Implicits.global
+
+                val future = Future.successful(42)
+                val fiber  = Fiber.Unsafe.fromFuture(future)
+                for
+                    result <- fiber.safe.get
+                yield assert(result == 42)
+            }
+
+            "map" in run {
+                val fiber       = Promise.Unsafe.init[Nothing, Int]()
+                val mappedFiber = fiber.map(_ * 2)
+                discard(fiber.complete(Result.success(21)))
+                for
+                    result <- mappedFiber.safe.get
+                yield assert(result == 42)
+            }
+
+            "flatMap" in run {
+                val fiber           = Promise.Unsafe.init[Nothing, Int]()
+                val flatMappedFiber = fiber.flatMap(x => Fiber.Unsafe.init[Nothing, String](Result.success(x.toString)))
+                discard(fiber.complete(Result.success(42)))
+                for
+                    result <- flatMappedFiber.safe.get
+                yield assert(result == "42")
+            }
+
+            "mapResult" in run {
+                val fiber       = Promise.Unsafe.init[Nothing, Int]()
+                val mappedFiber = fiber.mapResult(_.map(_ * 2))
+                fiber.completeDiscard(Result.success(21))
+                for
+                    result <- mappedFiber.safe.get
+                yield assert(result == 42)
+            }
+        }
+
+        "Promise" - {
+            "init" in run {
+                val promise = Promise.Unsafe.init[Nothing, Int]()
+                assert(promise.done() == false)
+            }
+
+            "complete" in run {
+                val promise   = Promise.Unsafe.init[Nothing, Int]()
+                val completed = promise.complete(Result.success(42))
+                assert(completed)
+                for
+                    result <- promise.safe.get
+                yield assert(result == 42)
+            }
+
+            "completeDiscard" in run {
+                val promise = Promise.Unsafe.init[Nothing, Int]()
+                promise.completeDiscard(Result.success(42))
+                for
+                    result <- promise.safe.get
+                yield assert(result == 42)
+            }
+
+            "become" in run {
+                val promise1 = Promise.Unsafe.init[Nothing, Int]()
+                val promise2 = Promise.Unsafe.init[Nothing, Int]()
+                promise2.completeDiscard(Result.success(42))
+                val became = promise1.become(promise2.safe)
+                assert(became)
+                for
+                    result <- promise1.safe.get
+                yield assert(result == 42)
+            }
+
+            "becomeDiscard" in run {
+                val promise1 = Promise.Unsafe.init[Nothing, Int]()
+                val promise2 = Promise.Unsafe.init[Nothing, Int]()
+                promise2.completeDiscard(Result.success(42))
+                promise1.becomeDiscard(promise2.safe)
+                for
+                    result <- promise1.safe.get
+                yield assert(result == 42)
+            }
+        }
     }
 
 end FiberTest

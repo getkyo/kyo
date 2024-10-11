@@ -297,7 +297,7 @@ class IOPromiseTest extends Test:
     "mask" - {
         "doesn't propagate interrupts to parent" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask
+            val masked   = original.mask()
 
             var originalCompleted                         = false
             var maskedResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
@@ -312,7 +312,7 @@ class IOPromiseTest extends Test:
 
         "completes when original completes" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask
+            val masked   = original.mask()
 
             var maskedResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
             masked.onComplete(r => maskedResult = Maybe(r))
@@ -323,7 +323,7 @@ class IOPromiseTest extends Test:
 
         "propagates failure" in {
             val original = new IOPromise[Exception, Int]()
-            val masked   = original.mask
+            val masked   = original.mask()
 
             var maskedResult: Maybe[Result[Exception, Int]] = Maybe.Empty
             masked.onComplete(r => maskedResult = Maybe(r))
@@ -335,7 +335,7 @@ class IOPromiseTest extends Test:
 
         "allows completion of masked promise" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask
+            val masked   = original.mask()
 
             var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
             var maskedResult: Maybe[Result[Nothing, Int]]   = Maybe.Empty
@@ -350,8 +350,8 @@ class IOPromiseTest extends Test:
 
         "chained masks" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked1  = original.mask
-            val masked2  = masked1.mask
+            val masked1  = original.mask()
+            val masked2  = masked1.mask()
 
             var originalCompleted                          = false
             var masked1Completed                           = false
@@ -374,7 +374,7 @@ class IOPromiseTest extends Test:
             val original = new IOPromise[Nothing, Int]()
             original.complete(Result.success(42))
 
-            val masked                                    = original.mask
+            val masked                                    = original.mask()
             var maskedResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
             masked.onComplete(r => maskedResult = Maybe(r))
 
@@ -383,7 +383,7 @@ class IOPromiseTest extends Test:
 
         "interrupt original completes masked" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask
+            val masked   = original.mask()
 
             var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
             var maskedResult: Maybe[Result[Nothing, Int]]   = Maybe.Empty
@@ -399,8 +399,8 @@ class IOPromiseTest extends Test:
 
         "chained masks with interrupt" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked1  = original.mask
-            val masked2  = masked1.mask
+            val masked1  = original.mask()
+            val masked2  = masked1.mask()
 
             var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
             var masked1Result: Maybe[Result[Nothing, Int]]  = Maybe.Empty
@@ -425,7 +425,7 @@ class IOPromiseTest extends Test:
 
         "mask interaction with become" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask
+            val masked   = original.mask()
             val other    = new IOPromise[Nothing, Int]()
 
             var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
@@ -453,7 +453,7 @@ class IOPromiseTest extends Test:
 
         "mask with interrupts" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask
+            val masked   = original.mask()
             val other    = new IOPromise[Nothing, Int]()
 
             masked.interrupts(other)
@@ -495,7 +495,7 @@ class IOPromiseTest extends Test:
 
         "onInterrupt with mask" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask
+            val masked   = original.mask()
 
             var originalInterrupted = false
             var maskedInterrupted   = false
@@ -510,8 +510,8 @@ class IOPromiseTest extends Test:
 
         "onInterrupt with chained masks" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked1  = original.mask
-            val masked2  = masked1.mask
+            val masked1  = original.mask()
+            val masked2  = masked1.mask()
 
             var originalInterrupted = false
             var masked1Interrupted  = false
@@ -546,7 +546,7 @@ class IOPromiseTest extends Test:
 
         "onInterrupt with mask and become" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask
+            val masked   = original.mask()
             val other    = new IOPromise[Nothing, Int]()
 
             var originalInterrupted = false
@@ -585,7 +585,7 @@ class IOPromiseTest extends Test:
 
         "onInterrupt with mask and interrupts" in {
             val original = new IOPromise[Nothing, Int]()
-            val masked   = original.mask
+            val masked   = original.mask()
             val other    = new IOPromise[Nothing, Int]()
 
             var originalInterrupted = false
@@ -647,9 +647,9 @@ class IOPromiseTest extends Test:
 
         "complex chaining with interrupts and masks" in {
             val p1 = new IOPromise[Nothing, Int]()
-            val p2 = p1.mask
+            val p2 = p1.mask()
             val p3 = new IOPromise[Nothing, Int]()
-            val p4 = p3.mask
+            val p4 = p3.mask()
 
             p2.become(p4)
             p1.interrupts(p3)
@@ -687,6 +687,68 @@ class IOPromiseTest extends Test:
 
             p1.interrupt(Result.Panic(new Exception("Interrupted")))
             assert(p2.block(deadline()).isFail)
+        }
+    }
+
+    "variance" - {
+        given [A, B]: CanEqual[A, B] = CanEqual.derived
+        "covariance of A" in {
+            val p: IOPromise[Nothing, AnyRef] = new IOPromise[Nothing, String]()
+            p.complete(Result.success("Hello"))
+            assert(p.block(deadline()) == Result.success("Hello"))
+        }
+
+        "contravariance of E" in {
+            val p: IOPromise[Throwable, Nothing] = new IOPromise[Exception, Nothing]()
+            val ex                               = new Exception("Test")
+            p.complete(Result.fail(ex))
+            assert(p.block(deadline()) == Result.fail(ex))
+        }
+
+        "variance with become" in {
+            val p1: IOPromise[Throwable, AnyRef] = new IOPromise[Exception, String]()
+            val p2: IOPromise[Exception, String] = new IOPromise[Exception, String]()
+            p2.complete(Result.success("Hello"))
+            assert(p1.become(p2))
+            assert(p1.block(deadline()) == Result.success("Hello"))
+        }
+
+        "variance with onComplete" in {
+            val p: IOPromise[Exception, String]           = new IOPromise[Exception, String]()
+            var result: Option[Result[Throwable, AnyRef]] = None
+            p.onComplete(r => result = Some(r.asInstanceOf[Result[Throwable, AnyRef]]))
+            p.complete(Result.success("Hello"))
+            assert(result.contains(Result.success("Hello")))
+        }
+
+        "variance with interrupts" in {
+            val p1: IOPromise[Throwable, AnyRef] = new IOPromise[Exception, String]()
+            val p2: IOPromise[Exception, Int]    = new IOPromise[Exception, Int]()
+            p1.interrupts(p2)
+            val ex = new Exception("Test")
+            assert(p1.interrupt(Result.Panic(ex)))
+            assert(p2.block(deadline()).isPanic)
+        }
+
+        "variance with mask" in {
+            val original: IOPromise[Throwable, AnyRef] = new IOPromise[Exception, String]()
+            val masked: IOPromise[Throwable, AnyRef]   = original.mask()
+            original.complete(Result.success("Hello"))
+            assert(masked.block(deadline()) == Result.success("Hello"))
+        }
+
+        "variance with complex chaining" in {
+            val p1: IOPromise[Throwable, AnyRef]       = new IOPromise[Exception, String]()
+            val p2: IOPromise[Exception, String]       = new IOPromise[Exception, String]()
+            val p3: IOPromise[Throwable, CharSequence] = new IOPromise[Throwable, String]()
+
+            p1.become(p2)
+            p2.become(p3)
+            p3.complete(Result.success("Hello"))
+
+            assert(p1.block(deadline()) == Result.success("Hello"))
+            assert(p2.block(deadline()) == Result.success("Hello"))
+            assert(p3.block(deadline()) == Result.success("Hello"))
         }
     }
 
