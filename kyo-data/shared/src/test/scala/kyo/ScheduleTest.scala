@@ -671,4 +671,33 @@ class ScheduleTest extends Test:
         }
     }
 
+    "withNext" - {
+        "allows custom processing of next duration and schedule" in {
+            val schedule = Schedule.fixed(1.second)
+            val result = schedule.withNext { (duration, nextSchedule) =>
+                (duration * 2, nextSchedule.take(1))
+            }
+
+            assert(result == (2.seconds, Schedule.fixed(1.second).take(1)))
+        }
+
+        "works with immediate schedule" in {
+            val schedule = Schedule.immediate
+            val result = schedule.withNext { (duration, nextSchedule) =>
+                (duration, nextSchedule == Schedule.done)
+            }
+
+            assert(result == (Duration.Zero, true))
+        }
+
+        "works with never schedule" in {
+            val schedule = Schedule.never
+            val result = schedule.withNext { (duration, nextSchedule) =>
+                (duration == Duration.Infinity, nextSchedule == Schedule.never)
+            }
+
+            assert(result == (true, true))
+        }
+    }
+
 end ScheduleTest
