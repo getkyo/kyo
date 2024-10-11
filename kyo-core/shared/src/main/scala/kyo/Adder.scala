@@ -61,9 +61,10 @@ object LongAdder:
       */
     def init(using frame: Frame): LongAdder < IO = IO.Unsafe(LongAdder(Unsafe.init()))
 
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     opaque type Unsafe = j.LongAdder
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given Flat[Unsafe]                    = Flat.unsafe.bypass
         def init()(using AllowUnsafe): Unsafe = new j.LongAdder
@@ -125,9 +126,10 @@ object DoubleAdder:
       */
     def init(using Frame): DoubleAdder < IO = IO(DoubleAdder(new j.DoubleAdder))
 
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     opaque type Unsafe = j.DoubleAdder
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given Flat[Unsafe] = Flat.unsafe.bypass
 

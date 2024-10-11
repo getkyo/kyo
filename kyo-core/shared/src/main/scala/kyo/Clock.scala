@@ -46,7 +46,7 @@ object Clock:
     end Stopwatch
 
     object Stopwatch:
-        /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+        /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         class Unsafe(start: Instant, clock: Clock.Unsafe):
             def elapsed()(using AllowUnsafe): Duration = clock.now() - start
             def safe: Stopwatch                        = Stopwatch(this)
@@ -71,7 +71,7 @@ object Clock:
     end Deadline
 
     object Deadline:
-        /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+        /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
         class Unsafe(endInstant: Maybe[Instant], clock: Clock.Unsafe):
 
             def timeLeft()(using AllowUnsafe): Duration =
@@ -143,7 +143,7 @@ object Clock:
                 IO.Unsafe(u.now())
             def unsafe: Unsafe = u
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         def now()(using AllowUnsafe): Instant
 

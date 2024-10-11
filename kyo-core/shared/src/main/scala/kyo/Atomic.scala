@@ -99,9 +99,10 @@ object AtomicInt:
       */
     def init(v: Int)(using Frame): AtomicInt < IO = IO.Unsafe(AtomicInt(Unsafe.init(v)))
 
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     opaque type Unsafe = j.AtomicInteger
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given Flat[Unsafe] = Flat.unsafe.bypass
 
@@ -221,9 +222,10 @@ object AtomicLong:
       */
     def init(v: Long)(using Frame): AtomicLong < IO = IO.Unsafe(AtomicLong(Unsafe.init(v)))
 
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     opaque type Unsafe = j.AtomicLong
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given Flat[Unsafe] = Flat.unsafe.bypass
 
@@ -303,9 +305,10 @@ object AtomicBoolean:
       */
     def init(v: Boolean)(using Frame): AtomicBoolean < IO = IO.Unsafe(AtomicBoolean(Unsafe.init(v)))
 
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     opaque type Unsafe = j.AtomicBoolean
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given Flat[Unsafe] = Flat.unsafe.bypass
 
@@ -401,7 +404,7 @@ object AtomicRef:
 
     opaque type Unsafe[A] = j.AtomicReference[A]
 
-    /* WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given [A]: Flat[Unsafe[A]] = Flat.unsafe.bypass
 
