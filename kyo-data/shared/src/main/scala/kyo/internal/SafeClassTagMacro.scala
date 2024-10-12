@@ -41,14 +41,14 @@ private[kyo] object SafeClassTagMacro:
                             case OrType(a, b) => flatten(a) ++ flatten(b)
                             case _            => Seq(tpe)
                     val exprs = flatten(tpe).map(create)
-                    '{ Union(${ Expr.ofList(exprs) }) }
+                    '{ Union(Set(${ Varargs(exprs) }*)) }
                 case AndType(_, _) =>
                     def flatten(tpe: TypeRepr): Seq[TypeRepr] =
                         tpe match
                             case AndType(a, b) => flatten(a) ++ flatten(b)
                             case _             => Seq(tpe)
                     val exprs = flatten(tpe).map(create)
-                    '{ Intersection(${ Expr.ofList(exprs) }) }
+                    '{ Intersection(Set(${ Varargs(exprs) }*)) }
                 case _ => createSingle(tpe)
             end match
         end create
