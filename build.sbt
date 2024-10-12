@@ -141,7 +141,7 @@ lazy val `kyo-scheduler` =
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
-            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.9"          % Test
+            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.10"         % Test
         )
         .jsSettings(
             `js-settings`,
@@ -207,7 +207,7 @@ lazy val `kyo-core` =
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC31" % Test,
             libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.11"     % Test,
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.9"      % Test,
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.10"     % Test,
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
         .jsSettings(`js-settings`)
