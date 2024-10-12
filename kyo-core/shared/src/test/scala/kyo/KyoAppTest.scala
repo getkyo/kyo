@@ -41,7 +41,8 @@ class KyoAppTest extends Test:
                 _ <- Async.run(())
             yield 1
 
-        assert(KyoApp.run(Duration.Infinity)(run) == 1)
+        import AllowUnsafe.embrace.danger
+        assert(KyoApp.Unsafe.run(Duration.Infinity)(run) == 1)
     }
     "failing effects" taggedAs jvmOnly in {
         def run: Unit < KyoApp.Effects =
@@ -51,7 +52,8 @@ class KyoAppTest extends Test:
                 _ <- Abort.fail(new RuntimeException("Aborts!"))
             yield ()
 
-        KyoApp.attempt(Duration.Infinity)(run) match
+        import AllowUnsafe.embrace.danger
+        KyoApp.Unsafe.attempt(Duration.Infinity)(run) match
             case Result.Fail(exception) => assert(exception.getMessage == "Aborts!")
             case _                      => fail("Unexpected Success...")
     }

@@ -440,11 +440,13 @@ val a: Int < IO =
 
 // Avoid! Run the application with a specific timeout
 val b: Int =
-    KyoApp.run(2.minutes)(a)
+    import AllowUnsafe.embrace.danger
+    KyoApp.Unsafe.run(2.minutes)(a)
 
 // Avoid! Run the application without specifying a timeout
 val c: Int =
-    KyoApp.run(a)
+    import AllowUnsafe.embrace.danger
+    KyoApp.Unsafe.run(a)
 ```
 
 ## Core Effects
