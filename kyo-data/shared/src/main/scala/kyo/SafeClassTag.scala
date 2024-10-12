@@ -22,11 +22,13 @@ import scala.quoted.*
 opaque type SafeClassTag[A] >: SafeClassTag.Element = Class[?] | SafeClassTag.Element
 
 object SafeClassTag:
+    given [A, B]: CanEqual[SafeClassTag[A], SafeClassTag[B]] = CanEqual.derived
+
     sealed trait Element
 
-    case class Union(elements: List[SafeClassTag[Any]])        extends Element
-    case class Intersection(elements: List[SafeClassTag[Any]]) extends Element
-    case class LiteralTag(value: Any)                          extends Element
+    case class Union(elements: Set[SafeClassTag[Any]])        extends Element
+    case class Intersection(elements: Set[SafeClassTag[Any]]) extends Element
+    case class LiteralTag(value: Any)                         extends Element
 
     sealed trait Primitive extends Element
     case object IntTag     extends Primitive
@@ -40,6 +42,7 @@ object SafeClassTag:
     case object UnitTag    extends Element
     case object AnyValTag  extends Element
     case object NothingTag extends Element
+
     inline given apply[A]: SafeClassTag[A] = ${ SafeClassTagMacro.derive[A] }
 
     extension [A](self: SafeClassTag[A])
@@ -104,10 +107,10 @@ object SafeClassTag:
             self match
                 case Intersection(e1) => that match
                         case Intersection(e2) => Intersection(e1 ++ e2)
-                        case _                => Intersection(that :: e1)
+                        case _                => Intersection(e1 + that)
                 case _ => that match
-                        case Intersection(e2) => Intersection(self :: e2)
-                        case _                => Intersection(List(self, that))
+                        case Intersection(e2) => Intersection(e2 + self)
+                        case _                => Intersection(Set(self, that))
 
         /** Combines this SafeClassTag with another to form a union type
           *
@@ -120,10 +123,10 @@ object SafeClassTag:
             self match
                 case Union(e1) => that match
                         case Union(e2) => Union(e1 ++ e2)
-                        case _         => Union(that :: e1)
+                        case _         => Union(e1 + that)
                 case _ => that match
-                        case Union(e2) => Union(self :: e2)
-                        case _         => Union(List(self, that))
+                        case Union(e2) => Union(e2 + self)
+                        case _         => Union(Set(self, that))
 
         /** Checks if this SafeClassTag is a subtype of another SafeClassTag
           *

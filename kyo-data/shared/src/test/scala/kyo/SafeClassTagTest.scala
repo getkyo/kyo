@@ -676,4 +676,121 @@ class SafeClassTagTest extends Test:
         }
     }
 
+    "equality" - {
+        "simple types" in {
+            assert(SafeClassTag[Int] == SafeClassTag[Int])
+            assert(SafeClassTag[String] == SafeClassTag[String])
+            assert(SafeClassTag[Int] != SafeClassTag[String])
+        }
+
+        "class hierarchy" in {
+            assert(SafeClassTag[Dog] == SafeClassTag[Dog])
+            assert(SafeClassTag[Animal] == SafeClassTag[Animal])
+            assert(SafeClassTag[Dog] != SafeClassTag[Cat])
+        }
+
+        "union types" - {
+            "simple union" in {
+                assert(SafeClassTag[Int | String] == SafeClassTag[Int | String])
+                assert(SafeClassTag[String | Int] == SafeClassTag[Int | String])
+                assert(SafeClassTag[Int | String] != SafeClassTag[Int | Double])
+            }
+
+            "complex union" in {
+                assert(SafeClassTag[Dog | Cat | Snake] == SafeClassTag[Cat | Snake | Dog])
+                assert(SafeClassTag[Dog | (Cat | Snake)] == SafeClassTag[(Dog | Cat) | Snake])
+                assert(SafeClassTag[Dog | Cat | Snake] != SafeClassTag[Dog | Cat | Duck])
+            }
+        }
+
+        "intersection types" - {
+            "simple intersection" in {
+                assert(SafeClassTag[Animal & Swimmer] == SafeClassTag[Animal & Swimmer])
+                assert(SafeClassTag[Swimmer & Animal] == SafeClassTag[Animal & Swimmer])
+                assert(SafeClassTag[Animal & Swimmer] != SafeClassTag[Animal & Flyer])
+            }
+
+            "complex intersection" in {
+                assert(SafeClassTag[Animal & Swimmer & Flyer] == SafeClassTag[Flyer & Animal & Swimmer])
+                assert(SafeClassTag[Animal & (Swimmer & Flyer)] == SafeClassTag[(Animal & Swimmer) & Flyer])
+                assert(SafeClassTag[Animal & Swimmer & Flyer] != SafeClassTag[Animal & Swimmer & Reptile])
+            }
+        }
+
+        "mixed union and intersection" in {
+            assert(SafeClassTag[(Animal & Swimmer) | (Mammal & Flyer)] == SafeClassTag[(Mammal & Flyer) | (Animal & Swimmer)])
+            assert(SafeClassTag[(Animal & Swimmer) | (Mammal & Flyer)] != SafeClassTag[(Animal & Flyer) | (Mammal & Swimmer)])
+        }
+
+        "with literal types" in {
+            assert(SafeClassTag[42 | "hello" | true] == SafeClassTag[true | 42 | "hello"])
+            assert(SafeClassTag[42 & Int] == SafeClassTag[Int & 42])
+            assert(SafeClassTag[42 | "hello" | true] != SafeClassTag[42 | "hello" | false])
+        }
+
+        "complex nested types" in {
+            val type1 = SafeClassTag[((Animal & Swimmer) | Mammal) & (Reptile | Flyer)]
+            val type2 = SafeClassTag[(Mammal | (Swimmer & Animal)) & (Flyer | Reptile)]
+            val type3 = SafeClassTag[((Animal & Swimmer) | Mammal) & (Flyer | Snake)]
+
+            assert(type1 == type2)
+            assert(type1 != type3)
+        }
+    }
+
+    "dynamic creation" - {
+        "& (intersection) method" - {
+            "simple types" in {
+                val intAndString = SafeClassTag[Int] & SafeClassTag[String]
+                assert(!intAndString.accepts(42))
+                assert(!intAndString.accepts("hello"))
+            }
+
+            "class hierarchy" in {
+                val mammalAndSwimmer = SafeClassTag[Mammal] & SafeClassTag[Swimmer]
+                assert(!mammalAndSwimmer.accepts(new Dog))
+                assert(!mammalAndSwimmer.accepts(new Duck))
+            }
+
+            "with existing intersection" in {
+                val animalAndSwimmer   = SafeClassTag[Animal & Swimmer]
+                val tripleIntersection = animalAndSwimmer & SafeClassTag[Flyer]
+                assert(tripleIntersection.accepts(new Duck))
+                assert(!tripleIntersection.accepts(new Penguin))
+            }
+        }
+
+        "| (union) method" - {
+            "simple types" in {
+                val intOrString = SafeClassTag[Int] | SafeClassTag[String]
+                assert(intOrString.accepts(42))
+                assert(intOrString.accepts("hello"))
+                assert(!intOrString.accepts(true))
+            }
+
+            "class hierarchy" in {
+                val mammalOrReptile = SafeClassTag[Mammal] | SafeClassTag[Reptile]
+                assert(mammalOrReptile.accepts(new Dog))
+                assert(mammalOrReptile.accepts(new Snake))
+                assert(!mammalOrReptile.accepts(new Duck))
+            }
+
+            "with existing union" in {
+                val dogOrCat    = SafeClassTag[Dog | Cat]
+                val animalUnion = dogOrCat | SafeClassTag[Snake]
+                assert(animalUnion.accepts(new Dog))
+                assert(animalUnion.accepts(new Cat))
+                assert(animalUnion.accepts(new Snake))
+                assert(!animalUnion.accepts(new Duck))
+            }
+        }
+
+        "combining & and |" in {
+            val complexTag = (SafeClassTag[Int] & SafeClassTag[AnyVal]) | (SafeClassTag[String] & SafeClassTag[Any])
+            assert(complexTag.accepts(42))
+            assert(complexTag.accepts("hello"))
+            assert(!complexTag.accepts(true))
+        }
+    }
+
 end SafeClassTagTest
