@@ -853,6 +853,75 @@ class ResultTest extends Test:
 
     }
 
+    "contains" - {
+        "should return true for Success with matching value" in {
+            val result = Result.success(42)
+            assert(result.contains(42))
+        }
+
+        "should return false for Success with non-matching value" in {
+            val result = Result.success(42)
+            assert(!result.contains(43))
+        }
+
+        "should return false for Fail" in {
+            val result = Result.fail[String, Int]("error")
+            assert(!result.contains(42))
+        }
+
+        "should return false for Panic" in {
+            val result = Result.panic[String, Int](new Exception("panic"))
+            assert(!result.contains(42))
+        }
+
+        "should work with custom types" in {
+            case class Person(name: String, age: Int) derives CanEqual
+            val person = Person("Alice", 30)
+            val result = Result.success(person)
+            assert(result.contains(person))
+            assert(!result.contains(Person("Bob", 25)))
+        }
+
+        "should work with Maybe values" in {
+            val someMaybeResult = Result.success(Maybe(42))
+            assert(someMaybeResult.contains(Maybe(42)))
+            assert(!someMaybeResult.contains(Maybe(43)))
+            assert(!someMaybeResult.contains(Maybe.empty))
+
+            val noneMaybeResult = Result.success(Maybe.empty)
+            assert(noneMaybeResult.contains(Maybe.empty))
+            assert(!noneMaybeResult.contains(Maybe(42)))
+
+            val failResult: Result[String, Maybe[Int]] = Result.fail("error")
+            assert(!failResult.contains(Maybe(42)))
+            assert(!failResult.contains(Maybe.empty))
+
+            val panicResult: Result[String, Maybe[Int]] = Result.panic(new Exception("panic"))
+            assert(!panicResult.contains(Maybe(42)))
+            assert(!panicResult.contains(Maybe.empty))
+        }
+
+        "should work with nested Result values" in {
+            val nestedSuccessResult: Result[String, Result[Int, String]] = Result.success(Result.success("nested"))
+            assert(nestedSuccessResult.contains(Result.success("nested")))
+            assert(!nestedSuccessResult.contains(Result.success("other")))
+            assert(!nestedSuccessResult.contains(Result.fail(42)))
+
+            val nestedFailResult: Result[String, Result[Int, String]] = Result.success(Result.fail(42))
+            assert(nestedFailResult.contains(Result.fail(42)))
+            assert(!nestedFailResult.contains(Result.success("nested")))
+
+            val deeplyNestedResult: Result[String, Result[Int, Result[Double, String]]] =
+                Result.success(Result.success(Result.success("deeply nested")))
+            assert(deeplyNestedResult.contains(Result.success(Result.success("deeply nested"))))
+            assert(!deeplyNestedResult.contains(Result.success(Result.fail(3.14))))
+
+            val outerFailResult: Result[String, Result[Int, String]] = Result.fail("outer error")
+            assert(!outerFailResult.contains(Result.success("nested")))
+            assert(!outerFailResult.contains(Result.fail(42)))
+        }
+    }
+
     "show" - {
         "Success" in {
             assert(Result.success(42).show == "Success(42)")

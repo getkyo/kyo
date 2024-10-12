@@ -579,6 +579,18 @@ object Result:
                 case Success(v) => Result.fail(v)
                 case _          => self.asInstanceOf[Result[A, E]]
 
+        /** Checks if the Result is a Success and contains the given value.
+          *
+          * @param value
+          *   The value to check for
+          * @return
+          *   true if the Result is a Success and contains the given value, false otherwise
+          */
+        def contains(value: A)(using CanEqual[A, A]): Boolean =
+            self match
+                case Success(`value`) => true
+                case _                => false
+
         /** Returns a string representation of the Result.
           *
           * @return
