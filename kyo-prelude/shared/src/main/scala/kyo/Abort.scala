@@ -43,6 +43,13 @@ object Abort:
       */
     inline def panic[E](inline ex: Throwable)(using inline frame: Frame): Nothing < Abort[E] = error(Panic(ex))
 
+    /** Fails the computation with the given error value (failure or panic).
+      *
+      * @param e
+      *   The error value to fail with
+      * @return
+      *   A computation that immediately fails with the given error value
+      */
     inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
         ArrowEffect.suspendMap[Any](erasedTag[E], e)(_ => ???)
 
