@@ -49,7 +49,7 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes successfully with the given value
       */
-    def success[E, A](v: A)(using Frame): Fiber[E, A] = result(Result.success(v))
+    def success[E, A](v: A): Fiber[E, A] = result(Result.success(v))
 
     /** Creates a failed Fiber.
       *
@@ -58,7 +58,7 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that fails with the given error
       */
-    def fail[E, A](ex: E)(using Frame): Fiber[E, A] = result(Result.fail(ex))
+    def fail[E, A](ex: E): Fiber[E, A] = result(Result.fail(ex))
 
     /** Creates a panicked Fiber.
       *
@@ -67,7 +67,7 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that panics with the given throwable
       */
-    def panic[E, A](ex: Throwable)(using Frame): Fiber[E, A] = result(Result.panic(ex))
+    def panic[E, A](ex: Throwable): Fiber[E, A] = result(Result.panic(ex))
 
     /** Creates a Fiber from a Future.
       *
@@ -83,10 +83,10 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes with the result of the Future
       */
-    def fromFuture[A](future: Future[A])(using frame: Frame): Fiber[Throwable, A] < IO =
+    def fromFuture[A](future: => Future[A])(using frame: Frame): Fiber[Throwable, A] < IO =
         IO.Unsafe(Unsafe.fromFuture(future))
 
-    private def result[E, A](result: Result[E, A])(using Frame): Fiber[E, A] = IOPromise(result)
+    private def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
 
     extension [E, A](self: Fiber[E, A])
 
@@ -351,7 +351,7 @@ object Fiber extends FiberPlatformSpecific:
 
         def init[E, A](result: Result[E, A])(using AllowUnsafe): Unsafe[E, A] = IOPromise(result)
 
-        def fromFuture[A](f: Future[A])(using AllowUnsafe): Unsafe[Throwable, A] =
+        def fromFuture[A](f: => Future[A])(using AllowUnsafe): Unsafe[Throwable, A] =
             import scala.util.*
             val p = new IOPromise[Throwable, A] with (Try[A] => Unit):
                 def apply(result: Try[A]) =
