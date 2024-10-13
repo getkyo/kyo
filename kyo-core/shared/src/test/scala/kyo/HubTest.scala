@@ -57,12 +57,12 @@ class HubTest extends Test:
             _  <- untilTrue(h.empty) // wait transfer
             l  <- h.listen
             c1 <- h.close
-            v1 <- Abort.run[Throwable](h.listen)
-            v2 <- h.offer(2)
-            v3 <- l.poll
-            c2 <- l.close
+            v1 <- Abort.run(h.listen)
+            v2 <- Abort.run(h.offer(2))
+            v3 <- Abort.run(l.poll)
+            v4 <- Abort.run(l.close)
         yield assert(
-            b && c1 == Maybe(Seq()) && v1.isFail && !v2 && v3.isEmpty && c2.isEmpty
+            b && c1 == Seq() && v1.isFail && v2.isFail && v3.isFail && v4.isFail
         )
     }
     "close listener w/ buffer" in runJVM {
@@ -78,7 +78,7 @@ class HubTest extends Test:
             v2 <- l2.poll
             c2 <- l2.close
         yield assert(
-            b1 && c1 == Maybe(Seq(1)) && b2 && v2 == Maybe(2) && c2 == Maybe(Seq())
+            b1 && c1 == Seq(1) && b2 && v2 == Maybe(2) && c2 == Seq()
         )
     }
     "offer beyond capacity" in runJVM {
@@ -107,22 +107,22 @@ class HubTest extends Test:
     }
     "listener removal" in runJVM {
         for
-            h <- Hub.init[Int](2)
-            l <- h.listen
-            _ <- h.offer(1)
-            _ <- untilTrue(h.empty)
-            c <- l.close
-            _ <- h.offer(2)
-            v <- l.poll
-        yield assert(c == Maybe(Seq()) && v.isEmpty)
+            h  <- Hub.init[Int](2)
+            l  <- h.listen
+            _  <- h.offer(1)
+            _  <- untilTrue(h.empty)
+            c  <- l.close
+            v1 <- h.offer(2)
+            v2 <- Abort.run(l.poll)
+        yield assert(c == Seq() && v1 && v2.isFail)
     }
     "hub closure with pending offers" in runJVM {
         for
             h <- Hub.init[Int](2)
             _ <- h.offer(1)
             _ <- h.close
-            v <- h.offer(2)
-        yield assert(!v)
+            v <- Abort.run(h.offer(2))
+        yield assert(v.isFail)
     }
     "create listener on empty hub" in runJVM {
         for

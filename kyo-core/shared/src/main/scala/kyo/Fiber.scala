@@ -85,7 +85,7 @@ object Fiber extends FiberPlatformSpecific:
     def fromFuture[A](future: => Future[A])(using frame: Frame): Fiber[Throwable, A] < IO =
         IO.Unsafe(Unsafe.fromFuture(future))
 
-    private def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
+    def result[E, A](result: Result[E, A]): Fiber[E, A] = IOPromise(result)
 
     extension [E, A](self: Fiber[E, A])
 

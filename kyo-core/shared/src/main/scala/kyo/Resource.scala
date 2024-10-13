@@ -28,9 +28,9 @@ object Resource:
       */
     def ensure(v: => Unit < Async)(using frame: Frame): Unit < (Resource & IO) =
         ContextEffect.suspendMap(Tag[Resource]) { finalizer =>
-            finalizer.queue.offer(IO(v)).map {
-                case true => ()
-                case false =>
+            Abort.run(finalizer.queue.offer(IO(v))).map {
+                case Result.Success(_) => ()
+                case _ =>
                     throw new Closed(
                         "Resource finalizer queue already closed. This may happen if " +
                             "a background fiber escapes the scope of a 'Resource.run' call.",
@@ -78,20 +78,20 @@ object Resource:
       *   The result of the effect wrapped in Async and S effects.
       */
     def run[A, S](v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
-        Queue.initUnbounded[Unit < Async](Access.MultiProducerSingleConsumer).map { q =>
+        Queue.Unbounded.init[Unit < Async](Access.MultiProducerSingleConsumer).map { q =>
             Promise.init[Nothing, Unit].map { p =>
                 val finalizer = Finalizer(frame, q)
                 def close: Unit < IO =
-                    q.close.map {
-                        case Absent =>
-                            bug("Resource finalizer queue already closed.")
-                        case Present(l) =>
+                    Abort.run(q.close).map {
+                        case Result.Success(l) =>
                             Kyo.foreachDiscard(l)(task =>
                                 Abort.run[Throwable](task)
                                     .map(_.fold(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))
                             )
                                 .pipe(Async.run)
                                 .map(p.becomeDiscard)
+                        case _ =>
+                            bug("Resource finalizer queue already closed.")
                     }
                 ContextEffect.handle(Tag[Resource], finalizer, _ => finalizer)(v)
                     .pipe(IO.ensure(close))

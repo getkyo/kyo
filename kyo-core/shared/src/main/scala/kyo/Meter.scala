@@ -5,20 +5,22 @@ package kyo
 abstract class Meter:
     self =>
 
+    def capacity: Int
+
     /** Returns the number of available permits.
       *
       * @return
       *   The number of available permits as an Int effect.
       */
-    def available(using Frame): Int < IO
+    def permits(using Frame): Int < (IO & Abort[Closed])
 
     /** Checks if there are any available permits.
       *
       * @return
       *   A Boolean effect indicating whether permits are available.
       */
-    def isAvailable(using Frame): Boolean < IO =
-        available.map(_ > 0)
+    def available(using Frame): Boolean < (IO & Abort[Closed]) =
+        permits.map(_ > 0)
 
     /** Runs an effect after acquiring a permit.
       *
@@ -31,7 +33,7 @@ abstract class Meter:
       * @return
       *   The result of running the effect.
       */
-    def run[A, S](v: => A < S)(using Frame): A < (S & Async)
+    def run[A, S](v: => A < S)(using Frame): A < (S & Async & Abort[Closed])
 
     /** Attempts to run an effect if a permit is available.
       *
@@ -44,7 +46,7 @@ abstract class Meter:
       * @return
       *   A Maybe containing the result of running the effect, or Absent if no permit was available.
       */
-    def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (IO & S)
+    def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (S & IO & Abort[Closed])
 
     /** Closes the Meter.
       *
@@ -58,7 +60,8 @@ object Meter:
 
     /** A no-op Meter that always allows operations. */
     case object Noop extends Meter:
-        def available(using Frame)                 = Int.MaxValue
+        def capacity                               = 0
+        def permits(using Frame)                   = Int.MaxValue
         def run[A, S](v: => A < S)(using Frame)    = v
         def tryRun[A, S](v: => A < S)(using Frame) = v.map(Maybe(_))
         def close(using Frame)                     = false
@@ -81,10 +84,11 @@ object Meter:
       */
     def initSemaphore(concurrency: Int)(using Frame): Meter < IO =
         Channel.init[Unit](concurrency).map { chan =>
-            offer(concurrency, chan, ()).map { _ =>
+            Abort.run(offer(concurrency, chan, ())).map { _ =>
                 new Meter:
-                    def available(using Frame) = chan.size
-                    def release(using Frame)   = chan.offerDiscard(())
+                    def capacity             = chan.capacity
+                    def permits(using Frame) = chan.size
+                    def release(using Frame) = Abort.run(chan.offer(())).unit
 
                     def run[A, S](v: => A < S)(using Frame) =
                         IO.ensure(release) {
@@ -93,16 +97,18 @@ object Meter:
 
                     def tryRun[A, S](v: => A < S)(using Frame) =
                         IO.Unsafe {
-                            chan.unsafePoll match
-                                case Absent => Maybe.empty
-                                case _ =>
-                                    IO.ensure(release) {
-                                        v.map(Maybe(_))
-                                    }
+                            chan.unsafe.poll() match
+                                case Result.Success(maybe) =>
+                                    maybe match
+                                        case Absent => Maybe.empty
+                                        case _ =>
+                                            IO.ensure(release)(v).map(Maybe(_))
+                                case error: Result.Error[Closed] @unchecked =>
+                                    Abort.error(error)
                         }
 
                     def close(using Frame) =
-                        chan.close.map(_.isDefined)
+                        Abort.run(chan.close).map(_.isSuccess)
             }
         }
 
@@ -117,10 +123,10 @@ object Meter:
       */
     def initRateLimiter(rate: Int, period: Duration)(using Frame): Meter < IO =
         Channel.init[Unit](rate).map { chan =>
-            Timer.scheduleAtFixedRate(period)(offer(rate, chan, ())).map { _ =>
+            Timer.scheduleAtFixedRate(period)(Abort.run(offer(rate, chan, ())).unit).map { timerTask =>
                 new Meter:
-
-                    def available(using Frame)              = chan.size
+                    def capacity                            = chan.capacity
+                    def permits(using Frame)                = chan.size
                     def run[A, S](v: => A < S)(using Frame) = chan.take.map(_ => v)
 
                     def tryRun[A, S](v: => A < S)(using Frame) =
@@ -132,7 +138,7 @@ object Meter:
                         }
 
                     def close(using Frame) =
-                        chan.close.map(_.isDefined)
+                        timerTask.cancel.as(Abort.run(chan.close).map(_.isSuccess))
             }
         }
 
@@ -198,22 +204,22 @@ object Meter:
         Kyo.collect(meters).map { seq =>
             val meters = seq.toIndexedSeq
             new Meter:
-
-                def available(using Frame) =
+                def capacity = meters.map(_.capacity).min
+                def permits(using Frame) =
                     Loop.indexed(0) { (idx, acc) =>
                         if idx == meters.length then Loop.done(acc)
-                        else meters(idx).available.map(v => Loop.continue(acc + v))
+                        else meters(idx).permits.map(v => Loop.continue(acc + v))
                     }
 
                 def run[A, S](v: => A < S)(using Frame) =
-                    def loop(idx: Int = 0): A < (S & Async) =
+                    def loop(idx: Int = 0): A < (S & Async & Abort[Closed]) =
                         if idx == meters.length then v
                         else meters(idx).run(loop(idx + 1))
                     loop()
                 end run
 
                 def tryRun[A, S](v: => A < S)(using Frame) =
-                    def loop(idx: Int = 0): Maybe[A] < (S & IO) =
+                    def loop(idx: Int = 0): Maybe[A] < (S & IO & Abort[Closed]) =
                         if idx == meters.length then v.map(Maybe(_))
                         else
                             meters(idx).tryRun(loop(idx + 1)).map {
@@ -228,7 +234,7 @@ object Meter:
             end new
         }
 
-    private def offer[A](n: Int, chan: Channel[A], v: A)(using Frame): Unit < IO =
+    private def offer[A](n: Int, chan: Channel[A], v: A)(using Frame): Unit < (IO & Abort[Closed]) =
         Loop.indexed { idx =>
             if idx == n then Loop.done
             else

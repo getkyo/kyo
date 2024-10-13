@@ -61,24 +61,24 @@ class QueueTest extends Test:
             q  <- Queue.init[Int](2)
             b  <- q.offer(1)
             c1 <- q.close
-            v1 <- Abort.run[Throwable](q.size)
-            v2 <- Abort.run[Throwable](q.empty)
-            v3 <- Abort.run[Throwable](q.full)
-            v4 <- q.offer(2)
-            v5 <- Abort.run[Throwable](q.poll)
-            v6 <- Abort.run[Throwable](q.peek)
-            v7 <- Abort.run[Throwable](q.drain)
-            c2 <- q.close
+            v1 <- Abort.run(q.size)
+            v2 <- Abort.run(q.empty)
+            v3 <- Abort.run(q.full)
+            v4 <- Abort.run(q.offer(2))
+            v5 <- Abort.run(q.poll)
+            v6 <- Abort.run(q.peek)
+            v7 <- Abort.run(q.drain)
+            c2 <- Abort.run(q.close)
         yield assert(
-            b && c1 == Maybe(Seq(1)) &&
+            b && c1 == Seq(1) &&
                 v1.isFail &&
                 v2.isFail &&
                 v3.isFail &&
-                !v4 &&
+                v4.isFail &&
                 v5.isFail &&
                 v6.isFail &&
                 v7.isFail &&
-                c2.isEmpty
+                c2.isFail
         )
     }
 
@@ -96,27 +96,27 @@ class QueueTest extends Test:
             access.toString() - {
                 "isEmpty" in run {
                     for
-                        q <- Queue.initUnbounded[Int](access)
+                        q <- Queue.Unbounded.init[Int](access)
                         b <- q.empty
                     yield assert(b)
                 }
                 "offer and poll" in run {
                     for
-                        q <- Queue.initUnbounded[Int](access)
+                        q <- Queue.Unbounded.init[Int](access)
                         b <- q.offer(1)
                         v <- q.poll
                     yield assert(b && v == Maybe(1))
                 }
                 "peek" in run {
                     for
-                        q <- Queue.initUnbounded[Int](access)
+                        q <- Queue.Unbounded.init[Int](access)
                         _ <- q.offer(1)
                         v <- q.peek
                     yield assert(v == Maybe(1))
                 }
                 "add and poll" in run {
                     for
-                        q <- Queue.initUnbounded[Int](access)
+                        q <- Queue.Unbounded.init[Int](access)
                         _ <- q.add(1)
                         v <- q.poll
                     yield assert(v == Maybe(1))
@@ -129,7 +129,7 @@ class QueueTest extends Test:
         access.foreach { access =>
             access.toString() in run {
                 for
-                    q <- Queue.initDropping[Int](2)
+                    q <- Queue.Unbounded.initDropping[Int](2)
                     _ <- q.add(1)
                     _ <- q.add(2)
                     _ <- q.add(3)
@@ -145,7 +145,7 @@ class QueueTest extends Test:
         access.foreach { access =>
             access.toString() in run {
                 for
-                    q <- Queue.initSliding[Int](2)
+                    q <- Queue.Unbounded.initSliding[Int](2)
                     _ <- q.add(1)
                     _ <- q.add(2)
                     _ <- q.add(3)
@@ -164,76 +164,196 @@ class QueueTest extends Test:
             f(TestUnsafeQueue[Int](2))
 
         "should offer and poll correctly" in withQueue { testUnsafe =>
-            assert(testUnsafe.offer(1))
-            assert(testUnsafe.poll() == Maybe(1))
+            assert(testUnsafe.offer(1).contains(true))
+            assert(testUnsafe.poll().contains(Maybe(1)))
         }
 
         "should peek correctly" in withQueue { testUnsafe =>
             testUnsafe.offer(2)
-            assert(testUnsafe.peek() == Maybe(2))
+            assert(testUnsafe.peek().contains(Maybe(2)))
         }
 
         "should report empty correctly" in withQueue { testUnsafe =>
-            assert(testUnsafe.empty())
+            assert(testUnsafe.empty().contains(true))
             testUnsafe.offer(3)
-            assert(!testUnsafe.empty())
+            assert(testUnsafe.empty().contains(false))
         }
 
         "should report size correctly" in withQueue { testUnsafe =>
-            assert(testUnsafe.size() == 0)
+            assert(testUnsafe.size().contains(0))
             testUnsafe.offer(3)
-            assert(testUnsafe.size() == 1)
+            assert(testUnsafe.size().contains(1))
         }
 
         "should drain correctly" in withQueue { testUnsafe =>
             testUnsafe.offer(3)
             testUnsafe.offer(4)
             val drained = testUnsafe.drain()
-            assert(drained == Seq(3, 4))
-            assert(testUnsafe.empty())
-        }
-
-        "should close correctly" in withQueue { testUnsafe =>
-            testUnsafe.offer(5)
-            val closed = testUnsafe.close()
-            assert(closed == Maybe(Seq(5)))
-            assert(testUnsafe.close().isEmpty)
+            assert(drained == Result.success(Seq(3, 4)))
+            assert(testUnsafe.empty().contains(true))
         }
     }
 
     case class TestUnsafeQueue[A](capacity: Int) extends Queue.Unsafe[A]:
         private var elements = scala.collection.mutable.Queue[A]()
-        private var closed   = false
 
-        def offer(a: A)(using AllowUnsafe): Boolean =
-            if closed then throw new IllegalStateException("Queue is closed")
-            else if elements.size >= capacity then false
-            else
-                elements.enqueue(a)
-                true
+        def offer(a: A)(using AllowUnsafe) =
+            Result {
+                if elements.size >= capacity then false
+                else
+                    elements.enqueue(a)
+                    true
+            }
 
-        def poll()(using AllowUnsafe): Maybe[A] =
-            if closed then throw new IllegalStateException("Queue is closed")
-            else if elements.isEmpty then Maybe.empty
-            else Maybe(elements.dequeue())
+        def poll()(using AllowUnsafe) =
+            Result {
+                if elements.isEmpty then Maybe.empty
+                else Maybe(elements.dequeue())
+            }
 
-        def peek()(using AllowUnsafe): Maybe[A] =
-            if closed then throw new IllegalStateException("Queue is closed")
-            else if elements.isEmpty then Maybe.empty
-            else Maybe(elements.head)
+        def peek()(using AllowUnsafe) =
+            Result {
+                if elements.isEmpty then Maybe.empty
+                else Maybe(elements.head)
+            }
 
-        def empty()(using AllowUnsafe): Boolean =
-            if closed then throw new IllegalStateException("Queue is closed")
-            else elements.isEmpty
+        def empty()(using AllowUnsafe) = Result(elements.isEmpty)
 
-        def size()(using AllowUnsafe): Int =
-            if closed then throw new IllegalStateException("Queue is closed")
-            else elements.size
+        def size()(using AllowUnsafe) = Result(elements.size)
 
-        def full()(using AllowUnsafe): Boolean =
-            if closed then throw new IllegalStateException("Queue is closed")
-            else elements.size == capacity
+        def full()(using AllowUnsafe) = Result(elements.size == capacity)
+
+        def close()(using Frame, AllowUnsafe) = ???
+        def closed()(using AllowUnsafe)       = ???
+        def drain()(using AllowUnsafe) =
+            try Result(elements.toSeq)
+            finally elements.clear()
 
     end TestUnsafeQueue
 
+    "concurrency" - {
+
+        val repeats = 100
+
+        "offer and close" in run {
+            (for
+                size  <- Choice.get(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                latch <- Latch.init(1)
+                offerFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                )
+                closeFiber  <- Async.run(latch.await.andThen(queue.close))
+                _           <- latch.release
+                offered     <- offerFiber.get
+                backlog     <- closeFiber.get
+                closedQueue <- Abort.run(queue.close)
+                drained     <- Abort.run(queue.drain)
+                isClosed    <- queue.closed
+            yield
+                assert(offered.count(_.contains(true)) == backlog.size)
+                assert(closedQueue.isFail)
+                assert(drained.isFail)
+                assert(isClosed)
+            )
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+
+        "offer and poll" in run {
+            (for
+                size  <- Choice.get(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                latch <- Latch.init(1)
+                offerFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                )
+                pollFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(_ => Abort.run(queue.poll))))
+                )
+                _       <- latch.release
+                offered <- offerFiber.get
+                polled  <- pollFiber.get
+                left    <- queue.size
+            yield assert(offered.count(_.contains(true)) == polled.count(_.toMaybe.flatten.isDefined) + left))
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+
+        "offer to full queue during close" in run {
+            (for
+                size  <- Choice.get(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                _     <- Kyo.foreach(1 to size)(i => queue.offer(i))
+                latch <- Latch.init(1)
+                offerFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                )
+                closeFiber <- Async.run(latch.await.andThen(queue.close))
+                _          <- latch.release
+                offered    <- offerFiber.get
+                backlog    <- closeFiber.get
+                isClosed   <- queue.closed
+            yield
+                assert(offered.count(_.contains(true)) == backlog.size - size)
+                assert(isClosed)
+            )
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+
+        "concurrent close attempts" in run {
+            (for
+                size  <- Choice.get(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                latch <- Latch.init(1)
+                offerFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                )
+                closeFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(_ => Abort.run(queue.close))))
+                )
+                _        <- latch.release
+                offered  <- offerFiber.get
+                backlog  <- closeFiber.get
+                isClosed <- queue.closed
+            yield
+                assert(backlog.count(_.isSuccess) == 1)
+                assert(backlog.flatMap(_.toMaybe.toList.flatten).size == offered.count(_.contains(true)))
+                assert(isClosed)
+            )
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+
+        "offer, poll and close" in run {
+            (for
+                size  <- Choice.get(Seq(0, 1, 2, 10, 100))
+                queue <- Queue.init[Int](size)
+                latch <- Latch.init(1)
+                offerFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                )
+                pollFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(_ => Abort.run(queue.poll))))
+                )
+                closeFiber <- Async.run(latch.await.andThen(queue.close))
+                _          <- latch.release
+                offered    <- offerFiber.get
+                polled     <- pollFiber.get
+                backlog    <- closeFiber.get
+                isClosed   <- queue.closed
+            yield
+                assert(offered.count(_.contains(true)) - polled.count(_.toMaybe.flatten.isDefined) == backlog.size)
+                assert(isClosed)
+            )
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+    }
 end QueueTest

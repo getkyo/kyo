@@ -7,5 +7,6 @@ import sttp.client3.internal.httpclient.Sequencer
 class KyoSequencer(mutex: Meter) extends Sequencer[KyoSttpMonad.M]:
 
     def apply[A](t: => KyoSttpMonad.M[A]) =
-        mutex.run(t)
+        import Flat.unsafe.bypass
+        Abort.run(mutex.run(t)).map(_.getOrThrow) // safe since the meter will never be closed
 end KyoSequencer

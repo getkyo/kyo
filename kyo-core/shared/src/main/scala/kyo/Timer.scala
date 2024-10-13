@@ -73,6 +73,9 @@ object Timer:
     def let[A, S](timer: Timer)(v: A < S)(using Frame): A < (IO & S) =
         local.let(timer)(v)
 
+    def use[A, S](f: Timer => A < S)(using Frame): A < (IO & S) =
+        local.use(f)
+
     /** Schedule a task to run after a specified delay.
       *
       * @param delay

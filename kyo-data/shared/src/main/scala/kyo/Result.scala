@@ -1,6 +1,7 @@
 package kyo
 
 import Result.*
+import kyo.TypeMap.empty
 import scala.annotation.implicitNotFound
 import scala.annotation.targetName
 import scala.reflect.ClassTag
@@ -459,6 +460,9 @@ object Result:
         inline def map[B](inline f: A => B): Result[E, B] =
             flatMap(v => Result.success(f(v)))
 
+        inline def foreach(inline f: A => Unit): Unit =
+            fold(_ => ())(f)
+
         /** Applies a function to the error value of this Result.
           *
           * @param f
@@ -568,6 +572,9 @@ object Result:
         ): Try[A] =
             fold(e => scala.util.Failure(e.getFailure.asInstanceOf[Throwable]))(scala.util.Success(_))
 
+        def unit: Result[E, Unit] =
+            map(_ => ())
+
         /** Swaps the success and failure cases of the Result.
           *
           * @return
@@ -590,6 +597,9 @@ object Result:
             self match
                 case Success(`value`) => true
                 case _                => false
+
+        def exists(pred: A => Boolean): Boolean =
+            fold(_ => false)(pred)
 
         /** Returns a string representation of the Result.
           *
