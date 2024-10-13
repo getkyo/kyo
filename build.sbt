@@ -3,6 +3,7 @@ import org.scalajs.jsenv.nodejs.*
 import org.typelevel.scalacoptions.ScalacOption
 import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
+import sbtdynver.DynVerPlugin.autoImport.*
 
 val scala3Version   = "3.5.1"
 val scala212Version = "2.12.20"
@@ -78,6 +79,7 @@ lazy val kyoJVM = project
         name := "kyoJVM",
         `kyo-settings`
     )
+    .disablePlugins(MimaPlugin)
     .aggregate(
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
@@ -105,6 +107,7 @@ lazy val kyoJS = project
         name := "kyoJS",
         `kyo-settings`
     )
+    .disablePlugins(MimaPlugin)
     .aggregate(
         `kyo-scheduler`.js,
         `kyo-data`.js,
@@ -125,6 +128,7 @@ lazy val kyoNative = project
         name := "kyoNative",
         `kyo-settings`
     )
+    .disablePlugins(MimaPlugin)
     .aggregate(
         `kyo-data`.native,
         `kyo-prelude`.native
@@ -143,6 +147,7 @@ lazy val `kyo-scheduler` =
             libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.10"         % Test
         )
+        .jvmSettings(mimaCheck(false))
         .jsSettings(
             `js-settings`,
             libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
@@ -157,6 +162,7 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
         libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
     )
+    .jvmSettings(mimaCheck(false))
     .settings(
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
         crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
@@ -173,6 +179,7 @@ lazy val `kyo-data` =
             libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
             libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
         )
+        .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
@@ -190,6 +197,7 @@ lazy val `kyo-prelude` =
             libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % zioVersion   % Test,
             libraryDependencies += "org.javassist" % "javassist"     % "3.30.2-GA"  % Test
         )
+        .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
@@ -210,6 +218,7 @@ lazy val `kyo-core` =
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.10"     % Test,
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
+        .jvmSettings(mimaCheck(false))
         .jsSettings(`js-settings`)
 
 lazy val `kyo-direct` =
@@ -222,6 +231,7 @@ lazy val `kyo-direct` =
             `kyo-settings`,
             libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.22"
         )
+        .jvmSettings(mimaCheck(false))
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-registry` =
@@ -236,6 +246,7 @@ lazy val `kyo-stats-registry` =
             libraryDependencies += "org.scalatest"  %%% "scalatest"    % scalaTestVersion % Test,
             crossScalaVersions                       := List(scala3Version, scala212Version, scala213Version)
         )
+        .jvmSettings(mimaCheck(false))
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-otel` =
@@ -250,6 +261,7 @@ lazy val `kyo-stats-otel` =
             libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.43.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-cache` =
     crossProject(JVMPlatform)
@@ -261,6 +273,7 @@ lazy val `kyo-cache` =
             `kyo-settings`,
             libraryDependencies += "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8"
         )
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-sttp` =
     crossProject(JSPlatform, JVMPlatform)
@@ -273,6 +286,7 @@ lazy val `kyo-sttp` =
             libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.10.0"
         )
         .jsSettings(`js-settings`)
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-tapir` =
     crossProject(JVMPlatform)
@@ -286,6 +300,7 @@ lazy val `kyo-tapir` =
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.7",
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.7"
         )
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-caliban` =
     crossProject(JVMPlatform)
@@ -301,6 +316,7 @@ lazy val `kyo-caliban` =
             libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.9.0",
             libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.9.0"
         )
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-test` =
     crossProject(JVMPlatform, JSPlatform)
@@ -314,9 +330,11 @@ lazy val `kyo-test` =
             libraryDependencies += "dev.zio" %%% "zio"          % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-test"     % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
-        ).jsSettings(
+        )
+        .jsSettings(
             `js-settings`
         )
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-zio` =
     crossProject(JVMPlatform, JSPlatform)
@@ -329,9 +347,11 @@ lazy val `kyo-zio` =
             libraryDependencies += "dev.zio" %%% "zio"          % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-test"     % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
-        ).jsSettings(
+        )
+        .jsSettings(
             `js-settings`
         )
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-cats` =
     crossProject(JSPlatform, JVMPlatform)
@@ -342,9 +362,11 @@ lazy val `kyo-cats` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion
-        ).jsSettings(
+        )
+        .jsSettings(
             `js-settings`
         )
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-combinators` =
     crossProject(JSPlatform, JVMPlatform)
@@ -356,6 +378,7 @@ lazy val `kyo-combinators` =
             `kyo-settings`
         )
         .jsSettings(`js-settings`)
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-examples` =
     crossProject(JVMPlatform)
@@ -365,6 +388,7 @@ lazy val `kyo-examples` =
         .dependsOn(`kyo-tapir`)
         .dependsOn(`kyo-direct`)
         .dependsOn(`kyo-core`)
+        .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
             fork := true,
@@ -377,6 +401,7 @@ lazy val `kyo-examples` =
             Compile / doc / sources                              := Seq.empty,
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.7"
         )
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-bench` =
     crossProject(JVMPlatform)
@@ -387,6 +412,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-core`)
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-scheduler-zio`)
+        .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
             Test / testForkedParallel := true,
@@ -492,3 +518,10 @@ def scalacOptionTokens(proposedScalacOptions: Set[ScalacOption]) = Def.setting {
     val version = ScalaVersion.fromString(scalaVersion.value).right.get
     ScalacOptions.tokensForVersion(version, proposedScalacOptions)
 }
+
+def mimaCheck(failOnProblem: Boolean) =
+    Seq(
+        mimaPreviousArtifacts ++= previousStableVersion.value.map(organization.value %% name.value % _).toSet,
+        mimaBinaryIssueFilters ++= Seq(),
+        mimaFailOnProblem := failOnProblem
+    )
