@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/getkyo/kyo/master/kyo.svg" width="200" alt="Kyo">
+<img src="https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png" width="200" alt="Kyo">
 
 > Toolkit for Scala Development
 
