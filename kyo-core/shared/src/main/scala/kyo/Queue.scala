@@ -1,6 +1,5 @@
 package kyo
 
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import org.jctools.queues.*
 import scala.annotation.tailrec
@@ -13,189 +12,332 @@ import scala.annotation.tailrec
   * @tparam A
   *   the type of elements in the queue
   */
-class Queue[A] private[kyo] (initFrame: Frame, val unsafe: Queue.Unsafe[A]):
+opaque type Queue[A] = Queue.Unsafe[A]
 
-    /** Returns the capacity of the queue.
-      *
-      * @return
-      *   the capacity of the queue
-      */
-    final def capacity(using Frame): Int = unsafe.capacity
-
-    /** Returns the current size of the queue.
-      *
-      * @return
-      *   the current size of the queue
-      */
-    final def size(using Frame): Int < IO = op(unsafe.size())
-
-    /** Checks if the queue is empty.
-      *
-      * @return
-      *   true if the queue is empty, false otherwise
-      */
-    final def empty(using Frame): Boolean < IO = op(unsafe.empty())
-
-    /** Checks if the queue is full.
-      *
-      * @return
-      *   true if the queue is full, false otherwise
-      */
-    final def full(using Frame): Boolean < IO = op(unsafe.full())
-
-    /** Offers an element to the queue.
-      *
-      * @param v
-      *   the element to offer
-      * @return
-      *   true if the element was added, false if the queue is full or closed
-      */
-    final def offer(v: A)(using Frame): Boolean < IO = IO.Unsafe(!unsafe.closed() && unsafe.offer(v))
-
-    /** Polls an element from the queue.
-      *
-      * @return
-      *   Maybe containing the polled element, or empty if the queue is empty
-      */
-    final def poll(using Frame): Maybe[A] < IO = op(unsafe.poll())
-
-    /** Peeks at the first element in the queue without removing it.
-      *
-      * @return
-      *   Maybe containing the first element, or empty if the queue is empty
-      */
-    final def peek(using Frame): Maybe[A] < IO = op(unsafe.peek())
-
-    /** Drains all elements from the queue.
-      *
-      * @return
-      *   a sequence of all elements in the queue
-      */
-    final def drain(using Frame): Seq[A] < IO = op(unsafe.drain())
-
-    /** Checks if the queue is closed.
-      *
-      * @return
-      *   true if the queue is closed, false otherwise
-      */
-    final def closed(using Frame): Boolean < IO = IO.Unsafe(unsafe.closed())
-
-    /** Closes the queue and returns any remaining elements.
-      *
-      * @return
-      *   Maybe containing a sequence of remaining elements, or empty if already closed
-      */
-    final def close(using Frame): Maybe[Seq[A]] < IO = IO.Unsafe(unsafe.close())
-
-    protected inline def op[A, S](inline v: AllowUnsafe ?=> A < (IO & S))(using frame: Frame): A < (IO & S) =
-        IO.Unsafe {
-            if unsafe.closed() then
-                throw Closed("Queue", initFrame, frame)
-            else
-                v
-        }
-end Queue
-
-/** Companion object for Queue, containing factory methods and nested classes.
-  *
-  * This object provides various initialization methods for different types of queues, all based on JCTools' concurrent queue
-  * implementations.
-  */
 object Queue:
 
-    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-    abstract class Unsafe[A]
-        extends AtomicBoolean(false):
-        def capacity: Int
-        def size()(using AllowUnsafe): Int
-        def empty()(using AllowUnsafe): Boolean
-        def full()(using AllowUnsafe): Boolean
-        def offer(v: A)(using AllowUnsafe): Boolean
-        def poll()(using AllowUnsafe): Maybe[A]
-        def peek()(using AllowUnsafe): Maybe[A]
-        final def drain()(using AllowUnsafe): Seq[A] =
-            val b = Seq.newBuilder[A]
-            @tailrec def loop(): Unit =
-                val v = poll()
-                v match
-                    case Absent =>
-                    case Present(v) =>
-                        b += v
-                        loop()
-                end match
-            end loop
-            loop()
-            b.result()
-        end drain
+    extension [A](self: Queue[A])
+        /** Returns the capacity of the queue.
+          *
+          * @return
+          *   the capacity of the queue
+          */
+        def capacity: Int = self.capacity
 
-        final def closed()(using AllowUnsafe): Boolean =
-            super.get()
+        /** Returns the current size of the queue.
+          *
+          * @return
+          *   the current size of the queue
+          */
+        def size(using Frame): Int < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.size()))
 
-        final def close()(using AllowUnsafe): Maybe[Seq[A]] =
-            super.compareAndSet(false, true) match
-                case false =>
-                    Maybe.empty
-                case true =>
-                    Maybe(drain())
+        /** Checks if the queue is empty.
+          *
+          * @return
+          *   true if the queue is empty, false otherwise
+          */
+        def empty(using Frame): Boolean < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.empty()))
 
-        final def safe(using frame: Frame): Queue[A] = Queue(frame, this)
+        /** Checks if the queue is full.
+          *
+          * @return
+          *   true if the queue is full, false otherwise
+          */
+        def full(using Frame): Boolean < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.full()))
 
-    end Unsafe
+        /** Offers an element to the queue.
+          *
+          * @param v
+          *   the element to offer
+          * @return
+          *   true if the element was added, false if the queue is full or closed
+          */
+        def offer(v: A)(using Frame): Boolean < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.offer(v)))
+
+        /** Offers an element to the queue and discards the result
+          *
+          * @param v
+          *   the element to offer
+          */
+        def offerDiscard(v: A)(using Frame): Unit < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.offer(v).unit))
+
+        /** Polls an element from the queue.
+          *
+          * @return
+          *   Maybe containing the polled element, or empty if the queue is empty
+          */
+        def poll(using Frame): Maybe[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.poll()))
+
+        /** Peeks at the first element in the queue without removing it.
+          *
+          * @return
+          *   Maybe containing the first element, or empty if the queue is empty
+          */
+        def peek(using Frame): Maybe[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.peek()))
+
+        /** Drains all elements from the queue.
+          *
+          * @return
+          *   a sequence of all elements in the queue
+          */
+        def drain(using Frame): Seq[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drain()))
+
+        /** Closes the queue and returns any remaining elements.
+          *
+          * @return
+          *   a sequence of remaining elements
+          */
+        def close(using Frame): Maybe[Seq[A]] < IO = IO.Unsafe(self.close())
+
+        /** Checks if the queue is closed.
+          *
+          * @return
+          *   true if the queue is closed, false otherwise
+          */
+        def closed(using Frame): Boolean < IO = IO.Unsafe(self.closed())
+
+        /** Returns the unsafe version of the queue.
+          *
+          * @return
+          *   the unsafe version of the queue
+          */
+        def unsafe: Unsafe[A] = self
+    end extension
+
+    /** Initializes a new queue with the specified capacity and access pattern. The actual capacity will be rounded up to the next power of
+      * two.
+      *
+      * @param capacity
+      *   the desired capacity of the queue. Note that this will be rounded up to the next power of two.
+      * @param access
+      *   the access pattern (default is MPMC)
+      * @return
+      *   a new Queue instance with a capacity that is the next power of two greater than or equal to the specified capacity
+      *
+      * @note
+      *   The actual capacity will be rounded up to the next power of two.
+      * @warning
+      *   The actual capacity may be larger than the specified capacity due to rounding.
+      */
+    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Queue[A] < IO =
+        IO.Unsafe(Unsafe.init(capacity, access))
 
     /** An unbounded queue that can grow indefinitely.
       *
       * @tparam A
       *   the type of elements in the queue
       */
-    class Unbounded[A] private[kyo] (initFrame: Frame, unsafe: Queue.Unsafe[A]) extends Queue[A](initFrame, unsafe):
-        /** Adds an element to the unbounded queue.
+    opaque type Unbounded[A] <: Queue[A] = Queue[A]
+
+    object Unbounded:
+        extension [A](self: Unbounded[A])
+            /** Adds an element to the unbounded queue.
+              *
+              * @param value
+              *   the element to add
+              */
+            def add(value: A)(using Frame): Unit < IO = IO.Unsafe(Unsafe.add(self)(value))
+
+            def unsafe: Unsafe[A] = self
+        end extension
+
+        /** Initializes a new unbounded queue with the specified access pattern and chunk size.
           *
-          * @param v
-          *   the element to add
+          * @param access
+          *   the access pattern (default is MPMC)
+          * @param chunkSize
+          *   the chunk size for internal array allocation (default is 8)
+          * @return
+          *   a new Unbounded Queue instance
           */
-        final def add[S](v: A < S)(using Frame): Unit < (IO & S) =
-            op(v.map(offer).unit)
+        def init[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)(using Frame): Unbounded[A] < IO =
+            IO.Unsafe(Unsafe.init(access, chunkSize))
+
+        /** Initializes a new dropping queue with the specified capacity and access pattern.
+          *
+          * @param capacity
+          *   the capacity of the queue. Note that this will be rounded up to the next power of two.
+          * @param access
+          *   the access pattern (default is MPMC)
+          * @return
+          *   a new Unbounded Queue instance that drops elements when full
+          *
+          * @note
+          *   The actual capacity will be rounded up to the next power of two.
+          * @warning
+          *   The actual capacity may be larger than the specified capacity due to rounding.
+          */
+        def initDropping[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Unbounded[A] < IO =
+            IO.Unsafe(Unsafe.initDropping(capacity, access))
+
+        /** Initializes a new sliding queue with the specified capacity and access pattern.
+          *
+          * @param capacity
+          *   the capacity of the queue. Note that this will be rounded up to the next power of two.
+          * @param access
+          *   the access pattern (default is MPMC)
+          * @return
+          *   a new Unbounded Queue instance that slides elements when full
+          *
+          * @note
+          *   The actual capacity will be rounded up to the next power of two.
+          * @warning
+          *   The actual capacity may be larger than the specified capacity due to rounding.
+          */
+        def initSliding[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Unbounded[A] < IO =
+            IO.Unsafe(Unsafe.initSliding(capacity, access))
+
+        /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+        opaque type Unsafe[A] <: Queue.Unsafe[A] = Queue[A]
+
+        /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+        object Unsafe:
+            extension [A](self: Unsafe[A])
+                def add(value: A)(using AllowUnsafe, Frame): Unit = discard(self.offer(value))
+                def safe: Unbounded[A]                            = self
+
+            def init[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)(
+                using
+                Frame,
+                AllowUnsafe
+            ): Unsafe[A] =
+                access match
+                    case Access.MultiProducerMultiConsumer =>
+                        Queue.Unsafe.fromJava(new MpmcUnboundedXaddArrayQueue[A](chunkSize))
+                    case Access.MultiProducerSingleConsumer =>
+                        Queue.Unsafe.fromJava(new MpscUnboundedArrayQueue[A](chunkSize))
+                    case Access.SingleProducerMultiConsumer =>
+                        Queue.Unsafe.fromJava(new MpmcUnboundedXaddArrayQueue[A](chunkSize))
+                    case Access.SingleProducerSingleConsumer =>
+                        Queue.Unsafe.fromJava(new SpscUnboundedArrayQueue[A](chunkSize))
+
+            def initDropping[A](_capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(
+                using
+                frame: Frame,
+                allow: AllowUnsafe
+            ): Unsafe[A] =
+                new Unsafe[A]:
+                    val underlying                           = Queue.Unsafe.init[A](_capacity, access)
+                    def capacity                             = _capacity
+                    def size()(using AllowUnsafe)            = underlying.size()
+                    def empty()(using AllowUnsafe)           = underlying.empty()
+                    def full()(using AllowUnsafe)            = underlying.full().map(_ => false)
+                    def offer(v: A)(using AllowUnsafe)       = underlying.offer(v).map(_ => true)
+                    def poll()(using AllowUnsafe)            = underlying.poll()
+                    def peek()(using AllowUnsafe)            = underlying.peek()
+                    def drain()(using AllowUnsafe)           = underlying.drain()
+                    def close()(using Frame, AllowUnsafe)    = underlying.close()
+                    def closed()(using AllowUnsafe): Boolean = underlying.closed()
+                end new
+            end initDropping
+
+            def initSliding[A](_capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(
+                using
+                frame: Frame,
+                allow: AllowUnsafe
+            ): Unsafe[A] =
+                new Unsafe[A]:
+                    val underlying                 = Queue.Unsafe.init[A](_capacity, access)
+                    def capacity                   = _capacity
+                    def size()(using AllowUnsafe)  = underlying.size()
+                    def empty()(using AllowUnsafe) = underlying.empty()
+                    def full()(using AllowUnsafe)  = underlying.full().map(_ => false)
+                    def offer(v: A)(using AllowUnsafe) =
+                        @tailrec def loop(v: A): Result[Closed, Boolean] =
+                            underlying.offer(v) match
+                                case Result.Success(false) =>
+                                    discard(underlying.poll())
+                                    loop(v)
+                                case result =>
+                                    result
+                        end loop
+                        loop(v)
+                    end offer
+                    def poll()(using AllowUnsafe)            = underlying.poll()
+                    def peek()(using AllowUnsafe)            = underlying.peek()
+                    def drain()(using AllowUnsafe)           = underlying.drain()
+                    def close()(using Frame, AllowUnsafe)    = underlying.close()
+                    def closed()(using AllowUnsafe): Boolean = underlying.closed()
+                end new
+            end initSliding
+        end Unsafe
     end Unbounded
 
-    /** Initializes a new queue with the specified capacity and access pattern.
-      *
-      * @param capacity
-      *   the capacity of the queue
-      * @param access
-      *   the access pattern (default is MPMC)
-      * @return
-      *   a new Queue instance
-      */
-    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using frame: Frame): Queue[A] < IO =
-        IO {
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    abstract class Unsafe[A]:
+        def capacity: Int
+        def size()(using AllowUnsafe): Result[Closed, Int]
+        def empty()(using AllowUnsafe): Result[Closed, Boolean]
+        def full()(using AllowUnsafe): Result[Closed, Boolean]
+        def offer(v: A)(using AllowUnsafe): Result[Closed, Boolean]
+        def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
+        def peek()(using AllowUnsafe): Result[Closed, Maybe[A]]
+        def drain()(using AllowUnsafe): Result[Closed, Seq[A]]
+        def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
+        def closed()(using AllowUnsafe): Boolean
+        final def safe: Queue[A] = this
+    end Unsafe
+
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    object Unsafe:
+
+        abstract private class Closeable[A](initFrame: Frame) extends Unsafe[A]:
+            import AllowUnsafe.embrace.danger
+            final protected val _closed = AtomicRef.Unsafe.init(Maybe.empty[Result.Error[Closed]])
+
+            final def close()(using frame: Frame, allow: AllowUnsafe) =
+                val fail = Result.Fail(Closed("Queue", initFrame, frame))
+                Maybe.when(_closed.cas(Maybe.empty, Maybe(fail)))(_drain())
+            end close
+
+            final def closed()(using AllowUnsafe) = _closed.get().isDefined
+
+            final def drain()(using AllowUnsafe): Result[Closed, Seq[A]] = op(_drain())
+
+            protected def _drain(): Seq[A]
+
+            protected inline def op[A](inline f: => A): Result[Closed, A] =
+                _closed.get().getOrElse(Result(f))
+
+            protected inline def offerOp[A](inline f: => Boolean, inline raceRepair: => Boolean): Result[Closed, Boolean] =
+                _closed.get().getOrElse {
+                    val result = f
+                    if result && _closed.get().isDefined then
+                        Result(raceRepair)
+                    else
+                        Result(result)
+                    end if
+                }
+        end Closeable
+
+        def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using
+            initFrame: Frame,
+            allow: AllowUnsafe
+        ): Unsafe[A] =
             capacity match
-                case c if (c <= 0) =>
-                    new Queue(
-                        frame,
-                        new Unsafe[A]:
-                            def capacity                       = 0
-                            def size()(using AllowUnsafe)      = 0
-                            def empty()(using AllowUnsafe)     = true
-                            def full()(using AllowUnsafe)      = true
-                            def offer(v: A)(using AllowUnsafe) = false
-                            def poll()(using AllowUnsafe)      = Maybe.empty
-                            def peek()(using AllowUnsafe)      = Maybe.empty
-                    )
+                case _ if capacity <= 0 =>
+                    new Closeable[A](initFrame):
+                        def capacity                       = 0
+                        def size()(using AllowUnsafe)      = op(0)
+                        def empty()(using AllowUnsafe)     = op(true)
+                        def full()(using AllowUnsafe)      = op(true)
+                        def offer(v: A)(using AllowUnsafe) = op(false)
+                        def poll()(using AllowUnsafe)      = op(Maybe.empty)
+                        def peek()(using AllowUnsafe)      = op(Maybe.empty)
+                        def _drain()                       = Seq.empty
                 case 1 =>
-                    new Queue(
-                        frame,
-                        new Unsafe[A]:
-                            val state                          = new AtomicReference[A]
-                            def capacity                       = 1
-                            def size()(using AllowUnsafe)      = if isNull(state.get()) then 0 else 1
-                            def empty()(using AllowUnsafe)     = isNull(state.get())
-                            def full()(using AllowUnsafe)      = !isNull(state.get())
-                            def offer(v: A)(using AllowUnsafe) = state.compareAndSet(null.asInstanceOf[A], v)
-                            def poll()(using AllowUnsafe)      = Maybe(state.getAndSet(null.asInstanceOf[A]))
-                            def peek()(using AllowUnsafe)      = Maybe(state.get())
-                    )
+                    new Closeable[A](initFrame):
+                        private val state                  = AtomicRef.Unsafe.init(Maybe.empty[A])
+                        def capacity                       = 1
+                        def empty()(using AllowUnsafe)     = op(state.get().isEmpty)
+                        def size()(using AllowUnsafe)      = op(if state.get().isEmpty then 0 else 1)
+                        def full()(using AllowUnsafe)      = op(state.get().isDefined)
+                        def offer(v: A)(using AllowUnsafe) = offerOp(state.cas(Maybe.empty, Maybe(v)), !state.cas(Maybe(v), Maybe.empty))
+                        def poll()(using AllowUnsafe)      = op(state.getAndSet(Maybe.empty))
+                        def peek()(using AllowUnsafe)      = op(state.get())
+                        def _drain()                       = state.getAndSet(Maybe.empty).toList
                 case Int.MaxValue =>
-                    initUnbounded(access)
+                    Unbounded.Unsafe.init(access).safe
                 case _ =>
                     access match
                         case Access.MultiProducerMultiConsumer =>
@@ -210,118 +352,38 @@ object Queue:
                             else
                                 // Spsc queue doesn't support capacity < 4
                                 fromJava(new SpmcArrayQueue[A](capacity), capacity)
-        }
 
-    /** Initializes a new unbounded queue with the specified access pattern and chunk size.
-      *
-      * @param access
-      *   the access pattern (default is MPMC)
-      * @param chunkSize
-      *   the chunk size for internal array allocation (default is 8)
-      * @return
-      *   a new Unbounded Queue instance
-      */
-    def initUnbounded[A](access: Access = Access.MultiProducerMultiConsumer, chunkSize: Int = 8)(using Frame): Unbounded[A] < IO =
-        IO {
-            access match
-                case Access.MultiProducerMultiConsumer =>
-                    fromJava(new MpmcUnboundedXaddArrayQueue[A](chunkSize))
-                case Access.MultiProducerSingleConsumer =>
-                    fromJava(new MpscUnboundedArrayQueue[A](chunkSize))
-                case Access.SingleProducerMultiConsumer =>
-                    fromJava(new MpmcUnboundedXaddArrayQueue[A](chunkSize))
-                case Access.SingleProducerSingleConsumer =>
-                    fromJava(new SpscUnboundedArrayQueue[A](chunkSize))
-        }
+        def fromJava[A](q: java.util.Queue[A], _capacity: Int = Int.MaxValue)(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
+            new Closeable[A](initFrame):
+                def capacity                   = _capacity
+                def size()(using AllowUnsafe)  = op(q.size())
+                def empty()(using AllowUnsafe) = op(q.isEmpty())
+                def full()(using AllowUnsafe)  = op(q.size() >= _capacity)
+                def offer(v: A)(using AllowUnsafe) =
+                    offerOp(
+                        q.offer(v),
+                        try !q.remove(v)
+                        catch
+                            case _: UnsupportedOperationException =>
+                                // TODO the race repair should use '!q.remove(v)' but JCTools doesn't support the operation.
+                                // In rare cases, items may be left in the queue permanently after closing due to this limitation.
+                                // The item will only be removed when the queue object itself is garbage collected.
+                                !q.contains(v)
+                    )
+                def poll()(using AllowUnsafe) = op(Maybe(q.poll()))
+                def peek()(using AllowUnsafe) = op(Maybe(q.peek()))
+                def _drain() =
+                    val b = Seq.newBuilder[A]
+                    @tailrec def loop(): Unit =
+                        val value = q.poll()
+                        if !isNull(value) then
+                            b.addOne(value)
+                            loop()
+                    end loop
+                    loop()
+                    b.result()
+                end _drain
 
-    /** Initializes a new dropping queue with the specified capacity and access pattern.
-      *
-      * @param capacity
-      *   the capacity of the queue
-      * @param access
-      *   the access pattern (default is MPMC)
-      * @return
-      *   a new Unbounded Queue instance that drops elements when full
-      */
-    def initDropping[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using frame: Frame): Unbounded[A] < IO =
-        init[A](capacity, access).map { q =>
-            val u = q.unsafe
-            val c = capacity
-            new Unbounded(
-                frame,
-                new Unsafe[A]:
-                    def capacity                   = c
-                    def size()(using AllowUnsafe)  = u.size()
-                    def empty()(using AllowUnsafe) = u.empty()
-                    def full()(using AllowUnsafe)  = false
-                    def offer(v: A)(using AllowUnsafe) =
-                        discard(u.offer(v))
-                        true
-                    def poll()(using AllowUnsafe) = u.poll()
-                    def peek()(using AllowUnsafe) = u.peek()
-            )
-        }
+    end Unsafe
 
-    /** Initializes a new sliding queue with the specified capacity and access pattern.
-      *
-      * @param capacity
-      *   the capacity of the queue
-      * @param access
-      *   the access pattern (default is MPMC)
-      * @return
-      *   a new Unbounded Queue instance that slides elements when full
-      */
-    def initSliding[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using frame: Frame): Unbounded[A] < IO =
-        init[A](capacity, access).map { q =>
-            val u = q.unsafe
-            val c = capacity
-            new Unbounded(
-                frame,
-                new Unsafe[A]:
-                    def capacity                   = c
-                    def size()(using AllowUnsafe)  = u.size()
-                    def empty()(using AllowUnsafe) = u.empty()
-                    def full()(using AllowUnsafe)  = false
-                    def offer(v: A)(using AllowUnsafe) =
-                        @tailrec def loop(v: A): Unit =
-                            val u = q.unsafe
-                            if u.offer(v) then ()
-                            else
-                                discard(u.poll())
-                                loop(v)
-                            end if
-                        end loop
-                        loop(v)
-                        true
-                    end offer
-                    def poll()(using AllowUnsafe) = u.poll()
-                    def peek()(using AllowUnsafe) = u.peek()
-            )
-        }
-
-    private def fromJava[A](q: java.util.Queue[A])(using frame: Frame): Unbounded[A] =
-        new Unbounded(
-            frame,
-            new Unsafe[A]:
-                def capacity                       = Int.MaxValue
-                def size()(using AllowUnsafe)      = q.size
-                def empty()(using AllowUnsafe)     = q.isEmpty()
-                def full()(using AllowUnsafe)      = false
-                def offer(v: A)(using AllowUnsafe) = q.offer(v)
-                def poll()(using AllowUnsafe)      = Maybe(q.poll)
-                def peek()(using AllowUnsafe)      = Maybe(q.peek)
-        )
-
-    private def fromJava[A](q: java.util.Queue[A], _capacity: Int)(using frame: Frame): Queue[A] =
-        new Queue(
-            frame,
-            new Unsafe[A]:
-                def capacity                       = _capacity
-                def size()(using AllowUnsafe)      = q.size
-                def empty()(using AllowUnsafe)     = q.isEmpty()
-                def full()(using AllowUnsafe)      = q.size >= _capacity
-                def offer(v: A)(using AllowUnsafe) = q.offer(v)
-                def poll()(using AllowUnsafe)      = Maybe(q.poll)
-                def peek()(using AllowUnsafe)      = Maybe(q.peek)
-        )
 end Queue

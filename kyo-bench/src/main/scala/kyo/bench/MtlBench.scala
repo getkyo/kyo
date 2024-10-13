@@ -21,15 +21,13 @@ class MtlBench extends Bench(()):
                     _    <- Var.update((state: State) => state.copy(value = state.value + 1))
                 yield ()
             )
-        Abort.run[Throwable](
-            Var.run(State(2))(
-                Emit.run(
-                    Env.run(EnvValue("config"))(
-                        testKyo.andThen(Var.get[State])
-                    )
+        Var.run(State(2))(
+            Emit.run(
+                Env.run(EnvValue("config"))(
+                    testKyo.andThen(Var.get[State])
                 )
             )
-        ).eval
+        )
     end syncKyo
 
     @Benchmark

@@ -30,7 +30,7 @@ class ProducerConsumerBench extends Bench.ForkOnly(()):
 
         import kyo.Access
 
-        def repeat[A](n: Int)(io: A < Async): A < Async =
+        def repeat[A](n: Int)(io: A < (Async & Abort[Closed])): A < (Async & Abort[Closed]) =
             if n <= 1 then io
             else io.flatMap(_ => repeat(n - 1)(io))
 
