@@ -271,4 +271,23 @@ class KyoTest extends Test:
             assert(Kyo.foreachIndexed(largeSeq)((idx, v) => idx == v).eval == Chunk.fill(100)(true))
         }
     }
+
+    "pure" - {
+        "should create a pure effect" in {
+            val effect = Kyo.pure[Int, Any](42)
+            assert(effect.eval == 42)
+        }
+
+        "should work with different types" in {
+            assert(Kyo.pure[String, Any]("hello").eval == "hello")
+            assert(Kyo.pure[Boolean, Any](true).eval == true)
+            assert(Kyo.pure[List[Int], Any](List(1, 2, 3)).eval == List(1, 2, 3))
+        }
+
+        "should work with effects" in {
+            val effect = Kyo.pure[Int < Env[Int], Any](Env.get[Int])
+            val result = Env.run(10)(effect.flatten)
+            assert(result.eval == 10)
+        }
+    }
 end KyoTest
