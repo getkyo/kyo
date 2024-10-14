@@ -59,11 +59,11 @@ private[kyo] object LayerMacros:
                     _.value, {
                         // TODO: MAke nIcEr PlZEaz
                         val debugFold =
-                            targetLayer.fold[String]("(" + _ + " and " + _ + ")", "(" + _ + " to " + _ + ")", _.value.show, "Absent")
+                            targetLayer.fold[String]("(" + _ + " and " + _ + ")", "(" + _ + " to " + _ + ")", _.value.show, "Empty")
 
                         report.errorAndAbort(
                             s"""|
-                                | Absent layer found as input to Layer with non-zero requirements. Did you fully resolve dependencies?
+                                | Empty layer found as input to Layer with non-zero requirements. Did you fully resolve dependencies?
                                 | Debug: $debugFold
                                 |""".stripMargin
                         )
