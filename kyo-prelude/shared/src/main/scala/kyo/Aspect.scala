@@ -27,7 +27,7 @@ final class Aspect[A, B, S] private[kyo] (default: Cut[A, B, S])(using Frame) ex
       * @return
       *   The result of applying the aspect and then the function
       */
-    def apply[S2](v: A < S2)(f: A => B < S) =
+    def apply(v: A)(f: A => B < S) =
         local.use { map =>
             map.get(this) match
                 case Some(a: Cut[A, B, S] @unchecked) =>
@@ -115,7 +115,7 @@ object Aspect:
           * @return
           *   The result of applying the cut and then the function
           */
-        def apply[S2](v: A < S2)(f: A => B < S): B < (S & S2)
+        def apply(v: A)(f: A => B < S): B < S
 
         /** Chains this cut with another cut.
           *
@@ -126,7 +126,7 @@ object Aspect:
           */
         def andThen(other: Cut[A, B, S])(using Frame): Cut[A, B, S] =
             new Cut[A, B, S]:
-                def apply[S2](v: A < S2)(f: A => B < S) =
+                def apply(v: A)(f: A => B < S) =
                     Cut.this(v)(other(_)(f))
     end Cut
 
@@ -143,8 +143,8 @@ object Aspect:
       */
     def init[A, B, S](using Frame): Aspect[A, B, S] =
         init(new Cut[A, B, S]:
-            def apply[S2](v: A < S2)(f: A => B < S) =
-                v.map(f)
+            def apply(v: A)(f: A => B < S) =
+                f(v)
         )
 
     /** Initializes a new Aspect with a custom default cut.

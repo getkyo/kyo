@@ -1391,8 +1391,8 @@ val countPlusOne =
     new Aspect.Cut[Database, Int, IO]:
         // The first param is the input of the computation and the second is
         // the computation being handled
-        def apply[S](v: Database < S)(f: Database => Int < IO) =
-            v.map(db => f(db).map(_ + 1))
+        def apply(db: Database)(f: Database => Int < IO) =
+            f(db).map(_ + 1)
 
 // Bind the 'Cut' to a computation with the 'let' method.
 // The first param is the 'Cut' and the second is the computation
@@ -1409,8 +1409,8 @@ def example(db: Database): Int < IO =
 // Another 'Cut' implementation
 val countTimesTen =
     new Aspect.Cut[Database, Int, IO]:
-        def apply[S](v: Database < S)(f: Database => Int < IO) =
-            v.map(db => f(db).map(_ * 10))
+        def apply(db: Database)(f: Database => Int < IO) =
+            f(db).map(_ * 10)
 
 // First bind 'countPlusOne' then 'countTimesTen'
 // the result will be (db.count + 1) * 10
