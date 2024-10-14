@@ -6,13 +6,13 @@ class ScheduleTest extends Test:
         "returns correct next duration and same schedule" in {
             val interval             = 5.seconds
             val schedule             = Schedule.fixed(interval)
-            val (next, nextSchedule) = schedule.next
+            val (next, nextSchedule) = schedule.next.get
             assert(next == interval)
             assert(nextSchedule == schedule)
         }
 
         "works with zero interval" in {
-            val (next, _) = Schedule.fixed(Duration.Zero).next
+            val (next, _) = Schedule.fixed(Duration.Zero).next.get
             assert(next == Duration.Zero)
         }
     }
@@ -20,32 +20,32 @@ class ScheduleTest extends Test:
     "exponential" - {
         "increases interval exponentially" in {
             val schedule           = Schedule.exponential(1.second, 2.0)
-            val (next1, schedule2) = schedule.next
-            val (next2, _)         = schedule2.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, _)         = schedule2.next.get
             assert(next1 == 1.second)
             assert(next2 == 2.seconds)
         }
 
         "works with factor less than 1" in {
             val schedule           = Schedule.exponential(1.second, 0.5)
-            val (next1, schedule2) = schedule.next
-            val (next2, _)         = schedule2.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, _)         = schedule2.next.get
             assert(next1 == 1.second)
             assert(next2 == 500.millis)
         }
 
         "handles very large intervals" in {
             val schedule           = Schedule.exponential(365.days, 2.0)
-            val (next1, schedule2) = schedule.next
-            val (next2, _)         = schedule2.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, _)         = schedule2.next.get
             assert(next1 == 365.days)
             assert(next2 == 730.days)
         }
 
         "works with factor of 1" in {
             val schedule           = Schedule.exponential(1.second, 1.0)
-            val (next1, schedule2) = schedule.next
-            val (next2, _)         = schedule2.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, _)         = schedule2.next.get
             assert(next1 == 1.second)
             assert(next2 == 1.second)
         }
@@ -54,9 +54,9 @@ class ScheduleTest extends Test:
     "fibonacci" - {
         "follows fibonacci sequence" in {
             val schedule           = Schedule.fibonacci(1.second, 1.second)
-            val (next1, schedule2) = schedule.next
-            val (next2, schedule3) = schedule2.next
-            val (next3, _)         = schedule3.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, schedule3) = schedule2.next.get
+            val (next3, _)         = schedule3.next.get
             assert(next1 == 1.second)
             assert(next2 == 1.second)
             assert(next3 == 2.seconds)
@@ -64,9 +64,9 @@ class ScheduleTest extends Test:
 
         "works with different initial values" in {
             val schedule           = Schedule.fibonacci(1.second, 2.seconds)
-            val (next1, schedule2) = schedule.next
-            val (next2, schedule3) = schedule2.next
-            val (next3, _)         = schedule3.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, schedule3) = schedule2.next.get
+            val (next3, _)         = schedule3.next.get
             assert(next1 == 1.second)
             assert(next2 == 2.seconds)
             assert(next3 == 3.seconds)
@@ -74,9 +74,9 @@ class ScheduleTest extends Test:
 
         "works with zero initial values" in {
             val schedule           = Schedule.fibonacci(Duration.Zero, Duration.Zero)
-            val (next1, schedule2) = schedule.next
-            val (next2, schedule3) = schedule2.next
-            val (next3, _)         = schedule3.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, schedule3) = schedule2.next.get
+            val (next3, _)         = schedule3.next.get
             assert(next1 == Duration.Zero)
             assert(next2 == Duration.Zero)
             assert(next3 == Duration.Zero)
@@ -85,24 +85,19 @@ class ScheduleTest extends Test:
 
     "immediate" - {
         "returns zero duration" in {
-            val (next, nextSchedule) = Schedule.immediate.next
+            val (next, nextSchedule) = Schedule.immediate.next.get
             assert(next == Duration.Zero)
             assert(nextSchedule == Schedule.done)
         }
 
         "always returns never as next schedule" in {
-            val (_, nextSchedule1) = Schedule.immediate.next
-            val (_, nextSchedule2) = nextSchedule1.next
-            assert(nextSchedule1 == Schedule.done)
-            assert(nextSchedule2 == Schedule.done)
+            assert(Schedule.immediate.next.flatMap(_._2.next).isEmpty)
         }
     }
 
     "never" - {
         "always returns infinite duration" in {
-            val (next, nextSchedule) = Schedule.never.next
-            assert(next == Duration.Infinity)
-            assert(nextSchedule == Schedule.never)
+            assert(Schedule.never.next.isEmpty)
         }
     }
 
@@ -112,9 +107,9 @@ class ScheduleTest extends Test:
             val factor             = 2.0
             val maxDelay           = 4.seconds
             val schedule           = Schedule.exponentialBackoff(initial, factor, maxDelay)
-            val (next1, schedule2) = schedule.next
-            val (next2, schedule3) = schedule2.next
-            val (next3, _)         = schedule3.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, schedule3) = schedule2.next.get
+            val (next3, _)         = schedule3.next.get
             assert(next1 == 1.second)
             assert(next2 == 2.seconds)
             assert(next3 == 4.seconds)
@@ -127,7 +122,7 @@ class ScheduleTest extends Test:
             val schedule = Schedule.exponentialBackoff(initial, factor, maxDelay)
             var current  = schedule
             for _ <- 1 to 5 do
-                val (nextDuration, nextSchedule) = current.next
+                val (nextDuration, nextSchedule) = current.next.get
                 assert(nextDuration <= maxDelay)
                 current = nextSchedule
             end for
@@ -139,8 +134,8 @@ class ScheduleTest extends Test:
             val factor             = 0.5
             val maxDelay           = 4.seconds
             val schedule           = Schedule.exponentialBackoff(initial, factor, maxDelay)
-            val (next1, schedule2) = schedule.next
-            val (next2, _)         = schedule2.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, _)         = schedule2.next.get
             assert(next1 == 4.seconds)
             assert(next2 == 2.seconds)
         }
@@ -149,74 +144,68 @@ class ScheduleTest extends Test:
     "repeat" - {
         "repeats specified number of times" in {
             val schedule           = Schedule.repeat(3)
-            val (next1, schedule2) = schedule.next
-            val (next2, schedule3) = schedule2.next
-            val (next3, schedule4) = schedule3.next
-            val (next4, _)         = schedule4.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, schedule3) = schedule2.next.get
+            val (next3, schedule4) = schedule3.next.get
+            val next4              = schedule4.next
             assert(next1 == Duration.Zero)
             assert(next2 == Duration.Zero)
             assert(next3 == Duration.Zero)
-            assert(next4 == Duration.Infinity)
+            assert(next4.isEmpty)
         }
 
         "works with zero repetitions" in {
-            val schedule  = Schedule.repeat(0)
-            val (next, _) = schedule.next
-            assert(next == Duration.Infinity)
+            val schedule = Schedule.repeat(0)
+            assert(schedule.next.isEmpty)
         }
 
         "works with finite inner schedule" in {
             val innerSchedule = Schedule.fixed(1.second).take(2)
             val s             = innerSchedule.repeat(3)
             val results = List.unfold(s) { schedule =>
-                val (next, newSchedule) = schedule.next
-                if next == Duration.Infinity then None
-                else Some((next, newSchedule))
+                schedule.next.map((next, newSchedule) => Some((next, newSchedule))).getOrElse(None)
             }
             assert(results == List(1.second, 1.second, 1.second, 1.second, 1.second, 1.second))
         }
 
         "repeats correct number of times with complex inner schedule" in {
             val s           = Schedule.immediate.andThen(Schedule.fixed(1.second).take(1)).repeat(2)
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, s4) = s3.next
-            val (next4, s5) = s4.next
-            val (next5, _)  = s5.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val (next3, s4) = s3.next.get
+            val (next4, s5) = s4.next.get
+            val next5       = s5.next
             assert(next1 == Duration.Zero)
             assert(next2 == 1.second)
             assert(next3 == Duration.Zero)
             assert(next4 == 1.second)
-            assert(next5 == Duration.Infinity)
+            assert(next5.isEmpty)
         }
 
         "Schedule.repeat" - {
             "repeats immediate schedule specified number of times" in {
                 val s           = Schedule.repeat(3)
-                val (next1, s2) = s.next
-                val (next2, s3) = s2.next
-                val (next3, s4) = s3.next
-                val (next4, _)  = s4.next
+                val (next1, s2) = s.next.get
+                val (next2, s3) = s2.next.get
+                val (next3, s4) = s3.next.get
+                val next4       = s4.next
 
                 assert(next1 == Duration.Zero)
                 assert(next2 == Duration.Zero)
                 assert(next3 == Duration.Zero)
-                assert(next4 == Duration.Infinity)
+                assert(next4.isEmpty)
             }
 
             "works with zero repetitions" in {
-                val s         = Schedule.repeat(0)
-                val (next, _) = s.next
-
-                assert(next == Duration.Infinity)
+                assert(Schedule.repeat(0).next.isEmpty)
             }
 
             "can be chained with other schedules" in {
                 val s           = Schedule.repeat(2).andThen(Schedule.fixed(1.second))
-                val (next1, s2) = s.next
-                val (next2, s3) = s2.next
-                val (next3, s4) = s3.next
-                val (next4, _)  = s4.next
+                val (next1, s2) = s.next.get
+                val (next2, s3) = s2.next.get
+                val (next3, s4) = s3.next.get
+                val (next4, _)  = s4.next.get
 
                 assert(next1 == Duration.Zero)
                 assert(next2 == Duration.Zero)
@@ -231,9 +220,9 @@ class ScheduleTest extends Test:
         "increases interval linearly" in {
             val base               = 1.second
             val schedule           = Schedule.linear(base)
-            val (next1, schedule2) = schedule.next
-            val (next2, schedule3) = schedule2.next
-            val (next3, _)         = schedule3.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, schedule3) = schedule2.next.get
+            val (next3, _)         = schedule3.next.get
             assert(next1 == 1.second)
             assert(next2 == 2.seconds)
             assert(next3 == 4.seconds)
@@ -241,8 +230,8 @@ class ScheduleTest extends Test:
 
         "works with zero base" in {
             val schedule           = Schedule.linear(Duration.Zero)
-            val (next1, schedule2) = schedule.next
-            val (next2, _)         = schedule2.next
+            val (next1, schedule2) = schedule.next.get
+            val (next2, _)         = schedule2.next.get
             assert(next1 == Duration.Zero)
             assert(next2 == Duration.Zero)
         }
@@ -253,20 +242,19 @@ class ScheduleTest extends Test:
             val s1        = Schedule.fixed(1.second)
             val s2        = Schedule.fixed(2.seconds)
             val combined  = s1.max(s2)
-            val (next, _) = combined.next
+            val (next, _) = combined.next.get
             assert(next == 2.seconds)
         }
 
         "handles one schedule being never" in {
             val s1 = Schedule.fixed(1.second)
             val s2 = Schedule.never
-            assert(s1.max(s2) == Schedule.never)
+            assert(s1.max(s2).next.isEmpty)
         }
 
         "handles both schedules being never" in {
-            val combined  = Schedule.never.max(Schedule.never)
-            val (next, _) = combined.next
-            assert(next == Duration.Infinity)
+            val combined = Schedule.never.max(Schedule.never)
+            assert(combined.next.isEmpty)
         }
     }
 
@@ -275,7 +263,7 @@ class ScheduleTest extends Test:
             val s1        = Schedule.fixed(1.second)
             val s2        = Schedule.fixed(2.seconds)
             val combined  = s1.min(s2)
-            val (next, _) = combined.next
+            val (next, _) = combined.next.get
             assert(next == 1.second)
         }
 
@@ -283,13 +271,13 @@ class ScheduleTest extends Test:
             val s1        = Schedule.fixed(1.second)
             val s2        = Schedule.immediate
             val combined  = s1.min(s2)
-            val (next, _) = combined.next
+            val (next, _) = combined.next.get
             assert(next == Duration.Zero)
         }
 
         "handles both schedules being immediate" in {
             val combined  = Schedule.immediate.min(Schedule.immediate)
-            val (next, _) = combined.next
+            val (next, _) = combined.next.get
             assert(next == Duration.Zero)
         }
     }
@@ -297,12 +285,12 @@ class ScheduleTest extends Test:
     "take" - {
         "limits number of executions" in {
             val s           = Schedule.fixed(1.second).take(2)
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, _)  = s3.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val next3       = s3.next
             assert(next1 == 1.second)
             assert(next2 == 1.second)
-            assert(next3 == Duration.Infinity)
+            assert(next3.isEmpty)
         }
 
         "returns never for non-positive count" in {
@@ -316,114 +304,109 @@ class ScheduleTest extends Test:
             val s1          = Schedule.repeat(2)
             val s2          = Schedule.fixed(1.second)
             val combined    = s1.andThen(s2)
-            val (next1, c2) = combined.next
-            val (next2, c3) = c2.next
-            val (next3, _)  = c3.next
+            val (next1, c2) = combined.next.get
+            val (next2, c3) = c2.next.get
+            val (next3, _)  = c3.next.get
             assert(next1 == Duration.Zero)
             assert(next2 == Duration.Zero)
             assert(next3 == 1.second)
         }
 
         "works with never as first schedule" in {
-            val s1        = Schedule.never
-            val s2        = Schedule.fixed(1.second)
-            val combined  = s1.andThen(s2)
-            val (next, _) = combined.next
-            assert(next == Duration.Infinity)
+            val s1       = Schedule.never
+            val s2       = Schedule.fixed(1.second)
+            val combined = s1.andThen(s2)
+            assert(combined.next.isEmpty)
         }
 
         "works with never as second schedule" in {
             val s1          = Schedule.immediate
             val s2          = Schedule.never
             val combined    = s1.andThen(s2)
-            val (next1, c2) = combined.next
-            val (next2, _)  = c2.next
+            val (next1, c2) = combined.next.get
+            val next2       = c2.next
             assert(next1 == Duration.Zero)
-            assert(next2 == Duration.Infinity)
+            assert(next2.isEmpty)
         }
 
         "chains multiple schedules" in {
             val s           = Schedule.immediate.andThen(Schedule.fixed(1.second).take(1)).andThen(Schedule.fixed(2.seconds).take(1))
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, s4) = s3.next
-            val (next4, _)  = s4.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val (next3, s4) = s3.next.get
+            val next4       = s4.next
             assert(next1 == Duration.Zero)
             assert(next2 == 1.second)
             assert(next3 == 2.seconds)
-            assert(next4 == Duration.Infinity)
+            assert(next4.isEmpty)
         }
     }
 
     "maxDuration" - {
         "stops after specified duration" in {
             val s           = Schedule.fixed(1.second).maxDuration(2.seconds + 500.millis)
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, _)  = s3.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val next3       = s3.next
             assert(next1 == 1.second)
             assert(next2 == 1.second)
-            assert(next3 == Duration.Infinity)
+            assert(next3.isEmpty)
         }
 
         "works with zero duration" in {
-            val s         = Schedule.fixed(1.second).maxDuration(Duration.Zero)
-            val (next, _) = s.next
-            assert(next == Duration.Infinity)
+            val s = Schedule.fixed(1.second).maxDuration(Duration.Zero)
+            assert(s.next.isEmpty)
         }
 
         "works with complex schedule" in {
             val s = Schedule.exponential(1.second, 2.0).repeat(5).maxDuration(7.seconds)
             val results = List.unfold(s) { schedule =>
-                val (next, newSchedule) = schedule.next
-                if next == Duration.Infinity then None
-                else Some((next, newSchedule))
+                schedule.next.map((next, newSchedule) => Some((next, newSchedule))).getOrElse(None)
             }
             assert(results == List(1.second, 2.seconds, 4.seconds))
         }
 
         "limits duration correctly with delayed start" in {
             val s           = Schedule.fixed(2.seconds).take(1).andThen(Schedule.linear(1.second)).maxDuration(5.seconds)
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, s4) = s3.next
-            val (next4, _)  = s4.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val (next3, s4) = s3.next.get
+            val next4       = s4.next
             assert(next1 == 2.seconds)
             assert(next2 == 1.second)
             assert(next3 == 2.seconds)
-            assert(next4 == Duration.Infinity)
+            assert(next4.isEmpty)
         }
     }
 
     "forever" - {
         "repeats indefinitely" in {
             val s           = Schedule.repeat(1).forever
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, _)  = s3.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val (next3, _)  = s3.next.get
             assert(next1 == Duration.Zero)
             assert(next2 == Duration.Zero)
             assert(next3 == Duration.Zero)
         }
 
         "works with never schedule" in {
-            val (next, _) = Schedule.never.forever.next
-            assert(next == Duration.Infinity)
+            assert(Schedule.never.forever.next.isEmpty)
         }
 
         "works with immediate schedule" in {
             val s           = Schedule.immediate.forever
-            val (next1, s2) = s.next
-            val (next2, _)  = s2.next
+            val (next1, s2) = s.next.get
+            val (next2, _)  = s2.next.get
             assert(next1 == Duration.Zero)
             assert(next2 == Duration.Zero)
         }
 
         "works with fixed schedule" in {
             val s           = Schedule.fixed(1.second).forever
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, _)  = s3.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val (next3, _)  = s3.next.get
             assert(next1 == 1.second)
             assert(next2 == 1.second)
             assert(next3 == 1.second)
@@ -431,9 +414,9 @@ class ScheduleTest extends Test:
 
         "works with exponential schedule" in {
             val s           = Schedule.exponential(1.second, 2.0).forever
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, _)  = s3.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val (next3, _)  = s3.next.get
             assert(next1 == 1.second)
             assert(next2 == 2.seconds)
             assert(next3 == 4.seconds)
@@ -441,10 +424,10 @@ class ScheduleTest extends Test:
 
         "works with complex schedule" in {
             val s           = (Schedule.immediate.andThen(Schedule.fixed(1.second).take(1))).forever
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, s4) = s3.next
-            val (next4, _)  = s4.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val (next3, s4) = s3.next.get
+            val (next4, _)  = s4.next.get
             assert(next1 == Duration.Zero)
             assert(next2 == 1.second)
             assert(next3 == Duration.Zero)
@@ -457,8 +440,8 @@ class ScheduleTest extends Test:
             val original = Schedule.fixed(1.second)
             val delayed  = original.delay(500.millis)
 
-            val (next1, s2) = delayed.next
-            val (next2, _)  = s2.next
+            val (next1, s2) = delayed.next.get
+            val (next2, _)  = s2.next.get
 
             assert(next1 == 1500.millis)
             assert(next2 == 1500.millis)
@@ -468,7 +451,7 @@ class ScheduleTest extends Test:
             val original = Schedule.fixed(1.second)
             val delayed  = original.delay(Duration.Zero)
 
-            val (next, _) = delayed.next
+            val (next, _) = delayed.next.get
 
             assert(next == 1.second)
         }
@@ -476,57 +459,54 @@ class ScheduleTest extends Test:
         "works with immediate schedule" in {
             val delayed = Schedule.immediate.delay(1.second)
 
-            val (next1, s2) = delayed.next
-            val (next2, _)  = s2.next
+            val (next1, s1) = delayed.next.get
+            val next2       = s1.next
 
             assert(next1 == 1.second)
-            assert(next2 == Duration.Infinity)
+            assert(next2.isEmpty)
         }
 
         "works with never schedule" in {
             val delayed = Schedule.never.delay(1.second)
-
-            val (next, _) = delayed.next
-
-            assert(next == Duration.Infinity)
+            assert(delayed.next.isEmpty)
         }
 
         "works with complex schedule" in {
             val original = Schedule.exponential(1.second, 2.0).take(3)
             val delayed  = original.delay(500.millis)
 
-            val (next1, s2) = delayed.next
-            val (next2, s3) = s2.next
-            val (next3, s4) = s3.next
-            val (next4, _)  = s4.next
+            val (next1, s2) = delayed.next.get
+            val (next2, s3) = s2.next.get
+            val (next3, s4) = s3.next.get
+            val next4       = s4.next
 
             assert(next1 == 1500.millis)
             assert(next2 == 2500.millis)
             assert(next3 == 4500.millis)
-            assert(next4 == Duration.Infinity)
+            assert(next4.isEmpty)
         }
 
         "Schedule.delay" - {
             "creates a delayed immediate schedule" in {
                 val s           = Schedule.delay(1.second)
-                val (next1, s2) = s.next
-                val (next2, _)  = s2.next
+                val (next1, s2) = s.next.get
+                val next2       = s2.next
 
                 assert(next1 == 1.second)
-                assert(next2 == Duration.Infinity)
+                assert(next2.isEmpty)
             }
 
             "works with zero delay" in {
                 val s         = Schedule.delay(Duration.Zero)
-                val (next, _) = s.next
+                val (next, _) = s.next.get
 
                 assert(next == Duration.Zero)
             }
 
             "can be chained with other schedules" in {
                 val s           = Schedule.delay(500.millis).andThen(Schedule.fixed(1.second))
-                val (next1, s2) = s.next
-                val (next2, _)  = s2.next
+                val (next1, s2) = s.next.get
+                val (next2, _)  = s2.next.get
 
                 assert(next1 == 500.millis)
                 assert(next2 == 1.second)
@@ -537,11 +517,11 @@ class ScheduleTest extends Test:
                 val s2       = Schedule.exponential(2.seconds, 2.0).take(2)
                 val combined = s1.andThen(Schedule.delay(3.seconds)).andThen(s2)
 
-                val (next1, c2) = combined.next
-                val (next2, c3) = c2.next
-                val (next3, c4) = c3.next
-                val (next4, c5) = c4.next
-                val (next5, _)  = c5.next
+                val (next1, c2) = combined.next.get
+                val (next2, c3) = c2.next.get
+                val (next3, c4) = c3.next.get
+                val (next4, c5) = c4.next.get
+                val (next5, _)  = c5.next.get
 
                 assert(next1 == 1.second)
                 assert(next2 == 1.second)
@@ -559,8 +539,8 @@ class ScheduleTest extends Test:
             val s3       = Schedule.fixed(3.seconds)
             val combined = s1.max(s2).min(s3)
 
-            val (next1, c2) = combined.next
-            val (next2, _)  = c2.next
+            val (next1, c2) = combined.next.get
+            val (next2, _)  = c2.next.get
 
             assert(next1 == 2.seconds)
             assert(next2 == 2.seconds)
@@ -569,23 +549,23 @@ class ScheduleTest extends Test:
         "limits a forever schedule" in {
             val s = Schedule.exponential(1.second, 2.0).forever.maxDuration(5.seconds)
 
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, _)  = s3.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val next3       = s3.next
 
             assert(next1 == 1.second)
             assert(next2 == 2.seconds)
-            assert(next3 == Duration.Infinity)
+            assert(next3.isEmpty)
         }
 
         "combines repeat with exponential backoff" in {
             val s = Schedule.repeat(3).andThen(Schedule.exponentialBackoff(1.second, 2.0, 8.seconds))
 
-            val (next1, s2) = s.next
-            val (next2, s3) = s2.next
-            val (next3, s4) = s3.next
-            val (next4, s5) = s4.next
-            val (next5, _)  = s5.next
+            val (next1, s2) = s.next.get
+            val (next2, s3) = s2.next.get
+            val (next3, s4) = s3.next.get
+            val (next4, s5) = s4.next.get
+            val (next5, _)  = s5.next.get
 
             assert(next1 == Duration.Zero)
             assert(next2 == Duration.Zero)
@@ -668,35 +648,6 @@ class ScheduleTest extends Test:
 
             assert(s1 == s2)
             assert(s1 != s3)
-        }
-    }
-
-    "withNext" - {
-        "allows custom processing of next duration and schedule" in {
-            val schedule = Schedule.fixed(1.second)
-            val result = schedule.withNext { (duration, nextSchedule) =>
-                (duration * 2, nextSchedule.take(1))
-            }
-
-            assert(result == (2.seconds, Schedule.fixed(1.second).take(1)))
-        }
-
-        "works with immediate schedule" in {
-            val schedule = Schedule.immediate
-            val result = schedule.withNext { (duration, nextSchedule) =>
-                (duration, nextSchedule == Schedule.done)
-            }
-
-            assert(result == (Duration.Zero, true))
-        }
-
-        "works with never schedule" in {
-            val schedule = Schedule.never
-            val result = schedule.withNext { (duration, nextSchedule) =>
-                (duration == Duration.Infinity, nextSchedule == Schedule.never)
-            }
-
-            assert(result == (true, true))
         }
     }
 

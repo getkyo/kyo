@@ -16,9 +16,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a tuple containing the next delay duration and the updated schedule
       */
-    def next: (Duration, Schedule) = withNext((_, _))
-
-    def withNext[A](f: (Duration, Schedule) => A): A
+    def next: Maybe[(Duration, Schedule)]
 
     /** Combines this schedule with another, taking the maximum delay of both.
       *
@@ -106,7 +104,7 @@ sealed abstract class Schedule derives CanEqual:
     def maxDuration(maxDuration: Duration): Schedule =
         this match
             case Never | Done => this
-            case _            => Limit(this, maxDuration)
+            case _            => MaxDuration(this, maxDuration)
 
     /** Repeats this schedule indefinitely.
       *
@@ -223,96 +221,78 @@ object Schedule:
     private[kyo] object internal:
 
         case object Immediate extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                f(Duration.Zero, Done)
+            val next = Maybe((Duration.Zero, Done))
 
         case object Never extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                f(Duration.Infinity, Never)
+            def next = Maybe.empty
 
         case object Done extends Schedule:
-            override val next = (Duration.Infinity, Done)
-            def withNext[A](f: (Duration, Schedule) => A) =
-                f(Duration.Infinity, Done)
-        end Done
+            def next = Maybe.empty
 
         case class Fixed(interval: Duration) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                f(interval, this)
+            val next = Maybe((interval, this))
 
         case class Exponential(initial: Duration, factor: Double) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                f(initial, Exponential(initial * factor, factor))
+            def next = Maybe((initial, Exponential(initial * factor, factor)))
 
         case class Fibonacci(a: Duration, b: Duration) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                f(a, Fibonacci(b, a + b))
+            def next = Maybe((a, Fibonacci(b, a + b)))
 
         case class ExponentialBackoff(initial: Duration, factor: Double, maxBackoff: Duration) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
+            def next =
                 val nextDelay = initial.min(maxBackoff)
-                f(nextDelay, exponentialBackoff(nextDelay * factor, factor, maxBackoff))
+                Maybe((nextDelay, exponentialBackoff(nextDelay * factor, factor, maxBackoff)))
         end ExponentialBackoff
 
         case class Linear(base: Duration) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                f(base, linear(base + base))
+            def next = Maybe((base, linear(base + base)))
 
         case class Max(a: Schedule, b: Schedule) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                val (d1, s1) = a.next
-                val (d2, s2) = b.next
-                f(d1.max(d2), s1.max(s2))
-            end withNext
+            def next =
+                for
+                    (d1, s1) <- a.next
+                    (d2, s2) <- b.next
+                yield (d1.max(d2), s1.max(s2))
         end Max
 
         case class Min(a: Schedule, b: Schedule) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                val (d1, s1) = a.next
-                val (d2, s2) = b.next
-                f(d1.min(d2), s1.min(s2))
-            end withNext
+            def next =
+                a.next match
+                    case Maybe.Empty => b.next
+                    case n @ Maybe.Defined((d1, s1)) =>
+                        b.next match
+                            case Maybe.Empty => n
+                            case Maybe.Defined((d2, s2)) =>
+                                Maybe((d1.min(d2), s1.min(s2)))
         end Min
 
         case class Take(schedule: Schedule, remaining: Int) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                val (d, s) = schedule.next
-                f(d, s.take(remaining - 1))
-        end Take
+            def next =
+                schedule.next.map((d, s) => (d, s.take(remaining - 1)))
 
         case class AndThen(a: Schedule, b: Schedule) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                val (d, s) = a.next
-                f(d, s.andThen(b))
-        end AndThen
+            def next =
+                a.next.map((d, s) => (d, s.andThen(b))).orElse(b.next)
 
-        case class Limit(schedule: Schedule, duration: Duration) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                val (d, s) = schedule.next
-                if d > duration then Done.withNext(f)
-                else f(d, s.maxDuration(duration - d))
-            end withNext
-        end Limit
+        case class MaxDuration(schedule: Schedule, duration: Duration) extends Schedule:
+            def next =
+                schedule.next.flatMap { (d, s) =>
+                    if d > duration then Maybe.empty
+                    else Maybe((d, s.maxDuration(duration - d)))
+                }
+        end MaxDuration
 
         case class Repeat(schedule: Schedule, remaining: Int) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                if remaining == 1 then schedule.withNext(f)
-                else
-                    val (d, s) = schedule.next
-                    f(d, s.andThen(schedule.repeat(remaining - 1)))
-        end Repeat
+            def next =
+                schedule.next.map((d, s) => (d, s.andThen(schedule.repeat(remaining - 1))))
 
         case class Forever(schedule: Schedule) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                val (d, s) = schedule.next
-                f(d, s.andThen(schedule.forever))
-        end Forever
+            def next =
+                schedule.next.map((d, s) => (d, s.andThen(this)))
 
         case class Delay(schedule: Schedule, duration: Duration) extends Schedule:
-            def withNext[A](f: (Duration, Schedule) => A) =
-                val (d, s) = schedule.next
-                f(duration + d, s.delay(duration))
-        end Delay
+            def next =
+                schedule.next.map((d, s) => (duration + d, s.delay(duration)))
 
     end internal
 end Schedule
