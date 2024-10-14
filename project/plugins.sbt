@@ -16,6 +16,12 @@ addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.2.1")
 
 // addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
 
+addSbtPlugin("com.eed3si9n" % "sbt-buildinfo"          % "0.12.0")
+addSbtPlugin("com.thesamet" % "sbt-protoc"             % "1.0.7")
+addSbtPlugin("com.thesamet" % "sbt-protoc-gen-project" % "0.1.8")
+
 libraryDependencies ++= Seq(
-    "org.typelevel" %% "scalac-options" % "0.1.7"
+    "com.thesamet.scalapb"          %% "compilerplugin"   % "0.11.17",
+    "com.thesamet.scalapb.zio-grpc" %% "zio-grpc-codegen" % "0.6.2",
+    "org.typelevel"                 %% "scalac-options"   % "0.1.7"
 )
