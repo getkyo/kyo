@@ -100,44 +100,44 @@ class ResultTest extends Test:
     }
 
     "value" - {
-        "returns Defined with the value for Success" in {
+        "returns Present with the value for Success" in {
             assert(Result.success(42).value == Maybe(42))
         }
 
-        "returns Empty for Fail" in {
+        "returns Absent for Fail" in {
             assert(Result.fail("error").value == Maybe.empty)
         }
 
-        "returns Empty for Panic" in {
+        "returns Absent for Panic" in {
             assert(Result.panic(new Exception).value == Maybe.empty)
         }
     }
 
     "failure" - {
-        "returns Defined with the error for Fail" in {
+        "returns Present with the error for Fail" in {
             assert(Result.fail("error").failure == Maybe("error"))
         }
 
-        "returns Empty for Success" in {
+        "returns Absent for Success" in {
             assert(Result.success(42).failure == Maybe.empty)
         }
 
-        "returns Empty for Panic" in {
+        "returns Absent for Panic" in {
             assert(Result.panic(new Exception).failure == Maybe.empty)
         }
     }
 
     "panic" - {
-        "returns Defined with the exception for Panic" in {
+        "returns Present with the exception for Panic" in {
             val ex = new Exception("test")
             assert(Result.panic(ex).panic == Maybe(ex))
         }
 
-        "returns Empty for Success" in {
+        "returns Absent for Success" in {
             assert(Result.success(42).panic == Maybe.empty)
         }
 
-        "returns Empty for Fail" in {
+        "returns Absent for Fail" in {
             assert(Result.fail("error").panic == Maybe.empty)
         }
     }

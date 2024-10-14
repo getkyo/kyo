@@ -42,14 +42,14 @@ object System:
             def env[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
                 IO.Unsafe {
                     u.env(name) match
-                        case Empty      => Empty
-                        case Defined(v) => Abort.get(p(v).map(Maybe(_)))
+                        case Absent     => Absent
+                        case Present(v) => Abort.get(p(v).map(Maybe(_)))
                 }
             def property[E, A](name: String)(using p: Parser[E, A], frame: Frame): Maybe[A] < (Abort[E] & IO) =
                 IO.Unsafe {
                     u.property(name) match
-                        case Empty      => Empty
-                        case Defined(v) => Abort.get(p(v).map(Maybe(_)))
+                        case Absent     => Absent
+                        case Present(v) => Abort.get(p(v).map(Maybe(_)))
                 }
             def lineSeparator(using Frame): String < IO = IO.Unsafe(u.lineSeparator())
             def userName(using Frame): String < IO      = IO.Unsafe(u.userName())

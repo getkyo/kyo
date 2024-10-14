@@ -226,10 +226,10 @@ extension [A, S](effect: A < S)
       * @param condition
       *   The condition to check
       * @return
-      *   A computation that produces the result of this computation wrapped in Defined if the condition is satisfied, or Empty if not
+      *   A computation that produces the result of this computation wrapped in Present if the condition is satisfied, or Absent if not
       */
     def when[S1](condition: => Boolean < S1)(using Frame): Maybe[A] < (S & S1) =
-        condition.map(c => if c then effect.map(Defined.apply) else Empty)
+        condition.map(c => if c then effect.map(Present.apply) else Absent)
 
     /** Performs this computation catching any Throwable in an Abort[Throwable] effect.
       *
@@ -247,15 +247,15 @@ extension [A, S](effect: A < S)
     def tap[S1](f: A => Any < S1)(using Frame): A < (S & S1) =
         effect.map(a => f(a).as(a))
 
-    /** Performs this computation unless the given condition holds, in which case it returns an Abort[Empty] effect.
+    /** Performs this computation unless the given condition holds, in which case it returns an Abort[Absent] effect.
       *
       * @param condition
       *   The condition to check
       * @return
-      *   A computation that produces the result of this computation with Abort[Empty] effect
+      *   A computation that produces the result of this computation with Abort[Absent] effect
       */
-    def unless[S1](condition: Boolean < S1)(using Frame): A < (S & S1 & Abort[Empty]) =
-        condition.map(c => if c then Abort.fail(Empty) else effect)
+    def unless[S1](condition: Boolean < S1)(using Frame): A < (S & S1 & Abort[Absent]) =
+        condition.map(c => if c then Abort.fail(Absent) else effect)
 
     /** Ensures that the specified finalizer is executed after this effect, whether it succeeds or fails. The finalizer will execute when
       * the Resource effect is handled.
@@ -302,19 +302,19 @@ extension [A, S, E](effect: A < (Abort[E] & S))
 
     def someAbortToChoice[E1 <: E](using Frame): SomeAbortToChoiceOps[A, S, E, E1] = SomeAbortToChoiceOps(effect)
 
-    /** Translates the Abort[E] effect to an Abort[Empty] effect in case of failure.
+    /** Translates the Abort[E] effect to an Abort[Absent] effect in case of failure.
       *
       * @return
-      *   A computation that produces the result of this computation with the Abort[E] effect translated to Abort[Empty]
+      *   A computation that produces the result of this computation with the Abort[E] effect translated to Abort[Absent]
       */
     def abortToEmpty(
         using
         ct: SafeClassTag[E],
         tag: Tag[E],
         flat: Flat[A]
-    )(using Frame): A < (S & Abort[Empty]) =
+    )(using Frame): A < (S & Abort[Absent]) =
         effect.handleAbort.map {
-            case Result.Fail(_)    => Abort.fail(Empty)
+            case Result.Fail(_)    => Abort.fail(Absent)
             case Result.Panic(e)   => throw e
             case Result.Success(a) => a
         }
@@ -397,36 +397,36 @@ extension [A, S, E](effect: A < (Abort[E] & S))
             .map(_.fold(e => throw e.getFailure)(identity))
 end extension
 
-extension [A, S, E](effect: A < (Abort[Empty] & S))
+extension [A, S, E](effect: A < (Abort[Absent] & S))
 
-    /** Handles the Abort[Empty] effect and returns its result as a `Maybe[A]`.
+    /** Handles the Abort[Absent] effect and returns its result as a `Maybe[A]`.
       *
       * @return
-      *   A computation that produces the result of this computation with the Abort[Empty] effect handled
+      *   A computation that produces the result of this computation with the Abort[Absent] effect handled
       */
     def handleEmptyAbort(using Flat[A], Frame): Maybe[A] < S =
-        Abort.run[Empty](effect).map {
-            case Result.Fail(_)    => Empty
+        Abort.run[Absent](effect).map {
+            case Result.Fail(_)    => Absent
             case Result.Panic(e)   => throw e
-            case Result.Success(a) => Defined(a)
+            case Result.Success(a) => Present(a)
         }
 
-    /** Translates the Abort[Empty] effect to a Choice effect.
+    /** Translates the Abort[Absent] effect to a Choice effect.
       *
       * @return
-      *   A computation that produces the result of this computation with the Abort[Empty] effect translated to Choice
+      *   A computation that produces the result of this computation with the Abort[Absent] effect translated to Choice
       */
     def emptyAbortToChoice(using Flat[A], Frame): A < (S & Choice) =
-        effect.someAbortToChoice[Empty]()
+        effect.someAbortToChoice[Absent]()
 
-    /** Handles the Abort[Empty] effect translating it to an Abort[E] effect.
+    /** Handles the Abort[Absent] effect translating it to an Abort[E] effect.
       *
       * @return
-      *   A computation that produces the result of this computation with the Abort[Empty] effect translated to Abort[E]
+      *   A computation that produces the result of this computation with the Abort[Absent] effect translated to Abort[E]
       */
     def emptyAbortToFailure(failure: => E)(using Flat[A], Frame): A < (S & Abort[E]) =
         for
-            res <- effect.handleSomeAbort[Empty]()
+            res <- effect.handleSomeAbort[Absent]()
         yield res match
             case Result.Fail(_)    => Abort.get(Result.Fail(failure))
             case Result.Success(a) => Abort.get(Result.success(a))
@@ -455,10 +455,10 @@ end SomeAbortToChoiceOps
 
 class SomeAbortToEmptyOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
 
-    /** Handles the Abort[E] effect translating it to an Abort[Empty] effect.
+    /** Handles the Abort[E] effect translating it to an Abort[Absent] effect.
       *
       * @return
-      *   A computation that produces the result of this computation with Abort[Empty] effect
+      *   A computation that produces the result of this computation with Abort[Absent] effect
       */
     def apply[ER]()(
         using
@@ -468,9 +468,9 @@ class SomeAbortToEmptyOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends 
         reduce: Reducible[Abort[ER]],
         flat: Flat[A],
         frame: Frame
-    ): A < (S & reduce.SReduced & Abort[Empty]) =
+    ): A < (S & reduce.SReduced & Abort[Absent]) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map {
-            case Result.Fail(_)        => Abort.get(Result.Fail(Empty))
+            case Result.Fail(_)        => Abort.get(Result.Fail(Absent))
             case p @ Result.Panic(e)   => Abort.get(p.asInstanceOf[Result[Nothing, Nothing]])
             case s @ Result.Success(a) => Abort.get(s.asInstanceOf[Result[Nothing, A]])
         }

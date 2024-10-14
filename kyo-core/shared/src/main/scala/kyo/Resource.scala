@@ -83,9 +83,9 @@ object Resource:
                 val finalizer = Finalizer(frame, q)
                 def close: Unit < IO =
                     q.close.map {
-                        case Empty =>
+                        case Absent =>
                             bug("Resource finalizer queue already closed.")
-                        case Defined(l) =>
+                        case Present(l) =>
                             Kyo.foreachDiscard(l)(task =>
                                 Abort.run[Throwable](task)
                                     .map(_.fold(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))

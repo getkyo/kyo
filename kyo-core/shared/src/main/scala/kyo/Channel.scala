@@ -204,11 +204,11 @@ object Channel:
                                     throw closedException
                                 else
                                     u.poll() match
-                                        case Empty =>
+                                        case Absent =>
                                             val p = Promise.Unsafe.init[Nothing, A]()
                                             takes.add(p)
                                             p.safe.get
-                                        case Defined(v) =>
+                                        case Present(v) =>
                                             v
                             finally
                                 flush()
@@ -221,11 +221,11 @@ object Channel:
                                     throw closedException
                                 else
                                     u.poll() match
-                                        case Empty =>
+                                        case Absent =>
                                             val p = Promise.Unsafe.init[Nothing, A]()
                                             takes.add(p)
                                             p.safe
-                                        case Defined(v) =>
+                                        case Present(v) =>
                                             Fiber.success(v)
                             finally
                                 flush()
@@ -248,7 +248,7 @@ object Channel:
                     def close(using frame: Frame) =
                         IO.Unsafe {
                             u.close() match
-                                case Empty => Maybe.empty
+                                case Absent => Maybe.empty
                                 case r =>
                                     val c = Result.panic(closedException)
                                     def dropTakes(): Unit =
@@ -283,11 +283,11 @@ object Channel:
                             val p = takes.poll()
                             if !isNull(p) then
                                 u.poll() match
-                                    case Empty =>
+                                    case Absent =>
                                         // If the queue has been emptied before the
                                         // transfer, requeue the consumer's promise.
                                         discard(takes.add(p))
-                                    case Defined(v) =>
+                                    case Present(v) =>
                                         if !p.complete(Result.success(v)) && !u.offer(v) then
                                             // If completing the take fails and the queue
                                             // cannot accept the value back, enqueue a

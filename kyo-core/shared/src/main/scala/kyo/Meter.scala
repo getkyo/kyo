@@ -42,7 +42,7 @@ abstract class Meter:
       * @tparam S
       *   The effect type.
       * @return
-      *   A Maybe containing the result of running the effect, or Empty if no permit was available.
+      *   A Maybe containing the result of running the effect, or Absent if no permit was available.
       */
     def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (IO & S)
 
@@ -94,7 +94,7 @@ object Meter:
                     def tryRun[A, S](v: => A < S)(using Frame) =
                         IO.Unsafe {
                             chan.unsafePoll match
-                                case Empty => Maybe.empty
+                                case Absent => Maybe.empty
                                 case _ =>
                                     IO.ensure(release) {
                                         v.map(Maybe(_))
@@ -125,7 +125,7 @@ object Meter:
 
                     def tryRun[A, S](v: => A < S)(using Frame) =
                         chan.poll.map {
-                            case Empty =>
+                            case Absent =>
                                 Maybe.empty
                             case _ =>
                                 v.map(Maybe(_))
@@ -217,8 +217,8 @@ object Meter:
                         if idx == meters.length then v.map(Maybe(_))
                         else
                             meters(idx).tryRun(loop(idx + 1)).map {
-                                case Empty => Maybe.empty
-                                case r     => r.flatten
+                                case Absent => Maybe.empty
+                                case r      => r.flatten
                             }
                     loop()
                 end tryRun

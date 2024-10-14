@@ -6,304 +6,304 @@ import kyo.Maybe.internal.DefinedEmpty
 class MaybeTest extends Test:
 
     "apply" - {
-        "creates Defined for non-null values" in {
-            assert(Maybe(1) == Defined(1))
-            assert(Maybe("hello") == Defined("hello"))
+        "creates Present for non-null values" in {
+            assert(Maybe(1) == Present(1))
+            assert(Maybe("hello") == Present("hello"))
         }
-        "creates Empty for null values" in {
-            assert(Maybe(null) == Empty)
+        "creates Absent for null values" in {
+            assert(Maybe(null) == Absent)
         }
-        "creates DefinedEmpty for Empty" in {
+        "creates DefinedEmpty for Absent" in {
             assert(Maybe(Maybe.empty).equals(DefinedEmpty.one))
         }
     }
 
     "isEmpty" - {
-        "returns true for Empty" in {
-            assert(Empty.isEmpty)
+        "returns true for Absent" in {
+            assert(Absent.isEmpty)
         }
-        "returns false for Defined" in {
-            assert(!Defined(1).isEmpty)
+        "returns false for Present" in {
+            assert(!Present(1).isEmpty)
         }
     }
 
     "isDefined" - {
-        "returns false for Empty" in {
-            assert(!Empty.isDefined)
+        "returns false for Absent" in {
+            assert(!Absent.isDefined)
         }
-        "returns true for Defined" in {
-            assert(Defined(1).isDefined)
+        "returns true for Present" in {
+            assert(Present(1).isDefined)
         }
     }
 
     "get" - {
-        "returns the value for Defined" in {
-            assert(Defined(1).get == 1)
-            assert(Defined("hello").get == "hello")
+        "returns the value for Present" in {
+            assert(Present(1).get == 1)
+            assert(Present("hello").get == "hello")
         }
-        "throws NoSuchElementException for Empty" in {
+        "throws NoSuchElementException for Absent" in {
             assertThrows[NoSuchElementException] {
-                Empty.get
+                Absent.get
             }
         }
     }
 
     "getOrElse" - {
-        "returns the value for Defined" in {
-            assert(Defined(1).getOrElse(0) == 1)
-            assert(Defined("hello").getOrElse("") == "hello")
+        "returns the value for Present" in {
+            assert(Present(1).getOrElse(0) == 1)
+            assert(Present("hello").getOrElse("") == "hello")
         }
-        "returns the default value for Empty" in {
-            assert(Empty.getOrElse(0) == 0)
-            assert(Empty.getOrElse("") == "")
+        "returns the default value for Absent" in {
+            assert(Absent.getOrElse(0) == 0)
+            assert(Absent.getOrElse("") == "")
         }
     }
 
     "fold" - {
-        "applies the empty function for Empty" in {
-            assert(Empty.fold(0)(_ => 1) == 0)
+        "applies the empty function for Absent" in {
+            assert(Absent.fold(0)(_ => 1) == 0)
         }
-        "applies the non-empty function for Defined" in {
-            assert(Defined(1).fold(0)(x => x + 1) == 2)
+        "applies the non-empty function for Present" in {
+            assert(Present(1).fold(0)(x => x + 1) == 2)
         }
     }
 
     "flatMap" - {
-        "returns Empty for Empty" in {
-            assert(Maybe.empty[Int].flatMap(x => Defined(x + 1)) == Empty)
+        "returns Absent for Absent" in {
+            assert(Maybe.empty[Int].flatMap(x => Present(x + 1)) == Absent)
         }
-        "applies the function for Defined" in {
-            assert(Defined(1).flatMap(x => Defined(x + 1)) == Defined(2))
+        "applies the function for Present" in {
+            assert(Present(1).flatMap(x => Present(x + 1)) == Present(2))
         }
     }
 
     "flatten" - {
-        "returns Empty for Empty" in {
-            assert(Empty.flatten == Empty)
+        "returns Absent for Absent" in {
+            assert(Absent.flatten == Absent)
         }
-        "returns the nested value for Defined" in {
-            assert(Defined(Defined(1)).flatten == Defined(1))
+        "returns the nested value for Present" in {
+            assert(Present(Present(1)).flatten == Present(1))
         }
     }
 
     "filter" - {
-        "returns Empty for Empty" in {
-            assert(Empty.filter(_ => true) == Empty)
+        "returns Absent for Absent" in {
+            assert(Absent.filter(_ => true) == Absent)
         }
-        "returns Empty if the predicate is false" in {
-            assert(Defined(1).filter(_ > 1) == Empty)
+        "returns Absent if the predicate is false" in {
+            assert(Present(1).filter(_ > 1) == Absent)
         }
-        "returns Defined if the predicate is true" in {
-            assert(Defined(1).filter(_ == 1) == Defined(1))
+        "returns Present if the predicate is true" in {
+            assert(Present(1).filter(_ == 1) == Present(1))
         }
     }
 
     "filterNot" - {
-        "returns Empty for Empty" in {
-            assert(Empty.filterNot(_ => false) == Empty)
+        "returns Absent for Absent" in {
+            assert(Absent.filterNot(_ => false) == Absent)
         }
-        "returns Defined if the predicate is false" in {
-            assert(Defined(1).filterNot(_ > 1) == Defined(1))
+        "returns Present if the predicate is false" in {
+            assert(Present(1).filterNot(_ > 1) == Present(1))
         }
-        "returns Empty if the predicate is true" in {
-            assert(Defined(1).filterNot(_ == 1) == Empty)
+        "returns Absent if the predicate is true" in {
+            assert(Present(1).filterNot(_ == 1) == Absent)
         }
     }
 
     "contains" - {
-        "returns false for Empty" in {
-            assert(!Empty.contains(1))
+        "returns false for Absent" in {
+            assert(!Absent.contains(1))
         }
         "returns true if the element is equal" in {
-            assert(Defined(1).contains(1))
+            assert(Present(1).contains(1))
         }
         "returns false if the element is not equal" in {
-            assert(!Defined(1).contains(2))
+            assert(!Present(1).contains(2))
         }
     }
 
     "exists" - {
-        "returns false for Empty" in {
-            assert(!Empty.exists(_ => true))
+        "returns false for Absent" in {
+            assert(!Absent.exists(_ => true))
         }
         "returns true if the predicate is satisfied" in {
-            assert(Defined(1).exists(_ == 1))
+            assert(Present(1).exists(_ == 1))
         }
         "returns false if the predicate is not satisfied" in {
-            assert(!Defined(1).exists(_ != 1))
+            assert(!Present(1).exists(_ != 1))
         }
     }
 
     "forall" - {
-        "returns true for Empty" in {
-            assert(Empty.forall(_ => false))
+        "returns true for Absent" in {
+            assert(Absent.forall(_ => false))
         }
         "returns true if the predicate is satisfied" in {
-            assert(Defined(1).forall(_ == 1))
+            assert(Present(1).forall(_ == 1))
         }
         "returns false if the predicate is not satisfied" in {
-            assert(!Defined(1).forall(_ != 1))
+            assert(!Present(1).forall(_ != 1))
         }
     }
 
     "foreach" - {
-        "does not apply the function for Empty" in {
+        "does not apply the function for Absent" in {
             var applied = false
-            Empty.foreach(_ => applied = true)
+            Absent.foreach(_ => applied = true)
             assert(!applied)
         }
-        "applies the function for Defined" in {
+        "applies the function for Present" in {
             var result = 0
-            Defined(1).foreach(result += _)
+            Present(1).foreach(result += _)
             assert(result == 1)
         }
     }
 
     "collect" - {
-        "returns Empty for Empty" in {
-            assert(Empty.collect { case _ => 1 } == Empty)
+        "returns Absent for Absent" in {
+            assert(Absent.collect { case _ => 1 } == Absent)
         }
-        "returns Empty if the partial function is not defined" in {
-            assert(Defined(1).collect { case 2 => 3 } == Empty)
+        "returns Absent if the partial function is not defined" in {
+            assert(Present(1).collect { case 2 => 3 } == Absent)
         }
-        "returns Defined if the partial function is defined" in {
-            assert(Defined(1).collect { case 1 => 2 } == Defined(2))
+        "returns Present if the partial function is defined" in {
+            assert(Present(1).collect { case 1 => 2 } == Present(2))
         }
     }
 
     "orElse" - {
-        "returns the fallback option for Empty" in {
-            assert(Empty.orElse(Defined(1)) == Defined(1))
+        "returns the fallback option for Absent" in {
+            assert(Absent.orElse(Present(1)) == Present(1))
         }
-        "returns itself for Defined" in {
-            assert(Defined(1).orElse(Defined(2)) == Defined(1))
+        "returns itself for Present" in {
+            assert(Present(1).orElse(Present(2)) == Present(1))
         }
     }
 
     "zip" - {
-        "returns Empty if either option is Empty" in {
-            assert(Empty.zip(Empty) == Empty)
-            assert(Empty.zip(Defined(1)) == Empty)
-            assert(Defined(1).zip(Empty) == Empty)
+        "returns Absent if either option is Absent" in {
+            assert(Absent.zip(Absent) == Absent)
+            assert(Absent.zip(Present(1)) == Absent)
+            assert(Present(1).zip(Absent) == Absent)
         }
-        "returns Defined with a tuple if both options are Defined" in {
-            assert(Defined(1).zip(Defined(2)) == Defined((1, 2)))
+        "returns Present with a tuple if both options are Present" in {
+            assert(Present(1).zip(Present(2)) == Present((1, 2)))
         }
     }
 
     "iterator" - {
-        "returns an empty iterator for Empty" in {
-            assert(Empty.iterator.isEmpty)
+        "returns an empty iterator for Absent" in {
+            assert(Absent.iterator.isEmpty)
         }
-        "returns a single element iterator for Defined" in {
-            assert(Defined(1).iterator.toList == List(1))
+        "returns a single element iterator for Present" in {
+            assert(Present(1).iterator.toList == List(1))
         }
     }
 
     "toList" - {
-        "returns an empty list for Empty" in {
-            assert(Empty.toList == Nil)
+        "returns an empty list for Absent" in {
+            assert(Absent.toList == Nil)
         }
-        "returns a single element list for Defined" in {
-            assert(Defined(1).toList == List(1))
+        "returns a single element list for Present" in {
+            assert(Present(1).toList == List(1))
         }
     }
 
     "toRight" - {
-        "returns Left with the argument for Empty" in {
-            assert(Empty.toRight(0) == Left(0))
+        "returns Left with the argument for Absent" in {
+            assert(Absent.toRight(0) == Left(0))
         }
-        "returns Right with the value for Defined" in {
-            assert(Defined(1).toRight(0) == Right(1))
+        "returns Right with the value for Present" in {
+            assert(Present(1).toRight(0) == Right(1))
         }
     }
 
     "toLeft" - {
-        "returns Right with the argument for Empty" in {
-            assert(Empty.toLeft(0) == Right(0))
+        "returns Right with the argument for Absent" in {
+            assert(Absent.toLeft(0) == Right(0))
         }
-        "returns Left with the value for Defined" in {
-            assert(Defined(1).toLeft(0) == Left(1))
+        "returns Left with the value for Present" in {
+            assert(Present(1).toLeft(0) == Left(1))
         }
     }
 
-    "nested Defined(Empty)" - {
+    "nested Present(Absent)" - {
         "flatten should return the nested Maybe" in {
-            assert(Defined(Defined(1)).flatten == Defined(1))
-            assert(Defined(Empty).flatten == Empty)
-            assert(Empty.flatten == Empty)
+            assert(Present(Present(1)).flatten == Present(1))
+            assert(Present(Absent).flatten == Absent)
+            assert(Absent.flatten == Absent)
         }
 
         "get should return the value of the nested Maybe" in {
-            assert(Defined(Defined(1)).get == Defined(1))
-            assert(Defined(Empty).get == Empty)
+            assert(Present(Present(1)).get == Present(1))
+            assert(Present(Absent).get == Absent)
         }
 
         "getOrElse should return the value of the nested Maybe" in {
-            assert(Defined(Defined(1)).getOrElse(Defined(2)) == Defined(1))
-            assert(Defined(Empty).getOrElse(Defined(2)) == Empty)
+            assert(Present(Present(1)).getOrElse(Present(2)) == Present(1))
+            assert(Present(Absent).getOrElse(Present(2)) == Absent)
         }
 
         "orElse should return the value of the nested Maybe" in {
-            assert(Defined(Defined(1)).orElse(Defined(Defined(2))) == Defined(Defined(1)))
-            assert(Defined(Empty).orElse(Defined(Defined(2))) == Defined(Empty))
+            assert(Present(Present(1)).orElse(Present(Present(2))) == Present(Present(1)))
+            assert(Present(Absent).orElse(Present(Present(2))) == Present(Absent))
         }
 
         "fold should apply the non-empty function to the nested Maybe" in {
-            assert(Defined(Defined(1)).fold(Defined(0))(x => x.map(_ + 1)) == Defined(2))
-            assert(Defined(Maybe.empty[Int]).fold(Defined(0))(x => x.map(_ + 1)) == Empty)
+            assert(Present(Present(1)).fold(Present(0))(x => x.map(_ + 1)) == Present(2))
+            assert(Present(Maybe.empty[Int]).fold(Present(0))(x => x.map(_ + 1)) == Absent)
         }
 
         "flatMap should apply the function to the nested Maybe" in {
-            assert(Defined(Defined(1)).flatMap(x => x.map(_ + 1)) == Defined(2))
-            assert(Defined(Maybe.empty[Int]).flatMap(x => x.map(_ + 1)) == Empty)
+            assert(Present(Present(1)).flatMap(x => x.map(_ + 1)) == Present(2))
+            assert(Present(Maybe.empty[Int]).flatMap(x => x.map(_ + 1)) == Absent)
         }
 
         "map should apply the function to the nested Maybe" in {
-            assert(Defined(Defined(1)).map(_ => Defined(2)) == Defined(Defined(2)))
-            assert(Defined(Empty).map(_ => Defined(2)) == Defined(Defined(2)))
+            assert(Present(Present(1)).map(_ => Present(2)) == Present(Present(2)))
+            assert(Present(Absent).map(_ => Present(2)) == Present(Present(2)))
         }
 
         "filter should apply the predicate to the nested Maybe" in {
-            assert(Defined(Defined(1)).filter(_.contains(1)) == Defined(Defined(1)))
-            assert(Defined(Defined(1)).filter(_.contains(2)) == Empty)
-            assert(Defined(Empty).filter(_.contains(1)) == Empty)
+            assert(Present(Present(1)).filter(_.contains(1)) == Present(Present(1)))
+            assert(Present(Present(1)).filter(_.contains(2)) == Absent)
+            assert(Present(Absent).filter(_.contains(1)) == Absent)
         }
 
         "filterNot should apply the predicate to the nested Maybe" in {
-            assert(Defined(Defined(1)).filterNot(_.contains(2)) == Defined(Defined(1)))
-            assert(Defined(Defined(1)).filterNot(_.contains(1)) == Empty)
-            assert(Defined(Empty).filterNot(_.contains(1)) == Defined(Empty))
+            assert(Present(Present(1)).filterNot(_.contains(2)) == Present(Present(1)))
+            assert(Present(Present(1)).filterNot(_.contains(1)) == Absent)
+            assert(Present(Absent).filterNot(_.contains(1)) == Present(Absent))
         }
 
         "exists should apply the predicate to the nested Maybe" in {
-            assert(Defined(Defined(1)).exists(_.contains(1)))
-            assert(!Defined(Defined(1)).exists(_.contains(2)))
-            assert(!Defined(Empty).exists(_.contains(1)))
+            assert(Present(Present(1)).exists(_.contains(1)))
+            assert(!Present(Present(1)).exists(_.contains(2)))
+            assert(!Present(Absent).exists(_.contains(1)))
         }
 
         "forall should apply the predicate to the nested Maybe" in {
-            assert(Defined(Defined(1)).forall(_.contains(1)))
-            assert(!Defined(Defined(1)).forall(_.contains(2)))
-            assert(!Defined(Empty).forall(_.contains(1)))
+            assert(Present(Present(1)).forall(_.contains(1)))
+            assert(!Present(Present(1)).forall(_.contains(2)))
+            assert(!Present(Absent).forall(_.contains(1)))
         }
     }
 
     "deeplyNestedDefined" - {
-        val deeplyNestedDefined = Defined(Defined(Defined(Defined(Defined(1)))))
+        val deeplyNestedDefined = Present(Present(Present(Present(Present(1)))))
 
         "get should return deeply nested value" in {
-            assert(deeplyNestedDefined.get == Defined(Defined(Defined(Defined(1)))))
+            assert(deeplyNestedDefined.get == Present(Present(Present(Present(1)))))
         }
 
-        "flatten should flatten deeply nested Defined" in {
-            assert(deeplyNestedDefined.flatten.flatten == Defined(Defined(Defined(1))))
-            assert(deeplyNestedDefined.flatten.flatten.flatten == Defined(Defined(1)))
-            assert(deeplyNestedDefined.flatten.flatten.flatten.flatten == Defined(1))
+        "flatten should flatten deeply nested Present" in {
+            assert(deeplyNestedDefined.flatten.flatten == Present(Present(Present(1))))
+            assert(deeplyNestedDefined.flatten.flatten.flatten == Present(Present(1)))
+            assert(deeplyNestedDefined.flatten.flatten.flatten.flatten == Present(1))
         }
 
         "flatMap should apply function and flatten result" in {
-            assert(deeplyNestedDefined.flatMap(x => x.flatMap(y => y.flatMap(z => z))) == Defined(Defined(1)))
+            assert(deeplyNestedDefined.flatMap(x => x.flatMap(y => y.flatMap(z => z))) == Present(Present(1)))
         }
 
         "exists should apply to deeply nested predicate" in {
@@ -319,218 +319,218 @@ class MaybeTest extends Test:
 
     "equals" - {
         "should equate two deeply nested Maybes" in {
-            assert(Defined(Defined(Defined(1))) == Defined(Defined(Defined(1))))
-            assert(Defined(Defined(Empty)) == Defined(Defined(Empty)))
+            assert(Present(Present(Present(1))) == Present(Present(Present(1))))
+            assert(Present(Present(Absent)) == Present(Present(Absent)))
         }
 
         "should not equate different nested Maybes" in {
-            assert(Defined(Defined(Defined(1))) != Defined(Defined(Defined(2))))
-            assert(Defined(Defined(Defined(1))) != Defined(Defined(Empty)))
-            assert(Defined(Defined(Empty)) != Defined(Empty))
+            assert(Present(Present(Present(1))) != Present(Present(Present(2))))
+            assert(Present(Present(Present(1))) != Present(Present(Absent)))
+            assert(Present(Present(Absent)) != Present(Absent))
         }
     }
 
     "pattern matching" - {
         "simple match" - {
-            "should match Defined and extract value" in {
-                val result = Defined(1) match
-                    case Defined(x) => x
-                    case Empty      => 0
+            "should match Present and extract value" in {
+                val result = Present(1) match
+                    case Present(x) => x
+                    case Absent     => 0
                 assert(result == 1)
             }
 
-            "should match Empty" in {
-                val result = Empty match
-                    case Defined(x) => x
-                    case Empty      => 0
+            "should match Absent" in {
+                val result = Absent match
+                    case Present(x) => x
+                    case Absent     => 0
                 assert(result == 0)
             }
         }
 
         "nested match" - {
-            "should match nested Defined and extract inner value" in {
-                val result = Defined(Defined(1)) match
-                    case Defined(Defined(x)) => x
+            "should match nested Present and extract inner value" in {
+                val result = Present(Present(1)) match
+                    case Present(Present(x)) => x
                     case _                   => 0
                 assert(result == 1)
             }
 
-            "should match outer Empty" in {
-                val result = Empty match
-                    case Defined(Defined(x)) => x
+            "should match outer Absent" in {
+                val result = Absent match
+                    case Present(Present(x)) => x
                     case _                   => 0
                 assert(result == 0)
             }
 
-            "should match inner Empty" in {
-                val result = Defined(Empty) match
-                    case Defined(Defined(x)) => x
+            "should match inner Absent" in {
+                val result = Present(Absent) match
+                    case Present(Present(x)) => x
                     case _                   => 0
                 assert(result == 0)
             }
         }
 
         "deep matching" - {
-            val nestedMaybe = Defined(Defined(Defined(Defined(1))))
+            val nestedMaybe = Present(Present(Present(Present(1))))
 
-            "should match deeply nested Defined and extract inner value" in {
+            "should match deeply nested Present and extract inner value" in {
                 val result = nestedMaybe match
-                    case Defined(Defined(Defined(Defined(x)))) => x
+                    case Present(Present(Present(Present(x)))) => x
                     case _                                     => 0
                 assert(result == 1)
             }
 
             "should return default for deep mismatch" in {
                 val result = nestedMaybe match
-                    case Defined(Defined(Defined(Empty))) => 1
-                    case _                                => 0
+                    case Present(Present(Present(Absent))) => 1
+                    case _                                 => 0
                 assert(result == 0)
             }
 
-            "should match partially and extract nested Defined" in {
+            "should match partially and extract nested Present" in {
                 val result = nestedMaybe match
-                    case Defined(Defined(x)) => x
-                    case _                   => Empty
-                assert(result == Defined(Defined(1)))
+                    case Present(Present(x)) => x
+                    case _                   => Absent
+                assert(result == Present(Present(1)))
             }
         }
     }
 
     "for comprehensions" - {
-        "with single Defined" - {
-            "should return Defined with value" in {
+        "with single Present" - {
+            "should return Present with value" in {
                 val result =
                     for
-                        x <- Defined(1)
+                        x <- Present(1)
                     yield x
-                assert(result == Defined(1))
+                assert(result == Present(1))
             }
         }
 
-        "with single Empty" - {
-            "should return Empty" in {
+        "with single Absent" - {
+            "should return Absent" in {
                 val result =
                     for
-                        x <- Empty
+                        x <- Absent
                     yield x
-                assert(result == Empty)
+                assert(result == Absent)
             }
         }
 
-        "with multiple Defined" - {
-            "should return Defined with result of yield" in {
+        "with multiple Present" - {
+            "should return Present with result of yield" in {
                 val result =
                     for
-                        x <- Defined(1)
-                        y <- Defined(2)
+                        x <- Present(1)
+                        y <- Present(2)
                     yield x + y
-                assert(result == Defined(3))
+                assert(result == Present(3))
             }
         }
 
-        "with multiple Defined and Empty" - {
-            "should return Empty if any are Empty" in {
+        "with multiple Present and Absent" - {
+            "should return Absent if any are Absent" in {
                 val result1 =
                     for
-                        _ <- Defined(1)
-                        _ <- Empty
-                        _ <- Defined(3)
+                        _ <- Present(1)
+                        _ <- Absent
+                        _ <- Present(3)
                     yield ()
-                assert(result1 == Empty)
+                assert(result1 == Absent)
 
                 val result2 =
                     for
-                        _ <- Empty
-                        _ <- Defined(2)
-                        _ <- Defined(3)
+                        _ <- Absent
+                        _ <- Present(2)
+                        _ <- Present(3)
                     yield ()
-                assert(result2 == Empty)
+                assert(result2 == Absent)
 
                 val result3 =
                     for
-                        _ <- Defined(1)
-                        _ <- Defined(2)
-                        _ <- Empty
+                        _ <- Present(1)
+                        _ <- Present(2)
+                        _ <- Absent
                     yield ()
-                assert(result3 == Empty)
+                assert(result3 == Absent)
             }
         }
 
         "with if guards" - {
-            "should return Defined if guard passes" in {
+            "should return Present if guard passes" in {
                 val result =
                     for
-                        x <- Defined(2)
+                        x <- Present(2)
                         if x % 2 == 0
                     yield x
-                assert(result == Defined(2))
+                assert(result == Present(2))
             }
 
-            "should return Empty if guard fails" in {
+            "should return Absent if guard fails" in {
                 val result =
                     for
-                        x <- Defined(3)
+                        x <- Present(3)
                         if x % 2 == 0
                     yield x
-                assert(result == Empty)
+                assert(result == Absent)
             }
         }
 
         "with nested for comprehensions" - {
-            "should return flat Defined if all succeed" in {
+            "should return flat Present if all succeed" in {
                 val result =
                     for
-                        x <- Defined(1)
+                        x <- Present(1)
                         y <-
                             for
-                                a <- Defined(2)
-                                b <- Defined(3)
+                                a <- Present(2)
+                                b <- Present(3)
                             yield a + b
                     yield x + y
-                assert(result == Defined(6))
+                assert(result == Present(6))
             }
 
-            "should return Empty if any inner comprehension is Empty" in {
+            "should return Absent if any inner comprehension is Absent" in {
                 val result =
                     for
-                        _ <- Defined(1)
+                        _ <- Present(1)
                         _ <-
                             for
-                                _ <- Empty
-                                _ <- Defined(3)
+                                _ <- Absent
+                                _ <- Present(3)
                             yield ()
                     yield ()
-                assert(result == Empty)
+                assert(result == Absent)
             }
         }
 
     }
 
     "show" - {
-        "should return 'Empty' for Empty" in {
-            assert(Empty.show == "Empty")
+        "should return 'Absent' for Absent" in {
+            assert(Absent.show == "Absent")
         }
 
-        "should return 'Defined(value)' for Defined" in {
-            assert(Defined(1).show == "Defined(1)")
-            assert(Defined("hello").show == "Defined(hello)")
+        "should return 'Present(value)' for Present" in {
+            assert(Present(1).show == "Present(1)")
+            assert(Present("hello").show == "Present(hello)")
         }
 
-        "should handle nested Defined values" in {
-            assert(Defined(Empty).show == "Defined(Empty)")
+        "should handle nested Present values" in {
+            assert(Present(Absent).show == "Present(Absent)")
         }
     }
 
     "DefinedEmpty.toString" - {
         "should return correct string representation" in {
-            assert(DefinedEmpty(1).toString == "Defined(Empty)")
-            assert(DefinedEmpty(2).toString == "Defined(Defined(Empty))")
-            assert(DefinedEmpty(3).toString == "Defined(Defined(Defined(Empty)))")
+            assert(DefinedEmpty(1).toString == "Present(Absent)")
+            assert(DefinedEmpty(2).toString == "Present(Present(Absent))")
+            assert(DefinedEmpty(3).toString == "Present(Present(Present(Absent)))")
         }
 
         "should handle large depths" in {
             val largeDepth = 10
-            val expected   = "Defined(" * largeDepth + "Empty" + ")" * largeDepth
+            val expected   = "Present(" * largeDepth + "Absent" + ")" * largeDepth
             assert(DefinedEmpty(largeDepth).toString == expected)
         }
     }

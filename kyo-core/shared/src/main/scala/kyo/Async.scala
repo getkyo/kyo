@@ -1,7 +1,6 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.Empty
 import kyo.Result.Panic
 import kyo.Tag
 import kyo.internal.FiberPlatformSpecific

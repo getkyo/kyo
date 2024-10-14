@@ -118,8 +118,8 @@ object Queue:
             @tailrec def loop(): Unit =
                 val v = poll()
                 v match
-                    case Empty =>
-                    case Defined(v) =>
+                    case Absent =>
+                    case Present(v) =>
                         b += v
                         loop()
                 end match

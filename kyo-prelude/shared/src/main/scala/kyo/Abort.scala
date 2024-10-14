@@ -91,16 +91,16 @@ object Abort:
                 case Right(value) => value
                 case Left(value)  => fail(value)
 
-        /** Lifts an Option into the Abort effect with Empty as the failure value.
+        /** Lifts an Option into the Abort effect with Absent as the failure value.
           *
           * @param opt
           *   The Option to lift
           * @return
-          *   A computation that succeeds with the Some value or fails with Empty
+          *   A computation that succeeds with the Some value or fails with Absent
           */
-        inline def apply[A](opt: Option[A])(using inline frame: Frame): A < Abort[Empty] =
+        inline def apply[A](opt: Option[A])(using inline frame: Frame): A < Abort[Absent] =
             opt match
-                case None    => fail(Empty)
+                case None    => fail(Absent)
                 case Some(v) => v
 
         /** Lifts a scala.util.Try into the Abort effect.
@@ -133,11 +133,11 @@ object Abort:
           * @param m
           *   The Maybe to lift
           * @return
-          *   A computation that succeeds with the Defined value or fails with Empty
+          *   A computation that succeeds with the Present value or fails with Absent
           */
         @targetName("maybe")
-        inline def apply[A](m: Maybe[A])(using inline frame: Frame): A < Abort[Empty] =
-            m.fold(fail(Empty))(identity)
+        inline def apply[A](m: Maybe[A])(using inline frame: Frame): A < Abort[Absent] =
+            m.fold(fail(Absent))(identity)
     end GetOps
 
     /** Operations for lifting various types into the Abort effect.

@@ -59,11 +59,11 @@ private[kyo] object LayerMacros:
                     _.value, {
                         // TODO: MAke nIcEr PlZEaz
                         val debugFold =
-                            targetLayer.fold[String]("(" + _ + " and " + _ + ")", "(" + _ + " to " + _ + ")", _.value.show, "Empty")
+                            targetLayer.fold[String]("(" + _ + " and " + _ + ")", "(" + _ + " to " + _ + ")", _.value.show, "Absent")
 
                         report.errorAndAbort(
                             s"""|
-                                | Empty layer found as input to Layer with non-zero requirements. Did you fully resolve dependencies?
+                                | Absent layer found as input to Layer with non-zero requirements. Did you fully resolve dependencies?
                                 | Debug: $debugFold
                                 |""".stripMargin
                         )
@@ -114,7 +114,7 @@ private[kyo] object LayerMacros:
         case And(left: LayerLike[A], right: LayerLike[A])
         case To(left: LayerLike[A], right: LayerLike[A])
         case Value(value: A)
-        case Empty
+        case Absent
 
         infix def and[A1 >: A](that: LayerLike[A1]): LayerLike[A1] = And(this, that)
         infix def to[A1 >: A](that: LayerLike[A1]): LayerLike[A1]  = To(this, that)
@@ -126,7 +126,7 @@ private[kyo] object LayerMacros:
                 case To(left, right) =>
                     toCase(left.fold(andCase, toCase, valueCase, emptyCase), right.fold(andCase, toCase, valueCase, emptyCase))
                 case Value(value) => valueCase(value)
-                case Empty        => emptyCase
+                case Absent       => emptyCase
     end LayerLike
 
     object LayerLike:
@@ -199,7 +199,7 @@ private[kyo] object LayerMacros:
                         buildTargets(node.inputs, Some(node), seen = seen + node)
                             .map { input => input to LayerLike.Value(node) }
                 }
-            yield values.reduceOption(_ and _).getOrElse(LayerLike.Empty)
+            yield values.reduceOption(_ and _).getOrElse(LayerLike.Absent)
         end buildTargets
 
         def findNodesWithOutputs(

@@ -43,24 +43,24 @@ class ConstructorsTest extends Test:
                 val someEffect = Kyo.fromOption(Some(42))
                 val noneEffect = Kyo.fromOption(None)
 
-                val someResult = Abort.run[Empty](someEffect).eval
-                val noneResult = Abort.run[Empty](noneEffect).eval
+                val someResult = Abort.run[Absent](someEffect).eval
+                val noneResult = Abort.run[Absent](noneEffect).eval
 
                 assert(someResult == Result.success(42))
-                assert(noneResult == Result.fail(Empty))
+                assert(noneResult == Result.fail(Absent))
             }
         }
 
         "fromMaybe" - {
             "should create an effect from Maybe[A]" in {
-                val definedEffect = Kyo.fromMaybe(Defined(42))
-                val emptyEffect   = Kyo.fromMaybe(Empty)
+                val definedEffect = Kyo.fromMaybe(Present(42))
+                val emptyEffect   = Kyo.fromMaybe(Absent)
 
-                val definedResult = Abort.run[Empty](definedEffect).eval
-                val emptyResult   = Abort.run[Empty](emptyEffect).eval
+                val definedResult = Abort.run[Absent](definedEffect).eval
+                val emptyResult   = Abort.run[Absent](emptyEffect).eval
 
                 assert(definedResult == Result.success(42))
-                assert(emptyResult == Result.fail(Empty))
+                assert(emptyResult == Result.fail(Absent))
             }
         }
 

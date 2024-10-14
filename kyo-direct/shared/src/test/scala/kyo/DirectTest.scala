@@ -40,7 +40,7 @@ class DirectTest extends Test:
     }
 
     "two effects" in run {
-        val io: String < (IO & Abort[Empty]) =
+        val io: String < (IO & Abort[Absent]) =
             defer {
                 val a = await(Abort.get(Some("hello")))
                 val b = await(IO("world"))

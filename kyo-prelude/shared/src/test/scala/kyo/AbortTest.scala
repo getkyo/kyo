@@ -90,11 +90,11 @@ class AbortsTest extends Test:
             assert(Abort.run(Abort.get(Result.fail(ex1))).eval == Result.fail(ex1))
         }
         "option" in {
-            assert(Abort.run(Abort.get(Option.empty)).eval == Result.fail(Empty))
+            assert(Abort.run(Abort.get(Option.empty)).eval == Result.fail(Absent))
             assert(Abort.run(Abort.get(Some(1))).eval == Result.success(1))
         }
         "maybe" in {
-            assert(Abort.run(Abort.get(Maybe.empty)).eval == Result.fail(Empty))
+            assert(Abort.run(Abort.get(Maybe.empty)).eval == Result.fail(Absent))
             assert(Abort.run(Abort.get(Maybe(1))).eval == Result.success(1))
         }
     }

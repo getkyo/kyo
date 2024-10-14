@@ -309,9 +309,9 @@ class SystemTest extends Test:
             assert(testUnsafe.env(TEST_ENV) == Maybe("test_env_value"))
         }
 
-        "should return Empty for non-existent environment variable" in {
+        "should return Absent for non-existent environment variable" in {
             val testUnsafe = new TestUnsafeSystem()
-            assert(testUnsafe.env("NON_EXISTENT_ENV") == Empty)
+            assert(testUnsafe.env("NON_EXISTENT_ENV") == Absent)
         }
 
         "should get system property correctly" in {
@@ -319,9 +319,9 @@ class SystemTest extends Test:
             assert(testUnsafe.property(TEST_PROP) == Maybe("test_prop_value"))
         }
 
-        "should return Empty for non-existent system property" in {
+        "should return Absent for non-existent system property" in {
             val testUnsafe = new TestUnsafeSystem()
-            assert(testUnsafe.property("NON_EXISTENT_PROP") == Empty)
+            assert(testUnsafe.property("NON_EXISTENT_PROP") == Absent)
         }
 
         "should get line separator correctly" in {

@@ -142,9 +142,9 @@ class EnvTest extends Test:
     "effectful services" - {
 
         trait Service1:
-            def apply(i: Int): Int < Abort[Empty]
+            def apply(i: Int): Int < Abort[Absent]
         trait Service2:
-            def apply(i: Int): Int < Abort[Empty]
+            def apply(i: Int): Int < Abort[Absent]
 
         val service1 = new Service1:
             def apply(i: Int) = i match
@@ -179,7 +179,7 @@ class EnvTest extends Test:
                     Env.get[Service1].map(_(1)).map { i =>
                         Env.get[Service2].map(_(i))
                     }
-                val v: Int < (Env[Service1] & Env[Service2] & Abort[Empty]) = a
+                val v: Int < (Env[Service1] & Env[Service2] & Abort[Absent]) = a
                 "same handling order" in {
                     val b = Env.run(service2)(v)
                     val c = Env.run(service1)(b)
@@ -195,7 +195,7 @@ class EnvTest extends Test:
                     )
                 }
                 "dependent services" in {
-                    val v2: Int < (Env[Service2] & Abort[Empty]) = Env.run(service1)(v)
+                    val v2: Int < (Env[Service2] & Abort[Absent]) = Env.run(service1)(v)
                     assert(
                         Abort.run(Env.run(service2)(v2)).eval ==
                             Result.success(3)
