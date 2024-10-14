@@ -136,6 +136,15 @@ sealed abstract class Schedule derives CanEqual:
                 case Never | Done => this
                 case _            => Delay(this, duration)
 
+    /** Returns a string representation of the schedule as it would appear in source code.
+      *
+      * @return
+      *   a string representation of the schedule
+      */
+    def show: String
+
+    override def toString() = show
+
 end Schedule
 
 object Schedule:
@@ -239,30 +248,38 @@ object Schedule:
 
         case object Immediate extends Schedule:
             val next = Maybe((Duration.Zero, Done))
+            def show = "Schedule.immediate"
 
         case object Never extends Schedule:
             def next = Maybe.empty
+            def show = "Schedule.never"
 
         case object Done extends Schedule:
             def next = Maybe.empty
+            def show = "Schedule.done"
 
         case class Fixed(interval: Duration) extends Schedule:
             val next = Maybe((interval, this))
+            def show = s"Schedule.fixed(${interval.show})"
 
         case class Exponential(initial: Duration, factor: Double) extends Schedule:
             def next = Maybe((initial, Exponential(initial * factor, factor)))
+            def show = s"Schedule.exponential(${initial.show}, $factor)"
 
         case class Fibonacci(a: Duration, b: Duration) extends Schedule:
             def next = Maybe((a, Fibonacci(b, a + b)))
+            def show = s"Schedule.fibonacci(${a.show}, ${b.show})"
 
         case class ExponentialBackoff(initial: Duration, factor: Double, maxBackoff: Duration) extends Schedule:
             def next =
                 val nextDelay = initial.min(maxBackoff)
                 Maybe((nextDelay, exponentialBackoff(nextDelay * factor, factor, maxBackoff)))
+            def show = s"Schedule.exponentialBackoff(${initial.show}, $factor, ${maxBackoff.show})"
         end ExponentialBackoff
 
         case class Linear(base: Duration) extends Schedule:
             def next = Maybe((base, linear(base + base)))
+            def show = s"Schedule.linear(${base.show})"
 
         case class Max(a: Schedule, b: Schedule) extends Schedule:
             def next =
@@ -270,6 +287,7 @@ object Schedule:
                     (d1, s1) <- a.next
                     (d2, s2) <- b.next
                 yield (d1.max(d2), s1.max(s2))
+            def show = s"(${a.show}).max(${b.show})"
         end Max
 
         case class Min(a: Schedule, b: Schedule) extends Schedule:
@@ -281,15 +299,20 @@ object Schedule:
                             case Maybe.Empty => n
                             case Maybe.Defined((d2, s2)) =>
                                 Maybe((d1.min(d2), s1.min(s2)))
+            def show = s"(${a.show}).min(${b.show})"
         end Min
 
         case class Take(schedule: Schedule, remaining: Int) extends Schedule:
             def next =
                 schedule.next.map((d, s) => (d, s.take(remaining - 1)))
+            def show = s"(${schedule.show}).take($remaining)"
+        end Take
 
         case class AndThen(a: Schedule, b: Schedule) extends Schedule:
             def next =
                 a.next.map((d, s) => (d, s.andThen(b))).orElse(b.next)
+            def show = s"(${a.show}).andThen(${b.show})"
+        end AndThen
 
         case class MaxDuration(schedule: Schedule, duration: Duration) extends Schedule:
             def next =
@@ -297,19 +320,26 @@ object Schedule:
                     if d > duration then Maybe.empty
                     else Maybe((d, s.maxDuration(duration - d)))
                 }
+            def show = s"(${schedule.show}).maxDuration(${duration.show})"
         end MaxDuration
 
         case class Repeat(schedule: Schedule, remaining: Int) extends Schedule:
             def next =
                 schedule.next.map((d, s) => (d, s.andThen(schedule.repeat(remaining - 1))))
+            def show = s"(${schedule.show}).repeat($remaining)"
+        end Repeat
 
         case class Forever(schedule: Schedule) extends Schedule:
             def next =
                 schedule.next.map((d, s) => (d, s.andThen(this)))
+            def show = s"(${schedule.show}).forever"
+        end Forever
 
         case class Delay(schedule: Schedule, duration: Duration) extends Schedule:
             def next =
                 schedule.next.map((d, s) => (duration + d, s.delay(duration)))
+            def show = s"(${schedule.show}).delay(${duration.show})"
+        end Delay
 
     end internal
 end Schedule

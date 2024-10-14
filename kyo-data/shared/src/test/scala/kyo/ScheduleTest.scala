@@ -787,4 +787,49 @@ class ScheduleTest extends Test:
         }
     }
 
+    "show" - {
+        "correctly represents simple schedules" in {
+            assert(Schedule.immediate.show == "Schedule.immediate")
+            assert(Schedule.never.show == "Schedule.never")
+            assert(Schedule.done.show == "Schedule.done")
+            assert(Schedule.fixed(1.second).show == s"Schedule.fixed(${1.second.show})")
+            assert(Schedule.linear(2.seconds).show == s"Schedule.linear(${2.seconds.show})")
+            assert(Schedule.exponential(1.second, 2.0).show == s"Schedule.exponential(${1.second.show}, 2.0)")
+            assert(Schedule.fibonacci(1.second, 2.seconds).show == s"Schedule.fibonacci(${1.second.show}, ${2.seconds.show})")
+            assert(Schedule.exponentialBackoff(1.second, 2.0, 10.seconds)
+                .show == s"Schedule.exponentialBackoff(${1.second.show}, 2.0, ${10.seconds.show})")
+        }
+
+        "correctly represents composite schedules" in {
+            val s1 = Schedule.fixed(1.second).take(3)
+            assert(s1.show == s"(Schedule.fixed(${1.second.show})).take(3)")
+
+            val s2 = Schedule.exponential(1.second, 2.0).forever
+            assert(s2.show == s"(Schedule.exponential(${1.second.show}, 2.0)).forever")
+
+            val s3 = Schedule.fixed(1.second).max(Schedule.fixed(2.seconds))
+            assert(s3.show == s"(Schedule.fixed(${1.second.show})).max(Schedule.fixed(${2.seconds.show}))")
+
+            val s4 = Schedule.immediate.andThen(Schedule.fixed(1.second))
+            assert(s4.show == s"(Schedule.immediate).andThen(Schedule.fixed(${1.second.show}))")
+        }
+
+        "correctly represents complex composite schedules" in {
+            val s = Schedule.exponential(1.second, 2.0)
+                .take(5)
+                .andThen(Schedule.fixed(10.seconds))
+                .forever
+                .maxDuration(1.minute)
+
+            assert(
+                s.show == s"((((Schedule.exponential(${1.second.show}, 2.0)).take(5)).andThen(Schedule.fixed(${10.seconds.show}))).forever).maxDuration(${1.minute.show})"
+            )
+        }
+
+        "correctly represents schedules with delay" in {
+            val s1 = Schedule.fixed(1.second).delay(500.millis)
+            assert(s1.show == s"(Schedule.fixed(${1.second.show})).delay(${500.millis.show})")
+        }
+    }
+
 end ScheduleTest
