@@ -69,7 +69,7 @@ object Maybe:
         if cond then v else Absent
 
     /** Represents a defined value in a Maybe. */
-    opaque type Present[+A] = A | PresentEmpty
+    opaque type Present[+A] = A | PresentAbsent
 
     object Present:
 
@@ -84,9 +84,9 @@ object Maybe:
           */
         def apply[A](v: A): Present[A] =
             v match
-                case v: PresentEmpty => v.nest
-                case v: Absent       => PresentEmpty.one
-                case v               => v
+                case v: PresentAbsent => v.nest
+                case v: Absent        => PresentAbsent.one
+                case v                => v
 
         /** Extracts the value from a Maybe instance.
           *
@@ -168,7 +168,7 @@ object Maybe:
             (self: @unchecked) match
                 case _: Absent =>
                     throw new NoSuchElementException("Maybe.get")
-                case self: PresentEmpty =>
+                case self: PresentAbsent =>
                     self.unnest.asInstanceOf[A]
                 case v: A =>
                     v
@@ -398,27 +398,27 @@ object Maybe:
 
     private[kyo] object internal:
 
-        case class PresentEmpty(val depth: Int):
+        case class PresentAbsent(val depth: Int):
             def unnest =
                 if depth > 1 then
-                    PresentEmpty(depth - 1)
+                    PresentAbsent(depth - 1)
                 else
                     Absent
             def nest =
-                PresentEmpty(depth + 1)
+                PresentAbsent(depth + 1)
 
             override def toString: String =
                 "Present(" * depth + "Absent" + ")" * depth
-        end PresentEmpty
+        end PresentAbsent
 
-        object PresentEmpty:
-            val cache = (0 until 100).map(new PresentEmpty(_)).toArray
-            val one   = PresentEmpty(1)
-            def apply(depth: Int): PresentEmpty =
+        object PresentAbsent:
+            val cache = (0 until 100).map(new PresentAbsent(_)).toArray
+            val one   = PresentAbsent(1)
+            def apply(depth: Int): PresentAbsent =
                 if depth < cache.length then
                     cache(depth)
                 else
-                    new PresentEmpty(depth)
-        end PresentEmpty
+                    new PresentAbsent(depth)
+        end PresentAbsent
     end internal
 end Maybe

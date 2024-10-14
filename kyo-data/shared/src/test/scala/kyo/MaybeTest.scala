@@ -1,7 +1,7 @@
 package kyo
 
 import kyo.Maybe.*
-import kyo.Maybe.internal.DefinedEmpty
+import kyo.Maybe.internal.PresentAbsent
 
 class MaybeTest extends Test:
 
@@ -13,8 +13,8 @@ class MaybeTest extends Test:
         "creates Absent for null values" in {
             assert(Maybe(null) == Absent)
         }
-        "creates DefinedEmpty for Absent" in {
-            assert(Maybe(Maybe.empty).equals(DefinedEmpty.one))
+        "creates PresentAbsent for Absent" in {
+            assert(Maybe(Maybe.empty).equals(PresentAbsent.one))
         }
     }
 
@@ -521,17 +521,17 @@ class MaybeTest extends Test:
         }
     }
 
-    "DefinedEmpty.toString" - {
+    "PresentAbsent.toString" - {
         "should return correct string representation" in {
-            assert(DefinedEmpty(1).toString == "Present(Absent)")
-            assert(DefinedEmpty(2).toString == "Present(Present(Absent))")
-            assert(DefinedEmpty(3).toString == "Present(Present(Present(Absent)))")
+            assert(PresentAbsent(1).toString == "Present(Absent)")
+            assert(PresentAbsent(2).toString == "Present(Present(Absent))")
+            assert(PresentAbsent(3).toString == "Present(Present(Present(Absent)))")
         }
 
         "should handle large depths" in {
             val largeDepth = 10
             val expected   = "Present(" * largeDepth + "Absent" + ")" * largeDepth
-            assert(DefinedEmpty(largeDepth).toString == expected)
+            assert(PresentAbsent(largeDepth).toString == expected)
         }
     }
 
