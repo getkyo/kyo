@@ -264,7 +264,7 @@ object Schedule:
 
         case class Exponential(initial: Duration, factor: Double) extends Schedule:
             def next = Maybe((initial, Exponential(initial * factor, factor)))
-            def show = s"Schedule.exponential(${initial.show}, $factor)"
+            def show = s"Schedule.exponential(${initial.show}, ${formatDouble(factor)})"
 
         case class Fibonacci(a: Duration, b: Duration) extends Schedule:
             def next = Maybe((a, Fibonacci(b, a + b)))
@@ -274,7 +274,7 @@ object Schedule:
             def next =
                 val nextDelay = initial.min(maxBackoff)
                 Maybe((nextDelay, exponentialBackoff(nextDelay * factor, factor, maxBackoff)))
-            def show = s"Schedule.exponentialBackoff(${initial.show}, $factor, ${maxBackoff.show})"
+            def show = s"Schedule.exponentialBackoff(${initial.show}, ${formatDouble(factor)}, ${maxBackoff.show})"
         end ExponentialBackoff
 
         case class Linear(base: Duration) extends Schedule:
@@ -340,6 +340,9 @@ object Schedule:
                 schedule.next.map((d, s) => (duration + d, s.delay(duration)))
             def show = s"(${schedule.show}).delay(${duration.show})"
         end Delay
+
+        private def formatDouble(d: Double): String =
+            if d == d.toLong then f"$d%.1f" else d.toString
 
     end internal
 end Schedule
