@@ -25,7 +25,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a new schedule that produces the maximum delay of both schedules
       */
-    def max(that: Schedule): Schedule =
+    final def max(that: Schedule): Schedule =
         this match
             case Never            => this
             case Done | Immediate => that
@@ -42,7 +42,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a new schedule that produces the minimum delay of both schedules
       */
-    def min(that: Schedule): Schedule =
+    final def min(that: Schedule): Schedule =
         this match
             case Never            => that
             case Done | Immediate => this
@@ -59,7 +59,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a new schedule that stops after n repetitions
       */
-    def take(n: Int): Schedule =
+    final def take(n: Int): Schedule =
         if n <= 0 then Schedule.done
         else
             this match
@@ -73,7 +73,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a new schedule that runs this schedule followed by the other
       */
-    def andThen(that: Schedule): Schedule =
+    final def andThen(that: Schedule): Schedule =
         this match
             case Never => Never
             case Done  => that
@@ -89,7 +89,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a new schedule that repeats this schedule n times
       */
-    def repeat(n: Int): Schedule =
+    final def repeat(n: Int): Schedule =
         if n <= 0 then Schedule.done
         else if n == 1 then this
         else
@@ -104,7 +104,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a new schedule that stops after the specified duration
       */
-    def maxDuration(maxDuration: Duration): Schedule =
+    final def maxDuration(maxDuration: Duration): Schedule =
         if !maxDuration.isFinite then this
         else
             this match
@@ -116,7 +116,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a new schedule that repeats this schedule forever
       */
-    def forever: Schedule =
+    final def forever: Schedule =
         this match
             case Never | Done => this
             case _: Forever   => this
@@ -129,7 +129,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a new schedule with the added delay
       */
-    def delay(duration: Duration): Schedule =
+    final def delay(duration: Duration): Schedule =
         if duration == Duration.Zero then this
         else
             this match
@@ -258,30 +258,30 @@ object Schedule:
             def next = Maybe.empty
             def show = "Schedule.done"
 
-        case class Fixed(interval: Duration) extends Schedule:
+        final case class Fixed(interval: Duration) extends Schedule:
             val next = Maybe((interval, this))
             def show = s"Schedule.fixed(${interval.show})"
 
-        case class Exponential(initial: Duration, factor: Double) extends Schedule:
+        final case class Exponential(initial: Duration, factor: Double) extends Schedule:
             def next = Maybe((initial, Exponential(initial * factor, factor)))
             def show = s"Schedule.exponential(${initial.show}, ${formatDouble(factor)})"
 
-        case class Fibonacci(a: Duration, b: Duration) extends Schedule:
+        final case class Fibonacci(a: Duration, b: Duration) extends Schedule:
             def next = Maybe((a, Fibonacci(b, a + b)))
             def show = s"Schedule.fibonacci(${a.show}, ${b.show})"
 
-        case class ExponentialBackoff(initial: Duration, factor: Double, maxBackoff: Duration) extends Schedule:
+        final case class ExponentialBackoff(initial: Duration, factor: Double, maxBackoff: Duration) extends Schedule:
             def next =
                 val nextDelay = initial.min(maxBackoff)
                 Maybe((nextDelay, exponentialBackoff(nextDelay * factor, factor, maxBackoff)))
             def show = s"Schedule.exponentialBackoff(${initial.show}, ${formatDouble(factor)}, ${maxBackoff.show})"
         end ExponentialBackoff
 
-        case class Linear(base: Duration) extends Schedule:
+        final case class Linear(base: Duration) extends Schedule:
             def next = Maybe((base, linear(base + base)))
             def show = s"Schedule.linear(${base.show})"
 
-        case class Max(a: Schedule, b: Schedule) extends Schedule:
+        final case class Max(a: Schedule, b: Schedule) extends Schedule:
             def next =
                 for
                     (d1, s1) <- a.next
@@ -290,7 +290,7 @@ object Schedule:
             def show = s"(${a.show}).max(${b.show})"
         end Max
 
-        case class Min(a: Schedule, b: Schedule) extends Schedule:
+        final case class Min(a: Schedule, b: Schedule) extends Schedule:
             def next =
                 a.next match
                     case Maybe.Empty => b.next
@@ -302,19 +302,19 @@ object Schedule:
             def show = s"(${a.show}).min(${b.show})"
         end Min
 
-        case class Take(schedule: Schedule, remaining: Int) extends Schedule:
+        final case class Take(schedule: Schedule, remaining: Int) extends Schedule:
             def next =
                 schedule.next.map((d, s) => (d, s.take(remaining - 1)))
             def show = s"(${schedule.show}).take($remaining)"
         end Take
 
-        case class AndThen(a: Schedule, b: Schedule) extends Schedule:
+        final case class AndThen(a: Schedule, b: Schedule) extends Schedule:
             def next =
                 a.next.map((d, s) => (d, s.andThen(b))).orElse(b.next)
             def show = s"(${a.show}).andThen(${b.show})"
         end AndThen
 
-        case class MaxDuration(schedule: Schedule, duration: Duration) extends Schedule:
+        final case class MaxDuration(schedule: Schedule, duration: Duration) extends Schedule:
             def next =
                 schedule.next.flatMap { (d, s) =>
                     if d > duration then Maybe.empty
@@ -323,19 +323,19 @@ object Schedule:
             def show = s"(${schedule.show}).maxDuration(${duration.show})"
         end MaxDuration
 
-        case class Repeat(schedule: Schedule, remaining: Int) extends Schedule:
+        final case class Repeat(schedule: Schedule, remaining: Int) extends Schedule:
             def next =
                 schedule.next.map((d, s) => (d, s.andThen(schedule.repeat(remaining - 1))))
             def show = s"(${schedule.show}).repeat($remaining)"
         end Repeat
 
-        case class Forever(schedule: Schedule) extends Schedule:
+        final case class Forever(schedule: Schedule) extends Schedule:
             def next =
                 schedule.next.map((d, s) => (d, s.andThen(this)))
             def show = s"(${schedule.show}).forever"
         end Forever
 
-        case class Delay(schedule: Schedule, duration: Duration) extends Schedule:
+        final case class Delay(schedule: Schedule, duration: Duration) extends Schedule:
             def next =
                 schedule.next.map((d, s) => (duration + d, s.delay(duration)))
             def show = s"(${schedule.show}).delay(${duration.show})"
