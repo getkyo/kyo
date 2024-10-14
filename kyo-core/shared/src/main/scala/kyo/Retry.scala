@@ -29,14 +29,11 @@ object Retry:
         ): A < (Async & Abort[E] & S) =
             Loop(schedule) { schedule =>
                 Abort.run[E](v).map(_.fold { r =>
-                    val (delay, nextSchedule) = schedule.next
-                    if delay.isFinite then
-                        Async.sleep(delay).andThen {
-                            Loop.continue(nextSchedule)
-                        }
-                    else
+                    schedule.next.map { (delay, nextSchedule) =>
+                        Async.delay(delay)(Loop.continue(nextSchedule))
+                    }.getOrElse {
                         Abort.get(r)
-                    end if
+                    }
                 }(Loop.done(_)))
             }
         end apply

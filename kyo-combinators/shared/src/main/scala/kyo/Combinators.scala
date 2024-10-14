@@ -74,9 +74,11 @@ extension [A, S](effect: A < S)
       */
     def repeat(schedule: Schedule)(using Flat[A], Frame): A < (S & Async) =
         Loop(schedule) { schedule =>
-            val (delay, nextSchedule) = schedule.next
-            if !delay.isFinite then effect.map(Loop.done)
-            else effect.delayed(delay).as(Loop.continue(nextSchedule))
+            schedule.next.map { (delay, nextSchedule) =>
+                effect.delayed(delay).as(Loop.continue(nextSchedule))
+            }.getOrElse {
+                effect.map(Loop.done)
+            }
         }
 
     /** Performs this computation repeatedly with a limit.
