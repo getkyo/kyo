@@ -12,6 +12,8 @@ addSbtPlugin("org.scalameta" % "sbt-mdoc" % "2.6.1")
 
 addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.2.1")
 
+addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.1.4")
+
 // addSbtPlugin("com.gradle" % "sbt-develocity" % "1.0.1")
 
 // addSbtPlugin("com.github.sbt" % "sbt-jacoco" % "3.4.0")
