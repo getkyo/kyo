@@ -649,6 +649,142 @@ class ScheduleTest extends Test:
             assert(s1 == s2)
             assert(s1 != s3)
         }
+
+        "reduces exponential schedule with factor 1 to fixed schedule" in {
+            val s1 = Schedule.exponential(1.second, 1.0)
+            val s2 = Schedule.fixed(1.second)
+
+            assert(s1 == s2)
+        }
+
+        "reduces exponential backoff schedule with factor 1 to fixed schedule" in {
+            val s1 = Schedule.exponentialBackoff(1.second, 1.0, 10.seconds)
+            val s2 = Schedule.fixed(1.second)
+
+            assert(s1 == s2)
+        }
+
+        "reduces linear schedule with zero base to immediate schedule" in {
+            val s1 = Schedule.linear(Duration.Zero)
+            val s2 = Schedule.immediate.forever
+
+            assert(s1 == s2)
+        }
+
+        "reduces fibonacci schedule with zero initial values to immediate forever" in {
+            val s1 = Schedule.fibonacci(Duration.Zero, Duration.Zero)
+            val s2 = Schedule.immediate.forever
+
+            assert(s1 == s2)
+        }
+
+        "reduces exponential schedule with zero initial to immediate" in {
+            val s1 = Schedule.exponential(Duration.Zero, 2.0)
+            val s2 = Schedule.immediate
+
+            assert(s1 == s2)
+        }
+
+        "reduces delay with zero duration to original schedule" in {
+            val original = Schedule.fixed(1.second)
+            val delayed  = original.delay(Duration.Zero)
+            assert(delayed == original)
+        }
+
+        "reduces maxDuration with infinite duration to original schedule" in {
+            val original = Schedule.fixed(1.second)
+            val limited  = original.maxDuration(Duration.Infinity)
+            assert(limited == original)
+        }
+
+        "reduces repeat with count 1 to original schedule" in {
+            val original = Schedule.fixed(1.second)
+            val repeated = original.repeat(1)
+            assert(repeated == original)
+        }
+
+        "reduces andThen with immediate to original schedule" in {
+            val original = Schedule.fixed(1.second)
+            val chained  = original.andThen(Schedule.immediate)
+            assert(chained == original)
+        }
+
+        "reduces forever of forever to single forever" in {
+            val original      = Schedule.fixed(1.second)
+            val doubleForever = original.forever
+            assert(doubleForever == original.forever)
+        }
+
+        "reduces delay of never to never" in {
+            val delayed = Schedule.never.delay(1.second)
+            assert(delayed == Schedule.never)
+        }
+
+        "reduces maxDuration of immediate to immediate" in {
+            val limited = Schedule.immediate.maxDuration(1.second)
+            assert(limited == Schedule.immediate)
+        }
+
+        "reduces andThen of done and any schedule to that schedule" in {
+            val s       = Schedule.fixed(1.second)
+            val chained = Schedule.done.andThen(s)
+            assert(chained == s)
+        }
+
+        "reduces repeat with count 0 to done" in {
+            val original = Schedule.fixed(1.second)
+            val repeated = original.repeat(0)
+            assert(repeated == Schedule.done)
+        }
+
+        "reduces take with count 0 to done" in {
+            val original = Schedule.fixed(1.second)
+            val taken    = original.take(0)
+            assert(taken == Schedule.done)
+        }
+
+        "reduces andThen with never to original schedule" in {
+            val original = Schedule.fixed(1.second)
+            val chained  = original.andThen(Schedule.never)
+            assert(chained == original)
+        }
+
+        "reduces max of done" in {
+            val s     = Schedule.fixed(1.second)
+            val maxed = Schedule.done.max(s)
+            assert(maxed == s)
+        }
+
+        "reduces min of never and any schedule to that schedule" in {
+            val s      = Schedule.fixed(1.second)
+            val minned = Schedule.never.min(s)
+            assert(minned == s)
+        }
+
+        "reduces delay of done to done" in {
+            val delayed = Schedule.done.delay(1.second)
+            assert(delayed == Schedule.done)
+        }
+
+        "reduces delay of immediate to fixed delay" in {
+            val delayed = Schedule.immediate.delay(1.second)
+            assert(delayed == Schedule.delay(1.second))
+        }
+
+        "reduces maxDuration of never to never" in {
+            val limited = Schedule.never.maxDuration(1.second)
+            assert(limited == Schedule.never)
+        }
+
+        "reduces forever of never to never" in {
+            val foreverNever = Schedule.never.forever
+            assert(foreverNever == Schedule.never)
+        }
+
+        "reduces forever of done to done" in {
+            val foreverDone = Schedule.done.forever
+            assert(foreverDone == Schedule.done)
+        }
     }
 
 end ScheduleTest

@@ -77,7 +77,10 @@ sealed abstract class Schedule derives CanEqual:
         this match
             case Never => Never
             case Done  => that
-            case _     => AndThen(this, that)
+            case _ =>
+                that match
+                    case Done | Never | Immediate => this
+                    case _                        => AndThen(this, that)
 
     /** Repeats this schedule a specified number of times.
       *
@@ -102,9 +105,11 @@ sealed abstract class Schedule derives CanEqual:
       *   a new schedule that stops after the specified duration
       */
     def maxDuration(maxDuration: Duration): Schedule =
-        this match
-            case Never | Done => this
-            case _            => MaxDuration(this, maxDuration)
+        if !maxDuration.isFinite then this
+        else
+            this match
+                case Never | Done | Immediate => this
+                case _                        => MaxDuration(this, maxDuration)
 
     /** Repeats this schedule indefinitely.
       *
@@ -114,6 +119,7 @@ sealed abstract class Schedule derives CanEqual:
     def forever: Schedule =
         this match
             case Never | Done => this
+            case _: Forever   => this
             case _            => Forever(this)
 
     /** Adds a fixed delay before each iteration of this schedule.
@@ -124,9 +130,11 @@ sealed abstract class Schedule derives CanEqual:
       *   a new schedule with the added delay
       */
     def delay(duration: Duration): Schedule =
-        this match
-            case Never | Done => this
-            case _            => Delay(this, duration)
+        if duration == Duration.Zero then this
+        else
+            this match
+                case Never | Done => this
+                case _            => Delay(this, duration)
 
 end Schedule
 
@@ -180,7 +188,9 @@ object Schedule:
       * @return
       *   a new schedule with linearly increasing intervals
       */
-    def linear(base: Duration): Schedule = Linear(base)
+    def linear(base: Duration): Schedule =
+        if base == Duration.Zero then immediate.forever
+        else Linear(base)
 
     /** Creates a schedule with intervals following the Fibonacci sequence.
       *
@@ -191,7 +201,9 @@ object Schedule:
       * @return
       *   a new schedule with Fibonacci sequence intervals
       */
-    def fibonacci(a: Duration, b: Duration): Schedule = Fibonacci(a, b)
+    def fibonacci(a: Duration, b: Duration): Schedule =
+        if a == Duration.Zero && b == Duration.Zero then immediate.forever
+        else Fibonacci(a, b)
 
     /** Creates a schedule with exponentially increasing intervals.
       *
@@ -202,7 +214,10 @@ object Schedule:
       * @return
       *   a new schedule with exponentially increasing intervals
       */
-    def exponential(initial: Duration, factor: Double): Schedule = Exponential(initial, factor)
+    def exponential(initial: Duration, factor: Double): Schedule =
+        if initial == Duration.Zero then immediate
+        else if factor == 1.0 then fixed(initial)
+        else Exponential(initial, factor)
 
     /** Creates a schedule with exponential backoff and a maximum delay.
       *
@@ -216,7 +231,9 @@ object Schedule:
       *   a new schedule with exponential backoff and a maximum delay
       */
     def exponentialBackoff(initial: Duration, factor: Double, maxBackoff: Duration): Schedule =
-        ExponentialBackoff(initial, factor, maxBackoff)
+        if initial == Duration.Zero then immediate
+        else if factor == 1.0 then fixed(initial)
+        else ExponentialBackoff(initial, factor, maxBackoff)
 
     private[kyo] object internal:
 
