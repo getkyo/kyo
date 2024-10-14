@@ -161,6 +161,84 @@ object DurationSpec extends ZIOSpecDefault:
             test("negative value") {
                 assertTrue(Duration.fromNanos(-1) == Duration.Zero)
             }
+        ),
+        suite("Duration.show")(
+            test("zero duration") {
+                assertTrue(Duration.Zero.show == "Duration.Zero")
+            },
+            test("infinity duration") {
+                assertTrue(Duration.Infinity.show == "Duration.Infinity")
+            },
+            test("nanoseconds") {
+                TestResult.allSuccesses(
+                    assertTrue(1.nano.show == "1.nanos"),
+                    assertTrue(999.nanos.show == "999.nanos")
+                )
+            },
+            test("microseconds") {
+                TestResult.allSuccesses(
+                    assertTrue(1.micro.show == "1.micros"),
+                    assertTrue(999.micros.show == "999.micros")
+                )
+            },
+            test("milliseconds") {
+                TestResult.allSuccesses(
+                    assertTrue(1.milli.show == "1.millis"),
+                    assertTrue(999.millis.show == "999.millis")
+                )
+            },
+            test("seconds") {
+                TestResult.allSuccesses(
+                    assertTrue(1.second.show == "1.seconds"),
+                    assertTrue(59.seconds.show == "59.seconds")
+                )
+            },
+            test("minutes") {
+                TestResult.allSuccesses(
+                    assertTrue(1.minute.show == "1.minutes"),
+                    assertTrue(59.minutes.show == "59.minutes")
+                )
+            },
+            test("hours") {
+                TestResult.allSuccesses(
+                    assertTrue(1.hour.show == "1.hours"),
+                    assertTrue(23.hours.show == "23.hours")
+                )
+            },
+            test("days") {
+                TestResult.allSuccesses(
+                    assertTrue(1.day.show == "1.days"),
+                    assertTrue(6.days.show == "6.days")
+                )
+            },
+            test("weeks") {
+                TestResult.allSuccesses(
+                    assertTrue(1.week.show == "1.weeks"),
+                    assertTrue(3.weeks.show == "3.weeks")
+                )
+            },
+            test("months") {
+                TestResult.allSuccesses(
+                    assertTrue(1.month.show == "1.months"),
+                    assertTrue(11.months.show == "11.months")
+                )
+            },
+            test("years") {
+                TestResult.allSuccesses(
+                    assertTrue(1.year.show == "1.years"),
+                    assertTrue(5.years.show == "5.years")
+                )
+            },
+            test("coarse resolution") {
+                TestResult.allSuccesses(
+                    assertTrue((1.day + 2.hours).show == "26.hours"),
+                    assertTrue((1.year + 6.months).show == "18.months"),
+                    assertTrue((1.minute + 30.seconds).show == "90.seconds"),
+                    assertTrue((1000.millis).show == "1.seconds"),
+                    assertTrue((1000.micros).show == "1.millis"),
+                    assertTrue((1000.nanos).show == "1.micros")
+                )
+            }
         )
     ) @@ TestAspect.exceptNative
 end DurationSpec
