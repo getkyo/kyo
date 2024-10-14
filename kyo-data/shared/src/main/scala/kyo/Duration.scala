@@ -174,13 +174,24 @@ object Duration:
                 case Duration.Zero => JavaDuration.ZERO
                 case n             => JavaDuration.of(n.toNanos, NANOS)
 
-        /** Converts the Duration to a human-readable string.
+        /** Converts the Duration to a human-readable string at the most coarse possible resolution without losing information.
           *
           * @return
           *   A string representation of the Duration
           */
-        inline def show: String = s"Duration($self ns)"
-
+        def show: String =
+            if self == Zero then "Duration.Zero"
+            else if self == Infinity then "Duration.Infinity"
+            else
+                val nanos = self.toNanos
+                Units.values.reverse.find(unit => nanos % unit.factor.toLong == 0) match
+                    case Some(unit) =>
+                        val value = (nanos / unit.factor).toLong
+                        val name  = unit.toString.toLowerCase
+                        s"$value.$name"
+                    case None =>
+                        s"$nanos.nanos"
+                end match
         /** Checks if the Duration is finite.
           *
           * @return
