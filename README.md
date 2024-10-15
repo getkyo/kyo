@@ -102,11 +102,12 @@ In Kyo, computations are expressed via the infix type `<`, known as "Pending". I
 ```scala 
 import kyo.*
 
-// 'Int' pending 'Abort[Maybe.Empty]'
-Int < Abort[Maybe.Empty]
+// 'Int' pending 'Abort[Absent]'
+// 'Absent' is Kyo's equivalent of 'None' via the 'Maybe' type
+Int < Abort[Absent]
 
-// 'String' pending 'Abort[Maybe.Empty]' and 'IO'
-String < (Abort[Maybe.Empty] & IO)
+// 'String' pending 'Abort[Absent]' and 'IO'
+String < (Abort[Absent] & IO)
 ```
 
 > Note: The naming convention for effect types is the plural form of the functionalities they manage.
@@ -2616,8 +2617,8 @@ import kyo._
 // Create a 'Maybe' value
 val a: Maybe[Int] = Maybe(42)
 
-// 'Maybe.empty' represents the absence of a value
-val b: Maybe[Int] = Maybe.empty[Int]
+// 'Absent' represents the absence of a value
+val b: Maybe[Int] = Absent
 
 // 'Maybe.when' conditionally creates a 'Maybe' value
 val c: Maybe[Int] = Maybe.when(true)(42)
@@ -2680,6 +2681,12 @@ val s: Maybe[Int] = for {
 // Nesting 'Maybe' values
 val nested: Maybe[Maybe[Int]] = Maybe(Maybe(42))
 val flattened: Maybe[Int] = nested.flatten
+
+// Pattern matching with 'Present' and 'Absent'
+val result: String = 
+    flattened match
+        case Present(value) => s"Value: $value"
+        case Absent        => "No value"
 ```
 
 ### Duration: Time Representation
@@ -3206,7 +3213,7 @@ import kyo.*
 
 // An example computation with
 // nested effects
-val a: Int < IO < Abort[Maybe.Empty] =
+val a: Int < IO < Abort[Absent] =
     Abort.get(Some(IO(1)))
 
 // Can't handle a effects of a
@@ -3226,7 +3233,7 @@ Kyo performs checks at compilation time to ensure that nested effects are not us
 ```scala
 import kyo.*
 
-// def test[T](v: T < Abort[Maybe.Empty]) =
+// def test[T](v: T < Abort[Absent]) =
 //   Abort.run(v)
 // Compilation failure:
 //   Method doesn't accept nested Kyo computations.
@@ -3234,7 +3241,7 @@ import kyo.*
 
 // It's possible to provide an implicit
 // evidence of `Flat` to resolve
-def test[T](v: T < Abort[Maybe.Empty])(using Flat[T]) =
+def test[T](v: T < Abort[Absent])(using Flat[T]) =
     Abort.run(v)
 ```
 
@@ -3310,7 +3317,7 @@ IO.Unsafe.run {                              // Handles IO
 
 ### Failure conversions
 
-One notable departure from the ZIO API worth calling out is a set of combinators for converting between failure effects. Whereas ZIO has a single channel for describing errors, Kyo has different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). `Abort[Maybe.Empty]` can also be used like `Choice` to model short-circuiting an empty result. It's useful to be able to move between these effects easily, so `kyo-combinators` provides a number of extension methods, usually in the form of `def effect1ToEffect2`.
+One notable departure from the ZIO API worth calling out is a set of combinators for converting between failure effects. Whereas ZIO has a single channel for describing errors, Kyo has different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). `Abort[Absent]` can also be used like `Choice` to model short-circuiting an empty result. It's useful to be able to move between these effects easily, so `kyo-combinators` provides a number of extension methods, usually in the form of `def effect1ToEffect2`.
 
 Some examples:
 
@@ -3318,7 +3325,7 @@ Some examples:
 val abortEffect: Int < Abort[String] = ???
 
 // Converts failures to empty failure
-val maybeEffect: Int < Abort[Maybe.Empty] = abortEffect.abortToEmpty
+val maybeEffect: Int < Abort[Absent] = abortEffect.abortToEmpty
 
 // Converts empty failure to a single "choice" (or Seq)
 val choiceEffect: Int < Choice = maybeEffect.emptyAbortToChoice

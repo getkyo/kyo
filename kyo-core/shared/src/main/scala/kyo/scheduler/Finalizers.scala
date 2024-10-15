@@ -6,12 +6,12 @@ import kyo.discard
 import org.jctools.queues.MpmcArrayQueue
 import scala.annotation.tailrec
 
-private[kyo] opaque type Finalizers = Finalizers.Empty.type | (() => Unit) | ArrayDeque[() => Unit]
+private[kyo] opaque type Finalizers = Finalizers.Absent.type | (() => Unit) | ArrayDeque[() => Unit]
 
 private[kyo] object Finalizers:
-    case object Empty derives CanEqual
+    case object Absent derives CanEqual
 
-    val empty: Finalizers = Empty
+    val empty: Finalizers = Absent
 
     private val bufferCache = new MpmcArrayQueue[ArrayDeque[() => Unit]](1024)
 
@@ -23,7 +23,7 @@ private[kyo] object Finalizers:
         /** Adds a finalizer function. */
         def add(f: () => Unit): Finalizers =
             (e: @unchecked) match
-                case e if e.equals(Empty) || e.equals(f) => f
+                case e if e.equals(Absent) || e.equals(f) => f
                 case f0: (() => Unit) @unchecked =>
                     val b = buffer()
                     b.add(f0)
@@ -36,8 +36,8 @@ private[kyo] object Finalizers:
         /** Removes a finalizer function by its object identity. */
         def remove(f: () => Unit): Finalizers =
             (e: @unchecked) match
-                case e if e.equals(Empty) => e
-                case e if e.equals(f)     => Empty
+                case e if e.equals(Absent) => e
+                case e if e.equals(f)      => Absent
                 case f: (() => Unit) @unchecked =>
                     f
                 case arr: ArrayDeque[() => Unit] @unchecked =>
@@ -48,7 +48,7 @@ private[kyo] object Finalizers:
 
         def run(): Unit =
             (e: @unchecked) match
-                case e if e.equals(Empty) =>
+                case e if e.equals(Absent) =>
                 case f: (() => Unit) @unchecked =>
                     f()
                 case arr: ArrayDeque[() => Unit] @unchecked =>
@@ -63,7 +63,7 @@ private[kyo] object Finalizers:
 
         def size(): Int =
             (e: @unchecked) match
-                case e if e.equals(Empty) => 0
+                case e if e.equals(Absent) => 0
                 case f: (() => Unit) @unchecked =>
                     1
                 case arr: ArrayDeque[() => Unit] @unchecked =>

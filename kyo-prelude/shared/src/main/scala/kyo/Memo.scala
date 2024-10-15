@@ -47,9 +47,9 @@ object Memo:
         input =>
             Var.use[Cache] { cache =>
                 cache.get(input, id) match
-                    case Maybe.Defined(cached) =>
+                    case Present(cached) =>
                         cached.asInstanceOf[B]
-                    case Maybe.Empty =>
+                    case Absent =>
                         f(input).map { result =>
                             Var.update[Cache](_.updated(input, id, result))
                                 .map(_ => result)

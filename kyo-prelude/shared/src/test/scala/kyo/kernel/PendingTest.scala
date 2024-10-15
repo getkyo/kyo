@@ -138,12 +138,12 @@ class PendingTest extends Test:
         ArrowEffect.suspend[Int](Tag[TestEffect], i)
 
     "evalNow" - {
-        "returns Defined for pure values" in {
+        "returns Present for pure values" in {
             val x: Int < Any = 5
             assert(x.evalNow == Maybe(5))
         }
 
-        "returns Empty for suspended computations" in {
+        "returns Absent for suspended computations" in {
             val x: Int < TestEffect = testEffect(5)
             assert(x.evalNow == Maybe.empty)
         }

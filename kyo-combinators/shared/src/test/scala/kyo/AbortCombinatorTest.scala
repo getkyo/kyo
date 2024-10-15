@@ -31,16 +31,16 @@ class AbortCombinatorTest extends Test:
 
             "should construct from option" in {
                 val effect = Kyo.fromOption(None)
-                assert(Abort.run[Maybe.Empty](effect).eval.failure.get == Maybe.Empty)
+                assert(Abort.run[Absent](effect).eval.failure.get == Absent)
                 val effect1 = Kyo.fromOption(Some(1))
-                assert(Abort.run[Maybe.Empty](effect1).eval.getOrElse(-1) == 1)
+                assert(Abort.run[Absent](effect1).eval.getOrElse(-1) == 1)
             }
 
             "should construct from maybe" in {
-                val effect = Kyo.fromMaybe(Maybe.Empty)
-                assert(Abort.run[Maybe.Empty](effect).eval.failure.get == Maybe.Empty)
-                val effect1 = Kyo.fromMaybe(Maybe.Defined(1))
-                assert(Abort.run[Maybe.Empty](effect1).eval.getOrElse(-1) == 1)
+                val effect = Kyo.fromMaybe(Absent)
+                assert(Abort.run[Absent](effect).eval.failure.get == Absent)
+                val effect1 = Kyo.fromMaybe(Present(1))
+                assert(Abort.run[Absent](effect1).eval.getOrElse(-1) == 1)
             }
 
             "should construct from a throwing block" in {
@@ -97,25 +97,25 @@ class AbortCombinatorTest extends Test:
             "should convert all abort to empty" in {
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
-                val failureEmpty: Int < Abort[Maybe.Empty] = failure.abortToEmpty
-                val handledFailureEmpty                    = Abort.run[Maybe.Empty](failureEmpty)
-                assert(handledFailureEmpty.eval == Result.Fail(Maybe.Empty))
-                val success: Int < Abort[String]           = 23
-                val successEmpty: Int < Abort[Maybe.Empty] = success.abortToEmpty
-                val handledSuccessEmpty                    = Abort.run[Any](successEmpty)
+                val failureEmpty: Int < Abort[Absent] = failure.abortToEmpty
+                val handledFailureEmpty               = Abort.run[Absent](failureEmpty)
+                assert(handledFailureEmpty.eval == Result.Fail(Absent))
+                val success: Int < Abort[String]      = 23
+                val successEmpty: Int < Abort[Absent] = success.abortToEmpty
+                val handledSuccessEmpty               = Abort.run[Any](successEmpty)
                 assert(handledSuccessEmpty.eval == Result.Success(23))
             }
 
             "should convert some abort to empty" in {
                 val failure: Int < Abort[String | Boolean | Double | Int] =
                     Abort.fail("failure")
-                val failureEmpty: Int < Abort[Maybe.Empty | Boolean | Double | Int] =
+                val failureEmpty: Int < Abort[Absent | Boolean | Double | Int] =
                     failure.someAbortToEmpty[String]()
                 val handledFailureEmpty = Choice.run(failureEmpty)
                 val handledFailureAbort = Abort.run[Any](handledFailureEmpty)
-                assert(handledFailureAbort.eval == Result.fail(Maybe.Empty))
+                assert(handledFailureAbort.eval == Result.fail(Absent))
                 val success: Int < Abort[String | Boolean | Double | Int] = 23
-                val successEmpty: Int < (Abort[Maybe.Empty | Boolean | Double | Int]) =
+                val successEmpty: Int < (Abort[Absent | Boolean | Double | Int]) =
                     success.someAbortToEmpty[String]()
                 val handledSuccessEmpty = Abort.run[Any](successEmpty)
                 assert(handledSuccessEmpty.eval == Result.success(23))
@@ -282,7 +282,7 @@ class AbortCombinatorTest extends Test:
             "should convert some abort to empty" in {
                 val effect: Int < Abort[String | Boolean] = Abort.fail("error")
                 val emptyEffect                           = effect.someAbortToEmpty[String]()
-                assert(Abort.run[Any](emptyEffect).eval == Result.fail(Maybe.Empty))
+                assert(Abort.run[Any](emptyEffect).eval == Result.fail(Absent))
 
                 val effect2: Int < Abort[String | Boolean] = 42
                 val emptyEffect2                           = effect2.someAbortToEmpty[String]()

@@ -300,7 +300,7 @@ class IOPromiseTest extends Test:
             val masked   = original.mask()
 
             var originalCompleted                         = false
-            var maskedResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
+            var maskedResult: Maybe[Result[Nothing, Int]] = Absent
 
             original.onComplete(_ => originalCompleted = true)
             masked.onComplete(r => maskedResult = Maybe(r))
@@ -314,7 +314,7 @@ class IOPromiseTest extends Test:
             val original = new IOPromise[Nothing, Int]()
             val masked   = original.mask()
 
-            var maskedResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
+            var maskedResult: Maybe[Result[Nothing, Int]] = Absent
             masked.onComplete(r => maskedResult = Maybe(r))
 
             original.complete(Result.success(42))
@@ -325,7 +325,7 @@ class IOPromiseTest extends Test:
             val original = new IOPromise[Exception, Int]()
             val masked   = original.mask()
 
-            var maskedResult: Maybe[Result[Exception, Int]] = Maybe.Empty
+            var maskedResult: Maybe[Result[Exception, Int]] = Absent
             masked.onComplete(r => maskedResult = Maybe(r))
 
             val ex = new Exception("Test exception")
@@ -337,8 +337,8 @@ class IOPromiseTest extends Test:
             val original = new IOPromise[Nothing, Int]()
             val masked   = original.mask()
 
-            var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
-            var maskedResult: Maybe[Result[Nothing, Int]]   = Maybe.Empty
+            var originalResult: Maybe[Result[Nothing, Int]] = Absent
+            var maskedResult: Maybe[Result[Nothing, Int]]   = Absent
 
             original.onComplete(r => originalResult = Maybe(r))
             masked.onComplete(r => maskedResult = Maybe(r))
@@ -355,7 +355,7 @@ class IOPromiseTest extends Test:
 
             var originalCompleted                          = false
             var masked1Completed                           = false
-            var masked2Result: Maybe[Result[Nothing, Int]] = Maybe.Empty
+            var masked2Result: Maybe[Result[Nothing, Int]] = Absent
 
             original.onComplete(_ => originalCompleted = true)
             masked1.onComplete(_ => masked1Completed = true)
@@ -375,7 +375,7 @@ class IOPromiseTest extends Test:
             original.complete(Result.success(42))
 
             val masked                                    = original.mask()
-            var maskedResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
+            var maskedResult: Maybe[Result[Nothing, Int]] = Absent
             masked.onComplete(r => maskedResult = Maybe(r))
 
             assert(maskedResult.contains(Result.success(42)))
@@ -385,8 +385,8 @@ class IOPromiseTest extends Test:
             val original = new IOPromise[Nothing, Int]()
             val masked   = original.mask()
 
-            var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
-            var maskedResult: Maybe[Result[Nothing, Int]]   = Maybe.Empty
+            var originalResult: Maybe[Result[Nothing, Int]] = Absent
+            var maskedResult: Maybe[Result[Nothing, Int]]   = Absent
 
             original.onComplete(r => originalResult = Maybe(r))
             masked.onComplete(r => maskedResult = Maybe(r))
@@ -402,9 +402,9 @@ class IOPromiseTest extends Test:
             val masked1  = original.mask()
             val masked2  = masked1.mask()
 
-            var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
-            var masked1Result: Maybe[Result[Nothing, Int]]  = Maybe.Empty
-            var masked2Result: Maybe[Result[Nothing, Int]]  = Maybe.Empty
+            var originalResult: Maybe[Result[Nothing, Int]] = Absent
+            var masked1Result: Maybe[Result[Nothing, Int]]  = Absent
+            var masked2Result: Maybe[Result[Nothing, Int]]  = Absent
 
             original.onComplete(r => originalResult = Maybe(r))
             masked1.onComplete(r => masked1Result = Maybe(r))
@@ -428,9 +428,9 @@ class IOPromiseTest extends Test:
             val masked   = original.mask()
             val other    = new IOPromise[Nothing, Int]()
 
-            var originalResult: Maybe[Result[Nothing, Int]] = Maybe.Empty
-            var maskedResult: Maybe[Result[Nothing, Int]]   = Maybe.Empty
-            var otherResult: Maybe[Result[Nothing, Int]]    = Maybe.Empty
+            var originalResult: Maybe[Result[Nothing, Int]] = Absent
+            var maskedResult: Maybe[Result[Nothing, Int]]   = Absent
+            var otherResult: Maybe[Result[Nothing, Int]]    = Absent
 
             original.onComplete(r => originalResult = Maybe(r))
             masked.onComplete(r => maskedResult = Maybe(r))

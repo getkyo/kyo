@@ -181,7 +181,7 @@ class ResourceTest extends Test:
                 .pipe(Resource.run)
                 .pipe(Async.runAndBlock(timeout))
                 .pipe(Abort.run[Timeout](_))
-                .pipe(Abort.run[Maybe.Empty](_))
+                .pipe(Abort.run[Absent](_))
                 .map { _ =>
                     assert(closes == 1)
                 }
