@@ -15,6 +15,7 @@ abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
     def clock: Clock    = Clock.live
 
     override protected def handle[A: Flat](v: A < KyoApp.Effects)(using Frame): Unit =
+        import AllowUnsafe.embrace.danger
         v.map { v =>
             if (()).equals(v) then ()
             else Console.println(v)
@@ -22,8 +23,9 @@ abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
             Clock.let(clock),
             Random.let(random),
             Log.let(log),
-            KyoApp.run
+            KyoApp.Unsafe.run
         )
+    end handle
 end KyoApp
 
 object KyoApp:
@@ -56,96 +58,98 @@ object KyoApp:
     /** The combined effect type used by KyoApp. */
     type Effects = Async & Resource & Abort[Throwable]
 
-    /** Attempts to run an effect with a specified timeout.
-      *
-      * Note: This method is unsafe and should only be used as the entrypoint of an application.
-      *
-      * @param timeout
-      *   The maximum duration to wait for the effect to complete.
-      * @param v
-      *   The effect to run.
-      * @param ev
-      *   Evidence that A is Flat.
-      * @param frame
-      *   The implicit Frame.
-      * @return
-      *   A Result containing either the computed value or a Throwable.
-      */
-    def attempt[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): Result[Throwable, A] =
-        import AllowUnsafe.embrace.danger
-        IO.Unsafe.run(runFiber(timeout)(v).block(timeout)).eval
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    object Unsafe:
 
-    /** Runs an effect with a specified timeout, throwing an exception if it fails.
-      *
-      * Note: This method is unsafe and should only be used as the entrypoint of an application.
-      *
-      * @param timeout
-      *   The maximum duration to wait for the effect to complete.
-      * @param v
-      *   The effect to run.
-      * @param ev
-      *   Evidence that A is Flat.
-      * @param frame
-      *   The implicit Frame.
-      * @return
-      *   The computed value of type A.
-      * @throws Throwable
-      *   if the effect fails or times out.
-      */
-    def run[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): A =
-        attempt(timeout)(v).getOrThrow
+        /** Attempts to run an effect with a specified timeout.
+          *
+          * Note: This method is unsafe and should only be used as the entrypoint of an application.
+          *
+          * @param timeout
+          *   The maximum duration to wait for the effect to complete.
+          * @param v
+          *   The effect to run.
+          * @param ev
+          *   Evidence that A is Flat.
+          * @param frame
+          *   The implicit Frame.
+          * @return
+          *   A Result containing either the computed value or a Throwable.
+          */
+        def attempt[A: Flat](timeout: Duration)(v: A < Effects)(using Frame, AllowUnsafe): Result[Throwable, A] =
+            IO.Unsafe.run(runFiber(timeout)(v).block(timeout)).eval
 
-    /** Runs an effect with an infinite timeout.
-      *
-      * Note: This method is unsafe and should only be used as the entrypoint of an application.
-      *
-      * @param v
-      *   The effect to run.
-      * @param ev
-      *   Evidence that A is Flat.
-      * @param frame
-      *   The implicit Frame.
-      * @return
-      *   The computed value of type A.
-      * @throws Throwable
-      *   if the effect fails.
-      */
-    def run[A: Flat](v: A < Effects)(using Frame): A =
-        run(Duration.Infinity)(v)
+        /** Runs an effect with a specified timeout, throwing an exception if it fails.
+          *
+          * Note: This method is unsafe and should only be used as the entrypoint of an application.
+          *
+          * @param timeout
+          *   The maximum duration to wait for the effect to complete.
+          * @param v
+          *   The effect to run.
+          * @param ev
+          *   Evidence that A is Flat.
+          * @param frame
+          *   The implicit Frame.
+          * @return
+          *   The computed value of type A.
+          * @throws Throwable
+          *   if the effect fails or times out.
+          */
+        def run[A: Flat](timeout: Duration)(v: A < Effects)(using Frame, AllowUnsafe): A =
+            attempt(timeout)(v).getOrThrow
 
-    /** Creates a Fiber to run an effect with an infinite timeout.
-      *
-      * Note: This method is unsafe and should only be used as the entrypoint of an application.
-      *
-      * @param v
-      *   The effect to run.
-      * @param ev
-      *   Evidence that A is Flat.
-      * @param frame
-      *   The implicit Frame.
-      * @return
-      *   A Fiber representing the running effect.
-      */
-    def runFiber[A: Flat](v: A < Effects)(using Frame): Fiber[Throwable, A] =
-        runFiber(Duration.Infinity)(v)
+        /** Runs an effect with an infinite timeout.
+          *
+          * Note: This method is unsafe and should only be used as the entrypoint of an application.
+          *
+          * @param v
+          *   The effect to run.
+          * @param ev
+          *   Evidence that A is Flat.
+          * @param frame
+          *   The implicit Frame.
+          * @return
+          *   The computed value of type A.
+          * @throws Throwable
+          *   if the effect fails.
+          */
+        def run[A: Flat](v: A < Effects)(using Frame, AllowUnsafe): A =
+            run(Duration.Infinity)(v)
 
-    /** Creates a Fiber to run an effect with a specified timeout.
-      *
-      * Note: This method is unsafe and should only be used as the entrypoint of an application.
-      *
-      * @param timeout
-      *   The maximum duration to wait for the effect to complete.
-      * @param v
-      *   The effect to run.
-      * @param ev
-      *   Evidence that A is Flat.
-      * @param frame
-      *   The implicit Frame.
-      * @return
-      *   A Fiber representing the running effect.
-      */
-    def runFiber[A: Flat](timeout: Duration)(v: A < Effects)(using Frame): Fiber[Throwable, A] =
-        import AllowUnsafe.embrace.danger
-        v.pipe(Resource.run, Async.run, IO.Unsafe.run).eval
+        /** Creates a Fiber to run an effect with an infinite timeout.
+          *
+          * Note: This method is unsafe and should only be used as the entrypoint of an application.
+          *
+          * @param v
+          *   The effect to run.
+          * @param ev
+          *   Evidence that A is Flat.
+          * @param frame
+          *   The implicit Frame.
+          * @return
+          *   A Fiber representing the running effect.
+          */
+        def runFiber[A: Flat](v: A < Effects)(using Frame, AllowUnsafe): Fiber[Throwable, A] =
+            runFiber(Duration.Infinity)(v)
+
+        /** Creates a Fiber to run an effect with a specified timeout.
+          *
+          * Note: This method is unsafe and should only be used as the entrypoint of an application.
+          *
+          * @param timeout
+          *   The maximum duration to wait for the effect to complete.
+          * @param v
+          *   The effect to run.
+          * @param ev
+          *   Evidence that A is Flat.
+          * @param frame
+          *   The implicit Frame.
+          * @return
+          *   A Fiber representing the running effect.
+          */
+        def runFiber[A: Flat](timeout: Duration)(v: A < Effects)(using Frame, AllowUnsafe): Fiber[Throwable, A] =
+            v.pipe(Resource.run, Async.timeout(timeout), Async.run, IO.Unsafe.run).eval
+    end Unsafe
 
 end KyoApp
