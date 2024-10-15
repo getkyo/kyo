@@ -7,6 +7,7 @@ import kyo.kernel.Platform
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.Eventually.*
 import scala.concurrent.Future
+import zio.Cause
 import zio.Task
 import zio.ZIO
 
@@ -294,10 +295,17 @@ class ZIOsTest extends Test:
                 }
             }
         end if
+
+        "synthetic" in runKyo {
+            val interrupted = ZIOs.get(ZIO.never.fork.flatMap(_.interrupt).flatten)
+            Abort.run(interrupted).map { result =>
+                assert(result.isPanic)
+            }
+        }
     }
 
-    "ZIO failure translation" - {
-        "regular failure to Abort[E]" in runKyo {
+    "failure translation" - {
+        "fail to Abort[E]" in runKyo {
             val zioFailure: ZIO[Any, String, Int]        = ZIO.fail("ZIO failed")
             val kyoEffect: Int < (Abort[String] & Async) = ZIOs.get(zioFailure)
             Abort.run(kyoEffect).map { result =>
@@ -305,7 +313,7 @@ class ZIOsTest extends Test:
             }
         }
 
-        "ZIO defect to Abort[Nothing] (panic)" in runKyo {
+        "die to Abort[Nothing] (panic)" in runKyo {
             val zioDefect: ZIO[Any, Nothing, Int]         = ZIO.die(new RuntimeException("ZIO defect"))
             val kyoEffect: Int < (Abort[Nothing] & Async) = ZIOs.get(zioDefect)
             Abort.run(kyoEffect).map { result =>
@@ -329,6 +337,30 @@ class ZIOsTest extends Test:
             val kyoEffect: Int < (Abort[CustomError] & Async) = ZIOs.get(zioFailure)
             Abort.run(kyoEffect).map { result =>
                 assert(result == Result.fail(CustomError("Custom ZIO error")))
+            }
+        }
+
+        "ZIO failure Both" in runKyo {
+            val zioFailure: ZIO[Any, String, Int]        = ZIO.failCause(Cause.Both(Cause.empty, Cause.fail("ZIO failure")))
+            val kyoEffect: Int < (Abort[String] & Async) = ZIOs.get(zioFailure)
+            Abort.run(kyoEffect).map { result =>
+                assert(result == Result.fail("ZIO failure"))
+            }
+        }
+
+        "ZIO failure Then" in runKyo {
+            val zioFailure: ZIO[Any, String, Int]        = ZIO.failCause(Cause.Then(Cause.fail("Left"), Cause.fail("Right")))
+            val kyoEffect: Int < (Abort[String] & Async) = ZIOs.get(zioFailure)
+            Abort.run(kyoEffect).map { result =>
+                assert(result == Result.fail("Left"))
+            }
+        }
+
+        "ZIO failure Empty" in runKyo {
+            val zioFailure: ZIO[Any, Nothing, Int]        = ZIO.failCause(Cause.empty)
+            val kyoEffect: Int < (Abort[Nothing] & Async) = ZIOs.get(zioFailure)
+            Abort.run(kyoEffect).map { result =>
+                assert(result.isPanic)
             }
         }
     }
