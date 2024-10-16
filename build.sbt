@@ -283,7 +283,7 @@ lazy val `kyo-sttp` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.10.0"
+            libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.10.1"
         )
         .jsSettings(`js-settings`)
         .jvmSettings(mimaCheck(false))
