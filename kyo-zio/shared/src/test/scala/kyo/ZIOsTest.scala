@@ -3,10 +3,14 @@ package kyo
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kyo.*
+import kyo.ZIOs.toError
+import kyo.ZIOs.toResult
 import kyo.kernel.Platform
 import org.scalatest.compatible.Assertion
 import org.scalatest.concurrent.Eventually.*
 import scala.concurrent.Future
+import zio.Cause
+import zio.Exit
 import zio.Task
 import zio.ZIO
 
@@ -294,10 +298,17 @@ class ZIOsTest extends Test:
                 }
             }
         end if
+
+        "synthetic" in runKyo {
+            val interrupted = ZIOs.get(ZIO.never.fork.flatMap(_.interrupt).flatten)
+            Abort.run(interrupted).map { result =>
+                assert(result.isPanic)
+            }
+        }
     }
 
-    "ZIO failure translation" - {
-        "regular failure to Abort[E]" in runKyo {
+    "failure translation" - {
+        "fail to Abort[E]" in runKyo {
             val zioFailure: ZIO[Any, String, Int]        = ZIO.fail("ZIO failed")
             val kyoEffect: Int < (Abort[String] & Async) = ZIOs.get(zioFailure)
             Abort.run(kyoEffect).map { result =>
@@ -305,7 +316,7 @@ class ZIOsTest extends Test:
             }
         }
 
-        "ZIO defect to Abort[Nothing] (panic)" in runKyo {
+        "die to Abort[Nothing] (panic)" in runKyo {
             val zioDefect: ZIO[Any, Nothing, Int]         = ZIO.die(new RuntimeException("ZIO defect"))
             val kyoEffect: Int < (Abort[Nothing] & Async) = ZIOs.get(zioDefect)
             Abort.run(kyoEffect).map { result =>
@@ -331,5 +342,87 @@ class ZIOsTest extends Test:
                 assert(result == Result.fail(CustomError("Custom ZIO error")))
             }
         }
+
+        "ZIO failure Both" in runKyo {
+            val zioFailure: ZIO[Any, String, Int]        = ZIO.failCause(Cause.Both(Cause.empty, Cause.fail("ZIO failure")))
+            val kyoEffect: Int < (Abort[String] & Async) = ZIOs.get(zioFailure)
+            Abort.run(kyoEffect).map { result =>
+                assert(result == Result.fail("ZIO failure"))
+            }
+        }
+
+        "ZIO failure Then" in runKyo {
+            val zioFailure: ZIO[Any, String, Int]        = ZIO.failCause(Cause.Then(Cause.fail("Left"), Cause.fail("Right")))
+            val kyoEffect: Int < (Abort[String] & Async) = ZIOs.get(zioFailure)
+            Abort.run(kyoEffect).map { result =>
+                assert(result == Result.fail("Left"))
+            }
+        }
+
+        "ZIO failure Empty" in runKyo {
+            val zioFailure: ZIO[Any, Nothing, Int]        = ZIO.failCause(Cause.empty)
+            val kyoEffect: Int < (Abort[Nothing] & Async) = ZIOs.get(zioFailure)
+            Abort.run(kyoEffect).map { result =>
+                assert(result.isPanic)
+            }
+        }
     }
+
+    "Exit toResult" - {
+        "Success" in {
+            assert(Exit.succeed(42).toResult == Result.success(42))
+        }
+
+        "Failure" in {
+            assert(Exit.fail("error").toResult == Result.fail("error"))
+        }
+    }
+
+    "Cause toError" - {
+        "Fail" in runKyo {
+            val cause = Cause.fail("error")
+            assert(cause.toError == Result.fail("error"))
+        }
+
+        "Die" in runKyo {
+            val exception = new RuntimeException("die")
+            val cause     = Cause.die(exception)
+            cause.toError match
+                case Result.Panic(e) => assert(e == exception)
+                case _               => fail("Expected Result.Panic")
+        }
+
+        "Interrupt" in runKyo {
+            Cause.interrupt(zio.FiberId.None).toError match
+                case Result.Panic(e: Fiber.Interrupted) => succeed
+                case _                                  => fail("Expected Result.Panic with Fiber.Interrupted")
+            end match
+        }
+
+        "Then" in runKyo {
+            val cause = Cause.Then(Cause.fail("first"), Cause.fail("second"))
+            assert(cause.toError == Result.fail("first"))
+        }
+
+        "Both" in runKyo {
+            val cause = Cause.Both(Cause.fail("left"), Cause.fail("right"))
+            assert(cause.toError == Result.fail("left"))
+        }
+
+        "Stackless" in runKyo {
+            val innerCause = Cause.fail("error")
+            val cause      = Cause.stackless(innerCause)
+            assert(cause.toError == Result.fail("error"))
+        }
+
+        "Empty" in runKyo {
+            val cause = Cause.empty
+            cause.toError match
+                case Result.Panic(e) =>
+                    assert(e.getMessage.startsWith("Unexpected zio.Cause.Empty at"))
+                case _ => fail("Expected Result.Panic")
+            end match
+        }
+    }
+
 end ZIOsTest
