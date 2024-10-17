@@ -8,6 +8,22 @@ import scala.annotation.tailrec
 /** Object containing utility functions for working with Kyo effects. */
 object Kyo:
 
+    /** Explicitly creates a pure effect that produces the given value.
+      *
+      * While pure values are automatically lifted into Kyo computations in most cases, this method can be useful in specific scenarios,
+      * such as in if/else expressions, to help with type inference.
+      *
+      * @tparam A
+      *   The type of the value
+      * @tparam S
+      *   The effect context (can be Any)
+      * @param v
+      *   The value to lift into the effect context
+      * @return
+      *   A computation that produces the given value
+      */
+    inline def pure[A, S](inline v: A): A < S = v
+
     /** Zips two effects into a tuple.
       *
       * @param v1

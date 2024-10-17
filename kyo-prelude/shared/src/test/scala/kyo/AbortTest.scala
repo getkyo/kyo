@@ -797,4 +797,194 @@ class AbortsTest extends Test:
         }
     }
 
+    "Abort.recover" - {
+        case class CustomError(message: String) derives CanEqual
+
+        "without onPanic" - {
+
+            "handles expected errors" in {
+                val computation = Abort.fail(CustomError("Expected error"))
+                val recovered   = Abort.recover[CustomError](_ => 42)(computation)
+                assert(Abort.run(recovered).eval == Result.success(42))
+            }
+
+            "leaves panics unhandled" in {
+                val ex          = new RuntimeException("Panic!")
+                val computation = Abort.panic(ex)
+                val recovered   = Abort.recover[CustomError](_ => 42)(computation)
+                assert(Abort.run(recovered).eval == Result.panic(ex))
+            }
+
+            "doesn't affect successful computations" in {
+                val computation: Int < Abort[CustomError] = 100
+                val recovered =
+                    Abort.recover[CustomError](_ => 42)(computation)
+                assert(Abort.run(recovered).eval == Result.success(100))
+            }
+
+            "keeps Abort in the effect set for panics" in {
+                val ex          = new RuntimeException("Panic!")
+                val computation = Abort.panic(ex)
+                val recovered   = Abort.recover[CustomError](_ => 42)(computation)
+                assertDoesNotCompile("val _: Int < Any = recovered")
+            }
+        }
+
+        "with onPanic" - {
+
+            "handles expected errors" in {
+                val computation = Abort.fail(CustomError("Expected error"))
+                val recovered   = Abort.recover[CustomError](_ => 42, _ => -1)(computation)
+                assert(recovered.eval == 42)
+            }
+
+            "handles panics" in {
+                val ex          = new RuntimeException("Panic!")
+                val computation = Abort.panic(ex)
+                val recovered   = Abort.recover[CustomError](_ => 42, _ => -1)(computation)
+                assert(recovered.eval == -1)
+            }
+
+            "doesn't affect successful computations" in {
+                val computation: Int < Abort[CustomError] = 100
+                val recovered                             = Abort.recover[CustomError](_ => 42, _ => -1)(computation)
+                assert(recovered.eval == 100)
+            }
+
+            "removes Abort from the effect set" in {
+                val computation = Abort.fail(CustomError("Expected error"))
+                val recovered   = Abort.recover[CustomError](_ => 42, _ => -1)(computation)
+                assertCompiles("val _: Int < Any = recovered")
+            }
+        }
+
+        "interaction with other effects" - {
+            "works with Env" in {
+                val computation: Int < (Abort[CustomError] & Env[String]) =
+                    for
+                        env    <- Env.get[String]
+                        result <- if env == "fail" then Abort.fail(CustomError("Failed")) else Kyo.pure(env.length)
+                    yield result
+
+                val recovered = Abort.recover[CustomError](_ => -1)(computation)
+                val result    = Env.run("success")(Abort.run(recovered))
+                assert(result.eval == Result.success(7))
+
+                val failResult = Env.run("fail")(Abort.run(recovered))
+                assert(failResult.eval == Result.success(-1))
+            }
+
+            "works with Var" in {
+                val computation: Int < (Abort[CustomError] & Var[Int]) =
+                    for
+                        value  <- Var.get[Int]
+                        result <- if value > 10 then Abort.fail(CustomError("Too large")) else Kyo.pure(value)
+                    yield result
+
+                val recovered = Abort.recover[CustomError](_ => -1)(computation)
+                val result    = Var.run(5)(Abort.run(recovered))
+                assert(result.eval == Result.success(5))
+
+                val failResult = Var.run(15)(Abort.run(recovered))
+                assert(failResult.eval == Result.success(-1))
+            }
+        }
+
+        "recover function using other effects" - {
+            case class CustomError(message: String) derives CanEqual
+
+            "with Env effect" in {
+                val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Failed"))
+                val recovered = Abort.recover[CustomError] { error =>
+                    Env.get[String].map(_.length)
+                }(computation)
+
+                val result = Env.run("TestEnv")(Abort.run(recovered))
+                assert(result.eval == Result.success(7))
+            }
+
+            "with Var effect" in {
+                val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Failed"))
+                val recovered = Abort.recover[CustomError] { error =>
+                    for
+                        current <- Var.get[Int]
+                        _       <- Var.set(current + error.message.length)
+                        result  <- Var.get[Int]
+                    yield result
+                }(computation)
+
+                val result = Var.run(10)(Abort.run(recovered))
+                assert(result.eval == Result.success(16))
+            }
+
+            "with both Env and Var effects" in {
+                val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Error"))
+                val recovered = Abort.recover[CustomError] { error =>
+                    for
+                        env    <- Env.get[String]
+                        _      <- Var.update[Int](_ + env.length + error.message.length)
+                        result <- Var.get[Int]
+                    yield result
+                }(computation)
+
+                val result = Env.run("TestEnv")(Var.run(5)(Abort.run(recovered)))
+                assert(result.eval == Result.success(17))
+            }
+
+            "with nested Abort effect" in {
+                val computation = Abort.fail(CustomError("Outer"))
+                val recovered   = Abort.recover[CustomError](_ => Abort.fail("Inner"))(computation)
+
+                assert(Abort.run(recovered).eval == Result.fail("Inner"))
+            }
+
+            "with onPanic using effects" in {
+                val ex                                    = new RuntimeException("Panic!")
+                val computation: Int < Abort[CustomError] = Abort.panic(ex)
+                val recovered = Abort.recover[CustomError](
+                    onFail = _ => Env.get[Int],
+                    onPanic = _ => Var.update[Int](_ + 1).as(Var.get[Int])
+                )(computation)
+
+                val result = Env.run(42)(Var.run(10)(recovered))
+                assert(result.eval == 11)
+            }
+        }
+
+        "with pipe operator" - {
+            case class CustomError(message: String) derives CanEqual
+
+            "recovers from failures" in {
+                val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Failed"))
+                val result                                = computation.pipe(Abort.recover[CustomError](_ => 42))
+                assert(Abort.run(result).eval == Result.success(42))
+            }
+
+            "doesn't affect successful computations" in {
+                val computation: Int < Abort[CustomError] = 10
+                val result                                = computation.pipe(Abort.recover[CustomError](_ => 42))
+                assert(Abort.run(result).eval == Result.success(10))
+            }
+
+            "can be chained with other operations" in {
+                val computation: Int < Abort[CustomError] = Abort.fail(CustomError("Failed"))
+                val result = computation
+                    .pipe(Abort.recover[CustomError](_ => 42))
+                    .map(_ * 2)
+
+                assert(Abort.run(result).eval == Result.success(84))
+            }
+
+            "works with onPanic" in {
+                val ex                                    = new RuntimeException("Panic!")
+                val computation: Int < Abort[CustomError] = Abort.panic(ex)
+                val result = computation.pipe(Abort.recover[CustomError](
+                    onFail = _ => 42,
+                    onPanic = _ => -1
+                ))
+                assert(result.eval == -1)
+            }
+        }
+    }
+
 end AbortsTest
