@@ -7,7 +7,7 @@ class RetryTest extends Test:
     "no retries" - {
         "ok" in run {
             var calls = 0
-            Retry[Any](_.limit(0)) {
+            Retry[Any](Schedule.never) {
                 calls += 1
                 42
             }.map { v =>
@@ -17,7 +17,7 @@ class RetryTest extends Test:
         "nok" in run {
             var calls = 0
             Abort.run[Exception] {
-                Retry[Exception](_.limit(0)) {
+                Retry[Exception](Schedule.never) {
                     calls += 1
                     throw ex
                 }
@@ -30,7 +30,7 @@ class RetryTest extends Test:
     "retries" - {
         "ok" in run {
             var calls = 0
-            Retry[Any](_.limit(3)) {
+            Retry[Any](Schedule.repeat(3)) {
                 calls += 1
                 42
             }.map { v =>
@@ -40,7 +40,7 @@ class RetryTest extends Test:
         "nok" in run {
             var calls = 0
             Abort.run[Exception] {
-                Retry[Exception](_.limit(3)) {
+                Retry[Exception](Schedule.repeat(3)) {
                     calls += 1
                     throw ex
                 }
@@ -54,7 +54,7 @@ class RetryTest extends Test:
         var calls = 0
         val start = java.lang.System.currentTimeMillis()
         Abort.run[Exception] {
-            Retry[Exception](_.limit(4).exponential(1.milli)) {
+            Retry[Exception](Schedule.exponentialBackoff(1.milli, 2.0, Duration.Infinity).take(4)) {
                 calls += 1
                 throw ex
             }

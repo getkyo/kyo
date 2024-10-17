@@ -239,6 +239,23 @@ object DurationSpec extends ZIOSpecDefault:
                     assertTrue((1000.nanos).show == "1.micros")
                 )
             }
+        ),
+        suite("Duration subtraction")(
+            test("subtracting smaller from larger") {
+                assertTrue(5.seconds - 2.seconds == 3.seconds)
+            },
+            test("subtracting larger from smaller") {
+                assertTrue(2.seconds - 5.seconds == Duration.Zero)
+            },
+            test("subtracting equal durations") {
+                assertTrue(3.minutes - 3.minutes == Duration.Zero)
+            },
+            test("subtracting from zero") {
+                assertTrue(Duration.Zero - 1.second == Duration.Zero)
+            },
+            test("subtracting zero") {
+                assertTrue(10.hours - Duration.Zero == 10.hours)
+            }
         )
     ) @@ TestAspect.exceptNative
 end DurationSpec

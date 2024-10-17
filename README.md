@@ -2038,30 +2038,17 @@ import scala.concurrent.duration.*
 val unreliableComputation: Int < Abort[Exception] =
     Abort.catching[Exception](throw new Exception("Temporary failure"))
 
-// Customize retry policy
-val customPolicy = Retry.Policy.default
-    .limit(5)
-    .exponential(100.millis, maxBackoff = 5.seconds)
+// Customize retry schedule
+val shedule = 
+    Schedule.exponentialBackoff(initial = 100.millis, factor = 2, maxBackoff = 5.seconds)
+        .take(5)
 
 val a: Int < (Abort[Exception] & Async) =
-    Retry[Exception](customPolicy)(unreliableComputation)
+    Retry[Exception](shedule)(unreliableComputation)
 
-// Use a custom policy builder
-val b: Int < (Abort[Exception] & Async) =
-    Retry[Exception] { policy =>
-        policy
-            .limit(10)
-            .backoff(attempt => (attempt * 100).millis)
-    }(unreliableComputation)
 ```
 
-The `Retry` effect automatically adds the `Async` effect to handle the backoff delays between retry attempts. The `Policy` class allows for fine-tuning of the retry behavior:
-
-- `limit`: Sets the maximum number of retry attempts.
-- `exponential`: Configures exponential backoff with a starting delay and optional maximum delay.
-- `backoff`: Allows for custom backoff strategies based on the attempt number.
-
-`Retry` will continue attempting the computation until it succeeds, the retry limit is reached, or an unhandled exception is thrown. If all retries fail, the last failure is propagated.
+The `Retry` effect automatically adds the `Async` effect to handle the provided `Schedule`. `Retry` will continue attempting the computation until it succeeds, the retry schedule is done, or an unhandled exception is thrown. If all retries fail, the last failure is propagated.
 
 ### Queue: Concurrent Queuing
 

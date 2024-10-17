@@ -138,6 +138,24 @@ object Instant:
         def truncatedTo(unit: Duration.Units & Duration.Truncatable): Instant =
             instant.truncatedTo(unit.chronoUnit)
 
+        /** Returns the minimum of this Instant and another.
+          *
+          * @param other
+          *   The other Instant to compare with.
+          * @return
+          *   The earlier of the two Instants.
+          */
+        infix def min(other: Instant): Instant = if instant.isBefore(other) then instant else other
+
+        /** Returns the maximum of this Instant and another.
+          *
+          * @param other
+          *   The other Instant to compare with.
+          * @return
+          *   The later of the two Instants.
+          */
+        infix def max(other: Instant): Instant = if instant.isAfter(other) then instant else other
+
         /** Converts this Instant to a human-readable ISO-8601 formatted string.
           *
           * @return
