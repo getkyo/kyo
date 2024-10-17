@@ -145,7 +145,7 @@ object Instant:
           * @return
           *   The earlier of the two Instants.
           */
-        def min(other: Instant): Instant = if instant.isBefore(other) then instant else other
+        infix def min(other: Instant): Instant = if instant.isBefore(other) then instant else other
 
         /** Returns the maximum of this Instant and another.
           *
@@ -154,7 +154,7 @@ object Instant:
           * @return
           *   The later of the two Instants.
           */
-        def max(other: Instant): Instant = if instant.isAfter(other) then instant else other
+        infix def max(other: Instant): Instant = if instant.isAfter(other) then instant else other
 
         /** Converts this Instant to a human-readable ISO-8601 formatted string.
           *

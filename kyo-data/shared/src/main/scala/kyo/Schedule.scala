@@ -25,7 +25,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a new schedule that produces the maximum delay of both schedules
       */
-    final def max(that: Schedule): Schedule =
+    final infix def max(that: Schedule): Schedule =
         this match
             case Never            => this
             case Done | Immediate => that
@@ -42,7 +42,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a new schedule that produces the minimum delay of both schedules
       */
-    final def min(that: Schedule): Schedule =
+    final infix def min(that: Schedule): Schedule =
         this match
             case Never            => that
             case Done | Immediate => this
@@ -293,11 +293,11 @@ object Schedule:
         final case class Min(a: Schedule, b: Schedule) extends Schedule:
             def next =
                 a.next match
-                    case Maybe.Empty => b.next
-                    case n @ Maybe.Defined((d1, s1)) =>
+                    case Absent => b.next
+                    case n @ Present((d1, s1)) =>
                         b.next match
-                            case Maybe.Empty => n
-                            case Maybe.Defined((d2, s2)) =>
+                            case Absent => n
+                            case Present((d2, s2)) =>
                                 Maybe((d1.min(d2), s1.min(s2)))
             def show = s"(${a.show}).min(${b.show})"
         end Min
