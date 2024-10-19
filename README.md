@@ -1,7 +1,7 @@
 ### Please visit https://getkyo.io for an indexed version of this documentation.
 ##
 
-<img src="https://raw.githubusercontent.com/getkyo/kyo/master/kyo.svg" width="200" alt="Kyo">
+<img src="https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png" width="200" alt="Kyo">
 
 ## Introduction
 
