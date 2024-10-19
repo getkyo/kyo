@@ -246,7 +246,7 @@ object Channel:
                         flush()
                     else if queueSize > 0 && !takesEmpty then
                         // Attempt to transfer a value from the queue to
-                        // a waiting take opeation.
+                        // a waiting take operation.
                         Maybe(takes.poll()).foreach { promise =>
                             queue.poll() match
                                 case Result.Success(Present(value)) =>
