@@ -310,7 +310,7 @@ object Meter:
                     // Complete the closed promise to fail new operations
                     closed.completeDiscard(fail)
                     // Drain the pending waiters
-                    def drain(st: Int): Unit =
+                    @tailrec def drain(st: Int): Unit =
                         if st < 0 then
                             // Use pollWaiter to ensure all pending waiters
                             // as indicated by the state are drained
@@ -325,7 +325,7 @@ object Meter:
 
         final def closed(using Frame) = IO(state.get() == Int.MinValue)
 
-        final protected def release(): Unit =
+        @tailrec final protected def release(): Unit =
             // if the state was negative, indicating that there are waiters,
             // release a waiter from the queue.
             if state.incrementAndGet() <= 0 && !pollWaiter().complete(Result.unit) then
