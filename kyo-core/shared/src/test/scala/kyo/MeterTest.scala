@@ -225,6 +225,13 @@ class MeterTest extends Test:
                 v1      <- counter.get
             yield assert(v1 >= 2 && v1 <= 200)
         }
+        "replenish doesn't overflow" in runJVM {
+            for
+                meter     <- Meter.initRateLimiter(5, 10.millis)
+                _         <- Async.sleep(32.millis)
+                available <- meter.availablePermits
+            yield assert(available == 5)
+        }
     }
 
     "pipeline" - {

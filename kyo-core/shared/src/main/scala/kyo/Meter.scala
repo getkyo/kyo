@@ -96,7 +96,7 @@ object Meter:
             new Base(concurrency):
                 def dispatch[A, S](v: => A < S) =
                     // Release the permit right after the computation
-                    IO.ensure(release())(v)
+                    IO.ensure(discard(release()))(v)
         }
 
     /** Creates a Meter that acts as a rate limiter.
@@ -120,8 +120,7 @@ object Meter:
                     v
 
                 @tailrec def replenish(i: Int = 0): Unit =
-                    if i < rate then
-                        release()
+                    if i < rate && release() then
                         replenish(i + 1)
 
                 override def onClose() = discard(timerTask.cancel())
@@ -325,13 +324,23 @@ object Meter:
 
         final def closed(using Frame) = IO(state.get() == Int.MinValue)
 
-        @tailrec final protected def release(): Unit =
-            // if the state was negative, indicating that there are waiters,
-            // release a waiter from the queue.
-            if state.incrementAndGet() <= 0 && !pollWaiter().complete(Result.unit) then
-                // the waiter is already completed due to interruption,
-                // try to release a waiter
+        @tailrec final protected def release(): Boolean =
+            val st = state.get()
+            if st >= permits then
+                // No more permits to release
+                false
+            else if !state.cas(st, st + 1) then
+                // CAS failed, retry
                 release()
+            else if st < 0 && !pollWaiter().complete(Result.unit) then
+                // Waiter is already complete due to interruption,
+                // retry another worker
+                release()
+            else
+                // release successful
+                true
+            end if
+        end release
 
         @tailrec final private def pollWaiter(): Promise.Unsafe[Closed, Unit] =
             val waiter = waiters.poll()
