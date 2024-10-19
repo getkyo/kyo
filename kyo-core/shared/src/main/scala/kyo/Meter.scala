@@ -333,11 +333,14 @@ object Meter:
                 // try to release a waiter
                 release()
 
-        @tailrec final private def pollWaiter(w: Promise.Unsafe[Closed, Unit] = waiters.poll()): Promise.Unsafe[Closed, Unit] =
-            if !isNull(w) then w
+        @tailrec final private def pollWaiter(): Promise.Unsafe[Closed, Unit] =
+            val waiter = waiters.poll()
+            if !isNull(waiter) then waiter
             else
                 // If no waiter is found, retry the poll operation
                 // This handles the race condition between state change and waiter queuing
                 pollWaiter()
+            end if
+        end pollWaiter
     end Base
 end Meter
