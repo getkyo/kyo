@@ -267,4 +267,56 @@ class InstantTest extends Test:
         }
     }
 
+    "min" - {
+        "earlier instant" in {
+            val instant1 = Instant.Epoch
+            val instant2 = instant1 + 1000.seconds
+            assert(instant1.min(instant2) == instant1)
+        }
+
+        "later instant" in {
+            val instant1 = Instant.Epoch
+            val instant2 = instant1 - 1000.seconds
+            assert(instant1.min(instant2) == instant2)
+        }
+
+        "equal instants" in {
+            val instant1 = Instant.Epoch
+            val instant2 = Instant.Epoch
+            assert(instant1.min(instant2) == instant1)
+        }
+
+        "with Min and Max" in {
+            val instant = Instant.Epoch
+            assert(instant.min(Instant.Min) == Instant.Min)
+            assert(instant.min(Instant.Max) == instant)
+        }
+    }
+
+    "max" - {
+        "earlier instant" in {
+            val instant1 = Instant.Epoch
+            val instant2 = instant1 + 1000.seconds
+            assert(instant1.max(instant2) == instant2)
+        }
+
+        "later instant" in {
+            val instant1 = Instant.Epoch
+            val instant2 = instant1 - 1000.seconds
+            assert(instant1.max(instant2) == instant1)
+        }
+
+        "equal instants" in {
+            val instant1 = Instant.Epoch
+            val instant2 = Instant.Epoch
+            assert(instant1.max(instant2) == instant1)
+        }
+
+        "with Min and Max" in {
+            val instant = Instant.Epoch
+            assert(instant.max(Instant.Min) == instant)
+            assert(instant.max(Instant.Max) == Instant.Max)
+        }
+    }
+
 end InstantTest
