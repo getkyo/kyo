@@ -1613,7 +1613,7 @@ val k: Int < IO =
 
 ### Log: Logging
 
-`Log` is designed to streamline the logging process without requiring the instantiation of a `Logger`. By leveraging the [sourcecode](https://github.com/com-lihaoyi/sourcecode) library, log messages automatically include source code position information, enhancing the clarity and usefulness of the logs.
+`Log` is designed to streamline the logging process without requiring the instantiation of a `Logger`. Log messages automatically include source code position information (File, Line, Column), enhancing the clarity and usefulness of the logs.
 
 ```scala 
 import kyo.*
