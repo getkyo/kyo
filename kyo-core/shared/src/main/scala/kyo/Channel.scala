@@ -179,8 +179,6 @@ object Channel:
             access: Access = Access.MultiProducerMultiConsumer
         )(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
             new Unsafe[A]:
-                import AllowUnsafe.embrace.danger
-
                 val queue = Queue.Unsafe.init[A](_capacity, access)
                 val takes = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, A]](8)
                 val puts  = new MpmcUnboundedXaddArrayQueue[(A, Promise.Unsafe[Closed, Unit])](8)
@@ -233,8 +231,6 @@ object Channel:
                 def closed()(using AllowUnsafe) = queue.closed()
 
                 @tailrec private def flush(): Unit =
-                    import AllowUnsafe.embrace.danger
-
                     // This method ensures that all values are processed
                     // and handles interrupted fibers by discarding them.
                     val queueClosed = queue.closed()
