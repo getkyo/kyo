@@ -97,6 +97,7 @@ object Meter:
                 def dispatch[A, S](v: => A < S) =
                     // Release the permit right after the computation
                     IO.ensure(discard(release()))(v)
+                def onClose(): Unit = ()
         }
 
     /** Creates a Meter that acts as a rate limiter.
@@ -123,7 +124,7 @@ object Meter:
                     if i < rate && release() then
                         replenish(i + 1)
 
-                override def onClose() = discard(timerTask.cancel())
+                def onClose() = discard(timerTask.cancel())
         }
 
     /** Combines two Meters into a pipeline.
@@ -235,7 +236,8 @@ object Meter:
         val waiters = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, Unit]](8)
         val closed  = Promise.Unsafe.init[Closed, Nothing]()
 
-        def dispatch[A, S](v: => A < S): A < (S & IO)
+        protected def dispatch[A, S](v: => A < S): A < (S & IO)
+        protected def onClose(): Unit
 
         final def run[A, S](v: => A < S)(using Frame) =
             IO.Unsafe {
@@ -298,8 +300,6 @@ object Meter:
                     case st           => Math.min(0, st).abs
             }
 
-        protected def onClose(): Unit = ()
-
         final def close(using frame: Frame): Boolean < IO =
             IO.Unsafe {
                 val st = state.getAndSet(Int.MinValue)
@@ -333,11 +333,10 @@ object Meter:
                 // CAS failed, retry
                 release()
             else if st < 0 && !pollWaiter().complete(Result.unit) then
-                // Waiter is already complete due to interruption,
-                // retry another worker
+                // Waiter is already complete due to interruption, retry
                 release()
             else
-                // release successful
+                // Permit released
                 true
             end if
         end release
