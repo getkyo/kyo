@@ -3,6 +3,7 @@ package kyo
 import java.time.Duration as JavaDuration
 import java.time.temporal.ChronoUnit
 import java.time.temporal.ChronoUnit.*
+import java.util.concurrent.TimeUnit
 import kyo.Duration.Units
 import kyo.Duration.Units.*
 import scala.concurrent.duration.Duration as ScalaDuration
@@ -58,7 +59,7 @@ object Duration:
       * @return
       *   A Duration instance
       */
-    inline def fromNanos(value: Long): Duration =
+    def fromNanos(value: Long): Duration =
         if value <= 0 then Duration.Zero else value
 
     /** Creates a Duration from a value and unit.
@@ -118,44 +119,52 @@ object Duration:
 
     extension (self: Duration)
 
-        private inline def toLong: Long = self
+        private def toLong: Long = self
 
-        inline infix def >=(that: Duration): Boolean = self.toLong >= that.toLong
-        inline infix def <=(that: Duration): Boolean = self.toLong <= that.toLong
-        inline infix def >(that: Duration): Boolean  = self.toLong > that.toLong
-        inline infix def <(that: Duration): Boolean  = self.toLong < that.toLong
-        inline infix def ==(that: Duration): Boolean = self.toLong == that.toLong
-        inline infix def !=(that: Duration): Boolean = self.toLong != that.toLong
+        infix def >=(that: Duration): Boolean = self.toLong >= that.toLong
+        infix def <=(that: Duration): Boolean = self.toLong <= that.toLong
+        infix def >(that: Duration): Boolean  = self.toLong > that.toLong
+        infix def <(that: Duration): Boolean  = self.toLong < that.toLong
+        infix def ==(that: Duration): Boolean = self.toLong == that.toLong
+        infix def !=(that: Duration): Boolean = self.toLong != that.toLong
 
-        inline infix def +(that: Duration): Duration =
+        infix def +(that: Duration): Duration =
             val sum: Long = self.toLong + that.toLong
             if sum >= 0 then sum else Duration.Infinity
 
-        inline infix def -(that: Duration): Duration =
+        infix def -(that: Duration): Duration =
             val diff: Long = self.toLong - that.toLong
             if diff > 0 then diff else Duration.Zero
 
-        inline infix def *(factor: Double): Duration =
+        infix def *(factor: Double): Duration =
             if factor <= 0 || self.toLong <= 0L then Duration.Zero
             else if factor <= Long.MaxValue / self.toLong.toDouble then Math.round(self.toLong.toDouble * factor)
             else Duration.Infinity
 
-        inline def max(that: Duration): Duration = Math.max(self.toLong, that.toLong)
-        inline def min(that: Duration): Duration = Math.min(self.toLong, that.toLong)
+        def max(that: Duration): Duration = Math.max(self.toLong, that.toLong)
+        def min(that: Duration): Duration = Math.min(self.toLong, that.toLong)
 
-        inline def to(unit: Units): Long =
+        def to(unit: Units): Long =
             Math.max(Math.round(self.toLong / unit.factor), Duration.Zero)
 
-        inline def toNanos: Long   = self.toLong
-        inline def toMicros: Long  = self.to(Micros)
-        inline def toMillis: Long  = self.to(Millis)
-        inline def toSeconds: Long = self.to(Seconds)
-        inline def toMinutes: Long = self.to(Minutes)
-        inline def toHours: Long   = self.to(Hours)
-        inline def toDays: Long    = self.to(Days)
-        inline def toWeeks: Long   = self.to(Weeks)
-        inline def toMonths: Long  = self.to(Months)
-        inline def toYears: Long   = self.to(Years)
+        def to(timeUnit: TimeUnit): Long =
+            to(timeUnit.toChronoUnit())
+
+        def to(chronoUnit: ChronoUnit): Long =
+            Units.values.find(_.chronoUnit.equals(chronoUnit)) match
+                case None       => throw new UnsupportedOperationException("Chrono unit not suppported: " + chronoUnit)
+                case Some(unit) => to(unit)
+
+        def toNanos: Long   = self.toLong
+        def toMicros: Long  = self.to(Micros)
+        def toMillis: Long  = self.to(Millis)
+        def toSeconds: Long = self.to(Seconds)
+        def toMinutes: Long = self.to(Minutes)
+        def toHours: Long   = self.to(Hours)
+        def toDays: Long    = self.to(Days)
+        def toWeeks: Long   = self.to(Weeks)
+        def toMonths: Long  = self.to(Months)
+        def toYears: Long   = self.to(Years)
 
         /** Converts the Duration to a Scala Duration.
           *
@@ -202,41 +211,41 @@ object Duration:
           *   true if the Duration is finite, false otherwise
           */
         // TODO Is this Robust enough?
-        private[kyo] inline def isFinite: Boolean = self < Duration.Infinity
+        private[kyo] def isFinite: Boolean = self < Duration.Infinity
     end extension
 
 end Duration
 
 extension (value: Long)
     /** Creates a Duration of nanoseconds. */
-    inline def nanos: Duration = Duration.fromNanos(value)
+    def nanos: Duration = Duration.fromNanos(value)
 
     /** Creates a Duration of microseconds. */
-    inline def micros: Duration = value.asUnit(Micros)
+    def micros: Duration = value.asUnit(Micros)
 
     /** Creates a Duration of milliseconds. */
-    inline def millis: Duration = value.asUnit(Millis)
+    def millis: Duration = value.asUnit(Millis)
 
     /** Creates a Duration of seconds. */
-    inline def seconds: Duration = value.asUnit(Seconds)
+    def seconds: Duration = value.asUnit(Seconds)
 
     /** Creates a Duration of minutes. */
-    inline def minutes: Duration = value.asUnit(Minutes)
+    def minutes: Duration = value.asUnit(Minutes)
 
     /** Creates a Duration of hours. */
-    inline def hours: Duration = value.asUnit(Hours)
+    def hours: Duration = value.asUnit(Hours)
 
     /** Creates a Duration of days. */
-    inline def days: Duration = value.asUnit(Days)
+    def days: Duration = value.asUnit(Days)
 
     /** Creates a Duration of weeks. */
-    inline def weeks: Duration = value.asUnit(Weeks)
+    def weeks: Duration = value.asUnit(Weeks)
 
     /** Creates a Duration of months. */
-    inline def months: Duration = value.asUnit(Months)
+    def months: Duration = value.asUnit(Months)
 
     /** Creates a Duration of years. */
-    inline def years: Duration = value.asUnit(Years)
+    def years: Duration = value.asUnit(Years)
 
     inline def nano: Duration   = compiletime.error("please use `.nanos`")
     inline def micro: Duration  = compiletime.error("please use `.micros`")
@@ -256,20 +265,20 @@ extension (value: Long)
       * @return
       *   A Duration instance
       */
-    inline def asUnit(unit: Units): Duration =
+    def asUnit(unit: Units): Duration =
         Duration.fromUnits(value, unit)
 end extension
 
 /** Extension methods for the value 1 to create singular Durations. */
 extension (value: 1)
-    inline def nano: Duration   = Duration.fromNanos(value)
-    inline def micro: Duration  = value.asUnit(Micros)
-    inline def milli: Duration  = value.asUnit(Millis)
-    inline def second: Duration = value.asUnit(Seconds)
-    inline def minute: Duration = value.asUnit(Minutes)
-    inline def hour: Duration   = value.asUnit(Hours)
-    inline def day: Duration    = value.asUnit(Days)
-    inline def week: Duration   = value.asUnit(Weeks)
-    inline def month: Duration  = value.asUnit(Months)
-    inline def year: Duration   = value.asUnit(Years)
+    def nano: Duration   = Duration.fromNanos(value)
+    def micro: Duration  = value.asUnit(Micros)
+    def milli: Duration  = value.asUnit(Millis)
+    def second: Duration = value.asUnit(Seconds)
+    def minute: Duration = value.asUnit(Minutes)
+    def hour: Duration   = value.asUnit(Hours)
+    def day: Duration    = value.asUnit(Days)
+    def week: Duration   = value.asUnit(Weeks)
+    def month: Duration  = value.asUnit(Months)
+    def year: Duration   = value.asUnit(Years)
 end extension

@@ -1,5 +1,7 @@
 package kyo
 
+import java.time.temporal.ChronoUnit
+import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.Duration as ScalaDuration
 import zio.Duration as ZDuration
 import zio.test.{Result as _, *}
@@ -255,6 +257,36 @@ object DurationSpec extends ZIOSpecDefault:
             },
             test("subtracting zero") {
                 assertTrue(10.hours - Duration.Zero == 10.hours)
+            }
+        ),
+        suite("Duration TimeUnit/ChronoUnit conversions")(
+            test("TimeUnit conversions") {
+                val duration = 1000.millis
+                TestResult.allSuccesses(
+                    assertTrue(duration.to(TimeUnit.NANOSECONDS) == 1_000_000_000L),
+                    assertTrue(duration.to(TimeUnit.MICROSECONDS) == 1_000_000L),
+                    assertTrue(duration.to(TimeUnit.MILLISECONDS) == 1000L),
+                    assertTrue(duration.to(TimeUnit.SECONDS) == 1L),
+                    assertTrue(duration.to(TimeUnit.MINUTES) == 0L),
+                    assertTrue(duration.to(TimeUnit.HOURS) == 0L),
+                    assertTrue(duration.to(TimeUnit.DAYS) == 0L)
+                )
+            },
+            test("ChronoUnit conversions") {
+                val duration = 24.hours
+                TestResult.allSuccesses(
+                    assertTrue(duration.to(ChronoUnit.NANOS) == 24L * 60 * 60 * 1_000_000_000L),
+                    assertTrue(duration.to(ChronoUnit.MICROS) == 24L * 60 * 60 * 1_000_000L),
+                    assertTrue(duration.to(ChronoUnit.MILLIS) == 24L * 60 * 60 * 1000L),
+                    assertTrue(duration.to(ChronoUnit.SECONDS) == 24L * 60 * 60),
+                    assertTrue(duration.to(ChronoUnit.MINUTES) == 24L * 60),
+                    assertTrue(duration.to(ChronoUnit.HOURS) == 24L),
+                    assertTrue(duration.to(ChronoUnit.DAYS) == 1L)
+                )
+            },
+            test("unsupported ChronoUnit throws exception") {
+                val result = Result.catching[UnsupportedOperationException](1.second.to(ChronoUnit.FOREVER))
+                assertTrue(result.isFail)
             }
         )
     ) @@ TestAspect.exceptNative

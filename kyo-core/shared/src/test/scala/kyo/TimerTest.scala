@@ -1,127 +1,150 @@
 package kyo
 
-import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 import org.scalatest.compatible.Assertion
 
 class TimerTest extends Test:
 
-    "schedule" in run {
-        for
-            p     <- Promise.init[Nothing, String]
-            _     <- Timer.schedule(1.milli)(p.complete(Result.success("hello")).map(require(_)))
-            hello <- p.get
-        yield assert(hello == "hello")
-    }
+    def intervals(instants: Seq[Instant]): Seq[Duration] =
+        instants.sliding(2, 1).filter(_.size == 2).map(seq => seq(1) - seq(0)).toSeq
 
-    "custom executor" in runJVM {
-        val exec = Executors.newSingleThreadScheduledExecutor()
-        import AllowUnsafe.embrace.danger
-        Timer.let(Timer(Timer.Unsafe(exec))) {
+    "repeatAtInterval" - {
+        "executes function at interval" in run {
             for
-                p     <- Promise.init[Nothing, String]
-                _     <- Timer.schedule(1.milli)(p.complete(Result.success("hello")).map(require(_)))
-                hello <- p.get
-            yield assert(hello == "hello")
+                channel  <- Channel.init[Instant](10)
+                task     <- Timer.repeatAtInterval(1.millis)(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+            yield
+                val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
+                assert(avgInterval >= 1.millis && avgInterval < 5.millis)
+        }
+        "respects interrupt" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Timer.repeatAtInterval(1.millis)(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+                _        <- Async.sleep(2.millis)
+                result   <- channel.poll
+            yield assert(result.isEmpty)
+        }
+        "with time control" in run {
+            Clock.withTimeControl { control =>
+                for
+                    running  <- AtomicBoolean.init(false)
+                    queue    <- Queue.Unbounded.init[Instant]()
+                    task     <- Timer.repeatAtInterval(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
+                    _        <- untilTrue(control.advance(1.milli).andThen(running.get))
+                    _        <- queue.drain
+                    _        <- control.advance(1.milli).repeat(10)
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield
+                    intervals(instants).foreach(v => assert(v == 1.millis))
+                    succeed
+            }
+        }
+        "with Schedule parameter" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Timer.repeatAtInterval(Schedule.fixed(1.millis))(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+            yield
+                val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
+                assert(avgInterval >= 1.millis && avgInterval < 5.millis)
+        }
+        "with Schedule and state" in run {
+            for
+                channel <- Channel.init[Int](10)
+                task    <- Timer.repeatAtInterval(Schedule.fixed(1.millis), 0)(st => channel.put(st).andThen(st + 1))
+                numbers <- Kyo.fill(10)(channel.take)
+                _       <- task.interrupt
+            yield assert(numbers.toSeq == (0 until 10))
+        }
+        "completes when schedule completes" in run {
+            for
+                channel <- Channel.init[Int](10)
+                task    <- Timer.repeatAtInterval(Schedule.fixed(1.millis).maxDuration(10.millis), 0)(st => channel.put(st).andThen(st + 1))
+                lastState <- task.get
+                numbers   <- channel.drain
+            yield assert(lastState == 10 && numbers.toSeq == (0 until 10))
         }
     }
 
-    "cancel" in runJVM {
-        for
-            p         <- Promise.init[Nothing, String]
-            task      <- Timer.schedule(5.seconds)(p.complete(Result.success("hello")).map(require(_)))
-            _         <- task.cancel
-            cancelled <- untilTrue(task.cancelled)
-            done1     <- p.done
-            _         <- Async.sleep(5.millis)
-            done2     <- p.done
-        yield assert(cancelled && !done1 && !done2)
-    }
-
-    "scheduleAtFixedRate" in run {
-        for
-            ref <- AtomicInt.init(0)
-            task <- Timer.scheduleAtFixedRate(
-                1.milli,
-                1.milli
-            )(ref.incrementAndGet.unit)
-            _         <- Async.sleep(5.millis)
-            n         <- ref.get
-            cancelled <- task.cancel
-        yield assert(n > 0 && cancelled)
-    }
-
-    "scheduleWithFixedDelay" in runJVM {
-        for
-            ref <- AtomicInt.init(0)
-            task <- Timer.scheduleWithFixedDelay(
-                1.milli,
-                1.milli
-            )(ref.incrementAndGet.unit)
-            _         <- Async.sleep(5.millis)
-            n         <- ref.get
-            cancelled <- task.cancel
-        yield assert(n > 0 && cancelled)
-    }
-
-    "scheduleWithFixedDelay 2" in runJVM {
-        for
-            ref <- AtomicInt.init(0)
-            task <- Timer.scheduleWithFixedDelay(
-                1.milli
-            )(ref.incrementAndGet.unit)
-            _         <- Async.sleep(5.millis)
-            n         <- ref.get
-            cancelled <- task.cancel
-        yield assert(n > 0 && cancelled)
-    }
-
-    "unsafe" - {
-        import AllowUnsafe.embrace.danger
-
-        "should schedule task correctly" in {
-            val testUnsafe = new TestUnsafeTimer()
-            val task       = testUnsafe.schedule(1.second)(())
-            assert(testUnsafe.scheduledTasks.nonEmpty)
-            assert(task.isInstanceOf[TimerTask.Unsafe])
+    "repeatWithDelay" - {
+        "executes function with delay" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Timer.repeatWithDelay(1.millis)(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+            yield
+                val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
+                assert(avgDelay >= 1.millis && avgDelay < 5.millis)
         }
 
-        "should schedule at fixed rate correctly" in {
-            val testUnsafe = new TestUnsafeTimer()
-            val task       = testUnsafe.scheduleAtFixedRate(1.second, 2.seconds)(())
-            assert(testUnsafe.fixedRateTasks.nonEmpty)
-            assert(task.isInstanceOf[TimerTask.Unsafe])
+        "respects interrupt" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Timer.repeatWithDelay(1.millis)(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+                _        <- Async.sleep(2.millis)
+                result   <- channel.poll
+            yield assert(result.isEmpty)
         }
 
-        "should schedule with fixed delay correctly" in {
-            val testUnsafe = new TestUnsafeTimer()
-            val task       = testUnsafe.scheduleWithFixedDelay(1.second, 2.seconds)(())
-            assert(testUnsafe.fixedDelayTasks.nonEmpty)
-            assert(task.isInstanceOf[TimerTask.Unsafe])
+        "with time control" in run {
+            Clock.withTimeControl { control =>
+                for
+                    running  <- AtomicBoolean.init(false)
+                    queue    <- Queue.Unbounded.init[Instant]()
+                    task     <- Timer.repeatWithDelay(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
+                    _        <- untilTrue(control.advance(1.milli).andThen(running.get))
+                    _        <- queue.drain
+                    _        <- control.advance(1.milli).repeat(10)
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield
+                    intervals(instants).foreach(v => assert(v == 1.millis))
+                    succeed
+            }
         }
 
-        "should convert to safe Timer" in {
-            val testUnsafe = new TestUnsafeTimer()
-            val safeTimer  = testUnsafe.safe
-            assert(safeTimer.isInstanceOf[Timer])
+        "works with Schedule parameter" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Timer.repeatWithDelay(Schedule.fixed(1.millis))(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+            yield
+                val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
+                assert(avgDelay >= 1.millis && avgDelay < 5.millis)
+        }
+
+        "works with Schedule and state" in run {
+            val counter = new JAtomicInteger(0)
+            for
+                channel <- Channel.init[Int](10)
+                task <- Timer.repeatWithDelay(Schedule.fixed(1.millis), 0) { state =>
+                    channel.put(state).as(state + 1)
+                }
+                numbers <- Kyo.fill(10)(channel.take)
+                _       <- task.interrupt
+            yield assert(numbers.toSeq == (0 until 10))
+            end for
+        }
+
+        "completes when schedule completes" in run {
+            for
+                channel <- Channel.init[Int](10)
+                task    <- Timer.repeatWithDelay(Schedule.fixed(1.millis).maxDuration(10.millis), 0)(st => channel.put(st).andThen(st + 1))
+                lastState <- task.get
+                numbers   <- channel.drain
+            yield assert(lastState == 10 && numbers.toSeq == (0 until 10))
         }
     }
-
-    class TestUnsafeTimer extends Timer.Unsafe:
-        var scheduledTasks  = List.empty[(Duration, () => Unit)]
-        var fixedRateTasks  = List.empty[(Duration, Duration, () => Unit)]
-        var fixedDelayTasks = List.empty[(Duration, Duration, () => Unit)]
-
-        def schedule(delay: Duration)(f: => Unit)(using AllowUnsafe): TimerTask.Unsafe =
-            scheduledTasks = (delay, () => f) :: scheduledTasks
-            TimerTask.Unsafe.noop
-
-        def scheduleAtFixedRate(initialDelay: Duration, period: Duration)(f: => Unit)(using AllowUnsafe): TimerTask.Unsafe =
-            fixedRateTasks = (initialDelay, period, () => f) :: fixedRateTasks
-            TimerTask.Unsafe.noop
-
-        def scheduleWithFixedDelay(initialDelay: Duration, period: Duration)(f: => Unit)(using AllowUnsafe): TimerTask.Unsafe =
-            fixedDelayTasks = (initialDelay, period, () => f) :: fixedDelayTasks
-            TimerTask.Unsafe.noop
-    end TestUnsafeTimer
 
 end TimerTest
