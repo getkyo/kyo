@@ -922,6 +922,68 @@ class ResultTest extends Test:
         }
     }
 
+    "unit" - {
+        "should convert Success to Success(())" in {
+            val result = Result.success(42).unit
+            assert(result == Success(()))
+        }
+
+        "should not change Fail" in {
+            val result = Result.fail[String, Int]("error").unit
+            assert(result == Fail("error"))
+        }
+
+        "should not change Panic" in {
+            val ex     = new Exception("test")
+            val result = Result.panic[String, Int](ex).unit
+            assert(result == Panic(ex))
+        }
+    }
+
+    "exists" - {
+        "should return true for Success when predicate holds" in {
+            val result = Result.success(42)
+            assert(result.exists(_ > 0))
+        }
+
+        "should return false for Success when predicate doesn't hold" in {
+            val result = Result.success(42)
+            assert(!result.exists(_ < 0))
+        }
+
+        "should return false for Fail" in {
+            val result = Result.fail[String, Int]("error")
+            assert(!result.exists(_ => true))
+        }
+
+        "should return false for Panic" in {
+            val result = Result.panic[String, Int](new Exception("test"))
+            assert(!result.exists(_ => true))
+        }
+    }
+
+    "forall" - {
+        "should return true for Success when predicate holds" in {
+            val result = Result.success(42)
+            assert(result.forall(_ > 0))
+        }
+
+        "should return false for Success when predicate doesn't hold" in {
+            val result = Result.success(42)
+            assert(!result.forall(_ < 0))
+        }
+
+        "should return true for Fail" in {
+            val result = Result.fail[String, Int]("error")
+            assert(result.forall(_ => false))
+        }
+
+        "should return true for Panic" in {
+            val result = Result.panic[String, Int](new Exception("test"))
+            assert(result.forall(_ => false))
+        }
+    }
+
     "show" - {
         "Success" in {
             assert(Result.success(42).show == "Success(42)")

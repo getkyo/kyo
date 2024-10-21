@@ -22,7 +22,7 @@ class SemaphoreBench extends Bench.ForkOnly(()):
     override def kyoBenchFiber() =
         import kyo.*
 
-        def loop(s: Meter, i: Int): Unit < Async =
+        def loop(s: Meter, i: Int): Unit < (Async & Abort[Closed]) =
             if i >= depth then
                 IO.unit
             else

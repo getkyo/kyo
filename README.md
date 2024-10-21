@@ -2054,18 +2054,20 @@ The `Retry` effect automatically adds the `Async` effect to handle the provided 
 
 The `Queue` effect operates atop of `IO` and provides thread-safe queue data structures based on the high-performance [JCTools](https://github.com/JCTools/JCTools) library on the JVM. For ScalaJS, a simple `ArrayQueue` is used.
 
+> Warning: The actual capacity of a `Queue` is rounded up to the next power of two for performance reasons. For example, if you specify a capacity of `10`, the actual capacity will be `16`.
+
 **Bounded queues**
 ```scala
 import kyo.*
 
-// A bounded channel rejects new
+// A bounded queue that rejects new
 // elements once full
 val a: Queue[Int] < IO =
     Queue.init(capacity = 42)
 
 // Obtain the number of items in the queue
 // via the method 'size' in 'Queue'
-val b: Int < IO =
+val b: Int < (IO & Abort[Closed]) =
     a.map(_.size)
 
 // Get the queue capacity
@@ -2073,27 +2075,27 @@ val c: Int < IO =
     a.map(_.capacity)
 
 // Try to offer a new item
-val d: Boolean < IO =
+val d: Boolean < (IO & Abort[Closed]) =
     a.map(_.offer(42))
 
 // Try to poll an item
-val e: Maybe[Int] < IO =
+val e: Maybe[Int] < (IO & Abort[Closed]) =
     a.map(_.poll)
 
 // Try to 'peek' an item without removing it
-val f: Maybe[Int] < IO =
+val f: Maybe[Int] < (IO & Abort[Closed]) =
     a.map(_.peek)
 
 // Check if the queue is empty
-val g: Boolean < IO =
+val g: Boolean < (IO & Abort[Closed]) =
     a.map(_.empty)
 
 // Check if the queue is full
-val h: Boolean < IO =
+val h: Boolean < (IO & Abort[Closed]) =
     a.map(_.full)
 
 // Drain the queue items
-val i: Seq[Int] < IO =
+val i: Seq[Int] < (IO & Abort[Closed]) =
     a.map(_.drain)
 
 // Close the queue. If successful,
@@ -2111,18 +2113,18 @@ import kyo.*
 // grow without limits, the GC overhead can make
 // the system fail
 val a: Queue.Unbounded[Int] < IO =
-    Queue.initUnbounded()
+    Queue.Unbounded.init()
 
 // A 'dropping' queue discards new entries
 // when full
 val b: Queue.Unbounded[Int] < IO =
-    Queue.initDropping(capacity = 42)
+    Queue.Unbounded.initDropping(capacity = 42)
 
 // A 'sliding' queue discards the oldest
 // entries if necessary to make space for new
 // entries
 val c: Queue.Unbounded[Int] < IO =
-    Queue.initSliding(capacity = 42)
+    Queue.Unbounded.initSliding(capacity = 42)
 
 // Note how 'dropping' and 'sliding' queues
 // return 'Queue.Unbounded`. It provides
@@ -2164,7 +2166,9 @@ val a: Queue[Int] < IO =
 
 The `Channel` effect serves as an advanced concurrency primitive, designed to facilitate seamless and backpressured data transfer between various parts of your application. Built upon the `Async` effect, `Channel` not only ensures thread-safe communication but also incorporates a backpressure mechanism. This mechanism temporarily suspends fibers under specific conditions—either when waiting for new items to arrive or when awaiting space to add new items.
 
-```scala
+> Warning: The actual capacity of a `Channel` is rounded up to the next power of two for performance reasons. For example, if you specify a capacity of `10`, the actual capacity will be `16`.
+
+```scala    
 import kyo.*
 
 // A 'Channel' is initialized
@@ -2194,23 +2198,23 @@ val a: Channel[Int] < IO =
 // If there's no capacity, the fiber
 // is automatically suspended until
 // space is made available
-val b: Unit < Async =
+val b: Unit < (Async & Abort[Closed]) =
     a.map(_.put(42))
 
 // Takes an item from the channel.
 // If the channel is empty, the fiber
 // is suspended until a new item is
 // made available
-val c: Int < Async =
+val c: Int < (Async & Abort[Closed]) =
     a.map(_.take)
 
 // 'putFiber' returns a `Fiber` that
 // will complete once the put completes
-val d: Fiber[Nothing, Unit] < IO =
+val d: Fiber[Closed, Unit] < IO =
     a.map(_.putFiber(42))
 
 // 'takeFiber' also returns a fiber
-val e: Fiber[Nothing, Int] < IO =
+val e: Fiber[Closed, Int] < IO =
     a.map(_.takeFiber)
 
 // Closes the channel. If successful,
@@ -2240,7 +2244,7 @@ val a: Hub[Int] < IO =
 // Hub provide APIs similar to
 // channels: size, offer, isEmpty,
 // isFull, putFiber, put
-val b: Boolean < IO =
+val b: Boolean < (IO & Abort[Closed]) =
     a.map(_.offer(1))
 
 // But reading from hubs can only
@@ -2248,26 +2252,26 @@ val b: Boolean < IO =
 // only receive messages sent after
 // their cration. To create call
 // `listen`:
-val c: Listener[Int] < IO =
+val c: Listener[Int] < (IO & Abort[Closed]) =
     a.map(_.listen)
 
 // Each listener can have an
 // additional message buffer
-val d: Listener[Int] < IO =
+val d: Listener[Int] < (IO & Abort[Closed]) =
     a.map(_.listen(bufferSize = 3))
 
 // Listeners provide methods for
 // receiving messages similar to
 // channels: size, isEmpty, isFull,
 // poll, takeFiber, take
-val e: Int < Async =
+val e: Int < (Async & Abort[Closed]) =
     d.map(_.take)
 
 // A listener can be closed
 // individually. If successful,
 // a Some with the backlog of
 // pending messages is returned
-val f: Maybe[Seq[Int]] < IO =
+val f: Maybe[Seq[Int]] < (IO & Abort[Closed]) =
     d.map(_.close)
 
 // If the Hub is closed, all
@@ -2322,22 +2326,22 @@ import kyo.*
 val a: Meter < IO =
     Meter.initMutex
 
-// Get available permits
-val b: Int < IO =
-    a.map(_.available)
+// Get the number available permits
+val b: Int < (Async & Abort[Closed]) =
+    a.map(_.availablePermits)
 
-// Check for available permit
-val c: Boolean < IO =
-    a.map(_.isAvailable)
+// Get the number of waiting fibers
+val c: Int < (Async & Abort[Closed]) =
+    a.map(_.pendingWaiters)
 
 // Use 'run' to execute tasks
 // respecting meter limits
-val d: Int < Async =
+val d: Int < (Async & Abort[Closed]) =
     a.map(_.run(Math.cos(42).toInt))
 
 // 'tryRun' executes if a permit is
 // available; returns 'None' otherwise
-val e: Maybe[Int] < IO =
+val e: Maybe[Int] < (Async & Abort[Closed]) =
     a.map(_.tryRun(Math.cos(42).toInt))
 ```
 
@@ -2936,7 +2940,7 @@ val c: String < (Async & Abort[FailedRequest]) =
 // Implementing a custom mock backend
 val backend: Backend =
     new Backend:
-        def send[T](r: Request[T, Any]) =
+        def send[T: Flat](r: Request[T, Any]) =
             Response.ok(Right("mocked")).asInstanceOf[Response[T]]
 
 // Use the custom backend

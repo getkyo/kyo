@@ -1,5 +1,6 @@
 package kyo
 
+import org.jctools.queues.MessagePassingQueue.Consumer
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 
@@ -8,334 +9,291 @@ import scala.annotation.tailrec
   * @tparam A
   *   The type of elements in the channel
   */
-abstract class Channel[A]:
-    self =>
-
-    /** Returns the current size of the channel.
-      *
-      * @return
-      *   The number of elements currently in the channel
-      */
-    def size(using Frame): Int < IO
-
-    /** Attempts to offer an element to the channel without blocking.
-      *
-      * @param v
-      *   The element to offer
-      * @return
-      *   true if the element was added to the channel, false otherwise
-      */
-    def offer(v: A)(using Frame): Boolean < IO
-
-    /** Offers an element to the channel without returning a result.
-      *
-      * @param v
-      *   The element to offer
-      */
-    def offerDiscard(v: A)(using Frame): Unit < IO
-
-    /** Attempts to poll an element from the channel without blocking.
-      *
-      * @return
-      *   Maybe containing the polled element, or empty if the channel is empty
-      */
-    def poll(using Frame): Maybe[A] < IO
-
-    private[kyo] def unsafePoll(using AllowUnsafe): Maybe[A]
-
-    /** Checks if the channel is empty.
-      *
-      * @return
-      *   true if the channel is empty, false otherwise
-      */
-    def empty(using Frame): Boolean < IO
-
-    /** Checks if the channel is full.
-      *
-      * @return
-      *   true if the channel is full, false otherwise
-      */
-    def full(using Frame): Boolean < IO
-
-    /** Creates a fiber that puts an element into the channel.
-      *
-      * @param v
-      *   The element to put
-      * @return
-      *   A fiber that completes when the element is put into the channel
-      */
-    def putFiber(v: A)(using Frame): Fiber[Nothing, Unit] < IO
-
-    /** Creates a fiber that takes an element from the channel.
-      *
-      * @return
-      *   A fiber that completes with the taken element
-      */
-    def takeFiber(using Frame): Fiber[Nothing, A] < IO
-
-    /** Puts an element into the channel, asynchronously blocking if necessary.
-      *
-      * @param v
-      *   The element to put
-      */
-    def put(v: A)(using Frame): Unit < Async
-
-    /** Takes an element from the channel, asynchronously blocking if necessary.
-      *
-      * @return
-      *   The taken element
-      */
-    def take(using Frame): A < Async
-
-    /** Checks if the channel is closed.
-      *
-      * @return
-      *   true if the channel is closed, false otherwise
-      */
-    def closed(using Frame): Boolean < IO
-
-    /** Drains all elements from the channel.
-      *
-      * @return
-      *   A sequence containing all elements that were in the channel
-      */
-    def drain(using Frame): Seq[A] < IO
-
-    /** Closes the channel.
-      *
-      * @return
-      *   Maybe containing a sequence of remaining elements, or empty if the channel was already closed
-      */
-    def close(using Frame): Maybe[Seq[A]] < IO
-end Channel
+opaque type Channel[A] = Channel.Unsafe[A]
 
 object Channel:
+
+    extension [A](self: Channel[A])
+
+        /** Returns the capacity of the channel.
+          *
+          * @return
+          *   The capacity of the channel
+          */
+        def capacity: Int = self.capacity
+
+        /** Returns the current size of the channel.
+          *
+          * @return
+          *   The number of elements currently in the channel
+          */
+        def size(using Frame): Int < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.size()))
+
+        /** Attempts to offer an element to the channel without blocking.
+          *
+          * @param value
+          *   The element to offer
+          * @return
+          *   true if the element was added to the channel, false otherwise
+          */
+        def offer(value: A)(using Frame): Boolean < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.offer(value)))
+
+        /** Offers an element to the channel without returning a result.
+          *
+          * @param v
+          *   The element to offer
+          */
+        def offerDiscard(value: A)(using Frame): Unit < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.offer(value).unit))
+
+        /** Attempts to poll an element from the channel without blocking.
+          *
+          * @return
+          *   Maybe containing the polled element, or empty if the channel is empty
+          */
+        def poll(using Frame): Maybe[A] < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.poll()))
+
+        /** Puts an element into the channel, asynchronously blocking if necessary.
+          *
+          * @param value
+          *   The element to put
+          */
+        def put(value: A)(using Frame): Unit < (Abort[Closed] & Async) =
+            IO.Unsafe {
+                self.offer(value).fold(Abort.error) {
+                    case true  => ()
+                    case false => self.putFiber(value).safe.get
+                }
+            }
+
+        /** Takes an element from the channel, asynchronously blocking if necessary.
+          *
+          * @return
+          *   The taken element
+          */
+        def take(using Frame): A < (Abort[Closed] & Async) =
+            IO.Unsafe {
+                self.poll().fold(Abort.error) {
+                    case Present(value) => value
+                    case Absent         => self.takeFiber().safe.get
+                }
+            }
+
+        /** Creates a fiber that puts an element into the channel.
+          *
+          * @param value
+          *   The element to put
+          * @return
+          *   A fiber that completes when the element is put into the channel
+          */
+        def putFiber(value: A)(using Frame): Fiber[Closed, Unit] < IO = IO.Unsafe(self.putFiber(value).safe)
+
+        /** Creates a fiber that takes an element from the channel.
+          *
+          * @return
+          *   A fiber that completes with the taken element
+          */
+        def takeFiber(using Frame): Fiber[Closed, A] < IO = IO.Unsafe(self.takeFiber().safe)
+
+        /** Drains all elements from the channel.
+          *
+          * @return
+          *   A sequence containing all elements that were in the channel
+          */
+        def drain(using Frame): Seq[A] < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.drain()))
+
+        /** Closes the channel.
+          *
+          * @return
+          *   A sequence of remaining elements
+          */
+        def close(using Frame): Maybe[Seq[A]] < IO = IO.Unsafe(self.close())
+
+        /** Checks if the channel is closed.
+          *
+          * @return
+          *   true if the channel is closed, false otherwise
+          */
+        def closed(using Frame): Boolean < IO = IO.Unsafe(self.closed())
+
+        /** Checks if the channel is empty.
+          *
+          * @return
+          *   true if the channel is empty, false otherwise
+          */
+        def empty(using Frame): Boolean < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.empty()))
+
+        /** Checks if the channel is full.
+          *
+          * @return
+          *   true if the channel is full, false otherwise
+          */
+        def full(using Frame): Boolean < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.full()))
+
+        def unsafe: Unsafe[A] = self
+    end extension
 
     /** Initializes a new Channel.
       *
       * @param capacity
-      *   The capacity of the channel
+      *   The capacity of the channel. Note that this will be rounded up to the next power of two.
       * @param access
       *   The access mode for the channel (default is MPMC)
-      * @param initFrame
-      *   The initial frame for the channel
       * @tparam A
       *   The type of elements in the channel
       * @return
       *   A new Channel instance
+      *
+      * @note
+      *   The actual capacity will be rounded up to the next power of two.
+      * @warning
+      *   The actual capacity may be larger than the specified capacity due to rounding.
       */
-    def init[A](
-        capacity: Int,
-        access: Access = Access.MultiProducerMultiConsumer
-    )(using initFrame: Frame): Channel[A] < IO =
-        Queue.init[A](capacity, access).map { queue =>
-            IO {
-                new Channel[A]:
+    def init[A](capacity: Int, access: Access = Access.MultiProducerMultiConsumer)(using Frame): Channel[A] < IO =
+        IO.Unsafe(Unsafe.init(capacity, access))
 
-                    def u     = queue.unsafe
-                    val takes = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Nothing, A]](8)
-                    val puts  = new MpmcUnboundedXaddArrayQueue[(A, Promise.Unsafe[Nothing, Unit])](8)
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    abstract class Unsafe[A]:
+        def capacity: Int
+        def size()(using AllowUnsafe): Result[Closed, Int]
 
-                    def size(using Frame)  = op(u.size())
-                    def empty(using Frame) = op(u.empty())
-                    def full(using Frame)  = op(u.full())
+        def offer(value: A)(using AllowUnsafe): Result[Closed, Boolean]
+        def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
 
-                    def offer(v: A)(using Frame) =
-                        IO.Unsafe {
-                            !u.closed() && {
-                                try u.offer(v)
-                                finally flush()
-                            }
+        def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
+        def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A]
+
+        def drain()(using AllowUnsafe): Result[Closed, Seq[A]]
+        def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
+
+        def empty()(using AllowUnsafe): Result[Closed, Boolean]
+        def full()(using AllowUnsafe): Result[Closed, Boolean]
+        def closed()(using AllowUnsafe): Boolean
+
+        def safe: Channel[A] = this
+    end Unsafe
+
+    /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
+    object Unsafe:
+        def init[A](
+            _capacity: Int,
+            access: Access = Access.MultiProducerMultiConsumer
+        )(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
+            new Unsafe[A]:
+                val queue = Queue.Unsafe.init[A](_capacity, access)
+                val takes = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, A]](8)
+                val puts  = new MpmcUnboundedXaddArrayQueue[(A, Promise.Unsafe[Closed, Unit])](8)
+
+                def capacity = _capacity
+
+                def size()(using AllowUnsafe) = queue.size()
+
+                def offer(value: A)(using AllowUnsafe) =
+                    val result = queue.offer(value)
+                    if result.contains(true) then flush()
+                    result
+                end offer
+
+                def poll()(using AllowUnsafe) =
+                    val result = queue.poll()
+                    if result.exists(_.nonEmpty) then flush()
+                    result
+                end poll
+
+                def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
+                    val promise = Promise.Unsafe.init[Closed, Unit]()
+                    val tuple   = (value, promise)
+                    puts.add(tuple)
+                    flush()
+                    promise
+                end putFiber
+
+                def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A] =
+                    val promise = Promise.Unsafe.init[Closed, A]()
+                    takes.add(promise)
+                    flush()
+                    promise
+                end takeFiber
+
+                def drain()(using AllowUnsafe) =
+                    val result = queue.drain()
+                    if result.exists(_.nonEmpty) then flush()
+                    result
+                end drain
+
+                def close()(using frame: Frame, allow: AllowUnsafe) =
+                    queue.close().map { backlog =>
+                        flush()
+                        backlog
+                    }
+
+                def empty()(using AllowUnsafe)  = queue.empty()
+                def full()(using AllowUnsafe)   = queue.full()
+                def closed()(using AllowUnsafe) = queue.closed()
+
+                @tailrec private def flush(): Unit =
+                    // This method ensures that all values are processed
+                    // and handles interrupted fibers by discarding them.
+                    val queueClosed = queue.closed()
+                    val queueSize   = queue.size().getOrElse(0)
+                    val takesEmpty  = takes.isEmpty()
+                    val putsEmpty   = puts.isEmpty()
+
+                    if queueClosed && (!takesEmpty || !putsEmpty) then
+                        // Queue is closed, drain all takes and puts
+                        val fail = queue.size() // Obtain the failed Result
+                        takes.drain(_.completeDiscard(fail))
+                        puts.drain(_._2.completeDiscard(fail.unit))
+                        flush()
+                    else if queueSize > 0 && !takesEmpty then
+                        // Attempt to transfer a value from the queue to
+                        // a waiting take operation.
+                        Maybe(takes.poll()).foreach { promise =>
+                            queue.poll() match
+                                case Result.Success(Present(value)) =>
+                                    if !promise.complete(Result.success(value)) && !queue.offer(value).contains(true) then
+                                        // If completing the take fails and the queue
+                                        // cannot accept the value back, enqueue a
+                                        // placeholder put operation
+                                        val placeholder = Promise.Unsafe.init[Nothing, Unit]()
+                                        discard(puts.add((value, placeholder)))
+                                case _ =>
+                                    // Queue became empty, enqueue the take again
+                                    discard(takes.add(promise))
                         }
-
-                    def offerDiscard(v: A)(using Frame) =
-                        IO.Unsafe {
-                            if !u.closed() then
-                                try discard(u.offer(v))
-                                finally flush()
-                        }
-
-                    def unsafePoll(using AllowUnsafe): Maybe[A] =
-                        if u.closed() then
-                            Maybe.empty
-                        else
-                            try u.poll()
-                            finally flush()
-
-                    def poll(using Frame) =
-                        IO.Unsafe(unsafePoll)
-
-                    def put(v: A)(using Frame) =
-                        IO.Unsafe {
-                            try
-                                if u.closed() then
-                                    throw closedException
-                                else if u.offer(v) then
-                                    ()
-                                else
-                                    val p = Promise.Unsafe.init[Nothing, Unit]()
-                                    puts.add((v, p))
-                                    p.safe.get
-                                end if
-                            finally
-                                flush()
-                        }
-
-                    def putFiber(v: A)(using frame: Frame) =
-                        IO.Unsafe {
-                            try
-                                if u.closed() then
-                                    throw closedException
-                                else if u.offer(v) then
-                                    Fiber.unit
-                                else
-                                    val p = Promise.Unsafe.init[Nothing, Unit]()
-                                    puts.add((v, p))
-                                    p.safe
-                                end if
-                            finally
-                                flush()
-                        }
-
-                    def take(using Frame) =
-                        IO.Unsafe {
-                            try
-                                if u.closed() then
-                                    throw closedException
-                                else
-                                    u.poll() match
-                                        case Absent =>
-                                            val p = Promise.Unsafe.init[Nothing, A]()
-                                            takes.add(p)
-                                            p.safe.get
-                                        case Present(v) =>
-                                            v
-                            finally
-                                flush()
-                        }
-
-                    def takeFiber(using frame: Frame) =
-                        IO.Unsafe {
-                            try
-                                if u.closed() then
-                                    throw closedException
-                                else
-                                    u.poll() match
-                                        case Absent =>
-                                            val p = Promise.Unsafe.init[Nothing, A]()
-                                            takes.add(p)
-                                            p.safe
-                                        case Present(v) =>
-                                            Fiber.success(v)
-                            finally
-                                flush()
-                        }
-
-                    def closedException(using frame: Frame): Closed = Closed("Channel", initFrame, frame)
-
-                    inline def op[A](inline v: AllowUnsafe ?=> A)(using inline frame: Frame): A < IO =
-                        IO.Unsafe {
-                            if u.closed() then
-                                throw closedException
+                        flush()
+                    else if queueSize < capacity && !putsEmpty then
+                        // Attempt to transfer a value from a waiting
+                        // put operation to the queue.
+                        Maybe(puts.poll()).foreach { tuple =>
+                            val (value, promise) = tuple
+                            if queue.offer(value).contains(true) then
+                                // Queue accepted the value, complete the put
+                                discard(promise.complete(Result.unit))
                             else
-                                v
+                                // Queue became full, enqueue the put again
+                                discard(puts.add(tuple))
+                            end if
                         }
-
-                    def closed(using Frame) = queue.closed
-
-                    def drain(using Frame) = queue.drain
-
-                    def close(using frame: Frame) =
-                        IO.Unsafe {
-                            u.close() match
-                                case Absent => Maybe.empty
-                                case r =>
-                                    val c = Result.panic(closedException)
-                                    def dropTakes(): Unit =
-                                        val p = takes.poll()
-                                        if !isNull(p) then
-                                            p.completeDiscard(c)
-                                            dropTakes()
-                                    end dropTakes
-                                    def dropPuts(): Unit =
-                                        puts.poll() match
-                                            case null => ()
-                                            case (_, p) =>
-                                                p.completeDiscard(c)
-                                                dropPuts()
-                                    dropTakes()
-                                    dropPuts()
-                                    r
+                        flush()
+                    else if queueSize == 0 && !putsEmpty && !takesEmpty then
+                        // Directly transfer a value from a producer to a
+                        // consumer when the queue is empty.
+                        Maybe(puts.poll()).foreach { putTuple =>
+                            val (value, putPromise) = putTuple
+                            Maybe(takes.poll()) match
+                                case Present(takePromise) if takePromise.complete(Result.success(value)) =>
+                                    // Value transfered to the pending take, complete put
+                                    putPromise.completeDiscard(Result.unit)
+                                case _ =>
+                                    // No pending take available or the pending take is already
+                                    // completed due to interruption. Enqueue the put again.
+                                    discard(puts.add(putTuple))
+                            end match
                         }
-
-                    @tailrec private def flush(): Unit =
-                        import AllowUnsafe.embrace.danger
-
-                        // This method ensures that all values are processed
-                        // and handles interrupted fibers by discarding them.
-                        val queueSize  = u.size()
-                        val takesEmpty = takes.isEmpty()
-                        val putsEmpty  = puts.isEmpty()
-
-                        if queueSize > 0 && !takesEmpty then
-                            // Attempt to transfer a value from the queue to
-                            // a waiting consumer (take).
-                            val p = takes.poll()
-                            if !isNull(p) then
-                                u.poll() match
-                                    case Absent =>
-                                        // If the queue has been emptied before the
-                                        // transfer, requeue the consumer's promise.
-                                        discard(takes.add(p))
-                                    case Present(v) =>
-                                        if !p.complete(Result.success(v)) && !u.offer(v) then
-                                            // If completing the take fails and the queue
-                                            // cannot accept the value back, enqueue a
-                                            // placeholder put operation to preserve the value.
-                                            val placeholder = Promise.Unsafe.init[Nothing, Unit]()
-                                            discard(puts.add((v, placeholder)))
-                            end if
-                            flush()
-                        else if queueSize < capacity && !putsEmpty then
-                            // Attempt to transfer a value from a waiting
-                            // producer (put) to the queue.
-                            val t = puts.poll()
-                            if t != null then
-                                val (v, p) = t
-                                if u.offer(v) then
-                                    // Complete the put's promise if the value is
-                                    // successfully enqueued. If the fiber became
-                                    // interrupted, the completion will be ignored.
-                                    discard(p.complete(Result.success(())))
-                                else
-                                    // If the queue becomes full before the transfer,
-                                    // requeue the producer's operation.
-                                    discard(puts.add(t))
-                                end if
-                            end if
-                            flush()
-                        else if queueSize == 0 && !putsEmpty && !takesEmpty then
-                            // Directly transfer a value from a producer to a
-                            // consumer when the queue is empty.
-                            val t = puts.poll()
-                            if t != null then
-                                val (v, p) = t
-                                val p2     = takes.poll()
-                                if !isNull(p2) && p2.complete(Result.success(v)) then
-                                    // If the transfer is successful, complete
-                                    // the put's promise. If the consumer's fiber
-                                    // became interrupted, the completion will be
-                                    // ignored.
-                                    discard(p.complete(Result.success(())))
-                                else
-                                    // If the transfer to the consumer fails, requeue
-                                    // the producer's operation.
-                                    discard(puts.add(t))
-                                end if
-                            end if
-                            flush()
-                        end if
-                    end flush
-            }
-        }
+                        flush()
+                    end if
+                end flush
+            end new
+        end init
+    end Unsafe
 end Channel

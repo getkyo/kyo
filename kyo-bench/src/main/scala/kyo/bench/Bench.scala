@@ -48,7 +48,7 @@ object Bench:
 
     abstract class Base[A](expectedResult: A) extends Bench[A](expectedResult):
         def zioBench(): zio.UIO[A]
-        def kyoBenchFiber(): kyo.<[A, kyo.Async] = kyoBench()
+        def kyoBenchFiber(): kyo.<[A, kyo.Async & kyo.Abort[Throwable]] = kyoBench()
         def kyoBench(): kyo.<[A, kyo.IO]
         def catsBench(): cats.effect.IO[A]
     end Base

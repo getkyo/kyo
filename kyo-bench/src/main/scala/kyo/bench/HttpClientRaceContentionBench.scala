@@ -58,7 +58,9 @@ class HttpClientRaceContentionBench
     override def kyoBenchFiber() =
         import kyo.*
 
-        Async.race(Seq.fill(concurrency)(Requests.let(kyoClient)(Abort.run(Requests(_.get(kyoUrl)))).map(_.getOrThrow)))
+        // TODO inference issue
+        val x = Async.race(Seq.fill(concurrency)(Requests.let(kyoClient)(Requests(_.get(kyoUrl)))))
+        x
     end kyoBenchFiber
 
     val zioUrl =

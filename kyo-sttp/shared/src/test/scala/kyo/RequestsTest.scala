@@ -7,7 +7,7 @@ class RequestsTest extends Test:
 
     class TestBackend extends Requests.Backend:
         var calls = 0
-        def send[A](r: Request[A, Any]) =
+        def send[A: Flat](r: Request[A, Any]) =
             calls += 1
             Response.ok(Right("mocked")).asInstanceOf[Response[A]]
     end TestBackend
@@ -49,7 +49,10 @@ class RequestsTest extends Test:
     "with meter" in run {
         var calls = 0
         val meter = new Meter:
-            def available(using Frame)                 = ???
+            def capacity                               = ???
+            def availablePermits(using Frame)          = ???
+            def pendingWaiters(using Frame)            = ???
+            def closed(using Frame)                    = ???
             def tryRun[A, S](v: => A < S)(using Frame) = ???
             def run[A, S](v: => A < S)(using Frame) =
                 calls += 1
