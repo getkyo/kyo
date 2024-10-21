@@ -254,7 +254,7 @@ object Meter:
                             // No permit available, add to waiters queue
                             val p = Promise.Unsafe.init[Closed, Unit]()
                             waiters.add(p)
-                            p.safe.use(_ => dispatch(v))
+                            dispatch(p.safe.use(_ => v))
                     else
                         // CAS failed, retry
                         loop()
@@ -326,8 +326,8 @@ object Meter:
 
         @tailrec final protected def release(): Boolean =
             val st = state.get()
-            if st >= permits then
-                // No more permits to release
+            if st >= permits || st == Int.MinValue then
+                // No more permits to release or meter is closed
                 false
             else if !state.cas(st, st + 1) then
                 // CAS failed, retry
