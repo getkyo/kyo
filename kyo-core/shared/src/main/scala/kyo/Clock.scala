@@ -104,6 +104,9 @@ object Clock:
     def let[A, S](c: Clock)(f: => A < S)(using Frame): A < S =
         local.let(c)(f)
 
+    def use[A, S](f: Clock => A < S)(using Frame): A < S =
+        local.use(f)
+
     /** Gets the current time using the local Clock instance.
       *
       * @return

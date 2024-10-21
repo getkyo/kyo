@@ -464,6 +464,8 @@ object Fiber extends FiberPlatformSpecific:
 
             def init[E, A]()(using AllowUnsafe): Unsafe[E, A] = IOPromise()
 
+            private[kyo] def fromIOPromise[E, A](p: IOPromise[E, A]): Unsafe[E, A] = p
+
             extension [E, A](self: Unsafe[E, A])
                 def complete[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Boolean        = self.complete(v)
                 def completeDiscard[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Unit    = discard(self.complete(v))
