@@ -398,4 +398,35 @@ class AsyncTest extends Test:
         yield assert(r1 == 0 && r2 == 42)
     }
 
+    "boundary inference with Abort" - {
+        "same failures" in {
+            val v: Int < Abort[Int]                            = 1
+            val _: Fiber[Int, Int] < IO                        = Async.run(v)
+            val _: Int < (Abort[Int | Timeout] & IO)           = Async.runAndBlock(1.second)(v)
+            val _: Int < (Abort[Int] & Async)                  = Async.mask(v)
+            val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(v)
+            val _: Int < (Abort[Int] & Async)                  = Async.race(Seq(v))
+            val _: Int < (Abort[Int] & Async)                  = Async.race(v, v)
+            val _: Seq[Int] < (Abort[Int] & Async)             = Async.parallel(Seq(v))
+            val _: (Int, Int) < (Abort[Int] & Async)           = Async.parallel(v, v)
+            val _: (Int, Int, Int) < (Abort[Int] & Async)      = Async.parallel(v, v, v)
+            val _: (Int, Int, Int, Int) < (Abort[Int] & Async) = Async.parallel(v, v, v, v)
+            succeed
+        }
+        "additional failure" in {
+            val v: Int < Abort[Int]                                     = 1
+            val _: Fiber[Int | String, Int] < IO                        = Async.run(v)
+            val _: Int < (Abort[Int | Timeout | String] & IO)           = Async.runAndBlock(1.second)(v)
+            val _: Int < (Abort[Int | String] & Async)                  = Async.mask(v)
+            val _: Int < (Abort[Int | Timeout | String] & Async)        = Async.timeout(1.second)(v)
+            val _: Int < (Abort[Int | String] & Async)                  = Async.race(Seq(v))
+            val _: Int < (Abort[Int | String] & Async)                  = Async.race(v, v)
+            val _: Seq[Int] < (Abort[Int | String] & Async)             = Async.parallel(Seq(v))
+            val _: (Int, Int) < (Abort[Int | String] & Async)           = Async.parallel(v, v)
+            val _: (Int, Int, Int) < (Abort[Int | String] & Async)      = Async.parallel(v, v, v)
+            val _: (Int, Int, Int, Int) < (Abort[Int | String] & Async) = Async.parallel(v, v, v, v)
+            succeed
+        }
+    }
+
 end AsyncTest
