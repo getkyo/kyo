@@ -579,4 +579,19 @@ class FiberTest extends Test:
         }
     }
 
+    "boundary inference with Abort" - {
+        "same failures" in {
+            val v: Int < Abort[Int]          = 1
+            val _: Fiber[Int, Int] < IO      = Fiber.race(Seq(v))
+            val _: Fiber[Int, Seq[Int]] < IO = Fiber.parallel(Seq(v))
+            succeed
+        }
+        "additional failure" in {
+            val v: Int < Abort[Int]                   = 1
+            val _: Fiber[Int | String, Int] < IO      = Fiber.race(Seq(v))
+            val _: Fiber[Int | String, Seq[Int]] < IO = Fiber.parallel(Seq(v))
+            succeed
+        }
+    }
+
 end FiberTest
