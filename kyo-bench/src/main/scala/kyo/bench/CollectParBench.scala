@@ -10,9 +10,7 @@ class CollectParBench extends Bench.ForkOnly(Seq.fill(1000)(1)):
     override def kyoBenchFiber() =
         import kyo.*
 
-        // TODO inference issue
-        val x = Async.parallel(kyoTasks)
-        x
+        Async.parallel(kyoTasks)
     end kyoBenchFiber
 
     def catsBench() =

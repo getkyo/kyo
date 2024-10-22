@@ -640,7 +640,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     def fork(
         using
         flat: Flat[A],
-        boundary: Boundary[Ctx, IO],
+        boundary: Boundary[Ctx, IO & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[E, A] < (IO & Ctx) =
@@ -656,7 +656,7 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
     def forkScoped(
         using
         flat: Flat[A],
-        boundary: Boundary[Ctx, IO],
+        boundary: Boundary[Ctx, IO & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Fiber[E, A] < (IO & Ctx & Resource) =
@@ -697,8 +697,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         using
         f: Flat[A],
         f1: Flat[A1],
-        b: Boundary[Ctx, IO],
-        b1: Boundary[Ctx1, IO],
+        b: Boundary[Ctx, IO & Abort[E]],
+        b1: Boundary[Ctx1, IO & Abort[E1]],
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
         fr: Frame
@@ -722,8 +722,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         using
         f: Flat[A],
         f1: Flat[A1],
-        b: Boundary[Ctx, IO],
-        b1: Boundary[Ctx1, IO],
+        b: Boundary[Ctx, IO & Abort[E]],
+        b1: Boundary[Ctx1, IO & Abort[E1]],
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
         fr: Frame
@@ -747,8 +747,8 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
         using
         f: Flat[A],
         f1: Flat[A1],
-        b: Boundary[Ctx, IO],
-        b1: Boundary[Ctx1, IO],
+        b: Boundary[Ctx, IO & Abort[E]],
+        b1: Boundary[Ctx1, IO & Abort[E1]],
         r: Reducible[Abort[E]],
         r1: Reducible[Abort[E1]],
         fr: Frame
