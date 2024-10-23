@@ -4,11 +4,16 @@ import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 
 /** A Meter is an abstract class that represents a mechanism for controlling concurrency and rate limiting.
+  *
+  * Meters can be configured to be reentrant or non-reentrant. Reentrant meters allow nested calls from the same fiber, while non-reentrant
+  * meters will block or fail on nested calls.
   */
 abstract class Meter:
     self =>
 
     /** Runs an effect after acquiring a permit.
+      *
+      * If the meter is reentrant, nested calls from the same fiber will be allowed. If non-reentrant, nested calls will block or fail.
       *
       * @param v
       *   The effect to run.
@@ -66,6 +71,8 @@ end Meter
 
 object Meter:
 
+    import internal.*
+
     /** A no-op Meter that always allows operations and can't be closed. */
     case object Noop extends Meter:
         def availablePermits(using Frame)          = Int.MaxValue
@@ -76,24 +83,36 @@ object Meter:
         def closed(using Frame): Boolean < IO      = false
     end Noop
 
-    /** Creates a Meter that acts as a mutex (binary semaphore).
+    /** Creates a **reentrant** Meter that acts as a mutex (binary semaphore).
       *
       * @return
       *   A Meter effect that represents a mutex.
       */
     def initMutex(using Frame): Meter < IO =
-        initSemaphore(1)
+        initMutex(true)
+
+    /** Creates a Meter that acts as a mutex (binary semaphore).
+      *
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
+      * @return
+      *   A Meter effect that represents a mutex.
+      */
+    def initMutex(reentrant: Boolean = true)(using Frame): Meter < IO =
+        initSemaphore(1, reentrant)
 
     /** Creates a Meter that acts as a semaphore with the specified concurrency.
       *
       * @param concurrency
       *   The number of concurrent operations allowed.
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
       * @return
       *   A Meter effect that represents a semaphore.
       */
-    def initSemaphore(concurrency: Int)(using Frame): Meter < IO =
+    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < IO =
         IO.Unsafe {
-            new Base(concurrency):
+            new Base(concurrency, reentrant):
                 def dispatch[A, S](v: => A < S) =
                     // Release the permit right after the computation
                     IO.ensure(discard(release()))(v)
@@ -106,12 +125,14 @@ object Meter:
       *   The number of operations allowed per period.
       * @param period
       *   The duration of each period.
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
       * @return
       *   A Meter effect that represents a rate limiter.
       */
-    def initRateLimiter(rate: Int, period: Duration)(using initFrame: Frame): Meter < IO =
+    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < IO =
         IO.Unsafe {
-            new Base(rate):
+            new Base(rate, reentrant):
                 val timerTask =
                     // Schedule periodic task to replenish permits
                     IO.Unsafe.run(Clock.repeatAtInterval(period)(replenish())).eval
@@ -227,128 +248,153 @@ object Meter:
             end new
         }
 
-    abstract private class Base(permits: Int)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
+    private object internal:
 
-        // MinValue => closed
-        // >= 0     => # of permits
-        // < 0      => # of waiters
-        val state   = AtomicInt.Unsafe.init(permits)
-        val waiters = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, Unit]](8)
-        val closed  = Promise.Unsafe.init[Closed, Nothing]()
+        private val acquiredMeters = Local.initIsolated(Set.empty[Meter])
 
-        protected def dispatch[A, S](v: => A < S): A < (S & IO)
-        protected def onClose(): Unit
+        abstract class Base(permits: Int, reentrant: Boolean)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
 
-        final def run[A, S](v: => A < S)(using Frame) =
-            IO.Unsafe {
-                @tailrec def loop(): A < (S & Async & Abort[Closed]) =
-                    val st = state.get()
-                    if st == Int.MinValue then
-                        // Meter is closed
-                        closed.safe.get
-                    else if state.cas(st, st - 1) then
-                        if st > 0 then
-                            // Permit available, dispatch immediately
-                            dispatch(v)
-                        else
-                            // No permit available, add to waiters queue
-                            val p = Promise.Unsafe.init[Closed, Unit]()
-                            waiters.add(p)
-                            dispatch(p.safe.use(_ => v))
-                    else
-                        // CAS failed, retry
+            // MinValue => closed
+            // >= 0     => # of permits
+            // < 0      => # of waiters
+            val state   = AtomicInt.Unsafe.init(permits)
+            val waiters = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, Unit]](8)
+            val closed  = Promise.Unsafe.init[Closed, Nothing]()
+
+            protected def dispatch[A, S](v: => A < S): A < (S & IO)
+            protected def onClose(): Unit
+
+            private inline def withReentry[A, S](inline reenter: => A < S)(inline acquire: => A < S): A < S =
+                if reentrant then
+                    acquiredMeters.use { meters =>
+                        if meters.contains(this) then reenter
+                        else acquire
+                    }
+                else
+                    acquire
+
+            private inline def withAcquiredMeter[A, S](inline v: => A < S) =
+                if reentrant then
+                    acquiredMeters.update(_ + this)(v)
+                else
+                    v
+
+            final def run[A, S](v: => A < S)(using Frame) =
+                withReentry(v) {
+                    IO.Unsafe {
+                        @tailrec def loop(): A < (S & Async & Abort[Closed]) =
+                            val st = state.get()
+                            if st == Int.MinValue then
+                                // Meter is closed
+                                closed.safe.get
+                            else if state.cas(st, st - 1) then
+                                if st > 0 then
+                                    // Permit available, dispatch immediately
+                                    dispatch(withAcquiredMeter(v))
+                                else
+                                    // No permit available, add to waiters queue
+                                    val p = Promise.Unsafe.init[Closed, Unit]()
+                                    waiters.add(p)
+                                    dispatch(p.safe.use(_ => withAcquiredMeter(v)))
+                            else
+                                // CAS failed, retry
+                                loop()
+                            end if
+                        end loop
                         loop()
-                    end if
-                end loop
-                loop()
-            }
-        end run
+                    }
+                }
+            end run
 
-        final def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (S & Async & Abort[Closed]) =
-            IO.Unsafe {
-                @tailrec def loop(): Maybe[A] < (S & Async & Abort[Closed]) =
-                    val st = state.get()
-                    if st == Int.MinValue then
-                        // Meter is closed
-                        closed.safe.get
-                    else if st <= 0 then
-                        // No permit available, return empty
-                        Maybe.empty
-                    else if state.cas(st, st - 1) then
-                        // Permit available, dispatch
-                        dispatch(v.map(Maybe(_)))
-                    else
-                        // CAS failed, retry
+            final def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (S & Async & Abort[Closed]) =
+                withReentry(v.map(Maybe(_))) {
+                    IO.Unsafe {
+                        @tailrec def loop(): Maybe[A] < (S & Async & Abort[Closed]) =
+                            val st = state.get()
+                            if st == Int.MinValue then
+                                // Meter is closed
+                                closed.safe.get
+                            else if st <= 0 then
+                                // No permit available, return empty
+                                Maybe.empty
+                            else if state.cas(st, st - 1) then
+                                // Permit available, dispatch
+                                dispatch(withAcquiredMeter(v.map(Maybe(_))))
+                            else
+                                // CAS failed, retry
+                                loop()
+                            end if
+                        end loop
                         loop()
+                    }
+                }
+            end tryRun
+
+            final def availablePermits(using Frame) =
+                IO.Unsafe {
+                    state.get() match
+                        case Int.MinValue => closed.safe.get
+                        case st           => Math.max(0, st)
+                }
+
+            final def pendingWaiters(using Frame) =
+                IO.Unsafe {
+                    state.get() match
+                        case Int.MinValue => closed.safe.get
+                        case st           => Math.min(0, st).abs
+                }
+
+            final def close(using frame: Frame): Boolean < IO =
+                IO.Unsafe {
+                    val st = state.getAndSet(Int.MinValue)
+                    val ok = st != Int.MinValue // The meter wasn't already closed
+                    if ok then
+                        val fail = Result.fail(Closed("Semaphore is closed", initFrame, frame))
+                        // Complete the closed promise to fail new operations
+                        closed.completeDiscard(fail)
+                        // Drain the pending waiters
+                        @tailrec def drain(st: Int): Unit =
+                            if st < 0 then
+                                // Use pollWaiter to ensure all pending waiters
+                                // as indicated by the state are drained
+                                pollWaiter().completeDiscard(fail)
+                                drain(st + 1)
+                        drain(st)
+                        onClose()
                     end if
-                end loop
-                loop()
-            }
-        end tryRun
+                    ok
+                }
+            end close
 
-        final def availablePermits(using Frame) =
-            IO.Unsafe {
-                state.get() match
-                    case Int.MinValue => closed.safe.get
-                    case st           => Math.max(0, st)
-            }
+            final def closed(using Frame) = IO(state.get() == Int.MinValue)
 
-        final def pendingWaiters(using Frame) =
-            IO.Unsafe {
-                state.get() match
-                    case Int.MinValue => closed.safe.get
-                    case st           => Math.min(0, st).abs
-            }
-
-        final def close(using frame: Frame): Boolean < IO =
-            IO.Unsafe {
-                val st = state.getAndSet(Int.MinValue)
-                val ok = st != Int.MinValue // The meter wasn't already closed
-                if ok then
-                    val fail = Result.fail(Closed("Semaphore is closed", initFrame, frame))
-                    // Complete the closed promise to fail new operations
-                    closed.completeDiscard(fail)
-                    // Drain the pending waiters
-                    @tailrec def drain(st: Int): Unit =
-                        if st < 0 then
-                            // Use pollWaiter to ensure all pending waiters
-                            // as indicated by the state are drained
-                            pollWaiter().completeDiscard(fail)
-                            drain(st + 1)
-                    drain(st)
-                    onClose()
+            @tailrec final protected def release(): Boolean =
+                val st = state.get()
+                if st >= permits || st == Int.MinValue then
+                    // No more permits to release or meter is closed
+                    false
+                else if !state.cas(st, st + 1) then
+                    // CAS failed, retry
+                    release()
+                else if st < 0 && !pollWaiter().complete(Result.unit) then
+                    // Waiter is already complete due to interruption, retry
+                    release()
+                else
+                    // Permit released
+                    true
                 end if
-                ok
-            }
-        end close
+            end release
 
-        final def closed(using Frame) = IO(state.get() == Int.MinValue)
+            @tailrec final private def pollWaiter(): Promise.Unsafe[Closed, Unit] =
+                val waiter = waiters.poll()
+                if !isNull(waiter) then waiter
+                else
+                    // If no waiter is found, retry the poll operation
+                    // This handles the race condition between state change and waiter queuing
+                    pollWaiter()
+                end if
+            end pollWaiter
+        end Base
+    end internal
 
-        @tailrec final protected def release(): Boolean =
-            val st = state.get()
-            if st >= permits || st == Int.MinValue then
-                // No more permits to release or meter is closed
-                false
-            else if !state.cas(st, st + 1) then
-                // CAS failed, retry
-                release()
-            else if st < 0 && !pollWaiter().complete(Result.unit) then
-                // Waiter is already complete due to interruption, retry
-                release()
-            else
-                // Permit released
-                true
-            end if
-        end release
-
-        @tailrec final private def pollWaiter(): Promise.Unsafe[Closed, Unit] =
-            val waiter = waiters.poll()
-            if !isNull(waiter) then waiter
-            else
-                // If no waiter is found, retry the poll operation
-                // This handles the race condition between state change and waiter queuing
-                pollWaiter()
-            end if
-        end pollWaiter
-    end Base
 end Meter
