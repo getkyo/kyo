@@ -262,7 +262,7 @@ object Meter:
         protected def dispatch[A, S](v: => A < S): A < (S & IO)
         protected def onClose(): Unit
 
-        private inline def withReentry[A, S](inline reenter: => A < S)(inline acquire: => A < S): A < S =
+        private inline def withReentry[A, S](inline reenter: => A < S)(acquire: => A < S): A < S =
             if reentrant then
                 acquiredMeters.use { meters =>
                     if meters.contains(this) then reenter
