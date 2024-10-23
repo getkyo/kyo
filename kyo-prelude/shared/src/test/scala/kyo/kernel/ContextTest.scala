@@ -64,4 +64,33 @@ class ContextTest extends Test:
         assert(context.getOrElse(Tag[TestEffect2], "") == "test")
     }
 
+    "inherit" - {
+        sealed trait NonIsolatedEffect extends ContextEffect[String]
+        sealed trait IsolatedEffect    extends ContextEffect[String] with ContextEffect.Isolated
+
+        "should keep non-isolated effects" in {
+            val context = Context.empty
+                .set(Tag[NonIsolatedEffect], "test")
+                .set(Tag[TestEffect1], 42)
+
+            val inherited = context.inherit
+
+            assert(inherited.contains(Tag[NonIsolatedEffect]))
+            assert(inherited.contains(Tag[TestEffect1]))
+            assert(inherited.getOrElse(Tag[NonIsolatedEffect], "") == "test")
+            assert(inherited.getOrElse(Tag[TestEffect1], 0) == 42)
+        }
+
+        "should remove isolated effects" in {
+            val context = Context.empty
+                .set(Tag[IsolatedEffect], 100)
+                .set(Tag[TestEffect1], 42)
+
+            val inherited = context.inherit
+
+            assert(!inherited.contains(Tag[IsolatedEffect]))
+            assert(inherited.contains(Tag[TestEffect1]))
+        }
+    }
+
 end ContextTest
