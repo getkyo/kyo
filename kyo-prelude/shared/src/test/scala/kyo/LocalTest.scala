@@ -1,46 +1,51 @@
 package kyo
 
 import kyo.*
+import kyo.kernel.Boundary
 
 class LocalTest extends Test:
 
+    def withBuilder[A](f: ((=> Int) => Local[Int]) => Assertion) =
+        "isolated" in f(Local.initIsolated)
+        "regular" in f(Local.init)
+
     "default" - {
-        "method" in {
-            val l = Local.init(10)
+        "method" - withBuilder { b =>
+            val l = b(10)
             assert(l.default == 10)
         }
-        "get" in {
-            val l = Local.init(10)
+        "get" - withBuilder { b =>
+            val l = b(10)
             assert(
                 l.get.eval == 10
             )
         }
-        "effect + get" in {
-            val l = Local.init(10)
+        "effect + get" - withBuilder { b =>
+            val l = b(10)
             assert(
                 Env.run(1)(Env.use[Int](_ => l.get)).eval == 10
             )
         }
-        "effect + get + effect" in {
-            val l = Local.init(10)
+        "effect + get + effect" - withBuilder { b =>
+            val l = b(10)
             assert(
                 Env.run(42)(Env.use(_ => l.get).map(i => Env.use[Int](_ + i))).eval ==
                     52
             )
         }
-        "multiple" in {
-            val l1 = Local.init(10)
-            val l2 = Local.init(20)
+        "multiple" - withBuilder { b =>
+            val l1 = b(10)
+            val l2 = b(20)
             assert(
                 Kyo.zip(l1.get, l2.get).eval == (10, 20)
             )
         }
-        "lazy" in {
+        "lazy" - withBuilder { b =>
             var invoked = 0
             def default =
                 invoked += 1
                 10
-            val l = Local.init(default)
+            val l = b(default)
             assert(invoked == 0)
             assert(l.default == 10)
             assert(l.default == 10)
@@ -106,4 +111,52 @@ class LocalTest extends Test:
             )
         }
     }
+
+    "isolated" - {
+        "isolation and context inheritance" in {
+            val isolatedLocal    = Local.initIsolated(10)
+            val nonIsolatedLocal = Local.init("test")
+
+            val boundary = Boundary.derive[Any, Any]
+
+            val context =
+                isolatedLocal.let(20)(nonIsolatedLocal.let("modified")(boundary { (trace, context) => context })).eval
+
+            val nonIsolatedContext = context.get(Tag[Local.internal.State])
+            assert(!nonIsolatedContext.contains(isolatedLocal))
+            assert(nonIsolatedContext.contains(nonIsolatedLocal))
+
+            assert(!context.contains(Tag[Local.internal.IsolatedState]))
+        }
+
+        "nested boundaries" in {
+            val isolatedLocal    = Local.initIsolated(10)
+            val nonIsolatedLocal = Local.init("test")
+
+            val outerBoundary = Boundary.derive[Any, Any]
+            val innerBoundary = Boundary.derive[Any, Any]
+
+            val context =
+                isolatedLocal.let(20)(
+                    nonIsolatedLocal.let("outer")(
+                        outerBoundary { (outerTrace, outerContext) =>
+                            isolatedLocal.let(30)(
+                                nonIsolatedLocal.let("inner")(
+                                    innerBoundary { (innerTrace, innerContext) => innerContext }
+                                )
+                            )
+                        }
+                    )
+                ).eval
+
+            val nonIsolatedContext = context.get(Tag[Local.internal.State])
+            assert(!nonIsolatedContext.contains(isolatedLocal))
+            assert(nonIsolatedContext.contains(nonIsolatedLocal))
+            assert(nonIsolatedContext.get(nonIsolatedLocal).contains("inner"))
+
+            assert(!context.contains(Tag[Local.internal.IsolatedState]))
+        }
+
+    }
+
 end LocalTest

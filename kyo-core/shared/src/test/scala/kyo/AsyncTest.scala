@@ -468,4 +468,68 @@ class AsyncTest extends Test:
         }
     }
 
+    "isolated locals inheritance" - {
+        val isolatedInt    = Local.initIsolated(10)
+        val isolatedString = Local.initIsolated("initial")
+        val regularLocal   = Local.init("regular")
+
+        "run" in run {
+            for
+                (i, s, r) <- isolatedInt.let(20) {
+                    isolatedString.let("modified") {
+                        regularLocal.let("modified") {
+                            Async.run {
+                                for
+                                    i <- isolatedInt.get
+                                    s <- isolatedString.get
+                                    r <- regularLocal.get
+                                yield (i, s, r)
+                            }.map(_.get)
+                        }
+                    }
+                }
+            yield assert(i == 10 && s == "initial" && r == "modified")
+        }
+
+        "parallel" in run {
+            for
+                (i, s, r) <- isolatedInt.let(30) {
+                    isolatedString.let("parallel") {
+                        regularLocal.let("parallel") {
+                            Async.parallel(
+                                Async.run(isolatedInt.get).map(_.get),
+                                Async.run(isolatedString.get).map(_.get),
+                                Async.run(regularLocal.get).map(_.get)
+                            )
+                        }
+                    }
+                }
+            yield assert(i == 10 && s == "initial" && r == "parallel")
+        }
+
+        "nested operations" in run {
+            for
+                (i, s, r) <- isolatedInt.let(50) {
+                    isolatedString.let("outer") {
+                        regularLocal.let("outer") {
+                            Async.run {
+                                isolatedInt.let(60) {
+                                    isolatedString.let("inner") {
+                                        regularLocal.let("inner") {
+                                            Async.parallel(
+                                                Async.run(isolatedInt.get).map(_.get),
+                                                Async.run(isolatedString.get).map(_.get),
+                                                Async.run(regularLocal.get).map(_.get)
+                                            )
+                                        }
+                                    }
+                                }
+                            }.map(_.get)
+                        }
+                    }
+                }
+            yield assert(i == 10 && s == "initial" && r == "inner")
+        }
+    }
+
 end AsyncTest
