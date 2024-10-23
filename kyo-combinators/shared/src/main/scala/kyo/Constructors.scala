@@ -112,7 +112,7 @@ extension (kyoObject: Kyo.type)
     def foreachPar[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
         using
         flat: Flat[A1],
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Seq[A1] < (reduce.SReduced & Async & Ctx) =
@@ -130,7 +130,7 @@ extension (kyoObject: Kyo.type)
     def foreachParDiscard[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
         using
         flat: Flat[A1],
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Unit < (reduce.SReduced & Async & Ctx) =

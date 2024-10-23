@@ -263,7 +263,7 @@ object Fiber extends FiberPlatformSpecific:
       */
     def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
-        boundary: Boundary[Ctx, IO],
+        boundary: Boundary[Ctx, IO & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame,
         safepoint: Safepoint
@@ -301,7 +301,7 @@ object Fiber extends FiberPlatformSpecific:
       */
     def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
-        boundary: Boundary[Ctx, IO],
+        boundary: Boundary[Ctx, IO & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame,
         safepoint: Safepoint
