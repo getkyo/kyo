@@ -7,7 +7,10 @@ import scala.annotation.nowarn
 
 /** Represents a local value that can be accessed and modified within a specific scope.
   *
-  * Local provides a way to manage thread-local state in a functional manner.
+  * Local provides a way to manage thread-local-like state in a functional manner. There are two types of locals: regular and isolated.
+  *
+  * Regular locals behave similarly to inheritable thread locals, where child fibers inherit the value from their parent fiber. Isolated
+  * locals, on the other hand, are similar to non-inheritable thread locals, where child fibers always start with the default value.
   *
   * @tparam A
   *   The type of the local value
@@ -58,12 +61,14 @@ end Local
 /** Companion object for Local, providing utility methods for creating Local instances. */
 object Local:
 
-    /** Creates a new Local instance with the given default value.
+    /** Creates a new regular Local instance with the given default value.
+      *
+      * Regular locals are similar to inheritable thread locals, where child fibers inherit the value from their parent fiber.
       *
       * @param defaultValue
       *   The default value for the Local
       * @return
-      *   A new Local instance
+      *   A new regular Local instance
       */
     @nowarn("msg=anonymous")
     inline def init[A](inline defaultValue: A): Local[A] =
@@ -71,6 +76,16 @@ object Local:
             def tag             = Tag[State]
             lazy val default: A = defaultValue
 
+    /** Creates a new isolated Local instance with the given default value.
+      *
+      * Isolated locals are similar to non-inheritable thread locals, where child fibers always start with the default value and do not
+      * inherit from their parent fiber.
+      *
+      * @param defaultValue
+      *   The default value for the Local
+      * @return
+      *   A new isolated Local instance
+      */
     @nowarn("msg=anonymous")
     inline def initIsolated[A](inline defaultValue: A): Local[A] =
         new Base[A, IsolatedState]:
