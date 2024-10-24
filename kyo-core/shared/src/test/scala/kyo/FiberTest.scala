@@ -134,6 +134,44 @@ class FiberTest extends Test:
                 assert(bc.get() <= Int.MaxValue)
             }
         }
+        "interrupts losers" - {
+            "promise + plain value" in runJVM {
+                for
+                    flag        <- AtomicBoolean.init(false)
+                    promise     <- Promise.init[Nothing, Int]
+                    _           <- promise.onInterrupt(_ => flag.set(true))
+                    result      <- Async.race(promise.get, 42)
+                    interrupted <- flag.get
+                yield
+                    assert(result == 42)
+                    assert(interrupted)
+            }
+            "promise + delayed" in runJVM {
+                for
+                    flag        <- AtomicBoolean.init(false)
+                    promise     <- Promise.init[Nothing, Int]
+                    _           <- promise.onInterrupt(_ => flag.set(true))
+                    result      <- Async.race(promise.get, Async.delay(5.millis)(42))
+                    interrupted <- flag.get
+                yield
+                    assert(result == 42)
+                    assert(interrupted)
+            }
+            "slow + fast" in runJVM {
+                for
+                    adder <- LongAdder.init
+                    result <-
+                        Async.race(
+                            Async.delay(15.millis)(adder.increment.andThen(24)),
+                            Async.delay(5.millis)((adder.increment.andThen(42)))
+                        )
+                    _        <- Async.sleep(50.millis)
+                    executed <- adder.get
+                yield
+                    assert(result == 42)
+                    assert(executed == 1)
+            }
+        }
     }
 
     "parallel" - {
