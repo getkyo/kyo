@@ -7,6 +7,8 @@ opaque type Text >: String = String | Op
 
 object Text:
 
+    given Tag[Text] = Tag.fromRaw("kyo.Text")
+
     def apply(s: String): Text = s
 
     def empty: Text = ""
@@ -229,6 +231,17 @@ object Text:
         def show: String = self.toString()
 
         def compact: Text = self.toString()
+
+        def is(other: Text): Boolean =
+            if self.length != other.length then false
+            else
+                @tailrec
+                def loop(i: Int): Boolean =
+                    if i >= self.length then true
+                    else if self.charAt(i) != other.charAt(i) then false
+                    else loop(i + 1)
+                loop(0)
+        end is
 
     end extension
 

@@ -19,6 +19,8 @@ object Tag:
 
     inline given apply[A]: Tag[A] = ${ TagMacro.tagImpl[A] }
 
+    private[kyo] def fromRaw[A](tag: String): Tag[A] = tag
+
     extension [A](t1: Tag[A])
 
         inline def erased: Tag[Any] = t1.asInstanceOf[Tag[Any]]
