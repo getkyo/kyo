@@ -278,21 +278,17 @@ object Fiber extends FiberPlatformSpecific:
             end State
             val state = new State
             import state.*
-            foreach(seq)((idx, io) => io.evalNow.foreach(v => state(Result.success(v))))
-            if state.done() then
-                state
-            else
-                boundary { (trace, context) =>
-                    IO {
-                        foreach(seq) { (_, v) =>
-                            val fiber = IOTask(v, safepoint.copyTrace(trace), context)
-                            state.interrupts(fiber)
-                            fiber.onComplete(state)
-                        }
-                        state
+            boundary { (trace, context) =>
+                IO {
+                    val interruptPanic = Result.Panic(Fiber.Interrupted(frame))
+                    foreach(seq) { (_, v) =>
+                        val fiber = IOTask(v, safepoint.copyTrace(trace), context)
+                        state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
+                        fiber.onComplete(state)
                     }
+                    state
                 }
-            end if
+            }
         }
 
     /** Runs multiple Fibers in parallel and returns a Fiber that completes with their results. If any Fiber fails or is interrupted, all
