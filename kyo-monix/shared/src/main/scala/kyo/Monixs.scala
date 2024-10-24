@@ -19,9 +19,9 @@ object Monixs:
         Task.defer {
             import AllowUnsafe.embrace.danger
             Async.run(v).map { fiber =>
-                Task.async[A] { cb =>
+                Task.cancelable[A] { cb =>
                     fiber.unsafe.onComplete(r => cb(r.toEither))
-                    // fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))
+                    Task(discard(fiber.unsafe.interrupt(Result.Panic(Fiber.Interrupted(frame)))))
                 }
             }.pipe(IO.Unsafe.run).eval
         }
