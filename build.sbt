@@ -6,6 +6,7 @@ import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
 val scala3Version   = "3.5.2"
+val scalaLTSVersion = "3.3.4"
 val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
@@ -49,7 +50,7 @@ ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 lazy val `kyo-settings` = Seq(
     fork               := true,
     scalaVersion       := scala3Version,
-    crossScalaVersions := List(scala3Version),
+    crossScalaVersions := List(scala3Version, scalaLTSVersion),
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     scalafmtOnCompile := true,
