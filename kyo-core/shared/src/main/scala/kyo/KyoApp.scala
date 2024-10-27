@@ -10,9 +10,9 @@ import scala.collection.mutable.ListBuffer
   * Note: This class and its methods are unsafe and should only be used as the entrypoint of an application.
   */
 abstract class KyoApp extends KyoApp.Base[KyoApp.Effects]:
-    def log: Log.Unsafe = Log.unsafe
-    def random: Random  = Random.live
-    def clock: Clock    = Clock.live
+    def log: Log       = Log.live
+    def random: Random = Random.live
+    def clock: Clock   = Clock.live
 
     override protected def handle[A: Flat](v: A < KyoApp.Effects)(using Frame): Unit =
         import AllowUnsafe.embrace.danger

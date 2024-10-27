@@ -110,9 +110,9 @@ class KyoAppTest extends Test:
                 override def unsafe = ???
 
             app = new KyoApp:
-                override val log: Log.Unsafe = Log.Unsafe.ConsoleLogger("ConsoleLogger")
-                override val clock: Clock    = testClock
-                override val random: Random  = testRandom
+                override val log: Log       = Log(Log.Unsafe.ConsoleLogger("ConsoleLogger", Log.Level.Debug))
+                override val clock: Clock   = testClock
+                override val random: Random = testRandom
                 run {
                     for
                         _ <- Clock.now.map(i => instantRef.update(_ => i))

@@ -3,9 +3,10 @@ package kyo.internal
 import kyo.AllowUnsafe
 import kyo.Frame
 import kyo.Log
+import kyo.Log.Level
 
 trait LogPlatformSpecific:
-    val unsafe: Log.Unsafe = LogPlatformSpecific.Unsafe.SLF4J("kyo.logs")
+    val live: Log = Log(LogPlatformSpecific.Unsafe.SLF4J("kyo.logs"))
 
 object LogPlatformSpecific:
 
@@ -16,45 +17,42 @@ object LogPlatformSpecific:
             def apply(name: String) = new SLF4J(org.slf4j.LoggerFactory.getLogger(name))
 
         class SLF4J(logger: org.slf4j.Logger) extends Log.Unsafe:
-            inline def traceEnabled: Boolean = logger.isTraceEnabled
-
-            inline def debugEnabled: Boolean = logger.isDebugEnabled
-
-            inline def infoEnabled: Boolean = logger.isInfoEnabled
-
-            inline def warnEnabled: Boolean = logger.isWarnEnabled
-
-            inline def errorEnabled: Boolean = logger.isErrorEnabled
+            def level =
+                if logger.isTraceEnabled() then Level.Trace
+                else if logger.isDebugEnabled() then Level.Debug
+                else if logger.isInfoEnabled() then Level.Info
+                else if logger.isWarnEnabled() then Level.Warn
+                else Level.Error
 
             inline def trace(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if traceEnabled then logger.trace(s"[${frame.parse.position}] $msg")
+                if Level.Trace.enabled(level) then logger.trace(s"[${frame.parse.position}] $msg")
 
             inline def trace(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if traceEnabled then logger.trace(s"[${frame.parse.position}] $msg", t)
+                if Level.Trace.enabled(level) then logger.trace(s"[${frame.parse.position}] $msg", t)
 
             inline def debug(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if debugEnabled then logger.debug(s"[${frame.parse.position}] $msg")
+                if Level.Debug.enabled(level) then logger.debug(s"[${frame.parse.position}] $msg")
 
             inline def debug(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if debugEnabled then logger.debug(s"[${frame.parse.position}] $msg", t)
+                if Level.Debug.enabled(level) then logger.debug(s"[${frame.parse.position}] $msg", t)
 
             inline def info(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if infoEnabled then logger.info(s"[${frame.parse.position}] $msg")
+                if Level.Info.enabled(level) then logger.info(s"[${frame.parse.position}] $msg")
 
             inline def info(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if infoEnabled then logger.info(s"[${frame.parse.position}] $msg", t)
+                if Level.Info.enabled(level) then logger.info(s"[${frame.parse.position}] $msg", t)
 
             inline def warn(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if warnEnabled then logger.warn(s"[${frame.parse.position}] $msg")
+                if Level.Warn.enabled(level) then logger.warn(s"[${frame.parse.position}] $msg")
 
             inline def warn(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if warnEnabled then logger.warn(s"[${frame.parse.position}] $msg", t)
+                if Level.Warn.enabled(level) then logger.warn(s"[${frame.parse.position}] $msg", t)
 
             inline def error(msg: => String)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if errorEnabled then logger.error(s"[${frame.parse.position}] $msg")
+                if Level.Error.enabled(level) then logger.error(s"[${frame.parse.position}] $msg")
 
             inline def error(msg: => String, t: => Throwable)(using frame: Frame, allow: AllowUnsafe): Unit =
-                if errorEnabled then logger.error(s"[${frame.parse.position}] $msg", t)
+                if Level.Error.enabled(level) then logger.error(s"[${frame.parse.position}] $msg", t)
         end SLF4J
     end Unsafe
 end LogPlatformSpecific

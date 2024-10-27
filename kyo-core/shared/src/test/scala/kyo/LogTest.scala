@@ -24,16 +24,42 @@ class LogTest extends Test:
 
     "unsafe" in {
         import AllowUnsafe.embrace.danger
-        Log.unsafe.trace("trace")
-        Log.unsafe.debug("debug")
-        Log.unsafe.info("info")
-        Log.unsafe.warn("warn")
-        Log.unsafe.error("error")
-        Log.unsafe.trace("trace", ex)
-        Log.unsafe.debug("debug", ex)
-        Log.unsafe.info("info", ex)
-        Log.unsafe.warn("warn", ex)
-        Log.unsafe.error("error", ex)
+        Log.live.unsafe.trace("trace")
+        Log.live.unsafe.debug("debug")
+        Log.live.unsafe.info("info")
+        Log.live.unsafe.warn("warn")
+        Log.live.unsafe.error("error")
+        Log.live.unsafe.trace("trace", ex)
+        Log.live.unsafe.debug("debug", ex)
+        Log.live.unsafe.info("info", ex)
+        Log.live.unsafe.warn("warn", ex)
+        Log.live.unsafe.error("error", ex)
         succeed
+    }
+
+    "withConsoleLogger" in {
+        val output = new StringBuilder
+        scala.Console.withOut(new java.io.PrintStream(new java.io.OutputStream:
+            override def write(b: Int): Unit = output.append(b.toChar)
+        )) {
+            import AllowUnsafe.embrace.danger
+            IO.Unsafe.run {
+                for
+                    _ <- Log.withConsoleLogger("test.logger", Log.Level.Debug) {
+                        for
+                            _ <- Log.trace("won't show up")
+                            _ <- Log.debug("test message")
+                            _ <- Log.info("info message")
+                            _ <- Log.warn("warning", new Exception("test exception"))
+                        yield ()
+                    }
+                yield
+                    val logs = output.toString.trim.split("\n")
+                    assert(logs.length == 3)
+                    assert(logs(0).matches("DEBUG test.logger -- \\[.*\\] test message"))
+                    assert(logs(1).matches("INFO test.logger -- \\[.*\\] info message"))
+                    assert(logs(2).matches("WARN test.logger -- \\[.*\\] warning java.lang.Exception: test exception"))
+            }.eval
+        }
     }
 end LogTest
