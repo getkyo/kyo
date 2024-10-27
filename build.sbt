@@ -5,7 +5,7 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version   = "3.5.1"
+val scala3Version   = "3.5.2"
 val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
@@ -145,7 +145,7 @@ lazy val `kyo-scheduler` =
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
-            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.11"         % Test
+            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.12"         % Test
         )
         .jvmSettings(mimaCheck(false))
         .jsSettings(
@@ -215,7 +215,7 @@ lazy val `kyo-core` =
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC31" % Test,
             libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.11"     % Test,
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.11"     % Test,
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.12"     % Test,
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -453,8 +453,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC31",
             libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.11.0",
-            libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.28",
-            libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.28",
+            libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.29",
+            libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.29",
             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.1",
             libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.10",
             libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.10",
