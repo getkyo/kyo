@@ -71,7 +71,7 @@ object Instant:
           * @return
           *   A new Instant representing the result of the addition.
           */
-        def +(duration: Duration): Instant =
+        infix def +(duration: Duration): Instant =
             if duration == Duration.Zero then instant
             else if !duration.isFinite then Max
             else
@@ -87,7 +87,7 @@ object Instant:
           * @return
           *   A new Instant representing the result of the subtraction.
           */
-        def -(duration: Duration): Instant =
+        infix def -(duration: Duration): Instant =
             if duration == Duration.Zero then instant
             else if !duration.isFinite then Min
             else
@@ -103,11 +103,11 @@ object Instant:
           * @return
           *   The duration between this Instant and the other.
           */
-        def -(other: Instant): Duration =
+        infix def -(other: Instant): Duration =
             val seconds = instant.getEpochSecond - other.getEpochSecond
             val nanos   = instant.getNano - other.getNano
             if seconds == Long.MaxValue || seconds == Long.MinValue then Duration.Infinity
-            else Duration.fromNanos(seconds * 1_000_000_000L + nanos)
+            else Duration.fromNanos(seconds.seconds.toNanos + nanos)
         end -
 
         /** Checks if this Instant is after another.
@@ -117,7 +117,16 @@ object Instant:
           * @return
           *   true if this Instant is after the other, false otherwise.
           */
-        def isAfter(other: Instant): Boolean = instant.isAfter(other)
+        infix def >(other: Instant): Boolean = instant.compareTo(other) > 0
+
+        /** Checks if this Instant is after or equal to another.
+          *
+          * @param other
+          *   The other Instant to compare to.
+          * @return
+          *   true if this Instant is after or equal to the other, false otherwise.
+          */
+        infix def >=(other: Instant): Boolean = instant.compareTo(other) >= 0
 
         /** Checks if this Instant is before another.
           *
@@ -126,7 +135,16 @@ object Instant:
           * @return
           *   true if this Instant is before the other, false otherwise.
           */
-        def isBefore(other: Instant): Boolean = instant.isBefore(other)
+        infix def <(other: Instant): Boolean = instant.compareTo(other) < 0
+
+        /** Checks if this Instant is before or equal to another.
+          *
+          * @param other
+          *   The other Instant to compare to.
+          * @return
+          *   true if this Instant is before or equal to the other, false otherwise.
+          */
+        infix def <=(other: Instant): Boolean = instant.compareTo(other) <= 0
 
         /** Returns this instant truncated to the specified unit.
           *
@@ -155,6 +173,30 @@ object Instant:
           *   The later of the two Instants.
           */
         infix def max(other: Instant): Instant = if instant.isAfter(other) then instant else other
+
+        /** Returns true if this Instant is between two other Instants (inclusive).
+          *
+          * @param start
+          *   The start Instant
+          * @param end
+          *   The end Instant
+          * @return
+          *   true if this Instant is between start and end (inclusive)
+          */
+        def between(start: Instant, end: Instant): Boolean =
+            (instant >= start) && (instant <= end)
+
+        /** Clamps this Instant between two bounds.
+          *
+          * @param min
+          *   The lower bound
+          * @param max
+          *   The upper bound
+          * @return
+          *   An Instant clamped between min and max
+          */
+        def clamp(min: Instant, max: Instant): Instant =
+            instant.max(min).min(max)
 
         /** Converts this Instant to a human-readable ISO-8601 formatted string.
           *

@@ -94,43 +94,83 @@ class InstantTest extends Test:
         }
     }
 
-    "isAfter" - {
+    ">" - {
         "equal instants" in {
             val instant1 = Instant.Epoch
             val instant2 = Instant.Epoch
-            assert(!instant1.isAfter(instant2))
+            assert(!(instant1 > instant2))
         }
 
         "earlier instant" in {
             val instant1 = Instant.Epoch
             val instant2 = instant1 + 1000.seconds
-            assert(!instant1.isAfter(instant2))
+            assert(!(instant1 > instant2))
         }
 
         "later instant" in {
             val instant1 = Instant.Epoch
             val instant2 = instant1 - 1000.seconds
-            assert(instant1.isAfter(instant2))
+            assert(instant1 > instant2)
         }
     }
 
-    "isBefore" - {
+    "<" - {
         "equal instants" in {
             val instant1 = Instant.Epoch
             val instant2 = Instant.Epoch
-            assert(!instant1.isBefore(instant2))
+            assert(!(instant1 < instant2))
         }
 
         "earlier instant" in {
             val instant1 = Instant.Epoch
             val instant2 = instant1 + 1000.seconds
-            assert(instant1.isBefore(instant2))
+            assert(instant1 < instant2)
         }
 
         "later instant" in {
             val instant1 = Instant.Epoch
             val instant2 = instant1 - 1000.seconds
-            assert(!instant1.isBefore(instant2))
+            assert(!(instant1 < instant2))
+        }
+    }
+
+    ">=" - {
+        "equal instants" in {
+            val instant1 = Instant.Epoch
+            val instant2 = Instant.Epoch
+            assert(instant1 >= instant2)
+        }
+
+        "earlier instant" in {
+            val instant1 = Instant.Epoch
+            val instant2 = instant1 + 1000.seconds
+            assert(!(instant1 >= instant2))
+        }
+
+        "later instant" in {
+            val instant1 = Instant.Epoch
+            val instant2 = instant1 - 1000.seconds
+            assert(instant1 >= instant2)
+        }
+    }
+
+    "<=" - {
+        "equal instants" in {
+            val instant1 = Instant.Epoch
+            val instant2 = Instant.Epoch
+            assert(instant1 <= instant2)
+        }
+
+        "earlier instant" in {
+            val instant1 = Instant.Epoch
+            val instant2 = instant1 + 1000.seconds
+            assert(instant1 <= instant2)
+        }
+
+        "later instant" in {
+            val instant1 = Instant.Epoch
+            val instant2 = instant1 - 1000.seconds
+            assert(!(instant1 <= instant2))
         }
     }
 
@@ -316,6 +356,88 @@ class InstantTest extends Test:
             val instant = Instant.Epoch
             assert(instant.max(Instant.Min) == instant)
             assert(instant.max(Instant.Max) == Instant.Max)
+        }
+    }
+
+    "between" - {
+        "instant is between bounds" in {
+            val start   = Instant.Epoch
+            val end     = start + 1000.seconds
+            val instant = start + 500.seconds
+            assert(instant.between(start, end))
+        }
+
+        "instant equals start bound" in {
+            val start = Instant.Epoch
+            val end   = start + 1000.seconds
+            assert(start.between(start, end))
+        }
+
+        "instant equals end bound" in {
+            val start = Instant.Epoch
+            val end   = start + 1000.seconds
+            assert(end.between(start, end))
+        }
+
+        "instant before start bound" in {
+            val start   = Instant.Epoch
+            val end     = start + 1000.seconds
+            val instant = start - 500.seconds
+            assert(!instant.between(start, end))
+        }
+
+        "instant after end bound" in {
+            val start   = Instant.Epoch
+            val end     = start + 1000.seconds
+            val instant = end + 500.seconds
+            assert(!instant.between(start, end))
+        }
+
+        "with Min and Max" in {
+            assert(Instant.Epoch.between(Instant.Min, Instant.Max))
+            assert(Instant.Min.between(Instant.Min, Instant.Max))
+            assert(Instant.Max.between(Instant.Min, Instant.Max))
+        }
+    }
+
+    "clamp" - {
+        "instant within bounds" in {
+            val min     = Instant.Epoch
+            val max     = min + 1000.seconds
+            val instant = min + 500.seconds
+            assert(instant.clamp(min, max) == instant)
+        }
+
+        "instant below min bound" in {
+            val min     = Instant.Epoch
+            val max     = min + 1000.seconds
+            val instant = min - 500.seconds
+            assert(instant.clamp(min, max) == min)
+        }
+
+        "instant above max bound" in {
+            val min     = Instant.Epoch
+            val max     = min + 1000.seconds
+            val instant = max + 500.seconds
+            assert(instant.clamp(min, max) == max)
+        }
+
+        "instant equals min bound" in {
+            val min = Instant.Epoch
+            val max = min + 1000.seconds
+            assert(min.clamp(min, max) == min)
+        }
+
+        "instant equals max bound" in {
+            val min = Instant.Epoch
+            val max = min + 1000.seconds
+            assert(max.clamp(min, max) == max)
+        }
+
+        "with Min and Max" in {
+            assert(Instant.Epoch.clamp(Instant.Min, Instant.Max) == Instant.Epoch)
+            assert(Instant.Min.clamp(Instant.Min, Instant.Max) == Instant.Min)
+            assert(Instant.Max.clamp(Instant.Min, Instant.Max) == Instant.Max)
         }
     }
 
