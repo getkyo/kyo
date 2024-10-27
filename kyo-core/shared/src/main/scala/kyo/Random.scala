@@ -138,6 +138,43 @@ object Random:
     def let[A, S](r: Random)(v: A < S)(using Frame): A < (S & IO) =
         local.let(r)(v)
 
+    /** Executes the given effect with a new Random instance initialized with the specified seed.
+      *
+      * @param seed
+      *   The seed value to initialize the Random instance.
+      * @param v
+      *   The effect to execute.
+      * @tparam A
+      *   The return type of the effect.
+      * @tparam S
+      *   The effect type.
+      * @return
+      *   The result of the effect execution with the seeded Random instance.
+      */
+    def withSeed[A, S](seed: Int)(v: A < S)(using Frame): A < (S & IO) =
+        IO(Random(Random.Unsafe(new java.util.Random(seed)))).map(let(_)(v))
+
+    /** Gets the current Random instance from the local context.
+      *
+      * @return
+      *   The current Random instance.
+      */
+    def get(using Frame): Random < Any = local.get
+
+    /** Executes a function that requires a Random instance using the current Random from the local context.
+      *
+      * @param f
+      *   A function that takes a Random instance and returns an effect.
+      * @tparam A
+      *   The return type of the effect.
+      * @tparam S
+      *   The effect type.
+      * @return
+      *   The result of executing the function with the current Random instance.
+      */
+    def use[A, S](f: Random => A < S)(using Frame): A < (S & IO) =
+        local.use(f)
+
     /** Generates a random integer.
       *
       * @return
