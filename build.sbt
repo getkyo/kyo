@@ -143,7 +143,6 @@ lazy val `kyo-scheduler` =
         .in(file("kyo-scheduler"))
         .settings(
             `kyo-settings`,
-            scalaVersion := scala333Version,
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
@@ -161,7 +160,6 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
     .dependsOn(`kyo-scheduler`)
     .settings(
         `kyo-settings`,
-        scalaVersion := scala333Version,
         libraryDependencies += "dev.zio"       %%% "zio"       % zioVersion,
         libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
     )
@@ -178,7 +176,7 @@ lazy val `kyo-data` =
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,
-            scalaVersion := scala333Version,
+            crossScalaVersions := List(scala3Version, scala333Version),
             libraryDependencies += "dev.zio"       %%% "zio-test-sbt"  % zioVersion       % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
             libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
@@ -287,7 +285,7 @@ lazy val `kyo-sttp` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            scalaVersion := scala333Version,
+            crossScalaVersions := List(scala3Version, scala333Version),
             libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.10.1"
         )
         .jsSettings(`js-settings`)
@@ -302,7 +300,7 @@ lazy val `kyo-tapir` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            scalaVersion := scala333Version,
+            crossScalaVersions := List(scala3Version, scala333Version),
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.7",
             libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.7"
         )
@@ -319,7 +317,7 @@ lazy val `kyo-caliban` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            scalaVersion := scala3Version,
+            crossScalaVersions := List(scala3Version, scala333Version),
             libraryDependencies += "com.github.ghostdogpr" %% "caliban"       % "2.9.0",
             libraryDependencies += "com.github.ghostdogpr" %% "caliban-tapir" % "2.9.0"
         )
@@ -334,7 +332,7 @@ lazy val `kyo-test` =
         .dependsOn(`kyo-zio`)
         .settings(
             `kyo-settings`,
-            scalaVersion := scala3Version,
+            crossScalaVersions := List(scala3Version, scala333Version),
             libraryDependencies += "dev.zio" %%% "zio"          % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-test"     % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
@@ -352,7 +350,7 @@ lazy val `kyo-zio` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            scalaVersion := scala3Version,
+            crossScalaVersions := List(scala3Version, scala333Version),
             libraryDependencies += "dev.zio" %%% "zio"          % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-test"     % zioVersion,
             libraryDependencies += "dev.zio" %%% "zio-test-sbt" % zioVersion % Test
@@ -370,7 +368,7 @@ lazy val `kyo-cats` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            scalaVersion := scala3Version,
+            crossScalaVersions := List(scala3Version, scala333Version),
             libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion
         )
         .jsSettings(
