@@ -153,7 +153,7 @@ case class NettyKyoServer(
         gracefulShutdownTimeout: Option[FiniteDuration]
     ): KyoSttpMonad.M[Unit] =
         isShuttingDown.set(true)
-        val timeout = gracefulShutdownTimeout.map(_.toNanos).getOrElse(Long.MaxValue)
+        val timeout = gracefulShutdownTimeout.fold(Long.MaxValue)(_.toNanos)
         waitForClosedChannels(
             channelGroup,
             startNanos = JSystem.nanoTime(),
