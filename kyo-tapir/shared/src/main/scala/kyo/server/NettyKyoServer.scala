@@ -153,6 +153,7 @@ case class NettyKyoServer(
         gracefulShutdownTimeout: Option[FiniteDuration]
     ): KyoSttpMonad.M[Unit] =
         isShuttingDown.set(true)
+        val timeout = gracefulShutdownTimeout.map(_.toNanos).getOrElse(Long.MaxValue)
         waitForClosedChannels(
             channelGroup,
             startNanos = JSystem.nanoTime(),
@@ -160,8 +161,8 @@ case class NettyKyoServer(
         ).flatMap { _ =>
             nettyFutureToScala(ch.close()).flatMap { _ =>
                 if config.shutdownEventLoopGroupOnClose then
-                    nettyFutureToScala(eventLoopGroup.shutdownGracefully()).unit.andThen {
-                        nettyFutureToScala(eventExecutor.shutdownGracefully()).unit
+                    nettyFutureToScala(eventLoopGroup.shutdownGracefully(timeout, timeout, java.util.concurrent.TimeUnit.NANOSECONDS)).unit.andThen {
+                        nettyFutureToScala(eventExecutor.shutdownGracefully(timeout, timeout, java.util.concurrent.TimeUnit.NANOSECONDS)).unit
                     }
                 else ()
             }
