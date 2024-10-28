@@ -1,5 +1,6 @@
 package kyo
 
+import java.io.IOException
 import kyo.kernel.Boundary
 import kyo.kernel.Reducible
 import scala.annotation.tailrec
@@ -87,7 +88,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that prints the message to the console
       */
-    def debugln(message: String)(using Frame): Unit < IO =
+    def debugln(message: String)(using Frame): Unit < (IO & Abort[IOException]) =
         Console.println(message)
 
     /** Creates an effect that fails with Abort[E].

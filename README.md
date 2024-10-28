@@ -928,6 +928,7 @@ The `Choice` effect becomes exceptionally powerful when combined with other effe
 
 ```scala
 import kyo.*
+import java.io.IOException
 
 // Iteratively increment an 'Int' value
 // until it reaches 5
@@ -954,7 +955,7 @@ val d: Int < IO =
     )
 
 // Mixing 'Console' with 'Loop'
-val e: Int < IO =
+val e: Int < (IO & Abort[IOException]) =
     Loop(1)(i =>
         if i < 5 then
             Console.println(s"Iteration: $i").map(_ => Loop.continue(i + 1))
@@ -1001,9 +1002,10 @@ In addition to the transform methods, Loop also provides indexed variants that p
 
 ```scala
 import kyo.*
+import java.io.IOException
 
 // Print a message every 3 iterations
-val a: Int < IO =
+val a: Int < (IO & Abort[IOException]) =
     Loop.indexed(1)((idx, i) =>
         if idx < 10 then
             if idx % 3 == 0 then
@@ -1179,6 +1181,7 @@ The Stream effect provides a powerful mechanism for processing sequences of data
 
 ```scala
 import kyo.*
+import java.io.IOException
 
 // Create a stream from a sequence
 val a: Stream[Int, Any] =
@@ -1221,7 +1224,7 @@ val j: Int < Any =
     a.runFold(0)(_ + _)
 
 // Process each element with side effects
-val k: Unit < IO =
+val k: Unit < (IO & Abort[IOException]) =
     a.runForeach(Console.println(_))
 ```
 
@@ -1473,29 +1476,30 @@ The `CheckFailed` exception class, which is used to represent failed checks, inc
 
 ```scala
 import kyo.*
+import java.io.IOException
 
 // Read a line from the console
-val a: String < IO =
+val a: String < (IO & Abort[IOException]) =
     Console.readln
 
 // Print to stdout
-val b: Unit < IO =
+val b: Unit < (IO & Abort[IOException]) =
     Console.print("ok")
 
 // Print to stdout with a new line
-val c: Unit < IO =
+val c: Unit < (IO & Abort[IOException]) =
     Console.println("ok")
 
 // Print to stderr
-val d: Unit < IO =
+val d: Unit < (IO & Abort[IOException]) =
     Console.printErr("fail")
 
 // Print to stderr with a new line
-val e: Unit < IO =
+val e: Unit < (IO & Abort[IOException]) =
     Console.printlnErr("fail")
 
 // Explicitly specifying the 'Console' implementation
-val f: Unit < IO =
+val f: Unit < (IO & Abort[IOException]) =
     Console.let(Console.live)(e)
 ```
 
@@ -1725,6 +1729,7 @@ All methods that perform side effects are suspended using the `IO` effect, ensur
 
 ```scala
 import kyo.*
+import java.io.IOException
 
 val path: Path = Path("tmp", "file.txt")
 
@@ -1733,7 +1738,7 @@ val lines: Stream[String, Resource & IO] =
     path.readLinesStream()
 
 // Process the stream
-val result: Unit < (Resource & Console & Async) =
+val result: Unit < (Resource & Console & Async & Abort[IOException]) =
     lines.map(line => Console.println(line)).runDiscard
 
 // Walk a directory tree
@@ -1741,7 +1746,7 @@ val tree: Stream[Path, IO] =
     Path("tmp").walk
 
 // Process each file in the tree
-val processedTree: Unit < (Console & Async) =
+val processedTree: Unit < (Console & Async & Abort[IOException]) =
     tree.map(file => file.read.map(content => Console.println(s"File: ${file}, Content: $content"))).runDiscard
 ```
 
@@ -3267,6 +3272,7 @@ Generally speaking, the names of `kyo-combinators` methods are the same as the c
 ```scala 3
 import kyo.*
 import scala.concurrent.duration.*
+import java.io.IOException
 
 trait HelloService:
     def sayHelloTo(saluee: String): Unit < (IO & Abort[Throwable])
@@ -3280,7 +3286,7 @@ object HelloService:
     end Live
 end HelloService
 
-val keepTicking: Nothing < (Console & Async) =
+val keepTicking: Nothing < (Console & Async & Abort[IOException]) =
     (Console.print(".") *> Kyo.sleep(1.second)).forever
 
 val effect: Unit < (Console & Async & Resource & Abort[Throwable] & Env[NameService]) =
