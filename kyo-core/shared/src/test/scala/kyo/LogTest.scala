@@ -45,7 +45,7 @@ class LogTest extends Test:
             import AllowUnsafe.embrace.danger
             IO.Unsafe.run {
                 for
-                    _ <- Log.withConsoleLogger("test.logger", Log.Level.Debug) {
+                    _ <- Log.withConsoleLogger("test.logger", Log.Level.debug) {
                         for
                             _ <- Log.trace("won't show up")
                             _ <- Log.debug("test message")

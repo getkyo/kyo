@@ -110,7 +110,7 @@ class KyoAppTest extends Test:
                 override def unsafe = ???
 
             app = new KyoApp:
-                override val log: Log       = Log(Log.Unsafe.ConsoleLogger("ConsoleLogger", Log.Level.Debug))
+                override val log: Log       = Log(Log.Unsafe.ConsoleLogger("ConsoleLogger", Log.Level.debug))
                 override val clock: Clock   = testClock
                 override val random: Random = testRandom
                 run {

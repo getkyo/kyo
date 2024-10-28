@@ -19,9 +19,15 @@ end Log
 /** Logging utility object for Kyo applications. */
 object Log extends LogPlatformSpecific:
 
-    enum Level:
-        case Trace, Debug, Info, Warn, Error
-        def enabled(minLevel: Level): Boolean = this.ordinal >= minLevel.ordinal
+    case class Level private (priority: Int) extends AnyVal:
+        def enabled(minLevel: Level) = priority >= minLevel.priority
+    object Level:
+        val trace: Level = Level(10)
+        val debug: Level = Level(20)
+        val info: Level  = Level(30)
+        val warn: Level  = Level(40)
+        val error: Level = Level(50)
+    end Level
 
     private val local = Local.init(live)
 
@@ -74,7 +80,7 @@ object Log extends LogPlatformSpecific:
       * @return
       *   The result of executing the effect with the console logger
       */
-    def withConsoleLogger[A, S](name: String = "kyo.logs", level: Level = Level.Debug)(v: A < S)(using Frame): A < S =
+    def withConsoleLogger[A, S](name: String = "kyo.logs", level: Level = Level.debug)(v: A < S)(using Frame): A < S =
         let(Log(Unsafe.ConsoleLogger(name, level)))(v)
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
@@ -102,62 +108,62 @@ object Log extends LogPlatformSpecific:
                 using
                 frame: Frame,
                 allow: AllowUnsafe
-            ): Unit = if Level.Trace.enabled(level) then println(s"TRACE $name -- [${frame.parse.position}] $msg")
+            ): Unit = if Level.trace.enabled(level) then println(s"TRACE $name -- [${frame.parse.position}] $msg")
 
             inline def trace(msg: => String, t: => Throwable)(
                 using
                 frame: Frame,
                 allow: AllowUnsafe
-            ): Unit = if Level.Trace.enabled(level) then println(s"TRACE $name -- [${frame.parse.position}] $msg $t")
+            ): Unit = if Level.trace.enabled(level) then println(s"TRACE $name -- [${frame.parse.position}] $msg $t")
 
             inline def debug(msg: => String)(
                 using
                 frame: Frame,
                 allow: AllowUnsafe
             ): Unit =
-                if Level.Debug.enabled(level) then println(s"DEBUG $name -- [${frame.parse.position}] $msg")
+                if Level.debug.enabled(level) then println(s"DEBUG $name -- [${frame.parse.position}] $msg")
 
             inline def debug(msg: => String, t: => Throwable)(
                 using
                 frame: Frame,
                 allow: AllowUnsafe
-            ): Unit = if Level.Debug.enabled(level) then println(s"DEBUG $name -- [${frame.parse.position}] $msg $t")
+            ): Unit = if Level.debug.enabled(level) then println(s"DEBUG $name -- [${frame.parse.position}] $msg $t")
 
             inline def info(msg: => String)(
                 using
                 frame: Frame,
                 allow: AllowUnsafe
-            ): Unit = if Level.Info.enabled(level) then println(s"INFO $name -- [${frame.parse.position}] $msg")
+            ): Unit = if Level.info.enabled(level) then println(s"INFO $name -- [${frame.parse.position}] $msg")
 
             inline def info(msg: => String, t: => Throwable)(
                 using
                 frame: Frame,
                 allow: AllowUnsafe
-            ): Unit = if Level.Info.enabled(level) then println(s"INFO $name -- [${frame.parse.position}] $msg $t")
+            ): Unit = if Level.info.enabled(level) then println(s"INFO $name -- [${frame.parse.position}] $msg $t")
 
             inline def warn(msg: => String)(
                 using
                 frame: Frame,
                 allow: AllowUnsafe
-            ): Unit = if Level.Warn.enabled(level) then println(s"WARN $name -- [${frame.parse.position}] $msg")
+            ): Unit = if Level.warn.enabled(level) then println(s"WARN $name -- [${frame.parse.position}] $msg")
 
             inline def warn(msg: => String, t: => Throwable)(
                 using
                 frame: Frame,
                 allow: AllowUnsafe
-            ): Unit = if Level.Warn.enabled(level) then println(s"WARN $name -- [${frame.parse.position}] $msg $t")
+            ): Unit = if Level.warn.enabled(level) then println(s"WARN $name -- [${frame.parse.position}] $msg $t")
 
             inline def error(msg: => String)(
                 using
                 frame: Frame,
                 allow: AllowUnsafe
-            ): Unit = if Level.Error.enabled(level) then println(s"ERROR $name -- [${frame.parse.position}] $msg")
+            ): Unit = if Level.error.enabled(level) then println(s"ERROR $name -- [${frame.parse.position}] $msg")
 
             inline def error(msg: => String, t: => Throwable)(
                 using
                 frame: Frame,
                 allow: AllowUnsafe
-            ): Unit = if Level.Error.enabled(level) then println(s"ERROR $name -- [${frame.parse.position}] $msg $t")
+            ): Unit = if Level.error.enabled(level) then println(s"ERROR $name -- [${frame.parse.position}] $msg $t")
         end ConsoleLogger
     end Unsafe
 
@@ -180,7 +186,7 @@ object Log extends LogPlatformSpecific:
       *   An IO effect that logs the message
       */
     inline def trace(inline msg: => String)(using inline frame: Frame): Unit < IO =
-        logWhen(Level.Trace)(_.trace(msg))
+        logWhen(Level.trace)(_.trace(msg))
 
     /** Logs a trace message with an exception.
       *
@@ -192,7 +198,7 @@ object Log extends LogPlatformSpecific:
       *   An IO effect that logs the message and exception
       */
     inline def trace(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
-        logWhen(Level.Trace)(_.trace(msg, t))
+        logWhen(Level.trace)(_.trace(msg, t))
 
     /** Logs a debug message.
       *
@@ -202,7 +208,7 @@ object Log extends LogPlatformSpecific:
       *   An IO effect that logs the message
       */
     inline def debug(inline msg: => String)(using inline frame: Frame): Unit < IO =
-        logWhen(Level.Debug)(_.debug(msg))
+        logWhen(Level.debug)(_.debug(msg))
 
     /** Logs a debug message with an exception.
       *
@@ -214,7 +220,7 @@ object Log extends LogPlatformSpecific:
       *   An IO effect that logs the message and exception
       */
     inline def debug(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
-        logWhen(Level.Debug)(_.debug(msg, t))
+        logWhen(Level.debug)(_.debug(msg, t))
 
     /** Logs an info message.
       *
@@ -224,7 +230,7 @@ object Log extends LogPlatformSpecific:
       *   An IO effect that logs the message
       */
     inline def info(inline msg: => String)(using inline frame: Frame): Unit < IO =
-        logWhen(Level.Info)(_.info(msg))
+        logWhen(Level.info)(_.info(msg))
 
     /** Logs an info message with an exception.
       *
@@ -236,7 +242,7 @@ object Log extends LogPlatformSpecific:
       *   An IO effect that logs the message and exception
       */
     inline def info(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
-        logWhen(Level.Info)(_.info(msg, t))
+        logWhen(Level.info)(_.info(msg, t))
 
     /** Logs a warning message.
       *
@@ -246,7 +252,7 @@ object Log extends LogPlatformSpecific:
       *   An IO effect that logs the message
       */
     inline def warn(inline msg: => String)(using inline frame: Frame): Unit < IO =
-        logWhen(Level.Warn)(_.warn(msg))
+        logWhen(Level.warn)(_.warn(msg))
 
     /** Logs a warning message with an exception.
       *
@@ -258,7 +264,7 @@ object Log extends LogPlatformSpecific:
       *   An IO effect that logs the message and exception
       */
     inline def warn(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
-        logWhen(Level.Warn)(_.warn(msg, t))
+        logWhen(Level.warn)(_.warn(msg, t))
 
     /** Logs an error message.
       *
@@ -268,7 +274,7 @@ object Log extends LogPlatformSpecific:
       *   An IO effect that logs the message
       */
     inline def error(inline msg: => String)(using inline frame: Frame): Unit < IO =
-        logWhen(Level.Error)(_.error(msg))
+        logWhen(Level.error)(_.error(msg))
 
     /** Logs an error message with an exception.
       *
@@ -280,6 +286,6 @@ object Log extends LogPlatformSpecific:
       *   An IO effect that logs the message and exception
       */
     inline def error(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
-        logWhen(Level.Error)(_.error(msg, t))
+        logWhen(Level.error)(_.error(msg, t))
 
 end Log
