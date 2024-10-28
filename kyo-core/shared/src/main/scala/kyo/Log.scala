@@ -19,15 +19,16 @@ end Log
 /** Logging utility object for Kyo applications. */
 object Log extends LogPlatformSpecific:
 
-    case class Level private (priority: Int) extends AnyVal:
+    final class Level private (private val priority: Int) extends AnyVal:
         def enabled(minLevel: Level) = priority >= minLevel.priority
+
     object Level:
         val trace: Level = Level(10)
         val debug: Level = Level(20)
         val info: Level  = Level(30)
         val warn: Level  = Level(40)
         val error: Level = Level(50)
-    end Level
+    end Level   
 
     private val local = Local.init(live)
 
