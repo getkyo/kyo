@@ -28,7 +28,7 @@ object Log extends LogPlatformSpecific:
         val info: Level  = Level(30)
         val warn: Level  = Level(40)
         val error: Level = Level(50)
-    end Level   
+    end Level
 
     private val local = Local.init(live)
 
