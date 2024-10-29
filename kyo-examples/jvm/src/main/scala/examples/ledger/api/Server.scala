@@ -9,7 +9,7 @@ object Server extends KyoApp:
 
     val clock =
         import AllowUnsafe.embrace.danger
-        Clock(Clock.Unsafe(Executors.newSingleThreadScheduledExecutor())) 
+        Clock(Clock.Unsafe(Executors.newSingleThreadScheduledExecutor()))
 
     run {
 
