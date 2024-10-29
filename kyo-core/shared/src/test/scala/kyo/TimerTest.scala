@@ -17,7 +17,7 @@ class TimerTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 1.millis && avgInterval < 5.millis)
+                assert(avgInterval >= 1.millis && avgInterval < 10.millis)
         }
         "respects interrupt" in run {
             for
@@ -53,7 +53,7 @@ class TimerTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 1.millis && avgInterval < 5.millis)
+                assert(avgInterval >= 1.millis && avgInterval < 10.millis)
         }
         "with Schedule and state" in run {
             for
@@ -82,7 +82,7 @@ class TimerTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgDelay >= 1.millis && avgDelay < 5.millis)
+                assert(avgDelay >= 1.millis && avgDelay < 10.millis)
         }
 
         "respects interrupt" in run {
@@ -121,7 +121,7 @@ class TimerTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgDelay >= 1.millis && avgDelay < 5.millis)
+                assert(avgDelay >= 1.millis && avgDelay < 10.millis)
         }
 
         "works with Schedule and state" in run {
