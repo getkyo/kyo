@@ -501,12 +501,14 @@ lazy val readme =
         )
 
 lazy val `native-settings` = Seq(
-    fork := false
+    fork       := false,
+    bspEnabled := false
 )
 
 lazy val `js-settings` = Seq(
     Compile / doc / sources                     := Seq.empty,
     fork                                        := false,
+    bspEnabled                                  := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.5.0" % "provided"
 )
