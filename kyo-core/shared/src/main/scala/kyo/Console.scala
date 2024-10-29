@@ -58,15 +58,15 @@ object Console:
     val live: Console = Console(
         new Unsafe:
             def readln()(using AllowUnsafe) =
-                Result.catching(Maybe(scala.Console.in.readLine())).flatMap {
+                Result.catching[IOException](Maybe(scala.Console.in.readLine())).flatMap {
                     case Absent         => Result.fail(new EOFException("Consoles.readln failed."))
                     case Present(value) => Result.success(value)
                 }
-            def print(s: String)(using AllowUnsafe)      = Result.catching(scala.Console.out.print(s))
-            def printErr(s: String)(using AllowUnsafe)   = Result.catching(scala.Console.err.print(s))
-            def println(s: String)(using AllowUnsafe)    = Result.catching(scala.Console.out.println(s))
-            def printlnErr(s: String)(using AllowUnsafe) = Result.catching(scala.Console.err.println(s))
-            def flush()(using AllowUnsafe)               = Result.catching(scala.Console.flush())
+            def print(s: String)(using AllowUnsafe)      = Result.catching[IOException](scala.Console.out.print(s))
+            def printErr(s: String)(using AllowUnsafe)   = Result.catching[IOException](scala.Console.err.print(s))
+            def println(s: String)(using AllowUnsafe)    = Result.catching[IOException](scala.Console.out.println(s))
+            def printlnErr(s: String)(using AllowUnsafe) = Result.catching[IOException](scala.Console.err.println(s))
+            def flush()(using AllowUnsafe)               = Result.catching[IOException](scala.Console.flush())
     )
 
     private val local = Local.init(live)
