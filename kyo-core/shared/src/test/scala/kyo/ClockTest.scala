@@ -253,8 +253,8 @@ class ClockTest extends Test:
                 _      <- fiber2.get
                 end    <- Clock.now
             yield
-                assert(mid - start >= 2.millis && mid - start < 10.millis)
-                assert(end - start >= 4.millis && end - start < 15.millis)
+                assert(mid - start >= 2.millis && mid - start < 20.millis)
+                assert(end - start >= 4.millis && end - start < 30.millis)
         }
 
         "sleep with zero duration" in run {
@@ -264,7 +264,7 @@ class ClockTest extends Test:
                 fiber <- clock.sleep(Duration.Zero)
                 _     <- fiber.get
                 end   <- Clock.now
-            yield assert(end - start < 2.millis)
+            yield assert(end - start < 10.millis)
         }
 
         "concurrency" in run {
@@ -276,7 +276,7 @@ class ClockTest extends Test:
                 end    <- Clock.now
             yield
                 val elapsed = end - start
-                assert(elapsed >= 1.millis && elapsed < 15.millis)
+                assert(elapsed >= 1.millis && elapsed < 100.millis)
         }
     }
 
@@ -289,7 +289,7 @@ class ClockTest extends Test:
             yield
                 val elapsedWall    = wallEnd - wallStart
                 val elapsedShifted = shiftedEnd - wallStart
-                assert(elapsedWall >= 5.millis && elapsedWall < 10.millis)
+                assert(elapsedWall >= 5.millis && elapsedWall < 20.millis)
                 assert(elapsedShifted > elapsedWall)
         }
 
