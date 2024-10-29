@@ -77,7 +77,7 @@ object Clock:
             def timeLeft()(using AllowUnsafe): Duration =
                 endInstant.map(_ - clock.now()).getOrElse(Duration.Infinity)
 
-            def isOverdue()(using AllowUnsafe): Boolean = endInstant.exists(clock.now().isAfter)
+            def isOverdue()(using AllowUnsafe): Boolean = endInstant.exists(_ < clock.now())
 
             def safe: Deadline = Deadline(this)
         end Unsafe

@@ -30,7 +30,7 @@ object DB:
         Live(index, log)
     }
 
-    class Live(index: Index, log: Log) extends DB:
+    class Live(index: Index, log: db.Log) extends DB:
 
         def transaction(account: Int, amount: Int, desc: String): Result < IO =
             index.transaction(account, amount, desc).map {

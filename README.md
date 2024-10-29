@@ -431,7 +431,7 @@ object MyApp extends KyoApp:
 end MyApp
 ```
 
-While the companion object of `KyoApp` provides utility methods to run isolated effectful computations, it's crucial to approach these with caution. Direct handling of effects like `IO` through these methods can compromise referential transparency, an essential property for functional programming.
+While the companion object of `KyoApp` provides a utility method to run isolated effectful computations, it's crucial to approach it with caution. Direct handling the `IO` effect through this method compromises referential transparency, an essential property for functional programming.
 
 ```scala
 import kyo.*
@@ -440,15 +440,10 @@ import kyo.*
 val a: Int < IO =
     IO(Math.cos(42).toInt)
 
-// Avoid! Run the application with a specific timeout
-val b: Int =
+// Avoid! Run the application with a timeout
+val b: Result[Throwable, Int] =
     import AllowUnsafe.embrace.danger
-    KyoApp.Unsafe.run(2.minutes)(a)
-
-// Avoid! Run the application without specifying a timeout
-val c: Int =
-    import AllowUnsafe.embrace.danger
-    KyoApp.Unsafe.run(a)
+    KyoApp.Unsafe.runAndBlock(2.minutes)(a)
 ```
 
 ## Core Effects

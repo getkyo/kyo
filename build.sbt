@@ -11,7 +11,7 @@ val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
 val zioVersion       = "2.1.11"
-val catsVersion      = "3.5.4"
+val catsVersion      = "3.5.5"
 val scalaTestVersion = "3.2.19"
 
 val compilerOptions = Set(

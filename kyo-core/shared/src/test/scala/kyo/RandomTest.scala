@@ -283,6 +283,56 @@ class RandomTest extends Test:
         }
     }
 
+    "context operations" - {
+        val testRandom: Random = new Random:
+            def nextInt(using Frame)                                   = 42
+            def nextInt(n: Int)(using Frame)                           = n - 1
+            def nextLong(using Frame)                                  = 20L
+            def nextBoolean(using Frame)                               = true
+            def nextDouble(using Frame)                                = 30d
+            def nextFloat(using Frame)                                 = 40f
+            def nextGaussian(using Frame)                              = 50d
+            def nextValue[A](seq: Seq[A])(using Frame)                 = seq.last
+            def nextValues[A](length: Int, seq: Seq[A])(using Frame)   = Seq.fill(length)(seq.last)
+            def nextStringAlphanumeric(length: Int)(using Frame)       = "a" * length
+            def nextString(length: Int, chars: Seq[Char])(using Frame) = chars.last.toString * length
+            def nextBytes(length: Int)(using Frame)                    = Seq.fill(length)(1.toByte)
+            def shuffle[A](seq: Seq[A])(using Frame)                   = seq.reverse
+            def unsafe                                                 = ???
+
+        "get should return current Random instance" in run {
+            Random.let(testRandom) {
+                Random.get.map { random =>
+                    assert(random.equals(testRandom))
+                }
+            }
+        }
+
+        "use should execute function with current Random" in run {
+            Random.let(testRandom) {
+                Random.use(_.nextInt).map { result =>
+                    assert(result == 42)
+                }
+            }
+        }
+
+        "withSeed should create deterministic Random" in run {
+            val seed = 12345
+            for
+                result1 <- Random.withSeed(seed)(Random.nextInt)
+                result2 <- Random.withSeed(seed)(Random.nextInt)
+            yield assert(result1 == result2)
+            end for
+        }
+
+        "withSeed should produce different results with different seeds" in run {
+            for
+                result1 <- Random.withSeed(12345)(Random.nextInt)
+                result2 <- Random.withSeed(54321)(Random.nextInt)
+            yield assert(result1 != result2)
+        }
+    }
+
     class TestUnsafe extends Random.Unsafe:
         private val javaRandom = new java.util.Random()
 
