@@ -4,6 +4,7 @@ import java.util.concurrent.Callable
 import java.util.concurrent.Delayed
 import java.util.concurrent.DelayQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.LockSupport
 import kyo.Clock.Deadline
@@ -100,21 +101,8 @@ object Clock:
 
     /** A live Clock instance using the system clock. */
     val live: Clock =
-        Clock(
-            new Unsafe:
-                val executor                 = Executors.newScheduledThreadPool(2, Threads("kyo-core-clock-executor"))
-                def now()(using AllowUnsafe) = Instant.fromJava(java.time.Instant.now())
-                def sleep(duration: Duration) =
-                    Promise.Unsafe.fromIOPromise {
-                        new IOPromise[Nothing, Unit] with Callable[Unit]:
-                            val task = executor.schedule(this, duration.toNanos, TimeUnit.NANOSECONDS)
-                            override def interrupt(error: Panic): Boolean =
-                                discard(task.cancel(true))
-                                super.interrupt(error)
-                            def call(): Unit = completeDiscard(Result.unit)
-                    }
-                end sleep
-        )
+        import AllowUnsafe.embrace.danger
+        Clock(Unsafe(Executors.newScheduledThreadPool(2, Threads("kyo-core-clock-executor"))))
 
     private val local = Local.init(live)
 
@@ -313,6 +301,22 @@ object Clock:
             else Deadline.Unsafe(Maybe(now() + duration), this)
 
         final def safe: Clock = Clock(this)
+    end Unsafe
+
+    object Unsafe:
+        def apply(executor: ScheduledExecutorService)(using AllowUnsafe): Unsafe =
+            new Unsafe:
+                def now()(using AllowUnsafe) = Instant.fromJava(java.time.Instant.now())
+                def sleep(duration: Duration) =
+                    Promise.Unsafe.fromIOPromise {
+                        new IOPromise[Nothing, Unit] with Callable[Unit]:
+                            val task = executor.schedule(this, duration.toNanos, TimeUnit.NANOSECONDS)
+                            override def interrupt(error: Panic): Boolean =
+                                discard(task.cancel(true))
+                                super.interrupt(error)
+                            def call(): Unit = completeDiscard(Result.unit)
+                    }
+                end sleep
     end Unsafe
 
 end Clock
