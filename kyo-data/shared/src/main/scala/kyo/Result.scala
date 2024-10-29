@@ -118,7 +118,8 @@ object Result:
         loop(seq, Chunk.empty[A])
     end collect
 
-    private val _unit = Success(())
+    private val _unit   = Success(())
+    private val _absent = Fail(Absent)
 
     /** Returns a successful Result containing unit.
       *
@@ -128,6 +129,13 @@ object Result:
       *   A successful Result containing unit
       */
     def unit[E]: Result[E, Unit] = _unit
+
+    /** Returns a failed Result with an Absent failure.
+      *
+      * @return
+      *   A failed Result with an Absent failure
+      */
+    def absent[A]: Result[Absent, A] = _absent
 
     /** Converts an Either to a Result.
       *

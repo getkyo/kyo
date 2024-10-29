@@ -506,6 +506,29 @@ class MaybeTest extends Test:
 
     }
 
+    "toResult" - {
+        "without error parameter" - {
+            "should return Result.success for Present" in {
+                assert(Present(1).toResult == Result.success(1))
+            }
+
+            "should return Result.absent for Absent" in {
+                assert(Absent.toResult == Result.absent)
+            }
+        }
+
+        "with custom error" - {
+            "should return Result.success for Present" in {
+                assert(Present(1).toResult(Result.fail("error")) == Result.success(1))
+            }
+
+            "should return provided error Result for Absent" in {
+                val errorResult = Result.fail("custom error")
+                assert(Absent.toResult(errorResult) == errorResult)
+            }
+        }
+    }
+
     "show" - {
         "should return 'Absent' for Absent" in {
             assert(Absent.show == "Absent")
