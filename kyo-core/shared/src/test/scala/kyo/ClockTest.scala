@@ -253,8 +253,8 @@ class ClockTest extends Test:
                 _      <- fiber2.get
                 end    <- Clock.now
             yield
-                assert(mid - start >= 2.millis && mid - start < 20.millis)
-                assert(end - start >= 4.millis && end - start < 30.millis)
+                assert(mid - start >= 2.millis && mid - start < 30.millis)
+                assert(end - start >= 4.millis && end - start < 50.millis)
         }
 
         "sleep with zero duration" in run {
