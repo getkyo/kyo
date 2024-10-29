@@ -144,7 +144,7 @@ object Duration:
         inline def min(that: Duration): Duration = Math.min(self.toLong, that.toLong)
 
         inline def to(unit: Units): Long =
-            Math.max(Math.round(self.toLong / unit.factor), Duration.Zero)
+            Math.max(Math.round(self.toLong / unit.factor), Duration.Zero.toLong)
 
         inline def toNanos: Long   = self.toLong
         inline def toMicros: Long  = self.to(Micros)

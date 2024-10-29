@@ -429,7 +429,7 @@ object Result:
             self match
                 case self: Error[E] @unchecked => self
                 case self =>
-                    try f(self.asInstanceOf[Success[A]].get)
+                    try f(self.asInstanceOf[Result[Nothing, A]].get)
                     catch
                         case ex => Panic(ex)
 
@@ -498,7 +498,7 @@ object Result:
                 if !p(v) then
                     Fail(new NoSuchElementException("Predicate does not hold for " + v))
                 else
-                    v
+                    Result(v)
             }
 
         /** Recovers from an error by applying a partial function.
