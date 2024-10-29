@@ -29,22 +29,22 @@ class TimerTest extends Test:
                 result   <- channel.poll
             yield assert(result.isEmpty)
         }
-        // "with time control" in run {
-        //     Clock.withTimeControl { control =>
-        //         for
-        //             running  <- AtomicBoolean.init(false)
-        //             queue    <- Queue.Unbounded.init[Instant]()
-        //             task     <- Timer.repeatAtInterval(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
-        //             _        <- untilTrue(control.advance(1.milli).andThen(running.get))
-        //             _        <- queue.drain
-        //             _        <- control.advance(1.milli).repeat(10)
-        //             _        <- task.interrupt
-        //             instants <- queue.drain
-        //         yield
-        //             intervals(instants).foreach(v => assert(v == 1.millis))
-        //             succeed
-        //     }
-        // }
+        "with time control" in runJVM {
+            Clock.withTimeControl { control =>
+                for
+                    running  <- AtomicBoolean.init(false)
+                    queue    <- Queue.Unbounded.init[Instant]()
+                    task     <- Timer.repeatAtInterval(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
+                    _        <- untilTrue(control.advance(1.milli).andThen(running.get))
+                    _        <- queue.drain
+                    _        <- control.advance(1.milli).repeat(10)
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield
+                    intervals(instants).foreach(v => assert(v == 1.millis))
+                    succeed
+            }
+        }
         "with Schedule parameter" in run {
             for
                 channel  <- Channel.init[Instant](10)
@@ -96,22 +96,22 @@ class TimerTest extends Test:
             yield assert(result.isEmpty)
         }
 
-        // "with time control" in run {
-        //     Clock.withTimeControl { control =>
-        //         for
-        //             running  <- AtomicBoolean.init(false)
-        //             queue    <- Queue.Unbounded.init[Instant]()
-        //             task     <- Timer.repeatWithDelay(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
-        //             _        <- untilTrue(control.advance(1.milli).andThen(running.get))
-        //             _        <- queue.drain
-        //             _        <- control.advance(1.milli).repeat(10)
-        //             _        <- task.interrupt
-        //             instants <- queue.drain
-        //         yield
-        //             intervals(instants).foreach(v => assert(v == 1.millis))
-        //             succeed
-        //     }
-        // }
+        "with time control" in runJVM {
+            Clock.withTimeControl { control =>
+                for
+                    running  <- AtomicBoolean.init(false)
+                    queue    <- Queue.Unbounded.init[Instant]()
+                    task     <- Timer.repeatWithDelay(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
+                    _        <- untilTrue(control.advance(1.milli).andThen(running.get))
+                    _        <- queue.drain
+                    _        <- control.advance(1.milli).repeat(10)
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield
+                    intervals(instants).foreach(v => assert(v == 1.millis))
+                    succeed
+            }
+        }
 
         "works with Schedule parameter" in run {
             for

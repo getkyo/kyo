@@ -225,7 +225,7 @@ object Clock:
                     @volatile var current = Instant.Epoch
 
                     case class Task(deadline: Instant) extends IOPromise[Nothing, Unit]
-                    val queue = new PriorityQueue[Task](using Ordering.fromLessThan((a, b) => a.deadline < b.deadline))
+                    val queue = new PriorityQueue[Task](using Ordering.fromLessThan((a, b) => b.deadline < a.deadline))
 
                     def now()(using AllowUnsafe) = current
 
