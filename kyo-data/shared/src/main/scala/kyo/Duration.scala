@@ -117,6 +117,26 @@ object Duration:
         val factor: Double = chronoUnit.getDuration.toNanos.toDouble
     end Units
 
+    object Units:
+        def fromJava(chronoUnit: ChronoUnit): Units =
+            Units.values.find(_.chronoUnit.equals(chronoUnit)) match
+                case None       => throw new UnsupportedOperationException("Chrono unit not suppported: " + chronoUnit)
+                case Some(unit) => unit
+
+        def fromJava(timeUnit: TimeUnit): Units =
+            given CanEqual[TimeUnit, TimeUnit] = CanEqual.derived
+            timeUnit match
+                case TimeUnit.NANOSECONDS  => Units.Nanos
+                case TimeUnit.MICROSECONDS => Units.Micros
+                case TimeUnit.MILLISECONDS => Units.Millis
+                case TimeUnit.SECONDS      => Units.Seconds
+                case TimeUnit.MINUTES      => Units.Minutes
+                case TimeUnit.HOURS        => Units.Hours
+                case TimeUnit.DAYS         => Units.Days
+            end match
+        end fromJava
+    end Units
+
     extension (self: Duration)
 
         private def toLong: Long = self
@@ -148,12 +168,10 @@ object Duration:
             Math.max(Math.round(self.toLong / unit.factor), Duration.Zero)
 
         def to(timeUnit: TimeUnit): Long =
-            to(timeUnit.toChronoUnit())
+            to(Units.fromJava(timeUnit))
 
         def to(chronoUnit: ChronoUnit): Long =
-            Units.values.find(_.chronoUnit.equals(chronoUnit)) match
-                case None       => throw new UnsupportedOperationException("Chrono unit not suppported: " + chronoUnit)
-                case Some(unit) => to(unit)
+            to(Units.fromJava(chronoUnit))
 
         def toNanos: Long   = self.toLong
         def toMicros: Long  = self.to(Micros)

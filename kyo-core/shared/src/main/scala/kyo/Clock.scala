@@ -107,7 +107,7 @@ object Clock:
                         new IOPromise[Nothing, Unit] with Callable[Unit]:
                             val task = executor.schedule(this, duration.toNanos, TimeUnit.NANOSECONDS)
                             override def interrupt(error: Panic): Boolean =
-                                task.cancel(true)
+                                discard(task.cancel(true))
                                 super.interrupt(error)
                             def call(): Unit = completeDiscard(Result.unit)
                     }
