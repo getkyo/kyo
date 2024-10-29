@@ -294,7 +294,6 @@ object Clock:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
         import AllowUnsafe.embrace.danger
-        import Unsafe.SleepTask
 
         def now()(using AllowUnsafe): Instant
 
@@ -308,8 +307,5 @@ object Clock:
 
         final def safe: Clock = Clock(this)
     end Unsafe
-
-    object Unsafe:
-        final private class SleepTask(val deadline: Instant) extends IOPromise[Nothing, Unit]
 
 end Clock
