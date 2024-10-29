@@ -42,7 +42,9 @@ final case class Clock(unsafe: Clock.Unsafe):
     def deadline(duration: Duration)(using Frame): Clock.Deadline < IO = IO.Unsafe(unsafe.deadline(duration).safe)
 
     private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Nothing, Unit] < IO =
-        IO.Unsafe(unsafe.sleep(duration).safe)
+        if duration == Duration.Zero then Fiber.unit
+        else if !duration.isFinite then Fiber.never
+        else IO.Unsafe(unsafe.sleep(duration).safe)
 end Clock
 
 /** Companion object for creating and managing Clock instances. */
@@ -222,20 +224,16 @@ object Clock:
                 new Unsafe with TimeControl:
                     @volatile var current = Instant.Epoch
 
-                    case class Task(deadline: Instant) extends IOPromise[Nothing, Unit] with Delayed:
-                        def getDelay(unit: TimeUnit): Long =
-                            (deadline - current).to(unit)
-                        def compareTo(other: Delayed): Int =
-                            deadline.toJava.compareTo(other.asInstanceOf[Task].deadline.toJava)
-                    end Task
-
-                    val queue = new DelayQueue[Task]
+                    case class Task(deadline: Instant) extends IOPromise[Nothing, Unit]
+                    val queue = new PriorityQueue[Task](using Ordering.fromLessThan((a, b) => a.deadline < b.deadline))
 
                     def now()(using AllowUnsafe) = current
 
                     def sleep(duration: Duration): Fiber.Unsafe[Nothing, Unit] =
                         val task = new Task(current + duration)
-                        queue.add(task)
+                        queue.synchronized {
+                            queue.enqueue(task)
+                        }
                         Promise.Unsafe.fromIOPromise(task)
                     end sleep
 
@@ -252,12 +250,21 @@ object Clock:
                         }
 
                     def tick(): Unit =
-                        val task = queue.poll()
-                        if task != null then
-                            task.completeDiscard(Result.unit)
-                            tick()
-                        end if
-                    end tick
+                        queue.synchronized {
+                            queue.headOption match
+                                case Some(task) if task.deadline <= current =>
+                                    Maybe(queue.dequeue())
+                                case Some(task) if task.done() =>
+                                    discard(queue.dequeue())
+                                    Maybe.empty
+                                case _ =>
+                                    Maybe.empty
+                        } match
+                            case Present(task) =>
+                                task.completeDiscard(Result.unit)
+                                tick()
+                            case Absent =>
+                                ()
             let(Clock(controlled))(f(controlled))
         }
     end withTimeControl
