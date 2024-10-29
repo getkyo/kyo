@@ -126,7 +126,7 @@ object Clock:
       *   The current Clock instance
       */
     def get(using Frame): Clock < Any =
-        use(identity)
+        local.get
 
     /** Uses the current Clock instance from the local context to perform an operation.
       *
