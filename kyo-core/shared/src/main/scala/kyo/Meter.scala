@@ -114,7 +114,7 @@ object Meter:
             new Base(rate):
                 val timerTask =
                     // Schedule periodic task to replenish permits
-                    IO.Unsafe.run(Timer.repeatAtInterval(period)(replenish())).eval
+                    IO.Unsafe.run(Clock.repeatAtInterval(period)(replenish())).eval
 
                 def dispatch[A, S](v: => A < S) =
                     // Don't release a permit since it's managed by the timer task
