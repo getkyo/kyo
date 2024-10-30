@@ -569,4 +569,49 @@ class TextTest extends Test:
         }
     }
 
+    "is (equality)" - {
+        "simple texts" in {
+            assert(Text("hello").is(Text("hello")))
+            assert(!Text("hello").is(Text("world")))
+        }
+
+        "empty texts" in {
+            assert(Text("").is(Text("")))
+            assert(!Text("").is(Text("a")))
+        }
+
+        "case sensitivity" in {
+            assert(!Text("Hello").is(Text("hello")))
+        }
+
+        "concatenated texts" in {
+            assert((Text("hello") + " world").is(Text("hello world")))
+            assert(!(Text("hello") + "world").is(Text("helloworld ")))
+        }
+
+        "cut texts" in {
+            assert(Text("hello world").substring(0, 5).is(Text("hello")))
+            assert(!Text("hello world").substring(0, 5).is(Text("world")))
+        }
+
+        "mixed operations" in {
+            val text1 = Text("hello") + " " + "world"
+            val text2 = Text("hello world").substring(0, 11)
+            assert(text1.is(text2))
+        }
+
+        "unicode support" in {
+            assert(Text("Hello 🌍").is(Text("Hello 🌍")))
+            assert(!Text("Hello 🌍").is(Text("Hello 🌎")))
+        }
+
+        "large texts" in {
+            val large1 = Text("a" * 1000000)
+            val large2 = Text("a" * 1000000)
+            val large3 = Text("a" * 999999 + "b")
+            assert(large1.is(large2))
+            assert(!large1.is(large3))
+        }
+    }
+
 end TextTest

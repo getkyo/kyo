@@ -38,6 +38,14 @@ class FlatTest extends Test:
                 test[Int]
             }
         }
+        "kyo data" in {
+            implicitly[Flat[Maybe[Int]]]
+            implicitly[Flat[Result[String, Int]]]
+            implicitly[Flat[TypeMap[String & Int]]]
+            implicitly[Flat[Duration]]
+            implicitly[Flat[Text]]
+            succeed
+        }
     }
 
     "nok" - {

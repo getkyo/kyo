@@ -4,6 +4,7 @@ import kyo.Duration
 import kyo.Maybe
 import kyo.Result
 import kyo.Tag
+import kyo.Text
 import kyo.TypeMap
 import scala.annotation.implicitNotFound
 import scala.quoted.*
@@ -75,9 +76,10 @@ private object FlatMacro:
                 case AppliedType(base, _) =>
                     base =:= TypeRepr.of[Maybe] ||
                     base =:= TypeRepr.of[Result] ||
-                    base =:= TypeRepr.of[TypeMap] ||
-                    base =:= TypeRepr.of[Duration]
-                case _ => false
+                    base =:= TypeRepr.of[TypeMap]
+                case _ =>
+                    t =:= TypeRepr.of[Duration] ||
+                    t =:= TypeRepr.of[Text]
 
         def canDerive(t: TypeRepr): Boolean =
             t.asType match
