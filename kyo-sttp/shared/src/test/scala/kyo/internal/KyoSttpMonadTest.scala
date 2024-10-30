@@ -63,31 +63,48 @@ class KyoSttpMonadTest extends Test:
 
     "async" - {
         "ok" in run {
-            val result = KyoSttpMonad.async[Int] { cb =>
+            var interrupted = false
+            KyoSttpMonad.async[Int] { cb =>
                 cb(Right(42))
-                Canceler(() => {})
+                Canceler(() => interrupted = true)
+            }.map { r =>
+                assert(!interrupted)
+                assert(r == 42)
             }
-            result.map(r => assert(r == 42))
         }
 
         "nok" in run {
-            val ex = new Exception("test")
+            var interrupted = false
+            val ex          = new Exception("test")
             val result = KyoSttpMonad.async[Int] { cb =>
                 cb(Left(ex))
-                Canceler(() => {})
+                Canceler(() => interrupted = true)
             }
-            Abort.run[Throwable](result).map(r => assert(r == Result.panic(ex)))
+            Abort.run[Throwable](result).map { r =>
+                assert(!interrupted)
+                assert(r == Result.panic(ex))
+            }
         }
 
         "cancel" in runJVM {
-            var cancelled = false
-            val result = KyoSttpMonad.async[Int] { cb =>
-                cb(Left(new Exception))
-                Canceler(() => cancelled = true)
-            }
-            Async.run(result).map(_.getResult).map { _ =>
-                assert(cancelled)
-            }
+            for
+                started   <- Latch.init(1)
+                cancelled <- Latch.init(1)
+                fiber <- Async.run {
+                    KyoSttpMonad.async[Int] { _ =>
+                        import AllowUnsafe.embrace.danger
+                        started.unsafe.release()
+                        Canceler(() => cancelled.unsafe.release())
+                    }
+                }
+                _           <- started.await
+                interrupted <- fiber.interrupt
+                _           <- cancelled.await
+                result      <- fiber.getResult
+            yield
+                assert(interrupted)
+                assert(result.isPanic)
+            end for
         }
     }
 

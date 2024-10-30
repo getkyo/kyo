@@ -429,4 +429,43 @@ class AsyncTest extends Test:
         }
     }
 
+    "timeout" - {
+        "completes before timeout" in run {
+            for
+                result <- Async.timeout(1.second)(42)
+            yield assert(result == 42)
+        }
+
+        "times out" in run {
+            val result =
+                for
+                    value <- Async.timeout(5.millis)(Async.sleep(1.second).as(42))
+                yield value
+
+            Abort.run[Timeout](result).map {
+                case Result.Fail(Timeout(_)) => succeed
+                case other                   => fail(s"Expected Timeout, got $other")
+            }
+        }
+
+        "infinite duration doesn't timeout" in run {
+            for
+                result <- Async.timeout(Duration.Infinity)(42)
+            yield assert(result == 42)
+        }
+
+        "interrupts computation" in run {
+            for
+                flag  <- AtomicBoolean.init(false)
+                fiber <- Promise.init[Nothing, Int]
+                _     <- fiber.onInterrupt(_ => flag.set(true))
+                // TODO Boundary inference issue
+                v = Async.timeout(1.millis)(fiber.get)
+                result <- Async.run(v)
+                result <- fiber.getResult
+                _      <- untilTrue(flag.get)
+            yield assert(result.isFail)
+        }
+    }
+
 end AsyncTest
