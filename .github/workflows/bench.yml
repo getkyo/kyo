@@ -16,11 +16,11 @@ on:
       warmupIterations:
         description: 'Warmup iterations'     
         required: false
-        default: '13'
+        default: '10'
       measurementIterations:
         description: 'Measurement iterations'     
         required: false
-        default: '5'
+        default: '4'
       iterationTime:
         description: 'Iteration time'     
         required: false
@@ -41,7 +41,7 @@ jobs:
   bench:
     name: bench
     runs-on: bench
-    timeout-minutes: 120
+    timeout-minutes: 240
     env: 
       IX: ${{ github.event.inputs.index || 'default' }}
       SE: ${{ github.event.inputs.selector || 'Kyo' }}
