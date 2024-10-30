@@ -114,7 +114,7 @@ object Meter:
             new Base(rate):
                 val timerTask =
                     // Schedule periodic task to replenish permits
-                    Timer.live.unsafe.scheduleAtFixedRate(period, period)(replenish())
+                    IO.Unsafe.run(Clock.repeatAtInterval(period)(replenish())).eval
 
                 def dispatch[A, S](v: => A < S) =
                     // Don't release a permit since it's managed by the timer task
@@ -124,7 +124,7 @@ object Meter:
                     if i < rate && release() then
                         replenish(i + 1)
 
-                def onClose() = discard(timerTask.cancel())
+                def onClose() = discard(timerTask.unsafe.interrupt())
         }
 
     /** Combines two Meters into a pipeline.

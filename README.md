@@ -1498,7 +1498,7 @@ val f: Unit < (IO & Abort[IOException]) =
     Console.let(Console.live)(e)
 ```
 
-### Clock: Time Management
+### Clock: Time Management and Scheduled Tasks
 
 The `Clock` effect provides utilities for time-related operations, including getting the current time, creating stopwatches, and managing deadlines.
 
@@ -1544,6 +1544,60 @@ val g: Instant < IO =
 ```
 
 `Clock` both safe (effectful) and unsafe (non-effectful) versions of its operations. The safe versions are suspended in `IO` and should be used in most cases. The unsafe versions are available through the `unsafe` property and should be used with caution, typically only in performance-critical sections or when integrating with non-effectful code.
+
+`Clock` also offers methods to schedule background tasks:
+
+```scala
+import kyo.*
+
+// An example computation to
+// be scheduled
+val a: Unit < IO =
+    IO(())
+
+// Recurring task with a delay between
+// executions
+val b: Fiber[Nothing, Unit] < IO =
+    Clock.repeatWithDelay(
+        startAfter = 1.minute,
+        delay = 1.minute
+    )(a)
+
+// Without an initial delay
+val c: Fiber[Nothing, Unit] < IO =
+    Clock.repeatWithDelay(1.minute)(a)
+
+// Schedule at a specific interval, regarless
+// of the duration of each execution
+val d: Fiber[Nothing, Unit] < IO =
+    Clock.repeatAtInterval(
+        startAfter = 1.minute,
+        interval = 1.minute
+    )(a)
+
+// Without an initial delay
+val e: Fiber[Nothing, Unit] < IO =
+    Clock.repeatAtInterval(1.minute)(a)
+```
+
+Use the returned `Fiber` to control scheduled tasks.
+
+```scala
+import kyo.*
+
+// Example task
+val a: Fiber[Nothing, Unit] < IO =
+    Clock.repeatAtInterval(1.second)(())
+
+// Try to cancel a task
+def b(task: Fiber[Nothing, Unit]): Boolean < IO =
+    task.interrupt
+
+// Check if a task is done
+def c(task: Fiber[Nothing, Unit]): Boolean < IO =
+    task.done
+```
+
 
 ### System: Environment Variables and System Properties
 
@@ -2343,77 +2397,6 @@ val d: Int < (Async & Abort[Closed]) =
 // available; returns 'None' otherwise
 val e: Maybe[Int] < (Async & Abort[Closed]) =
     a.map(_.tryRun(Math.cos(42).toInt))
-```
-
-### Timer: Scheduled Execution
-
-The `Timer` effect is designed for control over the timing of task execution.
-
-```scala
-import kyo.*
-
-// An example computation to
-// be scheduled
-val a: Unit < IO =
-    IO(())
-
-// Schedule a delayed task
-val b: TimerTask < IO =
-    Timer.schedule(delay = 1.second)(a)
-
-// Recurring task with
-// intial delay
-val c: TimerTask < IO =
-    Timer.scheduleAtFixedRate(
-        initialDelay = 1.minutes,
-        period = 1.minutes
-    )(a)
-
-// Recurring task without
-// initial delay
-val d: TimerTask < IO =
-    Timer.scheduleAtFixedRate(
-        period = 1.minutes
-    )(a)
-
-// Schedule with fixed delay between tasks
-val e: TimerTask < IO =
-    Timer.scheduleWithFixedDelay(
-        initialDelay = 1.minutes,
-        period = 1.minutes
-    )(a)
-
-// without initial delay
-val f: TimerTask < IO =
-    Timer.scheduleWithFixedDelay(
-        period = 1.minutes
-    )(a)
-
-// Specify the 'Timer' explictly
-val i: TimerTask < IO =
-    Timer.let(Timer.live)(f)
-```
-
-`TimerTask` offers methods for more granular control over the scheduled tasks.
-
-```scala
-import kyo.*
-
-// Example TimerTask
-val a: TimerTask < IO =
-    Timer.schedule(1.second)(())
-
-// Try to cancel the task
-val b: Boolean < IO =
-    a.map(_.cancel)
-
-// Check if the task is cancelled
-val c: Boolean < IO =
-    a.map(_.cancelled)
-
-// Check if the task is done
-val d: Boolean < IO =
-    a.map(_.done)
 ```
 
 ### Latch: Countdown Synchronization

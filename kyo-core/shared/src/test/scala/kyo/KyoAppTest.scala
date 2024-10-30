@@ -33,7 +33,7 @@ class KyoAppTest extends Test:
     "effects" taggedAs jvmOnly in {
         def run: Int < (Async & Resource & Abort[Throwable]) =
             for
-                _ <- Timer.scheduleAtFixedRate(1.second, 1.second)(())
+                _ <- Clock.repeatAtInterval(1.second, 1.second)(())
                 i <- Random.nextInt
                 _ <- Console.println(s"$i")
                 _ <- Clock.now

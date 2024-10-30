@@ -365,9 +365,10 @@ object Fiber extends FiberPlatformSpecific:
             def onComplete(f: Result[E, A] => Unit)(using AllowUnsafe): Unit                             = self.onComplete(f)
             def onInterrupt(f: Panic => Unit)(using Frame): Unit                                         = self.onInterrupt(f)
             def block(deadline: Clock.Deadline.Unsafe)(using AllowUnsafe, Frame): Result[E | Timeout, A] = self.block(deadline)
-            def interrupt(error: Panic)(using AllowUnsafe): Boolean                                      = self.interrupt(error)
-            def interruptDiscard(error: Panic)(using AllowUnsafe): Unit                                  = discard(self.interrupt(error))
-            def mask()(using AllowUnsafe): Unsafe[E, A]                                                  = self.mask()
+            def interrupt()(using frame: Frame, allow: AllowUnsafe): Boolean = self.interrupt(Panic(Interrupted(frame)))
+            def interrupt(error: Panic)(using AllowUnsafe): Boolean          = self.interrupt(error)
+            def interruptDiscard(error: Panic)(using AllowUnsafe): Unit      = discard(self.interrupt(error))
+            def mask()(using AllowUnsafe): Unsafe[E, A]                      = self.mask()
 
             def toFuture()(using E <:< Throwable, AllowUnsafe): Future[A] =
                 val r = scala.concurrent.Promise[A]()
@@ -459,6 +460,8 @@ object Fiber extends FiberPlatformSpecific:
             inline given [E, A]: Flat[Unsafe[E, A]] = Flat.unsafe.bypass
 
             def init[E, A]()(using AllowUnsafe): Unsafe[E, A] = IOPromise()
+
+            private[kyo] def fromIOPromise[E, A](p: IOPromise[E, A]): Unsafe[E, A] = p
 
             extension [E, A](self: Unsafe[E, A])
                 def complete[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Boolean        = self.complete(v)
