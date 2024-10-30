@@ -1,4 +1,6 @@
 name: bench
+permissions:
+  contents: write
 on:
   # push:
   #   branches:
@@ -103,7 +105,7 @@ jobs:
         id: publish-results
         uses: actions/github-script@v5
         with:
-          github-token: ${{ secrets.GIST_PAT }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs').promises;
             const path = require('path');
