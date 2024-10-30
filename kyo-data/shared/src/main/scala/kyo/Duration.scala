@@ -118,10 +118,11 @@ object Duration:
     end Units
 
     object Units:
+        private val byChronoUnit: Map[ChronoUnit, Units] = Units.values.map(u => (u.chronoUnit, u)).toMap
+
         def fromJava(chronoUnit: ChronoUnit): Units =
-            Units.values.find(_.chronoUnit.equals(chronoUnit)) match
-                case None       => throw new UnsupportedOperationException("Chrono unit not suppported: " + chronoUnit)
-                case Some(unit) => unit
+            byChronoUnit.get(chronoUnit)
+                .getOrElse(throw new UnsupportedOperationException("Chrono unit not suppported: " + chronoUnit))
 
         def fromJava(timeUnit: TimeUnit): Units =
             given CanEqual[TimeUnit, TimeUnit] = CanEqual.derived
