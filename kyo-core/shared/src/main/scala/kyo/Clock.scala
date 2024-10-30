@@ -309,12 +309,12 @@ object Clock:
                 def now()(using AllowUnsafe) = Instant.fromJava(java.time.Instant.now())
                 def sleep(duration: Duration) =
                     Promise.Unsafe.fromIOPromise {
-                        new IOPromise[Nothing, Unit] with Callable[Unit]:
+                        new IOPromise[Nothing, Unit] with Runnable:
                             val task = executor.schedule(this, duration.toNanos, TimeUnit.NANOSECONDS)
                             override def interrupt(error: Panic): Boolean =
                                 discard(task.cancel(true))
                                 super.interrupt(error)
-                            def call(): Unit = completeDiscard(Result.unit)
+                            def run() = completeDiscard(Result.unit)
                     }
                 end sleep
     end Unsafe
