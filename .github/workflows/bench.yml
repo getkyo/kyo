@@ -110,37 +110,40 @@ jobs:
             const fs = require('fs').promises;
             const path = require('path');
             
-            // Create release tag
             const short_sha = context.sha.substring(0, 7);
             const tag = `bench-${short_sha}`;
             const date = new Date().toISOString().split('T')[0];
             
-            // Create the release
             const release = await github.rest.repos.createRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
               name: `Benchmark Results ${short_sha} ${date}`,
               body: `Benchmark results for commit ${context.sha} on ${date}`,
-              prerelease: true  // Mark as prerelease to separate from regular releases
+              prerelease: true
             });
             
-            // Upload all files from output directory
-            const files = await fs.readdir('output');
-            for (const file of files) {
-              const filePath = path.join('output', file);
+            async function* getFiles(dir) {
+              const entries = await fs.readdir(dir, { withFileTypes: true });
+              for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                  yield* getFiles(fullPath);
+                } else {
+                  yield fullPath;
+                }
+              }
+            }
+            
+            for await (const filePath of getFiles('output')) {
               const content = await fs.readFile(filePath);
+              const fileName = path.basename(filePath);
               
               await github.rest.repos.uploadReleaseAsset({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 release_id: release.data.id,
-                name: file,
-                data: content,
-                headers: {
-                  'content-type': 'application/octet-stream',
-                  'content-length': content.length
-                }
+                name: fileName,
+                data: content
               });
             }
-            
