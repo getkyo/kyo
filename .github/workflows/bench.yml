@@ -146,8 +146,8 @@ jobs:
       - name: Get commit message
         id: get-commit-message
         run: |
-          COMMIT_MESSAGE="$(git log --format=%B -n 1 ${{ github.sha }})"
-          echo "COMMIT_MESSAGE=${COMMIT_MESSAGE}" >> $GITHUB_ENV
+          COMMIT_MESSAGE=$(git log --format=%B -n 1 ${{ github.sha }} | tr '\n' ' ' | sed 's/"/\\"/g')
+          echo "COMMIT_MESSAGE=${COMMIT_MESSAGE}" >> "$GITHUB_ENV"
 
       - name: Update Index
         id: update-index
