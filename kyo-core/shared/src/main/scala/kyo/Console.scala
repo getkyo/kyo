@@ -5,7 +5,7 @@ import java.io.IOException
 
 /** Represents a console for input and output operations.
   */
-final case class Console(unsafe: Console.Unsafe) extends AnyVal:
+final case class Console(unsafe: Console.Unsafe):
 
     /** Reads a line from the console.
       *
