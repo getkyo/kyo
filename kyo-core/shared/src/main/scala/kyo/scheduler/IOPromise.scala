@@ -3,7 +3,7 @@ package kyo.scheduler
 import IOPromise.*
 import java.util.concurrent.locks.LockSupport
 import kyo.*
-import kyo.Result.Panic
+import kyo.Result.Error
 import kyo.kernel.Safepoint
 import scala.annotation.nowarn
 import scala.annotation.tailrec
@@ -64,12 +64,12 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
 
     final def mask(): IOPromise[E, A] =
         val p = new IOPromise[E, A]:
-            override def interrupt(error: Panic): Boolean = false
+            override def interrupt[E2 >: E](error: Error[E2]): Boolean = false
         onComplete(p.completeDiscard)
         p
     end mask
 
-    def interrupt(error: Panic): Boolean =
+    def interrupt[E2 >: E](error: Error[E2]): Boolean =
         @tailrec def interruptLoop(promise: IOPromise[E, A]): Boolean =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
@@ -139,7 +139,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
         onCompleteLoop(this)
     end onComplete
 
-    inline def onInterrupt(inline f: Panic => Unit): Unit =
+    inline def onInterrupt(inline f: Error[E] => Unit): Unit =
         @tailrec def onInterruptLoop(promise: IOPromise[E, A]): Unit =
             promise.state match
                 case p: Pending[E, A] @unchecked =>
@@ -153,7 +153,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
 
     protected def onComplete(): Unit = {}
 
-    final private def interrupt[E2 >: E, A2 >: A](p: Pending[E2, A2], v: Panic): Boolean =
+    final private def interrupt[E2 >: E, A2 >: A](p: Pending[E2, A2], v: Error[E2]): Boolean =
         cas(p, v) && {
             onComplete()
             p.flushInterrupt(v)
@@ -240,15 +240,15 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
         self =>
 
         def waiters: Int
-        def interrupt(v: Panic): Pending[E, A]
+        def interrupt[E2 >: E](v: Error[E2]): Pending[E, A]
         def run[E2 >: E, A2 >: A](v: Result[E2, A2]): Pending[E2, A2]
 
         @nowarn("msg=anonymous")
         inline def onComplete(inline f: Result[E, A] => Unit): Pending[E, A] =
             new Pending[E, A]:
                 def waiters: Int = self.waiters + 1
-                def interrupt(v: Panic) =
-                    f(v)
+                def interrupt[E2 >: E](error: Error[E2]) =
+                    f(error.asInstanceOf[Error[E]])
                     self
                 def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
                     try f(v.asInstanceOf[Result[E, A]])
@@ -263,18 +263,18 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
 
         final def interrupts(p: IOPromise[?, ?]): Pending[E, A] =
             new Pending[E, A]:
-                def interrupt(panic: Panic): Pending[E, A] =
-                    discard(p.interrupt(panic))
+                def interrupt[E2 >: E](error: Error[E2]) =
+                    discard(p.interrupt(error.asInstanceOf[Error[E]]))
                     self
                 def waiters: Int = self.waiters + 1
                 def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
                     self
 
         @nowarn("msg=anonymous")
-        inline def onInterrupt(inline f: Panic => Unit): Pending[E, A] =
+        inline def onInterrupt(inline f: Error[E] => Unit): Pending[E, A] =
             new Pending[E, A]:
-                def interrupt(panic: Panic): Pending[E, A] =
-                    f(panic)
+                def interrupt[E2 >: E](error: Error[E2]) =
+                    f(error.asInstanceOf[Error[E]])
                     self
                 def waiters: Int = self.waiters + 1
                 def run[E2 >: E, A2 >: A](v: Result[E2, A2]) =
@@ -287,24 +287,24 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
                     case _ if (p eq Pending.Empty) => tail
                     case p: Pending[?, ?]          => runLoop(p.run(v), v)
 
-            @tailrec def interruptLoop(p: Pending[E, A], panic: Panic): Pending[E2, A2] =
+            @tailrec def interruptLoop(p: Pending[E, A], error: Error[E2]): Pending[E2, A2] =
                 p match
                     case _ if (p eq Pending.Empty) => tail
-                    case p: Pending[E, A]          => interruptLoop(p.interrupt(panic), panic)
+                    case p: Pending[E, A]          => interruptLoop(p.interrupt(error), error)
 
             new Pending[E2, A2]:
                 def waiters: Int                               = self.waiters + tail.waiters
-                def interrupt(panic: Panic)                    = interruptLoop(self, panic)
+                def interrupt[E2 >: E](error: Error[E2])       = interruptLoop(self, error.asInstanceOf[Error[E]])
                 def run[E3 >: E2, A3 >: A2](v: Result[E3, A3]) = runLoop(self, v)
             end new
         end merge
 
-        final def flushInterrupt[E2 >: E, A2 >: A](v: Panic): Unit =
+        final def flushInterrupt[E2 >: E, A2 >: A](error: Error[E2]): Unit =
             @tailrec def flushInterruptLoop(p: Pending[E, A]): Unit =
                 p match
                     case _ if (p eq Pending.Empty) => ()
                     case p: Pending[E, A] =>
-                        flushInterruptLoop(p.interrupt(v))
+                        flushInterruptLoop(p.interrupt(error))
             flushInterruptLoop(this)
         end flushInterrupt
 
@@ -322,9 +322,9 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
     object Pending:
         def apply[E, A](): Pending[E, A] = Empty.asInstanceOf[Pending[E, A]]
         case object Empty extends Pending[Nothing, Nothing]:
-            def waiters: Int                   = 0
-            def interrupt(v: Panic)            = this
-            def run[E2, A2](v: Result[E2, A2]) = this
+            def waiters: Int                           = 0
+            def interrupt[E2 >: Nothing](v: Error[E2]) = this
+            def run[E2, A2](v: Result[E2, A2])         = this
         end Empty
     end Pending
 end IOPromise
