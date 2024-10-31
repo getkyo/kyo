@@ -4,7 +4,7 @@ import java.util.concurrent.atomic as j
 
 /** A wrapper for Java's AtomicInteger.
   */
-final case class AtomicInt private (unsafe: AtomicInt.Unsafe) extends AnyVal:
+final case class AtomicInt private (unsafe: AtomicInt.Unsafe):
 
     /** Gets the current value.
       * @return
@@ -127,7 +127,7 @@ end AtomicInt
 
 /** A wrapper for Java's AtomicLong.
   */
-final case class AtomicLong private (unsafe: AtomicLong.Unsafe) extends AnyVal:
+final case class AtomicLong private (unsafe: AtomicLong.Unsafe):
     /** Gets the current value.
       * @return
       *   The current long value
@@ -250,7 +250,7 @@ end AtomicLong
 
 /** A wrapper for Java's AtomicBoolean.
   */
-final case class AtomicBoolean private (unsafe: AtomicBoolean.Unsafe) extends AnyVal:
+final case class AtomicBoolean private (unsafe: AtomicBoolean.Unsafe):
     /** Gets the current value.
       * @return
       *   The current boolean value
@@ -330,7 +330,7 @@ end AtomicBoolean
   * @tparam A
   *   The type of the referenced value
   */
-final case class AtomicRef[A] private (unsafe: AtomicRef.Unsafe[A]) extends AnyVal:
+final case class AtomicRef[A] private (unsafe: AtomicRef.Unsafe[A]):
 
     /** Gets the current value.
       * @return
