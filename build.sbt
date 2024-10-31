@@ -13,6 +13,8 @@ val zioVersion       = "2.1.11"
 val catsVersion      = "3.5.5"
 val scalaTestVersion = "3.2.19"
 
+val compilerOptionFailDiscard = "-Wconf:msg=(discarded.*value|pure.*statement):error"
+
 val compilerOptions = Set(
     ScalacOptions.encoding("utf8"),
     ScalacOptions.feature,
@@ -53,7 +55,7 @@ lazy val `kyo-settings` = Seq(
     scalacOptions ++= scalacOptionTokens(compilerOptions).value,
     Test / scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
     scalafmtOnCompile := true,
-    scalacOptions += "-Wconf:msg=(discarded.*value|pure.*statement):error",
+    scalacOptions += compilerOptionFailDiscard,
     Test / testOptions += Tests.Argument("-oDG"),
     ThisBuild / versionScheme               := Some("early-semver"),
     libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test,
@@ -476,7 +478,7 @@ lazy val readme =
             `kyo-settings`,
             mdocIn  := new File("./../../README-in.md"),
             mdocOut := new File("./../../README-out.md"),
-            scalacOptions --= scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
+            scalacOptions --= compilerOptionFailDiscard +: scalacOptionTokens(Set(ScalacOptions.warnNonUnitStatement)).value,
             rewriteReadmeFile := {
                 val readmeFile       = new File("README.md")
                 val targetReadmeFile = new File("target/README-in.md")
