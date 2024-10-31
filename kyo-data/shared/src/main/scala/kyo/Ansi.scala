@@ -68,7 +68,7 @@ object Ansi:
         def apply(header: String, code: String, trailer: String, startLine: Int = 1): String =
             try
                 val headerLines  = if header.nonEmpty then header.split("\n") else Array.empty[String]
-                val codeLines    = code.split("\n").dropWhile(_.trim.isEmpty).reverse.dropWhile(_.trim.isEmpty).reverse
+                val codeLines    = code.split("\n").dropWhile(_.isBlank).reverse.dropWhile(_.isBlank).reverse
                 val trailerLines = if trailer.nonEmpty then trailer.split("\n") else Array.empty[String]
 
                 val allLines        = headerLines ++ codeLines ++ trailerLines
