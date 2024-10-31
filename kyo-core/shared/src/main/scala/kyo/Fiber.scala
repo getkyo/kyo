@@ -248,7 +248,7 @@ object Fiber extends FiberPlatformSpecific:
     end extension
 
     case class Interrupted(at: Frame)
-        extends RuntimeException("Fiber interrupted at " + at.parse.position)
+        extends RuntimeException("Fiber interrupted at " + at.position.show)
         with NoStackTrace:
         override def getCause() = null
     end Interrupted

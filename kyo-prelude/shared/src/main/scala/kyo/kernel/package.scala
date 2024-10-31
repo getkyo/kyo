@@ -32,8 +32,7 @@ package object kernel:
             def apply(v: O[A], context: Context)(using Safepoint): B < S
 
             final override def toString =
-                val parsed = frame.parse
-                s"Kyo(${tag.show}, Input($input), ${parsed.position}, ${parsed.snippetShort})"
+                s"Kyo(${tag.show}, Input($input), ${frame.position.show}, ${frame.snippetShort})"
         end KyoSuspend
 
         abstract class KyoContinue[I[_], O[_], E <: ArrowEffect[I, O], A, B, S](kyo: KyoSuspend[I, O, E, A, ?, ?])

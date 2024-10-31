@@ -13,44 +13,85 @@ class FrameTest extends Test:
         x / x
     }
 
-    "parse.toString" in {
-        assert(test1.parse.toString == "Frame(kyo.kernel.FrameTest, test1, FrameTest.scala:9:28, def test1 = test(1 + 2))")
-        assert(test2.parse.toString == "Frame(kyo.kernel.FrameTest, test2, FrameTest.scala:14:6, })")
-    }
+    val internal = Frame.internal
 
     "show" in {
-        import kyo.Ansi.*
-        assert(test1.show.stripAnsi ==
-            """|  │ // FrameTest.scala:9:28 kyo.kernel.FrameTest test1
-               |9 │ def test1 = test(1 + 2)📍""".stripMargin)
-        assert(test2.show.stripAnsi ==
-            """|   │ // FrameTest.scala:14:6 kyo.kernel.FrameTest test2
-               |14 │     x / x
-               |15 │ }📍""".stripMargin)
+        assert(test1.show == "Frame(FrameTest.scala:9:28, kyo.kernel.FrameTest, test1, def test1 = test(1 + 2))")
+        assert(test2.show == "Frame(FrameTest.scala:14:6, kyo.kernel.FrameTest, test2, })")
+    }
+
+    "render" - {
+        "no details" in {
+            import kyo.Ansi.*
+            assert(test1.render.stripAnsi ==
+                """|   │ ──────────────────────────────
+                   |   │ // FrameTest.scala:9:28 kyo.kernel.FrameTest test1
+                   |   │ ──────────────────────────────
+                   |10 │ def test1 = test(1 + 2)📍
+                   |   │ ──────────────────────────────""".stripMargin)
+            assert(test2.render.stripAnsi ==
+                """|   │ ──────────────────────────────
+                   |   │ // FrameTest.scala:14:6 kyo.kernel.FrameTest test2
+                   |   │ ──────────────────────────────
+                   |15 │     x / x
+                   |16 │ }📍
+                   |   │ ──────────────────────────────""".stripMargin)
+        }
+
+        "with details" in {
+            import kyo.Ansi.*
+            assert(test1.render(3).stripAnsi ==
+                """|   │ ──────────────────────────────
+                   |   │ // FrameTest.scala:9:28 kyo.kernel.FrameTest test1
+                   |   │ ──────────────────────────────
+                   |10 │ def test1 = test(1 + 2)📍
+                   |   │ ──────────────────────────────
+                   |   │ 3
+                   |   │ ──────────────────────────────""".stripMargin)
+
+            assert(test1.render(1, "hello", true).stripAnsi ==
+                """|   │ ──────────────────────────────
+                   |   │ // FrameTest.scala:9:28 kyo.kernel.FrameTest test1
+                   |   │ ──────────────────────────────
+                   |10 │ def test1 = test(1 + 2)📍
+                   |   │ ──────────────────────────────
+                   |   │ 1
+                   |   │ 
+                   |   │ hello
+                   |   │ 
+                   |   │ true
+                   |   │ ──────────────────────────────""".stripMargin)
+
+            case class Person(name: String, age: Int)
+            assert(test1.render(Person("Alice", 30)).stripAnsi ==
+                """|   │ ──────────────────────────────
+                   |   │ // FrameTest.scala:9:28 kyo.kernel.FrameTest test1
+                   |   │ ──────────────────────────────
+                   |10 │ def test1 = test(1 + 2)📍
+                   |   │ ──────────────────────────────
+                   |   │ Person(name = "Alice", age = 30)
+                   |   │ ──────────────────────────────""".stripMargin)
+        }
     }
 
     "parse" in {
-        val parsed = test1.parse
-        assert(parsed.declaringClass == "kyo.kernel.FrameTest")
-        assert(parsed.methodName == "test1")
-        assert(parsed.position.fileName == "FrameTest.scala")
-        assert(parsed.position.lineNumber == 9)
-        assert(parsed.position.columnNumber == 28)
-        assert(parsed.snippetShort == "def test1 = test(1 + 2)")
-        assert(parsed.snippetLong == "def test1 = test(1 + 2)📍")
+        assert(test1.className == "kyo.kernel.FrameTest")
+        assert(test1.methodName == "test1")
+        assert(test1.position.fileName == "FrameTest.scala")
+        assert(test1.position.lineNumber == 9)
+        assert(test1.position.columnNumber == 28)
+        assert(test1.snippet == "def test1 = test(1 + 2)📍")
+        assert(test1.snippetShort == "def test1 = test(1 + 2)")
     }
 
     "internal" in {
-        val internal = Frame.internal
-        val parsed   = internal.parse
-        assert(parsed.declaringClass == "kyo.kernel.FrameTest")
-        assert(parsed.methodName == "?")
-        assert(parsed.position.fileName == "FrameTest.scala")
-        assert(parsed.position.lineNumber == 44)
-        assert(parsed.position.columnNumber == 24)
-        assert(parsed.snippetShort == "<internal>")
-        assert(parsed.snippetLong == "<internal>")
-        assert(parsed.toString == "Frame(kyo.kernel.FrameTest, ?, FrameTest.scala:44:24, <internal>)")
+        assert(internal.className == "kyo.kernel.FrameTest")
+        assert(internal.methodName == "?")
+        assert(internal.position.fileName == "FrameTest.scala")
+        assert(internal.position.lineNumber == 16)
+        assert(internal.position.columnNumber == 20)
+        assert(internal.snippet == "<internal>")
+        assert(internal.snippetShort == "<internal>")
     }
 
 end FrameTest

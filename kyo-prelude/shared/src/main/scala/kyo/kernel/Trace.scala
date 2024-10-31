@@ -85,11 +85,11 @@ object Trace:
                     if index < maxTraceFrames then 0
                     else index & (maxTraceFrames - 1)
 
-                val parsed = new Array[Frame.Parsed](size)
+                val ordered = new Array[Frame](size)
                 @tailrec def parse(idx: Int, maxSnippetSize: Int): Int =
                     if idx < size then
-                        val curr = frames((start + idx) & (maxTraceFrames - 1)).parse
-                        parsed(idx) = curr
+                        val curr = frames((start + idx) & (maxTraceFrames - 1))
+                        ordered(idx) = curr
                         val snippetSize = curr.snippetShort.size
                         parse(idx + 1, if snippetSize > maxSnippetSize then snippetSize else maxSnippetSize)
                     else
@@ -97,14 +97,14 @@ object Trace:
                 val toPad = parse(0, 0)
 
                 val elements =
-                    parsed.foldLeft(List.empty[Frame.Parsed]) {
+                    ordered.foldLeft(List.empty[Frame]) {
                         case (acc, curr) =>
                             acc match
                                 case `curr` :: tail => acc
                                 case _              => curr :: acc
                     }.map { frame =>
                         StackTraceElement(
-                            frame.snippetShort.reverse.padTo(toPad, ' ').reverse + " @ " + frame.declaringClass,
+                            frame.snippetShort.reverse.padTo(toPad, ' ').reverse + " @ " + frame.className,
                             frame.methodName,
                             frame.position.fileName,
                             frame.position.lineNumber

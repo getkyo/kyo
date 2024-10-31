@@ -13,7 +13,7 @@ import scala.annotation.nowarn
   */
 abstract class Local[A]:
 
-    import Local.State
+    import Local.internal.*
 
     /** The default value for this Local. */
     lazy val default: A
@@ -23,8 +23,8 @@ abstract class Local[A]:
       * @return
       *   An effect that produces the current value
       */
-    final def get(using Frame): A < Any =
-        ContextEffect.suspendMap(Tag[Local.State], Map.empty)(_.getOrElse(this, default).asInstanceOf[A])
+    inline def get(using inline frame: Frame): A < Any =
+        ContextEffect.suspendMap(Tag[State], Map.empty)(_.getOrElse(this, default).asInstanceOf[A])
 
     /** Applies a function to the current value of this Local.
       *
@@ -33,8 +33,8 @@ abstract class Local[A]:
       * @return
       *   An effect that produces the result of applying the function
       */
-    final def use[B, S](f: A => B < S)(using Frame): B < S =
-        ContextEffect.suspendMap(Tag[Local.State], Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[A]))
+    inline def use[B, S](inline f: A => B < S)(using inline frame: Frame): B < S =
+        ContextEffect.suspendMap(Tag[State], Map.empty)(map => f(map.getOrElse(this, default).asInstanceOf[A]))
 
     /** Runs an effect with a temporarily modified local value.
       *
@@ -46,7 +46,7 @@ abstract class Local[A]:
       *   The result of running the effect with the modified value
       */
     final def let[B, S](value: A)(v: B < S)(using Frame): B < S =
-        ContextEffect.handle(Tag[Local.State], Map(this -> value), _.updated(this, value.asInstanceOf[AnyRef]))(v)
+        ContextEffect.handle(Tag[State], Map(this -> value), _.updated(this, value.asInstanceOf[AnyRef]))(v)
 
     /** Runs an effect with an updated local value.
       *
@@ -59,7 +59,7 @@ abstract class Local[A]:
       */
     final def update[B, S](f: A => A)(v: B < S)(using Frame): B < S =
         ContextEffect.handle(
-            Tag[Local.State],
+            Tag[State],
             Map(this -> f(default)),
             map => map.updated(this, f(map.getOrElse(this, default).asInstanceOf[A]).asInstanceOf[AnyRef])
         )(v)
@@ -80,5 +80,6 @@ object Local:
         new Local[A]:
             lazy val default: A = defaultValue
 
-    sealed private trait State extends ContextEffect[Map[Local[?], AnyRef]]
+    object internal:
+        sealed trait State extends ContextEffect[Map[Local[?], AnyRef]]
 end Local
