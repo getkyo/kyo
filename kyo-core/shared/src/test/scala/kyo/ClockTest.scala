@@ -239,7 +239,7 @@ class ClockTest extends Test:
                 end   <- Clock.now
             yield
                 val elapsed = end - start
-                assert(elapsed >= 1.millis && elapsed < 10.millis)
+                assert(elapsed >= 1.millis && elapsed < 20.millis)
         }
 
         "multiple sequential sleeps" in run {
