@@ -46,8 +46,7 @@ object Async:
       */
     inline def run[E, A: Flat, Ctx](inline v: => A < (Abort[E] & Async & Ctx))(
         using
-        boundary: Boundary[Ctx, IO],
-        reduce: Reducible[Abort[E]],
+        boundary: Boundary[Ctx, IO & Abort[E]],
         frame: Frame
     ): Fiber[E, A] < (IO & Ctx) =
         boundary((trace, context) => Fiber.fromTask(IOTask(v, trace, context)))
@@ -63,7 +62,7 @@ object Async:
       */
     def runAndBlock[E, A: Flat, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
         using
-        boundary: Boundary[Ctx, IO & Abort[E]],
+        boundary: Boundary[Ctx, IO & Abort[E | Timeout]],
         frame: Frame
     ): A < (Abort[E | Timeout] & IO & Ctx) =
         run(v).map { fiber =>
@@ -83,9 +82,10 @@ object Async:
       */
     def mask[E, A: Flat, Ctx](v: => A < (Abort[E] & Async & Ctx))(
         using
-        boundary: Boundary[Ctx, IO],
+        reduce: Reducible[Abort[E]],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
-    ): A < (Abort[E] & Async & Ctx) =
+    ): A < (reduce.SReduced & Async & Ctx) =
         Async.run(v).map(_.mask.map(_.get))
 
     /** Delays execution of a computation by a specified duration.
@@ -105,19 +105,9 @@ object Async:
       * @param d
       *   The duration to sleep
       */
-    def sleep(d: Duration)(using Frame): Unit < Async =
-        if d == Duration.Zero then ()
-        else
-            IO.Unsafe {
-                val p = Promise.Unsafe.init[Nothing, Unit]()
-                if d.isFinite then
-                    Timer.schedule(d)(p.completeDiscard(Result.success(()))).map { t =>
-                        IO.ensure(t.cancel.unit)(p.safe.get)
-                    }
-                else
-                    p.safe.get
-                end if
-            }
+    def sleep(duration: Duration)(using Frame): Unit < Async =
+        if duration == Duration.Zero then ()
+        else Clock.sleep(duration).map(_.get)
 
     /** Runs a computation with a timeout.
       *
@@ -128,17 +118,24 @@ object Async:
       * @return
       *   The result of the computation, or a Timeout error
       */
-    def timeout[E, A: Flat, Ctx](d: Duration)(v: => A < (Abort[E] & Async & Ctx))(
+    def timeout[E, A: Flat, Ctx](after: Duration)(v: => A < (Abort[E] & Async & Ctx))(
         using
-        boundary: Boundary[Ctx, Async & Abort[E]],
+        boundary: Boundary[Ctx, Async & Abort[E | Timeout]],
         frame: Frame
     ): A < (Abort[E | Timeout] & Async & Ctx) =
-        boundary { (trace, context) =>
-            val task = IOTask[Ctx, E | Timeout, A](v, trace, context)
-            Timer.schedule(d)(task.completeDiscard(Result.fail(Timeout(frame)))).map { t =>
-                IO.ensure(t.cancel.unit)(Async.get(task))
+        if !after.isFinite then v
+        else
+            boundary { (trace, context) =>
+                Clock.use { clock =>
+                    IO.Unsafe {
+                        val sleepFiber = clock.unsafe.sleep(after)
+                        val task       = IOTask[Ctx, E | Timeout, A](v, trace, context)
+                        sleepFiber.onComplete(_ => discard(task.complete(Result.fail(Timeout(frame)))))
+                        task.onComplete(_ => discard(sleepFiber.interrupt()))
+                        Async.get(task)
+                    }
+                }
             }
-        }
     end timeout
 
     /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations
@@ -151,7 +148,7 @@ object Async:
       */
     def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): A < (reduce.SReduced & Async & Ctx) =
@@ -172,7 +169,7 @@ object Async:
         rest: A < (Abort[E] & Async & Ctx)*
     )(
         using
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): A < (reduce.SReduced & Async & Ctx) =
@@ -188,7 +185,7 @@ object Async:
       */
     def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Seq[A] < (reduce.SReduced & Async & Ctx) =
@@ -213,7 +210,7 @@ object Async:
         v2: A2 < (Abort[E] & Async & Ctx)
     )(
         using
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): (A1, A2) < (reduce.SReduced & Async & Ctx) =
@@ -238,7 +235,7 @@ object Async:
         v3: A3 < (Abort[E] & Async & Ctx)
     )(
         using
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): (A1, A2, A3) < (reduce.SReduced & Async & Ctx) =
@@ -266,7 +263,7 @@ object Async:
         v4: A4 < (Abort[E] & Async & Ctx)
     )(
         using
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): (A1, A2, A3, A4) < (reduce.SReduced & Async & Ctx) =

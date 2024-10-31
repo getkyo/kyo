@@ -35,7 +35,7 @@ class HttpClientBench extends Bench.ForkOnly("pong"):
     override def kyoBenchFiber() =
         import kyo.*
 
-        Abort.run(Requests(_.get(kyoUrl))).map(_.getOrThrow)
+        Requests(_.get(kyoUrl))
     end kyoBenchFiber
 
     val zioUrl =

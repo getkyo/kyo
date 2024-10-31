@@ -1,7 +1,7 @@
 ### Please visit https://getkyo.io for an indexed version of this documentation.
 ##
 
-<img src="https://raw.githubusercontent.com/getkyo/kyo/master/kyo.svg" width="200" alt="Kyo">
+<img src="https://raw.githubusercontent.com/getkyo/kyo/master/kyo.png" width="200" alt="Kyo">
 
 ## Introduction
 
@@ -431,7 +431,7 @@ object MyApp extends KyoApp:
 end MyApp
 ```
 
-While the companion object of `KyoApp` provides utility methods to run isolated effectful computations, it's crucial to approach these with caution. Direct handling of effects like `IO` through these methods can compromise referential transparency, an essential property for functional programming.
+While the companion object of `KyoApp` provides a utility method to run isolated effectful computations, it's crucial to approach it with caution. Direct handling the `IO` effect through this method compromises referential transparency, an essential property for functional programming.
 
 ```scala
 import kyo.*
@@ -440,15 +440,10 @@ import kyo.*
 val a: Int < IO =
     IO(Math.cos(42).toInt)
 
-// Avoid! Run the application with a specific timeout
-val b: Int =
+// Avoid! Run the application with a timeout
+val b: Result[Throwable, Int] =
     import AllowUnsafe.embrace.danger
-    KyoApp.Unsafe.run(2.minutes)(a)
-
-// Avoid! Run the application without specifying a timeout
-val c: Int =
-    import AllowUnsafe.embrace.danger
-    KyoApp.Unsafe.run(a)
+    KyoApp.Unsafe.runAndBlock(2.minutes)(a)
 ```
 
 ## Core Effects
@@ -928,6 +923,7 @@ The `Choice` effect becomes exceptionally powerful when combined with other effe
 
 ```scala
 import kyo.*
+import java.io.IOException
 
 // Iteratively increment an 'Int' value
 // until it reaches 5
@@ -954,7 +950,7 @@ val d: Int < IO =
     )
 
 // Mixing 'Console' with 'Loop'
-val e: Int < IO =
+val e: Int < (IO & Abort[IOException]) =
     Loop(1)(i =>
         if i < 5 then
             Console.println(s"Iteration: $i").map(_ => Loop.continue(i + 1))
@@ -1001,9 +997,10 @@ In addition to the transform methods, Loop also provides indexed variants that p
 
 ```scala
 import kyo.*
+import java.io.IOException
 
 // Print a message every 3 iterations
-val a: Int < IO =
+val a: Int < (IO & Abort[IOException]) =
     Loop.indexed(1)((idx, i) =>
         if idx < 10 then
             if idx % 3 == 0 then
@@ -1179,6 +1176,7 @@ The Stream effect provides a powerful mechanism for processing sequences of data
 
 ```scala
 import kyo.*
+import java.io.IOException
 
 // Create a stream from a sequence
 val a: Stream[Int, Any] =
@@ -1221,7 +1219,7 @@ val j: Int < Any =
     a.runFold(0)(_ + _)
 
 // Process each element with side effects
-val k: Unit < IO =
+val k: Unit < (IO & Abort[IOException]) =
     a.runForeach(Console.println(_))
 ```
 
@@ -1473,33 +1471,34 @@ The `CheckFailed` exception class, which is used to represent failed checks, inc
 
 ```scala
 import kyo.*
+import java.io.IOException
 
 // Read a line from the console
-val a: String < IO =
+val a: String < (IO & Abort[IOException]) =
     Console.readln
 
 // Print to stdout
-val b: Unit < IO =
+val b: Unit < (IO & Abort[IOException]) =
     Console.print("ok")
 
 // Print to stdout with a new line
-val c: Unit < IO =
+val c: Unit < (IO & Abort[IOException]) =
     Console.println("ok")
 
 // Print to stderr
-val d: Unit < IO =
+val d: Unit < (IO & Abort[IOException]) =
     Console.printErr("fail")
 
 // Print to stderr with a new line
-val e: Unit < IO =
+val e: Unit < (IO & Abort[IOException]) =
     Console.printlnErr("fail")
 
 // Explicitly specifying the 'Console' implementation
-val f: Unit < IO =
+val f: Unit < (IO & Abort[IOException]) =
     Console.let(Console.live)(e)
 ```
 
-### Clock: Time Management
+### Clock: Time Management and Scheduled Tasks
 
 The `Clock` effect provides utilities for time-related operations, including getting the current time, creating stopwatches, and managing deadlines.
 
@@ -1545,6 +1544,60 @@ val g: Instant < IO =
 ```
 
 `Clock` both safe (effectful) and unsafe (non-effectful) versions of its operations. The safe versions are suspended in `IO` and should be used in most cases. The unsafe versions are available through the `unsafe` property and should be used with caution, typically only in performance-critical sections or when integrating with non-effectful code.
+
+`Clock` also offers methods to schedule background tasks:
+
+```scala
+import kyo.*
+
+// An example computation to
+// be scheduled
+val a: Unit < IO =
+    IO(())
+
+// Recurring task with a delay between
+// executions
+val b: Fiber[Nothing, Unit] < IO =
+    Clock.repeatWithDelay(
+        startAfter = 1.minute,
+        delay = 1.minute
+    )(a)
+
+// Without an initial delay
+val c: Fiber[Nothing, Unit] < IO =
+    Clock.repeatWithDelay(1.minute)(a)
+
+// Schedule at a specific interval, regarless
+// of the duration of each execution
+val d: Fiber[Nothing, Unit] < IO =
+    Clock.repeatAtInterval(
+        startAfter = 1.minute,
+        interval = 1.minute
+    )(a)
+
+// Without an initial delay
+val e: Fiber[Nothing, Unit] < IO =
+    Clock.repeatAtInterval(1.minute)(a)
+```
+
+Use the returned `Fiber` to control scheduled tasks.
+
+```scala
+import kyo.*
+
+// Example task
+val a: Fiber[Nothing, Unit] < IO =
+    Clock.repeatAtInterval(1.second)(())
+
+// Try to cancel a task
+def b(task: Fiber[Nothing, Unit]): Boolean < IO =
+    task.interrupt
+
+// Check if a task is done
+def c(task: Fiber[Nothing, Unit]): Boolean < IO =
+    task.done
+```
+
 
 ### System: Environment Variables and System Properties
 
@@ -1613,7 +1666,7 @@ val k: Int < IO =
 
 ### Log: Logging
 
-`Log` is designed to streamline the logging process without requiring the instantiation of a `Logger`. By leveraging the [sourcecode](https://github.com/com-lihaoyi/sourcecode) library, log messages automatically include source code position information, enhancing the clarity and usefulness of the logs.
+`Log` is designed to streamline the logging process without requiring the instantiation of a `Logger`. Log messages automatically include source code position information (File, Line, Column), enhancing the clarity and usefulness of the logs.
 
 ```scala 
 import kyo.*
@@ -1725,6 +1778,7 @@ All methods that perform side effects are suspended using the `IO` effect, ensur
 
 ```scala
 import kyo.*
+import java.io.IOException
 
 val path: Path = Path("tmp", "file.txt")
 
@@ -1733,7 +1787,7 @@ val lines: Stream[String, Resource & IO] =
     path.readLinesStream()
 
 // Process the stream
-val result: Unit < (Resource & Console & Async) =
+val result: Unit < (Resource & Console & Async & Abort[IOException]) =
     lines.map(line => Console.println(line)).runDiscard
 
 // Walk a directory tree
@@ -1741,7 +1795,7 @@ val tree: Stream[Path, IO] =
     Path("tmp").walk
 
 // Process each file in the tree
-val processedTree: Unit < (Console & Async) =
+val processedTree: Unit < (Console & Async & Abort[IOException]) =
     tree.map(file => file.read.map(content => Console.println(s"File: ${file}, Content: $content"))).runDiscard
 ```
 
@@ -2054,18 +2108,20 @@ The `Retry` effect automatically adds the `Async` effect to handle the provided 
 
 The `Queue` effect operates atop of `IO` and provides thread-safe queue data structures based on the high-performance [JCTools](https://github.com/JCTools/JCTools) library on the JVM. For ScalaJS, a simple `ArrayQueue` is used.
 
+> Warning: The actual capacity of a `Queue` is rounded up to the next power of two for performance reasons. For example, if you specify a capacity of `10`, the actual capacity will be `16`.
+
 **Bounded queues**
 ```scala
 import kyo.*
 
-// A bounded channel rejects new
+// A bounded queue that rejects new
 // elements once full
 val a: Queue[Int] < IO =
     Queue.init(capacity = 42)
 
 // Obtain the number of items in the queue
 // via the method 'size' in 'Queue'
-val b: Int < IO =
+val b: Int < (IO & Abort[Closed]) =
     a.map(_.size)
 
 // Get the queue capacity
@@ -2073,27 +2129,27 @@ val c: Int < IO =
     a.map(_.capacity)
 
 // Try to offer a new item
-val d: Boolean < IO =
+val d: Boolean < (IO & Abort[Closed]) =
     a.map(_.offer(42))
 
 // Try to poll an item
-val e: Maybe[Int] < IO =
+val e: Maybe[Int] < (IO & Abort[Closed]) =
     a.map(_.poll)
 
 // Try to 'peek' an item without removing it
-val f: Maybe[Int] < IO =
+val f: Maybe[Int] < (IO & Abort[Closed]) =
     a.map(_.peek)
 
 // Check if the queue is empty
-val g: Boolean < IO =
+val g: Boolean < (IO & Abort[Closed]) =
     a.map(_.empty)
 
 // Check if the queue is full
-val h: Boolean < IO =
+val h: Boolean < (IO & Abort[Closed]) =
     a.map(_.full)
 
 // Drain the queue items
-val i: Seq[Int] < IO =
+val i: Seq[Int] < (IO & Abort[Closed]) =
     a.map(_.drain)
 
 // Close the queue. If successful,
@@ -2111,18 +2167,18 @@ import kyo.*
 // grow without limits, the GC overhead can make
 // the system fail
 val a: Queue.Unbounded[Int] < IO =
-    Queue.initUnbounded()
+    Queue.Unbounded.init()
 
 // A 'dropping' queue discards new entries
 // when full
 val b: Queue.Unbounded[Int] < IO =
-    Queue.initDropping(capacity = 42)
+    Queue.Unbounded.initDropping(capacity = 42)
 
 // A 'sliding' queue discards the oldest
 // entries if necessary to make space for new
 // entries
 val c: Queue.Unbounded[Int] < IO =
-    Queue.initSliding(capacity = 42)
+    Queue.Unbounded.initSliding(capacity = 42)
 
 // Note how 'dropping' and 'sliding' queues
 // return 'Queue.Unbounded`. It provides
@@ -2164,7 +2220,9 @@ val a: Queue[Int] < IO =
 
 The `Channel` effect serves as an advanced concurrency primitive, designed to facilitate seamless and backpressured data transfer between various parts of your application. Built upon the `Async` effect, `Channel` not only ensures thread-safe communication but also incorporates a backpressure mechanism. This mechanism temporarily suspends fibers under specific conditions—either when waiting for new items to arrive or when awaiting space to add new items.
 
-```scala
+> Warning: The actual capacity of a `Channel` is rounded up to the next power of two for performance reasons. For example, if you specify a capacity of `10`, the actual capacity will be `16`.
+
+```scala    
 import kyo.*
 
 // A 'Channel' is initialized
@@ -2194,23 +2252,23 @@ val a: Channel[Int] < IO =
 // If there's no capacity, the fiber
 // is automatically suspended until
 // space is made available
-val b: Unit < Async =
+val b: Unit < (Async & Abort[Closed]) =
     a.map(_.put(42))
 
 // Takes an item from the channel.
 // If the channel is empty, the fiber
 // is suspended until a new item is
 // made available
-val c: Int < Async =
+val c: Int < (Async & Abort[Closed]) =
     a.map(_.take)
 
 // 'putFiber' returns a `Fiber` that
 // will complete once the put completes
-val d: Fiber[Nothing, Unit] < IO =
+val d: Fiber[Closed, Unit] < IO =
     a.map(_.putFiber(42))
 
 // 'takeFiber' also returns a fiber
-val e: Fiber[Nothing, Int] < IO =
+val e: Fiber[Closed, Int] < IO =
     a.map(_.takeFiber)
 
 // Closes the channel. If successful,
@@ -2240,7 +2298,7 @@ val a: Hub[Int] < IO =
 // Hub provide APIs similar to
 // channels: size, offer, isEmpty,
 // isFull, putFiber, put
-val b: Boolean < IO =
+val b: Boolean < (IO & Abort[Closed]) =
     a.map(_.offer(1))
 
 // But reading from hubs can only
@@ -2248,26 +2306,26 @@ val b: Boolean < IO =
 // only receive messages sent after
 // their cration. To create call
 // `listen`:
-val c: Listener[Int] < IO =
+val c: Listener[Int] < (IO & Abort[Closed]) =
     a.map(_.listen)
 
 // Each listener can have an
 // additional message buffer
-val d: Listener[Int] < IO =
+val d: Listener[Int] < (IO & Abort[Closed]) =
     a.map(_.listen(bufferSize = 3))
 
 // Listeners provide methods for
 // receiving messages similar to
 // channels: size, isEmpty, isFull,
 // poll, takeFiber, take
-val e: Int < Async =
+val e: Int < (Async & Abort[Closed]) =
     d.map(_.take)
 
 // A listener can be closed
 // individually. If successful,
 // a Some with the backlog of
 // pending messages is returned
-val f: Maybe[Seq[Int]] < IO =
+val f: Maybe[Seq[Int]] < (IO & Abort[Closed]) =
     d.map(_.close)
 
 // If the Hub is closed, all
@@ -2322,94 +2380,23 @@ import kyo.*
 val a: Meter < IO =
     Meter.initMutex
 
-// Get available permits
-val b: Int < IO =
-    a.map(_.available)
+// Get the number available permits
+val b: Int < (Async & Abort[Closed]) =
+    a.map(_.availablePermits)
 
-// Check for available permit
-val c: Boolean < IO =
-    a.map(_.isAvailable)
+// Get the number of waiting fibers
+val c: Int < (Async & Abort[Closed]) =
+    a.map(_.pendingWaiters)
 
 // Use 'run' to execute tasks
 // respecting meter limits
-val d: Int < Async =
+val d: Int < (Async & Abort[Closed]) =
     a.map(_.run(Math.cos(42).toInt))
 
 // 'tryRun' executes if a permit is
 // available; returns 'None' otherwise
-val e: Maybe[Int] < IO =
+val e: Maybe[Int] < (Async & Abort[Closed]) =
     a.map(_.tryRun(Math.cos(42).toInt))
-```
-
-### Timer: Scheduled Execution
-
-The `Timer` effect is designed for control over the timing of task execution.
-
-```scala
-import kyo.*
-
-// An example computation to
-// be scheduled
-val a: Unit < IO =
-    IO(())
-
-// Schedule a delayed task
-val b: TimerTask < IO =
-    Timer.schedule(delay = 1.second)(a)
-
-// Recurring task with
-// intial delay
-val c: TimerTask < IO =
-    Timer.scheduleAtFixedRate(
-        initialDelay = 1.minutes,
-        period = 1.minutes
-    )(a)
-
-// Recurring task without
-// initial delay
-val d: TimerTask < IO =
-    Timer.scheduleAtFixedRate(
-        period = 1.minutes
-    )(a)
-
-// Schedule with fixed delay between tasks
-val e: TimerTask < IO =
-    Timer.scheduleWithFixedDelay(
-        initialDelay = 1.minutes,
-        period = 1.minutes
-    )(a)
-
-// without initial delay
-val f: TimerTask < IO =
-    Timer.scheduleWithFixedDelay(
-        period = 1.minutes
-    )(a)
-
-// Specify the 'Timer' explictly
-val i: TimerTask < IO =
-    Timer.let(Timer.live)(f)
-```
-
-`TimerTask` offers methods for more granular control over the scheduled tasks.
-
-```scala
-import kyo.*
-
-// Example TimerTask
-val a: TimerTask < IO =
-    Timer.schedule(1.second)(())
-
-// Try to cancel the task
-val b: Boolean < IO =
-    a.map(_.cancel)
-
-// Check if the task is cancelled
-val c: Boolean < IO =
-    a.map(_.cancelled)
-
-// Check if the task is done
-val d: Boolean < IO =
-    a.map(_.done)
 ```
 
 ### Latch: Countdown Synchronization
@@ -2936,7 +2923,7 @@ val c: String < (Async & Abort[FailedRequest]) =
 // Implementing a custom mock backend
 val backend: Backend =
     new Backend:
-        def send[T](r: Request[T, Any]) =
+        def send[T: Flat](r: Request[T, Any]) =
             Response.ok(Right("mocked")).asInstanceOf[Response[T]]
 
 // Use the custom backend
@@ -3263,6 +3250,7 @@ Generally speaking, the names of `kyo-combinators` methods are the same as the c
 ```scala 3
 import kyo.*
 import scala.concurrent.duration.*
+import java.io.IOException
 
 trait HelloService:
     def sayHelloTo(saluee: String): Unit < (IO & Abort[Throwable])
@@ -3276,7 +3264,7 @@ object HelloService:
     end Live
 end HelloService
 
-val keepTicking: Nothing < (Console & Async) =
+val keepTicking: Nothing < (Console & Async & Abort[IOException]) =
     (Console.print(".") *> Kyo.sleep(1.second)).forever
 
 val effect: Unit < (Console & Async & Resource & Abort[Throwable] & Env[NameService]) =

@@ -95,8 +95,8 @@ class ChannelTest extends Test:
             for
                 c <- Channel.init[Int](2)
                 r <- c.close
-                t <- c.offer(1)
-            yield assert(r == Maybe(Seq()) && !t)
+                t <- Abort.run(c.offer(1))
+            yield assert(r == Maybe(Seq()) && t.isFail)
         }
         "non-empty" in runJVM {
             for
@@ -104,7 +104,7 @@ class ChannelTest extends Test:
                 _ <- c.put(1)
                 _ <- c.put(2)
                 r <- c.close
-                t <- Abort.run[Throwable](c.empty)
+                t <- Abort.run(c.empty)
             yield assert(r == Maybe(Seq(1, 2)) && t.isFail)
         }
         "pending take" in runJVM {
@@ -113,8 +113,8 @@ class ChannelTest extends Test:
                 f <- c.takeFiber
                 r <- c.close
                 d <- f.getResult
-                t <- Abort.run[Throwable](c.full)
-            yield assert(r == Maybe(Seq()) && d.isPanic && t.isFail)
+                t <- Abort.run(c.full)
+            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
         }
         "pending put" in runJVM {
             for
@@ -124,8 +124,8 @@ class ChannelTest extends Test:
                 f <- c.putFiber(3)
                 r <- c.close
                 d <- f.getResult
-                _ <- c.offerDiscard(1)
-            yield assert(r == Maybe(Seq(1, 2)) && d.isPanic)
+                e <- Abort.run(c.offer(1))
+            yield assert(r == Maybe(Seq(1, 2)) && d.isFail && e.isFail)
         }
         "no buffer w/ pending put" in runJVM {
             for
@@ -133,8 +133,8 @@ class ChannelTest extends Test:
                 f <- c.putFiber(1)
                 r <- c.close
                 d <- f.getResult
-                t <- c.poll
-            yield assert(r == Maybe(Seq()) && d.isPanic && t.isEmpty)
+                t <- Abort.run(c.poll)
+            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
         }
         "no buffer w/ pending take" in runJVM {
             for
@@ -143,7 +143,7 @@ class ChannelTest extends Test:
                 r <- c.close
                 d <- f.getResult
                 t <- Abort.run[Throwable](c.put(1))
-            yield assert(r == Maybe(Seq()) && d.isPanic && t.isFail)
+            yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
         }
     }
     "no buffer" in runJVM {
@@ -178,4 +178,164 @@ class ChannelTest extends Test:
             yield assert(b)
         }
     }
+
+    "concurrency" - {
+
+        val repeats = 100
+
+        "offer and close" in run {
+            (for
+                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+                offerFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(channel.offer(i)))))
+                )
+                closeFiber    <- Async.run(latch.await.andThen(channel.close))
+                _             <- latch.release
+                offered       <- offerFiber.get
+                backlog       <- closeFiber.get
+                closedChannel <- channel.close
+                drained       <- Abort.run(channel.drain)
+                isClosed      <- channel.closed
+            yield
+                assert(backlog.isDefined)
+                assert(offered.count(_.contains(true)) == backlog.get.size)
+                assert(closedChannel.isEmpty)
+                assert(drained.isFail)
+                assert(isClosed)
+            )
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+
+        "offer and poll" in run {
+            (for
+                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+                offerFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(channel.offer(i)))))
+                )
+                pollFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(_ => Abort.run(channel.poll))))
+                )
+                _           <- latch.release
+                offered     <- offerFiber.get
+                polled      <- pollFiber.get
+                channelSize <- channel.size
+            yield assert(offered.count(_.contains(true)) == polled.count(_.toMaybe.flatten.isDefined) + channelSize))
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+
+        "put and take" in run {
+            (for
+                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+                putFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(channel.put(i)))))
+                )
+                takeFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(_ => Abort.run(channel.take))))
+                )
+                _     <- latch.release
+                puts  <- putFiber.get
+                takes <- takeFiber.get
+            yield assert(puts.count(_.isSuccess) == takes.count(_.isSuccess) && takes.flatMap(_.toMaybe.toList).toSet == (1 to 100).toSet))
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+
+        "offer to full channel during close" in run {
+            (for
+                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                _       <- Kyo.foreach(1 to size)(i => channel.offer(i))
+                latch   <- Latch.init(1)
+                offerFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(channel.offer(i)))))
+                )
+                closeFiber <- Async.run(latch.await.andThen(channel.close))
+                _          <- latch.release
+                offered    <- offerFiber.get
+                backlog    <- closeFiber.get
+                isClosed   <- channel.closed
+            yield
+                assert(backlog.isDefined)
+                assert(offered.count(_.contains(true)) == backlog.get.size - size)
+                assert(isClosed)
+            )
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+
+        "concurrent close attempts" in run {
+            (for
+                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+                offerFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(channel.offer(i)))))
+                )
+                closeFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 100).map(_ => channel.close)))
+                )
+                _        <- latch.release
+                offered  <- offerFiber.get
+                backlog  <- closeFiber.get
+                isClosed <- channel.closed
+            yield
+                assert(backlog.count(_.isDefined) == 1)
+                assert(backlog.flatMap(_.toList.flatten).size == offered.count(_.contains(true)))
+                assert(isClosed)
+            )
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+
+        "offer, poll, put, take, and close" in run {
+            (for
+                size    <- Choice.get(Seq(0, 1, 2, 10, 100))
+                channel <- Channel.init[Int](size)
+                latch   <- Latch.init(1)
+                offerFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 50).map(i => Abort.run(channel.offer(i)))))
+                )
+                pollFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 50).map(_ => Abort.run(channel.poll))))
+                )
+                putFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((51 to 100).map(i => Abort.run(channel.put(i)))))
+                )
+                takeFiber <- Async.run(
+                    latch.await.andThen(Async.parallel((1 to 50).map(_ => Abort.run(channel.take))))
+                )
+                closeFiber <- Async.run(latch.await.andThen(channel.close))
+                _          <- latch.release
+                offered    <- offerFiber.get
+                polled     <- pollFiber.get
+                puts       <- putFiber.get
+                takes      <- takeFiber.get
+                backlog    <- closeFiber.get
+                isClosed   <- channel.closed
+            yield
+                val totalOffered = offered.count(_.contains(true)) + puts.count(_.isSuccess)
+                val totalTaken   = polled.count(_.toMaybe.flatten.isDefined) + takes.count(_.isSuccess)
+                assert(backlog.isDefined)
+                assert(totalOffered - totalTaken == backlog.get.size)
+                assert(isClosed)
+            )
+                .pipe(Choice.run).unit
+                .repeat(repeats)
+                .as(succeed)
+        }
+    }
+
 end ChannelTest

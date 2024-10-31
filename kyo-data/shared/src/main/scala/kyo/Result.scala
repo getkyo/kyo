@@ -118,7 +118,8 @@ object Result:
         loop(seq, Chunk.empty[A])
     end collect
 
-    private val _unit = Success(())
+    private val _unit   = Success(())
+    private val _absent = Fail(Absent)
 
     /** Returns a successful Result containing unit.
       *
@@ -128,6 +129,13 @@ object Result:
       *   A successful Result containing unit
       */
     def unit[E]: Result[E, Unit] = _unit
+
+    /** Returns a failed Result with an Absent failure.
+      *
+      * @return
+      *   A failed Result with an Absent failure
+      */
+    def absent[A]: Result[Absent, A] = _absent
 
     /** Converts an Either to a Result.
       *
@@ -568,6 +576,14 @@ object Result:
         ): Try[A] =
             fold(e => scala.util.Failure(e.getFailure.asInstanceOf[Throwable]))(scala.util.Success(_))
 
+        /** Converts the Result to a Result[E, Unit].
+          *
+          * @return
+          *   A new Result with the same error type E and Unit as the success type
+          */
+        def unit: Result[E, Unit] =
+            map(_ => ())
+
         /** Swaps the success and failure cases of the Result.
           *
           * @return
@@ -590,6 +606,26 @@ object Result:
             self match
                 case Success(`value`) => true
                 case _                => false
+
+        /** Checks if the Result is a Success and the predicate holds for its value.
+          *
+          * @param pred
+          *   The predicate function to apply to the successful value
+          * @return
+          *   true if the Result is a Success and the predicate holds, false otherwise
+          */
+        def exists(pred: A => Boolean): Boolean =
+            fold(_ => false)(pred)
+
+        /** Checks if the Result is a Success and the predicate holds for its value, or if the Result is a Failure.
+          *
+          * @param pred
+          *   The predicate function to apply to the successful value
+          * @return
+          *   true if the Result is a Failure, or if it's a Success and the predicate holds
+          */
+        def forall(pred: A => Boolean): Boolean =
+            fold(_ => true)(pred)
 
         /** Returns a string representation of the Result.
           *

@@ -128,4 +128,65 @@ class BoundaryTest extends Test:
         assert(result.eval == 40)
     }
 
+    "residual effects" - {
+        sealed trait ResidualEffect    extends ArrowEffect[Const[Int], Const[Int]]
+        sealed trait SubResidualEffect extends ResidualEffect
+
+        "supports residual effects in S type parameter" in {
+            val boundary                                 = Boundary.derive[TestEffect1, ResidualEffect]
+            val _: Boundary[TestEffect1, ResidualEffect] = boundary
+            succeed
+        }
+
+        "allows using residual effects within boundary" in {
+            val boundary = Boundary.derive[TestEffect1, ResidualEffect]
+            val effect: Int < (TestEffect1 & ResidualEffect) = boundary { (trace, context) =>
+                for
+                    x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+                    y <- ArrowEffect.suspend[Int](Tag[ResidualEffect], x)
+                yield y
+            }
+
+            val result = ContextEffect.handle(Tag[TestEffect1], 10, _ + 1) {
+                ArrowEffect.handle(Tag[ResidualEffect], effect) {
+                    [C] => (input, cont) => cont(input * 2)
+                }
+            }
+
+            assert(result.eval == 20)
+        }
+
+        "preserves residual effects after boundary application" in {
+            val boundary = Boundary.derive[TestEffect1, ResidualEffect]
+            val effect: Int < (TestEffect1 & ResidualEffect) = boundary { (trace, context) =>
+                ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+            }
+
+            val result = ContextEffect.handle(Tag[TestEffect1], 5, _ + 1)(effect)
+
+            val finalResult = ArrowEffect.handle(Tag[ResidualEffect], result) {
+                [C] => (input, cont) => cont(input * 2)
+            }
+            assert(finalResult.eval == 5)
+        }
+
+        "supports subclasses of residual effects" in {
+            val boundary = Boundary.derive[TestEffect1, ResidualEffect]
+            val effect: Int < (TestEffect1 & SubResidualEffect) = boundary { (trace, context) =>
+                for
+                    x <- ContextEffect.suspend[Int, TestEffect1](Tag[TestEffect1])
+                    y <- ArrowEffect.suspend[Int](Tag[SubResidualEffect], x)
+                yield y
+            }
+
+            val result = ContextEffect.handle(Tag[TestEffect1], 15, _ + 1) {
+                ArrowEffect.handle(Tag[SubResidualEffect], effect) {
+                    [C] => (input, cont) => cont(input * 2)
+                }
+            }
+
+            assert(result.eval == 30)
+        }
+    }
+
 end BoundaryTest

@@ -58,7 +58,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
                     catch
                         case ex if NonFatal(ex) =>
                             import AllowUnsafe.embrace.danger
-                            Log.unsafe.error("uncaught exception", ex)
+                            Log.live.unsafe.error("uncaught exception", ex)
         interruptsLoop(this)
     end interrupts
 
@@ -135,7 +135,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
                         case ex if NonFatal(ex) =>
                             given Frame = Frame.internal
                             import AllowUnsafe.embrace.danger
-                            Log.unsafe.error("uncaught exception", ex)
+                            Log.live.unsafe.error("uncaught exception", ex)
         onCompleteLoop(this)
     end onComplete
 
@@ -256,7 +256,7 @@ private[kyo] object IOPromise extends IOPromisePlatformSpecific:
                         case ex if NonFatal(ex) =>
                             given Frame = Frame.internal
                             import AllowUnsafe.embrace.danger
-                            Log.unsafe.error("uncaught exception", ex)
+                            Log.live.unsafe.error("uncaught exception", ex)
                     end try
                     self
                 end run

@@ -263,7 +263,7 @@ object Fiber extends FiberPlatformSpecific:
       */
     def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
-        boundary: Boundary[Ctx, IO],
+        boundary: Boundary[Ctx, IO & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame,
         safepoint: Safepoint
@@ -278,21 +278,17 @@ object Fiber extends FiberPlatformSpecific:
             end State
             val state = new State
             import state.*
-            foreach(seq)((idx, io) => io.evalNow.foreach(v => state(Result.success(v))))
-            if state.done() then
-                state
-            else
-                boundary { (trace, context) =>
-                    IO {
-                        foreach(seq) { (_, v) =>
-                            val fiber = IOTask(v, safepoint.copyTrace(trace), context)
-                            state.interrupts(fiber)
-                            fiber.onComplete(state)
-                        }
-                        state
+            boundary { (trace, context) =>
+                IO {
+                    val interruptPanic = Result.Panic(Fiber.Interrupted(frame))
+                    foreach(seq) { (_, v) =>
+                        val fiber = IOTask(v, safepoint.copyTrace(trace), context)
+                        state.onComplete(_ => discard(fiber.interrupt(interruptPanic)))
+                        fiber.onComplete(state)
                     }
+                    state
                 }
-            end if
+            }
         }
 
     /** Runs multiple Fibers in parallel and returns a Fiber that completes with their results. If any Fiber fails or is interrupted, all
@@ -305,7 +301,7 @@ object Fiber extends FiberPlatformSpecific:
       */
     def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
-        boundary: Boundary[Ctx, IO],
+        boundary: Boundary[Ctx, IO & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame,
         safepoint: Safepoint
@@ -369,9 +365,10 @@ object Fiber extends FiberPlatformSpecific:
             def onComplete(f: Result[E, A] => Unit)(using AllowUnsafe): Unit                             = self.onComplete(f)
             def onInterrupt(f: Panic => Unit)(using Frame): Unit                                         = self.onInterrupt(f)
             def block(deadline: Clock.Deadline.Unsafe)(using AllowUnsafe, Frame): Result[E | Timeout, A] = self.block(deadline)
-            def interrupt(error: Panic)(using AllowUnsafe): Boolean                                      = self.interrupt(error)
-            def interruptDiscard(error: Panic)(using AllowUnsafe): Unit                                  = discard(self.interrupt(error))
-            def mask()(using AllowUnsafe): Unsafe[E, A]                                                  = self.mask()
+            def interrupt()(using frame: Frame, allow: AllowUnsafe): Boolean = self.interrupt(Panic(Interrupted(frame)))
+            def interrupt(error: Panic)(using AllowUnsafe): Boolean          = self.interrupt(error)
+            def interruptDiscard(error: Panic)(using AllowUnsafe): Unit      = discard(self.interrupt(error))
+            def mask()(using AllowUnsafe): Unsafe[E, A]                      = self.mask()
 
             def toFuture()(using E <:< Throwable, AllowUnsafe): Future[A] =
                 val r = scala.concurrent.Promise[A]()
@@ -463,6 +460,8 @@ object Fiber extends FiberPlatformSpecific:
             inline given [E, A]: Flat[Unsafe[E, A]] = Flat.unsafe.bypass
 
             def init[E, A]()(using AllowUnsafe): Unsafe[E, A] = IOPromise()
+
+            private[kyo] def fromIOPromise[E, A](p: IOPromise[E, A]): Unsafe[E, A] = p
 
             extension [E, A](self: Unsafe[E, A])
                 def complete[E2 <: E, A2 <: A](v: Result[E, A])(using AllowUnsafe): Boolean        = self.complete(v)

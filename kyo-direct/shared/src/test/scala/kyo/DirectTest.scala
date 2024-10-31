@@ -112,21 +112,8 @@ class DirectTest extends Test:
         test(None)
     }
     "consoles" in run {
-        object console extends Console:
-            def unsafe: Unsafe = ???
-
-            def printErr(s: String)(using Frame): Unit < IO = ???
-
-            def println(s: String)(using Frame): Unit < IO = ???
-
-            def print(s: String)(using Frame): Unit < IO = ???
-
-            def readln(using Frame): String < IO = "hello"
-
-            def printlnErr(s: String)(using Frame): Unit < IO = ???
-        end console
-        Console.let(console)(defer(await(Console.readln))).map { result =>
-            assert(result == "hello")
+        Console.withIn(List("hello"))(defer(await(Abort.run(Console.readln)))).map { result =>
+            assert(result.contains("hello"))
         }
     }
 

@@ -5,12 +5,12 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version   = "3.5.1"
+val scala3Version   = "3.5.2"
 val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
 val zioVersion       = "2.1.11"
-val catsVersion      = "3.5.4"
+val catsVersion      = "3.5.5"
 val scalaTestVersion = "3.2.19"
 
 val compilerOptions = Set(
@@ -146,7 +146,7 @@ lazy val `kyo-scheduler` =
             scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
             crossScalaVersions                      := List(scala3Version, scala212Version, scala213Version),
             libraryDependencies += "org.scalatest" %%% "scalatest"       % scalaTestVersion % Test,
-            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.11"         % Test
+            libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.12"         % Test
         )
         .jvmSettings(mimaCheck(false))
         .jsSettings(
@@ -216,7 +216,7 @@ lazy val `kyo-core` =
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC31" % Test,
             libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.11"     % Test,
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.11"     % Test,
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.12"     % Test,
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -459,16 +459,16 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.typelevel"       %% "cats-mtl"            % "1.5.0",
             libraryDependencies += "org.typelevel"       %% "cats-mtl"            % "1.5.0",
             libraryDependencies += "com.47deg"           %% "fetch"               % "3.1.2",
-            libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.3.1",
-            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.3.1",
+            libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.3.2",
+            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.3.2",
             libraryDependencies += "dev.zio"             %% "zio"                 % zioVersion,
             libraryDependencies += "dev.zio"             %% "zio-concurrent"      % zioVersion,
             libraryDependencies += "dev.zio"             %% "zio-query"           % "0.7.6",
             libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC31",
             libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.11.0",
-            libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.28",
-            libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.28",
+            libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.29",
+            libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.29",
             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.1",
             libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.10",
             libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.10",
@@ -515,12 +515,14 @@ lazy val readme =
         )
 
 lazy val `native-settings` = Seq(
-    fork := false
+    fork       := false,
+    bspEnabled := false
 )
 
 lazy val `js-settings` = Seq(
     Compile / doc / sources                     := Seq.empty,
     fork                                        := false,
+    bspEnabled                                  := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.5.0" % "provided"
 )

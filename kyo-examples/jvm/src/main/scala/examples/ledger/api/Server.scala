@@ -7,9 +7,9 @@ import sttp.tapir.server.netty.*
 
 object Server extends KyoApp:
 
-    val timer =
+    val clock =
         import AllowUnsafe.embrace.danger
-        Timer(Timer.Unsafe(Executors.newSingleThreadScheduledExecutor()))
+        Clock(Clock.Unsafe(Executors.newSingleThreadScheduledExecutor()))
 
     run {
 
@@ -41,7 +41,7 @@ object Server extends KyoApp:
             val handler = await(Env.run(db)(Handler.init))
 
             await(Console.println(s"Server starting on port $port..."))
-            val binding = await(Routes.run(server)(Timer.let(timer)(Env.run(handler)(Endpoints.init))))
+            val binding = await(Routes.run(server)(Clock.let(clock)(Env.run(handler)(Endpoints.init))))
             await(Console.println(s"Server started: ${binding.localSocket}"))
         }
     }

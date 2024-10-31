@@ -1,5 +1,6 @@
 package kyo
 
+import java.io.IOException
 import kyo.kernel.Boundary
 import kyo.kernel.Reducible
 import scala.annotation.tailrec
@@ -87,7 +88,7 @@ extension (kyoObject: Kyo.type)
       * @return
       *   An effect that prints the message to the console
       */
-    def debugln(message: String)(using Frame): Unit < IO =
+    def debugln(message: String)(using Frame): Unit < (IO & Abort[IOException]) =
         Console.println(message)
 
     /** Creates an effect that fails with Abort[E].
@@ -112,7 +113,7 @@ extension (kyoObject: Kyo.type)
     def foreachPar[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
         using
         flat: Flat[A1],
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Seq[A1] < (reduce.SReduced & Async & Ctx) =
@@ -130,7 +131,7 @@ extension (kyoObject: Kyo.type)
     def foreachParDiscard[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
         using
         flat: Flat[A1],
-        boundary: Boundary[Ctx, Async],
+        boundary: Boundary[Ctx, Async & Abort[E]],
         reduce: Reducible[Abort[E]],
         frame: Frame
     ): Unit < (reduce.SReduced & Async & Ctx) =

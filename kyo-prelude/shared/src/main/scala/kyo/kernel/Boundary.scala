@@ -37,7 +37,7 @@ private[kyo] object Boundary:
 
         val s = flatten(TypeRepr.of[S])
 
-        val r = flatten(TypeRepr.of[Ctx]).filter(tpe => !s.exists(_ <:< tpe))
+        val r = flatten(TypeRepr.of[Ctx]).filter(tpe => !s.exists(tpe <:< _))
 
         val nok = r.filterNot(tpe => (tpe <:< TypeRepr.of[ContextEffect[?]]) || (tpe =:= TypeRepr.of[Any]))
         if nok.nonEmpty then

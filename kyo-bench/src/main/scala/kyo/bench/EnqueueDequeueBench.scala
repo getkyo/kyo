@@ -22,7 +22,7 @@ class EnqueueDequeueBench extends Bench.ForkOnly(()):
 
         import kyo.Access
 
-        def loop(c: Channel[Unit], i: Int): Unit < Async =
+        def loop(c: Channel[Unit], i: Int): Unit < (Async & Abort[Closed]) =
             if i >= depth then
                 IO.unit
             else
