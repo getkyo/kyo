@@ -31,7 +31,7 @@ private[kyo] object Boundary:
             new KyoDefer[A, S & S2]:
                 def frame = _frame
                 def apply(v: Unit, context: Context)(using safepoint: Safepoint) =
-                    f(safepoint.saveTrace(), context)
+                    f(safepoint.saveTrace(), context.inherit)
 
     inline given derive[Ctx, S]: Boundary[Ctx, S] = ${ boundaryImpl[Ctx, S] }
 

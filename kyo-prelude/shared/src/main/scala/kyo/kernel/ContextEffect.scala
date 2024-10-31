@@ -10,6 +10,9 @@ abstract class ContextEffect[+A] extends Effect
 
 object ContextEffect:
 
+    trait Isolated:
+        self: ContextEffect[?] =>
+
     inline def suspend[A, E <: ContextEffect[A]](inline tag: Tag[E])(using inline frame: Frame): A < E =
         suspendMap(tag)(identity)
 
