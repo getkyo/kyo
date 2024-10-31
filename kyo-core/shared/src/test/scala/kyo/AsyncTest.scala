@@ -427,6 +427,71 @@ class AsyncTest extends Test:
             val _: (Int, Int, Int, Int) < (Abort[Int | String] & Async) = Async.parallel(v, v, v, v)
             succeed
         }
+        "nested" - {
+            "run" in pendingUntilFixed {
+                val v: Int < Abort[Int] = 1
+                assertCompiles("Async.run(Async.run(v))")
+                assertCompiles("Async.run(Async.runAndBlock(1.second)(v))")
+                assertCompiles("Async.run(Async.mask(v))")
+                assertCompiles("Async.run(Async.timeout(1.second)(v))")
+                assertCompiles("Async.run(Async.race(Seq(v)))")
+                assertCompiles("Async.run(Async.race(v, v))")
+                assertCompiles("Async.run(Async.parallel(Seq(v)))")
+                assertCompiles("Async.run(Async.parallel(v, v))")
+                assertCompiles("Async.run(Async.parallel(v, v, v))")
+                assertCompiles("Async.run(Async.parallel(v, v, v, v))")
+            }
+
+            "parallel" in pendingUntilFixed {
+                val v: Int < Abort[Int] = 1
+                assertCompiles("Async.parallel(Async.run(v), Async.run(v))")
+                assertCompiles("Async.parallel(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))")
+                assertCompiles("Async.parallel(Async.mask(v), Async.mask(v))")
+                assertCompiles("Async.parallel(Async.timeout(1.second)(v), Async.timeout(1.second)(v))")
+                assertCompiles("Async.parallel(Async.race(v, v), Async.race(v, v))")
+                assertCompiles("Async.parallel(Async.parallel(v, v), Async.parallel(v, v))")
+            }
+
+            "race" in pendingUntilFixed {
+                val v: Int < Abort[Int] = 1
+                assertCompiles("Async.race(Async.run(v), Async.run(v))")
+                assertCompiles("Async.race(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))")
+                assertCompiles("Async.race(Async.mask(v), Async.mask(v))")
+                assertCompiles("Async.race(Async.timeout(1.second)(v), Async.timeout(1.second)(v))")
+                assertCompiles("Async.race(Async.race(v, v), Async.race(v, v))")
+                assertCompiles("Async.race(Async.parallel(v, v), Async.parallel(v, v))")
+            }
+
+            "mask" in pendingUntilFixed {
+                val v: Int < Abort[Int] = 1
+                assertCompiles("Async.mask(Async.run(v))")
+                assertCompiles("Async.mask(Async.runAndBlock(1.second)(v))")
+                assertCompiles("Async.mask(Async.mask(v))")
+                assertCompiles("Async.mask(Async.timeout(1.second)(v))")
+                assertCompiles("Async.mask(Async.race(v, v))")
+                assertCompiles("Async.mask(Async.parallel(v, v))")
+            }
+
+            "timeout" in pendingUntilFixed {
+                val v: Int < Abort[Int] = 1
+                assertCompiles("Async.timeout(1.second)(Async.run(v))")
+                assertCompiles("Async.timeout(1.second)(Async.runAndBlock(1.second)(v))")
+                assertCompiles("Async.timeout(1.second)(Async.mask(v))")
+                assertCompiles("Async.timeout(1.second)(Async.timeout(1.second)(v))")
+                assertCompiles("Async.timeout(1.second)(Async.race(v, v))")
+                assertCompiles("Async.timeout(1.second)(Async.parallel(v, v))")
+            }
+
+            "runAndBlock" in pendingUntilFixed {
+                val v: Int < Abort[Int] = 1
+                assertCompiles("Async.runAndBlock(1.second)(Async.run(v))")
+                assertCompiles("Async.runAndBlock(1.second)(Async.runAndBlock(1.second)(v))")
+                assertCompiles("Async.runAndBlock(1.second)(Async.mask(v))")
+                assertCompiles("Async.runAndBlock(1.second)(Async.timeout(1.second)(v))")
+                assertCompiles("Async.runAndBlock(1.second)(Async.race(v, v))")
+                assertCompiles("Async.runAndBlock(1.second)(Async.parallel(v, v))")
+            }
+        }
     }
 
     "timeout" - {

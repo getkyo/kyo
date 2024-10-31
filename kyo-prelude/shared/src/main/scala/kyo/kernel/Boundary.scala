@@ -1,9 +1,24 @@
 package kyo.kernel
 
 import internal.*
+import kyo.Ansi.*
+import scala.annotation.implicitNotFound
 import scala.annotation.nowarn
 import scala.quoted.*
 
+@implicitNotFound("""
+Could not create an Async boundary for effects: ${Ctx}
+
+Note: If you're seeing this error with nested Async operations (like Async.run(Async.run(v))),
+this is due to a current limitation. As a workaround, you can break them into separate statements:
+
+Instead of:
+  Async.run(Async.run(v))
+
+Use:
+  val x = Async.run(v)
+  Async.run(x)
+""")
 final class Boundary[Ctx, +S] private (dummy: Unit) extends AnyVal:
 
 end Boundary
@@ -41,7 +56,31 @@ private[kyo] object Boundary:
 
         val nok = r.filterNot(tpe => (tpe <:< TypeRepr.of[ContextEffect[?]]) || (tpe =:= TypeRepr.of[Any]))
         if nok.nonEmpty then
-            report.errorAndAbort(s"Expected context effects. Found: '${nok.map(_.show).mkString(" & ")}'")
+            report.errorAndAbort(
+                s"""|The computation you're trying to fork with Async has pending effects that aren't supported: 
+                    |
+                    |  ${nok.map(_.show.red).mkString(" & ")}
+                    |
+                    |You need to handle these effects before using Async operations. For example:
+                    |
+                    |Instead of:
+                    |  Async.run(computation) // where computation has pending MyEffect
+                    |
+                    |Handle the effect first:
+                    |  Async.run(MyEffect.run(computation))
+                    |
+                    |Note: There's currently a limitation with nested Async operations (like Async.run(Async.run(v))).
+                    |As a workaround, you can break them into separate statements:
+                    |
+                    |Instead of:
+                    |  Async.run(Async.run(v))
+                    |
+                    |Use:
+                    |  val x = Async.run(v)
+                    |  Async.run(x)
+                    |""".stripMargin
+            )
+        end if
 
         '{ create[Ctx, S] }
     end boundaryImpl
