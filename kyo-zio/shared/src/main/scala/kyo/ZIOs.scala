@@ -103,7 +103,7 @@ object ZIOs:
                     case Both(left, right)         => loop(left).orElse(loop(right))
                     case Stackless(e, trace)       => loop(e)
                     case _: Empty.type             => Maybe.empty
-            loop(cause).getOrElse(Result.Panic(new Exception("Unexpected zio.Cause.Empty at " + frame.parse.position)))
+            loop(cause).getOrElse(Result.Panic(new Exception("Unexpected zio.Cause.Empty at " + frame.position.show)))
         end toError
     end extension
 

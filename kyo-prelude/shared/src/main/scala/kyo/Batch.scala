@@ -51,7 +51,7 @@ object Batch:
             f(input).map { output =>
                 require(
                     input.size == output.size,
-                    s"Source created at ${frame.parse.position} returned a different number of elements than input: ${input.size} != ${output.size}"
+                    s"Source created at ${frame.position.show} returned a different number of elements than input: ${input.size} != ${output.size}"
                 )
                 ((a: A) => output(a): B < S)
             }
@@ -69,7 +69,7 @@ object Batch:
             f(input).map { output =>
                 require(
                     input.size == output.size,
-                    s"Source created at ${frame.parse.position} returned a different number of elements than input: ${input.size} != ${output.size}"
+                    s"Source created at ${frame.position.show} returned a different number of elements than input: ${input.size} != ${output.size}"
                 )
                 input.zip(output).toMap
             }
@@ -149,19 +149,20 @@ object Batch:
                     case Expanded(_, source, _) => source
                     case _                      => () // Used as a placeholder for items that aren't source calls
                 }
-            Kyo.foreach(pending.toSeq) {
-                case (_: Unit, items) =>
-                    // No need for flushing
-                    Chunk.from(items)
-                case (source: SourceAny, items: Seq[Expanded] @unchecked) =>
-                    // Only request distinct items from the source
-                    source(items.map(_.value).distinct).map { results =>
-                        // Reassemble the results by iterating on the original collection
-                        Kyo.foreach(items) { e =>
-                            // Note how each value can have its own effects
-                            capture(results(e.value).map(e.cont))
+            Kyo.foreach(pending.toSeq) { tuple =>
+                (tuple: @unchecked) match
+                    case (_: Unit, items) =>
+                        // No need for flushing
+                        Chunk.from(items)
+                    case (source: SourceAny, items: Seq[Expanded] @unchecked) =>
+                        // Only request distinct items from the source
+                        source(items.map(_.value).distinct).map { results =>
+                            // Reassemble the results by iterating on the original collection
+                            Kyo.foreach(items) { e =>
+                                // Note how each value can have its own effects
+                                capture(results(e.value).map(e.cont))
+                            }
                         }
-                    }
             }
         end flush
 

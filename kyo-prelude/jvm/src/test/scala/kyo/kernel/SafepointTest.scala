@@ -281,8 +281,7 @@ class SafepointTest extends Test:
                 val logs = ArrayBuffer.empty[String]
 
                 def enter(frame: Frame, value: Any): Boolean =
-                    val parsed = frame.parse
-                    logs += s"Entering ${parsed.methodName} with value: $value"
+                    logs += s"Entering ${frame.methodName} with value: $value"
                     true
                 end enter
 
@@ -365,7 +364,7 @@ class SafepointTest extends Test:
             }
 
             assert(interceptor.log.size == 3)
-            assert(interceptor.log.exists(_._1.parse.methodName == "computation"))
+            assert(interceptor.log.exists(_._1.methodName == "computation"))
         }
     }
 

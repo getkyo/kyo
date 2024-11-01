@@ -390,6 +390,26 @@ object Maybe:
         inline def toLeft[X](inline right: => X): Either[A, X] =
             if isEmpty then Right(right) else Left(get)
 
+        /** Converts the Maybe to a Result with Absent as the error type.
+          *
+          * @return
+          *   a Result containing the value if defined, or a Result.absent if empty
+          */
+        inline def toResult[E]: Result[Absent, A] =
+            toResult(Result.absent)
+
+        /** Converts the Maybe to a Result with a custom error value.
+          *
+          * @param ifEmpty
+          *   the Result to return if this Maybe is empty
+          * @tparam E
+          *   the error type of the Result
+          * @return
+          *   a Result containing the value if defined, or the provided error Result if empty
+          */
+        inline def toResult[E](inline ifEmpty: => Result[E, A]): Result[E, A] =
+            if isEmpty then ifEmpty else Result.success(get)
+
         def show: String =
             if isEmpty then "Absent"
             else s"Present(${get})"

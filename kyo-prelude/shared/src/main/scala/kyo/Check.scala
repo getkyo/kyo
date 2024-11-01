@@ -14,15 +14,7 @@ import kyo.kernel.*
   *   The [[Frame]] where the check failure occurred
   */
 final class CheckFailed(val message: String, val frame: Frame) extends AssertionError(message):
-    override def getMessage() =
-        Seq(
-            "",
-            "──────────────────────────────".dim,
-            "Check failed! ".red.bold + message,
-            "──────────────────────────────".dim,
-            frame.parse.show,
-            "──────────────────────────────".dim
-        ).mkString("\n")
+    override def getMessage() = frame.render("Check failed! ".red.bold + message)
 end CheckFailed
 
 /** Represents a check effect for validating conditions.

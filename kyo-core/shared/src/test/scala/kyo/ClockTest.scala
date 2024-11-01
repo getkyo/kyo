@@ -3,240 +3,462 @@ package kyo
 import java.time.temporal.ChronoUnit
 import kyo.Clock.Deadline
 import kyo.Clock.Stopwatch
+import kyo.Clock.stopwatch
 
 class ClockTest extends Test:
 
-    given CanEqual[Instant, Instant] = CanEqual.derived
-
-    class TestClock extends Clock:
-        var currentTime = Instant.fromJava(java.time.Instant.now())
-
-        val unsafe: Clock.Unsafe = new Clock.Unsafe:
-            def now()(using AllowUnsafe): Instant = currentTime
-        def now(using Frame) = IO(currentTime)
-
-        def advance(duration: Duration): Unit =
-            currentTime = currentTime + duration
-
-        def set(instant: Instant): Unit =
-            currentTime = instant
-    end TestClock
-
     "Clock" - {
+        def javaNow() = Instant.fromJava(java.time.Instant.now())
+
         "now" in run {
-            val testClock = new TestClock
-            val instant   = testClock.currentTime
-            for
-                result <- Clock.let(testClock)(Clock.now)
-            yield assert(result == instant)
+            Clock.now.map { now =>
+                assert(now - javaNow() < 1.milli)
+            }
         }
 
         "unsafe now" in {
             import AllowUnsafe.embrace.danger
-            val testClock = new TestClock
-            val instant   = testClock.currentTime
-            assert(testClock.unsafe.now() == instant)
+            val now = Clock.live.unsafe.now()
+            assert(now - javaNow() < 1.milli)
         }
 
         "now at epoch" in run {
-            val testClock = new TestClock
-            testClock.set(Instant.Epoch)
-            for
-                result <- Clock.let(testClock)(Clock.now)
-            yield assert(result == Instant.Epoch)
+            Clock.withTimeControl { control =>
+                for
+                    _   <- control.set(Instant.Epoch)
+                    now <- Clock.now
+                yield assert(now == Instant.Epoch)
+            }
         }
 
         "now at max instant" in run {
-            val testClock = new TestClock
-            testClock.set(Instant.Max)
-            for
-                result <- Clock.let(testClock)(Clock.now)
-            yield assert(result == Instant.Max)
-        }
-
-        "handle Duration.Zero and Duration.Infinity" - {
-            "deadline with Zero duration" in run {
-                val testClock = new TestClock
+            Clock.withTimeControl { control =>
                 for
-                    deadline  <- Clock.let(testClock)(Clock.deadline(Duration.Zero))
-                    isOverdue <- deadline.isOverdue
-                    timeLeft  <- deadline.timeLeft
-                yield
-                    assert(!isOverdue)
-                    assert(timeLeft == Duration.Zero)
-                end for
-            }
-
-            "deadline with Infinity duration" in run {
-                val testClock = new TestClock
-                for
-                    deadline  <- Clock.let(testClock)(Clock.deadline(Duration.Infinity))
-                    isOverdue <- deadline.isOverdue
-                    timeLeft  <- deadline.timeLeft
-                yield
-                    assert(!isOverdue)
-                    assert(timeLeft == Duration.Infinity)
-                end for
+                    _   <- control.set(Instant.Max)
+                    now <- Clock.now
+                yield assert(now == Instant.Max)
             }
         }
     }
 
     "Stopwatch" - {
         "elapsed time" in run {
-            val testClock = new TestClock
-            for
-                stopwatch <- Clock.let(testClock)(Clock.stopwatch)
-                _ = testClock.advance(5.seconds)
-                elapsed <- stopwatch.elapsed
-            yield assert(elapsed == 5.seconds)
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    stopwatch <- Clock.stopwatch
+                    _         <- control.advance(5.seconds)
+                    elapsed   <- stopwatch.elapsed
+                yield assert(elapsed == 5.seconds)
+                end for
+            }
         }
 
-        "unsafe elapsed time" in {
+        "unsafe elapsed time" in run {
             import AllowUnsafe.embrace.danger
-            val testClock = new TestClock
-            val stopwatch = testClock.unsafe.stopwatch()
-            testClock.advance(5.seconds)
-            assert(stopwatch.elapsed() == 5.seconds)
+            Clock.withTimeControl { control =>
+                for
+                    clock     <- Clock.get
+                    stopwatch <- IO.Unsafe(clock.unsafe.stopwatch())
+                    _         <- control.advance(5.seconds)
+                yield assert(stopwatch.elapsed() == 5.seconds)
+                end for
+            }
         }
 
         "zero elapsed time" in run {
-            val testClock = new TestClock
-            for
-                stopwatch <- Clock.let(testClock)(Clock.stopwatch)
-                elapsed   <- stopwatch.elapsed
-            yield assert(elapsed == Duration.Zero)
-            end for
-        }
-
-        "measure Zero duration" in run {
-            val testClock = new TestClock
-            for
-                stopwatch <- Clock.let(testClock)(Clock.stopwatch)
-                elapsed   <- stopwatch.elapsed
-            yield assert(elapsed == Duration.Zero)
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    stopwatch <- Clock.stopwatch
+                    elapsed   <- stopwatch.elapsed
+                yield assert(elapsed == 0.seconds)
+                end for
+            }
         }
     }
 
     "Deadline" - {
         "timeLeft" in run {
-            val testClock = new TestClock
-            for
-                deadline <- Clock.let(testClock)(Clock.deadline(10.seconds))
-                _ = testClock.advance(3.seconds)
-                timeLeft <- deadline.timeLeft
-            yield assert(timeLeft == 7.seconds)
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    deadline <- Clock.deadline(10.seconds)
+                    _        <- control.advance(3.seconds)
+                    timeLeft <- deadline.timeLeft
+                yield assert(timeLeft == 7.seconds)
+                end for
+            }
         }
 
         "isOverdue" in run {
-            val testClock = new TestClock
-            for
-                deadline   <- Clock.let(testClock)(Clock.deadline(5.seconds))
-                notOverdue <- deadline.isOverdue
-                _ = testClock.advance(6.seconds)
-                overdue <- deadline.isOverdue
-            yield assert(!notOverdue && overdue)
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    deadline   <- Clock.deadline(5.seconds)
+                    notOverdue <- deadline.isOverdue
+                    _          <- control.advance(6.seconds)
+                    overdue    <- deadline.isOverdue
+                yield assert(!notOverdue && overdue)
+            }
         }
 
-        "unsafe timeLeft" in {
+        "unsafe timeLeft" in run {
             import AllowUnsafe.embrace.danger
-            val testClock = new TestClock
-            val deadline  = testClock.unsafe.deadline(10.seconds)
-            testClock.advance(3.seconds)
-            assert(deadline.timeLeft() == 7.seconds)
+            Clock.withTimeControl { control =>
+                for
+                    clock    <- Clock.get
+                    deadline <- IO.Unsafe(clock.unsafe.deadline(10.seconds))
+                    _        <- control.advance(3.seconds)
+                yield assert(deadline.timeLeft() == 7.seconds)
+            }
         }
 
-        "unsafe isOverdue" in {
+        "unsafe isOverdue" in run {
             import AllowUnsafe.embrace.danger
-            val testClock = new TestClock
-            val deadline  = testClock.unsafe.deadline(5.seconds)
-            assert(!deadline.isOverdue())
-            testClock.advance(6.seconds)
-            assert(deadline.isOverdue())
+            Clock.withTimeControl { control =>
+                for
+                    deadline <- Clock.deadline(5.seconds)
+                    _        <- IO.Unsafe(assert(!deadline.unsafe.isOverdue()))
+                    _        <- control.advance(6.seconds)
+                yield assert(deadline.unsafe.isOverdue())
+            }
         }
 
         "zero duration deadline" in run {
-            val testClock = new TestClock
-            for
-                deadline  <- Clock.let(testClock)(Clock.deadline(Duration.Zero))
-                isOverdue <- deadline.isOverdue
-                timeLeft  <- deadline.timeLeft
-            yield assert(!isOverdue && timeLeft == Duration.Zero)
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    deadline  <- Clock.deadline(Duration.Zero)
+                    isOverdue <- deadline.isOverdue
+                    timeLeft  <- deadline.timeLeft
+                yield assert(!isOverdue && timeLeft == Duration.Zero)
+            }
         }
 
         "deadline exactly at expiration" in run {
-            val testClock = new TestClock
-            for
-                deadline <- Clock.let(testClock)(Clock.deadline(5.seconds))
-                _ = testClock.advance(5.seconds)
-                isOverdue <- deadline.isOverdue
-                timeLeft  <- deadline.timeLeft
-            yield assert(!isOverdue && timeLeft == Duration.Zero)
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    deadline  <- Clock.deadline(5.seconds)
+                    _         <- control.advance(5.seconds)
+                    isOverdue <- deadline.isOverdue
+                    timeLeft  <- deadline.timeLeft
+                yield assert(!isOverdue && timeLeft == Duration.Zero)
+            }
         }
 
         "handle Zero timeLeft" in run {
-            val testClock = new TestClock
-            for
-                deadline  <- Clock.let(testClock)(Clock.deadline(1.second))
-                _         <- Clock.let(testClock)(IO { testClock.advance(1.second) })
-                timeLeft  <- deadline.timeLeft
-                isOverdue <- deadline.isOverdue
-            yield
-                assert(timeLeft == Duration.Zero)
-                assert(!isOverdue)
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    deadline  <- Clock.deadline(1.second)
+                    _         <- control.advance(1.second)
+                    timeLeft  <- deadline.timeLeft
+                    isOverdue <- deadline.isOverdue
+                yield
+                    assert(timeLeft == Duration.Zero)
+                    assert(!isOverdue)
+            }
         }
 
         "handle Infinity timeLeft" in run {
-            val testClock = new TestClock
-            for
-                deadline  <- Clock.let(testClock)(Clock.deadline(Duration.Infinity))
-                timeLeft  <- deadline.timeLeft
-                isOverdue <- deadline.isOverdue
-            yield
-                assert(timeLeft == Duration.Infinity)
-                assert(!isOverdue)
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    deadline  <- Clock.deadline(Duration.Infinity)
+                    timeLeft  <- deadline.timeLeft
+                    isOverdue <- deadline.isOverdue
+                yield
+                    assert(timeLeft == Duration.Infinity)
+                    assert(!isOverdue)
+            }
+        }
+
+        "handle Duration.Zero and Duration.Infinity" - {
+            "deadline with Zero duration" in run {
+                Clock.withTimeControl { control =>
+                    for
+                        deadline  <- Clock.deadline(Duration.Zero)
+                        isOverdue <- deadline.isOverdue
+                        timeLeft  <- deadline.timeLeft
+                    yield
+                        assert(!isOverdue)
+                        assert(timeLeft == Duration.Zero)
+                }
+            }
+
+            "deadline with Infinity duration" in run {
+                Clock.withTimeControl { control =>
+                    for
+                        deadline  <- Clock.deadline(Duration.Infinity)
+                        isOverdue <- deadline.isOverdue
+                        timeLeft  <- deadline.timeLeft
+                    yield
+                        assert(!isOverdue)
+                        assert(timeLeft == Duration.Infinity)
+                }
+            }
         }
     }
 
     "Integration" - {
         "using stopwatch with deadline" in run {
-            val testClock = new TestClock
-            for
-                stopwatch <- Clock.let(testClock)(Clock.stopwatch)
-                deadline  <- Clock.let(testClock)(Clock.deadline(10.seconds))
-                _ = testClock.advance(7.seconds)
-                elapsed  <- stopwatch.elapsed
-                timeLeft <- deadline.timeLeft
-            yield assert(elapsed == 7.seconds && timeLeft == 3.seconds)
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    stopwatch <- Clock.stopwatch
+                    deadline  <- Clock.deadline(10.seconds)
+                    _         <- control.advance(7.seconds)
+                    elapsed   <- stopwatch.elapsed
+                    timeLeft  <- deadline.timeLeft
+                yield assert(elapsed == 7.seconds && timeLeft == 3.seconds)
+            }
         }
 
         "multiple stopwatches and deadlines" in run {
-            val testClock = new TestClock
-            for
-                stopwatch1 <- Clock.let(testClock)(Clock.stopwatch)
-                deadline1  <- Clock.let(testClock)(Clock.deadline(10.seconds))
-                _ = testClock.advance(3.seconds)
-                stopwatch2 <- Clock.let(testClock)(Clock.stopwatch)
-                deadline2  <- Clock.let(testClock)(Clock.deadline(5.seconds))
-                _ = testClock.advance(4.seconds)
-                elapsed1  <- stopwatch1.elapsed
-                elapsed2  <- stopwatch2.elapsed
-                timeLeft1 <- deadline1.timeLeft
-                timeLeft2 <- deadline2.timeLeft
-            yield
-                assert(elapsed1 == 7.seconds)
-                assert(elapsed2 == 4.seconds)
-                assert(timeLeft1 == 3.seconds)
-                assert(timeLeft2 == 1.second)
-            end for
+            Clock.withTimeControl { control =>
+                for
+                    stopwatch1 <- Clock.stopwatch
+                    deadline1  <- Clock.deadline(10.seconds)
+                    _          <- control.advance(3.seconds)
+                    stopwatch2 <- Clock.stopwatch
+                    deadline2  <- Clock.deadline(5.seconds)
+                    _          <- control.advance(4.seconds)
+                    elapsed1   <- stopwatch1.elapsed
+                    elapsed2   <- stopwatch2.elapsed
+                    timeLeft1  <- deadline1.timeLeft
+                    timeLeft2  <- deadline2.timeLeft
+                yield
+                    assert(elapsed1 == 7.seconds)
+                    assert(elapsed2 == 4.seconds)
+                    assert(timeLeft1 == 3.seconds)
+                    assert(timeLeft2 == 1.second)
+            }
         }
     }
+
+    "Sleep" - {
+        "sleep for specified duration" in run {
+            for
+                clock <- Clock.get
+                start <- Clock.now
+                fiber <- clock.sleep(1.millis)
+                _     <- fiber.get
+                end   <- Clock.now
+            yield
+                val elapsed = end - start
+                assert(elapsed >= 1.millis && elapsed < 20.millis)
+        }
+
+        "multiple sequential sleeps" in run {
+            for
+                clock  <- Clock.get
+                start  <- Clock.now
+                fiber1 <- clock.sleep(2.millis)
+                _      <- fiber1.get
+                mid    <- Clock.now
+                fiber2 <- clock.sleep(2.millis)
+                _      <- fiber2.get
+                end    <- Clock.now
+            yield
+                assert(mid - start >= 2.millis && mid - start < 30.millis)
+                assert(end - start >= 4.millis && end - start < 50.millis)
+        }
+
+        "sleep with zero duration" in run {
+            for
+                clock <- Clock.get
+                start <- Clock.now
+                fiber <- clock.sleep(Duration.Zero)
+                _     <- fiber.get
+                end   <- Clock.now
+            yield assert(end - start < 10.millis)
+        }
+
+        "concurrency" in run {
+            for
+                clock  <- Clock.get
+                start  <- Clock.now
+                fibers <- Kyo.fill(100)(clock.sleep(1.millis))
+                _      <- Kyo.foreachDiscard(fibers)(_.get)
+                end    <- Clock.now
+            yield
+                val elapsed = end - start
+                assert(elapsed >= 1.millis && elapsed < 100.millis)
+        }
+    }
+
+    "TimeShift" - {
+        "speed up time" in run {
+            for
+                wallStart  <- Clock.now
+                shiftedEnd <- Clock.withTimeShift(2)(Clock.sleep(10.millis).map(_.get.andThen(Clock.now)))
+                wallEnd    <- Clock.now
+            yield
+                val elapsedWall    = wallEnd - wallStart
+                val elapsedShifted = shiftedEnd - wallStart
+                assert(elapsedWall >= 5.millis && elapsedWall < 20.millis)
+                assert(elapsedShifted > elapsedWall)
+        }
+
+        "slow down time" in run {
+            for
+                wallStart  <- Clock.now
+                shiftedEnd <- Clock.withTimeShift(0.1)(Clock.sleep(2.millis).map(_.get.andThen(Clock.now)))
+                wallEnd    <- Clock.now
+            yield
+                val elapsedWall    = wallEnd - wallStart
+                val elapsedShifted = shiftedEnd - wallStart
+                assert(elapsedWall >= 20.millis && elapsedWall < 50.millis)
+                assert(elapsedShifted < elapsedWall)
+        }
+
+        "with time control" in run {
+            Clock.withTimeControl { control =>
+                Clock.withTimeShift(2.0) {
+                    for
+                        start <- Clock.now
+                        _     <- control.advance(5.seconds)
+                        end   <- Clock.now
+                    yield
+                        val elapsed = end - start
+                        assert(elapsed == 10.seconds)
+                }
+            }
+        }
+    }
+
+    def intervals(instants: Seq[Instant]): Seq[Duration] =
+        instants.sliding(2, 1).filter(_.size == 2).map(seq => seq(1) - seq(0)).toSeq
+
+    "repeatAtInterval" - {
+        "executes function at interval" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+            yield
+                val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
+                assert(avgInterval >= 1.millis && avgInterval < 10.millis)
+        }
+        "respects interrupt" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+                _        <- Async.sleep(2.millis)
+                result   <- channel.poll
+            yield assert(result.isEmpty)
+        }
+        "with time control" in runJVM {
+            Clock.withTimeControl { control =>
+                for
+                    running  <- AtomicBoolean.init(false)
+                    queue    <- Queue.Unbounded.init[Instant]()
+                    task     <- Clock.repeatAtInterval(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
+                    _        <- untilTrue(control.advance(1.milli).andThen(running.get))
+                    _        <- queue.drain
+                    _        <- control.advance(1.milli).repeat(10)
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield
+                    intervals(instants).foreach(v => assert(v == 1.millis))
+                    succeed
+            }
+        }
+        "with Schedule parameter" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Clock.repeatAtInterval(Schedule.fixed(1.millis))(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+            yield
+                val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
+                assert(avgInterval >= 1.millis && avgInterval < 10.millis)
+        }
+        "with Schedule and state" in run {
+            for
+                channel <- Channel.init[Int](10)
+                task    <- Clock.repeatAtInterval(Schedule.fixed(1.millis), 0)(st => channel.put(st).andThen(st + 1))
+                numbers <- Kyo.fill(10)(channel.take)
+                _       <- task.interrupt
+            yield assert(numbers.toSeq == (0 until 10))
+        }
+        "completes when schedule completes" in run {
+            for
+                channel <- Channel.init[Int](10)
+                task    <- Clock.repeatAtInterval(Schedule.fixed(1.millis).maxDuration(10.millis), 0)(st => channel.put(st).andThen(st + 1))
+                lastState <- task.get
+                numbers   <- channel.drain
+            yield assert(lastState == 10 && numbers.toSeq == (0 until 10))
+        }
+    }
+
+    "repeatWithDelay" - {
+        "executes function with delay" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Clock.repeatWithDelay(1.millis)(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+            yield
+                val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
+                assert(avgDelay >= 1.millis && avgDelay < 10.millis)
+        }
+
+        "respects interrupt" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Clock.repeatWithDelay(1.millis)(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+                _        <- Async.sleep(2.millis)
+                result   <- channel.poll
+            yield assert(result.isEmpty)
+        }
+
+        "with time control" in runJVM {
+            Clock.withTimeControl { control =>
+                for
+                    running  <- AtomicBoolean.init(false)
+                    queue    <- Queue.Unbounded.init[Instant]()
+                    task     <- Clock.repeatWithDelay(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
+                    _        <- untilTrue(control.advance(1.milli).andThen(running.get))
+                    _        <- queue.drain
+                    _        <- control.advance(1.milli).repeat(10)
+                    _        <- task.interrupt
+                    instants <- queue.drain
+                yield
+                    intervals(instants).foreach(v => assert(v == 1.millis))
+                    succeed
+            }
+        }
+
+        "works with Schedule parameter" in run {
+            for
+                channel  <- Channel.init[Instant](10)
+                task     <- Clock.repeatWithDelay(Schedule.fixed(1.millis))(Clock.now.map(channel.put))
+                instants <- Kyo.fill(10)(channel.take)
+                _        <- task.interrupt
+            yield
+                val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
+                assert(avgDelay >= 1.millis && avgDelay < 10.millis)
+        }
+
+        "works with Schedule and state" in run {
+            for
+                channel <- Channel.init[Int](10)
+                task <- Clock.repeatWithDelay(Schedule.fixed(1.millis), 0) { state =>
+                    channel.put(state).as(state + 1)
+                }
+                numbers <- Kyo.fill(10)(channel.take)
+                _       <- task.interrupt
+            yield assert(numbers.toSeq == (0 until 10))
+            end for
+        }
+
+        "completes when schedule completes" in run {
+            for
+                channel <- Channel.init[Int](10)
+                task    <- Clock.repeatWithDelay(Schedule.fixed(1.millis).maxDuration(10.millis), 0)(st => channel.put(st).andThen(st + 1))
+                lastState <- task.get
+                numbers   <- channel.drain
+            yield assert(lastState == 10 && numbers.toSeq == (0 until 10))
+        }
+    }
+
 end ClockTest

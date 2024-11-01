@@ -1016,4 +1016,12 @@ class ResultTest extends Test:
         }
     }
 
+    "absent" in {
+        val result = Result.absent[Int]
+        assert(result == Fail(Absent))
+        assert(result.isFail)
+        assert(!result.isSuccess)
+        assert(!result.isPanic)
+    }
+
 end ResultTest

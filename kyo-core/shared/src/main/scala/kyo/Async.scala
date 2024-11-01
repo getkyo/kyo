@@ -105,19 +105,9 @@ object Async:
       * @param d
       *   The duration to sleep
       */
-    def sleep(d: Duration)(using Frame): Unit < Async =
-        if d == Duration.Zero then ()
-        else
-            IO.Unsafe {
-                val p = Promise.Unsafe.init[Nothing, Unit]()
-                if d.isFinite then
-                    Timer.schedule(d)(p.completeDiscard(Result.success(()))).map { t =>
-                        IO.ensure(t.cancel.unit)(p.safe.get)
-                    }
-                else
-                    p.safe.get
-                end if
-            }
+    def sleep(duration: Duration)(using Frame): Unit < Async =
+        if duration == Duration.Zero then ()
+        else Clock.sleep(duration).map(_.get)
 
     /** Runs a computation with a timeout.
       *
@@ -128,17 +118,24 @@ object Async:
       * @return
       *   The result of the computation, or a Timeout error
       */
-    def timeout[E, A: Flat, Ctx](d: Duration)(v: => A < (Abort[E] & Async & Ctx))(
+    def timeout[E, A: Flat, Ctx](after: Duration)(v: => A < (Abort[E] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, Async & Abort[E | Timeout]],
         frame: Frame
     ): A < (Abort[E | Timeout] & Async & Ctx) =
-        boundary { (trace, context) =>
-            val task = IOTask[Ctx, E | Timeout, A](v, trace, context)
-            Timer.schedule(d)(task.completeDiscard(Result.fail(Timeout(frame)))).map { t =>
-                IO.ensure(t.cancel.unit)(Async.get(task))
+        if !after.isFinite then v
+        else
+            boundary { (trace, context) =>
+                Clock.use { clock =>
+                    IO.Unsafe {
+                        val sleepFiber = clock.unsafe.sleep(after)
+                        val task       = IOTask[Ctx, E | Timeout, A](v, trace, context)
+                        sleepFiber.onComplete(_ => discard(task.interrupt(Result.Fail(Timeout(frame)))))
+                        task.onComplete(_ => discard(sleepFiber.interrupt()))
+                        Async.get(task)
+                    }
+                }
             }
-        }
     end timeout
 
     /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations

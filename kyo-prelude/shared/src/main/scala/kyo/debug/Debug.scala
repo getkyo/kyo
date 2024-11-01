@@ -24,12 +24,12 @@ object Debug:
     def apply[A, S](v: => A < S)(using frame: Frame): A < S =
         Effect.catching {
             v.map { value =>
-                println(frame.show)
+                println(frame.render)
                 printValue(value)
                 value
             }
         } { ex =>
-            println(frame.show)
+            println(frame.render)
             printValue(ex)
             throw ex
         }
@@ -48,7 +48,7 @@ object Debug:
         val interceptor = new Safepoint.Interceptor:
             def enter(frame: Frame, value: Any): Boolean =
                 printValue(value)
-                println(frame.parse.show)
+                println(frame.render)
                 true
             end enter
             def addFinalizer(f: () => Unit): Unit    = ()
@@ -77,7 +77,7 @@ object Debug:
     def values(params: Param[?]*)(using frame: Frame): Unit =
         val tuples = LinkedHashMap(params.map(p => (p.code, p.value))*)
         val string = pprint(tuples).render.replaceFirst("LinkedHashMap", "Params")
-        println(frame.parse.show)
+        println(frame.render)
         println(string)
     end values
 
@@ -104,7 +104,7 @@ object Debug:
     end Param
 
     private def printValue(value: Any) =
-        println("──────────────────────────────".dim)
+        println("───────────────────────────────────".dim)
         val rendered = pprint(value).render
         val truncated =
             if rendered.length > maxValueLength then
@@ -112,6 +112,6 @@ object Debug:
             else
                 rendered
         println(truncated)
-        println("──────────────────────────────".dim)
+        println("───────────────────────────────────".dim)
     end printValue
 end Debug
