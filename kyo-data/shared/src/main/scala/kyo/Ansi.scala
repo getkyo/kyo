@@ -67,18 +67,19 @@ object Ansi:
           */
         def apply(header: String, code: String, trailer: String, startLine: Int = 1): String =
             try
-                val headerLines  = if header.nonEmpty then header.split("\n") else Array.empty[String]
-                val codeLines    = code.split("\n").dropWhile(_.isBlank).reverse.dropWhile(_.isBlank).reverse
-                val trailerLines = if trailer.nonEmpty then trailer.split("\n") else Array.empty[String]
+                val separatorLine = "─".repeat(30).dim
+                val headerLines   = if header.nonEmpty then Array(separatorLine) ++ header.split("\n") else Array.empty[String]
+                val codeLines     = code.split("\n").dropWhile(_.isBlank).reverse.dropWhile(_.isBlank).reverse
+                val trailerLines  = if trailer.nonEmpty then trailer.split("\n") ++ Array(separatorLine) else Array.empty[String]
 
-                val allLines        = headerLines ++ codeLines ++ trailerLines
                 val toDrop          = codeLines.filter(_.trim.nonEmpty).map(_.takeWhile(_ == ' ').length).minOption.getOrElse(0)
-                val lineNumberWidth = (startLine + codeLines.length - 1).toString.length
+                val lineNumberWidth = (startLine + codeLines.length).toString.length
                 val separator       = "│".dim
+                val allLines        = headerLines ++ Array(separatorLine) ++ codeLines ++ Array(separatorLine) ++ trailerLines
 
                 val processedLines = allLines.zipWithIndex.map { case (line, index) =>
-                    val isHeader  = index < headerLines.length
-                    val isTrailer = index >= (headerLines.length + codeLines.length)
+                    val isHeader  = index <= headerLines.length
+                    val isTrailer = index > (headerLines.length + codeLines.length)
                     val lineNumber =
                         if isHeader || isTrailer then
                             " ".repeat(lineNumberWidth)

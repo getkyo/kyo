@@ -9,45 +9,88 @@ opaque type Frame <: AnyRef = String
 
 object Frame:
 
+    private val version = '0'
+
     private val snippetShortMaxChars = 50
 
     given CanEqual[Frame, Frame] = CanEqual.derived
 
-    case class Parsed(
-        declaringClass: String,
-        methodName: String,
-        position: Position,
-        snippetShort: String,
-        snippetLong: String
-    ) derives CanEqual:
+    opaque type Position = String
 
-        def show: String =
-            Ansi.highlight(s"// $position $declaringClass $methodName", snippetLong, s"", position.lineNumber)
+    object Position:
+        extension (self: Position)
+            def fileName: String =
+                self.substring(1, self.indexOf(':'))
 
-        override def toString = s"Frame($declaringClass, $methodName, $position, $snippetShort)"
-    end Parsed
+            def lineNumber: Int =
+                val start = self.indexOf(':') + 1
+                val end   = self.indexOf(':', start)
+                self.substring(start, end).toInt
+            end lineNumber
 
-    case class Position(
-        fileName: String,
-        lineNumber: Int,
-        columnNumber: Int
-    ) derives CanEqual:
-        override def toString = s"$fileName:$lineNumber:$columnNumber"
+            def columnNumber: Int =
+                val firstColon = self.indexOf(':')
+                val start      = self.indexOf(':', firstColon + 1) + 1
+                val end        = self.indexOf('|', start)
+                self.substring(start, end).toInt
+            end columnNumber
+
+            def show: String =
+                self.substring(1, self.indexOf('|'))
+        end extension
     end Position
 
-    extension (t: Frame)
-        def parse: Parsed =
-            val arr = t.split('£')
-            Parsed(
-                arr(0),
-                arr(1),
-                Position(arr(2), arr(3).toInt, arr(4).toInt),
-                arr(5).split("📍")(0).reverse.take(snippetShortMaxChars).takeWhile(_ != '\n').trim.reverse,
-                arr(5)
-            )
-        end parse
+    extension (self: Frame)
+        private def findNextSeparator(from: Int): Int =
+            self.indexOf('|', from)
 
-        def show: String = parse.show
+        private def parseSection(start: Int, end: Int): String =
+            if end < 0 then self.substring(start)
+            else self.substring(start, end)
+
+        def position: Position = self
+
+        def className: String =
+            val start = findNextSeparator(1) + 1
+            parseSection(start, findNextSeparator(start))
+
+        def methodName: String =
+            val firstSep = findNextSeparator(1)
+            val start    = findNextSeparator(firstSep + 1) + 1
+            parseSection(start, findNextSeparator(start))
+        end methodName
+
+        def snippet: String =
+            val firstSep  = findNextSeparator(1)
+            val secondSep = findNextSeparator(firstSep + 1)
+            val start     = findNextSeparator(secondSep + 1) + 1
+            self.substring(start)
+        end snippet
+
+        def snippetShort: String = snippet.split("📍")(0).reverse.take(snippetShortMaxChars).takeWhile(_ != '\n').trim.reverse
+
+        def show: String = s"Frame(${Position.show(position)}, $className, $methodName, $snippetShort)"
+
+        def render: String =
+            Ansi.highlight(s"// ${Position.show(position)} $className $methodName", snippet.toString(), s"", Position.lineNumber(self))
+
+        def render(details: Any*): String =
+            val detailsString =
+                details.size match
+                    case 0 => ""
+                    case 1 => pprint(details(0)).render
+                    case _ =>
+                        details.map {
+                            case v: String => v
+                            case v         => pprint(v).render
+                        }.mkString("\n\n")
+            Ansi.highlight(
+                s"// ${Position.show(position)} $className $methodName",
+                snippet.toString(),
+                detailsString,
+                Position.lineNumber(self)
+            )
+        end render
     end extension
 
     implicit inline def derive: Frame = ${ frameImpl(false) }
@@ -90,17 +133,17 @@ object Frame:
         val snippetLines  = lines.slice(startLine - 1, endLine + 2).filter(_.exists(_ != ' '))
         val toDrop        = snippetLines.map(_.takeWhile(_ == ' ').size).minOption.getOrElse(0)
         val snippet       = if internal then "<internal>" else snippetLines.map(_.drop(toDrop)).mkString("\n")
-        val cls           = findEnclosing(_.isClassDef).map(show).getOrElse("?")
-        val method        = findEnclosing(_.isDefDef).map(show).getOrElse("?")
+        val cls           = findEnclosing(_.isClassDef).map(render).getOrElse("?")
+        val method        = findEnclosing(_.isDefDef).map(render).getOrElse("?")
 
-        Expr(s"$cls£$method£${pos.sourceFile.name}£${startLine + 1}£${startColumn + 1}£$snippet")
+        Expr(s"$version${pos.sourceFile.name}:${startLine + 1}:${startColumn + 1}|$cls|$method|$snippet")
     end frameImpl
 
-    private def show(using Quotes)(symbol: quotes.reflect.Symbol): String =
+    private def render(using Quotes)(symbol: quotes.reflect.Symbol): String =
         if symbol.isClassDef then symbol.fullName
         else if symbol.isDefDef then symbol.name
         else ""
-    end show
+    end render
 
     private def findEnclosing(using Quotes)(predicate: quotes.reflect.Symbol => Boolean): Maybe[quotes.reflect.Symbol] =
         import quotes.reflect.*
@@ -113,4 +156,5 @@ object Frame:
 
         findSymbol(Symbol.spliceOwner)
     end findEnclosing
+
 end Frame

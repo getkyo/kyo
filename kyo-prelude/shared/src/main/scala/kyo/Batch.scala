@@ -51,7 +51,7 @@ object Batch:
             f(input).map { output =>
                 require(
                     input.size == output.size,
-                    s"Source created at ${frame.parse.position} returned a different number of elements than input: ${input.size} != ${output.size}"
+                    s"Source created at ${frame.position.show} returned a different number of elements than input: ${input.size} != ${output.size}"
                 )
                 ((a: A) => output(a): B < S)
             }
@@ -69,7 +69,7 @@ object Batch:
             f(input).map { output =>
                 require(
                     input.size == output.size,
-                    s"Source created at ${frame.parse.position} returned a different number of elements than input: ${input.size} != ${output.size}"
+                    s"Source created at ${frame.position.show} returned a different number of elements than input: ${input.size} != ${output.size}"
                 )
                 input.zip(output).toMap
             }

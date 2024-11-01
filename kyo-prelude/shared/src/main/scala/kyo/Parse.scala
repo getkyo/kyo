@@ -458,16 +458,5 @@ end Parse
 
 case class ParseFailed(frame: Frame, states: Seq[Parse.State], message: String) extends Exception with Serializable:
 
-    override def getMessage() =
-        Seq(
-            "\n".dim,
-            "──────────────────────────────".dim,
-            "Parse failed! ".red.bold + message,
-            "──────────────────────────────".dim,
-            frame.parse.show,
-            "──────────────────────────────".dim,
-            pprint(states).plainText,
-            "──────────────────────────────".dim
-        ).mkString("\n")
-    end getMessage
+    override def getMessage() = frame.render("Parse failed! ".red.bold + message, states)
 end ParseFailed
