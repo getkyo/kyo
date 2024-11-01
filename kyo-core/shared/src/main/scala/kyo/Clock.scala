@@ -52,7 +52,7 @@ end Clock
 object Clock:
 
     /** A stopwatch for measuring elapsed time. */
-    final case class Stopwatch private[Clock] (unsafe: Stopwatch.Unsafe) extends AnyVal:
+    final case class Stopwatch private[Clock] (unsafe: Stopwatch.Unsafe):
         /** Gets the elapsed time since the stopwatch was created.
           *
           * @return
@@ -70,7 +70,7 @@ object Clock:
     end Stopwatch
 
     /** A deadline for checking remaining time or if it's overdue. */
-    final case class Deadline private[Clock] (unsafe: Deadline.Unsafe) extends AnyVal:
+    final case class Deadline private[Clock] (unsafe: Deadline.Unsafe):
         /** Gets the time left until the deadline.
           *
           * @return

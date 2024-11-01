@@ -69,7 +69,7 @@ object Ansi:
             try
                 val separatorLine = "─".repeat(30).dim
                 val headerLines   = if header.nonEmpty then Array(separatorLine) ++ header.split("\n") else Array.empty[String]
-                val codeLines     = code.split("\n").dropWhile(_.trim.isEmpty).reverse.dropWhile(_.trim.isEmpty).reverse
+                val codeLines     = code.split("\n").dropWhile(_.isBlank).reverse.dropWhile(_.isBlank).reverse
                 val trailerLines  = if trailer.nonEmpty then trailer.split("\n") ++ Array(separatorLine) else Array.empty[String]
 
                 val toDrop          = codeLines.filter(_.trim.nonEmpty).map(_.takeWhile(_ == ' ').length).minOption.getOrElse(0)

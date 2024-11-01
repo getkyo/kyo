@@ -189,4 +189,23 @@ class BoundaryTest extends Test:
         }
     }
 
+    "context inheritance" - {
+        sealed trait IsolatedEffect    extends ContextEffect[Int] with ContextEffect.Isolated
+        sealed trait NonIsolatedEffect extends ContextEffect[String]
+
+        "should propagate only non-isolated effects" in {
+            val boundary = Boundary.derive[NonIsolatedEffect, Any]
+
+            val context =
+                ContextEffect.handle(Tag[IsolatedEffect], 24, _ + 1) {
+                    ContextEffect.handle(Tag[NonIsolatedEffect], "test", _.toUpperCase) {
+                        boundary { (trace, context) => context }
+                    }
+                }.eval
+
+            assert(!context.contains(Tag[IsolatedEffect]))
+            assert(context.contains(Tag[NonIsolatedEffect]))
+        }
+    }
+
 end BoundaryTest
