@@ -614,4 +614,57 @@ class TextTest extends Test:
         }
     }
 
+    "takeWhile" in {
+        assert(Text("hello123").takeWhile(_.isLetter).toString == "hello")
+        assert(Text("123").takeWhile(_.isLetter).isEmpty)
+        assert(Text("").takeWhile(_.isLetter).isEmpty)
+    }
+
+    "filter" in {
+        assert(Text("h3ll0").filter(_.isLetter).toString == "hll")
+        assert(Text("123").filter(_.isLetter).isEmpty)
+        assert(Text("").filter(_.isLetter).isEmpty)
+    }
+
+    "exists" in {
+        assert(Text("hello123").exists(_.isDigit))
+        assert(!Text("hello").exists(_.isDigit))
+        assert(!Text("").exists(_.isDigit))
+    }
+
+    "forall" in {
+        assert(Text("hello").forall(_.isLetter))
+        assert(!Text("hello123").forall(_.isLetter))
+        assert(Text("").forall(_.isLetter))
+    }
+
+    "reverse" - {
+        "simple text" in {
+            assert(Text("hello").reverse.toString == "olleh")
+        }
+
+        "empty text" in {
+            assert(Text("").reverse.isEmpty)
+        }
+
+        "palindrome" in {
+            val text = Text("racecar")
+            assert(text.reverse.is(text))
+        }
+    }
+
+    "until operations" - {
+        "takeUntilNext" in {
+            assert(Text("hello123").takeUntilNext(_.isLetter).toString == "hello")
+            assert(Text("123").takeUntilNext(_.isLetter).isEmpty)
+            assert(Text("").takeUntilNext(_.isLetter).isEmpty)
+        }
+
+        "dropUntilNext" in {
+            assert(Text("hello123world").dropUntilNext(_.isLetter).toString == "23world")
+            assert(Text("hello").dropUntilNext(_.isLetter).isEmpty)
+            assert(Text("").dropUntilNext(_.isLetter).isEmpty)
+        }
+    }
+
 end TextTest
