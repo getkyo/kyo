@@ -360,4 +360,31 @@ class QueueTest extends Test:
             }
         }
     end if
+
+    "Kyo computations" - {
+        "IO" in run {
+            for
+                queue  <- Queue.init[Int < IO](2)
+                _      <- queue.offer(IO(42))
+                result <- queue.poll.map(_.get)
+            yield assert(result == 42)
+        }
+        "AtomicBoolean" in run {
+            for
+                flag   <- AtomicBoolean.init(false)
+                queue  <- Queue.init[Int < IO](2)
+                _      <- queue.offer(flag.set(true).andThen(42))
+                before <- flag.get
+                result <- queue.poll.map(_.get)
+                after  <- flag.get
+            yield assert(!before && result == 42 && after)
+        }
+        "Env" in run {
+            for
+                queue  <- Queue.init[Int < Env[Int]](2)
+                _      <- queue.offer(Env.use[Int](_ + 22))
+                result <- Env.run(20)(queue.poll.map(_.get))
+            yield assert(result == 42)
+        }
+    }
 end QueueTest
