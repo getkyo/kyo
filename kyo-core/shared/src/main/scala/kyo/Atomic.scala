@@ -91,6 +91,13 @@ final case class AtomicInt private (unsafe: AtomicInt.Unsafe):
 end AtomicInt
 
 object AtomicInt:
+
+    /** Creates a new AtomicInt with an initial value of 0.
+      * @return
+      *   A new AtomicInt instance initialized to 0
+      */
+    def init(using Frame): AtomicInt < IO = init(0)
+
     /** Creates a new AtomicInt with the given initial value.
       * @param v
       *   The initial value
@@ -106,7 +113,9 @@ object AtomicInt:
     object Unsafe:
         given Flat[Unsafe] = Flat.unsafe.bypass
 
-        def init(v: Int)(using allow: AllowUnsafe): Unsafe = new j.AtomicInteger(v)
+        def init(using AllowUnsafe): Unsafe = init(0)
+
+        def init(v: Int)(using AllowUnsafe): Unsafe = new j.AtomicInteger(v)
 
         extension (self: Unsafe)
             inline def get()(using inline allow: AllowUnsafe): Int                         = self.get()
@@ -214,6 +223,12 @@ end AtomicLong
 
 object AtomicLong:
 
+    /** Creates a new AtomicLong with an initial value of 0.
+      * @return
+      *   A new AtomicLong instance initialized to 0
+      */
+    def init(using Frame): AtomicLong < IO = init(0)
+
     /** Creates a new AtomicLong with the given initial value.
       * @param v
       *   The initial value
@@ -228,6 +243,8 @@ object AtomicLong:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given Flat[Unsafe] = Flat.unsafe.bypass
+
+        def init(using AllowUnsafe): Unsafe = init(0)
 
         def init(v: Long)(using AllowUnsafe): Unsafe = new j.AtomicLong(v)
 
@@ -297,6 +314,12 @@ end AtomicBoolean
 
 object AtomicBoolean:
 
+    /** Creates a new AtomicBoolean with an initial value of false.
+      * @return
+      *   A new AtomicBoolean instance initialized to false
+      */
+    def init(using Frame): AtomicBoolean < IO = init(false)
+
     /** Creates a new AtomicBoolean with the given initial value.
       * @param v
       *   The initial value
@@ -311,6 +334,8 @@ object AtomicBoolean:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         given Flat[Unsafe] = Flat.unsafe.bypass
+
+        def init(using AllowUnsafe): Unsafe = init(false)
 
         def init(v: Boolean)(using AllowUnsafe): Unsafe = new j.AtomicBoolean(v)
 
