@@ -179,6 +179,33 @@ class ChannelTest extends Test:
         }
     }
 
+    "Kyo computations" - {
+        "IO" in run {
+            for
+                channel <- Channel.init[Int < IO](2)
+                _       <- channel.put(IO(42))
+                result  <- channel.take.flatten
+            yield assert(result == 42)
+        }
+        "AtomicBoolean" in run {
+            for
+                flag    <- AtomicBoolean.init(false)
+                channel <- Channel.init[Int < IO](2)
+                _       <- channel.put(flag.set(true).andThen(42))
+                before  <- flag.get
+                result  <- channel.take.flatten
+                after   <- flag.get
+            yield assert(!before && result == 42 && after)
+        }
+        "Env" in run {
+            for
+                channel <- Channel.init[Int < Env[Int]](2)
+                _       <- channel.put(Env.use[Int](_ + 22))
+                result  <- Env.run(20)(channel.take.flatten)
+            yield assert(result == 42)
+        }
+    }
+
     "concurrency" - {
 
         val repeats = 100
