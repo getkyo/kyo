@@ -199,6 +199,83 @@ class EmitTest extends Test:
         }
     }
 
+    "runFold" - {
+        "basic folding" in {
+            val v =
+                for
+                    _ <- Emit(1)
+                    _ <- Emit(2)
+                    _ <- Emit(3)
+                yield "a"
+
+            val result = Emit.runFold(0)((acc, v: Int) => (acc + v, Emit.Ack.Continue()))(v).eval
+            assert(result == (6, "a"))
+        }
+
+        "early termination" in {
+            val v =
+                for
+                    _ <- Emit(1)
+                    _ <- Emit(2)
+                    _ <- Emit(3)
+                    _ <- Emit(4)
+                yield "a"
+
+            val result = Emit.runFold(0)((acc, v: Int) =>
+                if v < 3 then (acc + v, Emit.Ack.Continue())
+                else (acc, Emit.Ack.Stop)
+            )(v).eval
+            assert(result == (3, "a"))
+        }
+
+        "with effects" in {
+            val v =
+                for
+                    _ <- Emit(1)
+                    _ <- Emit(2)
+                    _ <- Emit(3)
+                yield "a"
+
+            val result = Env.run(10) {
+                Emit.runFold(0)((acc, v: Int) =>
+                    for
+                        threshold <- Env.get[Int]
+                        newAcc = if v < threshold then acc + v else acc
+                    yield (newAcc, Emit.Ack.Continue())
+                )(v)
+            }.eval
+            assert(result == (6, "a"))
+        }
+    }
+
+    "runDiscard" - {
+        "discards all values" in {
+            val v =
+                for
+                    _ <- Emit(1)
+                    _ <- Emit(2)
+                    _ <- Emit(3)
+                yield "a"
+
+            val result = Emit.runDiscard(v).eval
+            assert(result == "a")
+        }
+
+        "with effects" in {
+            var count = 0
+            val v =
+                for
+                    _ <- Emit(1)
+                    _ <- Emit(2)
+                    _ <- Emit(3)
+                yield count
+
+            val result = Emit.runDiscard(v).eval
+            assert(result == 0)
+            assert(count == 0) // Ensures values were truly discarded
+        }
+    }
+
     "generic type parameters" - {
         "single generic emit" in {
             def emitGeneric[T: Tag](value: T): Unit < Emit[T] =

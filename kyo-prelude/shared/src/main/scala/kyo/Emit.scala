@@ -109,13 +109,14 @@ object Emit:
           * @param acc
           *   The initial accumulator value
           * @param f
-          *   The folding function
+          *   The folding function that takes the current accumulator and emitted value, and returns a tuple of the new accumulator and an
+          *   Ack to control further emissions
           * @param v
           *   The computation with Emit effect
           * @return
           *   A tuple of the final accumulator value and the result of the computation
           */
-        def apply[A, S, B: Flat, S2](acc: A)(f: (A, V) => A < S)(v: B < (Emit[V] & S2))(
+        def apply[A, S, B: Flat, S2](acc: A)(f: (A, V) => (A, Ack) < S)(v: B < (Emit[V] & S2))(
             using
             tag: Tag[Emit[V]],
             frame: Frame
@@ -123,7 +124,7 @@ object Emit:
             ArrowEffect.handle.state(tag, acc, v)(
                 handle = [C] =>
                     (input, state, cont) =>
-                        f(state, input).map((_, cont(Ack.Continue()))),
+                        f(state, input).map((a, ack) => (a, cont(ack))),
                 done = (state, res) => (state, res)
             )
     end RunFoldOps
