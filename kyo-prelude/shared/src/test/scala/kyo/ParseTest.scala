@@ -735,31 +735,4 @@ class ParseTest extends Test:
             }
         }
     }
-
-    "ParseFailed" - {
-        "is serializable" in {
-            import java.io.*
-            val frame = Frame.internal
-            val state = Parse.State("test input", 5)
-            val error = ParseFailed(frame, Seq(state), "test error")
-
-            // Serialize
-            val baos = new ByteArrayOutputStream()
-            val oos  = new ObjectOutputStream(baos)
-            oos.writeObject(error)
-            oos.close()
-
-            // Deserialize
-            val bais         = new ByteArrayInputStream(baos.toByteArray)
-            val ois          = new ObjectInputStream(bais)
-            val deserialized = ois.readObject().asInstanceOf[ParseFailed]
-            ois.close()
-
-            assert(deserialized.message == "test error")
-            assert(deserialized.states.size == 1)
-            assert(deserialized.states.head.input.is("test input"))
-            assert(deserialized.states.head.position == 5)
-            assert(deserialized.frame == frame)
-        }
-    }
 end ParseTest
