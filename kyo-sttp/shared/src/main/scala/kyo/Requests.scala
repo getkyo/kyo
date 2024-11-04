@@ -14,6 +14,11 @@ case class FailedRequest(cause: String | Throwable) extends Exception:
         cause match
             case ex: Throwable => ex
             case _             => null
+
+    override def getMessage(): String =
+        cause match
+            case ex: Throwable => ex.getMessage
+            case str: String   => str
 end FailedRequest
 
 object Requests:
