@@ -1,6 +1,8 @@
 import sbt._
 
 object Repeat {
+    val usage = "Usage: repeat <command> | repeat <number-of-times> <command>"
+
     private def executeCommand(command: String, state: State): (Boolean, State) = {
         var success = true
         val newState = Command.process(
@@ -61,11 +63,11 @@ object Repeat {
                     }
                 } catch {
                     case _: NumberFormatException =>
-                        println("Usage: repeat <command> | repeat <number-of-times> <command>")
+                        println(usage)
                         state
                 }
             case _ =>
-                println("Usage: repeat <command> | repeat <number-of-times> <command>")
+                println(usage)
                 state
         }
     }
