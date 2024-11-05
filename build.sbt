@@ -48,6 +48,8 @@ ThisBuild / sonatypeProfileName    := "io.getkyo"
 
 ThisBuild / useConsoleForROGit := (baseDirectory.value / ".git").isFile
 
+Global / commands += Repeat.command
+
 lazy val `kyo-settings` = Seq(
     fork               := true,
     scalaVersion       := scala3Version,
