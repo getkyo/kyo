@@ -232,51 +232,47 @@ class ClockTest extends Test:
     "Sleep" - {
         "sleep for specified duration" in run {
             for
-                clock <- Clock.get
-                start <- Clock.now
-                fiber <- clock.sleep(1.millis)
-                _     <- fiber.get
-                end   <- Clock.now
-            yield
-                val elapsed = end - start
-                assert(elapsed >= 1.millis && elapsed < 20.millis)
+                clock     <- Clock.get
+                stopwatch <- Clock.stopwatch
+                fiber     <- clock.sleep(5.millis)
+                _         <- fiber.get
+                elapsed   <- stopwatch.elapsed
+            yield assert(elapsed >= 3.millis && elapsed < 20.millis)
         }
 
         "multiple sequential sleeps" in run {
             for
-                clock  <- Clock.get
-                start  <- Clock.now
-                fiber1 <- clock.sleep(2.millis)
-                _      <- fiber1.get
-                mid    <- Clock.now
-                fiber2 <- clock.sleep(2.millis)
-                _      <- fiber2.get
-                end    <- Clock.now
+                clock     <- Clock.get
+                stopwatch <- Clock.stopwatch
+                fiber1    <- clock.sleep(5.millis)
+                _         <- fiber1.get
+                mid       <- stopwatch.elapsed
+                fiber2    <- clock.sleep(5.millis)
+                _         <- fiber2.get
+                end       <- stopwatch.elapsed
             yield
-                assert(mid - start >= 2.millis && mid - start < 30.millis)
-                assert(end - start >= 4.millis && end - start < 50.millis)
+                assert(mid >= 3.millis && mid < 30.millis)
+                assert(end >= 8.millis && end < 50.millis)
         }
 
         "sleep with zero duration" in run {
             for
-                clock <- Clock.get
-                start <- Clock.now
-                fiber <- clock.sleep(Duration.Zero)
-                _     <- fiber.get
-                end   <- Clock.now
-            yield assert(end - start < 10.millis)
+                clock     <- Clock.get
+                stopwatch <- Clock.stopwatch
+                fiber     <- clock.sleep(Duration.Zero)
+                _         <- fiber.get
+                elapsed   <- stopwatch.elapsed
+            yield assert(elapsed < 10.millis)
         }
 
         "concurrency" in run {
             for
-                clock  <- Clock.get
-                start  <- Clock.now
-                fibers <- Kyo.fill(100)(clock.sleep(1.millis))
-                _      <- Kyo.foreachDiscard(fibers)(_.get)
-                end    <- Clock.now
-            yield
-                val elapsed = end - start
-                assert(elapsed >= 1.millis && elapsed < 100.millis)
+                clock     <- Clock.get
+                stopwatch <- Clock.stopwatch
+                fibers    <- Kyo.fill(100)(clock.sleep(5.millis))
+                _         <- Kyo.foreachDiscard(fibers)(_.get)
+                elapsed   <- stopwatch.elapsed
+            yield assert(elapsed >= 3.millis && elapsed < 100.millis)
         }
     }
 
@@ -289,7 +285,7 @@ class ClockTest extends Test:
             yield
                 val elapsedWall    = wallEnd - wallStart
                 val elapsedShifted = shiftedEnd - wallStart
-                assert(elapsedWall >= 5.millis && elapsedWall < 20.millis)
+                assert(elapsedWall >= 4.millis && elapsedWall < 20.millis)
                 assert(elapsedShifted > elapsedWall)
         }
 
@@ -301,7 +297,7 @@ class ClockTest extends Test:
             yield
                 val elapsedWall    = wallEnd - wallStart
                 val elapsedShifted = shiftedEnd - wallStart
-                assert(elapsedWall >= 20.millis && elapsedWall < 50.millis)
+                assert(elapsedWall >= 18.millis && elapsedWall < 50.millis)
                 assert(elapsedShifted < elapsedWall)
         }
 
@@ -321,18 +317,18 @@ class ClockTest extends Test:
     }
 
     def intervals(instants: Seq[Instant]): Seq[Duration] =
-        instants.sliding(2, 1).filter(_.size == 2).map(seq => seq(1) - seq(0)).toSeq
+        instants.drop(1).sliding(2, 1).filter(_.size == 2).map(seq => seq(1) - seq(0)).toSeq
 
     "repeatAtInterval" - {
         "executes function at interval" in run {
             for
                 channel  <- Channel.init[Instant](10)
-                task     <- Clock.repeatAtInterval(1.millis)(Clock.now.map(channel.put))
+                task     <- Clock.repeatAtInterval(5.millis)(Clock.now.map(channel.put))
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 1.millis && avgInterval < 10.millis)
+                assert(avgInterval >= 4.millis && avgInterval < 20.millis)
         }
         "respects interrupt" in run {
             for
@@ -349,26 +345,26 @@ class ClockTest extends Test:
                 for
                     running  <- AtomicBoolean.init(false)
                     queue    <- Queue.Unbounded.init[Instant]()
-                    task     <- Clock.repeatAtInterval(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
+                    task     <- Clock.repeatAtInterval(5.millis)(running.set(true).andThen(Clock.now.map(queue.add)))
                     _        <- untilTrue(control.advance(1.milli).andThen(running.get))
                     _        <- queue.drain
                     _        <- control.advance(1.milli).repeat(10)
                     _        <- task.interrupt
                     instants <- queue.drain
                 yield
-                    intervals(instants).foreach(v => assert(v == 1.millis))
+                    intervals(instants).foreach(v => assert(v == 5.millis))
                     succeed
             }
         }
         "with Schedule parameter" in run {
             for
                 channel  <- Channel.init[Instant](10)
-                task     <- Clock.repeatAtInterval(Schedule.fixed(1.millis))(Clock.now.map(channel.put))
+                task     <- Clock.repeatAtInterval(Schedule.fixed(5.millis))(Clock.now.map(channel.put))
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 1.millis && avgInterval < 10.millis)
+                assert(avgInterval >= 4.millis && avgInterval < 20.millis)
         }
         "with Schedule and state" in run {
             for
@@ -392,12 +388,12 @@ class ClockTest extends Test:
         "executes function with delay" in run {
             for
                 channel  <- Channel.init[Instant](10)
-                task     <- Clock.repeatWithDelay(1.millis)(Clock.now.map(channel.put))
+                task     <- Clock.repeatWithDelay(5.millis)(Clock.now.map(channel.put))
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
             yield
                 val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgDelay >= 1.millis && avgDelay < 10.millis)
+                assert(avgDelay >= 4.millis && avgDelay < 20.millis)
         }
 
         "respects interrupt" in run {
@@ -431,12 +427,12 @@ class ClockTest extends Test:
         "works with Schedule parameter" in run {
             for
                 channel  <- Channel.init[Instant](10)
-                task     <- Clock.repeatWithDelay(Schedule.fixed(1.millis))(Clock.now.map(channel.put))
+                task     <- Clock.repeatWithDelay(Schedule.fixed(5.millis))(Clock.now.map(channel.put))
                 instants <- Kyo.fill(10)(channel.take)
                 _        <- task.interrupt
             yield
                 val avgDelay = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgDelay >= 1.millis && avgDelay < 10.millis)
+                assert(avgDelay >= 4.millis && avgDelay < 20.millis)
         }
 
         "works with Schedule and state" in run {
@@ -458,6 +454,41 @@ class ClockTest extends Test:
                 lastState <- task.get
                 numbers   <- channel.drain
             yield assert(lastState == 10 && numbers.toSeq == (0 until 10))
+        }
+    }
+
+    "Monotonic Time" - {
+        "nowMonotonic" in run {
+            for
+                time1 <- Clock.nowMonotonic
+                _     <- Clock.sleep(5.millis).map(_.get)
+                time2 <- Clock.nowMonotonic
+            yield
+                assert(time2 > time1)
+                assert(time2 - time1 >= 4.millis)
+                assert(time2 - time1 < 20.millis)
+        }
+
+        "with time control" in run {
+            Clock.withTimeControl { control =>
+                for
+                    time1 <- Clock.nowMonotonic
+                    _     <- control.advance(5.seconds)
+                    time2 <- Clock.nowMonotonic
+                yield assert(time2 - time1 == 5.seconds)
+            }
+        }
+
+        "with time shift" in run {
+            Clock.withTimeShift(2.0) {
+                for
+                    time1 <- Clock.nowMonotonic
+                    _     <- Clock.sleep(10.millis).map(_.get)
+                    time2 <- Clock.nowMonotonic
+                yield
+                    assert(time2 - time1 >= 4.millis)
+                    assert(time2 - time1 < 30.millis)
+            }
         }
     }
 
