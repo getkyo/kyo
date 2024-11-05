@@ -31,7 +31,7 @@ import scala.util.control.NoStackTrace
   * @see
   *   [[Async.race]] for racing multiple computations
   */
-opaque type Async <: (IO & Async.Join) = Async.Join & IO
+opaque type Async <: (IO & Async.Join & Abort[Nothing]) = Async.Join & IO & Abort[Nothing]
 
 object Async:
 
