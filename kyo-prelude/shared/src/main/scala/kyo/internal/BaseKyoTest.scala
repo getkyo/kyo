@@ -1,5 +1,6 @@
 package kyo.internal
 
+import java.util.concurrent.TimeoutException
 import kyo.*
 import kyo.kernel.Platform
 import scala.annotation.targetName
@@ -40,11 +41,16 @@ trait BaseKyoTest[S]:
     given throwableCanEqual: CanEqual[Throwable, Throwable]          = CanEqual.derived
 
     def untilTrue[S](f: => Boolean < S): Boolean < S =
+        def now: Duration = System.currentTimeMillis().millis
+        val start         = now
         def loop(): Boolean < S =
-            f.map {
-                case true  => true
-                case false => loop()
-            }
+            if now - start > timeout then
+                throw new TimeoutException
+            else
+                f.map {
+                    case true  => true
+                    case false => loop()
+                }
         loop()
     end untilTrue
 
