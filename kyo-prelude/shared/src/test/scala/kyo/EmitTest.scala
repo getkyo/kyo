@@ -127,6 +127,35 @@ class EmitTest extends Test:
                 }
             }
         }
+        "next" - {
+            "stop short circuits" in run {
+                var executed = false
+                Emit.Ack.Stop.next {
+                    executed = true
+                    Emit.Ack.Continue()
+                }.map { ack =>
+                    assert(ack == Emit.Ack.Stop)
+                    assert(!executed)
+                }
+            }
+
+            "continue executes function" in run {
+                var executed = false
+                Emit.Ack(2).next {
+                    executed = true
+                    Emit.Ack(1)
+                }.map { ack =>
+                    assert(ack == Emit.Ack(1))
+                    assert(executed)
+                }
+            }
+        }
+        "Flat" in {
+            summon[Flat[Emit.Ack]]
+            summon[Flat[Emit.Ack.Continue]]
+            summon[Flat[Emit.Ack.Stop.type]]
+            succeed
+        }
     }
 
     "runAck" - {

@@ -22,8 +22,10 @@ object Emit:
       */
     opaque type Ack = Int
     object Ack:
-        given CanEqual[Ack, Ack] = CanEqual.derived
-        inline given Flat[Ack]   = Flat.unsafe.bypass
+        given CanEqual[Ack, Ack]         = CanEqual.derived
+        inline given Flat[Ack]           = Flat.unsafe.bypass
+        inline given Flat[Ack.Stop.type] = Flat.unsafe.bypass
+        inline given Flat[Ack.Continue]  = Flat.unsafe.bypass
 
         /** Creates an [[Ack]] from a maximum number of values to emit.
           *
@@ -34,7 +36,7 @@ object Emit:
           */
         def apply(maxValues: Int): Ack = Math.max(0, maxValues)
 
-        extension (ack: Ack)
+        extension (self: Ack)
             /** Limits the acknowledgement to a maximum number of values.
               *
               * If this acknowledgement is [[Stop]] or `n` is non-positive then the returned acknowledgement is [[Stop]]. Otherwise, if this
@@ -46,7 +48,25 @@ object Emit:
               * @return
               *   [[Continue]] if the minimum of the current maximum number of values and `n` is positive, [[Stop]] otherwise
               */
-            def maxValues(n: Int): Ack = Ack(Math.min(ack, n))
+            def maxValues(n: Int): Ack = Ack(Math.min(self, n))
+
+            /** Chains acknowledgements by executing a function only if not stopped.
+              *
+              * If the current acknowledgement is [[Stop]], returns [[Stop]] immediately. Otherwise, executes the provided function to get
+              * the next acknowledgement.
+              *
+              * @param f
+              *   The function to execute to get the next acknowledgement
+              * @return
+              *   [[Stop]] if current acknowledgement is [[Stop]], otherwise the result of `f`
+              */
+            inline def next[S](inline f: => Ack < S): Ack < S =
+                if isStop then Stop
+                else f
+
+            // Workaround for compiler issue with inlined `next`
+            private def isStop: Boolean = self == Stop
+        end extension
 
         /** Indicates to continue emitting values */
         opaque type Continue <: Ack = Int
