@@ -65,7 +65,7 @@ object Emit:
                 else f
 
             // Workaround for compiler issue with inlined `next`
-            private def isStop: Boolean = self == Stop
+            private def stop: Boolean = self == Stop
         end extension
 
         /** Indicates to continue emitting values */
