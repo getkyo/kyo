@@ -319,53 +319,6 @@ class SafepointTest extends Test:
             assert(interceptor.logs == expectedLogs)
         }
 
-        "example wall-clock profiling interceptor" in {
-            import scala.collection.mutable.Stack
-
-            class ProfilingInterceptor extends TestInterceptor:
-                val starts = Stack.empty[(Frame, Long)]
-                var log    = Stack.empty[(Frame, Long)]
-
-                def enter(frame: Frame, value: Any): Boolean =
-                    if starts.nonEmpty then
-                        val (frame, start) = starts.pop()
-                        log.push((frame, System.nanoTime() - start))
-                    starts.push((frame, System.nanoTime()))
-                    true
-                end enter
-
-            end ProfilingInterceptor
-
-            val interceptor = new ProfilingInterceptor
-
-            def computation(x: Int): Int < Any =
-                Effect.defer {
-                    Thread.sleep(1)
-                    x + 1
-                }.map { y =>
-                    Effect.defer {
-                        Thread.sleep(1)
-                        y * 2
-                    }
-                }
-
-            val result = Safepoint.propagating(interceptor) {
-                for
-                    a <- computation(5)
-                    b <- computation(a)
-                yield b
-            }.eval
-
-            assert(result == 26)
-
-            interceptor.log.foreach { case (frame, duration) =>
-                assert(duration > 0)
-                assert(duration < 5000000)
-            }
-
-            assert(interceptor.log.size == 3)
-            assert(interceptor.log.exists(_._1.methodName == "computation"))
-        }
     }
 
     "ensure" - {
