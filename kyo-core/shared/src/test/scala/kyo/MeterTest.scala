@@ -351,7 +351,7 @@ class MeterTest extends Test:
         "rate limiter" - {
             "reentrant by default" in runJVM {
                 for
-                    rateLimiter <- Meter.initRateLimiter(1, 1.second)
+                    rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     result <- rateLimiter.run {
                         rateLimiter.run {
                             rateLimiter.run(42)
@@ -362,7 +362,7 @@ class MeterTest extends Test:
 
             "non-reentrant" in runJVM {
                 for
-                    meter  <- Meter.initRateLimiter(1, 1.second, reentrant = false)
+                    meter  <- Meter.initRateLimiter(1, 60.seconds, reentrant = false)
                     p      <- Promise.init[Nothing, Int]
                     f      <- Async.run(meter.run(meter.run(42)))
                     _      <- Async.sleep(5.millis)
@@ -374,7 +374,7 @@ class MeterTest extends Test:
 
             "nested forked fiber can't reenter" in runJVM {
                 for
-                    meter <- Meter.initRateLimiter(1, 1.second)
+                    meter <- Meter.initRateLimiter(1, 60.seconds)
                     (done, result) <- meter.run {
                         meter.run {
                             for
@@ -395,7 +395,7 @@ class MeterTest extends Test:
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1)
-                    rateLimiter <- Meter.initRateLimiter(1, 1.second)
+                    rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     pipeline    <- Meter.pipeline(mutex, sem, rateLimiter)
                     result <- pipeline.run {
                         pipeline.run {
@@ -409,7 +409,7 @@ class MeterTest extends Test:
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1, reentrant = false)
-                    rateLimiter <- Meter.initRateLimiter(1, 1.second)
+                    rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     pipeline    <- Meter.pipeline(mutex, sem, rateLimiter)
                     p           <- Promise.init[Nothing, Int]
                     f <- Async.run(pipeline.run {
@@ -426,7 +426,7 @@ class MeterTest extends Test:
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1)
-                    rateLimiter <- Meter.initRateLimiter(1, 1.second)
+                    rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     meter       <- Meter.pipeline(mutex, sem, rateLimiter)
                     (done, result) <- meter.run {
                         meter.run {
