@@ -61,7 +61,7 @@ object Emit:
               *   [[Stop]] if current acknowledgement is [[Stop]], otherwise the result of `f`
               */
             inline def next[S](inline f: => Ack < S): Ack < S =
-                if isStop then Stop
+                if stop then Stop
                 else f
 
             // Workaround for compiler issue with inlined `next`
