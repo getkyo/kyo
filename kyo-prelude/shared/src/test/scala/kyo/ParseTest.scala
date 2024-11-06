@@ -218,10 +218,74 @@ class ParseTest extends Test:
                 }
             }
 
-            "trailing separator" in run {
-                val parser = Parse.separatedBy(Parse.int, Parse.char(','))
-                Parse.run("1,2,")(parser).map { result =>
-                    assert(result == Chunk(1, 2))
+            "missing separator fails" in run {
+                val parser = Parse.separatedBy(Parse.int.as(Parse.char(' ')), Parse.char(','))
+                Abort.run(Parse.run("1 2 ,3 ")(parser)).map { result =>
+                    assert(result.isFail)
+                }
+            }
+
+            "multiple missing separators fails" in run {
+                val parser = Parse.separatedBy(Parse.int.as(Parse.char(' ')), Parse.char(','))
+                Abort.run(Parse.run("1 2 3")(parser)).map { result =>
+                    assert(result.isFail)
+                }
+            }
+
+            "allowTrailing" - {
+                "accepts trailing separator when enabled" in run {
+                    val parser = Parse.separatedBy(
+                        Parse.int,
+                        Parse.char(','),
+                        allowTrailing = true
+                    )
+                    Parse.run("1,2,3,")(parser).map { result =>
+                        assert(result == Chunk(1, 2, 3))
+                    }
+                }
+
+                "rejects trailing separator when disabled" in run {
+                    val parser = Parse.separatedBy(
+                        Parse.int,
+                        Parse.char(','),
+                        allowTrailing = false
+                    )
+                    Abort.run(Parse.run("1,2,3,")(parser)).map { result =>
+                        assert(result.isFail)
+                    }
+                }
+
+                "handles empty input with trailing enabled" in run {
+                    val parser = Parse.separatedBy(
+                        Parse.int,
+                        Parse.char(','),
+                        allowTrailing = true
+                    )
+                    Parse.run("")(parser).map { result =>
+                        assert(result.isEmpty)
+                    }
+                }
+
+                "handles single element with trailing enabled" in run {
+                    val parser = Parse.separatedBy(
+                        Parse.int,
+                        Parse.char(','),
+                        allowTrailing = true
+                    )
+                    Parse.run("42,")(parser).map { result =>
+                        assert(result == Chunk(42))
+                    }
+                }
+
+                "multiple trailing separators fail even when enabled" in run {
+                    val parser = Parse.separatedBy(
+                        Parse.int,
+                        Parse.char(','),
+                        allowTrailing = true
+                    )
+                    Abort.run(Parse.run("1,2,3,,")(parser)).map { result =>
+                        assert(result.isFail)
+                    }
                 }
             }
         }

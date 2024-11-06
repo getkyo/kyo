@@ -326,9 +326,26 @@ object Parse:
       */
     def separatedBy[A: Flat, S](
         element: A < (Parse & S),
-        separator: Unit < (Parse & S)
+        separator: Unit < (Parse & S),
+        allowTrailing: Boolean = false
     )(using Frame): Chunk[A] < (Parse & S) =
-        repeat(element.map(v => attempt(separator).as(v)))
+        attempt(element).map {
+            case Absent => Chunk.empty
+            case Present(first) =>
+                Loop(Chunk(first)) { acc =>
+                    attempt(separator).map {
+                        case Absent => Loop.done(acc)
+                        case Present(_) =>
+                            attempt(element).map {
+                                case Present(next) =>
+                                    Loop.continue(acc.append(next))
+                                case Absent =>
+                                    if allowTrailing then Loop.done(acc)
+                                    else Parse.drop
+                            }
+                    }
+                }
+        }
 
     /** Parses content between a left and right delimiter.
       *
