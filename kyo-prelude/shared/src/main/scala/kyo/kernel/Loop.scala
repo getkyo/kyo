@@ -25,6 +25,11 @@ object Loop:
         private[Loop] def _4: D
     end Continue4
 
+    given [A, O: Flat]: Flat[Outcome[A, O]]                    = Flat.unsafe.bypass
+    given [A, B, O: Flat]: Flat[Outcome2[A, B, O]]             = Flat.unsafe.bypass
+    given [A, B, C, O: Flat]: Flat[Outcome3[A, B, C, O]]       = Flat.unsafe.bypass
+    given [A, B, C, D, O: Flat]: Flat[Outcome4[A, B, C, D, O]] = Flat.unsafe.bypass
+
     opaque type Outcome[A, O]           = O | Continue[A]
     opaque type Outcome2[A, B, O]       = O | Continue2[A, B]
     opaque type Outcome3[A, B, C, O]    = O | Continue3[A, B, C]
