@@ -597,4 +597,10 @@ class AsyncTest extends Test:
         }
     }
 
+    "Async includes Abort[Nothing]" in run {
+        val a: Int < Abort[Nothing] = 42
+        val b: Int < Async          = a
+        succeed
+    }
+
 end AsyncTest

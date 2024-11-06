@@ -31,7 +31,7 @@ import scala.util.control.NoStackTrace
   * @see
   *   [[Async.race]] for racing multiple computations
   */
-opaque type Async <: (IO & Async.Join) = Async.Join & IO
+opaque type Async <: (IO & Async.Join & Abort[Nothing]) = Async.Join & IO & Abort[Nothing]
 
 object Async:
 
@@ -82,10 +82,9 @@ object Async:
       */
     def mask[E, A: Flat, Ctx](v: => A < (Abort[E] & Async & Ctx))(
         using
-        reduce: Reducible[Abort[E]],
         boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
-    ): A < (reduce.SReduced & Async & Ctx) =
+    ): A < (Abort[E] & Async & Ctx) =
         Async.run(v).map(_.mask.map(_.get))
 
     /** Delays execution of a computation by a specified duration.
@@ -149,10 +148,9 @@ object Async:
     def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
-        reduce: Reducible[Abort[E]],
         frame: Frame
-    ): A < (reduce.SReduced & Async & Ctx) =
-        if seq.isEmpty then reduce(seq(0))
+    ): A < (Abort[E] & Async & Ctx) =
+        if seq.isEmpty then seq(0)
         else Fiber.race(seq).map(_.get)
 
     /** Races two or more computations and returns the result of the first to complete.
@@ -170,9 +168,8 @@ object Async:
     )(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
-        reduce: Reducible[Abort[E]],
         frame: Frame
-    ): A < (reduce.SReduced & Async & Ctx) =
+    ): A < (Abort[E] & Async & Ctx) =
         race[E, A, Ctx](first +: rest)
 
     /** Runs multiple computations in parallel and returns their results. If any computation fails or is interrupted, all other computations
@@ -186,12 +183,11 @@ object Async:
     def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
-        reduce: Reducible[Abort[E]],
         frame: Frame
-    ): Seq[A] < (reduce.SReduced & Async & Ctx) =
+    ): Seq[A] < (Abort[E] & Async & Ctx) =
         seq.size match
             case 0 => Seq.empty
-            case 1 => reduce(seq(0).map(Seq(_)))
+            case 1 => seq(0).map(Seq(_))
             case _ => Fiber.parallel(seq).map(_.get)
         end match
     end parallel
@@ -211,9 +207,8 @@ object Async:
     )(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
-        reduce: Reducible[Abort[E]],
         frame: Frame
-    ): (A1, A2) < (reduce.SReduced & Async & Ctx) =
+    ): (A1, A2) < (Abort[E] & Async & Ctx) =
         parallel(Seq(v1, v2))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2])
         }
@@ -236,9 +231,8 @@ object Async:
     )(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
-        reduce: Reducible[Abort[E]],
         frame: Frame
-    ): (A1, A2, A3) < (reduce.SReduced & Async & Ctx) =
+    ): (A1, A2, A3) < (Abort[E] & Async & Ctx) =
         parallel(Seq(v1, v2, v3))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3])
         }
@@ -264,9 +258,8 @@ object Async:
     )(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
-        reduce: Reducible[Abort[E]],
         frame: Frame
-    ): (A1, A2, A3, A4) < (reduce.SReduced & Async & Ctx) =
+    ): (A1, A2, A3, A4) < (Abort[E] & Async & Ctx) =
         parallel(Seq(v1, v2, v3, v4))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }

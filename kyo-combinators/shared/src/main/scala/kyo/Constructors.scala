@@ -114,9 +114,8 @@ extension (kyoObject: Kyo.type)
         using
         flat: Flat[A1],
         boundary: Boundary[Ctx, Async & Abort[E]],
-        reduce: Reducible[Abort[E]],
         frame: Frame
-    ): Seq[A1] < (reduce.SReduced & Async & Ctx) =
+    ): Seq[A1] < (Abort[E] & Async & Ctx) =
         Async.parallel[E, A1, Ctx](sequence.map(useElement))
 
     /** Applies a function to each element in parallel and discards the results.
@@ -132,9 +131,8 @@ extension (kyoObject: Kyo.type)
         using
         flat: Flat[A1],
         boundary: Boundary[Ctx, Async & Abort[E]],
-        reduce: Reducible[Abort[E]],
         frame: Frame
-    ): Unit < (reduce.SReduced & Async & Ctx) =
+    ): Unit < (Abort[E] & Async & Ctx) =
         foreachPar(sequence)(useElement).unit
 
     /** Creates an effect from an AutoCloseable resource.
