@@ -639,4 +639,38 @@ class LoopTest extends Test:
         Loop.repeat(10000)(io).eval
         assert(count == 10000)
     }
+
+    "flat evidences" - {
+        "Outcome" in {
+            implicitly[Flat[Loop.Outcome[Int, String]]]
+            implicitly[Flat[Loop.Outcome[String, Int]]]
+            implicitly[Flat[Loop.Outcome[Int, Maybe[String]]]]
+            succeed
+        }
+
+        "Outcome2" in {
+            implicitly[Flat[Loop.Outcome2[Int, String, Boolean]]]
+            implicitly[Flat[Loop.Outcome2[String, Int, Maybe[Boolean]]]]
+            succeed
+        }
+
+        "Outcome3" in {
+            implicitly[Flat[Loop.Outcome3[Int, String, Boolean, Double]]]
+            implicitly[Flat[Loop.Outcome3[String, Int, Boolean, Maybe[Double]]]]
+            succeed
+        }
+
+        "Outcome4" in {
+            implicitly[Flat[Loop.Outcome4[Int, String, Boolean, Double, Long]]]
+            implicitly[Flat[Loop.Outcome4[String, Int, Boolean, Double, Maybe[Long]]]]
+            succeed
+        }
+
+        "should not compile for non-Flat output types" in {
+            assertDoesNotCompile("implicitly[Flat[Loop.Outcome[Int, Int < Any]]]")
+            assertDoesNotCompile("implicitly[Flat[Loop.Outcome2[Int, String, Int < Any]]]")
+            assertDoesNotCompile("implicitly[Flat[Loop.Outcome3[Int, String, Boolean, Int < Any]]]")
+            assertDoesNotCompile("implicitly[Flat[Loop.Outcome4[Int, String, Boolean, Double, Int < Any]]]")
+        }
+    }
 end LoopTest
