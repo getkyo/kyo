@@ -441,4 +441,34 @@ class InstantTest extends Test:
         }
     }
 
+    "toDuration" - {
+        "from Epoch" in {
+            val instant = Instant.Epoch
+            assert(instant.toDuration == Duration.Zero)
+        }
+
+        "positive duration" in {
+            val instant = Instant.Epoch + 1000.seconds
+            assert(instant.toDuration == 1000.seconds)
+        }
+
+        "negative duration" in {
+            val instant = Instant.Epoch - 1000.seconds
+            assert(instant.toDuration == Duration.Zero)
+        }
+
+        "with nanoseconds" in {
+            val instant = Instant.Epoch + 1000.seconds + 500.nanos
+            assert(instant.toDuration == 1000.seconds + 500.nanos)
+        }
+
+        "Max instant" in {
+            assert(Instant.Max.toDuration == Duration.Infinity)
+        }
+
+        "Min instant" in {
+            assert(Instant.Min.toDuration == Duration.Zero)
+        }
+    }
+
 end InstantTest

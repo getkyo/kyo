@@ -26,6 +26,17 @@ final case class Clock(unsafe: Clock.Unsafe):
       */
     def now(using Frame): Instant < IO = IO.Unsafe(unsafe.now())
 
+    /** Gets the current monotonic time as a Duration. Unlike `now`, this is guaranteed to be strictly monotonic and suitable for measuring
+      * elapsed time.
+      *
+      * Returns a Duration rather than an Instant because monotonic time represents the time elapsed since some arbitrary starting point
+      * (usually system boot), not a specific point in calendar time.
+      *
+      * @return
+      *   The current monotonic time as a Duration since system start
+      */
+    def nowMonotonic(using Frame): Duration < IO = IO.Unsafe(unsafe.nowMonotonic())
+
     /** Creates a new stopwatch.
       *
       * @return
@@ -63,8 +74,8 @@ object Clock:
 
     object Stopwatch:
         /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
-        final class Unsafe(start: Instant, clock: Clock.Unsafe):
-            def elapsed()(using AllowUnsafe): Duration = clock.now() - start
+        final class Unsafe(start: Duration, clock: Clock.Unsafe):
+            def elapsed()(using AllowUnsafe): Duration = clock.nowMonotonic() - start
             def safe: Stopwatch                        = Stopwatch(this)
         end Unsafe
     end Stopwatch
@@ -160,6 +171,8 @@ object Clock:
                             val underlying  = clock.unsafe
                             val start       = underlying.now()
                             val sleepFactor = (1.toDouble / factor)
+                            def nowMonotonic()(using AllowUnsafe) =
+                                now().toDuration
                             def now()(using AllowUnsafe) =
                                 val diff = underlying.now() - start
                                 start + (diff * factor)
@@ -217,6 +230,8 @@ object Clock:
 
                     def now()(using AllowUnsafe) = current
 
+                    def nowMonotonic()(using AllowUnsafe) = current.toDuration
+
                     def sleep(duration: Duration): Fiber.Unsafe[Nothing, Unit] =
                         val task = new Task(current + duration)
                         queue.synchronized {
@@ -264,6 +279,18 @@ object Clock:
       */
     def now(using Frame): Instant < IO =
         use(_.now)
+
+    /** Gets the current monotonic time using the local Clock instance. Unlike `now`, this is guaranteed to be strictly monotonic and
+      * suitable for measuring elapsed time.
+      *
+      * Returns a Duration rather than an Instant because monotonic time represents the time elapsed since some arbitrary starting point
+      * (usually system boot), not a specific point in calendar time.
+      *
+      * @return
+      *   The current monotonic time as a Duration since system start
+      */
+    def nowMonotonic(using Frame): Duration < IO =
+        use(_.nowMonotonic)
 
     private[kyo] def sleep(duration: Duration)(using Frame): Fiber[Nothing, Unit] < IO =
         use(_.sleep(duration))
@@ -495,9 +522,11 @@ object Clock:
 
         def now()(using AllowUnsafe): Instant
 
+        def nowMonotonic()(using AllowUnsafe): Duration
+
         private[kyo] def sleep(duration: Duration): Fiber.Unsafe[Nothing, Unit]
 
-        final def stopwatch()(using AllowUnsafe): Stopwatch.Unsafe = Stopwatch.Unsafe(now(), this)
+        final def stopwatch()(using AllowUnsafe): Stopwatch.Unsafe = Stopwatch.Unsafe(nowMonotonic(), this)
 
         final def deadline(duration: Duration)(using AllowUnsafe): Deadline.Unsafe =
             if !duration.isFinite then Deadline.Unsafe(Maybe.empty, this)
@@ -509,7 +538,8 @@ object Clock:
     object Unsafe:
         def apply(executor: ScheduledExecutorService)(using AllowUnsafe): Unsafe =
             new Unsafe:
-                def now()(using AllowUnsafe) = Instant.fromJava(java.time.Instant.now())
+                def now()(using AllowUnsafe)          = Instant.fromJava(java.time.Instant.now())
+                def nowMonotonic()(using AllowUnsafe) = java.lang.System.nanoTime().nanos
                 def sleep(duration: Duration) =
                     Promise.Unsafe.fromIOPromise {
                         new IOPromise[Nothing, Unit] with Callable[Unit]:
