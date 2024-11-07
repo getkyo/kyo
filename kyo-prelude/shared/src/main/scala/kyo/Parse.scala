@@ -168,7 +168,7 @@ object Parse:
     def inOrder[A, B, C, D, S](p1: A < (Parse & S), p2: B < (Parse & S), p3: C < (Parse & S), p4: D < (Parse & S))(using
         Frame
     ): (A, B, C, D) < (Parse & S) =
-        inOrder(Seq(p1, p2, p3, p4))(using Flat.unsafe.bypass).map { s =>
+        inOrder(Chunk(p1, p2, p3, p4))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A], s(1).asInstanceOf[B], s(2).asInstanceOf[C], s(3).asInstanceOf[D])
         }
 
