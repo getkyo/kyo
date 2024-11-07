@@ -192,6 +192,38 @@ object Async:
         end match
     end parallel
 
+    /** Runs multiple computations in parallel with a specified level of parallelism and returns their results.
+      *
+      * The computations are divided into groups based on the parallelism parameter. Each group is assigned to a new fiber, and the
+      * computations within each fiber are processed sequentially. For example, with a parallelism of 2 and 6 tasks, there will be 2 fibers,
+      * each processing 3 tasks sequentially.
+      *
+      * If any computation fails or is interrupted, all other computations are interrupted.
+      *
+      * @param parallelism
+      *   The maximum number of fibers to run concurrently
+      * @param seq
+      *   The sequence of computations to run in parallel
+      * @return
+      *   A sequence containing the results of all computations in their original order
+      */
+    def parallelGrouped[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using
+        boundary: Boundary[Ctx, Async & Abort[E]],
+        frame: Frame
+    ): Seq[A] < (Abort[E] & Async & Ctx) =
+        seq.size match
+            case 0 => Seq.empty
+            case 1 => seq(0).map(Seq(_))
+            case n =>
+                if parallelism == 1 then
+                    Kyo.collect(seq)
+                else
+                    val groupSize = Math.ceil(n.toDouble / Math.max(1, parallelism)).toInt
+                    parallel(seq.grouped(groupSize).map(Kyo.collect).toSeq).map(_.flatten)
+                end if
+    end parallelGrouped
+
     /** Runs two computations in parallel and returns their results as a tuple.
       *
       * @param v1

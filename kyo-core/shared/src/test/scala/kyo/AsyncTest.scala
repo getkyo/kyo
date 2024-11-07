@@ -603,4 +603,58 @@ class AsyncTest extends Test:
         succeed
     }
 
+    "parallelGrouped" - {
+        "empty sequence" in run {
+            Async.parallelGrouped(2)(Seq()).map { r =>
+                assert(r == Seq())
+            }
+        }
+
+        "sequence smaller than parallelism" in run {
+            Async.parallelGrouped(5)(Seq(1, 2, 3)).map { r =>
+                assert(r == Seq(1, 2, 3))
+            }
+        }
+
+        "sequence larger than parallelism" in run {
+            AtomicInt.init.map { counter =>
+                def task(i: Int): Int < (IO & Async) =
+                    for
+                        current <- counter.getAndIncrement
+                        _       <- Async.sleep(1.millis)
+                        _       <- counter.decrementAndGet
+                    yield
+                        assert(current < 2)
+                        i
+
+                Async.parallelGrouped(2)((1 to 20).map(task)).map { r =>
+                    counter.get.map { counter =>
+                        assert(r == (1 to 20))
+                        assert(counter == 0)
+                    }
+                }
+            }
+        }
+
+        "parallelism of 1 executes sequentially" in run {
+            AtomicInt.init.map { counter =>
+                def task(i: Int): Int < (IO & Async) =
+                    for
+                        current <- counter.getAndIncrement
+                        _       <- Async.sleep(1.millis)
+                        _       <- counter.decrementAndGet
+                    yield
+                        assert(current == 0)
+                        i
+
+                Async.parallelGrouped(1)((1 to 5).map(task)).map { r =>
+                    counter.get.map { counter =>
+                        assert(r == (1 to 5))
+                        assert(counter == 0)
+                    }
+                }
+            }
+        }
+    }
+
 end AsyncTest
