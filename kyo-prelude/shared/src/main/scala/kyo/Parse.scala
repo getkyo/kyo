@@ -147,7 +147,7 @@ object Parse:
       *   Tuple containing all three parsed results in order. The parse branch is dropped if any parser fails
       */
     def inOrder[A, B, C, S](p1: A < (Parse & S), p2: B < (Parse & S), p3: C < (Parse & S))(using Frame): (A, B, C) < (Parse & S) =
-        inOrder(Seq(p1, p2, p3))(using Flat.unsafe.bypass).map { s =>
+        inOrder(Chunk(p1, p2, p3))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A], s(1).asInstanceOf[B], s(2).asInstanceOf[C])
         }
 
