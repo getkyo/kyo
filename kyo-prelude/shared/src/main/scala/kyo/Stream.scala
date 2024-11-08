@@ -160,7 +160,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
                             Emit.andMap(input)(ack => (0, cont(ack)))
                         else
                             val c = input.dropLeft(state)
-                            if c.isEmpty then (state - c.size, cont(Continue()))
+                            if c.isEmpty then (state - input.size, cont(Continue()))
                             else Emit.andMap(c)(ack => (0, cont(ack)))
             ))
 
