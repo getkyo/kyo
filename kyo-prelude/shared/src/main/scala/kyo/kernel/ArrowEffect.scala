@@ -241,30 +241,25 @@ object ArrowEffect:
         I2[_],
         O2[_],
         E2 <: ArrowEffect[I2, O2],
-        I3[_],
-        O3[_],
-        E3 <: ArrowEffect[I3, O3],
         A,
         S,
         S2
     ](
         inline tag1: Tag[E1],
         inline tag2: Tag[E2],
-        inline tag3: Tag[E3],
-        v: A < (E1 & E2 & E3 & S),
+        v: A < (E1 & E2 & S),
         context: Context
     )(
         inline stop: => Boolean,
-        inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
-        inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2),
-        inline handle3: [C] => (I3[C], Safepoint ?=> O3[C] => A < (E1 & E2 & E3 & S & S2)) => A < (E1 & E2 & E3 & S & S2)
-    )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
-        def partialLoop(v: A < (E1 & E2 & E3 & S & S2), context: Context)(using safepoint: Safepoint): A < (E1 & E2 & E3 & S & S2) =
+        inline handle1: [C] => (I1[C], Safepoint ?=> O1[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2),
+        inline handle2: [C] => (I2[C], Safepoint ?=> O2[C] => A < (E1 & E2 & S & S2)) => A < (E1 & E2 & S & S2)
+    )(using inline _frame: Frame, inline flat: Flat[A], safepoint: Safepoint): A < (E1 & E2 & S & S2) =
+        def partialLoop(v: A < (E1 & E2 & S & S2), context: Context)(using safepoint: Safepoint): A < (E1 & E2 & S & S2) =
             if stop then v
             else
                 v match
                     case kyo: KyoSuspend[?, ?, ?, ?, ?, ?] =>
-                        type Suspend[I[_], O[_], E <: ArrowEffect[I, O]] = KyoSuspend[I, O, E, Any, A, E1 & E2 & E3 & S & S2]
+                        type Suspend[I[_], O[_], E <: ArrowEffect[I, O]] = KyoSuspend[I, O, E, Any, A, E1 & E2 & S & S2]
                         if kyo.tag =:= Tag[Defer] then
                             val k = kyo.asInstanceOf[Suspend[Const[Unit], Const[Unit], Defer]]
                             partialLoop(k((), context), context)
@@ -276,9 +271,6 @@ object ArrowEffect:
                             else if tag2 =:= kyo.tag then
                                 val k = kyo.asInstanceOf[Suspend[I2, O2, E2]]
                                 partialLoop(handle2[Any](k.input, k(_, context)), context)
-                            else if tag3 =:= kyo.tag then
-                                val k = kyo.asInstanceOf[Suspend[I3, O3, E3]]
-                                partialLoop(handle3[Any](k.input, k(_, context)), context)
                             else
                                 v
                             end if

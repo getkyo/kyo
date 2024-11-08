@@ -50,7 +50,7 @@ class IOTest extends Test:
                 IO(IO(1)).map(_ => fail)
             )
             ios.foreach { io =>
-                assert(Try(IO.Unsafe.runLazy(io)) == Try(fail))
+                assert(Try(IO.Unsafe.runLazy(io).eval) == Try(fail))
             }
             succeed
         }
@@ -105,7 +105,7 @@ class IOTest extends Test:
                 IO(IO(1)).map(_ => fail)
             )
             ios.foreach { io =>
-                assert(Try(IO.Unsafe.run(io)) == Try(fail))
+                assert(Try(IO.Unsafe.run(io).eval) == Try(fail))
             }
             succeed
         }
