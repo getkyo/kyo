@@ -47,7 +47,7 @@ class VarTest extends Test:
     }
 
     "runTuple" in {
-        val r = Var.runTuple(1)(Var.update[Int](_ + 1).as(Var.get[Int]).map(_ + 1)).eval
+        val r = Var.runTuple(1)(Var.update[Int](_ + 1).andThen(Var.get[Int]).map(_ + 1)).eval
         assert(r == (2, 3))
     }
 
@@ -73,7 +73,7 @@ class VarTest extends Test:
                 Var.get[Int].map { innerValue =>
                     assert(innerValue == 2)
                 }
-            }.as(Var.get[Int])
+            }.andThen(Var.get[Int])
                 .map { outerValue =>
                     assert(outerValue == 1)
                 }

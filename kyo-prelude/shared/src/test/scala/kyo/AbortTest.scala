@@ -943,7 +943,7 @@ class AbortsTest extends Test:
                 val computation: Int < Abort[CustomError] = Abort.panic(ex)
                 val recovered = Abort.recover[CustomError](
                     onFail = _ => Env.get[Int],
-                    onPanic = _ => Var.update[Int](_ + 1).as(Var.get[Int])
+                    onPanic = _ => Var.update[Int](_ + 1).andThen(Var.get[Int])
                 )(computation)
 
                 val result = Env.run(42)(Var.run(10)(recovered))

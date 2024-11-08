@@ -38,20 +38,11 @@ object `<`:
 
         inline def andThen[B, S2](inline f: Safepoint ?=> B < S2)(
             using
-            inline ev: A => Unit,
             inline frame: Frame,
             inline flatA: WeakFlat[A],
             inline flatB: WeakFlat[B]
         ): B < (S & S2) =
             map(_ => f)
-
-        inline def as[B, S2](other: B < S2)(
-            using
-            inline frame: Frame,
-            inline flatA: WeakFlat[A],
-            inline flatB: WeakFlat[B]
-        ): B < (S & S2) =
-            map(_ => other)
 
         inline def flatMap[B, S2](inline f: Safepoint ?=> A => B < S2)(
             using

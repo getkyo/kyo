@@ -28,7 +28,7 @@ extension [A, S](effect: A < S)
       */
     @targetName("zipLeft")
     def <*[A1, S1](next: => A1 < S1)(using Frame): A < (S & S1) =
-        effect.map(e => next.as(e))
+        effect.map(e => next.andThen(e))
 
     /** Performs this computation and then the next one, returning both results as a tuple.
       *
@@ -75,7 +75,7 @@ extension [A, S](effect: A < S)
     def repeat(schedule: Schedule)(using Flat[A], Frame): A < (S & Async) =
         Loop(schedule) { schedule =>
             schedule.next.map { (delay, nextSchedule) =>
-                effect.delayed(delay).as(Loop.continue(nextSchedule))
+                effect.delayed(delay).andThen(Loop.continue(nextSchedule))
             }.getOrElse {
                 effect.map(Loop.done)
             }
@@ -91,7 +91,7 @@ extension [A, S](effect: A < S)
     def repeat(limit: Int)(using Flat[A], Frame): A < S =
         Loop.indexed { i =>
             if i >= limit then effect.map(Loop.done)
-            else effect.as(Loop.continue)
+            else effect.andThen(Loop.continue)
         }
 
     /** Performs this computation repeatedly with a backoff policy and a limit.
@@ -106,7 +106,7 @@ extension [A, S](effect: A < S)
     def repeat(backoff: Int => Duration, limit: Int)(using Flat[A], Frame): A < (S & Async) =
         Loop.indexed { i =>
             if i >= limit then effect.map(Loop.done)
-            else effect.delayed(backoff(i)).as(Loop.continue)
+            else effect.delayed(backoff(i)).andThen(Loop.continue)
         }
 
     /** Performs this computation repeatedly while the given condition holds.
@@ -236,7 +236,7 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of this computation
       */
     def tap[S1](f: A => Any < S1)(using Frame): A < (S & S1) =
-        effect.map(a => f(a).as(a))
+        effect.map(a => f(a).andThen(a))
 
     /** Performs this computation unless the given condition holds, in which case it returns an Abort[Absent] effect.
       *
@@ -619,7 +619,7 @@ extension [A, S](effect: A < (S & Choice))
       *   A computation that produces the result of this computation with Choice effect
       */
     def filterChoice[S1](fn: A => Boolean < S1)(using Frame): A < (S & S1 & Choice) =
-        effect.map(a => fn(a).map(b => Choice.dropIf(!b)).as(a))
+        effect.map(a => fn(a).map(b => Choice.dropIf(!b)).andThen(a))
 
     /** Handles the Choice effect and returns its result as a `Seq[A]`.
       *

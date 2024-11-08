@@ -233,7 +233,7 @@ class ChannelTest extends Test:
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
 
         "offer and poll" in run {
@@ -253,7 +253,7 @@ class ChannelTest extends Test:
                 channelSize <- channel.size
             yield assert(offered.count(_.contains(true)) == polled.count(_.toMaybe.flatten.isDefined) + channelSize))
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
 
         "put and take" in run {
@@ -272,7 +272,7 @@ class ChannelTest extends Test:
                 takes <- takeFiber.get
             yield assert(puts.count(_.isSuccess) == takes.count(_.isSuccess) && takes.flatMap(_.toMaybe.toList).toSet == (1 to 100).toSet))
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
 
         "offer to full channel during close" in run {
@@ -295,7 +295,7 @@ class ChannelTest extends Test:
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
 
         "concurrent close attempts" in run {
@@ -319,7 +319,7 @@ class ChannelTest extends Test:
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
 
         "offer, poll, put, take, and close" in run {
@@ -355,7 +355,7 @@ class ChannelTest extends Test:
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
     }
 
