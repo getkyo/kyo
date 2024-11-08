@@ -66,23 +66,27 @@ object Parse:
     private def fail(states: Seq[State], message: String)(using frame: Frame): Nothing < Abort[ParseFailed] =
         Abort.fail(ParseFailed(frame, states, message))
 
-    /** Tries all parsers in sequence and returns results from all successful parses. Unlike firstOf, this will evaluate all parsers even
-      * after finding a successful one, which is useful when you need to handle ambiguous grammars.
+    /** Tries each parser in sequence and ensures exactly one succeeds. Unlike firstOf, this will evaluate all parsers, but will fail if
+      * zero or multiple parsers succeed. This is useful for grammars where ambiguous parses should be considered an error.
       *
       * @param seq
       *   Sequence of parsers to try
       * @return
-      *   Result from all successful parsers
+      *   Result from the single successful parser, fails if zero or multiple parsers succeed
       */
     def anyOf[A, S](seq: (A < (Parse & S))*)(using Frame): A < (Parse & S) =
         Choice.eval(seq)(identity)
 
-    /** Like anyOf but commits to first successful parse
+    /** Tries parsers in sequence until the first success, backtracking between attempts.
+      *
+      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
       *
       * @param seq
-      *   Sequence of parsers to try
+      *   Sequence of parsers to try in order
       * @return
-      *   Result from first successful parser, fails if none succeed
+      *   Result from first successful parser, drops the parse branch if none succeed
       */
     def firstOf[A: Flat, S](seq: (A < (Parse & S))*)(using Frame): A < (Parse & S) =
         Loop(seq) {
@@ -92,6 +96,80 @@ object Parse:
                     case Present(value) => Loop.done(value)
                     case Absent         => Loop.continue(tail)
                 }
+        }
+
+    /** Parses a sequence of parsers in order and collects their results. This operation is commonly known as "sequence" in other parsing
+      * libraries.
+      *
+      * @param parsers
+      *   Sequence of parsers to execute sequentially
+      * @return
+      *   Chunk containing all parsed results in order. The parse branch is dropped if any parser fails
+      */
+    def inOrder[A: Flat, S](parsers: Seq[A < (Parse & S)])(using Frame): Chunk[A] < (Parse & S) =
+        parsers.size match
+            case 0 => Chunk.empty
+            case 1 => parsers(0).map(Chunk(_))
+            case _ =>
+                Kyo.foldLeft(parsers)(Chunk.empty[A]) {
+                    case (acc, parser) =>
+                        attempt(parser).map {
+                            case Present(result) => acc.append(result)
+                            case Absent          => Parse.drop
+                        }
+                }
+
+    /** Parses two parsers in sequence and combines their results. This operation is commonly known as "sequence" in other parsing
+      * libraries.
+      *
+      * @param p1
+      *   First parser to execute
+      * @param p2
+      *   Second parser to execute
+      * @return
+      *   Tuple containing both parsed results in order. The parse branch is dropped if either parser fails
+      */
+    def inOrder[A, B, S](p1: A < (Parse & S), p2: B < (Parse & S))(using Frame): (A, B) < (Parse & S) =
+        inOrder(Chunk(p1, p2))(using Flat.unsafe.bypass).map { s =>
+            (s(0).asInstanceOf[A], s(1).asInstanceOf[B])
+        }
+
+    /** Parses three parsers in sequence and combines their results. This operation is commonly known as "sequence" in other parsing
+      * libraries.
+      *
+      * @param p1
+      *   First parser to execute
+      * @param p2
+      *   Second parser to execute
+      * @param p3
+      *   Third parser to execute
+      * @return
+      *   Tuple containing all three parsed results in order. The parse branch is dropped if any parser fails
+      */
+    def inOrder[A, B, C, S](p1: A < (Parse & S), p2: B < (Parse & S), p3: C < (Parse & S))(using Frame): (A, B, C) < (Parse & S) =
+        inOrder(Chunk(p1, p2, p3))(using Flat.unsafe.bypass).map { s =>
+            (s(0).asInstanceOf[A], s(1).asInstanceOf[B], s(2).asInstanceOf[C])
+        }
+
+    /** Parses four parsers in sequence and combines their results. This operation is commonly known as "sequence" in other parsing
+      * libraries.
+      *
+      * @param p1
+      *   First parser to execute
+      * @param p2
+      *   Second parser to execute
+      * @param p3
+      *   Third parser to execute
+      * @param p4
+      *   Fourth parser to execute
+      * @return
+      *   Tuple containing all four parsed results in order. The parse branch is dropped if any parser fails
+      */
+    def inOrder[A, B, C, D, S](p1: A < (Parse & S), p2: B < (Parse & S), p3: C < (Parse & S), p4: D < (Parse & S))(using
+        Frame
+    ): (A, B, C, D) < (Parse & S) =
+        inOrder(Chunk(p1, p2, p3, p4))(using Flat.unsafe.bypass).map { s =>
+            (s(0).asInstanceOf[A], s(1).asInstanceOf[B], s(2).asInstanceOf[C], s(3).asInstanceOf[D])
         }
 
     /** Selects between multiple successful parses using a selection function. This is useful for implementing custom disambiguation
@@ -167,18 +245,23 @@ object Parse:
             }
         }
 
-    /** Like attempt but commits to the parse result and fails instead of returning Maybe.empty. This is useful when you want to commit to a
-      * parsing branch and prevent backtracking, effectively saying "if we got this far, this must be the correct parse".
+    /** Like attempt but requires the parse to succeed, failing instead of returning Maybe.empty. Use this when a parser must succeed at
+      * this point - if it fails, the entire parse fails with no possibility of backtracking.
+      *
+      * This operation is sometimes known as a "cut" in other parsing libraries, as it cuts off the possibility of backtracking.
       *
       * @param v
-      *   Parser to attempt
+      *   Parser to run
       * @return
       *   Parser result, fails if parser fails with no possibility of backtracking
       */
-    def cut[A: Flat, S](v: A < (Parse & S))(using Frame): A < (Parse & S) =
+    def require[A: Flat, S](v: A < (Parse & S))(using Frame): A < (Parse & S) =
         attempt(v).map {
             case Present(a) => a
-            case Absent     => Parse.fail("Failed to parse required element")
+            case Absent => Parse.fail(
+                    "Parse.require failed - parser did not match at this position. A required parser " +
+                        "fails the entire parse instead of allowing backtracking."
+                )
         }
 
     /** Tries a parser without consuming input
@@ -228,6 +311,67 @@ object Parse:
                     case Absent     => Parse.drop
                 }
         }
+
+    /** Parses a sequence of elements separated by a delimiter. For example, parsing comma-separated values or space-separated words.
+      *
+      * The parser succeeds with an empty chunk if no elements can be parsed, otherwise parses elements until no more element-separator
+      * pairs are found.
+      *
+      * @param element
+      *   Parser for individual elements
+      * @param separator
+      *   Parser for the delimiter between elements
+      * @return
+      *   Chunk of successfully parsed elements
+      */
+    def separatedBy[A: Flat, S](
+        element: A < (Parse & S),
+        separator: Unit < (Parse & S),
+        allowTrailing: Boolean = false
+    )(using Frame): Chunk[A] < (Parse & S) =
+        attempt(element).map {
+            case Absent => Chunk.empty
+            case Present(first) =>
+                Loop(Chunk(first)) { acc =>
+                    attempt(separator).map {
+                        case Absent => Loop.done(acc)
+                        case Present(_) =>
+                            attempt(element).map {
+                                case Present(next) =>
+                                    Loop.continue(acc.append(next))
+                                case Absent =>
+                                    if allowTrailing then Loop.done(acc)
+                                    else Parse.drop
+                            }
+                    }
+                }
+        }
+
+    /** Parses content between a left and right delimiter.
+      *
+      * @param left
+      *   Parser for left delimiter
+      * @param content
+      *   Parser for content between delimiters
+      * @param right
+      *   Parser for right delimiter
+      * @return
+      *   The parsed content
+      */
+    def between[A: Flat, S](
+        left: Any < (Parse & S),
+        content: A < (Parse & S),
+        right: Any < (Parse & S)
+    )(using Frame): A < (Parse & S) =
+        for
+            _      <- left
+            result <- content
+            _      <- right
+        yield result
+
+    // **************
+    // ** Handlers **
+    // **************
 
     /** Runs a parser on input text
       *

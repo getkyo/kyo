@@ -161,20 +161,280 @@ class ParseTest extends Test:
             }
         }
 
-        "cut" - {
+        "require" - {
             "succeeds with match" in run {
-                val parser = Parse.cut(Parse.literal("test"))
+                val parser = Parse.require(Parse.literal("test"))
                 Parse.run("test")(parser).map(_ => succeed)
             }
 
             "fails without backtracking" in run {
                 val parser =
                     Parse.firstOf(
-                        Parse.cut(Parse.literal("test")),
+                        Parse.require(Parse.literal("test")),
                         Parse.literal("world")
                     )
                 Abort.run(Parse.run("world")(parser)).map { result =>
                     assert(result.isFail)
+                }
+            }
+        }
+
+        "separatedBy" - {
+            "comma separated numbers" in run {
+                val parser = Parse.separatedBy(
+                    Parse.int,
+                    Parse.char(',')
+                )
+                Parse.run("1,2,3")(parser).map { result =>
+                    assert(result == Chunk(1, 2, 3))
+                }
+            }
+
+            "with whitespace" in run {
+                val parser = Parse.separatedBy(
+                    Parse.int,
+                    for
+                        _ <- Parse.whitespaces
+                        _ <- Parse.char(',')
+                        _ <- Parse.whitespaces
+                    yield ()
+                )
+                Parse.run("1 , 2 , 3")(parser).map { result =>
+                    assert(result == Chunk(1, 2, 3))
+                }
+            }
+
+            "single element" in run {
+                val parser = Parse.separatedBy(Parse.int, Parse.char(','))
+                Parse.run("42")(parser).map { result =>
+                    assert(result == Chunk(42))
+                }
+            }
+
+            "empty input" in run {
+                val parser = Parse.separatedBy(Parse.int, Parse.char(','))
+                Parse.run("")(parser).map { result =>
+                    assert(result.isEmpty)
+                }
+            }
+
+            "missing separator fails" in run {
+                val parser = Parse.separatedBy(Parse.int.as(Parse.char(' ')), Parse.char(','))
+                Abort.run(Parse.run("1 2 ,3 ")(parser)).map { result =>
+                    assert(result.isFail)
+                }
+            }
+
+            "multiple missing separators fails" in run {
+                val parser = Parse.separatedBy(Parse.int.as(Parse.char(' ')), Parse.char(','))
+                Abort.run(Parse.run("1 2 3")(parser)).map { result =>
+                    assert(result.isFail)
+                }
+            }
+
+            "allowTrailing" - {
+                "accepts trailing separator when enabled" in run {
+                    val parser = Parse.separatedBy(
+                        Parse.int,
+                        Parse.char(','),
+                        allowTrailing = true
+                    )
+                    Parse.run("1,2,3,")(parser).map { result =>
+                        assert(result == Chunk(1, 2, 3))
+                    }
+                }
+
+                "rejects trailing separator when disabled" in run {
+                    val parser = Parse.separatedBy(
+                        Parse.int,
+                        Parse.char(','),
+                        allowTrailing = false
+                    )
+                    Abort.run(Parse.run("1,2,3,")(parser)).map { result =>
+                        assert(result.isFail)
+                    }
+                }
+
+                "handles empty input with trailing enabled" in run {
+                    val parser = Parse.separatedBy(
+                        Parse.int,
+                        Parse.char(','),
+                        allowTrailing = true
+                    )
+                    Parse.run("")(parser).map { result =>
+                        assert(result.isEmpty)
+                    }
+                }
+
+                "handles single element with trailing enabled" in run {
+                    val parser = Parse.separatedBy(
+                        Parse.int,
+                        Parse.char(','),
+                        allowTrailing = true
+                    )
+                    Parse.run("42,")(parser).map { result =>
+                        assert(result == Chunk(42))
+                    }
+                }
+
+                "multiple trailing separators fail even when enabled" in run {
+                    val parser = Parse.separatedBy(
+                        Parse.int,
+                        Parse.char(','),
+                        allowTrailing = true
+                    )
+                    Abort.run(Parse.run("1,2,3,,")(parser)).map { result =>
+                        assert(result.isFail)
+                    }
+                }
+            }
+        }
+
+        "between" - {
+            "parentheses" in run {
+                val parser = Parse.between(
+                    Parse.char('('),
+                    Parse.int,
+                    Parse.char(')')
+                )
+                Parse.run("(42)")(parser).map { result =>
+                    assert(result == 42)
+                }
+            }
+
+            "with whitespace" in run {
+                val parser = Parse.between(
+                    Parse.char('[').as(Parse.whitespaces),
+                    Parse.int,
+                    Parse.whitespaces.as(Parse.char(']'))
+                )
+                Parse.run("[ 42 ]")(parser).map { result =>
+                    assert(result == 42)
+                }
+            }
+
+            "nested" in run {
+                val parser = Parse.between(
+                    Parse.char('('),
+                    Parse.between(
+                        Parse.char('['),
+                        Parse.int,
+                        Parse.char(']')
+                    ),
+                    Parse.char(')')
+                )
+                Parse.run("([42])")(parser).map { result =>
+                    assert(result == 42)
+                }
+            }
+
+            "missing right delimiter" in run {
+                val parser = Parse.between(
+                    Parse.char('('),
+                    Parse.int,
+                    Parse.char(')')
+                )
+                Abort.run(Parse.run("(42")(parser)).map { result =>
+                    assert(result.isFail)
+                }
+            }
+
+            "missing left delimiter" in run {
+                val parser = Parse.between(
+                    Parse.char('('),
+                    Parse.int,
+                    Parse.char(')')
+                )
+                Abort.run(Parse.run("42)")(parser)).map { result =>
+                    assert(result.isFail)
+                }
+            }
+        }
+
+        "inOrder" - {
+            "two parsers" in run {
+                val parser = Parse.inOrder(
+                    Parse.literal("hello").as(1),
+                    Parse.literal("world").as(2)
+                )
+                Parse.run("helloworld")(parser).map { case (r1, r2) =>
+                    assert(r1 == 1)
+                    assert(r2 == 2)
+                }
+            }
+
+            "three parsers" in run {
+                val parser = Parse.inOrder(
+                    Parse.literal("hello").as(1),
+                    Parse.literal("world").as(2),
+                    Parse.literal("!").as(3)
+                )
+                Parse.run("helloworld!")(parser).map { case (r1, r2, r3) =>
+                    assert(r1 == 1)
+                    assert(r2 == 2)
+                    assert(r3 == 3)
+                }
+            }
+
+            "four parsers" in run {
+                val parser = Parse.inOrder(
+                    Parse.literal("hello").as(1),
+                    Parse.literal("world").as(2),
+                    Parse.literal("!").as(3),
+                    Parse.literal("?").as(4)
+                )
+                Parse.run("helloworld!?")(parser).map { case (r1, r2, r3, r4) =>
+                    assert(r1 == 1)
+                    assert(r2 == 2)
+                    assert(r3 == 3)
+                    assert(r4 == 4)
+                }
+            }
+
+            "sequence of parsers" in run {
+                val parser = Parse.inOrder(Seq(
+                    Parse.literal("hello").as(1),
+                    Parse.literal(" ").as(2),
+                    Parse.literal("world").as(3)
+                ))
+                Parse.run("hello world")(parser).map { result =>
+                    assert(result == Chunk(1, 2, 3))
+                }
+            }
+
+            "empty sequence" in run {
+                val parser = Parse.inOrder(Seq.empty[Unit < Parse])
+                Parse.run("")(parser).map { result =>
+                    assert(result.isEmpty)
+                }
+            }
+
+            "single parser" in run {
+                val parser = Parse.inOrder(Seq(Parse.literal("test").as(1)))
+                Parse.run("test")(parser).map { result =>
+                    assert(result == Chunk(1))
+                }
+            }
+
+            "fails if any parser fails" in run {
+                val parser = Parse.inOrder(Seq(
+                    Parse.literal("hello").as(1),
+                    Parse.literal("world").as(2),
+                    Parse.literal("!").as(3)
+                ))
+                Abort.run(Parse.run("hello test")(parser)).map { result =>
+                    assert(result.isFail)
+                }
+            }
+
+            "consumes input sequentially" in run {
+                val parser = Parse.inOrder(Seq(
+                    Parse.literal("a").as(1),
+                    Parse.literal("b").as(2),
+                    Parse.literal("c").as(3)
+                ))
+                Parse.run("abc")(parser).map { result =>
+                    assert(result == Chunk(1, 2, 3))
                 }
             }
         }
