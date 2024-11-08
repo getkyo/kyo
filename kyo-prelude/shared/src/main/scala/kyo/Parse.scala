@@ -359,9 +359,9 @@ object Parse:
       *   The parsed content
       */
     def between[A: Flat, S](
-        left: Unit < (Parse & S),
+        left: Any < (Parse & S),
         content: A < (Parse & S),
-        right: Unit < (Parse & S)
+        right: Any < (Parse & S)
     )(using Frame): A < (Parse & S) =
         for
             _      <- left
