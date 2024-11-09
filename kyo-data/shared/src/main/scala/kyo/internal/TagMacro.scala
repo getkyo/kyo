@@ -165,10 +165,9 @@ object TagMacro:
         "kyo.Abort"                       -> "t",
         "kyo.Async$package$.Async$.Join"  -> "u",
         "kyo.Emit"                        -> "v",
-        "kyo.IO"                          -> "w",
-        "scala.Char"                      -> "x",
-        "java.lang.Throwable"             -> "y",
-        "java.lang.Exception"             -> "z"
+        "scala.Char"                      -> "w",
+        "java.lang.Throwable"             -> "x",
+        "java.lang.Exception"             -> "y"
     )
 
     val fromCompact = toCompact.map(_.swap).toMap

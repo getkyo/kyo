@@ -205,14 +205,12 @@ class ArrowEffectTest extends Test:
             val result = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
-                Tag[TestEffect3],
                 x,
                 Context.empty
             )(
                 stop = false,
                 [C] => (input, cont) => cont(input.toString),
-                [C] => (input, cont) => cont(input.toInt),
-                [C] => (input, cont) => cont(if input then 1.0 else 0.0)
+                [C] => (input, cont) => cont(input.toInt)
             )
             assert(result.evalNow == Maybe(5))
         }
@@ -222,14 +220,12 @@ class ArrowEffectTest extends Test:
             val result = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
-                Tag[TestEffect3],
                 x,
                 Context.empty
             )(
                 stop = false,
                 [C] => (input, cont) => cont(input.toString),
-                [C] => (input, cont) => cont(input.toInt),
-                [C] => (input, cont) => cont(if input then 1.0 else 0.0)
+                [C] => (input, cont) => cont(input.toInt)
             )
             assert(result.evalNow == Maybe(6))
         }
@@ -240,7 +236,6 @@ class ArrowEffectTest extends Test:
             val result = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
-                Tag[TestEffect3],
                 x,
                 Context.empty
             )(
@@ -252,10 +247,6 @@ class ArrowEffectTest extends Test:
                 [C] =>
                     (input, cont) =>
                         called = true; cont(input.toInt)
-                ,
-                [C] =>
-                    (input, cont) =>
-                        called = true; cont(if input then 1.0 else 0.0)
             )
             assert(!called)
             assert(result.evalNow.isEmpty)
@@ -266,14 +257,12 @@ class ArrowEffectTest extends Test:
             val result = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
-                Tag[TestEffect3],
                 x,
                 Context.empty
             )(
                 stop = false,
                 [C] => (input, cont) => cont(input.toString),
-                [C] => (input, cont) => cont(input.toInt),
-                [C] => (input, cont) => cont(if input then 1.0 else 0.0)
+                [C] => (input, cont) => cont(input.toInt)
             )
             assert(result.evalNow == Maybe(5))
         }

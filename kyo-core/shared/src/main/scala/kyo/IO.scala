@@ -7,8 +7,12 @@ import kyo.kernel.*
   *
   * IO allows you to encapsulate and manage side-effecting operations (such as file I/O, network calls, or mutable state modifications)
   * within a purely functional context. This enables better reasoning about effects and helps maintain referential transparency.
+  *
+  * IO is implemented as a type-level marker rather than a full ArrowEffect for performance. Since Effect.defer is only evaluated by the
+  * Pending type's "eval" method, which can only handle computations without pending effects, side effects are properly deferred. This
+  * ensures they can only be executed after an IO.run call, even though it is is a purely type-level operation.
   */
-sealed trait IO extends ArrowEffect[Const[Unit], Const[Unit]]
+opaque type IO = Any
 
 object IO:
 
@@ -36,7 +40,7 @@ object IO:
       *   The suspended computation wrapped in an IO effect.
       */
     inline def apply[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (IO & S) =
-        ArrowEffect.suspendAndMap[Any](Tag[IO], ())(_ => f)
+        Effect.defer(f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
       *
@@ -63,8 +67,10 @@ object IO:
     object Unsafe:
 
         inline def apply[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (IO & S) =
-            import AllowUnsafe.embrace.danger
-            ArrowEffect.suspendAndMap[Any](Tag[IO], ())(_ => f)
+            Effect.defer {
+                import AllowUnsafe.embrace.danger
+                f
+            }
 
         /** Runs an IO effect, evaluating it and its side effects immediately.
           *
@@ -110,8 +116,7 @@ object IO:
           *   The result of the IO effect, evaluated lazily along with its side effects.
           */
         def runLazy[A: Flat, S](v: => A < (IO & S))(using Frame, AllowUnsafe): A < S =
-            ArrowEffect.handle(Tag[IO], v) {
-                [C] => (_, cont) => cont(())
-            }
+            v
+
     end Unsafe
 end IO
