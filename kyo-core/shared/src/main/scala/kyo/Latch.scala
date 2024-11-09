@@ -7,7 +7,7 @@ import scala.annotation.tailrec
   *
   * A `Latch` is initialized with a count and can be awaited. It is released by calling `release` the specified number of times.
   */
-final case class Latch private (unsafe: Latch.Unsafe) extends AnyVal:
+final case class Latch private (unsafe: Latch.Unsafe):
 
     /** Waits until the latch has counted down to zero.
       *

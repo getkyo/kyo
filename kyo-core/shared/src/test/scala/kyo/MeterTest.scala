@@ -227,7 +227,7 @@ class MeterTest extends Test:
         }
         "replenish doesn't overflow" in runJVM {
             for
-                meter     <- Meter.initRateLimiter(5, 10.millis)
+                meter     <- Meter.initRateLimiter(5, 5.millis)
                 _         <- Async.sleep(32.millis)
                 available <- meter.availablePermits
             yield assert(available == 5)
@@ -251,7 +251,7 @@ class MeterTest extends Test:
 
         "tryRun" in runJVM {
             for
-                meter   <- Meter.pipeline(Meter.initRateLimiter(2, 10.millis), Meter.initMutex)
+                meter   <- Meter.pipeline(Meter.initRateLimiter(2, 5.millis), Meter.initMutex)
                 counter <- AtomicInt.init(0)
                 f1      <- Async.run(loop(meter, counter))
                 _       <- Async.sleep(5.millis)
@@ -260,6 +260,187 @@ class MeterTest extends Test:
                 r       <- meter.tryRun(())
                 _       <- f1.interrupt(panic)
             yield assert(r.isEmpty)
+        }
+    }
+
+    "reentrancy" - {
+        "mutex" - {
+            "reentrant by default" in runJVM {
+                for
+                    mutex <- Meter.initMutex
+                    result <- mutex.run {
+                        mutex.run {
+                            mutex.run(42)
+                        }
+                    }
+                yield assert(result == 42)
+            }
+
+            "non-reentrant" in runJVM {
+                for
+                    meter  <- Meter.initMutex(reentrant = false)
+                    p      <- Promise.init[Nothing, Int]
+                    f      <- Async.run(meter.run(meter.run(42)))
+                    _      <- Async.sleep(5.millis)
+                    done   <- f.done
+                    _      <- f.interrupt
+                    result <- f.getResult
+                yield assert(!done && result.isPanic)
+            }
+
+            "nested forked fiber can't reenter" in runJVM {
+                for
+                    meter <- Meter.initMutex
+                    (done, result) <- meter.run {
+                        meter.run {
+                            for
+                                f      <- Async.run(meter.run(42))
+                                _      <- Async.sleep(5.millis)
+                                done   <- f.done
+                                _      <- f.interrupt
+                                result <- f.getResult
+                            yield (done, result)
+                        }
+                    }
+                yield assert(!done && result.isPanic)
+            }
+        }
+
+        "semaphore" - {
+            "reentrant by default" in runJVM {
+                for
+                    sem <- Meter.initSemaphore(1)
+                    result <- sem.run {
+                        sem.run {
+                            sem.run(42)
+                        }
+                    }
+                yield assert(result == 42)
+            }
+
+            "non-reentrant" in runJVM {
+                for
+                    meter  <- Meter.initSemaphore(1, reentrant = false)
+                    p      <- Promise.init[Nothing, Int]
+                    f      <- Async.run(meter.run(meter.run(42)))
+                    _      <- Async.sleep(5.millis)
+                    done   <- f.done
+                    _      <- f.interrupt
+                    result <- f.getResult
+                yield assert(!done && result.isPanic)
+            }
+
+            "nested forked fiber can't reenter" in runJVM {
+                for
+                    meter <- Meter.initSemaphore(1)
+                    (done, result) <- meter.run {
+                        meter.run {
+                            for
+                                f      <- Async.run(meter.run(42))
+                                _      <- Async.sleep(5.millis)
+                                done   <- f.done
+                                _      <- f.interrupt
+                                result <- f.getResult
+                            yield (done, result)
+                        }
+                    }
+                yield assert(!done && result.isPanic)
+            }
+        }
+
+        "rate limiter" - {
+            "reentrant by default" in runJVM {
+                for
+                    rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
+                    result <- rateLimiter.run {
+                        rateLimiter.run {
+                            rateLimiter.run(42)
+                        }
+                    }
+                yield assert(result == 42)
+            }
+
+            "non-reentrant" in runJVM {
+                for
+                    meter  <- Meter.initRateLimiter(1, 60.seconds, reentrant = false)
+                    p      <- Promise.init[Nothing, Int]
+                    f      <- Async.run(meter.run(meter.run(42)))
+                    _      <- Async.sleep(5.millis)
+                    done   <- f.done
+                    _      <- f.interrupt
+                    result <- f.getResult
+                yield assert(!done && result.isPanic)
+            }
+
+            "nested forked fiber can't reenter" in runJVM {
+                for
+                    meter <- Meter.initRateLimiter(1, 60.seconds)
+                    (done, result) <- meter.run {
+                        meter.run {
+                            for
+                                f      <- Async.run(meter.run(42))
+                                _      <- Async.sleep(5.millis)
+                                done   <- f.done
+                                _      <- f.interrupt
+                                result <- f.getResult
+                            yield (done, result)
+                        }
+                    }
+                yield assert(!done && result.isPanic)
+            }
+        }
+
+        "pipeline" - {
+            "reentrant when all components are reentrant" in runJVM {
+                for
+                    mutex       <- Meter.initMutex
+                    sem         <- Meter.initSemaphore(1)
+                    rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
+                    pipeline    <- Meter.pipeline(mutex, sem, rateLimiter)
+                    result <- pipeline.run {
+                        pipeline.run {
+                            pipeline.run(42)
+                        }
+                    }
+                yield assert(result == 42)
+            }
+
+            "non-reentrant when any component is non-reentrant" in runJVM {
+                for
+                    mutex       <- Meter.initMutex
+                    sem         <- Meter.initSemaphore(1, reentrant = false)
+                    rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
+                    pipeline    <- Meter.pipeline(mutex, sem, rateLimiter)
+                    p           <- Promise.init[Nothing, Int]
+                    f <- Async.run(pipeline.run {
+                        pipeline.run(42)
+                    })
+                    _      <- Async.sleep(5.millis)
+                    done   <- f.done
+                    _      <- f.interrupt
+                    result <- f.getResult
+                yield assert(!done && result.isPanic)
+            }
+
+            "nested forked fiber can't reenter" in runJVM {
+                for
+                    mutex       <- Meter.initMutex
+                    sem         <- Meter.initSemaphore(1)
+                    rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
+                    meter       <- Meter.pipeline(mutex, sem, rateLimiter)
+                    (done, result) <- meter.run {
+                        meter.run {
+                            for
+                                f      <- Async.run(meter.run(42))
+                                _      <- Async.sleep(5.millis)
+                                done   <- f.done
+                                _      <- f.interrupt
+                                result <- f.getResult
+                            yield (done, result)
+                        }
+                    }
+                yield assert(!done && result.isPanic)
+            }
         }
     }
 

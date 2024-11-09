@@ -559,4 +559,180 @@ class ParseTest extends Test:
             }
         }
     }
+
+    "streaming" - {
+
+        "basic streaming" in run {
+            val parser = Parse.int
+            val input  = Stream.init(Seq[Text]("1", "2", "3"))
+            Parse.run(input)(parser).run.map { result =>
+                assert(result == Chunk(123))
+            }
+        }
+
+        "partial inputs" in run {
+            val parser =
+                for
+                    r <- Parse.int
+                    _ <- Parse.attempt(Parse.char(' '))
+                yield r
+            val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
+            Parse.run(input)(parser).run.map { result =>
+                assert(result == Chunk(12, 34, 5))
+            }
+        }
+
+        "with whitespace" in run {
+            val parser =
+                for
+                    _ <- Parse.whitespaces
+                    n <- Parse.int
+                    _ <- Parse.whitespaces
+                yield n
+
+            val input = Stream.init(Seq[Text](" 1 ", "  2  ", " 3 "))
+            Parse.run(input)(parser).run.map { result =>
+                assert(result == Chunk(1, 2, 3))
+            }
+        }
+
+        "error handling" in run {
+            val parser = Parse.int
+            val input  = Stream.init(Seq[Text]("1", "abc", "3"))
+
+            Abort.run(Parse.run(input)(parser).run).map { result =>
+                assert(result.isFail)
+            }
+        }
+
+        "ambiguous parse" in run {
+            val parser = Parse.anyOf(
+                Parse.literal("ab").as(1),
+                Parse.literal("abc").as(2)
+            )
+            val input = Stream.init(Seq("abc").map(Text(_)))
+
+            Abort.run(Parse.run(input)(parser).run).map { result =>
+                assert(result.isFail)
+                assert(result.failure.get.getMessage().contains("Ambiguous"))
+            }
+        }
+
+        "incomplete parse" in run {
+            val parser = Parse.literal("abc")
+            val input  = Stream.init(Seq("ab").map(Text(_)))
+
+            Abort.run(Parse.run(input)(parser).run).map { result =>
+                assert(result.isFail)
+                assert(result.failure.get.getMessage().contains("Incomplete"))
+            }
+        }
+
+        "large input stream" in run {
+            val size = 20
+            val parser =
+                for
+                    r <- Parse.int
+                    _ <- Parse.whitespaces
+                yield r
+            val numbers = (1 to size).map(_.toString)
+            val chunks  = numbers.grouped(size / 10).map(seq => Text(seq.map(n => s"$n ").mkString)).toSeq
+            val input   = Stream.init(chunks)
+
+            Parse.run(input)(parser).run.map { result =>
+                assert(result == Chunk.from(1 to size))
+            }
+        }
+
+        "empty chunks handling" in run {
+            val parser = Parse.int
+            val input  = Stream.init(Seq[Text]("", "1", "", "2", ""))
+            Parse.run(input)(parser).run.map { result =>
+                assert(result == Chunk(12))
+            }
+        }
+
+        "partial token across chunks" in run {
+            val parser = Parse.int
+            val input  = Stream.init(Seq[Text]("1", "2", "34", "5"))
+            Parse.run(input)(parser).run.map { result =>
+                assert(result == Chunk(12345))
+            }
+        }
+
+        "complex token splitting" in run {
+            val parser = Parse.literal("hello world")
+            val input  = Stream.init(Seq[Text]("he", "llo", " wo", "rld"))
+            Parse.run(input)(parser).run.map { result =>
+                assert(result == Chunk(()))
+            }
+        }
+
+        "accumulated state handling" in run {
+            val parser =
+                for
+                    _ <- Parse.whitespaces
+                    n <- Parse.int
+                    _ <- Parse.whitespaces
+                    _ <- Parse.literal(",")
+                yield n
+
+            val input = Stream.init(Seq[Text]("1,", " 2 ,", "  3,"))
+            Parse.run(input)(parser).run.map { result =>
+                assert(result == Chunk(1, 2, 3))
+            }
+        }
+
+        "nested parsers with streaming" in run {
+            val numberList =
+                for
+                    _ <- Parse.char('[')
+                    n <- Parse.int
+                    _ <- Parse.char(']')
+                yield n
+
+            val input = Stream.init(Seq[Text]("[1]", "[2", "]", "[3]"))
+            Parse.run(input)(numberList).run.map { result =>
+                assert(result == Chunk(1, 2, 3))
+            }
+        }
+
+        "backtracking across chunks" in run {
+            val parser = Parse.firstOf(
+                Parse.literal("foo bar").as(1),
+                Parse.literal("foo baz").as(2)
+            )
+            val input = Stream.init(Seq[Text]("foo ", "ba", "z"))
+            Parse.run(input)(parser).run.map { result =>
+                assert(result == Chunk(2))
+            }
+        }
+
+        "with Var effect" in run {
+            val parser =
+                for
+                    r <- Parse.int
+                    _ <- Parse.attempt(Parse.char(' '))
+                    _ <- Var.update[Int](_ + 1)
+                yield r
+            val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
+            Var.runTuple(0)(Parse.run(input)(parser).run).map { (count, result) =>
+                assert(result == Chunk(12, 34, 5))
+                assert(count == 3)
+            }
+        }
+
+        "with Env effect" in run {
+            val parser =
+                for
+                    r         <- Parse.int
+                    separator <- Env.get[Char]
+                    _         <- Parse.attempt(Parse.char(separator))
+                yield r
+            val input = Stream.init(Seq[Text]("1", "2 3", "4 5"))
+            Env.run(' ')(Parse.run(input)(parser).run).map { result =>
+                assert(result == Chunk(12, 34, 5))
+            }
+        }
+    }
 end ParseTest

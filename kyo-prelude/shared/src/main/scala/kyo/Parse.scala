@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.Ansi.*
+import kyo.Emit.Ack
 import kyo.kernel.*
 
 /** The Parse effect combines three fundamental capabilities needed for parsing:
@@ -248,6 +249,70 @@ object Parse:
                 Parse.fail(seq.map(_._1), "Ambiguous parse - multiple results found")
         }
 
+    /** Runs a parser on a stream of text input, emitting parsed results as they become available. This streaming parser accumulates text
+      * chunks and continuously attempts to parse complete results, handling partial inputs and backtracking as needed.
+      *
+      * @param input
+      *   Stream of text chunks to parse
+      * @param v
+      *   Parser to run on the accumulated text
+      * @tparam A
+      *   Type of parsed result
+      * @tparam S
+      *   Effects required by input stream
+      * @tparam S2
+      *   Effects required by parser
+      * @return
+      *   Stream of successfully parsed results, which can abort with ParseFailed
+      */
+    def run[A: Flat, S, S2](input: Stream[Text, S])(v: A < (Parse & S2))(
+        using
+        Frame,
+        Tag[Emit[Chunk[Text]]],
+        Tag[Emit[Chunk[A]]]
+    ): Stream[A, S & S2 & Abort[ParseFailed]] =
+        Stream {
+            input.emit.pipe {
+                // Maintains a running buffer of text and repeatedly attempts parsing
+                Emit.runFold[Chunk[Text]](Text.empty) {
+                    (acc: Text, curr: Chunk[Text]) =>
+                        // Concatenate new chunks with existing accumulated text
+                        val text = acc + curr.foldLeft(Text.empty)(_ + _)
+                        if text.isEmpty then
+                            // If no text to parse, request more input
+                            (text, Ack.Continue())
+                        else
+                            Choice.run(Var.runTuple(State(text, 0))(v)).map {
+                                case Seq() =>
+                                    // No valid parse found yet - keep current text and continue
+                                    // collecting more input as the parse might succeed with additional text
+                                    (text, Ack.Continue())
+                                case Seq((state, value)) =>
+                                    if state.done then
+                                        // Parser consumed all input - might need more text to complete
+                                        // the next parse, so continue
+                                        (text, Ack.Continue())
+                                    else
+                                        // Successfully parsed a value with remaining text.
+                                        // Emit the parsed value and continue with unconsumed text
+                                        Emit.andMap(Chunk(value)) { ack =>
+                                            (state.remaining, ack)
+                                        }
+                                case seq =>
+                                    Parse.fail(seq.map(_._1), "Ambiguous parse - multiple results found")
+                            }
+                        end if
+                }
+            }.map { (text, ack) =>
+                // Handle any remaining text after input stream ends
+                ack match
+                    case Ack.Stop => Ack.Stop
+                    case _        =>
+                        // Try to parse any complete results from remaining text
+                        run(text)(repeat(v)).map(Emit(_))
+            }
+        }
+
     private def result[A](seq: Seq[A])(using Frame): Maybe[A] < Parse =
         seq match
             case Seq()      => Maybe.empty
@@ -458,16 +523,5 @@ end Parse
 
 case class ParseFailed(frame: Frame, states: Seq[Parse.State], message: String) extends Exception with Serializable:
 
-    override def getMessage() =
-        Seq(
-            "\n".dim,
-            "──────────────────────────────".dim,
-            "Parse failed! ".red.bold + message,
-            "──────────────────────────────".dim,
-            frame.parse.show,
-            "──────────────────────────────".dim,
-            pprint(states).plainText,
-            "──────────────────────────────".dim
-        ).mkString("\n")
-    end getMessage
+    override def getMessage() = frame.render("Parse failed! ".red.bold + message, states)
 end ParseFailed

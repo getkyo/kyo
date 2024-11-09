@@ -8,7 +8,7 @@ import scala.annotation.tailrec
   *   - The barrier releases all waiting parties when the last party arrives.
   *   - The barrier can only be used once. After all parties have been released, the barrier cannot be reset.
   */
-final case class Barrier private (unsafe: Barrier.Unsafe) extends AnyVal:
+final case class Barrier private (unsafe: Barrier.Unsafe):
 
     /** Waits for the barrier to be released.
       *

@@ -149,7 +149,7 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   A unit value wrapped in IO, representing the registration of the callback
           */
-        def onInterrupt(f: Panic => Unit < IO)(using Frame): Unit < IO =
+        def onInterrupt(f: Result.Error[E] => Unit < IO)(using Frame): Unit < IO =
             import AllowUnsafe.embrace.danger
             IO(self.onInterrupt(r => IO.Unsafe.run(f(r)).eval))
 
@@ -248,7 +248,7 @@ object Fiber extends FiberPlatformSpecific:
     end extension
 
     case class Interrupted(at: Frame)
-        extends RuntimeException("Fiber interrupted at " + at.parse.position)
+        extends RuntimeException("Fiber interrupted at " + at.position.show)
         with NoStackTrace:
         override def getCause() = null
     end Interrupted
@@ -264,7 +264,6 @@ object Fiber extends FiberPlatformSpecific:
     def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, IO & Abort[E]],
-        reduce: Reducible[Abort[E]],
         frame: Frame,
         safepoint: Safepoint
     ): Fiber[E, A] < (IO & Ctx) =
@@ -302,7 +301,6 @@ object Fiber extends FiberPlatformSpecific:
     def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, IO & Abort[E]],
-        reduce: Reducible[Abort[E]],
         frame: Frame,
         safepoint: Safepoint
     ): Fiber[E, Seq[A]] < (IO & Ctx) =
@@ -363,7 +361,7 @@ object Fiber extends FiberPlatformSpecific:
         extension [E, A](self: Unsafe[E, A])
             def done()(using AllowUnsafe): Boolean                                                       = self.done()
             def onComplete(f: Result[E, A] => Unit)(using AllowUnsafe): Unit                             = self.onComplete(f)
-            def onInterrupt(f: Panic => Unit)(using Frame): Unit                                         = self.onInterrupt(f)
+            def onInterrupt(f: Result.Error[E] => Unit)(using Frame): Unit                               = self.onInterrupt(f)
             def block(deadline: Clock.Deadline.Unsafe)(using AllowUnsafe, Frame): Result[E | Timeout, A] = self.block(deadline)
             def interrupt()(using frame: Frame, allow: AllowUnsafe): Boolean = self.interrupt(Panic(Interrupted(frame)))
             def interrupt(error: Panic)(using AllowUnsafe): Boolean          = self.interrupt(error)

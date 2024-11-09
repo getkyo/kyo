@@ -137,25 +137,21 @@ class FiberTest extends Test:
         "interrupts losers" - {
             "promise + plain value" in runJVM {
                 for
-                    flag        <- AtomicBoolean.init(false)
-                    promise     <- Promise.init[Nothing, Int]
-                    _           <- promise.onInterrupt(_ => flag.set(true))
-                    result      <- Async.race(promise.get, 42)
-                    interrupted <- flag.get
-                yield
-                    assert(result == 42)
-                    assert(interrupted)
+                    latch   <- Latch.init(1)
+                    promise <- Promise.init[Nothing, Int]
+                    _       <- promise.onInterrupt(_ => latch.release)
+                    result  <- Async.race(promise.get, 42)
+                    _       <- latch.await
+                yield assert(result == 42)
             }
             "promise + delayed" in runJVM {
                 for
-                    flag        <- AtomicBoolean.init(false)
-                    promise     <- Promise.init[Nothing, Int]
-                    _           <- promise.onInterrupt(_ => flag.set(true))
-                    result      <- Async.race(promise.get, Async.delay(5.millis)(42))
-                    interrupted <- flag.get
-                yield
-                    assert(result == 42)
-                    assert(interrupted)
+                    latch   <- Latch.init(1)
+                    promise <- Promise.init[Nothing, Int]
+                    _       <- promise.onInterrupt(_ => latch.release)
+                    result  <- Async.race(promise.get, Async.delay(5.millis)(42))
+                    _       <- latch.await
+                yield assert(result == 42)
             }
             "slow + fast" in runJVM {
                 for

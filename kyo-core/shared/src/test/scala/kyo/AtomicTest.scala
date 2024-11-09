@@ -3,6 +3,12 @@ package kyo
 class AtomicTest extends Test:
 
     "int" - {
+        "should initialize to default value (0)" in run {
+            for
+                ref <- AtomicInt.init
+                v   <- ref.get
+            yield assert(v == 0)
+        }
         "should initialize to the provided value" in run {
             for
                 ref <- AtomicInt.init(5)
@@ -78,6 +84,12 @@ class AtomicTest extends Test:
     }
 
     "long" - {
+        "should initialize to default value (0)" in run {
+            for
+                ref <- AtomicLong.init
+                v   <- ref.get
+            yield assert(v == 0L)
+        }
         "should initialize to the provided value" in run {
             for
                 ref <- AtomicLong.init(5L)
@@ -153,6 +165,12 @@ class AtomicTest extends Test:
     }
 
     "boolean" - {
+        "should initialize to default value (false)" in run {
+            for
+                ref <- AtomicBoolean.init
+                v   <- ref.get
+            yield assert(v == false)
+        }
         "should initialize to the provided value" in run {
             for
                 ref <- AtomicBoolean.init(true)
@@ -245,6 +263,10 @@ class AtomicTest extends Test:
         import AllowUnsafe.embrace.danger
 
         "int" - {
+            "should initialize to default value (0)" in {
+                val ref = AtomicInt.Unsafe.init
+                assert(ref.get() == 0)
+            }
             "should initialize to the provided value" in {
                 val ref = AtomicInt.Unsafe.init(5)
                 assert(ref.get() == 5)
@@ -307,6 +329,10 @@ class AtomicTest extends Test:
         }
 
         "long" - {
+            "should initialize to default value (0)" in {
+                val ref = AtomicLong.Unsafe.init
+                assert(ref.get() == 0L)
+            }
             "should initialize to the provided value" in {
                 val ref = AtomicLong.Unsafe.init(5L)
                 assert(ref.get() == 5L)

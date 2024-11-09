@@ -212,6 +212,16 @@ object Instant:
           */
         def toJava: JInstant = instant
 
+        /** Converts this Instant to a Duration representing the time elapsed since the epoch (1970-01-01T00:00:00Z).
+          *
+          * @return
+          *   The Duration since the epoch.
+          */
+        def toDuration: Duration =
+            if instant == Max then Duration.Infinity
+            else if instant == Min then Duration.Zero
+            else instant - Epoch
+
     end extension
 
 end Instant

@@ -4,11 +4,16 @@ import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
 
 /** A Meter is an abstract class that represents a mechanism for controlling concurrency and rate limiting.
+  *
+  * Meters can be configured to be reentrant or non-reentrant. Reentrant meters allow nested calls from the same fiber, while non-reentrant
+  * meters will block or fail on nested calls.
   */
 abstract class Meter:
     self =>
 
     /** Runs an effect after acquiring a permit.
+      *
+      * If the meter is reentrant, nested calls from the same fiber will be allowed. If non-reentrant, nested calls will block or fail.
       *
       * @param v
       *   The effect to run.
@@ -66,6 +71,8 @@ end Meter
 
 object Meter:
 
+    import internal.*
+
     /** A no-op Meter that always allows operations and can't be closed. */
     case object Noop extends Meter:
         def availablePermits(using Frame)          = Int.MaxValue
@@ -76,24 +83,36 @@ object Meter:
         def closed(using Frame): Boolean < IO      = false
     end Noop
 
-    /** Creates a Meter that acts as a mutex (binary semaphore).
+    /** Creates a **reentrant** Meter that acts as a mutex (binary semaphore).
       *
       * @return
       *   A Meter effect that represents a mutex.
       */
     def initMutex(using Frame): Meter < IO =
-        initSemaphore(1)
+        initMutex(true)
+
+    /** Creates a Meter that acts as a mutex (binary semaphore).
+      *
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
+      * @return
+      *   A Meter effect that represents a mutex.
+      */
+    def initMutex(reentrant: Boolean)(using Frame): Meter < IO =
+        initSemaphore(1, reentrant)
 
     /** Creates a Meter that acts as a semaphore with the specified concurrency.
       *
       * @param concurrency
       *   The number of concurrent operations allowed.
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
       * @return
       *   A Meter effect that represents a semaphore.
       */
-    def initSemaphore(concurrency: Int)(using Frame): Meter < IO =
+    def initSemaphore(concurrency: Int, reentrant: Boolean = true)(using Frame): Meter < IO =
         IO.Unsafe {
-            new Base(concurrency):
+            new Base(concurrency, reentrant):
                 def dispatch[A, S](v: => A < S) =
                     // Release the permit right after the computation
                     IO.ensure(discard(release()))(v)
@@ -106,15 +125,17 @@ object Meter:
       *   The number of operations allowed per period.
       * @param period
       *   The duration of each period.
+      * @param reentrant
+      *   If true, allows nested calls from the same fiber. Default is true.
       * @return
       *   A Meter effect that represents a rate limiter.
       */
-    def initRateLimiter(rate: Int, period: Duration)(using initFrame: Frame): Meter < IO =
+    def initRateLimiter(rate: Int, period: Duration, reentrant: Boolean = true)(using initFrame: Frame): Meter < IO =
         IO.Unsafe {
-            new Base(rate):
+            new Base(rate, reentrant):
                 val timerTask =
                     // Schedule periodic task to replenish permits
-                    IO.Unsafe.run(Clock.repeatAtInterval(period)(replenish())).eval
+                    IO.Unsafe.run(Clock.repeatAtInterval(period, period)(replenish())).eval
 
                 def dispatch[A, S](v: => A < S) =
                     // Don't release a permit since it's managed by the timer task
@@ -227,7 +248,9 @@ object Meter:
             end new
         }
 
-    abstract private class Base(permits: Int)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
+    private val acquiredMeters = Local.initIsolated(Set.empty[Meter])
+
+    abstract private class Base(permits: Int, reentrant: Boolean)(using initFrame: Frame, allow: AllowUnsafe) extends Meter:
 
         // MinValue => closed
         // >= 0     => # of permits
@@ -239,8 +262,23 @@ object Meter:
         protected def dispatch[A, S](v: => A < S): A < (S & IO)
         protected def onClose(): Unit
 
+        private inline def withReentry[A, S](inline reenter: => A < S)(acquire: AllowUnsafe ?=> A < S): A < (IO & S) =
+            if reentrant then
+                acquiredMeters.use { meters =>
+                    if meters.contains(this) then reenter
+                    else IO.Unsafe(acquire)
+                }
+            else
+                IO.Unsafe(acquire)
+
+        private inline def withAcquiredMeter[A, S](inline v: => A < S) =
+            if reentrant then
+                acquiredMeters.update(_ + this)(v)
+            else
+                v
+
         final def run[A, S](v: => A < S)(using Frame) =
-            IO.Unsafe {
+            withReentry(v) {
                 @tailrec def loop(): A < (S & Async & Abort[Closed]) =
                     val st = state.get()
                     if st == Int.MinValue then
@@ -249,12 +287,12 @@ object Meter:
                     else if state.cas(st, st - 1) then
                         if st > 0 then
                             // Permit available, dispatch immediately
-                            dispatch(v)
+                            dispatch(withAcquiredMeter(v))
                         else
                             // No permit available, add to waiters queue
                             val p = Promise.Unsafe.init[Closed, Unit]()
                             waiters.add(p)
-                            dispatch(p.safe.use(_ => v))
+                            dispatch(p.safe.use(_ => withAcquiredMeter(v)))
                     else
                         // CAS failed, retry
                         loop()
@@ -265,7 +303,7 @@ object Meter:
         end run
 
         final def tryRun[A, S](v: => A < S)(using Frame): Maybe[A] < (S & Async & Abort[Closed]) =
-            IO.Unsafe {
+            withReentry(v.map(Maybe(_))) {
                 @tailrec def loop(): Maybe[A] < (S & Async & Abort[Closed]) =
                     val st = state.get()
                     if st == Int.MinValue then
@@ -276,7 +314,7 @@ object Meter:
                         Maybe.empty
                     else if state.cas(st, st - 1) then
                         // Permit available, dispatch
-                        dispatch(v.map(Maybe(_)))
+                        dispatch(withAcquiredMeter(v.map(Maybe(_))))
                     else
                         // CAS failed, retry
                         loop()
@@ -351,4 +389,5 @@ object Meter:
             end if
         end pollWaiter
     end Base
+
 end Meter

@@ -4,7 +4,7 @@ import java.util.concurrent.atomic as j
 
 /** A wrapper for Java's LongAdder.
   */
-final case class LongAdder private (unsafe: LongAdder.Unsafe) extends AnyVal:
+final case class LongAdder private (unsafe: LongAdder.Unsafe):
 
     /** Adds the given value to the sum.
       *
@@ -83,7 +83,7 @@ end LongAdder
 
 /** A wrapper for Java's DoubleAdde
   */
-final case class DoubleAdder private (unsafe: DoubleAdder.Unsafe) extends AnyVal:
+final case class DoubleAdder private (unsafe: DoubleAdder.Unsafe):
 
     /** Adds the given value to the sum.
       *
