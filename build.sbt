@@ -262,8 +262,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.43.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.43.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.44.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.44.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -461,8 +461,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.29",
             libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.29",
             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.1",
-            libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.10",
-            libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.10",
+            libraryDependencies += "io.vertx"             % "vertx-core"          % "5.0.0.CR1",
+            libraryDependencies += "io.vertx"             % "vertx-web"           % "5.0.0.CR1",
             libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
         )
 
