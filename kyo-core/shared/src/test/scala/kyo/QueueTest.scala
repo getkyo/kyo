@@ -229,8 +229,7 @@ class QueueTest extends Test:
                 assert(drained.isFail)
                 assert(isClosed)
             )
-                .pipe(Choice.run).unit
-                .repeat(repeats)
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .as(succeed)
         }
 
@@ -250,8 +249,7 @@ class QueueTest extends Test:
                 polled  <- pollFiber.get
                 left    <- queue.size
             yield assert(offered.count(_.contains(true)) == polled.count(_.toMaybe.flatten.isDefined) + left))
-                .pipe(Choice.run).unit
-                .repeat(repeats)
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .as(succeed)
         }
 
@@ -274,8 +272,7 @@ class QueueTest extends Test:
                 assert(offered.count(_.contains(true)) == backlog.get.size - size)
                 assert(isClosed)
             )
-                .pipe(Choice.run).unit
-                .repeat(repeats)
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .as(succeed)
         }
 
@@ -299,8 +296,7 @@ class QueueTest extends Test:
                 assert(backlog.flatMap(_.toList.flatten).size == offered.count(_.contains(true)))
                 assert(isClosed)
             )
-                .pipe(Choice.run).unit
-                .repeat(repeats)
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .as(succeed)
         }
 
@@ -326,8 +322,7 @@ class QueueTest extends Test:
                 assert(offered.count(_.contains(true)) - polled.count(_.toMaybe.flatten.isDefined) == backlog.get.size)
                 assert(isClosed)
             )
-                .pipe(Choice.run).unit
-                .repeat(repeats)
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .as(succeed)
         }
     }

@@ -1,6 +1,5 @@
 package kyo
 
-import kernel.Frame
 import kernel.Loop
 import kyo.kernel.Safepoint
 import scala.annotation.tailrec

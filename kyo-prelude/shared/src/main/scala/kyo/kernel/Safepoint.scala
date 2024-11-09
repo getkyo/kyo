@@ -3,6 +3,7 @@ package kyo.kernel
 import Safepoint.State
 import internal.*
 import java.util.concurrent.atomic.AtomicBoolean
+import kyo.Frame
 import kyo.isNull
 import kyo.kernel.Safepoint.*
 import scala.annotation.nowarn
@@ -39,9 +40,9 @@ end Safepoint
 
 object Safepoint:
 
-    opaque type State = Long
+    private[kernel] opaque type State = Long
 
-    object State:
+    private[kernel] object State:
         // Bit allocation:
         // Bits 0-15 (16 bits): depth (0-65535)
         // Bit 16 (1 bit): hasInterceptor flag
@@ -187,7 +188,7 @@ object Safepoint:
             continue(a)
     end handle
 
-    def enrich(ex: Throwable)(using safepoint: Safepoint): Unit =
+    private[kernel] def enrich(ex: Throwable)(using safepoint: Safepoint): Unit =
         safepoint.enrich(ex)
 
     private val local =

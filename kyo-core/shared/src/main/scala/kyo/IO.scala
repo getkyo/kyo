@@ -36,7 +36,7 @@ object IO:
       *   The suspended computation wrapped in an IO effect.
       */
     inline def apply[A, S](inline f: Safepoint ?=> A < S)(using inline frame: Frame): A < (IO & S) =
-        ArrowEffect.suspendMap[Any](Tag[IO], ())(_ => f)
+        ArrowEffect.suspendAndMap[Any](Tag[IO], ())(_ => f)
 
     /** Ensures that a finalizer is run after the main computation, regardless of success or failure.
       *
@@ -64,7 +64,7 @@ object IO:
 
         inline def apply[A, S](inline f: AllowUnsafe ?=> A < S)(using inline frame: Frame): A < (IO & S) =
             import AllowUnsafe.embrace.danger
-            ArrowEffect.suspendMap[Any](Tag[IO], ())(_ => f)
+            ArrowEffect.suspendAndMap[Any](Tag[IO], ())(_ => f)
 
         /** Runs an IO effect, evaluating it and its side effects immediately.
           *

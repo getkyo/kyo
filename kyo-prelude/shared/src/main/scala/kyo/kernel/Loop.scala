@@ -1,6 +1,8 @@
 package kyo.kernel
 
 import internal.*
+import kyo.Flat
+import kyo.Frame
 import scala.annotation.nowarn
 import scala.annotation.tailrec
 import scala.annotation.targetName
@@ -78,7 +80,8 @@ object Loop:
             def _3 = v3
             def _4 = v4
 
-    inline def apply[A, O, S](inline input: A)(inline run: Safepoint ?=> A => Outcome[A, O] < S)(using
+    inline def apply[A, O, S](inline input: A)(inline run: Safepoint ?=> A => Outcome[A, O] < S)(
+        using
         inline _frame: Frame,
         safepoint: Safepoint
     ): O < S =

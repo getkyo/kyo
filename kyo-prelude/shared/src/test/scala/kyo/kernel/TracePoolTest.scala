@@ -1,7 +1,7 @@
 package kyo.kernel
 
+import kyo.Frame
 import kyo.Test
-import kyo.kernel.Frame
 
 class TracePoolTest extends Test:
 

@@ -1,6 +1,8 @@
 package kyo.kernel
 
 import internal.*
+import kyo.Flat
+import kyo.Frame
 import kyo.Tag
 import kyo.bug
 import scala.annotation.nowarn
@@ -14,23 +16,23 @@ object ContextEffect:
         self: ContextEffect[?] =>
 
     inline def suspend[A, E <: ContextEffect[A]](inline tag: Tag[E])(using inline frame: Frame): A < E =
-        suspendMap(tag)(identity)
+        suspendAndMap(tag)(identity)
 
-    inline def suspendMap[A, E <: ContextEffect[A], B, S](
+    inline def suspendAndMap[A, E <: ContextEffect[A], B, S](
         inline tag: Tag[E]
     )(
         inline f: Safepoint ?=> A => B < S
     )(using inline frame: Frame): B < (E & S) =
-        suspendMap(tag, bug("Unexpected pending context effect: " + tag.show))(f)
+        suspendAndMap(tag, bug("Unexpected pending context effect: " + tag.show))(f)
 
     inline def suspend[A, E <: ContextEffect[A]](
         inline tag: Tag[E],
         inline default: => A
     )(using inline frame: Frame): A < Any =
-        suspendMap(tag, default)(identity)
+        suspendAndMap(tag, default)(identity)
 
     @nowarn("msg=anonymous")
-    inline def suspendMap[A, E <: ContextEffect[A], B, S](
+    inline def suspendAndMap[A, E <: ContextEffect[A], B, S](
         inline _tag: Tag[E],
         inline default: => A
     )(

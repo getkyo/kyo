@@ -11,26 +11,26 @@ opaque type <[+A, -S] = A | Kyo[A, S]
 
 object `<`:
 
-    implicit private[kernel] inline def fromKyo[A, S](v: Kyo[A, S]): A < S       = v
-    implicit inline def lift[A, S](v: A)(using inline flat: Flat.Weak[A]): A < S = v
+    implicit private[kernel] inline def fromKyo[A, S](v: Kyo[A, S]): A < S      = v
+    implicit inline def lift[A, S](v: A)(using inline flat: WeakFlat[A]): A < S = v
 
     implicit inline def liftPureFunction1[A1, B](inline f: A1 => B)(
-        using inline flat: Flat.Weak[B]
+        using inline flat: WeakFlat[B]
     ): A1 => B < Any =
         a1 => f(a1)
 
     implicit inline def liftPureFunction2[A1, A2, B](inline f: (A1, A2) => B)(
-        using inline flat: Flat.Weak[B]
+        using inline flat: WeakFlat[B]
     ): (A1, A2) => B < Any =
         (a1, a2) => f(a1, a2)
 
     implicit inline def liftPureFunction3[A1, A2, A3, B](inline f: (A1, A2, A3) => B)(
-        using inline flat: Flat.Weak[B]
+        using inline flat: WeakFlat[B]
     ): (A1, A2, A3) => B < Any =
         (a1, a2, a3) => f(a1, a2, a3)
 
     implicit inline def liftPureFunction4[A1, A2, A3, A4, B](inline f: (A1, A2, A3, A4) => B)(
-        using inline flat: Flat.Weak[B]
+        using inline flat: WeakFlat[B]
     ): (A1, A2, A3, A4) => B < Any =
         (a1, a2, a3, a4) => f(a1, a2, a3, a4)
 
@@ -40,32 +40,32 @@ object `<`:
             using
             inline ev: A => Unit,
             inline frame: Frame,
-            inline flatA: Flat.Weak[A],
-            inline flatB: Flat.Weak[B]
+            inline flatA: WeakFlat[A],
+            inline flatB: WeakFlat[B]
         ): B < (S & S2) =
             map(_ => f)
 
         inline def as[B, S2](other: B < S2)(
             using
             inline frame: Frame,
-            inline flatA: Flat.Weak[A],
-            inline flatB: Flat.Weak[B]
+            inline flatA: WeakFlat[A],
+            inline flatB: WeakFlat[B]
         ): B < (S & S2) =
             map(_ => other)
 
         inline def flatMap[B, S2](inline f: Safepoint ?=> A => B < S2)(
             using
             inline frame: Frame,
-            inline flatA: Flat.Weak[A],
-            inline flatB: Flat.Weak[B]
+            inline flatA: WeakFlat[A],
+            inline flatB: WeakFlat[B]
         ): B < (S & S2) =
             map(v => f(v))
 
         inline def map[B, S2](inline f: Safepoint ?=> A => B < S2)(
             using
             inline _frame: Frame,
-            inline flatA: Flat.Weak[A],
-            inline flatB: Flat.Weak[B],
+            inline flatA: WeakFlat[A],
+            inline flatB: WeakFlat[B],
             inline safepoint: Safepoint
         ): B < (S & S2) =
             @nowarn("msg=anonymous") def mapLoop(v: A < S)(using Safepoint): B < (S & S2) =
@@ -92,7 +92,7 @@ object `<`:
         inline def unit(
             using
             inline _frame: Frame,
-            inline flat: Flat.Weak[A],
+            inline flat: WeakFlat[A],
             inline safepoint: Safepoint
         ): Unit < S =
             @nowarn("msg=anonymous") def unitLoop(v: A < S)(using Safepoint): Unit < S =
@@ -109,7 +109,7 @@ object `<`:
 
         // TODO Nested 'pipe*' methods required to work around compiler crash
         inline def pipe[B](inline f: (=> A < S) => B)(
-            using inline flat: Flat.Weak[A]
+            using inline flat: WeakFlat[A]
         ): B =
             def pipe1 = v
             f(pipe1)
@@ -118,7 +118,7 @@ object `<`:
         inline def pipe[B, C](
             inline f1: A < S => B,
             inline f2: (=> B) => C
-        )(using inline flat: Flat.Weak[A]): C =
+        )(using inline flat: WeakFlat[A]): C =
             def pipe2 = v.pipe(f1)
             f2(pipe2)
         end pipe
@@ -127,7 +127,7 @@ object `<`:
             inline f1: A < S => B,
             inline f2: (=> B) => C,
             inline f3: (=> C) => D
-        )(using inline flat: Flat.Weak[A]): D =
+        )(using inline flat: WeakFlat[A]): D =
             def pipe3 = v.pipe(f1, f2)
             f3(pipe3)
         end pipe
@@ -137,7 +137,7 @@ object `<`:
             inline f2: (=> B) => C,
             inline f3: (=> C) => D,
             inline f4: (=> D) => E
-        )(using inline flat: Flat.Weak[A]): E =
+        )(using inline flat: WeakFlat[A]): E =
             def pipe4 = v.pipe(f1, f2, f3)
             f4(pipe4)
         end pipe
@@ -148,7 +148,7 @@ object `<`:
             inline f3: (=> C) => D,
             inline f4: (=> D) => E,
             inline f5: (=> E) => F
-        )(using inline flat: Flat.Weak[A]): F =
+        )(using inline flat: WeakFlat[A]): F =
             def pipe5 = v.pipe(f1, f2, f3, f4)
             f5(pipe5)
         end pipe
@@ -160,21 +160,12 @@ object `<`:
             inline f4: (=> D) => E,
             inline f5: (=> E) => F,
             inline f6: (=> F) => G
-        )(using inline flat: Flat.Weak[A]): G =
+        )(using inline flat: WeakFlat[A]): G =
             def pipe6 = v.pipe(f1, f2, f3, f4, f5)
             f6(pipe6)
         end pipe
 
     end extension
-
-    // TODO Compiler crash if inlined
-    extension [A, S](v: A < S)
-        def repeat(i: Int)(using ev: A => Unit, frame: Frame, flat: Flat.Weak[A]): Unit < S =
-            if i <= 0 then ()
-            else
-                // TODO Test failures in Scala Native without `return`
-                return v.andThen(repeat(i - 1))
-            end if
 
     // TODO Compiler crash if inlined
     extension [A, S, S2](v: A < S < S2)

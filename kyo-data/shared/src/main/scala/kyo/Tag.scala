@@ -13,7 +13,8 @@ object Tag:
 
     type Full[A] = Tag[A] | Set[A]
 
-    given [A, B]: CanEqual[Full[A], Full[B]] = CanEqual.derived
+    inline given [A, B]: CanEqual[Full[A], Full[B]] = CanEqual.derived
+    inline given [A]: Flat[Tag[A]]                  = Flat.unsafe.bypass
 
     import internal.*
 

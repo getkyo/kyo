@@ -60,10 +60,6 @@ class KyoTest extends Test:
         assert(Var.run(())(Var.get[Unit]).andThen(2).eval == 2)
     }
 
-    "repeat" in {
-        assert(Var.run(0)(Var.update[Int](_ + 1).unit.repeat(3).andThen(Var.get[Int])).eval == 3)
-    }
-
     "zip" in {
         assert(Env.run(1)(Kyo.zip(Env.get[Int], Env.use[Int](_ + 1))).eval == (1, 2))
         assert(Var.run(1)(Kyo.zip(Var.get[Int], Var.use[Int](_ + 1), Var.get[Int])).eval == (1, 2, 1))
