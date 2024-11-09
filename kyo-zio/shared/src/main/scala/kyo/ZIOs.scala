@@ -4,6 +4,7 @@ import kyo.kernel.*
 import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 import zio.Exit
+import zio.FiberId
 import zio.Runtime
 import zio.Unsafe
 import zio.ZIO
@@ -19,17 +20,18 @@ object ZIOs:
       * @return
       *   A Kyo effect that, when run, will execute the zio.ZIO
       */
-    def get[E, A](v: => ZIO[Any, E, A])(using Frame, zio.Trace): A < (Abort[E] & Async) =
+    def get[E, A](v: => ZIO[Any, E, A])(using f: Frame, t: zio.Trace): A < (Abort[E] & Async) =
         IO.Unsafe {
             Unsafe.unsafely {
-                import zio.unsafeInterrupt
                 given ce: CanEqual[E, E] = CanEqual.derived
                 val p                    = Promise.Unsafe.init[E, A]()
                 val f                    = Runtime.default.unsafe.fork(v)
                 f.unsafe.addObserver { (exit: zio.Exit[E, A]) =>
                     p.completeDiscard(exit.toResult)
                 }
-                p.onInterrupt(_ => discard(f.unsafeInterrupt()))
+                p.onInterrupt(_ =>
+                    discard(f.unsafe.interrupt(zio.Cause.interrupt(FiberId.None, zio.StackTrace(FiberId.None, zio.Chunk(t)))))
+                )
                 p.safe.get
             }
         }
