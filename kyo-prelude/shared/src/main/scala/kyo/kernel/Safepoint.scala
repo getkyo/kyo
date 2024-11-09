@@ -9,12 +9,20 @@ import kyo.kernel.Safepoint.*
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 
+/** Provides runtime safety guarantees and debugging capabilities for effect execution.
+  *
+  * Safepoint ensures stack safety, thread isolation, and debugging support for effectful computations. It maintains execution state,
+  * manages interceptors for cross-cutting concerns, and provides rich error context for failures.
+  *
+  * This class is not meant to be used directly by user code, but rather serves as infrastructure for effect handlers and combinators. It's
+  * a key part of ensuring effect execution remains practical and debuggable while maintaining good performance characteristics.
+  */
 final class Safepoint private () extends Trace.Owner:
 
     private var state: State             = State.init()
     private var interceptor: Interceptor = null
 
-    def enter(frame: Frame, value: Any): Boolean =
+    private[kernel] def enter(frame: Frame, value: Any): Boolean =
         val state    = this.state
         val threadId = Thread.currentThread().getId()
         val proceed =
@@ -27,7 +35,7 @@ final class Safepoint private () extends Trace.Owner:
         proceed
     end enter
 
-    def exit(): Unit =
+    private[kernel] def exit(): Unit =
         state = state.decrementDepth
 
     private[kernel] def getInterceptor(): Interceptor = interceptor
@@ -39,6 +47,8 @@ final class Safepoint private () extends Trace.Owner:
 end Safepoint
 
 object Safepoint:
+
+    implicit def get: Safepoint = local.get()
 
     private[kernel] opaque type State = Long
 
@@ -68,8 +78,6 @@ object Safepoint:
                 else state & ~InterceptorMask
         end extension
     end State
-
-    implicit def get: Safepoint = local.get()
 
     abstract private[kyo] class Interceptor:
         def addFinalizer(f: () => Unit): Unit

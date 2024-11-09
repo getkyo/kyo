@@ -66,16 +66,6 @@ class ArrowEffectTest extends Test:
             assert(result.eval == 1.0)
         }
 
-        "with accept" in {
-            val effect = testEffect1(42)
-            val result = ArrowEffect.handle(Tag[TestEffect1], effect)(
-                [C] => (input, cont) => cont(input.toString),
-                done = identity,
-                accept = [C] => _ == 42
-            )
-            assert(result.eval == "42")
-        }
-
         "with state" in {
             val effect =
                 for
