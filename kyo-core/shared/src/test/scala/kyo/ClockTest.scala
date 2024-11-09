@@ -348,7 +348,7 @@ class ClockTest extends Test:
                     task     <- Clock.repeatAtInterval(5.millis)(running.set(true).andThen(Clock.now.map(queue.add)))
                     _        <- untilTrue(control.advance(1.milli).andThen(running.get))
                     _        <- queue.drain
-                    _        <- control.advance(1.milli).repeat(10)
+                    _        <- Loop.repeat(10)(control.advance(1.milli))
                     _        <- task.interrupt
                     instants <- queue.drain
                 yield
@@ -415,7 +415,7 @@ class ClockTest extends Test:
                     task     <- Clock.repeatWithDelay(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
                     _        <- untilTrue(control.advance(1.milli).andThen(running.get))
                     _        <- queue.drain
-                    _        <- control.advance(1.milli).repeat(10)
+                    _        <- Loop.repeat(10)(control.advance(1.milli))
                     _        <- task.interrupt
                     instants <- queue.drain
                 yield

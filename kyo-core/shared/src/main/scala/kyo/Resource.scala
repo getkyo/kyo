@@ -27,7 +27,7 @@ object Resource:
       *   A unit value wrapped in Resource and IO effects.
       */
     def ensure(v: => Unit < Async)(using frame: Frame): Unit < (Resource & IO) =
-        ContextEffect.suspendMap(Tag[Resource]) { finalizer =>
+        ContextEffect.suspendAndMap(Tag[Resource]) { finalizer =>
             Abort.run(finalizer.queue.offer(IO(v))).map {
                 case Result.Success(_) => ()
                 case _ =>

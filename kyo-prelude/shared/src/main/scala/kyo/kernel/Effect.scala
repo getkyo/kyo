@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import internal.*
+import kyo.Frame
 import kyo.Tag
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
@@ -9,9 +10,9 @@ abstract class Effect private[kernel] ()
 
 object Effect:
 
-    def defer[A, S](f: Safepoint ?=> A < S)(using fr: Frame): A < S =
+    def defer[A, S](f: Safepoint ?=> A < S)(using _frame: Frame): A < S =
         new KyoDefer[A, S]:
-            def frame = summon[Frame]
+            def frame = _frame
             def apply(v: Unit, context: Context)(using Safepoint) =
                 f
 

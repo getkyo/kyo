@@ -2,12 +2,6 @@ package kyo
 
 import kyo.Tag
 
-private[kyo] type Frame = kernel.Frame
-private[kyo] inline def Frame = kernel.Frame
-
-type Flat[A] = kernel.Flat[A]
-val Flat = kernel.Flat
-
 type <[+A, -S] = kernel.<[A, S]
 
 val Loop = kernel.Loop

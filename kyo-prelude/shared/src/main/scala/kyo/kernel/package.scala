@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Tag
-
 package object kernel:
 
     type Id[A]    = A

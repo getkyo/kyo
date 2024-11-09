@@ -22,7 +22,8 @@ import scala.quoted.*
 opaque type SafeClassTag[A] >: SafeClassTag.Element = Class[?] | SafeClassTag.Element
 
 object SafeClassTag:
-    given [A, B]: CanEqual[SafeClassTag[A], SafeClassTag[B]] = CanEqual.derived
+    inline given [A, B]: CanEqual[SafeClassTag[A], SafeClassTag[B]] = CanEqual.derived
+    inline given [A]: Flat[SafeClassTag[A]]                         = Flat.unsafe.bypass
 
     sealed trait Element
 

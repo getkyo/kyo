@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import internal.*
+import kyo.Frame
 
 private[kernel] object TracePool:
     inline def globalCapacity: Int = 0

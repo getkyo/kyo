@@ -15,7 +15,8 @@ opaque type Instant = JInstant
 /** Companion object for Instant, providing factory methods and constants. */
 object Instant:
 
-    given CanEqual[Instant, Instant] = CanEqual.derived
+    inline given CanEqual[Instant, Instant] = CanEqual.derived
+    inline given Flat[Instant]              = Flat.unsafe.bypass
 
     given Ordering[Instant] with
         def compare(x: Instant, y: Instant): Int = x.compareTo(y)

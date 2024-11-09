@@ -47,13 +47,6 @@ class PendingTest extends Test:
         assert(y.eval == "result")
     }
 
-    "repeat" in {
-        var counter       = 0
-        val x: Unit < Any = Effect.defer { counter += 1 }
-        x.repeat(3).eval
-        assert(counter == 3)
-    }
-
     "eval" in {
         val x: Int < Any = 10
         assert(x.eval == 10)

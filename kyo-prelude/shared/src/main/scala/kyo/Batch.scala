@@ -97,7 +97,7 @@ object Batch:
       *   A batched computation that produces a single value of type B
       */
     inline def foreach[A, B, S](seq: Seq[A])(inline f: A => B < S): B < (Batch[Any] & S) =
-        ArrowEffect.suspendMap[A](erasedTag[Any], seq)(f)
+        ArrowEffect.suspendAndMap[A](erasedTag[Any], seq)(f)
 
     /** Runs a computation with Batch effect, executing all batched operations.
       *

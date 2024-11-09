@@ -16,7 +16,8 @@ object Duration:
 
     opaque type Value = Long
 
-    given CanEqual[Duration, Duration] = CanEqual.derived
+    inline given CanEqual[Duration, Duration] = CanEqual.derived
+    inline given Flat[Duration]               = Flat.unsafe.bypass
 
     /** Exception thrown for invalid duration parsing. */
     case class InvalidDuration(message: String) extends Exception(message)

@@ -2,6 +2,7 @@ package kyo.kernel
 
 import internal.*
 import kyo.Ansi.*
+import kyo.Frame
 import scala.annotation.implicitNotFound
 import scala.annotation.nowarn
 import scala.quoted.*
@@ -19,11 +20,9 @@ Use:
   val x = Async.run(v)
   Async.run(x)
 """)
-final class Boundary[Ctx, +S] private (dummy: Unit) extends AnyVal:
+final class Boundary[Ctx, +S] private (dummy: Unit) extends AnyVal
 
-end Boundary
-
-private[kyo] object Boundary:
+object Boundary:
 
     extension [Ctx, S](boundary: Boundary[Ctx, S])
         @nowarn("msg=anonymous")

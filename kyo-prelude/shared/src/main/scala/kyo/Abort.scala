@@ -2,7 +2,6 @@ package kyo
 
 import kernel.ArrowEffect
 import kernel.Const
-import kernel.Frame
 import kyo.Result.*
 import kyo.Tag
 import kyo.kernel.Effect
@@ -51,7 +50,7 @@ object Abort:
       *   A computation that immediately fails with the given error value
       */
     inline def error[E](inline e: Error[E])(using inline frame: Frame): Nothing < Abort[E] =
-        ArrowEffect.suspendMap[Any](erasedTag[E], e)(_ => ???)
+        ArrowEffect.suspendAndMap[Any](erasedTag[E], e)(_ => ???)
 
     /** Fails the computation if the condition is true.
       *
@@ -175,7 +174,7 @@ object Abort:
             reduce: Reducible[Abort[ER]]
         ): Result[E, A] < (S & reduce.SReduced) =
             reduce {
-                ArrowEffect.handle.catching[
+                ArrowEffect.handleCatching[
                     Const[Error[E]],
                     Const[Unit],
                     Abort[E],
@@ -227,7 +226,7 @@ object Abort:
             ct: SafeClassTag[E],
             reduce: Reducible[Abort[ER]]
         ): (A | B) < (S & Abort[ER]) =
-            ArrowEffect.handle.catching[
+            ArrowEffect.handleCatching[
                 Const[Error[E]],
                 Const[Unit],
                 Abort[E],
@@ -276,7 +275,7 @@ object Abort:
             reduce: Reducible[Abort[ER]]
         ): (A | B) < (S & reduce.SReduced) =
             reduce {
-                ArrowEffect.handle.catching[
+                ArrowEffect.handleCatching[
                     Const[Error[E]],
                     Const[Unit],
                     Abort[E],

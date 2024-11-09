@@ -104,7 +104,7 @@ object Emit:
         inline tag: Tag[Emit[V]],
         inline frame: Frame
     ): A < (S & Emit[V]) =
-        ArrowEffect.suspendMap[Any](tag, value)(f(_))
+        ArrowEffect.suspendAndMap[Any](tag, value)(f(_))
 
     final class RunOps[V](dummy: Unit) extends AnyVal:
         /** Runs an Emit effect, collecting all emitted values into a Chunk.
@@ -115,7 +115,7 @@ object Emit:
           *   A tuple of the collected values and the result of the computation
           */
         def apply[A: Flat, S](v: A < (Emit[V] & S))(using tag: Tag[Emit[V]], frame: Frame): (Chunk[V], A) < S =
-            ArrowEffect.handle.state(tag, Chunk.empty[V], v)(
+            ArrowEffect.handleState(tag, Chunk.empty[V], v)(
                 handle = [C] => (input, state, cont) => (state.append(input), cont(Ack.Continue())),
                 done = (state, res) => (state, res)
             )
@@ -141,7 +141,7 @@ object Emit:
             tag: Tag[Emit[V]],
             frame: Frame
         ): (A, B) < (S & S2) =
-            ArrowEffect.handle.state(tag, acc, v)(
+            ArrowEffect.handleState(tag, acc, v)(
                 handle = [C] =>
                     (input, state, cont) =>
                         f(state, input).map((a, ack) => (a, cont(ack))),

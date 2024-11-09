@@ -203,7 +203,7 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   A new Fiber with the mapped Result
           */
-        def mapResult[E2, B](f: Result[E, A] => Result[E2, B] < IO)(using Frame): Fiber[E2, B] < IO =
+        def mapResult[E2, B: Flat](f: Result[E, A] => Result[E2, B] < IO)(using Frame): Fiber[E2, B] < IO =
             IO.Unsafe(Unsafe.mapResult(self)(r => IO.Unsafe.run(f(r)).eval))
 
         /** Creates a new Fiber that runs with interrupt masking.

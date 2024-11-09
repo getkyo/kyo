@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import Context.internal.*
+import kyo.Flat
 import kyo.Tag
 import kyo.bug
 
@@ -12,12 +13,12 @@ object Context:
     val empty: Context = Map.empty
 
     extension (self: Context)
-        inline def isEmpty = self eq empty
+        def isEmpty = self eq empty
 
-        inline def contains[A, E <: ContextEffect[A]](tag: Tag[E]): Boolean =
+        def contains[A, E <: ContextEffect[A]](tag: Tag[E]): Boolean =
             self.contains(tag.erased)
 
-        inline def inherit: Context =
+        def inherit: Context =
             if !self.contains(IsolationFlag) then self
             else
                 self.filter { (k, _) =>
@@ -29,10 +30,10 @@ object Context:
             if !contains(tag) then default
             else self(tag.erased).asInstanceOf[B]
 
-        private[kyo] inline def get[A, E <: ContextEffect[A]](tag: Tag[E]): A =
+        private[kyo] def get[A, E <: ContextEffect[A]](tag: Tag[E]): A =
             getOrElse(tag, bug(s"Missing value for context effect '${tag}'. Values: $self"))
 
-        private[kernel] inline def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
+        private[kernel] def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
             val newContext = self.updated(tag.erased, value.asInstanceOf[AnyRef])
             if tag <:< Tag[ContextEffect.Isolated] then
                 newContext.updated(IsolationFlag, IsolationFlag)
