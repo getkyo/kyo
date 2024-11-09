@@ -58,29 +58,51 @@ class MonixTest extends AsyncFreeSpec:
     }
 
     "interrupts" - {
+        val debug = false
 
-        def kyoLoop(started: CountDownLatch, done: CountDownLatch): Unit < IO =
+        def kyoLoop(started: CountDownLatch, done: CountDownLatch)(using f: Frame): Unit < IO =
             def loop(i: Int): Unit < IO =
                 IO {
                     if i == 0 then
                         IO(started.countDown()).andThen(loop(i + 1))
-                    else
-                        loop(i + 1)
+                    else loop(i + 1)
                 }
-            IO.ensure(IO(done.countDown()))(loop(0))
+            val ensure =
+                if debug then IO(println(s"Kyo ENSURED ${f.position.show}")).andThen(IO(done.countDown()))
+                else IO(done.countDown())
+            IO.ensure(ensure)(loop(0))
         end kyoLoop
 
-        def monixLoop(started: CountDownLatch, done: CountDownLatch): Task[Unit] =
+        def monixLoop(started: CountDownLatch, done: CountDownLatch)(using f: Frame): Task[Unit] =
             def loop(i: Int): Task[Unit] =
                 Task.defer {
-                    if i == 0 then
-                        Task(started.countDown())
-                            .flatMap(_ => loop(i + 1))
-                    else
-                        loop(i + 1)
+                    if i == 0 then Task(started.countDown()) *> loop(i + 1)
+                    else loop(i + 1)
                 }
-            loop(0).guarantee(Task(done.countDown()))
+            val ensure =
+                if debug then Task(println(s"Monix ENSURED ${f.position.show}")) *> Task(done.countDown())
+                else Task(done.countDown())
+            loop(0).guarantee(ensure)
         end monixLoop
+
+        // inline maintains error message
+        inline def kyoWait(inline latch: CountDownLatch, inline duration: Duration): Assertion < IO =
+            IO {
+                val millis = duration.toMillis
+                assert(
+                    latch.await(millis, TimeUnit.MILLISECONDS) && latch.getCount() == 0,
+                    s"Latch had count ${latch.getCount()} after ${duration.show}"
+                )
+            }
+
+        inline def monixWait(inline latch: CountDownLatch, inline duration: Duration): Task[Assertion] =
+            Task {
+                val millis = duration.toMillis
+                assert(
+                    latch.await(millis, TimeUnit.MILLISECONDS),
+                    s"Latch had count ${latch.getCount()} after ${duration.show}"
+                )
+            }
 
         if Platform.isJVM then
 
@@ -97,37 +119,15 @@ class MonixTest extends AsyncFreeSpec:
                     end for
                 }
 
-                "both" in runMonix {
-                    val started = new CountDownLatch(2)
-                    val done    = new CountDownLatch(2)
-                    val v =
-                        for
-                            _ <- Monix.get(monixLoop(started, done))
-                            _ <- Async.run(kyoLoop(started, done))
-                        yield ()
-                    for
-                        f <- Monix.run(v).start
-                        _ <- Task(started.await(100, TimeUnit.MILLISECONDS))
-                        _ <- f.cancel
-                        _ <- Task(done.await(100, TimeUnit.MILLISECONDS))
-                    yield assert(done.getCount == 0)
-                    end for
-                }
-
                 "parallel loops" in runMonix {
-                    val started = new CountDownLatch(2)
-                    val done    = new CountDownLatch(2)
-                    def parallelEffect =
-                        Monix.run {
-                            val loop1 = Monix.get(monixLoop(started, done))
-                            val loop2 = kyoLoop(started, done)
-                            Async.parallel[Throwable, Unit, Unit, Any](loop1, loop2)
-                        }
+                    val started  = new CountDownLatch(2)
+                    val done     = new CountDownLatch(2)
+                    val parallel = Task.parZip2(monixLoop(started, done), Monix.run(kyoLoop(started, done)))
                     for
-                        f <- parallelEffect.start
-                        _ <- Task(started.await(100, TimeUnit.MILLISECONDS))
+                        f <- parallel.start
+                        _ <- monixWait(started, 100.millis)
                         _ <- f.cancel
-                        _ <- Task(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- monixWait(done, 100.millis)
                     yield assert(done.getCount == 0)
                     end for
                 }
@@ -135,14 +135,9 @@ class MonixTest extends AsyncFreeSpec:
                 "race loops" in runMonix {
                     val started = new CountDownLatch(2)
                     val done    = new CountDownLatch(2)
-                    def raceEffect =
-                        Monix.run {
-                            val loop1 = Monix.get(monixLoop(started, done))
-                            val loop2 = kyoLoop(started, done)
-                            Async.race[Throwable, Unit, Any](loop1, loop2)
-                        }
+                    val race    = Task.race(monixLoop(started, done), monixLoop(started, done))
                     for
-                        f <- raceEffect.start
+                        f <- race.start
                         _ <- Task(started.await(100, TimeUnit.MILLISECONDS))
                         _ <- f.cancel
                         _ <- Task(done.await(100, TimeUnit.MILLISECONDS))
@@ -158,64 +153,42 @@ class MonixTest extends AsyncFreeSpec:
                     val panic   = Result.Panic(new Exception)
                     for
                         f <- Async.run(Monix.get(monixLoop(started, done)))
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- kyoWait(started, 100.millis)
                         _ <- f.interrupt(panic)
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- kyoWait(done, 100.millis)
                     yield assert(r == panic)
                     end for
                 }
 
-                "both" in runKyo {
-                    val started = new CountDownLatch(2)
-                    val done    = new CountDownLatch(2)
-                    val v =
-                        for
-                            _ <- Monix.get(monixLoop(started, done))
-                            _ <- kyoLoop(started, done)
-                        yield ()
-                    for
-                        f <- Async.run(v)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
-                        _ <- f.interrupt
-                        r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
-                    yield assert(r.isPanic)
-                    end for
-                }
-
-                "parallel loops" in runKyo {
+                "parallel" in runKyo {
                     val started = new CountDownLatch(2)
                     val done    = new CountDownLatch(2)
                     def parallelEffect =
-                        val loop1 = Monix.get(monixLoop(started, done))
-                        val loop2 = kyoLoop(started, done)
-                        Async.parallel[Throwable, Unit, Unit, Any](loop1, loop2)
+                        val monix = Monix.get(monixLoop(started, done))
+                        val kyo   = kyoLoop(started, done)
+                        Async.parallel(monix, kyo)
                     end parallelEffect
                     for
                         f <- Async.run(parallelEffect)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        _ <- kyoWait(started, 100.millis)
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- kyoWait(done, 100.millis)
                     yield assert(r.isPanic)
                     end for
                 }
 
-                "race loops" in runKyo {
+                "race" in runKyo {
                     val started = new CountDownLatch(2)
                     val done    = new CountDownLatch(2)
-                    def raceEffect =
-                        val loop1 = Monix.get(monixLoop(started, done))
-                        val loop2 = kyoLoop(started, done)
-                        Async.race(loop1, loop2)
-                    end raceEffect
+                    val race    = Async.race(Monix.get(monixLoop(started, done)), kyoLoop(started, done))
                     for
-                        f <- Async.run(raceEffect)
-                        _ <- IO(started.await(100, TimeUnit.MILLISECONDS))
+                        f <- Async.run(race)
+                        _ <- kyoWait(started, 100.millis)
                         _ <- f.interrupt
                         r <- f.getResult
-                        _ <- IO(done.await(100, TimeUnit.MILLISECONDS))
+                        _ <- kyoWait(done, 100.millis)
                     yield assert(r.isPanic)
                     end for
                 }
