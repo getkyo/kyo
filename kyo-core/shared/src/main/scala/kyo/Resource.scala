@@ -107,7 +107,7 @@ object Resource:
                         case Absent =>
                             bug("Resource finalizer queue already closed.")
                         case Present(tasks) =>
-                            Async.parallelGrouped(closeParallelism) {
+                            Async.parallel(closeParallelism) {
                                 tasks.map { task =>
                                     Abort.run[Throwable](task)
                                         .map(_.fold(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))

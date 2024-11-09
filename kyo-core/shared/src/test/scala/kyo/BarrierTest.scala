@@ -43,7 +43,7 @@ class BarrierTest extends Test:
     "contention" in runJVM {
         for
             barrier <- Barrier.init(1000)
-            _       <- Async.parallel(List.fill(1000)(barrier.await))
+            _       <- Async.parallelUnbounded(List.fill(1000)(barrier.await))
         yield succeed
     }
 

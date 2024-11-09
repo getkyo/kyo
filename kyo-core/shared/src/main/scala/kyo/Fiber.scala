@@ -290,15 +290,46 @@ object Fiber extends FiberPlatformSpecific:
             }
         }
 
-    /** Runs multiple Fibers in parallel and returns a Fiber that completes with their results. If any Fiber fails or is interrupted, all
-      * other Fibers are interrupted.
+    /** Runs multiple computations in parallel with a specified level of parallelism and returns a Fiber that completes with their results.
+      *
+      * This method allows you to execute a sequence of computations with controlled parallelism by grouping them into batches. If any
+      * computation fails or is interrupted, all other computations are interrupted.
+      *
+      * @param parallelism
+      *   The maximum number of computations to run concurrently. The input sequence will be divided into groups of size ceil(n/parallelism)
+      *   where n is the total number of computations.
+      * @param seq
+      *   The sequence of computations to run in parallel
+      * @return
+      *   A Fiber that completes with a sequence containing the results of all computations in their original order
+      */
+    def parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using
+        boundary: Boundary[Ctx, IO & Abort[E]],
+        frame: Frame,
+        safepoint: Safepoint
+    ): Fiber[E, Seq[A]] < (IO & Ctx) =
+        seq.size match
+            case 0 => Fiber.success(Seq.empty)
+            case n =>
+                val groupSize = Math.ceil(n.toDouble / Math.max(1, parallelism)).toInt
+                parallelUnbounded(seq.grouped(groupSize).map(Kyo.collect).toSeq).map(_.map(_.flatten))
+    end parallel
+
+    /** Runs multiple computations in parallel with unlimited parallelism and returns a Fiber that completes with their results.
+      *
+      * Unlike [[parallel]], this method starts all computations immediately without any concurrency control. This can lead to resource
+      * exhaustion if the input sequence is large. Consider using [[parallel]] instead, which allows you to control the level of
+      * concurrency.
+      *
+      * If any computation fails or is interrupted, all other computations are interrupted.
       *
       * @param seq
-      *   The sequence of Fibers to run in parallel
+      *   The sequence of computations to run in parallel
       * @return
-      *   A Fiber that completes with the results of all Fibers
+      *   A Fiber that completes with a sequence containing the results of all computations in their original order
       */
-    def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    def parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, IO & Abort[E]],
         frame: Frame,
