@@ -69,6 +69,9 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
         p
     end mask
 
+    def interruptDiscard[E2 >: E](error: Error[E2]): Unit =
+        discard(interrupt(error))
+
     def interrupt[E2 >: E](error: Error[E2]): Boolean =
         @tailrec def interruptLoop(promise: IOPromise[E, A]): Boolean =
             promise.state match

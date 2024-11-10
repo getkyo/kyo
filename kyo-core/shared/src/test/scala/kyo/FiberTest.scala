@@ -274,7 +274,36 @@ class FiberTest extends Test:
                 assert(bc.get() == 5)
             }
         }
-
+        "interrupts fibers on failure" - {
+            "promise + plain value" in runJVM {
+                for
+                    latch   <- Latch.init(1)
+                    promise <- Promise.init[Nothing, Int]
+                    _       <- promise.onInterrupt(_ => latch.release)
+                    result  <- Fiber.parallelUnbounded(Seq(promise.get, Abort.fail(new Exception))).map(_.getResult)
+                    _       <- latch.await
+                yield assert(result.isFail)
+            }
+            "promise + delayed abort" in runJVM {
+                for
+                    latch   <- Latch.init(1)
+                    promise <- Promise.init[Nothing, Int]
+                    _       <- promise.onInterrupt(_ => latch.release)
+                    result  <- Fiber.parallelUnbounded(Seq(promise.get, Async.delay(5.millis)(Abort.fail(new Exception)))).map(_.getResult)
+                    _       <- latch.await
+                yield assert(result.isFail)
+            }
+            "slow + fast abort" in runJVM {
+                val ex1 = new Exception
+                val ex2 = new Exception
+                Fiber.parallelUnbounded(Seq(
+                    Async.delay(15.millis)(Abort.fail(ex1)),
+                    Async.delay(5.millis)(Abort.fail(ex2))
+                )).map(_.getResult).map { result =>
+                    assert(result == Result.fail(ex2))
+                }
+            }
+        }
     }
 
     "fromFuture" - {

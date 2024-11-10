@@ -232,7 +232,7 @@ object Fiber extends FiberPlatformSpecific:
           * @return
           *   Whether the Fiber was successfully interrupted
           */
-        def interrupt(error: Panic)(using Frame): Boolean < IO =
+        def interrupt(error: Result.Error[E])(using Frame): Boolean < IO =
             IO(self.interrupt(error))
 
         /** Interrupts the Fiber with a specific error, discarding the return value.
@@ -240,7 +240,7 @@ object Fiber extends FiberPlatformSpecific:
           * @param error
           *   The error to interrupt the Fiber with
           */
-        def interruptDiscard(error: Panic)(using Frame): Unit < IO =
+        def interruptDiscard(error: Result.Error[E])(using Frame): Unit < IO =
             IO(discard(self.interrupt(error)))
 
         def unsafe: Fiber.Unsafe[E, A] = self
@@ -339,32 +339,28 @@ object Fiber extends FiberPlatformSpecific:
             case 0 => Fiber.success(Seq.empty)
             case _ =>
                 IO {
-                    class State extends IOPromise[E, Seq[A]]:
+                    class State extends IOPromise[E, Seq[A]] with ((Int, Result[E, A]) => Unit):
                         val results = (new Array[Any](seq.size)).asInstanceOf[Array[A]]
                         val pending = new AtomicInteger(seq.size)
-                        def update(idx: Int, value: A) =
-                            results(idx) = value
-                            if pending.decrementAndGet() == 0 then
-                                this.completeDiscard(Result.success(ArraySeq.unsafeWrapArray(results)))
-                        end update
+                        def apply(idx: Int, result: Result[E, A]): Unit =
+                            result.fold(this.interruptDiscard) { value =>
+                                results(idx) = value
+                                if pending.decrementAndGet() == 0 then
+                                    this.completeDiscard(Result.success(ArraySeq.unsafeWrapArray(results)))
+                            }
                     end State
                     val state = new State
                     import state.*
-                    foreach(seq)((idx, io) => io.evalNow.foreach(update(idx, _)))
-                    if state.done() then state
-                    else
-                        boundary { (trace, context) =>
-                            IO {
-                                foreach(seq) { (idx, v) =>
-                                    if isNull(results(idx)) then
-                                        val fiber = IOTask(v, safepoint.copyTrace(trace), context)
-                                        state.interrupts(fiber)
-                                        fiber.onComplete(_.fold(state.completeDiscard)(update(idx, _)))
-                                }
-                                state
+                    boundary { (trace, context) =>
+                        IO {
+                            foreach(seq) { (idx, v) =>
+                                val fiber = IOTask(v, safepoint.copyTrace(trace), context)
+                                state.interrupts(fiber)
+                                fiber.onComplete(state(idx, _))
                             }
+                            state
                         }
-                    end if
+                    }
                 }
 
     opaque type Unsafe[+E, +A] = IOPromise[E, A]
