@@ -7,6 +7,21 @@ import scala.annotation.implicitNotFound
 import scala.annotation.nowarn
 import scala.quoted.*
 
+/** Ensures type-safe transitions of effects across asynchronous boundaries.
+  *
+  * When code requests a Boundary (typically through implicit resolution), it means that effects need to be handled before crossing an
+  * asynchronous boundary. Only [[ContextEffect]]s can cross boundaries, while [[ArrowEffect]]s must be handled first because they represent
+  * operations that require explicit interpretation.
+  *
+  * If the compiler requests a Boundary, either:
+  *   - Handle any non-ContextEffects in the computation before the boundary
+  *   - Or split nested boundary operations into separate statements if you see the "nested Async operations" error
+  *
+  * @tparam Ctx
+  *   The context effects that will cross the boundary
+  * @tparam S
+  *   The source effects that must be handled before crossing
+  */
 @implicitNotFound("""
 Could not create an Async boundary for effects: ${Ctx}
 

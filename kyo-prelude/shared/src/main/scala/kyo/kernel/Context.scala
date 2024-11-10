@@ -5,9 +5,9 @@ import kyo.Flat
 import kyo.Tag
 import kyo.bug
 
-opaque type Context = Map[Tag[Any] | IsolationFlag, AnyRef]
+private[kyo] opaque type Context = Map[Tag[Any] | IsolationFlag, AnyRef]
 
-object Context:
+private[kyo] object Context:
     inline given Flat[Context] = Flat.unsafe.bypass
 
     val empty: Context = Map.empty
@@ -43,7 +43,7 @@ object Context:
         end set
     end extension
 
-    private[kyo] object internal:
+    object internal:
         class IsolationFlag
         object IsolationFlag extends IsolationFlag
 end Context

@@ -6,12 +6,12 @@ import scala.annotation.tailrec
 import scala.util.control.NonFatal
 import scala.util.control.NoStackTrace
 
-final class Trace(
+final private[kyo] class Trace(
     private[kernel] var frames: Array[Frame],
     private[kernel] var index: Int
 )
 
-object Trace:
+private[kyo] object Trace:
 
     private[kernel] def init: Trace = Trace(new Array[Frame](maxTraceFrames), 0)
 
