@@ -140,7 +140,7 @@ class FiberTest extends Test:
                     latch   <- Latch.init(1)
                     promise <- Promise.init[Nothing, Int]
                     _       <- promise.onInterrupt(_ => latch.release)
-                    result  <- Async.race(promise.get, 42)
+                    result  <- Fiber.race(Seq(promise.get, 42)).map(_.get)
                     _       <- latch.await
                 yield assert(result == 42)
             }
@@ -149,7 +149,7 @@ class FiberTest extends Test:
                     latch   <- Latch.init(1)
                     promise <- Promise.init[Nothing, Int]
                     _       <- promise.onInterrupt(_ => latch.release)
-                    result  <- Async.race(promise.get, Async.delay(5.millis)(42))
+                    result  <- Fiber.race(Seq(promise.get, Async.delay(5.millis)(42))).map(_.get)
                     _       <- latch.await
                 yield assert(result == 42)
             }
@@ -157,10 +157,10 @@ class FiberTest extends Test:
                 for
                     adder <- LongAdder.init
                     result <-
-                        Async.race(
+                        Fiber.race(Seq(
                             Async.delay(15.millis)(adder.increment.andThen(24)),
                             Async.delay(5.millis)((adder.increment.andThen(42)))
-                        )
+                        )).map(_.get)
                     _        <- Async.sleep(50.millis)
                     executed <- adder.get
                 yield
@@ -171,13 +171,88 @@ class FiberTest extends Test:
     }
 
     "parallel" - {
+        "empty sequence" in run {
+            for
+                fiber  <- Fiber.parallel(2)(Seq())
+                result <- fiber.get
+            yield assert(result == Seq())
+        }
+
+        "sequence smaller than parallelism" in run {
+            for
+                fiber  <- Fiber.parallel(5)(Seq(IO(1), IO(2), IO(3)))
+                result <- fiber.get
+            yield assert(result == Seq(1, 2, 3))
+        }
+
+        "sequence larger than parallelism" in run {
+            for
+                counter <- AtomicInt.init
+                fiber <- IO {
+                    def task(i: Int): Int < (IO & Async) =
+                        for
+                            current <- counter.getAndIncrement
+                            _       <- Async.sleep(1.millis)
+                            _       <- counter.decrementAndGet
+                        yield
+                            assert(current < 2)
+                            i
+
+                    Fiber.parallel(2)((1 to 20).map(task))
+                }
+                result       <- fiber.get
+                finalCounter <- counter.get
+            yield
+                assert(result == (1 to 20))
+                assert(finalCounter == 0)
+        }
+
+        "parallelism of 1 executes sequentially" in run {
+            for
+                counter <- AtomicInt.init
+                fiber <- IO {
+                    def task(i: Int): Int < (IO & Async) =
+                        for
+                            current <- counter.getAndIncrement
+                            _       <- Async.sleep(1.millis)
+                            _       <- counter.decrementAndGet
+                        yield
+                            assert(current == 0)
+                            i
+
+                    Fiber.parallel(1)((1 to 5).map(task))
+                }
+                result       <- fiber.get
+                finalCounter <- counter.get
+            yield
+                assert(result == (1 to 5))
+                assert(finalCounter == 0)
+        }
+
+        "error propagation" in run {
+            val error = new Exception("test error")
+            for
+                fiber <- IO {
+                    def task(i: Int): Int < (IO & Async & Abort[Throwable]) =
+                        if i == 3 then Abort.fail(error)
+                        else i
+
+                    Fiber.parallel(2)((1 to 5).map(task))
+                }
+                result <- fiber.getResult
+            yield assert(result == Result.fail(error))
+            end for
+        }
+    }
+
+    "parallelUnbounded" - {
         "zero" in run {
-            Fiber.parallel(Seq.empty[Int < Async]).map(_.get).map { r =>
+            Fiber.parallelUnbounded(Seq.empty[Int < Async]).map(_.get).map { r =>
                 assert(r == Seq())
             }
         }
         "one" in run {
-            Fiber.parallel(Seq(1)).map(_.get).map { r =>
+            Fiber.parallelUnbounded(Seq(1)).map(_.get).map { r =>
                 assert(r == Seq(1))
             }
         }
@@ -193,12 +268,13 @@ class FiberTest extends Test:
                     else
                         s
                 }
-            Fiber.parallel(List(loop(1, "a"), loop(5, "b"))).map(_.get).map { r =>
+            Fiber.parallelUnbounded(List(loop(1, "a"), loop(5, "b"))).map(_.get).map { r =>
                 assert(r == List("a", "b"))
                 assert(ac.get() == 1)
                 assert(bc.get() == 5)
             }
         }
+
     }
 
     "fromFuture" - {
@@ -617,13 +693,13 @@ class FiberTest extends Test:
         "same failures" in {
             val v: Int < Abort[Int]          = 1
             val _: Fiber[Int, Int] < IO      = Fiber.race(Seq(v))
-            val _: Fiber[Int, Seq[Int]] < IO = Fiber.parallel(Seq(v))
+            val _: Fiber[Int, Seq[Int]] < IO = Fiber.parallelUnbounded(Seq(v))
             succeed
         }
         "additional failure" in {
             val v: Int < Abort[Int]                   = 1
             val _: Fiber[Int | String, Int] < IO      = Fiber.race(Seq(v))
-            val _: Fiber[Int | String, Seq[Int]] < IO = Fiber.parallel(Seq(v))
+            val _: Fiber[Int | String, Seq[Int]] < IO = Fiber.parallelUnbounded(Seq(v))
             succeed
         }
     }

@@ -163,7 +163,7 @@ object Hub:
                                     listeners.toArray
                                         .toList.asInstanceOf[List[Channel[A]]]
                                         .map(child => Abort.run[Throwable](child.put(v)))
-                                Async.parallel(puts).map(_ => Loop.continue)
+                                Async.parallelUnbounded(puts).map(_ => Loop.continue)
                             }
                         }
                     }
