@@ -158,6 +158,12 @@ class IOPromiseTest extends Test:
             assert(p1.interrupt(Result.Panic(new Exception("Interrupted"))))
             assert(p3.block(deadline()).isPanic)
         }
+
+        "interruptDiscard" in {
+            val p = new IOPromise[Nothing, Int]()
+            p.interruptDiscard(Result.Panic(new Exception("Interrupted")))
+            assert(p.block(deadline()).isPanic)
+        }
     }
 
     "onComplete" - {
