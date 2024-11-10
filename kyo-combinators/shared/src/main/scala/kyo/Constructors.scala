@@ -116,7 +116,7 @@ extension (kyoObject: Kyo.type)
         boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
     ): Seq[A1] < (Abort[E] & Async & Ctx) =
-        Async.parallel[E, A1, Ctx](sequence.map(useElement))
+        Async.parallelUnbounded[E, A1, Ctx](sequence.map(useElement))
 
     /** Applies a function to each element in parallel and discards the results.
       *

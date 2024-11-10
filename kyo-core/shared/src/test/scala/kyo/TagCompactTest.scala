@@ -25,8 +25,5 @@ class TagCompactTest extends Test:
         "Tag[Emit[Int]]" in {
             assert(Tag[Emit[Int]].raw == "!Bv;!?s;!=q;!T0;!U1;!V2;[=!Y5;!W3;!U1;!V2;]")
         }
-        "Tag[IO]" in {
-            assert(Tag[IO].raw == "!Cw;!?s;!=q;!T0;!U1;!V2;")
-        }
     }
 end TagCompactTest

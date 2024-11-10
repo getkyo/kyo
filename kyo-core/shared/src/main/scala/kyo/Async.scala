@@ -172,15 +172,20 @@ object Async:
     ): A < (Abort[E] & Async & Ctx) =
         race[E, A, Ctx](first +: rest)
 
-    /** Runs multiple computations in parallel and returns their results. If any computation fails or is interrupted, all other computations
-      * are interrupted.
+    /** Runs multiple computations in parallel with unlimited parallelism and returns their results.
+      *
+      * Unlike [[parallel]], this method starts all computations immediately without any concurrency control. This can lead to resource
+      * exhaustion if the input sequence is large. Consider using [[parallel]] instead, which allows you to control the level of
+      * concurrency.
+      *
+      * If any computation fails or is interrupted, all other computations are interrupted.
       *
       * @param seq
       *   The sequence of computations to run in parallel
       * @return
-      *   A sequence containing the results of all computations
+      *   A sequence containing the results of all computations in their original order
       */
-    def parallel[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    def parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
@@ -188,8 +193,37 @@ object Async:
         seq.size match
             case 0 => Seq.empty
             case 1 => seq(0).map(Seq(_))
-            case _ => Fiber.parallel(seq).map(_.get)
+            case _ => Fiber.parallelUnbounded(seq).map(_.get)
         end match
+    end parallelUnbounded
+
+    /** Runs multiple computations in parallel with a specified level of parallelism and returns their results.
+      *
+      * This method allows you to execute a sequence of computations with controlled parallelism by grouping them into batches. The
+      * computations are divided into groups based on the parallelism parameter. Each group is assigned to a new fiber, and the computations
+      * within each fiber are processed sequentially.
+      *
+      * For example, with a parallelism of 2 and 6 tasks, there will be 2 fibers, each processing 3 tasks sequentially. The group size is
+      * calculated as ceil(n/parallelism) where n is the total number of computations.
+      *
+      * If any computation fails or is interrupted, all other computations are interrupted.
+      *
+      * @param parallelism
+      *   The maximum number of computations to run concurrently
+      * @param seq
+      *   The sequence of computations to run in parallel
+      * @return
+      *   A sequence containing the results of all computations in their original order
+      */
+    def parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using
+        boundary: Boundary[Ctx, Async & Abort[E]],
+        frame: Frame
+    ): Seq[A] < (Abort[E] & Async & Ctx) =
+        seq.size match
+            case 0 => Seq.empty
+            case 1 => seq(0).map(Seq(_))
+            case n => Fiber.parallel(parallelism)(seq).map(_.get)
     end parallel
 
     /** Runs two computations in parallel and returns their results as a tuple.
@@ -209,7 +243,7 @@ object Async:
         boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
     ): (A1, A2) < (Abort[E] & Async & Ctx) =
-        parallel(Seq(v1, v2))(using Flat.unsafe.bypass).map { s =>
+        parallelUnbounded(Seq(v1, v2))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2])
         }
 
@@ -233,7 +267,7 @@ object Async:
         boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
     ): (A1, A2, A3) < (Abort[E] & Async & Ctx) =
-        parallel(Seq(v1, v2, v3))(using Flat.unsafe.bypass).map { s =>
+        parallelUnbounded(Seq(v1, v2, v3))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3])
         }
 
@@ -260,7 +294,7 @@ object Async:
         boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
     ): (A1, A2, A3, A4) < (Abort[E] & Async & Ctx) =
-        parallel(Seq(v1, v2, v3, v4))(using Flat.unsafe.bypass).map { s =>
+        parallelUnbounded(Seq(v1, v2, v3, v4))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
         }
 
@@ -293,6 +327,6 @@ object Async:
         ArrowEffect.suspend[A](Tag[Join], v).asInstanceOf[Result[E, A] < Async]
 
     private[kyo] def useResult[E, A, B, S](v: IOPromise[E, A])(f: Result[E, A] => B < S)(using Frame): B < (S & Async) =
-        ArrowEffect.suspendMap[A](Tag[Join], v)(f)
+        ArrowEffect.suspendAndMap[A](Tag[Join], v)(f)
 
 end Async

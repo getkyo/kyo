@@ -213,7 +213,7 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(queue.offer(i)))))
                 )
                 closeFiber  <- Async.run(latch.await.andThen(queue.close))
                 _           <- latch.release
@@ -229,9 +229,8 @@ class QueueTest extends Test:
                 assert(drained.isFail)
                 assert(isClosed)
             )
-                .pipe(Choice.run).unit
-                .repeat(repeats)
-                .as(succeed)
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .andThen(succeed)
         }
 
         "offer and poll" in run {
@@ -240,19 +239,18 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(queue.offer(i)))))
                 )
                 pollFiber <- Async.run(
-                    latch.await.andThen(Async.parallel((1 to 100).map(_ => Abort.run(queue.poll))))
+                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ => Abort.run(queue.poll))))
                 )
                 _       <- latch.release
                 offered <- offerFiber.get
                 polled  <- pollFiber.get
                 left    <- queue.size
             yield assert(offered.count(_.contains(true)) == polled.count(_.toMaybe.flatten.isDefined) + left))
-                .pipe(Choice.run).unit
-                .repeat(repeats)
-                .as(succeed)
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .andThen(succeed)
         }
 
         "offer to full queue during close" in run {
@@ -262,7 +260,7 @@ class QueueTest extends Test:
                 _     <- Kyo.foreach(1 to size)(i => queue.offer(i))
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(queue.offer(i)))))
                 )
                 closeFiber <- Async.run(latch.await.andThen(queue.close))
                 _          <- latch.release
@@ -274,9 +272,8 @@ class QueueTest extends Test:
                 assert(offered.count(_.contains(true)) == backlog.get.size - size)
                 assert(isClosed)
             )
-                .pipe(Choice.run).unit
-                .repeat(repeats)
-                .as(succeed)
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .andThen(succeed)
         }
 
         "concurrent close attempts" in run {
@@ -285,10 +282,10 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(queue.offer(i)))))
                 )
                 closeFiber <- Async.run(
-                    latch.await.andThen(Async.parallel((1 to 100).map(_ => queue.close)))
+                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ => queue.close)))
                 )
                 _        <- latch.release
                 offered  <- offerFiber.get
@@ -299,9 +296,8 @@ class QueueTest extends Test:
                 assert(backlog.flatMap(_.toList.flatten).size == offered.count(_.contains(true)))
                 assert(isClosed)
             )
-                .pipe(Choice.run).unit
-                .repeat(repeats)
-                .as(succeed)
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .andThen(succeed)
         }
 
         "offer, poll and close" in run {
@@ -310,10 +306,10 @@ class QueueTest extends Test:
                 queue <- Queue.init[Int](size)
                 latch <- Latch.init(1)
                 offerFiber <- Async.run(
-                    latch.await.andThen(Async.parallel((1 to 100).map(i => Abort.run(queue.offer(i)))))
+                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(i => Abort.run(queue.offer(i)))))
                 )
                 pollFiber <- Async.run(
-                    latch.await.andThen(Async.parallel((1 to 100).map(_ => Abort.run(queue.poll))))
+                    latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ => Abort.run(queue.poll))))
                 )
                 closeFiber <- Async.run(latch.await.andThen(queue.close))
                 _          <- latch.release
@@ -326,9 +322,8 @@ class QueueTest extends Test:
                 assert(offered.count(_.contains(true)) - polled.count(_.toMaybe.flatten.isDefined) == backlog.get.size)
                 assert(isClosed)
             )
-                .pipe(Choice.run).unit
-                .repeat(repeats)
-                .as(succeed)
+                .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                .andThen(succeed)
         }
     }
 

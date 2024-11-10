@@ -1931,18 +1931,23 @@ val a: Int < IO =
 val b: (Int, String) < Async =
     Async.parallel(a, "example")
 
-// Alternatively, it's possible to provide
-// a 'Seq' of computations and produce a 'Seq'
-// with the results
+// Run with unlimited concurrency - starts all
+// computations immediately
 val c: Seq[Int] < Async =
-    Async.parallel(Seq(a, a.map(_ + 1)))
+    Async.parallelUnbounded(Seq(a, a.map(_ + 1)))
+
+// Run with controlled concurrency (max 2 tasks)
+val d: Seq[Int] < Async =
+    Async.parallel(2)(Seq(a, a.map(_ + 1)))
 
 // The 'Fiber.parallel' method is similar but
 // it doesn't automatically join the fibers and
 // produces a 'Fiber[Seq[T]]'
-val d: Fiber[Nothing, Seq[Int]] < IO =
-    Fiber.parallel(Seq(a, a.map(_ + 1)))
+val e: Fiber[Nothing, Seq[Int]] < IO =
+    Fiber.parallel(2)(Seq(a, a.map(_ + 1)))
 ```
+
+For better resource management, prefer `Async.parallel(n)(seq)` to control the maximum number of concurrent computations. If any computation fails or is interrupted, all other computations are automatically interrupted.
 
 The `race` methods are similar to `parallel` but they return the first computation to complete with either a successful result or a failure. Once the first result is produced, the other computations are automatically interrupted.
 
@@ -3004,7 +3009,7 @@ val a: Unit < Routes =
     }
 ```
 
-For further examples, Kyo's [example ledger service](https://github.com/getkyo/kyo/tree/main/kyo-examples/jvm/src/main/scala/kyo/examples/ledger) provides practical applications of these concepts.
+For further examples, Kyo's [example ledger service](https://github.com/getkyo/kyo/tree/main/kyo-examples/jvm/src/main/scala/examples/ledger) provides practical applications of these concepts.
 
 ### ZIOs: Integration with ZIO
 

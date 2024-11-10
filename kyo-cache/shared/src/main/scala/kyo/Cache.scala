@@ -49,11 +49,11 @@ class Cache(private[kyo] val store: Store):
                             Abort.run[Throwable](f(v)).map {
                                 case Result.Success(v) =>
                                     p.complete(Result.Success(v))
-                                        .as(v)
+                                        .andThen(v)
                                 case r =>
                                     IO(store.invalidate(key))
                                         .andThen(p.complete(r))
-                                        .as(r.getOrThrow)
+                                        .andThen(r.getOrThrow)
                             }
                         }
                     else

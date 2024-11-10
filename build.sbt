@@ -9,7 +9,7 @@ val scala3Version   = "3.5.2"
 val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
-val zioVersion       = "2.1.11"
+val zioVersion       = "2.1.12"
 val catsVersion      = "3.5.5"
 val scalaTestVersion = "3.2.19"
 
@@ -181,6 +181,7 @@ lazy val `kyo-data` =
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,
+            libraryDependencies += "com.lihaoyi"   %%% "pprint"        % "0.9.0",
             libraryDependencies += "dev.zio"       %%% "zio-test-sbt"  % zioVersion       % Test,
             libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
             libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
@@ -197,7 +198,6 @@ lazy val `kyo-prelude` =
         .in(file("kyo-prelude"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.lihaoyi" %%% "pprint"        % "0.9.0",
             libraryDependencies += "org.jctools"   % "jctools-core"  % "4.0.5",
             libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC31" % Test,
             libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % zioVersion   % Test,
@@ -220,7 +220,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC31" % Test,
-            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.11"     % Test,
+            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.12"     % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.12"     % Test,
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
@@ -263,8 +263,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.43.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.43.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.44.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.44.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -475,8 +475,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.29",
             libraryDependencies += "org.http4s"          %% "http4s-dsl"          % "0.23.29",
             libraryDependencies += "dev.zio"             %% "zio-http"            % "3.0.1",
-            libraryDependencies += "io.vertx"             % "vertx-core"          % "4.5.10",
-            libraryDependencies += "io.vertx"             % "vertx-web"           % "4.5.10",
+            libraryDependencies += "io.vertx"             % "vertx-core"          % "5.0.0.CR1",
+            libraryDependencies += "io.vertx"             % "vertx-web"           % "5.0.0.CR1",
             libraryDependencies += "org.scalatest"       %% "scalatest"           % scalaTestVersion % Test
         )
 

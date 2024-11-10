@@ -63,7 +63,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
         tagV2: Tag[Emit[Chunk[V2]]],
         frame: Frame
     ): Stream[V2, S & S2] =
-        Stream[V2, S & S2](ArrowEffect.handle.state(tagV, (), v)(
+        Stream[V2, S & S2](ArrowEffect.handleState(tagV, (), v)(
             [C] =>
                 (input, _, cont) =>
                     if input.isEmpty then
@@ -85,7 +85,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
         tagV2: Tag[Emit[Chunk[V2]]],
         frame: Frame
     ): Stream[V2, S & S2 & S3] =
-        Stream[V2, S & S2 & S3](ArrowEffect.handle.state(tagV, (), v)(
+        Stream[V2, S & S2 & S3](ArrowEffect.handleState(tagV, (), v)(
             [C] =>
                 (input, _, cont) =>
                     Kyo.foldLeft(input)(Continue(): Ack) { (ack, v) =>
@@ -108,7 +108,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
         tagV2: Tag[Emit[Chunk[V2]]],
         frame: Frame
     ): Stream[V2, S & S2 & S3] =
-        Stream[V2, S & S2 & S3](ArrowEffect.handle.state(tagV, (), v)(
+        Stream[V2, S & S2 & S3](ArrowEffect.handleState(tagV, (), v)(
             [C] =>
                 (input, _, cont) =>
                     if input.isEmpty then
@@ -132,7 +132,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
     def take(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
         if n <= 0 then discard
         else
-            Stream[V, S](ArrowEffect.handle.state(tag, n, v)(
+            Stream[V, S](ArrowEffect.handleState(tag, n, v)(
                 [C] =>
                     (input, state, cont) =>
                         if state == 0 then
@@ -153,14 +153,14 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
     def drop(n: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
         if n <= 0 then this
         else
-            Stream[V, S](ArrowEffect.handle.state(tag, n, v)(
+            Stream[V, S](ArrowEffect.handleState(tag, n, v)(
                 [C] =>
                     (input, state, cont) =>
                         if state == 0 then
                             Emit.andMap(input)(ack => (0, cont(ack)))
                         else
                             val c = input.dropLeft(state)
-                            if c.isEmpty then (state - c.size, cont(Continue()))
+                            if c.isEmpty then (state - input.size, cont(Continue()))
                             else Emit.andMap(c)(ack => (0, cont(ack)))
             ))
 
@@ -172,7 +172,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
       *   A new stream containing elements that satisfy the predicate
       */
     def takeWhile[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
-        Stream[V, S & S2](ArrowEffect.handle.state(tag, true, v)(
+        Stream[V, S & S2](ArrowEffect.handleState(tag, true, v)(
             [C] =>
                 (input, state, cont) =>
                     if !state then (false, cont(Stop))
@@ -191,7 +191,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
       *   A new stream with initial elements that satisfy the predicate removed
       */
     def dropWhile[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
-        Stream[V, S & S2](ArrowEffect.handle.state(tag, true, v)(
+        Stream[V, S & S2](ArrowEffect.handleState(tag, true, v)(
             [C] =>
                 (input, state, cont) =>
                     if state then
@@ -211,7 +211,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
       *   A new stream containing only elements that satisfy the predicate
       */
     def filter[S2](f: V => Boolean < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S & S2] =
-        Stream[V, S & S2](ArrowEffect.handle.state(tag, (), v)(
+        Stream[V, S & S2](ArrowEffect.handleState(tag, (), v)(
             [C] =>
                 (input, _, cont) =>
                     Kyo.filter(input)(f).map { c =>
@@ -247,7 +247,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
       */
     @targetName("changesMaybe")
     def changes(first: Maybe[V])(using tag: Tag[Emit[Chunk[V]]], frame: Frame, ce: CanEqual[V, V]): Stream[V, S] =
-        Stream[V, S](ArrowEffect.handle.state(tag, first, v)(
+        Stream[V, S](ArrowEffect.handleState(tag, first, v)(
             [C] =>
                 (input, state, cont) =>
                     val c        = input.changes(state)
@@ -305,7 +305,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
       *   The final accumulated value
       */
     def runFold[A, S2](acc: A)(f: (A, V) => A < S2)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): A < (S & S2) =
-        ArrowEffect.handle.state(tag, acc, v)(
+        ArrowEffect.handleState(tag, acc, v)(
             handle = [C] =>
                 (input, state, cont) =>
                     Kyo.foldLeft(input)(state)(f).map((_, cont(Continue()))),
@@ -318,7 +318,7 @@ final case class Stream[V, -S](v: Ack < (Emit[Chunk[V]] & S)):
       *   A chunk containing all values emitted by the stream
       */
     def run(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Chunk[V] < S =
-        ArrowEffect.handle.state(tag, Chunk.empty[Chunk[V]], v)(
+        ArrowEffect.handleState(tag, Chunk.empty[Chunk[V]], v)(
             handle = [C] =>
                 (input, state, cont) =>
                     (state.append(input), cont(Continue())),

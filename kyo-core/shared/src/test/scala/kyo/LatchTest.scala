@@ -48,7 +48,7 @@ class LatchTest extends Test:
     "contention" in runJVM {
         for
             latch <- Latch.init(1000)
-            _     <- Async.parallel(List.fill(1000)(latch.release))
+            _     <- Async.parallelUnbounded(List.fill(1000)(latch.release))
             _     <- latch.await
         yield succeed
     }

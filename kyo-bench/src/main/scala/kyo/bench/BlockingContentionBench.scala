@@ -12,7 +12,7 @@ class BlockingContentionBench extends Bench.ForkOnly(()):
     override def kyoBenchFiber() =
         import kyo.*
 
-        Async.parallel(Seq.fill(concurrency)(IO(block()))).unit
+        Async.parallelUnbounded(Seq.fill(concurrency)(IO(block()))).unit
     end kyoBenchFiber
 
     def catsBench() =

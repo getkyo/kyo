@@ -253,4 +253,46 @@ class ResourceTest extends Test:
             end for
         }
     }
+
+    "parallel close" - {
+
+        "cleans up resources in parallel" taggedAs jvmOnly in run {
+            Latch.init(3).map { latch =>
+                def makeResource(id: Int) =
+                    Resource.acquireRelease(IO(id))(_ => latch.release)
+
+                val resources = Kyo.collect((1 to 3).map(makeResource))
+
+                for
+                    close <- Async.run(resources.pipe(Resource.run(3)))
+                    _     <- latch.await
+                    ids   <- close.get
+                yield assert(ids == (1 to 3))
+                end for
+            }
+        }
+
+        "respects parallelism limit" taggedAs jvmOnly in run {
+            AtomicInt.init.map { counter =>
+                def makeResource(id: Int) =
+                    Resource.acquireRelease(IO(id)) { _ =>
+                        for
+                            current <- counter.getAndIncrement
+                            _       <- Async.sleep(1.millis)
+                            _       <- counter.decrementAndGet
+                        yield
+                            assert(current < 3)
+                            ()
+                    }
+
+                val resources = Kyo.collect((1 to 10).map(makeResource))
+
+                for
+                    close <- Async.run(resources.pipe(Resource.run(3)))
+                    ids   <- close.get
+                yield assert(ids == (1 to 10))
+                end for
+            }
+        }
+    }
 end ResourceTest

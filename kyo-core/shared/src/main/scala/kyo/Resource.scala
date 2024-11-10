@@ -15,7 +15,7 @@ sealed trait Resource extends ContextEffect[Resource.Finalizer]
 object Resource:
 
     /** Represents a finalizer for a resource. */
-    case class Finalizer(createdAt: Frame, queue: Queue.Unbounded[Unit < Async])
+    case class Finalizer(createdAt: Frame, queue: Queue.Unbounded[Unit < (Async & Abort[Throwable])])
 
     /** Ensures that the given effect is executed when the resource is released.
       *
@@ -26,8 +26,8 @@ object Resource:
       * @return
       *   A unit value wrapped in Resource and IO effects.
       */
-    def ensure(v: => Unit < Async)(using frame: Frame): Unit < (Resource & IO) =
-        ContextEffect.suspendMap(Tag[Resource]) { finalizer =>
+    def ensure(v: => Unit < (Async & Abort[Throwable]))(using frame: Frame): Unit < (Resource & IO) =
+        ContextEffect.suspendAndMap(Tag[Resource]) { finalizer =>
             Abort.run(finalizer.queue.offer(IO(v))).map {
                 case Result.Success(_) => ()
                 case _ =>
@@ -51,7 +51,7 @@ object Resource:
       * @return
       *   The acquired resource wrapped in Resource, IO, and S effects.
       */
-    def acquireRelease[A, S](acquire: A < S)(release: A => Unit < Async)(using Frame): A < (Resource & IO & S) =
+    def acquireRelease[A, S](acquire: A < S)(release: A => Unit < (Async & Abort[Throwable]))(using Frame): A < (Resource & IO & S) =
         acquire.map { resource =>
             ensure(release(resource)).andThen(resource)
         }
@@ -68,7 +68,10 @@ object Resource:
     def acquire[A <: Closeable, S](resource: A < S)(using Frame): A < (Resource & IO & S) =
         acquireRelease(resource)(r => IO(r.close()))
 
-    /** Runs a resource-managed effect.
+    /** Runs a resource-managed effect with default parallelism of 1.
+      *
+      * This method collects all resources used within the computation and ensures they are properly closed when the computation completes
+      * (either successfully or with an error). Resources are closed sequentially (parallelism = 1).
       *
       * @param v
       *   The effect to run with resource management.
@@ -78,18 +81,39 @@ object Resource:
       *   The result of the effect wrapped in Async and S effects.
       */
     def run[A, S](v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
-        Queue.Unbounded.init[Unit < Async](Access.MultiProducerSingleConsumer).map { q =>
+        run(1)(v)
+
+    /** Runs a resource-managed effect with specified parallelism for cleanup.
+      *
+      * This method tracks all resources acquired during the computation and ensures they are properly closed when the computation completes
+      * (either successfully or with an error). The cleanup phase runs resource finalizers in parallel, grouped according to the specified
+      * parallelism level. For example, with closeParallelism=3, up to 3 resources can be cleaned up simultaneously.
+      *
+      * @param closeParallelism
+      *   The number of parallel tasks to use when running finalizers. This controls how many resources can be cleaned up simultaneously.
+      * @param v
+      *   The effect to run with resource management.
+      * @param frame
+      *   The implicit Frame for context.
+      * @return
+      *   The result of the effect wrapped in Async and S effects.
+      */
+    def run[A, S](closeParallelism: Int)(v: A < (Resource & S))(using frame: Frame): A < (Async & S) =
+        Queue.Unbounded.init[Unit < (Async & Abort[Throwable])](Access.MultiProducerSingleConsumer).map { q =>
             Promise.init[Nothing, Unit].map { p =>
                 val finalizer = Finalizer(frame, q)
                 def close: Unit < IO =
                     q.close.map {
                         case Absent =>
                             bug("Resource finalizer queue already closed.")
-                        case Present(l) =>
-                            Kyo.foreachDiscard(l)(task =>
-                                Abort.run[Throwable](task)
-                                    .map(_.fold(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))
-                            )
+                        case Present(tasks) =>
+                            Async.parallel(closeParallelism) {
+                                tasks.map { task =>
+                                    Abort.run[Throwable](task)
+                                        .map(_.fold(ex => Log.error("Resource finalizer failed", ex.exception))(_ => ()))
+                                }
+                            }
+                                .unit
                                 .pipe(Async.run)
                                 .map(p.becomeDiscard)
                     }

@@ -66,16 +66,6 @@ class ArrowEffectTest extends Test:
             assert(result.eval == 1.0)
         }
 
-        "with accept" in {
-            val effect = testEffect1(42)
-            val result = ArrowEffect.handle(Tag[TestEffect1], effect)(
-                [C] => (input, cont) => cont(input.toString),
-                done = identity,
-                accept = [C] => _ == 42
-            )
-            assert(result.eval == "42")
-        }
-
         "with state" in {
             val effect =
                 for
@@ -83,7 +73,7 @@ class ArrowEffectTest extends Test:
                     s2 <- testEffect1(43)
                 yield (s1, s2)
 
-            val result = ArrowEffect.handle.state(Tag[TestEffect1], 0, effect)(
+            val result = ArrowEffect.handleState(Tag[TestEffect1], 0, effect)(
                 [C] => (input, state, cont) => (state + 1, cont((input + state).toString))
             )
 
@@ -115,7 +105,7 @@ class ArrowEffectTest extends Test:
     "handle.catching" - {
         "failure" in {
             val effect = ArrowEffect.suspend[Int](Tag[TestEffect1], 42)
-            val result = ArrowEffect.handle.catching(Tag[TestEffect1], effect)(
+            val result = ArrowEffect.handleCatching(Tag[TestEffect1], effect)(
                 [C] => (input, cont) => throw new RuntimeException("Test exception"),
                 recover = {
                     case _: RuntimeException => "recovered"
@@ -126,7 +116,7 @@ class ArrowEffectTest extends Test:
 
         "success" in {
             val effect = ArrowEffect.suspend[Int](Tag[TestEffect1], 42)
-            val result = ArrowEffect.handle.catching(Tag[TestEffect1], effect)(
+            val result = ArrowEffect.handleCatching(Tag[TestEffect1], effect)(
                 [C] => (input, cont) => cont(input.toString),
                 recover = {
                     case _: RuntimeException => "recovered"
@@ -188,48 +178,44 @@ class ArrowEffectTest extends Test:
                     b <- customEffect(List(4, 5, 6))
                 yield (a, b)
 
-            val result = ArrowEffect.handle.state(Tag[CustomEffect], 0, effect)(
+            val result = ArrowEffect.handleState(Tag[CustomEffect], 0, effect)(
                 [C] => (input, state, cont) => (state + 1, cont(Some(input(state))))
             )
             assert(result.eval == (Some(1), Some(5)))
         }
     }
 
-    "Effect.partial" - {
+    "handlePartial" - {
         abstract class TestInterceptor extends Safepoint.Interceptor:
             def addFinalizer(f: () => Unit): Unit    = {}
             def removeFinalizer(f: () => Unit): Unit = {}
 
         "evaluates pure values" in {
             val x: Int < Any = 5
-            val result = ArrowEffect.handle.partial(
+            val result = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
-                Tag[TestEffect3],
                 x,
                 Context.empty
             )(
                 stop = false,
                 [C] => (input, cont) => cont(input.toString),
-                [C] => (input, cont) => cont(input.toInt),
-                [C] => (input, cont) => cont(if input then 1.0 else 0.0)
+                [C] => (input, cont) => cont(input.toInt)
             )
             assert(result.evalNow == Maybe(5))
         }
 
         "suspends at effects" in {
             val x: Int < TestEffect1 = testEffect1(5).map(_ => 6)
-            val result = ArrowEffect.handle.partial(
+            val result = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
-                Tag[TestEffect3],
                 x,
                 Context.empty
             )(
                 stop = false,
                 [C] => (input, cont) => cont(input.toString),
-                [C] => (input, cont) => cont(input.toInt),
-                [C] => (input, cont) => cont(if input then 1.0 else 0.0)
+                [C] => (input, cont) => cont(input.toInt)
             )
             assert(result.evalNow == Maybe(6))
         }
@@ -237,10 +223,9 @@ class ArrowEffectTest extends Test:
         "respects the stop condition" in {
             var called       = false
             val x: Int < Any = Effect.defer(5)
-            val result = ArrowEffect.handle.partial(
+            val result = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
-                Tag[TestEffect3],
                 x,
                 Context.empty
             )(
@@ -252,10 +237,6 @@ class ArrowEffectTest extends Test:
                 [C] =>
                     (input, cont) =>
                         called = true; cont(input.toInt)
-                ,
-                [C] =>
-                    (input, cont) =>
-                        called = true; cont(if input then 1.0 else 0.0)
             )
             assert(!called)
             assert(result.evalNow.isEmpty)
@@ -263,17 +244,15 @@ class ArrowEffectTest extends Test:
 
         "evaluates nested suspensions" in {
             val x: Int < Any = Effect.defer(Effect.defer(5))
-            val result = ArrowEffect.handle.partial(
+            val result = ArrowEffect.handlePartial(
                 Tag[TestEffect1],
                 Tag[TestEffect2],
-                Tag[TestEffect3],
                 x,
                 Context.empty
             )(
                 stop = false,
                 [C] => (input, cont) => cont(input.toString),
-                [C] => (input, cont) => cont(input.toInt),
-                [C] => (input, cont) => cont(if input then 1.0 else 0.0)
+                [C] => (input, cont) => cont(input.toInt)
             )
             assert(result.evalNow == Maybe(5))
         }

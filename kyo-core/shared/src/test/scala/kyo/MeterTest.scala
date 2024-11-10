@@ -123,7 +123,7 @@ class MeterTest extends Test:
                     meter   <- Meter.initSemaphore(size)
                     counter <- AtomicInt.init(0)
                     results <-
-                        Async.parallel((1 to 100).map(_ =>
+                        Async.parallelUnbounded((1 to 100).map(_ =>
                             Abort.run(meter.run(counter.incrementAndGet))
                         ))
                     count   <- counter.get
@@ -133,9 +133,8 @@ class MeterTest extends Test:
                     assert(count == 100)
                     assert(permits == size)
                 )
-                    .pipe(Choice.run).unit
-                    .repeat(repeats)
-                    .as(succeed)
+                    .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                    .andThen(succeed)
             }
 
             "close" in run {
@@ -145,7 +144,7 @@ class MeterTest extends Test:
                     latch   <- Latch.init(1)
                     counter <- AtomicInt.init(0)
                     runFiber <- Async.run(
-                        latch.await.andThen(Async.parallel((1 to 100).map(_ =>
+                        latch.await.andThen(Async.parallelUnbounded((1 to 100).map(_ =>
                             Abort.run(meter.run(counter.incrementAndGet))
                         )))
                     )
@@ -161,9 +160,8 @@ class MeterTest extends Test:
                     assert(count <= 100)
                     assert(available.isFail)
                 )
-                    .pipe(Choice.run).unit
-                    .repeat(repeats)
-                    .as(succeed)
+                    .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                    .andThen(succeed)
             }
 
             "with interruptions" in run {
@@ -175,7 +173,7 @@ class MeterTest extends Test:
                     runFibers <- Kyo.foreach(1 to 100)(_ =>
                         Async.run(latch.await.andThen(meter.run(counter.incrementAndGet)))
                     )
-                    interruptFiber <- Async.run(latch.await.andThen(Async.parallel(
+                    interruptFiber <- Async.run(latch.await.andThen(Async.parallelUnbounded(
                         runFibers.take(50).map(_.interrupt(panic))
                     )))
                     _           <- latch.release
@@ -183,9 +181,8 @@ class MeterTest extends Test:
                     completed   <- Kyo.foreach(runFibers)(_.getResult)
                     count       <- counter.get
                 yield assert(interrupted.count(identity) + completed.count(_.isSuccess) == 100))
-                    .pipe(Choice.run).unit
-                    .repeat(repeats)
-                    .as(succeed)
+                    .pipe(Choice.run, _.unit, Loop.repeat(repeats))
+                    .andThen(succeed)
             }
         }
     }

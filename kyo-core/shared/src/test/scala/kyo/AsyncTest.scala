@@ -88,7 +88,7 @@ class AsyncTest extends Test:
         }
 
         "multiple fibers timeout" in runJVM {
-            Kyo.fill(100)(Async.sleep(1.milli)).as(1)
+            Kyo.fill(100)(Async.sleep(1.milli)).andThen(1)
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
@@ -188,14 +188,14 @@ class AsyncTest extends Test:
         }
     }
 
-    "parallel" - {
+    "parallelUnbounded" - {
         "zero" in run {
-            Async.parallel(Seq()).map { r =>
+            Async.parallelUnbounded(Seq()).map { r =>
                 assert(r == Seq())
             }
         }
         "one" in run {
-            Async.parallel(Seq(1)).map { r =>
+            Async.parallelUnbounded(Seq(1)).map { r =>
                 assert(r == Seq(1))
             }
         }
@@ -211,7 +211,7 @@ class AsyncTest extends Test:
                     else
                         s
                 }
-            Async.parallel(List(loop(1, "a"), loop(5, "b"))).map { r =>
+            Async.parallelUnbounded(List(loop(1, "a"), loop(5, "b"))).map { r =>
                 assert(r == List("a", "b"))
                 assert(ac.get() == 1)
                 assert(bc.get() == 5)
@@ -233,7 +233,7 @@ class AsyncTest extends Test:
         for
             v1       <- Async.run(1).map(_.get)
             (v2, v3) <- Async.parallel(2, 3)
-            l        <- Async.parallel(List[Int < Any](4, 5))
+            l        <- Async.parallelUnbounded(List[Int < Any](4, 5))
         yield assert(v1 + v2 + v3 + l.sum == 15)
     }
 
@@ -334,10 +334,10 @@ class AsyncTest extends Test:
         }
         "collect" - {
             "default" in run {
-                Async.parallel(List(l.get, l.get)).map(v => assert(v == List(10, 10)))
+                Async.parallelUnbounded(List(l.get, l.get)).map(v => assert(v == List(10, 10)))
             }
             "let" in run {
-                l.let(20)(Async.parallel(List(l.get, l.get)).map(v => assert(v == List(20, 20))))
+                l.let(20)(Async.parallelUnbounded(List(l.get, l.get)).map(v => assert(v == List(20, 20))))
             }
         }
     }
@@ -407,7 +407,7 @@ class AsyncTest extends Test:
             val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int] & Async)                  = Async.race(Seq(v))
             val _: Int < (Abort[Int] & Async)                  = Async.race(v, v)
-            val _: Seq[Int] < (Abort[Int] & Async)             = Async.parallel(Seq(v))
+            val _: Seq[Int] < (Abort[Int] & Async)             = Async.parallelUnbounded(Seq(v))
             val _: (Int, Int) < (Abort[Int] & Async)           = Async.parallel(v, v)
             val _: (Int, Int, Int) < (Abort[Int] & Async)      = Async.parallel(v, v, v)
             val _: (Int, Int, Int, Int) < (Abort[Int] & Async) = Async.parallel(v, v, v, v)
@@ -421,7 +421,7 @@ class AsyncTest extends Test:
             val _: Int < (Abort[Int | Timeout | String] & Async)        = Async.timeout(1.second)(v)
             val _: Int < (Abort[Int | String] & Async)                  = Async.race(Seq(v))
             val _: Int < (Abort[Int | String] & Async)                  = Async.race(v, v)
-            val _: Seq[Int] < (Abort[Int | String] & Async)             = Async.parallel(Seq(v))
+            val _: Seq[Int] < (Abort[Int | String] & Async)             = Async.parallelUnbounded(Seq(v))
             val _: (Int, Int) < (Abort[Int | String] & Async)           = Async.parallel(v, v)
             val _: (Int, Int, Int) < (Abort[Int | String] & Async)      = Async.parallel(v, v, v)
             val _: (Int, Int, Int, Int) < (Abort[Int | String] & Async) = Async.parallel(v, v, v, v)
@@ -504,7 +504,7 @@ class AsyncTest extends Test:
         "times out" in run {
             val result =
                 for
-                    value <- Async.timeout(5.millis)(Async.sleep(1.second).as(42))
+                    value <- Async.timeout(5.millis)(Async.sleep(1.second).andThen(42))
                 yield value
 
             Abort.run[Timeout](result).map {
@@ -601,6 +601,60 @@ class AsyncTest extends Test:
         val a: Int < Abort[Nothing] = 42
         val b: Int < Async          = a
         succeed
+    }
+
+    "parallel" - {
+        "empty sequence" in run {
+            Async.parallel(2)(Seq()).map { r =>
+                assert(r == Seq())
+            }
+        }
+
+        "sequence smaller than parallelism" in run {
+            Async.parallel(5)(Seq(1, 2, 3)).map { r =>
+                assert(r == Seq(1, 2, 3))
+            }
+        }
+
+        "sequence larger than parallelism" in run {
+            AtomicInt.init.map { counter =>
+                def task(i: Int): Int < (IO & Async) =
+                    for
+                        current <- counter.getAndIncrement
+                        _       <- Async.sleep(1.millis)
+                        _       <- counter.decrementAndGet
+                    yield
+                        assert(current < 2)
+                        i
+
+                Async.parallel(2)((1 to 20).map(task)).map { r =>
+                    counter.get.map { counter =>
+                        assert(r == (1 to 20))
+                        assert(counter == 0)
+                    }
+                }
+            }
+        }
+
+        "parallelism of 1 executes sequentially" in run {
+            AtomicInt.init.map { counter =>
+                def task(i: Int): Int < (IO & Async) =
+                    for
+                        current <- counter.getAndIncrement
+                        _       <- Async.sleep(1.millis)
+                        _       <- counter.decrementAndGet
+                    yield
+                        assert(current == 0)
+                        i
+
+                Async.parallel(1)((1 to 5).map(task)).map { r =>
+                    counter.get.map { counter =>
+                        assert(r == (1 to 5))
+                        assert(counter == 0)
+                    }
+                }
+            }
+        }
     }
 
 end AsyncTest

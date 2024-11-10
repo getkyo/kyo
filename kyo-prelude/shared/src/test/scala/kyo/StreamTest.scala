@@ -145,6 +145,19 @@ class StreamTest extends Test:
                 Stream.init(Seq.fill(n)(1)).drop(5).run.eval.size == n - 5
             )
         }
+
+        "chunk smaller than n" in {
+            val small = Stream.init(0 until 5)
+
+            val result =
+                small
+                    .concat(small)
+                    .drop(6)
+                    .run
+                    .eval
+
+            assert(result == Seq(1, 2, 3, 4))
+        }
     }
 
     "takeWhile" - {

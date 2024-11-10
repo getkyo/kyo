@@ -1,8 +1,5 @@
 package kyo
 
-import kyo.Tag
-import kyo.kernel.*
-
 /** Represents a memoization effect.
   *
   * Memo is used to cache the results of expensive computations, allowing them to be reused without re-computation.
