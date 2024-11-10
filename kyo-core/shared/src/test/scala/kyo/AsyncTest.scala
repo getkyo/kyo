@@ -88,7 +88,7 @@ class AsyncTest extends Test:
         }
 
         "multiple fibers timeout" in runJVM {
-            Kyo.fill(100)(Async.sleep(1.milli)).as(1)
+            Kyo.fill(100)(Async.sleep(1.milli)).andThen(1)
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
                 .map {
@@ -504,7 +504,7 @@ class AsyncTest extends Test:
         "times out" in run {
             val result =
                 for
-                    value <- Async.timeout(5.millis)(Async.sleep(1.second).as(42))
+                    value <- Async.timeout(5.millis)(Async.sleep(1.second).andThen(42))
                 yield value
 
             Abort.run[Timeout](result).map {

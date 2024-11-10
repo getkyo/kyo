@@ -134,7 +134,7 @@ class MeterTest extends Test:
                     assert(permits == size)
                 )
                     .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                    .as(succeed)
+                    .andThen(succeed)
             }
 
             "close" in run {
@@ -161,7 +161,7 @@ class MeterTest extends Test:
                     assert(available.isFail)
                 )
                     .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                    .as(succeed)
+                    .andThen(succeed)
             }
 
             "with interruptions" in run {
@@ -182,7 +182,7 @@ class MeterTest extends Test:
                     count       <- counter.get
                 yield assert(interrupted.count(identity) + completed.count(_.isSuccess) == 100))
                     .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                    .as(succeed)
+                    .andThen(succeed)
             }
         }
     }

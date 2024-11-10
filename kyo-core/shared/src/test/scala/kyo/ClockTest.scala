@@ -439,7 +439,7 @@ class ClockTest extends Test:
             for
                 channel <- Channel.init[Int](10)
                 task <- Clock.repeatWithDelay(Schedule.fixed(1.millis), 0) { state =>
-                    channel.put(state).as(state + 1)
+                    channel.put(state).andThen(state + 1)
                 }
                 numbers <- Kyo.fill(10)(channel.take)
                 _       <- task.interrupt

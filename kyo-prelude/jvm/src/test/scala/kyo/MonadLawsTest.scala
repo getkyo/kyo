@@ -27,7 +27,7 @@ object MonadLawsTest extends ZIOSpecDefault:
                         if b then Abort.fail("fail") else (v: A < Any)
                     ),
                     gen.zip(intGen).map((v, i) =>
-                        Emit(i).as(v)
+                        Emit(i).andThen(v)
                     ),
                     gen.zip(boolGen).map((v, b) =>
                         Var.setDiscard(b).andThen(v)

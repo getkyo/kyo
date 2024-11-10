@@ -230,7 +230,7 @@ class QueueTest extends Test:
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
 
         "offer and poll" in run {
@@ -250,7 +250,7 @@ class QueueTest extends Test:
                 left    <- queue.size
             yield assert(offered.count(_.contains(true)) == polled.count(_.toMaybe.flatten.isDefined) + left))
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
 
         "offer to full queue during close" in run {
@@ -273,7 +273,7 @@ class QueueTest extends Test:
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
 
         "concurrent close attempts" in run {
@@ -297,7 +297,7 @@ class QueueTest extends Test:
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
 
         "offer, poll and close" in run {
@@ -323,7 +323,7 @@ class QueueTest extends Test:
                 assert(isClosed)
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
-                .as(succeed)
+                .andThen(succeed)
         }
     }
 

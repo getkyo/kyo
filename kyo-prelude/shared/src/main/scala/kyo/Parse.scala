@@ -33,7 +33,7 @@ object Parse:
             f(state.remaining).map {
                 case Present((remaining, result)) =>
                     val consumed = state.remaining.length - remaining.length
-                    Var.set(state.advance(consumed)).as(result)
+                    Var.set(state.advance(consumed)).andThen(result)
                 case Absent =>
                     Choice.drop
             }
@@ -192,7 +192,7 @@ object Parse:
                     current match
                         case Absent => Choice.drop
                         case Present((state, a)) =>
-                            Var.set(state).as(Loop.done(a))
+                            Var.set(state).andThen(Loop.done(a))
                 case head +: tail =>
                     peek(head.map(a => Var.use[State]((_, a)))).map {
                         case Absent =>
@@ -219,7 +219,7 @@ object Parse:
             case Absent =>
                 Var.use[State] { state =>
                     if state.done then Parse.drop
-                    else Var.set(state.advance(1)).as(skipUntil(v))
+                    else Var.set(state.advance(1)).andThen(skipUntil(v))
                 }
             case Present(v) => v
         }
@@ -238,7 +238,7 @@ object Parse:
             Choice.run(v).map { r =>
                 result(r).map {
                     case Absent =>
-                        Var.set(start).as(Maybe.empty)
+                        Var.set(start).andThen(Maybe.empty)
                     case result =>
                         result
                 }
@@ -274,7 +274,7 @@ object Parse:
     def peek[A: Flat, S](v: A < (Parse & S))(using Frame): Maybe[A] < (Parse & S) =
         Var.use[State] { start =>
             Choice.run(v).map { r =>
-                Var.set(start).as(result(r))
+                Var.set(start).andThen(result(r))
             }
         }
 
