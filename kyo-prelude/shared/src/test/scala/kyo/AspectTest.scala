@@ -5,7 +5,7 @@ import kyo.Aspect.Cut
 class AspectTest extends Test:
 
     "one aspect" - {
-        val aspect       = Aspect.init[Int, Int, Any]
+        val aspect       = Aspect.init[Const[Int], Const[Int], Any]
         def test(v: Int) = aspect(v)(_ + 1)
 
         "default" in run {
@@ -13,19 +13,13 @@ class AspectTest extends Test:
         }
 
         "with cut" in run {
-            val cut = new Cut[Int, Int, Any]:
-                def apply(v: Int)(f: Int => Int < Any) =
-                    f(v + 1)
-            aspect.let[Assertion, Any](cut) {
+            aspect.let([C] => (input, cont) => cont(input + 1)) {
                 test(1).map(v => assert(v == 3))
             }
         }
 
         "sandboxed" in run {
-            val cut = new Cut[Int, Int, Any]:
-                def apply(v: Int)(f: Int => Int < Any) =
-                    f(v + 1)
-            aspect.let[Assertion, Any](cut) {
+            aspect.let([C] => (input, cont) => cont(input + 1)) {
                 aspect.sandbox {
                     test(1)
                 }.map(v => assert(v == 2))
@@ -33,14 +27,8 @@ class AspectTest extends Test:
         }
 
         "nested cuts" in run {
-            val cut1 = new Cut[Int, Int, Any]:
-                def apply(v: Int)(f: Int => Int < Any) =
-                    f(v * 3)
-            val cut2 = new Cut[Int, Int, Any]:
-                def apply(v: Int)(f: Int => Int < Any) =
-                    f(v + 5)
-            aspect.let[Assertion, Any](cut1) {
-                aspect.let[Assertion, Any](cut2) {
+            aspect.let([C] => (input, cont) => cont(input * 3)) {
+                aspect.let([C] => (input, cont) => cont(input + 5)) {
                     test(2).map(v => assert(v == 2 * 3 + 5 + 1))
                 }
             }
@@ -49,8 +37,8 @@ class AspectTest extends Test:
 
     "multiple aspects" - {
         "independent aspects" in run {
-            val aspect1 = Aspect.init[Int, Int, Any]
-            val aspect2 = Aspect.init[Int, Int, Any]
+            val aspect1 = Aspect.init[Const[Int], Const[Int], Any]
+            val aspect2 = Aspect.init[Const[Int], Const[Int], Any]
 
             def test(v: Int) =
                 for
@@ -58,39 +46,22 @@ class AspectTest extends Test:
                     v2 <- aspect2(v)(_ + 1)
                 yield (v1, v2)
 
-            val cut1 = new Cut[Int, Int, Any]:
-                def apply(v: Int)(f: Int => Int < Any) =
-                    f(v * 3)
-            val cut2 = new Cut[Int, Int, Any]:
-                def apply(v: Int)(f: Int => Int < Any) =
-                    f(v + 5)
-            aspect1.let[Assertion, Any](cut1) {
-                aspect2.let[Assertion, Any](cut2) {
+            aspect1.let([C] => (input, cont) => cont(input * 3)) {
+                aspect2.let([C] => (input, cont) => cont(input + 5)) {
                     test(2).map(v => assert(v == (2 * 3 + 1, 2 + 5 + 1)))
                 }
             }
         }
 
         "chained aspects" in run {
-            val aspect1 = Aspect.init[Int, Int, Any]
-            val aspect2 = Aspect.init[Int, Int, Any]
+            val aspect1 = Aspect.init[Const[Int], Const[Int], Any]
+            val aspect2 = Aspect.init[Const[Int], Const[Int], Any]
 
             def test(v: Int) =
-                aspect1(v) { v1 =>
-                    aspect2(v1) { v2 =>
-                        v2 + 1
-                    }
-                }
+                aspect1(v)(v1 => aspect2(v1)(v2 => v2 + 1))
 
-            val cut1 = new Cut[Int, Int, Any]:
-                def apply(v: Int)(f: Int => Int < Any) =
-                    f(v * 2)
-            val cut2 = new Cut[Int, Int, Any]:
-                def apply(v: Int)(f: Int => Int < Any) =
-                    f(v + 3)
-
-            aspect1.let[Assertion, Any](cut1) {
-                aspect2.let[Assertion, Any](cut2) {
+            aspect1.let([C] => (input, cont) => cont(input * 2)) {
+                aspect2.let([C] => (input, cont) => cont(input + 3)) {
                     test(2).map(v => assert(v == ((2 * 2) + 3) + 1))
                 }
             }
@@ -98,8 +69,8 @@ class AspectTest extends Test:
     }
 
     "use aspect as a cut" in run {
-        val aspect1 = Aspect.init[Int, Int, Any]
-        val aspect2 = Aspect.init[Int, Int, Any]
+        val aspect1 = Aspect.init[Const[Int], Const[Int], Any]
+        val aspect2 = Aspect.init[Const[Int], Const[Int], Any]
 
         def test(v: Int) =
             for
@@ -107,39 +78,30 @@ class AspectTest extends Test:
                 v2 <- aspect2(v)(_ + 1)
             yield (v1, v2)
 
-        val cut = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v * 3)
-        aspect1.let[Assertion, Any](cut) {
-            aspect2.let[Assertion, Any](aspect1) {
+        aspect1.let([C] => (input, cont) => cont(input * 3)) {
+            aspect2.letCut(aspect1) {
                 test(2).map(v => assert(v == (2 * 3 + 1, 2 * 3 + 1)))
             }
         }
     }
 
     "aspect chain" in run {
-        val aspect = Aspect.init[Int, Int, Any]
+        val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
-        val cut1 = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v * 2)
-        val cut2 = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v + 3)
-        val cut3 = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v - 1)
+        val chainedCut = Aspect.chain[Const[Int], Const[Int], Any](
+            [C] => (input, cont) => cont(input * 2),
+            [C] => (input, cont) => cont(input + 3),
+            [C] => (input, cont) => cont(input - 1)
+        )
 
-        val chainedCut = Aspect.chain(cut1, Seq(cut2, cut3))
-
-        aspect.let[Assertion, Any](chainedCut) {
-            aspect(5) { v => v }.map(v => assert(v == ((5 * 2 + 3) - 1)))
+        aspect.letCut(chainedCut) {
+            aspect(5)(identity).map(v => assert(v == ((5 * 2 + 3) - 1)))
         }
     }
 
     "aspect sandbox with multiple aspects" in run {
-        val aspect1 = Aspect.init[Int, Int, Any]
-        val aspect2 = Aspect.init[Int, Int, Any]
+        val aspect1 = Aspect.init[Const[Int], Const[Int], Any]
+        val aspect2 = Aspect.init[Const[Int], Const[Int], Any]
 
         def test(v: Int) =
             for
@@ -147,14 +109,8 @@ class AspectTest extends Test:
                 v2 <- aspect2(v1)(_ * 2)
             yield v2
 
-        val cut1 = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v * 3)
-        val cut2 = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v + 5)
-        aspect1.let[Assertion, Any](cut1) {
-            aspect2.let[Assertion, Any](cut2) {
+        aspect1.let([C] => (input, cont) => cont(input * 3)) {
+            aspect2.let([C] => (input, cont) => cont(input + 5)) {
                 aspect1.sandbox {
                     test(2)
                 }.map(v => assert(v == (2 + 5 + 1) * 2))
@@ -163,59 +119,38 @@ class AspectTest extends Test:
     }
 
     "nested aspect lets" in run {
-        val aspect = Aspect.init[Int, Int, Any]
+        val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
         def test(v: Int) = aspect(v)(_ + 1)
 
-        val cut1 = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v * 2)
-        val cut2 = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v + 3)
-
-        aspect.let[Assertion, Any](cut1) {
-            aspect.let[Assertion, Any](cut2) {
+        aspect.let([C] => (input, cont) => cont(input * 2)) {
+            aspect.let([C] => (input, cont) => cont(input + 3)) {
                 test(2).map(v => assert(v == (2 * 2 + 3) + 1))
             }
         }
     }
 
     "aspect order of application" in run {
-        val aspect = Aspect.init[Int, Int, Any]
+        val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
         def test(v: Int) = aspect(v)(_ + 1)
 
-        val cut1 = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v * 2)
-        val cut2 = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v + 3)
+        val cut1 = Cut[Const[Int], Const[Int], Any]([C] => (input, cont) => cont(input * 2))
+        val cut2 = Cut[Const[Int], Const[Int], Any]([C] => (input, cont) => cont(input + 3))
 
-        aspect.let[Assertion, Any](cut1) {
-            aspect.let[Assertion, Any](cut2) {
-                test(2).map(v => assert(v == (2 * 2 + 3) + 1))
-            }
-        }
-
-        aspect.let[Assertion, Any](cut2) {
-            aspect.let[Assertion, Any](cut1) {
+        aspect.letCut(cut2) {
+            aspect.letCut(cut1) {
                 test(2).map(v => assert(v == (2 + 3) * 2 + 1))
             }
         }
     }
 
     "aspect reuse after let" in run {
-        val aspect = Aspect.init[Int, Int, Any]
+        val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
         def test(v: Int) = aspect(v)(_ + 1)
 
-        val cut = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v * 2)
-
-        aspect.let[Assertion, Any](cut) {
+        aspect.let([C] => (input, cont) => cont(input * 2)) {
             test(2).map(v => assert(v == 2 * 2 + 1))
         }
 
@@ -223,25 +158,20 @@ class AspectTest extends Test:
     }
 
     "aspect chain with identity cut" in run {
-        val aspect = Aspect.init[Int, Int, Any]
+        val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
-        val cut1 = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v * 2)
+        val chainedCut = Aspect.chain[Const[Int], Const[Int], Any](
+            [C] => (input, cont) => cont(input * 2),
+            [C] => (input, cont) => cont(input)
+        )
 
-        val identityCut = new Cut[Int, Int, Any]:
-            def apply(v: Int)(f: Int => Int < Any) =
-                f(v)
-
-        val chainedCut = Aspect.chain(cut1, Seq(identityCut))
-
-        aspect.let[Assertion, Any](chainedCut) {
-            aspect(5) { v => v }.map(v => assert(v == 5 * 2))
+        aspect.letCut(chainedCut) {
+            aspect(5)(identity).map(v => assert(v == 5 * 2))
         }
     }
 
     "aspect interaction with effects" in run {
-        val aspect = Aspect.init[Int, Int, Var[Int]]
+        val aspect = Aspect.init[Const[Int], Const[Int], Var[Int]]
 
         def test(v: Int) =
             for
@@ -250,18 +180,131 @@ class AspectTest extends Test:
                 s      <- Var.get[Int]
             yield (result, s)
 
-        val cut = new Cut[Int, Int, Var[Int]]:
-            def apply(v: Int)(f: Int => Int < Var[Int]) =
-                for
-                    _      <- Var.update[Int](_ * 2)
-                    result <- f(v * 2)
-                yield result
+        val cut =
+            Cut[Const[Int], Const[Int], Var[Int]] {
+                [C] =>
+                    (input, cont) =>
+                        for
+                            _      <- Var.update[Int](_ * 2)
+                            result <- cont(input * 2)
+                        yield result
+            }
 
         Var.run(0) {
-            aspect.let(cut) {
+            aspect.letCut(cut) {
                 test(3).map { case (result, s) =>
                     assert(result == 3 * 2 + 1)
                     assert(s == 6) // (0 + 3) * 2
+                }
+            }
+        }
+    }
+
+    "non-Const type parameters" - {
+        case class Wrapped[+A, B](value: A, meta: B) derives CanEqual
+        case class Container[+A](value: A, meta: String) derives CanEqual
+
+        "with same input/output wrapper" in run {
+            val aspect = Aspect.init[Wrapped[*, String], Wrapped[*, String], Any]
+
+            def test[A](v: A) =
+                aspect(Wrapped(v, "init"))(w =>
+                    Wrapped(w.value, w.meta + "-processed")
+                )
+
+            aspect.let([C] => (input, cont) => cont(Wrapped(input.value, input.meta + "-modified"))) {
+                test(42).map { result =>
+                    assert(result == Wrapped(42, "init-modified-processed"))
+                }
+            }
+        }
+
+        "with different input/output wrappers" in run {
+            val aspect = Aspect.init[Wrapped[*, String], Container, Any]
+
+            def test[A](v: A) = aspect(Wrapped(v, "init"))(w =>
+                Container(w.value, w.meta)
+            )
+
+            aspect.let([C] =>
+                (input, cont) =>
+                    if input.meta == "init" then
+                        cont(Wrapped(input.value, "modified"))
+                    else cont(input)) {
+                test[String]("test").map { result =>
+                    assert(result.value == "test")
+                    assert(result.meta == "modified")
+                }
+            }
+        }
+
+        "with multiple type parameters" in run {
+            case class DataResult[+A, +B](data: A, extra: B) derives CanEqual
+
+            val aspect = Aspect.init[Wrapped[*, String], DataResult[*, Int], Any]
+
+            def test[A](v: A) = aspect(Wrapped(v, "meta")) { w =>
+                DataResult(w.value, w.meta.length)
+            }
+
+            aspect.let([C] => (input, cont) => cont(Wrapped(input.value, input.meta + "!"))) {
+                test[String]("hello").map { result =>
+                    assert(result == DataResult("hello", 5))
+                }
+            }
+        }
+
+        "sandbox with generic parameters" in run {
+            val aspect = Aspect.init[[A] =>> Wrapped[A, String], [A] =>> Container[A], Any]
+
+            def test[A](v: A) = aspect(Wrapped(v, "init"))(w =>
+                Container(w.value, w.meta)
+            )
+
+            aspect.let([C] => (input, cont) => cont(Wrapped(input.value, input.meta + "-modified"))) {
+                aspect.sandbox {
+                    test[String]("test")
+                }.map { result =>
+                    assert(result == Container("test", "init")) // Original behavior
+                }
+            }
+        }
+    }
+
+    "init" - {
+        "with default binding" in run {
+            val defaultBinding: Cut.Binding[Const[Int], Const[Int], Any] =
+                [C] => (input, cont) => cont(input * 2)
+
+            val aspect = Aspect.init(defaultBinding)
+
+            aspect(5)(identity).map { result =>
+                assert(result == 10)
+            }
+        }
+
+        "with default cut" in run {
+            val defaultCut = Cut[Const[Int], Const[Int], Any] {
+                [C] =>
+                    (input, cont) => cont(input + 10)
+            }
+
+            val aspect = Aspect.initCut(defaultCut)
+
+            aspect(5)(identity).map { result =>
+                assert(result == 15)
+            }
+        }
+
+        "override default behavior" in run {
+            val defaultBinding: Cut.Binding[Const[Int], Const[Int], Any] =
+                [C] => (input, cont) => cont(input * 2)
+
+            val aspect = Aspect.init(defaultBinding)
+
+            aspect.let([C] => (input, cont) => cont(input + 3)) {
+                aspect(5)(identity).map { result =>
+                    assert(result == 8)
                 }
             }
         }

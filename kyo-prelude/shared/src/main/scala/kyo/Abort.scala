@@ -1,7 +1,6 @@
 package kyo
 
 import kernel.ArrowEffect
-import kernel.Const
 import kyo.Result.*
 import kyo.Tag
 import kyo.kernel.Effect
