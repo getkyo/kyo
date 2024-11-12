@@ -1,5 +1,6 @@
 package kyo
 
+import Tagged.*
 import kyo.Aspect.Cut
 
 class AspectTest extends Test:
@@ -204,7 +205,8 @@ class AspectTest extends Test:
         case class Wrapped[+A, B](value: A, meta: B) derives CanEqual
         case class Container[+A](value: A, meta: String) derives CanEqual
 
-        "with same input/output wrapper" in run {
+        // TODO SIGSEGV in Scala Native
+        "with same input/output wrapper" taggedAs notNative in run {
             val aspect = Aspect.init[Wrapped[*, String], Wrapped[*, String], Any]
 
             def test[A](v: A) =
@@ -219,7 +221,7 @@ class AspectTest extends Test:
             }
         }
 
-        "with different input/output wrappers" in run {
+        "with different input/output wrappers" taggedAs notNative in run {
             val aspect = Aspect.init[Wrapped[*, String], Container, Any]
 
             def test[A](v: A) = aspect(Wrapped(v, "init"))(w =>
@@ -238,7 +240,7 @@ class AspectTest extends Test:
             }
         }
 
-        "with multiple type parameters" in run {
+        "with multiple type parameters" taggedAs notNative in run {
             case class DataResult[+A, +B](data: A, extra: B) derives CanEqual
 
             val aspect = Aspect.init[Wrapped[*, String], DataResult[*, Int], Any]
@@ -254,7 +256,7 @@ class AspectTest extends Test:
             }
         }
 
-        "sandbox with generic parameters" in run {
+        "sandbox with generic parameters" taggedAs notNative in run {
             val aspect = Aspect.init[[A] =>> Wrapped[A, String], [A] =>> Container[A], Any]
 
             def test[A](v: A) = aspect(Wrapped(v, "init"))(w =>
