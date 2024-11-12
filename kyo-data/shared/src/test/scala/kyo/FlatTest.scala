@@ -50,36 +50,40 @@ class FlatTest extends Test:
 
     "nok" - {
 
-        "pending type" in {
-            assertDoesNotCompile("implicitly[Flat[Int < Any]]")
-            assertDoesNotCompile("implicitly[Flat[Int < Options]]")
-            assertDoesNotCompile("implicitly[Flat[Int < Nothing]]")
+        "pending type" in pendingUntilFixed {
+            typeCheckFailure("implicitly[Flat[Int < Any]]")(_ => false)
+            typeCheckFailure("implicitly[Flat[Int < Options]]")(_ => false)
+            typeCheckFailure("implicitly[Flat[Int < Nothing]]")(_ => false)
+            ()
         }
 
-        "nested" in {
-            assertDoesNotCompile("implicitly[Flat[Int < IOs < IOs]]")
-            assertDoesNotCompile("implicitly[Flat[Any < IOs < IOs]]")
+        "nested" in pendingUntilFixed {
+            typeCheckFailure("implicitly[Flat[Int < IOs < IOs]]")(_ => false)
+            typeCheckFailure("implicitly[Flat[Any < IOs < IOs]]")(_ => false)
+            ()
         }
 
-        "nested w/ mismatch" in {
-            assertDoesNotCompile("implicitly[Flat[Int < Options < IOs]]")
-            assertDoesNotCompile("implicitly[Flat[Int < IOs < Options]]")
+        "nested w/ mismatch" in pendingUntilFixed {
+            typeCheckFailure("implicitly[Flat[Int < Options < IOs]]")(_ => false)
+            typeCheckFailure("implicitly[Flat[Int < IOs < Options]]")(_ => false)
+            ()
         }
 
         "generic" in {
-            def test1[A] =
-                assertDoesNotCompile("implicitly[Flat[A]]")
-                assertDoesNotCompile("implicitly[Flat[A | Int]]")
-                assertDoesNotCompile("implicitly[Flat[A < Options]]")
-                assertDoesNotCompile("implicitly[Flat[A < Any]]")
-            end test1
-            test1[Int]
-            succeed
+            typeCheckFailure("def f[A] = implicitly[Flat[A]]")(_.contains("No given instance of type kyo.Flat[A]"))
+            typeCheckFailure("def f[A] = implicitly[Flat[A | Int]]")(_.contains("No given instance of type kyo.Flat[A | Int]"))
         }
 
-        "any" in {
-            assertDoesNotCompile("implicitly[Flat[Any]]")
-            assertDoesNotCompile("implicitly[Flat[Any < IOs]]")
+        "generic pending" in pendingUntilFixed {
+            typeCheckFailure("def f[A] = implicitly[Flat[A < Options]]")(_ => false)
+            typeCheckFailure("def f[A] = implicitly[Flat[A < Any]]")(_ => false)
+            ()
+        }
+
+        "any" in pendingUntilFixed {
+            typeCheckFailure("implicitly[Flat[Any]]")(_.contains("No given instance of type kyo.Flat[Any]"))
+            typeCheckFailure("implicitly[Flat[Any < IOs]]")(_ => false)
+            ()
         }
     }
 
