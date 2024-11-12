@@ -1413,11 +1413,15 @@ val loggingCut =
                 yield result
     )
 
+// Compose both cuts into one
+val composedCut =
+    Aspect.Cut.andThen(validationCut, loggingCut)
+
 // Success case
 val successExample: Unit < (Abort[Throwable] & IO) =
     for
         result <-
-            numberAspect.letCut(validationCut.andThen(loggingCut)) {
+            numberAspect.let(composedCut) {
                 process(5) // Will succeed: 5 * 2 -> 10
             }
         _ <- Console.println(s"Success result: $result")
@@ -1427,7 +1431,7 @@ val successExample: Unit < (Abort[Throwable] & IO) =
 val failureExample: Unit < (Abort[Throwable] & IO) =
     for
         result <-
-            numberAspect.letCut(validationCut.andThen(loggingCut)) {
+            numberAspect.let(composedCut) {
                 process(-3) // Will fail with Invalid("negative number")
             }
         _ <- Console.println("This won't be reached due to Abort")
@@ -1476,6 +1480,10 @@ val loggingCut =
                 yield result
     )
 
+// Compose both cuts into one
+val composedCut =
+    Aspect.Cut.andThen(authCut, loggingCut)
+
 // Example requests
 val req1 = Request("hello", Map("auth-token" -> "valid-token"))
 val req2 = Request(42, Map("auth-token" -> "invalid"))
@@ -1484,11 +1492,11 @@ val req2 = Request(42, Map("auth-token" -> "invalid"))
 val example: Unit < (IO & Abort[Throwable]) =
     for
         r1 <-
-            serviceAspect.letCut(authCut.andThen(loggingCut)) {
+            serviceAspect.let(composedCut) {
                 processRequest(req1)
             }
         r2 <-
-            serviceAspect.letCut(authCut.andThen(loggingCut)) {
+            serviceAspect.let(composedCut) {
                 processRequest(req2)
             }
         _ <- Console.println(s"Results: $r1, $r2")

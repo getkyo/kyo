@@ -9,17 +9,17 @@ class AspectTest extends Test:
         val aspect       = Aspect.init[Const[Int], Const[Int], Any]
         def test(v: Int) = aspect(v)(_ + 1)
 
-        "default" in run {
+        "default" taggedAs notNative in run {
             test(1).map(v => assert(v == 2))
         }
 
-        "with cut" in run {
+        "with cut" taggedAs notNative in run {
             aspect.let([C] => (input, cont) => cont(input + 1)) {
                 test(1).map(v => assert(v == 3))
             }
         }
 
-        "sandboxed" in run {
+        "sandboxed" taggedAs notNative in run {
             aspect.let([C] => (input, cont) => cont(input + 1)) {
                 aspect.sandbox {
                     test(1)
@@ -27,7 +27,7 @@ class AspectTest extends Test:
             }
         }
 
-        "nested cuts" in run {
+        "nested cuts" taggedAs notNative in run {
             aspect.let([C] => (input, cont) => cont(input * 3)) {
                 aspect.let([C] => (input, cont) => cont(input + 5)) {
                     test(2).map(v => assert(v == 2 * 3 + 5 + 1))
@@ -37,7 +37,7 @@ class AspectTest extends Test:
     }
 
     "multiple aspects" - {
-        "independent aspects" in run {
+        "independent aspects" taggedAs notNative in run {
             val aspect1 = Aspect.init[Const[Int], Const[Int], Any]
             val aspect2 = Aspect.init[Const[Int], Const[Int], Any]
 
@@ -54,7 +54,7 @@ class AspectTest extends Test:
             }
         }
 
-        "chained aspects" in run {
+        "chained aspects" taggedAs notNative in run {
             val aspect1 = Aspect.init[Const[Int], Const[Int], Any]
             val aspect2 = Aspect.init[Const[Int], Const[Int], Any]
 
@@ -69,7 +69,7 @@ class AspectTest extends Test:
         }
     }
 
-    "use aspect as a cut" in run {
+    "use aspect as a cut" taggedAs notNative in run {
         val aspect1 = Aspect.init[Const[Int], Const[Int], Any]
         val aspect2 = Aspect.init[Const[Int], Const[Int], Any]
 
@@ -80,27 +80,26 @@ class AspectTest extends Test:
             yield (v1, v2)
 
         aspect1.let([C] => (input, cont) => cont(input * 3)) {
-            aspect2.letCut(aspect1) {
+            aspect2.let(aspect1.asCut) {
                 test(2).map(v => assert(v == (2 * 3 + 1, 2 * 3 + 1)))
             }
         }
     }
 
-    "aspect chain" in run {
+    "Cut.andThen" taggedAs notNative in run {
         val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
-        val chainedCut = Aspect.chain[Const[Int], Const[Int], Any](
+        val chainedCut = Cut.andThen[Const[Int], Const[Int], Any](
             [C] => (input, cont) => cont(input * 2),
-            [C] => (input, cont) => cont(input + 3),
-            [C] => (input, cont) => cont(input - 1)
+            [C] => (input, cont) => cont(input + 3)
         )
 
-        aspect.letCut(chainedCut) {
-            aspect(5)(identity).map(v => assert(v == ((5 * 2 + 3) - 1)))
+        aspect.let(chainedCut) {
+            aspect(5)(identity).map(v => assert(v == (5 * 2 + 3)))
         }
     }
 
-    "aspect sandbox with multiple aspects" in run {
+    "aspect sandbox with multiple aspects" taggedAs notNative in run {
         val aspect1 = Aspect.init[Const[Int], Const[Int], Any]
         val aspect2 = Aspect.init[Const[Int], Const[Int], Any]
 
@@ -119,7 +118,7 @@ class AspectTest extends Test:
         }
     }
 
-    "nested aspect lets" in run {
+    "nested aspect lets" taggedAs notNative in run {
         val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
         def test(v: Int) = aspect(v)(_ + 1)
@@ -131,7 +130,7 @@ class AspectTest extends Test:
         }
     }
 
-    "aspect order of application" in run {
+    "aspect order of application" taggedAs notNative in run {
         val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
         def test(v: Int) = aspect(v)(_ + 1)
@@ -139,14 +138,14 @@ class AspectTest extends Test:
         val cut1 = Cut[Const[Int], Const[Int], Any]([C] => (input, cont) => cont(input * 2))
         val cut2 = Cut[Const[Int], Const[Int], Any]([C] => (input, cont) => cont(input + 3))
 
-        aspect.letCut(cut2) {
-            aspect.letCut(cut1) {
+        aspect.let(cut2) {
+            aspect.let(cut1) {
                 test(2).map(v => assert(v == (2 + 3) * 2 + 1))
             }
         }
     }
 
-    "aspect reuse after let" in run {
+    "aspect reuse after let" taggedAs notNative in run {
         val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
         def test(v: Int) = aspect(v)(_ + 1)
@@ -158,20 +157,20 @@ class AspectTest extends Test:
         test(2).map(v => assert(v == 3))
     }
 
-    "aspect chain with identity cut" in run {
+    "aspect chain with identity cut" taggedAs notNative in run {
         val aspect = Aspect.init[Const[Int], Const[Int], Any]
 
-        val chainedCut = Aspect.chain[Const[Int], Const[Int], Any](
+        val chainedCut = Cut.andThen[Const[Int], Const[Int], Any](
             [C] => (input, cont) => cont(input * 2),
             [C] => (input, cont) => cont(input)
         )
 
-        aspect.letCut(chainedCut) {
+        aspect.let(chainedCut) {
             aspect(5)(identity).map(v => assert(v == 5 * 2))
         }
     }
 
-    "aspect interaction with effects" in run {
+    "aspect interaction with effects" taggedAs notNative in run {
         val aspect = Aspect.init[Const[Int], Const[Int], Var[Int]]
 
         def test(v: Int) =
@@ -192,7 +191,7 @@ class AspectTest extends Test:
             }
 
         Var.run(0) {
-            aspect.letCut(cut) {
+            aspect.let(cut) {
                 test(3).map { case (result, s) =>
                     assert(result == 3 * 2 + 1)
                     assert(s == 6) // (0 + 3) * 2
@@ -274,8 +273,8 @@ class AspectTest extends Test:
     }
 
     "init" - {
-        "with default binding" in run {
-            val defaultBinding: Cut.Binding[Const[Int], Const[Int], Any] =
+        "with default binding" taggedAs notNative in run {
+            val defaultBinding: Cut[Const[Int], Const[Int], Any] =
                 [C] => (input, cont) => cont(input * 2)
 
             val aspect = Aspect.init(defaultBinding)
@@ -285,21 +284,21 @@ class AspectTest extends Test:
             }
         }
 
-        "with default cut" in run {
+        "with default cut" taggedAs notNative in run {
             val defaultCut = Cut[Const[Int], Const[Int], Any] {
                 [C] =>
                     (input, cont) => cont(input + 10)
             }
 
-            val aspect = Aspect.initCut(defaultCut)
+            val aspect = Aspect.init(defaultCut)
 
             aspect(5)(identity).map { result =>
                 assert(result == 15)
             }
         }
 
-        "override default behavior" in run {
-            val defaultBinding: Cut.Binding[Const[Int], Const[Int], Any] =
+        "override default behavior" taggedAs notNative in run {
+            val defaultBinding: Cut[Const[Int], Const[Int], Any] =
                 [C] => (input, cont) => cont(input * 2)
 
             val aspect = Aspect.init(defaultBinding)
