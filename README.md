@@ -1381,7 +1381,6 @@ The simplest way to work with aspects is to use `Const[A]`, which represents a p
 Here's a basic example using `Const`:
 
 ```scala
-import java.io.IOException
 import kyo.*
 
 case class Invalid(reason: String) extends Exception
