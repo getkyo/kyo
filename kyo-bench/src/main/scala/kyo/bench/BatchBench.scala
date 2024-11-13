@@ -1,7 +1,5 @@
 package kyo.bench
 
-import java.util.concurrent.locks.LockSupport
-
 class BatchBench extends Bench.SyncAndFork(5050):
 
     val count = 100

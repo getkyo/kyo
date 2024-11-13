@@ -6,7 +6,6 @@ import caliban.interop.tapir.TapirAdapter.*
 import kyo.internal.KyoSttpMonad
 import scala.concurrent.ExecutionContext
 import sttp.monad.Canceler
-import sttp.tapir.Codec.JsonCodec
 import sttp.tapir.Endpoint
 import sttp.tapir.capabilities.NoStreams
 import sttp.tapir.server.ServerEndpoint

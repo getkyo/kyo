@@ -6,7 +6,6 @@ import kyo.Flat
 import kyo.Frame
 import kyo.Tag
 import scala.annotation.nowarn
-import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 /** Represents abstract functions whose implementations are provided later by a handler.
@@ -415,7 +414,7 @@ object ArrowEffect:
     )(
         inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2),
         inline done: A => B < S3 = (v: A) => v,
-        inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true,
+        inline accept: [C] => I[C] => Boolean = [C] => (_: I[C]) => true,
         inline recover: Throwable => B < (S & S2 & S3)
     )(
         using

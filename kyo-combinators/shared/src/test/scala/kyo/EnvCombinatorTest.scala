@@ -73,7 +73,7 @@ class EnvCombinatorTest extends Test:
                             layerInt,
                             layerBool
                         )
-                val handledTyped: Int < (IO & Memo) = handled
+                val _: Int < (IO & Memo) = handled
                 Memo.run(handled).map { result =>
                     assert(result == 23)
                 }

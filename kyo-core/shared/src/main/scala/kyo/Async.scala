@@ -1,19 +1,13 @@
 package kyo
 
-import java.util.concurrent.atomic.AtomicInteger
 import kyo.Result.Panic
 import kyo.Tag
-import kyo.internal.FiberPlatformSpecific
 import kyo.kernel.*
 import kyo.scheduler.*
-import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
-import scala.collection.immutable.ArraySeq
-import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.util.NotGiven
 import scala.util.control.NonFatal
-import scala.util.control.NoStackTrace
 
 /** Represents an asynchronous computation effect.
   *
