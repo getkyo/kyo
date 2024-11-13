@@ -1,6 +1,7 @@
 package kyo.kernel
 
 import internal.*
+import kyo.Const
 import kyo.Flat
 import kyo.Frame
 import kyo.Tag

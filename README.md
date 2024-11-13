@@ -1370,80 +1370,137 @@ The `Emit` effect is useful for collecting diagnostic information, accumulating 
 
 ### Aspect: Aspect-Oriented Programming
 
-The `Aspect` effect in Kyo allows for high-level customization of behavior across your application. This is similar to how some frameworks use aspects for centralized control over diverse functionalities like database timeouts, authentication, authorization, and transaction management. You can modify these core operations without altering their individual codebases, streamlining how centralized logic is applied across different parts of an application. This makes `Aspect` ideal for implementing cross-cutting concerns in a clean and efficient manner.
+The `Aspect` effect provides a way to modify or intercept behavior across multiple points in a program without directly changing the affected code. It works by allowing users to provide implementations for abstract operations at runtime, similar to dependency injection but with more powerful composition capabilities.
 
-To instantiate an aspect, use the `Aspect.init` method. It takes three type parameters:
+Aspects are created using `Aspect.init` and are typically stored as vals at module level. Once initialized, an aspect can be used to wrap computations that need to be modified, and its behavior can be customized using the `let` method to provide specific implementations within a given scope. This pattern allows for clean separation between the definition of interceptable operations and their actual implementations.
 
-1. `T`: The input type of the aspect
-2. `U`: The output type of the aspect
-3. `S`: The effects the aspect may perform
+An aspect is parameterized by two type constructors, `Input[_]` and `Output[_]`, along with an effect type `S`. These type constructors define the shape of values that can be processed and produced by the aspect. The underscore in `Input[_]` and `Output[_]` indicates that these are higher-kinded types - they each take a type parameter. This allows aspects to work with generic data structures while preserving type information throughout the transformation chain.
+
+The simplest way to work with aspects is to use `Const[A]`, which represents a plain value of type `A`. This is useful when you want to transform values directly without additional context or metadata. As you'll see in the more advanced example later, you can also create custom type constructors when you need to carry additional information through the transformation pipeline.
+
+Here's a basic example using `Const`:
 
 ```scala
-import java.io.Closeable
 import kyo.*
 
-class Database extends Closeable:
-    def count: Int < IO = 42
-    def close()          = {}
+case class Invalid(reason: String) extends Exception
 
-// Initialize an aspect that takes a 'Database' and returns
-// an 'Int', potentially performing 'IO' effects
-val countAspect: Aspect[Database, Int, IO] =
-    Aspect.init[Database, Int, IO]
+// Simple aspect that transforms integers
+val numberAspect = Aspect.init[Const[Int], Const[Int], Abort[Throwable] & IO]
 
-// The method 'apply' activates the aspect for a computation
-def count(db: Database): Int < IO =
-    countAspect(db)(_.count)
+// Basic processing function
+def process(n: Int): Int < (Abort[Throwable] & IO) =
+    numberAspect(n)(x => x * 2)
 
-// To bind an aspect to an implementation, first create a new 'Cut'
-val countPlusOne =
-    new Aspect.Cut[Database, Int, IO]:
-        // The first param is the input of the computation and the second is
-        // the computation being handled
-        def apply(db: Database)(f: Database => Int < IO) =
-            f(db).map(_ + 1)
+// Add validation via a Cut
+val validationCut =
+    Aspect.Cut[Const[Int], Const[Int], Abort[Throwable] & IO](
+        [C] =>
+            (input, cont) =>
+                if input > 0 then cont(input)
+                else Abort.fail(Invalid("negative number"))
+    )
 
-// Bind the 'Cut' to a computation with the 'let' method.
-// The first param is the 'Cut' and the second is the computation
-// that will run with the custom binding of the aspect
-def example(db: Database): Int < IO =
-    countAspect.let(countPlusOne) {
-        count(db)
+// Add logging via another Cut
+val loggingCut =
+    Aspect.Cut[Const[Int], Const[Int], Abort[Throwable] & IO](
+        [C] =>
+            (input, cont) =>
+                for
+                    _      <- Console.println(s"Processing: $input")
+                    result <- cont(input)
+                    _      <- Console.println(s"Result: $result")
+                yield result
+    )
+
+// Compose both cuts into one
+val composedCut =
+    Aspect.Cut.andThen(validationCut, loggingCut)
+
+// Success case
+val successExample: Unit < (Abort[Throwable] & IO) =
+    for
+        result <-
+            numberAspect.let(composedCut) {
+                process(5) // Will succeed: 5 * 2 -> 10
+            }
+        _ <- Console.println(s"Success result: $result")
+    yield ()
+
+// Failure case
+val failureExample: Unit < (Abort[Throwable] & IO) =
+    for
+        result <-
+            numberAspect.let(composedCut) {
+                process(-3) // Will fail with Invalid("negative number")
+            }
+        _ <- Console.println("This won't be reached due to Abort")
+    yield ()
+```
+
+Aspects support multi-shot continuations, meaning that cut implementations can invoke the continuation function multiple times or not at all. This enables control flow modifications like retry logic, fallback behavior, or conditional execution. Internally, aspects function as a form of reified ArrowEffect that can be stored, passed around, and modified at runtime. They maintain state through a `Local` map of active implementations, allowing them to be dynamically activated and deactivated through operations like `let` and `sandbox`.
+
+The following example demonstrates these capabilities with generic type constructors:
+
+```scala
+import kyo.*
+
+// Define wrapper types that preserve the generic parameter
+case class Request[+A](value: A, metadata: Map[String, String])
+case class Response[+A](value: A, status: Int)
+
+// Initialize aspect that can transform any Request to Response
+val serviceAspect = Aspect.init[Request, Response, IO & Abort[Throwable]]
+
+// Example service using the aspect
+def processRequest[A](request: Request[A]): Response[A] < (IO & Abort[Throwable]) =
+    serviceAspect(request) { req =>
+        Response(req.value, status = 200)
     }
 
-// If an aspect is bound to multiple `Cut` implementations, the order of
-// their execution is determined by the sequence in which they are scoped
-// within the computation.
+// Add authentication via a Cut
+val authCut =
+    Aspect.Cut[Request, Response, IO & Abort[Throwable]](
+        [C] =>
+            (input, cont) =>
+                input.metadata.get("auth-token") match
+                    case Some("valid-token") => cont(input)
+                    case _                   => IO(Response(input.value, status = 401))
+    )
 
-// Another 'Cut' implementation
-val countTimesTen =
-    new Aspect.Cut[Database, Int, IO]:
-        def apply(db: Database)(f: Database => Int < IO) =
-            f(db).map(_ * 10)
+// Add logging via another Cut
+val loggingCut =
+    Aspect.Cut[Request, Response, IO & Abort[Throwable]](
+        [C] =>
+            (input, cont) =>
+                for
+                    _      <- Console.println(s"Processing request: ${input}")
+                    result <- cont(input)
+                    _      <- Console.println(s"Response: ${result}")
+                yield result
+    )
 
-// First bind 'countPlusOne' then 'countTimesTen'
-// the result will be (db.count + 1) * 10
-def example1(db: Database) =
-    countAspect.let(countPlusOne) {
-        countAspect.let(countTimesTen) {
-            count(db)
-        }
-    }
+// Compose both cuts into one
+val composedCut =
+    Aspect.Cut.andThen(authCut, loggingCut)
 
-// First bind 'countTimesTen' then 'countPlusOne'
-// the result will be (db.count * 10) + 1
-def example2(db: Database) =
-    countAspect.let(countTimesTen) {
-        countAspect.let(countPlusOne) {
-            count(db)
-        }
-    }
+// Example requests
+val req1 = Request("hello", Map("auth-token" -> "valid-token"))
+val req2 = Request(42, Map("auth-token" -> "invalid"))
 
-// Cuts can also be composed via `andThen`
-def example3(db: Database) =
-    countAspect.let(countTimesTen.andThen(countPlusOne)) {
-        count(db)
-    }
+// Use the service with both aspects
+val example: Unit < (IO & Abort[Throwable]) =
+    for
+        r1 <-
+            serviceAspect.let(composedCut) {
+                processRequest(req1)
+            }
+        r2 <-
+            serviceAspect.let(composedCut) {
+                processRequest(req2)
+            }
+        _ <- Console.println(s"Results: $r1, $r2")
+    yield ()
 ```
 
 ### Check: Runtime Assertions
