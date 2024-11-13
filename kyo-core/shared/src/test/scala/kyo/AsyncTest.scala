@@ -669,4 +669,115 @@ class AsyncTest extends Test:
         }
     }
 
+    "with isolates" - {
+        "mask with isolate" in run {
+            val varIsolate = Var.isolate.update[Int]
+
+            Var.runTuple(1) {
+                for
+                    start <- Var.get[Int]
+                    _ <- Async.mask(varIsolate) {
+                        for
+                            _ <- Var.set(2)
+                            _ <- Async.sleep(1.millis)
+                            _ <- Var.set(3)
+                        yield ()
+                    }
+                    end <- Var.get[Int]
+                yield (start, end)
+            }.map { result =>
+                assert(result == (3, (1, 3)))
+            }
+        }
+
+        "timeout with isolate" in run {
+            val emitIsolate = Emit.isolate.merge[Int]
+
+            Emit.run {
+                Async.timeout(10.millis, emitIsolate) {
+                    for
+                        _ <- Emit(1)
+                        _ <- Async.sleep(1.millis)
+                        _ <- Emit(2)
+                    yield "done"
+                }
+            }.map { result =>
+                assert(result == (Chunk(1, 2), "done"))
+            }
+        }
+
+        "race with isolate" in run {
+            val varIsolate = Var.isolate.update[Int]
+
+            Var.runTuple(0) {
+                Async.race(varIsolate)(
+                    Seq(
+                        for
+                            _ <- Var.set(1)
+                            _ <- Async.sleep(1.millis)
+                            v <- Var.get[Int]
+                        yield v,
+                        for
+                            _ <- Var.set(2)
+                            _ <- Async.sleep(2.millis)
+                            v <- Var.get[Int]
+                        yield v
+                    )
+                )
+            }.map { result =>
+                assert(result == (1, 1))
+            }
+        }
+
+        "parallel with isolate" in run {
+            val memoIsolate = Memo.isolate.merge
+            var count       = 0
+            val f = Memo[Int, Int, Any] { x =>
+                count += 1
+                x * 2
+            }
+
+            Memo.run {
+                Kyo.zip(
+                    Async.parallel(2, memoIsolate)(
+                        Seq(
+                            f(1),
+                            f(1),
+                            f(1)
+                        )
+                    ),
+                    f(1)
+                )
+            }.map { result =>
+                assert(result == (Seq(2, 2, 2), 2))
+                assert(count == 3)
+            }
+        }
+
+        "parallelUnbounded with isolate" in run {
+            val emitIsolate = Emit.isolate.merge[String]
+
+            Emit.run {
+                Async.parallelUnbounded(
+                    emitIsolate,
+                    Seq(
+                        for
+                            _ <- Emit("a1")
+                            _ <- Async.sleep(2.millis)
+                            _ <- Emit("a2")
+                        yield 1,
+                        for
+                            _ <- Emit("b1")
+                            _ <- Async.sleep(1.millis)
+                            _ <- Emit("b2")
+                        yield 2
+                    )
+                )
+            }.map { result =>
+                assert(result._1.size == 4)
+                assert(result._2 == Seq(1, 2))
+            }
+        }
+    }
+
 end AsyncTest

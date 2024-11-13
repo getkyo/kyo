@@ -276,4 +276,213 @@ class MemoTest extends Test:
         }
     }
 
+    "isolate" - {
+        "merge" - {
+            "combines caches from isolated and outer scopes" in run {
+                var count = 0
+                val f = Memo[Int, Int, Any] { x =>
+                    count += 1
+                    x * 2
+                }
+
+                val result = Memo.run {
+                    for
+                        a <- f(5)
+                        b <- Memo.isolate.merge.run {
+                            for
+                                c <- f(6)
+                                d <- f(5)
+                            yield (c, d)
+                        }
+                        c <- f(6)
+                        d <- f(7)
+                    yield (count, a, b, c, d)
+                }
+                assert(result.eval == (3, 10, (12, 10), 12, 14))
+                assert(count == 3)
+            }
+
+            "proper state restoration after nested isolations" in run {
+                var count = 0
+                val f = Memo[Int, Int, Any] { x =>
+                    count += 1
+                    x * 2
+                }
+
+                val result = Memo.run {
+                    for
+                        start <- f(1)
+                        v1 <- Memo.isolate.merge.run {
+                            f(2)
+                        }
+                        middle <- f(3)
+                        v2 <- Memo.isolate.merge.run {
+                            f(4)
+                        }
+                        end <- f(5)
+                    yield (count, start, v1, middle, v2, end)
+                }
+                assert(result.eval == (5, 2, 4, 6, 8, 10))
+                assert(count == 5)
+            }
+        }
+
+        "update" - {
+            "replaces outer cache with inner cache" in run {
+                var count = 0
+                val f = Memo[Int, Int, Any] { x =>
+                    count += 1
+                    x * 2
+                }
+
+                val result = Memo.run {
+                    for
+                        before <- f(1)
+                        _ <- Memo.isolate.update.run {
+                            f(2)
+                        }
+                        after <- f(2)
+                    yield (count, before, after)
+                }
+                assert(result.eval == (2, 2, 4))
+                assert(count == 2)
+            }
+
+            "nested updates apply in order" in run {
+                var count = 0
+                val f = Memo[Int, Int, Any] { x =>
+                    count += 1
+                    x * 2
+                }
+
+                val result = Memo.run {
+                    for
+                        start <- f(1)
+                        _ <- Memo.isolate.update.run {
+                            f(2).andThen {
+                                Memo.isolate.update.run {
+                                    f(3)
+                                }
+                            }
+                        }
+                        end <- f(3)
+                    yield (count, start, end)
+                }
+                assert(result.eval == (3, 2, 6))
+                assert(count == 3)
+            }
+        }
+
+        "discard" - {
+            "inner modifications don't affect outer scope" in run {
+                var count = 0
+                val f = Memo[Int, Int, Any] { x =>
+                    count += 1
+                    x * 2
+                }
+
+                val result = Memo.run {
+                    for
+                        before <- f(1)
+                        _ <- Memo.isolate.discard.run {
+                            f(2)
+                        }
+                        after <- f(1)
+                    yield (count, before, after)
+                }
+                assert(result.eval == (2, 2, 2))
+                assert(count == 2)
+            }
+
+            "nested discards maintain isolation" in run {
+                var count = 0
+                val f = Memo[Int, Int, Any] { x =>
+                    count += 1
+                    x * 2
+                }
+
+                val result = Memo.run {
+                    for
+                        start <- f(1)
+                        _ <- Memo.isolate.discard.run {
+                            f(2).andThen {
+                                Memo.isolate.discard.run {
+                                    f(3)
+                                }
+                            }
+                        }
+                        end <- f(1)
+                    yield (count, start, end)
+                }
+                assert(result.eval == (3, 2, 2))
+                assert(count == 3)
+            }
+        }
+
+        "composition" - {
+            "can combine multiple isolates" in run {
+                var count = 0
+                val f = Memo[Int, Int, Any] { x =>
+                    count += 1
+                    x * 2
+                }
+
+                val i1 = Memo.isolate.merge
+                val i2 = Emit.isolate.merge[Int]
+
+                val combined = i1.andThen(i2)
+
+                val result = Memo.run {
+                    Emit.run {
+                        combined.run {
+                            for
+                                a <- f(1)
+                                _ <- Emit(a)
+                                b <- f(2)
+                                _ <- Emit(b)
+                            yield (a, b)
+                        }
+                    }
+                }
+                assert(result.eval == (Chunk(2, 4), (2, 4)))
+                assert(count == 2)
+            }
+
+            "preserves individual isolation behaviors when composed" in run {
+                var count = 0
+                val f = Memo[Int, Int, Any] { x =>
+                    count += 1
+                    x * 2
+                }
+
+                val i1 = Memo.isolate.discard
+                val i2 = Emit.isolate.merge[Int]
+
+                val result = Memo.run {
+                    Emit.run {
+                        for
+                            a <- f(1)
+                            _ <- i1.run {
+                                for
+                                    b <- f(2)
+                                    _ <- Emit(b)
+                                yield b
+                            }
+                            c <- f(2)
+                            _ <- i2.run {
+                                for
+                                    d <- f(3)
+                                    _ <- Emit(d)
+                                yield d
+                            }
+                            e <- f(3)
+                        yield (count, a, c, e)
+                    }
+                }
+                assert(result.eval == (Chunk(4, 6), (4, 2, 4, 6)))
+                assert(count == 4)
+            }
+        }
+    }
+
 end MemoTest

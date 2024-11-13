@@ -430,4 +430,149 @@ class EmitTest extends Test:
             assert(result._2._2._2 == ())
         }
     }
+
+    "isolate" - {
+        "merge" - {
+            "combines emitted values from isolated and outer scopes" in run {
+                val result = Emit.run {
+                    for
+                        _ <- Emit(1)
+                        isolated <- Emit.isolate.merge[Int].run {
+                            for
+                                _ <- Emit(2)
+                                _ <- Emit(3)
+                            yield "inner"
+                        }
+                        _ <- Emit(4)
+                    yield (isolated)
+                }
+                assert(result.eval == (Chunk(1, 2, 3, 4), "inner"))
+            }
+
+            "proper state restoration after nested isolations" in run {
+                val result = Emit.run {
+                    for
+                        _ <- Emit("start")
+                        v1 <- Emit.isolate.merge[String].run {
+                            for
+                                _ <- Emit("inner1")
+                                v2 <- Emit.isolate.merge[String].run {
+                                    Emit("nested").map(_ => "nested-result")
+                                }
+                            yield v2
+                        }
+                        _ <- Emit("end")
+                    yield v1
+                }
+                assert(result.eval == (Chunk("start", "inner1", "nested", "end"), "nested-result"))
+            }
+        }
+
+        "discard" - {
+            "inner emissions don't affect outer scope" in run {
+                val result = Emit.run {
+                    for
+                        _ <- Emit(1)
+                        isolated <- Emit.isolate.discard[Int].run {
+                            for
+                                _ <- Emit(2)
+                                _ <- Emit(3)
+                            yield "inner"
+                        }
+                        _ <- Emit(4)
+                    yield isolated
+                }
+                assert(result.eval == (Chunk(1, 4), "inner"))
+            }
+
+            "nested discards maintain isolation" in run {
+                val result = Emit.run {
+                    for
+                        _ <- Emit("outer")
+                        v1 <- Emit.isolate.discard[String].run {
+                            for
+                                _ <- Emit("discarded1")
+                                v2 <- Emit.isolate.discard[String].run {
+                                    Emit("discarded2").map(_ => "nested-result")
+                                }
+                            yield v2
+                        }
+                        _ <- Emit("final")
+                    yield v1
+                }
+                assert(result.eval == (Chunk("outer", "final"), "nested-result"))
+            }
+        }
+
+        "composition" - {
+            "can combine with Var isolate" in run {
+                val emitIsolate = Emit.isolate.merge[Int]
+                val varIsolate  = Var.isolate.discard[Int]
+
+                val combined = emitIsolate.andThen(varIsolate)
+
+                val result = Emit.run {
+                    Var.runTuple(0) {
+                        combined.run {
+                            for
+                                _ <- Emit(1)
+                                _ <- Var.update[Int](_ + 1)
+                                v <- Var.get[Int]
+                                _ <- Emit(v)
+                            yield "done"
+                        }
+                    }
+                }
+                assert(result.eval == (Chunk(1, 1), (0, "done")))
+            }
+
+            "can combine with Memo isolate" in run {
+                var count = 0
+                val f = Memo[Int, Int, Any] { x =>
+                    count += 1
+                    x * 2
+                }
+
+                val emitIsolate = Emit.isolate.merge[Int]
+                val memoIsolate = Memo.isolate.merge
+
+                val combined = emitIsolate.andThen(memoIsolate)
+
+                val result = Emit.run {
+                    Memo.run {
+                        combined.run {
+                            for
+                                a <- f(1)
+                                _ <- Emit(a)
+                                b <- f(1)
+                                _ <- Emit(b)
+                            yield (a, b)
+                        }
+                    }
+                }
+                assert(result.eval == (Chunk(2, 2), (2, 2)))
+                assert(count == 1)
+            }
+
+            "preserves individual isolation behaviors when composed" in run {
+                val emitDiscard = Emit.isolate.discard[Int]
+                val emitMerge   = Emit.isolate.merge[Int]
+
+                val result = Emit.run {
+                    for
+                        _ <- Emit(1)
+                        _ <- emitDiscard.run {
+                            Emit(2)
+                        }
+                        _ <- Emit(3)
+                        _ <- emitMerge.run {
+                            Emit(4)
+                        }
+                        _ <- Emit(5)
+                    yield "done"
+                }
+                assert(result.eval == (Chunk(1, 3, 4, 5), "done"))
+            }
+        }
+    }
 end EmitTest

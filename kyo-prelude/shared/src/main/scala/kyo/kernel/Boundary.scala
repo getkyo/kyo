@@ -22,19 +22,6 @@ import scala.quoted.*
   * @tparam S
   *   The source effects that must be handled before crossing
   */
-@implicitNotFound("""
-Could not create an Async boundary for effects: ${Ctx}
-
-Note: If you're seeing this error with nested Async operations (like Async.run(Async.run(v))),
-this is due to a current limitation. As a workaround, you can break them into separate statements:
-
-Instead of:
-  Async.run(Async.run(v))
-
-Use:
-  val x = Async.run(v)
-  Async.run(x)
-""")
 final class Boundary[Ctx, +S] private (dummy: Unit) extends AnyVal
 
 object Boundary:
@@ -75,23 +62,26 @@ object Boundary:
                     |
                     |  ${nok.map(_.show.red).mkString(" & ")}
                     |
-                    |You need to handle these effects before using Async operations. For example:
+                    |You have two options to handle these effects:
                     |
-                    |Instead of:
-                    |  Async.run(computation) // where computation has pending MyEffect
+                    |1. Handle the effects before the async operation:
+                    |   Instead of:
+                    |     Async.race(computation1, computation2) // where computations have pending MyEffect
                     |
-                    |Handle the effect first:
-                    |  Async.run(MyEffect.run(computation))
+                    |   Handle the effect first:
+                    |     Async.race(MyEffect.run(computation1), MyEffect.run(computation2))
                     |
-                    |Note: There's currently a limitation with nested Async operations (like Async.run(Async.run(v))).
-                    |As a workaround, you can break them into separate statements:
+                    |2. Use isolates to manage effect state:
+                    |   Instead of:
+                    |     Async.race(computation1, computation2) // where computations have MyEffect
                     |
-                    |Instead of:
-                    |  Async.run(Async.run(v))
+                    |   Use an isolate:
+                    |     val isolate = MyEffect.isolate.someStrategy  // Check effect companion objects for available isolates
+                    |     Async.race(isolate)(computation1, computation2)
                     |
-                    |Use:
-                    |  val x = Async.run(v)
-                    |  Async.run(x)
+                    |Isolates can be composed for multiple effects:
+                    |  val combined = effect1.isolate.someStrategy.andThen(effect2.isolate.someStrategy)
+                    |  Async.race(combined)(computation1, computation2)
                     |""".stripMargin
             )
         end if

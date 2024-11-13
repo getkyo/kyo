@@ -151,6 +151,62 @@ object Var:
     def runTuple[V, A: Flat, S](state: V)(v: A < (Var[V] & S))(using Tag[Var[V]], Frame): (V, A) < S =
         runWith(state)(v)((state, result) => (state, result))
 
+    object isolate:
+        abstract private[kyo] class Base[V: Tag] extends Isolate[Var[V]]:
+            type State = V
+            def use[A, S2](f: V => A < S2)(using Frame) = Var.use(f)
+            def resume[A: Flat, S2](state: State, v: A < (Var[V] & S2))(using Frame) =
+                Var.runTuple(state)(v)
+        end Base
+
+        /** Creates an isolate that sets the Var to its final isolated value.
+          *
+          * When the isolation ends, unconditionally updates the Var with the last value it had in the isolated computation.
+          *
+          * @tparam V
+          *   The type of value in the Var
+          * @return
+          *   An isolate that updates the Var with its isolated value
+          */
+        def update[V: Tag]: Isolate[Var[V]] =
+            new Base[V]:
+                def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
+                    Var.set(state).andThen(v)
+
+        /** Creates an isolate that merges Var values using a combination function.
+          *
+          * When the isolation ends, combines the Var's current value with the value from the isolated computation using the provided merge
+          * function. Useful when you want to reconcile isolated Var modifications with any concurrent changes to the same Var.
+          *
+          * @param f
+          *   Function that combines outer and isolated Var values
+          * @tparam V
+          *   The type of value in the Var
+          * @return
+          *   An isolate that merges Var values
+          */
+        def merge[V: Tag](f: (V, V) => V): Isolate[Var[V]] =
+            new Base[V]:
+                def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
+                    Var.use[V](prev => Var.set(f(prev, state)).andThen(v))
+
+        /** Creates an isolate that keeps Var modifications local.
+          *
+          * Allows the isolated computation to read and modify the Var freely, but discards all modifications when the isolation ends. The
+          * Var retains its original value as if the isolated modifications never happened.
+          *
+          * @tparam V
+          *   The type of value in the Var
+          * @return
+          *   An isolate that discards Var modifications
+          */
+        def discard[V: Tag]: Isolate[Var[V]] =
+            new Base[V]:
+                def restore[A: Flat, S2](state: V, v: A < S2)(using Frame) =
+                    v
+
+    end isolate
+
     object internal:
         type Op[V] = Get.type | V | Update[V]
         object Get
