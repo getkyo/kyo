@@ -764,8 +764,4 @@ class SafepointTest extends Test:
         }
     }
 
-    private def createStateWithThreadId(threadId: Long): Safepoint.State =
-        val raw = (threadId << 32) | (Safepoint.State.init().depth & 0xffffffffL)
-        raw.asInstanceOf[Safepoint.State]
-
 end SafepointTest

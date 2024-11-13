@@ -1,6 +1,5 @@
 package kyo.kernel
 
-import Safepoint.State
 import internal.*
 import java.util.concurrent.atomic.AtomicBoolean
 import kyo.Frame

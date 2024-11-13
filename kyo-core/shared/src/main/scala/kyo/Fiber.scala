@@ -7,7 +7,6 @@ import kyo.Tag
 import kyo.internal.FiberPlatformSpecific
 import kyo.kernel.*
 import kyo.scheduler.*
-import scala.annotation.implicitNotFound
 import scala.annotation.tailrec
 import scala.collection.immutable.ArraySeq
 import scala.concurrent.ExecutionContext
@@ -179,7 +178,6 @@ object Fiber extends FiberPlatformSpecific:
           *   A new Fiber with the mapped result
           */
         def map[B: Flat](f: A => B < IO)(using Frame): Fiber[E, B] < IO =
-            import AllowUnsafe.embrace.danger
             IO.Unsafe(Unsafe.map(self)((r => IO.Unsafe.run(f(r)).eval)))
 
         /** Flat maps the result of the Fiber.
@@ -190,7 +188,6 @@ object Fiber extends FiberPlatformSpecific:
           *   A new Fiber with the flat mapped result
           */
         def flatMap[E2, B](f: A => Fiber[E2, B] < IO)(using Frame): Fiber[E | E2, B] < IO =
-            import AllowUnsafe.embrace.danger
             IO.Unsafe(Unsafe.flatMap(self)(r => IO.Unsafe.run(f(r)).eval))
 
         /** Maps the Result of the Fiber using the provided function.

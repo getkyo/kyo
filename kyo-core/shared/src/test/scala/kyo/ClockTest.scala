@@ -1,9 +1,7 @@
 package kyo
 
-import java.time.temporal.ChronoUnit
 import kyo.Clock.Deadline
 import kyo.Clock.Stopwatch
-import kyo.Clock.stopwatch
 
 class ClockTest extends Test:
 

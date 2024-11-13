@@ -2,7 +2,6 @@ package kyo
 
 import Schedule.internal.*
 import kyo.Duration
-import kyo.Instant
 
 /** An immutable, composable scheduling policy.
   *

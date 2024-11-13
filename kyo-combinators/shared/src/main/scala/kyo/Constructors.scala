@@ -5,7 +5,6 @@ import kyo.kernel.Boundary
 import kyo.kernel.Reducible
 import scala.annotation.tailrec
 import scala.concurrent.Future
-import scala.reflect.ClassTag
 import scala.util.Failure
 import scala.util.NotGiven
 import scala.util.Success

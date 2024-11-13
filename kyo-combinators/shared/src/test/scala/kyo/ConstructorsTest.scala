@@ -1,6 +1,5 @@
 package kyo
 
-import scala.concurrent.Future
 import scala.util.Failure
 import scala.util.Success
 

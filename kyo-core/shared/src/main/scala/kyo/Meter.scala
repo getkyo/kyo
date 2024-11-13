@@ -71,8 +71,6 @@ end Meter
 
 object Meter:
 
-    import internal.*
-
     /** A no-op Meter that always allows operations and can't be closed. */
     case object Noop extends Meter:
         def availablePermits(using Frame)          = Int.MaxValue

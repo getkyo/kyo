@@ -1,6 +1,5 @@
 package kyo
 
-import java.io.Closeable
 import java.util.concurrent.atomic.AtomicInteger as JAtomicInteger
 import org.scalatest.compatible.Assertion
 
@@ -308,7 +307,6 @@ class FiberTest extends Test:
 
     "fromFuture" - {
         import scala.concurrent.Future
-        import scala.concurrent.ExecutionContext.Implicits.global
 
         "success" in run {
             val future = Future.successful(42)
@@ -635,7 +633,6 @@ class FiberTest extends Test:
 
             "fromFuture" in run {
                 import scala.concurrent.Future
-                import scala.concurrent.ExecutionContext.Implicits.global
 
                 val future = Future.successful(42)
                 val fiber  = Fiber.Unsafe.fromFuture(future)

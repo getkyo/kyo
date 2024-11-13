@@ -1,10 +1,7 @@
 package kyo.bench
 
 import WarmupJITProfile.*
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
 import org.openjdk.jmh.annotations.*
-import scala.concurrent.duration.*
 
 @State(Scope.Benchmark)
 @Fork(

@@ -1,8 +1,6 @@
 package kyo
 
-import scala.annotation.implicitNotFound
 import scala.quoted.*
-import scala.util.NotGiven
 
 opaque type Flat[A] = Null
 

@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Console.Unsafe
-
 class DirectTest extends Test:
 
     // "match" in {

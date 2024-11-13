@@ -3,7 +3,6 @@ package kyo
 import java.time.DateTimeException
 import java.time.Instant as JInstant
 import java.time.format.DateTimeParseException
-import java.time.temporal.ChronoUnit
 
 /** Represents a point in time with nanosecond precision by wrapping 'java.time.Instant'.
   *

@@ -76,8 +76,9 @@ abstract class Regulator(
     }
 
     def stop(): Unit = {
-        val ign = collectTask.cancel()
-        val _   = regulateTask.cancel()
+        def discard(v: Any) = {}
+        discard(collectTask.cancel())
+        discard(regulateTask.cancel())
     }
 
     protected val statsScope = kyo.scheduler.statsScope.scope("regulator", getClass.getSimpleName().toLowerCase())
