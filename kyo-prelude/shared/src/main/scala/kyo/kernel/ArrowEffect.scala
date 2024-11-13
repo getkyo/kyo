@@ -119,7 +119,7 @@ object ArrowEffect:
           * @return
           *   The computation result with the function implementation provided
           */
-        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, S3](
+        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
             inline effectTag: Tag[E],
             v: A < (E & S)
         )(
@@ -129,9 +129,9 @@ object ArrowEffect:
             inline _frame: Frame,
             inline flat: Flat[A],
             safepoint: Safepoint
-        ): A < (S & S2 & S3) =
+        ): A < (S & S2) =
             @nowarn("msg=anonymous")
-            def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): A < (S & S2 & S3) =
+            def handleLoop(v: A < (E & S & S2), context: Context)(using Safepoint): A < (S & S2) =
                 v match
                     case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if effectTag =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
@@ -139,8 +139,8 @@ object ArrowEffect:
                             continue = handleLoop(_, context),
                             suspend = handleLoop(kyo, context)
                         )
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, A, S & S2 & S3](kyo):
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked =>
+                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handleLoop(kyo(v, context), context)
