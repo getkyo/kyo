@@ -19,6 +19,15 @@ object Parse:
     // avoids splicing the derived tag on each use
     private given Tag[Var[State]] = Tag[Var[State]]
 
+    /** Aspect that modifies how text is read and parsed. This is the core parsing aspect that other parsing operations build upon. It takes
+      * the current text input and a parsing function, allowing for preprocessing of input or postprocessing of results.
+      *
+      * @return
+      *   An Aspect that transforms from Const[Text] to Maybe[(Text, C)]
+      */
+    val readAspect: Aspect[Const[Text], [C] =>> Maybe[(Text, C)], Parse] =
+        Aspect.init(using Frame.internal)
+
     /** Attempts to parse input using the provided parsing function
       *
       * @param f
@@ -28,9 +37,9 @@ object Parse:
       * @return
       *   Parsed value if successful, drops the current parse branch if unsuccessful
       */
-    def read[A, S](f: Text => Maybe[(Text, A)] < S)(using Frame): A < (Parse & S) =
+    def read[A](f: Text => Maybe[(Text, A)])(using Frame): A < Parse =
         Var.use[State] { state =>
-            f(state.remaining).map {
+            readAspect(state.remaining)(f).map {
                 case Present((remaining, result)) =>
                     val consumed = state.remaining.length - remaining.length
                     Var.set(state.advance(consumed)).andThen(result)
@@ -66,6 +75,40 @@ object Parse:
     private def fail(states: Seq[State], message: String)(using frame: Frame): Nothing < Abort[ParseFailed] =
         Abort.fail(ParseFailed(frame, states, message))
 
+    /** Reads and consumes characters from the input as long as they satisfy the given predicate.
+      *
+      * @param f
+      *   Predicate function that tests each character
+      * @return
+      *   The matched text containing all consecutive characters that satisfied the predicate
+      */
+    def readWhile(f: Char => Boolean)(using Frame): Text < Parse =
+        Parse.read { s =>
+            val (matched, rest) = s.span(f(_))
+            Maybe((rest, matched))
+        }
+
+    /** Modifies a computation to automatically handle whitespace in all its parsing operations. Any parser used within the computation will
+      * consume and discard leading and trailing whitespace around its expected input.
+      *
+      * Since this operates through the Aspect effect, it affects all parsing operations within the computation, not just the immediate
+      * parser. This makes it particularly useful for complex parsers like those for mathematical expressions or programming languages where
+      * whitespace should be uniformly handled.
+      *
+      * @param v
+      *   Computation containing parsing operations
+      * @return
+      *   A computation where all parsing operations handle surrounding whitespace
+      */
+    def spaced[A, S](v: A < (Parse & S), isWhitespace: Char => Boolean = _.isWhitespace)(using Frame): A < (Parse & S) =
+        readAspect.let([C] =>
+            (input, cont) =>
+                cont(input.dropWhile(isWhitespace(_))).map {
+                    case Present((remaining, value)) =>
+                        Present((remaining.dropWhile(isWhitespace(_)), value))
+                    case Absent => Absent
+            })(v)
+
     /** Tries each parser in sequence and ensures exactly one succeeds. Unlike firstOf, this will evaluate all parsers, but will fail if
       * zero or multiple parsers succeed. This is useful for grammars where ambiguous parses should be considered an error.
       *
@@ -77,43 +120,162 @@ object Parse:
     def anyOf[A, S](seq: (A < (Parse & S))*)(using Frame): A < (Parse & S) =
         Choice.eval(seq)(identity)
 
+    private def firstOf[A: Flat, S](seq: Seq[() => A < (Parse & S)])(using Frame): A < (Parse & S) =
+        Loop(seq) {
+            case Seq() => Choice.drop
+            case head +: tail =>
+                attempt(head()).map {
+                    case Present(value) => Loop.done(value)
+                    case Absent         => Loop.continue(tail)
+                }
+        }
+
     /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
       * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
       * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
       * no parsers succeed, the parse branch is dropped.
       *
-      * @param seq
-      *   Sequence of parsers to try in order
       * @return
       *   Result from first successful parser, drops the parse branch if none succeed
       */
-    def firstOf[A: Flat, S](seq: (A < (Parse & S))*)(using Frame): A < (Parse & S) =
-        Loop(seq) {
-            case Seq() => Choice.drop
-            case head +: tail =>
-                attempt(head).map {
-                    case Present(value) => Loop.done(value)
-                    case Absent         => Loop.continue(tail)
-                }
-        }
+    def firstOf[A: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => A < (Parse & S)
+    )(using Frame): A < (Parse & S) =
+        firstOf(Seq(() => parser1, () => parser2))
 
-    /** Parses a sequence of parsers in order and collects their results. This operation is commonly known as "sequence" in other parsing
-      * libraries.
+    /** Tries parsers in sequence until the first success, backtracking between attempts.
       *
-      * @param parsers
-      *   Sequence of parsers to execute sequentially
+      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
+      *
       * @return
-      *   Chunk containing all parsed results in order. The parse branch is dropped if any parser fails
+      *   Result from first successful parser, drops the parse branch if none succeed
       */
-    def inOrder[A: Flat, S](parsers: Seq[A < (Parse & S)])(using Frame): Chunk[A] < (Parse & S) =
+    def firstOf[A: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => A < (Parse & S),
+        parser3: => A < (Parse & S)
+    )(
+        using Frame
+    ): A < (Parse & S) =
+        firstOf(Seq(() => parser1, () => parser2, () => parser3))
+
+    /** Tries parsers in sequence until the first success, backtracking between attempts.
+      *
+      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
+      *
+      * @return
+      *   Result from first successful parser, drops the parse branch if none succeed
+      */
+    def firstOf[A: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => A < (Parse & S),
+        parser3: => A < (Parse & S),
+        parser4: => A < (Parse & S)
+    )(
+        using Frame
+    ): A < (Parse & S) =
+        firstOf(Seq(() => parser1, () => parser2, () => parser3, () => parser4))
+
+    /** Tries parsers in sequence until the first success, backtracking between attempts.
+      *
+      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
+      *
+      * @return
+      *   Result from first successful parser, drops the parse branch if none succeed
+      */
+    def firstOf[A: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => A < (Parse & S),
+        parser3: => A < (Parse & S),
+        parser4: => A < (Parse & S),
+        parser5: => A < (Parse & S)
+    )(
+        using Frame
+    ): A < (Parse & S) =
+        firstOf(Seq(() => parser1, () => parser2, () => parser3, () => parser4, () => parser5))
+
+    /** Tries parsers in sequence until the first success, backtracking between attempts.
+      *
+      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
+      *
+      * @return
+      *   Result from first successful parser, drops the parse branch if none succeed
+      */
+    def firstOf[A: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => A < (Parse & S),
+        parser3: => A < (Parse & S),
+        parser4: => A < (Parse & S),
+        parser5: => A < (Parse & S),
+        parser6: => A < (Parse & S)
+    )(
+        using Frame
+    ): A < (Parse & S) =
+        firstOf(Seq(() => parser1, () => parser2, () => parser3, () => parser4, () => parser5, () => parser6))
+
+    /** Tries parsers in sequence until the first success, backtracking between attempts.
+      *
+      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
+      *
+      * @return
+      *   Result from first successful parser, drops the parse branch if none succeed
+      */
+    def firstOf[A: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => A < (Parse & S),
+        parser3: => A < (Parse & S),
+        parser4: => A < (Parse & S),
+        parser5: => A < (Parse & S),
+        parser6: => A < (Parse & S),
+        parser7: => A < (Parse & S)
+    )(
+        using Frame
+    ): A < (Parse & S) =
+        firstOf(Seq(() => parser1, () => parser2, () => parser3, () => parser4, () => parser5, () => parser6, () => parser7))
+
+    /** Tries parsers in sequence until the first success, backtracking between attempts.
+      *
+      * Unlike anyOf, this stops at the first successful parse and won't detect ambiguities. This makes it suitable for ordered alternatives
+      * where earlier parsers take precedence over later ones. The parser backtracks (restores input position) after each failed attempt. If
+      * no parsers succeed, the parse branch is dropped.
+      *
+      * @return
+      *   Result from first successful parser, drops the parse branch if none succeed
+      */
+    def firstOf[A: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => A < (Parse & S),
+        parser3: => A < (Parse & S),
+        parser4: => A < (Parse & S),
+        parser5: => A < (Parse & S),
+        parser6: => A < (Parse & S),
+        parser7: => A < (Parse & S),
+        parser8: => A < (Parse & S)
+    )(
+        using Frame
+    ): A < (Parse & S) =
+        firstOf(Seq(() => parser1, () => parser2, () => parser3, () => parser4, () => parser5, () => parser6, () => parser7, () => parser8))
+
+    private def inOrder[A: Flat, S](parsers: Seq[() => A < (Parse & S)])(using Frame): Chunk[A] < (Parse & S) =
         parsers.size match
             case 0 => Chunk.empty
-            case 1 => parsers(0).map(Chunk(_))
+            case 1 => parsers(0)().map(Chunk(_))
             case _ =>
                 Kyo.foldLeft(parsers)(Chunk.empty[A]) {
                     case (acc, parser) =>
-                        attempt(parser).map {
+                        attempt(parser()).map {
                             case Present(result) => acc.append(result)
                             case Absent          => Parse.drop
                         }
@@ -122,90 +284,202 @@ object Parse:
     /** Parses two parsers in sequence and combines their results. This operation is commonly known as "sequence" in other parsing
       * libraries.
       *
-      * @param p1
-      *   First parser to execute
-      * @param p2
-      *   Second parser to execute
       * @return
       *   Tuple containing both parsed results in order. The parse branch is dropped if either parser fails
       */
-    def inOrder[A, B, S](p1: A < (Parse & S), p2: B < (Parse & S))(using Frame): (A, B) < (Parse & S) =
-        inOrder(Chunk(p1, p2))(using Flat.unsafe.bypass).map { s =>
+    def inOrder[A: Flat, B: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => B < (Parse & S)
+    )(using Frame): (A, B) < (Parse & S) =
+        inOrder(Chunk(
+            () => parser1,
+            () => parser2
+        ))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A], s(1).asInstanceOf[B])
         }
 
     /** Parses three parsers in sequence and combines their results. This operation is commonly known as "sequence" in other parsing
       * libraries.
       *
-      * @param p1
-      *   First parser to execute
-      * @param p2
-      *   Second parser to execute
-      * @param p3
-      *   Third parser to execute
       * @return
       *   Tuple containing all three parsed results in order. The parse branch is dropped if any parser fails
       */
-    def inOrder[A, B, C, S](p1: A < (Parse & S), p2: B < (Parse & S), p3: C < (Parse & S))(using Frame): (A, B, C) < (Parse & S) =
-        inOrder(Chunk(p1, p2, p3))(using Flat.unsafe.bypass).map { s =>
+    def inOrder[A: Flat, B: Flat, C: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => B < (Parse & S),
+        parser3: => C < (Parse & S)
+    )(using
+        Frame
+    ): (A, B, C) < (Parse & S) =
+        inOrder(Chunk(
+            () => parser1,
+            () => parser2,
+            () => parser3
+        ))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A], s(1).asInstanceOf[B], s(2).asInstanceOf[C])
         }
 
     /** Parses four parsers in sequence and combines their results. This operation is commonly known as "sequence" in other parsing
       * libraries.
       *
-      * @param p1
-      *   First parser to execute
-      * @param p2
-      *   Second parser to execute
-      * @param p3
-      *   Third parser to execute
-      * @param p4
-      *   Fourth parser to execute
       * @return
       *   Tuple containing all four parsed results in order. The parse branch is dropped if any parser fails
       */
-    def inOrder[A, B, C, D, S](p1: A < (Parse & S), p2: B < (Parse & S), p3: C < (Parse & S), p4: D < (Parse & S))(using
-        Frame
+    def inOrder[A: Flat, B: Flat, C: Flat, D: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => B < (Parse & S),
+        parser3: => C < (Parse & S),
+        parser4: => D < (Parse & S)
+    )(
+        using Frame
     ): (A, B, C, D) < (Parse & S) =
-        inOrder(Chunk(p1, p2, p3, p4))(using Flat.unsafe.bypass).map { s =>
+        inOrder(Chunk(
+            () => parser1,
+            () => parser2,
+            () => parser3,
+            () => parser4
+        ))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A], s(1).asInstanceOf[B], s(2).asInstanceOf[C], s(3).asInstanceOf[D])
         }
 
-    /** Selects between multiple successful parses using a selection function. This is useful for implementing custom disambiguation
-      * strategies between multiple valid parses.
+    /** Parses five parsers in sequence and combines their results. This operation is commonly known as "sequence" in other parsing
+      * libraries.
       *
-      * @param seq
-      *   Sequence of parsers to try - all parsers will be evaluated
-      * @param f
-      *   Selection function that receives pairs of successful parses (with their states) and decides which one to keep. Returns Maybe.empty
-      *   to skip both.
       * @return
-      *   The parse result selected by the selection function
+      *   Tuple containing all five parsed results in order. The parse branch is dropped if any parser fails
       */
-    def select[A: Flat, S, S2](seq: (A < (Parse & S))*)(f: ((State, A), (State, A)) => Maybe[(State, A)] < S2)(
+    def inOrder[A: Flat, B: Flat, C: Flat, D: Flat, E: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => B < (Parse & S),
+        parser3: => C < (Parse & S),
+        parser4: => D < (Parse & S),
+        parser5: => E < (Parse & S)
+    )(
         using Frame
-    ): A < (Parse & S & S2) =
-        Loop(seq, Maybe.empty[(State, A)]) { (seq, current) =>
-            seq match
-                case Seq() =>
-                    current match
-                        case Absent => Choice.drop
-                        case Present((state, a)) =>
-                            Var.set(state).andThen(Loop.done(a))
-                case head +: tail =>
-                    peek(head.map(a => Var.use[State]((_, a)))).map {
-                        case Absent =>
-                            Loop.continue(tail, current)
-                        case next @ Present(nextState) =>
-                            current match
-                                case Absent =>
-                                    Loop.continue(tail, next)
-                                case Present(currentState) =>
-                                    f(currentState, nextState).map(Loop.continue(tail, _))
-                    }
+    ): (A, B, C, D, E) < (Parse & S) =
+        inOrder(Chunk(
+            () => parser1,
+            () => parser2,
+            () => parser3,
+            () => parser4,
+            () => parser5
+        ))(using Flat.unsafe.bypass).map { s =>
+            (s(0).asInstanceOf[A], s(1).asInstanceOf[B], s(2).asInstanceOf[C], s(3).asInstanceOf[D], s(4).asInstanceOf[E])
         }
-    end select
+
+    /** Parses six parsers in sequence and combines their results. This operation is commonly known as "sequence" in other parsing
+      * libraries.
+      *
+      * @return
+      *   Tuple containing all six parsed results in order. The parse branch is dropped if any parser fails
+      */
+    def inOrder[A: Flat, B: Flat, C: Flat, D: Flat, E: Flat, F: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => B < (Parse & S),
+        parser3: => C < (Parse & S),
+        parser4: => D < (Parse & S),
+        parser5: => E < (Parse & S),
+        parser6: => F < (Parse & S)
+    )(
+        using Frame
+    ): (A, B, C, D, E, F) < (Parse & S) =
+        inOrder(Chunk(
+            () => parser1,
+            () => parser2,
+            () => parser3,
+            () => parser4,
+            () => parser5,
+            () => parser6
+        ))(using Flat.unsafe.bypass).map {
+            s =>
+                (
+                    s(0).asInstanceOf[A],
+                    s(1).asInstanceOf[B],
+                    s(2).asInstanceOf[C],
+                    s(3).asInstanceOf[D],
+                    s(4).asInstanceOf[E],
+                    s(5).asInstanceOf[F]
+                )
+        }
+
+    /** Parses seven parsers in sequence and combines their results. This operation is commonly known as "sequence" in other parsing
+      * libraries.
+      *
+      * @return
+      *   Tuple containing all seven parsed results in order. The parse branch is dropped if any parser fails
+      */
+    def inOrder[A: Flat, B: Flat, C: Flat, D: Flat, E: Flat, F: Flat, G: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => B < (Parse & S),
+        parser3: => C < (Parse & S),
+        parser4: => D < (Parse & S),
+        parser5: => E < (Parse & S),
+        parser6: => F < (Parse & S),
+        parser7: => G < (Parse & S)
+    )(
+        using Frame
+    ): (A, B, C, D, E, F, G) < (Parse & S) =
+        inOrder(Chunk(
+            () => parser1,
+            () => parser2,
+            () => parser3,
+            () => parser4,
+            () => parser5,
+            () => parser6,
+            () => parser7
+        ))(using Flat.unsafe.bypass).map {
+            s =>
+                (
+                    s(0).asInstanceOf[A],
+                    s(1).asInstanceOf[B],
+                    s(2).asInstanceOf[C],
+                    s(3).asInstanceOf[D],
+                    s(4).asInstanceOf[E],
+                    s(5).asInstanceOf[F],
+                    s(6).asInstanceOf[G]
+                )
+        }
+
+    /** Parses eight parsers in sequence and combines their results. This operation is commonly known as "sequence" in other parsing
+      * libraries.
+      *
+      * @return
+      *   Tuple containing all eight parsed results in order. The parse branch is dropped if any parser fails
+      */
+    def inOrder[A: Flat, B: Flat, C: Flat, D: Flat, E: Flat, F: Flat, G: Flat, H: Flat, S](
+        parser1: => A < (Parse & S),
+        parser2: => B < (Parse & S),
+        parser3: => C < (Parse & S),
+        parser4: => D < (Parse & S),
+        parser5: => E < (Parse & S),
+        parser6: => F < (Parse & S),
+        parser7: => G < (Parse & S),
+        parser8: => H < (Parse & S)
+    )(
+        using Frame
+    ): (A, B, C, D, E, F, G, H) < (Parse & S) =
+        inOrder(Chunk(
+            () => parser1,
+            () => parser2,
+            () => parser3,
+            () => parser4,
+            () => parser5,
+            () => parser6,
+            () => parser7,
+            () => parser8
+        ))(using Flat.unsafe.bypass).map {
+            s =>
+                (
+                    s(0).asInstanceOf[A],
+                    s(1).asInstanceOf[B],
+                    s(2).asInstanceOf[C],
+                    s(3).asInstanceOf[D],
+                    s(4).asInstanceOf[E],
+                    s(5).asInstanceOf[F],
+                    s(6).asInstanceOf[G],
+                    s(7).asInstanceOf[H]
+                )
+        }
 
     /** Skips input until parser succeeds
       *
@@ -324,9 +598,9 @@ object Parse:
       * @return
       *   Chunk of successfully parsed elements
       */
-    def separatedBy[A: Flat, S](
-        element: A < (Parse & S),
-        separator: Unit < (Parse & S),
+    def separatedBy[A: Flat, B: Flat, S](
+        element: => A < (Parse & S),
+        separator: => B < (Parse & S),
         allowTrailing: Boolean = false
     )(using Frame): Chunk[A] < (Parse & S) =
         attempt(element).map {
@@ -359,9 +633,9 @@ object Parse:
       *   The parsed content
       */
     def between[A: Flat, S](
-        left: Any < (Parse & S),
-        content: A < (Parse & S),
-        right: Any < (Parse & S)
+        left: => Any < (Parse & S),
+        content: => A < (Parse & S),
+        right: => Any < (Parse & S)
     )(using Frame): A < (Parse & S) =
         for
             _      <- left
@@ -499,41 +773,13 @@ object Parse:
     // ** Standard parsers **
     // **********************
 
-    /** Selects shortest matching parse from alternatives
-      *
-      * @param seq
-      *   Sequence of parsers to try
-      * @return
-      *   Result that consumed least input
-      */
-    def shortest[A: Flat, S](seq: (A < (Parse & S))*)(using Frame): A < (Parse & S) =
-        select(seq*) {
-            case (curr @ (state1, _), next @ (state2, _)) =>
-                if state2.position < state1.position then Maybe(next)
-                else Maybe(curr)
-        }
-
-    /** Selects longest matching parse from alternatives
-      *
-      * @param seq
-      *   Sequence of parsers to try
-      * @return
-      *   Result that consumed most input
-      */
-    def longest[A: Flat, S](seq: (A < (Parse & S))*)(using Frame): A < (Parse & S) =
-        select(seq*) {
-            case (curr @ (state1, _), next @ (state2, _)) =>
-                if state2.position > state1.position then Maybe(next)
-                else Maybe(curr)
-        }
-
     /** Consumes whitespace characters
       *
       * @return
       *   Unit after consuming whitespace
       */
-    def whitespaces(using Frame): Unit < Parse =
-        Parse.read(s => Maybe((s.dropWhile(_.isWhitespace), ())))
+    def whitespaces(using Frame): Text < Parse =
+        Parse.readWhile(_.isWhitespace)
 
     /** Parses an integer
       *
@@ -576,9 +822,9 @@ object Parse:
       * @return
       *   Unit if character matches
       */
-    def char(c: Char)(using Frame): Unit < Parse =
+    def char(c: Char)(using Frame): Char < Parse =
         Parse.read { s =>
-            s.head.filter(_ == c).map(_ => (s.drop(1), ()))
+            s.head.filter(_ == c).map(_ => (s.drop(1), c))
         }
 
     /** Matches exact text
@@ -588,15 +834,20 @@ object Parse:
       * @return
       *   Unit if text matches
       */
-    def literal(str: Text)(using Frame): Unit < Parse =
-        Parse.read(s => if s.startsWith(str) then Maybe((s.drop(str.length), ())) else Maybe.empty)
+    def literal(str: Text)(using Frame): Text < Parse =
+        Parse.read { s =>
+            if s.startsWith(str) then
+                Maybe((s.drop(str.length), str))
+            else
+                Maybe.empty
+        }
 
     /** Consumes any single character
       *
       * @return
       *   The character consumed
       */
-    def anyChar(using Frame): Char < Parse =
+    def char(using Frame): Char < Parse =
         Parse.read(s => s.head.map(c => (s.drop(1), c)))
 
     /** Consumes a character matching predicate
@@ -606,7 +857,7 @@ object Parse:
       * @return
       *   Matching character
       */
-    def satisfy(p: Char => Boolean)(using Frame): Char < Parse =
+    def charIf(p: Char => Boolean)(using Frame): Char < Parse =
         Parse.read(s => s.head.filter(p).map(c => (s.drop(1), c)))
 
     /** Matches text using regex pattern
@@ -642,8 +893,8 @@ object Parse:
       * @return
       *   Matched character
       */
-    def oneOf(chars: String)(using Frame): Char < Parse =
-        satisfy(c => chars.contains(c))
+    def charIn(chars: String)(using Frame): Char < Parse =
+        charIf(c => chars.contains(c))
 
     /** Matches any character not in string
       *
@@ -652,8 +903,8 @@ object Parse:
       * @return
       *   Matched character
       */
-    def noneOf(chars: String)(using Frame): Char < Parse =
-        satisfy(c => !chars.contains(c))
+    def charNotIn(chars: String)(using Frame): Char < Parse =
+        charIf(c => !chars.contains(c))
 
     /** Succeeds only at end of input
       *
