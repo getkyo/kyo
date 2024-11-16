@@ -5,7 +5,7 @@ package object kernel:
     enum Mode derives CanEqual:
         case Development, Staging, Production
 
-    private object internal:
+    private[kernel] object internal:
 
         inline def maxStackDepth  = 512
         inline def maxTraceFrames = 16
