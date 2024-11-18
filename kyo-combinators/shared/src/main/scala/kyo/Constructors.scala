@@ -1,7 +1,6 @@
 package kyo
 
 import java.io.IOException
-import kyo.kernel.Boundary
 import kyo.kernel.Reducible
 import scala.annotation.tailrec
 import scala.concurrent.Future
@@ -109,10 +108,9 @@ extension (kyoObject: Kyo.type)
       * @return
       *   A new sequence with elements collected using the function
       */
-    def foreachPar[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
+    inline def foreachPar[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
         using
         flat: Flat[A1],
-        boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
     ): Seq[A1] < (Abort[E] & Async & Ctx) =
         Async.parallelUnbounded[E, A1, Ctx](sequence.map(useElement))
@@ -126,10 +124,9 @@ extension (kyoObject: Kyo.type)
       * @return
       *   Discards the results of the function application and returns Unit
       */
-    def foreachParDiscard[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
+    inline def foreachParDiscard[E, A, S, A1, Ctx](sequence: Seq[A])(useElement: A => A1 < (Abort[E] & Async & Ctx))(
         using
         flat: Flat[A1],
-        boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
     ): Unit < (Abort[E] & Async & Ctx) =
         foreachPar(sequence)(useElement).unit

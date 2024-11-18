@@ -427,73 +427,81 @@ class AsyncTest extends Test:
             succeed
         }
         "nested" - {
-            "run" in pendingUntilFixed {
+            "run" in {
                 val v: Int < Abort[Int] = 1
-                assertCompiles("Async.run(Async.run(v))")
-                assertCompiles("Async.run(Async.runAndBlock(1.second)(v))")
-                assertCompiles("Async.run(Async.mask(v))")
-                assertCompiles("Async.run(Async.timeout(1.second)(v))")
-                assertCompiles("Async.run(Async.race(Seq(v)))")
-                assertCompiles("Async.run(Async.race(v, v))")
-                assertCompiles("Async.run(Async.parallel(Seq(v)))")
-                assertCompiles("Async.run(Async.parallel(v, v))")
-                assertCompiles("Async.run(Async.parallel(v, v, v))")
-                assertCompiles("Async.run(Async.parallel(v, v, v, v))")
+
+                val _: Fiber[Nothing, Fiber[Int, Int]] < IO  = Async.run(Async.run(v))
+                val _: Fiber[Int | Timeout, Int] < IO        = Async.run(Async.runAndBlock(1.second)(v))
+                val _: Fiber[Int, Int] < IO                  = Async.run(Async.mask(v))
+                val _: Fiber[Int | Timeout, Int] < IO        = Async.run(Async.timeout(1.second)(v))
+                val _: Fiber[Int, Int] < IO                  = Async.run(Async.race(Seq(v)))
+                val _: Fiber[Int, Int] < IO                  = Async.run(Async.race(v, v))
+                val x: Fiber[Int, Seq[Int]] < IO             = Async.run(Async.parallel(10)(Seq(v)))
+                val _: Fiber[Int, (Int, Int)] < IO           = Async.run(Async.parallel(v, v))
+                val _: Fiber[Int, (Int, Int, Int)] < IO      = Async.run(Async.parallel(v, v, v))
+                val _: Fiber[Int, (Int, Int, Int, Int)] < IO = Async.run(Async.parallel(v, v, v, v))
+                succeed
             }
 
-            "parallel" in pendingUntilFixed {
+            "parallel" in run {
                 val v: Int < Abort[Int] = 1
-                discard(v)
-                assertCompiles("Async.parallel(Async.run(v), Async.run(v))")
-                assertCompiles("Async.parallel(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))")
-                assertCompiles("Async.parallel(Async.mask(v), Async.mask(v))")
-                assertCompiles("Async.parallel(Async.timeout(1.second)(v), Async.timeout(1.second)(v))")
-                assertCompiles("Async.parallel(Async.race(v, v), Async.race(v, v))")
-                assertCompiles("Async.parallel(Async.parallel(v, v), Async.parallel(v, v))")
+
+                val _: (Fiber[Int, Int], Fiber[Int, Int]) < Async = Async.parallel(Async.run(v), Async.run(v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Async) =
+                    Async.parallel(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))
+                val _: (Int, Int) < (Abort[Int] & Async)           = Async.parallel(Async.mask(v), Async.mask(v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Async) = Async.parallel(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
+                val _: (Int, Int) < (Abort[Int] & Async)           = Async.parallel(Async.race(v, v), Async.race(v, v))
+                val _: ((Int, Int), (Int, Int)) < (Abort[Int] & Async) = Async.parallel(Async.parallel(v, v), Async.parallel(v, v))
+                succeed
             }
 
-            "race" in pendingUntilFixed {
+            "race" in {
                 val v: Int < Abort[Int] = 1
-                discard(v)
-                assertCompiles("Async.race(Async.run(v), Async.run(v))")
-                assertCompiles("Async.race(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))")
-                assertCompiles("Async.race(Async.mask(v), Async.mask(v))")
-                assertCompiles("Async.race(Async.timeout(1.second)(v), Async.timeout(1.second)(v))")
-                assertCompiles("Async.race(Async.race(v, v), Async.race(v, v))")
-                assertCompiles("Async.race(Async.parallel(v, v), Async.parallel(v, v))")
+
+                val _: Fiber[Int, Int] < Async              = Async.race(Async.run(v), Async.run(v))
+                val _: Int < (Abort[Int | Timeout] & Async) = Async.race(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int] & Async)           = Async.race(Async.mask(v), Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Async) = Async.race(Async.timeout(1.second)(v), Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int] & Async)           = Async.race(Async.race(v, v), Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int] & Async)    = Async.race(Async.parallel(v, v), Async.parallel(v, v))
+                succeed
             }
 
-            "mask" in pendingUntilFixed {
+            "mask" in {
                 val v: Int < Abort[Int] = 1
-                discard(v)
-                assertCompiles("Async.mask(Async.run(v))")
-                assertCompiles("Async.mask(Async.runAndBlock(1.second)(v))")
-                assertCompiles("Async.mask(Async.mask(v))")
-                assertCompiles("Async.mask(Async.timeout(1.second)(v))")
-                assertCompiles("Async.mask(Async.race(v, v))")
-                assertCompiles("Async.mask(Async.parallel(v, v))")
+
+                val _: Fiber[Int, Int] < Async              = Async.mask(Async.run(v))
+                val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(Async.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int] & Async)           = Async.mask(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Async) = Async.mask(Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int] & Async)           = Async.mask(Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int] & Async)    = Async.mask(Async.parallel(v, v))
+                succeed
             }
 
-            "timeout" in pendingUntilFixed {
+            "timeout" in {
                 val v: Int < Abort[Int] = 1
-                discard(v)
-                assertCompiles("Async.timeout(1.second)(Async.run(v))")
-                assertCompiles("Async.timeout(1.second)(Async.runAndBlock(1.second)(v))")
-                assertCompiles("Async.timeout(1.second)(Async.mask(v))")
-                assertCompiles("Async.timeout(1.second)(Async.timeout(1.second)(v))")
-                assertCompiles("Async.timeout(1.second)(Async.race(v, v))")
-                assertCompiles("Async.timeout(1.second)(Async.parallel(v, v))")
+
+                val _: Fiber[Int, Int] < (Abort[Timeout] & Async)  = Async.timeout(1.second)(Async.run(v))
+                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & Async)        = Async.timeout(1.second)(Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & Async) = Async.timeout(1.second)(Async.parallel(v, v))
+                succeed
             }
 
-            "runAndBlock" in pendingUntilFixed {
+            "runAndBlock" in {
                 val v: Int < Abort[Int] = 1
-                discard(v)
-                assertCompiles("Async.runAndBlock(1.second)(Async.run(v))")
-                assertCompiles("Async.runAndBlock(1.second)(Async.runAndBlock(1.second)(v))")
-                assertCompiles("Async.runAndBlock(1.second)(Async.mask(v))")
-                assertCompiles("Async.runAndBlock(1.second)(Async.timeout(1.second)(v))")
-                assertCompiles("Async.runAndBlock(1.second)(Async.race(v, v))")
-                assertCompiles("Async.runAndBlock(1.second)(Async.parallel(v, v))")
+
+                val _: Fiber[Int, Int] < (Abort[Timeout] & IO)  = Async.runAndBlock(1.second)(Async.run(v))
+                val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.runAndBlock(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.mask(v))
+                val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.timeout(1.second)(v))
+                val _: Int < (Abort[Int | Timeout] & IO)        = Async.runAndBlock(1.second)(Async.race(v, v))
+                val _: (Int, Int) < (Abort[Int | Timeout] & IO) = Async.runAndBlock(1.second)(Async.parallel(v, v))
+                succeed
             }
         }
     }

@@ -39,6 +39,11 @@ object Async:
       *   A Fiber representing the running computation
       */
     inline def run[E, A: Flat, Ctx](inline v: => A < (Abort[E] & Async & Ctx))(
+        using frame: Frame
+    ): Fiber[E, A] < (IO & Ctx) =
+        _run(v)
+
+    private[kyo] inline def _run[E, A: Flat, Ctx](inline v: => A < (Abort[E] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, IO & Abort[E]],
         frame: Frame
@@ -54,12 +59,17 @@ object Async:
       * @return
       *   The result of the computation, or a Timeout error
       */
-    def runAndBlock[E, A: Flat, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
+    inline def runAndBlock[E, A: Flat, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
+        using frame: Frame
+    ): A < (Abort[E | Timeout] & IO & Ctx) =
+        _runAndBlock(timeout)(v)
+
+    private def _runAndBlock[E, A: Flat, Ctx](timeout: Duration)(v: => A < (Abort[E] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, IO & Abort[E | Timeout]],
         frame: Frame
     ): A < (Abort[E | Timeout] & IO & Ctx) =
-        run(v).map { fiber =>
+        _run(v).map { fiber =>
             fiber.block(timeout).map(Abort.get(_))
         }
 
@@ -74,12 +84,17 @@ object Async:
       * @return
       *   The result of the computation, which can still be interrupted
       */
-    def mask[E, A: Flat, Ctx](v: => A < (Abort[E] & Async & Ctx))(
+    inline def mask[E, A: Flat, Ctx](v: => A < (Abort[E] & Async & Ctx))(
+        using frame: Frame
+    ): A < (Abort[E] & Async & Ctx) =
+        _mask(v)
+
+    private def _mask[E, A: Flat, Ctx](v: => A < (Abort[E] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
     ): A < (Abort[E] & Async & Ctx) =
-        Async.run(v).map(_.mask.map(_.get))
+        _run(v).map(_.mask.map(_.get))
 
     /** Delays execution of a computation by a specified duration.
       *
@@ -111,7 +126,12 @@ object Async:
       * @return
       *   The result of the computation, or a Timeout error
       */
-    def timeout[E, A: Flat, Ctx](after: Duration)(v: => A < (Abort[E] & Async & Ctx))(
+    inline def timeout[E, A: Flat, Ctx](after: Duration)(v: => A < (Abort[E] & Async & Ctx))(
+        using frame: Frame
+    ): A < (Abort[E | Timeout] & Async & Ctx) =
+        _timeout(after)(v)
+
+    private def _timeout[E, A: Flat, Ctx](after: Duration)(v: => A < (Abort[E] & Async & Ctx))(
         using
         boundary: Boundary[Ctx, Async & Abort[E | Timeout]],
         frame: Frame
@@ -129,7 +149,6 @@ object Async:
                     }
                 }
             }
-    end timeout
 
     /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations
       * are interrupted.
@@ -139,13 +158,18 @@ object Async:
       * @return
       *   The result of the first computation to complete
       */
-    def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    inline def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using frame: Frame
+    ): A < (Abort[E] & Async & Ctx) =
+        _race(seq)
+
+    private def _race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
     ): A < (Abort[E] & Async & Ctx) =
         if seq.isEmpty then seq(0)
-        else Fiber.race(seq).map(_.get)
+        else Fiber._race(seq).map(_.get)
 
     /** Races two or more computations and returns the result of the first to complete.
       *
@@ -156,13 +180,11 @@ object Async:
       * @return
       *   The result of the first computation to complete
       */
-    def race[E, A: Flat, Ctx](
+    inline def race[E, A: Flat, Ctx](
         first: A < (Abort[E] & Async & Ctx),
         rest: A < (Abort[E] & Async & Ctx)*
     )(
-        using
-        boundary: Boundary[Ctx, Async & Abort[E]],
-        frame: Frame
+        using frame: Frame
     ): A < (Abort[E] & Async & Ctx) =
         race[E, A, Ctx](first +: rest)
 
@@ -179,7 +201,12 @@ object Async:
       * @return
       *   A sequence containing the results of all computations in their original order
       */
-    def parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    inline def parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using frame: Frame
+    ): Seq[A] < (Abort[E] & Async & Ctx) =
+        _parallelUnbounded(seq)
+
+    private def _parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
@@ -187,9 +214,9 @@ object Async:
         seq.size match
             case 0 => Seq.empty
             case 1 => seq(0).map(Seq(_))
-            case _ => Fiber.parallelUnbounded(seq).map(_.get)
+            case _ => Fiber._parallelUnbounded(seq).map(_.get)
         end match
-    end parallelUnbounded
+    end _parallelUnbounded
 
     /** Runs multiple computations in parallel with a specified level of parallelism and returns their results.
       *
@@ -209,7 +236,12 @@ object Async:
       * @return
       *   A sequence containing the results of all computations in their original order
       */
-    def parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    inline def parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using frame: Frame
+    ): Seq[A] < (Abort[E] & Async & Ctx) =
+        _parallel(parallelism)(seq)
+
+    private def _parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, Async & Abort[E]],
         frame: Frame
@@ -217,8 +249,7 @@ object Async:
         seq.size match
             case 0 => Seq.empty
             case 1 => seq(0).map(Seq(_))
-            case n => Fiber.parallel(parallelism)(seq).map(_.get)
-    end parallel
+            case n => Fiber._parallel(parallelism)(seq).map(_.get)
 
     /** Runs two computations in parallel and returns their results as a tuple.
       *
@@ -229,13 +260,11 @@ object Async:
       * @return
       *   A tuple containing the results of both computations
       */
-    def parallel[E, A1: Flat, A2: Flat, Ctx](
+    inline def parallel[E, A1: Flat, A2: Flat, Ctx](
         v1: A1 < (Abort[E] & Async & Ctx),
         v2: A2 < (Abort[E] & Async & Ctx)
     )(
-        using
-        boundary: Boundary[Ctx, Async & Abort[E]],
-        frame: Frame
+        using frame: Frame
     ): (A1, A2) < (Abort[E] & Async & Ctx) =
         parallelUnbounded(Seq(v1, v2))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2])
@@ -252,14 +281,12 @@ object Async:
       * @return
       *   A tuple containing the results of all three computations
       */
-    def parallel[E, A1: Flat, A2: Flat, A3: Flat, Ctx](
+    inline def parallel[E, A1: Flat, A2: Flat, A3: Flat, Ctx](
         v1: A1 < (Abort[E] & Async & Ctx),
         v2: A2 < (Abort[E] & Async & Ctx),
         v3: A3 < (Abort[E] & Async & Ctx)
     )(
-        using
-        boundary: Boundary[Ctx, Async & Abort[E]],
-        frame: Frame
+        using frame: Frame
     ): (A1, A2, A3) < (Abort[E] & Async & Ctx) =
         parallelUnbounded(Seq(v1, v2, v3))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3])
@@ -278,15 +305,13 @@ object Async:
       * @return
       *   A tuple containing the results of all four computations
       */
-    def parallel[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, Ctx](
+    inline def parallel[E, A1: Flat, A2: Flat, A3: Flat, A4: Flat, Ctx](
         v1: A1 < (Abort[E] & Async & Ctx),
         v2: A2 < (Abort[E] & Async & Ctx),
         v3: A3 < (Abort[E] & Async & Ctx),
         v4: A4 < (Abort[E] & Async & Ctx)
     )(
-        using
-        boundary: Boundary[Ctx, Async & Abort[E]],
-        frame: Frame
+        using frame: Frame
     ): (A1, A2, A3, A4) < (Abort[E] & Async & Ctx) =
         parallelUnbounded(Seq(v1, v2, v3, v4))(using Flat.unsafe.bypass).map { s =>
             (s(0).asInstanceOf[A1], s(1).asInstanceOf[A2], s(2).asInstanceOf[A3], s(3).asInstanceOf[A4])
