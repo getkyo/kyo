@@ -8,17 +8,12 @@ import kyo.kernel.*
   *
   * Batch is used to group multiple operations together and execute them in a single batch, which can lead to performance improvements,
   * especially when dealing with external systems or databases.
-  *
-  * @tparam S
-  *   Effects from batch sources
   */
-sealed trait Batch[+S] extends ArrowEffect[Op[*, S], Id]
+sealed trait Batch extends ArrowEffect[Op, Id]
 
 object Batch:
 
     import internal.*
-
-    private inline def erasedTag[S]: Tag[Batch[S]] = Tag[Batch[Any]].asInstanceOf[Tag[Batch[S]]]
 
     /** Creates a batched computation from a source function.
       *
@@ -36,8 +31,8 @@ object Batch:
       * This method allows for efficient batching of operations by processing multiple inputs at once, while still providing individual
       * results for each input.
       */
-    inline def source[A, B, S](f: Seq[A] => (A => B < S) < S)(using inline frame: Frame): A => B < Batch[S] =
-        (v: A) => ArrowEffect.suspend[B](erasedTag[S], Call(v, f))
+    inline def source[A, B, S](f: Seq[A] => (A => B < S) < S)(using inline frame: Frame): A => B < (Batch & S) =
+        (v: A) => ArrowEffect.suspendAndMap(Tag[Batch], Call(v, f))(identity)
 
     /** Creates a batched computation from a source function that returns a Map.
       *
@@ -46,7 +41,7 @@ object Batch:
       * @return
       *   A function that takes a single input and returns a batched computation
       */
-    inline def sourceMap[A, B, S](f: Seq[A] => Map[A, B] < S)(using inline frame: Frame): A => B < Batch[S] =
+    inline def sourceMap[A, B, S](f: Seq[A] => Map[A, B] < S)(using inline frame: Frame): A => B < (Batch & S) =
         source[A, B, S] { input =>
             f(input).map { output =>
                 require(
@@ -64,7 +59,7 @@ object Batch:
       * @return
       *   A function that takes a single input and returns a batched computation
       */
-    inline def sourceSeq[A, B, S](f: Seq[A] => Seq[B] < S)(using inline frame: Frame): A => B < Batch[S] =
+    inline def sourceSeq[A, B, S](f: Seq[A] => Seq[B] < S)(using inline frame: Frame): A => B < (Batch & S) =
         sourceMap[A, B, S] { input =>
             f(input).map { output =>
                 require(
@@ -82,8 +77,8 @@ object Batch:
       * @return
       *   A batched operation that produces a single value from the sequence
       */
-    inline def eval[A](seq: Seq[A])(using inline frame: Frame): A < Batch[Any] =
-        ArrowEffect.suspend[A](erasedTag[Any], seq)
+    inline def eval[A](seq: Seq[A])(using inline frame: Frame): A < Batch =
+        ArrowEffect.suspend[A](Tag[Batch], Eval(seq))
 
     /** Applies a function to each element of a sequence in a batched context.
       *
@@ -96,8 +91,8 @@ object Batch:
       * @return
       *   A batched computation that produces a single value of type B
       */
-    inline def foreach[A, B, S](seq: Seq[A])(inline f: A => B < S): B < (Batch[Any] & S) =
-        ArrowEffect.suspendAndMap[A](erasedTag[Any], seq)(f)
+    inline def foreach[A, B, S](seq: Seq[A])(inline f: A => B < S): B < (Batch & S) =
+        ArrowEffect.suspendAndMap[A](Tag[Batch], Eval(seq))(f)
 
     /** Runs a computation with Batch effect, executing all batched operations.
       *
@@ -106,10 +101,10 @@ object Batch:
       * @return
       *   A sequence of results from executing the batched operations
       */
-    def run[A: Flat, S, S2](v: A < (Batch[S] & S2))(using Frame): Chunk[A] < (S & S2) =
+    def run[A: Flat, S](v: A < (Batch & S))(using Frame): Chunk[A] < S =
 
         type SourceAny = Source[Any, Any, S]
-        type ContAny   = Any => (ToExpand | Expanded | A) < (Batch[S] & S & S2)
+        type ContAny   = Any < (Batch & S) => (ToExpand | Expanded | A) < (Batch & S)
 
         abstract class Pending
         case class ToExpand(op: Seq[Any], cont: ContAny)                  extends Pending
@@ -122,19 +117,19 @@ object Batch:
 
         // Transforms effect suspensions into an item.
         // Captures the continuation in the `Item` objects for `ToExpand` and `Expanded` cases.
-        def capture(v: Item < (Batch[S] & S & S2)): Item < (S & S2) =
-            ArrowEffect.handle(erasedTag[S], v) {
+        def capture(v: Item < (Batch & S)): Item < S =
+            ArrowEffect.handle(Tag[Batch], v) {
                 [C] =>
                     (input, cont) =>
                         val contAny = cont.asInstanceOf[ContAny]
                         input match
                             case Call(v, source) => Expanded(v, source.asInstanceOf[SourceAny], contAny)
-                            case v: Seq[C]       => ToExpand(v, contAny)
+                            case Eval(v)         => ToExpand(v, contAny)
             }
 
         // Expands any `Batch.eval` calls, capturing items for each element in the sequence.
         // Returns a `Chunk[Chunk[A]]` to reduce `map` calls.
-        def expand(items: Chunk[Item]): Chunk[Chunk[Item]] < (S & S2) =
+        def expand(items: Chunk[Item]): Chunk[Chunk[Item]] < S =
             Kyo.foreach(items) {
                 case ToExpand(seq: Seq[Any], cont) =>
                     Kyo.foreach(seq)(v => capture(cont(v)))
@@ -143,7 +138,7 @@ object Batch:
 
         // Groups all source calls (`Expanded`), calls their source functions, and reassembles the results.
         // Returns a `Chunk[Chunk[A]]` to reduce `map` calls.
-        def flush(items: Chunk[Item]): Chunk[Chunk[Item]] < (S & S2) =
+        def flush(items: Chunk[Item]): Chunk[Chunk[Item]] < S =
             val pending: Map[SourceAny | Unit, Seq[Item]] =
                 items.groupBy {
                     case Expanded(_, source, _) => source
@@ -160,14 +155,14 @@ object Batch:
                             // Reassemble the results by iterating on the original collection
                             Kyo.foreach(items) { e =>
                                 // Note how each value can have its own effects
-                                capture(results(e.value).map(e.cont))
+                                capture(e.cont(results(e.value)))
                             }
                         }
             }
         end flush
 
         // The main evaluation loop that expands and flushes items until all values are final.
-        def loop(items: Chunk[Item]): Chunk[A] < (S & S2) =
+        def loop(items: Chunk[Item]): Chunk[A] < S =
             if !items.exists((_: @unchecked).isInstanceOf[Pending]) then
                 // All values are final, done
                 items.asInstanceOf[Chunk[A]]
@@ -191,8 +186,9 @@ object Batch:
     object internal:
         type Source[A, B, S] = Seq[A] => (A => B < S) < S
 
-        type Op[V, -S] = Seq[V] | Call[?, V, S]
-        case class Call[A, B, -S](v: A, source: Source[A, B, S])
+        sealed trait Op[A]
+        case class Eval[A](seq: Seq[A])                         extends Op[A]
+        case class Call[A, B, S](v: A, source: Source[A, B, S]) extends Op[B < (Batch & S)]
     end internal
 
 end Batch
