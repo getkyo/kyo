@@ -8,7 +8,7 @@ object Monix:
     def get[A: Flat](task: Task[A])(using monix.execution.Scheduler, Frame): A < (Abort[Throwable] & Async) =
         IO.Unsafe {
             val p = Promise.Unsafe.init[Throwable, A]()
-            val cancelable = task.runAsync { (e: Either[Throwable, A]) =>
+            val cancelable = task.executeAsync.runAsync { (e: Either[Throwable, A]) =>
                 p.completeDiscard(Result.fromEither(e))
             }
             p.onInterrupt(_ => discard(cancelable.cancel()))
