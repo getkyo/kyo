@@ -6,7 +6,6 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.LongAdder
 import java.util.concurrent.locks.LockSupport
 import kyo.scheduler.regulator.Admission

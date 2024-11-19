@@ -1,9 +1,6 @@
 package kyo
 
 import Tagged.*
-import kyo.Clock.Deadline
-import kyo.Clock.Stopwatch
-import kyo.Clock.Unsafe
 
 class KyoAppTest extends Test:
 

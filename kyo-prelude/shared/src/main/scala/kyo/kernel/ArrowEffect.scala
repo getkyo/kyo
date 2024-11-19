@@ -1,11 +1,11 @@
 package kyo.kernel
 
 import internal.*
+import kyo.Const
 import kyo.Flat
 import kyo.Frame
 import kyo.Tag
 import scala.annotation.nowarn
-import scala.annotation.tailrec
 import scala.util.control.NonFatal
 
 /** Represents abstract functions whose implementations are provided later by a handler.
@@ -118,7 +118,7 @@ object ArrowEffect:
           * @return
           *   The computation result with the function implementation provided
           */
-        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2, S3](
+        inline def apply[I[_], O[_], E <: ArrowEffect[I, O], A, S, S2](
             inline effectTag: Tag[E],
             v: A < (E & S)
         )(
@@ -128,9 +128,9 @@ object ArrowEffect:
             inline _frame: Frame,
             inline flat: Flat[A],
             safepoint: Safepoint
-        ): A < (S & S2 & S3) =
+        ): A < (S & S2) =
             @nowarn("msg=anonymous")
-            def handleLoop(v: A < (E & S & S2 & S3), context: Context)(using Safepoint): A < (S & S2 & S3) =
+            def handleLoop(v: A < (E & S & S2), context: Context)(using Safepoint): A < (S & S2) =
                 v match
                     case kyo: KyoSuspend[I, O, E, Any, A, E & S & S2] @unchecked if effectTag =:= kyo.tag =>
                         Safepoint.handle(kyo.input)(
@@ -138,8 +138,8 @@ object ArrowEffect:
                             continue = handleLoop(_, context),
                             suspend = handleLoop(kyo, context)
                         )
-                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2 & S3] @unchecked =>
-                        new KyoContinue[IX, OX, EX, Any, A, S & S2 & S3](kyo):
+                    case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S & S2] @unchecked =>
+                        new KyoContinue[IX, OX, EX, Any, A, S & S2](kyo):
                             def frame = _frame
                             def apply(v: OX[Any], context: Context)(using Safepoint) =
                                 handleLoop(kyo(v, context), context)
@@ -414,7 +414,7 @@ object ArrowEffect:
     )(
         inline handle: [C] => (I[C], Safepoint ?=> O[C] => A < (E & S & S2)) => A < (E & S & S2),
         inline done: A => B < S3 = (v: A) => v,
-        inline accept: [C] => I[C] => Boolean = [C] => (v: I[C]) => true,
+        inline accept: [C] => I[C] => Boolean = [C] => (_: I[C]) => true,
         inline recover: Throwable => B < (S & S2 & S3)
     )(
         using

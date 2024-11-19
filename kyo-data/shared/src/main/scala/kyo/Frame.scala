@@ -1,6 +1,5 @@
 package kyo
 
-import kyo.Ansi
 import kyo.Maybe
 import scala.annotation.tailrec
 import scala.quoted.*

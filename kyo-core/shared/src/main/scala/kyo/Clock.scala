@@ -1,15 +1,11 @@
 package kyo
 
 import java.util.concurrent.Callable
-import java.util.concurrent.Delayed
-import java.util.concurrent.DelayQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.locks.LockSupport
 import kyo.Clock.Deadline
 import kyo.Clock.Stopwatch
-import kyo.Result.Panic
 import kyo.scheduler.IOPromise
 import kyo.scheduler.util.Threads
 import scala.annotation.tailrec
@@ -518,7 +514,6 @@ object Clock:
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     abstract class Unsafe:
-        import AllowUnsafe.embrace.danger
 
         def now()(using AllowUnsafe): Instant
 

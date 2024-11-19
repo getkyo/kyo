@@ -199,7 +199,7 @@ lazy val `kyo-prelude` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.jctools"   % "jctools-core"  % "4.0.5",
-            libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC31" % Test,
+            libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC34" % Test,
             libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % zioVersion   % Test,
             libraryDependencies += "org.javassist" % "javassist"     % "3.30.2-GA"  % Test
         )
@@ -219,7 +219,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
-            libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC31" % Test,
+            libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC34" % Test,
             libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.12"     % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.12"     % Test,
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
@@ -263,8 +263,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.44.0",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.44.0" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.44.1",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.44.1" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -303,8 +303,8 @@ lazy val `kyo-tapir` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.8",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.8"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.9",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.9"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -418,7 +418,7 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.8"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.9"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -464,12 +464,12 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.typelevel"       %% "cats-mtl"            % "1.5.0",
             libraryDependencies += "org.typelevel"       %% "cats-mtl"            % "1.5.0",
             libraryDependencies += "com.47deg"           %% "fetch"               % "3.1.2",
-            libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.3.2",
-            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.3.2",
+            libraryDependencies += "dev.zio"             %% "zio-logging"         % "2.4.0",
+            libraryDependencies += "dev.zio"             %% "zio-logging-slf4j2"  % "2.4.0",
             libraryDependencies += "dev.zio"             %% "zio"                 % zioVersion,
             libraryDependencies += "dev.zio"             %% "zio-concurrent"      % zioVersion,
             libraryDependencies += "dev.zio"             %% "zio-query"           % "0.7.6",
-            libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC31",
+            libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC34",
             libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.11.0",
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.29",

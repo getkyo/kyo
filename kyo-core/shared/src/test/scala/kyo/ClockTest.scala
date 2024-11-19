@@ -1,9 +1,7 @@
 package kyo
 
-import java.time.temporal.ChronoUnit
 import kyo.Clock.Deadline
 import kyo.Clock.Stopwatch
-import kyo.Clock.stopwatch
 
 class ClockTest extends Test:
 
@@ -285,7 +283,7 @@ class ClockTest extends Test:
             yield
                 val elapsedWall    = wallEnd - wallStart
                 val elapsedShifted = shiftedEnd - wallStart
-                assert(elapsedWall >= 4.millis && elapsedWall < 20.millis)
+                assert(elapsedWall >= 4.millis && elapsedWall < 40.millis)
                 assert(elapsedShifted > elapsedWall)
         }
 

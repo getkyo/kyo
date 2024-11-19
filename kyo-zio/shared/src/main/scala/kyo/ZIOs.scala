@@ -1,17 +1,14 @@
 package kyo
 
 import kyo.kernel.*
-import scala.concurrent.ExecutionContext
 import scala.util.control.NonFatal
 import zio.Exit
 import zio.FiberId
 import zio.Runtime
 import zio.Unsafe
 import zio.ZIO
-import zio.stacktracer.TracingImplicits.disableAutoTrace
 
 object ZIOs:
-    import internal.*
 
     /** Lifts a zio.ZIO into a Kyo effect.
       *

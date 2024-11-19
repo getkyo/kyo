@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Ansi.*
-import kyo.kernel.Safepoint
 import scala.annotation.implicitNotFound
 
 @implicitNotFound("""

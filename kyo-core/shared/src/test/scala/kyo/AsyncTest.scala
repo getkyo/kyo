@@ -344,7 +344,6 @@ class AsyncTest extends Test:
 
     "fromFuture" - {
         import scala.concurrent.Future
-        import scala.concurrent.ExecutionContext.Implicits.global
 
         "success" in run {
             val future = Future.successful(42)
@@ -444,6 +443,7 @@ class AsyncTest extends Test:
 
             "parallel" in pendingUntilFixed {
                 val v: Int < Abort[Int] = 1
+                discard(v)
                 assertCompiles("Async.parallel(Async.run(v), Async.run(v))")
                 assertCompiles("Async.parallel(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))")
                 assertCompiles("Async.parallel(Async.mask(v), Async.mask(v))")
@@ -454,6 +454,7 @@ class AsyncTest extends Test:
 
             "race" in pendingUntilFixed {
                 val v: Int < Abort[Int] = 1
+                discard(v)
                 assertCompiles("Async.race(Async.run(v), Async.run(v))")
                 assertCompiles("Async.race(Async.runAndBlock(1.second)(v), Async.runAndBlock(1.second)(v))")
                 assertCompiles("Async.race(Async.mask(v), Async.mask(v))")
@@ -464,6 +465,7 @@ class AsyncTest extends Test:
 
             "mask" in pendingUntilFixed {
                 val v: Int < Abort[Int] = 1
+                discard(v)
                 assertCompiles("Async.mask(Async.run(v))")
                 assertCompiles("Async.mask(Async.runAndBlock(1.second)(v))")
                 assertCompiles("Async.mask(Async.mask(v))")
@@ -474,6 +476,7 @@ class AsyncTest extends Test:
 
             "timeout" in pendingUntilFixed {
                 val v: Int < Abort[Int] = 1
+                discard(v)
                 assertCompiles("Async.timeout(1.second)(Async.run(v))")
                 assertCompiles("Async.timeout(1.second)(Async.runAndBlock(1.second)(v))")
                 assertCompiles("Async.timeout(1.second)(Async.mask(v))")
@@ -484,6 +487,7 @@ class AsyncTest extends Test:
 
             "runAndBlock" in pendingUntilFixed {
                 val v: Int < Abort[Int] = 1
+                discard(v)
                 assertCompiles("Async.runAndBlock(1.second)(Async.run(v))")
                 assertCompiles("Async.runAndBlock(1.second)(Async.runAndBlock(1.second)(v))")
                 assertCompiles("Async.runAndBlock(1.second)(Async.mask(v))")

@@ -2,7 +2,6 @@ package kyo
 
 import kyo.Maybe
 import kyo.internal.SafeClassTagMacro
-import scala.annotation.tailrec
 import scala.quoted.*
 
 /** An alternative to ClassTag that supports union and intersection types.

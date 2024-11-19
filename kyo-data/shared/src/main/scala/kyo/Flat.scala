@@ -1,8 +1,6 @@
 package kyo
 
-import scala.annotation.implicitNotFound
 import scala.quoted.*
-import scala.util.NotGiven
 
 opaque type Flat[A] = Null
 
@@ -60,7 +58,7 @@ private object FlatMacro:
                         report.errorAndAbort(
                             s"Cannot prove ${code(t.show)} isn't nested. " +
                                 s"This error can be reported an unsupported pending effect is passed to a method. " +
-                                s"If that's not the case, provide an implicit evidence ${code(s"kyo.Flat[${print(t)}]")}."
+                                s"If that's not the case, provide an implicit evidence ${code(s"kyo.Flat[${t.show}]")}."
                         )
 
         check(t)

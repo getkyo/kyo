@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.kernel.*
-import org.scalatest.NonImplicitAssertions
 import org.scalatest.compatible.Assertion
 
 class TagCompactTest extends Test:
