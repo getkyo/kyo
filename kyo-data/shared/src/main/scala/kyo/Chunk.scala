@@ -451,8 +451,11 @@ object Chunk:
       * @return
       *   a new Chunk.Indexed containing the elements from the Array
       */
-    def from[A <: AnyRef](values: Array[A]): Chunk.Indexed[A] =
-        Compact(Arrays.copyOf(values, values.length))
+    def from[A](values: Array[A]): Chunk.Indexed[A] =
+        if values.isEmpty then cachedEmpty.asInstanceOf[Chunk.Indexed[A]]
+        else
+            Compact(Array.copyAs(values, values.length)(using ClassTag.AnyRef).asInstanceOf[Array[A]])
+    end from
 
     /** Creates a Chunk from a Seq of elements.
       *

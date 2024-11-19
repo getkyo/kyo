@@ -26,6 +26,30 @@ class StreamTest extends Test:
                 Stream.init(Seq(1, 2, 3)).run.eval == Seq(1, 2, 3)
             )
         }
+
+        "lazy" in {
+            var i = 0
+            val _ = Stream.init {
+                i += 1
+                Seq.empty[Int]
+            }
+
+            assert(i == 0)
+        }
+
+        "chunk size" in {
+            def size(n: Int, c: Int): Chunk[Int] =
+                Var.runTuple(Chunk.empty[Int])(
+                    Stream
+                        .init(Seq.fill(n)(""), chunkSize = c)
+                        .mapChunk(chunk => Var.update[Chunk[Int]](_.append(chunk.size)))
+                        .runDiscard
+                ).eval._1
+
+            assert(size(10240, 4096) == Chunk(4096, 4096, 2048))
+            assert(size(301, 100) == Chunk(100, 100, 100, 1))
+            assert(size(5, 0) == Chunk(1, 1, 1, 1, 1))
+        }
     }
 
     "initChunk" - {
@@ -39,6 +63,52 @@ class StreamTest extends Test:
             assert(
                 Stream.init(Chunk(1, 2, 3)).run.eval == Seq(1, 2, 3)
             )
+        }
+    }
+
+    "range" - {
+        "empty" in {
+            assert(Stream.range(0, 0).run.eval == Seq.empty)
+        }
+
+        "negative" in {
+            assert(Stream.range(0, -10).run.eval == (0 until -10))
+            assert(Stream.range(0, -10, step = -1).run.eval == (0 until -10 by -1))
+        }
+
+        "positive" in {
+            assert(Stream.range(0, 1024).run.eval == (0 until 1024))
+        }
+
+        "step" - {
+            "zero" in {
+                assert(Stream.range(0, 1024, 0).run.eval == Seq.empty)
+            }
+
+            "positive" in {
+                assert(Stream.range(0, 1024, 2).run.eval == (0 until 1024 by 2))
+            }
+
+            "negative" in {
+                assert(Stream.range(0, -10, -2).run.eval == (0 until -10 by -2))
+            }
+        }
+
+        "chunk size" in {
+            def size(n: Int, c: Int): Chunk[Int] =
+                Var.runTuple(Chunk.empty[Int])(
+                    Stream
+                        .range(0, n, chunkSize = c)
+                        .mapChunk(chunk => Var.update[Chunk[Int]](_.append(chunk.size)))
+                        .runDiscard
+                ).eval._1
+
+            assert(size(10240, 4096) == Chunk(4096, 4096, 2048))
+            assert(size(301, 100) == Chunk(100, 100, 100, 1))
+        }
+
+        "stack safety" in {
+            assert(Stream.range(0, 1000000).take(5).run.eval == (0 until 5))
         }
     }
 
