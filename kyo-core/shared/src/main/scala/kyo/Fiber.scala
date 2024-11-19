@@ -258,7 +258,14 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes with the result of the first Fiber to complete
       */
-    def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    inline def race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using
+        frame: Frame,
+        safepoint: Safepoint
+    ): Fiber[E, A] < (IO & Ctx) =
+        _race(seq)
+
+    private[kyo] def _race[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, IO & Abort[E]],
         frame: Frame,
@@ -300,7 +307,14 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes with a sequence containing the results of all computations in their original order
       */
-    def parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    inline def parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using
+        frame: Frame,
+        safepoint: Safepoint
+    ): Fiber[E, Seq[A]] < (IO & Ctx) =
+        _parallel(parallelism)(seq)
+
+    private[kyo] def _parallel[E, A: Flat, Ctx](parallelism: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, IO & Abort[E]],
         frame: Frame,
@@ -310,8 +324,7 @@ object Fiber extends FiberPlatformSpecific:
             case 0 => Fiber.success(Seq.empty)
             case n =>
                 val groupSize = Math.ceil(n.toDouble / Math.max(1, parallelism)).toInt
-                parallelUnbounded(seq.grouped(groupSize).map(Kyo.collect).toSeq).map(_.map(_.flatten))
-    end parallel
+                _parallelUnbounded(seq.grouped(groupSize).map(Kyo.collect).toSeq).map(_.map(_.flatten))
 
     /** Runs multiple computations in parallel with unlimited parallelism and returns a Fiber that completes with their results.
       *
@@ -326,7 +339,15 @@ object Fiber extends FiberPlatformSpecific:
       * @return
       *   A Fiber that completes with a sequence containing the results of all computations in their original order
       */
-    def parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+    inline def parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using
+        boundary: Boundary[Ctx, IO & Abort[E]],
+        frame: Frame,
+        safepoint: Safepoint
+    ): Fiber[E, Seq[A]] < (IO & Ctx) =
+        _parallelUnbounded(seq)
+
+    private[kyo] def _parallelUnbounded[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
         using
         boundary: Boundary[Ctx, IO & Abort[E]],
         frame: Frame,
