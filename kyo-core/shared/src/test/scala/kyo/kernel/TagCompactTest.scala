@@ -1,6 +1,8 @@
-package kyo
+package kyo.kernel
 
-import kyo.kernel.*
+import kyo.*
+import kyo.kernel.internal.Defer
+import org.scalatest.NonImplicitAssertions
 import org.scalatest.compatible.Assertion
 
 class TagCompactTest extends Test:
@@ -23,6 +25,9 @@ class TagCompactTest extends Test:
         }
         "Tag[Emit[Int]]" in {
             assert(Tag[Emit[Int]].raw == "!Bv;!?s;!=q;!T0;!U1;!V2;[=!Y5;!W3;!U1;!V2;]")
+        }
+        "Tag[Defer]" in {
+            assert(Tag[Defer].raw == "!Fz;!?s;!=q;!T0;!U1;!V2;")
         }
     }
 end TagCompactTest
