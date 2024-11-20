@@ -12,7 +12,7 @@ class BatchTest extends Test:
             f(seq)
         }
 
-        def apply(a: A): B < Batch[S] = source(a)
+        def apply(a: A): B < (Batch & S) = source(a)
 
         def calls: Seq[Seq[A]] = callsBuffer.toSeq
     end TestSource
@@ -763,6 +763,89 @@ class BatchTest extends Test:
                 assert(source1.calls == Seq(Seq(1, 2, 3)))
                 assert(source2.calls == Seq(Seq(2, 3, 4)))
                 assert(source3.calls == Seq(Seq(4, 6, 8)))
+            }
+        }
+    }
+
+    "source effects handled before Batch.run" - {
+
+        "isolated Var" in run {
+            val source = Batch.source[Int, Int, Var[Int]] { seq =>
+                val map = seq.map { i =>
+                    i -> Var.update[Int](_ + i)
+                }.toMap
+                (i: Int) => map(i)
+            }
+
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2, 3, 4, 5))
+                    b <- if a < 3 then Var.run(42)(source(a)) else source(a)
+                yield (a, b)
+
+            Var.runTuple(0) {
+                Batch.run(result).map { seq =>
+                    assert(seq == Seq((1, 43), (2, 44), (3, 3), (4, 7), (5, 12)))
+                }
+            }.map { case (finalVarValue, _) =>
+                assert(finalVarValue == 12)
+            }
+        }
+
+        "effect handling with multiple sources" in run {
+            val source1 = Batch.source[Int, Int, Var[Int]] { seq =>
+                val map = seq.map { i =>
+                    i -> Var.update[Int](_ + i)
+                }.toMap
+                (i: Int) => map(i)
+            }
+
+            val source2 = Batch.source[Int, Int, Var[Int]] { seq =>
+                val map = seq.map { i =>
+                    i -> Var.update[Int](_ * i)
+                }.toMap
+                (i: Int) => map(i)
+            }
+
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2, 3))
+                    b <- Var.run(10)(source1(a))
+                    c <- Var.run(5)(source2(a))
+                yield (a, b, c)
+
+            Batch.run(result).map { seq =>
+                assert(seq == Seq(
+                    (1, 11, 5),
+                    (2, 12, 10),
+                    (3, 13, 15)
+                ))
+            }
+        }
+
+        "chained effect handlers with batch eval" in run {
+            val source = Batch.source[Int, Int, Var[Int]] { seq =>
+                val map = seq.map { i =>
+                    i -> Var.update[Int](_ + i)
+                }.toMap
+                (i: Int) => map(i)
+            }
+
+            val result =
+                for
+                    a <- Batch.eval(Seq(1, 2))
+                    b <- Var.run(0)(source(a))
+                    c <- Batch.eval(Seq(3, 4))
+                    d <- Var.run(b)(source(c))
+                yield (a, b, c, d)
+
+            Batch.run(result).map { seq =>
+                assert(seq == Seq(
+                    (1, 1, 3, 4),
+                    (1, 1, 4, 5),
+                    (2, 2, 3, 5),
+                    (2, 2, 4, 6)
+                ))
             }
         }
     }
