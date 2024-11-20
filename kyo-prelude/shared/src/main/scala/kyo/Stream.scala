@@ -337,7 +337,8 @@ object Stream:
     private val _empty           = Stream(Stop)
     def empty[V]: Stream[V, Any] = _empty.asInstanceOf[Stream[V, Any]]
 
-    private inline def DefaultChunkSize = 4096
+    /** The default chunk size for streams. */
+    inline def DefaultChunkSize: Int = 4096
 
     /** Creates a stream from a sequence of values.
       *
@@ -408,7 +409,7 @@ object Stream:
                                         else
                                             ((current - end - 1) / step.abs).abs + 1
                                     val size  = (n min _chunkSize) min remaining
-                                    val chunk = Chunk.from(Array.range(current, current + size * step, step))
+                                    val chunk = Chunk.from(Range(current, current + size * step, step))
                                     Emit.andMap(chunk)(ack => Loop.continue(current + step * size, ack))
                                 end if
                     }
