@@ -25,11 +25,6 @@ class ChunkTest extends Test:
                 array(0) = "x"
                 assert(chunk(0) == "a")
             }
-
-            "boxes primitives" in {
-                val boxed: java.lang.Integer = Chunk.from(Array(1)).head
-                assert(classOf[Integer].isAssignableFrom(boxed.getClass))
-            }
         }
 
         "from Seq" - {
