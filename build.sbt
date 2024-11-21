@@ -199,7 +199,7 @@ lazy val `kyo-prelude` =
         .settings(
             `kyo-settings`,
             libraryDependencies += "org.jctools"   % "jctools-core"  % "4.0.5",
-            libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC34" % Test,
+            libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC35" % Test,
             libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % zioVersion   % Test,
             libraryDependencies += "org.javassist" % "javassist"     % "3.30.2-GA"  % Test
         )
@@ -219,7 +219,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
-            libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC34" % Test,
+            libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC35" % Test,
             libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.12"     % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.12"     % Test,
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
@@ -469,7 +469,7 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"             %% "zio"                 % zioVersion,
             libraryDependencies += "dev.zio"             %% "zio-concurrent"      % zioVersion,
             libraryDependencies += "dev.zio"             %% "zio-query"           % "0.7.6",
-            libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC34",
+            libraryDependencies += "dev.zio"             %% "zio-prelude"         % "1.0.0-RC35",
             libraryDependencies += "com.softwaremill.ox" %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"              %% "fs2-core"            % "3.11.0",
             libraryDependencies += "org.http4s"          %% "http4s-ember-client" % "0.23.29",
