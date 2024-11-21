@@ -259,6 +259,46 @@ sealed abstract class Stream[V, -S]:
         ))
     end changes
 
+    /** Transforms the stream by regrouping elements into chunks of the specified size.
+      *
+      * This operation maintains the order of elements while potentially redistributing them into new chunks. Smaller chunks may occur in
+      * two cases:
+      *   - When there aren't enough remaining elements to form a complete chunk
+      *   - When the input stream emits an empty chunk
+      *
+      * @param chunkSize
+      *   The target size for each chunk. Must be positive - negative values will be treated as 1.
+      * @return
+      *   A new stream with elements regrouped into chunks of the specified size
+      */
+    def rechunk(chunkSize: Int)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+        Stream.sized[V, S](chunkSize)(cs =>
+            ArrowEffect.handleState(tag, Chunk.empty[V], emit.andThen(Emit(Chunk.empty[V])))(
+                [C] =>
+                    (input, buffer, cont) =>
+                        if input.isEmpty && buffer.nonEmpty then
+                            Emit.andMap(buffer)(ack => (Chunk.empty, cont(ack)))
+                        else
+                            val combined = Chunk.from(buffer.appendedAll(input))
+                            if combined.size < cs then
+                                (combined, cont(Continue()))
+                            else
+                                Loop(combined: Chunk[V], Continue(): Ack) { (current, ack) =>
+                                    ack match
+                                        case Stop => Loop.done((current, cont(Stop)))
+                                        case Continue(_) =>
+                                            if current.size < cs then
+                                                Loop.done((current, cont(Continue())))
+                                            else
+                                                Emit.andMap(current.take(cs)) { nextAck =>
+                                                    Loop.continue(current.dropLeft(cs), nextAck)
+                                                }
+                                }
+                            end if
+            )
+        )
+    end rechunk
+
     /** Runs the stream and discards all emitted values.
       *
       * @return
@@ -334,6 +374,9 @@ object Stream:
         new Stream[V, S]:
             def emit: Ack < (Emit[Chunk[V]] & S) = v
 
+    private inline def sized[V, S](inline chunkSize: Int)(inline v: Int => Ack < (Emit[Chunk[V]] & S)): Stream[V, S] =
+        Stream[V, S](v(chunkSize max 1))
+
     private val _empty           = Stream(Stop)
     def empty[V]: Stream[V, Any] = _empty.asInstanceOf[Stream[V, Any]]
 
@@ -350,10 +393,9 @@ object Stream:
       *   A stream of values from the sequence
       */
     def init[V, S](v: => Seq[V] < S, chunkSize: Int = DefaultChunkSize)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
-        Stream[V, S](
+        Stream.sized[V, S](chunkSize)(cs =>
             v.map { seq =>
                 val chunk: Chunk[V] = Chunk.from(seq)
-                val _chunkSize      = chunkSize max 1
                 Emit.andMap(Chunk.empty[V]) { ack =>
                     Loop(chunk, ack) { (c, ack) =>
                         ack match
@@ -362,7 +404,7 @@ object Stream:
                             case Continue(n) =>
                                 if c.isEmpty then Loop.done(Ack.Continue())
                                 else
-                                    val i = n min _chunkSize
+                                    val i = n min cs
                                     Emit.andMap(c.take(i))(ack => Loop.continue(c.dropLeft(i), ack))
                     }
                 }
@@ -388,9 +430,7 @@ object Stream:
     ): Stream[Int, S] =
         if step == 0 || (start < end && step < 0) || (start > end && step > 0) then empty
         else
-            Stream[Int, S] {
-                val _chunkSize = chunkSize max 1
-
+            Stream.sized[Int, S](chunkSize)(cs =>
                 Emit.andMap(Chunk.empty[Int]) { ack =>
                     Loop(start, ack) { (current, ack) =>
                         ack match
@@ -408,12 +448,12 @@ object Stream:
                                             ((end - current - 1) / step).abs + 1
                                         else
                                             ((current - end - 1) / step.abs).abs + 1
-                                    val size  = (n min _chunkSize) min remaining
+                                    val size  = (n min cs) min remaining
                                     val chunk = Chunk.from(Range(current, current + size * step, step))
                                     Emit.andMap(chunk)(ack => Loop.continue(current + step * size, ack))
                                 end if
                     }
                 }
-            }
+            )
 
 end Stream
