@@ -279,7 +279,7 @@ sealed abstract class Stream[V, -S]:
                         if input.isEmpty && buffer.nonEmpty then
                             Emit.andMap(buffer)(ack => (Chunk.empty, cont(ack)))
                         else
-                            val combined = Chunk.from(buffer.appendedAll(input))
+                            val combined = buffer.concat(input)
                             if combined.size < cs then
                                 (combined, cont(Continue()))
                             else
