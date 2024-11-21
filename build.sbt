@@ -10,7 +10,7 @@ val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
 val zioVersion       = "2.1.13"
-val catsVersion      = "3.5.5"
+val catsVersion      = "3.5.6"
 val scalaTestVersion = "3.2.19"
 
 val compilerOptionFailDiscard = "-Wconf:msg=(discarded.*value|pure.*statement):error"
