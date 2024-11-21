@@ -9,7 +9,7 @@ val scala3Version   = "3.5.2"
 val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
-val zioVersion       = "2.1.12"
+val zioVersion       = "2.1.13"
 val catsVersion      = "3.5.5"
 val scalaTestVersion = "3.2.19"
 
@@ -220,7 +220,7 @@ lazy val `kyo-core` =
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
             libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC34" % Test,
-            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.12"     % Test,
+            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.13"     % Test,
             libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.12"     % Test,
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
