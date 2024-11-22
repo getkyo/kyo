@@ -39,6 +39,9 @@ transparent inline def defer[A](inline f: A) = ${ impl[A]('f) }
 inline def await[A, S](v: A < S): A =
     compiletime.error("`await` must be used within a `defer` block")
 
+extension [A, S](inline v: A < S)
+    transparent inline def unary_! : A = await(v)
+
 private def impl[A: Type](body: Expr[A])(using Quotes): Expr[Any] =
     import quotes.reflect.*
 
