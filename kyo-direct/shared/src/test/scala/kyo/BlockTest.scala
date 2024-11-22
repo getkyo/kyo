@@ -10,14 +10,14 @@ class BlockTest extends AnyFreeSpec with Assertions:
         "only" in {
             val i = IO(1)
             runLiftTest(1) {
-                val v = await(i)
+                val v = ~i
                 v
             }
         }
         "followed by pure expression" in {
             val i = IO(1)
             runLiftTest(2) {
-                val v = await(i)
+                val v = ~i
                 v + 1
             }
         }
@@ -25,15 +25,15 @@ class BlockTest extends AnyFreeSpec with Assertions:
             val i = IO(1)
             val j = IO(2)
             runLiftTest(3) {
-                val v = await(i)
-                v + await(j)
+                val v = ~i
+                v + ~j
             }
         }
         "nested" in {
             val i = IO(1)
             runLiftTest(3) {
                 val v =
-                    val r = await(i)
+                    val r = ~i
                     r + 1
                 v + 1
             }
@@ -43,13 +43,13 @@ class BlockTest extends AnyFreeSpec with Assertions:
         "only" in {
             val i = IO(1)
             runLiftTest(1) {
-                await(i)
+                ~i
             }
         }
         "followed by pure expression" in {
             val i = IO(1)
             runLiftTest(2) {
-                await(i)
+                ~i
                 2
             }
         }
@@ -57,8 +57,8 @@ class BlockTest extends AnyFreeSpec with Assertions:
             val i = IO(1)
             val j = IO(2)
             runLiftTest(2) {
-                await(i)
-                await(j)
+                ~i
+                ~j
             }
         }
     }
@@ -80,28 +80,28 @@ class BlockTest extends AnyFreeSpec with Assertions:
             def a = 2
             runLiftTest(1) {
                 a
-                await(i)
+                ~i
             }
         }
         "using previous defers" in {
             val i = IO(1)
             val j = IO(2)
             runLiftTest(3) {
-                val v = await(i)
-                v + await(j)
+                val v = ~i
+                v + ~j
             }
         }
         "using external function" in {
             def a(i: Int, s: String) = i + s.toInt
             runLiftTest(4) {
-                await(IO(a(1, "2"))) + a(0, "1")
+                ~(IO(a(1, "2"))) + a(0, "1")
             }
         }
     }
     "complex" - {
         "tuple val pattern" in {
             runLiftTest(3) {
-                val (a, b) = (await(IO(1)), await(IO(2)))
+                val (a, b) = (~IO(1), ~IO(2))
                 a + b
             }
         }
@@ -109,11 +109,11 @@ class BlockTest extends AnyFreeSpec with Assertions:
             runLiftTest((1, 2, 3)) {
                 val x = 1
                 (
-                    await(IO(x)), {
-                        val a = await(IO(2))
+                    ~IO(x), {
+                        val a = ~IO(2)
                         a
                     },
-                    await(IO(3))
+                    ~IO(3)
                 )
             }
         }

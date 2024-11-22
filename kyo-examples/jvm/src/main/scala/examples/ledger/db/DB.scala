@@ -25,8 +25,8 @@ object DB:
     )
 
     val init: DB < (Env[Config] & IO) = defer {
-        val index = await(Index.init)
-        val log   = await(db.Log.init)
+        val index = ~Index.init
+        val log   = ~db.Log.init
         Live(index, log)
     }
 

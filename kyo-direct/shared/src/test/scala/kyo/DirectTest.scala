@@ -2,22 +2,9 @@ package kyo
 
 class DirectTest extends Test:
 
-    // "match" in {
-    //   val a = IO(1)
-    //   val b = IO(2)
-    //   val c =
-    //     defer {
-    //       await(a) match {
-    //         case i if (await(b) > 0) => i
-    //         case 2                   => 99
-    //       }
-    //     }
-    //   assert(IO.Unsafe.run(c) == 1)
-    // }
-
     "one run" in run {
         val io = defer {
-            val a = await(IO("hello"))
+            val a = ~IO("hello")
             a + " world"
         }
         io.map { result =>
@@ -28,8 +15,8 @@ class DirectTest extends Test:
     "two runs" in run {
         val io =
             defer {
-                val a = await(IO("hello"))
-                val b = await(IO("world"))
+                val a = ~IO("hello")
+                val b = ~IO("world")
                 a + " " + b
             }
         io.map { result =>
@@ -40,8 +27,8 @@ class DirectTest extends Test:
     "two effects" in run {
         val io: String < (IO & Abort[Absent]) =
             defer {
-                val a = await(Abort.get(Some("hello")))
-                val b = await(IO("world"))
+                val a = ~Abort.get(Some("hello"))
+                val b = ~IO("world")
                 a + " " + b
             }
         Abort.run(io).map { result =>
@@ -53,10 +40,10 @@ class DirectTest extends Test:
         var calls = Seq.empty[Int]
         val io: Boolean < IO =
             defer {
-                if await(IO { calls :+= 1; true }) then
-                    await(IO { calls :+= 2; true })
+                if ~IO { calls :+= 1; true } then
+                    ~IO { calls :+= 2; true }
                 else
-                    await(IO { calls :+= 3; true })
+                    ~IO { calls :+= 3; true }
             }
         io.map { result =>
             assert(result)
@@ -69,7 +56,7 @@ class DirectTest extends Test:
             var calls = Seq.empty[Int]
             val io: Boolean < IO =
                 defer {
-                    (await(IO { calls :+= 1; true }) && await(IO { calls :+= 2; true }))
+                    (~IO { calls :+= 1; true } && ~IO { calls :+= 2; true })
                 }
             io.map { result =>
                 assert(result)
@@ -80,7 +67,7 @@ class DirectTest extends Test:
             var calls = Seq.empty[Int]
             val io: Boolean < IO =
                 defer {
-                    (await(IO { calls :+= 1; true }) || await(IO { calls :+= 2; true }))
+                    (~IO { calls :+= 1; true } || ~IO { calls :+= 2; true })
                 }
             io.map { result =>
                 assert(result)
@@ -92,11 +79,11 @@ class DirectTest extends Test:
     "while" in run {
         val io =
             defer {
-                val c = await(AtomicInt.init(1))
-                while await(c.get) < 100 do
-                    await(c.incrementAndGet)
+                val c = ~AtomicInt.init(1)
+                while ~c.get < 100 do
+                    ~c.incrementAndGet
                     ()
-                await(c.get)
+                ~c.get
             }
         io.map { result =>
             assert(result == 100)
@@ -105,12 +92,12 @@ class DirectTest extends Test:
 
     "options" in {
         def test(opt: Option[Int]) =
-            assert(opt == Abort.run(defer(await(Abort.get(opt)))).eval.fold(_ => None)(Some(_)))
+            assert(opt == Abort.run(defer(~Abort.get(opt))).eval.fold(_ => None)(Some(_)))
         test(Some(1))
         test(None)
     }
     "consoles" in run {
-        Console.withIn(List("hello"))(defer(await(Abort.run(Console.readLine)))).map { result =>
+        Console.withIn(List("hello"))(defer(~(Abort.run(Console.readLine)))).map { result =>
             assert(result.contains("hello"))
         }
     }
@@ -141,10 +128,10 @@ class DirectTest extends Test:
 
         val v: Int < Choice =
             defer {
-                val xx = await(x)
+                val xx = ~x
                 xx + (
-                    if xx > 0 then await(y).length * await(x)
-                    else await(y).length
+                    if xx > 0 then (~y).length * ~x
+                    else (~y).length
                 )
             }
 
@@ -159,13 +146,13 @@ class DirectTest extends Test:
 
         val v: Int < Choice =
             defer {
-                val xx = await(x)
+                val xx = ~x
                 val r =
                     xx + (
-                        if xx > 0 then await(y).length * await(x)
-                        else await(y).length
+                        if xx > 0 then (~y).length * ~x
+                        else (~y).length
                     )
-                await(Choice.dropIf(r <= 0))
+                ~Choice.dropIf(r <= 0)
                 r
             }
 
