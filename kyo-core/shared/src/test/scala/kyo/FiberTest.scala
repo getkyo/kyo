@@ -742,10 +742,14 @@ class FiberTest extends Test:
         }
 
         "collects all successful results" in run {
-            for
-                fiber  <- Fiber.gather(Seq(IO(1), IO(2), IO(3)))
-                result <- fiber.get
-            yield assert(result == Chunk(1, 2, 3))
+            Loop.repeat(repeats) {
+                for
+                    fiber  <- Fiber.gather(Seq(IO(1), IO(2), IO(3)))
+                    result <- fiber.get
+                yield
+                    assert(result == Chunk(1, 2, 3))
+                    ()
+            }.andThen(succeed)
         }
 
         "with max limit" in run {
@@ -932,14 +936,17 @@ class FiberTest extends Test:
         }
 
         "completes early when max successful results reached" in run {
-            val seq = Seq(1, 2, 3)
-            for
-                fiber  <- Fiber.gather(2)(seq.map(i => Async.delay(i.millis)(i)))
-                result <- fiber.get
-            yield
-                assert(result.size == 2)
-                assert(result.forall(seq.contains))
-            end for
+            Loop.repeat(repeats) {
+                val seq = Seq(1, 2, 3)
+                for
+                    fiber  <- Fiber.gather(2)(seq.map(i => Async.delay(i.millis)(i)))
+                    result <- fiber.get
+                yield
+                    assert(result.size == 2)
+                    assert(result.forall(seq.contains))
+                    ()
+                end for
+            }.andThen(succeed)
         }
 
         "interrupts all child fibers" in runJVM {

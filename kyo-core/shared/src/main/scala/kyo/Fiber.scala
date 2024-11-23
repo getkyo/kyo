@@ -378,8 +378,8 @@ object Fiber extends FiberPlatformSpecific:
                                     case Result.Success(v) =>
                                         if ok <= max then
                                             // Store successful result and its original index for ordering
-                                            results(okInt - 1) = v.asInstanceOf[AnyRef]
                                             indices(okInt - 1) = idx
+                                            results(okInt - 1) = v.asInstanceOf[AnyRef]
                                     case result: Result.Error[?] =>
                                         if ok == 0 && ok + nok == total then
                                             // If we have no successful results and all computations have completed,
@@ -389,6 +389,10 @@ object Fiber extends FiberPlatformSpecific:
                                 // Complete if we have max successes or all results are in
                                 if ok == max || ok + nok == total then
                                     val size = okInt.min(max)
+
+                                    // Handle race condition
+                                    waitForResults(results, size)
+
                                     // Restore original ordering but limit size since later
                                     // results might still arrive and we want to avoid races
                                     quickSort(indices, results, size)
@@ -415,6 +419,25 @@ object Fiber extends FiberPlatformSpecific:
                     }
                 }
             }
+
+    /** Busy waits until all results are present in the `_gather` array.
+      *
+      * This is necessary because there's a race condition between:
+      *   - One fiber successfully incrementing the counter via CAS
+      *   - Another fiber seeing the updated counter and trying to complete the gather
+      *   - The first fiber hasn't written its result to the array yet
+      *
+      * Without this wait, we might start processing results before all fibers have finished writing their values to the array.
+      */
+    private def waitForResults(results: Array[AnyRef], size: Int): Unit =
+        @tailrec def loop(i: Int): Unit =
+            if i < size then
+                if results(i) == null then
+                    loop(0)
+                else
+                    loop(i + 1)
+        loop(0)
+    end waitForResults
 
     /** Custom quicksort that sorts both indices and results arrays together.
       *
