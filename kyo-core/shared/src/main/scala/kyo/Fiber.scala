@@ -387,7 +387,7 @@ object Fiber extends FiberPlatformSpecific:
                                             completeDiscard(result)
                                 end match
                                 // Complete if we have max successes or all results are in
-                                if ok == max || ok + nok == total then
+                                if ok > 0 && (ok == max || ok + nok == total) then
                                     val size = okInt.min(max)
 
                                     // Handle race condition
