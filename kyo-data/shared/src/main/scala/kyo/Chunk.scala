@@ -42,7 +42,8 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       *   a new Chunk containing the first n elements
       */
     override def take(n: Int): Chunk[A] =
-        dropLeftAndRight(0, length - Math.min(Math.max(0, n), length))
+        if n == length then this
+        else dropLeftAndRight(0, length - Math.min(Math.max(0, n), length))
 
     /** Drops the first n elements of the Chunk.
       *

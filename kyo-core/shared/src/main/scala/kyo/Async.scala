@@ -153,6 +153,8 @@ object Async:
     /** Races multiple computations and returns the result of the first to complete. When one computation completes, all other computations
       * are interrupted.
       *
+      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
+      *
       * @param seq
       *   The sequence of computations to race
       * @return
@@ -187,6 +189,95 @@ object Async:
         using frame: Frame
     ): A < (Abort[E] & Async & Ctx) =
         race[E, A, Ctx](first +: rest)
+
+    /** Concurrently executes effects and collects their successful results.
+      *
+      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
+      *
+      * Similar to the sequence-based gather, but accepts varargs input.
+      *
+      * @param first
+      *   First effect to execute
+      * @param rest
+      *   Rest of the effects to execute
+      * @return
+      *   Successful results as a Chunk
+      */
+    inline def gather[E, A: Flat, Ctx](
+        first: A < (Abort[E] & Async & Ctx),
+        rest: A < (Abort[E] & Async & Ctx)*
+    )(
+        using frame: Frame
+    ): Chunk[A] < (Abort[E] & Async & Ctx) =
+        gather(first +: rest)
+
+    /** Concurrently executes effects and collects up to `max` successful results.
+      *
+      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
+      *
+      * Similar to the sequence-based gather with max, but accepts varargs input.
+      *
+      * @param max
+      *   Maximum number of successful results to collect
+      * @param first
+      *   First effect to execute
+      * @param rest
+      *   Rest of the effects to execute
+      * @return
+      *   Successful results as a Chunk (size <= max)
+      */
+    inline def gather[E, A: Flat, Ctx](max: Int)(
+        first: A < (Abort[E] & Async & Ctx),
+        rest: A < (Abort[E] & Async & Ctx)*
+    )(
+        using frame: Frame
+    ): Chunk[A] < (Abort[E] & Async & Ctx) =
+        gather(max)(first +: rest)
+
+    /** Concurrently executes effects and collects their successful results.
+      *
+      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
+      *
+      * Executes all effects concurrently and returns successful results in completion order. If all computations fail, the last encountered
+      * error is propagated. The operation completes when all effects have either succeeded or failed.
+      *
+      * @tparam Ctx
+      *   Context requirements
+      * @param seq
+      *   Sequence of effects to execute
+      * @return
+      *   Successful results as a Chunk
+      */
+    inline def gather[E, A: Flat, Ctx](seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using frame: Frame
+    ): Chunk[A] < (Abort[E] & Async & Ctx) =
+        _gather(seq.size)(seq)
+
+    /** Concurrently executes effects and collects up to `max` successful results.
+      *
+      * WARNING: Executes all computations in parallel without bounds. Use with caution on large sequences to avoid resource exhaustion.
+      *
+      * Similar to `gather`, but completes early once the specified number of `max` successful results is reached. If not enough successes
+      * occur and all remaining computations fail, the last encountered error is propagated.
+      *
+      * @param max
+      *   Maximum number of successful results to collect
+      * @param seq
+      *   Sequence of effects to execute
+      * @return
+      *   Successful results as a Chunk (size <= max)
+      */
+    inline def gather[E, A: Flat, Ctx](max: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using frame: Frame
+    ): Chunk[A] < (Abort[E] & Async & Ctx) =
+        _gather(max)(seq)
+
+    private def _gather[E, A: Flat, Ctx](max: Int)(seq: Seq[A < (Abort[E] & Async & Ctx)])(
+        using
+        boundary: Boundary[Ctx, Async & Abort[E]],
+        frame: Frame
+    ): Chunk[A] < (Abort[E] & Async & Ctx) =
+        Fiber._gather(max)(seq.size, seq).map(_.get)
 
     /** Runs multiple computations in parallel with unlimited parallelism and returns their results.
       *
