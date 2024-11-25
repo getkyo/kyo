@@ -1,7 +1,6 @@
 package kyo
 
 export Fiber.Promise
-import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
 import kyo.Tag
@@ -351,9 +350,6 @@ object Fiber extends FiberPlatformSpecific:
         else
             IO.Unsafe {
                 class State extends IOPromise[E, Chunk[A]] with Function2[Int, Result[E, A], Unit]:
-
-                    // Array to store results as they arrive. Ordering is preserved
-                    // indirectly via the indices array
                     val results = new Array[AnyRef](max)
 
                     // Helper array to store original indices to maintain ordering
@@ -377,8 +373,6 @@ object Fiber extends FiberPlatformSpecific:
                                 // CAS failed, retry the update
                                 loop()
                             else
-                                // Note that counters are already updated considering the current
-                                // successful of failed result
                                 val okInt = ok.toInt
                                 result match
                                     case Result.Success(v) =>
@@ -386,16 +380,11 @@ object Fiber extends FiberPlatformSpecific:
                                             // Store successful result and its original index for ordering
                                             indices(okInt - 1) = idx
                                             results(okInt - 1) = v.asInstanceOf[AnyRef]
-
-                                            // Ensure new results are promptly made available
-                                            VarHandle.storeStoreFence()
-
                                     case result: Result.Error[?] =>
                                         if ok == 0 && ok + nok == total then
                                             // If we have no successful results and all computations have completed,
                                             // propagate the last encountered error since there's nothing else to return
                                             completeDiscard(result)
-
                                 end match
                                 // Complete if we have max successes or all results are in
                                 if ok > 0 && (ok == max || ok + nok == total) then
@@ -443,17 +432,10 @@ object Fiber extends FiberPlatformSpecific:
     private def waitForResults(results: Array[AnyRef], size: Int): Unit =
         @tailrec def loop(i: Int): Unit =
             if i < size then
-                // Restart check from beginning if any result is missing
                 if results(i) == null then
-                    // Indicate that the thread is busy waiting and introduce
-                    // a load barrier to ensure new results are promptly visible
-                    Thread.onSpinWait()
                     loop(0)
                 else
                     loop(i + 1)
-                end if
-            end if
-        end loop
         loop(0)
     end waitForResults
 
