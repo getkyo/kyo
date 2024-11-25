@@ -9,6 +9,74 @@ import kyo.scheduler.top.WorkerStatus
 import scala.annotation.nowarn
 import scala.util.control.NonFatal
 
+/** A scheduler worker that executes tasks with preemption and work stealing capabilities.
+  *
+  * This worker implementation provides core task execution functionality for the scheduler, including:
+  *   - Task queuing and execution
+  *   - Preemptive scheduling with time slicing
+  *   - Work stealing for load balancing
+  *   - Thread state monitoring and stall detection
+  *   - Performance metrics collection
+  *
+  * ==Task Execution==
+  *
+  * Workers maintain a priority queue of pending tasks and execute them according to their priority ordering. Each task runs until either:
+  *   - It completes naturally
+  *   - It exceeds its time slice and is preempted
+  *   - The worker is instructed to stop
+  *
+  * ==Preemption==
+  *
+  * The worker monitors task execution time and preempts long-running tasks that exceed the configured time slice. Preempted tasks are
+  * re-queued to allow other tasks to execute, implementing fair scheduling. This prevents individual tasks from monopolizing the worker
+  * thread.
+  *
+  * ==Work Stealing==
+  *
+  * When a worker's queue is empty, it attempts to steal tasks from other workers that have higher load. The stealing mechanism uses atomic
+  * batch transfers to move multiple tasks at once, maintaining priority ordering while balancing load across workers. This improves overall
+  * scheduler throughput by keeping workers busy.
+  *
+  * ==State Management==
+  *
+  * The worker transitions between three states:
+  *   - Idle: No tasks to execute
+  *   - Running: Actively executing tasks
+  *   - Stalled: Detected as blocked or exceeding time slice
+  *
+  * Thread state monitoring detects when workers become blocked on I/O or synchronization, allowing the scheduler to compensate by not
+  * scheduling new tasks to blocked workers.
+  *
+  * ==Thread Management==
+  *
+  * Workers use an ephemeral thread model where they acquire threads from the executor only when actively processing tasks:
+  *   - Thread is mounted when the worker begins processing tasks
+  *   - Thread is released back to the pool when the worker becomes idle
+  *   - New thread is requested from executor when work arrives for an idle worker
+  *
+  * The provided executor may be configured to start new virtual threads instead of platform threads when Project Loom is available. The
+  * worker treats virtual and platform threads identically, with thread management handled transparently by the provided executor instance.
+  *
+  * @param id
+  *   Unique identifier for this worker
+  * @param exec
+  *   Executor for running the worker thread
+  * @param scheduleTask
+  *   Function to schedule a task on a specific worker
+  * @param stealTask
+  *   Function to steal tasks from another worker
+  * @param clock
+  *   Internal clock for timing operations
+  * @param timeSliceMs
+  *   Maximum time slice for task execution before preemption
+  *
+  * @see
+  *   Queue for details on the underlying task queue implementation
+  * @see
+  *   Task for the task execution model
+  * @see
+  *   Scheduler for how workers are managed
+  */
 abstract private class Worker(
     id: Int,
     exec: Executor,
@@ -46,16 +114,24 @@ abstract private class Worker(
 
     private val schedule = scheduleTask(_, this)
 
+    /** Adds a task to this worker's queue and ensures the worker is running. Called by the scheduler when assigning new work.
+      */
     def enqueue(task: Task): Unit = {
         queue.add(task)
         wakeup()
     }
 
+    /** Transitions the worker from Idle to Running state and requests a new thread from the executor if successful. Used when new work
+      * arrives for an idle worker.
+      */
     def wakeup() = {
         if ((state eq State.Idle) && stateHandle.compareAndSet(this, State.Idle, State.Running))
             exec.execute(this)
     }
 
+    /** Returns the current task count including both queued tasks and any actively executing task. Used by the scheduler for load balancing
+      * decisions.
+      */
     def load() = {
         var load = queue.size()
         if (currentTask ne null)
@@ -63,6 +139,9 @@ abstract private class Worker(
         load
     }
 
+    /** Attempts to steal tasks from this worker's queue into the thief's queue. Updates metrics to track task movement between workers.
+      * Returns null if no tasks were stolen.
+      */
     def stealingBy(thief: Worker): Task = {
         val task = queue.stealingBy(thief.queue)
         if (task ne null)
@@ -70,9 +149,19 @@ abstract private class Worker(
         task
     }
 
+    /** Transfers all tasks from this worker's queue to the scheduler for reassignment. Called when the worker becomes stalled to allow
+      * other workers to take over the work.
+      */
     def drain(): Unit =
         queue.drain(schedule)
 
+    /** Checks if this worker can accept new tasks by verifying:
+      *   - Not stalled on a long-running task
+      *   - Not in Stalled state
+      *   - Thread not blocked on I/O or synchronization
+      *
+      * If checks fail while Running, transitions to Stalled and drains queue. Used by scheduler to skip workers that can't make progress.
+      */
     def checkAvailability(nowMs: Long): Boolean = {
         val state     = this.state
         val available = !checkStalling(nowMs) && (state ne State.Stalled) && !isBlocked()
@@ -102,39 +191,58 @@ abstract private class Worker(
     }
 
     def run(): Unit = {
+        // Set up worker state
         mounts += 1
         mount = Thread.currentThread()
         setCurrent(this)
         var task: Task = null
+
         while (true) {
+            // Mark worker as actively running
             state = State.Running
+
             if (task eq null)
+                // Try to get a task from our own queue first
                 task = queue.poll()
+
             if (task eq null) {
+                // If our queue is empty, try to steal work from another worker
                 task = stealTask(this)
                 if (task ne null)
+                    // Track number of stolen tasks including batch size
                     stolenTasks += queue.size() + 1
             }
+
             if (task ne null) {
+                // We have a task to execute
                 executions += 1
                 if (runTask(task) == Task.Preempted) {
+                    // Task was preempted - add it back to queue and get next task
                     preemptions += 1
                     task = queue.addAndPoll(task)
                 } else {
+                    // Task completed normally
                     completions += 1
                     task = null
                 }
             } else {
+                // No tasks available - prepare to go idle
                 state = State.Idle
                 if (queue.isEmpty() || !stateHandle.compareAndSet(this, State.Idle, State.Running)) {
+                    // Either queue is empty or another thread changed our state
+                    // Clean up and exit
                     mount = null
                     clearCurrent()
                     return
                 }
             }
+
+            // Check if we should stop processing tasks
             if (shouldStop()) {
                 state = State.Idle
+                // Reschedule current task if we have one
                 if (task ne null) schedule(task)
+                // Drain remaining tasks from queue
                 drain()
                 return
             }
