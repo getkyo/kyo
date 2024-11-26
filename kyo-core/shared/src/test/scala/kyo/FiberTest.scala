@@ -965,12 +965,10 @@ class FiberTest extends Test:
                         startLatch.release.andThen(promise2.get),
                         startLatch.release.andThen(promise3.get)
                     ))
-                    _     <- startLatch.await
-                    _     <- fiber.interrupt
-                    count <- interruptCount.get
-                yield
-                    assert(count == 3)
-                    ()
+                    _ <- startLatch.await
+                    _ <- fiber.interrupt
+                    _ <- untilTrue(interruptCount.get.map(_ == 3))
+                yield ()
             }.andThen(succeed)
         }
 
@@ -996,11 +994,10 @@ class FiberTest extends Test:
                     done2  <- fiber.done
                     _      <- promise2.complete(Result.success(1))
                     result <- fiber.get
-                    count  <- interruptCount.get
+                    _      <- untilTrue(interruptCount.get.map(_ == 1))
                 yield
                     assert(!done1 && !done2)
                     assert(result == Seq(1, 1))
-                    assert(count == 1)
                     ()
             }.andThen(succeed)
         }
