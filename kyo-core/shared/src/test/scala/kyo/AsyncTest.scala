@@ -12,7 +12,7 @@ class AsyncTest extends Test:
                 v <- Async.run(1).map(_.get)
             yield assert(v == 1)
         }
-        "executes in a different thread" in runJVM {
+        "executes in a different thread" in runNotJS {
             val t1 = Thread.currentThread()
             for
                 t2 <- Async.run(Thread.currentThread()).map(_.get)
@@ -26,7 +26,7 @@ class AsyncTest extends Test:
                 (v6, v7, v8, v9) <- Async.parallel(6, 7, 8, 9)
             yield assert(v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 == 45)
         }
-        "nested" in runJVM {
+        "nested" in runNotJS {
             val t1 = Thread.currentThread()
             for
                 t2 <- Async.run(IO(Async.run(Thread.currentThread()).map(_.get))).map(_.get)
@@ -66,7 +66,7 @@ class AsyncTest extends Test:
 
     "runAndBlock" - {
 
-        "timeout" in runJVM {
+        "timeout" in runNotJS {
             Async.sleep(1.day).andThen(1)
                 .pipe(Async.timeout(10.millis))
                 .pipe(Async.runAndBlock(Duration.Infinity))
@@ -77,7 +77,7 @@ class AsyncTest extends Test:
                 }
         }
 
-        "block timeout" in runJVM {
+        "block timeout" in runNotJS {
             Async.sleep(1.day).andThen(1)
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
@@ -87,7 +87,7 @@ class AsyncTest extends Test:
                 }
         }
 
-        "multiple fibers timeout" in runJVM {
+        "multiple fibers timeout" in runNotJS {
             Kyo.fill(100)(Async.sleep(1.milli)).andThen(1)
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
@@ -112,7 +112,7 @@ class AsyncTest extends Test:
                 }
             }
 
-        "one fiber" in runJVM {
+        "one fiber" in runNotJS {
             for
                 started     <- Latch.init(1)
                 done        <- Latch.init(1)
@@ -122,7 +122,7 @@ class AsyncTest extends Test:
                 _           <- done.await
             yield assert(interrupted)
         }
-        "multiple fibers" in runJVM {
+        "multiple fibers" in runNotJS {
             for
                 started      <- Latch.init(3)
                 done         <- Latch.init(3)
@@ -139,15 +139,15 @@ class AsyncTest extends Test:
     }
 
     "race" - {
-        "zero" in runJVM {
+        "zero" in runNotJS {
             assertDoesNotCompile("Async.race()")
         }
-        "one" in runJVM {
+        "one" in runNotJS {
             Async.race(1).map { r =>
                 assert(r == 1)
             }
         }
-        "multiple" in runJVM {
+        "multiple" in runNotJS {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
             def loop(i: Int, s: String): String < IO =
@@ -165,7 +165,7 @@ class AsyncTest extends Test:
                 assert(bc.get() <= Int.MaxValue)
             }
         }
-        "waits for the first success" in runJVM {
+        "waits for the first success" in runNotJS {
             val ex = new Exception
             Async.race(
                 Async.sleep(1.milli).andThen(42),
@@ -174,7 +174,7 @@ class AsyncTest extends Test:
                 assert(r == 42)
             }
         }
-        "returns the last failure if all fibers fail" in runJVM {
+        "returns the last failure if all fibers fail" in runNotJS {
             val ex1 = new Exception
             val ex2 = new Exception
             val race =
@@ -237,7 +237,7 @@ class AsyncTest extends Test:
         yield assert(v1 + v2 + v3 + l.sum == 15)
     }
 
-    "interrupt" in runJVM {
+    "interrupt" in runNotJS {
         def loop(ref: AtomicInt): Unit < IO =
             ref.incrementAndGet.map(_ => loop(ref))
 
@@ -531,7 +531,7 @@ class AsyncTest extends Test:
             yield assert(result == 42)
         }
 
-        "interrupts computation" in runJVM {
+        "interrupts computation" in runNotJS {
             for
                 flag  <- AtomicBoolean.init(false)
                 fiber <- Promise.init[Nothing, Int]
@@ -892,7 +892,7 @@ class AsyncTest extends Test:
                     Async.gather(1, emitIsolate)(
                         for
                             _ <- Emit("a1")
-                            _ <- Async.sleep(2.millis)
+                            _ <- Async.sleep(10.millis)
                             _ <- Emit("a2")
                         yield 1,
                         for

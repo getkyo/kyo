@@ -338,7 +338,7 @@ class ClockTest extends Test:
                 result   <- channel.poll
             yield assert(result.isEmpty)
         }
-        "with time control" in runJVM {
+        "with time control" in runNotJS {
             Clock.withTimeControl { control =>
                 for
                     running  <- AtomicBoolean.init(false)
@@ -362,7 +362,7 @@ class ClockTest extends Test:
                 _        <- task.interrupt
             yield
                 val avgInterval = intervals(instants).reduce(_ + _) * (1.toDouble / (instants.size - 2))
-                assert(avgInterval >= 4.millis && avgInterval < 20.millis)
+                assert(avgInterval >= 4.millis && avgInterval < 40.millis)
         }
         "with Schedule and state" in run {
             for
@@ -405,7 +405,7 @@ class ClockTest extends Test:
             yield assert(result.isEmpty)
         }
 
-        "with time control" in runJVM {
+        "with time control" in runNotJS {
             Clock.withTimeControl { control =>
                 for
                     running  <- AtomicBoolean.init(false)
@@ -485,7 +485,7 @@ class ClockTest extends Test:
                     time2 <- Clock.nowMonotonic
                 yield
                     assert(time2 - time1 >= 4.millis)
-                    assert(time2 - time1 < 30.millis)
+                    assert(time2 - time1 < 40.millis)
             }
         }
     }

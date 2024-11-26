@@ -2,7 +2,7 @@ package kyo
 
 class HubTest extends Test:
 
-    "listen/offer/take" in runJVM {
+    "listen/offer/take" in runNotJS {
         for
             h <- Hub.init[Int](2)
             l <- h.listen
@@ -10,7 +10,7 @@ class HubTest extends Test:
             v <- l.take
         yield assert(b && v == 1)
     }
-    "listen/listen/offer/take" in runJVM {
+    "listen/listen/offer/take" in runNotJS {
         for
             h  <- Hub.init[Int](2)
             l1 <- h.listen
@@ -20,7 +20,7 @@ class HubTest extends Test:
             v2 <- l2.take
         yield assert(b && v1 == 1 && v2 == 1)
     }
-    "listen/offer/listen/take/poll" in runJVM {
+    "listen/offer/listen/take/poll" in runNotJS {
         for
             h  <- Hub.init[Int](2)
             l1 <- h.listen
@@ -31,7 +31,7 @@ class HubTest extends Test:
             v2 <- l2.poll
         yield assert(b && v1 == 1 && v2.isEmpty)
     }
-    "listen/offer/take/listen/poll" in runJVM {
+    "listen/offer/take/listen/poll" in runNotJS {
         for
             h  <- Hub.init[Int](2)
             l1 <- h.listen
@@ -41,7 +41,7 @@ class HubTest extends Test:
             v2 <- l2.poll
         yield assert(b && v1 == 1 && v2.isEmpty)
     }
-    "offer/listen/poll" in runJVM {
+    "offer/listen/poll" in runNotJS {
         for
             h <- Hub.init[Int](2)
             b <- h.offer(1)
@@ -50,7 +50,7 @@ class HubTest extends Test:
             v <- l.poll
         yield assert(b && v.isEmpty)
     }
-    "close hub" in runJVM {
+    "close hub" in runNotJS {
         for
             h  <- Hub.init[Int](2)
             b  <- h.offer(1)
@@ -65,7 +65,7 @@ class HubTest extends Test:
             b && c1 == Maybe(Seq()) && v1.isFail && v2.isFail && v3.isFail && v4.isEmpty
         )
     }
-    "close listener w/ buffer" in runJVM {
+    "close listener w/ buffer" in runNotJS {
         for
             h  <- Hub.init[Int](2)
             l1 <- h.listen(2)
@@ -81,7 +81,7 @@ class HubTest extends Test:
             b1 && c1 == Maybe(Seq(1)) && b2 && v2 == Maybe(2) && c2 == Maybe(Seq())
         )
     }
-    "offer beyond capacity" in runJVM {
+    "offer beyond capacity" in runNotJS {
         for
             h  <- Hub.init[Int](2)
             l  <- h.listen
@@ -95,7 +95,7 @@ class HubTest extends Test:
             v4 <- l.poll
         yield assert(!b && v1 == 1 && v2 == 2 && v3 == 3 && v4.isEmpty)
     }
-    "concurrent listeners taking values" in runJVM {
+    "concurrent listeners taking values" in runNotJS {
         for
             h  <- Hub.init[Int](10)
             l1 <- h.listen
@@ -105,7 +105,7 @@ class HubTest extends Test:
             v2 <- l2.take
         yield assert(v1 == 1 && v2 == 1) // Assuming listeners take different values
     }
-    "listener removal" in runJVM {
+    "listener removal" in runNotJS {
         for
             h  <- Hub.init[Int](2)
             l  <- h.listen
@@ -116,7 +116,7 @@ class HubTest extends Test:
             v2 <- Abort.run(l.poll)
         yield assert(c == Maybe(Seq()) && v1 && v2.isFail)
     }
-    "hub closure with pending offers" in runJVM {
+    "hub closure with pending offers" in runNotJS {
         for
             h <- Hub.init[Int](2)
             _ <- h.offer(1)
@@ -124,7 +124,7 @@ class HubTest extends Test:
             v <- Abort.run(h.offer(2))
         yield assert(v.isFail)
     }
-    "create listener on empty hub" in runJVM {
+    "create listener on empty hub" in runNotJS {
         for
             h <- Hub.init[Int](2)
             l <- h.listen
@@ -132,7 +132,7 @@ class HubTest extends Test:
         yield assert(v.isEmpty)
     }
     "contention" - {
-        "writes" in runJVM {
+        "writes" in runNotJS {
             for
                 h  <- Hub.init[Int](2)
                 l  <- h.listen
@@ -142,7 +142,7 @@ class HubTest extends Test:
                 e2 <- l.empty
             yield assert(t == List.fill(100)(1) && e1 && e2)
         }
-        "reads + writes" in runJVM {
+        "reads + writes" in runNotJS {
             for
                 h  <- Hub.init[Int](2)
                 l  <- h.listen
@@ -152,7 +152,7 @@ class HubTest extends Test:
                 e2 <- l.empty
             yield assert(t == List.fill(100)(1) && e1 && e2)
         }
-        "listeners" in runJVM {
+        "listeners" in runNotJS {
             for
                 h  <- Hub.init[Int](2)
                 l  <- Kyo.fill(100)(Async.run(h.listen).map(_.get))

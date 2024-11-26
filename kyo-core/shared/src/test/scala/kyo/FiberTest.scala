@@ -107,15 +107,15 @@ class FiberTest extends Test:
     }
 
     "race" - {
-        "zero" in runJVM {
+        "zero" in runNotJS {
             assertDoesNotCompile("Async.raceFiber()")
         }
-        "one" in runJVM {
+        "one" in runNotJS {
             Fiber.race(Seq(1)).map(_.get).map { r =>
                 assert(r == 1)
             }
         }
-        "n" in runJVM {
+        "n" in runNotJS {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
             def loop(i: Int, s: String): String < IO =
@@ -134,7 +134,7 @@ class FiberTest extends Test:
             }
         }
         "interrupts losers" - {
-            "promise + plain value" in runJVM {
+            "promise + plain value" in runNotJS {
                 for
                     latch   <- Latch.init(1)
                     promise <- Promise.init[Nothing, Int]
@@ -143,7 +143,7 @@ class FiberTest extends Test:
                     _       <- latch.await
                 yield assert(result == 42)
             }
-            "promise + delayed" in runJVM {
+            "promise + delayed" in runNotJS {
                 for
                     latch   <- Latch.init(1)
                     promise <- Promise.init[Nothing, Int]
@@ -152,7 +152,7 @@ class FiberTest extends Test:
                     _       <- latch.await
                 yield assert(result == 42)
             }
-            "slow + fast" in runJVM {
+            "slow + fast" in runNotJS {
                 for
                     adder <- LongAdder.init
                     result <-
@@ -274,7 +274,7 @@ class FiberTest extends Test:
             }
         }
         "interrupts fibers on failure" - {
-            "promise + plain value" in runJVM {
+            "promise + plain value" in runNotJS {
                 for
                     latch   <- Latch.init(1)
                     promise <- Promise.init[Nothing, Int]
@@ -283,7 +283,7 @@ class FiberTest extends Test:
                     _       <- latch.await
                 yield assert(result.isFail)
             }
-            "promise + delayed abort" in runJVM {
+            "promise + delayed abort" in runNotJS {
                 for
                     latch   <- Latch.init(1)
                     promise <- Promise.init[Nothing, Int]
@@ -292,7 +292,7 @@ class FiberTest extends Test:
                     _       <- latch.await
                 yield assert(result.isFail)
             }
-            "slow + fast abort" in runJVM {
+            "slow + fast abort" in runNotJS {
                 val ex1 = new Exception
                 val ex2 = new Exception
                 Fiber.parallelUnbounded(Seq(
@@ -524,7 +524,7 @@ class FiberTest extends Test:
             yield assert(result == Result.success(42))
         }
 
-        "timeout" in runJVM {
+        "timeout" in runNotJS {
             for
                 fiber  <- Async.run(Async.sleep(1.second).andThen(42))
                 result <- fiber.block(1.millis)
@@ -812,7 +812,7 @@ class FiberTest extends Test:
             end for
         }
 
-        "preserves original order" in runJVM {
+        "preserves original order" in runNotJS {
             for
                 fiber <- Fiber.gather(Seq(
                     Async.delay(3.millis)(1),
@@ -823,7 +823,7 @@ class FiberTest extends Test:
             yield assert(result == Chunk(1, 2, 3))
         }
 
-        "preserves original order with max limit" in runJVM {
+        "preserves original order with max limit" in runNotJS {
             for
                 fiber <- Fiber.gather(2)(Seq(
                     Async.delay(3.millis)(1),
@@ -834,7 +834,7 @@ class FiberTest extends Test:
             yield assert(result == Chunk(2, 3))
         }
 
-        "handles concurrent completions" in runJVM {
+        "handles concurrent completions" in runNotJS {
             for
                 latch  <- Latch.init(1)
                 fiber  <- Fiber.gather(Seq.fill(20)(latch.await.andThen(42)))
@@ -857,7 +857,7 @@ class FiberTest extends Test:
             end for
         }
 
-        "handles mixed success/failure with exact max" in runJVM {
+        "handles mixed success/failure with exact max" in runNotJS {
             val error = new Exception("test error")
             for
                 fiber <- Fiber.gather(2)(Seq(
@@ -865,7 +865,7 @@ class FiberTest extends Test:
                     Async.delay(1.millis)(Abort.fail[Exception](error)),
                     Async.delay(1.millis)(2),
                     Async.delay(2.millis)(Abort.fail[Exception](error)),
-                    Async.delay(3.millis)(3)
+                    Async.delay(10.millis)(3)
                 ))
                 result <- fiber.get
             yield
@@ -874,7 +874,7 @@ class FiberTest extends Test:
             end for
         }
 
-        "handles race conditions in counter updates" in runJVM {
+        "handles race conditions in counter updates" in runNotJS {
             Loop.repeat(repeats) {
                 for
                     latch1 <- Latch.init(1)
@@ -893,7 +893,7 @@ class FiberTest extends Test:
             }.andThen(succeed)
         }
 
-        "race conditions in error propagation" in runJVM {
+        "race conditions in error propagation" in runNotJS {
             Loop.repeat(50) {
                 for
                     latch <- Latch.init(1)
@@ -949,7 +949,7 @@ class FiberTest extends Test:
             }.andThen(succeed)
         }
 
-        "interrupts all child fibers" in runJVM {
+        "interrupts all child fibers" in runNotJS {
             Loop.repeat(repeats) {
                 for
                     interruptCount <- AtomicInt.init
@@ -972,7 +972,7 @@ class FiberTest extends Test:
             }.andThen(succeed)
         }
 
-        "interrupts remaining fibers when max results reached" in runJVM {
+        "interrupts remaining fibers when max results reached" in runNotJS {
             Loop.repeat(repeats) {
                 for
                     interruptCount <- AtomicInt.init

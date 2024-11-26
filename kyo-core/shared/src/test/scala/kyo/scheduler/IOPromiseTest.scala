@@ -203,13 +203,13 @@ class IOPromiseTest extends Test:
             assert(result == Result.success(42))
         }
 
-        "timeout" in runJVM {
+        "timeout" in runNotJS {
             val p      = new IOPromise[Nothing, Int]()
             val result = p.block(deadline(10.millis))
             assert(result.isFail)
         }
 
-        "block with very short timeout" in runJVM {
+        "block with very short timeout" in runNotJS {
             val p      = new IOPromise[Nothing, Int]()
             val result = p.block(deadline(10.millis))
             assert(result.isFail)

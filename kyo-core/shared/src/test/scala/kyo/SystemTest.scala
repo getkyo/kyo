@@ -8,7 +8,7 @@ import kyo.System.Unsafe
 class SystemTest extends Test:
 
     "env" - {
-        "existing variable" in runJVM {
+        "existing variable" in runNotJS {
             for
                 path <- System.env[String]("PATH")
             yield assert(path.isDefined && path.get.nonEmpty)
