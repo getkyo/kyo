@@ -63,6 +63,58 @@ class AdmissionTest extends AnyFreeSpec with NonImplicitAssertions {
         }
     }
 
+    "rotation window" - {
+        "rejection set varies over time with fixed load" in new Context {
+            loadAvg = 0.9
+            jitter = jitterUpperThreshold * 10
+
+            timer.advanceAndRun(regulateInterval * 2)
+            assert(admission.percent() == 97)
+
+            val keys           = (1 to 1000).toSet
+            val window1Rejects = keys.filter(admission.reject)
+            assert(window1Rejects.size > 0)
+
+            timer.advance(1.hour)
+            assert(admission.percent() == 97)
+            val window2Rejects = keys.filter(admission.reject)
+            assert(window2Rejects.size > 0)
+
+            timer.advance(1.hour)
+            assert(admission.percent() == 97)
+            val window3Rejects = keys.filter(admission.reject)
+            assert(window3Rejects.size > 0)
+
+            assert(window1Rejects != window2Rejects)
+            assert(window2Rejects != window3Rejects)
+            assert(window1Rejects != window3Rejects)
+
+            assert((window1Rejects.size - 30).abs <= 10)
+            assert((window2Rejects.size - 30).abs <= 10)
+            assert((window3Rejects.size - 30).abs <= 10)
+        }
+
+        "different loads give proportionally different rejection sets" in new Context {
+            jitter = jitterUpperThreshold * 10
+
+            loadAvg = 0.9
+            timer.advanceAndRun(regulateInterval * 2)
+            assert(admission.percent() == 97)
+
+            val keys              = (1 to 1000).toSet
+            val highAcceptRejects = keys.filter(admission.reject)
+
+            loadAvg = 0.95
+            timer.advanceAndRun(regulateInterval * 4)
+            assert(admission.percent() == 59)
+
+            timer.advance(1.hour)
+            val lowAcceptRejects = keys.filter(admission.reject)
+
+            assert(lowAcceptRejects.size > highAcceptRejects.size)
+        }
+    }
+
     trait Context {
         val timer           = TestTimer()
         var loadAvg: Double = 0.8
