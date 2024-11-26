@@ -139,7 +139,7 @@ lazy val kyoNative = project
         `kyo-data`.native,
         `kyo-prelude`.native,
         `kyo-stats-registry`.native,
-        `kyo-scheduler`.native,
+        `kyo-scheduler`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -187,10 +187,9 @@ lazy val `kyo-data` =
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.lihaoyi"       %%% "pprint"          % "0.9.0",
-            libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"          % "provided",
-            libraryDependencies += "org.scalatest"     %%% "scalatest"       % scalaTestVersion % Test,
-            libraryDependencies += "dev.zio"           %%% "izumi-reflect"   % "2.3.10"         % Test
+            libraryDependencies += "com.lihaoyi"   %%% "pprint"        % "0.9.0",
+            libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
+            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
@@ -389,7 +388,7 @@ lazy val `kyo-monix` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.monix" %% "monix" % "3.4.1",
+            libraryDependencies += "io.monix"       %% "monix"     % "3.4.1",
             libraryDependencies += "org.scalatest" %%% "scalatest" % scalaTestVersion % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -527,8 +526,9 @@ lazy val readme =
         )
 
 lazy val `native-settings` = Seq(
-    fork       := false,
-    bspEnabled := false
+    fork                                        := false,
+    bspEnabled                                  := false,
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0" % "provided"
 )
 
 lazy val `js-settings` = Seq(
@@ -536,7 +536,7 @@ lazy val `js-settings` = Seq(
     fork                                        := false,
     bspEnabled                                  := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.5.0" % "provided"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0" % "provided"
 )
 
 def scalacOptionToken(proposedScalacOption: ScalacOption) =
