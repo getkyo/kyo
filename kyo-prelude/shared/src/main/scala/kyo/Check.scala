@@ -88,4 +88,51 @@ object Check:
             [C] => (_, cont) => cont(())
         )
 
+    object isolate:
+
+        /** Creates an isolate that combines check failures.
+          *
+          * When the isolation ends, accumulates any check failures that occurred during the isolated computation with failures from the
+          * outer context. This allows building up a complete set of failed checks.
+          *
+          * @return
+          *   An isolate that accumulates check failures
+          */
+        val merge: Isolate[Check] =
+            new Isolate[Check]:
+                type State = Chunk[CheckFailed]
+
+                def use[A, S2](f: State => A < S2)(using Frame) = f(Chunk.empty)
+
+                def resume[A: Flat, S2](state: Chunk[CheckFailed], v: A < (Check & S2))(using Frame) =
+                    Check.runChunk(v)
+
+                def restore[A: Flat, S2](state: Chunk[CheckFailed], v: A < S2)(using Frame) =
+                    Kyo.foreach(state)(check => Check(false, check.message)(using check.frame)).andThen(v)
+            end new
+        end merge
+
+        /** Creates an isolate that contains check failures.
+          *
+          * Allows checks to fail within the isolated computation without propagating those failures to the outer context. The failures are
+          * discarded when isolation ends.
+          *
+          * @return
+          *   An isolate that contains check failures
+          */
+        val discard: Isolate[Check] =
+            new Isolate[Check]:
+                type State = Chunk[CheckFailed]
+
+                def use[A, S2](f: State => A < S2)(using Frame) = f(Chunk.empty)
+
+                def resume[A: Flat, S2](state: Chunk[CheckFailed], v: A < (Check & S2))(using Frame) =
+                    Check.runChunk(v)
+
+                def restore[A: Flat, S2](state: Chunk[CheckFailed], v: A < S2)(using Frame) =
+                    v
+            end new
+        end discard
+    end isolate
+
 end Check

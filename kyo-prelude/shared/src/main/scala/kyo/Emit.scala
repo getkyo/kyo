@@ -185,4 +185,53 @@ object Emit:
 
     inline def runAck[V >: Nothing]: RunAckOps[V] = RunAckOps(())
 
+    object isolate:
+
+        /** Creates an isolate that includes emitted values from isolated computations.
+          *
+          * When the isolation ends, appends all values emitted during the isolated computation to the outer context. The values are emitted
+          * in their original order.
+          *
+          * @tparam V
+          *   The type of values being emitted
+          * @return
+          *   An isolate that preserves emitted values
+          */
+        def merge[V: Tag]: Isolate[Emit[V]] =
+            new Isolate[Emit[V]]:
+                type State = Chunk[V]
+                def use[A, S2](f: Chunk[V] => A < S2)(using Frame) = f(Chunk.empty)
+                def resume[A: Flat, S2](state: Chunk[V], v: A < (Emit[V] & S2))(using Frame) =
+                    Emit.run(v)
+                def restore[A: Flat, S2](state: Chunk[V], v: A < S2)(using Frame) =
+                    Loop(state: Seq[V]) {
+                        case Seq() => Loop.done
+                        case head +: tail =>
+                            Emit.andMap(head) {
+                                case Ack.Stop => Loop.done
+                                case _        => Loop.continue(tail)
+                            }
+                    }.andThen(v)
+                end restore
+
+        /** Creates an isolate that ignores emitted values.
+          *
+          * Allows the isolated computation to emit values freely, but discards all emissions when the isolation ends. Useful when you want
+          * to prevent emissions from propagating to the outer context.
+          *
+          * @tparam V
+          *   The type of values being emitted
+          * @return
+          *   An isolate that discards emitted values
+          */
+        def discard[V: Tag]: Isolate[Emit[V]] =
+            new Isolate[Emit[V]]:
+                type State = Chunk[V]
+                def use[A, S2](f: Chunk[V] => A < S2)(using Frame) = f(Chunk.empty)
+                def resume[A: Flat, S2](state: Chunk[V], v: A < (Emit[V] & S2))(using Frame) =
+                    Emit.run(v)
+                def restore[A: Flat, S2](state: Chunk[V], v: A < S2)(using Frame) =
+                    v
+    end isolate
+
 end Emit
