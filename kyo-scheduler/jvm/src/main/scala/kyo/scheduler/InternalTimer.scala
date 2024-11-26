@@ -5,6 +5,11 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.Duration
 
+/** Scheduler-internal timer abstraction that provides unified scheduling primitives.
+  *
+  * Abstracts over the underlying executor to support both testing scenarios (via TestTimer) and production usage (via
+  * ScheduledExecutorService), while maintaining consistent scheduling semantics throughout the scheduler implementation.
+  */
 abstract private[kyo] class InternalTimer {
     def schedule(interval: Duration)(f: => Unit): TimerTask
     def scheduleOnce(delay: Duration)(f: => Unit): TimerTask
