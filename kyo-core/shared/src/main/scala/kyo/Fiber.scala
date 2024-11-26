@@ -398,7 +398,7 @@ object Fiber extends FiberPlatformSpecific:
                                     quickSort(indices, results, size)
 
                                     // Limit final result to max successful results
-                                    completeDiscard(Result.success(Chunk.from(results).take(size)))
+                                    completeDiscard(Result.success(Chunk.fromNoCopy(results).take(size)))
                                 end if
                             end if
                         end loop
@@ -549,7 +549,7 @@ object Fiber extends FiberPlatformSpecific:
                             result.fold(this.interruptDiscard) { value =>
                                 results(idx) = value
                                 if pending.decrementAndGet() == 0 then
-                                    this.completeDiscard(Result.success(Chunk.from(results)))
+                                    this.completeDiscard(Result.success(Chunk.fromNoCopy(results)))
                             }
                     end State
                     val state = new State
