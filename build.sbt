@@ -156,7 +156,10 @@ lazy val `kyo-scheduler` =
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.12"         % Test
         )
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
+        .nativeSettings(
+            `native-settings`,
+            crossScalaVersions := List(scala3Version)
+        )
         .jsSettings(
             `js-settings`,
             libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"

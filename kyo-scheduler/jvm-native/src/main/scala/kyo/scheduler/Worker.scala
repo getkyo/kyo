@@ -291,7 +291,7 @@ abstract private class Worker(
             }
         WorkerStatus(
             id,
-            state eq State.Running,
+            state.get() eq State.Running,
             thread,
             frame,
             isBlocked(),
