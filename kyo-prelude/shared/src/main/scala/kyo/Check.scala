@@ -98,7 +98,7 @@ object Check:
           * @return
           *   An isolate that accumulates check failures
           */
-        def merge: Isolate[Check] =
+        val merge: Isolate[Check] =
             new Isolate[Check]:
                 type State = Chunk[CheckFailed]
 
@@ -120,7 +120,7 @@ object Check:
           * @return
           *   An isolate that contains check failures
           */
-        def discard: Isolate[Check] =
+        val discard: Isolate[Check] =
             new Isolate[Check]:
                 type State = Chunk[CheckFailed]
 

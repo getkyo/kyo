@@ -67,7 +67,7 @@ object Memo:
           * @return
           *   An isolate that preserves memoized results
           */
-        def merge: Isolate[Memo] =
+        val merge: Isolate[Memo] =
             Var.isolate.merge[Memo.Cache]((m1, m2) => Cache(m1.map ++ m2.map))
 
         /** Creates an isolate that overwrites the memoization cache.
@@ -78,7 +78,7 @@ object Memo:
           * @return
           *   An isolate that updates the cache with isolated results
           */
-        def update: Isolate[Memo] =
+        val update: Isolate[Memo] =
             Var.isolate.update[Memo.Cache]
 
         /** Creates an isolate that provides a temporary cache.
@@ -89,7 +89,7 @@ object Memo:
           * @return
           *   An isolate that discards the isolated cache
           */
-        def discard: Isolate[Memo] =
+        val discard: Isolate[Memo] =
             Var.isolate.discard[Memo.Cache]
     end isolate
 end Memo
