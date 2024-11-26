@@ -669,4 +669,38 @@ class AsyncTest extends Test:
         }
     }
 
+    "gather" - {
+        "sequence" - {
+            "delegates to Fiber.gather" in run {
+                for
+                    result <- Async.gather(Seq(IO(1), IO(2), IO(3)))
+                yield assert(result == Chunk(1, 2, 3))
+            }
+
+            "with max limit delegates to Fiber.gather" in run {
+                for
+                    result <- Async.gather(2)(Seq(IO(1), IO(2), IO(3)))
+                yield
+                    assert(result.size == 2)
+                    assert(result.forall(Seq(1, 2, 3).contains))
+            }
+        }
+
+        "varargs" - {
+            "delegates to sequence-based gather" in run {
+                for
+                    result <- Async.gather(IO(1), IO(2), IO(3))
+                yield assert(result == Chunk(1, 2, 3))
+            }
+
+            "with max limit delegates to sequence-based gather" in run {
+                for
+                    result <- Async.gather(2)(IO(1), IO(2), IO(3))
+                yield
+                    assert(result.size == 2)
+                    assert(result.forall(Seq(1, 2, 3).contains))
+            }
+        }
+    }
+
 end AsyncTest

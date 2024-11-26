@@ -730,4 +730,385 @@ class FiberTest extends Test:
         }
     }
 
+    "gather" - {
+
+        val repeats = 100
+
+        "empty sequence" in run {
+            for
+                fiber  <- Fiber.gather(Seq.empty[Int < Async])
+                result <- fiber.get
+            yield assert(result.isEmpty)
+        }
+
+        "collects all successful results" in run {
+            Loop.repeat(repeats) {
+                for
+                    fiber  <- Fiber.gather(Seq(IO(1), IO(2), IO(3)))
+                    result <- fiber.get
+                yield
+                    assert(result == Chunk(1, 2, 3))
+                    ()
+            }.andThen(succeed)
+        }
+
+        "with max limit" in run {
+            val seq = Seq(1, 2, 3)
+            for
+                fiber  <- Fiber.gather(2)(seq.map(IO(_)))
+                result <- fiber.get
+            yield
+                assert(result.distinct.size == 2)
+                assert(result.forall(seq.contains))
+            end for
+        }
+
+        "handles max=0" in run {
+            for
+                fiber  <- Fiber.gather(0)(Seq(IO(1), IO(2), IO(3)))
+                result <- fiber.get
+            yield assert(result.isEmpty)
+        }
+
+        "handles max=1 with all failures except last" in run {
+            val error = new Exception("test error")
+            for
+                fiber <- Fiber.gather(1)(Seq(
+                    Abort.fail[Exception](error),
+                    Abort.fail[Exception](error),
+                    IO(3)
+                ))
+                result <- fiber.get
+            yield assert(result == Chunk(3))
+            end for
+        }
+
+        "handles negative max" in run {
+            for
+                fiber  <- Fiber.gather(-1)(Seq(IO(1), IO(2), IO(3)))
+                result <- fiber.get
+            yield assert(result.isEmpty)
+        }
+
+        "handles max > size" in run {
+            val seq = Seq(1, 2, 3)
+            for
+                fiber  <- Fiber.gather(10)(seq.map(IO(_)))
+                result <- fiber.get
+            yield assert(result == Chunk(1, 2, 3))
+            end for
+        }
+
+        "handles max > size with failures" in run {
+            val error = new Exception("test error")
+            for
+                fiber <- Fiber.gather(10)(Seq(
+                    IO(1),
+                    Abort.fail[Exception](error),
+                    IO(3)
+                ))
+                result <- fiber.get
+            yield assert(result == Chunk(1, 3))
+            end for
+        }
+
+        "preserves original order" in runJVM {
+            for
+                fiber <- Fiber.gather(Seq(
+                    Async.delay(3.millis)(1),
+                    Async.delay(1.millis)(2),
+                    Async.delay(2.millis)(3)
+                ))
+                result <- fiber.get
+            yield assert(result == Chunk(1, 2, 3))
+        }
+
+        "preserves original order with max limit" in runJVM {
+            for
+                fiber <- Fiber.gather(2)(Seq(
+                    Async.delay(3.millis)(1),
+                    Async.delay(1.millis)(2),
+                    Async.delay(2.millis)(3)
+                ))
+                result <- fiber.get
+            yield assert(result == Chunk(2, 3))
+        }
+
+        "handles concurrent completions" in runJVM {
+            for
+                latch  <- Latch.init(1)
+                fiber  <- Fiber.gather(Seq.fill(20)(latch.await.andThen(42)))
+                _      <- latch.release
+                result <- fiber.get
+            yield assert(result.size == 20 && result.forall(_ == 42))
+        }
+
+        val error = new Exception("test error")
+
+        "filters out failures" in run {
+            for
+                fiber <- Fiber.gather(Seq(
+                    IO(1),
+                    Abort.fail[Exception](error),
+                    IO(3)
+                ))
+                result <- fiber.get
+            yield assert(result == Chunk(1, 3))
+            end for
+        }
+
+        "handles mixed success/failure with exact max" in runJVM {
+            val error = new Exception("test error")
+            for
+                fiber <- Fiber.gather(2)(Seq(
+                    Async.delay(2.millis)(1),
+                    Async.delay(1.millis)(Abort.fail[Exception](error)),
+                    Async.delay(1.millis)(2),
+                    Async.delay(2.millis)(Abort.fail[Exception](error)),
+                    Async.delay(3.millis)(3)
+                ))
+                result <- fiber.get
+            yield
+                assert(result.size == 2)
+                assert(result == Chunk(1, 2))
+            end for
+        }
+
+        "handles race conditions in counter updates" in runJVM {
+            Loop.repeat(repeats) {
+                for
+                    latch1 <- Latch.init(1)
+                    latch2 <- Latch.init(1)
+                    fiber <- Fiber.gather(2)(Seq(
+                        latch1.release.andThen(1),
+                        latch2.release.andThen(2),
+                        Async.delay(1.millis)(3)
+                    ))
+                    _      <- latch1.await
+                    _      <- latch2.await
+                    result <- fiber.get
+                yield
+                    assert(result == Chunk(1, 2))
+                    ()
+            }.andThen(succeed)
+        }
+
+        "race conditions in error propagation" in runJVM {
+            Loop.repeat(50) {
+                for
+                    latch <- Latch.init(1)
+                    error1 = new Exception("error1")
+                    error2 = new Exception("error2")
+                    fiber <- Fiber.gather(Seq(
+                        latch.await.andThen(Abort.fail[Exception](error1)),
+                        latch.await.andThen(Abort.fail[Exception](error2))
+                    ))
+                    _      <- latch.release
+                    result <- Abort.run(fiber.get)
+                yield
+                    assert(result.isFail)
+                    assert(result.failure.exists(e => e == error1 || e == error2))
+                    ()
+            }.andThen(succeed)
+        }
+
+        "propagates error when all fail" in run {
+            for
+                fiber  <- Fiber.gather(Seq[Int < Abort[Throwable]](Abort.fail(error), Abort.fail(error)))
+                result <- Abort.run(fiber.get)
+            yield assert(result.failure.contains(error))
+            end for
+        }
+
+        "max limit with failures" in run {
+            for
+                fiber <- Fiber.gather(2)(Seq(
+                    IO(1),
+                    Abort.fail[Exception](error),
+                    IO(3),
+                    IO(4)
+                ))
+                result <- fiber.get
+            yield
+                assert(result.size == 2)
+                assert(result.forall(Seq(1, 3, 4).contains))
+            end for
+        }
+
+        "completes early when max successful results reached" in run {
+            Loop.repeat(repeats) {
+                val seq = Seq(1, 2, 3)
+                for
+                    fiber  <- Fiber.gather(2)(seq.map(i => Async.delay(i.millis)(i)))
+                    result <- fiber.get
+                yield
+                    assert(result.size == 2)
+                    assert(result.forall(seq.contains))
+                    ()
+                end for
+            }.andThen(succeed)
+        }
+
+        "interrupts all child fibers" in runJVM {
+            Loop.repeat(repeats) {
+                for
+                    interruptCount <- AtomicInt.init
+                    startLatch     <- Latch.init(3)
+                    promise1       <- Promise.init[Nothing, Int]
+                    promise2       <- Promise.init[Nothing, Int]
+                    promise3       <- Promise.init[Nothing, Int]
+                    _              <- promise1.onInterrupt(_ => interruptCount.incrementAndGet.unit)
+                    _              <- promise2.onInterrupt(_ => interruptCount.incrementAndGet.unit)
+                    _              <- promise3.onInterrupt(_ => interruptCount.incrementAndGet.unit)
+                    fiber <- Fiber.gather(Seq(
+                        startLatch.release.andThen(promise1.get),
+                        startLatch.release.andThen(promise2.get),
+                        startLatch.release.andThen(promise3.get)
+                    ))
+                    _     <- startLatch.await
+                    _     <- fiber.interrupt
+                    count <- interruptCount.get
+                yield
+                    assert(count == 3)
+                    ()
+            }.andThen(succeed)
+        }
+
+        "interrupts remaining fibers when max results reached" in runJVM {
+            Loop.repeat(repeats) {
+                for
+                    interruptCount <- AtomicInt.init
+                    startLatch     <- Latch.init(3)
+                    promise1       <- Promise.init[Nothing, Int]
+                    promise2       <- Promise.init[Nothing, Int]
+                    promise3       <- Promise.init[Nothing, Int]
+                    _              <- promise1.onInterrupt(_ => interruptCount.incrementAndGet.unit)
+                    _              <- promise2.onInterrupt(_ => interruptCount.incrementAndGet.unit)
+                    _              <- promise3.onInterrupt(_ => interruptCount.incrementAndGet.unit)
+                    fiber <- Fiber.gather(2)(Seq(
+                        startLatch.release.andThen(promise1.get),
+                        startLatch.release.andThen(promise2.get),
+                        startLatch.release.andThen(promise3.get)
+                    ))
+                    _      <- startLatch.await
+                    done1  <- fiber.done
+                    _      <- promise1.complete(Result.success(1))
+                    done2  <- fiber.done
+                    _      <- promise2.complete(Result.success(1))
+                    result <- fiber.get
+                    count  <- interruptCount.get
+                yield
+                    assert(!done1 && !done2)
+                    assert(result == Seq(1, 1))
+                    assert(count == 1)
+                    ()
+            }.andThen(succeed)
+        }
+
+        "quickSort" - {
+            "empty array" in {
+                val indices = Array[Int]()
+                val results = Array[AnyRef]()
+                Fiber.quickSort(indices, results, 0)
+                assert(indices.isEmpty && results.isEmpty)
+            }
+
+            "single element" in {
+                val indices = Array[Int](0)
+                val results = Array[AnyRef]("a")
+                Fiber.quickSort(indices, results, 1)
+                assert(indices.sameElements(Array(0)) && results.sameElements(Array("a")))
+            }
+
+            "partial sort with items" - {
+                "items = 0" in {
+                    val indices  = Array[Int](3, 1, 4, 2)
+                    val results  = Array[AnyRef]("c", "a", "d", "b")
+                    val original = indices.clone()
+                    Fiber.quickSort(indices, results, 0)
+                    assert(indices.sameElements(original))
+                }
+
+                "items = 1" in {
+                    val indices = Array[Int](3, 1, 4, 2)
+                    val results = Array[AnyRef]("c", "a", "d", "b")
+                    Fiber.quickSort(indices, results, 1)
+                    assert(indices(0) == 3)
+                }
+
+                "items = n-1" in {
+                    val indices = Array[Int](3, 1, 4, 2)
+                    val results = Array[AnyRef]("c", "a", "d", "b")
+                    Fiber.quickSort(indices, results, 3)
+                    assert(indices.take(3).sorted.sameElements(indices.take(3)))
+                    assert(indices(3) == 2)
+                }
+            }
+
+            "full sort" - {
+                "already sorted" in {
+                    val indices = Array[Int](0, 1, 2, 3)
+                    val results = Array[AnyRef]("a", "b", "c", "d")
+                    Fiber.quickSort(indices, results, 4)
+                    assert(indices.sameElements(Array(0, 1, 2, 3)))
+                    assert(results.sameElements(Array("a", "b", "c", "d")))
+                }
+
+                "reverse sorted" in {
+                    val indices = Array[Int](3, 2, 1, 0)
+                    val results = Array[AnyRef]("d", "c", "b", "a")
+                    Fiber.quickSort(indices, results, 4)
+                    assert(indices.sameElements(Array(0, 1, 2, 3)))
+                    assert(results.sameElements(Array("a", "b", "c", "d")))
+                }
+
+                "random order" in {
+                    val indices = Array[Int](3, 1, 4, 2)
+                    val results = Array[AnyRef]("c", "a", "d", "b")
+                    Fiber.quickSort(indices, results, 4)
+                    assert(indices.sameElements(Array(1, 2, 3, 4)))
+                    assert(results.sameElements(Array("a", "b", "c", "d")))
+                }
+            }
+
+            "can handle larger arrays" - {
+                val size = 1000
+
+                "sorted array" in {
+                    val indices = Array.range(0, size)
+                    val results = Array.fill[AnyRef](size)("x")
+                    Fiber.quickSort(indices, results, size)
+                    assert(indices.take(5).sameElements(Array(0, 1, 2, 3, 4)))
+                    assert(indices.takeRight(5).sameElements(Array(size - 5, size - 4, size - 3, size - 2, size - 1)))
+                }
+
+                "reverse sorted array" in {
+                    val indices = Array.range(0, size).reverse
+                    val results = Array.fill[AnyRef](size)("x")
+                    Fiber.quickSort(indices, results, size)
+                    assert(indices.take(5).sameElements(Array(0, 1, 2, 3, 4)))
+                    assert(indices.takeRight(5).sameElements(Array(size - 5, size - 4, size - 3, size - 2, size - 1)))
+                }
+
+                "random sorted array" in run {
+                    val indices = Array.range(0, size).reverse
+                    Random.shuffle(0 until size).map { seq =>
+                        val indices = seq.toArray
+                        val results = Array.fill[AnyRef](size)("x")
+                        Fiber.quickSort(indices, results, size)
+                        assert(indices.take(5).sameElements(Array(0, 1, 2, 3, 4)))
+                        assert(indices.takeRight(5).sameElements(Array(size - 5, size - 4, size - 3, size - 2, size - 1)))
+                    }
+                }
+
+                "array with repeated elements" in {
+                    val indices = Array.fill(size)(42)
+                    val results = Array.fill[AnyRef](size)("x")
+                    Fiber.quickSort(indices, results, size)
+                    assert(indices.forall(_ == 42))
+                }
+            }
+        }
+    }
+
 end FiberTest
