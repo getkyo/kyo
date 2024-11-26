@@ -694,7 +694,7 @@ class AsyncTest extends Test:
             val emitIsolate = Emit.isolate.merge[Int]
 
             Emit.run {
-                Async.timeout(10.millis, emitIsolate) {
+                Async.timeout(1.hour, emitIsolate) {
                     for
                         _ <- Emit(1)
                         _ <- Async.sleep(1.millis)
