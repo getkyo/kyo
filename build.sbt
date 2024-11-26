@@ -137,11 +137,13 @@ lazy val kyoNative = project
     .disablePlugins(MimaPlugin)
     .aggregate(
         `kyo-data`.native,
-        `kyo-prelude`.native
+        `kyo-prelude`.native,
+        `kyo-stats-registry`.native,
+        `kyo-scheduler`.native,
     )
 
 lazy val `kyo-scheduler` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-stats-registry`)
@@ -154,6 +156,7 @@ lazy val `kyo-scheduler` =
             libraryDependencies += "ch.qos.logback"  % "logback-classic" % "1.5.12"         % Test
         )
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
             libraryDependencies += "org.scala-js" %%% "scala-js-macrotask-executor" % "1.1.1"
@@ -241,7 +244,7 @@ lazy val `kyo-direct` =
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-registry` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stats-registry"))
@@ -253,6 +256,7 @@ lazy val `kyo-stats-registry` =
             crossScalaVersions                       := List(scala3Version, scala212Version, scala213Version)
         )
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-otel` =

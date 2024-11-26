@@ -4,6 +4,7 @@ import Worker.State
 import java.lang.invoke.MethodHandles
 import java.lang.invoke.VarHandle
 import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.LongAdder
 import kyo.scheduler.top.WorkerStatus
 import scala.annotation.nowarn
@@ -92,7 +93,8 @@ abstract private class Worker(
 
     val a1, a2, a3, a4, a5, a6, a7 = 0L // padding
 
-    @volatile private var state: State  = State.Idle
+    private val state = new AtomicReference[State](State.Idle)
+
     @volatile private var mount: Thread = null
 
     val b1, b2, b3, b4, b5, b6, b7 = 0L // padding
@@ -125,7 +127,7 @@ abstract private class Worker(
       * arrives for an idle worker.
       */
     def wakeup() = {
-        if ((state eq State.Idle) && stateHandle.compareAndSet(this, State.Idle, State.Running))
+        if ((state.get() eq State.Idle) && state.compareAndSet(State.Idle, State.Running))
             exec.execute(this)
     }
 
@@ -163,9 +165,9 @@ abstract private class Worker(
       * If checks fail while Running, transitions to Stalled and drains queue. Used by scheduler to skip workers that can't make progress.
       */
     def checkAvailability(nowMs: Long): Boolean = {
-        val state     = this.state
-        val available = !checkStalling(nowMs) && (state ne State.Stalled) && !isBlocked()
-        if (!available && (state eq State.Running) && stateHandle.compareAndSet(this, State.Running, State.Stalled))
+        val st        = this.state.get()
+        val available = !checkStalling(nowMs) && (st ne State.Stalled) && !isBlocked()
+        if (!available && (st eq State.Running) && state.compareAndSet(State.Running, State.Stalled))
             drain()
         available
     }
@@ -199,7 +201,7 @@ abstract private class Worker(
 
         while (true) {
             // Mark worker as actively running
-            state = State.Running
+            state.set(State.Running)
 
             if (task eq null)
                 // Try to get a task from our own queue first
@@ -227,8 +229,8 @@ abstract private class Worker(
                 }
             } else {
                 // No tasks available - prepare to go idle
-                state = State.Idle
-                if (queue.isEmpty() || !stateHandle.compareAndSet(this, State.Idle, State.Running)) {
+                state.set(State.Idle)
+                if (queue.isEmpty() || !state.compareAndSet(State.Idle, State.Running)) {
                     // Either queue is empty or another thread changed our state
                     // Clean up and exit
                     mount = null
@@ -239,7 +241,7 @@ abstract private class Worker(
 
             // Check if we should stop processing tasks
             if (shouldStop()) {
-                state = State.Idle
+                state.set(State.Idle)
                 // Reschedule current task if we have one
                 if (task ne null) schedule(task)
                 // Drain remaining tasks from queue
@@ -319,10 +321,6 @@ private object Worker {
     }
 
     private[Worker] object internal {
-
-        val stateHandle: VarHandle =
-            MethodHandles.privateLookupIn(classOf[Worker], MethodHandles.lookup())
-                .findVarHandle(classOf[Worker], "state", classOf[State])
 
         val local = new ThreadLocal[Worker]
 
