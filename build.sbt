@@ -187,10 +187,10 @@ lazy val `kyo-data` =
         .in(file("kyo-data"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.lihaoyi"   %%% "pprint"        % "0.9.0",
-            libraryDependencies += "dev.zio"       %%% "zio-test-sbt"  % zioVersion       % Test,
-            libraryDependencies += "org.scalatest" %%% "scalatest"     % scalaTestVersion % Test,
-            libraryDependencies += "dev.zio"       %%% "izumi-reflect" % "2.3.10"         % Test
+            libraryDependencies += "com.lihaoyi"       %%% "pprint"          % "0.9.0",
+            libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"          % "provided",
+            libraryDependencies += "org.scalatest"     %%% "scalatest"       % scalaTestVersion % Test,
+            libraryDependencies += "dev.zio"           %%% "izumi-reflect"   % "2.3.10"         % Test
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
