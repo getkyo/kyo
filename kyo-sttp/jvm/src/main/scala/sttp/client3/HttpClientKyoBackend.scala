@@ -4,17 +4,25 @@ import java.io.InputStream
 import java.io.UnsupportedEncodingException
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
+import java.net.http.HttpRequest.BodyPublisher
+import java.net.http.HttpRequest.BodyPublishers
 import java.net.http.HttpResponse
 import java.net.http.HttpResponse.BodyHandlers
+import java.nio.ByteBuffer
 import java.util.concurrent.Executor
+import java.util.concurrent.Flow.Publisher
 import java.util.zip.GZIPInputStream
 import java.util.zip.InflaterInputStream
+import java.util as ju
 import kyo.*
+import kyo.capabilities.KyoStreams
 import kyo.internal.KyoSttpMonad
 import kyo.internal.KyoSttpMonad.*
+import kyo.interop.Adapters
+import scala.collection.mutable.ArrayBuffer
 import sttp.capabilities.WebSockets
 import sttp.client3.HttpClientBackend.EncodingHandler
-import sttp.client3.HttpClientFutureBackend.InputStreamEncodingHandler
+import sttp.client3.internal.*
 import sttp.client3.internal.NoStreams
 import sttp.client3.internal.emptyInputStream
 import sttp.client3.internal.httpclient.*
@@ -27,8 +35,8 @@ class HttpClientKyoBackend private (
     client: HttpClient,
     closeClient: Boolean,
     customizeRequest: HttpRequest => HttpRequest,
-    customEncodingHandler: InputStreamEncodingHandler
-) extends HttpClientAsyncBackend[M, Nothing, WebSockets, InputStream, InputStream](
+    customEncodingHandler: EncodingHandler[KyoStreams.BinaryStream]
+) extends HttpClientAsyncBackend[M, KyoStreams, WebSockets, Publisher[ju.List[ByteBuffer]], KyoStreams.BinaryStream](
         client,
         KyoSttpMonad,
         closeClient,
@@ -36,25 +44,11 @@ class HttpClientKyoBackend private (
         customEncodingHandler
     ):
 
-    override val streams: NoStreams = NoStreams
+    override val streams: KyoStreams = KyoStreams
 
-    override protected val bodyToHttpClient =
-        new BodyToHttpClient[KyoSttpMonad.M, Nothing]:
-            override val streams: NoStreams                  = NoStreams
-            override given monad: MonadError[KyoSttpMonad.M] = KyoSttpMonad
-            override def streamToPublisher(stream: Nothing) =
-                stream
+    override protected val bodyToHttpClient = new KyoBodyToHttpClient
 
-    override protected val bodyFromHttpClient =
-        new InputStreamBodyFromHttpClient[KyoSttpMonad.M, Nothing]:
-            override def inputStreamToStream(is: InputStream) =
-                KyoSttpMonad.error(new IllegalStateException("Streaming is not supported"))
-            override val streams: NoStreams                  = NoStreams
-            override given monad: MonadError[KyoSttpMonad.M] = KyoSttpMonad
-            override def compileWebSocketPipe(
-                ws: WebSocket[KyoSttpMonad.M],
-                pipe: streams.Pipe[WebSocketFrame.Data[?], WebSocketFrame]
-            ) = pipe
+    override protected val bodyFromHttpClient = new KyoBodyFromHttpClient
 
     override protected def createSimpleQueue[A] =
         Channel.init[A](Int.MaxValue).map(new KyoSimpleQueue[A](_))
@@ -62,18 +56,26 @@ class HttpClientKyoBackend private (
     override protected def createSequencer =
         Meter.initMutex.map(new KyoSequencer(_))
 
-    override protected def standardEncoding: (InputStream, String) => InputStream = {
-        case (body, "gzip")    => new GZIPInputStream(body)
-        case (body, "deflate") => new InflaterInputStream(body)
-        case (_, ce)           => throw new UnsupportedEncodingException(s"Unsupported encoding: $ce")
+    override protected def standardEncoding: (KyoStreams.BinaryStream, String) => KyoStreams.BinaryStream = {
+        case (_, ce) => throw new UnsupportedEncodingException(s"Unsupported encoding: $ce")
     }
 
-    override protected def createBodyHandler: HttpResponse.BodyHandler[InputStream] =
-        BodyHandlers.ofInputStream()
+    override protected def createBodyHandler: HttpResponse.BodyHandler[Publisher[ju.List[ByteBuffer]]] =
+        BodyHandlers.ofPublisher()
 
-    override protected def bodyHandlerBodyToBody(p: InputStream): InputStream = p
+    override protected def bodyHandlerBodyToBody(p: Publisher[ju.List[ByteBuffer]]): KyoStreams.BinaryStream =
+        Adapters.publisherToStream(p).mapChunk { chunkList =>
+            val builder = ArrayBuffer.newBuilder[Byte]
+            chunkList.foreach { list =>
+                val iterator = list.iterator()
+                while iterator.hasNext() do
+                    val bytes = iterator.next().safeRead()
+                    builder ++= bytes
+            }
+            Chunk.from(builder.result().toArray)
+        }
 
-    override protected def emptyBody(): InputStream = emptyInputStream()
+    override protected def emptyBody(): KyoStreams.BinaryStream = Stream.empty[Byte]
 end HttpClientKyoBackend
 
 object HttpClientKyoBackend:
@@ -84,7 +86,7 @@ object HttpClientKyoBackend:
         client: HttpClient,
         closeClient: Boolean,
         customizeRequest: HttpRequest => HttpRequest,
-        customEncodingHandler: InputStreamEncodingHandler
+        customEncodingHandler: EncodingHandler[KyoStreams.BinaryStream]
     ): SttpBackend[KyoSttpMonad.M, WebSockets] =
         new FollowRedirectsBackend(
             new HttpClientKyoBackend(
@@ -98,7 +100,7 @@ object HttpClientKyoBackend:
     def apply(
         options: SttpBackendOptions = SttpBackendOptions.Default,
         customizeRequest: HttpRequest => HttpRequest = identity,
-        customEncodingHandler: InputStreamEncodingHandler = PartialFunction.empty,
+        customEncodingHandler: EncodingHandler[KyoStreams.BinaryStream] = PartialFunction.empty,
         executor: Option[Executor] = Some(r => r.run())
     ): SttpBackend[KyoSttpMonad.M, WebSockets] =
         HttpClientKyoBackend(
@@ -111,7 +113,7 @@ object HttpClientKyoBackend:
     def usingClient(
         client: HttpClient,
         customizeRequest: HttpRequest => HttpRequest = identity,
-        customEncodingHandler: InputStreamEncodingHandler = PartialFunction.empty
+        customEncodingHandler: EncodingHandler[KyoStreams.BinaryStream] = PartialFunction.empty
     ): SttpBackend[KyoSttpMonad.M, WebSockets] =
         HttpClientKyoBackend(
             client,
