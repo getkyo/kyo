@@ -2,6 +2,7 @@ package java.util.concurrent
 
 import java.util.Timer
 import java.util.TimerTask
+import java.util.logging.*
 
 class ScheduledFuture[A](r: => A) extends TimerTask:
     private var _cancelled = false
@@ -17,11 +18,14 @@ class ScheduledFuture[A](r: => A) extends TimerTask:
             ()
         catch
             case e: Throwable =>
-                e.printStackTrace()
+                ScheduledFuture.log.log(Level.SEVERE, "Bug in ScheduledFuture", e)
         end try
     end run
     def isDone(): Boolean = _done
 end ScheduledFuture
+
+private object ScheduledFuture:
+    private[ScheduledFuture] val log = Logger.getLogger("java.util.concurrent.ScheduledFuture")
 
 class ScheduledExecutorService():
 

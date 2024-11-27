@@ -158,7 +158,8 @@ lazy val `kyo-scheduler` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(
             `native-settings`,
-            crossScalaVersions := List(scala3Version)
+            crossScalaVersions                         := List(scala3Version),
+            libraryDependencies += "org.scala-native" %%% "scala-native-java-logging" % "1.0.0"
         )
         .jsSettings(
             `js-settings`,
@@ -230,7 +231,10 @@ lazy val `kyo-core` =
             libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
         )
         .jvmSettings(mimaCheck(false))
-        .jsSettings(`js-settings`)
+        .jsSettings(
+            `js-settings`,
+            libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
+        )
 
 lazy val `kyo-direct` =
     crossProject(JSPlatform, JVMPlatform)
