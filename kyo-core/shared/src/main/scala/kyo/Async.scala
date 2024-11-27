@@ -369,6 +369,80 @@ object Async:
     ): Chunk[A] < (Abort[E] & Async & Ctx) =
         Fiber._gather(max)(seq.size, seq).map(_.get)
 
+    /** Concurrently executes effects with state isolation and collects their successful results.
+      *
+      * @param isolate
+      *   Controls state propagation during execution
+      * @param first
+      *   First effect to execute
+      * @param rest
+      *   Rest of the effects to execute
+      * @return
+      *   Successful results as a Chunk
+      */
+    inline def gather[E, A: Flat, S, Ctx](isolate: Isolate[S])(
+        first: A < (Abort[E] & Async & S & Ctx),
+        rest: A < (Abort[E] & Async & S & Ctx)*
+    )(
+        using frame: Frame
+    ): Chunk[A] < (Abort[E] & Async & S & Ctx) =
+        gather(isolate)(first +: rest)
+
+    /** Concurrently executes effects with state isolation and collects up to `max` successful results.
+      *
+      * @param max
+      *   Maximum number of successful results to collect
+      * @param isolate
+      *   Controls state propagation during execution
+      * @param first
+      *   First effect to execute
+      * @param rest
+      *   Rest of the effects to execute
+      * @return
+      *   Successful results as a Chunk (size <= max)
+      */
+    inline def gather[E, A: Flat, S, Ctx](max: Int, isolate: Isolate[S])(
+        first: A < (Abort[E] & Async & S & Ctx),
+        rest: A < (Abort[E] & Async & S & Ctx)*
+    )(
+        using frame: Frame
+    ): Chunk[A] < (Abort[E] & Async & S & Ctx) =
+        gather(max, isolate)(first +: rest)
+
+    /** Concurrently executes effects with state isolation and collects their successful results.
+      *
+      * @param isolate
+      *   Controls state propagation during execution
+      * @param seq
+      *   Sequence of effects to execute
+      * @return
+      *   Successful results as a Chunk
+      */
+    inline def gather[E, A: Flat, S, Ctx](isolate: Isolate[S])(seq: Seq[A < (Abort[E] & Async & S & Ctx)])(
+        using frame: Frame
+    ): Chunk[A] < (Abort[E] & Async & S & Ctx) =
+        gather(seq.size, isolate)(seq)
+
+    /** Concurrently executes effects with state isolation and collects up to `max` successful results.
+      *
+      * @param max
+      *   Maximum number of successful results to collect
+      * @param isolate
+      *   Controls state propagation during execution
+      * @param seq
+      *   Sequence of effects to execute
+      * @return
+      *   Successful results as a Chunk (size <= max)
+      */
+    inline def gather[E, A: Flat, S, Ctx](max: Int, isolate: Isolate[S])(seq: Seq[A < (Abort[E] & Async & S & Ctx)])(
+        using frame: Frame
+    ): Chunk[A] < (Abort[E] & Async & S & Ctx) =
+        isolate.use { state =>
+            _gather(max)(seq.map(isolate.resume(state, _))).map { results =>
+                Kyo.collect(results.map((state, result) => isolate.restore(state, result)))
+            }
+        }
+
     /** Runs multiple computations in parallel with unlimited parallelism and returns their results.
       *
       * Unlike [[parallel]], this method starts all computations immediately without any concurrency control. This can lead to resource
