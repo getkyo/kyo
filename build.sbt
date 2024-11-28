@@ -141,6 +141,7 @@ lazy val kyoNative = project
         `kyo-stats-registry`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
+        `kyo-direct`.native,
     )
 
 lazy val `kyo-scheduler` =
@@ -236,7 +237,7 @@ lazy val `kyo-core` =
         )
 
 lazy val `kyo-direct` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-direct"))
@@ -246,6 +247,7 @@ lazy val `kyo-direct` =
             libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.22"
         )
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-registry` =
