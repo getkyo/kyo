@@ -16,7 +16,11 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Abort[Any] & Async & 
 
     def run(v: Future[Assertion] < (Abort[Any] & Async & Resource)): Future[Assertion] =
         import AllowUnsafe.embrace.danger
-        val a = Async.run(Abort.run(Resource.run(v)).map(_.fold(e => throw new IllegalStateException(s"Test aborted with $e"))(identity)))
+        val a = Async.run(Abort.run(Resource.run(v)).map(_.fold {
+            _.getFailure match
+                case ex: Throwable => throw ex
+                case e             => throw new IllegalStateException(s"Test aborted with $e")
+        }(identity)))
         val b = a.map(_.toFuture).map(_.flatten)
         IO.Unsafe.run(b).eval
     end run
