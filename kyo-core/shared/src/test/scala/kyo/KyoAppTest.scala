@@ -4,7 +4,7 @@ import Tagged.*
 
 class KyoAppTest extends Test:
 
-    "main" in runJVM {
+    "main" in runNotJS {
         val app = new KyoApp:
             run {
                 for

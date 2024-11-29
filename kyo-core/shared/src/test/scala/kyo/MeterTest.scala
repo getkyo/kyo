@@ -3,14 +3,14 @@ package kyo
 class MeterTest extends Test:
 
     "mutex" - {
-        "ok" in runJVM {
+        "ok" in runNotJS {
             for
                 t <- Meter.initMutex
                 v <- t.run(2)
             yield assert(v == 2)
         }
 
-        "run" in runJVM {
+        "run" in runNotJS {
             for
                 t  <- Meter.initMutex
                 p  <- Promise.init[Nothing, Int]
@@ -34,7 +34,7 @@ class MeterTest extends Test:
             yield assert(a1 == 0 && w1 == 0 && !d1 && !d2 && a2 == 0 && w2 == 1 && v1 == Result.success(1) && v2 == 2 && a3 == 1 && w3 == 0)
         }
 
-        "tryRun" in runJVM {
+        "tryRun" in runNotJS {
             for
                 sem <- Meter.initMutex
                 p   <- Promise.init[Nothing, Int]
@@ -52,7 +52,7 @@ class MeterTest extends Test:
     }
 
     "semaphore" - {
-        "ok" in runJVM {
+        "ok" in runNotJS {
             for
                 t  <- Meter.initSemaphore(2)
                 v1 <- t.run(2)
@@ -60,7 +60,7 @@ class MeterTest extends Test:
             yield assert(v1 == 2 && v2 == 3)
         }
 
-        "run" in runJVM {
+        "run" in runNotJS {
             for
                 t  <- Meter.initSemaphore(2)
                 p  <- Promise.init[Nothing, Int]
@@ -90,7 +90,7 @@ class MeterTest extends Test:
                 v1 == Result.success(1) && v2 == Result.success(1) && v3 == 2 && a3 == 2 && w3 == 0)
         }
 
-        "tryRun" in runJVM {
+        "tryRun" in runNotJS {
             for
                 sem <- Meter.initSemaphore(2)
                 p   <- Promise.init[Nothing, Int]
@@ -193,14 +193,14 @@ class MeterTest extends Test:
     val panic = Result.Panic(new Exception)
 
     "rate limiter" - {
-        "ok" in runJVM {
+        "ok" in runNotJS {
             for
                 t  <- Meter.initRateLimiter(2, 1.milli)
                 v1 <- t.run(2)
                 v2 <- t.run(3)
             yield assert(v1 == 2 && v2 == 3)
         }
-        "one loop" in runJVM {
+        "one loop" in runNotJS {
             for
                 meter   <- Meter.initRateLimiter(10, 1.milli)
                 counter <- AtomicInt.init(0)
@@ -210,7 +210,7 @@ class MeterTest extends Test:
                 v1      <- counter.get
             yield assert(v1 >= 2 && v1 <= 200)
         }
-        "two loops" in runJVM {
+        "two loops" in runNotJS {
             for
                 meter   <- Meter.initRateLimiter(10, 1.milli)
                 counter <- AtomicInt.init(0)
@@ -222,7 +222,7 @@ class MeterTest extends Test:
                 v1      <- counter.get
             yield assert(v1 >= 2 && v1 <= 200)
         }
-        "replenish doesn't overflow" in runJVM {
+        "replenish doesn't overflow" in runNotJS {
             for
                 meter     <- Meter.initRateLimiter(5, 5.millis)
                 _         <- Async.sleep(32.millis)
@@ -233,7 +233,7 @@ class MeterTest extends Test:
 
     "pipeline" - {
 
-        "run" in runJVM {
+        "run" in runNotJS {
             for
                 meter   <- Meter.pipeline(Meter.initRateLimiter(2, 1.milli), Meter.initMutex)
                 counter <- AtomicInt.init(0)
@@ -246,9 +246,9 @@ class MeterTest extends Test:
             yield assert(v1 >= 0 && v1 < 200)
         }
 
-        "tryRun" in runJVM {
+        "tryRun" in runNotJS {
             for
-                meter   <- Meter.pipeline(Meter.initRateLimiter(2, 5.millis), Meter.initMutex)
+                meter   <- Meter.pipeline(Meter.initRateLimiter(2, 1.second), Meter.initMutex)
                 counter <- AtomicInt.init(0)
                 f1      <- Async.run(loop(meter, counter))
                 _       <- Async.sleep(5.millis)
@@ -262,7 +262,7 @@ class MeterTest extends Test:
 
     "reentrancy" - {
         "mutex" - {
-            "reentrant by default" in runJVM {
+            "reentrant by default" in runNotJS {
                 for
                     mutex <- Meter.initMutex
                     result <- mutex.run {
@@ -273,7 +273,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant" in runJVM {
+            "non-reentrant" in runNotJS {
                 for
                     meter  <- Meter.initMutex(reentrant = false)
                     p      <- Promise.init[Nothing, Int]
@@ -285,7 +285,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in runJVM {
+            "nested forked fiber can't reenter" in runNotJS {
                 for
                     meter <- Meter.initMutex
                     (done, result) <- meter.run {
@@ -304,7 +304,7 @@ class MeterTest extends Test:
         }
 
         "semaphore" - {
-            "reentrant by default" in runJVM {
+            "reentrant by default" in runNotJS {
                 for
                     sem <- Meter.initSemaphore(1)
                     result <- sem.run {
@@ -315,7 +315,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant" in runJVM {
+            "non-reentrant" in runNotJS {
                 for
                     meter  <- Meter.initSemaphore(1, reentrant = false)
                     p      <- Promise.init[Nothing, Int]
@@ -327,7 +327,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in runJVM {
+            "nested forked fiber can't reenter" in runNotJS {
                 for
                     meter <- Meter.initSemaphore(1)
                     (done, result) <- meter.run {
@@ -346,7 +346,7 @@ class MeterTest extends Test:
         }
 
         "rate limiter" - {
-            "reentrant by default" in runJVM {
+            "reentrant by default" in runNotJS {
                 for
                     rateLimiter <- Meter.initRateLimiter(1, 60.seconds)
                     result <- rateLimiter.run {
@@ -357,7 +357,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant" in runJVM {
+            "non-reentrant" in runNotJS {
                 for
                     meter  <- Meter.initRateLimiter(1, 60.seconds, reentrant = false)
                     p      <- Promise.init[Nothing, Int]
@@ -369,7 +369,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in runJVM {
+            "nested forked fiber can't reenter" in runNotJS {
                 for
                     meter <- Meter.initRateLimiter(1, 60.seconds)
                     (done, result) <- meter.run {
@@ -388,7 +388,7 @@ class MeterTest extends Test:
         }
 
         "pipeline" - {
-            "reentrant when all components are reentrant" in runJVM {
+            "reentrant when all components are reentrant" in runNotJS {
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1)
@@ -402,7 +402,7 @@ class MeterTest extends Test:
                 yield assert(result == 42)
             }
 
-            "non-reentrant when any component is non-reentrant" in runJVM {
+            "non-reentrant when any component is non-reentrant" in runNotJS {
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1, reentrant = false)
@@ -419,7 +419,7 @@ class MeterTest extends Test:
                 yield assert(!done && result.isPanic)
             }
 
-            "nested forked fiber can't reenter" in runJVM {
+            "nested forked fiber can't reenter" in runNotJS {
                 for
                     mutex       <- Meter.initMutex
                     sem         <- Meter.initSemaphore(1)

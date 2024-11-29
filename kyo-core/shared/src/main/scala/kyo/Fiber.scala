@@ -1,6 +1,7 @@
 package kyo
 
 export Fiber.Promise
+import java.lang.invoke.VarHandle
 import java.util.Arrays
 import kyo.Result.Panic
 import kyo.Tag
@@ -380,6 +381,7 @@ object Fiber extends FiberPlatformSpecific:
                                             // Store successful result and its original index for ordering
                                             indices(okInt - 1) = idx
                                             results(okInt - 1) = v.asInstanceOf[AnyRef]
+                                            discard(VarHandle.storeStoreFence())
                                     case result: Result.Error[?] =>
                                         if ok == 0 && ok + nok == total then
                                             // If we have no successful results and all computations have completed,
@@ -433,6 +435,7 @@ object Fiber extends FiberPlatformSpecific:
         @tailrec def loop(i: Int): Unit =
             if i < size then
                 if results(i) == null then
+                    discard(VarHandle.loadLoadFence())
                     loop(0)
                 else
                     loop(i + 1)

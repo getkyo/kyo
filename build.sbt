@@ -139,7 +139,9 @@ lazy val kyoNative = project
         `kyo-data`.native,
         `kyo-prelude`.native,
         `kyo-stats-registry`.native,
-        `kyo-scheduler`.native
+        `kyo-scheduler`.native,
+        `kyo-core`.native,
+        `kyo-direct`.native,
     )
 
 lazy val `kyo-scheduler` =
@@ -214,7 +216,7 @@ lazy val `kyo-prelude` =
         .jsSettings(`js-settings`)
 
 lazy val `kyo-core` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-scheduler`)
@@ -225,19 +227,17 @@ lazy val `kyo-core` =
             libraryDependencies += "org.jctools"    % "jctools-core"    % "4.0.5",
             libraryDependencies += "org.slf4j"      % "slf4j-api"       % "2.0.16",
             libraryDependencies += "dev.dirs"       % "directories"     % "26",
-            libraryDependencies += "dev.zio"      %%% "zio-laws-laws"   % "1.0.0-RC35" % Test,
-            libraryDependencies += "dev.zio"      %%% "zio-test-sbt"    % "2.1.13"     % Test,
-            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.12"     % Test,
-            libraryDependencies += "org.javassist"  % "javassist"       % "3.30.2-GA"  % Test
+            libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.5.12" % Test
         )
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
         .jsSettings(
             `js-settings`,
             libraryDependencies += ("org.scala-js" %%% "scalajs-java-logging" % "1.0.0").cross(CrossVersion.for3Use2_13)
         )
 
 lazy val `kyo-direct` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-direct"))
@@ -247,6 +247,7 @@ lazy val `kyo-direct` =
             libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.22"
         )
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-registry` =
