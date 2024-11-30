@@ -31,7 +31,7 @@ case class FailedTransaction(frame: Frame) extends Exception(frame.position.show
   *   - Deadlocks are prevented by acquiring locks in a consistent order
   *
   * STM is most effective for operations that rarely conflict and complete quickly. Long-running transactions or high contention scenarios
-  * may face performance challenges from repeated retries. The system particularly excels at read-heavy workloads due to its support for
+  * may face performance challenges from repeated retries. The approach particularly excels at read-heavy workloads due to its support for
   * concurrent readers, while write-heavy workloads may experience more contention due to the need for exclusive write access. The
   * fine-grained locking strategy means that transactions only conflict if they actually touch the same references, allowing for high
   * concurrency when different transactions operate on different refs.
