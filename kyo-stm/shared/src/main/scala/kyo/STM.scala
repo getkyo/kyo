@@ -11,9 +11,9 @@ case class FailedTransaction(frame: Frame) extends Exception(frame.position.show
   * upfront, transactions execute speculatively and automatically retry if conflicts are detected during commit. While this enables better
   * composability than manual locking, applications must be designed to handle potentially frequent transaction retries.
   *
-  * Transactions are atomic, isolated, and composable but may retry multiple times before success. Side effects (like I/O) inside
-  * transactions must be used with caution as they will be re-executed on retry. Pure operations that only modify transactional references
-  * are safe and encouraged, while external side effects should be performed after the transaction commits.
+  * > IMPORTANT: Transactions are atomic, isolated, and composable but may retry multiple times before success. Side effects (like I/O)
+  * inside transactions must be used with caution as they will be re-executed on retry. Pure operations that only modify transactional
+  * references are safe and encouraged, while external side effects should be performed after the transaction commits.
   *
   * The core operations are:
   *   - STM.initRef and TRef.init create transactional references that can be shared between threads
@@ -22,16 +22,19 @@ case class FailedTransaction(frame: Frame) extends Exception(frame.position.show
   *   - STM.retry and STM.retryIf provide manual control over transaction retry behavior
   *   - Configurable retry schedules via STM.run's retrySchedule parameter
   *
-  * * The implementation uses a multi-reader-single-writer (MRSW) locking strategy:
-  *   - Multiple concurrent readers are allowed (read locks are stackable)
-  *   - Writers require exclusive access (no other readers or writers)
+  * * The implementation uses a fine-grained, per-reference locking strategy where each TRef has its own independent read/write lock:
+  *   - Multiple concurrent readers are allowed on each reference (read locks are stackable)
+  *   - Writers require exclusive access to a reference (no other readers or writers on that ref)
+  *   - No global locks are used - operations on different refs can proceed independently
   *   - Lock acquisition is optimistic to minimize contention
   *   - Early conflict detection prevents unnecessary work
   *   - Deadlocks are prevented by acquiring locks in a consistent order
   *
   * STM is most effective for operations that rarely conflict and complete quickly. Long-running transactions or high contention scenarios
   * may face performance challenges from repeated retries. The system particularly excels at read-heavy workloads due to its support for
-  * concurrent readers, while write-heavy workloads may experience more contention due to the need for exclusive write access.
+  * concurrent readers, while write-heavy workloads may experience more contention due to the need for exclusive write access. The
+  * fine-grained locking strategy means that transactions only conflict if they actually touch the same references, allowing for high
+  * concurrency when different transactions operate on different refs.
   */
 opaque type STM <: (Var[STM.RefLog] & Abort[FailedTransaction] & Async) =
     Var[STM.RefLog] & Abort[FailedTransaction] & Async
