@@ -22,8 +22,16 @@ case class FailedTransaction(frame: Frame) extends Exception(frame.position.show
   *   - STM.retry and STM.retryIf provide manual control over transaction retry behavior
   *   - Configurable retry schedules via STM.run's retrySchedule parameter
   *
+  * * The implementation uses a multi-reader-single-writer (MRSW) locking strategy:
+  *   - Multiple concurrent readers are allowed (read locks are stackable)
+  *   - Writers require exclusive access (no other readers or writers)
+  *   - Lock acquisition is optimistic to minimize contention
+  *   - Early conflict detection prevents unnecessary work
+  *   - Deadlocks are prevented by acquiring locks in a consistent order
+  *
   * STM is most effective for operations that rarely conflict and complete quickly. Long-running transactions or high contention scenarios
-  * may face performance challenges from repeated retries.
+  * may face performance challenges from repeated retries. The system particularly excels at read-heavy workloads due to its support for
+  * concurrent readers, while write-heavy workloads may experience more contention due to the need for exclusive write access.
   */
 opaque type STM <: (Var[STM.RefLog] & Abort[FailedTransaction] & Async) =
     Var[STM.RefLog] & Abort[FailedTransaction] & Async
