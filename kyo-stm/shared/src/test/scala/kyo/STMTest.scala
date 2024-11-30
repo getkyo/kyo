@@ -1,55 +1,19 @@
 package kyo
 
-import kyo.debug.Debug
-
 class STMTest extends Test:
 
-    "Ref operations" - {
-        "init and get" in run {
-            for
-                ref   <- Ref.init(42)
-                value <- STM.run(ref.get)
-            yield assert(value == 42)
-        }
-
-        "set and get" in run {
-            for
-                ref   <- Ref.init(42)
-                _     <- STM.run(ref.set(100))
-                value <- STM.run(ref.get)
-            yield assert(value == 100)
-        }
-
-        "multiple operations in transaction" in run {
-            for
-                ref1 <- Ref.init(10)
-                ref2 <- Ref.init(20)
-                result <- STM.run {
-                    for
-                        v1 <- ref1.get
-                        v2 <- ref2.get
-                        _  <- ref1.set(v2)
-                        _  <- ref2.set(v1)
-                        r1 <- ref1.get
-                        r2 <- ref2.get
-                    yield (r1, r2)
-                }
-            yield assert(result == (20, 10))
-        }
-    }
-
     "Transaction isolation" - {
-        "concurrent modifications" in runNotJS {
+        "concurrent modifications" in run {
             for
-                ref    <- Ref.init(0)
+                ref    <- TRef.init(0)
                 fibers <- Async.parallelUnbounded(List.fill(100)(STM.run(ref.update(_ + 1))))
                 value  <- STM.run(ref.get)
             yield assert(value == 100)
         }
 
-        "no dirty reads" in runNotJS {
+        "no dirty reads" in run {
             for
-                ref      <- Ref.init(0)
+                ref      <- TRef.init(0)
                 start    <- Latch.init(1)
                 continue <- Latch.init(1)
                 fiber <- Async.run {
@@ -71,8 +35,8 @@ class STMTest extends Test:
 
         "independent transactions don't interfere" in run {
             for
-                ref1 <- Ref.init(10)
-                ref2 <- Ref.init(20)
+                ref1 <- TRef.init(10)
+                ref2 <- TRef.init(20)
                 _    <- STM.run(ref1.set(30))
                 result <- STM.run {
                     for
@@ -90,7 +54,7 @@ class STMTest extends Test:
     "Retry behavior" - {
         "explicit retry" in run {
             for
-                ref <- Ref.init(0)
+                ref <- TRef.init(0)
                 result <- Abort.run {
                     STM.run {
                         for
@@ -104,7 +68,7 @@ class STMTest extends Test:
 
         "retry with schedule" in run {
             for
-                ref     <- Ref.init(0)
+                ref     <- TRef.init(0)
                 counter <- AtomicInt.init(0)
                 result <- Abort.run {
                     STM.run(Schedule.repeat(3)) {
@@ -125,7 +89,7 @@ class STMTest extends Test:
         "with Var effect" in run {
             Var.run(42) {
                 for
-                    ref <- Ref.init(0)
+                    ref <- TRef.init(0)
                     result <- STM.run(Var.isolate.update) {
                         for
                             _  <- ref.set(1)
@@ -142,7 +106,7 @@ class STMTest extends Test:
 
         "with Emit effect" in run {
             for
-                ref <- Ref.init(0)
+                ref <- TRef.init(0)
                 result <- Emit.run {
                     STM.run(Emit.isolate.merge[Int]) {
                         for
@@ -160,7 +124,7 @@ class STMTest extends Test:
         "rollback on failure preserves effect isolation" in run {
             val ex = new Exception("Test failure")
             for
-                ref <- Ref.init(0)
+                ref <- TRef.init(0)
                 result <-
                     Emit.run {
                         Abort.run {
@@ -182,7 +146,7 @@ class STMTest extends Test:
         "with nested Var isolations" in run {
             Var.run(0) {
                 for
-                    ref <- Ref.init(1)
+                    ref <- TRef.init(1)
                     result <- STM.run(Var.isolate.update) {
                         for
                             _ <- ref.set(2)
@@ -213,7 +177,7 @@ class STMTest extends Test:
 
             Memo.run {
                 for
-                    ref <- Ref.init(1)
+                    ref <- TRef.init(1)
                     result <- STM.run(Memo.isolate.merge) {
                         for
                             _      <- ref.set(2)
@@ -233,7 +197,7 @@ class STMTest extends Test:
             val ex = new Exception("Test failure")
             Var.run(0) {
                 for
-                    ref <- Ref.init(0)
+                    ref <- TRef.init(0)
                     result <- Emit.run {
                         Abort.run {
                             STM.run(Emit.isolate.merge[Int].andThen(Var.isolate.update)) {
@@ -261,7 +225,7 @@ class STMTest extends Test:
 
         "nested transactions share the same transaction context" in run {
             for
-                ref <- Ref.init(0)
+                ref <- TRef.init(0)
                 result <- STM.run {
                     for
                         _ <- ref.set(1)
@@ -281,7 +245,7 @@ class STMTest extends Test:
 
         "nested transaction rollbacks affect outer transaction" in run {
             for
-                ref <- Ref.init(0)
+                ref <- TRef.init(0)
                 _ <-
                     STM.run {
                         for
@@ -303,7 +267,7 @@ class STMTest extends Test:
 
         "multiple levels of nesting maintain consistency" in run {
             for
-                ref <- Ref.init(0)
+                ref <- TRef.init(0)
                 result <- STM.run {
                     for
                         _ <- ref.set(1)
@@ -323,7 +287,7 @@ class STMTest extends Test:
 
         "nested transactions see parent modifications" in run {
             for
-                ref <- Ref.init(0)
+                ref <- TRef.init(0)
                 result <- STM.run {
                     for
                         _  <- ref.set(1)
@@ -343,8 +307,8 @@ class STMTest extends Test:
 
         "nested transaction modifications are visible to parent" in run {
             for
-                ref1 <- Ref.init(0)
-                ref2 <- Ref.init(0)
+                ref1 <- TRef.init(0)
+                ref2 <- TRef.init(0)
                 result <- STM.run {
                     for
                         _ <- ref1.set(1)
@@ -369,7 +333,7 @@ class STMTest extends Test:
 
         "sequential nested transactions see previous changes" in run {
             for
-                ref <- Ref.init(0)
+                ref <- TRef.init(0)
                 result <- STM.run {
                     for
                         _ <- ref.set(1)
@@ -393,7 +357,7 @@ class STMTest extends Test:
 
         "nested transaction rollback preserves parent changes" in run {
             for
-                ref <- Ref.init(0)
+                ref <- TRef.init(0)
                 result <- STM.run {
                     for
                         _  <- ref.set(1)
@@ -420,7 +384,7 @@ class STMTest extends Test:
 
         "transaction rollback on failure" in run {
             for
-                ref <- Ref.init(42)
+                ref <- TRef.init(42)
                 result <- Abort.run {
                     STM.run {
                         for
@@ -435,8 +399,8 @@ class STMTest extends Test:
 
         "multiple refs rollback on failure" in run {
             for
-                ref1 <- Ref.init(10)
-                ref2 <- Ref.init(20)
+                ref1 <- TRef.init(10)
+                ref2 <- TRef.init(20)
                 result <- Abort.run {
                     STM.run {
                         for
@@ -453,7 +417,7 @@ class STMTest extends Test:
 
         "nested transaction rollback on inner failure" in run {
             for
-                ref <- Ref.init(1)
+                ref <- TRef.init(1)
                 result <- Abort.run {
                     STM.run {
                         for
@@ -473,8 +437,8 @@ class STMTest extends Test:
 
         "partial updates within transaction are atomic" in run {
             for
-                ref1 <- Ref.init("initial1")
-                ref2 <- Ref.init("initial2")
+                ref1 <- TRef.init("initial1")
+                ref2 <- TRef.init("initial2")
                 result <- Abort.run {
                     STM.run {
                         for
@@ -496,7 +460,7 @@ class STMTest extends Test:
 
         "exception in update function rolls back" in run {
             for
-                ref <- Ref.init(0)
+                ref <- TRef.init(0)
                 result <- Abort.run {
                     STM.run {
                         ref.update { x =>
@@ -517,7 +481,7 @@ class STMTest extends Test:
         "concurrent updates" in run {
             (for
                 size  <- Choice.get(Seq(1, 10, 100))
-                ref   <- Ref.init(0)
+                ref   <- TRef.init(0)
                 _     <- Async.parallelUnbounded((1 to size).map(_ => STM.run(ref.update(_ + 1))))
                 value <- STM.run(ref.get)
             yield assert(value == size))
@@ -528,7 +492,7 @@ class STMTest extends Test:
         "concurrent reads and writes" in run {
             (for
                 size  <- Choice.get(Seq(1, 10, 100))
-                ref   <- Ref.init(0)
+                ref   <- TRef.init(0)
                 latch <- Latch.init(1)
                 writeFiber <- Async.run(
                     latch.await.andThen(Async.parallelUnbounded((1 to size).map(_ => STM.run(ref.update(_ + 1)))))
@@ -548,7 +512,7 @@ class STMTest extends Test:
         "concurrent nested transactions" in run {
             (for
                 size <- Choice.get(Seq(1, 10, 100))
-                ref  <- Ref.init(0)
+                ref  <- TRef.init(0)
                 _ <- Async.parallelUnbounded((1 to size).map { _ =>
                     STM.run {
                         for
@@ -571,7 +535,7 @@ class STMTest extends Test:
         "dining philosophers" in run {
             val philosophers = 5
             (for
-                forks <- Kyo.fill(philosophers)(Ref.init(true))
+                forks <- Kyo.fill(philosophers)(TRef.init(true))
                 _ <- Async.parallelUnbounded(
                     (0 until philosophers).map { i =>
                         val leftFork  = forks(i)
@@ -602,9 +566,9 @@ class STMTest extends Test:
 
         "bank account transfers" in run {
             (for
-                account1 <- Ref.init(500)
-                account2 <- Ref.init(300)
-                account3 <- Ref.init(200)
+                account1 <- TRef.init(500)
+                account2 <- TRef.init(300)
+                account3 <- TRef.init(200)
 
                 transfers = List(
                     STM.run {
@@ -652,9 +616,9 @@ class STMTest extends Test:
 
         "circular account transfers" in run {
             (for
-                account1 <- Ref.init(300)
-                account2 <- Ref.init(200)
-                account3 <- Ref.init(100)
+                account1 <- TRef.init(300)
+                account2 <- TRef.init(200)
+                account3 <- TRef.init(100)
 
                 circularTransfers = (1 to 5).flatMap(_ =>
                     List(

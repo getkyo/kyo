@@ -286,4 +286,61 @@ class KyoTest extends Test:
             assert(result.eval == 10)
         }
     }
+
+    "findFirst" - {
+        "empty sequence" in {
+            assert(Kyo.findFirst(Seq.empty[Int])(v => Maybe(v)).eval == Maybe.empty)
+        }
+
+        "single element - found" in {
+            assert(Kyo.findFirst(Seq(1))(v => Maybe(v)).eval == Maybe(1))
+        }
+
+        "single element - not found" in {
+            assert(Kyo.findFirst(Seq(1))(v => Maybe.empty).eval == Maybe.empty)
+        }
+
+        "multiple elements - first match" in {
+            assert(Kyo.findFirst(Seq(1, 2, 3))(v => if v > 0 then Maybe(v) else Maybe.empty).eval == Maybe(1))
+        }
+
+        "multiple elements - middle match" in {
+            assert(Kyo.findFirst(Seq(1, 2, 3))(v => if v == 2 then Maybe(v) else Maybe.empty).eval == Maybe(2))
+        }
+
+        "multiple elements - no match" in {
+            assert(Kyo.findFirst(Seq(1, 2, 3))(v => if v > 5 then Maybe(v) else Maybe.empty).eval == Maybe.empty)
+        }
+
+        "works with effects" in {
+            var count = 0
+            val result = Env.run(42)(
+                Kyo.findFirst(Seq(1, 2, 3)) { v =>
+                    Env.use[Int] { env =>
+                        count += 1
+                        if v == env then Maybe(v) else Maybe.empty
+                    }
+                }
+            ).eval
+            assert(result == Maybe.empty)
+            assert(count == 3)
+        }
+
+        "short circuits" in {
+            var count = 0
+            val result = Kyo.findFirst(Seq(1, 2, 3, 4, 5)) { v =>
+                count += 1
+                if v == 2 then Maybe(v) else Maybe.empty
+            }.eval
+            assert(result == Maybe(2))
+            assert(count == 2)
+        }
+
+        "works with different sequence types" in {
+            val pred = (v: Int) => if v == 2 then Maybe(v) else Maybe.empty
+            assert(Kyo.findFirst(List(1, 2, 3))(pred).eval == Maybe(2))
+            assert(Kyo.findFirst(Vector(1, 2, 3))(pred).eval == Maybe(2))
+            assert(Kyo.findFirst(Chunk(1, 2, 3))(pred).eval == Maybe(2))
+        }
+    }
 end KyoTest

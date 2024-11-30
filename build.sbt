@@ -92,6 +92,7 @@ lazy val kyoJVM = project
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
         `kyo-direct`.jvm,
+        `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
         `kyo-stats-otel`.jvm,
         `kyo-cache`.jvm,
@@ -120,6 +121,7 @@ lazy val kyoJS = project
         `kyo-prelude`.js,
         `kyo-core`.js,
         `kyo-direct`.js,
+        `kyo-stm`.js,
         `kyo-stats-registry`.js,
         `kyo-sttp`.js,
         `kyo-test`.js,
@@ -142,6 +144,7 @@ lazy val kyoNative = project
         `kyo-scheduler`.native,
         `kyo-core`.native,
         `kyo-direct`.native,
+        `kyo-stm`.native,
     )
 
 lazy val `kyo-scheduler` =
@@ -246,6 +249,17 @@ lazy val `kyo-direct` =
             `kyo-settings`,
             libraryDependencies += "com.github.rssh" %%% "dotty-cps-async" % "0.9.22"
         )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-stm` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-stm"))
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
@@ -533,7 +547,7 @@ lazy val readme =
 lazy val `native-settings` = Seq(
     fork                                        := false,
     bspEnabled                                  := false,
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0" % "provided"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )
 
 lazy val `js-settings` = Seq(

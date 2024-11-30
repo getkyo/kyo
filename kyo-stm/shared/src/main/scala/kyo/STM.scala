@@ -16,8 +16,8 @@ case class FailedTransaction(frame: Frame) extends Exception(frame.position.show
   * are safe and encouraged, while external side effects should be performed after the transaction commits.
   *
   * The core operations are:
-  *   - STM.initRef and Ref.init create transactional references that can be shared between threads
-  *   - Ref.get and Ref.set read and modify references within transactions
+  *   - STM.initRef and TRef.init create transactional references that can be shared between threads
+  *   - TRef.get and TRef.set read and modify references within transactions
   *   - STM.run executes transactions that either fully commit or rollback
   *   - STM.retry and STM.retryIf provide manual control over transaction retry behavior
   *   - Configurable retry schedules via STM.run's retrySchedule parameter
@@ -27,9 +27,6 @@ case class FailedTransaction(frame: Frame) extends Exception(frame.position.show
   */
 opaque type STM <: (Var[STM.RefLog] & Abort[FailedTransaction] & Async) =
     Var[STM.RefLog] & Abort[FailedTransaction] & Async
-
-// Export Ref to the kyo package
-export STM.Ref
 
 object STM:
 
@@ -52,19 +49,19 @@ object STM:
       */
     def retryIf(cond: Boolean)(using Frame): Unit < STM = if cond then retry else ()
 
-    /** Initializes a new transactional reference (Ref) with an initial value. The reference is created within the current transaction.
+    /** Initializes a new transactional reference (TRef) with an initial value. The reference is created within the current transaction.
       *
       * @param value
       *   The initial value to store in the reference
       * @return
       *   A new transactional reference containing the initial value
       */
-    def initRef[A](value: A)(using Frame): Ref[A] < STM =
+    def initRef[A](value: A)(using Frame): TRef[A] < STM =
         useRequiredTid { tid =>
             Var.use[RefLog] { log =>
                 IO.Unsafe {
                     val ref    = initRefNow(tid, value)
-                    val refAny = ref.asInstanceOf[Ref[Any]]
+                    val refAny = ref.asInstanceOf[TRef[Any]]
                     Var.setAndThen(log + (refAny -> refAny.state))(ref)
                 }
             }
@@ -122,8 +119,8 @@ object STM:
                             IO.Unsafe {
                                 // Attempt to acquire locks and commit the transaction
                                 val (locked, unlocked) =
-                                    // Sort references by ID to prevent deadlocks
-                                    log.toSeq.sortBy(_._1.id)
+                                    // Sort references by identity to prevent deadlocks
+                                    log.toSeq.sortBy((ref, _) => ref.hashCode)
                                         .span((ref, entry) => ref.lock(entry))
 
                                 if unlocked.nonEmpty then
@@ -156,152 +153,22 @@ object STM:
 
     end run
 
-    /** A transactional reference that can be modified within STM transactions. Provides atomic read and write operations with strong
-      * consistency guarantees.
-      *
-      * @param id
-      *   Unique identifier for this reference
-      * @param state
-      *   The current state of the reference
-      */
-    @safePublish final class Ref[A] private[STM] (
-        private[STM] val id: Long,
-        @volatile private[STM] var state: Write[A]
-    ):
-        // Int.MaxValue => write lock
-        // > 0          => read lock
-        private val lock =
-            import AllowUnsafe.embrace.danger
-            AtomicInt.Unsafe.init(0)
-
-        /** Gets the current value of the reference within a transaction.
-          *
-          * @return
-          *   The current value
-          */
-        def get(using Frame): A < STM =
-            Var.use[RefLog] { log =>
-                val refAny = this.asInstanceOf[Ref[Any]]
-                if log.contains(refAny) then
-                    // Ref is already in the log, return value
-                    log(refAny).value.asInstanceOf[A]
-                else
-                    useRequiredTid { tid =>
-                        IO {
-                            val state = this.state
-                            if state.tid > tid then
-                                // Early retry if the Ref is concurrently modified
-                                retry
-                            else
-                                // Append Read to the log and return value
-                                val entry = Read[Any](state.tid, state.value)
-                                Var.setAndThen(log + (refAny -> entry))(state.value)
-                            end if
-                        }
-                    }
-                end if
-            }
-
-        /** Sets a new value for the reference within a transaction.
-          *
-          * @param v
-          *   The new value to set
-          */
-        def set(v: A)(using Frame): Unit < STM =
-            Var.use[RefLog] { log =>
-                val refAny = this.asInstanceOf[Ref[Any]]
-                if log.contains(refAny) then
-                    // Ref is already in the log, update it
-                    val prev  = log(refAny)
-                    val entry = Write[Any](prev.tid, v)
-                    Var.setDiscard(log + (refAny -> entry))
-                else
-                    IO {
-                        useRequiredTid { tid =>
-                            val state = this.state
-                            if state.tid > tid then
-                                // Early retry if the Ref is concurrently modified
-                                retry
-                            else
-                                // Append Write to the log
-                                val entry = Write[Any](state.tid, v)
-                                Var.setDiscard(log + (refAny -> entry))
-                            end if
-                        }
-                    }
-                end if
-            }
-
-        /** Updates the reference's value by applying a function to the current value within a transaction.
-          *
-          * @param f
-          *   The function to transform the current value into the new value
-          * @return
-          *   Unit, as this is a modification operation
-          */
-        def update(f: A => A)(using Frame): Unit < STM =
-            get.map(f(_)).map(set)
-
-        @tailrec private[STM] def lock(entry: Entry[A])(using AllowUnsafe): Boolean =
-            state.tid == entry.tid && {
-                val l = lock.get()
-                entry match
-                    case Read(tid, value) =>
-                        // Read locks can stack if no write lock
-                        l != Int.MaxValue && (lock.cas(l, l + 1) || lock(entry))
-                    case Write(tid, value) =>
-                        // Write lock requires no existing locks
-                        l == 0 && (lock.cas(l, Int.MaxValue) || lock(entry))
-                end match
-            }
-
-        private[STM] def commit(tid: Long, entry: Entry[A])(using AllowUnsafe): Unit =
-            entry match
-                case Write(_, value) =>
-                    // Only need to commit Write entries
-                    state = Write(tid, value)
-                case _ =>
-
-        private[STM] def unlock(entry: Entry[A])(using AllowUnsafe): Unit =
-            entry match
-                case Read(tid, value) =>
-                    // Release read lock
-                    discard(lock.decrementAndGet())
-                case Write(tid, value) =>
-                    // Release write lock
-                    lock.set(0)
-            end match
-        end unlock
-    end Ref
-
-    object Ref:
-        /** Creates a new transactional reference outside of a transaction.
-          *
-          * @param value
-          *   The initial value
-          * @return
-          *   A new reference containing the value
-          */
-        def init[A](value: A)(using Frame): Ref[A] < IO =
-            IO.Unsafe(initRefNow(value))
-    end Ref
-
-    type RefLog = Map[Ref[Any], Entry[Any]]
+    type RefLog = Map[TRef[Any], Entry[Any]]
 
     private[kyo] object internal:
 
         // Unique transaction and reference ID generation
-        private val (nextTid, nextRefId) =
+        private val nextTid =
             import AllowUnsafe.embrace.danger
-            (AtomicLong.Unsafe.init(0), AtomicLong.Unsafe.init(0))
+            AtomicLong.Unsafe.init(0)
 
         private val tidLocal = Local.init(-1L)
 
-        def initRefNow[A](tid: Long, value: A)(using AllowUnsafe): Ref[A] =
-            new Ref(nextRefId.incrementAndGet(), Write(tid, value))
+        def initRefNow[A](tid: Long, value: A)(using AllowUnsafe): TRef[A] =
+            new TRef(Write(tid, value))
 
-        def initRefNow[A](value: A)(using AllowUnsafe): Ref[A] =
-            new Ref(nextRefId.incrementAndGet(), Write(nextTid.incrementAndGet(), value))
+        def initRefNow[A](value: A)(using AllowUnsafe): TRef[A] =
+            new TRef(Write(nextTid.incrementAndGet(), value))
 
         def withNewTid[A, S](f: Long => A < S)(using Frame): A < (S & IO) =
             IO.Unsafe {

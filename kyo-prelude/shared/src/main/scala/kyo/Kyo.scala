@@ -289,6 +289,45 @@ object Kyo:
                 end match
     end collectDiscard
 
+    /** Finds the first element in a sequence that satisfies a predicate.
+      *
+      * @param seq
+      *   The input sequence
+      * @param f
+      *   The effect-producing predicate function
+      * @return
+      *   A new effect that produces Maybe of the first matching element
+      */
+    def findFirst[A, B, S](seq: Seq[A])(f: Safepoint ?=> A => Maybe[B] < S)(using Frame, Safepoint): Maybe[B] < S =
+        seq.knownSize match
+            case 0 => Maybe.empty
+            case 1 => f(seq(0))
+            case _ =>
+                seq match
+                    case seq: List[A] =>
+                        Loop(seq) { seq =>
+                            seq match
+                                case Nil => Loop.done(Maybe.empty)
+                                case head :: tail =>
+                                    f(head).map {
+                                        case Absent     => Loop.continue(tail)
+                                        case Present(v) => Loop.done(Maybe(v))
+                                    }
+                        }
+                    case seq =>
+                        val indexed = toIndexed(seq)
+                        val size    = indexed.size
+                        Loop.indexed { idx =>
+                            if idx == size then Loop.done(Maybe.empty)
+                            else
+                                f(indexed(idx)).map {
+                                    case Absent     => Loop.continue
+                                    case Present(v) => Loop.done(Maybe(v))
+                                }
+                        }
+                end match
+    end findFirst
+
     /** Takes elements from a sequence while a predicate holds true.
       *
       * @param seq
