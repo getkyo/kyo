@@ -54,6 +54,11 @@ sealed trait TRef[A]:
 
 end TRef
 
+/** Implementation of a transactional reference. Extends AtomicInteger to avoid an extra allocation for lock state management.
+  *
+  * @param initialState
+  *   The initial value and transaction ID for this reference
+  */
 final private class TRefImpl[A] private[kyo] (initialState: Write[A])
     extends AtomicInteger(0) // Atomic super class to keep the lock state
     with TRef[A]:
