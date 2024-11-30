@@ -71,7 +71,7 @@ object STM:
         useRequiredTid { tid =>
             Var.use[RefLog] { log =>
                 IO.Unsafe {
-                    val ref    = initRefNow(tid, value)
+                    val ref    = TRef.Unsafe.init(tid, value)
                     val refAny = ref.asInstanceOf[TRef[Any]]
                     Var.setAndThen(log + (refAny -> refAny.state))(ref)
                 }
@@ -169,17 +169,11 @@ object STM:
     private[kyo] object internal:
 
         // Unique transaction and reference ID generation
-        private val nextTid =
+        private[kyo] val nextTid =
             import AllowUnsafe.embrace.danger
             AtomicLong.Unsafe.init(0)
 
         private val tidLocal = Local.init(-1L)
-
-        def initRefNow[A](tid: Long, value: A)(using AllowUnsafe): TRef[A] =
-            new TRef(Write(tid, value))
-
-        def initRefNow[A](value: A)(using AllowUnsafe): TRef[A] =
-            new TRef(Write(nextTid.incrementAndGet(), value))
 
         def withNewTid[A, S](f: Long => A < S)(using Frame): A < (S & IO) =
             IO.Unsafe {
