@@ -2,7 +2,7 @@ package kyo
 
 private[kyo] object TID:
 
-    // Unique transaction and reference ID generation
+    // Unique transaction ID generation
     private val nextTid = AtomicLong.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
     private val tidLocal = Local.initIsolated(-1L)

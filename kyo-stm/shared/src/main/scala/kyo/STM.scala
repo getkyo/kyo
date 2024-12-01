@@ -21,13 +21,14 @@ case class FailedTransaction(frame: Frame) extends Exception(frame.position.show
   *   - STM.retry and STM.retryIf provide manual control over transaction retry behavior
   *   - Configurable retry schedules via STM.run's retrySchedule parameter
   *
-  * * The implementation uses a fine-grained, per-reference locking strategy where each TRef has its own independent read/write lock:
-  *   - Multiple concurrent readers are allowed on each reference (read locks are stackable)
-  *   - Writers require exclusive access to a reference (no other readers or writers on that ref)
-  *   - No global locks are used - operations on different refs can proceed independently
-  *   - Lock acquisition is optimistic to minimize contention
-  *   - Early conflict detection prevents unnecessary work
-  *   - Deadlocks are prevented by acquiring locks in a consistent order
+  * The implementation uses optimistic execution with lock-based validation during commit:
+  *   - Transactions execute without acquiring locks, tracking reads and writes in a local log
+  *   - During commit, read-write locks are acquired on affected TRefs to ensure consistency:
+  *     - Multiple readers can hold shared locks on a TRef during commit
+  *     - Writers require an exclusive lock during commit
+  *     - No global locks are used - operations on different refs can commit independently
+  *     - Lock acquisition is ordered by TRef identity to prevent deadlocks
+  *     - Early conflict detection aborts transactions that would fail validation
   *
   * STM is most effective for operations that rarely conflict and complete quickly. Long-running transactions or high contention scenarios
   * may face performance challenges from repeated retries. The approach particularly excels at read-heavy workloads due to its support for

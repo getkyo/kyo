@@ -4,11 +4,11 @@ package kyo
   * `TRef[Map[K, TRef[V]]]`, where each value is wrapped in its own transactional reference.
   *
   * TMap is designed to minimize contention in concurrent scenarios through this nested TRef structure. Since each value has its own `TRef`,
-  * operations on different keys can proceed independently. Only structural changes like `put` with new keys or `remove` need to lock the
-  * main map, while value updates through `updateWith` or `put` to existing keys only lock that specific value's TRef.
+  * operations on different keys can commit independently. Only structural changes like `put` with new keys or `remove` need to lock the
+  * main map during commit, while value updates through `updateWith` or `put` to existing keys only lock that specific value's TRef.
   *
   * This architecture is particularly effective at reducing retries in concurrent scenarios by limiting the scope of conflicts between
-  * transactions. Updates to different keys can proceed in parallel, while reads can execute concurrently with writes to different keys. The
+  * transactions. Updates to different keys can proceed in parallel, while reads can commit concurrently with writes to different keys. The
   * implementation maintains strong consistency guarantees while allowing maximum concurrency for non-conflicting operations.
   *
   * Operations that modify existing values have low contention characteristics, while structural modifications experience higher contention.
@@ -122,7 +122,7 @@ object TMap:
           *   the value associated with the key or the computed default
           */
         inline def getOrElse[A, S](key: K, inline orElse: => V < S)(using inline frame: Frame): V < (STM & S) =
-            use(key) {
+            self.use(key) {
                 case Absent     => orElse
                 case Present(v) => v
             }
@@ -264,7 +264,7 @@ object TMap:
           *   the final accumulated result
           */
         def fold[A, B, S](acc: A)(f: (A, K, V) => A < S)(using Frame): A < (STM & S) =
-            use { map =>
+            self.use { map =>
                 Kyo.foldLeft(map.toSeq)(acc) {
                     case (acc, (key, ref)) =>
                         ref.use(v => f(acc, key, v))
@@ -279,7 +279,7 @@ object TMap:
           *   the first result that matches, if any
           */
         def findFirst[A, S](f: (K, V) => Maybe[A] < S)(using Frame): Maybe[A] < (STM & S) =
-            use { map =>
+            self.use { map =>
                 Kyo.findFirst(map.toSeq) { (key, ref) =>
                     ref.use(f(key, _))
                 }
