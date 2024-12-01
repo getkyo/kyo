@@ -36,12 +36,12 @@ case class FailedTransaction(frame: Frame) extends Exception(frame.position.show
   * fine-grained locking strategy means that transactions only conflict if they actually touch the same references, allowing for high
   * concurrency when different transactions operate on different refs.
   */
-opaque type STM <: (Var[STM.RefLog] & Abort[FailedTransaction] & Async) =
-    Var[STM.RefLog] & Abort[FailedTransaction] & Async
+opaque type STM <: (Var[RefLog] & Abort[FailedTransaction] & Async) =
+    Var[RefLog] & Abort[FailedTransaction] & Async
 
 object STM:
 
-    // The default retry schedule for failed transactions
+    /** The default retry schedule for failed transactions */
     val defaultRetrySchedule = Schedule.fixed(1.millis * 0.5).take(20)
 
     /** Forces a transaction retry by aborting the current transaction and rolling back all changes. This is useful when a transaction
@@ -58,7 +58,8 @@ object STM:
       * @param cond
       *   The condition that determines whether to retry
       */
-    def retryIf(cond: Boolean)(using Frame): Unit < STM = if cond then retry else ()
+    def retryIf(cond: Boolean)(using frame: Frame): Unit < STM =
+        Abort.when(cond)(FailedTransaction(frame))
 
     /** Initializes a new transactional reference (TRef) with an initial value. The reference is created within the current transaction.
       *
@@ -73,7 +74,7 @@ object STM:
                 IO.Unsafe {
                     val ref    = TRef.Unsafe.init(tid, value)
                     val refAny = ref.asInstanceOf[TRef[Any]]
-                    Var.setAndThen(log + (refAny -> refAny.state))(ref)
+                    Var.setAndThen(log.put(refAny, refAny.state))(ref)
                 }
             }
         }
@@ -126,7 +127,7 @@ object STM:
                 // New transaction without a parent, use regular commit flow
                 Retry[FailedTransaction](retrySchedule) {
                     withNewTid { tid =>
-                        Var.runWith(Map.empty)(v) { (log, result) =>
+                        Var.runWith(RefLog.empty)(v) { (log, result) =>
                             IO.Unsafe {
                                 // Attempt to acquire locks and commit the transaction
                                 val (locked, unlocked) =
@@ -164,14 +165,11 @@ object STM:
 
     end run
 
-    type RefLog = Map[TRef[Any], Entry[Any]]
-
     private[kyo] object internal:
 
         // Unique transaction and reference ID generation
         private[kyo] val nextTid =
-            import AllowUnsafe.embrace.danger
-            AtomicLong.Unsafe.init(0)
+            AtomicLong.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
         private val tidLocal = Local.init(-1L)
 
@@ -190,7 +188,7 @@ object STM:
                 case tid => f(tid)
             }
 
-        sealed trait Entry[A]:
+        sealed abstract class Entry[A]:
             def tid: Long
             def value: A
 

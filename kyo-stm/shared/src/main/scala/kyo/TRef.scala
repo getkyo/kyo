@@ -1,7 +1,6 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.STM.RefLog
 import kyo.STM.internal.*
 import scala.annotation.tailrec
 
@@ -69,50 +68,46 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
 
     def use[B, S](f: A => B < S)(using Frame): B < (STM & S) =
         Var.use[RefLog] { log =>
-            val refAny = this.asInstanceOf[TRef[Any]]
-            if log.contains(refAny) then
-                // TRef is already in the log, return value
-                f(log(refAny).value.asInstanceOf[A])
-            else
-                useRequiredTid { tid =>
-                    IO {
-                        val state = currentState
-                        if state.tid > tid then
-                            // Early retry if the TRef is concurrently modified
-                            STM.retry
-                        else
-                            // Append Read to the log and return value
-                            val entry = Read[Any](state.tid, state.value)
-                            Var.setAndThen(log + (refAny -> entry))(f(state.value))
-                        end if
+            log.get(this) match
+                case Present(entry) =>
+                    f(entry.value)
+                case Absent =>
+                    useRequiredTid { tid =>
+                        IO {
+                            val state = currentState
+                            if state.tid > tid then
+                                // Early retry if the TRef is concurrently modified
+                                STM.retry
+                            else
+                                // Append Read to the log and return value
+                                val entry = Read(state.tid, state.value)
+                                Var.setAndThen(log.put(this, entry))(f(state.value))
+                            end if
+                        }
                     }
-                }
-            end if
+            end match
         }
 
     def set(v: A)(using Frame): Unit < STM =
         Var.use[RefLog] { log =>
-            val refAny = this.asInstanceOf[TRef[Any]]
-            if log.contains(refAny) then
-                // TRef is already in the log, update it
-                val prev  = log(refAny)
-                val entry = Write[Any](prev.tid, v)
-                Var.setDiscard(log + (refAny -> entry))
-            else
-                useRequiredTid { tid =>
-                    IO {
-                        val state = currentState
-                        if state.tid > tid then
-                            // Early retry if the TRef is concurrently modified
-                            STM.retry
-                        else
-                            // Append Write to the log
-                            val entry = Write[Any](state.tid, v)
-                            Var.setDiscard(log + (refAny -> entry))
-                        end if
+            log.get(this) match
+                case Present(prev) =>
+                    val entry = Write(prev.tid, v)
+                    Var.setDiscard(log.put(this, entry))
+                case Absent =>
+                    useRequiredTid { tid =>
+                        IO {
+                            val state = currentState
+                            if state.tid > tid then
+                                // Early retry if the TRef is concurrently modified
+                                STM.retry
+                            else
+                                // Append Write to the log
+                                val entry = Write(state.tid, v)
+                                Var.setDiscard(log.put(this, entry))
+                            end if
+                        }
                     }
-                }
-            end if
         }
 
     @tailrec private[kyo] def lock(entry: Entry[A])(using AllowUnsafe): Boolean =
