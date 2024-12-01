@@ -254,14 +254,13 @@ lazy val `kyo-direct` =
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stm` =
-    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+    crossProject(JSPlatform, JVMPlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stm"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
-        .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-registry` =

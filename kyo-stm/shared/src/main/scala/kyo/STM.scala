@@ -192,7 +192,7 @@ object STM:
             def tid: Long
             def value: A
 
-        @safePublish case class Read[A](tid: Long, value: A)  extends Entry[A]
-        @safePublish case class Write[A](tid: Long, value: A) extends Entry[A]
+        case class Read[A](tid: Long, value: A)  extends Entry[A]
+        case class Write[A](tid: Long, value: A) extends Entry[A]
     end internal
 end STM
