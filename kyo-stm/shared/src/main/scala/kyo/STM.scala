@@ -1,6 +1,5 @@
 package kyo
 
-import STM.internal.*
 import scala.annotation.tailrec
 
 /** A FailedTransaction exception that is thrown when a transaction fails to commit. Contains the frame where the failure occurred.
@@ -58,8 +57,7 @@ object STM:
       * @param cond
       *   The condition that determines whether to retry
       */
-    def retryIf(cond: Boolean)(using frame: Frame): Unit < STM =
-        Abort.when(cond)(FailedTransaction(frame))
+    def retryIf(cond: Boolean)(using frame: Frame): Unit < STM = Abort.when(cond)(FailedTransaction(frame))
 
     /** Executes a transactional computation with explicit state isolation. This version of run supports additional effects beyond Abort and
       * Async through the provided isolate, which ensures proper state management during transaction retries and rollbacks.
@@ -104,11 +102,11 @@ object STM:
     def run[E, A: Flat](retrySchedule: Schedule)(v: A < (STM & Abort[E] & Async))(
         using frame: Frame
     ): A < (Async & Abort[E | FailedTransaction]) =
-        useTid {
+        TID.use {
             case -1L =>
                 // New transaction without a parent, use regular commit flow
                 Retry[FailedTransaction](retrySchedule) {
-                    withNewTid { tid =>
+                    TID.useNew { tid =>
                         Var.runWith(RefLog.empty)(v) { (log, result) =>
                             IO.Unsafe {
                                 // Attempt to acquire locks and commit the transaction
@@ -146,35 +144,4 @@ object STM:
         }
 
     end run
-
-    private[kyo] object internal:
-
-        // Unique transaction and reference ID generation
-        private[kyo] val nextTid =
-            AtomicLong.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
-
-        private val tidLocal = Local.initIsolated(-1L)
-
-        def withNewTid[A, S](f: Long => A < S)(using Frame): A < (S & IO) =
-            IO.Unsafe {
-                val tid = nextTid.incrementAndGet()
-                tidLocal.let(tid)(f(tid))
-            }
-
-        def useTid[A, S](f: Long => A < S)(using Frame): A < S =
-            tidLocal.use(f)
-
-        def useRequiredTid[A, S](f: Long => A < S)(using Frame): A < S =
-            tidLocal.use {
-                case -1L => bug("STM operation attempted outside of STM.run - this should be impossible due to effect typing")
-                case tid => f(tid)
-            }
-
-        sealed abstract class Entry[A]:
-            def tid: Long
-            def value: A
-
-        case class Read[A](tid: Long, value: A)  extends Entry[A]
-        case class Write[A](tid: Long, value: A) extends Entry[A]
-    end internal
 end STM

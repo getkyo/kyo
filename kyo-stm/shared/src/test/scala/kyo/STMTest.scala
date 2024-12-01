@@ -702,9 +702,9 @@ class STMTest extends Test:
                 ref <- TRef.initNow(0)
                 (parentTid, childTid) <-
                     STM.run {
-                        STM.internal.useTid { parentTid =>
+                        TID.use { parentTid =>
                             Async.run {
-                                STM.run(STM.internal.useTid(identity))
+                                STM.run(TID.use(identity))
                             }.map(_.get).map { childTid =>
                                 (parentTid, childTid)
                             }

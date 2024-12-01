@@ -1,7 +1,7 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.STM.internal.*
+import kyo.RefLog.*
 import scala.annotation.tailrec
 
 /** A transactional reference that can be modified within STM transactions. Provides atomic read and write operations with strong
@@ -72,7 +72,7 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                 case Present(entry) =>
                     f(entry.value)
                 case Absent =>
-                    useRequiredTid { tid =>
+                    TID.useRequired { tid =>
                         IO {
                             val state = currentState
                             if state.tid > tid then
@@ -95,7 +95,7 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                     val entry = Write(prev.tid, v)
                     Var.setDiscard(log.put(this, entry))
                 case Absent =>
-                    useRequiredTid { tid =>
+                    TID.useRequired { tid =>
                         IO {
                             val state = currentState
                             if state.tid > tid then
@@ -152,12 +152,11 @@ object TRef:
       *   A new transactional reference containing the value, within the STM effect
       */
     def init[A](value: A)(using Frame): TRef[A] < STM =
-        useRequiredTid { tid =>
+        TID.useRequired { tid =>
             Var.use[RefLog] { log =>
                 IO.Unsafe {
-                    val ref    = TRef.Unsafe.init(tid, value)
-                    val refAny = ref.asInstanceOf[TRef[Any]]
-                    Var.setAndThen(log.put(refAny, refAny.state))(ref)
+                    val ref = TRef.Unsafe.init(tid, value)
+                    Var.setAndThen(log.put(ref, ref.state))(ref)
                 }
             }
         }
@@ -182,7 +181,7 @@ object TRef:
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
         def initNow[A](value: A)(using AllowUnsafe): TRef[A] =
-            init(STM.internal.nextTid.incrementAndGet(), value)
+            init(TID.next, value)
 
         private[kyo] def init[A](tid: Long, value: A)(using AllowUnsafe): TRef[A] =
             new TRefImpl(Write(tid, value))

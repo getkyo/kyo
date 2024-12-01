@@ -1,7 +1,5 @@
 package kyo
 
-import STM.internal.*
-
 /** A log of transactional operations performed on TRefs within an STM transaction.
   *
   * RefLog maintains a mapping from transactional references to their pending read/write operations within a transaction. It tracks both
@@ -12,7 +10,7 @@ import STM.internal.*
   * @note
   *   This is a private implementation detail of the STM system
   */
-opaque type RefLog = Map[TRef[Any], Entry[Any]]
+opaque type RefLog = Map[TRef[Any], RefLog.Entry[Any]]
 
 private[kyo] object RefLog:
 
@@ -32,4 +30,11 @@ private[kyo] object RefLog:
         def toSeq: Seq[(TRef[Any], Entry[Any])] =
             self.toSeq
     end extension
+
+    sealed abstract class Entry[A]:
+        def tid: Long
+        def value: A
+
+    case class Read[A](tid: Long, value: A)  extends Entry[A]
+    case class Write[A](tid: Long, value: A) extends Entry[A]
 end RefLog

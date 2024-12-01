@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.STM.internal.*
+import kyo.RefLog.*
 
 class RefLogTest extends Test:
 
