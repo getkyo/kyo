@@ -24,7 +24,29 @@ object KyoSpecDefaultSpec extends KyoSpecDefault:
                 test("Async.delay") {
                     Async.delay(Duration.Infinity)(assertCompletes)
                 } @@ TestAspect.timeout(Duration.Zero.toJava)
-            ) @@ TestAspect.failing
+            ) @@ TestAspect.failing,
+            suite("Gen")(
+                test("check1")(
+                    check(Gen.boolean) { b =>
+                        assertTrue(b == b)
+                    }
+                ),
+                test("check2")(
+                    check(Gen.boolean, Gen.int) { (b, i) =>
+                        assertTrue(b == b && i == i)
+                    }
+                ),
+                test("check3")(
+                    check(Gen.boolean, Gen.int, Gen.string) { (b, i, s) =>
+                        assertTrue(b == b && i == i && s == s)
+                    }
+                ),
+                test("checkKyo")(
+                    check(Gen.boolean) { b =>
+                        IO(assertTrue(b == b))
+                    }
+                )
+            )
         ) @@ TestAspect.timed
 
 end KyoSpecDefaultSpec
