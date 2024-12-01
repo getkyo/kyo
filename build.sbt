@@ -144,7 +144,6 @@ lazy val kyoNative = project
         `kyo-scheduler`.native,
         `kyo-core`.native,
         `kyo-direct`.native,
-        `kyo-stm`.native,
     )
 
 lazy val `kyo-scheduler` =
