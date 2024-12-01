@@ -153,7 +153,7 @@ object STM:
         private[kyo] val nextTid =
             AtomicLong.Unsafe.init(0)(using AllowUnsafe.embrace.danger)
 
-        private val tidLocal = Local.init(-1L)
+        private val tidLocal = Local.initIsolated(-1L)
 
         def withNewTid[A, S](f: Long => A < S)(using Frame): A < (S & IO) =
             IO.Unsafe {

@@ -667,4 +667,51 @@ class STMTest extends Test:
         }
     }
 
+    "async transaction nesting" - {
+        "nested transactions with async boundary should fail gracefully" in run {
+            for
+                ref <- TRef.initNow(0)
+                result <- Abort.run {
+                    STM.run {
+                        for
+                            _ <- ref.set(1)
+                            fiber <- Async.run {
+                                STM.run {
+                                    for
+                                        _ <- ref.set(2)
+                                        v <- ref.get
+                                    yield v
+                                }
+                            }
+                            _ <- fiber.get
+                        yield
+                        // The transaction will keep failing until it reaches the
+                        // retry limit because the ref is changed by the nested
+                        // fiber concurrently. The transactions in the nested
+                        // fibers executed on each try succeed, updating the ref
+                        // to 2.
+                        ()
+                    }
+                }
+                value <- STM.run(ref.get)
+            yield assert(result.isFail && value == 2)
+        }
+
+        "transaction ID should not leak across async boundaries" in run {
+            for
+                ref <- TRef.initNow(0)
+                (parentTid, childTid) <-
+                    STM.run {
+                        STM.internal.useTid { parentTid =>
+                            Async.run {
+                                STM.run(STM.internal.useTid(identity))
+                            }.map(_.get).map { childTid =>
+                                (parentTid, childTid)
+                            }
+                        }
+                    }
+            yield assert(parentTid != childTid)
+        }
+    }
+
 end STMTest
