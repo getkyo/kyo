@@ -69,7 +69,7 @@ object Var:
       * @return
       *   The result of the computation after setting the new value
       */
-    inline def setAndThen[V, A, S](inline value: V)(inline f: => A < S)(using
+    private[kyo] inline def setAndThen[V, A, S](inline value: V)(inline f: => A < S)(using
         inline tag: Tag[Var[V]],
         inline frame: Frame
     ): A < (Var[V] & S) =
