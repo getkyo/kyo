@@ -146,11 +146,6 @@ object TRef:
 
     /** Creates a new transactional reference within an STM transaction.
       *
-      * This operation is transactional and will:
-      *   - Register the new reference within the current transaction's log
-      *   - Roll back if the containing transaction fails
-      *   - Maintain proper transactional isolation
-      *
       * @param value
       *   The initial value for the reference
       * @return
@@ -167,9 +162,9 @@ object TRef:
             }
         }
 
-    /** Creates a new transactional reference immediately, outside of any transaction.
+    /** Creates a new transactional reference outside of any transaction.
       *
-      * WARNING: This operation takes effect immediately and:
+      * WARNING: This operation:
       *   - Cannot be rolled back
       *   - Is not part of any transaction
       *   - Will cause any containing transaction to retry if used within one, since it creates a reference with a newer transaction ID

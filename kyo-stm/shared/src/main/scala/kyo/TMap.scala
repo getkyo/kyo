@@ -23,11 +23,6 @@ object TMap:
 
     /** Creates a new transactional map within an STM transaction.
       *
-      * This operation is transactional and will:
-      *   - Create all internal TRefs within the same transaction
-      *   - Roll back if the containing transaction fails
-      *   - Maintain proper transactional isolation
-      *
       * @param entries
       *   The initial key-value pairs to populate the map
       * @return
@@ -36,9 +31,9 @@ object TMap:
     def init[K, V](entries: (K, V)*)(using Frame): TMap[K, V] < STM =
         Kyo.foreach(entries)((k, v) => TRef.init(v).map((k, _))).map(r => TRef.init(r.toMap))
 
-    /** Creates a new transactional map immediately, outside of any transaction.
+    /** Creates a new transactional map outside of any transaction.
       *
-      * WARNING: This operation takes effect immediately and:
+      * WARNING: This operation:
       *   - Cannot be rolled back
       *   - Is not part of any transaction
       *   - Will cause any containing transaction to retry if used within one, since it creates references with newer transaction IDs
