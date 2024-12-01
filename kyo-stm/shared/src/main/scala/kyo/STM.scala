@@ -16,7 +16,7 @@ case class FailedTransaction(frame: Frame) extends Exception(frame.position.show
   * references are safe and encouraged, while external side effects should be performed after the transaction commits.
   *
   * The core operations are:
-  *   - STM.initRef and TRef.init create transactional references that can be shared between threads
+  *   - TRef.init and TRef.initNow create transactional references that can be shared between threads
   *   - TRef.get and TRef.set read and modify references within transactions
   *   - STM.run executes transactions that either fully commit or rollback
   *   - STM.retry and STM.retryIf provide manual control over transaction retry behavior
@@ -60,24 +60,6 @@ object STM:
       */
     def retryIf(cond: Boolean)(using frame: Frame): Unit < STM =
         Abort.when(cond)(FailedTransaction(frame))
-
-    /** Initializes a new transactional reference (TRef) with an initial value. The reference is created within the current transaction.
-      *
-      * @param value
-      *   The initial value to store in the reference
-      * @return
-      *   A new transactional reference containing the initial value
-      */
-    def initRef[A](value: A)(using Frame): TRef[A] < STM =
-        useRequiredTid { tid =>
-            Var.use[RefLog] { log =>
-                IO.Unsafe {
-                    val ref    = TRef.Unsafe.init(tid, value)
-                    val refAny = ref.asInstanceOf[TRef[Any]]
-                    Var.setAndThen(log.put(refAny, refAny.state))(ref)
-                }
-            }
-        }
 
     /** Executes a transactional computation with explicit state isolation. This version of run supports additional effects beyond Abort and
       * Async through the provided isolate, which ensures proper state management during transaction retries and rollbacks.

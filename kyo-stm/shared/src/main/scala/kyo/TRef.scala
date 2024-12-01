@@ -144,19 +144,49 @@ end TRefImpl
 
 object TRef:
 
-    /** Creates a new transactional reference outside of a transaction.
+    /** Creates a new transactional reference within an STM transaction.
+      *
+      * This operation is transactional and will:
+      *   - Register the new reference within the current transaction's log
+      *   - Roll back if the containing transaction fails
+      *   - Maintain proper transactional isolation
       *
       * @param value
-      *   The initial value
+      *   The initial value for the reference
       * @return
-      *   A new reference containing the value
+      *   A new transactional reference containing the value, within the STM effect
       */
-    def init[A](value: A)(using Frame): TRef[A] < IO =
-        IO.Unsafe(TRef.Unsafe.init(value))
+    def init[A](value: A)(using Frame): TRef[A] < STM =
+        useRequiredTid { tid =>
+            Var.use[RefLog] { log =>
+                IO.Unsafe {
+                    val ref    = TRef.Unsafe.init(tid, value)
+                    val refAny = ref.asInstanceOf[TRef[Any]]
+                    Var.setAndThen(log.put(refAny, refAny.state))(ref)
+                }
+            }
+        }
+
+    /** Creates a new transactional reference immediately, outside of any transaction.
+      *
+      * WARNING: This operation takes effect immediately and:
+      *   - Cannot be rolled back
+      *   - Is not part of any transaction
+      *   - Will cause any containing transaction to retry if used within one, since it creates a reference with a newer transaction ID
+      *
+      * Use this only for static initialization or when you specifically need non-transactional creation. For most cases, prefer `init`.
+      *
+      * @param value
+      *   The initial value for the reference
+      * @return
+      *   A new transactional reference containing the value, within the IO effect
+      */
+    def initNow[A](value: A)(using Frame): TRef[A] < IO =
+        IO.Unsafe(TRef.Unsafe.initNow(value))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
-        def init[A](value: A)(using AllowUnsafe): TRef[A] =
+        def initNow[A](value: A)(using AllowUnsafe): TRef[A] =
             init(STM.internal.nextTid.incrementAndGet(), value)
 
         private[kyo] def init[A](tid: Long, value: A)(using AllowUnsafe): TRef[A] =

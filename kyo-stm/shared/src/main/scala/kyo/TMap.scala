@@ -21,15 +21,37 @@ object TMap:
 
     given [K, V]: Flat[TMap[K, V]] = Flat.derive[TRef[Map[K, TRef[V]]]]
 
-    /** Initializes a new transactional map with the given entries.
+    /** Creates a new transactional map within an STM transaction.
+      *
+      * This operation is transactional and will:
+      *   - Create all internal TRefs within the same transaction
+      *   - Roll back if the containing transaction fails
+      *   - Maintain proper transactional isolation
       *
       * @param entries
-      *   the initial key-value pairs to populate the map with
+      *   The initial key-value pairs to populate the map
       * @return
-      *   a new transactional map containing the provided entries
+      *   A new transactional map containing the entries, within the STM effect
       */
     def init[K, V](entries: (K, V)*)(using Frame): TMap[K, V] < STM =
-        Kyo.foreach(entries)((k, v) => STM.initRef(v).map((k, _))).map(r => STM.initRef(r.toMap))
+        Kyo.foreach(entries)((k, v) => TRef.init(v).map((k, _))).map(r => TRef.init(r.toMap))
+
+    /** Creates a new transactional map immediately, outside of any transaction.
+      *
+      * WARNING: This operation takes effect immediately and:
+      *   - Cannot be rolled back
+      *   - Is not part of any transaction
+      *   - Will cause any containing transaction to retry if used within one, since it creates references with newer transaction IDs
+      *
+      * Use this only for static initialization or when you specifically need non-transactional creation. For most cases, prefer `init`.
+      *
+      * @param entries
+      *   The initial key-value pairs to populate the map
+      * @return
+      *   A new transactional map containing the entries, within the IO effect
+      */
+    def initNow[K, V](entries: (K, V)*)(using Frame): TMap[K, V] < IO =
+        Kyo.foreach(entries)((k, v) => TRef.initNow(v).map((k, _))).map(r => TRef.initNow(r.toMap))
 
     /** Initializes a new transactional map from an existing Map.
       *
@@ -122,7 +144,7 @@ object TMap:
                 if map.contains(key) then
                     map(key).set(value)
                 else
-                    STM.initRef(value).map { ref =>
+                    TRef.init(value).map { ref =>
                         self.update(_.updated(key, ref))
                     }
             }
