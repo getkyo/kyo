@@ -533,7 +533,7 @@ lazy val readme =
 lazy val `native-settings` = Seq(
     fork                                        := false,
     bspEnabled                                  := false,
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0" % "provided"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )
 
 lazy val `js-settings` = Seq(
@@ -541,7 +541,7 @@ lazy val `js-settings` = Seq(
     fork                                        := false,
     bspEnabled                                  := false,
     jsEnv                                       := new NodeJSEnv(NodeJSEnv.Config().withArgs(List("--max_old_space_size=5120"))),
-    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0" % "provided"
+    libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % "2.6.0"
 )
 
 def scalacOptionToken(proposedScalacOption: ScalacOption) =
