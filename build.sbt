@@ -92,6 +92,7 @@ lazy val kyoJVM = project
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
         `kyo-direct`.jvm,
+        `kyo-stm`.jvm,
         `kyo-stats-registry`.jvm,
         `kyo-stats-otel`.jvm,
         `kyo-cache`.jvm,
@@ -120,6 +121,7 @@ lazy val kyoJS = project
         `kyo-prelude`.js,
         `kyo-core`.js,
         `kyo-direct`.js,
+        `kyo-stm`.js,
         `kyo-stats-registry`.js,
         `kyo-sttp`.js,
         `kyo-test`.js,
@@ -248,6 +250,16 @@ lazy val `kyo-direct` =
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-stm` =
+    crossProject(JSPlatform, JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-stm"))
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`)
+        .jvmSettings(mimaCheck(false))
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-registry` =

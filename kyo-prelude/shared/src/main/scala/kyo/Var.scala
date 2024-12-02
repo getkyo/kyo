@@ -60,6 +60,21 @@ object Var:
     inline def set[V](inline value: V)(using inline tag: Tag[Var[V]], inline frame: Frame): V < Var[V] =
         ArrowEffect.suspend[Unit](tag, value: Op[V])
 
+    /** Sets a new value and then executes another computation.
+      *
+      * @param value
+      *   The new value to set in the Var
+      * @param f
+      *   The computation to execute after setting the value
+      * @return
+      *   The result of the computation after setting the new value
+      */
+    private[kyo] inline def setAndThen[V, A, S](inline value: V)(inline f: => A < S)(using
+        inline tag: Tag[Var[V]],
+        inline frame: Frame
+    ): A < (Var[V] & S) =
+        ArrowEffect.suspendAndMap[Unit](tag, value: Op[V])(_ => f)
+
     /** Sets a new value and returns `Unit`.
       *
       * @param value
@@ -98,7 +113,7 @@ object Var:
     inline def updateDiscard[V](inline f: V => V)(using inline tag: Tag[Var[V]], inline frame: Frame): Unit < Var[V] =
         ArrowEffect.suspendAndMap[Unit](tag, (v => f(v)): Update[V])(_ => ())
 
-    private inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
+    private[kyo] inline def runWith[V, A: Flat, S, B, S2](state: V)(v: A < (Var[V] & S))(
         inline f: (V, A) => B < S2
     )(using inline tag: Tag[Var[V]], inline frame: Frame): B < (S & S2) =
         ArrowEffect.handleState(tag, state, v)(
