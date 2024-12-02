@@ -1,7 +1,7 @@
 package kyo
 
 import java.util.concurrent.atomic.AtomicInteger
-import kyo.RefLog.*
+import kyo.TRefLog.*
 import scala.annotation.tailrec
 
 /** A transactional reference that can be modified within STM transactions. Provides atomic read and write operations with strong
@@ -67,7 +67,7 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
     private[kyo] def state(using AllowUnsafe): Write[A] = currentState
 
     def use[B, S](f: A => B < S)(using Frame): B < (STM & S) =
-        Var.use[RefLog] { log =>
+        TRefLog.use { log =>
             log.get(this) match
                 case Present(entry) =>
                     f(entry.value)
@@ -81,7 +81,7 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                             else
                                 // Append Read to the log and return value
                                 val entry = Read(state.tid, state.value)
-                                Var.setAndThen(log.put(this, entry))(f(state.value))
+                                TRefLog.setAndThen(log.put(this, entry))(f(state.value))
                             end if
                         }
                     }
@@ -89,11 +89,11 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
         }
 
     def set(v: A)(using Frame): Unit < STM =
-        Var.use[RefLog] { log =>
+        TRefLog.use { log =>
             log.get(this) match
                 case Present(prev) =>
                     val entry = Write(prev.tid, v)
-                    Var.setDiscard(log.put(this, entry))
+                    TRefLog.setDiscard(log.put(this, entry))
                 case Absent =>
                     TID.useRequired { tid =>
                         IO {
@@ -104,7 +104,7 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                             else
                                 // Append Write to the log
                                 val entry = Write(state.tid, v)
-                                Var.setDiscard(log.put(this, entry))
+                                TRefLog.setDiscard(log.put(this, entry))
                             end if
                         }
                     }
@@ -153,10 +153,10 @@ object TRef:
       */
     def init[A](value: A)(using Frame): TRef[A] < STM =
         TID.useRequired { tid =>
-            Var.use[RefLog] { log =>
+            TRefLog.use { log =>
                 IO.Unsafe {
                     val ref = TRef.Unsafe.init(tid, value)
-                    Var.setAndThen(log.put(ref, ref.state))(ref)
+                    TRefLog.setAndThen(log.put(ref, ref.state))(ref)
                 }
             }
         }

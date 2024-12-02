@@ -36,8 +36,8 @@ case class FailedTransaction(frame: Frame) extends Exception(frame.position.show
   * fine-grained locking strategy means that transactions only conflict if they actually touch the same references, allowing for high
   * concurrency when different transactions operate on different refs.
   */
-opaque type STM <: (Var[RefLog] & Abort[FailedTransaction] & Async) =
-    Var[RefLog] & Abort[FailedTransaction] & Async
+opaque type STM <: (Var[TRefLog] & Abort[FailedTransaction] & Async) =
+    Var[TRefLog] & Abort[FailedTransaction] & Async
 
 object STM:
 
@@ -108,7 +108,7 @@ object STM:
                 // New transaction without a parent, use regular commit flow
                 Retry[FailedTransaction](retrySchedule) {
                     TID.useNew { tid =>
-                        Var.runWith(RefLog.empty)(v) { (log, result) =>
+                        TRefLog.runWith(v) { (log, result) =>
                             IO.Unsafe {
                                 // Attempt to acquire locks and commit the transaction
                                 val (locked, unlocked) =
@@ -135,7 +135,7 @@ object STM:
                 // Nested transaction inherits parent's transaction context but isolates RefLog.
                 // On success: changes propagate to parent. On failure: changes are rolled back
                 // without affecting parent's state.
-                val result = Var.isolate.update[RefLog].run(v)
+                val result = TRefLog.isolate(v)
 
                 // Can't return `result` directly since it has a pending STM effect
                 // but it's safe to cast because, if there's a parent transaction,
