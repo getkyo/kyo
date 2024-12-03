@@ -107,6 +107,7 @@ lazy val kyoJVM = project
         `kyo-offheap`.jvm,
         `kyo-direct`.jvm,
         `kyo-stm`.jvm,
+        `kyo-actor`.jvm,
         `kyo-stats-registry`.jvm,
         `kyo-stats-otel`.jvm,
         `kyo-cache`.jvm,
@@ -371,6 +372,15 @@ lazy val `kyo-stm` =
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
+
+lazy val `kyo-actor` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .in(file("kyo-actor"))
+        .dependsOn(`kyo-core`)
+        .settings(`kyo-settings`) 
+        .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-stats-registry` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
