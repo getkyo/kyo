@@ -14,4 +14,5 @@ object Platform:
     val isJS: Boolean                      = false
     val isNative: Boolean                  = true
     val isDebugEnabled: Boolean            = false
+    def exit(code: Int): Unit = java.lang.System.exit(code)
 end Platform

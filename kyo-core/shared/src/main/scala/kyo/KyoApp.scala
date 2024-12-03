@@ -41,7 +41,7 @@ object KyoApp:
             this._args = args
             for proc <- initCode do proc()
 
-        protected def exit(code: Int): Unit = java.lang.System.exit(code)
+        protected def exit(code: Int): Unit = kernel.Platform.exit(code)
 
         protected def onResult(result: Result[Any, Any]): Unit =
             if !result.exists(().equals(_)) then
