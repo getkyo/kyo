@@ -52,7 +52,7 @@ class TMapSingleKeyBench(parallelism: Int) extends Bench.ForkOnly(parallelism):
 
         for
             map <- TMap.empty[Int, Int].commit
-            _ <- ZIO.collectAllPar(
+            _ <- ZIO.collectAllParDiscard(
                 Seq.fill(parallelism)(
                     STM.atomically {
                         for

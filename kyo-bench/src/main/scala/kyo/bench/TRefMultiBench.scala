@@ -14,8 +14,7 @@ class TRefMultiBench(parallelism: Int) extends Bench.ForkOnly(parallelism):
         STM.runtime[IO].flatMap { stm =>
             for
                 refs <- stm.commit(Seq.fill(parallelism)(stm.TVar.of(0)).sequence)
-                x: Seq[IO[Unit]] = refs.map(ref => stm.commit(ref.modify(_ + 1)))
-                _      <- x.parSequence_
+                _      <- refs.map(ref => stm.commit(ref.modify(_ + 1))).parSequence_
                 result <- stm.commit(refs.traverse(_.get).map(_.sum))
             yield result
         }
@@ -38,7 +37,7 @@ class TRefMultiBench(parallelism: Int) extends Bench.ForkOnly(parallelism):
 
         for
             refs   <- ZIO.collectAll(Seq.fill(parallelism)(TRef.make(0).commit))
-            _      <- ZIO.collectAllPar(refs.map(_.update(_ + 1).commit))
+            _      <- ZIO.collectAllParDiscard(refs.map(_.update(_ + 1).commit))
             result <- STM.collectAll(refs.map(_.get)).map(_.sum).commit
         yield result
         end for

@@ -39,7 +39,7 @@ class TRefSingleBench(parallelism: Int) extends Bench.ForkOnly(parallelism):
 
         for
             ref    <- TRef.make(0).commit
-            _      <- ZIO.collectAllPar(Seq.fill(parallelism)(ref.update(_ + 1).commit))
+            _      <- ZIO.collectAllParDiscard(Seq.fill(parallelism)(ref.update(_ + 1).commit))
             result <- ref.get.commit
         yield result
         end for

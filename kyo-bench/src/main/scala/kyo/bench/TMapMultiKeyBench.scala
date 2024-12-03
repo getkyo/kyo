@@ -54,7 +54,7 @@ class TMapMultiKeyBench(parallelism: Int) extends Bench.ForkOnly(parallelism):
         for
             map <- TMap.empty[Int, Int].commit
             _ <-
-                ZIO.collectAllPar(
+                ZIO.collectAllParDiscard(
                     (0 until parallelism).map { i =>
                         STM.atomically {
                             for
