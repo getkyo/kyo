@@ -144,6 +144,8 @@ lazy val kyoNative = project
         `kyo-scheduler`.native,
         `kyo-core`.native,
         `kyo-direct`.native
+        `kyo-combinators`.native,
+        `kyo-sttp`.native
     )
 
 lazy val `kyo-scheduler` =
@@ -305,7 +307,7 @@ lazy val `kyo-cache` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-sttp` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-sttp"))
@@ -315,6 +317,7 @@ lazy val `kyo-sttp` =
             libraryDependencies += "com.softwaremill.sttp.client3" %%% "core" % "3.10.1"
         )
         .jsSettings(`js-settings`)
+        .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-tapir` =
@@ -411,7 +414,7 @@ lazy val `kyo-monix` =
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-combinators` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-combinators"))
@@ -420,6 +423,7 @@ lazy val `kyo-combinators` =
             `kyo-settings`
         )
         .jsSettings(`js-settings`)
+        .nativeSettings(`native-settings`)
         .jvmSettings(mimaCheck(false))
 
 lazy val `kyo-examples` =
