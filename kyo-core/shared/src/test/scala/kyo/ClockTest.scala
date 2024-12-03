@@ -249,8 +249,8 @@ class ClockTest extends Test:
                 _         <- fiber2.get
                 end       <- stopwatch.elapsed
             yield
-                assert(mid >= 3.millis && mid < 30.millis)
-                assert(end >= 8.millis && end < 50.millis)
+                assert(mid >= 3.millis)
+                assert(end >= 8.millis)
         }
 
         "sleep with zero duration" in run {

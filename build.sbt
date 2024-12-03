@@ -143,7 +143,7 @@ lazy val kyoNative = project
         `kyo-stats-registry`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
-        `kyo-direct`.native
+        `kyo-direct`.native,
         `kyo-combinators`.native,
         `kyo-sttp`.native
     )
