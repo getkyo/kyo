@@ -1,14 +1,14 @@
 package kyo
 
-import kyo.RefLog.*
+import kyo.TRefLog.*
 
-class RefLogTest extends Test:
+class TTRefLogTest extends Test:
 
     given [A, B]: CanEqual[A, B] = CanEqual.derived
 
-    "RefLog" - {
+    "TTRefLog" - {
         "empty" in run {
-            val log = RefLog.empty
+            val log = TRefLog.empty
             assert(log.toSeq.isEmpty)
         }
 
@@ -16,7 +16,7 @@ class RefLogTest extends Test:
             IO {
                 val ref   = new TRefImpl[Int](Write(0, 0))
                 val entry = Write(1, 42)
-                val log   = RefLog.empty.put(ref, entry)
+                val log   = TRefLog.empty.put(ref, entry)
                 assert(log.toSeq.size == 1)
                 assert(log.toSeq.head._1 == ref)
                 assert(log.toSeq.head._2 == entry)
@@ -27,7 +27,7 @@ class RefLogTest extends Test:
             IO {
                 val ref   = new TRefImpl[Int](Write(0, 0))
                 val entry = Write(1, 42)
-                val log   = RefLog.empty.put(ref, entry)
+                val log   = TRefLog.empty.put(ref, entry)
                 assert(log.get(ref) == Maybe(entry))
                 assert(log.get(new TRefImpl[Int](Write(0, 0))).isEmpty)
             }
@@ -40,7 +40,7 @@ class RefLogTest extends Test:
                 val entry1 = Write(1, 42)
                 val entry2 = Read(1, 24)
 
-                val log = RefLog.empty
+                val log = TRefLog.empty
                     .put(ref1, entry1)
                     .put(ref2, entry2)
 
@@ -51,4 +51,4 @@ class RefLogTest extends Test:
             }
         }
     }
-end RefLogTest
+end TTRefLogTest
