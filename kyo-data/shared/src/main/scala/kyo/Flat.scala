@@ -30,16 +30,6 @@ private object FlatMacro:
         def isConcrete(t: TypeRepr) =
             t.typeSymbol.isClassDef
 
-        def isKyoData(t: TypeRepr): Boolean =
-            t match
-                case AppliedType(base, _) =>
-                    base =:= TypeRepr.of[Maybe] ||
-                    base =:= TypeRepr.of[Result] ||
-                    base =:= TypeRepr.of[TypeMap]
-                case _ =>
-                    t =:= TypeRepr.of[Duration] ||
-                    t =:= TypeRepr.of[Text]
-
         def canDerive(t: TypeRepr): Boolean =
             t.asType match
                 case '[t] =>
@@ -54,7 +44,7 @@ private object FlatMacro:
                     check(a)
                     check(b)
                 case _ =>
-                    if isAny(t) || (!isConcrete(t.dealias) && !canDerive(t) && !isKyoData(t)) then
+                    if isAny(t) || (!isConcrete(t.dealias) && !canDerive(t)) then
                         report.errorAndAbort(
                             s"Cannot prove ${code(t.show)} isn't nested. " +
                                 s"This error can be reported an unsupported pending effect is passed to a method. " +

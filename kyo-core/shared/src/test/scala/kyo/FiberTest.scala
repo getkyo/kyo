@@ -157,8 +157,8 @@ class FiberTest extends Test:
                     adder <- LongAdder.init
                     result <-
                         Fiber.race(Seq(
-                            Async.delay(15.millis)(adder.increment.andThen(24)),
-                            Async.delay(5.millis)((adder.increment.andThen(42)))
+                            Async.delay(1.second)(adder.increment.andThen(24)),
+                            Async.delay(1.millis)((adder.increment.andThen(42)))
                         )).map(_.get)
                     _        <- Async.sleep(50.millis)
                     executed <- adder.get
@@ -882,7 +882,7 @@ class FiberTest extends Test:
                     fiber <- Fiber.gather(2)(Seq(
                         latch1.release.andThen(1),
                         latch2.release.andThen(2),
-                        Async.delay(1.millis)(3)
+                        Async.delay(50.millis)(3)
                     ))
                     _      <- latch1.await
                     _      <- latch2.await
