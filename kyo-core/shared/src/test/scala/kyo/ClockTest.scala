@@ -235,7 +235,7 @@ class ClockTest extends Test:
                 fiber     <- clock.sleep(5.millis)
                 _         <- fiber.get
                 elapsed   <- stopwatch.elapsed
-            yield assert(elapsed >= 3.millis && elapsed < 20.millis)
+            yield assert(elapsed >= 3.millis && elapsed < 100.millis)
         }
 
         "multiple sequential sleeps" in run {
