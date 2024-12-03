@@ -4,7 +4,6 @@ import Chunk.Indexed
 import java.util.Arrays
 import scala.annotation.tailrec
 import scala.annotation.targetName
-import scala.collection.SeqFactory
 import scala.collection.StrictOptimizedSeqFactory
 import scala.reflect.ClassTag
 
