@@ -38,7 +38,7 @@ class ChunkTest extends Test:
             "creates an empty Chunk from an empty Seq" in {
                 val seq   = Seq.empty[String]
                 val chunk = Chunk.from(seq)
-                assert(chunk.isEmpty)
+                assert(chunk.isEmpty && (chunk eq Chunk.empty))
             }
 
             "handles different Seq types" - {
@@ -505,6 +505,13 @@ class ChunkTest extends Test:
             val chunk: Chunk[Chunk[Int]] =
                 Chunk(Chunk.empty[Int].append(1).append(2), Chunk(3, 4).append(5), Chunk(6, 7).append(8).append(9))
             assert(chunk.flattenChunk == Chunk(1, 2, 3, 4, 5, 6, 7, 8, 9))
+        }
+    }
+
+    "to(Chunk)" - {
+        "converts an Iterable to a Chunk" in {
+            val iterator = (0 until 5).iterator
+            assert(iterator.to(Chunk) == Chunk.range(0, 5))
         }
     }
 

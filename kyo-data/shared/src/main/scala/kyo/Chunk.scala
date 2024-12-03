@@ -4,6 +4,7 @@ import Chunk.Indexed
 import java.util.Arrays
 import scala.annotation.tailrec
 import scala.annotation.targetName
+import scala.collection.StrictOptimizedSeqFactory
 import scala.reflect.ClassTag
 
 /** An immutable, efficient sequence of elements.
@@ -354,9 +355,7 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
                 c.toArray
 
 end Chunk
-
-object Chunk:
-
+object Chunk extends StrictOptimizedSeqFactory[Chunk]:
     import internal.*
 
     /** An indexed version of Chunk that provides O(1) access to elements.
@@ -428,20 +427,8 @@ object Chunk:
       * @return
       *   an empty Chunk of type A
       */
-    def empty[A]: Chunk[A] =
-        cachedEmpty.asInstanceOf[Chunk[A]]
-
-    /** Creates a Chunk from a variable number of elements.
-      *
-      * @tparam A
-      *   the type of elements in the Chunk
-      * @param values
-      *   the elements to include in the Chunk
-      * @return
-      *   a new Chunk containing the provided values
-      */
-    def apply[A](values: A*): Chunk[A] =
-        from(values)
+    def empty[A]: Chunk[A]                              = indexedEmpty[A]
+    private[kyo] inline def indexedEmpty[A]: Indexed[A] = cachedEmpty.asInstanceOf[Indexed[A]]
 
     /** Creates a Chunk from an Array of elements.
       *
@@ -453,55 +440,44 @@ object Chunk:
       *   a new Chunk.Indexed containing the elements from the Array
       */
     def from[A](values: Array[A]): Chunk.Indexed[A] =
-        if values.isEmpty then cachedEmpty.asInstanceOf[Chunk.Indexed[A]]
+        if values.isEmpty then indexedEmpty[A]
         else
             Compact(Array.copyAs(values, values.length)(using ClassTag.AnyRef).asInstanceOf[Array[A]])
     end from
 
     private[kyo] def fromNoCopy[A](values: Array[A]): Chunk.Indexed[A] =
-        if values.isEmpty then cachedEmpty.asInstanceOf[Chunk.Indexed[A]]
+        if values.isEmpty then indexedEmpty[A]
         else
             Compact(values)
 
-    /** Creates a Chunk from a Seq of elements.
+    /** Creates a Chunk from an `IterableOnce`.
+      *
+      * NOTE: This method will **mutate** the source `IterableOnce` if it is a mutable collection.
       *
       * @tparam A
-      *   the type of elements in the Seq
-      * @param values
-      *   the Seq to create the Chunk from
+      *   the type of elements in the IterableOnce
+      * @param source
+      *   the IterableOnce to create the Chunk from
       * @return
-      *   a new Chunk.Indexed containing the elements from the Seq
+      *   a new Chunk.Indexed containing the elements from the IterableOnce
       */
-    def from[A](values: Seq[A]): Chunk.Indexed[A] =
-        if values.isEmpty then cachedEmpty.asInstanceOf[Chunk.Indexed[A]]
+    override def from[A](source: IterableOnce[A]): Chunk.Indexed[A] =
+        if source.knownSize == 0 then indexedEmpty[A]
         else
-            values match
-                case seq: Chunk.Indexed[A] @unchecked => seq
-                case seq: IndexedSeq[A]               => FromSeq(seq)
-                case _                                => Compact(values.toArray(using ClassTag.Any.asInstanceOf[ClassTag[A]]))
+            source match
+                case chunk: Chunk.Indexed[A] @unchecked => chunk
+                case seq: IndexedSeq[A]                 => FromSeq(seq)
+                case _                                  => Compact(source.iterator.toArray(using ClassTag.Any.asInstanceOf[ClassTag[A]]))
+    end from
 
-    /** Creates a Chunk filled with a specified number of copies of a given value.
+    /** Creates a new **mutable** builder for constructing Chunks.
       *
       * @tparam A
       *   the type of elements in the Chunk
-      * @param n
-      *   the number of times to repeat the value
-      * @param v
-      *   the value to fill the Chunk with
       * @return
-      *   a new Chunk containing n copies of v
+      *   a mutable Builder that constructs a Chunk[A]
       */
-    def fill[A](n: Int)(v: A): Chunk[A] =
-        if n <= 0 then empty
-        else
-            val array = (new Array[Any](n)).asInstanceOf[Array[A]]
-            @tailrec def loop(idx: Int = 0): Unit =
-                if idx < n then
-                    array(idx) = v
-                    loop(idx + 1)
-            loop()
-            Compact(array)
-    end fill
+    override def newBuilder[A]: collection.mutable.Builder[A, Chunk[A]] = ChunkBuilder.init[A]
 
     private[kyo] object internal:
 
