@@ -12,11 +12,9 @@ import scala.collection.mutable.ListBuffer
 abstract class KyoApp extends KyoApp.Base[Async & Resource & Abort[Throwable]]:
     def timeout: Duration = Duration.Infinity
 
-    override protected def handle[A: Flat](v: A < (Async & Resource & Abort[Throwable]))(using Frame): Unit =
+    override protected def handle[A: Flat](v: A < (Async & Resource & Abort[Throwable]))(using Frame): Result[Any, A] =
         import AllowUnsafe.embrace.danger
-        val result = KyoApp.Unsafe.runAndBlock(timeout)(v)
-        if !result.exists(().equals(_)) then
-            println(pprint.apply(result).plainText)
+        KyoApp.Unsafe.runAndBlock(timeout)(v)
     end handle
 end KyoApp
 
@@ -31,7 +29,7 @@ object KyoApp:
       */
     abstract class Base[S]:
 
-        protected def handle[A: Flat](v: A < S)(using Frame): Unit
+        protected def handle[A: Flat](v: A < S)(using Frame): Result[Any, A]
 
         final protected def args: Array[String] = _args
 
@@ -43,8 +41,18 @@ object KyoApp:
             this._args = args
             for proc <- initCode do proc()
 
+        protected def exit(code: Int): Unit = java.lang.System.exit(code)
+
+        protected def onResult(result: Result[Any, Any]): Unit =
+            if !result.exists(().equals(_)) then
+                println(pprint.apply(result).plainText)
+            result match
+                case Result.Error(_) => exit(1)
+                case _               => ()
+        end onResult
+
         protected def run[A: Flat](v: => A < S)(using Frame): Unit =
-            initCode += (() => handle(v))
+            initCode += (() => onResult(handle(v)))
     end Base
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */

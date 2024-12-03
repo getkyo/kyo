@@ -27,6 +27,19 @@ class KyoAppTest extends Test:
             runs <- ref.get
         yield assert(runs == 3)
     }
+
+    "exit on error" taggedAs jvmOnly in {
+        var exitCode = -1
+        def app(fail: Boolean): KyoApp = new KyoApp:
+            override def exit(code: Int): Unit = exitCode = code
+            run(Abort.when(fail)(new RuntimeException("Aborts!")))
+        app(fail = true).main(Array.empty)
+        assert(exitCode == 1)
+        exitCode = -1
+        app(fail = false).main(Array.empty)
+        assert(exitCode == -1)
+    }
+
     "effects" taggedAs jvmOnly in {
         def run: Int < (Async & Resource & Abort[Throwable]) =
             for
