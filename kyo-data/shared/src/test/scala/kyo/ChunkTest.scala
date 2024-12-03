@@ -99,6 +99,28 @@ class ChunkTest extends Test:
         }
     }
 
+    "headMaybe" - {
+        "returns Present with the first element for a non-empty chunk" in {
+            val chunk = Chunk(1, 2, 3)
+            assert(chunk.headMaybe == Maybe(1))
+        }
+
+        "returns Absent for an empty chunk" in {
+            val chunk = Chunk.empty[Int]
+            assert(chunk.headMaybe.isEmpty)
+        }
+
+        "returns Present with the first element after appending" in {
+            val chunk = Chunk.empty[Int].append(1).append(2)
+            assert(chunk.headMaybe == Maybe(1))
+        }
+
+        "returns Present with the first element after dropping elements" in {
+            val chunk = Chunk(1, 2, 3, 4).dropLeft(2)
+            assert(chunk.headMaybe == Maybe(3))
+        }
+    }
+
     "tail" - {
         "returns the tail of a non-empty chunk" in {
             val chunk = Chunk(1, 2, 3).toIndexed
