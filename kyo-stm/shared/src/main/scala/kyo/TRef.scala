@@ -6,11 +6,6 @@ import scala.annotation.tailrec
 
 /** A transactional reference that can be modified within STM transactions. Provides atomic read and write operations with strong
   * consistency guarantees.
-  *
-  * @param id
-  *   Unique identifier for this reference
-  * @param state
-  *   The current state of the reference
   */
 sealed trait TRef[A]:
 
