@@ -73,6 +73,18 @@ class TChunkTest extends Test:
                 assert(snap.isInstanceOf[Chunk.Indexed[Int]])
                 assert(snap == Chunk(1, 2, 3))
         }
+
+        "use" in run {
+            for
+                chunk  <- TChunk.initNow(1, 2, 3)
+                sum    <- STM.run(chunk.use(_.sum))
+                first  <- STM.run(chunk.use(_.head))
+                mapped <- STM.run(chunk.use(_.map(_ * 2)))
+            yield
+                assert(sum == 6)
+                assert(first == 1)
+                assert(mapped == Chunk(2, 4, 6))
+        }
     }
 
     "modification operations" - {

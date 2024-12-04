@@ -86,6 +86,8 @@ object TChunk:
       */
     def initNow[A](chunk: Chunk[A])(using Frame): TChunk[A] < IO = TRef.initNow(chunk)
 
+    private def useRef[A, B, S](ref: TRef[A], f: A => B < S)(using Frame) = ref.use(f(_))
+
     extension [A](self: TChunk[A])
 
         /** Returns the current size of the chunk.
@@ -112,6 +114,16 @@ object TChunk:
           *   if the index is out of bounds
           */
         def get(index: Int)(using Frame): A < STM = self.use(_(index))
+
+        /** Applies a function to the current state of the chunk within a transaction.
+          *
+          * @param f
+          *   the function to apply to the chunk
+          * @return
+          *   the result of applying the function to the chunk, within the combined STM and S effects
+          */
+        def use[B, S](f: Chunk[A] => B < S)(using Frame): B < (STM & S) =
+            useRef(self, f(_))
 
         /** Returns the first element of the chunk.
           *
