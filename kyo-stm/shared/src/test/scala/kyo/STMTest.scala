@@ -476,11 +476,12 @@ class STMTest extends Test:
 
     "Concurrency" - {
 
-        val repeats = 100
+        val repeats = 10
+        val sizes   = Seq(1, 10, 100, 1000)
 
         "concurrent updates" in run {
             (for
-                size  <- Choice.get(Seq(1, 10, 100))
+                size  <- Choice.get(sizes)
                 ref   <- TRef.initNow(0)
                 _     <- Async.parallelUnbounded((1 to size).map(_ => STM.run(ref.update(_ + 1))))
                 value <- STM.run(ref.get)
@@ -491,7 +492,7 @@ class STMTest extends Test:
 
         "concurrent reads and writes" in run {
             (for
-                size  <- Choice.get(Seq(1, 10, 100))
+                size  <- Choice.get(sizes)
                 ref   <- TRef.initNow(0)
                 latch <- Latch.init(1)
                 writeFiber <- Async.run(
@@ -511,7 +512,7 @@ class STMTest extends Test:
 
         "concurrent nested transactions" in run {
             (for
-                size <- Choice.get(Seq(1, 10, 100))
+                size <- Choice.get(sizes)
                 ref  <- TRef.initNow(0)
                 _ <- Async.parallelUnbounded((1 to size).map { _ =>
                     STM.run {
