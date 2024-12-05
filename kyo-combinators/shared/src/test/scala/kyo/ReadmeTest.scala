@@ -46,7 +46,7 @@ class ReadmeTest extends Test:
                 Memo.run:
                     effect
                         .catching((thr: Throwable) => // Handles Abort[Throwable]
-                            Kyo.logDebug(s"Failed printing to console: ${thr}")
+                            Console.printLine(s"Failed printing to console: ${thr}").orPanic
                         )
                         .provide(HelloService.live) // Works like ZIO[R,E,A]#provide
                         .map(_ => assert(true))

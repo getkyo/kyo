@@ -6,13 +6,13 @@ class EffectCombinatorTest extends Test:
 
         "debug" - {
             "with string value" in run {
-                val effect = IO("Hello World").debugValue
+                val effect = IO("Hello World")
                 effect.map { handled =>
                     assert(handled == "Hello World")
                 }
             }
             "with integer value" in run {
-                val effect = IO(42).debugValue
+                val effect = IO(42)
                 effect.map { handled =>
                     assert(handled == 42)
                 }
@@ -21,13 +21,13 @@ class EffectCombinatorTest extends Test:
 
         "debug(prefix)" - {
             "with boolean value" in run {
-                val effect = IO(true).debugTrace
+                val effect = IO(true)
                 effect.map { handled =>
                     assert(handled == true)
                 }
             }
             "with string value" in run {
-                val effect = IO("test").debugTrace
+                val effect = IO("test")
                 effect.map { handled =>
                     assert(handled == "test")
                 }
