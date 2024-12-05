@@ -3381,7 +3381,7 @@ For each of these, to handle the effect, lifting the result type to `Result`, `S
 Some examples:
 
 ```scala 
-val abortEffect: Int < Abort[String] = ???
+val abortEffect: Int < Abort[String] = 1
 
 // Converts failures to empty failure
 val maybeEffect: Int < Abort[Absent] = abortEffect.abortToEmpty
@@ -3396,34 +3396,45 @@ val newAbortEffect: Int < Abort[Throwable] = choiceEffect.choiceToThrowable
 To swallow errors à la ZIO's `orDie` method, you have choices:
 
 ```scala
-val throwableAbort: Int < Abort[IOException] = ???
+import kyo.*
+import java.io.IOException
+
+trait ErrorType
+
+val throwableAbort: Int < Abort[IOException] = 1
 
 // Throws a throwable Abort failure (will actually throw unless suspended)
-val unsafeEffect: Int < Any = abortEffect.implicitThrowable
+val unsafeEffect: Int < Any = throwableAbort.implicitThrowable
 
 // Catch any suspended throws
 val safeEffect: Int < Abort[Throwable] = unsafeEffect.explicitThrowable
 
-val anyAbort: Int < Abort[ErrorType] = ???
+val anyAbort: Int < Abort[ErrorType] = 1
 
-// orDie will allow you to swallow *any* errors. If the error is throwable,
+// orPanic will allow you to swallow *any* errors. If the error is throwable,
 // it will throw that error. If not, it will wrap it in throwable PanicException type
-val unsafeEffect: Int < Any = anyAbort.orDie
+val unsafeAgain: Int < Any = anyAbort.orPanic
 ```
 
 The Abort-specific error handling methods are as follows:
 
 ```scala
-val effect: Int < Abort[A | B | C] = ???
+import kyo.*
 
-val handled: Result[A | B | C, Int] = effect.result
+trait A
+trait B
+trait C
+
+val effect: Int < Abort[A | B | C] = 1
+
+val handled: Result[A | B | C, Int] < Any = effect.result
 val caught: Int < Any = effect.catching(_.toString.size)
 val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
 
 // Manipulate single types from within the union
 val handledA: Result[A, Int] < Abort[B | C] = effect.forAbort[A].result
 val caughtA: Int < Abort[B | C] = effect.forAbort[A].catching(_.toString.size)
-val partiallyCaughtA: Int < Abort[A | B | C] = effect.someAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
+val partiallyCaughtA: Int < Abort[A | B | C] = effect.forAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
 val aToEmpty: Int < Abort[Absent | B | C] = effect.forAbort[A].toEmpty
 val aToChoice: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toChoice
 ```
@@ -3431,13 +3442,18 @@ val aToChoice: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toChoice
 Note that `mapError` and similar ZIO methods are not really needed, as we can handle those cases with `catching` (and `forAbort[E].catching`):
 
 ```scala
-val effect: Int < Abort[A] = ???
+import kyo.*
 
-def fn(err: A): B = ???
+trait A
+trait B
+
+val effect: Int < Abort[A] = 1
+
+def fn(err: A): B = new B {}
 val mapped: Int < Abort[B] = effect.catching(err => Kyo.fail(fn(err)))
 
-def impureFn(err: A): B < Async = ???
-val mappedImpure: Int < (Abort[B] & Async) = effect.catching(err => fn(err).map(Kyo.fail))
+def impureFn(err: A): B < Async = new B {}
+val mappedImpure: Int < (Abort[B] & Async) = effect.catching(err => impureFn(err).map(Kyo.fail))
 ```
 
 ## Acknowledgements

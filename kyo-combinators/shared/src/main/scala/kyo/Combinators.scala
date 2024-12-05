@@ -542,6 +542,27 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         val handled = Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
         handled.map((v: Result[E1, A]) => Abort.get(v.swap))
     end swap
+
+    /** Catches partial Abort and panics instead
+      *
+      * @return
+      *   A computation that panics instead of catching Abort effect failures
+      */
+    def orPanic[ER](
+        using
+        ev: E => E1 | ER,
+        reduce: Reducible[Abort[ER]],
+        ct: SafeClassTag[E1],
+        fl: Flat[A],
+        frame: Frame
+    ): A < (S & reduce.SReduced) =
+        Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map:
+            case Result.Success(v)           => v
+            case Result.Fail(thr: Throwable) => Abort.panic(thr).asInstanceOf[Nothing < Any]
+            case Result.Fail(other)          => Abort.panic(PanicException(other)).asInstanceOf[Nothing < Any]
+            case other: Result.Panic         => Abort.get(other).asInstanceOf[Nothing < Any]
+
+    end orPanic
 end ForAbortOps
 
 extension [A, S, E](effect: A < (S & Env[E]))
