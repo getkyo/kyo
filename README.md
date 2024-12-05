@@ -126,8 +126,6 @@ Int < Abort[Absent]
 String < (Abort[Absent] & IO)
 ```
 
-> Note: The naming convention for effect types is the plural form of the functionalities they manage.
-
 Any type `T` is automatically considered to be of type `T < Any`, where `Any` denotes an absence of pending effects. In simpler terms, this means that every value in Kyo is automatically a computation, but one without any effects that you need to handle. 
 
 This design choice streamlines your code by removing the necessity to differentiate between pure values and computations that may have effects. So, when you're dealing with a value of type `T < Any`, you can safely `eval` the pure value directly, without worrying about handling any effects.
@@ -419,7 +417,7 @@ The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a co
 
 The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
 
-> Note: `defer` is currently the only user-facing macro in Kyo. All other features use regular language constructs.
+> Note: `defer` is currently one of only two user-facing macros in Kyo. All other features use regular language constructs.
 
 ### Defining an App
 
@@ -3334,6 +3332,8 @@ trait HelloService:
     def sayHelloTo(saluee: String): Unit < (IO & Abort[Throwable])
 
 object HelloService:
+    val live = Layer(Live)
+
     object Live extends HelloService:
         override def sayHelloTo(saluee: String): Unit < (IO & Abort[Throwable]) =
             Kyo.suspendAttempt { // Adds IO & Abort[Throwable] effect
@@ -3342,17 +3342,19 @@ object HelloService:
     end Live
 end HelloService
 
-val keepTicking: Nothing < (Console & Async & Abort[IOException]) =
+val keepTicking: Nothing < (Async & Abort[IOException]) =
     (Console.print(".") *> Kyo.sleep(1.second)).forever
 
-val effect: Unit < (Console & Async & Resource & Abort[Throwable] & Env[NameService]) =
+val effect: Unit < (Async & Resource & Abort[Throwable] & Env[HelloService]) =
     for
-        nameService <- Kyo.service[NameService]       // Adds Env[NameService] effect
-        _           <- keepTicking.forkScoped         // Adds Console, Async, and Resource effects
-        saluee      <- Console.readln                 // Uses Console effect
+        nameService <- Kyo.service[HelloService]      // Adds Env[NameService] effect
+        _           <- keepTicking.forkScoped         // Adds Async, Abort[IOException], and Resource effects
+        saluee      <- Console.readln
         _           <- Kyo.sleep(2.seconds)           // Uses Async (semantic blocking)
-        _           <- nameService.sayHelloTo(saluee) // Adds Abort[Throwable] effect
+        _           <- nameService.sayHelloTo(saluee) // Lifts Abort[IOException] to Abort[Throwable]
     yield ()
+    end for
+end effect
 
 // There are no combinators for handling IO or blocking Async, since this should
 // be done at the edge of the program
@@ -3360,19 +3362,20 @@ IO.Unsafe.run {                              // Handles IO
     Async.runAndBlock(Duration.Inf) { // Handles Async
         Kyo.scoped {                   // Handles Resource
             effect
-                .provideAs[HelloService](HelloService.Live) // Handles Env[HelloService]
                 .catchAbort((thr: Throwable) =>             // Handles Abort[Throwable]
                     Kyo.debug(s"Failed printing to console: ${throwable}")
                 )
-                .provideDefaultConsole // Handles Console
+                .provide(HelloService.live)                 // Works like ZIO[R,E,A]#provide
         }
     }
 }
 ```
 
-### Failure conversions
+### Error handling
 
-One notable departure from the ZIO API worth calling out is a set of combinators for converting between failure effects. Whereas ZIO has a single channel for describing errors, Kyo has different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). `Abort[Absent]` can also be used like `Choice` to model short-circuiting an empty result. It's useful to be able to move between these effects easily, so `kyo-combinators` provides a number of extension methods, usually in the form of `def effect1ToEffect2`.
+One notable departure from the ZIO API worth calling out is in error handling. Rather than simply copy the usual ZIO methods, kyo-combinators has tried to provide a more general API for handling different kinds of error types in different ways. Whereas ZIO has a single channel for describing errors, Kyo has different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). `Abort[Absent]` can also be used like `Choice` to model short-circuiting an empty result.
+
+For each of these, to handle the effect, lifting the result type to `Result`, `Seq`, and `Maybe`, use `.handleAbort`, `.handleChoice`, and `.handleEmptyAbort` respectively. Alternatively, you can convert between these different error types using methods usually in the form of `def effect1ToEffect2`.
 
 Some examples:
 
@@ -3387,12 +3390,53 @@ val choiceEffect: Int < Choice = maybeEffect.emptyAbortToChoice
 
 // Fails with Nil#head exception if empty and succeeds with Seq.head if non-empty
 val newAbortEffect: Int < Abort[Throwable] = choiceEffect.choiceToThrowable
+```
+
+To swallow errors à la ZIO's `orDie` method, you have choices:
+
+```scala
+val throwableAbort: Int < Abort[IOException] = ???
 
 // Throws a throwable Abort failure (will actually throw unless suspended)
-val unsafeEffect: Int < Any = newAbortEffect.implicitAborts
+val unsafeEffect: Int < Any = abortEffect.implicitThrowable
 
 // Catch any suspended throws
-val safeEffect: Int < Abort[Throwable] = unsafeEffect.explicitAborts
+val safeEffect: Int < Abort[Throwable] = unsafeEffect.explicitThrowable
+
+val anyAbort: Int < Abort[ErrorType] = ???
+
+// orDie will allow you to swallow *any* errors. If the error is throwable,
+// it will throw that error. If not, it will wrap it in throwable PanicException type
+val unsafeEffect: Int < Any = anyAbort.orDie
+```
+
+The Abort-specific error handling methods are as follows:
+
+```scala
+val effect: Int < Abort[A | B | C] = ???
+
+val handled: Result[A | B | C, Int] = effect.handleAbort
+val caught: Int < Any = effect.catchAbort(_.toString.size)
+val partiallyCaught: Int < Abort[A | B | C] = effect.catchAbortPartial { case err if err.toString.size > 5 => 0 }
+
+// Manipulate single types from within the union
+val handledA: Result[A, Int] < Abort[B | C] = effect.someAbort[A].handled
+val caughtA: Int < Abort[B | C] = effect.someAbort[A].caught(_.toString.size)
+val partiallyCaughtA: Int < Abort[A | B | C] = effect.someAbort[A].caughtPartial { case err if err.toString.size > 5 => 0 }
+val aToEmpty: Int < Abort[Absent | B | C] = effect.someAbort[A].toEmpty
+val aToChoice: Int < (Choice & Abort[B | C]) = effect.someAbort[A].toChoice
+```
+
+Note that `mapError` and similar ZIO methods are not really needed, as we can handle those cases with `catchAbort` (and `someAbort[X].catch`):
+
+```scala
+val effect: Int < Abort[A] = ???
+
+def fn(err: A): B = ???
+val mapped: Int < Abort[B] = effect.catchAbort(err => Kyo.fail(fn(err)))
+
+def impureFn(err: A): B < Async = ???
+val mappedImpure: Int < (Abort[B] & Async) = effect.catchAbort(err => fn(err).map(Kyo.fail))
 ```
 
 ## Acknowledgements
