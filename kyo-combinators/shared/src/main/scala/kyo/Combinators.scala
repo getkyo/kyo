@@ -6,6 +6,8 @@ import kyo.kernel.Reducible
 import scala.annotation.tailrec
 import scala.annotation.targetName
 
+sealed class PanicException[A](val error: A) extends Exception(s"Uncaught error: $error")
+
 extension [A, S](effect: A < S)
 
     /** Performs this computation and then the next one, discarding the result of this computation.
@@ -386,6 +388,25 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     ): A < (S & reduce.SReduced) =
         Abort.run[Throwable](effect.asInstanceOf[A < (Abort[Throwable | ER] & S)])
             .map(_.fold(e => throw e.getFailure)(identity))
+
+    /** Catches any Aborts and panics instead
+      *
+      * @return
+      *   A computation that panics instead of catching Abort effect failures
+      */
+    def orDie(
+        using
+        ct: SafeClassTag[E],
+        tag: Tag[E],
+        fl: Flat[A],
+        frame: Frame
+    ): A < S =
+        Abort.run[E](effect).map(
+            _.fold(_.getFailure match
+                case thr: Throwable => throw thr
+                case other          => throw PanicException(other)
+            )(identity)
+        )
 end extension
 
 extension [A, S, E](effect: A < (Abort[Absent] & S))

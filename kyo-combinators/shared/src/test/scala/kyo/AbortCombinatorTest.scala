@@ -343,6 +343,42 @@ class AbortCombinatorTest extends Test:
                 assert(Abort.run[Any](swapped3).eval == Result.fail(42))
             }
         }
+
+        "orDie" - {
+            "should remove Abort effects and run successfully if effect has no failures" in {
+                val effect: Int < Abort[String] =
+                    for
+                        i      <- (1: Int < Any)
+                        result <- if i > 1 then Abort.fail("error") else (i: Int < Any)
+                    yield i
+
+                val effectOrDie: Int < Any = effect.orDie
+                assert(effectOrDie.eval == 1)
+            }
+
+            "should remove throwable Abort and throw error" in {
+                val effect: Int < Abort[Throwable] =
+                    Abort.fail(IndexOutOfBoundsException()).map(_ => 23)
+
+                assertThrows[IndexOutOfBoundsException]:
+                    effect.orDie
+            }
+
+            "should remove non-throwable Abort and throw PanicException" in {
+                val effect: Int < Abort[String] =
+                    Abort.fail("error").map(_ => 23)
+
+                try
+                    val result: Int < Any = effect.orDie
+                    assert(???)
+                catch
+                    case err: PanicException[?] =>
+                        assert(err.error == "error")
+                    case other =>
+                        fail(s"unexpected exception: $other")
+                end try
+            }
+        }
     }
 
 end AbortCombinatorTest
