@@ -64,7 +64,7 @@ class AbortCombinatorTest extends Test:
             }
         }
 
-        "handle" - {
+        "result" - {
             "should handle" in {
                 val effect1 = Abort.fail[String]("failure")
                 assert(effect1.result.eval == Result.fail("failure"))
@@ -84,20 +84,28 @@ class AbortCombinatorTest extends Test:
                 assert(handled.eval == Result.success(Result.success(Result.success(Result.fail("failure")))))
             }
 
-            "should handle abort" in {
-                val effect: Int < Abort[String] =
-                    Abort.fail[String]("failure")
-                val handled: Result[String, Int] < Any =
-                    effect.result
-                assert(handled.eval == Result.fail("failure"))
-            }
-
             "should handle union" in {
                 val failure: Int < Abort[String | Boolean | Double | Int] =
                     Abort.fail("failure")
                 val handled: Result[String | Boolean | Double | Int, Int] < Any =
                     failure.result
                 assert(handled.eval == Result.fail("failure"))
+            }
+        }
+
+        "mapAbort" - {
+            "should map abort" in {
+                val effect1       = Abort.fail[String]("failure")
+                val effect1Mapped = effect1.mapAbort(_.size)
+                assert(effect1Mapped.result.eval == Result.fail(7))
+            }
+
+            "should map union abort" in {
+                val effect1 = Abort.fail[String | Int | Boolean]("failure")
+                val effect1Mapped = effect1.mapAbort:
+                    case str: String => 0
+                    case _           => -1
+                assert(effect1Mapped.result.eval == Result.fail(0))
             }
         }
 
@@ -241,6 +249,18 @@ class AbortCombinatorTest extends Test:
                     val effect2: Int < Abort[String | Boolean | Int] = Abort.fail(true)
                     val handled2                                     = effect2.forAbort[String].result
                     assert(Abort.run[Any](handled2).eval == Result.fail(true))
+                }
+            }
+
+            "mapAbort" - {
+                "should map single Abort" in {
+                    val effect1       = Abort.fail[String | Int | Boolean]("failure")
+                    val effect1Mapped = effect1.forAbort[String].mapAbort(_.size)
+                    assert(effect1Mapped.result.eval == Result.fail(7))
+
+                    val effect2       = Abort.fail[String | Int | Boolean](1)
+                    val effect2Mapped = effect2.forAbort[String].mapAbort(_.size)
+                    assert(effect2Mapped.result.eval == Result.fail(1))
                 }
             }
 

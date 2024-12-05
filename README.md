@@ -3416,7 +3416,7 @@ val anyAbort: Int < Abort[ErrorType] = 1
 val unsafeAgain: Int < Any = anyAbort.orPanic
 ```
 
-The Abort-specific error handling methods are as follows:
+Other error-handling methods are as follows:
 
 ```scala
 import kyo.*
@@ -3428,6 +3428,7 @@ trait C
 val effect: Int < Abort[A | B | C] = 1
 
 val handled: Result[A | B | C, Int] < Any = effect.result
+val mappedError: Int < Abort[String] = effect.mapAbort(_.toString)
 val caught: Int < Any = effect.catching(_.toString.size)
 val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if err.toString.size > 5 => 0 }
 
@@ -3439,22 +3440,6 @@ val aToEmpty: Int < Abort[Absent | B | C] = effect.forAbort[A].toEmpty
 val aToChoice: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toChoice
 ```
 
-Note that `mapError` and similar ZIO methods are not really needed, as we can handle those cases with `catching` (and `forAbort[E].catching`):
-
-```scala
-import kyo.*
-
-trait A
-trait B
-
-val effect: Int < Abort[A] = 1
-
-def fn(err: A): B = new B {}
-val mapped: Int < Abort[B] = effect.catching(err => Kyo.fail(fn(err)))
-
-def impureFn(err: A): B < Async = new B {}
-val mappedImpure: Int < (Abort[B] & Async) = effect.catching(err => impureFn(err).map(Kyo.fail))
-```
 
 ## Acknowledgements
 

@@ -278,6 +278,22 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     ): Result[E, A] < S =
         Abort.run[E](effect)
 
+    /** Handles the Abort effect, transforming caught errors into a new error as determined by mapping function
+      *
+      * @return
+      *   A computation that fails with Abort[E1], where E1 is an error type mapped from E
+      */
+    def mapAbort[E1, S1](
+        fn: E => E1 < S1
+    )(
+        using
+        ct: SafeClassTag[E],
+        ct1: SafeClassTag[E1],
+        fl: Flat[A],
+        fr: Frame
+    ): A < (Abort[E1] & S & S1) =
+        effect.catching(e => fn(e).map(Kyo.fail))
+
     def forAbort[E1 <: E]: ForAbortOps[A, S, E, E1] = ForAbortOps(effect)
 
     /** Translates the Abort effect to a Choice effect.
@@ -450,6 +466,24 @@ class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         frame: Frame
     ): Result[E1, A] < (S & reduce.SReduced) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
+
+    /** Handles a partial Abort[E1] effect, transforming caught errors into a new error as determined by mapping function
+      *
+      * @return
+      *   A computation that fails with Abort[E2], where E2 is an error type mapped from E1
+      */
+    def mapAbort[ER, E2, S1](
+        fn: E1 => E2 < S1
+    )(
+        using
+        ev: E => E1 | ER,
+        ct: SafeClassTag[E1],
+        ct1: SafeClassTag[E2],
+        reduce: Reducible[Abort[ER]],
+        fl: Flat[A],
+        fr: Frame
+    ): A < (Abort[E2] & reduce.SReduced & S & S1) =
+        catching(e => fn(e).map(Kyo.fail))
 
     /** Handles the partial Abort[E1] effect and applies a recovery function to the error.
       *
