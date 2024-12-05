@@ -128,8 +128,8 @@ sealed abstract class Chunk[A] extends Seq[A] derives CanEqual:
       * @return
       *   Maybe containing the first element if the Chunk is non-empty, or Maybe.empty if the Chunk is empty
       */
-    def headMaybe: Maybe[A] =
-        Maybe.when(nonEmpty)(apply(0))
+    final def headMaybe: Maybe[A] =
+        Maybe.when(nonEmpty)(head)
 
     /** Returns the last element of the Chunk.
       *
