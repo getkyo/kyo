@@ -1,7 +1,6 @@
 package kyo
 
 import kyo.Ansi.*
-import kyo.Emit.Ack
 import kyo.kernel.*
 
 /** The Parse effect combines three fundamental capabilities needed for parsing:

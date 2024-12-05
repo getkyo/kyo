@@ -89,7 +89,7 @@ We strongly recommend enabling these Scala compiler flags when working with Kyo 
 
 1. `-Wvalue-discard`: Warns when non-Unit expression results are unused.
 2. `-Wnonunit-statement`: Warns when non-Unit expressions are used in statement position.
-3. `-Wconf:msg=(discarded.*value|pure.*statement):error`: Elevates the warnings from the previous flags to compilation errors.
+3. `-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error`: Elevates the warnings from the previous flags to compilation errors.
 
 Add these to your `build.sbt`:
 
@@ -97,14 +97,14 @@ Add these to your `build.sbt`:
 scalacOptions ++= Seq(
     "-Wvalue-discard", 
     "-Wnonunit-statement", 
-    "-Wconf:msg=(discarded.*value|pure.*statement):error")
+    "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error")
 ```
 
 These flags help catch two common issues in Kyo applications:
 
 1. **A pure expression does nothing in statement position**: Often suggests that a Kyo computation is being discarded and will never execute, though it can also occur with other pure expressions. Common fixes include using `map` to chain transformations or explicitly handling the result.
 
-2. **Discarded non-Unit value**: Most commonly occurs when you pass a computation to a method that can only handle some of the effects that your computation requires. For example, passing a computation that needs both `IO` and `Abort[Exception]` effects as a method parameter that only accepts `IO` can trigger this warning. While this warning can appear in other scenarios (like ignoring any non-Unit value), in Kyo applications it typically signals that you're trying to use a computation in a context that doesn't support all of its required effects.
+2. **Unused/Discarded non-Unit value**: Most commonly occurs when you pass a computation to a method that can only handle some of the effects that your computation requires. For example, passing a computation that needs both `IO` and `Abort[Exception]` effects as a method parameter that only accepts `IO` can trigger this warning. While this warning can appear in other scenarios (like ignoring any non-Unit value), in Kyo applications it typically signals that you're trying to use a computation in a context that doesn't support all of its required effects.
 
 > Note: You may want to selectively disable these warnings in test code, where it's common to assert side effects without using their returned values.
 
@@ -432,11 +432,11 @@ object MyApp extends KyoApp:
     // field initialization issues.
     run {
         for
-            _            <- Console.println(s"Main args: $args")
+            _            <- Console.printLine(s"Main args: $args")
             currentTime  <- Clock.now
-            _            <- Console.println(s"Current time is: $currentTime")
+            _            <- Console.printLine(s"Current time is: $currentTime")
             randomNumber <- Random.nextInt(100)
-            _            <- Console.println(s"Generated random number: $randomNumber")
+            _            <- Console.printLine(s"Generated random number: $randomNumber")
         yield
         // The produced value can be of any type and is
         // automatically printed to the console.
@@ -967,7 +967,7 @@ val d: Int < IO =
 val e: Int < (IO & Abort[IOException]) =
     Loop(1)(i =>
         if i < 5 then
-            Console.println(s"Iteration: $i").map(_ => Loop.continue(i + 1))
+            Console.printLine(s"Iteration: $i").map(_ => Loop.continue(i + 1))
         else
             Loop.done(i)
     )
@@ -1018,7 +1018,7 @@ val a: Int < (IO & Abort[IOException]) =
     Loop.indexed(1)((idx, i) =>
         if idx < 10 then
             if idx % 3 == 0 then
-                Console.println(s"Iteration $idx").map(_ => Loop.continue(i + 1))
+                Console.printLine(s"Iteration $idx").map(_ => Loop.continue(i + 1))
             else
                 Loop.continue(i + 1)
         else
@@ -1234,7 +1234,7 @@ val j: Int < Any =
 
 // Process each element with side effects
 val k: Unit < (IO & Abort[IOException]) =
-    a.runForeach(Console.println(_))
+    a.runForeach(Console.printLine(_))
 ```
 
 Streams can be combined with other effects, allowing for powerful and flexible data processing pipelines:
@@ -1334,7 +1334,7 @@ The `Emit` effect is designed to accumulate values throughout a computation, sim
 import kyo.*
 
 // Add a value
-val a: Emit.Ack < Emit[Int] =
+val a: Ack < Emit[Int] =
     Emit(42)
 
 // Add multiple values
@@ -1413,9 +1413,9 @@ val loggingCut =
         [C] =>
             (input, cont) =>
                 for
-                    _      <- Console.println(s"Processing: $input")
+                    _      <- Console.printLine(s"Processing: $input")
                     result <- cont(input)
-                    _      <- Console.println(s"Result: $result")
+                    _      <- Console.printLine(s"Result: $result")
                 yield result
     )
 
@@ -1430,7 +1430,7 @@ val successExample: Unit < (Abort[Throwable] & IO) =
             numberAspect.let(composedCut) {
                 process(5) // Will succeed: 5 * 2 -> 10
             }
-        _ <- Console.println(s"Success result: $result")
+        _ <- Console.printLine(s"Success result: $result")
     yield ()
 
 // Failure case
@@ -1440,7 +1440,7 @@ val failureExample: Unit < (Abort[Throwable] & IO) =
             numberAspect.let(composedCut) {
                 process(-3) // Will fail with Invalid("negative number")
             }
-        _ <- Console.println("This won't be reached due to Abort")
+        _ <- Console.printLine("This won't be reached due to Abort")
     yield ()
 ```
 
@@ -1480,9 +1480,9 @@ val loggingCut =
         [C] =>
             (input, cont) =>
                 for
-                    _      <- Console.println(s"Processing request: ${input}")
+                    _      <- Console.printLine(s"Processing request: ${input}")
                     result <- cont(input)
-                    _      <- Console.println(s"Response: ${result}")
+                    _      <- Console.printLine(s"Response: ${result}")
                 yield result
     )
 
@@ -1505,7 +1505,7 @@ val example: Unit < (IO & Abort[Throwable]) =
             serviceAspect.let(composedCut) {
                 processRequest(req2)
             }
-        _ <- Console.println(s"Results: $r1, $r2")
+        _ <- Console.printLine(s"Results: $r1, $r2")
     yield ()
 ```
 
@@ -1546,7 +1546,7 @@ import java.io.IOException
 
 // Read a line from the console
 val a: String < (IO & Abort[IOException]) =
-    Console.readln
+    Console.readLine
 
 // Print to stdout
 val b: Unit < (IO & Abort[IOException]) =
@@ -1554,7 +1554,7 @@ val b: Unit < (IO & Abort[IOException]) =
 
 // Print to stdout with a new line
 val c: Unit < (IO & Abort[IOException]) =
-    Console.println("ok")
+    Console.printLine("ok")
 
 // Print to stderr
 val d: Unit < (IO & Abort[IOException]) =
@@ -1562,7 +1562,7 @@ val d: Unit < (IO & Abort[IOException]) =
 
 // Print to stderr with a new line
 val e: Unit < (IO & Abort[IOException]) =
-    Console.printlnErr("fail")
+    Console.printLineErr("fail")
 
 // Explicitly specifying the 'Console' implementation
 val f: Unit < (IO & Abort[IOException]) =
@@ -1859,7 +1859,7 @@ val lines: Stream[String, Resource & IO] =
 
 // Process the stream
 val result: Unit < (Resource & Console & Async & Abort[IOException]) =
-    lines.map(line => Console.println(line)).runDiscard
+    lines.map(line => Console.printLine(line)).runDiscard
 
 // Walk a directory tree
 val tree: Stream[Path, IO] =
@@ -1867,7 +1867,7 @@ val tree: Stream[Path, IO] =
 
 // Process each file in the tree
 val processedTree: Unit < (Console & Async & Abort[IOException]) =
-    tree.map(file => file.read.map(content => Console.println(s"File: ${file}, Content: $content"))).runDiscard
+    tree.map(file => file.read.map(content => Console.printLine(s"File: ${file}, Content: $content"))).runDiscard
 ```
 
 `Path` integrates with Kyo's `Stream` API, allowing for efficient processing of file contents using streams. The `sink` and `sinkLines` extension methods on `Stream` enable writing streams of data back to files.
@@ -1906,7 +1906,7 @@ import kyo.*
 
 class MyClass extends KyoApp:
     run {
-        Console.println(s"Executed with args: $args")
+        Console.printLine(s"Executed with args: $args")
     }
 end MyClass
 

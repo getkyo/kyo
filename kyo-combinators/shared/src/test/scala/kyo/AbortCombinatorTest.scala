@@ -404,7 +404,7 @@ class AbortCombinatorTest extends Test:
             for
                 nameService <- Kyo.service[HelloService]      // Adds Env[NameService] effect
                 _           <- keepTicking.forkScoped         // Adds Async, Abort[IOException], and Resource effects
-                saluee      <- Console.readln
+                saluee      <- Console.readLine
                 _           <- Kyo.sleep(2.seconds)           // Uses Async (semantic blocking)
                 _           <- nameService.sayHelloTo(saluee) // Lifts Abort[IOException] to Abort[Throwable]
             yield ()

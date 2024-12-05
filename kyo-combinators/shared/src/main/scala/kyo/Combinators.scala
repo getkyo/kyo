@@ -278,7 +278,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
     ): Result[E, A] < S =
         Abort.run[E](effect)
 
-    def forAbort[E1 <: E]: SomeAbortOps[A, S, E, E1] = SomeAbortOps(effect)
+    def forAbort[E1 <: E]: ForAbortOps[A, S, E, E1] = ForAbortOps(effect)
 
     /** Translates the Abort effect to a Choice effect.
       *
@@ -435,7 +435,12 @@ extension [A, S, E](effect: A < (Abort[Absent] & S))
             case res: Result.Panic => Abort.get(res)
 end extension
 
-class SomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
+class ForAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
+    /** Handles the partial Abort[E1] effect and returns its result as a `Result[E1, A]`.
+      *
+      * @return
+      *   A computation that produces the result of this computation with the Abort[E1] effect handled
+      */
     def result[ER](
         using
         ev: E => E1 | ER,
@@ -446,6 +451,11 @@ class SomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     ): Result[E1, A] < (S & reduce.SReduced) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
 
+    /** Handles the partial Abort[E1] effect and applies a recovery function to the error.
+      *
+      * @return
+      *   A computation that produces the result of this computation with the Abort[E1] effect handled
+      */
     def catching[ER](
         using
         ev: E => E1 | ER,
@@ -462,6 +472,11 @@ class SomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
                     case ab @ Result.Panic(_) => Abort.get(ab.asInstanceOf[Result[Nothing, Nothing]])
                 })
 
+    /** Handles the partial Abort[E1] effect and applies a partial recovery function to the error.
+      *
+      * @return
+      *   A computation that produces the result of this computation with Abort[E1] effect
+      */
     def catchingSome[ER](
         using
         ev: E => E1 | ER,
@@ -477,6 +492,11 @@ class SomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
                     case Result.Success(a)                     => a
             }
 
+    /** Translates the partial Abort[E1] effect to a Choice effect.
+      *
+      * @return
+      *   A computation that produces the result of this computation with the Abort[E1] effect translated to Choice
+      */
     def toChoice[ER](
         using
         ev: E => E1 | ER,
@@ -487,6 +507,11 @@ class SomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
     ): A < (S & reduce.SReduced & Choice) =
         Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)]).map(e => Choice.get(e.fold(_ => Nil)(List(_))))
 
+    /** Translates the partial Abort[E1] effect to an Abort[Absent] effect in case of failure.
+      *
+      * @return
+      *   A computation that produces the result of this computation with the Abort[E1] effect translated to Abort[Absent]
+      */
     def toEmpty[ER](
         using
         ev: E => E1 | ER,
@@ -501,6 +526,11 @@ class SomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
             case s @ Result.Success(_) => Abort.get(s.asInstanceOf[Result[Nothing, A]])
         }
 
+    /** Translates the partial Abort[E1] effect by swapping the error and success types.
+      *
+      * @return
+      *   A computation that produces the failure E1 as result of this computation and the success A as Abort[A] effect
+      */
     def swap[ER](
         using
         ev: E => E1 | ER,
@@ -512,7 +542,7 @@ class SomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
         val handled = Abort.run[E1](effect.asInstanceOf[A < (Abort[E1 | ER] & S)])
         handled.map((v: Result[E1, A]) => Abort.get(v.swap))
     end swap
-end SomeAbortOps
+end ForAbortOps
 
 extension [A, S, E](effect: A < (S & Env[E]))
 
