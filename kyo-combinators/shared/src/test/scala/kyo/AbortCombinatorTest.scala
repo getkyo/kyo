@@ -239,7 +239,7 @@ class AbortCombinatorTest extends Test:
 
                     val effect2: Int < Abort[String | Boolean | Int] = Abort.fail(true)
                     val handled2                                     = effect2.someAbort[String].handled
-                    assert(Abort.run[Any](handled2).eval.isFail)
+                    assert(Abort.run[Any](handled2).eval == Result.fail(true))
                 }
             }
 
@@ -319,6 +319,20 @@ class AbortCombinatorTest extends Test:
                     val swapped3                               = effect3.someAbort[String].swap
                     assert(Abort.run[Any](swapped3).eval == Result.fail(42))
                 }
+            }
+
+            "should handle reduced union" in {
+                val effect: Int < Abort[String | Boolean | Int]         = Abort.fail("error")
+                val handled: Result[String | Int, Int] < Abort[Boolean] = effect.someAbort[String | Int].handled
+                assert(Abort.run[Any](handled).eval == Result.success(Result.fail("error")))
+
+                val effect2: Int < Abort[String | Boolean | Int]         = Abort.fail(5)
+                val handled2: Result[String | Int, Int] < Abort[Boolean] = effect2.someAbort[String | Int].handled
+                assert(Abort.run[Any](handled2).eval == Result.success(Result.fail(5)))
+
+                val effect3: Int < Abort[String | Boolean | Int]         = Abort.fail(true)
+                val handled3: Result[String | Int, Int] < Abort[Boolean] = effect3.someAbort[String | Int].handled
+                assert(Abort.run[Any](handled3).eval == Result.fail(true))
             }
         }
 
