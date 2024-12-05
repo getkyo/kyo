@@ -180,7 +180,7 @@ class AbortCombinatorTest extends Test:
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
                 val caughtFailure: Int < Abort[String] =
-                    failure.catchingPartial {
+                    failure.catchingSome {
                         case "failure" => 100
                     }
                 val handledFailure: Result[String, Int] < Any =
@@ -188,7 +188,7 @@ class AbortCombinatorTest extends Test:
                 assert(handledFailure.eval == Result.success(100))
                 val success: Int < Abort[String] = 23
                 val caughtSuccess: Int < Abort[String] =
-                    success.catchingPartial {
+                    success.catchingSome {
                         case "failure" => 100
                     }
                 val handledSuccess: Result[String, Int] < Any =
@@ -200,7 +200,7 @@ class AbortCombinatorTest extends Test:
                 val failure: Int < Abort[String | Int | Boolean] =
                     Abort.fail("failure")
                 val partialHandled: Int < Abort[String | Int | Boolean] =
-                    failure.catchingPartial {
+                    failure.catchingSome {
                         case _: String => 1
                     }
                 val handledFailure: Result[String | Int | Boolean, Int] < Any =
@@ -287,19 +287,19 @@ class AbortCombinatorTest extends Test:
             "caughtPartial" - {
                 "should catch some abort with partial function" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val caught = effect.forAbort[String].catchingPartial {
+                    val caught = effect.forAbort[String].catchingSome {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught).eval == Result.success(99))
 
                     val effect2: Int < Abort[String | Boolean] = Abort.fail("other")
-                    val caught2 = effect2.forAbort[String].catchingPartial {
+                    val caught2 = effect2.forAbort[String].catchingSome {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught2).eval == Result.fail("other"))
 
                     val effect3: Int < Abort[String | Boolean] = 42
-                    val caught3 = effect3.forAbort[String].catchingPartial {
+                    val caught3 = effect3.forAbort[String].catchingSome {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught3).eval == Result.success(42))
@@ -337,7 +337,7 @@ class AbortCombinatorTest extends Test:
             }
         }
 
-        "orDie" - {
+        "orPanic" - {
             "should remove Abort effects and run successfully if effect has no failures" in {
                 val effect: Int < Abort[String] =
                     for
@@ -345,7 +345,7 @@ class AbortCombinatorTest extends Test:
                         result <- if i > 1 then Abort.fail("error") else (i: Int < Any)
                     yield i
 
-                val effectOrDie: Int < Any = effect.orDie
+                val effectOrDie: Int < Any = effect.orPanic
                 assert(effectOrDie.eval == 1)
             }
 
@@ -355,7 +355,7 @@ class AbortCombinatorTest extends Test:
                     Abort.fail(exc).map(_ => 23)
 
                 try
-                    effect.orDie.eval
+                    effect.orPanic.eval
                     assert(???)
                 catch
                     case bug =>
@@ -368,7 +368,7 @@ class AbortCombinatorTest extends Test:
                     Abort.fail("error").map(_ => 23)
 
                 try
-                    effect.orDie.eval
+                    effect.orPanic.eval
                     assert(???)
                 catch
                     case bug =>

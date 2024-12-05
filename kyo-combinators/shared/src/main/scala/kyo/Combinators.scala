@@ -332,7 +332,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that produces the result of this computation with Abort[E] effect
       */
-    def catchingPartial[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
+    def catchingSome[A1 >: A, S1](fn: PartialFunction[E, A1 < S1])(
         using
         ct: SafeClassTag[E],
         fl: Flat[A],
@@ -382,7 +382,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
       * @return
       *   A computation that panics instead of catching Abort effect failures
       */
-    def orDie(
+    def orPanic(
         using
         ct: SafeClassTag[E],
         fl: Flat[A],
@@ -395,7 +395,7 @@ extension [A, S, E](effect: A < (Abort[E] & S))
             case other: Result.Panic         => Abort.get(other)
 
         summon[Reducible[Abort[Nothing]] { type SReduced = Any }][A, S](handled)
-    end orDie
+    end orPanic
 
 end extension
 
@@ -462,7 +462,7 @@ class SomeAbortOps[A, S, E, E1 <: E](effect: A < (Abort[E] & S)) extends AnyVal:
                     case ab @ Result.Panic(_) => Abort.get(ab.asInstanceOf[Result[Nothing, Nothing]])
                 })
 
-    def catchingPartial[ER](
+    def catchingSome[ER](
         using
         ev: E => E1 | ER,
         ct: SafeClassTag[E1],
