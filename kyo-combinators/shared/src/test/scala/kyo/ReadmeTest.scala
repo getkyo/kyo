@@ -45,7 +45,7 @@ class ReadmeTest extends Test:
             Kyo.scoped { // Handles Resource
                 Memo.run:
                     effect
-                        .catchAbort((thr: Throwable) => // Handles Abort[Throwable]
+                        .catching((thr: Throwable) => // Handles Abort[Throwable]
                             Kyo.logDebug(s"Failed printing to console: ${thr}")
                         )
                         .provide(HelloService.live) // Works like ZIO[R,E,A]#provide

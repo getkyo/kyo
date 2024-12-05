@@ -67,20 +67,20 @@ class AbortCombinatorTest extends Test:
         "handle" - {
             "should handle" in {
                 val effect1 = Abort.fail[String]("failure")
-                assert(effect1.handleAbort.eval == Result.fail("failure"))
+                assert(effect1.result.eval == Result.fail("failure"))
 
                 val effect2 = Abort.get[Boolean](Right(1))
-                assert(effect2.handleAbort.eval == Result.success(1))
+                assert(effect2.result.eval == Result.success(1))
             }
 
             "should handle incrementally" in {
                 val effect1: Int < Abort[String | Boolean | Int | Double] =
                     Abort.fail[String]("failure")
                 val handled = effect1
-                    .someAbort[String].handled
-                    .someAbort[Boolean].handled
-                    .someAbort[Int].handled
-                    .someAbort[Double].handled
+                    .forAbort[String].result
+                    .forAbort[Boolean].result
+                    .forAbort[Int].result
+                    .forAbort[Double].result
                 assert(handled.eval == Result.success(Result.success(Result.success(Result.fail("failure")))))
             }
 
@@ -88,7 +88,7 @@ class AbortCombinatorTest extends Test:
                 val effect: Int < Abort[String] =
                     Abort.fail[String]("failure")
                 val handled: Result[String, Int] < Any =
-                    effect.handleAbort
+                    effect.result
                 assert(handled.eval == Result.fail("failure"))
             }
 
@@ -96,7 +96,7 @@ class AbortCombinatorTest extends Test:
                 val failure: Int < Abort[String | Boolean | Double | Int] =
                     Abort.fail("failure")
                 val handled: Result[String | Boolean | Double | Int, Int] < Any =
-                    failure.handleAbort
+                    failure.result
                 assert(handled.eval == Result.fail("failure"))
             }
         }
@@ -150,14 +150,14 @@ class AbortCombinatorTest extends Test:
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
                 val handledFailure: Int < Any =
-                    failure.catchAbort {
+                    failure.catching {
                         case "wrong"   => 99
                         case "failure" => 100
                     }
                 assert(handledFailure.eval == 100)
                 val success: Int < Abort[String] = 23
                 val handledSuccess: Int < Any =
-                    success.catchAbort {
+                    success.catching {
                         case "wrong"   => 99
                         case "failure" => 100
                     }
@@ -168,7 +168,7 @@ class AbortCombinatorTest extends Test:
                 val failure: Int < Abort[String | Int | Boolean] =
                     Abort.fail("failure")
                 val handledFailure: Int < Any =
-                    failure.catchAbort {
+                    failure.catching {
                         case _: String  => 1
                         case _: Int     => 2
                         case _: Boolean => 3
@@ -180,7 +180,7 @@ class AbortCombinatorTest extends Test:
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
                 val caughtFailure: Int < Abort[String] =
-                    failure.catchAbortPartial {
+                    failure.catchingPartial {
                         case "failure" => 100
                     }
                 val handledFailure: Result[String, Int] < Any =
@@ -188,7 +188,7 @@ class AbortCombinatorTest extends Test:
                 assert(handledFailure.eval == Result.success(100))
                 val success: Int < Abort[String] = 23
                 val caughtSuccess: Int < Abort[String] =
-                    success.catchAbortPartial {
+                    success.catchingPartial {
                         case "failure" => 100
                     }
                 val handledSuccess: Result[String, Int] < Any =
@@ -200,11 +200,11 @@ class AbortCombinatorTest extends Test:
                 val failure: Int < Abort[String | Int | Boolean] =
                     Abort.fail("failure")
                 val partialHandled: Int < Abort[String | Int | Boolean] =
-                    failure.catchAbortPartial {
+                    failure.catchingPartial {
                         case _: String => 1
                     }
                 val handledFailure: Result[String | Int | Boolean, Int] < Any =
-                    partialHandled.handleAbort
+                    partialHandled.result
                 assert(handledFailure.eval == Result.Success(1))
             }
         }
@@ -230,16 +230,16 @@ class AbortCombinatorTest extends Test:
             }
         }
 
-        "someAbort" - {
+        "forAbort" - {
 
             "handle" - {
                 "should handle single Abort" in {
                     val effect: Int < Abort[String | Boolean | Int] = Abort.fail("error")
-                    val handled                                     = effect.someAbort[String].handled
+                    val handled                                     = effect.forAbort[String].result
                     assert(Abort.run[Any](handled).eval == Result.success(Result.fail("error")))
 
                     val effect2: Int < Abort[String | Boolean | Int] = Abort.fail(true)
-                    val handled2                                     = effect2.someAbort[String].handled
+                    val handled2                                     = effect2.forAbort[String].result
                     assert(Abort.run[Any](handled2).eval == Result.fail(true))
                 }
             }
@@ -247,11 +247,11 @@ class AbortCombinatorTest extends Test:
             "toChoice" - {
                 "should convert some abort to choice" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val choiceEffect                          = effect.someAbort[String].toChoice
+                    val choiceEffect                          = effect.forAbort[String].toChoice
                     assert(Abort.run[Any](Choice.run(choiceEffect)).eval.value.get.isEmpty)
 
                     val effect2: Int < Abort[String | Boolean] = 42
-                    val choiceEffect2                          = effect2.someAbort[String].toChoice
+                    val choiceEffect2                          = effect2.forAbort[String].toChoice
                     assert(Abort.run[Any](Choice.run(choiceEffect2)).eval == Seq(42))
                 }
             }
@@ -259,11 +259,11 @@ class AbortCombinatorTest extends Test:
             "toEmpty" - {
                 "should convert some abort to empty" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val emptyEffect                           = effect.someAbort[String].toEmpty
+                    val emptyEffect                           = effect.forAbort[String].toEmpty
                     assert(Abort.run[Any](emptyEffect).eval == Result.fail(Absent))
 
                     val effect2: Int < Abort[String | Boolean] = 42
-                    val emptyEffect2                           = effect2.someAbort[String].toEmpty
+                    val emptyEffect2                           = effect2.forAbort[String].toEmpty
                     assert(Abort.run[Any](emptyEffect2).eval == Result.success(42))
                 }
             }
@@ -271,15 +271,15 @@ class AbortCombinatorTest extends Test:
             "caught" - {
                 "should catch some abort" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val caught                                = effect.someAbort[String].caught(_ => 99)
+                    val caught                                = effect.forAbort[String].catching(_ => 99)
                     assert(Abort.run[Any](caught).eval == Result.success(99))
 
                     val effect2: Int < Abort[String | Boolean] = Abort.fail(true)
-                    val caught2                                = effect2.someAbort[String].caught(_ => 99)
+                    val caught2                                = effect2.forAbort[String].catching(_ => 99)
                     assert(Abort.run[Boolean](caught2).eval == Result.fail(true))
 
                     val effect3: Int < Abort[String | Boolean] = 42
-                    val caught3                                = effect3.someAbort[String].caught(_ => 99)
+                    val caught3                                = effect3.forAbort[String].catching(_ => 99)
                     assert(Abort.run[Any](caught3).eval == Result.success(42))
                 }
             }
@@ -287,19 +287,19 @@ class AbortCombinatorTest extends Test:
             "caughtPartial" - {
                 "should catch some abort with partial function" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val caught = effect.someAbort[String].caughtPartial {
+                    val caught = effect.forAbort[String].catchingPartial {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught).eval == Result.success(99))
 
                     val effect2: Int < Abort[String | Boolean] = Abort.fail("other")
-                    val caught2 = effect2.someAbort[String].caughtPartial {
+                    val caught2 = effect2.forAbort[String].catchingPartial {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught2).eval == Result.fail("other"))
 
                     val effect3: Int < Abort[String | Boolean] = 42
-                    val caught3 = effect3.someAbort[String].caughtPartial {
+                    val caught3 = effect3.forAbort[String].catchingPartial {
                         case "error" => 99
                     }
                     assert(Abort.run[Any](caught3).eval == Result.success(42))
@@ -309,30 +309,30 @@ class AbortCombinatorTest extends Test:
             "swap" - {
                 "should swap some abort" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val swapped                               = effect.someAbort[String].swap
+                    val swapped                               = effect.forAbort[String].swap
                     assert(Abort.run[Any](swapped).eval == Result.success("error"))
 
                     val effect2: Int < Abort[String | Boolean] = Abort.fail(true)
-                    val swapped2                               = effect2.someAbort[String].swap
+                    val swapped2                               = effect2.forAbort[String].swap
                     assert(Abort.run[Any](swapped2).eval.isFail)
 
                     val effect3: Int < Abort[String | Boolean] = 42
-                    val swapped3                               = effect3.someAbort[String].swap
+                    val swapped3                               = effect3.forAbort[String].swap
                     assert(Abort.run[Any](swapped3).eval == Result.fail(42))
                 }
             }
 
             "should handle reduced union" in {
                 val effect: Int < Abort[String | Boolean | Int]         = Abort.fail("error")
-                val handled: Result[String | Int, Int] < Abort[Boolean] = effect.someAbort[String | Int].handled
+                val handled: Result[String | Int, Int] < Abort[Boolean] = effect.forAbort[String | Int].result
                 assert(Abort.run[Any](handled).eval == Result.success(Result.fail("error")))
 
                 val effect2: Int < Abort[String | Boolean | Int]         = Abort.fail(5)
-                val handled2: Result[String | Int, Int] < Abort[Boolean] = effect2.someAbort[String | Int].handled
+                val handled2: Result[String | Int, Int] < Abort[Boolean] = effect2.forAbort[String | Int].result
                 assert(Abort.run[Any](handled2).eval == Result.success(Result.fail(5)))
 
                 val effect3: Int < Abort[String | Boolean | Int]         = Abort.fail(true)
-                val handled3: Result[String | Int, Int] < Abort[Boolean] = effect3.someAbort[String | Int].handled
+                val handled3: Result[String | Int, Int] < Abort[Boolean] = effect3.forAbort[String | Int].result
                 assert(Abort.run[Any](handled3).eval == Result.fail(true))
             }
         }
@@ -349,12 +349,18 @@ class AbortCombinatorTest extends Test:
                 assert(effectOrDie.eval == 1)
             }
 
-            "should remove throwable Abort and throw error" in {
+            "should remove throwable Abort and throw KyoBugException with error as cause" in {
+                val exc = IndexOutOfBoundsException("test-error")
                 val effect: Int < Abort[Throwable] =
-                    Abort.fail(IndexOutOfBoundsException()).map(_ => 23)
+                    Abort.fail(exc).map(_ => 23)
 
-                assertThrows[IndexOutOfBoundsException]:
-                    effect.orDie
+                try
+                    effect.orDie.eval
+                    assert(???)
+                catch
+                    case bug =>
+                        assert(bug.getMessage.contains(exc.toString))
+                end try
             }
 
             "should remove non-throwable Abort and throw PanicException" in {
@@ -362,13 +368,12 @@ class AbortCombinatorTest extends Test:
                     Abort.fail("error").map(_ => 23)
 
                 try
-                    val result: Int < Any = effect.orDie
+                    effect.orDie.eval
                     assert(???)
                 catch
-                    case err: PanicException[?] =>
-                        assert(err.error == "error")
-                    case other =>
-                        fail(s"unexpected exception: $other")
+                    case bug =>
+                        val panic = PanicException("error")
+                        assert(bug.getMessage.contains(panic.toString))
                 end try
             }
         }
@@ -412,7 +417,7 @@ class AbortCombinatorTest extends Test:
             Kyo.scoped { // Handles Resource
                 Memo.run:
                     effect
-                        .catchAbort((thr: Throwable) => // Handles Abort[Throwable]
+                        .catching((thr: Throwable) => // Handles Abort[Throwable]
                             Kyo.logDebug(s"Failed printing to console: ${thr}")
                         )
                         .provide(HelloService.live) // Works like ZIO[R,E,A]#provide

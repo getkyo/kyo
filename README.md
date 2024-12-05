@@ -3358,14 +3358,15 @@ end effect
 
 // There are no combinators for handling IO or blocking Async, since this should
 // be done at the edge of the program
-IO.Unsafe.run {                              // Handles IO
-    Async.runAndBlock(Duration.Inf) { // Handles Async
+IO.Unsafe.run {                        // Handles IO
+    Async.runAndBlock(Duration.Inf) {  // Handles Async
         Kyo.scoped {                   // Handles Resource
-            effect
-                .catchAbort((thr: Throwable) =>             // Handles Abort[Throwable]
-                    Kyo.debug(s"Failed printing to console: ${throwable}")
-                )
-                .provide(HelloService.live)                 // Works like ZIO[R,E,A]#provide
+            Memo.run:                  // Handles Memo (introduced by .provide, below)
+                effect
+                    .catchAbort((thr: Throwable) =>             // Handles Abort[Throwable]
+                        Kyo.debug(s"Failed printing to console: ${throwable}")
+                    )
+                    .provide(HelloService.live)                 // Works like ZIO[R,E,A]#provide, but adds Memo effect
         }
     }
 }
