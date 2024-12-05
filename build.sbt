@@ -13,7 +13,7 @@ val zioVersion       = "2.1.13"
 val catsVersion      = "3.5.7"
 val scalaTestVersion = "3.2.19"
 
-val compilerOptionFailDiscard = "-Wconf:msg=(discarded.*value|pure.*statement):error"
+val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
 
 val compilerOptions = Set(
     ScalacOptions.encoding("utf8"),

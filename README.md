@@ -89,7 +89,7 @@ We strongly recommend enabling these Scala compiler flags when working with Kyo 
 
 1. `-Wvalue-discard`: Warns when non-Unit expression results are unused.
 2. `-Wnonunit-statement`: Warns when non-Unit expressions are used in statement position.
-3. `-Wconf:msg=(discarded.*value|pure.*statement):error`: Elevates the warnings from the previous flags to compilation errors.
+3. `-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error`: Elevates the warnings from the previous flags to compilation errors.
 
 Add these to your `build.sbt`:
 
@@ -97,14 +97,14 @@ Add these to your `build.sbt`:
 scalacOptions ++= Seq(
     "-Wvalue-discard", 
     "-Wnonunit-statement", 
-    "-Wconf:msg=(discarded.*value|pure.*statement):error")
+    "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error")
 ```
 
 These flags help catch two common issues in Kyo applications:
 
 1. **A pure expression does nothing in statement position**: Often suggests that a Kyo computation is being discarded and will never execute, though it can also occur with other pure expressions. Common fixes include using `map` to chain transformations or explicitly handling the result.
 
-2. **Discarded non-Unit value**: Most commonly occurs when you pass a computation to a method that can only handle some of the effects that your computation requires. For example, passing a computation that needs both `IO` and `Abort[Exception]` effects as a method parameter that only accepts `IO` can trigger this warning. While this warning can appear in other scenarios (like ignoring any non-Unit value), in Kyo applications it typically signals that you're trying to use a computation in a context that doesn't support all of its required effects.
+2. **Unused/Discarded non-Unit value**: Most commonly occurs when you pass a computation to a method that can only handle some of the effects that your computation requires. For example, passing a computation that needs both `IO` and `Abort[Exception]` effects as a method parameter that only accepts `IO` can trigger this warning. While this warning can appear in other scenarios (like ignoring any non-Unit value), in Kyo applications it typically signals that you're trying to use a computation in a context that doesn't support all of its required effects.
 
 > Note: You may want to selectively disable these warnings in test code, where it's common to assert side effects without using their returned values.
 
