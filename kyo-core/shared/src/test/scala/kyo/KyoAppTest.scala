@@ -8,7 +8,7 @@ class KyoAppTest extends Test:
         val app = new KyoApp:
             run {
                 for
-                    _ <- Console.println(s"Starting with args [${args.mkString(", ")}]")
+                    _ <- Console.printLine(s"Starting with args [${args.mkString(", ")}]")
                 yield "Exit!"
             }
 
@@ -32,7 +32,7 @@ class KyoAppTest extends Test:
             for
                 _ <- Clock.repeatAtInterval(1.second, 1.second)(())
                 i <- Random.nextInt
-                _ <- Console.println(s"$i")
+                _ <- Console.printLine(s"$i")
                 _ <- Clock.now
                 _ <- Resource.ensure(())
                 _ <- Async.run(())

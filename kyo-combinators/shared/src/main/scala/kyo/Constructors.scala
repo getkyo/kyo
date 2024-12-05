@@ -87,7 +87,7 @@ extension (kyoObject: Kyo.type)
       *   An effect that prints the message to the console
       */
     def debugln(message: String)(using Frame): Unit < (IO & Abort[IOException]) =
-        Console.println(message)
+        Console.printLine(message)
 
     /** Creates an effect that fails with Abort[E].
       *
