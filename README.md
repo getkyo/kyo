@@ -3376,7 +3376,7 @@ IO.Unsafe.run {                        // Handles IO
 
 One notable departure from the ZIO API worth calling out is in error handling. Rather than simply copy the usual ZIO methods, kyo-combinators has tried to provide a more general API for handling different kinds of error types in different ways. Whereas ZIO has a single channel for describing errors, Kyo has different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). `Abort[Absent]` can also be used like `Choice` to model short-circuiting an empty result.
 
-For each of these, to handle the effect, lifting the result type to `Result`, `Seq`, and `Maybe`, use `.handleAbort`, `.handleChoice`, and `.handleEmptyAbort` respectively. Alternatively, you can convert between these different error types using methods usually in the form of `def effect1ToEffect2`.
+For each of these, to handle the effect, lifting the result type to `Result`, `Seq`, and `Maybe`, use `.result`, `.handleChoice`, and `.maybe` respectively. Alternatively, you can convert between these different error types using methods usually in the form of `def effect1ToEffect2`.
 
 Some examples:
 
@@ -3428,7 +3428,7 @@ val aToEmpty: Int < Abort[Absent | B | C] = effect.forAbort[A].toEmpty
 val aToChoice: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toChoice
 ```
 
-Note that `mapError` and similar ZIO methods are not really needed, as we can handle those cases with `catching` (and `forAbort[X].catching`):
+Note that `mapError` and similar ZIO methods are not really needed, as we can handle those cases with `catching` (and `forAbort[E].catching`):
 
 ```scala
 val effect: Int < Abort[A] = ???
