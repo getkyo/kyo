@@ -518,9 +518,9 @@ val a: Int < IO =
     IO(42)
 
 // ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
-val b: Int =
+val b: Int < Abort[Nothing] =
     import AllowUnsafe.embrace.danger // Required for unsafe operations
-    IO.Unsafe.run(a).eval
+    IO.Unsafe.run(a)
 // ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
 ```
 
@@ -540,7 +540,7 @@ val a: Int < (Env[Int] & IO) =
 
 // ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
 // Handle the 'IO' effect lazily
-val b: Int < Env[Int] =
+val b: Int < (Env[Int] & Abort[Nothing]) =
     import AllowUnsafe.embrace.danger // Required for unsafe operations
     IO.Unsafe.runLazy(a)
 // ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
@@ -548,8 +548,8 @@ val b: Int < Env[Int] =
 // Since the computation is suspended with the
 // 'Env' effect first, the lazy 'IO' execution
 // will be triggered once 'Env' is handled
-val c: Int =
-    Env.run(42)(b).eval
+val c: Int < Abort[Nothing] =
+    Env.run(42)(b)
 ```
 
 > IMPORTANT: Avoid handling the `IO` effect directly since it breaks referential transparency. Use `KyoApp` instead.

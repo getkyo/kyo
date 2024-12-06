@@ -56,8 +56,7 @@ class ResourceTest extends Test:
         Async.runAndBlock(timeout)(r)
             .pipe(Env.run(1))
             .pipe(Abort.run(_))
-            .pipe(IO.Unsafe.run)
-            .eval
+            .pipe(IO.Unsafe.evalOrThrow)
         assert(r1.closes == 1)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
@@ -118,8 +117,7 @@ class ResourceTest extends Test:
         r.pipe(Env.run(3))
             .pipe(Async.runAndBlock(timeout))
             .pipe(Abort.run(_))
-            .pipe(IO.Unsafe.run)
-            .eval
+            .pipe(IO.Unsafe.evalOrThrow)
         assert(r1.closes == 1)
         assert(r2.closes == 1)
         assert(r1.acquires == 1)

@@ -17,8 +17,7 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Async & Abort[String]
             .pipe(Async.run)
             .map(_.toFuture)
             .map(_.flatten)
-            .pipe(IO.Unsafe.run)
-            .eval
+            .pipe(IO.Unsafe.evalOrThrow)
     end run
 
     type Assertion = org.scalatest.compatible.Assertion
