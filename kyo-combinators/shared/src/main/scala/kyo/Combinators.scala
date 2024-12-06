@@ -6,7 +6,7 @@ import kyo.kernel.Reducible
 import scala.annotation.tailrec
 import scala.annotation.targetName
 
-sealed class PanicException[A](val error: A) extends Exception(s"Uncaught error: $error")
+sealed case class PanicException[A] private[kyo] (val error: A) extends Exception(s"Uncaught error: $error")
 
 extension [A, S](effect: A < S)
 
@@ -229,8 +229,11 @@ extension [A, S](effect: A < S)
       * @return
       *   A computation that produces the result of this computation with Abort[Throwable] effect
       */
-    def explicitThrowable(using Flat[A], Frame): A < (S & Abort[Throwable]) =
-        Abort.catching[Throwable](effect)
+    def resurrect(using Flat[A], Frame): A < (S & Abort[Throwable]) =
+        Abort.run[Throwable](effect: A < (S & Abort[Throwable])).map:
+            case Result.Success(v)                      => v
+            case err: Result.Fail[Throwable] @unchecked => Abort.get(err)
+            case err: Result.Panic                      => Abort.fail(err.exception)
 
     /** Performs this computation and applies an effectful function to its result.
       *

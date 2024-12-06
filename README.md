@@ -3403,11 +3403,11 @@ trait ErrorType
 
 val throwableAbort: Int < Abort[IOException] = 1
 
-// Throws a throwable Abort failure (will actually throw unless suspended)
+// Panics throwable Abort failure (will actually throw unless suspended)
 val unsafeEffect: Int < Any = throwableAbort.implicitThrowable
 
 // Catch any suspended throws
-val safeEffect: Int < Abort[Throwable] = unsafeEffect.explicitThrowable
+val safeEffect: Int < Abort[Throwable] = unsafeEffect.resurrect
 
 val anyAbort: Int < Abort[ErrorType] = 1
 
