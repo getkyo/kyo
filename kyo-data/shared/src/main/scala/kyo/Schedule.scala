@@ -15,7 +15,7 @@ sealed abstract class Schedule derives CanEqual:
       * @return
       *   a tuple containing the next delay duration and the updated schedule
       */
-    def next: Maybe[(Duration, Schedule)]
+    def next(now: Instant): Maybe[(Duration, Schedule)]
 
     /** Combines this schedule with another, taking the maximum delay of both.
       *
@@ -135,6 +135,26 @@ sealed abstract class Schedule derives CanEqual:
                 case Never | Done => this
                 case _            => Delay(this, duration)
 
+    /** Adds variation to the delays in a schedule.
+      *
+      * Returns a new schedule that adds jitter to the delays of the original schedule. The actual delay will be the original delay
+      * multiplied by (1 + r * factor), where r is a value between -1 and 1. Note: The current implementation derives r using XOR shift
+      * operations on a hash of the current Instant and duration. This makes the jitter deterministic rather than truly random.
+      *
+      * Example: With factor 0.5, delays may be adjusted by up to ±50%
+      *
+      * @param factor
+      *   The maximum proportion of the delay to add or subtract as jitter (e.g. 0.5 means ±50% variation)
+      * @return
+      *   A new Schedule with jittered delays. If factor is 0, returns the original schedule unchanged
+      */
+    final def jitter(factor: Double): Schedule =
+        if factor == 0d then this
+        else
+            this match
+                case Never | Done => this
+                case _            => Jitter(this, factor)
+
     /** Returns a string representation of the schedule as it would appear in source code.
       *
       * @return
@@ -243,58 +263,107 @@ object Schedule:
         else if factor == 1.0 then fixed(initial)
         else ExponentialBackoff(initial, factor, maxBackoff)
 
+    /** Creates a schedule that executes at fixed points in time, aligned to a base period and offset.
+      *
+      * Anchored schedules maintain alignment with specific points in time, regardless of when executions complete. This means:
+      *   - Executions align to consistent time boundaries (e.g., every hour on the hour)
+      *   - If an execution is delayed, the next execution time adjusts to maintain alignment
+      *   - Multiple missed periods will be caught up with a single execution
+      *
+      * Examples:
+      *   - Schedule.anchored(1.hour) // Hourly on the hour
+      *   - Schedule.anchored(1.day, 2.hours) // Daily at 2am
+      *   - Schedule.anchored(15.minutes, 5.minutes) // Every 15 minutes, offset by 5 minutes
+      *
+      * @param period
+      *   the regular interval between executions
+      * @param offset
+      *   optional offset from period boundaries
+      * @return
+      *   a new schedule that executes at fixed time points
+      */
+    def anchored(period: Duration, offset: Duration = Duration.Zero): Schedule =
+        if period == Duration.Zero then immediate
+        else Anchored(period, offset, Maybe.empty)
+
     private[kyo] object internal:
 
         case object Immediate extends Schedule:
-            val next = Maybe((Duration.Zero, Done))
-            def show = "Schedule.immediate"
+            val _next              = Maybe((Duration.Zero, Done))
+            def next(now: Instant) = _next
+            def show               = "Schedule.immediate"
+        end Immediate
 
         case object Never extends Schedule:
-            def next = Maybe.empty
-            def show = "Schedule.never"
+            def next(now: Instant) = Maybe.empty
+            def show               = "Schedule.never"
 
         case object Done extends Schedule:
-            def next = Maybe.empty
-            def show = "Schedule.done"
+            def next(now: Instant) = Maybe.empty
+            def show               = "Schedule.done"
 
         final case class Fixed(interval: Duration) extends Schedule:
-            val next = Maybe((interval, this))
-            def show = s"Schedule.fixed(${interval.show})"
+            val _next              = Maybe((interval, this))
+            def next(now: Instant) = _next
+            def show               = s"Schedule.fixed(${interval.show})"
+        end Fixed
 
         final case class Exponential(initial: Duration, factor: Double) extends Schedule:
-            def next = Maybe((initial, Exponential(initial * factor, factor)))
-            def show = s"Schedule.exponential(${initial.show}, ${formatDouble(factor)})"
+            def next(now: Instant) = Maybe((initial, Exponential(initial * factor, factor)))
+            def show               = s"Schedule.exponential(${initial.show}, ${formatDouble(factor)})"
 
         final case class Fibonacci(a: Duration, b: Duration) extends Schedule:
-            def next = Maybe((a, Fibonacci(b, a + b)))
-            def show = s"Schedule.fibonacci(${a.show}, ${b.show})"
+            def next(now: Instant) = Maybe((a, Fibonacci(b, a + b)))
+            def show               = s"Schedule.fibonacci(${a.show}, ${b.show})"
 
         final case class ExponentialBackoff(initial: Duration, factor: Double, maxBackoff: Duration) extends Schedule:
-            def next =
+            def next(now: Instant) =
                 val nextDelay = initial.min(maxBackoff)
                 Maybe((nextDelay, exponentialBackoff(nextDelay * factor, factor, maxBackoff)))
             def show = s"Schedule.exponentialBackoff(${initial.show}, ${formatDouble(factor)}, ${maxBackoff.show})"
         end ExponentialBackoff
 
         final case class Linear(base: Duration) extends Schedule:
-            def next = Maybe((base, linear(base + base)))
-            def show = s"Schedule.linear(${base.show})"
+            def next(now: Instant) = Maybe((base, linear(base + base)))
+            def show               = s"Schedule.linear(${base.show})"
+
+        final case class Anchored(period: Duration, offset: Duration, last: Maybe[Instant]) extends Schedule:
+            def next(now: Instant): Maybe[(Duration, Schedule)] =
+                val reference   = last.getOrElse(now)
+                val periodNanos = period.toNanos.max(1)
+
+                val elapsed  = (reference - Instant.Epoch).toNanos % periodNanos
+                val nextTime = reference - elapsed.nanos + offset
+
+                val finalTime =
+                    if nextTime <= now then
+                        val periodsToSkip = ((now - nextTime).toNanos / periodNanos) + 1
+                        nextTime + (periodsToSkip * periodNanos).nanos
+                    else nextTime
+
+                Maybe((finalTime - now, Anchored(period, offset, Present(finalTime))))
+            end next
+
+            def show =
+                val offsetStr = if offset == Duration.Zero then "" else s", ${offset.show}"
+                s"Schedule.anchored(${period.show}$offsetStr)"
+        end Anchored
 
         final case class Max(a: Schedule, b: Schedule) extends Schedule:
-            def next =
+            def next(now: Instant) =
                 for
-                    (d1, s1) <- a.next
-                    (d2, s2) <- b.next
+                    (d1, s1) <- a.next(now)
+                    (d2, s2) <- b.next(now)
                 yield (d1.max(d2), s1.max(s2))
             def show = s"(${a.show}).max(${b.show})"
         end Max
 
         final case class Min(a: Schedule, b: Schedule) extends Schedule:
-            def next =
-                a.next match
-                    case Absent => b.next
+            def next(now: Instant) =
+                a.next(now) match
+                    case Absent => b.next(now)
                     case n @ Present((d1, s1)) =>
-                        b.next match
+                        b.next(now) match
                             case Absent => n
                             case Present((d2, s2)) =>
                                 Maybe((d1.min(d2), s1.min(s2)))
@@ -302,20 +371,20 @@ object Schedule:
         end Min
 
         final case class Take(schedule: Schedule, remaining: Int) extends Schedule:
-            def next =
-                schedule.next.map((d, s) => (d, s.take(remaining - 1)))
+            def next(now: Instant) =
+                schedule.next(now).map((d, s) => (d, s.take(remaining - 1)))
             def show = s"(${schedule.show}).take($remaining)"
         end Take
 
         final case class AndThen(a: Schedule, b: Schedule) extends Schedule:
-            def next =
-                a.next.map((d, s) => (d, s.andThen(b))).orElse(b.next)
+            def next(now: Instant) =
+                a.next(now).map((d, s) => (d, s.andThen(b))).orElse(b.next(now))
             def show = s"(${a.show}).andThen(${b.show})"
         end AndThen
 
         final case class MaxDuration(schedule: Schedule, duration: Duration) extends Schedule:
-            def next =
-                schedule.next.flatMap { (d, s) =>
+            def next(now: Instant) =
+                schedule.next(now).flatMap { (d, s) =>
                     if d > duration then Maybe.empty
                     else Maybe((d, s.maxDuration(duration - d)))
                 }
@@ -323,22 +392,38 @@ object Schedule:
         end MaxDuration
 
         final case class Repeat(schedule: Schedule, remaining: Int) extends Schedule:
-            def next =
-                schedule.next.map((d, s) => (d, s.andThen(schedule.repeat(remaining - 1))))
+            def next(now: Instant) =
+                schedule.next(now).map((d, s) => (d, s.andThen(schedule.repeat(remaining - 1))))
             def show = s"(${schedule.show}).repeat($remaining)"
         end Repeat
 
         final case class Forever(schedule: Schedule) extends Schedule:
-            def next =
-                schedule.next.map((d, s) => (d, s.andThen(this)))
+            def next(now: Instant) =
+                schedule.next(now).map((d, s) => (d, s.andThen(this)))
             def show = s"(${schedule.show}).forever"
         end Forever
 
         final case class Delay(schedule: Schedule, duration: Duration) extends Schedule:
-            def next =
-                schedule.next.map((d, s) => (duration + d, s.delay(duration)))
+            def next(now: Instant) =
+                schedule.next(now).map((d, s) => (duration + d, s.delay(duration)))
             def show = s"(${schedule.show}).delay(${duration.show})"
         end Delay
+
+        final case class Jitter(schedule: Schedule, factor: Double) extends Schedule:
+            def next(now: Instant): Maybe[(Duration, Schedule)] =
+                schedule.next(now).map { (duration, nextSchedule) =>
+                    val x    = now.hashCode() + (31 * duration.hashCode())
+                    val y    = x ^ (x << 13)
+                    val z    = y ^ (y >> 7)
+                    val hash = z ^ (z << 17)
+
+                    val jitterFactor = (hash.toDouble / Int.MaxValue) * factor
+                    val jittered     = duration * (1.0 + jitterFactor)
+                    (jittered, Jitter(nextSchedule, factor))
+                }
+
+            def show: String = s"(${schedule.show}).jitter(${formatDouble(factor)})"
+        end Jitter
 
         private def formatDouble(d: Double): String =
             if d == d.toLong then f"$d%.1f" else d.toString

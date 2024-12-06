@@ -401,10 +401,12 @@ object Clock:
         Async.run {
             Clock.use { clock =>
                 Loop(state, delaySchedule) { (state, schedule) =>
-                    schedule.next match
-                        case Absent => Loop.done(state)
-                        case Present((duration, nextSchedule)) =>
-                            clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(_, nextSchedule))))
+                    Clock.now.map { now =>
+                        schedule.next(now) match
+                            case Absent => Loop.done(state)
+                            case Present((duration, nextSchedule)) =>
+                                clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(_, nextSchedule))))
+                    }
                 }
             }
         }
@@ -502,11 +504,13 @@ object Clock:
             Clock.use { clock =>
                 clock.now.map { now =>
                     Loop(now, state, intervalSchedule) { (lastExecution, state, period) =>
-                        period.next match
-                            case Absent => Loop.done(state)
-                            case Present((duration, nextSchedule)) =>
-                                val nextExecution = lastExecution + duration
-                                clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(nextExecution, _, nextSchedule))))
+                        Clock.now.map { now =>
+                            period.next(now) match
+                                case Absent => Loop.done(state)
+                                case Present((duration, nextSchedule)) =>
+                                    val nextExecution = lastExecution + duration
+                                    clock.sleep(duration).map(_.use(_ => f(state).map(Loop.continue(nextExecution, _, nextSchedule))))
+                        }
                     }
                 }
             }
