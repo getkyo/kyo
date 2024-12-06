@@ -2,7 +2,6 @@ package kyo.interop.reactivestreams
 
 import kyo.*
 import kyo.Duration
-import kyo.Emit.Ack
 import kyo.interop.reactivestreams.*
 
 final class PublisherToSubscriberTest extends Test:
