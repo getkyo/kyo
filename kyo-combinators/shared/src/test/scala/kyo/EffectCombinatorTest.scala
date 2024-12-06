@@ -335,22 +335,22 @@ class EffectCombinatorTest extends Test:
 
         }
 
-        "resurrect" - {
+        "unpanic" - {
             "with throwable" in run {
-                val effect: Nothing < (Abort[Throwable] & IO)      = IO { Abort.fail(Exception("failure")) }
-                val panicked: Nothing < IO                         = effect.orPanic
-                val resurrected: Nothing < (Abort[Throwable] & IO) = panicked.resurrect
-                Abort.run[Throwable](resurrected).debugValue.map: handled =>
+                val effect: Nothing < (Abort[Throwable] & IO)     = IO { Abort.fail(Exception("failure")) }
+                val panicked: Nothing < IO                        = effect.orPanic
+                val unpanicked: Nothing < (Abort[Throwable] & IO) = panicked.unpanic
+                Abort.run[Throwable](unpanicked).map: handled =>
                     val msg = handled.failure.collect:
                         case thr: Throwable => thr.getMessage()
                     assert(msg.contains("failure"))
             }
 
             "with non-throwable failure" in run {
-                val effect: Nothing < (Abort[String] & IO)         = IO { Abort.fail("failure") }
-                val panicked: Nothing < IO                         = effect.orPanic
-                val resurrected: Nothing < (Abort[Throwable] & IO) = panicked.resurrect
-                Abort.run[Throwable](resurrected).debugValue.map: handled =>
+                val effect: Nothing < (Abort[String] & IO)        = IO { Abort.fail("failure") }
+                val panicked: Nothing < IO                        = effect.orPanic
+                val unpanicked: Nothing < (Abort[Throwable] & IO) = panicked.unpanic
+                Abort.run[Throwable](unpanicked).map: handled =>
                     assert(handled == Result.Fail(PanicException("failure")))
             }
         }

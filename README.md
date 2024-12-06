@@ -417,8 +417,6 @@ The `defer` method in Kyo mirrors Scala's `for`-comprehensions in providing a co
 
 The `kyo-direct` module is constructed as a wrapper around [dotty-cps-async](https://github.com/rssh/dotty-cps-async).
 
-> Note: `defer` is currently one of only two user-facing macros in Kyo. All other features use regular language constructs.
-
 ### Defining an App
 
 `KyoApp` offers a structured approach similar to Scala's `App` for defining application entry points. However, it comes with added capabilities, handling a suite of default effects. As a result, the `run` method within `KyoApp` can accommodate various effects, such as IO, Async, Resource, Clock, Console, Random, Timer, and Aspect.
@@ -3374,9 +3372,9 @@ IO.Unsafe.run {                        // Handles IO
 
 ### Error handling
 
-One notable departure from the ZIO API worth calling out is in error handling. Rather than simply copy the usual ZIO methods, kyo-combinators has tried to provide a more general API for handling different kinds of error types in different ways. Whereas ZIO has a single channel for describing errors, Kyo has different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). `Abort[Absent]` can also be used like `Choice` to model short-circuiting an empty result.
+Whereas ZIO has a single channel for describing errors, Kyo has different effect types that can describe failure in the basic sense of "short-circuiting": `Abort` and `Choice` (an empty `Seq` being equivalent to a short-circuit). `Abort[Absent]` can also be used like `Choice` to model short-circuiting an empty result.
 
-For each of these, to handle the effect, lifting the result type to `Result`, `Seq`, and `Maybe`, use `.result`, `.handleChoice`, and `.maybe` respectively. Alternatively, you can convert between these different error types using methods usually in the form of `def effect1ToEffect2`.
+For each of these, to handle the effect, lifting the result type to `Result`, `Seq`, and `Maybe`, use `.result`, `.handleChoice`, and `.maybe` respectively. Alternatively, you can convert between these different error types using methods usually in the form of `def effect1ToEffect2`, where `effect1` and `effect2` can be "abort" (`Abort[?]`), "absent" (`Abort[Absent]`), "empty" (`Choice`, when reduced to an empty sequence), and "throwable" (`Abort[Throwable]`).
 
 Some examples:
 
@@ -3384,36 +3382,31 @@ Some examples:
 val abortEffect: Int < Abort[String] = 1
 
 // Converts failures to empty failure
-val maybeEffect: Int < Abort[Absent] = abortEffect.abortToEmpty
+val maybeEffect: Int < Abort[Absent] = abortEffect.abortToAbsent
 
-// Converts empty failure to a single "choice" (or Seq)
-val choiceEffect: Int < Choice = maybeEffect.emptyAbortToChoice
+// Converts an aborted Absent to an empty "choice"
+val choiceEffect: Int < Choice = maybeEffect.absentToEmpty
 
-// Fails with Nil#head exception if empty and succeeds with Seq.head if non-empty
-val newAbortEffect: Int < Abort[Throwable] = choiceEffect.choiceToThrowable
+// Fails with exception if empty
+val newAbortEffect: Int < (Choice & Abort[Throwable]) = choiceEffect.emptyToThrowable
 ```
 
-To swallow errors à la ZIO's `orDie` method, you have choices:
+To swallow errors à la ZIO's `orDie` and `resurrect` methods, you can use `orPanic` and `unpanic` respectively:
 
 ```scala
 import kyo.*
 import java.io.IOException
 
-trait ErrorType
+val abortEffect: Int < Abort[String | Throwable] = 1
 
-val throwableAbort: Int < Abort[IOException] = 1
-
-// Panics throwable Abort failure (will actually throw unless suspended)
-val unsafeEffect: Int < Any = throwableAbort.implicitThrowable
+// unsafeEffect will panic with a `PanicException(err)`
+val unsafeEffect: Int < Any = abortEffect.orPanic
 
 // Catch any suspended throws
-val safeEffect: Int < Abort[Throwable] = unsafeEffect.resurrect
+val safeEffect: Int < Abort[Throwable] = unsafeEffect.unpanic
 
-val anyAbort: Int < Abort[ErrorType] = 1
-
-// orPanic will allow you to swallow *any* errors. If the error is throwable,
-// it will throw that error. If not, it will wrap it in throwable PanicException type
-val unsafeAgain: Int < Any = anyAbort.orPanic
+// Use orPanic after forAbort[E] to swallow only errors of type E
+val unsafeForThrowables: Int < Abort[String] = abortEffect.forAbort[Throwable].orPanic
 ```
 
 Other error-handling methods are as follows:
@@ -3436,8 +3429,9 @@ val partiallyCaught: Int < Abort[A | B | C] = effect.catchingSome { case err if 
 val handledA: Result[A, Int] < Abort[B | C] = effect.forAbort[A].result
 val caughtA: Int < Abort[B | C] = effect.forAbort[A].catching(_.toString.size)
 val partiallyCaughtA: Int < Abort[A | B | C] = effect.forAbort[A].catchingSome { case err if err.toString.size > 5 => 0 }
-val aToEmpty: Int < Abort[Absent | B | C] = effect.forAbort[A].toEmpty
-val aToChoice: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toChoice
+val aToAbsent: Int < Abort[Absent | B | C] = effect.forAbort[A].toAbsent
+val aToEmpty: Int < (Choice & Abort[B | C]) = effect.forAbort[A].toEmpty
+val aToThrowable: Int < (Abort[Throwable | B | C]) = effect.forAbort[A].toThrowable
 ```
 
 

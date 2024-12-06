@@ -114,11 +114,11 @@ class AbortCombinatorTest extends Test:
             "should convert all abort to empty" in {
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
-                val failureEmpty: Int < Abort[Absent] = failure.abortToEmpty
+                val failureEmpty: Int < Abort[Absent] = failure.abortToAbsent
                 val handledFailureEmpty               = Abort.run[Absent](failureEmpty)
                 assert(handledFailureEmpty.eval == Result.Fail(Absent))
                 val success: Int < Abort[String]      = 23
-                val successEmpty: Int < Abort[Absent] = success.abortToEmpty
+                val successEmpty: Int < Abort[Absent] = success.abortToAbsent
                 val handledSuccessEmpty               = Abort.run[Any](successEmpty)
                 assert(handledSuccessEmpty.eval == Result.Success(23))
             }
@@ -127,29 +127,66 @@ class AbortCombinatorTest extends Test:
                 val failure: Int < Abort[String | Boolean | Double | Int] =
                     Abort.fail("failure")
                 val failureEmpty: Int < Abort[Absent] =
-                    failure.abortToEmpty
+                    failure.abortToAbsent
                 val handledFailureAbort = Abort.run[Any](failureEmpty)
                 assert(handledFailureAbort.eval == Result.fail(Absent))
             }
 
-            "should convert all abort to choice" in {
+            "should convert all abort to empty choice" in {
                 val failure: Int < Abort[String] =
                     Abort.fail("failure")
-                val failureChoice: Int < Choice = failure.abortToChoice
+                val failureChoice: Int < Choice = failure.abortToEmpty
                 val handledFailureChoice        = Choice.run(failureChoice)
                 assert(handledFailureChoice.eval.isEmpty)
                 val success: Int < Abort[String] = 23
-                val successChoice: Int < Choice  = success.abortToChoice
+                val successChoice: Int < Choice  = success.abortToEmpty
                 val handledSuccessChoice         = Choice.run(successChoice)
                 assert(handledSuccessChoice.eval == Seq(23))
             }
 
-            "should convert all union abort to choice" in {
+            "should convert all union abort to empty choice" in {
                 val failure: Int < Abort[String | Boolean | Double | Int] =
                     Abort.fail("failure")
-                val failureChoice: Int < Choice = failure.abortToChoice
+                val failureChoice: Int < Choice = failure.abortToEmpty
                 val handledFailureChoice        = Choice.run(failureChoice)
                 assert(handledFailureChoice.eval == Result.success(Seq.empty))
+            }
+
+            "should convert all abort to throwable abort" in {
+                val failure: Int < Abort[String] =
+                    Abort.fail("failure")
+                val failureThrowable: Int < Abort[Throwable] = failure.abortToThrowable
+                val handledFailureThrowable                  = Abort.run(failureThrowable)
+                assert(handledFailureThrowable.eval == Result.fail(PanicException("failure")))
+                val success: Int < Abort[String]             = 23
+                val successThrowable: Int < Abort[Throwable] = success.abortToThrowable
+                val handledSuccessThrowable                  = Abort.run(successThrowable)
+                assert(handledSuccessThrowable.eval == 23)
+            }
+
+            "should convert all union abort to throwable abort" in {
+                val failure: Int < Abort[String | Boolean | Double | Throwable] =
+                    Abort.fail("failure")
+                val failureThrowable: Int < Abort[Throwable] = failure.abortToThrowable
+                val handledFailureThrowable                  = Abort.run(failureThrowable)
+                assert(handledFailureThrowable.eval == Result.fail(PanicException("failure")))
+            }
+
+            "should not be callable on throwable abort" in {
+                val failure: Int < Abort[IllegalArgumentException] = 23
+                assertDoesNotCompile("failure.abortToThrowable")
+            }
+
+            "should convert empty choice to absent abort" in {
+                val failure: Int < Choice                     = Choice.get(Seq())
+                val converted: Int < (Choice & Abort[Absent]) = failure.emptyToAbsent
+                val handled                                   = Abort.run(Choice.run(converted))
+                assert(handled.eval == Result.fail(Absent))
+
+                val success: Int < Choice                      = Choice.get(Seq(23))
+                val converted2: Int < (Choice & Abort[Absent]) = success.emptyToAbsent
+                val handled2                                   = Abort.run(Choice.run(converted2))
+                assert(handled2.eval == Result.success(Chunk(23)))
             }
         }
 
@@ -264,27 +301,47 @@ class AbortCombinatorTest extends Test:
                 }
             }
 
-            "toChoice" - {
+            "toEmpty" - {
                 "should convert some abort to choice" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val choiceEffect                          = effect.forAbort[String].toChoice
+                    val choiceEffect                          = effect.forAbort[String].toEmpty
                     assert(Abort.run[Any](Choice.run(choiceEffect)).eval.value.get.isEmpty)
 
                     val effect2: Int < Abort[String | Boolean] = 42
-                    val choiceEffect2                          = effect2.forAbort[String].toChoice
+                    val choiceEffect2                          = effect2.forAbort[String].toEmpty
                     assert(Abort.run[Any](Choice.run(choiceEffect2)).eval == Seq(42))
                 }
             }
 
-            "toEmpty" - {
+            "toAbsent" - {
                 "should convert some abort to empty" in {
                     val effect: Int < Abort[String | Boolean] = Abort.fail("error")
-                    val emptyEffect                           = effect.forAbort[String].toEmpty
+                    val emptyEffect                           = effect.forAbort[String].toAbsent
                     assert(Abort.run[Any](emptyEffect).eval == Result.fail(Absent))
 
                     val effect2: Int < Abort[String | Boolean] = 42
-                    val emptyEffect2                           = effect2.forAbort[String].toEmpty
+                    val emptyEffect2                           = effect2.forAbort[String].toAbsent
                     assert(Abort.run[Any](emptyEffect2).eval == Result.success(42))
+                }
+            }
+
+            "toThrowable" - {
+                "should convert abort to throwable abort, wrapping non-throwable failures in PanicExceptions" in {
+                    val effect: Int < Abort[Throwable | String | Boolean] = Abort.fail(new IllegalStateException("error"))
+                    val asThrow: Int < Abort[Throwable | Boolean]         = effect.forAbort[Throwable | String].toThrowable
+                    Abort.run[Any](asThrow).eval match
+                        case Result.Error(exc: IllegalStateException) => assert(exc.getMessage() == "error")
+                        case other                                    => fail(s"Unexpected result $other")
+
+                    val effect2: Int < Abort[Throwable | String | Boolean] = Abort.fail("error")
+                    val asThrow2: Int < Abort[Throwable | Boolean]         = effect2.forAbort[Throwable | String].toThrowable
+                    Abort.run[Any](asThrow2).eval match
+                        case Result.Error(PanicException(msg)) => assert(msg == "error")
+                        case other                             => fail(s"Unexpected result $other")
+
+                    val effect3: Int < Abort[Throwable | String | Boolean] = 23
+                    val asThrow3                                           = effect3.forAbort[Throwable | String].toThrowable
+                    assert(Abort.run[Any](asThrow3).eval == Result.Success(23))
                 }
             }
 
