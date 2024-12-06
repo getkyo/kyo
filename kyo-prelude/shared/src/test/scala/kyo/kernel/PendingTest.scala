@@ -270,11 +270,11 @@ class PendingTest extends Test:
     }
 
     "show" - {
-        "should display pure vals wrapped" in {
-            val i: Int < Any        = 23
-            val sh: Show[Int < Any] = Show.apply
-            assert(sh.show(i) == "KyoPure(23)")
-            // assert(k"$i" == "KyoPure(23)")
+        "should display pure vals wrapped with inner types displayed using show" in {
+            val i: Result[String, Int] < Any        = Result.success(23)
+            val sh: Show[Result[String, Int] < Any] = Show.apply
+            assert(sh.show(i) == "Kyo(Success(23))")
+            assert(k"$i" == "Kyo(Success(23))")
         }
     }
 

@@ -34,8 +34,12 @@ class ShowTest extends Test:
 
     "interpolation" - {
         "should interpolate" in {
+            assert(k"${23}" == "23")
             assert(k"hello ${Wr(23)}" == "hello Yep(23)")
             assert(k"hello ${Wr(null)}" == "hello Nope")
+            assert(k"${ShowADT.Obj}" == "Obj")
+            assert(k"${ShowADT.Nested(Wr(null))}" == "Nested(Nope)")
+            assert(k"${ShowADT.Nested(Wr(23))}" == "Nested(Yep(23))")
         }
     }
 

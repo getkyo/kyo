@@ -69,11 +69,13 @@ end Show
 sealed trait Shown:
     private[kyo] def shownValue: String
 
-given [A](using sh: Show[A]): Conversion[A, Shown] with
-    def apply(a: A): Shown =
-        new Shown:
-            def shownValue: String = sh.show(a)
-end given
+object Shown:
+    given [A](using sh: Show[A]): Conversion[A, Shown] with
+        def apply(a: A): Shown =
+            new Shown:
+                private[kyo] def shownValue: String = sh.show(a)
+    end given
+end Shown
 
 extension (sc: StringContext)
     def k(args: Shown*): String = sc.s(args.map(_.shownValue)*)

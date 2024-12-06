@@ -288,7 +288,7 @@ object `<`:
     given [A, S, APS <: A < S](using sha: Show[A]): Show[APS] with
         def show(value: APS): String = value match
             case sus: Kyo[?, ?]  => sus.toString
-            case a: A @unchecked => s"KyoPure(${sha.show(a)})"
+            case a: A @unchecked => s"Kyo(${sha.show(a)})"
     end given
 
 end `<`
