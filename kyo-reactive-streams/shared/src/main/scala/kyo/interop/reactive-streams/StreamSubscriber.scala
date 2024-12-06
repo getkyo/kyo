@@ -2,7 +2,6 @@ package kyo.interop.reactivestreams
 
 import StreamSubscriber.*
 import kyo.*
-import kyo.Emit.Ack
 import org.reactivestreams.*
 
 final class StreamSubscriber[V] private (
@@ -174,19 +173,24 @@ final class StreamSubscriber[V] private (
     end interupt
 
     private[interop] def emit(ack: Ack)(using Tag[V]): Ack < (Emit[Chunk[V]] & Async) =
-        ack match
-            case Ack.Stop => interupt.andThen(Ack.Stop)
-            case Ack.Continue(_) =>
-                await.map {
-                    if _ then
-                        request.andThen(Ack.Continue())
-                    else
-                        poll.map {
-                            case Result.Success(nextChunk)  => Emit(nextChunk)
-                            case Result.Error(e: Throwable) => Abort.panic(e)
-                            case _                          => Ack.Stop
+        Emit.andMap(Chunk.empty) { ack =>
+            Loop(ack) {
+                case Ack.Stop => interupt.andThen(Loop.done(Ack.Stop))
+                case Ack.Continue(_) =>
+                    await
+                        .map {
+                            if _ then
+                                request.andThen(Ack.Continue())
+                            else
+                                poll.map {
+                                    case Result.Success(nextChunk)  => Emit(nextChunk)
+                                    case Result.Error(e: Throwable) => Abort.panic(e)
+                                    case _                          => Ack.Stop
+                                }
                         }
-                }.map(emit)
+                        .map(Loop.continue(_))
+            }
+        }
 
     def stream(using Tag[V]): Stream[V, Async] = Stream(Emit.andMap(Chunk.empty)(emit))
 

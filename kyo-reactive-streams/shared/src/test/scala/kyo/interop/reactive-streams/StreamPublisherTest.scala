@@ -1,7 +1,6 @@
 package kyo.interop.reactivestreams
 
 import kyo.*
-import kyo.Emit.Ack
 import kyo.interop.reactivestreams.StreamPublisher
 import org.reactivestreams.tck.PublisherVerification
 import org.reactivestreams.tck.TestEnvironment
