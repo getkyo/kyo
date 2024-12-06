@@ -19,6 +19,14 @@ object Maybe:
     inline given [A: Flat]: Flat[Maybe[A]]                                             = Flat.unsafe.bypass
     given [A]: Conversion[Maybe[A], IterableOnce[A]]                                   = _.iterator
 
+    given [A, MA <: Maybe[A]](using sha: Show[A]): Show[MA] with
+        given CanEqual[Absent, MA] = CanEqual.derived
+        def show(value: MA): String = value match
+            case pr @ Present(_) => s"Present(${sha.show(pr.get)})"
+            case Absent          => "Absent"
+            case _               => throw IllegalStateException()
+    end given
+
     /** Creates a Maybe instance from a value.
       *
       * @param v
@@ -71,8 +79,9 @@ object Maybe:
 
     /** Represents a defined value in a Maybe. */
     opaque type Present[+A] = A | PresentAbsent
-
     object Present:
+        // given presentShow[A](using sha: Show[A]): Show[Present[A]] with
+        //     def show(value: Present[A]): String = s"Present(${sha.show(value.get)})"
 
         /** Creates a Present instance.
           *
@@ -124,6 +133,8 @@ object Maybe:
     /** Represents an empty Maybe instance. */
     sealed abstract class Absent
     case object Absent extends Absent
+    // given Show[Absent] with
+    //     def show(value: Absent): String = "Absent"
 
     extension [A](self: Maybe[A])
 
@@ -411,9 +422,7 @@ object Maybe:
         inline def toResult[E](inline ifEmpty: => Result[E, A]): Result[E, A] =
             if isEmpty then ifEmpty else Result.success(get)
 
-        def show: String =
-            if isEmpty then "Absent"
-            else s"Present(${get})"
+        def show(using sh: Show[Maybe[A]]): String = sh.show(self)
 
     end extension
 

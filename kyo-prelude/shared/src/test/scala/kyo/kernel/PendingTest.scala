@@ -269,4 +269,13 @@ class PendingTest extends Test:
         assert(test(nest((): Unit < Any)).eval == ())
     }
 
+    "show" - {
+        "should display pure vals wrapped" in {
+            val i: Int < Any        = 23
+            val sh: Show[Int < Any] = Show.apply
+            assert(sh.show(i) == "KyoPure(23)")
+            // assert(k"$i" == "KyoPure(23)")
+        }
+    }
+
 end PendingTest
