@@ -90,6 +90,7 @@ We strongly recommend enabling these Scala compiler flags when working with Kyo 
 1. `-Wvalue-discard`: Warns when non-Unit expression results are unused.
 2. `-Wnonunit-statement`: Warns when non-Unit expressions are used in statement position.
 3. `-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error`: Elevates the warnings from the previous flags to compilation errors.
+4. `-language:strictEquality`: Enforces type-safe equality comparisons by requiring explicit evidence that types can be safely compared.
 
 Add these to your `build.sbt`:
 
@@ -97,7 +98,9 @@ Add these to your `build.sbt`:
 scalacOptions ++= Seq(
     "-Wvalue-discard", 
     "-Wnonunit-statement", 
-    "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error")
+    "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error",
+    "-language:strictEquality"
+)
 ```
 
 These flags help catch two common issues in Kyo applications:
@@ -106,7 +109,9 @@ These flags help catch two common issues in Kyo applications:
 
 2. **Unused/Discarded non-Unit value**: Most commonly occurs when you pass a computation to a method that can only handle some of the effects that your computation requires. For example, passing a computation that needs both `IO` and `Abort[Exception]` effects as a method parameter that only accepts `IO` can trigger this warning. While this warning can appear in other scenarios (like ignoring any non-Unit value), in Kyo applications it typically signals that you're trying to use a computation in a context that doesn't support all of its required effects.
 
-> Note: You may want to selectively disable these warnings in test code, where it's common to assert side effects without using their returned values.
+3. **Values cannot be compared with == or !=**: The strict equality flag ensures type-safe equality comparisons by requiring that compared types are compatible. This is particularly important for Kyo's opaque types like `Maybe`, where comparing values of different types could lead to inconsistent behavior. The flag helps catch these issues at compile-time, ensuring you only compare values that can be meaningfully compared. For example, you cannot accidentally compare a `Maybe[Int]` with an `Option[Int]` or a raw `Int`, preventing subtle bugs. To disable the check for a specific scope, introduce an unsafe evidence: `given [A, B]: CanEqual[A, B] = CanEqual.derived`
+
+> Note: You may want to selectively disable these warnings in test code, where it's common to assert side effects without using their returned values: `Test / scalacOptions --= Seq(options, to, disable)`
 
 ### The "Pending" type: `<`
 
