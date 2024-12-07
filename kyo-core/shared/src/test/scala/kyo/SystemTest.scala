@@ -82,6 +82,12 @@ class SystemTest extends Test:
         yield assert(OS.values.contains(os))
     }
 
+    "workingDirectory" in run {
+        for
+            workingDirectory <- System.workingDirectory
+        yield assert(workingDirectory == Path(j.System.getProperty("user.dir")))
+    }
+
     "custom System implementation" in run {
         val customSystem = new System:
             def unsafe: Unsafe = ???
@@ -89,23 +95,26 @@ class SystemTest extends Test:
                 IO(Maybe("custom_env").asInstanceOf[Maybe[A]])
             def property[E, A](name: String)(using Parser[E, A], Frame): Maybe[A] < (Abort[E] & IO) =
                 IO(Maybe("custom_property").asInstanceOf[Maybe[A]])
-            def lineSeparator(using Frame): String < IO = IO("custom_separator")
-            def userName(using Frame): String < IO      = IO("custom_user")
-            def userHome(using Frame): String < IO      = IO("custom_home")
-            def operatingSystem(using Frame): OS < IO   = IO(OS.AIX)
+            def lineSeparator(using Frame): String < IO  = IO("custom_separator")
+            def userName(using Frame): String < IO       = IO("custom_user")
+            def userHome(using Frame): String < IO       = IO("custom_home")
+            def operatingSystem(using Frame): OS < IO    = IO(OS.AIX)
+            def workingDirectory(using Frame): Path < IO = IO(Path("custom_working_directory"))
 
         for
-            env       <- System.let(customSystem)(System.env[String]("ANY"))
-            prop      <- System.let(customSystem)(System.property[String]("ANY"))
-            separator <- System.let(customSystem)(System.lineSeparator)
-            user      <- System.let(customSystem)(System.userName)
-            os        <- System.let(customSystem)(System.operatingSystem)
+            env              <- System.let(customSystem)(System.env[String]("ANY"))
+            prop             <- System.let(customSystem)(System.property[String]("ANY"))
+            separator        <- System.let(customSystem)(System.lineSeparator)
+            user             <- System.let(customSystem)(System.userName)
+            os               <- System.let(customSystem)(System.operatingSystem)
+            workingDirectory <- System.let(customSystem)(System.workingDirectory)
         yield
             assert(env == Maybe("custom_env"))
             assert(prop == Maybe("custom_property"))
             assert(separator == "custom_separator")
             assert(user == "custom_user")
             assert(os == OS.AIX)
+            assert(workingDirectory == Path("custom_working_directory"))
         end for
     }
 
@@ -339,6 +348,11 @@ class SystemTest extends Test:
             assert(testUnsafe.operatingSystem() == OS.Linux)
         }
 
+        "should get working directory correctly" in {
+            val testUnsafe = new TestUnsafeSystem(workingDirectory = Path("test_working_directory"))
+            assert(testUnsafe.workingDirectory() == Path("test_working_directory"))
+        }
+
         "should convert to safe System" in {
             val testUnsafe = new TestUnsafeSystem()
             val safeSystem = testUnsafe.safe
@@ -351,7 +365,8 @@ class SystemTest extends Test:
         properties: Map[String, String] = Map.empty,
         lineSeparator: String = "\n",
         userName: String = "test_user",
-        os: OS = OS.Unknown
+        os: OS = OS.Unknown,
+        workingDirectory: Path = Path("test_working_directory")
     ) extends System.Unsafe:
         def env(name: String)(using AllowUnsafe): Maybe[String] =
             Maybe.fromOption(envVars.get(name))
@@ -364,6 +379,8 @@ class SystemTest extends Test:
         def userName()(using AllowUnsafe): String = userName
 
         def operatingSystem()(using AllowUnsafe): OS = os
+
+        def workingDirectory()(using AllowUnsafe): Path = workingDirectory
     end TestUnsafeSystem
 
 end SystemTest

@@ -18,6 +18,7 @@ abstract class System:
     def lineSeparator(using Frame): String < IO
     def userName(using Frame): String < IO
     def operatingSystem(using Frame): System.OS < IO
+    def workingDirectory(using Frame): Path < IO
 end System
 
 /** Companion object for System, containing utility methods and type classes. */
@@ -34,6 +35,7 @@ object System:
         def lineSeparator()(using AllowUnsafe): String
         def userName()(using AllowUnsafe): String
         def operatingSystem()(using AllowUnsafe): OS
+        def workingDirectory()(using AllowUnsafe): Path
         def safe: System = System(this)
     end Unsafe
 
@@ -51,10 +53,11 @@ object System:
                         case Absent     => Absent
                         case Present(v) => Abort.get(p(v).map(Maybe(_)))
                 }
-            def lineSeparator(using Frame): String < IO = IO.Unsafe(u.lineSeparator())
-            def userName(using Frame): String < IO      = IO.Unsafe(u.userName())
-            def operatingSystem(using Frame): OS < IO   = IO.Unsafe(u.operatingSystem())
-            def unsafe: Unsafe                          = u
+            def lineSeparator(using Frame): String < IO  = IO.Unsafe(u.lineSeparator())
+            def userName(using Frame): String < IO       = IO.Unsafe(u.userName())
+            def operatingSystem(using Frame): OS < IO    = IO.Unsafe(u.operatingSystem())
+            def workingDirectory(using Frame): Path < IO = IO.Unsafe(u.workingDirectory())
+            def unsafe: Unsafe                           = u
 
     private val local = Local.init(live)
 
@@ -81,6 +84,7 @@ object System:
                         else OS.Unknown
                         end if
                     }.getOrElse(OS.Unknown)
+                def workingDirectory()(using AllowUnsafe): Path = Path(JSystem.getProperty("user.dir"))
         )
 
     /** Executes a computation with a custom System implementation.
@@ -190,6 +194,9 @@ object System:
 
     /** Retrieves the current operating system. */
     def operatingSystem(using Frame): OS < IO = local.use(_.operatingSystem)
+
+    /** Retrieves the current working directory. */
+    def workingDirectory(using Frame): Path < IO = local.use(_.workingDirectory)
 
     /** Abstract class for parsing string values into specific types. */
     abstract class Parser[E, A]:
