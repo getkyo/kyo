@@ -1,5 +1,6 @@
 package kyo
 
+import kyo.Schedule.done
 import scala.language.implicitConversions
 
 /** Provides string representation of a type as an alternative to .toString. Needed for customizing how to display opaque types
@@ -18,13 +19,36 @@ object Show extends LowPriorityShows:
 
     import scala.compiletime.*
 
+    private inline def sumShow[A, M <: scala.deriving.Mirror.ProductOf[A]](label: String, mir: M): Show[A] =
+        val shows = summonAll[Tuple.Map[mir.MirroredElemTypes, Show]]
+        new Show[A]:
+            def show(value: A): String =
+                val builder = java.lang.StringBuilder()
+                builder.append(label)
+                builder.append("(")
+                val valIter                       = value.asInstanceOf[Product].productIterator
+                val showIter: Iterator[Show[Any]] = shows.productIterator.asInstanceOf
+                if valIter.hasNext then
+                    builder.append(showIter.next().show(valIter.next()))
+                    ()
+                while valIter.hasNext do
+                    builder.append(",")
+                    builder.append(showIter.next().show(valIter.next()))
+                    ()
+                end while
+                builder.append(")")
+                builder.toString()
+            end show
+        end new
+    end sumShow
+
     inline given [A](using mir: scala.deriving.Mirror.Of[A]): Show[A] = inline mir match
         case sumMir: scala.deriving.Mirror.SumOf[?] =>
-            val shows: List[Show[Any]] = summonAll[Tuple.Map[sumMir.MirroredElemTypes, Show]].toList.asInstanceOf
+            val shows = summonAll[Tuple.Map[sumMir.MirroredElemTypes, Show]]
             new Show[A]:
                 def show(value: A): String =
-                    val caseIndex    = sumMir.ordinal(value)
-                    val showInstance = shows(caseIndex)
+                    val caseIndex               = sumMir.ordinal(value)
+                    val showInstance: Show[Any] = shows.productElement(caseIndex).asInstanceOf
                     showInstance.show(value)
                 end show
             end new
@@ -34,29 +58,21 @@ object Show extends LowPriorityShows:
                 def show(value: A): String = label
         case prodMir: scala.deriving.Mirror.ProductOf[?] => inline erasedValue[A] match
                 case _: Tuple =>
-                    val shows         = summonAll[Tuple.Map[prodMir.MirroredElemTypes, Show]]
-                    val label: String = ""
-                    new Show[A]:
-                        def show(value: A): String =
-                            val innerValues: List[Any] = value.asInstanceOf[Product].productIterator.toList
-                            val values: List[String] = shows.toList.zipWithIndex.map:
-                                case (sh: Show[Any] @unchecked, i) =>
-                                    sh.show(value.asInstanceOf[Product].productElement(i))
-                            values.mkString(label + "(", ",", ")")
-                        end show
-                    end new
+                    inline erasedValue[prodMir.MirroredElemTypes] match
+                        case _: EmptyTuple =>
+                            new Show[A]:
+                                def show(value: A): String = "()"
+                        case _ =>
+                            sumShow[A, prodMir.type]("", prodMir)
                 case _ =>
-                    val shows         = summonAll[Tuple.Map[prodMir.MirroredElemTypes, Show]]
                     val label: String = constValue[prodMir.MirroredLabel]
-                    new Show[A]:
-                        def show(value: A): String =
-                            val innerValues: List[Any] = value.asInstanceOf[Product].productIterator.toList
-                            val values: List[String] = shows.toList.zipWithIndex.map:
-                                case (sh: Show[Any] @unchecked, i) =>
-                                    sh.show(value.asInstanceOf[Product].productElement(i))
-                            values.mkString(label + "(", ",", ")")
-                        end show
-                    end new
+                    inline erasedValue[prodMir.MirroredElemTypes] match
+                        case _: EmptyTuple =>
+                            new Show[A]:
+                                def show(value: A): String = label + "()"
+                        case _ =>
+                            sumShow[A, prodMir.type](label, prodMir)
+                    end match
         case _ =>
             new Show[A]:
 
