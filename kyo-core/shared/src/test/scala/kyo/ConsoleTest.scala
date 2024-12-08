@@ -44,17 +44,18 @@ class ConsoleTest extends Test:
                 override def write(b: Int): Unit = error.append(b.toChar)
             )) {
                 import AllowUnsafe.embrace.danger
-                IO.Unsafe.run {
-                    for
-                        r1 <- Abort.run(Console.print("test"))
-                        r2 <- Abort.run(Console.printLine(" message"))
-                        r3 <- Abort.run(Console.printErr("error"))
-                        r4 <- Abort.run(Console.printLineErr(" message"))
-                    yield
-                        assert(r1.isSuccess && r2.isSuccess && r3.isSuccess && r4.isSuccess)
-                        assert(output.toString == "test message\n")
-                        assert(error.toString == "error message\n")
-                }.eval
+                val (r1, r2, r3, r4) =
+                    IO.Unsafe.evalOrThrow {
+                        for
+                            r1 <- Abort.run(Console.print("test"))
+                            r2 <- Abort.run(Console.printLine(" message"))
+                            r3 <- Abort.run(Console.printErr("error"))
+                            r4 <- Abort.run(Console.printLineErr(" message"))
+                        yield (r1, r2, r3, r4)
+                    }
+                assert(r1.isSuccess && r2.isSuccess && r3.isSuccess && r4.isSuccess)
+                assert(output.toString == "test message\n")
+                assert(error.toString == "error message\n")
             }
         }
     }

@@ -22,7 +22,7 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Abort[Any] & Async & 
                 case e             => throw new IllegalStateException(s"Test aborted with $e")
         }(identity)))
         val b = a.map(_.toFuture).map(_.flatten)
-        IO.Unsafe.run(b).eval
+        IO.Unsafe.evalOrThrow(b)
     end run
 
     type Assertion = org.scalatest.compatible.Assertion

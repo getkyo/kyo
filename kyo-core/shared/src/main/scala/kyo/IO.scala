@@ -8,11 +8,12 @@ import kyo.kernel.*
   * IO allows you to encapsulate and manage side-effecting operations (such as file I/O, network calls, or mutable state modifications)
   * within a purely functional context. This enables better reasoning about effects and helps maintain referential transparency.
   *
-  * IO is implemented as a type-level marker rather than a full ArrowEffect for performance. Since Effect.defer is only evaluated by the
-  * Pending type's "eval" method, which can only handle computations without pending effects, side effects are properly deferred. This
-  * ensures they can only be executed after an IO.run call, even though it is is a purely type-level operation.
+  * Like Async includes IO, this effect includes Abort[Nothing] to represent potential panics (untracked, unexpected exceptions). IO is
+  * implemented as a type-level marker rather than a full ArrowEffect for performance. Since Effect.defer is only evaluated by the Pending
+  * type's "eval" method, which can only handle computations without pending effects, side effects are properly deferred. This ensures they
+  * can only be executed after an IO.run call, even though it is a purely type-level operation.
   */
-opaque type IO = Any
+opaque type IO <: Abort[Nothing] = Abort[Nothing]
 
 object IO:
 
@@ -61,7 +62,7 @@ object IO:
       *   The result of the main computation, with the finalizer guaranteed to run.
       */
     def ensure[A, S](f: => Unit < IO)(v: A < S)(using frame: Frame): A < (IO & S) =
-        Unsafe(Safepoint.ensure(IO.Unsafe.run(f).eval)(v))
+        Unsafe(Safepoint.ensure(IO.Unsafe.evalOrThrow(f))(v))
 
     /** WARNING: Low-level API meant for integrations, libraries, and performance-sensitive code. See AllowUnsafe for more details. */
     object Unsafe:
@@ -71,6 +72,23 @@ object IO:
                 import AllowUnsafe.embrace.danger
                 f
             }
+
+        /** Evaluates an IO effect that may throw exceptions, converting any thrown exceptions into the final result.
+          *
+          * WARNING: This is a low-level API that should be used with caution. It forcefully evaluates the IO effect and will throw any
+          * encountered exceptions rather than handling them in a purely functional way.
+          *
+          * @param v
+          *   The IO effect to evaluate, which may contain throwable errors
+          * @param frame
+          *   Implicit frame for the computation
+          * @return
+          *   The result of evaluating the IO effect, throwing any encountered exceptions
+          * @throws Throwable
+          *   If the evaluation results in an error
+          */
+        def evalOrThrow[A: Flat](v: A < (IO & Abort[Throwable]))(using Frame): A =
+            Abort.run(v).eval.getOrThrow
 
         /** Runs an IO effect, evaluating it and its side effects immediately.
           *
@@ -91,7 +109,7 @@ object IO:
           * @return
           *   The result of the IO effect after executing its side effects.
           */
-        def run[A: Flat, S](v: => A < IO)(using Frame, AllowUnsafe): A < Any =
+        def run[E, A: Flat](v: => A < (IO & Abort[E]))(using Frame, AllowUnsafe): A < Abort[E] =
             runLazy(v)
 
         /** Runs an IO effect lazily, only evaluating when needed.
@@ -115,7 +133,7 @@ object IO:
           * @return
           *   The result of the IO effect, evaluated lazily along with its side effects.
           */
-        def runLazy[A: Flat, S](v: => A < (IO & S))(using Frame, AllowUnsafe): A < S =
+        def runLazy[E, A: Flat, S](v: => A < (IO & Abort[E] & S))(using Frame, AllowUnsafe): A < (S & Abort[E]) =
             v
 
     end Unsafe
