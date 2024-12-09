@@ -30,7 +30,7 @@ class IOTest extends Test:
                     }
                 }
             assert(!called)
-            val v2 = IO.Unsafe.runLazy(v)
+            val v2 = IO.Unsafe.run(v)
             assert(!called)
             assert(
                 Abort.run(Env.run(1)(v2)).eval ==

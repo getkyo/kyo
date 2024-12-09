@@ -90,7 +90,7 @@ object IO:
         def evalOrThrow[A: Flat](v: A < (IO & Abort[Throwable]))(using Frame): A =
             Abort.run(v).eval.getOrThrow
 
-        /** Runs an IO effect, evaluating it and its side effects immediately.
+        /** Runs an IO effect, evaluating it and its side effects.
           *
           * WARNING: This is a low-level, unsafe API. It should be used with caution and only when absolutely necessary. This method
           * executes the IO effect and any associated side effects right away, potentially breaking referential transparency and making it
@@ -109,31 +109,7 @@ object IO:
           * @return
           *   The result of the IO effect after executing its side effects.
           */
-        def run[E, A: Flat](v: => A < (IO & Abort[E]))(using Frame, AllowUnsafe): A < Abort[E] =
-            runLazy(v)
-
-        /** Runs an IO effect lazily, only evaluating when needed.
-          *
-          * WARNING: This is an extremely low-level and unsafe API. It should be used with great caution and only in very specific scenarios
-          * where fine-grained control over IO effect execution is absolutely necessary.
-          *
-          * This method allows for delayed execution of the IO effect and its side effects, which can lead to unpredictable behavior if not
-          * managed carefully. It bypasses many of the safety guarantees provided by the IO abstraction.
-          *
-          * In most cases, prefer higher-level, safer APIs for managing IO effects.
-          *
-          * @param v
-          *   The IO effect to run lazily.
-          * @param frame
-          *   Implicit frame for the computation.
-          * @tparam A
-          *   The result type of the IO effect.
-          * @tparam S
-          *   Additional effects in the computation.
-          * @return
-          *   The result of the IO effect, evaluated lazily along with its side effects.
-          */
-        def runLazy[E, A: Flat, S](v: => A < (IO & Abort[E] & S))(using Frame, AllowUnsafe): A < (S & Abort[E]) =
+        def run[E, A: Flat, S](v: => A < (IO & Abort[E] & S))(using Frame, AllowUnsafe): A < (S & Abort[E]) =
             v
 
     end Unsafe

@@ -524,34 +524,6 @@ val b: Int < Abort[Nothing] =
 // ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
 ```
 
-The `runLazy` method accepts computations with other effects but it doesn't guarantee that all side effects are performed before the method returns. If other effects still have to be handled, the side effects can be executed later once the other effects are handled. This a low-level API that must be used with caution.
-
-```scala
-import kyo.*
-
-// Computation with 'Env' and then 'IO' suspensions
-val a: Int < (Env[Int] & IO) =
-    Env.get[Int].map { v =>
-        IO {
-            println(v)
-            v
-        }
-    }
-
-// ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
-// Handle the 'IO' effect lazily
-val b: Int < (Env[Int] & Abort[Nothing]) =
-    import AllowUnsafe.embrace.danger // Required for unsafe operations
-    IO.Unsafe.runLazy(a)
-// ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
-
-// Since the computation is suspended with the
-// 'Env' effect first, the lazy 'IO' execution
-// will be triggered once 'Env' is handled
-val c: Int < Abort[Nothing] =
-    Env.run(42)(b)
-```
-
 > IMPORTANT: Avoid handling the `IO` effect directly since it breaks referential transparency. Use `KyoApp` instead.
 
 ### Env: Dependency Injection

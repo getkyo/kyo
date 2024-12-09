@@ -48,7 +48,7 @@ class ResourceTest extends Test:
                 assert(r1.closes == 0)
                 Env.get[Int]
             }.pipe(Resource.run)
-                .pipe(IO.Unsafe.runLazy)
+                .pipe(IO.Unsafe.run)
         assert(r1.closes == 0)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
@@ -109,7 +109,7 @@ class ResourceTest extends Test:
             yield i1 + i2
         val r =
             io.pipe(Resource.run)
-                .pipe(IO.Unsafe.runLazy)
+                .pipe(IO.Unsafe.run)
         assert(r1.closes == 0)
         assert(r2.closes == 0)
         assert(r1.acquires == 1)
