@@ -1,6 +1,7 @@
 package kyo
 
 import kyo.debug.Debug
+import kyo.kernel.ArrowEffect
 import kyo.kernel.Boundary
 import kyo.kernel.Reducible
 import scala.annotation.tailrec
@@ -900,3 +901,109 @@ extension [A, E, Ctx](effect: A < (Abort[E] & Async & Ctx))
             a1      <- fiberA1.join
         yield (a, a1)
 end extension
+
+extension [A, S](effect: Ack < (Emit[Chunk[A]] & S))
+    /** Convert streaming Emit effect to a [[Stream[A, S]]]
+      *
+      * @return
+      *   Stream representation of original effect
+      */
+    def emitToStream: Stream[A, S] = Stream(effect)
+
+private case object FinalEmit
+
+extension [A, B, S](effect: B < (Emit[A] & S))
+    /** Handle Emit[A], chunking emissions according to [[chunkSize]]
+      *
+      * @param chunkSize
+      *   maximum size of emitted chunks
+      *
+      * @return
+      */
+    def chunkEmit(
+        chunkSize: Int
+    )(
+        using
+        tag: Tag[Emit[A]],
+        fr: Frame,
+        at: Tag[A],
+        fl: Flat[B]
+    ): B < (Emit[Chunk[A]] & S) =
+        ArrowEffect.handleState(tag, Chunk.empty[A], effect)(
+            [C] =>
+                (v, buffer, cont) =>
+                    val b2 = buffer.append(v)
+                    if b2.size >= chunkSize then
+                        Emit.andMap(b2): ack =>
+                            (Chunk.empty, cont(ack))
+                    else
+                        (b2, cont(Ack.Continue()))
+                    end if
+            ,
+            (buffer, v) =>
+                if buffer.isEmpty then v
+                else Emit.andMap(buffer)(_ => v)
+        )
+
+    /** Convert an effect that emits type [[A]] while computing a result of type [[B]] to an asynchronous stream of the emission type [[A]]
+      * and a separate asynchronous effect that yields the result of the original effect after the stream has been handled.
+      *
+      * @param chunkSize
+      *   size of the chunks to be emitted by the resulting stream
+      *
+      * @return
+      *   tuple of async stream of type [[A]] and async effect yield result [[B]]
+      */
+    def separateStreamChunking(
+        chunkSize: Int
+    )(
+        using
+        tag: Tag[Emit[A]],
+        fr: Frame,
+        at: Tag[A],
+        fl: Flat[B]
+    ): (Stream[A, S & Async], B < Async) < Async =
+        val chunkedEffect = effect.chunkEmit(chunkSize)
+
+        for
+            c <- Channel.init[B](1)
+            streamEmit = chunkedEffect.map: b =>
+                c.put(b).map(_ => Ack.Continue()).orPanic
+        yield (Stream(streamEmit), c.take.orPanic)
+        end for
+    end separateStreamChunking
+end extension
+
+extension [A, B, S](effect: B < (Emit[Chunk[A]] & S))
+    def emitToStreamDiscarding(
+        using
+        NotGiven[B <:< Ack],
+        Frame
+    ): Stream[A, S] =
+        Stream(effect.map(_ => Ack.Continue()))
+
+    /** Convert an effect that emits chunks of type [[A]] while computing a result of type [[B]] to an asynchronous stream of the emission
+      * type [[A]] and a separate asynchronous effect that yields the result of the original effect after the stream has been handled.
+      *
+      * @return
+      *   tuple of async stream of type [[A]] and async effect yield result [[B]]
+      */
+    def separateStream(
+        using
+        Flat[B],
+        Frame
+    ): (Stream[A, S & Async], B < Async) < Async =
+        for
+            c <- Channel.init[B](1)
+            streamEmit = effect.map: b =>
+                c.put(b).map(_ => Ack.Continue()).orPanic
+        yield (Stream(streamEmit), c.take.orPanic)
+end extension
+
+extension [A, S](effect: Ack < (Emit[A] & S))
+    /** Convert streaming Emit effect to a [[Stream[A, S]]], chunking emissions by specified size
+      *
+      * @return
+      *   Stream representation of original effect
+      */
+    def emitChunkedToStream(chunkSize: Int)(using Tag[A], Frame): Stream[A, S] = Stream(effect.chunkEmit(chunkSize))
