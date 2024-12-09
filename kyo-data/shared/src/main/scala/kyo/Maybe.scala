@@ -22,7 +22,7 @@ object Maybe:
     given [A, MA <: Maybe[A]](using sha: Show[A]): Show[MA] with
         given CanEqual[Absent, MA] = CanEqual.derived
         def show(value: MA): String = value match
-            case pr @ Present(_) => s"Present(${sha.show(pr.get)})"
+            case Present(a) => s"Present(${sha.show(a)})"
             case Absent          => "Absent"
             case _               => throw IllegalStateException()
     end given
