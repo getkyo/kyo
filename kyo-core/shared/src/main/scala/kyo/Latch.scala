@@ -71,7 +71,7 @@ object Latch:
 
                     def release()(using AllowUnsafe) =
                         @tailrec def loop(c: Int): Unit =
-                            if c > 0 && !count.cas(c, c - 1) then
+                            if c > 0 && !count.compareAndSet(c, c - 1) then
                                 loop(count.get())
                             else if c == 1 then
                                 promise.completeDiscard(Result.unit)

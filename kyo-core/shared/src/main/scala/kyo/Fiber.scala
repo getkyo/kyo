@@ -370,7 +370,7 @@ object Fiber extends FiberPlatformSpecific:
                             val ok  = (p & 0xffffffffL) + (if result.isSuccess then 1 else 0)
                             val nok = (p >>> 32) + (if result.isFail then 1 else 0)
                             val np  = (nok << 32) | ok
-                            if !packed.cas(p, np) then
+                            if !packed.compareAndSet(p, np) then
                                 // CAS failed, retry the update
                                 loop()
                             else
