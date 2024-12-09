@@ -5,7 +5,7 @@ import scala.language.implicitConversions
 
 /** Provides string representation of a type as an alternative to .toString. Needed for customizing how to display opaque types
   */
-trait Show[A]:
+abstract class Show[A]:
     def show(value: A): String
 
 sealed trait LowPriorityShows:
