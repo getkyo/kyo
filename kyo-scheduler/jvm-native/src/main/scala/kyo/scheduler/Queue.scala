@@ -159,6 +159,11 @@ final class Queue[A](implicit ord: Ordering[A]) extends AtomicBoolean {
             tasks.foreach(f)
         }
 
+    /** Atomically removes and returns all elements as a sequence.
+      *
+      * Locks queue, removes all elements, then returns all elements as a sequence after lock release. Used for initializing a Stream from a
+      * Queue.
+      */
     def drainToSeq(): Seq[A] =
         if (!isEmpty()) {
             lock()
