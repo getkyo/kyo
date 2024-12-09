@@ -192,7 +192,6 @@ lazy val `kyo-data` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-data"))
-        .dependsOn(`kyo-scheduler`)
         .settings(
             `kyo-settings`,
             libraryDependencies += "com.lihaoyi"   %%% "pprint"        % "0.9.0",
@@ -208,6 +207,7 @@ lazy val `kyo-prelude` =
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
+        .dependsOn(`kyo-scheduler`)
         .in(file("kyo-prelude"))
         .settings(
             `kyo-settings`,
