@@ -4,6 +4,7 @@ import kyo.Emit.Ack
 import kyo.Emit.Ack.*
 import kyo.Tag
 import kyo.kernel.ArrowEffect
+import kyo.scheduler.Queue
 import scala.annotation.nowarn
 import scala.annotation.targetName
 
@@ -389,7 +390,10 @@ object Stream:
       * @return
       *   A stream of values from the sequence
       */
-    def init[V, S](v: => Seq[V] < S, chunkSize: Int = DefaultChunkSize)(using tag: Tag[Emit[Chunk[V]]], frame: Frame): Stream[V, S] =
+    def init[V, S](v: => Seq[V] < S, chunkSize: Int = DefaultChunkSize)(using
+        tag: Tag[Emit[Chunk[V]]],
+        frame: Frame
+    ): Stream[V, S] =
         Stream[V, S]:
             v.map { seq =>
                 val chunk: Chunk[V] = Chunk.from(seq)
@@ -407,6 +411,19 @@ object Stream:
                     }
                 }
             }
+
+    /** Creates a stream from a Queue.
+      *
+      * @param queue
+      *   The queue of values
+      * @return
+      *   A stream of values from the queue
+      */
+    def init[V, S](queue: => Queue[V])(using
+        tag: Tag[Emit[Chunk[V]]],
+        frame: Frame
+    ): Stream[V, S] =
+        init(queue.drainToSeq().reverse, DefaultChunkSize)
 
     /** Creates a stream of integers from start (inclusive) to end (exclusive).
       *

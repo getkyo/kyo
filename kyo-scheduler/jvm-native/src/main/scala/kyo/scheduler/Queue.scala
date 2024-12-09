@@ -23,7 +23,7 @@ import scala.collection.mutable.PriorityQueue
   * @param ord
   *   Implicit ordering for priority queue behavior
   */
-final private class Queue[A](implicit ord: Ordering[A]) extends AtomicBoolean {
+final class Queue[A](implicit ord: Ordering[A]) extends AtomicBoolean {
 
     private val queue = PriorityQueue[A]()
 
@@ -158,6 +158,17 @@ final private class Queue[A](implicit ord: Ordering[A]) extends AtomicBoolean {
             }
             tasks.foreach(f)
         }
+
+    def drainToSeq(): Seq[A] =
+        if (!isEmpty()) {
+            lock()
+            try {
+                items = 0
+                queue.dequeueAll
+            } finally
+                unlock()
+        } else
+            Seq.empty
 
     /** Acquires queue lock using busy-wait spin loop.
       *

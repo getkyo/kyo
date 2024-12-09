@@ -3,6 +3,7 @@ package kyo
 import kyo.Emit.Ack
 import kyo.Emit.Ack.*
 import kyo.kernel.Reducible
+import kyo.scheduler.Queue
 
 class StreamTest extends Test:
 
@@ -60,6 +61,24 @@ class StreamTest extends Test:
         "non-empty" in {
             assert(
                 Stream.init(Chunk(1, 2, 3)).run.eval == Seq(1, 2, 3)
+            )
+        }
+    }
+
+    "initQueue" - {
+        "empty" in {
+            assert(
+                Stream.init(new Queue[Integer]()).run.eval == Seq.empty
+            )
+        }
+
+        "non-empty" in {
+            val queue = new Queue[Integer]()
+            queue.add(1)
+            queue.add(2)
+            queue.add(3)
+            assert(
+                Stream.init(queue).run.eval == Seq(1, 2, 3)
             )
         }
     }

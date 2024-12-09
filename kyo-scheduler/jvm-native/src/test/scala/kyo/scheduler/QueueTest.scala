@@ -201,6 +201,16 @@ class QueueTest extends AnyFreeSpec with NonImplicitAssertions {
             assert(sum == 10)
             assert(queue.isEmpty())
         }
+
+        "drainToSeq" in {
+            val queue = new Queue[Integer]()
+            queue.add(1)
+            queue.add(2)
+            queue.add(3)
+            val seq = queue.drainToSeq()
+            assert(seq == Seq(1, 2, 3))
+            assert(queue.isEmpty())
+        }
     }
 
     "ordering" - {
