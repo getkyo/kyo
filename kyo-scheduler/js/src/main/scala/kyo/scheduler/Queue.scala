@@ -21,6 +21,16 @@ class Queue[A](implicit ord: Ordering[A]) extends AtomicBoolean {
         items
     }
 
+    def add(value: A): Unit = {
+        lock()
+        try {
+            items += 1
+            queue += value
+            ()
+        } finally
+            unlock()
+    }
+
     def drainToSeq(): Seq[A] = {
         if (!isEmpty()) {
             lock()
