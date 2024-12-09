@@ -74,6 +74,26 @@ class ChannelTest extends Test:
             v  <- f.get
         yield assert(!d1 && d2 && v == 1)
     }
+    "takeExactly" - {
+        "should take all if in channel" in runNotJS {
+            for
+                c <- Channel.init[Int](3)
+                _ <- Kyo.foreach(1 to 3)(c.put(_))
+                r <- c.takeExactly(3)
+            yield assert(r == Seq(1, 2, 3))
+        }
+        "should take incrementally as elements are added to channel" in runNotJS {
+            for
+                c  <- Channel.init[Int](3)
+                _  <- Kyo.foreach(1 to 3)(c.put(_))
+                f  <- Async.run(c.takeExactly(6))
+                _  <- Loop(false)(v => if v then Loop.done(()) else c.empty.map(Loop.continue(_)))
+                fd <- f.done
+                _  <- Kyo.foreach(4 to 6)(c.put(_))
+                r  <- Fiber.get(f)
+            yield assert(!fd && r == Seq(1, 2, 3, 4, 5, 6))
+        }
+    }
     "drain" - {
         "empty" in run {
             for

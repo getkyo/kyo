@@ -68,6 +68,13 @@ object Queue:
           */
         def poll(using Frame): Maybe[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.poll()))
 
+        /** Takes up to [[max]] elements from the queue.
+          *
+          * @return
+          *   a sequence of up to [[max]] elements from the queue.
+          */
+        def drainUpTo(max: Int)(using Frame): Seq[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
+
         /** Peeks at the first element in the queue without removing it.
           *
           * @return
@@ -217,17 +224,18 @@ object Queue:
                 allow: AllowUnsafe
             ): Unsafe[A] =
                 new Unsafe[A]:
-                    val underlying                           = Queue.Unsafe.init[A](_capacity, access)
-                    def capacity                             = _capacity
-                    def size()(using AllowUnsafe)            = underlying.size()
-                    def empty()(using AllowUnsafe)           = underlying.empty()
-                    def full()(using AllowUnsafe)            = underlying.full().map(_ => false)
-                    def offer(v: A)(using AllowUnsafe)       = underlying.offer(v).map(_ => true)
-                    def poll()(using AllowUnsafe)            = underlying.poll()
-                    def peek()(using AllowUnsafe)            = underlying.peek()
-                    def drain()(using AllowUnsafe)           = underlying.drain()
-                    def close()(using Frame, AllowUnsafe)    = underlying.close()
-                    def closed()(using AllowUnsafe): Boolean = underlying.closed()
+                    val underlying                             = Queue.Unsafe.init[A](_capacity, access)
+                    def capacity                               = _capacity
+                    def size()(using AllowUnsafe)              = underlying.size()
+                    def empty()(using AllowUnsafe)             = underlying.empty()
+                    def full()(using AllowUnsafe)              = underlying.full().map(_ => false)
+                    def offer(v: A)(using AllowUnsafe)         = underlying.offer(v).map(_ => true)
+                    def poll()(using AllowUnsafe)              = underlying.poll()
+                    def drainUpTo(max: Int)(using AllowUnsafe) = underlying.drainUpTo(max)
+                    def peek()(using AllowUnsafe)              = underlying.peek()
+                    def drain()(using AllowUnsafe)             = underlying.drain()
+                    def close()(using Frame, AllowUnsafe)      = underlying.close()
+                    def closed()(using AllowUnsafe): Boolean   = underlying.closed()
                 end new
             end initDropping
 
@@ -253,11 +261,12 @@ object Queue:
                         end loop
                         loop(v)
                     end offer
-                    def poll()(using AllowUnsafe)            = underlying.poll()
-                    def peek()(using AllowUnsafe)            = underlying.peek()
-                    def drain()(using AllowUnsafe)           = underlying.drain()
-                    def close()(using Frame, AllowUnsafe)    = underlying.close()
-                    def closed()(using AllowUnsafe): Boolean = underlying.closed()
+                    def poll()(using AllowUnsafe)              = underlying.poll()
+                    def drainUpTo(max: Int)(using AllowUnsafe) = underlying.drainUpTo(max)
+                    def peek()(using AllowUnsafe)              = underlying.peek()
+                    def drain()(using AllowUnsafe)             = underlying.drain()
+                    def close()(using Frame, AllowUnsafe)      = underlying.close()
+                    def closed()(using AllowUnsafe): Boolean   = underlying.closed()
                 end new
             end initSliding
         end Unsafe
@@ -271,6 +280,7 @@ object Queue:
         def full()(using AllowUnsafe): Result[Closed, Boolean]
         def offer(v: A)(using AllowUnsafe): Result[Closed, Boolean]
         def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
+        def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Seq[A]]
         def peek()(using AllowUnsafe): Result[Closed, Maybe[A]]
         def drain()(using AllowUnsafe): Result[Closed, Seq[A]]
         def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
@@ -292,7 +302,11 @@ object Queue:
 
             final def closed()(using AllowUnsafe) = _closed.get().isDefined
 
+            final def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Seq[A]] = op(_drainUpTo(max))
+
             final def drain()(using AllowUnsafe): Result[Closed, Seq[A]] = op(_drain())
+
+            protected def _drainUpTo(max: Int): Seq[A]
 
             protected def _drain(): Seq[A]
 
@@ -324,6 +338,7 @@ object Queue:
                         def offer(v: A)(using AllowUnsafe) = op(false)
                         def poll()(using AllowUnsafe)      = op(Maybe.empty)
                         def peek()(using AllowUnsafe)      = op(Maybe.empty)
+                        def _drainUpTo(max: Int): Seq[A]   = Seq.empty
                         def _drain()                       = Seq.empty
                 case 1 =>
                     new Closeable[A](initFrame):
@@ -335,6 +350,7 @@ object Queue:
                         def offer(v: A)(using AllowUnsafe) = offerOp(state.cas(Maybe.empty, Maybe(v)), !state.cas(Maybe(v), Maybe.empty))
                         def poll()(using AllowUnsafe)      = op(state.getAndSet(Maybe.empty))
                         def peek()(using AllowUnsafe)      = op(state.get())
+                        def _drainUpTo(max: Int): Seq[A]   = if max <= 0 then Seq.empty else state.getAndSet(Maybe.empty).toList
                         def _drain()                       = state.getAndSet(Maybe.empty).toList
                 case Int.MaxValue =>
                     Unbounded.Unsafe.init(access).safe
@@ -372,6 +388,18 @@ object Queue:
                     )
                 def poll()(using AllowUnsafe) = op(Maybe(q.poll()))
                 def peek()(using AllowUnsafe) = op(Maybe(q.peek()))
+                protected def _drainUpTo(max: Int): Seq[A] =
+                    val b = Seq.newBuilder[A]
+                    @tailrec def loop(i: Int): Unit =
+                        if i < max then
+                            val value = q.poll()
+                            if !isNull(value) then
+                                b.addOne(value)
+                                loop(i + 1)
+                    end loop
+                    loop(0)
+                    b.result()
+                end _drainUpTo
                 def _drain() =
                     val b = Seq.newBuilder[A]
                     @tailrec def loop(): Unit =

@@ -195,6 +195,15 @@ class QueueTest extends Test:
             assert(testUnsafe.empty().contains(true))
         }
 
+        "should drainUpTo correctly" in {
+            val testUnsafe = Queue.Unsafe.init[Int](6)
+            (1 to 6).foreach(testUnsafe.offer)
+            val drained3 = testUnsafe.drainUpTo(3)
+            assert(drained3 == Result.success(Seq(1, 2, 3)))
+            val drained5 = testUnsafe.drainUpTo(5)
+            assert(drained5 == Result.success(Seq(4, 5, 6)))
+        }
+
         "should close correctly" in withQueue { testUnsafe =>
             testUnsafe.offer(5)
             val closed = testUnsafe.close()
