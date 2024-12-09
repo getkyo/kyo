@@ -1,7 +1,6 @@
 package kyo
 
-import kyo.Emit.Ack
-import kyo.Emit.Ack.*
+import kyo.Ack.*
 import kyo.Tag
 import kyo.kernel.ArrowEffect
 import kyo.scheduler.Queue

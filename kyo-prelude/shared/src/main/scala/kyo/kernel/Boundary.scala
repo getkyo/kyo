@@ -22,9 +22,11 @@ import scala.quoted.*
   * @tparam S
   *   The source effects that must be handled before crossing
   */
-final class Boundary[Ctx, +S] private (dummy: Unit) extends AnyVal
-
+sealed abstract class Boundary[Ctx, +S]
 object Boundary:
+    private val instance = new Boundary[Any, Any] {}
+    private def unsafe[Ctx, S]: Boundary[Ctx, S] =
+        instance.asInstanceOf[Boundary[Ctx, S]]
 
     extension [Ctx, S](boundary: Boundary[Ctx, S])
         @nowarn("msg=anonymous")
@@ -41,13 +43,15 @@ object Boundary:
     )(using frame: Frame, safepoint: Safepoint): A < (Ctx & S) =
         Safepoint.immediate(interceptor)(safepoint.withTrace(trace)(v))
 
-    private def create[Ctx, S]: Boundary[Ctx, S] = new Boundary(())
-
     private def boundaryImpl[Ctx: Type, S: Type](using Quotes): Expr[Boundary[Ctx, S]] =
         import quotes.reflect.*
         def flatten(tpe: TypeRepr): List[TypeRepr] =
             tpe match
-                case AndType(left, right)        => flatten(left) ++ flatten(right)
+                case AndType(left, right) => flatten(left) ++ flatten(right)
+                case OrType(left, right) => report.errorAndAbort(
+                        s"Boundary: Unsupported type union in Pending Effects: ${tpe.show}\n".red +
+                            "This should be unreachable, please open an issue 🥹 https://github.com/getkyo/kyo/issues".yellow
+                    )
                 case t if t =:= TypeRepr.of[Any] => Nil
                 case t                           => List(t)
 
@@ -86,6 +90,6 @@ object Boundary:
             )
         end if
 
-        '{ create[Ctx, S] }
+        '{ unsafe[Ctx, S] }
     end boundaryImpl
 end Boundary

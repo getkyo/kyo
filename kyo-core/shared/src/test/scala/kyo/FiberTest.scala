@@ -826,9 +826,9 @@ class FiberTest extends Test:
         "preserves original order with max limit" in runNotJS {
             for
                 fiber <- Fiber.gather(2)(Seq(
-                    Async.delay(3.millis)(1),
+                    Async.delay(100.millis)(1),
                     Async.delay(1.millis)(2),
-                    Async.delay(2.millis)(3)
+                    Async.delay(10.millis)(3)
                 ))
                 result <- fiber.get
             yield assert(result == Chunk(2, 3))
@@ -861,11 +861,11 @@ class FiberTest extends Test:
             val error = new Exception("test error")
             for
                 fiber <- Fiber.gather(2)(Seq(
-                    Async.delay(2.millis)(1),
+                    Async.delay(10.millis)(1),
                     Async.delay(1.millis)(Abort.fail[Exception](error)),
                     Async.delay(1.millis)(2),
                     Async.delay(2.millis)(Abort.fail[Exception](error)),
-                    Async.delay(10.millis)(3)
+                    Async.delay(100.millis)(3)
                 ))
                 result <- fiber.get
             yield

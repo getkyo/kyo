@@ -1,6 +1,6 @@
 package kyo
 
-import kyo.Emit.Ack.*
+import kyo.Ack.*
 
 class EmitTest extends Test:
 
@@ -72,57 +72,57 @@ class EmitTest extends Test:
     "Ack" - {
         "apply" - {
             "negative" in {
-                val ack = Emit.Ack(-1)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack(-1)
+                assert(ack == Ack.Stop)
             }
             "zero" in {
-                val ack = Emit.Ack(0)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack(0)
+                assert(ack == Ack.Stop)
             }
             "positive" in {
-                Emit.Ack(1) match
+                Ack(1) match
                     case Continue(n) => assert(n == 1)
                     case Stop        => fail()
             }
         }
         "maxItems" - {
             "stop with negative" in {
-                val ack = Emit.Ack.Stop.maxValues(-1)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack.Stop.maxValues(-1)
+                assert(ack == Ack.Stop)
             }
             "stop with zero" in {
-                val ack = Emit.Ack.Stop.maxValues(0)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack.Stop.maxValues(0)
+                assert(ack == Ack.Stop)
             }
             "stop with positive" in {
-                val ack = Emit.Ack.Stop.maxValues(1)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack.Stop.maxValues(1)
+                assert(ack == Ack.Stop)
             }
             "continue with negative" in {
-                val ack = Emit.Ack(2).maxValues(-1)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack(2).maxValues(-1)
+                assert(ack == Ack.Stop)
             }
             "continue with zero" in {
-                val ack = Emit.Ack(2).maxValues(0)
-                assert(ack == Emit.Ack.Stop)
+                val ack = Ack(2).maxValues(0)
+                assert(ack == Ack.Stop)
             }
             "continue with less" in {
-                val ack = Emit.Ack(2).maxValues(1)
-                assert(ack == Emit.Ack(1))
+                val ack = Ack(2).maxValues(1)
+                assert(ack == Ack(1))
             }
             "continue with more" in {
-                val ack = Emit.Ack(2).maxValues(3)
-                assert(ack == Emit.Ack(2))
+                val ack = Ack(2).maxValues(3)
+                assert(ack == Ack(2))
             }
         }
         "Continue" - {
             "unapply" - {
                 "stop" in {
-                    val res = Emit.Ack.Continue.unapply(Emit.Ack.Stop)
+                    val res = Ack.Continue.unapply(Ack.Stop)
                     assert(res.isEmpty)
                 }
                 "continue" in {
-                    val res = Emit.Ack.Continue.unapply(Emit.Ack(1))
+                    val res = Ack.Continue.unapply(Ack(1))
                     assert(res.get == 1)
                 }
             }
@@ -130,30 +130,30 @@ class EmitTest extends Test:
         "next" - {
             "stop short circuits" in run {
                 var executed = false
-                Emit.Ack.Stop.next {
+                Ack.Stop.next {
                     executed = true
-                    Emit.Ack.Continue()
+                    Ack.Continue()
                 }.map { ack =>
-                    assert(ack == Emit.Ack.Stop)
+                    assert(ack == Ack.Stop)
                     assert(!executed)
                 }
             }
 
             "continue executes function" in run {
                 var executed = false
-                Emit.Ack(2).next {
+                Ack(2).next {
                     executed = true
-                    Emit.Ack(1)
+                    Ack(1)
                 }.map { ack =>
-                    assert(ack == Emit.Ack(1))
+                    assert(ack == Ack(1))
                     assert(executed)
                 }
             }
         }
         "Flat" in {
-            summon[Flat[Emit.Ack]]
-            summon[Flat[Emit.Ack.Continue]]
-            summon[Flat[Emit.Ack.Stop.type]]
+            summon[Flat[Ack]]
+            summon[Flat[Ack.Continue]]
+            summon[Flat[Ack.Stop.type]]
             succeed
         }
     }
@@ -172,8 +172,8 @@ class EmitTest extends Test:
 
                 Emit.runAck(emits(0)) { v =>
                     seen :+= v
-                    if v < 3 then Emit.Ack.Continue()
-                    else Emit.Ack.Stop
+                    if v < 3 then Ack.Continue()
+                    else Ack.Stop
                 }.eval
                 assert(seen == List(0, 1, 2, 3))
             }
@@ -197,7 +197,7 @@ class EmitTest extends Test:
                                     count     <- Var.get[Int]
                                     _         <- Var.set(count + 1)
                                     _ = seen :+= v
-                                yield if v <= threshold then Emit.Ack.Continue() else Emit.Ack.Stop
+                                yield if v <= threshold then Ack.Continue() else Ack.Stop
                             }
                         }
                     }.eval
@@ -218,7 +218,7 @@ class EmitTest extends Test:
                 val result = Abort.run[String] {
                     Emit.runAck(emits(0)) { v =>
                         seen :+= v
-                        if v < 3 then Emit.Ack.Continue()
+                        if v < 3 then Ack.Continue()
                         else Abort.fail("Reached 3")
                     }
                 }.eval
@@ -237,7 +237,7 @@ class EmitTest extends Test:
                     _ <- Emit(3)
                 yield "a"
 
-            val result = Emit.runFold(0)((acc, v: Int) => (acc + v, Emit.Ack.Continue()))(v).eval
+            val result = Emit.runFold(0)((acc, v: Int) => (acc + v, Ack.Continue()))(v).eval
             assert(result == (6, "a"))
         }
 
@@ -251,8 +251,8 @@ class EmitTest extends Test:
                 yield "a"
 
             val result = Emit.runFold(0)((acc, v: Int) =>
-                if v < 3 then (acc + v, Emit.Ack.Continue())
-                else (acc, Emit.Ack.Stop)
+                if v < 3 then (acc + v, Ack.Continue())
+                else (acc, Ack.Stop)
             )(v).eval
             assert(result == (3, "a"))
         }
@@ -270,7 +270,7 @@ class EmitTest extends Test:
                     for
                         threshold <- Env.get[Int]
                         newAcc = if v < threshold then acc + v else acc
-                    yield (newAcc, Emit.Ack.Continue())
+                    yield (newAcc, Ack.Continue())
                 )(v)
             }.eval
             assert(result == (6, "a"))
@@ -302,6 +302,72 @@ class EmitTest extends Test:
             val result = Emit.runDiscard(v).eval
             assert(result == 0)
             assert(count == 0) // Ensures values were truly discarded
+        }
+    }
+
+    "runFirst" - {
+        "basic operation" in run {
+            val v =
+                for
+                    _ <- Emit(1)
+                    _ <- Emit(2)
+                    _ <- Emit(3)
+                yield "done"
+
+            for
+                (v1, cont1)    <- Emit.runFirst(v)
+                (v2, cont2)    <- Emit.runFirst(cont1(Ack.Continue()))
+                (v3, cont3)    <- Emit.runFirst(cont2(Ack.Continue()))
+                (v4, cont4)    <- Emit.runFirst(cont3(Ack.Continue()))
+                (rest, result) <- Emit.run(cont4(Ack.Continue()))
+            yield
+                assert(v1.contains(1) && v2.contains(2) && v3.contains(3))
+                assert(v4.isEmpty)
+                assert(rest.isEmpty)
+                assert(result == "done")
+            end for
+        }
+
+        "empty emission" in run {
+            val v: String < Emit[Int] = "done"
+
+            for
+                (v1, cont1)    <- Emit.runFirst(v)
+                (rest, result) <- Emit.run(cont1(Ack.Continue()))
+            yield
+                assert(v1.isEmpty)
+                assert(rest.isEmpty)
+                assert(result == "done")
+            end for
+        }
+
+        "with effects" in run {
+            val v =
+                for
+                    _ <- Emit(1)
+                    _ <- Var.update[Int](_ + 1)
+                    _ <- Emit(2)
+                    _ <- Var.update[Int](_ + 1)
+                yield "done"
+
+            for
+                result <- Var.runTuple(0) {
+                    for
+                        (v1, cont1)    <- Emit.runFirst(v)
+                        (v2, cont2)    <- Emit.runFirst(cont1(Ack.Continue()))
+                        (v3, cont3)    <- Emit.runFirst(cont2(Ack.Continue()))
+                        (rest, result) <- Emit.run(cont3(Ack.Continue()))
+                    yield (v1, v2, v3, rest, result)
+                }
+            yield
+                val (counter, (v1, v2, v3, rest, finalResult)) = result
+                assert(v1.contains(1))
+                assert(v2.contains(2))
+                assert(v3.isEmpty)
+                assert(rest.isEmpty)
+                assert(finalResult == "done")
+                assert(counter == 2)
+            end for
         }
     }
 

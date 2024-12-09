@@ -1,7 +1,6 @@
 package kyo
 
-import kyo.Emit.Ack
-import kyo.Emit.Ack.*
+import kyo.Ack.*
 import kyo.kernel.Reducible
 import kyo.scheduler.Queue
 

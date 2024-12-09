@@ -362,6 +362,51 @@ object ArrowEffect:
         end apply
     end handle
 
+    /** Handles the first occurrence of an arrow effect and transforms the final result. This is useful when you want to handle just the
+      * first instance of an effect and transform its result into a different type, while leaving any subsequent occurrences of the effect
+      * unhandled.
+      *
+      * @param effectTag
+      *   Identifies which arrow effect to handle
+      * @param v
+      *   The computation containing the effect to handle
+      * @param handle
+      *   Function to handle the first occurrence of the effect and transform its result
+      * @param done
+      *   Function to transform the final result if no effect is found
+      * @return
+      *   The transformed computation result
+      */
+    inline def handleFirst[I[_], O[_], E <: ArrowEffect[I, O], A, B, S, S2](effectTag: Tag[E], v: A < (E & S))(
+        inline handle: [C] => (I[C], O[C] => A < (E & S)) => B < S2,
+        inline done: A => B < S2
+    )(
+        using
+        inline _frame: Frame,
+        inline flat: Flat[A],
+        safepoint: Safepoint
+    ): B < (S & S2) =
+        @nowarn("msg=anonymous")
+        def handleFirstLoop(v: A < (E & S), context: Context)(using Safepoint): B < (S & S2) =
+            v match
+                case kyo: KyoSuspend[I, O, E, Any, A, E & S] @unchecked if effectTag =:= kyo.tag =>
+                    Safepoint.handle(kyo.input)(
+                        suspend = handleFirstLoop(kyo, context),
+                        continue = handle[Any](kyo.input, kyo(_, context))
+                    )
+                case kyo: KyoSuspend[IX, OX, EX, Any, A, E & S] @unchecked =>
+                    new KyoContinue[IX, OX, EX, Any, B, S & S2](kyo):
+                        def frame = _frame
+                        def apply(v: OX[Any], context: Context)(using Safepoint) =
+                            handleFirstLoop(kyo(v, context), context)
+                    end new
+                case kyo =>
+                    done(kyo.asInstanceOf[A])
+            end match
+        end handleFirstLoop
+        handleFirstLoop(v, Context.empty)
+    end handleFirst
+
     /** Handles an arrow effect with a stateful implementation. This combines function implementation with state management, allowing the
       * handler to maintain and modify state as it processes operations. The state is threaded through the computation and can influence how
       * operations are processed.

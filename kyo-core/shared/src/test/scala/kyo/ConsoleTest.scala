@@ -8,7 +8,7 @@ class ConsoleTest extends Test:
 
     "readln" in run {
         Console.withIn(List("readln")) {
-            Console.readln.map { result =>
+            Console.readLine.map { result =>
                 assert(result == "readln")
             }
         }
@@ -24,12 +24,12 @@ class ConsoleTest extends Test:
         }
     }
     "println" in run {
-        Console.withOut(Console.println("print")).map { (out, _) =>
+        Console.withOut(Console.printLine("print")).map { (out, _) =>
             assert(out.stdOut == "print\n")
         }
     }
     "printlnErr" in run {
-        Console.withOut(Console.printlnErr("print")).map { (out, _) =>
+        Console.withOut(Console.printLineErr("print")).map { (out, _) =>
             assert(out.stdErr == "print\n")
         }
     }
@@ -47,9 +47,9 @@ class ConsoleTest extends Test:
                 IO.Unsafe.run {
                     for
                         r1 <- Abort.run(Console.print("test"))
-                        r2 <- Abort.run(Console.println(" message"))
+                        r2 <- Abort.run(Console.printLine(" message"))
                         r3 <- Abort.run(Console.printErr("error"))
-                        r4 <- Abort.run(Console.printlnErr(" message"))
+                        r4 <- Abort.run(Console.printLineErr(" message"))
                     yield
                         assert(r1.isSuccess && r2.isSuccess && r3.isSuccess && r4.isSuccess)
                         assert(output.toString == "test message\n")
@@ -64,7 +64,7 @@ class ConsoleTest extends Test:
 
         "should read line correctly" in {
             val testUnsafe = new TestUnsafeConsole("test input")
-            assert(testUnsafe.readln() == Result.success("test input"))
+            assert(testUnsafe.readLine() == Result.success("test input"))
         }
 
         "should print correctly" in {
@@ -81,13 +81,13 @@ class ConsoleTest extends Test:
 
         "should println correctly" in {
             val testUnsafe = new TestUnsafeConsole()
-            testUnsafe.println("test line")
+            testUnsafe.printLine("test line")
             assert(testUnsafe.printlns.head == "test line")
         }
 
         "should println error correctly" in {
             val testUnsafe = new TestUnsafeConsole()
-            testUnsafe.printlnErr("test error line")
+            testUnsafe.printLineErr("test error line")
             assert(testUnsafe.printlnErrs.head == "test error line")
         }
 
@@ -105,7 +105,7 @@ class ConsoleTest extends Test:
         var printlns    = List.empty[String]
         var printlnErrs = List.empty[String]
 
-        def readln()(using AllowUnsafe) =
+        def readLine()(using AllowUnsafe) =
             Result.success(readlnInput)
         def print(s: String)(using AllowUnsafe) =
             prints = s :: prints
@@ -113,10 +113,10 @@ class ConsoleTest extends Test:
         def printErr(s: String)(using AllowUnsafe) =
             printErrs = s :: printErrs
             Result.unit
-        def println(s: String)(using AllowUnsafe) =
+        def printLine(s: String)(using AllowUnsafe) =
             printlns = s :: printlns
             Result.unit
-        def printlnErr(s: String)(using AllowUnsafe) =
+        def printLineErr(s: String)(using AllowUnsafe) =
             printlnErrs = s :: printlnErrs
             Result.unit
         def flush()(using AllowUnsafe) = Result.unit

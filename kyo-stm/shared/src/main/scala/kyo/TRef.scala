@@ -6,11 +6,6 @@ import scala.annotation.tailrec
 
 /** A transactional reference that can be modified within STM transactions. Provides atomic read and write operations with strong
   * consistency guarantees.
-  *
-  * @param id
-  *   Unique identifier for this reference
-  * @param state
-  *   The current state of the reference
   */
 sealed trait TRef[A]:
 
@@ -110,18 +105,30 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                     }
         }
 
-    @tailrec private[kyo] def lock(entry: Entry[A])(using AllowUnsafe): Boolean =
-        currentState.tid == entry.tid && {
-            val lockState = super.get()
-            entry match
-                case Read(tid, value) =>
-                    // Read locks can stack if no write lock
-                    lockState != Int.MaxValue && (super.compareAndSet(lockState, lockState + 1) || lock(entry))
-                case Write(tid, value) =>
-                    // Write lock requires no existing locks
-                    lockState == 0 && (super.compareAndSet(lockState, Int.MaxValue) || lock(entry))
-            end match
-        }
+    private[kyo] def lock(entry: Entry[A])(using AllowUnsafe): Boolean =
+        @tailrec def loop(): Boolean =
+            currentState.tid == entry.tid && {
+                val lockState = super.get()
+                entry match
+                    case Read(tid, value) =>
+                        // Read locks can stack if no write lock
+                        lockState != Int.MaxValue && (super.compareAndSet(lockState, lockState + 1) || loop())
+                    case Write(tid, value) =>
+                        // Write lock requires no existing locks
+                        lockState == 0 && (super.compareAndSet(lockState, Int.MaxValue) || loop())
+                end match
+            }
+        val locked = loop()
+        if locked && currentState.tid != entry.tid then
+            // This branch handles the race condition where another fiber commits
+            // after the initial `currentState.tid == entry.tid` check but before the
+            // lock is acquired. If that's the case, roll back the lock.
+            unlock(entry)
+            false
+        else
+            locked
+        end if
+    end lock
 
     private[kyo] def commit(tid: Long, entry: Entry[A])(using AllowUnsafe): Unit =
         entry match

@@ -13,7 +13,7 @@ val zioVersion       = "2.1.13"
 val catsVersion      = "3.5.7"
 val scalaTestVersion = "3.2.19"
 
-val compilerOptionFailDiscard = "-Wconf:msg=(discarded.*value|pure.*statement):error"
+val compilerOptionFailDiscard = "-Wconf:msg=(unused.*value|discarded.*value|pure.*statement):error"
 
 val compilerOptions = Set(
     ScalacOptions.encoding("utf8"),
@@ -256,13 +256,14 @@ lazy val `kyo-direct` =
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stm` =
-    crossProject(JSPlatform, JVMPlatform)
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .in(file("kyo-stm"))
         .dependsOn(`kyo-core`)
         .settings(`kyo-settings`)
         .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
 lazy val `kyo-stats-registry` =
@@ -289,8 +290,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.44.1",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.44.1" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.45.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.45.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -330,8 +331,8 @@ lazy val `kyo-tapir` =
         .dependsOn(`kyo-sttp`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.9",
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.9"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-core"         % "1.11.10",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-netty-server" % "1.11.10"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -446,7 +447,7 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.9"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.10"
         )
         .jvmSettings(mimaCheck(false))
 
@@ -502,8 +503,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "dev.zio"              %% "zio-prelude"         % "1.0.0-RC35",
             libraryDependencies += "com.softwaremill.ox"  %% "core"                % "0.0.25",
             libraryDependencies += "co.fs2"               %% "fs2-core"            % "3.11.0",
-            libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "0.23.29",
-            libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "0.23.29",
+            libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "0.23.30",
+            libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "0.23.30",
             libraryDependencies += "dev.zio"              %% "zio-http"            % "3.0.1",
             libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR2",
             libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR2",
