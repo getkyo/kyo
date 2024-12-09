@@ -1,30 +1,28 @@
 package kyo.scheduler
 
-import java.lang.invoke.VarHandle
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger}
 import scala.collection.mutable.PriorityQueue
 
 class Queue[A](implicit ord: Ordering[A]) extends AtomicBoolean {
     private val queue = PriorityQueue[A]()
 
-    private var items = 0
+    private var items = new AtomicInteger(0)
 
     private def lock(): Unit =
         while (!compareAndSet(false, true)) ()
 
     private def unlock(): Unit = set(false)
 
-    def isEmpty() = size() == 0
+    def isEmpty(): Boolean = size() == 0
 
     def size(): Int = {
-        VarHandle.acquireFence()
-        items
+        items.intValue()
     }
 
     def add(value: A): Unit = {
         lock()
         try {
-            items += 1
+            items.incrementAndGet()
             queue += value
             ()
         } finally
@@ -35,7 +33,7 @@ class Queue[A](implicit ord: Ordering[A]) extends AtomicBoolean {
         if (!isEmpty()) {
             lock()
             try {
-                items = 0
+                items.set(0)
                 queue.dequeueAll
             } finally
                 unlock()
