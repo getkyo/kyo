@@ -73,12 +73,8 @@ object Show extends LowPriorityShows:
                         case _ =>
                             sumShow[A, prodMir.type](label, prodMir)
                     end match
-        case _ =>
-            new Show[A]:
-
-                def show(value: A): String =
-                    throw Exception(s"TO STRING: $value")
-                    value.toString
+        // case _ =>
+        //     error("unknown mirror type")
 
 end Show
 

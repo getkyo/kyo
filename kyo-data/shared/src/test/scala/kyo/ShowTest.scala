@@ -28,18 +28,21 @@ class ShowTest extends Test:
         }
 
         "should derive tuple correctly" in {
+            assert(Show[EmptyTuple].show(EmptyTuple) == "EmptyTuple")
+            assert(Show[Tuple1[Wr[String]]].show(Tuple1(Wr("hello"))) == "(Yep(hello))")
             assert(Show[(Int, Wr[String])].show((23, Wr("hello"))) == "(23,Yep(hello))")
+            assert(Show[(Int, Wr[String], Wr[Nothing])].show((23, Wr("hello"), Wr(null))) == "(23,Yep(hello),Nope)")
         }
     }
 
     "interpolation" - {
         "should interpolate" in {
             assert(k"${23}" == "23")
-            assert(k"hello ${Wr(23)}" == "hello Yep(23)")
-            assert(k"hello ${Wr(null)}" == "hello Nope")
-            assert(k"${ShowADT.Obj}" == "Obj")
-            assert(k"${ShowADT.Nested(Wr(null))}" == "Nested(Nope)")
-            assert(k"${ShowADT.Nested(Wr(23))}" == "Nested(Yep(23))")
+            assert(k"prefix ${Wr(23)} suffix" == "prefix Yep(23) suffix")
+            assert(k"prefix ${Wr(null)} suffix" == "prefix Nope suffix")
+            assert(k"prefix ${ShowADT.Obj} suffix" == "prefix Obj suffix")
+            assert(k"prefix ${ShowADT.Nested(Wr(null))} suffix" == "prefix Nested(Nope) suffix")
+            assert(k"prefix ${ShowADT.Nested(Wr(23))} suffix" == "prefix Nested(Yep(23)) suffix")
         }
     }
 
