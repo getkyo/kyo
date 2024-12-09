@@ -54,8 +54,6 @@ object Channel:
           */
         def poll(using Frame): Maybe[A] < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.poll()))
 
-        def drainUpTo(max: Int)(using Frame): Seq[A] < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
-
         /** Puts an element into the channel, asynchronously blocking if necessary.
           *
           * @param value
@@ -82,14 +80,23 @@ object Channel:
                 }
             }
 
+        /** Takes [[n]] elements from the channel, asynchronously blocking if necessary.
+          *
+          * @return
+          *   The taken element
+          */
         def takeExactly(n: Int)(using Frame): Seq[A] < (Abort[Closed] & Async) =
             Loop[Seq[A], Seq[A], Abort[Closed] & Async](Seq.empty): lastChunk =>
-                IO.Unsafe:
-                    val nextN = n - lastChunk.size
-                    self.drainUpTo(nextN).fold(Abort.error): chunk =>
+                val nextN = n - lastChunk.size
+                for
+                    drainFiberUnsafe <- IO.Unsafe(self.drainUpToFiber(nextN))
+                    drainFiber = drainFiberUnsafe.safe
+                    result <- Fiber.get(drainFiber).map: chunk =>
                         if chunk.size >= nextN then
-                            Loop.done(lastChunk ++ chunk)
+                            Loop.done[Seq[A], Seq[A]](lastChunk ++ chunk)
                         else Loop.continue(lastChunk ++ chunk)
+                yield result
+                end for
 
         /** Creates a fiber that puts an element into the channel.
           *
@@ -113,6 +120,13 @@ object Channel:
           *   A sequence containing all elements that were in the channel
           */
         def drain(using Frame): Seq[A] < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.drain()))
+
+        /** Takes up to [[max]] elements from the channel.
+          *
+          * @return
+          *   a sequence of up to [[max]] elements that were in the channel.
+          */
+        def drainUpTo(max: Int)(using Frame): Seq[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
 
         /** Closes the channel.
           *

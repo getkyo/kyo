@@ -68,13 +68,6 @@ object Queue:
           */
         def poll(using Frame): Maybe[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.poll()))
 
-        /** Takes up to [[max]] elements from the queue.
-          *
-          * @return
-          *   a sequence of up to [[max]] elements from the queue.
-          */
-        def drainUpTo(max: Int)(using Frame): Seq[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
-
         /** Peeks at the first element in the queue without removing it.
           *
           * @return
@@ -88,6 +81,13 @@ object Queue:
           *   a sequence of all elements in the queue
           */
         def drain(using Frame): Seq[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drain()))
+
+        /** Takes up to [[max]] elements from the queue.
+          *
+          * @return
+          *   a sequence of up to [[max]] elements from the queue.
+          */
+        def drainUpTo(max: Int)(using Frame): Seq[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
 
         /** Closes the queue and returns any remaining elements.
           *

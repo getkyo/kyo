@@ -110,6 +110,37 @@ class ChannelTest extends Test:
             yield assert(r == Seq(1, 2))
         }
     }
+    "drainUpTo" - {
+        "empty" in run {
+            for
+                c <- Channel.init[Int](2)
+                r <- c.drainUpTo(2)
+            yield assert(r == Seq())
+        }
+        "non-empty drain all" in run {
+            for
+                c <- Channel.init[Int](2)
+                _ <- c.put(1)
+                _ <- c.put(2)
+                r <- c.drainUpTo(2)
+            yield assert(r == Seq(1, 2))
+        }
+        "non-empty drain more than is in the Channel" in run {
+            for
+                c <- Channel.init[Int](2)
+                _ <- c.put(1)
+                _ <- c.put(2)
+                r <- c.drainUpTo(4)
+            yield assert(r == Seq(1, 2))
+        }
+        "non-empty drain less than is in the Channel" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put(_))
+                r <- c.drainUpTo(2)
+            yield assert(r == Seq(1, 2))
+        }
+    }
     "close" - {
         "empty" in runNotJS {
             for
