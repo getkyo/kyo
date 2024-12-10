@@ -2,6 +2,7 @@ package kyo
 
 import kyo.Maybe.*
 import kyo.Maybe.internal.PresentAbsent
+import scala.languageFeature.implicitConversions
 
 class MaybeTest extends Test:
 
@@ -532,15 +533,28 @@ class MaybeTest extends Test:
     "show" - {
         "should return 'Absent' for Absent" in {
             assert(Absent.show == "Absent")
+            assert(k"$Absent" == "Absent")
         }
 
         "should return 'Present(value)' for Present" in {
             assert(Present(1).show == "Present(1)")
+            summon[Conversion[Present[Int], Shown]]
+            val somat: Shown = Present(1)
+            assert(k"${Present(1): Present[Int]}" == "Present(1)")
             assert(Present("hello").show == "Present(hello)")
+            // assert(k"${Present("hello")}" == "Present(hello)")
         }
 
         "should handle nested Present values" in {
             assert(Present(Absent).show == "Present(Absent)")
+            // assert(k"${Present(Absent)}" == "Present(Absent)")
+        }
+
+        "should return Present(Present(value)) for nested Present" in {
+            val p: Present[Present[Int]]        = Present(Present(1))
+            val sh: Show[Present[Present[Int]]] = Show.apply
+            assert(sh.show(p) == "Present(Present(1))")
+            // assert(k"$p" == "Present(Present(1))")
         }
     }
 
