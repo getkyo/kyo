@@ -152,7 +152,7 @@ class Path private (val path: List[String]) derives CanEqual:
             end if
         }
 
-    private def readLoop[A, ReadTpe, Res](
+    private[kyo] def readLoop[A, ReadTpe, Res](
         acquire: Res < IO,
         release: Res => Unit < Async,
         readOnce: Res => Maybe[ReadTpe] < IO,
@@ -361,13 +361,16 @@ object Path:
             case s: String      => List(s)
             case p: Path        => p.path
         }
-        val javaPath       = if flattened.isEmpty then Paths.get("") else Paths.get(flattened.head, flattened.tail*)
-        val normalizedPath = javaPath.normalize().toString
-        new Path(if normalizedPath.isEmpty then Nil else normalizedPath.split(File.separator).toList)
+        val javaPath = if flattened.isEmpty then Paths.get("") else Paths.get(flattened.head, flattened.tail*)
+        fromJavaPath(javaPath)
     end apply
 
     def apply(path: Part*): Path =
         apply(path.toList)
+
+    def fromJavaPath(path: JPath): Path =
+        val normalizedPath = path.normalize().toString
+        new Path(if normalizedPath.isEmpty then Nil else normalizedPath.split(File.separator).toList)
 
     case class BasePaths(
         cache: Path,
