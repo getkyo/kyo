@@ -85,7 +85,8 @@ object Channel:
           *   Chunk of [[n]] elements
           */
         def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
-            Loop(Chunk.empty[A]): lastChunk =>
+            if n <= 0 then Chunk.empty
+            else Loop(Chunk.empty[A]): lastChunk =>
                 val nextN = n - lastChunk.size
                 Channel.drainUpTo(self)(nextN).map: chunk =>
                     // IO.Unsafe(Abort.get(self.drainUpTo(nextN))).map: chunk =>
