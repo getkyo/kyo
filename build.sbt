@@ -88,6 +88,7 @@ lazy val kyoJVM = project
     .aggregate(
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
+        `kyo-scheduler-cats`.jvm,
         `kyo-data`.jvm,
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
@@ -186,6 +187,22 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
         crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
     )
+lazy val `kyo-scheduler-cats` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-scheduler`)
+        .in(file("kyo-scheduler-cats"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
+            libraryDependencies += "org.scalatest" %%% "scalatest"   % scalaTestVersion % Test
+        )
+        .jvmSettings(mimaCheck(false))
+        .settings(
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+        )
 
 lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
@@ -289,8 +306,8 @@ lazy val `kyo-stats-otel` =
         .dependsOn(`kyo-core`)
         .settings(
             `kyo-settings`,
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.44.1",
-            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.44.1" % Test,
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-api"                % "1.45.0",
+            libraryDependencies += "io.opentelemetry" % "opentelemetry-sdk"                % "1.45.0" % Test,
             libraryDependencies += "io.opentelemetry" % "opentelemetry-exporters-inmemory" % "0.9.1"  % Test
         )
         .jvmSettings(mimaCheck(false))
@@ -460,6 +477,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-scheduler-zio`)
+        .dependsOn(`kyo-scheduler-cats`)
         .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,

@@ -287,7 +287,7 @@ object Queue:
 
             final def close()(using frame: Frame, allow: AllowUnsafe) =
                 val fail = Result.Fail(Closed("Queue", initFrame, frame))
-                Maybe.when(_closed.cas(Maybe.empty, Maybe(fail)))(_drain())
+                Maybe.when(_closed.compareAndSet(Maybe.empty, Maybe(fail)))(_drain())
             end close
 
             final def closed()(using AllowUnsafe) = _closed.get().isDefined
@@ -327,15 +327,16 @@ object Queue:
                         def _drain()                       = Seq.empty
                 case 1 =>
                     new Closeable[A](initFrame):
-                        private val state                  = AtomicRef.Unsafe.init(Maybe.empty[A])
-                        def capacity                       = 1
-                        def empty()(using AllowUnsafe)     = op(state.get().isEmpty)
-                        def size()(using AllowUnsafe)      = op(if state.get().isEmpty then 0 else 1)
-                        def full()(using AllowUnsafe)      = op(state.get().isDefined)
-                        def offer(v: A)(using AllowUnsafe) = offerOp(state.cas(Maybe.empty, Maybe(v)), !state.cas(Maybe(v), Maybe.empty))
-                        def poll()(using AllowUnsafe)      = op(state.getAndSet(Maybe.empty))
-                        def peek()(using AllowUnsafe)      = op(state.get())
-                        def _drain()                       = state.getAndSet(Maybe.empty).toList
+                        private val state              = AtomicRef.Unsafe.init(Maybe.empty[A])
+                        def capacity                   = 1
+                        def empty()(using AllowUnsafe) = op(state.get().isEmpty)
+                        def size()(using AllowUnsafe)  = op(if state.get().isEmpty then 0 else 1)
+                        def full()(using AllowUnsafe)  = op(state.get().isDefined)
+                        def offer(v: A)(using AllowUnsafe) =
+                            offerOp(state.compareAndSet(Maybe.empty, Maybe(v)), !state.compareAndSet(Maybe(v), Maybe.empty))
+                        def poll()(using AllowUnsafe) = op(state.getAndSet(Maybe.empty))
+                        def peek()(using AllowUnsafe) = op(state.get())
+                        def _drain()                  = state.getAndSet(Maybe.empty).toList
                 case Int.MaxValue =>
                     Unbounded.Unsafe.init(access).safe
                 case _ =>
