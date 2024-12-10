@@ -21,17 +21,25 @@ class ShowTest extends Test:
     "derivation" - {
         "should derive show for ADT correctly" in {
             assert(Show[ShowADT.Obj.type].show(ShowADT.Obj) == "Obj")
+            assert(Show.show(ShowADT.Obj) == "Obj")
             assert(Show[ShowADT].show(ShowADT.Obj) == "Obj")
+            assert(Show.show(ShowADT.Obj) == "Obj")
             val wr: Wr[Int] = Wr(23)
             assert(Show[ShowADT.Nested].show(ShowADT.Nested(wr)) == "Nested(Yep(23))")
+            assert(Show.show(ShowADT.Nested(wr)) == "Nested(Yep(23))")
             assert(Show[ShowADT].show(ShowADT.Nested(wr)) == "Nested(Yep(23))")
+            assert(Show.show(ShowADT.Nested(wr)) == "Nested(Yep(23))")
         }
 
         "should derive tuple correctly" in {
             assert(Show[EmptyTuple].show(EmptyTuple) == "EmptyTuple")
+            assert(Show.show(EmptyTuple) == "EmptyTuple")
             assert(Show[Tuple1[Wr[String]]].show(Tuple1(Wr("hello"))) == "(Yep(hello))")
+            assert(Show.show(Tuple1(Wr("hello"))) == "(Yep(hello))")
             assert(Show[(Int, Wr[String])].show((23, Wr("hello"))) == "(23,Yep(hello))")
+            assert(Show.show((23, Wr("hello"))) == "(23,Yep(hello))")
             assert(Show[(Int, Wr[String], Wr[Nothing])].show((23, Wr("hello"), Wr(null))) == "(23,Yep(hello),Nope)")
+            assert(Show.show((23, Wr("hello"), Wr(null))) == "(23,Yep(hello),Nope)")
         }
     }
 
