@@ -3,7 +3,7 @@ package kyo
 import kyo.Schedule.done
 import scala.language.implicitConversions
 
-/** Provides string representation of a type as an alternative to .toString. Needed for customizing how to display opaque types
+/** Provides Text representation of a type. Needed for customizing how to display opaque types
   */
 abstract class AsText[A]:
     def asText(value: A): Text
