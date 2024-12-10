@@ -68,7 +68,7 @@ object KyoApp:
         def runAndBlock[A: Flat](timeout: Duration)(
             v: A < (Async & Resource & Abort[Throwable])
         )(using Frame, AllowUnsafe): Result[Throwable, A] =
-            IO.Unsafe.run(Abort.run(Async.runAndBlock(timeout)(Resource.run(v)))).eval
+            Abort.run(IO.Unsafe.run(Async.runAndBlock(timeout)(Resource.run(v)))).eval
     end Unsafe
 
 end KyoApp

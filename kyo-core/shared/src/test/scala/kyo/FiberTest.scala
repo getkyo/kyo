@@ -296,7 +296,7 @@ class FiberTest extends Test:
                 val ex1 = new Exception
                 val ex2 = new Exception
                 Fiber.parallelUnbounded(Seq(
-                    Async.delay(15.millis)(Abort.fail(ex1)),
+                    Async.delay(100.millis)(Abort.fail(ex1)),
                     Async.delay(5.millis)(Abort.fail(ex2))
                 )).map(_.getResult).map { result =>
                     assert(result == Result.fail(ex2))
