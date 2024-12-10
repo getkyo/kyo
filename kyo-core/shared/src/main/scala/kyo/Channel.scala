@@ -276,26 +276,24 @@ object Channel:
                     if queueClosed && (!takesEmpty || !putsEmpty) then
                         // Queue is closed, drain all takes and puts
                         val fail = queue.size() // Obtain the failed Result
-                        takes.drain:
-                            case prom: Promise.Unsafe[Closed, A] @unchecked => prom.completeDiscard(fail)
+                        takes.drain(_.completeDiscard(fail))
                         puts.drain(_._2.completeDiscard(fail.unit))
                         flush()
                     else if queueSize > 0 && !takesEmpty then
                         // Attempt to transfer a value from the queue to
                         // a waiting take operation.
-                        Maybe(takes.poll()).foreach {
-                            case promise: Promise.Unsafe[Closed, A] @unchecked =>
-                                queue.poll() match
-                                    case Result.Success(Present(value)) =>
-                                        if !promise.complete(Result.success(value)) && !queue.offer(value).contains(true) then
-                                            // If completing the take fails and the queue
-                                            // cannot accept the value back, enqueue a
-                                            // placeholder put operation
-                                            val placeholder = Promise.Unsafe.init[Nothing, Unit]()
-                                            discard(puts.add((value, placeholder)))
-                                    case _ =>
-                                        // Queue became empty, enqueue the take again
-                                        discard(takes.add(promise))
+                        Maybe(takes.poll()).foreach { promise =>
+                            queue.poll() match
+                                case Result.Success(Present(value)) =>
+                                    if !promise.complete(Result.success(value)) && !queue.offer(value).contains(true) then
+                                        // If completing the take fails and the queue
+                                        // cannot accept the value back, enqueue a
+                                        // placeholder put operation
+                                        val placeholder = Promise.Unsafe.init[Nothing, Unit]()
+                                        discard(puts.add((value, placeholder)))
+                                case _ =>
+                                    // Queue became empty, enqueue the take again
+                                    discard(takes.add(promise))
                         }
                         flush()
                     else if queueSize < capacity && !putsEmpty then
@@ -318,8 +316,7 @@ object Channel:
                         Maybe(puts.poll()).foreach { putTuple =>
                             val (value, putPromise) = putTuple
                             Maybe(takes.poll()) match
-                                case Present(takePromise: Promise.Unsafe[Closed, A] @unchecked)
-                                    if takePromise.complete(Result.success(value)) =>
+                                case Present(takePromise) if takePromise.complete(Result.success(value)) =>
                                     // Value transfered to the pending take, complete put
                                     putPromise.completeDiscard(Result.unit)
                                 case _ =>

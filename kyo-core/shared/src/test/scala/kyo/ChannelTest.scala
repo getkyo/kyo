@@ -75,12 +75,32 @@ class ChannelTest extends Test:
         yield assert(!d1 && d2 && v == 1)
     }
     "takeExactly" - {
-        "should take all if in channel" in runNotJS {
+        "should take all contents if in n == capacity" in runNotJS {
             for
                 c <- Channel.init[Int](3)
                 _ <- Kyo.foreach(1 to 3)(c.put(_))
                 r <- c.takeExactly(3)
-            yield assert(r == Seq(1, 2, 3))
+                s <- c.size
+            yield assert(r == Seq(1, 2, 3) && s == 0)
+        }
+        "should take all contents and block if in n > capacity" in runNotJS {
+            for
+                c  <- Channel.init[Int](3)
+                _  <- Kyo.foreach(1 to 3)(c.put(_))
+                f  <- Async.run(c.takeExactly(5))
+                _  <- Loop(())(_ => c.size.map(s => if s == 0 then Loop.done(()) else Loop.continue(())))
+                _  <- Async.sleep(10.millis)
+                fd <- f.done
+                _  <- f.interrupt
+            yield assert(!fd)
+        }
+        "should take partial contents if channel capacity > n" in runNotJS {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put(_))
+                r <- c.takeExactly(2)
+                s <- c.size
+            yield assert(r == Seq(1, 2) && s == 2)
         }
         "should take incrementally as elements are added to channel" in runNotJS {
             for
@@ -92,7 +112,8 @@ class ChannelTest extends Test:
                 fd <- f.done
                 _  <- Kyo.foreach(4 to 6)(c.put(_))
                 r  <- Fiber.get(f)
-            yield assert(!fd && r == Seq(1, 2, 3, 4, 5, 6))
+                s  <- c.size
+            yield assert(!fd && r == Seq(1, 2, 3, 4, 5, 6) && s == 0)
         }
     }
     "drain" - {
@@ -116,30 +137,34 @@ class ChannelTest extends Test:
             for
                 c <- Channel.init[Int](2)
                 r <- c.drainUpTo(2)
-            yield assert(r == Seq())
+                s <- c.size
+            yield assert(r == Seq() && s == 0)
         }
-        "non-empty drain all" in run {
+        "non-empty channel drain up to the channel contents" in run {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
                 _ <- c.put(2)
                 r <- c.drainUpTo(2)
-            yield assert(r == Seq(1, 2))
+                s <- c.size
+            yield assert(r == Seq(1, 2) && s == 0)
         }
-        "non-empty drain more than is in the Channel" in run {
+        "non-empty channel drain up to more than is in the channel" in run {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
                 _ <- c.put(2)
                 r <- c.drainUpTo(4)
-            yield assert(r == Seq(1, 2))
+                s <- c.size
+            yield assert(r == Seq(1, 2) && s == 0)
         }
-        "non-empty drain less than is in the Channel" in run {
+        "non-empty channel drain up to less than is in the channel" in run {
             for
                 c <- Channel.init[Int](4)
                 _ <- Kyo.foreach(1 to 4)(c.put(_))
                 r <- c.drainUpTo(2)
-            yield assert(r == Seq(1, 2))
+                s <- c.size
+            yield assert(r == Seq(1, 2) && s == 2)
         }
     }
     "close" - {
