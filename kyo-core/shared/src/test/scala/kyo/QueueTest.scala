@@ -93,6 +93,14 @@ class QueueTest extends Test:
         yield assert(v == Seq(1, 2))
     }
 
+    "drainUpTo" in run {
+        for
+            q <- Queue.init[Int](4)
+            _ <- Kyo.foreach(1 to 4)(q.offer)
+            v <- q.drainUpTo(2)
+        yield assert(v == Seq(1, 2))
+    }
+
     "unbounded" - {
         access.foreach { access =>
             access.toString() - {

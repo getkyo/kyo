@@ -85,19 +85,21 @@ object Channel:
           * @return
           *   The taken element
           */
-        def takeExactly(n: Int)(using Frame): Seq[A] < (Abort[Closed] & Async) =
-            Loop[Seq[A], Seq[A], Abort[Closed] & Async](Seq.empty): lastChunk =>
-                val nextN = n - lastChunk.size
-                for
-                    drainFiberUnsafe <- IO.Unsafe(self.drainUpToFiber(nextN))
-                    drainFiber = drainFiberUnsafe.safe
-                    result <- Fiber.get(drainFiber).map: chunk =>
-                        if chunk.size >= nextN then
-                            Loop.done[Seq[A], Seq[A]](lastChunk ++ chunk)
-                        else Loop.continue(lastChunk ++ chunk)
-                yield result
-                end for
-
+        def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
+            IO.Unsafe(Abort.get(self.drainUpTo(n))).map:
+                case chunk if chunk.size == n => chunk
+                case chunk =>
+                    Loop(chunk): lastChunk =>
+                        val nextN = n - lastChunk.size
+                        for
+                            drainFiberUnsafe <- IO.Unsafe(self.drainFiber(Maybe.Present(nextN)))
+                            drainFiber = drainFiberUnsafe.safe
+                            result <- Fiber.get(drainFiber).map: chunk =>
+                                if chunk.size >= nextN then
+                                    Loop.done[Chunk[A], Chunk[A]](lastChunk.concat(chunk))
+                                else Loop.continue(lastChunk.concat(chunk))
+                        yield result
+                        end for
         /** Creates a fiber that puts an element into the channel.
           *
           * @param value
@@ -113,6 +115,8 @@ object Channel:
           *   A fiber that completes with the taken element
           */
         def takeFiber(using Frame): Fiber[Closed, A] < IO = IO.Unsafe(self.takeFiber().safe)
+
+        def drainFiber(max: Maybe[Int] = Maybe.Absent)(using Frame): Fiber[Closed, Chunk[A]] < IO = IO.Unsafe(self.drainFiber(max).safe)
 
         /** Drains all elements from the channel.
           *
@@ -186,13 +190,12 @@ object Channel:
         def offer(value: A)(using AllowUnsafe): Result[Closed, Boolean]
         def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
 
-        def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Seq[A]]
-
         def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
         def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A]
-        def drainUpToFiber(n: Int)(using AllowUnsafe): Fiber.Unsafe[Closed, Seq[A]]
+        def drainFiber(n: Maybe[Int])(using AllowUnsafe): Fiber.Unsafe[Closed, Chunk[A]]
 
-        def drain()(using AllowUnsafe): Result[Closed, Seq[A]]
+        def drain()(using AllowUnsafe): Result[Closed, Chunk[A]]
+        def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Chunk[A]]
         def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
 
         def empty()(using AllowUnsafe): Result[Closed, Boolean]
@@ -210,7 +213,7 @@ object Channel:
         )(using initFrame: Frame, allow: AllowUnsafe): Unsafe[A] =
             new Unsafe[A]:
                 val queue = Queue.Unsafe.init[A](_capacity, access)
-                val takes = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, A] | (Int, Promise.Unsafe[Closed, Seq[A]])](8)
+                val takes = new MpmcUnboundedXaddArrayQueue[Promise.Unsafe[Closed, A] | (Maybe[Int], Promise.Unsafe[Closed, Chunk[A]])](8)
                 val puts  = new MpmcUnboundedXaddArrayQueue[(A, Promise.Unsafe[Closed, Unit])](8)
 
                 def capacity = _capacity
@@ -250,12 +253,12 @@ object Channel:
                     promise
                 end takeFiber
 
-                def drainUpToFiber(n: Int)(using AllowUnsafe): Fiber.Unsafe[Closed, Seq[A]] =
-                    val promise = Promise.Unsafe.init[Closed, Seq[A]]()
+                def drainFiber(n: Maybe[Int])(using AllowUnsafe): Fiber.Unsafe[Closed, Chunk[A]] =
+                    val promise = Promise.Unsafe.init[Closed, Chunk[A]]()
                     takes.add((n, promise))
                     flush()
                     promise
-                end drainUpToFiber
+                end drainFiber
 
                 def drain()(using AllowUnsafe) =
                     val result = queue.drain()
@@ -285,25 +288,27 @@ object Channel:
                         // Queue is closed, drain all takes and puts
                         val fail = queue.size() // Obtain the failed Result
                         takes.drain:
-                            case (_, prom: Promise.Unsafe[Closed, Seq[A]] @unchecked) => prom.completeDiscard(fail)
-                            case prom: Promise.Unsafe[Closed, A] @unchecked           => prom.completeDiscard(fail)
+                            case (_, prom: Promise.Unsafe[Closed, Chunk[A]] @unchecked) => prom.completeDiscard(fail)
+                            case prom: Promise.Unsafe[Closed, A] @unchecked             => prom.completeDiscard(fail)
                         puts.drain(_._2.completeDiscard(fail.unit))
                         flush()
                     else if queueSize > 0 && !takesEmpty then
                         // Attempt to transfer a value from the queue to
                         // a waiting take operation.
                         Maybe(takes.poll()).foreach {
-                            case (n: Int, promise: Promise.Unsafe[Closed, Seq[A]] @unchecked) =>
-                                queue.drainUpTo(n) match
+                            case (nMaybe: Maybe[Int] @unchecked, promise: Promise.Unsafe[Closed, Chunk[A]] @unchecked) =>
+                                nMaybe.fold(queue.drain())(queue.drainUpTo(_)) match
                                     case Result.Success(values: Seq[A] @unchecked) =>
                                         if !promise.complete(Result.success(values)) then
                                             values.foreach: v =>
                                                 if !queue.offer(v).contains(true) then
                                                     val placeholder = Promise.Unsafe.init[Nothing, Unit]()
                                                     discard(puts.add(v, placeholder))
+                                        end if
                                     case _ =>
                                         // Queue became empty, enqueue the take again
-                                        discard(takes.add((n, promise)))
+                                        discard(takes.add((nMaybe, promise)))
+                                end match
                             case promise: Promise.Unsafe[Closed, A] @unchecked =>
                                 queue.poll() match
                                     case Result.Success(Present(value)) =>

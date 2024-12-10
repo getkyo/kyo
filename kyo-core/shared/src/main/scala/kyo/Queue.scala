@@ -80,14 +80,14 @@ object Queue:
           * @return
           *   a sequence of all elements in the queue
           */
-        def drain(using Frame): Seq[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drain()))
+        def drain(using Frame): Chunk[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drain()))
 
         /** Takes up to [[max]] elements from the queue.
           *
           * @return
           *   a sequence of up to [[max]] elements from the queue.
           */
-        def drainUpTo(max: Int)(using Frame): Seq[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
+        def drainUpTo(max: Int)(using Frame): Chunk[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
 
         /** Closes the queue and returns any remaining elements.
           *
@@ -280,9 +280,9 @@ object Queue:
         def full()(using AllowUnsafe): Result[Closed, Boolean]
         def offer(v: A)(using AllowUnsafe): Result[Closed, Boolean]
         def poll()(using AllowUnsafe): Result[Closed, Maybe[A]]
-        def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Seq[A]]
+        def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Chunk[A]]
         def peek()(using AllowUnsafe): Result[Closed, Maybe[A]]
-        def drain()(using AllowUnsafe): Result[Closed, Seq[A]]
+        def drain()(using AllowUnsafe): Result[Closed, Chunk[A]]
         def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
         def closed()(using AllowUnsafe): Boolean
         final def safe: Queue[A] = this
@@ -302,13 +302,11 @@ object Queue:
 
             final def closed()(using AllowUnsafe) = _closed.get().isDefined
 
-            final def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Seq[A]] = op(_drainUpTo(max))
+            final def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Chunk[A]] = op(_drain(Maybe.Present(max)))
 
-            final def drain()(using AllowUnsafe): Result[Closed, Seq[A]] = op(_drain())
+            final def drain()(using AllowUnsafe): Result[Closed, Chunk[A]] = op(_drain())
 
-            protected def _drainUpTo(max: Int): Seq[A]
-
-            protected def _drain(): Seq[A]
+            protected def _drain(max: Maybe[Int] = Maybe.Absent): Chunk[A]
 
             protected inline def op[A](inline f: => A): Result[Closed, A] =
                 _closed.get().getOrElse(Result(f))
@@ -331,15 +329,14 @@ object Queue:
             capacity match
                 case _ if capacity <= 0 =>
                     new Closeable[A](initFrame):
-                        def capacity                       = 0
-                        def size()(using AllowUnsafe)      = op(0)
-                        def empty()(using AllowUnsafe)     = op(true)
-                        def full()(using AllowUnsafe)      = op(true)
-                        def offer(v: A)(using AllowUnsafe) = op(false)
-                        def poll()(using AllowUnsafe)      = op(Maybe.empty)
-                        def peek()(using AllowUnsafe)      = op(Maybe.empty)
-                        def _drainUpTo(max: Int): Seq[A]   = Seq.empty
-                        def _drain()                       = Seq.empty
+                        def capacity                               = 0
+                        def size()(using AllowUnsafe)              = op(0)
+                        def empty()(using AllowUnsafe)             = op(true)
+                        def full()(using AllowUnsafe)              = op(true)
+                        def offer(v: A)(using AllowUnsafe)         = op(false)
+                        def poll()(using AllowUnsafe)              = op(Maybe.empty)
+                        def peek()(using AllowUnsafe)              = op(Maybe.empty)
+                        def _drain(max: Maybe[Int] = Maybe.Absent) = Chunk.empty
                 case 1 =>
                     new Closeable[A](initFrame):
                         private val state                  = AtomicRef.Unsafe.init(Maybe.empty[A])
@@ -350,8 +347,10 @@ object Queue:
                         def offer(v: A)(using AllowUnsafe) = offerOp(state.cas(Maybe.empty, Maybe(v)), !state.cas(Maybe(v), Maybe.empty))
                         def poll()(using AllowUnsafe)      = op(state.getAndSet(Maybe.empty))
                         def peek()(using AllowUnsafe)      = op(state.get())
-                        def _drainUpTo(max: Int): Seq[A]   = if max <= 0 then Seq.empty else state.getAndSet(Maybe.empty).toList
-                        def _drain()                       = state.getAndSet(Maybe.empty).toList
+                        def _drain(max: Maybe[Int] = Maybe.Absent) =
+                            max.fold(
+                                state.getAndSet(Maybe.empty).fold(Chunk.empty)(Chunk(_))
+                            )(m => if m <= 0 then Chunk.empty else state.getAndSet(Maybe.empty).fold(Chunk.empty)(Chunk(_)))
                 case Int.MaxValue =>
                     Unbounded.Unsafe.init(access).safe
                 case _ =>
@@ -388,28 +387,17 @@ object Queue:
                     )
                 def poll()(using AllowUnsafe) = op(Maybe(q.poll()))
                 def peek()(using AllowUnsafe) = op(Maybe(q.peek()))
-                protected def _drainUpTo(max: Int): Seq[A] =
-                    val b = Seq.newBuilder[A]
+                def _drain(max: Maybe[Int] = Maybe.Absent) =
+                    var b = Chunk.empty[A]
                     @tailrec def loop(i: Int): Unit =
-                        if i < max then
+                        if max.forall(i < _) then
                             val value = q.poll()
                             if !isNull(value) then
-                                b.addOne(value)
+                                b = b.append(value)
                                 loop(i + 1)
                     end loop
                     loop(0)
-                    b.result()
-                end _drainUpTo
-                def _drain() =
-                    val b = Seq.newBuilder[A]
-                    @tailrec def loop(): Unit =
-                        val value = q.poll()
-                        if !isNull(value) then
-                            b.addOne(value)
-                            loop()
-                    end loop
-                    loop()
-                    b.result()
+                    b
                 end _drain
 
     end Unsafe
