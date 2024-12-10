@@ -81,7 +81,7 @@ object Channel:
             }
 
         /** Takes [[n]] elements from the channel, semantically blocking until enough elements are present. Note that if enough elements are
-          * not added to the channel it can black indefinitely.
+          * not added to the channel it can block indefinitely.
           *
           * @return
           *   Chunk of [[n]] elements
