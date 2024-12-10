@@ -23,6 +23,13 @@ object Result:
     inline given [E, A: Flat]: Flat[Result[E, A]]                                              = Flat.unsafe.bypass
     inline given [E, A]: CanEqual[Result[E, A], Panic]                                         = CanEqual.derived
 
+    given [E, A, ResultEA <: Result[E, A]](using she: Show[E], sha: Show[A]): Show[ResultEA] with
+        def show(value: ResultEA): String = value match
+            case Success(a) => s"Success(${sha.show(a.asInstanceOf[A])})"
+            case f: Fail[?] => s"Fail(${she.show(f.error.asInstanceOf[E])})"
+            case other      => other.toString()
+    end given
+
     /** Creates a Result from an expression that might throw an exception.
       *
       * @param expr
@@ -632,11 +639,7 @@ object Result:
           * @return
           *   A string describing the Result's state and value
           */
-        def show: String =
-            self match
-                case Panic(ex) => s"Panic($ex)"
-                case Fail(ex)  => s"Fail($ex)"
-                case v         => s"Success($v)"
+        def show(using sh: Show[Result[E, A]]): String = sh.show(self)
 
     end extension
 

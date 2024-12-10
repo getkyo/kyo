@@ -284,4 +284,11 @@ object `<`:
         using inline flat: WeakFlat[B]
     ): (A1, A2, A3, A4, A5, A6) => B < Any =
         (a1, a2, a3, a4, a5, a6) => f(a1, a2, a3, a4, a5, a6)
+
+    given [A, S, APS <: A < S](using sha: Show[A]): Show[APS] with
+        def show(value: APS): String = value match
+            case sus: Kyo[?, ?]  => sus.toString
+            case a: A @unchecked => s"Kyo(${sha.show(a)})"
+    end given
+
 end `<`
