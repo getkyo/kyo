@@ -80,10 +80,12 @@ object Channel:
                 }
             }
 
-        /** Takes [[n]] elements from the channel, asynchronously blocking if necessary.
+        /** Takes [[n]] elements from the channel, semantically blocking until enough
+          * elements are present. Note that if enough elements are not added to the
+          * channel it can black indefinitely.
           *
           * @return
-          *   The taken element
+          *   Chunk of [[n]] elements
           */
         def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
             IO.Unsafe(Abort.get(self.drainUpTo(n))).map:
