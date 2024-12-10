@@ -282,7 +282,7 @@ object Meter:
                     if st == Int.MinValue then
                         // Meter is closed
                         closed.safe.get
-                    else if state.cas(st, st - 1) then
+                    else if state.compareAndSet(st, st - 1) then
                         if st > 0 then
                             // Permit available, dispatch immediately
                             dispatch(withAcquiredMeter(v))
@@ -310,7 +310,7 @@ object Meter:
                     else if st <= 0 then
                         // No permit available, return empty
                         Maybe.empty
-                    else if state.cas(st, st - 1) then
+                    else if state.compareAndSet(st, st - 1) then
                         // Permit available, dispatch
                         dispatch(withAcquiredMeter(v.map(Maybe(_))))
                     else
@@ -365,7 +365,7 @@ object Meter:
             if st >= permits || st == Int.MinValue then
                 // No more permits to release or meter is closed
                 false
-            else if !state.cas(st, st + 1) then
+            else if !state.compareAndSet(st, st + 1) then
                 // CAS failed, retry
                 release()
             else if st < 0 && !pollWaiter().complete(Result.unit) then
