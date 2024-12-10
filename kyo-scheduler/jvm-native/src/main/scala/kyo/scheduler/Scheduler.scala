@@ -209,7 +209,7 @@ final class Scheduler(
       *   An Executor that submits Runnables as scheduler tasks
       */
     def asExecutor: Executor =
-        (r: Runnable) => schedule(Task(r.run()))
+        (r: Runnable) => schedule(Task(r))
 
     /** Provides a Scala ExecutionContext interface to the scheduler.
       *

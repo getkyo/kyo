@@ -297,7 +297,7 @@ object Queue:
 
             final def close()(using frame: Frame, allow: AllowUnsafe) =
                 val fail = Result.Fail(Closed("Queue", initFrame, frame))
-                Maybe.when(_closed.cas(Maybe.empty, Maybe(fail)))(_drain())
+                Maybe.when(_closed.compareAndSet(Maybe.empty, Maybe(fail)))(_drain())
             end close
 
             final def closed()(using AllowUnsafe) = _closed.get().isDefined
@@ -339,14 +339,15 @@ object Queue:
                         def _drain(max: Maybe[Int] = Maybe.Absent) = Chunk.empty
                 case 1 =>
                     new Closeable[A](initFrame):
-                        private val state                  = AtomicRef.Unsafe.init(Maybe.empty[A])
-                        def capacity                       = 1
-                        def empty()(using AllowUnsafe)     = op(state.get().isEmpty)
-                        def size()(using AllowUnsafe)      = op(if state.get().isEmpty then 0 else 1)
-                        def full()(using AllowUnsafe)      = op(state.get().isDefined)
-                        def offer(v: A)(using AllowUnsafe) = offerOp(state.cas(Maybe.empty, Maybe(v)), !state.cas(Maybe(v), Maybe.empty))
-                        def poll()(using AllowUnsafe)      = op(state.getAndSet(Maybe.empty))
-                        def peek()(using AllowUnsafe)      = op(state.get())
+                        private val state              = AtomicRef.Unsafe.init(Maybe.empty[A])
+                        def capacity                   = 1
+                        def empty()(using AllowUnsafe) = op(state.get().isEmpty)
+                        def size()(using AllowUnsafe)  = op(if state.get().isEmpty then 0 else 1)
+                        def full()(using AllowUnsafe)  = op(state.get().isDefined)
+                        def offer(v: A)(using AllowUnsafe) =
+                            offerOp(state.compareAndSet(Maybe.empty, Maybe(v)), !state.compareAndSet(Maybe(v), Maybe.empty))
+                        def poll()(using AllowUnsafe) = op(state.getAndSet(Maybe.empty))
+                        def peek()(using AllowUnsafe) = op(state.get())
                         def _drain(max: Maybe[Int] = Maybe.Absent) =
                             max.fold(
                                 state.getAndSet(Maybe.empty).fold(Chunk.empty)(Chunk(_))
@@ -388,16 +389,16 @@ object Queue:
                 def poll()(using AllowUnsafe) = op(Maybe(q.poll()))
                 def peek()(using AllowUnsafe) = op(Maybe(q.peek()))
                 def _drain(max: Maybe[Int] = Maybe.Absent) =
-                    var b = Chunk.empty[A]
+                    val b = Chunk.newBuilder[A]
                     @tailrec def loop(i: Int): Unit =
                         if max.forall(i < _) then
                             val value = q.poll()
                             if !isNull(value) then
-                                b = b.append(value)
+                                b.addOne(value)
                                 loop(i + 1)
                     end loop
                     loop(0)
-                    b
+                    b.result()
                 end _drain
 
     end Unsafe
