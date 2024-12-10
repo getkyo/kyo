@@ -1,7 +1,9 @@
 package kyo.interop.reactivestreams
 
 import kyo.*
-import kyo.interop.reactivestreams.StreamPublisher
+import kyo.interop.flow.StreamPublisher
+import org.reactivestreams.FlowAdapters
+import org.reactivestreams.Publisher
 import org.reactivestreams.tck.PublisherVerification
 import org.reactivestreams.tck.TestEnvironment
 import org.scalatestplus.testng.*
@@ -22,28 +24,29 @@ final class StreamPublisherTest extends PublisherVerification[Int](new TestEnvir
                     .andThen(int)
             }
 
-    override def createPublisher(n: Long): StreamPublisher[Int, Async] =
+    override def createPublisher(n: Long): Publisher[Int] =
         if n > Int.MaxValue then
             null
         else
-            StreamPublisher.Unsafe(
-                createStream(n.toInt),
-                subscribeCallback = fiber =>
-                    discard(IO.Unsafe.run(Abort.run(Async.runAndBlock(Duration.Infinity)(fiber))).eval)
+            FlowAdapters.toPublisher(
+                StreamPublisher.Unsafe(
+                    createStream(n.toInt),
+                    subscribeCallback = fiber =>
+                        discard(IO.Unsafe.evalOrThrow(Async.runAndBlock(Duration.Infinity)(fiber)))
+                )
             )
         end if
     end createPublisher
 
-    override def createFailedPublisher(): StreamPublisher[Int, Async] =
-        StreamPublisher.Unsafe(
-            createStream(),
-            subscribeCallback = fiber =>
-                val asynced = Async.runAndBlock(Duration.Infinity)(fiber)
-                val aborted = Abort.run(asynced)
-                val ioed    = IO.Unsafe.run(aborted).eval
-                ioed match
-                    case Result.Success(fiber) => discard(fiber.unsafe.interrupt())
-                    case _                     => ()
+    override def createFailedPublisher(): Publisher[Int] =
+        FlowAdapters.toPublisher(
+            StreamPublisher.Unsafe(
+                createStream(),
+                subscribeCallback = fiber =>
+                    val asynced = Async.runAndBlock(Duration.Infinity)(fiber)
+                    val result  = IO.Unsafe.evalOrThrow(asynced)
+                    discard(result.unsafe.interrupt())
+            )
         )
     end createFailedPublisher
 end StreamPublisherTest

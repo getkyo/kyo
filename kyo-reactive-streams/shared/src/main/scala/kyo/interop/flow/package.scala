@@ -2,32 +2,47 @@ package kyo.interop
 
 import java.util.concurrent.Flow.*
 import kyo.*
-import kyo.interop.reactivestreams
+import kyo.interop.flow.*
+import kyo.interop.flow.StreamSubscriber.EmitStrategy
 import kyo.kernel.Boundary
 import org.reactivestreams.FlowAdapters
+import scala.annotation.nowarn
 
 package object flow:
     inline def fromPublisher[T](
         publisher: Publisher[T],
-        bufferSize: Int
+        bufferSize: Int,
+        emitStrategy: EmitStrategy = EmitStrategy.Eager
     )(
         using
         Frame,
-        Tag[T]
-    ): Stream[T, Async] < IO = reactivestreams.fromPublisher(FlowAdapters.toPublisher(publisher), bufferSize)
+        Tag[Emit[Chunk[T]]],
+        Tag[Poll[Chunk[T]]]
+    ): Stream[T, Async] < IO =
+        for
+            subscriber <- StreamSubscriber[T](bufferSize, emitStrategy)
+            _          <- IO(publisher.subscribe(subscriber))
+        yield subscriber.stream
 
-    def subscribeToStream[T, Ctx](
+    @nowarn("msg=anonymous")
+    inline def subscribeToStream[T, Ctx](
         stream: Stream[T, Ctx],
         subscriber: Subscriber[? >: T]
     )(
         using
-        Boundary[Ctx, IO],
         Frame,
-        Tag[T]
+        Tag[Emit[Chunk[T]]],
+        Tag[Poll[Chunk[T]]]
     ): Subscription < (Resource & IO & Ctx) =
-        reactivestreams.subscribeToStream(stream, FlowAdapters.toSubscriber(subscriber)).map { subscription =>
-            new Subscription:
-                override def request(n: Long): Unit = subscription.request(n)
-                override def cancel(): Unit         = subscription.cancel()
-        }
+        StreamSubscription.subscribe(stream, subscriber)
+
+    inline def streamToPublisher[T, Ctx](
+        stream: Stream[T, Ctx]
+    )(
+        using
+        Frame,
+        Tag[Emit[Chunk[T]]],
+        Tag[Poll[Chunk[T]]]
+    ): Publisher[T] < (Resource & IO & Ctx) = StreamPublisher[T, Ctx](stream)
+
 end flow

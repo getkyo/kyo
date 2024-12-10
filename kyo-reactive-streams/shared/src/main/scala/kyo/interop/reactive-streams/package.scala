@@ -1,33 +1,50 @@
 package kyo.interop
 
 import kyo.*
-import kyo.interop.reactivestreams.*
+import kyo.interop.flow
+import kyo.interop.flow.StreamSubscriber.EmitStrategy
 import kyo.kernel.Boundary
 import org.reactivestreams.*
 import org.reactivestreams.FlowAdapters
+import scala.annotation.nowarn
 
 package object reactivestreams:
-    def fromPublisher[T](
+    inline def fromPublisher[T](
         publisher: Publisher[T],
-        bufferSize: Int
+        bufferSize: Int,
+        emitStrategy: EmitStrategy = EmitStrategy.Eager
     )(
         using
         Frame,
-        Tag[T]
+        Tag[Emit[Chunk[T]]],
+        Tag[Poll[Chunk[T]]]
     ): Stream[T, Async] < IO =
-        for
-            subscriber <- StreamSubscriber[T](bufferSize)
-            _          <- IO(publisher.subscribe(subscriber))
-        yield subscriber.stream
+        flow.fromPublisher(FlowAdapters.toFlowPublisher(publisher), bufferSize, emitStrategy)
 
-    def subscribeToStream[T, Ctx](
+    @nowarn("msg=anonymous")
+    inline def subscribeToStream[T, Ctx](
         stream: Stream[T, Ctx],
         subscriber: Subscriber[? >: T]
     )(
         using
-        boundary: Boundary[Ctx, IO],
-        frame: Frame,
-        tag: Tag[T]
+        Frame,
+        Tag[Emit[Chunk[T]]],
+        Tag[Poll[Chunk[T]]]
     ): Subscription < (Resource & IO & Ctx) =
-        StreamSubscription.subscribe(stream, subscriber)(using boundary, frame, tag)
+        flow.subscribeToStream(stream, FlowAdapters.toFlowSubscriber(subscriber)).map { subscription =>
+            new Subscription:
+                override def request(n: Long): Unit = subscription.request(n)
+                override def cancel(): Unit         = subscription.cancel()
+        }
+
+    inline def streamToPublisher[T, Ctx](
+        stream: Stream[T, Ctx]
+    )(
+        using
+        Frame,
+        Tag[Emit[Chunk[T]]],
+        Tag[Poll[Chunk[T]]]
+    ): Publisher[T] < (Resource & IO & Ctx) = flow.streamToPublisher(stream).map { publisher =>
+        FlowAdapters.toPublisher(publisher)
+    }
 end reactivestreams

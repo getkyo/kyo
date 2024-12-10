@@ -14,3 +14,4 @@ jmh-result.json
 *.json
 *.gpg
 test-output
+.DS_Store
