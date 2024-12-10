@@ -2581,7 +2581,7 @@ val f: Unit < IO =
 val g: Unit < IO =
     aLong.map(_.lazySet(1L))
 val h: Boolean < IO =
-    aBool.map(_.cas(false, true))
+    aBool.map(_.compareAndSet(false, true))
 val i: String < IO =
     aRef.map(_.getAndSet("new"))
 ```
