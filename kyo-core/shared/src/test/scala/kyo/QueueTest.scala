@@ -93,6 +93,14 @@ class QueueTest extends Test:
         yield assert(v == Seq(1, 2))
     }
 
+    "drainUpTo" in run {
+        for
+            q <- Queue.init[Int](4)
+            _ <- Kyo.foreach(1 to 4)(q.offer)
+            v <- q.drainUpTo(2)
+        yield assert(v == Seq(1, 2))
+    }
+
     "unbounded" - {
         access.foreach { access =>
             access.toString() - {
@@ -193,6 +201,15 @@ class QueueTest extends Test:
             val drained = testUnsafe.drain()
             assert(drained == Result.success(Seq(3, 4)))
             assert(testUnsafe.empty().contains(true))
+        }
+
+        "should drainUpTo correctly" in {
+            val testUnsafe = Queue.Unsafe.init[Int](6)
+            (1 to 6).foreach(testUnsafe.offer)
+            val drained3 = testUnsafe.drainUpTo(3)
+            assert(drained3 == Result.success(Seq(1, 2, 3)))
+            val drained5 = testUnsafe.drainUpTo(5)
+            assert(drained5 == Result.success(Seq(4, 5, 6)))
         }
 
         "should close correctly" in withQueue { testUnsafe =>

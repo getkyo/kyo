@@ -74,6 +74,26 @@ class ChannelTest extends Test:
             v  <- f.get
         yield assert(!d1 && d2 && v == 1)
     }
+    "takeExactly" - {
+        "should take all if in channel" in runNotJS {
+            for
+                c <- Channel.init[Int](3)
+                _ <- Kyo.foreach(1 to 3)(c.put(_))
+                r <- c.takeExactly(3)
+            yield assert(r == Seq(1, 2, 3))
+        }
+        "should take incrementally as elements are added to channel" in runNotJS {
+            for
+                c  <- Channel.init[Int](3)
+                _  <- Kyo.foreach(1 to 3)(c.put(_))
+                f  <- Async.run(c.takeExactly(6))
+                _  <- Loop(false)(v => if v then Loop.done(()) else c.empty.map(Loop.continue(_)))
+                fd <- f.done
+                _  <- Kyo.foreach(4 to 6)(c.put(_))
+                r  <- Fiber.get(f)
+            yield assert(!fd && r == Seq(1, 2, 3, 4, 5, 6))
+        }
+    }
     "drain" - {
         "empty" in run {
             for
@@ -87,6 +107,37 @@ class ChannelTest extends Test:
                 _ <- c.put(1)
                 _ <- c.put(2)
                 r <- c.drain
+            yield assert(r == Seq(1, 2))
+        }
+    }
+    "drainUpTo" - {
+        "empty" in run {
+            for
+                c <- Channel.init[Int](2)
+                r <- c.drainUpTo(2)
+            yield assert(r == Seq())
+        }
+        "non-empty drain all" in run {
+            for
+                c <- Channel.init[Int](2)
+                _ <- c.put(1)
+                _ <- c.put(2)
+                r <- c.drainUpTo(2)
+            yield assert(r == Seq(1, 2))
+        }
+        "non-empty drain more than is in the Channel" in run {
+            for
+                c <- Channel.init[Int](2)
+                _ <- c.put(1)
+                _ <- c.put(2)
+                r <- c.drainUpTo(4)
+            yield assert(r == Seq(1, 2))
+        }
+        "non-empty drain less than is in the Channel" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put(_))
+                r <- c.drainUpTo(2)
             yield assert(r == Seq(1, 2))
         }
     }
@@ -356,6 +407,58 @@ class ChannelTest extends Test:
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
+        }
+    }
+
+    "stream" - {
+        "should stream from channel specified chunk size" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.stream(Maybe.Absent).mapChunk(ch => Chunk(ch)).take(1)
+                v <- stream.run
+            yield assert(v == Chunk(Chunk(1, 2, 3, 4)))
+        }
+
+        "should stream from channel with a specified chunk size" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.stream(Maybe.Present(2)).mapChunk(ch => Chunk(ch)).take(2)
+                v <- stream.run
+            yield assert(v == Chunk(Chunk(1, 2), Chunk(3, 4)))
+        }
+
+        "should stream concurrently with ingest, without specified chunk size" in run {
+            for
+                c  <- Channel.init[Int](4)
+                bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                stream = c.stream(Maybe.Absent).take(20).mapChunk(ch => Chunk(ch))
+                v <- stream.run
+                _ <- bg.interrupt
+            yield assert(v.flatten == Chunk.from(0 until 20) && v.forall(_.size <= 4))
+        }
+
+        "should stream concurrently with ingest, with specified chunk size" in run {
+            for
+                c  <- Channel.init[Int](4)
+                bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                stream = c.stream(Maybe.Present(2)).take(20).mapChunk(ch => Chunk(ch))
+                v <- stream.run
+                _ <- bg.interrupt
+            yield assert(v.flatten == Chunk.from(0 until 20) && v.forall(_.size <= 2))
+        }
+
+        "should fail when channel is closed" in run {
+            for
+                c  <- Channel.init[Int](3)
+                bg <- Async.run(Kyo.foreach(0 to 8)(c.put).andThen(c.close))
+                stream = c.stream(Maybe.Absent).mapChunk(ch => Chunk(ch))
+                v <- Abort.run(stream.run)
+            yield v match
+                case Result.Success(v)            => fail(s"Stream succeeded unexpectedly: ${v}")
+                case Result.Fail(Closed(_, _, _)) => assert(true)
+                case Result.Panic(ex)             => fail(s"Stream panicked unexpectedly: ${ex}")
         }
     }
 
