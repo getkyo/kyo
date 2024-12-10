@@ -23,10 +23,10 @@ object Result:
     inline given [E, A: Flat]: Flat[Result[E, A]]                                              = Flat.unsafe.bypass
     inline given [E, A]: CanEqual[Result[E, A], Panic]                                         = CanEqual.derived
 
-    given [E, A, ResultEA <: Result[E, A]](using she: Show[E], sha: Show[A]): Show[ResultEA] with
-        def show(value: ResultEA): String = value match
-            case Success(a) => s"Success(${sha.show(a.asInstanceOf[A])})"
-            case f: Fail[?] => s"Fail(${she.show(f.error.asInstanceOf[E])})"
+    given [E, A, ResultEA <: Result[E, A]](using she: AsText[E], sha: AsText[A]): AsText[ResultEA] with
+        def asText(value: ResultEA): String = value match
+            case Success(a) => s"Success(${sha.asText(a.asInstanceOf[A])})"
+            case f: Fail[?] => s"Fail(${she.asText(f.error.asInstanceOf[E])})"
             case other      => other.toString()
     end given
 
@@ -639,7 +639,7 @@ object Result:
           * @return
           *   A string describing the Result's state and value
           */
-        def show(using sh: Show[Result[E, A]]): String = sh.show(self)
+        def text(using sh: AsText[Result[E, A]]): Text = sh.asText(self)
 
     end extension
 

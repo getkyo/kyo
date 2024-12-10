@@ -221,7 +221,7 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
             state.get() match
                 case p: Pending[?, ?] => s"Pending(waiters = ${p.waiters})"
                 case l: Linked[?, ?]  => s"Linked(promise = ${l.p})"
-                case r                => s"Done(result = ${r.asInstanceOf[Result[Any, Any]].show})"
+                case r                => s"Done(result = ${r.asInstanceOf[Result[Any, Any]].text})"
         s"IOPromise(state = ${stateString})"
     end toString
 end IOPromise

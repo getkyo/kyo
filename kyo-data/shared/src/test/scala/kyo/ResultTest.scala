@@ -986,32 +986,34 @@ class ResultTest extends Test:
 
     "show" - {
         "Success" in {
-            assert(Result.success(42).show == "Success(42)")
+            assert(Result.success(42).text.show == "Success(42)")
         }
 
         "Fail" in {
-            assert(Result.fail("error").show == "Fail(error)")
+            assert(Result.fail("error").text.show == "Fail(error)")
         }
 
         "Panic" in {
             val ex = new Exception("test")
-            assert(Result.panic(ex).show == s"Panic($ex)")
+            assert(Result.panic(ex).text.show == s"Panic($ex)")
         }
 
         "nested Success" in {
             val nested = Result.success(Result.success(Result.success(23)))
-            assert(nested.show == "Success(Success(Success(23)))")
-            assert(k"$nested" == "Success(Success(Success(23)))")
+            assert(nested.text.show == "Success(Success(Success(23)))")
+            assert(txt"$nested".show == "Success(Success(Success(23)))")
             val widened: Result[Nothing, Result[Nothing, Result[Nothing, Int]]] = nested
-            assert(k"$widened" == "Success(Success(Success(23)))")
+            assert(widened.text.show == "Success(Success(Success(23)))")
+            assert(txt"$widened".show == "Success(Success(Success(23)))")
         }
 
         "nested Success with failure" in {
             val nested = Result.success(Result.success(Result.fail("error")))
-            assert(nested.show == "Success(Success(Fail(error)))")
-            assert(k"$nested" == "Success(Success(Fail(error)))")
+            assert(nested.text.show == "Success(Success(Fail(error)))")
+            assert(txt"$nested".show == "Success(Success(Fail(error)))")
             val widened: Result[Nothing, Result[Nothing, Result[String, Nothing]]] = nested
-            assert(k"$widened" == "Success(Success(Fail(error)))")
+            assert(widened.text.show == "Success(Success(Fail(error)))")
+            assert(txt"$widened".show == "Success(Success(Fail(error)))")
         }
     }
 

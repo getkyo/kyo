@@ -19,10 +19,10 @@ object Maybe:
     inline given [A: Flat]: Flat[Maybe[A]]                                             = Flat.unsafe.bypass
     given [A]: Conversion[Maybe[A], IterableOnce[A]]                                   = _.iterator
 
-    given [A, MaybeA <: Maybe[A]](using sha: Show[A]): Show[MaybeA] with
+    given [A, MaybeA <: Maybe[A]](using sha: AsText[A]): AsText[MaybeA] with
         given CanEqual[Absent, MaybeA] = CanEqual.derived
-        def show(value: MaybeA): String = (value: Maybe[A]) match
-            case Present(a) => s"Present(${sha.show(a)})"
+        def asText(value: MaybeA): String = (value: Maybe[A]) match
+            case Present(a) => s"Present(${sha.asText(a)})"
             case Absent     => "Absent"
             case _          => throw IllegalStateException()
     end given
@@ -419,7 +419,7 @@ object Maybe:
         inline def toResult[E](inline ifEmpty: => Result[E, A]): Result[E, A] =
             if isEmpty then ifEmpty else Result.success(get)
 
-        def show(using sh: Show[Maybe[A]]): String = sh.show(self)
+        def text(using sh: AsText[Maybe[A]]): Text = sh.asText(self)
 
     end extension
 
