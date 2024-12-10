@@ -86,18 +86,19 @@ object Channel:
           */
         def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
             if n <= 0 then Chunk.empty
-            else Loop(Chunk.empty[A]): lastChunk =>
-                val nextN = n - lastChunk.size
-                Channel.drainUpTo(self)(nextN).map: chunk =>
-                    // IO.Unsafe(Abort.get(self.drainUpTo(nextN))).map: chunk =>
-                    val chunk1 = lastChunk.concat(chunk)
-                    if chunk1.size == n then Loop.done(chunk1)
-                    else
-                        self.take.map: a =>
-                            val chunk2 = chunk1.append(a)
-                            if chunk2.size == n then Loop.done(chunk2)
-                            else Loop.continue(chunk2)
-                    end if
+            else
+                Loop(Chunk.empty[A]): lastChunk =>
+                    val nextN = n - lastChunk.size
+                    Channel.drainUpTo(self)(nextN).map: chunk =>
+                        // IO.Unsafe(Abort.get(self.drainUpTo(nextN))).map: chunk =>
+                        val chunk1 = lastChunk.concat(chunk)
+                        if chunk1.size == n then Loop.done(chunk1)
+                        else
+                            self.take.map: a =>
+                                val chunk2 = chunk1.append(a)
+                                if chunk2.size == n then Loop.done(chunk2)
+                                else Loop.continue(chunk2)
+                        end if
 
         /** Creates a fiber that puts an element into the channel.
           *

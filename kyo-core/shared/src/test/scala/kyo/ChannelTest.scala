@@ -75,6 +75,15 @@ class ChannelTest extends Test:
         yield assert(!d1 && d2 && v == 1)
     }
     "takeExactly" - {
+        "should return empty chunk if n <= 0" in runNotJS {
+            for
+                c  <- Channel.init[Int](3)
+                _  <- Kyo.foreach(1 to 3)(c.put(_))
+                r0 <- c.takeExactly(0)
+                rn <- c.takeExactly(-5)
+                s  <- c.size
+            yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 3)
+        }
         "should take all contents if in n == capacity" in runNotJS {
             for
                 c <- Channel.init[Int](3)
@@ -133,12 +142,20 @@ class ChannelTest extends Test:
         }
     }
     "drainUpTo" - {
+        "zero or negative" in run {
+            for
+                c  <- Channel.init[Int](2)
+                r0 <- c.drainUpTo(0)
+                rn <- c.drainUpTo(-5)
+                s  <- c.size
+            yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 0)
+        }
         "empty" in run {
             for
                 c <- Channel.init[Int](2)
                 r <- c.drainUpTo(2)
                 s <- c.size
-            yield assert(r == Seq() && s == 0)
+            yield assert(r == Chunk.empty && s == 0)
         }
         "non-empty channel drain up to the channel contents" in run {
             for
