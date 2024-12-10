@@ -19,9 +19,9 @@ object Maybe:
     inline given [A: Flat]: Flat[Maybe[A]]                                             = Flat.unsafe.bypass
     given [A]: Conversion[Maybe[A], IterableOnce[A]]                                   = _.iterator
 
-    given [A, MA <: Maybe[A]](using sha: Show[A]): Show[MA] with
-        given CanEqual[Absent, MA] = CanEqual.derived
-        def show(value: MA): String = (value: Maybe[A]) match
+    given [A, MaybeA <: Maybe[A]](using sha: Show[A]): Show[MaybeA] with
+        given CanEqual[Absent, MaybeA] = CanEqual.derived
+        def show(value: MaybeA): String = (value: Maybe[A]) match
             case Present(a) => s"Present(${sha.show(a)})"
             case Absent     => "Absent"
             case _          => throw IllegalStateException()
@@ -80,9 +80,6 @@ object Maybe:
     /** Represents a defined value in a Maybe. */
     opaque type Present[+A] = A | PresentAbsent
     object Present:
-        // given presentShow[A](using sha: Show[A]): Show[Present[A]] with
-        //     def show(value: Present[A]): String = s"Present(${sha.show(value.get)})"
-
         /** Creates a Present instance.
           *
           * @param v

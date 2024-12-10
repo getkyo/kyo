@@ -23,8 +23,8 @@ object Result:
     inline given [E, A: Flat]: Flat[Result[E, A]]                                              = Flat.unsafe.bypass
     inline given [E, A]: CanEqual[Result[E, A], Panic]                                         = CanEqual.derived
 
-    given [E, A, REA <: Result[E, A]](using she: Show[E], sha: Show[A]): Show[REA] with
-        def show(value: REA): String = value match
+    given [E, A, ResultEA <: Result[E, A]](using she: Show[E], sha: Show[A]): Show[ResultEA] with
+        def show(value: ResultEA): String = value match
             case Success(a) => s"Success(${sha.show(a.asInstanceOf[A])})"
             case f: Fail[?] => s"Fail(${she.show(f.error.asInstanceOf[E])})"
             case other      => other.toString()
