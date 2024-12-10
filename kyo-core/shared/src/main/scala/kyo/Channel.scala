@@ -89,7 +89,8 @@ object Channel:
         def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
             Loop(Chunk.empty[A]): lastChunk =>
                 val nextN = n - lastChunk.size
-                IO.Unsafe(Abort.get(self.drainUpTo(nextN))).map: chunk =>
+                Channel.drainUpTo(self)(nextN).map: chunk =>
+                    // IO.Unsafe(Abort.get(self.drainUpTo(nextN))).map: chunk =>
                     val chunk1 = lastChunk.concat(chunk)
                     if chunk1.size == n then Loop.done(chunk1)
                     else
@@ -127,7 +128,7 @@ object Channel:
           * @return
           *   a sequence of up to [[max]] elements that were in the channel.
           */
-        def drainUpTo(max: Int)(using Frame): Seq[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
+        def drainUpTo(max: Int)(using Frame): Chunk[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
 
         /** Closes the channel.
           *
