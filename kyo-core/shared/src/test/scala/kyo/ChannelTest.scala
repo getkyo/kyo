@@ -84,9 +84,9 @@ class ChannelTest extends Test:
         }
         "should take incrementally as elements are added to channel" in runNotJS {
             for
-                c  <- Channel.init[Int](3)
-                _  <- Kyo.foreach(1 to 3)(c.put(_))
-                f  <- Async.run(c.takeExactly(6))
+                c <- Channel.init[Int](3)
+                _ <- Kyo.foreach(1 to 3)(c.put(_))
+                f <- Async.run(c.takeExactly(6))
                 // Wait until channel is empty
                 _  <- Loop(false)(v => if v then Loop.done(()) else c.empty.map(Loop.continue(_)))
                 fd <- f.done
