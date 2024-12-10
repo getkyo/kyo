@@ -25,7 +25,7 @@ import scala.util.control.NonFatal
   * @see
   *   [[Async.race]] for racing multiple computations
   */
-opaque type Async <: (IO & Async.Join & Abort[Nothing]) = Async.Join & IO & Abort[Nothing]
+opaque type Async <: (IO & Async.Join) = Async.Join & IO
 
 object Async:
 
