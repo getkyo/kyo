@@ -1,7 +1,5 @@
 package kyo
 
-import kyo.Schedule.internal.Immediate.next
-import kyo.scheduler.IOPromise
 import org.jctools.queues.MessagePassingQueue.Consumer
 import org.jctools.queues.MpmcUnboundedXaddArrayQueue
 import scala.annotation.tailrec
