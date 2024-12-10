@@ -73,8 +73,6 @@ object Show extends LowPriorityShows:
                         case _ =>
                             sumShow[A, prodMir.type](label, prodMir)
                     end match
-        // case _ =>
-        //     error("unknown mirror type")
 
 end Show
 
