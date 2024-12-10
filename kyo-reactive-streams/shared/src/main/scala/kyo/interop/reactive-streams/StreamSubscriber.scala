@@ -3,13 +3,13 @@ package kyo.interop.reactivestreams
 import StreamSubscriber.*
 import kyo.*
 import org.reactivestreams.*
+import scala.annotation.tailrec
 
-final class StreamSubscriber[V] private (
-    bufferSize: Int
+final private[kyo] class StreamSubscriber[V](
+    bufferSize: Int,
+    strategy: EmitStrategy
 )(
-    using
-    allowance: AllowUnsafe,
-    frame: Frame
+    using AllowUnsafe
 ) extends Subscriber[V]:
 
     private enum UpstreamState derives CanEqual:
@@ -22,167 +22,235 @@ final class StreamSubscriber[V] private (
         UpstreamState.Uninitialized -> Maybe.empty[Fiber.Promise.Unsafe[Nothing, Unit]]
     )
 
-    private def throwIfNull[A](b: A): Unit = if isNull(b) then throw new NullPointerException()
+    private inline def throwIfNull[A](b: A): Unit = if isNull(b) then throw new NullPointerException()
 
     override def onSubscribe(subscription: Subscription): Unit =
         throwIfNull(subscription)
-        var sideEffect: () => Unit = () => ()
-        state.update {
-            case (UpstreamState.Uninitialized, maybePromise) =>
-                // Notify if someone wait
-                sideEffect = () => maybePromise.foreach(_.completeDiscard(Result.success(())))
-                UpstreamState.WaitForRequest(subscription, Chunk.empty, 0) -> Absent
-            case other =>
-                // wrong state, cancel incoming subscription
-                sideEffect = () => subscription.cancel()
-                other
-        }
-        sideEffect()
+        @tailrec def handleSubscribe(): Unit =
+            val curState = state.get()
+            curState match
+                case (UpstreamState.Uninitialized, maybePromise) =>
+                    val nextState = UpstreamState.WaitForRequest(subscription, Chunk.empty, 0) -> Absent
+                    if state.compareAndSet(curState, nextState) then
+                        maybePromise.foreach(_.completeDiscard(Result.success(())))
+                    else
+                        handleSubscribe()
+                    end if
+                case other =>
+                    if state.compareAndSet(curState, other) then
+                        subscription.cancel()
+                    else
+                        handleSubscribe()
+            end match
+        end handleSubscribe
+        handleSubscribe()
     end onSubscribe
 
     override def onNext(item: V): Unit =
         throwIfNull(item)
-        var sideEffect: () => Unit = () => ()
-        state.update {
-            case (UpstreamState.WaitForRequest(subscription, items, remaining), maybePromise) =>
-                sideEffect = () => maybePromise.foreach(_.completeDiscard(Result.success(())))
-                UpstreamState.WaitForRequest(subscription, items.append(item), remaining - 1) -> Absent
-            case other =>
-                sideEffect = () => ()
-                other
-        }
-        sideEffect()
+        @tailrec def handleNext(): Unit =
+            val curState = state.get()
+            curState match
+                case (UpstreamState.WaitForRequest(subscription, items, remaining), maybePromise) =>
+                    if (strategy == EmitStrategy.Eager) || (strategy == EmitStrategy.Buffer && remaining == 1) then
+                        val nextState = UpstreamState.WaitForRequest(subscription, items.append(item), remaining - 1) -> Absent
+                        if state.compareAndSet(curState, nextState) then
+                            maybePromise.foreach(_.completeDiscard(Result.success(())))
+                        else
+                            handleNext()
+                        end if
+                    else
+                        val nextState = UpstreamState.WaitForRequest(subscription, items.append(item), remaining - 1) -> maybePromise
+                        if !state.compareAndSet(curState, nextState) then handleNext()
+                case other =>
+                    if !state.compareAndSet(curState, other) then handleNext()
+            end match
+        end handleNext
+        handleNext()
     end onNext
 
     override def onError(throwable: Throwable): Unit =
         throwIfNull(throwable)
-        var sideEffect: () => Unit = () => ()
-        state.update {
-            case (UpstreamState.WaitForRequest(_, items, _), maybePromise) =>
-                sideEffect = () => maybePromise.foreach(_.completeDiscard(Result.success(())))
-                UpstreamState.Finished(Maybe(throwable), items) -> Absent
-            case other =>
-                sideEffect = () => ()
-                other
-        }
-        sideEffect()
+        @tailrec def handleError(): Unit =
+            val curState = state.get()
+            curState match
+                case (UpstreamState.WaitForRequest(_, items, _), maybePromise) =>
+                    val nextState = UpstreamState.Finished(Maybe(throwable), items) -> Absent
+                    if state.compareAndSet(curState, nextState) then
+                        maybePromise.foreach(_.completeDiscard(Result.success(())))
+                    else
+                        handleError()
+                    end if
+                case other =>
+                    if !state.compareAndSet(curState, other) then handleError()
+            end match
+        end handleError
+        handleError()
     end onError
 
     override def onComplete(): Unit =
-        var sideEffect: () => Unit = () => ()
-        state.update {
-            case (UpstreamState.WaitForRequest(_, items, _), maybePromise) =>
-                sideEffect = () => maybePromise.foreach(_.completeDiscard(Result.success(())))
-                UpstreamState.Finished(Absent, items) -> Absent
-            case other =>
-                sideEffect = () => ()
-                other
-        }
-        sideEffect()
+        @tailrec def handleComplete(): Unit =
+            val curState = state.get()
+            curState match
+                case (UpstreamState.WaitForRequest(_, items, _), maybePromise) =>
+                    val nextState = UpstreamState.Finished(Absent, items) -> Absent
+                    if state.compareAndSet(curState, nextState) then
+                        maybePromise.foreach(_.completeDiscard(Result.success(())))
+                    else
+                        handleComplete()
+                    end if
+                case other =>
+                    if !state.compareAndSet(curState, other) then handleComplete()
+            end match
+        end handleComplete
+        handleComplete()
     end onComplete
 
-    private[interop] def await: Boolean < Async =
-        var sideEffect: () => (Boolean < Async) = () => IO(false)
-        state.update {
-            case (UpstreamState.Uninitialized, Absent) =>
-                val promise = Fiber.Promise.Unsafe.init[Nothing, Unit]()
-                sideEffect = () => promise.safe.use(_ => false)
-                UpstreamState.Uninitialized -> Present(promise)
-            case s @ (UpstreamState.Uninitialized, Present(promise)) =>
-                sideEffect = () => promise.safe.use(_ => false)
-                s
-            case s @ (UpstreamState.WaitForRequest(subscription, items, remaining), Absent) =>
-                if items.isEmpty then
-                    if remaining == 0 then
-                        sideEffect = () => IO(true)
-                        UpstreamState.WaitForRequest(subscription, items, remaining) -> Absent
+    private[interop] def await(using Frame): Boolean < Async =
+        @tailrec def handleAwait: Boolean < Async =
+            val curState = state.get()
+            curState match
+                case (UpstreamState.Uninitialized, Absent) =>
+                    val promise   = Fiber.Promise.Unsafe.init[Nothing, Unit]()
+                    val nextState = UpstreamState.Uninitialized -> Present(promise)
+                    if state.compareAndSet(curState, nextState) then
+                        promise.safe.use(_ => false)
                     else
-                        val promise = Fiber.Promise.Unsafe.init[Nothing, Unit]()
-                        sideEffect = () => promise.safe.use(_ => false)
-                        UpstreamState.WaitForRequest(subscription, items, remaining) -> Present(promise)
-                else
-                    sideEffect = () => IO(false)
-                    s
-            case s @ (UpstreamState.Finished(_, _), maybePromise) =>
-                sideEffect = () =>
-                    maybePromise match
-                        case Present(promise) => promise.safe.use(_ => false)
-                        case Absent           => IO(false)
-                s
-            case other =>
-                sideEffect = () => IO(false)
-                other
-        }
-        sideEffect()
+                        handleAwait
+                    end if
+                case s @ (UpstreamState.Uninitialized, Present(promise)) =>
+                    if state.compareAndSet(curState, s) then
+                        promise.safe.use(_ => false)
+                    else
+                        handleAwait
+                case s @ (UpstreamState.WaitForRequest(subscription, items, remaining), Absent) =>
+                    if items.isEmpty then
+                        if remaining == 0 then
+                            val nextState = UpstreamState.WaitForRequest(subscription, Chunk.empty[V], 0) -> Absent
+                            if state.compareAndSet(curState, nextState) then
+                                IO(true)
+                            else
+                                handleAwait
+                            end if
+                        else
+                            val promise   = Fiber.Promise.Unsafe.init[Nothing, Unit]()
+                            val nextState = UpstreamState.WaitForRequest(subscription, Chunk.empty[V], remaining) -> Present(promise)
+                            if state.compareAndSet(curState, nextState) then
+                                promise.safe.use(_ => false)
+                            else
+                                handleAwait
+                            end if
+                    else
+                        if state.compareAndSet(curState, s) then
+                            IO(false)
+                        else
+                            handleAwait
+                case other =>
+                    if state.compareAndSet(curState, other) then
+                        IO(false)
+                    else
+                        handleAwait
+            end match
+        end handleAwait
+        IO(handleAwait)
     end await
 
-    private[interop] def request: Long < IO =
-        var sideEffect: () => Long < IO = () => IO(0L)
-        state.update {
-            case (UpstreamState.WaitForRequest(subscription, items, remaining), maybePromise) =>
-                sideEffect = () => IO(subscription.request(bufferSize)).andThen(bufferSize.toLong)
-                UpstreamState.WaitForRequest(subscription, items, remaining + bufferSize) -> maybePromise
-            case other =>
-                sideEffect = () => IO(0L)
-                other
-        }
-        sideEffect()
+    private[interop] def request(using Frame): Long < IO =
+        @tailrec def handleRequest: Long < IO =
+            val curState = state.get()
+            curState match
+                case (UpstreamState.WaitForRequest(subscription, items, remaining), maybePromise) =>
+                    val nextState = UpstreamState.WaitForRequest(subscription, items, remaining + bufferSize) -> maybePromise
+                    if state.compareAndSet(curState, nextState) then
+                        IO(subscription.request(bufferSize)).andThen(bufferSize.toLong)
+                    else
+                        handleRequest
+                    end if
+                case other =>
+                    if state.compareAndSet(curState, other) then
+                        IO(0L)
+                    else
+                        handleRequest
+            end match
+        end handleRequest
+        IO(handleRequest)
     end request
 
-    private[interop] def poll: Result[Throwable | SubscriberDone, Chunk[V]] < IO =
-        var sideEffect: () => (Result[Throwable | SubscriberDone, Chunk[V]] < IO) = () => IO(Result.success(Chunk.empty))
-        state.update {
-            case (UpstreamState.WaitForRequest(subscription, items, remaining), Absent) =>
-                sideEffect = () => IO(Result.success(items))
-                UpstreamState.WaitForRequest(subscription, Chunk.empty, remaining) -> Absent
-            case s @ (UpstreamState.Finished(reason, leftOver), Absent) =>
-                if leftOver.isEmpty then
-                    sideEffect = () =>
-                        IO {
-                            reason match
-                                case Present(error) => Result.fail(error)
-                                case Absent         => Result.fail(SubscriberDone)
-
-                        }
-                    s
-                else
-                    sideEffect = () => IO(Result.success(leftOver))
-                    UpstreamState.Finished(reason, Chunk.empty) -> Absent
-            case other =>
-                sideEffect = () => IO(Result.success(Chunk.empty))
-                other
-        }
-        sideEffect()
+    private[interop] def poll(using Frame): Result[Throwable | SubscriberDone, Chunk[V]] < IO =
+        @tailrec def handlePoll: Result[Throwable | SubscriberDone, Chunk[V]] < IO =
+            val curState = state.get()
+            curState match
+                case (UpstreamState.WaitForRequest(subscription, items, remaining), Absent) =>
+                    val nextState = UpstreamState.WaitForRequest(subscription, Chunk.empty, remaining) -> Absent
+                    if state.compareAndSet(curState, nextState) then
+                        IO(Result.success(items))
+                    else
+                        handlePoll
+                    end if
+                case s @ (UpstreamState.Finished(reason, leftOver), Absent) =>
+                    if leftOver.isEmpty then
+                        if state.compareAndSet(curState, s) then
+                            IO {
+                                reason match
+                                    case Present(error) => Result.fail(error)
+                                    case Absent         => Result.fail(SubscriberDone)
+                            }
+                        else
+                            handlePoll
+                    else
+                        val nextState = UpstreamState.Finished(reason, Chunk.empty) -> Absent
+                        if state.compareAndSet(curState, nextState) then
+                            IO(Result.success(leftOver))
+                        else
+                            handlePoll
+                        end if
+                case other =>
+                    if state.compareAndSet(curState, other) then
+                        IO(Result.success(Chunk.empty))
+                    else
+                        handlePoll
+            end match
+        end handlePoll
+        IO(handlePoll)
     end poll
 
-    private[interop] def interupt: Unit < IO =
-        var sideEffect: () => (Unit < IO) = () => IO.unit
-        state.update {
-            case (UpstreamState.Uninitialized, maybePromise) =>
-                // Notify if someone wait
-                sideEffect = () => maybePromise.foreach(_.completeDiscard(Result.success(())))
-                UpstreamState.Finished(Absent, Chunk.empty) -> Absent
-            case (UpstreamState.WaitForRequest(subscription, _, _), Absent) =>
-                sideEffect = () => IO(subscription.cancel())
-                UpstreamState.Finished(Absent, Chunk.empty) -> Absent
-            case other =>
-                sideEffect = () => IO.unit
-                other
-        }
-        sideEffect()
+    private[interop] def interupt(using Frame): Unit < IO =
+        @tailrec def handleInterupt: Unit < IO =
+            val curState = state.get()
+            curState match
+                case (UpstreamState.Uninitialized, maybePromise) =>
+                    val nextState = UpstreamState.Finished(Absent, Chunk.empty) -> Absent
+                    if state.compareAndSet(curState, nextState) then
+                        IO(maybePromise.foreach(_.completeDiscard(Result.success(()))))
+                    else
+                        handleInterupt
+                    end if
+                case (UpstreamState.WaitForRequest(subscription, _, _), Absent) =>
+                    val nextState = UpstreamState.Finished(Absent, Chunk.empty) -> Absent
+                    if state.compareAndSet(curState, nextState) then
+                        IO(subscription.cancel())
+                    else
+                        handleInterupt
+                    end if
+                case other =>
+                    if state.compareAndSet(curState, other) then
+                        IO.unit
+                    else
+                        handleInterupt
+            end match
+        end handleInterupt
+        IO(handleInterupt)
     end interupt
 
-    private[interop] def emit(ack: Ack)(using Tag[V]): Ack < (Emit[Chunk[V]] & Async) =
+    private[interop] def emit(using Frame, Tag[Emit[Chunk[V]]]): Ack < (Emit[Chunk[V]] & Async) =
         Emit.andMap(Chunk.empty) { ack =>
             Loop(ack) {
                 case Ack.Stop => interupt.andThen(Loop.done(Ack.Stop))
                 case Ack.Continue(_) =>
                     await
                         .map {
-                            if _ then
-                                request.andThen(Ack.Continue())
-                            else
-                                poll.map {
+                            case true => request.andThen(Ack.Continue())
+                            case false => poll.map {
                                     case Result.Success(nextChunk)  => Emit(nextChunk)
                                     case Result.Error(e: Throwable) => Abort.panic(e)
                                     case _                          => Ack.Stop
@@ -192,7 +260,7 @@ final class StreamSubscriber[V] private (
             }
         }
 
-    def stream(using Tag[V]): Stream[V, Async] = Stream(Emit.andMap(Chunk.empty)(emit))
+    def stream(using Frame, Tag[Emit[Chunk[V]]]): Stream[V, Async] = Stream(emit)
 
 end StreamSubscriber
 
@@ -201,9 +269,15 @@ object StreamSubscriber:
     abstract private[reactivestreams] class SubscriberDone
     private[reactivestreams] case object SubscriberDone extends SubscriberDone
 
+    enum EmitStrategy derives CanEqual:
+        case Eager  // Emit value to downstream stream as soon as the subscriber receives one
+        case Buffer // Subscriber buffers received values and emit them only when reaching bufferSize
+    end EmitStrategy
+
     def apply[V](
-        bufferSize: Int
+        bufferSize: Int,
+        strategy: EmitStrategy = EmitStrategy.Eager
     )(
         using Frame
-    ): StreamSubscriber[V] < IO = IO.Unsafe(new StreamSubscriber(bufferSize))
+    ): StreamSubscriber[V] < IO = IO.Unsafe(new StreamSubscriber(bufferSize, strategy))
 end StreamSubscriber

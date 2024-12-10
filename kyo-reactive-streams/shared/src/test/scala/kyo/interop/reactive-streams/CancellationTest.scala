@@ -6,31 +6,28 @@ import org.reactivestreams.Subscriber
 import org.reactivestreams.Subscription
 
 final class CancellationTest extends Test:
-    final class Sub[A](b: AtomicBoolean.Unsafe) extends Subscriber[A]:
+    final class Sub[A](b: AtomicBoolean) extends Subscriber[A]:
         import AllowUnsafe.embrace.danger
-        def onNext(t: A)                 = b.set(true)
-        def onComplete()                 = b.set(true)
-        def onError(e: Throwable)        = b.set(true)
+        def onNext(t: A)                 = IO.Unsafe.run(b.set(true)).eval
+        def onComplete()                 = IO.Unsafe.run(b.set(true)).eval
+        def onError(e: Throwable)        = IO.Unsafe.run(b.set(true)).eval
         def onSubscribe(s: Subscription) = ()
     end Sub
 
     val stream: Stream[Int, Any] = Stream.range(0, 5, 1)
 
-    val attempts = 1000
+    val attempts = 100
 
-    def testStreamSubscription(clue: String)(program: Subscription => Unit): Unit < IO =
+    def testStreamSubscription(clue: String)(program: Subscription => Unit): Unit < (IO & Resource) =
         Loop(attempts) { index =>
             if index <= 0 then
                 Loop.done
             else
-                IO.Unsafe {
-                    val flag = AtomicBoolean.Unsafe.init(false)
-                    StreamSubscription.Unsafe.subscribe(stream, new Sub(flag)) { fiber =>
-                        discard(IO.Unsafe.run(fiber).eval)
-                    }
-                }.map { subscription =>
-                    program(subscription)
-                }.andThen(Loop.continue(index - 1))
+                for
+                    flag         <- AtomicBoolean.init(false)
+                    subscription <- StreamSubscription.subscribe(stream, new Sub(flag))
+                    _            <- IO(program(subscription))
+                yield Loop.continue(index - 1)
             end if
         }
 

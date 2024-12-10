@@ -14,7 +14,7 @@ import org.reactivestreams.tck.SubscriberWhiteboxVerification.WhiteboxSubscriber
 import org.reactivestreams.tck.TestEnvironment
 import org.scalatestplus.testng.*
 
-class StreamSubscriberTest extends SubscriberWhiteboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
+class EagerStreamSubscriberTest extends SubscriberWhiteboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
     import AllowUnsafe.embrace.danger
     private val counter = new AtomicInteger()
 
@@ -26,7 +26,21 @@ class StreamSubscriberTest extends SubscriberWhiteboxVerification[Int](new TestE
         }.eval
 
     def createElement(i: Int): Int = counter.getAndIncrement
-end StreamSubscriberTest
+end EagerStreamSubscriberTest
+
+class BufferStreamSubscriberTest extends SubscriberWhiteboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
+    import AllowUnsafe.embrace.danger
+    private val counter = new AtomicInteger()
+
+    def createSubscriber(
+        p: SubscriberWhiteboxVerification.WhiteboxSubscriberProbe[Int]
+    ): Subscriber[Int] =
+        IO.Unsafe.run {
+            StreamSubscriber[Int](bufferSize = 16, EmitStrategy.Buffer).map(s => new WhiteboxSubscriber(s, p))
+        }.eval
+
+    def createElement(i: Int): Int = counter.getAndIncrement
+end BufferStreamSubscriberTest
 
 final class WhiteboxSubscriber[V](
     sub: StreamSubscriber[V],
@@ -74,7 +88,7 @@ final class WhiteboxSubscriber[V](
     end onNext
 end WhiteboxSubscriber
 
-final class SubscriberBlackboxSpec extends SubscriberBlackboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
+final class EagerSubscriberBlackboxSpec extends SubscriberBlackboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
     import AllowUnsafe.embrace.danger
     private val counter = new AtomicInteger()
 
@@ -88,4 +102,20 @@ final class SubscriberBlackboxSpec extends SubscriberBlackboxVerification[Int](n
         discard(IO.Unsafe.run(computation).eval)
 
     def createElement(i: Int): Int = counter.incrementAndGet()
-end SubscriberBlackboxSpec
+end EagerSubscriberBlackboxSpec
+
+final class BufferSubscriberBlackboxSpec extends SubscriberBlackboxVerification[Int](new TestEnvironment(1000L)), TestNGSuiteLike:
+    import AllowUnsafe.embrace.danger
+    private val counter = new AtomicInteger()
+
+    def createSubscriber(): StreamSubscriber[Int] =
+        IO.Unsafe.run {
+            StreamSubscriber[Int](bufferSize = 16, EmitStrategy.Buffer)
+        }.eval
+
+    override def triggerRequest(s: Subscriber[? >: Int]): Unit =
+        val computation: Long < IO = s.asInstanceOf[StreamSubscriber[Int]].request
+        discard(IO.Unsafe.run(computation).eval)
+
+    def createElement(i: Int): Int = counter.incrementAndGet()
+end BufferSubscriberBlackboxSpec
