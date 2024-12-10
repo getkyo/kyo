@@ -7,9 +7,9 @@ class AsTextTest extends Test:
         opaque type Type[A] = A | Null
         def apply[A](a: A | Null): Type[A] = a
 
-        given [A](using sha: AsText[A]): AsText[Wr[A]] with
+        given [A](using ata: AsText[A]): AsText[Wr[A]] with
             given CanEqual[A | Null, Null]   = CanEqual.derived
-            def asText(value: Wr[A]): String = if value == null then "Nope" else s"Yep(${sha.asText(value.asInstanceOf[A])})"
+            def asText(value: Wr[A]): String = if value == null then "Nope" else s"Yep(${ata.asText(value.asInstanceOf[A])})"
         end given
     end Wr
 

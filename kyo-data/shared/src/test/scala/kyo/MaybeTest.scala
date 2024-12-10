@@ -542,19 +542,19 @@ class MaybeTest extends Test:
             val somat: IsText = Present(1)
             assert(txt"${Present(1): Present[Int]}".show == "Present(1)")
             assert(Present("hello").text.show == "Present(hello)")
-            // assert(k"${Present("hello")}" == "Present(hello)")
+            assert(txt"${Present("hello")}".show == "Present(hello)")
         }
 
         "should handle nested Present values" in {
             assert(Present(Absent).text.show == "Present(Absent)")
-            // assert(k"${Present(Absent)}" == "Present(Absent)")
+            assert(txt"${Present(Absent)}".show == "Present(Absent)")
         }
 
         "should return Present(Present(value)) for nested Present" in {
             val p: Present[Present[Int]]          = Present(Present(1))
-            val sh: AsText[Present[Present[Int]]] = AsText.apply
-            assert(sh.asText(p).show == "Present(Present(1))")
-            // assert(k"$p" == "Present(Present(1))")
+            val at: AsText[Present[Present[Int]]] = AsText.apply
+            assert(AsText.asText(p).show == "Present(Present(1))")
+            assert(txt"$p".show == "Present(Present(1))")
         }
     }
 

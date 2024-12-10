@@ -3,7 +3,7 @@ package kyo
 import kyo.Schedule.done
 import scala.language.implicitConversions
 
-/** Provides Text representation of a type. Needed for customizing how to display opaque types
+/** Provides Text representation of a type. Needed for customizing how to display opaque types as alternative to toString
   */
 abstract class AsText[A]:
     def asText(value: A): Text
@@ -80,10 +80,10 @@ sealed trait IsText:
     private[kyo] def textValue: Text
 
 object IsText:
-    given [A](using sh: AsText[A]): Conversion[A, IsText] with
+    given [A](using at: AsText[A]): Conversion[A, IsText] with
         def apply(a: A): IsText =
             new IsText:
-                private[kyo] def textValue: Text = sh.asText(a)
+                private[kyo] def textValue: Text = at.asText(a)
     end given
 end IsText
 
