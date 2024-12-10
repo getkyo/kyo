@@ -463,6 +463,30 @@ val b: Result[Throwable, Int] =
     KyoApp.Unsafe.runAndBlock(2.minutes)(a)
 ```
 
+### Displaying Kyo type
+
+Due to the extensive use of opaque types in Kyo, logging Kyo values can lead to confusion, as the output of `toString` will often lead out type information we are used to seeing in boxed types. For instance, when a pure value is lifted to a pending computation, you will only see the value if you call `.toString`:
+
+```scala
+import kyo.*
+
+val a: Int < Any = 23
+println(s"Kyo effect: $a")
+// Ouputs `Kyo effect: 23` to console
+```
+
+This can be jarring to new Kyo users, since we would expect a Kyo computation to be something more than just a pure value. However, Kyo's ability to treat pure values as effects is part of what makes it so performant. Nevetheless, the string representations can mislead us as to the compiletime type of a value, which can make it harder to interpret our logs. To make this a bit easier, Kyo provides a string interpolator which will format Kyo types appropriately. To use this interpolater, prefix your interpolated strings with `k` instead of `s`.
+
+```scala
+import kyo.*
+
+val a: Int < Any = 23
+println(k"Kyo effect: $a")
+// Ouputs `Kyo effect: Kyo(23)` to console
+```
+
+We can still see the pure value (23) in the output, but now we can also see that it is a `Kyo`. This will work similarly for other unboxed types like `Maybe` and `Result` (see below). We recommend using `k` as the default string interpolator in Kyo applications for the best developer experience.
+
 ## Core Effects
 
 Kyo's core effects act as the essential building blocks that power your application's various functionalities. Unlike other libraries that might require heavy boilerplate or specialized knowledge, Kyo's core effects are designed to be straightforward and flexible. These core effects not only simplify the management of side-effects, dependencies, and several other aspects but also allow for a modular approach to building maintainable systems.
@@ -490,6 +514,28 @@ val c: Int < Abort[String] =
 // 'catching' automatically catches exceptions
 val d: Int < Abort[Exception] =
     Abort.catching(throw new Exception)
+```
+
+To handle a potentially aborting effect, you can use `Abort.run`. This will produce a `Result`, a high-performance Kyo type equivalent to `Either`:
+
+```scala
+import kyo.*
+
+// The 'get' method "extracts" the value
+// from an 'Either' (right projection)
+val a: Int < Abort[String] =
+    Abort.get(Right(1))
+
+// short-circuiting via 'Left'
+val b: Int < Abort[String] =
+    Abort.get(Left("failed!"))
+
+val aRes: Result[String, Int] < Any = Abort.run(a)
+val bRes: Result[String, Int] < Any = Abort.run(b)
+
+// Note we use a k-string since Result is an unboxed type
+println(k"A: ${aRes.eval}, B: ${bRes.eval}")
+// Output: A: Success(1), B: Fail(failed!)
 ```
 
 > Note that the `Abort` effect has a type parameter and its methods can only be accessed if the type parameter is provided.
@@ -2744,6 +2790,21 @@ val result: String =
         case Absent        => "No value"
 ```
 
+`Maybe`'s high performance is due to the fact that it is unboxed. Accordingly, we recommend using k-string interpolation when logging `Maybe`s:
+
+```scala
+import kyo.*
+
+val maybe: Maybe[Maybe[Int]] = Maybe(Maybe(42))
+val maybeNot: Maybe[Maybe[Int]] = Maybe(Maybe.Absent)
+
+println(s"s-string nested maybes: $maybe, $maybeNot")
+// Output: s-string nested maybes: 42, Absent
+
+println(k"k-string nested maybes: $maybe, $maybeNot")
+// Output: k-string nested maybes: Present(Present(42)), Present(Absent)
+```
+
 ### Duration: Time Representation
 
 `Duration` provides a convenient and efficient way to represent and manipulate time durations. It offers a wide range of operations and conversions, making it easy to work with time intervals in various units.
@@ -2852,6 +2913,21 @@ val q: Try[Int] = a.toTry
 ```
 
 Under the hood, `Result` is defined as an opaque type that is a supertype of `Success[T]` and `Failure[T]`. Success[T] represents a successful result and is encoded as either the value itself (`T`) or a special SuccessFailure[`T`] case class. The `SuccessFailure[T]` case class is used to handle the rare case where a `Failure[T]` needs to be wrapped in a `Success[T]`. On the other hand, a failed `Result` is always represented by a `Failure[T]` case class, which contains the exception that caused the failure. This means that creating a `Failure[T]` does incur an allocation cost. Additionally, some methods on `Result`, such as `fold`, `map`, and `flatMap`, may allocate in certain cases due to the need to catch and handle exceptions.
+
+Since `Result.Success` is unboxed, we recommend using k-string interpolation when logging `Result`s:
+
+```scala
+import kyo.*
+
+val success: Result[String, Result[String, Int]] = Result.success(Result.success(42))
+val failure: Result[String, Result[String, Int]] = Result.success(Result.fail("failure!"))
+
+println(s"s-string nested results: $success, $failure")
+// Output: s-string nested results: 42, Fail(failure!)
+
+println(k"kstring nested results: $success, $failure")
+// Output: k-string nested results: Success(Success(42)), Success(Fail(failure!))
+```
 
 ### TypeMap: Type-Safe Heterogeneous Maps
 

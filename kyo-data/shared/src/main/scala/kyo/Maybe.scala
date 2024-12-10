@@ -21,10 +21,10 @@ object Maybe:
 
     given [A, MA <: Maybe[A]](using sha: Show[A]): Show[MA] with
         given CanEqual[Absent, MA] = CanEqual.derived
-        def show(value: MA): String = value match
+        def show(value: MA): String = (value: Maybe[A]) match
             case Present(a) => s"Present(${sha.show(a)})"
-            case Absent          => "Absent"
-            case _               => throw IllegalStateException()
+            case Absent     => "Absent"
+            case _          => throw IllegalStateException()
     end given
 
     /** Creates a Maybe instance from a value.
