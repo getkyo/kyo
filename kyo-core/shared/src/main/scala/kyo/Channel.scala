@@ -78,6 +78,28 @@ object Channel:
                 }
             }
 
+        /** Takes [[n]] elements from the channel, semantically blocking until enough elements are present. Note that if enough elements are
+          * not added to the channel it can block indefinitely.
+          *
+          * @return
+          *   Chunk of [[n]] elements
+          */
+        def takeExactly(n: Int)(using Frame): Chunk[A] < (Abort[Closed] & Async) =
+            if n <= 0 then Chunk.empty
+            else
+                Loop(Chunk.empty[A]): lastChunk =>
+                    val nextN = n - lastChunk.size
+                    Channel.drainUpTo(self)(nextN).map: chunk =>
+                        // IO.Unsafe(Abort.get(self.drainUpTo(nextN))).map: chunk =>
+                        val chunk1 = lastChunk.concat(chunk)
+                        if chunk1.size == n then Loop.done(chunk1)
+                        else
+                            self.take.map: a =>
+                                val chunk2 = chunk1.append(a)
+                                if chunk2.size == n then Loop.done(chunk2)
+                                else Loop.continue(chunk2)
+                        end if
+
         /** Creates a fiber that puts an element into the channel.
           *
           * @param value
@@ -100,6 +122,13 @@ object Channel:
           *   A sequence containing all elements that were in the channel
           */
         def drain(using Frame): Seq[A] < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.drain()))
+
+        /** Takes up to [[max]] elements from the channel.
+          *
+          * @return
+          *   a sequence of up to [[max]] elements that were in the channel.
+          */
+        def drainUpTo(max: Int)(using Frame): Chunk[A] < (IO & Abort[Closed]) = IO.Unsafe(Abort.get(self.drainUpTo(max)))
 
         /** Closes the channel.
           *
@@ -162,7 +191,8 @@ object Channel:
         def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit]
         def takeFiber()(using AllowUnsafe): Fiber.Unsafe[Closed, A]
 
-        def drain()(using AllowUnsafe): Result[Closed, Seq[A]]
+        def drain()(using AllowUnsafe): Result[Closed, Chunk[A]]
+        def drainUpTo(max: Int)(using AllowUnsafe): Result[Closed, Chunk[A]]
         def close()(using Frame, AllowUnsafe): Maybe[Seq[A]]
 
         def empty()(using AllowUnsafe): Result[Closed, Boolean]
@@ -198,6 +228,12 @@ object Channel:
                     if result.exists(_.nonEmpty) then flush()
                     result
                 end poll
+
+                def drainUpTo(max: Int)(using AllowUnsafe) =
+                    val result = queue.drainUpTo(max)
+                    if result.exists(_.nonEmpty) then flush()
+                    result
+                end drainUpTo
 
                 def putFiber(value: A)(using AllowUnsafe): Fiber.Unsafe[Closed, Unit] =
                     val promise = Promise.Unsafe.init[Closed, Unit]()
