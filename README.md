@@ -471,37 +471,39 @@ Due to the extensive use of opaque types in Kyo, logging Kyo values can lead to 
 import kyo.*
 
 val a: Int < Any = 23
-println(s"Kyo effect: $a")
+Console.printLine(s"Kyo effect: $a")
 // Ouput: Kyo effect: 23
 ```
 
-This can be jarring to new Kyo users, since we would expect a Kyo computation to be something more than just a pure value. However, Kyo's ability to treat pure values as effects is part of what makes it so performant. Nevetheless, the string representations can mislead us as to the compiletime type of a value, which can make it harder to interpret our logs. To make things clearer, Kyo provides a `Show` utility to generate clearer string representation of types.
+This can be jarring to new Kyo users, since we would expect a Kyo computation to be something more than just a pure value. However, Kyo's ability to treat pure values as effects is part of what makes it so performant. Nevetheless, the string representations can mislead us as to the compiletime type of a value, which can make it harder to interpret our logs. To make things clearer, Kyo provides an `AsText` utility to generate clearer string representation of types.
 
 ```scala
 import kyo.*
 
 val a: Int < Any = 23
 
-val aStr: String = Show.show(a)
+val aStr: Text = AsText.asText(a)
 
-println(s"Kyo effect: $aStr")
+Console.printLine(s"Kyo effect: $aStr")
 // Output: Kyo effect: Kyo(23)
 ```
 
-We can still see the pure value (23) in the output, but now we can also see that it is a `Kyo`. This will work similarly for other unboxed types like `Maybe` and `Result` (see below).
+We can still see the pure value (23) in the output, but now we can also see that it is a `Kyo`. This will work similarly for other unboxed types like `Maybe` and `Result` (see below). 
 
-Converting values using `Show` directly can be cumbersome, however, so Kyo also provides a string interpolator to construct properly formatted strings automatically. To use this interpolater, prefix your interpolated strings with `k` instead of `s`.
+Note that `AsText` does not convert to string but to `Text`--an enriched `String` alternative provided and used internally by Kyo. Kyo methods for displaying strings all accept `Text` values.
+
+Converting values using `Text` directly can be cumbersome, however, so Kyo also provides a string interpolator to construct properly formatted strings automatically. To use this interpolater, prefix your interpolated strings with `txt` instead of `s`.
 
 ```scala
 import kyo.*
 
 val a: Int < Any = 23
 
-println(k"Kyo effect: $a, Kyo maybe: ${Maybe(23)}")
+Console.printLine(txt"Kyo effect: $a, Kyo maybe: ${Maybe(23)}")
 // Output: Kyo effect: Kyo(23), Kyo maybe: Present(23)
 ```
 
-We recommend using `k` as the default string interpolator in Kyo applications for the best developer experience.
+We recommend using `txt` as the default string interpolator in Kyo applications for the best developer experience.
 
 ## Core Effects
 
