@@ -523,8 +523,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "0.23.30",
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "0.23.30",
             libraryDependencies += "dev.zio"              %% "zio-http"            % "3.0.1",
-            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR2",
-            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR2",
+            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR3",
+            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR3",
             libraryDependencies += "org.scalatest"        %% "scalatest"           % scalaTestVersion % Test
         )
 
