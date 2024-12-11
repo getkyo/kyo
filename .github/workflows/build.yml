@@ -8,7 +8,10 @@ on:
       - main
 jobs:
   build:
-    runs-on: build
+    strategy:
+      matrix:
+        runner: [build-linux-x86, build-windows-x64, build-linux-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     env:
       JAVA_OPTS: -Xms15G -Xmx15G -Xss10M -XX:MaxMetaspaceSize=2G -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
