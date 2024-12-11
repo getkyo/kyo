@@ -10,7 +10,7 @@ jobs:
   build:
     strategy:
       matrix:
-        runner: [build-linux-x86, build-windows-x64, build-linux-arm]
+        runner: [build-linux-x86, build-linux-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     env:
