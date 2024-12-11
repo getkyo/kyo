@@ -453,4 +453,88 @@ class ChannelTest extends Test:
         }
     }
 
+    "stream" - {
+        "should stream from channel" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.stream().take(4)
+                v <- stream.run
+            yield assert(v == Chunk(1, 2, 3, 4))
+        }
+        "stream with zero or negative maxChunkSize should stop" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                s0 = c.stream(Maybe(0))
+                sn = c.stream(Maybe(-5))
+                r0 <- s0.run
+                rn <- sn.run
+                s  <- c.size
+            yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 4)
+            end for
+        }
+        "stream with maxChunkSize of 1 should stream in chunks of 1" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.stream(Maybe(1)).mapChunk(Chunk(_)).take(4)
+                r <- stream.run
+                s <- c.size
+            yield assert(r == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4)) && s == 0)
+            end for
+        }
+        "should stream from channel without specified chunk size" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.stream(Maybe.Absent).mapChunk(ch => Chunk(ch)).take(1)
+                v <- stream.run
+                s <- c.size
+            yield assert(v == Chunk(Chunk(1, 2, 3, 4)) && s == 0)
+        }
+
+        "should stream from channel with a specified chunk size" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.stream(Maybe.Present(2)).mapChunk(ch => Chunk(ch)).take(2)
+                v <- stream.run
+                s <- c.size
+            yield assert(v == Chunk(Chunk(1, 2), Chunk(3, 4)) && s == 0)
+        }
+
+        "should stream concurrently with ingest, without specified chunk size" in run {
+            for
+                c  <- Channel.init[Int](4)
+                bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                stream = c.stream(Maybe.Absent).take(20).mapChunk(ch => Chunk(ch))
+                v <- stream.run
+                _ <- bg.interrupt
+            yield assert(v.flattenChunk == Chunk.from(0 until 20))
+        }
+
+        "should stream concurrently with ingest, with specified chunk size" in run {
+            for
+                c  <- Channel.init[Int](4)
+                bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                stream = c.stream(Maybe.Present(2)).take(20).mapChunk(ch => Chunk(ch))
+                v <- stream.run
+                _ <- bg.interrupt
+            yield assert(v.flattenChunk == Chunk.from(0 until 20) && v.forall(_.size <= 2))
+        }
+
+        "should fail when channel is closed" in run {
+            for
+                c  <- Channel.init[Int](3)
+                bg <- Async.run(Kyo.foreach(0 to 8)(c.put).andThen(c.close))
+                stream = c.stream(Maybe.Absent).mapChunk(ch => Chunk(ch))
+                v <- Abort.run(stream.run)
+            yield v match
+                case Result.Success(v)            => fail(s"Stream succeeded unexpectedly: ${v}")
+                case Result.Fail(Closed(_, _, _)) => assert(true)
+                case Result.Panic(ex)             => fail(s"Stream panicked unexpectedly: ${ex}")
+        }
+    }
+
 end ChannelTest
