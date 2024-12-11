@@ -158,19 +158,22 @@ object Channel:
           */
         def full(using Frame): Boolean < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.full()))
 
-        private def emitChunks(maxChunkSize: Maybe[Int] = Maybe.Absent)(using
+        private def emitChunks(maxChunkSize: Int = Int.MaxValue)(
+            using
             Tag[Emit[Chunk[A]]],
             Frame
         ): Ack < (Emit[Chunk[A]] & Abort[Closed] & Async) =
-            if maxChunkSize.exists(_ <= 0) then Ack.Stop
-            else if maxChunkSize.exists(_ == 1) then
+            if maxChunkSize <= 0 then Ack.Stop
+            else if maxChunkSize == 1 then
                 Loop(()): _ =>
                     Channel.take(self).map: v =>
                         Emit.andMap(Chunk(v)):
                             case Ack.Stop => Loop.done(Ack.Stop)
                             case _        => Loop.continue(())
             else
-                val drainEffect = maxChunkSize.fold(Channel.drain(self))(m => Channel.drainUpTo(self)(m - 1))
+                val drainEffect =
+                    if maxChunkSize == Int.MaxValue then Channel.drain(self)
+                    else Channel.drainUpTo(self)(maxChunkSize - 1)
                 Loop[Unit, Ack, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
                     Channel.take(self).map: a =>
                         drainEffect.map: chunk =>
@@ -180,7 +183,7 @@ object Channel:
 
         /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
           * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than
-          * channel capacity.) Fails on channel closure.
+          * channel capacity.) Consumes elements from channel. Fails on channel closure.
           *
           * @param maxChunkSize
           *   Maximum number of elements to take for each chunk
@@ -188,7 +191,7 @@ object Channel:
           * @return
           *   Asynchronous stream of elements in this channel
           */
-        def stream(maxChunkSize: Maybe[Int] = Maybe.Absent)(using Tag[A], Frame): Stream[A, Abort[Closed] & Async] =
+        def stream(maxChunkSize: Int = Int.MaxValue)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Abort[Closed] & Async] =
             Stream(emitChunks(maxChunkSize))
 
         /** Like [[stream]] but stops streaming when the channel closes instead of failing
@@ -199,7 +202,7 @@ object Channel:
           * @return
           *   Asynchronous stream of elements in this channel
           */
-        def streamUntilClosed(maxChunkSize: Maybe[Int] = Maybe.Absent)(using Tag[A], Frame): Stream[A, Async] =
+        def streamUntilClosed(maxChunkSize: Int = Int.MaxValue)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Async] =
             Stream:
                 Abort.run[Closed](emitChunks(maxChunkSize)).map:
                     case Result.Success(v) => v
