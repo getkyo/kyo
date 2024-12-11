@@ -273,8 +273,8 @@ class PendingTest extends Test:
         "should display pure vals wrapped with inner types displayed using show" in {
             val i: Result[String, Int] < Any          = Result.success(23)
             val at: AsText[Result[String, Int] < Any] = AsText.apply
-            assert(at.asText(i) == "Kyo(Success(23))")
-            assert(text"$i" == "Kyo(Success(23))")
+            assert(AsText.asText(i).show == "Kyo(Success(23))")
+            assert(txt"$i".show == "Kyo(Success(23))")
         }
     }
 
