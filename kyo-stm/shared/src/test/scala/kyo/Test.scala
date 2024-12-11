@@ -16,13 +16,16 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Abort[Any] & Async & 
 
     def run(v: Future[Assertion] < (Abort[Any] & Async & Resource)): Future[Assertion] =
         import AllowUnsafe.embrace.danger
-        val a = Async.run(Abort.run(Resource.run(v)).map(_.fold {
-            _.getFailure match
+        v.pipe(
+            Resource.run,
+            Abort.recover[Any] {
                 case ex: Throwable => throw ex
                 case e             => throw new IllegalStateException(s"Test aborted with $e")
-        }(identity)))
-        val b = a.map(_.toFuture).map(_.flatten)
-        IO.Unsafe.evalOrThrow(b)
+            },
+            Async.run,
+            _.map(_.toFuture).map(_.flatten),
+            IO.Unsafe.evalOrThrow
+        )
     end run
 
     type Assertion = org.scalatest.compatible.Assertion
@@ -30,3 +33,10 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Abort[Any] & Async & 
 
     override given executionContext: ExecutionContext = Platform.executionContext
 end Test
+
+object bug:
+    val result: Result.Error[Any | Throwable] = Result.Fail(1)
+    result.getFailure match
+        case v: Throwable => println("exception " + v)
+        case v            => println("value " + v)
+end bug
