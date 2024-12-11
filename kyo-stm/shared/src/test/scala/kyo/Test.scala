@@ -33,10 +33,3 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[Abort[Any] & Async & 
 
     override given executionContext: ExecutionContext = Platform.executionContext
 end Test
-
-object bug:
-    val result: Result.Error[Any | Throwable] = Result.Fail(1)
-    result.getFailure match
-        case v: Throwable => println("exception " + v)
-        case v            => println("value " + v)
-end bug
