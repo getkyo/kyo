@@ -130,8 +130,6 @@ object Maybe:
     /** Represents an empty Maybe instance. */
     sealed abstract class Absent
     case object Absent extends Absent
-    // given Show[Absent] with
-    //     def show(value: Absent): String = "Absent"
 
     extension [A](self: Maybe[A])
 
