@@ -159,7 +159,7 @@ object Channel:
         def full(using Frame): Boolean < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.full()))
 
         private def emitChunks(maxChunkSize: Maybe[Int] = Maybe.Absent)(using
-            Tag[A],
+            Tag[Emit[Chunk[A]]],
             Frame
         ): Ack < (Emit[Chunk[A]] & Abort[Closed] & Async) =
             if maxChunkSize.exists(_ <= 0) then Ack.Stop
