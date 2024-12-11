@@ -158,7 +158,10 @@ object Channel:
           */
         def full(using Frame): Boolean < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.full()))
 
-        private def emitChunks(maxChunkSize: Maybe[Int] = Maybe.Absent)(using Tag[A], Frame): Ack < (Emit[Chunk[A]] & Abort[Closed] & Async) =
+        private def emitChunks(maxChunkSize: Maybe[Int] = Maybe.Absent)(using
+            Tag[A],
+            Frame
+        ): Ack < (Emit[Chunk[A]] & Abort[Closed] & Async) =
             if maxChunkSize.exists(_ <= 0) then Ack.Stop
             else if maxChunkSize.exists(_ == 1) then
                 Loop(()): _ =>
@@ -175,9 +178,9 @@ object Channel:
                                 case Ack.Stop => Loop.done(Ack.Stop)
                                 case _        => Loop.continue(())
 
-        /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]],
-          * chunk sizes will be limited only by channel capacity or the number of elements in the channel at a given time.
-          * (Chunks can still be larger than channel capacity.) Fails on channel closure.
+        /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
+          * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than
+          * channel capacity.) Fails on channel closure.
           *
           * @param maxChunkSize
           *   Maximum number of elements to take for each chunk
@@ -200,8 +203,8 @@ object Channel:
             Stream:
                 Abort.run[Closed](emitChunks(maxChunkSize)).map:
                     case Result.Success(v) => v
-                    case Result.Fail(_) => Ack.Stop
-                    case Result.Panic(e) => Abort.panic(e)
+                    case Result.Fail(_)    => Ack.Stop
+                    case Result.Panic(e)   => Abort.panic(e)
 
         def unsafe: Unsafe[A] = self
     end extension
