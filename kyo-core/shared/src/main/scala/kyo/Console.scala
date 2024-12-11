@@ -19,28 +19,28 @@ final case class Console(unsafe: Console.Unsafe):
       * @param s
       *   The string to print.
       */
-    def print(s: String)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.print(s)))
+    def print(s: Text)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.print(s.show)))
 
     /** Prints a string to the console's error stream without a newline.
       *
       * @param s
       *   The string to print to the error stream.
       */
-    def printErr(s: String)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.printErr(s)))
+    def printErr(s: Text)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.printErr(s.show)))
 
     /** Prints a string to the console followed by a newline.
       *
       * @param s
       *   The string to print.
       */
-    def println(s: String)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.printLine(s)))
+    def println(s: Text)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.printLine(s.show)))
 
     /** Prints a string to the console's error stream followed by a newline.
       *
       * @param s
       *   The string to print to the error stream.
       */
-    def printLineErr(s: String)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.printLineErr(s)))
+    def printLineErr(s: Text)(using Frame): Unit < (IO & Abort[IOException]) = IO.Unsafe(Abort.get(unsafe.printLineErr(s.show)))
 
     /** Flushes the console output streams.
       *
