@@ -77,10 +77,12 @@ extension [A, S](effect: A < S)
       */
     def repeat(schedule: Schedule)(using Flat[A], Frame): A < (S & Async) =
         Loop(schedule) { schedule =>
-            schedule.next.map { (delay, nextSchedule) =>
-                effect.delayed(delay).andThen(Loop.continue(nextSchedule))
-            }.getOrElse {
-                effect.map(Loop.done)
+            Clock.now.map { now =>
+                schedule.next(now).map { (delay, nextSchedule) =>
+                    effect.delayed(delay).andThen(Loop.continue(nextSchedule))
+                }.getOrElse {
+                    effect.map(Loop.done)
+                }
             }
         }
 

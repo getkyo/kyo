@@ -29,10 +29,12 @@ object Retry:
         ): A < (Async & Abort[E] & S) =
             Loop(schedule) { schedule =>
                 Abort.run[E](v).map(_.fold { r =>
-                    schedule.next.map { (delay, nextSchedule) =>
-                        Async.delay(delay)(Loop.continue(nextSchedule))
-                    }.getOrElse {
-                        Abort.get(r)
+                    Clock.now.map { now =>
+                        schedule.next(now).map { (delay, nextSchedule) =>
+                            Async.delay(delay)(Loop.continue(nextSchedule))
+                        }.getOrElse {
+                            Abort.get(r)
+                        }
                     }
                 }(Loop.done(_)))
             }
