@@ -12,7 +12,7 @@ abstract class Test extends AsyncFreeSpec with BaseKyoTest[IO] with NonImplicitA
 
     def run(v: Future[Assertion] < IO): Future[Assertion] = {
         import AllowUnsafe.embrace.danger
-        IO.Unsafe.run(v).eval
+        IO.Unsafe.evalOrThrow(v)
     }
 
     type Assertion = org.scalatest.compatible.Assertion
