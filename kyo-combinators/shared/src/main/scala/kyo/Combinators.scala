@@ -76,12 +76,14 @@ extension [A, S](effect: A < S)
       *   A computation that produces the result of the last execution
       */
     def repeat(schedule: Schedule)(using Flat[A], Frame): A < (S & Async) =
-        Loop(schedule) { schedule =>
-            Clock.now.map { now =>
-                schedule.next(now).map { (delay, nextSchedule) =>
-                    effect.delayed(delay).andThen(Loop.continue(nextSchedule))
-                }.getOrElse {
-                    effect.map(Loop.done)
+        Clock.use { clock =>
+            Loop(schedule) { schedule =>
+                clock.now.map { now =>
+                    schedule.next(now).map { (delay, nextSchedule) =>
+                        effect.delayed(delay).andThen(Loop.continue(nextSchedule))
+                    }.getOrElse {
+                        effect.map(Loop.done)
+                    }
                 }
             }
         }

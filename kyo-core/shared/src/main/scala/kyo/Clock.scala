@@ -401,7 +401,7 @@ object Clock:
         Async.run {
             Clock.use { clock =>
                 Loop(state, delaySchedule) { (state, schedule) =>
-                    Clock.now.map { now =>
+                    clock.now.map { now =>
                         schedule.next(now) match
                             case Absent => Loop.done(state)
                             case Present((duration, nextSchedule)) =>
@@ -504,7 +504,7 @@ object Clock:
             Clock.use { clock =>
                 clock.now.map { now =>
                     Loop(now, state, intervalSchedule) { (lastExecution, state, period) =>
-                        Clock.now.map { now =>
+                        clock.now.map { now =>
                             period.next(now) match
                                 case Absent => Loop.done(state)
                                 case Present((duration, nextSchedule)) =>
