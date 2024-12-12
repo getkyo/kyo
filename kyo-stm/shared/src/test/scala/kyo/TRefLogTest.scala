@@ -9,7 +9,7 @@ class TTRefLogTest extends Test:
     "TTRefLog" - {
         "empty" in run {
             val log = TRefLog.empty
-            assert(log.toSeq.isEmpty)
+            assert(log.toMap.isEmpty)
         }
 
         "put" in run {
@@ -17,9 +17,9 @@ class TTRefLogTest extends Test:
                 val ref   = new TRefImpl[Int](Write(0, 0))
                 val entry = Write(1, 42)
                 val log   = TRefLog.empty.put(ref, entry)
-                assert(log.toSeq.size == 1)
-                assert(log.toSeq.head._1 == ref)
-                assert(log.toSeq.head._2 == entry)
+                assert(log.toMap.size == 1)
+                assert(log.toMap.head._1 == ref)
+                assert(log.toMap.head._2 == entry)
             }
         }
 
@@ -44,7 +44,7 @@ class TTRefLogTest extends Test:
                     .put(ref1, entry1)
                     .put(ref2, entry2)
 
-                val seq = log.toSeq
+                val seq = log.toMap.toSeq
                 assert(seq.size == 2)
                 assert(seq.contains((ref1, entry1)))
                 assert(seq.contains((ref2, entry2)))

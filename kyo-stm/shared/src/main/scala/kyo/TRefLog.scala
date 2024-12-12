@@ -1,5 +1,8 @@
 package kyo
 
+import scala.collection.immutable.Map
+import scala.collection.mutable.TreeMap
+
 /** A log of transactional operations performed on TRefs within an STM transaction.
   *
   * TRefLog maintains a mapping from transactional references to their pending read/write operations within a transaction. It tracks both
@@ -14,35 +17,26 @@ opaque type TRefLog = Map[TRef[Any], TRefLog.Entry[Any]]
 
 private[kyo] object TRefLog:
 
+    given tag: Tag[Var[TRefLog]] = Tag[Var[Map[TRef[Any], TRefLog.Entry[Any]]]]
+
     val empty: TRefLog = Map.empty
 
     extension (self: TRefLog)
 
         def put[A](ref: TRef[A], entry: Entry[A]): TRefLog =
-            self.updated(ref.asInstanceOf[TRef[Any]], entry.asInstanceOf[Entry[Any]])
+            val refAny   = ref.asInstanceOf[TRef[Any]]
+            val entryAny = entry.asInstanceOf[TRefLog.Entry[Any]]
+            self.updated(refAny, entryAny)
+        end put
 
         def get[A](ref: TRef[A]): Maybe[Entry[A]] =
             val refAny = ref.asInstanceOf[TRef[Any]]
             Maybe.when(self.contains(refAny))(self(refAny).asInstanceOf[Entry[A]])
 
-        def toSeq: Seq[(TRef[Any], Entry[Any])] =
-            self.toSeq
+        def toMap: Map[TRef[Any], TRefLog.Entry[Any]] = self
     end extension
 
-    def use[A, S](f: TRefLog => A < S)(using Frame): A < (S & Var[TRefLog]) =
-        Var.use(f)
-
-    def isolate[A: Flat, S](v: A < (S & Var[TRefLog]))(using Frame): A < (S & Var[TRefLog]) =
-        Var.isolate.update[TRefLog].run(v)
-
-    def runWith[A: Flat, B, S, S2](v: A < (S & Var[TRefLog]))(f: (TRefLog, A) => B < S2)(using Frame): B < (S & S2) =
-        Var.runWith(empty)(v)(f(_, _))
-
-    def setAndThen[A, S](log: TRefLog)(f: => A < S)(using Frame): A < (S & Var[TRefLog]) =
-        Var.setAndThen(log)(f)
-
-    def setDiscard(log: TRefLog)(using Frame): Unit < Var[TRefLog] =
-        Var.setDiscard(log)
+    val isolate = Var.isolate.update[TRefLog](using tag)
 
     sealed abstract class Entry[A]:
         def tid: Long

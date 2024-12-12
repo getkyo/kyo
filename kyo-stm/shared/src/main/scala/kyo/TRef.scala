@@ -42,6 +42,7 @@ sealed trait TRef[A]:
     final def update[S](f: A => A < S)(using Frame): Unit < (STM & S) = use(f(_).map(set))
 
     private[kyo] def state(using AllowUnsafe): Write[A]
+    private[kyo] def validate(entry: Entry[A])(using AllowUnsafe): Boolean
     private[kyo] def lock(entry: Entry[A])(using AllowUnsafe): Boolean
     private[kyo] def commit(tid: Long, entry: Entry[A])(using AllowUnsafe): Unit
     private[kyo] def unlock(entry: Entry[A])(using AllowUnsafe): Unit
@@ -62,7 +63,7 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
     private[kyo] def state(using AllowUnsafe): Write[A] = currentState
 
     def use[B, S](f: A => B < S)(using Frame): B < (STM & S) =
-        TRefLog.use { log =>
+        Var.use[TRefLog] { log =>
             log.get(this) match
                 case Present(entry) =>
                     f(entry.value)
@@ -76,7 +77,7 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                             else
                                 // Append Read to the log and return value
                                 val entry = Read(state.tid, state.value)
-                                TRefLog.setAndThen(log.put(this, entry))(f(state.value))
+                                Var.setAndThen(log.put(this, entry))(f(state.value))
                             end if
                         }
                     }
@@ -84,11 +85,11 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
         }
 
     def set(v: A)(using Frame): Unit < STM =
-        TRefLog.use { log =>
+        Var.use[TRefLog] { log =>
             log.get(this) match
                 case Present(prev) =>
                     val entry = Write(prev.tid, v)
-                    TRefLog.setDiscard(log.put(this, entry))
+                    Var.setDiscard(log.put(this, entry))
                 case Absent =>
                     TID.useRequired { tid =>
                         IO {
@@ -99,15 +100,18 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                             else
                                 // Append Write to the log
                                 val entry = Write(state.tid, v)
-                                TRefLog.setDiscard(log.put(this, entry))
+                                Var.setDiscard(log.put(this, entry))
                             end if
                         }
                     }
         }
 
+    private[kyo] def validate(entry: Entry[A])(using AllowUnsafe): Boolean =
+        currentState.tid == entry.tid
+
     private[kyo] def lock(entry: Entry[A])(using AllowUnsafe): Boolean =
         @tailrec def loop(): Boolean =
-            currentState.tid == entry.tid && {
+            validate(entry) && {
                 val lockState = super.get()
                 entry match
                     case Read(tid, value) =>
@@ -119,9 +123,9 @@ final private class TRefImpl[A] private[kyo] (initialState: Write[A])
                 end match
             }
         val locked = loop()
-        if locked && currentState.tid != entry.tid then
+        if locked && !validate(entry) then
             // This branch handles the race condition where another fiber commits
-            // after the initial `currentState.tid == entry.tid` check but before the
+            // after the initial `validate(entry)` check but before the
             // lock is acquired. If that's the case, roll back the lock.
             unlock(entry)
             false
@@ -160,10 +164,10 @@ object TRef:
       */
     def init[A](value: A)(using Frame): TRef[A] < STM =
         TID.useRequired { tid =>
-            TRefLog.use { log =>
+            Var.use[TRefLog] { log =>
                 IO.Unsafe {
                     val ref = TRef.Unsafe.init(tid, value)
-                    TRefLog.setAndThen(log.put(ref, ref.state))(ref)
+                    Var.setAndThen(log.put(ref, ref.state))(ref)
                 }
             }
         }
