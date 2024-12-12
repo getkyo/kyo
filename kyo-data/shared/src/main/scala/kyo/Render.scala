@@ -14,7 +14,7 @@ sealed trait LowPriorityRenders:
         def asText(value: A): Text = value.toString
 
 object Render extends LowPriorityRenders:
-    inline def apply[A](using sh: Render[A]): Render[A] = sh
+    inline def apply[A](using r: Render[A]): Render[A] = r
 
     def asText[A](value: A)(using sh: Render[A]): Text = sh.asText(value)
 
