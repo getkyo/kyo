@@ -87,7 +87,7 @@ object IO:
           * @throws Throwable
           *   If the evaluation results in an error
           */
-        def evalOrThrow[A: Flat](v: A < (IO & Abort[Throwable]))(using Frame): A =
+        def evalOrThrow[A: Flat](v: A < (IO & Abort[Throwable]))(using Frame, AllowUnsafe): A =
             Abort.run(v).eval.getOrThrow
 
         /** Runs an IO effect, evaluating it and its side effects.

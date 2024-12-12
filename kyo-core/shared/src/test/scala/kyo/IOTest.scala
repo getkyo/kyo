@@ -135,6 +135,7 @@ class IOTest extends Test:
     }
 
     "evalOrThrow" - {
+        import AllowUnsafe.embrace.danger
         "success" in run {
             val result = IO.Unsafe.evalOrThrow(IO(42))
             assert(result == 42)
