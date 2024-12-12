@@ -7,7 +7,7 @@ import scala.language.implicitConversions
   */
 abstract class Render[A]:
     def asText(value: A): Text
-    def asString(value: A): String = asText(value).show
+    final def asString(value: A): String = asText(value).show
 
 sealed trait LowPriorityRenders:
     given [A]: Render[A] with
