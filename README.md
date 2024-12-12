@@ -490,14 +490,14 @@ Console.printLine(s"Kyo effect: $aStr")
 
 We can still see the pure value (23) in the output, but now we can also see that it is a `Kyo`. This will work similarly for other unboxed types like `Maybe` and `Result` (see below). 
 
-Note that `Render` does not convert to string but to `Text`--an enriched `String` alternative provided and used internally by Kyo. Kyo methods for displaying strings all accept `Text` values (see `Console` and `Log`, below). Converting values using `Text` directly can be cumbersome, however, so Kyo also provides a string interpolator to construct properly formatted `Text`s automatically. To use this interpolater, prefix your interpolated strings with `txt` instead of `s`.
+Note that `Render` does not convert to string but to `Text`--an enriched `String` alternative provided and used internally by Kyo. Kyo methods for displaying strings all accept `Text` values (see `Console` and `Log`, below). Converting values using `Render` directly can be cumbersome, however, so Kyo also provides a string interpolator to construct properly formatted `Text`s automatically. To use this interpolater, prefix your interpolated strings with `t` instead of `s`.
 
 ```scala
 import kyo.*
 
 val a: Int < Any = 23
 
-Console.printLine(text"Kyo effect: $a, Kyo maybe: ${Maybe(23)}")
+Console.printLine(t"Kyo effect: $a, Kyo maybe: ${Maybe(23)}")
 // Output: Kyo effect: Kyo(23), Kyo maybe: Present(23)
 ```
 
@@ -549,8 +549,8 @@ val b: Int < Abort[String] =
 val aRes: Result[String, Int] < Any = Abort.run(a)
 val bRes: Result[String, Int] < Any = Abort.run(b)
 
-// Note we use a text-string since Result is an unboxed type
-println(text"A: ${aRes.eval}, B: ${bRes.eval}")
+// Note we use a t-string since Result is an unboxed type
+println(t"A: ${aRes.eval}, B: ${bRes.eval}")
 // Output: A: Success(1), B: Fail(failed!)
 ```
 
@@ -2782,7 +2782,7 @@ val result: String =
         case Absent        => "No value"
 ```
 
-`Maybe`'s high performance is due to the fact that it is unboxed. Accordingly, we recommend using text-string interpolation when logging `Maybe`s:
+`Maybe`'s high performance is due to the fact that it is unboxed. Accordingly, we recommend using t-string interpolation when logging `Maybe`s:
 
 ```scala
 import kyo.*
@@ -2793,8 +2793,8 @@ val maybeNot: Maybe[Maybe[Int]] = Maybe(Maybe.Absent)
 println(s"s-string nested maybes: $maybe, $maybeNot")
 // Output: s-string nested maybes: 42, Absent
 
-println(text"text-string nested maybes: $maybe, $maybeNot")
-// Output: text-string nested maybes: Present(Present(42)), Present(Absent)
+println(t"t-string nested maybes: $maybe, $maybeNot")
+// Output: t-string nested maybes: Present(Present(42)), Present(Absent)
 ```
 
 ### Duration: Time Representation
@@ -2906,7 +2906,7 @@ val q: Try[Int] = a.toTry
 
 Under the hood, `Result` is defined as an opaque type that is a supertype of `Success[T]` and `Failure[T]`. Success[T] represents a successful result and is encoded as either the value itself (`T`) or a special SuccessFailure[`T`] case class. The `SuccessFailure[T]` case class is used to handle the rare case where a `Failure[T]` needs to be wrapped in a `Success[T]`. On the other hand, a failed `Result` is always represented by a `Failure[T]` case class, which contains the exception that caused the failure. This means that creating a `Failure[T]` does incur an allocation cost. Additionally, some methods on `Result`, such as `fold`, `map`, and `flatMap`, may allocate in certain cases due to the need to catch and handle exceptions.
 
-Since `Result.Success` is unboxed, we recommend using text-string interpolation when logging `Result`s:
+Since `Result.Success` is unboxed, we recommend using t-string interpolation when logging `Result`s:
 
 ```scala
 import kyo.*
@@ -2917,8 +2917,8 @@ val failure: Result[String, Result[String, Int]] = Result.success(Result.fail("f
 println(s"s-string nested results: $success, $failure")
 // Output: s-string nested results: 42, Fail(failure!)
 
-println(text"text-string nested results: $success, $failure")
-// Output: text-string nested results: Success(Success(42)), Success(Fail(failure!))
+println(t"t-string nested results: $success, $failure")
+// Output: t-string nested results: Success(Success(42)), Success(Fail(failure!))
 ```
 
 ### TypeMap: Type-Safe Heterogeneous Maps

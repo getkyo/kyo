@@ -89,7 +89,7 @@ object Rendered:
 end Rendered
 
 extension (sc: StringContext)
-    def text(args: Rendered*): Text =
+    def t(args: Rendered*): Text =
         StringContext.checkLengths(args, sc.parts)
         val pi         = sc.parts.iterator
         val ai         = args.iterator

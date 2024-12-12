@@ -274,7 +274,7 @@ class PendingTest extends Test:
             val i: Result[String, Int] < Any         = Result.success(23)
             val r: Render[Result[String, Int] < Any] = Render.apply
             assert(r.asText(i).show == "Kyo(Success(23))")
-            assert(text"$i".show == "Kyo(Success(23))")
+            assert(t"$i".show == "Kyo(Success(23))")
         }
     }
 
