@@ -16,7 +16,7 @@ sealed trait LowPriorityRenders:
 object Render extends LowPriorityRenders:
     inline def apply[A](using r: Render[A]): Render[A] = r
 
-    def asText[A](value: A)(using sh: Render[A]): Text = sh.asText(value)
+    def asText[A](value: A)(using r: Render[A]): Text = r.asText(value)
 
     import scala.compiletime.*
 
