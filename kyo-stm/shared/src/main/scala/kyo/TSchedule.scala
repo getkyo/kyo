@@ -21,7 +21,7 @@ object TSchedule:
       * @return
       *   A new transactional schedule containing the schedule state, within the STM effect
       */
-    def init(schedule: Schedule)(using Frame): TSchedule < STM = TRef.init(schedule.next)
+    def init(schedule: Schedule)(using Frame): TSchedule < STM = Clock.now.map(now => TRef.init(schedule.next(now)))
 
     /** Creates a new transactional schedule outside of a transaction.
       *
@@ -37,7 +37,7 @@ object TSchedule:
       * @return
       *   A new transactional schedule containing the schedule state, within IO
       */
-    def initNow(schedule: Schedule)(using Frame): TSchedule < IO = TRef.initNow(schedule.next)
+    def initNow(schedule: Schedule)(using Frame): TSchedule < IO = Clock.now.map(now => TRef.initNow(schedule.next(now)))
 
     extension (self: TSchedule)
 
@@ -58,7 +58,9 @@ object TSchedule:
             self.use {
                 case Absent => f(Absent)
                 case Present((duration, nextSchedule)) =>
-                    self.set(nextSchedule.next).andThen(f(Maybe(duration)))
+                    Clock.now.map { now =>
+                        self.set(nextSchedule.next(now)).andThen(f(Maybe(duration)))
+                    }
             }
 
         /** Retrieves the next duration and updates the schedule state atomically.

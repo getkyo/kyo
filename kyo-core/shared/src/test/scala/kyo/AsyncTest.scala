@@ -719,7 +719,7 @@ class AsyncTest extends Test:
                         yield v,
                         for
                             _ <- Var.set(2)
-                            _ <- Async.sleep(2.millis)
+                            _ <- Async.sleep(50.millis)
                             v <- Var.get[Int]
                         yield v
                     )
