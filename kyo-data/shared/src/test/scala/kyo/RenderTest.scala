@@ -119,6 +119,10 @@ class RenderTest extends Test:
             assert(t"prefix ${ShowADT.Nested(Wr(null))} suffix".show == "prefix Nested(Nope) suffix")
             assert(t"prefix ${ShowADT.Nested(Wr(23))} suffix".show == "prefix Nested(Yep(23)) suffix")
         }
+
+        "should handle empty string" in {
+            assert(t"".show == "")
+        }
     }
 
 end RenderTest
