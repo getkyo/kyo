@@ -151,7 +151,7 @@ class STMTest extends Test:
                         for
                             _ <- ref.set(2)
                             _ <- Var.set(1)
-                            innerResult <- TRefLog.isolate {
+                            innerResult <- TRefLog.isolate.run {
                                 for
                                     _  <- ref.set(3)
                                     _  <- Var.set(2)

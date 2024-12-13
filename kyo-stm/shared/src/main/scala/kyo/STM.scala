@@ -1,10 +1,13 @@
 package kyo
 
+import java.util.Arrays
+import kyo.Result.Fail
 import scala.annotation.tailrec
+import scala.util.control.NoStackTrace
 
 /** A FailedTransaction exception that is thrown when a transaction fails to commit. Contains the frame where the failure occurred.
   */
-case class FailedTransaction(frame: Frame) extends Exception(frame.position.show)
+case class FailedTransaction(frame: Frame) extends Exception(frame.position.show) with NoStackTrace
 
 /** Software Transactional Memory (STM) provides concurrent access to shared state using optimistic locking. Rather than acquiring locks
   * upfront, transactions execute speculatively and automatically retry if conflicts are detected during commit. While this enables better
@@ -108,26 +111,89 @@ object STM:
                 // New transaction without a parent, use regular commit flow
                 Retry[FailedTransaction](retrySchedule) {
                     TID.useNew { tid =>
-                        TRefLog.runWith(v) { (log, result) =>
-                            IO.Unsafe {
-                                // Attempt to acquire locks and commit the transaction
-                                val (locked, unlocked) =
-                                    // Sort references by identity to prevent deadlocks
-                                    log.toSeq.sortBy((ref, _) => ref.hashCode)
-                                        .span((ref, entry) => ref.lock(entry))
-
-                                if unlocked.nonEmpty then
-                                    // Failed to acquire some locks - rollback and retry
-                                    locked.foreach((ref, entry) => ref.unlock(entry))
-                                    Abort.fail(FailedTransaction(frame))
-                                else
-                                    // Successfully locked all references - commit changes
-                                    locked.foreach((ref, entry) => ref.commit(tid, entry))
-                                    // Release all locks
-                                    locked.foreach((ref, entry) => ref.unlock(entry))
+                        Var.runWith(TRefLog.empty)(v) { (log, result) =>
+                            val logMap = log.toMap
+                            logMap.size match
+                                case 0 =>
+                                    // Nothing to commit
                                     result
-                                end if
-                            }
+                                case 1 =>
+                                    // Fast-path for a single ref
+                                    IO.Unsafe {
+                                        val (ref, entry) = logMap.head
+                                        // No need to pre-validate since `lock` validates and
+                                        // there's a single ref
+                                        if ref.lock(entry) then
+                                            ref.commit(tid, entry)
+                                            ref.unlock(entry)
+                                            result
+                                        else
+                                            Abort.fail(FailedTransaction(frame))
+                                        end if
+                                    }
+                                case size =>
+                                    // Commit multiple refs
+                                    IO.Unsafe {
+                                        // Flattened representation of the log
+                                        val array = new Array[Any](size * 2)
+
+                                        try
+                                            def fail = throw new FailedTransaction(frame)
+
+                                            var i = 0
+                                            // Pre-validate and dump the log to the flat array
+                                            logMap.foreachEntry { (ref, entry) =>
+                                                // This code uses exception throwing because
+                                                // foreachEntry is the only way to traverse the
+                                                // map without allocating tuples, so throwing
+                                                // is the workaround to short circuit
+                                                if !ref.validate(entry) then fail
+                                                array(i) = ref
+                                                array(i + 1) = entry
+                                                i += 2
+                                            }
+
+                                            // Sort references by identity to prevent deadlocks
+                                            quickSort(array, size)
+
+                                            // Convenience accessors to the flat log
+                                            inline def ref(idx: Int)   = array(idx * 2).asInstanceOf[TRef[Any]]
+                                            inline def entry(idx: Int) = array(idx * 2 + 1).asInstanceOf[TRefLog.Entry[Any]]
+
+                                            @tailrec def lock(idx: Int): Int =
+                                                if idx == size then size
+                                                else if !ref(idx).lock(entry(idx)) then idx
+                                                else lock(idx + 1)
+
+                                            @tailrec def unlock(idx: Int, upTo: Int): Unit =
+                                                if idx < upTo then
+                                                    ref(idx).unlock(entry(idx))
+                                                    unlock(idx + 1, upTo)
+
+                                            @tailrec def commit(idx: Int): Unit =
+                                                if idx < size then
+                                                    ref(idx).commit(tid, entry(idx))
+                                                    commit(idx + 1)
+
+                                            val acquired = lock(0)
+                                            if acquired != size then
+                                                // Failed to acquire some locks - rollback and retry
+                                                unlock(0, acquired)
+                                                fail
+                                            end if
+
+                                            // Successfully locked all references - commit changes
+                                            commit(0)
+
+                                            // Release all locks
+                                            unlock(0, size)
+                                            result
+                                        catch
+                                            case ex: FailedTransaction =>
+                                                Abort.fail(ex)
+                                        end try
+                                    }
+                            end match
                         }
                     }
                 }
@@ -135,7 +201,7 @@ object STM:
                 // Nested transaction inherits parent's transaction context but isolates RefLog.
                 // On success: changes propagate to parent. On failure: changes are rolled back
                 // without affecting parent's state.
-                val result = TRefLog.isolate(v)
+                val result = TRefLog.isolate.run(v)
 
                 // Can't return `result` directly since it has a pending STM effect
                 // but it's safe to cast because, if there's a parent transaction,
@@ -145,4 +211,40 @@ object STM:
         }
 
     end run
+
+    private def quickSort(array: Array[Any], size: Int): Unit =
+        def swap(i: Int, j: Int): Unit =
+            val temp = array(i)
+            array(i) = array(j)
+            array(j) = temp
+            val temp2 = array(i + 1)
+            array(i + 1) = array(j + 1)
+            array(j + 1) = temp2
+        end swap
+
+        def getHash(idx: Int): Int =
+            array(idx * 2).hashCode()
+
+        @tailrec def partitionLoop(low: Int, hi: Int, pivot: Int, i: Int, j: Int): Int =
+            if j >= hi then
+                swap(i * 2, pivot * 2)
+                i
+            else if getHash(j) < getHash(pivot) then
+                swap(i * 2, j * 2)
+                partitionLoop(low, hi, pivot, i + 1, j + 1)
+            else
+                partitionLoop(low, hi, pivot, i, j + 1)
+
+        def partition(low: Int, hi: Int): Int =
+            partitionLoop(low, hi, hi, low, low)
+
+        def loop(low: Int, hi: Int): Unit =
+            if low < hi then
+                val p = partition(low, hi)
+                loop(low, p - 1)
+                loop(p + 1, hi)
+
+        if size > 0 then
+            loop(0, size - 1)
+    end quickSort
 end STM
