@@ -57,7 +57,7 @@ object Monix:
                     cb(r.toEither)
                 }
                 Task(discard(fiber.unsafe.interrupt()))
-            }.pipe(IO.Unsafe.run).eval
+            }.pipe(IO.Unsafe.evalOrThrow)
         }
 
 end Monix

@@ -137,7 +137,7 @@ object Fiber extends FiberPlatformSpecific:
           */
         def onComplete[E2 >: E, A2 >: A](f: Result[E2, A2] => Unit < IO)(using Frame): Unit < IO =
             import AllowUnsafe.embrace.danger
-            IO(self.onComplete(r => IO.Unsafe.run(f(r)).eval))
+            IO(self.onComplete(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Registers a callback to be called when the Fiber is interrupted.
           *
@@ -151,7 +151,7 @@ object Fiber extends FiberPlatformSpecific:
           */
         def onInterrupt(f: Result.Error[E] => Unit < IO)(using Frame): Unit < IO =
             import AllowUnsafe.embrace.danger
-            IO(self.onInterrupt(r => IO.Unsafe.run(f(r)).eval))
+            IO(self.onInterrupt(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Blocks until the Fiber completes or the timeout is reached.
           *
@@ -179,7 +179,7 @@ object Fiber extends FiberPlatformSpecific:
           *   A new Fiber with the mapped result
           */
         def map[B: Flat](f: A => B < IO)(using Frame): Fiber[E, B] < IO =
-            IO.Unsafe(Unsafe.map(self)((r => IO.Unsafe.run(f(r)).eval)))
+            IO.Unsafe(Unsafe.map(self)((r => IO.Unsafe.evalOrThrow(f(r)))))
 
         /** Flat maps the result of the Fiber.
           *
@@ -189,7 +189,7 @@ object Fiber extends FiberPlatformSpecific:
           *   A new Fiber with the flat mapped result
           */
         def flatMap[E2, B](f: A => Fiber[E2, B] < IO)(using Frame): Fiber[E | E2, B] < IO =
-            IO.Unsafe(Unsafe.flatMap(self)(r => IO.Unsafe.run(f(r)).eval))
+            IO.Unsafe(Unsafe.flatMap(self)(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Maps the Result of the Fiber using the provided function.
           *
@@ -202,7 +202,7 @@ object Fiber extends FiberPlatformSpecific:
           *   A new Fiber with the mapped Result
           */
         def mapResult[E2, B: Flat](f: Result[E, A] => Result[E2, B] < IO)(using Frame): Fiber[E2, B] < IO =
-            IO.Unsafe(Unsafe.mapResult(self)(r => IO.Unsafe.run(f(r)).eval))
+            IO.Unsafe(Unsafe.mapResult(self)(r => IO.Unsafe.evalOrThrow(f(r))))
 
         /** Creates a new Fiber that runs with interrupt masking.
           *
@@ -370,7 +370,7 @@ object Fiber extends FiberPlatformSpecific:
                             val ok  = (p & 0xffffffffL) + (if result.isSuccess then 1 else 0)
                             val nok = (p >>> 32) + (if result.isFail then 1 else 0)
                             val np  = (nok << 32) | ok
-                            if !packed.cas(p, np) then
+                            if !packed.compareAndSet(p, np) then
                                 // CAS failed, retry the update
                                 loop()
                             else

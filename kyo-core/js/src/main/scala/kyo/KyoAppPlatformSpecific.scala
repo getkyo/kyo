@@ -19,7 +19,7 @@ abstract class KyoAppPlatformSpecific extends KyoApp.Base[Async & Resource & Abo
                 val race = Async.race(Seq(fiber.get, previousAsync))
                 Async.timeout(timeout)(race)
             }
-            val _ = IO.Unsafe.run(Async.run(racedAsyncIO)).eval
+            val _ = IO.Unsafe.evalOrThrow(Async.run(racedAsyncIO))
         }.toList
     end run
 

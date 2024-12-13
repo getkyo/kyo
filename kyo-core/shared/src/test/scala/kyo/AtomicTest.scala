@@ -25,7 +25,7 @@ class AtomicTest extends Test:
         "should compare and set the value" in run {
             for
                 ref <- AtomicInt.init(5)
-                v   <- ref.cas(5, 10)
+                v   <- ref.compareAndSet(5, 10)
                 r   <- ref.get
             yield
                 assert(v == true)
@@ -106,7 +106,7 @@ class AtomicTest extends Test:
         "should compare and set the value" in run {
             for
                 ref <- AtomicLong.init(5L)
-                v   <- ref.cas(5L, 10L)
+                v   <- ref.compareAndSet(5L, 10L)
                 r   <- ref.get
             yield
                 assert(v == true)
@@ -187,7 +187,7 @@ class AtomicTest extends Test:
         "should compare and set the value" in run {
             for
                 ref <- AtomicBoolean.init(true)
-                v   <- ref.cas(true, false)
+                v   <- ref.compareAndSet(true, false)
                 r   <- ref.get
             yield
                 assert(v == true)
@@ -226,7 +226,7 @@ class AtomicTest extends Test:
         "should compare and set the value" in run {
             for
                 ref <- AtomicRef.init("initial")
-                v   <- ref.cas("initial", "new")
+                v   <- ref.compareAndSet("initial", "new")
                 r   <- ref.get
             yield
                 assert(v == true)
@@ -235,7 +235,7 @@ class AtomicTest extends Test:
         "should fail compare and set the value" in run {
             for
                 ref <- AtomicRef.init("initial")
-                v   <- ref.cas("not-initial", "new")
+                v   <- ref.compareAndSet("not-initial", "new")
                 r   <- ref.get
             yield
                 assert(v == false)
@@ -278,7 +278,7 @@ class AtomicTest extends Test:
             }
             "should compare and set the value" in {
                 val ref = AtomicInt.Unsafe.init(5)
-                val v   = ref.cas(5, 10)
+                val v   = ref.compareAndSet(5, 10)
                 assert(v == true)
                 assert(ref.get() == 10)
             }
@@ -344,7 +344,7 @@ class AtomicTest extends Test:
             }
             "should compare and set the value" in {
                 val ref = AtomicLong.Unsafe.init(5L)
-                val v   = ref.cas(5L, 10L)
+                val v   = ref.compareAndSet(5L, 10L)
                 assert(v == true)
                 assert(ref.get() == 10L)
             }

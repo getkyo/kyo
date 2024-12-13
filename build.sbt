@@ -5,7 +5,7 @@ import org.typelevel.scalacoptions.ScalacOptions
 import org.typelevel.scalacoptions.ScalaVersion
 import sbtdynver.DynVerPlugin.autoImport.*
 
-val scala3Version   = "3.5.2"
+val scala3Version   = "3.6.2"
 val scala212Version = "2.12.20"
 val scala213Version = "2.13.15"
 
@@ -88,6 +88,7 @@ lazy val kyoJVM = project
     .aggregate(
         `kyo-scheduler`.jvm,
         `kyo-scheduler-zio`.jvm,
+        `kyo-scheduler-cats`.jvm,
         `kyo-data`.jvm,
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
@@ -186,6 +187,22 @@ lazy val `kyo-scheduler-zio` = sbtcrossproject.CrossProject("kyo-scheduler-zio",
         scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
         crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
     )
+lazy val `kyo-scheduler-cats` =
+    crossProject(JVMPlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-scheduler`)
+        .in(file("kyo-scheduler-cats"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.typelevel" %%% "cats-effect" % catsVersion,
+            libraryDependencies += "org.scalatest" %%% "scalatest"   % scalaTestVersion % Test
+        )
+        .jvmSettings(mimaCheck(false))
+        .settings(
+            scalacOptions ++= scalacOptionToken(ScalacOptions.source3).value,
+            crossScalaVersions := List(scala3Version, scala212Version, scala213Version)
+        )
 
 lazy val `kyo-data` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
@@ -460,6 +477,7 @@ lazy val `kyo-bench` =
         .dependsOn(`kyo-sttp`)
         .dependsOn(`kyo-stm`)
         .dependsOn(`kyo-scheduler-zio`)
+        .dependsOn(`kyo-scheduler-cats`)
         .disablePlugins(MimaPlugin)
         .settings(
             `kyo-settings`,
@@ -505,8 +523,8 @@ lazy val `kyo-bench` =
             libraryDependencies += "org.http4s"           %% "http4s-ember-client" % "0.23.30",
             libraryDependencies += "org.http4s"           %% "http4s-dsl"          % "0.23.30",
             libraryDependencies += "dev.zio"              %% "zio-http"            % "3.0.1",
-            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR2",
-            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR2",
+            libraryDependencies += "io.vertx"              % "vertx-core"          % "5.0.0.CR3",
+            libraryDependencies += "io.vertx"              % "vertx-web"           % "5.0.0.CR3",
             libraryDependencies += "org.scalatest"        %% "scalatest"           % scalaTestVersion % Test
         )
 

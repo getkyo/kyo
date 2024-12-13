@@ -408,10 +408,11 @@ class ClockTest extends Test:
         "with time control" in runNotJS {
             Clock.withTimeControl { control =>
                 for
-                    running  <- AtomicBoolean.init(false)
+                    running  <- Latch.init(1)
                     queue    <- Queue.Unbounded.init[Instant]()
-                    task     <- Clock.repeatWithDelay(1.milli)(running.set(true).andThen(Clock.now.map(queue.add)))
-                    _        <- untilTrue(control.advance(1.milli).andThen(running.get))
+                    task     <- Clock.repeatWithDelay(1.milli)(Clock.now.map(queue.add).andThen(running.release))
+                    _        <- control.advance(1.milli)
+                    _        <- running.await
                     _        <- queue.drain
                     _        <- Loop.repeat(10)(control.advance(1.milli))
                     _        <- task.interrupt

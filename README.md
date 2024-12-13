@@ -519,38 +519,10 @@ val a: Int < IO =
     IO(42)
 
 // ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
-val b: Int =
+val b: Int < Abort[Nothing] =
     import AllowUnsafe.embrace.danger // Required for unsafe operations
-    IO.Unsafe.run(a).eval
+    IO.Unsafe.run(a)
 // ** Avoid 'IO.Unsafe.run', use 'KyoApp' instead. **
-```
-
-The `runLazy` method accepts computations with other effects but it doesn't guarantee that all side effects are performed before the method returns. If other effects still have to be handled, the side effects can be executed later once the other effects are handled. This a low-level API that must be used with caution.
-
-```scala
-import kyo.*
-
-// Computation with 'Env' and then 'IO' suspensions
-val a: Int < (Env[Int] & IO) =
-    Env.get[Int].map { v =>
-        IO {
-            println(v)
-            v
-        }
-    }
-
-// ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
-// Handle the 'IO' effect lazily
-val b: Int < Env[Int] =
-    import AllowUnsafe.embrace.danger // Required for unsafe operations
-    IO.Unsafe.runLazy(a)
-// ** Avoid 'IO.Unsafe.runLazy', use 'KyoApp' instead. **
-
-// Since the computation is suspended with the
-// 'Env' effect first, the lazy 'IO' execution
-// will be triggered once 'Env' is handled
-val c: Int =
-    Env.run(42)(b).eval
 ```
 
 > IMPORTANT: Avoid handling the `IO` effect directly since it breaks referential transparency. Use `KyoApp` instead.
@@ -2581,7 +2553,7 @@ val f: Unit < IO =
 val g: Unit < IO =
     aLong.map(_.lazySet(1L))
 val h: Boolean < IO =
-    aBool.map(_.cas(false, true))
+    aBool.map(_.compareAndSet(false, true))
 val i: String < IO =
     aRef.map(_.getAndSet("new"))
 ```
