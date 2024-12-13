@@ -87,6 +87,9 @@ sealed private[kyo] class IOTask[Ctx, E, A] private (
 
     private inline def nullResult = null.asInstanceOf[A < Ctx & Async & Abort[E]]
 
+    override def toString =
+        s"IOTask(state = ${stateString()}, preempt = ${{ shouldPreempt() }}, finalizers = ${finalizers.size()}, curr = ${curr})"
+
 end IOTask
 
 object IOTask:

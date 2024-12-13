@@ -216,14 +216,15 @@ private[kyo] class IOPromise[+E, +A](init: State[E, A]) extends Safepoint.Interc
         blockLoop(this)
     end block
 
+    protected def stateString(): String =
+        state.get() match
+            case p: Pending[?, ?] => s"Pending(waiters = ${p.waiters})"
+            case l: Linked[?, ?]  => s"Linked(promise = ${l.p})"
+            case r                => s"Done(result = ${r.asInstanceOf[Result[Any, Any]].show})"
+
     override def toString =
-        val stateString =
-            state.get() match
-                case p: Pending[?, ?] => s"Pending(waiters = ${p.waiters})"
-                case l: Linked[?, ?]  => s"Linked(promise = ${l.p})"
-                case r                => s"Done(result = ${r.asInstanceOf[Result[Any, Any]].show})"
-        s"IOPromise(state = ${stateString})"
-    end toString
+        s"IOPromise(state = ${stateString()})"
+
 end IOPromise
 
 private[kyo] object IOPromise:

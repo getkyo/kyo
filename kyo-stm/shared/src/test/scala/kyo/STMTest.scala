@@ -1,5 +1,7 @@
 package kyo
 
+import scala.concurrent.Future
+
 class STMTest extends Test:
 
     "Transaction isolation" - {
@@ -712,6 +714,28 @@ class STMTest extends Test:
                         }
                     }
             yield assert(parentTid != childTid)
+        }
+    }
+
+    "bug #925" in run {
+        def unsafeToFuture[A: Flat](a: => A < (Async & Abort[Throwable])): Future[A] =
+            import kyo.AllowUnsafe.embrace.danger
+            IO.Unsafe.evalOrThrow(
+                Async.run(a).map(_.toFuture)
+            )
+        end unsafeToFuture
+
+        val ex = new Exception
+
+        val faultyTransaction: Int < STM = TRef.init(42).map { r =>
+            throw ex
+            r.get
+        }
+
+        val task = Async.runAndBlock(Duration.Infinity)(Async.fromFuture(unsafeToFuture(STM.run(faultyTransaction))))
+
+        Abort.run(task).map { result =>
+            assert(result == Result.fail(ex))
         }
     }
 
