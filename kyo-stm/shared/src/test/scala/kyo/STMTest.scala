@@ -717,7 +717,7 @@ class STMTest extends Test:
         }
     }
 
-    "bug #925" in run {
+    "bug #925" in runJVM {
         def unsafeToFuture[A: Flat](a: => A < (Async & Abort[Throwable])): Future[A] =
             import kyo.AllowUnsafe.embrace.danger
             IO.Unsafe.evalOrThrow(
