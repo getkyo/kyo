@@ -13,7 +13,7 @@ class TRefMultiBench(parallelism: Int) extends Bench.ForkOnly(parallelism):
 
         STM.runtime[IO].flatMap { stm =>
             for
-                refs   <- stm.commit(Seq.fill(parallelism)(stm.TVar.of(0)).sequence)
+                refs   <- Seq.fill(parallelism)(stm.commit(stm.TVar.of(0))).sequence
                 _      <- refs.map(ref => stm.commit(ref.modify(_ + 1))).parSequence_
                 result <- stm.commit(refs.traverse(_.get).map(_.sum))
             yield result

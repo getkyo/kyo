@@ -41,18 +41,17 @@ object Retry:
             SafeClassTag[E],
             Frame
         ): A < (Async & Abort[E] & S) =
-            Loop(schedule) { schedule =>
-                Abort.run[E](v).map(_.fold { r =>
+            Abort.run[E](v).map {
+                case Result.Success(r) => r
+                case error: Result.Error[?] =>
                     Clock.now.map { now =>
                         schedule.next(now).map { (delay, nextSchedule) =>
-                            Async.delay(delay)(Loop.continue(nextSchedule))
+                            Async.delay(delay)(Retry[E](nextSchedule)(v))
                         }.getOrElse {
-                            Abort.get(r)
+                            Abort.get(error)
                         }
                     }
-                }(Loop.done(_)))
             }
-        end apply
     end RetryOps
 
     /** Creates a RetryOps instance for the specified error type.
