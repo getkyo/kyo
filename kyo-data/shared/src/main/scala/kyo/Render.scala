@@ -80,13 +80,12 @@ object Render extends LowPriorityRenders:
 
 end Render
 
-sealed trait Rendered:
-    private[kyo] def textValue: Text
+type Rendered = Rendered.Value
 
 object Rendered:
+    opaque type Value <: Text = Text
     implicit def apply[A](value: A)(using render: Render[A]): Rendered =
-        new Rendered:
-            private[kyo] def textValue: Text = render.asText(value)
+        render.asText(value)
 end Rendered
 
 extension (sc: StringContext)
@@ -96,6 +95,6 @@ extension (sc: StringContext)
         val ai         = args.iterator
         var text: Text = pi.next()
         while ai.hasNext do
-            text = text + ai.next.textValue
+            text = text + ai.next
             text = text + StringContext.processEscapes(pi.next())
         text
