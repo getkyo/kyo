@@ -6,14 +6,14 @@ class ConsoleTest extends Test:
     val obj       = Obj("a")
     val pprintObj = pprint.apply(obj).toString
 
-    "readln" in run {
+    "readLine" in run {
         Console.withIn(List("readln")) {
             Console.readLine.map { result =>
                 assert(result == "readln")
             }
         }
     }
-    "print" in run {
+    "print string" in run {
         Console.withOut(Console.print("print")).map { (out, _) =>
             assert(out.stdOut == "print")
         }
