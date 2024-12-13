@@ -62,4 +62,28 @@ class RetryTest extends Test:
             assert(v.isFail && calls == 5 && (java.lang.System.currentTimeMillis() - start) >= 15)
         }
     }
+
+    "default schedule" - {
+        "succeeds immediately without retries" in run {
+            var calls = 0
+            Retry[Any] {
+                calls += 1
+                42
+            }.map { v =>
+                assert(v == 42 && calls == 1)
+            }
+        }
+
+        "retries up to max attempts" in run {
+            var calls = 0
+            Abort.run[Exception] {
+                Retry[Exception] {
+                    calls += 1
+                    throw ex
+                }
+            }.map { v =>
+                assert(v.isFail && calls == 4)
+            }
+        }
+    }
 end RetryTest

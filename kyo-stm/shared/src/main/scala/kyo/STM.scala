@@ -42,7 +42,7 @@ opaque type STM <: (Var[TRefLog] & Abort[FailedTransaction] & Async) =
 object STM:
 
     /** The default retry schedule for failed transactions */
-    val defaultRetrySchedule = Schedule.fixed(1.millis * 0.5).take(20)
+    val defaultRetrySchedule = Schedule.fixed(1.millis).jitter(0.5).take(20)
 
     /** Forces a transaction retry by aborting the current transaction and rolling back all changes. This is useful when a transaction
       * detects that it cannot proceed due to invalid state.

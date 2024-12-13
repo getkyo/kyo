@@ -121,7 +121,7 @@ object Channel:
           * @return
           *   A sequence containing all elements that were in the channel
           */
-        def drain(using Frame): Seq[A] < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.drain()))
+        def drain(using Frame): Chunk[A] < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.drain()))
 
         /** Takes up to [[max]] elements from the channel.
           *
@@ -157,6 +157,57 @@ object Channel:
           *   true if the channel is full, false otherwise
           */
         def full(using Frame): Boolean < (Abort[Closed] & IO) = IO.Unsafe(Abort.get(self.full()))
+
+        private def emitChunks(maxChunkSize: Int = Int.MaxValue)(
+            using
+            Tag[Emit[Chunk[A]]],
+            Frame
+        ): Ack < (Emit[Chunk[A]] & Abort[Closed] & Async) =
+            if maxChunkSize <= 0 then Ack.Stop
+            else if maxChunkSize == 1 then
+                Loop(()): _ =>
+                    Channel.take(self).map: v =>
+                        Emit.andMap(Chunk(v)):
+                            case Ack.Stop => Loop.done(Ack.Stop)
+                            case _        => Loop.continue(())
+            else
+                val drainEffect =
+                    if maxChunkSize == Int.MaxValue then Channel.drain(self)
+                    else Channel.drainUpTo(self)(maxChunkSize - 1)
+                Loop[Unit, Ack, Abort[Closed] & Async & Emit[Chunk[A]]](()): _ =>
+                    Channel.take(self).map: a =>
+                        drainEffect.map: chunk =>
+                            Emit.andMap(Chunk(a).concat(chunk)):
+                                case Ack.Stop => Loop.done(Ack.Stop)
+                                case _        => Loop.continue(())
+
+        /** Stream elements from channel, optionally specifying a maximum chunk size. In the absence of [[maxChunkSize]], chunk sizes will
+          * be limited only by channel capacity or the number of elements in the channel at a given time. (Chunks can still be larger than
+          * channel capacity.) Consumes elements from channel. Fails on channel closure.
+          *
+          * @param maxChunkSize
+          *   Maximum number of elements to take for each chunk
+          *
+          * @return
+          *   Asynchronous stream of elements in this channel
+          */
+        def stream(maxChunkSize: Int = Int.MaxValue)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Abort[Closed] & Async] =
+            Stream(emitChunks(maxChunkSize))
+
+        /** Like [[stream]] but stops streaming when the channel closes instead of failing
+          *
+          * @param maxChunkSize
+          *   Maximum number of elements to take for each chunk
+          *
+          * @return
+          *   Asynchronous stream of elements in this channel
+          */
+        def streamUntilClosed(maxChunkSize: Int = Int.MaxValue)(using Tag[Emit[Chunk[A]]], Frame): Stream[A, Async] =
+            Stream:
+                Abort.run[Closed](emitChunks(maxChunkSize)).map:
+                    case Result.Success(v) => v
+                    case Result.Fail(_)    => Ack.Stop
+                    case Result.Panic(e)   => Abort.panic(e)
 
         def unsafe: Unsafe[A] = self
     end extension
