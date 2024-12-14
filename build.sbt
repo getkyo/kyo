@@ -463,7 +463,8 @@ lazy val `kyo-examples` =
                 "--add-opens=java.base/jdk.internal.misc=ALL-UNNAMED"
             ),
             Compile / doc / sources                              := Seq.empty,
-            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio" % "1.11.10"
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-json-zio"          % "1.11.10",
+            libraryDependencies += "com.softwaremill.sttp.tapir" %% "tapir-swagger-ui-bundle" % "1.11.10"
         )
         .jvmSettings(mimaCheck(false))
 
