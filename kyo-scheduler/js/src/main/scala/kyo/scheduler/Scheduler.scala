@@ -18,4 +18,10 @@ class Scheduler {
 
     def flush(): Unit = {}
 
+    def reject(): Boolean = false
+
+    def reject(key: String): Boolean = false
+
+    def reject(key: Int): Boolean = false
+
 }

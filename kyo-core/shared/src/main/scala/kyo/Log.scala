@@ -3,17 +3,19 @@ package kyo
 import kyo.internal.LogPlatformSpecific
 
 final case class Log(unsafe: Log.Unsafe):
-    def level: Log.Level                                                                                  = unsafe.level
-    inline def trace(inline msg: => String)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.trace(msg))
-    inline def trace(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.trace(msg, t))
-    inline def debug(inline msg: => String)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.debug(msg))
-    inline def debug(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.debug(msg, t))
-    inline def info(inline msg: => String)(using inline frame: Frame): Unit < IO                          = IO.Unsafe(unsafe.info(msg))
-    inline def info(inline msg: => String, inline t: => Throwable)(using inline frame: Frame): Unit < IO  = IO.Unsafe(unsafe.info(msg, t))
-    inline def warn(inline msg: => String)(using inline frame: Frame): Unit < IO                          = IO.Unsafe(unsafe.warn(msg))
-    inline def warn(inline msg: => String, t: => Throwable)(using inline frame: Frame): Unit < IO         = IO.Unsafe(unsafe.warn(msg, t))
-    inline def error(inline msg: => String)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.error(msg))
-    inline def error(inline msg: => String, t: => Throwable)(using inline frame: Frame): Unit < IO        = IO.Unsafe(unsafe.error(msg, t))
+    def level: Log.Level                                                        = unsafe.level
+    inline def trace(inline msg: => Text)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.trace(msg.show))
+    inline def trace(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
+        IO.Unsafe(unsafe.trace(msg.show, t))
+    inline def debug(inline msg: => Text)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.debug(msg.show))
+    inline def debug(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO =
+        IO.Unsafe(unsafe.debug(msg.show, t))
+    inline def info(inline msg: => Text)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.info(msg.show))
+    inline def info(inline msg: => Text, inline t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.info(msg.show, t))
+    inline def warn(inline msg: => Text)(using inline frame: Frame): Unit < IO                         = IO.Unsafe(unsafe.warn(msg.show))
+    inline def warn(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < IO        = IO.Unsafe(unsafe.warn(msg.show, t))
+    inline def error(inline msg: => Text)(using inline frame: Frame): Unit < IO                        = IO.Unsafe(unsafe.error(msg.show))
+    inline def error(inline msg: => Text, t: => Throwable)(using inline frame: Frame): Unit < IO = IO.Unsafe(unsafe.error(msg.show, t))
 end Log
 
 /** Logging utility object for Kyo applications. */

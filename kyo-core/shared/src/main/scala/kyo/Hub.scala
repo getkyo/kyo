@@ -84,7 +84,7 @@ class Hub[A] private[kyo] (
             ch.close.map { r =>
                 IO {
                     val array = listeners.toArray()
-                    listeners.removeIf(_ => true)
+                    discard(listeners.removeIf(_ => true))
                     Loop.indexed { idx =>
                         if idx == array.length then Loop.done
                         else
@@ -117,12 +117,12 @@ class Hub[A] private[kyo] (
             case false =>
                 Channel.init[A](bufferSize).map { child =>
                     IO {
-                        listeners.add(child)
+                        discard(listeners.add(child))
                         closed.map {
                             case true =>
                                 // race condition
                                 IO {
-                                    listeners.remove(child)
+                                    discard(listeners.remove(child))
                                     fail
                                 }
                             case false =>
@@ -135,8 +135,7 @@ class Hub[A] private[kyo] (
 
     private[kyo] def remove(child: Channel[A])(using Frame): Unit < IO =
         IO {
-            listeners.remove(child)
-            ()
+            discard(listeners.remove(child))
         }
 end Hub
 
@@ -160,7 +159,7 @@ object Hub:
                         ch.take.map { v =>
                             IO {
                                 val puts =
-                                    listeners.toArray
+                                    listeners.toArray()
                                         .toList.asInstanceOf[List[Channel[A]]]
                                         .map(child => Abort.run[Throwable](child.put(v)))
                                 Async.parallelUnbounded(puts).map(_ => Loop.continue)

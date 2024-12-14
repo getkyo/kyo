@@ -12,7 +12,7 @@ class AsyncTest extends Test:
                 v <- Async.run(1).map(_.get)
             yield assert(v == 1)
         }
-        "executes in a different thread" in runJVM {
+        "executes in a different thread" in runNotJS {
             val t1 = Thread.currentThread()
             for
                 t2 <- Async.run(Thread.currentThread()).map(_.get)
@@ -26,7 +26,7 @@ class AsyncTest extends Test:
                 (v6, v7, v8, v9) <- Async.parallel(6, 7, 8, 9)
             yield assert(v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 == 45)
         }
-        "nested" in runJVM {
+        "nested" in runNotJS {
             val t1 = Thread.currentThread()
             for
                 t2 <- Async.run(IO(Async.run(Thread.currentThread()).map(_.get))).map(_.get)
@@ -66,7 +66,7 @@ class AsyncTest extends Test:
 
     "runAndBlock" - {
 
-        "timeout" in runJVM {
+        "timeout" in runNotJS {
             Async.sleep(1.day).andThen(1)
                 .pipe(Async.timeout(10.millis))
                 .pipe(Async.runAndBlock(Duration.Infinity))
@@ -77,7 +77,7 @@ class AsyncTest extends Test:
                 }
         }
 
-        "block timeout" in runJVM {
+        "block timeout" in runNotJS {
             Async.sleep(1.day).andThen(1)
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
@@ -87,7 +87,7 @@ class AsyncTest extends Test:
                 }
         }
 
-        "multiple fibers timeout" in runJVM {
+        "multiple fibers timeout" in runNotJS {
             Kyo.fill(100)(Async.sleep(1.milli)).andThen(1)
                 .pipe(Async.runAndBlock(10.millis))
                 .pipe(Abort.run[Timeout](_))
@@ -112,7 +112,7 @@ class AsyncTest extends Test:
                 }
             }
 
-        "one fiber" in runJVM {
+        "one fiber" in runNotJS {
             for
                 started     <- Latch.init(1)
                 done        <- Latch.init(1)
@@ -122,7 +122,7 @@ class AsyncTest extends Test:
                 _           <- done.await
             yield assert(interrupted)
         }
-        "multiple fibers" in runJVM {
+        "multiple fibers" in runNotJS {
             for
                 started      <- Latch.init(3)
                 done         <- Latch.init(3)
@@ -139,15 +139,15 @@ class AsyncTest extends Test:
     }
 
     "race" - {
-        "zero" in runJVM {
+        "zero" in runNotJS {
             assertDoesNotCompile("Async.race()")
         }
-        "one" in runJVM {
+        "one" in runNotJS {
             Async.race(1).map { r =>
                 assert(r == 1)
             }
         }
-        "multiple" in runJVM {
+        "multiple" in runNotJS {
             val ac = new JAtomicInteger(0)
             val bc = new JAtomicInteger(0)
             def loop(i: Int, s: String): String < IO =
@@ -165,7 +165,7 @@ class AsyncTest extends Test:
                 assert(bc.get() <= Int.MaxValue)
             }
         }
-        "waits for the first success" in runJVM {
+        "waits for the first success" in runNotJS {
             val ex = new Exception
             Async.race(
                 Async.sleep(1.milli).andThen(42),
@@ -174,7 +174,7 @@ class AsyncTest extends Test:
                 assert(r == 42)
             }
         }
-        "returns the last failure if all fibers fail" in runJVM {
+        "returns the last failure if all fibers fail" in runNotJS {
             val ex1 = new Exception
             val ex2 = new Exception
             val race =
@@ -237,7 +237,7 @@ class AsyncTest extends Test:
         yield assert(v1 + v2 + v3 + l.sum == 15)
     }
 
-    "interrupt" in runJVM {
+    "interrupt" in runNotJS {
         def loop(ref: AtomicInt): Unit < IO =
             ref.incrementAndGet.map(_ => loop(ref))
 
@@ -531,7 +531,7 @@ class AsyncTest extends Test:
             yield assert(result == 42)
         }
 
-        "interrupts computation" in runJVM {
+        "interrupts computation" in runNotJS {
             for
                 flag  <- AtomicBoolean.init(false)
                 fiber <- Promise.init[Nothing, Int]
@@ -664,6 +664,351 @@ class AsyncTest extends Test:
                         assert(r == (1 to 5))
                         assert(counter == 0)
                     }
+                }
+            }
+        }
+    }
+
+    "with isolates" - {
+        "mask with isolate" in run {
+            val varIsolate = Var.isolate.update[Int]
+
+            Var.runTuple(1) {
+                for
+                    start <- Var.get[Int]
+                    _ <- Async.mask(varIsolate) {
+                        for
+                            _ <- Var.set(2)
+                            _ <- Async.sleep(1.millis)
+                            _ <- Var.set(3)
+                        yield ()
+                    }
+                    end <- Var.get[Int]
+                yield (start, end)
+            }.map { result =>
+                assert(result == (3, (1, 3)))
+            }
+        }
+
+        "timeout with isolate" in run {
+            val emitIsolate = Emit.isolate.merge[Int]
+
+            Emit.run {
+                Async.timeout(1.hour, emitIsolate) {
+                    for
+                        _ <- Emit(1)
+                        _ <- Async.sleep(1.millis)
+                        _ <- Emit(2)
+                    yield "done"
+                }
+            }.map { result =>
+                assert(result == (Chunk(1, 2), "done"))
+            }
+        }
+
+        "race with isolate" in run {
+            val varIsolate = Var.isolate.update[Int]
+
+            Var.runTuple(0) {
+                Async.race(varIsolate)(
+                    Seq(
+                        for
+                            _ <- Var.set(1)
+                            _ <- Async.sleep(1.millis)
+                            v <- Var.get[Int]
+                        yield v,
+                        for
+                            _ <- Var.set(2)
+                            _ <- Async.sleep(50.millis)
+                            v <- Var.get[Int]
+                        yield v
+                    )
+                )
+            }.map { result =>
+                assert(result == (1, 1))
+            }
+        }
+
+        "parallel with isolate" in run {
+            val memoIsolate = Memo.isolate.merge
+            var count       = 0
+            val f = Memo[Int, Int, Any] { x =>
+                count += 1
+                x * 2
+            }
+
+            Memo.run {
+                Kyo.zip(
+                    Async.parallel(2, memoIsolate)(
+                        Seq(
+                            f(1),
+                            f(1),
+                            f(1)
+                        )
+                    ),
+                    f(1)
+                )
+            }.map { result =>
+                assert(result == (Seq(2, 2, 2), 2))
+                assert(count == 3)
+            }
+        }
+
+        "parallelUnbounded with isolate" in run {
+            val emitIsolate = Emit.isolate.merge[String]
+
+            Emit.run {
+                Async.parallelUnbounded(
+                    emitIsolate,
+                    Seq(
+                        for
+                            _ <- Emit("a1")
+                            _ <- Async.sleep(2.millis)
+                            _ <- Emit("a2")
+                        yield 1,
+                        for
+                            _ <- Emit("b1")
+                            _ <- Async.sleep(1.millis)
+                            _ <- Emit("b2")
+                        yield 2
+                    )
+                )
+            }.map { result =>
+                assert(result._1.size == 4)
+                assert(result._2 == Seq(1, 2))
+            }
+        }
+    }
+
+    "gather" - {
+        "sequence" - {
+            "delegates to Fiber.gather" in run {
+                for
+                    result <- Async.gather(Seq(IO(1), IO(2), IO(3)))
+                yield assert(result == Chunk(1, 2, 3))
+            }
+
+            "with max limit delegates to Fiber.gather" in run {
+                for
+                    result <- Async.gather(2)(Seq(IO(1), IO(2), IO(3)))
+                yield
+                    assert(result.size == 2)
+                    assert(result.forall(Seq(1, 2, 3).contains))
+            }
+        }
+
+        "varargs" - {
+            "delegates to sequence-based gather" in run {
+                for
+                    result <- Async.gather(IO(1), IO(2), IO(3))
+                yield assert(result == Chunk(1, 2, 3))
+            }
+
+            "with max limit delegates to sequence-based gather" in run {
+                for
+                    result <- Async.gather(2)(IO(1), IO(2), IO(3))
+                yield
+                    assert(result.size == 2)
+                    assert(result.forall(Seq(1, 2, 3).contains))
+            }
+        }
+
+        "with isolate" - {
+            "sequence-based" in run {
+                val emitIsolate = Emit.isolate.merge[String]
+
+                Emit.run {
+                    Async.gather(emitIsolate)(
+                        Seq(
+                            for
+                                _ <- Emit("a1")
+                                _ <- Async.sleep(2.millis)
+                                _ <- Emit("a2")
+                            yield 1,
+                            for
+                                _ <- Emit("b1")
+                                _ <- Async.sleep(1.millis)
+                                _ <- Emit("b2")
+                            yield 2
+                        )
+                    )
+                }.map { result =>
+                    assert(result._1.size == 4)
+                    assert(result._2 == Chunk(1, 2))
+                }
+            }
+
+            "sequence-based with max" in run {
+                val emitIsolate = Emit.isolate.merge[String]
+
+                Emit.run {
+                    Async.gather(1, emitIsolate)(
+                        Seq(
+                            for
+                                _ <- Emit("a1")
+                                _ <- Async.sleep(5.millis)
+                                _ <- Emit("a2")
+                            yield 1,
+                            for
+                                _ <- Emit("b1")
+                                _ <- Async.sleep(1.millis)
+                                _ <- Emit("b2")
+                            yield 2
+                        )
+                    )
+                }.map { result =>
+                    assert(result._1.size == 2)
+                    assert(result._2.size == 1)
+                    assert(result._2.head == 2)
+                }
+            }
+
+            "varargs-based" in run {
+                val emitIsolate = Emit.isolate.merge[String]
+
+                Emit.run {
+                    Async.gather(emitIsolate)(
+                        for
+                            _ <- Emit("a1")
+                            _ <- Async.sleep(2.millis)
+                            _ <- Emit("a2")
+                        yield 1,
+                        for
+                            _ <- Emit("b1")
+                            _ <- Async.sleep(1.millis)
+                            _ <- Emit("b2")
+                        yield 2
+                    )
+                }.map { result =>
+                    assert(result._1.size == 4)
+                    assert(result._2 == Chunk(1, 2))
+                }
+            }
+
+            "varargs-based with max" in run {
+                val emitIsolate = Emit.isolate.merge[String]
+
+                Emit.run {
+                    Async.gather(1, emitIsolate)(
+                        for
+                            _ <- Emit("a1")
+                            _ <- Async.sleep(10.millis)
+                            _ <- Emit("a2")
+                        yield 1,
+                        for
+                            _ <- Emit("b1")
+                            _ <- Async.sleep(1.millis)
+                            _ <- Emit("b2")
+                        yield 2
+                    )
+                }.map { result =>
+                    assert(result._1.size == 2)
+                    assert(result._2.size == 1)
+                    assert(result._2.head == 2)
+                }
+            }
+
+            "handles failures" in run {
+                val emitIsolate = Emit.isolate.merge[String]
+                val error       = new RuntimeException("test error")
+
+                Emit.run {
+                    Abort.run {
+                        Async.gather(emitIsolate)(
+                            for
+                                _ <- Emit("a1")
+                                _ <- Abort.fail(error)
+                                _ <- Emit("a2")
+                            yield 1,
+                            for
+                                _ <- Emit("b1")
+                                _ <- Async.sleep(1.millis)
+                                _ <- Emit("b2")
+                            yield 2
+                        )
+                    }
+                }.map { case (emitted, result) =>
+                    assert(emitted == Seq("b1", "b2"))
+                    assert(result == Result.success(Chunk(2)))
+                }
+            }
+
+            "handles multiple failures" in run {
+                val emitIsolate = Emit.isolate.merge[String]
+                val error1      = new RuntimeException("error 1")
+                val error2      = new RuntimeException("error 2")
+
+                Emit.run {
+                    Abort.run {
+                        Async.gather(emitIsolate)(
+                            for
+                                _ <- Emit("a1")
+                                _ <- Abort.fail(error1)
+                            yield 1,
+                            for
+                                _ <- Emit("b1")
+                                _ <- Abort.fail(error2)
+                            yield 2,
+                            for
+                                _ <- Emit("c1")
+                                _ <- Async.sleep(1.millis)
+                                _ <- Emit("c2")
+                            yield 3
+                        )
+                    }
+                }.map { case (emitted, result) =>
+                    assert(emitted == Chunk("c1", "c2"))
+                    assert(result == Result.success(Chunk(3)))
+                }
+            }
+
+            "with max limit handles partial failures" in run {
+                val emitIsolate = Emit.isolate.merge[String]
+                val error       = new RuntimeException("test error")
+
+                Emit.run {
+                    Async.gather(2, emitIsolate)(
+                        for
+                            _ <- Emit("a1")
+                            _ <- Abort.fail(error)
+                        yield 1,
+                        for
+                            _ <- Emit("b1")
+                            _ <- Async.sleep(2.millis)
+                            _ <- Emit("b2")
+                        yield 2,
+                        for
+                            _ <- Emit("c1")
+                            _ <- Async.sleep(1.millis)
+                            _ <- Emit("c2")
+                        yield 3
+                    )
+                }.map { case (emitted, results) =>
+                    assert(emitted == Chunk("b1", "b2", "c1", "c2"))
+                    assert(results == Chunk(2, 3))
+                }
+            }
+
+            "preserves state isolation during failures" in run {
+                val varIsolate = Var.isolate.update[Int]
+                val error      = new RuntimeException("test error")
+
+                Var.runTuple(21) {
+                    Abort.run {
+                        Async.gather(varIsolate)(
+                            for
+                                _ <- Var.update[Int](_ + 2)
+                                _ <- Abort.fail(error)
+                            yield "a",
+                            for
+                                _ <- Var.update[Int](_ * 2)
+                                _ <- Async.sleep(1.millis)
+                            yield "b"
+                        )
+                    }
+                }.map { case (finalState, result) =>
+                    assert(finalState == 42)
+                    assert(result == Result.success(Chunk("b")))
                 }
             }
         }

@@ -39,6 +39,12 @@ abstract class Bench[A](val expectedResult: A):
         else
             zio.Runtime.default.unsafe
     end zioRuntime
+
+    given ioRuntime: cats.effect.unsafe.IORuntime =
+        if System.getProperty("replaceCatsExecutor", "false") == "true" then
+            kyo.KyoSchedulerIORuntime.global
+        else
+            cats.effect.unsafe.implicits.global
 end Bench
 
 object Bench:
@@ -56,14 +62,12 @@ object Bench:
         def forkKyo(warmup: KyoForkWarmup): A =
             import kyo.*
             import AllowUnsafe.embrace.danger
-            IO.Unsafe.run(Async.run(kyoBenchFiber()).flatMap(_.block(Duration.Infinity))).eval.getOrThrow
+            IO.Unsafe.evalOrThrow(Async.run(kyoBenchFiber()).flatMap(_.block(Duration.Infinity))).getOrThrow
         end forkKyo
 
         @Benchmark
         def forkCats(warmup: CatsForkWarmup): A =
-            import cats.effect.unsafe.implicits.global
             cats.effect.IO.cede.flatMap(_ => catsBench()).unsafeRunSync()
-        end forkCats
 
         @Benchmark
         def forkZIO(warmup: ZIOForkWarmup): A = zio.Unsafe.unsafe(implicit u =>
@@ -79,14 +83,12 @@ object Bench:
         @Benchmark
         def syncKyo(warmup: KyoSyncWarmup): A =
             import kyo.AllowUnsafe.embrace.danger
-            kyo.IO.Unsafe.run(kyoBench()).eval
+            kyo.IO.Unsafe.evalOrThrow(kyoBench())
         end syncKyo
 
         @Benchmark
         def syncCats(warmup: CatsSyncWarmup): A =
-            import cats.effect.unsafe.implicits.global
             catsBench().unsafeRunSync()
-        end syncCats
 
         @Benchmark
         def syncZIO(warmup: ZIOSyncWarmup): A = zio.Unsafe.unsafe(implicit u =>

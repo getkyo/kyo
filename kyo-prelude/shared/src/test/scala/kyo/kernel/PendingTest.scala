@@ -269,4 +269,13 @@ class PendingTest extends Test:
         assert(test(nest((): Unit < Any)).eval == ())
     }
 
+    "show" - {
+        "should display pure vals wrapped with inner types displayed using show" in {
+            val i: Result[String, Int] < Any         = Result.success(23)
+            val r: Render[Result[String, Int] < Any] = Render.apply
+            assert(r.asText(i).show == "Kyo(Success(23))")
+            assert(t"$i".show == "Kyo(Success(23))")
+        }
+    }
+
 end PendingTest

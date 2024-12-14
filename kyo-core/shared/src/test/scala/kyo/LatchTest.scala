@@ -29,7 +29,7 @@ class LatchTest extends Test:
         yield succeed
     }
 
-    "countDown + fibers + await" in runJVM {
+    "countDown + fibers + await" in runNotJS {
         for
             latch <- Latch.init(1)
             _     <- Async.run(latch.release)
@@ -37,7 +37,7 @@ class LatchTest extends Test:
         yield succeed
     }
 
-    "countDown(2) + fibers + await" in runJVM {
+    "countDown(2) + fibers + await" in runNotJS {
         for
             latch <- Latch.init(2)
             _     <- Async.parallel(latch.release, latch.release)
@@ -45,7 +45,7 @@ class LatchTest extends Test:
         yield succeed
     }
 
-    "contention" in runJVM {
+    "contention" in runNotJS {
         for
             latch <- Latch.init(1000)
             _     <- Async.parallelUnbounded(List.fill(1000)(latch.release))

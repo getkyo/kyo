@@ -5,7 +5,7 @@ import kyo.Flat
 import kyo.Tag
 import kyo.bug
 
-private[kyo] opaque type Context = Map[Tag[Any] | IsolationFlag, AnyRef]
+private[kyo] opaque type Context = Map[Tag[Any], AnyRef]
 
 private[kyo] object Context:
     inline given Flat[Context] = Flat.unsafe.bypass
@@ -15,15 +15,14 @@ private[kyo] object Context:
     extension (self: Context)
         def isEmpty = self eq empty
 
-        def contains[A, E <: ContextEffect[A]](tag: Tag[E]): Boolean =
+        def contains[E <: (ContextEffect[?] | IsolationFlag)](tag: Tag[E]): Boolean =
             self.contains(tag.erased)
 
         def inherit: Context =
-            if !self.contains(IsolationFlag) then self
+            if !contains(Tag[IsolationFlag]) then self
             else
-                self.filter { (k, _) =>
-                    !IsolationFlag.equals(k) &&
-                    !(k.asInstanceOf[Tag[Any]] <:< Tag[ContextEffect.Isolated])
+                self.filterNot { (k, _) =>
+                    k <:< Tag[IsolationFlag] || k <:< Tag[ContextEffect.Isolated]
                 }
 
         inline def getOrElse[A, E <: ContextEffect[A], B >: A](tag: Tag[E], inline default: => B): B =
@@ -36,7 +35,7 @@ private[kyo] object Context:
         private[kernel] def set[A, E <: ContextEffect[A]](tag: Tag[E], value: A): Context =
             val newContext = self.updated(tag.erased, value.asInstanceOf[AnyRef])
             if tag <:< Tag[ContextEffect.Isolated] then
-                newContext.updated(IsolationFlag, IsolationFlag)
+                newContext.updated(Tag[IsolationFlag].erased, IsolationFlag)
             else
                 newContext
             end if

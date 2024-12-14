@@ -35,7 +35,7 @@ class ChannelTest extends Test:
             b2 <- c.empty
         yield assert(b && v1 == Maybe(1) && v2 == Maybe(2) && b2)
     }
-    "offer, put, and take in parallel" in runJVM {
+    "offer, put, and take in parallel" in runNotJS {
         for
             c     <- Channel.init[Int](2)
             b     <- c.offer(1)
@@ -49,7 +49,7 @@ class ChannelTest extends Test:
             v3    <- take2.get
         yield assert(b && f && v1 == 1 && v2 == 1 && v3 == 2)
     }
-    "blocking put" in runJVM {
+    "blocking put" in runNotJS {
         for
             c  <- Channel.init[Int](2)
             _  <- c.put(1)
@@ -63,7 +63,7 @@ class ChannelTest extends Test:
             v3 <- c.poll
         yield assert(!d1 && d2 && v1 == Maybe(1) && v2 == Maybe(2) && v3 == Maybe(3))
     }
-    "blocking take" in runJVM {
+    "blocking take" in runNotJS {
         for
             c  <- Channel.init[Int](2)
             f  <- c.takeFiber
@@ -73,6 +73,57 @@ class ChannelTest extends Test:
             d2 <- f.done
             v  <- f.get
         yield assert(!d1 && d2 && v == 1)
+    }
+    "takeExactly" - {
+        "should return empty chunk if n <= 0" in runNotJS {
+            for
+                c  <- Channel.init[Int](3)
+                _  <- Kyo.foreach(1 to 3)(c.put(_))
+                r0 <- c.takeExactly(0)
+                rn <- c.takeExactly(-5)
+                s  <- c.size
+            yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 3)
+        }
+        "should take all contents if in n == capacity" in runNotJS {
+            for
+                c <- Channel.init[Int](3)
+                _ <- Kyo.foreach(1 to 3)(c.put(_))
+                r <- c.takeExactly(3)
+                s <- c.size
+            yield assert(r == Seq(1, 2, 3) && s == 0)
+        }
+        "should take all contents and block if in n > capacity" in runNotJS {
+            for
+                c  <- Channel.init[Int](3)
+                _  <- Kyo.foreach(1 to 3)(c.put(_))
+                f  <- Async.run(c.takeExactly(5))
+                _  <- Loop(())(_ => c.size.map(s => if s == 0 then Loop.done(()) else Loop.continue(())))
+                _  <- Async.sleep(10.millis)
+                fd <- f.done
+                _  <- f.interrupt
+            yield assert(!fd)
+        }
+        "should take partial contents if channel capacity > n" in runNotJS {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put(_))
+                r <- c.takeExactly(2)
+                s <- c.size
+            yield assert(r == Seq(1, 2) && s == 2)
+        }
+        "should take incrementally as elements are added to channel" in runNotJS {
+            for
+                c <- Channel.init[Int](3)
+                _ <- Kyo.foreach(1 to 3)(c.put(_))
+                f <- Async.run(c.takeExactly(6))
+                // Wait until channel is empty
+                _  <- Loop(false)(v => if v then Loop.done(()) else c.empty.map(Loop.continue(_)))
+                fd <- f.done
+                _  <- Kyo.foreach(4 to 6)(c.put(_))
+                r  <- Fiber.get(f)
+                s  <- c.size
+            yield assert(!fd && r == Seq(1, 2, 3, 4, 5, 6) && s == 0)
+        }
     }
     "drain" - {
         "empty" in run {
@@ -90,15 +141,58 @@ class ChannelTest extends Test:
             yield assert(r == Seq(1, 2))
         }
     }
+    "drainUpTo" - {
+        "zero or negative" in run {
+            for
+                c  <- Channel.init[Int](2)
+                r0 <- c.drainUpTo(0)
+                rn <- c.drainUpTo(-5)
+                s  <- c.size
+            yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 0)
+        }
+        "empty" in run {
+            for
+                c <- Channel.init[Int](2)
+                r <- c.drainUpTo(2)
+                s <- c.size
+            yield assert(r == Chunk.empty && s == 0)
+        }
+        "non-empty channel drain up to the channel contents" in run {
+            for
+                c <- Channel.init[Int](2)
+                _ <- c.put(1)
+                _ <- c.put(2)
+                r <- c.drainUpTo(2)
+                s <- c.size
+            yield assert(r == Seq(1, 2) && s == 0)
+        }
+        "non-empty channel drain up to more than is in the channel" in run {
+            for
+                c <- Channel.init[Int](2)
+                _ <- c.put(1)
+                _ <- c.put(2)
+                r <- c.drainUpTo(4)
+                s <- c.size
+            yield assert(r == Seq(1, 2) && s == 0)
+        }
+        "non-empty channel drain up to less than is in the channel" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put(_))
+                r <- c.drainUpTo(2)
+                s <- c.size
+            yield assert(r == Seq(1, 2) && s == 2)
+        }
+    }
     "close" - {
-        "empty" in runJVM {
+        "empty" in runNotJS {
             for
                 c <- Channel.init[Int](2)
                 r <- c.close
                 t <- Abort.run(c.offer(1))
             yield assert(r == Maybe(Seq()) && t.isFail)
         }
-        "non-empty" in runJVM {
+        "non-empty" in runNotJS {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
@@ -107,7 +201,7 @@ class ChannelTest extends Test:
                 t <- Abort.run(c.empty)
             yield assert(r == Maybe(Seq(1, 2)) && t.isFail)
         }
-        "pending take" in runJVM {
+        "pending take" in runNotJS {
             for
                 c <- Channel.init[Int](2)
                 f <- c.takeFiber
@@ -116,7 +210,7 @@ class ChannelTest extends Test:
                 t <- Abort.run(c.full)
             yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
         }
-        "pending put" in runJVM {
+        "pending put" in runNotJS {
             for
                 c <- Channel.init[Int](2)
                 _ <- c.put(1)
@@ -127,7 +221,7 @@ class ChannelTest extends Test:
                 e <- Abort.run(c.offer(1))
             yield assert(r == Maybe(Seq(1, 2)) && d.isFail && e.isFail)
         }
-        "no buffer w/ pending put" in runJVM {
+        "no buffer w/ pending put" in runNotJS {
             for
                 c <- Channel.init[Int](0)
                 f <- c.putFiber(1)
@@ -136,7 +230,7 @@ class ChannelTest extends Test:
                 t <- Abort.run(c.poll)
             yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
         }
-        "no buffer w/ pending take" in runJVM {
+        "no buffer w/ pending take" in runNotJS {
             for
                 c <- Channel.init[Int](0)
                 f <- c.takeFiber
@@ -146,7 +240,7 @@ class ChannelTest extends Test:
             yield assert(r == Maybe(Seq()) && d.isFail && t.isFail)
         }
     }
-    "no buffer" in runJVM {
+    "no buffer" in runNotJS {
         for
             c <- Channel.init[Int](0)
             _ <- c.putFiber(1)
@@ -156,7 +250,7 @@ class ChannelTest extends Test:
         yield assert(v == 1 && f && e)
     }
     "contention" - {
-        "with buffer" in runJVM {
+        "with buffer" in runNotJS {
             for
                 c  <- Channel.init[Int](10)
                 f1 <- Fiber.parallelUnbounded(List.fill(1000)(c.put(1)))
@@ -167,7 +261,7 @@ class ChannelTest extends Test:
             yield assert(b)
         }
 
-        "no buffer" in runJVM {
+        "no buffer" in runNotJS {
             for
                 c  <- Channel.init[Int](10)
                 f1 <- Fiber.parallelUnbounded(List.fill(1000)(c.put(1)))
@@ -356,6 +450,174 @@ class ChannelTest extends Test:
             )
                 .pipe(Choice.run, _.unit, Loop.repeat(repeats))
                 .andThen(succeed)
+        }
+    }
+
+    "stream" - {
+        "should stream from channel" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.stream().take(4)
+                v <- stream.run
+            yield assert(v == Chunk(1, 2, 3, 4))
+        }
+        "stream with zero or negative maxChunkSize should stop" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                s0 = c.stream(0)
+                sn = c.stream(-5)
+                r0 <- s0.run
+                rn <- sn.run
+                s  <- c.size
+            yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 4)
+            end for
+        }
+        "stream with maxChunkSize of 1 should stream in chunks of 1" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.stream(1).mapChunk(Chunk(_)).take(4)
+                r <- stream.run
+                s <- c.size
+            yield assert(r == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4)) && s == 0)
+            end for
+        }
+        "should stream from channel without specified chunk size" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.stream().mapChunk(ch => Chunk(ch)).take(1)
+                v <- stream.run
+                s <- c.size
+            yield assert(v == Chunk(Chunk(1, 2, 3, 4)) && s == 0)
+        }
+
+        "should stream from channel with a specified chunk size" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.stream(2).mapChunk(ch => Chunk(ch)).take(2)
+                v <- stream.run
+                s <- c.size
+            yield assert(v == Chunk(Chunk(1, 2), Chunk(3, 4)) && s == 0)
+        }
+
+        "should stream concurrently with ingest, without specified chunk size" in run {
+            for
+                c  <- Channel.init[Int](4)
+                bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                stream = c.stream().take(20).mapChunk(ch => Chunk(ch))
+                v <- stream.run
+                _ <- bg.interrupt
+            yield assert(v.flattenChunk == Chunk.from(0 until 20))
+        }
+
+        "should stream concurrently with ingest, with specified chunk size" in run {
+            for
+                c  <- Channel.init[Int](4)
+                bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                stream = c.stream(2).take(20).mapChunk(ch => Chunk(ch))
+                v <- stream.run
+                _ <- bg.interrupt
+            yield assert(v.flattenChunk == Chunk.from(0 until 20) && v.forall(_.size <= 2))
+        }
+
+        "should fail when channel is closed" in run {
+            for
+                c  <- Channel.init[Int](3)
+                bg <- Async.run(Kyo.foreach(0 to 8)(c.put).andThen(c.close))
+                stream = c.stream().mapChunk(ch => Chunk(ch))
+                v <- Abort.run(stream.run)
+            yield v match
+                case Result.Success(v)            => fail(s"Stream succeeded unexpectedly: ${v}")
+                case Result.Fail(Closed(_, _, _)) => assert(true)
+                case Result.Panic(ex)             => fail(s"Stream panicked unexpectedly: ${ex}")
+        }
+    }
+
+    "streamUntilClosed" - {
+        "should stream from channel" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.streamUntilClosed().take(4)
+                v <- stream.run
+            yield assert(v == Chunk(1, 2, 3, 4))
+        }
+        "stream with zero or negative maxChunkSize should stop" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                s0 = c.streamUntilClosed(0)
+                sn = c.streamUntilClosed(-5)
+                r0 <- s0.run
+                rn <- sn.run
+                s  <- c.size
+            yield assert(r0 == Chunk.empty && rn == Chunk.empty && s == 4)
+            end for
+        }
+        "stream with maxChunkSize of 1 should stream in chunks of 1" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.streamUntilClosed(1).mapChunk(Chunk(_)).take(4)
+                r <- stream.run
+                s <- c.size
+            yield assert(r == Chunk(Chunk(1), Chunk(2), Chunk(3), Chunk(4)) && s == 0)
+            end for
+        }
+        "should stream from channel without specified chunk size" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.streamUntilClosed().mapChunk(ch => Chunk(ch)).take(1)
+                v <- stream.run
+                s <- c.size
+            yield assert(v == Chunk(Chunk(1, 2, 3, 4)) && s == 0)
+        }
+
+        "should stream from channel with a specified chunk size" in run {
+            for
+                c <- Channel.init[Int](4)
+                _ <- Kyo.foreach(1 to 4)(c.put)
+                stream = c.streamUntilClosed(2).mapChunk(ch => Chunk(ch)).take(2)
+                v <- stream.run
+                s <- c.size
+            yield assert(v == Chunk(Chunk(1, 2), Chunk(3, 4)) && s == 0)
+        }
+
+        "should stream concurrently with ingest, without specified chunk size" in run {
+            for
+                c  <- Channel.init[Int](4)
+                bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                stream = c.streamUntilClosed().take(20).mapChunk(ch => Chunk(ch))
+                v <- stream.run
+                _ <- bg.interrupt
+            yield assert(v.flattenChunk == Chunk.from(0 until 20))
+        }
+
+        "should stream concurrently with ingest, with specified chunk size" in run {
+            for
+                c  <- Channel.init[Int](4)
+                bg <- Async.run(Loop(0)(i => c.put(i).andThen(Loop.continue(i + 1))))
+                stream = c.streamUntilClosed(2).take(20).mapChunk(ch => Chunk(ch))
+                v <- stream.run
+                _ <- bg.interrupt
+            yield assert(v.flattenChunk == Chunk.from(0 until 20) && v.forall(_.size <= 2))
+        }
+
+        "should stop when channel is closed" in run {
+            val fullStream = Chunk(0, 1, 2, 3, 4, 5, 6, 7, 8)
+            for
+                c <- Channel.init[Int](3)
+                stream = c.streamUntilClosed()
+                f <- Async.run(stream.run)
+                _ <- Kyo.foreach(fullStream)(c.put).andThen(c.close)
+                r <- Fiber.get(f)
+            yield assert(r.size <= fullStream.size && r == fullStream.take(r.size))
+            end for
         }
     }
 

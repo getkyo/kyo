@@ -103,6 +103,81 @@ class ArrowEffectTest extends Test:
         }
     }
 
+    "handleFirst" - {
+        "handles first occurrence of effect" in {
+            val effect =
+                for
+                    s1 <- testEffect1(10)
+                    s2 <- testEffect1(20)
+                    s3 <- testEffect1(30)
+                yield (s1, s2, s3)
+
+            val result = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont("handled"),
+                identity
+            )
+
+            val finalResult = ArrowEffect.handle(Tag[TestEffect1], result) {
+                [C] => (input, cont) => cont(input.toString)
+            }
+
+            assert(finalResult.eval == ("handled", "20", "30"))
+        }
+
+        "preserves unhandled effects" in {
+            val effect =
+                for
+                    s1 <- testEffect1(10)
+                    i1 <- testEffect2("test")
+                    s2 <- testEffect1(20)
+                yield (s1, i1, s2)
+
+            val result = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont("handled"),
+                identity
+            )
+
+            val finalResult = ArrowEffect.handle(Tag[TestEffect1], Tag[TestEffect2], result)(
+                [C] => (input, cont) => cont(input.toString),
+                [C] => (input, cont) => cont(input.length)
+            )
+
+            assert(finalResult.eval == ("handled", 4, "20"))
+        }
+
+        "handles pure values correctly" in {
+            val effect: String < Any = "pure"
+            val result = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont("handled"),
+                s => s + "-done"
+            )
+
+            val finalResult = ArrowEffect.handle(Tag[TestEffect1], result) {
+                [C] => (input, cont) => cont(input.toString)
+            }
+
+            assert(finalResult.eval == "pure-done")
+        }
+
+        "stack safety with nested effects" in {
+            def nested(n: Int): Int < TestEffect1 =
+                if n == 0 then 42
+                else testEffect1(n).map(_ => nested(n - 1))
+
+            val effect = nested(10000)
+            val result = ArrowEffect.handleFirst(Tag[TestEffect1], effect)(
+                [C] => (input, cont) => cont("42"),
+                identity
+            )
+
+            val finalResult = ArrowEffect.handle(Tag[TestEffect1], result) {
+                [C] => (input, cont) => cont(input.toString)
+            }
+
+            assert(finalResult.eval == 42)
+        }
+    }
+
     "handle.catching" - {
         "failure" in {
             val effect = ArrowEffect.suspend[Int](Tag[TestEffect1], 42)

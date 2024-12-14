@@ -40,7 +40,7 @@ final case class AtomicInt private (unsafe: AtomicInt.Unsafe):
       * @return
       *   true if successful, false otherwise
       */
-    inline def cas(curr: Int, next: Int)(using inline frame: Frame): Boolean < IO = IO.Unsafe(unsafe.cas(curr, next))
+    inline def compareAndSet(curr: Int, next: Int)(using inline frame: Frame): Boolean < IO = IO.Unsafe(unsafe.compareAndSet(curr, next))
 
     /** Atomically increments the current value and returns the updated value.
       * @return
@@ -118,18 +118,18 @@ object AtomicInt:
         def init(v: Int)(using AllowUnsafe): Unsafe = new j.AtomicInteger(v)
 
         extension (self: Unsafe)
-            inline def get()(using inline allow: AllowUnsafe): Int                         = self.get()
-            inline def set(v: Int)(using inline allow: AllowUnsafe): Unit                  = self.set(v)
-            inline def lazySet(v: Int)(using inline allow: AllowUnsafe): Unit              = self.lazySet(v)
-            inline def getAndSet(v: Int)(using inline allow: AllowUnsafe): Int             = self.getAndSet(v)
-            inline def cas(curr: Int, next: Int)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
-            inline def incrementAndGet()(using inline allow: AllowUnsafe): Int             = self.incrementAndGet()
-            inline def decrementAndGet()(using inline allow: AllowUnsafe): Int             = self.decrementAndGet()
-            inline def getAndIncrement()(using inline allow: AllowUnsafe): Int             = self.getAndIncrement()
-            inline def getAndDecrement()(using inline allow: AllowUnsafe): Int             = self.getAndDecrement()
-            inline def getAndAdd(v: Int)(using inline allow: AllowUnsafe): Int             = self.getAndAdd(v)
-            inline def addAndGet(v: Int)(using inline allow: AllowUnsafe): Int             = self.addAndGet(v)
-            inline def safe: AtomicInt                                                     = AtomicInt(self)
+            inline def get()(using inline allow: AllowUnsafe): Int                                   = self.get()
+            inline def set(v: Int)(using inline allow: AllowUnsafe): Unit                            = self.set(v)
+            inline def lazySet(v: Int)(using inline allow: AllowUnsafe): Unit                        = self.lazySet(v)
+            inline def getAndSet(v: Int)(using inline allow: AllowUnsafe): Int                       = self.getAndSet(v)
+            inline def compareAndSet(curr: Int, next: Int)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
+            inline def incrementAndGet()(using inline allow: AllowUnsafe): Int                       = self.incrementAndGet()
+            inline def decrementAndGet()(using inline allow: AllowUnsafe): Int                       = self.decrementAndGet()
+            inline def getAndIncrement()(using inline allow: AllowUnsafe): Int                       = self.getAndIncrement()
+            inline def getAndDecrement()(using inline allow: AllowUnsafe): Int                       = self.getAndDecrement()
+            inline def getAndAdd(v: Int)(using inline allow: AllowUnsafe): Int                       = self.getAndAdd(v)
+            inline def addAndGet(v: Int)(using inline allow: AllowUnsafe): Int                       = self.addAndGet(v)
+            inline def safe: AtomicInt                                                               = AtomicInt(self)
         end extension
     end Unsafe
 end AtomicInt
@@ -171,7 +171,8 @@ final case class AtomicLong private (unsafe: AtomicLong.Unsafe):
       * @return
       *   true if successful, false otherwise
       */
-    inline def cas(curr: Long, next: Long)(using inline frame: Frame): Boolean < IO = IO.Unsafe(unsafe.cas(curr, next))
+    inline def compareAndSet(curr: Long, next: Long)(using inline frame: Frame): Boolean < IO =
+        IO.Unsafe(unsafe.compareAndSet(curr, next))
 
     /** Atomically increments the current value and returns the updated value.
       * @return
@@ -249,18 +250,18 @@ object AtomicLong:
         def init(v: Long)(using AllowUnsafe): Unsafe = new j.AtomicLong(v)
 
         extension (self: Unsafe)
-            inline def get()(using inline allow: AllowUnsafe): Long                          = self.get()
-            inline def set(v: Long)(using inline allow: AllowUnsafe): Unit                   = self.set(v)
-            inline def lazySet(v: Long)(using inline allow: AllowUnsafe): Unit               = self.lazySet(v)
-            inline def getAndSet(v: Long)(using inline allow: AllowUnsafe): Long             = self.getAndSet(v)
-            inline def cas(curr: Long, next: Long)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
-            inline def incrementAndGet()(using inline allow: AllowUnsafe): Long              = self.incrementAndGet()
-            inline def decrementAndGet()(using inline allow: AllowUnsafe): Long              = self.decrementAndGet()
-            inline def getAndIncrement()(using inline allow: AllowUnsafe): Long              = self.getAndIncrement()
-            inline def getAndDecrement()(using inline allow: AllowUnsafe): Long              = self.getAndDecrement()
-            inline def getAndAdd(v: Long)(using inline allow: AllowUnsafe): Long             = self.getAndAdd(v)
-            inline def addAndGet(v: Long)(using inline allow: AllowUnsafe): Long             = self.addAndGet(v)
-            inline def safe: AtomicLong                                                      = AtomicLong(self)
+            inline def get()(using inline allow: AllowUnsafe): Long                                    = self.get()
+            inline def set(v: Long)(using inline allow: AllowUnsafe): Unit                             = self.set(v)
+            inline def lazySet(v: Long)(using inline allow: AllowUnsafe): Unit                         = self.lazySet(v)
+            inline def getAndSet(v: Long)(using inline allow: AllowUnsafe): Long                       = self.getAndSet(v)
+            inline def compareAndSet(curr: Long, next: Long)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
+            inline def incrementAndGet()(using inline allow: AllowUnsafe): Long                        = self.incrementAndGet()
+            inline def decrementAndGet()(using inline allow: AllowUnsafe): Long                        = self.decrementAndGet()
+            inline def getAndIncrement()(using inline allow: AllowUnsafe): Long                        = self.getAndIncrement()
+            inline def getAndDecrement()(using inline allow: AllowUnsafe): Long                        = self.getAndDecrement()
+            inline def getAndAdd(v: Long)(using inline allow: AllowUnsafe): Long                       = self.getAndAdd(v)
+            inline def addAndGet(v: Long)(using inline allow: AllowUnsafe): Long                       = self.addAndGet(v)
+            inline def safe: AtomicLong                                                                = AtomicLong(self)
         end extension
     end Unsafe
 end AtomicLong
@@ -302,7 +303,8 @@ final case class AtomicBoolean private (unsafe: AtomicBoolean.Unsafe):
       * @return
       *   true if successful, false otherwise
       */
-    inline def cas(curr: Boolean, next: Boolean)(using inline frame: Frame): Boolean < IO = IO.Unsafe(unsafe.cas(curr, next))
+    inline def compareAndSet(curr: Boolean, next: Boolean)(using inline frame: Frame): Boolean < IO =
+        IO.Unsafe(unsafe.compareAndSet(curr, next))
 
     /** Returns a string representation of the current value.
       * @return
@@ -340,12 +342,13 @@ object AtomicBoolean:
         def init(v: Boolean)(using AllowUnsafe): Unsafe = new j.AtomicBoolean(v)
 
         extension (self: Unsafe)
-            inline def get()(using inline allow: AllowUnsafe): Boolean                             = self.get()
-            inline def set(v: Boolean)(using inline allow: AllowUnsafe): Unit                      = self.set(v)
-            inline def lazySet(v: Boolean)(using inline allow: AllowUnsafe): Unit                  = self.lazySet(v)
-            inline def getAndSet(v: Boolean)(using inline allow: AllowUnsafe): Boolean             = self.getAndSet(v)
-            inline def cas(curr: Boolean, next: Boolean)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
-            inline def safe: AtomicBoolean                                                         = AtomicBoolean(self)
+            inline def get()(using inline allow: AllowUnsafe): Boolean                 = self.get()
+            inline def set(v: Boolean)(using inline allow: AllowUnsafe): Unit          = self.set(v)
+            inline def lazySet(v: Boolean)(using inline allow: AllowUnsafe): Unit      = self.lazySet(v)
+            inline def getAndSet(v: Boolean)(using inline allow: AllowUnsafe): Boolean = self.getAndSet(v)
+            inline def compareAndSet(curr: Boolean, next: Boolean)(using inline allow: AllowUnsafe): Boolean =
+                self.compareAndSet(curr, next)
+            inline def safe: AtomicBoolean = AtomicBoolean(self)
         end extension
     end Unsafe
 end AtomicBoolean
@@ -391,7 +394,7 @@ final case class AtomicRef[A] private (unsafe: AtomicRef.Unsafe[A]):
       * @return
       *   true if successful, false otherwise
       */
-    inline def cas(curr: A, next: A)(using inline frame: Frame): Boolean < IO = IO.Unsafe(unsafe.cas(curr, next))
+    inline def compareAndSet(curr: A, next: A)(using inline frame: Frame): Boolean < IO = IO.Unsafe(unsafe.compareAndSet(curr, next))
 
     /** Atomically updates the current value using the given function.
       * @param f
@@ -436,14 +439,14 @@ object AtomicRef:
         def init[A](v: A)(using AllowUnsafe): Unsafe[A] = new j.AtomicReference(v)
 
         extension [A](self: Unsafe[A])
-            inline def get()(using inline allow: AllowUnsafe): A                       = self.get()
-            inline def set(v: A)(using inline allow: AllowUnsafe): Unit                = self.set(v)
-            inline def lazySet(v: A)(using inline allow: AllowUnsafe): Unit            = self.lazySet(v)
-            inline def getAndSet(v: A)(using inline allow: AllowUnsafe): A             = self.getAndSet(v)
-            inline def cas(curr: A, next: A)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
-            def update[S](f: A => A)(using AllowUnsafe): Unit                          = discard(self.updateAndGet(f(_)))
-            def updateAndGet[S](f: A => A)(using AllowUnsafe): A                       = self.updateAndGet(f(_))
-            inline def safe: AtomicRef[A]                                              = AtomicRef(self)
+            inline def get()(using inline allow: AllowUnsafe): A                                 = self.get()
+            inline def set(v: A)(using inline allow: AllowUnsafe): Unit                          = self.set(v)
+            inline def lazySet(v: A)(using inline allow: AllowUnsafe): Unit                      = self.lazySet(v)
+            inline def getAndSet(v: A)(using inline allow: AllowUnsafe): A                       = self.getAndSet(v)
+            inline def compareAndSet(curr: A, next: A)(using inline allow: AllowUnsafe): Boolean = self.compareAndSet(curr, next)
+            def update[S](f: A => A)(using AllowUnsafe): Unit                                    = discard(self.updateAndGet(f(_)))
+            def updateAndGet[S](f: A => A)(using AllowUnsafe): A                                 = self.updateAndGet(f(_))
+            inline def safe: AtomicRef[A]                                                        = AtomicRef(self)
         end extension
     end Unsafe
 end AtomicRef

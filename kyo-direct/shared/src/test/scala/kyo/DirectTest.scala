@@ -97,7 +97,7 @@ class DirectTest extends Test:
         test(None)
     }
     "consoles" in run {
-        Console.withIn(List("hello"))(defer(~Abort.run(Console.readln))).map { result =>
+        Console.withIn(List("hello"))(defer(~Abort.run(Console.readLine))).map { result =>
             assert(result.contains("hello"))
         }
     }

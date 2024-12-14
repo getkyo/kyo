@@ -24,6 +24,12 @@ trait BaseKyoTest[S]:
     @targetName("runJSAssertion")
     def runJS(v: => Assertion < S): Future[Assertion] = runJS(v.map(Future.successful(_)))
 
+    @targetName("runNotJSAssertion")
+    def runNotJS(v: => Assertion < S): Future[Assertion] = runNotJS(v.map(Future.successful(_)))
+
+    @targetName("runNativeAssertion")
+    def runNative(v: => Assertion < S): Future[Assertion] = runNative(v.map(Future.successful(_)))
+
     def runJVM(v: => Future[Assertion] < S): Future[Assertion] =
         if Platform.isJVM then
             run(v)
@@ -32,6 +38,18 @@ trait BaseKyoTest[S]:
 
     def runJS(v: => Future[Assertion] < S): Future[Assertion] =
         if Platform.isJS then
+            run(v)
+        else
+            Future.successful(success)
+
+    def runNotJS(v: => Future[Assertion] < S): Future[Assertion] =
+        if !Platform.isJS then
+            run(v)
+        else
+            Future.successful(success)
+
+    def runNative(v: => Future[Assertion] < S): Future[Assertion] =
+        if Platform.isNative then
             run(v)
         else
             Future.successful(success)

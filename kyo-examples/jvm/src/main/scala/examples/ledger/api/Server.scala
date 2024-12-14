@@ -40,9 +40,9 @@ object Server extends KyoApp:
             val db      = ~Env.run(dbConfig)(DB.init)
             val handler = ~Env.run(db)(Handler.init)
 
-            ~Console.println(s"Server starting on port $port...")
+            ~Console.printLine(s"Server starting on port $port...")
             val binding = ~Routes.run(server)(Clock.let(clock)(Env.run(handler)(Endpoints.init)))
-            ~Console.println(s"Server started: ${binding.localSocket}")
+            ~Console.printLine(s"Server started: ${binding.localSocket}")
         }
     }
 

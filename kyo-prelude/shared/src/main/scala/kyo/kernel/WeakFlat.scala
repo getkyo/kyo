@@ -22,8 +22,7 @@ To fix this, you can:
      val x: Int < S1 = computeFirst()
      val y: Int < S2 = useResult(x)
 """)
-case class WeakFlat[A](dummy: Null) extends AnyVal
-
+opaque type WeakFlat[A] = Null
 trait WeakFlatLowPriority:
     inline given WeakFlat[Nothing] = WeakFlat.unsafe.bypass
 
@@ -38,6 +37,6 @@ object WeakFlat extends WeakFlatLowPriority:
           * Warning: This bypasses normal type safety checks and should only be used when you can guarantee through other means that no
           * problematic effect nesting will occur.
           */
-        inline given bypass[A]: WeakFlat[A] = WeakFlat(null)
+        inline given bypass[A]: WeakFlat[A] = null
     end unsafe
 end WeakFlat

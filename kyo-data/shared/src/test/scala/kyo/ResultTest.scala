@@ -999,8 +999,21 @@ class ResultTest extends Test:
         }
 
         "nested Success" in {
+            val nested = Result.success(Result.success(Result.success(23)))
+            assert(nested.show == "Success(Success(Success(23)))")
+            assert(t"$nested".show == "Success(Success(Success(23)))")
+            val widened: Result[Nothing, Result[Nothing, Result[Nothing, Int]]] = nested
+            assert(widened.show == "Success(Success(Success(23)))")
+            assert(t"$widened".show == "Success(Success(Success(23)))")
+        }
+
+        "nested Success with failure" in {
             val nested = Result.success(Result.success(Result.fail("error")))
-            assert(nested.show == "Success(Success(Success(Fail(error))))")
+            assert(nested.show == "Success(Success(Fail(error)))")
+            assert(t"$nested".show == "Success(Success(Fail(error)))")
+            val widened: Result[Nothing, Result[Nothing, Result[String, Nothing]]] = nested
+            assert(widened.show == "Success(Success(Fail(error)))")
+            assert(t"$widened".show == "Success(Success(Fail(error)))")
         }
     }
 
