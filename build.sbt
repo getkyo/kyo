@@ -90,6 +90,7 @@ lazy val kyoJVM = project
         `kyo-scheduler-zio`.jvm,
         `kyo-scheduler-cats`.jvm,
         `kyo-data`.jvm,
+        `kyo-kernel`.jvm,
         `kyo-prelude`.jvm,
         `kyo-core`.jvm,
         `kyo-direct`.jvm,
@@ -119,6 +120,7 @@ lazy val kyoJS = project
     .aggregate(
         `kyo-scheduler`.js,
         `kyo-data`.js,
+        `kyo-kernel`.js,
         `kyo-prelude`.js,
         `kyo-core`.js,
         `kyo-direct`.js,
@@ -141,6 +143,7 @@ lazy val kyoNative = project
     .aggregate(
         `kyo-data`.native,
         `kyo-prelude`.native,
+        `kyo-kernel`.native,
         `kyo-stats-registry`.native,
         `kyo-scheduler`.native,
         `kyo-core`.native,
@@ -219,18 +222,31 @@ lazy val `kyo-data` =
         .nativeSettings(`native-settings`)
         .jsSettings(`js-settings`)
 
-lazy val `kyo-prelude` =
+lazy val `kyo-kernel` =
     crossProject(JSPlatform, JVMPlatform, NativePlatform)
         .withoutSuffixFor(JVMPlatform)
         .crossType(CrossType.Full)
         .dependsOn(`kyo-data`)
+        .in(file("kyo-kernel"))
+        .settings(
+            `kyo-settings`,
+            libraryDependencies += "org.jctools"   % "jctools-core" % "4.0.5",
+            libraryDependencies += "org.javassist" % "javassist"    % "3.30.2-GA" % Test
+        )
+        .jvmSettings(mimaCheck(false))
+        .nativeSettings(`native-settings`)
+        .jsSettings(`js-settings`)
+
+lazy val `kyo-prelude` =
+    crossProject(JSPlatform, JVMPlatform, NativePlatform)
+        .withoutSuffixFor(JVMPlatform)
+        .crossType(CrossType.Full)
+        .dependsOn(`kyo-kernel`)
         .in(file("kyo-prelude"))
         .settings(
             `kyo-settings`,
-            libraryDependencies += "org.jctools"   % "jctools-core"  % "4.0.5",
-            libraryDependencies += "dev.zio"     %%% "zio-laws-laws" % "1.0.0-RC35" % Test,
-            libraryDependencies += "dev.zio"     %%% "zio-test-sbt"  % zioVersion   % Test,
-            libraryDependencies += "org.javassist" % "javassist"     % "3.30.2-GA"  % Test
+            libraryDependencies += "dev.zio" %%% "zio-laws-laws" % "1.0.0-RC35" % Test,
+            libraryDependencies += "dev.zio" %%% "zio-test-sbt"  % zioVersion   % Test
         )
         .jvmSettings(mimaCheck(false))
         .nativeSettings(`native-settings`)
