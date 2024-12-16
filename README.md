@@ -81,7 +81,7 @@ Replace `<version>` with the latest version: ![Version](https://img.shields.io/m
 
 ## IDE Support
 
-Kyo utilizes features from the latest Scala 3 versions that are not yet properly supported by IntelliJ IDEA. For the best development experience and to ensure all Kyo features are correctly recognized, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE for your Kyo projects.
+Kyo utilizes features from the latest Scala 3 versions that are not yet properly supported by IntelliJ IDEA. For the best development experience, we recommend using a [Metals-based](https://scalameta.org/metals/) IDE with the SBT BSP server for improved stability. See the Metals [instructions](https://scalameta.org/metals/docs/build-tools/sbt/#sbt-build-server) to switch from Bloop to sbt BSP.
 
 ## Recommended Compiler Flags
 
